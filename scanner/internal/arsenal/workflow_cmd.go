@@ -10,7 +10,7 @@ import (
 
 // HandleWorkflowCommand 处理 `dddd workflow <subcommand>` 命令。
 func HandleWorkflowCommand(args []string) {
-	if len(args) == 0 {
+	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		workflowUsage()
 		return
 	}

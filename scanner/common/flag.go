@@ -614,6 +614,26 @@ func Flag() {
 	flagSet := goflags.NewFlagSet()
 	flagSet.CaseSensitive = true
 	flagSet.SetDescription(`dddd是一款使用简单的批量信息收集,供应链漏洞探测工具。旨在优化红队工作流，减少伤肝、枯燥、乏味的机械性操作。`)
+	flagSet.SetCustomHelpText(`
+子命令:
+  finger      管理指纹规则库
+  poc         管理 POC 规则库
+  workflow    管理指纹到 POC 的映射关系
+
+帮助:
+  dddd help
+  dddd help finger
+  dddd help poc
+  dddd help workflow
+  dddd finger --help
+  dddd poc --help
+  dddd workflow --help
+
+示例:
+  dddd -t https://example.com
+  dddd finger list --product nginx
+  dddd poc list --severity high
+  dddd workflow list --product ruoyi`)
 
 	// 目标设置
 	flagSet.CreateGroup("input", "扫描目标",

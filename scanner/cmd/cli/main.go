@@ -9,9 +9,24 @@ import (
 )
 
 func main() {
-	// 子命令分发：finger / poc / workflow
+	// 子命令分发：finger / poc / workflow / help
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "help":
+			if len(os.Args) > 2 {
+				switch os.Args[2] {
+				case "finger":
+					arsenal.HandleFingerCommand([]string{"--help"})
+					return
+				case "poc":
+					arsenal.HandlePocCommand([]string{"--help"})
+					return
+				case "workflow":
+					arsenal.HandleWorkflowCommand([]string{"--help"})
+					return
+				}
+			}
+			os.Args = []string{os.Args[0], "--help"}
 		case "finger":
 			arsenal.HandleFingerCommand(os.Args[2:])
 			return
