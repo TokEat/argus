@@ -1,0 +1,41 @@
+Alibaba-Nacos:
+  - "/nacos/"
+  - "/api/nacos/"
+Alibaba-Druid:
+  - "/druid/index.html"
+帆软-FineReport:
+  - "/WebReport/ReportServer"
+  - "/ReportServer"
+  - "/webroot/decision/login"
+XXL-JOB:
+  - "/xxl-job-admin/toLogin"
+  - "/xxl-job/toLogin"
+  - "/toLogin"
+  - "/xxl-rpc-admin/toLogin"
+GeoServer:
+  - "/geoserver/web/"
+百度-UEditor:
+  - "/ueditor/ueditor.all.js"
+  - "/js/ueditor/ueditor.all.js"
+ArcGIS:
+  - "/arcgis/"
+SMARTBI:
+  - "/smartbi/vision/index.jsp"
+MINIO-Browser:
+  - "/minio/"
+Jenkins:
+  - "/jenkins/login"
+Jeecg-Boot:
+  - "/jeecg-boot/"
+ureport:
+  - "/ureport"
+xxl-rpc:
+  - "/services"
+积木报表:
+  - "/jmreport/testConnection"
+springboot-env:
+  - "/actuator"
+  - "/api/actuator"
+  - "/js/..;/actuator"
+东方通:
+  - "/ejbserver/ejb"

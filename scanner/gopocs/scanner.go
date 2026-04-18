@@ -1,0 +1,201 @@
+package gopocs
+
+import (
+	"dddd/scanner/common/report"
+	"dddd/scanner/structs"
+	"fmt"
+	"reflect"
+	"strings"
+	"sync"
+
+	"github.com/projectdiscovery/gologger"
+	"github.com/projectdiscovery/nuclei/v3/pkg/output"
+)
+
+type scanTask struct {
+	Name string
+	Info structs.HostInfo
+}
+
+type dispatcher struct {
+	progressMu   sync.Mutex
+	resultsMu    sync.Mutex
+	currentCount int
+	allCount     int
+	results      []structs.GoPocsResultType
+}
+
+func (d *dispatcher) addScan(scantype string, info structs.HostInfo, ch chan struct{}, wg *sync.WaitGroup) {
+	d.progressMu.Lock()
+	d.currentCount++
+	currentCount := d.currentCount
+	allCount := d.allCount
+	d.progressMu.Unlock()
+
+	if currentCount%100 == 0 {
+		gologger.Info().Msgf("[GoPoc] 当前进度: %v %v [%v/%v]", scantype, info.Host+":"+info.Ports, currentCount, allCount)
+	}
+
+	ch <- struct{}{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() { <-ch }()
+		d.scanFunc(scantype, &info)
+	}()
+}
+
+func (d *dispatcher) scanFunc(name string, info *structs.HostInfo) {
+	f := reflect.ValueOf(PluginList[name])
+	in := []reflect.Value{reflect.ValueOf(info)}
+	f.Call(in)
+}
+
+func (d *dispatcher) writeResult(result structs.GoPocsResultType) {
+	d.resultsMu.Lock()
+	d.results = append(d.results, result)
+	d.resultsMu.Unlock()
+	report.AddResultByGoPocResult(result)
+}
+
+func (d *dispatcher) snapshotResults() []structs.GoPocsResultType {
+	d.resultsMu.Lock()
+	defer d.resultsMu.Unlock()
+	return append([]structs.GoPocsResultType(nil), d.results...)
+}
+
+func GoPocsDispatcher(nucleiResults []output.ResultEvent) {
+	structs.GoPocsResults = Dispatch(
+		structs.GlobalIPPortMap,
+		structs.GlobalConfig.GoPocThreads,
+		structs.GlobalConfig.Password,
+		structs.GlobalConfig.PasswordFile,
+		nucleiResults,
+	)
+}
+
+func Dispatch(ipPortMap map[string]string, goPocThreads int, password string, passwordFile string, nucleiResults []output.ResultEvent) []structs.GoPocsResultType {
+	if len(ipPortMap) == 0 && len(nucleiResults) == 0 {
+		return nil
+	}
+
+	InitDictionaries()
+
+	dispatcher := &dispatcher{}
+
+	plan := buildScanPlan(ipPortMap, password, passwordFile, dispatcher.writeResult)
+	dispatcher.allCount = len(plan) + len(nucleiResults)
+	if dispatcher.allCount == 0 {
+		return nil
+	}
+
+	if goPocThreads <= 0 {
+		goPocThreads = 1
+	}
+
+	var ch = make(chan struct{}, goPocThreads)
+	var wg = sync.WaitGroup{}
+	gologger.Info().Msg("Golang Poc引擎启动")
+
+	for _, task := range plan {
+		dispatcher.addScan(task.Name, task.Info, ch, &wg)
+	}
+
+	// 各类指纹
+	//for host, fingers := range structs.GlobalResultMap {
+	//
+	//}
+	/*
+		for _, result := range nucleiResults {
+			if result.TemplateID == "shiro-detect" {
+				AddScan("Shiro-Key-Crack",
+					structs.HostInfo{Url: result.Matched},
+					&ch, &wg)
+			}
+		}
+	*/
+	wg.Wait()
+	fmt.Printf("\r\033[K")
+	gologger.Info().Msg("Golang Poc引擎扫描结束")
+
+	results := dispatcher.snapshotResults()
+	if len(results) > 0 {
+		gologger.Info().Msg("发现漏洞汇总:")
+		for _, res := range results {
+			gologger.Info().Msgf("[%s] %s %s\n%s", res.Security, res.PocName, res.Target, res.InfoLeft)
+		}
+	}
+	return results
+}
+
+func buildScanPlan(ipPortMap map[string]string, password string, passwordFile string, writeResult func(structs.GoPocsResultType)) []scanTask {
+	var tasks []scanTask
+	for hostPort, protocol := range ipPortMap {
+		t := strings.Split(hostPort, ":")
+		if len(t) != 2 {
+			continue
+		}
+		host := t[0]
+		port := t[1]
+		info := structs.HostInfo{
+			Host:         host,
+			Ports:        port,
+			Password:     password,
+			PasswordFile: passwordFile,
+			WriteResult:  writeResult,
+		}
+
+		if protocol == "ssh" || port == "22" {
+			tasks = append(tasks, scanTask{Name: "SSH-Crack", Info: info})
+		}
+		if protocol == "ftp" || port == "21" {
+			tasks = append(tasks, scanTask{Name: "FTP-Crack", Info: info})
+		}
+		if protocol == "mysql" || port == "3306" {
+			tasks = append(tasks, scanTask{Name: "Mysql-Crack", Info: info})
+		}
+		if protocol == "mssql" || port == "1433" {
+			tasks = append(tasks, scanTask{Name: "Mssql-Crack", Info: info})
+		}
+		if protocol == "oracle" || port == "1521" {
+			tasks = append(tasks, scanTask{Name: "Oracle-Crack", Info: info})
+		}
+		if protocol == "mongodb" || port == "27017" {
+			tasks = append(tasks, scanTask{Name: "MongoDB-Crack", Info: info})
+		}
+		if protocol == "rdp" || port == "3389" {
+			tasks = append(tasks, scanTask{Name: "RDP-Crack", Info: info})
+		}
+		if protocol == "redis" || port == "6379" {
+			tasks = append(tasks, scanTask{Name: "Redis-Crack", Info: info})
+		}
+		if protocol == "smb" || port == "445" {
+			tasks = append(tasks,
+				scanTask{Name: "SMB-MS17-010", Info: info},
+				scanTask{Name: "SMB-Crack", Info: info},
+			)
+		}
+		if protocol == "postgresql" || port == "5432" {
+			tasks = append(tasks, scanTask{Name: "PostgreSQL-Crack", Info: info})
+		}
+		if protocol == "telnet" || port == "23" {
+			tasks = append(tasks, scanTask{Name: "Telnet-Crack", Info: info})
+		}
+		if protocol == "memcached" || port == "11211" {
+			tasks = append(tasks, scanTask{Name: "Memcache-Crack", Info: info})
+		}
+		if protocol == "netbios" || port == "445" {
+			tasks = append(tasks, scanTask{Name: "NetBios-GetHostInfo", Info: info})
+		}
+		if protocol == "rpc" {
+			tasks = append(tasks, scanTask{Name: "RPC-GetHostInfo", Info: info})
+		}
+		if protocol == "jdwp" {
+			tasks = append(tasks, scanTask{Name: "JDWP-Scan", Info: info})
+		}
+		if protocol == "adb" || port == "5555" {
+			tasks = append(tasks, scanTask{Name: "ADB-Scan", Info: info})
+		}
+	}
+	return tasks
+}

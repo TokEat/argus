@@ -1,0 +1,84 @@
+syntax = "proto3";
+
+package scan;
+
+option go_package = "github.com/user/dddd-proto/go/scan";
+
+// AgentService 定义了扫描节点(Agent)与服务端(Server)之间的通信接口
+service AgentService {
+  // Register 节点上线注册
+  rpc Register(RegisterReq) returns (RegisterResp);
+  
+  // Heartbeat 节点心跳保活
+  rpc Heartbeat(HeartbeatReq) returns (HeartbeatResp);
+  
+  // FetchTask 领取分配给该节点的扫描任务
+  rpc FetchTask(FetchTaskReq) returns (Task);
+  
+  // StreamResult 流式回传扫描产生的中间结果（如单独发现的一个漏洞）
+  rpc StreamResult(stream ScanResult) returns (Ack);
+  
+  // TaskComplete 任务完成通知
+  rpc TaskComplete(TaskCompleteReq) returns (Ack);
+
+  // EmergencyDump 紧急数据下刷（竞价实例回收前调用）
+  rpc EmergencyDump(EmergencyReq) returns (Ack);
+}
+
+// -------------------- 基础消息类型 --------------------
+
+message Ack {
+  bool success = 1;
+  string message = 2;
+}
+
+message RegisterReq {
+  string agent_id = 1;       // 节点唯一ID (可以由云主机的 instance_id 充当)
+  string version = 2;        // dddd-agent 版本
+  map<string, string> tags = 3; // 节点标签能力
+}
+
+message RegisterResp {
+  bool success = 1;
+  string token = 2;          // 认证或会话 Token
+}
+
+message HeartbeatReq {
+  string agent_id = 1;
+  string status = 2;         // 节点当前状态：IDLE, RUNNING...
+}
+
+message HeartbeatResp {
+  bool ack = 1;
+  bool should_terminate = 2; // Server有权要求节点退出（例如竞价实例即将被回收或者资源充裕）
+}
+
+message FetchTaskReq {
+  string agent_id = 1;
+}
+
+message Task {
+  string task_id = 1;
+  repeated string targets = 2; // 目标列表
+  bytes config = 3;            // 序列化后的 engine.Config JSON，包含具体扫描参数
+}
+
+message ScanResult {
+  string task_id = 1;
+  // payload_type 区分结果类型（如 web_info, finger, poc_vuln）
+  // 以决定如何反序列化 payload
+  string payload_type = 2; 
+  bytes payload = 3;           // JSON payload，对应 engine.OutputMessage
+  int64 timestamp = 4;         // 发现时间 Unix Msec
+}
+
+message TaskCompleteReq {
+  string agent_id = 1;
+  string task_id = 2;
+  string status = 3;         // DONE, FAILED, CANCELLED
+  string error_message = 4;
+}
+
+message EmergencyReq {
+  string agent_id = 1;
+}

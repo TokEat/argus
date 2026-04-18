@@ -1,0 +1,38 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+bin-*
+dddd
+dddd-agent
+dd
+
+# Output files
+datas/
+ddout/
+*.log
+*.txt
+
+# IDEs
+.idea/
+.claude/
+.vscode/
+
+# OS files
+.DS_Store
+
+# Go
+vendor/
+*.test
+
+# UI
+amber-eye/node_modules/
+amber-eye/.next/
+amber-eye/dist/
+
+release/
+data/
+assets/

@@ -1,0 +1,32 @@
+id: TongWeb-Rce
+
+info:
+  name: 东方通反序列化
+  author: god
+  severity: critical
+  description: 东方通反序列化
+  metadata:
+    max-request: 1
+    shodan-query: ""
+    verified: true
+  yakit-info:
+    sign: 809f30f0b457c2b243c079959519340d
+
+http:
+- method: POST
+  path:
+  - '{{RootURL}}/ejbserver/ejb'
+  headers:
+    User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36
+
+  max-redirects: 0
+  disable-cookie: true
+  matchers-condition: and
+  matchers:
+  - type: status
+    status:
+    - 200
+
+  - type: dsl
+    dsl:
+    - 'len(body)==0'
