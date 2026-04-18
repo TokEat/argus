@@ -1,0 +1,55 @@
+import React, { useState } from 'react';
+import { Tabs, Space, Typography } from 'antd';
+import {
+    BugOutlined,
+    ScanOutlined,
+    ApartmentOutlined,
+} from '@ant-design/icons';
+import { useNavigate, useLocation } from 'react-router-dom';
+
+const { Text } = Typography;
+
+interface ConfigLayoutProps {
+    children: React.ReactNode;
+}
+
+const ConfigLayout: React.FC<ConfigLayoutProps> = ({ children }) => {
+    const navigate = useNavigate();
+    const location = useLocation();
+
+    const tabItems = [
+        { key: '/config/poc', label: 'POC 弹药库', icon: <BugOutlined /> },
+        { key: '/config/active-finger', label: '指纹弹药库', icon: <ScanOutlined /> },
+        { key: '/config/workflow', label: 'Workflow 弹药库', icon: <ApartmentOutlined /> },
+    ];
+
+    return (
+        <div>
+            <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: 16,
+            }}>
+                <Tabs
+                    activeKey={location.pathname}
+                    onChange={(key) => navigate(key)}
+                    items={tabItems.map((item) => ({
+                        key: item.key,
+                        label: (
+                            <span>
+                                {item.icon}
+                                <span style={{ marginLeft: 6 }}>{item.label}</span>
+                            </span>
+                        ),
+                    }))}
+                    style={{ marginBottom: 0 }}
+                    tabBarStyle={{ marginBottom: 0 }}
+                />
+            </div>
+            {children}
+        </div>
+    );
+};
+
+export default ConfigLayout;

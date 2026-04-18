@@ -1,0 +1,9 @@
+--- /Users/whn/work/tools/源码/go/dddd-web/Web/web-ui/src/pages/Login.tsx
++++ /Users/whn/work/tools/源码/go/dddd-web/Web/web-ui/src/pages/Login.tsx
+@@ -91,4 +91,4 @@
+                         <h1 style={{ marginBottom: '16px', fontSize: '32px', fontWeight: '800', background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Argus</h1>
+-                        <div style={{ width: '100%', maxWidth: '360px', height: 'auto', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+-                            <img src={logo} alt="Argus Blinking Eye" style={{ width: '100%', height: 'auto', display: 'block' }} />
++                        <div style={{ width: '100%', maxWidth: '360px', height: '150px', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
++                            <object data={logo} type="image/svg+xml" style={{ width: '100%', height: '100%', display: 'block', pointerEvents: 'none' }}></object>
+                         </div>

@@ -34,6 +34,9 @@ func main() {
 	log.Println("Initializing database...")
 	db.InitDB(dbDSN)
 
+	// 首次启动时，从 scanner/common/config/ 导入 POC/指纹/Workflow 到 PostgreSQL
+	db.SeedArsenalFromDisk("scanner/common/config")
+
 	// Set up the Hub Broadcast Hook for batching to prevent websocket surge
 	db.OnResultBatchSaved = func(count int, rType string) {
 		api.Hub.Broadcast(map[string]interface{}{

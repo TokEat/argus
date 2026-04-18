@@ -12,7 +12,6 @@ dd
 
 # Output files
 datas/
-ddout/
 *.log
 *.txt
 
@@ -29,10 +28,6 @@ vendor/
 *.test
 
 # UI
-amber-eye/node_modules/
-amber-eye/.next/
-amber-eye/dist/
 
 release/
 data/
-assets/

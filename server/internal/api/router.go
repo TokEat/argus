@@ -124,14 +124,25 @@ func InitRouter(port string) {
 		api.POST("/arsenals/:type/:filename/approve", approveArsenal)
 		api.POST("/arsenals/ai/analyze", aiAnalyzeArsenal)
 		api.DELETE("/arsenals/:type/:filename", deleteArsenal)
+
+		// Dictionary Parsing Gateway (for workflow etc)
+		api.GET("/dictionaries/workflow", getWorkflowDict)
+		api.POST("/dictionaries/workflow", addWorkflowDict)
+		api.PUT("/dictionaries/workflow/:product", updateWorkflowDict)
+		api.DELETE("/dictionaries/workflow/:product", deleteWorkflowDict)
+
+		api.GET("/dictionaries/fingerprint", getFingerprintDict)
+		api.POST("/dictionaries/fingerprint", addFingerprintDict)
+		api.PUT("/dictionaries/fingerprint/:product", updateFingerprintDict)
+		api.DELETE("/dictionaries/fingerprint/:product", deleteFingerprintDict)
 	}
 
 	// SPA 控制塔前台映射兜底
-	r.Static("/assets", "./dddd-ui/dist/assets")
-	r.StaticFile("/favicon.ico", "./dddd-ui/dist/favicon.ico")
+	r.Static("/assets", "./server-ui/dist/assets")
+	r.StaticFile("/favicon.ico", "./server-ui/dist/favicon.ico")
 	r.NoRoute(func(c *gin.Context) {
 		if !strings.HasPrefix(c.Request.URL.Path, "/api/") {
-			c.File("./dddd-ui/dist/index.html")
+			c.File("./server-ui/dist/index.html")
 		} else {
 			c.JSON(http.StatusNotFound, gin.H{"error": "API route not found"})
 		}
@@ -284,6 +295,12 @@ func getArsenals(c *gin.Context) {
 	if c.Query("all") != "1" {
 		query = query.Where("state = ?", "Approved")
 	}
+
+	// 如果指定了 lite=1 ，则省略动辄几千上万行的巨大 Content 正文内容，只提取主要元数据
+	if c.Query("lite") == "1" {
+		query = query.Omit("Content")
+	}
+
 	query.Find(&arsenals)
 	c.JSON(http.StatusOK, arsenals)
 }
@@ -468,19 +485,31 @@ func getAgentCommands(c *gin.Context) {
 
 func getVulns(c *gin.Context) {
 	var vulns []db.Vulnerability
-	db.DB.Order("created_at desc").Limit(100).Find(&vulns)
+	query := db.DB.Order("created_at desc")
+	if taskID := c.Query("task_id"); taskID != "" {
+		query = query.Where("task_id = ?", taskID)
+	}
+	query.Limit(500).Find(&vulns)
 	c.JSON(http.StatusOK, vulns)
 }
 
 func getAssets(c *gin.Context) {
 	var assets []db.Asset
-	db.DB.Order("created_at desc").Limit(100).Find(&assets)
+	query := db.DB.Order("created_at desc")
+	if taskID := c.Query("task_id"); taskID != "" {
+		query = query.Where("task_id = ?", taskID)
+	}
+	query.Limit(500).Find(&assets)
 	c.JSON(http.StatusOK, assets)
 }
 
 func getFingerprints(c *gin.Context) {
 	var fps []db.FingerprintHit
-	db.DB.Order("created_at desc").Limit(100).Find(&fps)
+	query := db.DB.Order("created_at desc")
+	if taskID := c.Query("task_id"); taskID != "" {
+		query = query.Where("task_id = ?", taskID)
+	}
+	query.Limit(500).Find(&fps)
 	c.JSON(http.StatusOK, fps)
 }
 

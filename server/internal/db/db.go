@@ -105,7 +105,8 @@ type Arsenal struct {
 
 func InitDB(dsn string) {
 	if strings.TrimSpace(dsn) == "" {
-		log.Fatalf("PostgreSQL DSN is required. Example: host=localhost user=postgres password=root dbname=dddd port=5432 sslmode=disable")
+		dsn = "host=127.0.0.1 user=postgres password=root dbname=dddd port=5432 sslmode=disable"
+		log.Printf("No DSN provided, using default: %s", dsn)
 	}
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
