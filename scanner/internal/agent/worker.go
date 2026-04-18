@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -151,8 +152,13 @@ func (w *Worker) commandLoop() {
 			resp.Body.Close()
 			var result struct {
 				CancelTasks []string `json:"cancel_tasks"`
+				ReloadRules bool     `json:"reload_rules"`
 			}
 			if json.Unmarshal(body, &result) == nil {
+				if result.ReloadRules {
+					log.Println("[Command] Received dynamic rule hot-reload signal from Control Plane!")
+					w.syncRules()
+				}
 				w.mu.Lock()
 				for _, tid := range result.CancelTasks {
 					if cancel, ok := w.runningTasks[tid]; ok {
@@ -276,9 +282,7 @@ func (w *Worker) executeTask(task *pb.Task) {
 		_, _ = stream.CloseAndRecv()
 	}
 
-	status := "DONE"
 	if runErr != nil {
-		status = "FAILED"
 		log.Printf("Pipeline execution aborted or failed: %v", runErr)
 		_, _ = w.client.TaskComplete(context.Background(), &pb.TaskCompleteReq{
 			AgentId:      w.agentID,

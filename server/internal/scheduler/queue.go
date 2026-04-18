@@ -66,7 +66,55 @@ func NewTaskQueue(addr string, password string, db int) *TaskQueue {
 		log.Printf("Warning: failed to create consumer group: %v", err)
 	}
 
+	go queue.daemonSalvage()
+
 	return queue
+}
+
+// daemonSalvage 死神协程：定期审查 Redis Pending 队列抓取孤魂
+func (q *TaskQueue) daemonSalvage() {
+	if q.mode != "redis" {
+		return
+	}
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		ctx := context.Background()
+		// 寻找 Idle 时间超过 1 小时的孤魂
+		pendings, err := q.client.XPendingExt(ctx, &redis.XPendingExtArgs{
+			Stream: q.queueKey,
+			Group:  "dddd_agents",
+			Start:  "-",
+			End:    "+",
+			Count:  100,
+			Idle:   1 * time.Hour,
+		}).Result()
+
+		if err == nil && len(pendings) > 0 {
+			for _, p := range pendings {
+				// 利用 XCLAIM 争夺该消息所属权
+				msgs, claimErr := q.client.XClaim(ctx, &redis.XClaimArgs{
+					Stream:   q.queueKey,
+					Group:    "dddd_agents",
+					MinIdle:  1 * time.Hour,
+					Messages: []string{p.ID},
+					Consumer: "daemon_salvager", // 控制塔自建的清道夫名义
+				}).Result()
+
+				if claimErr == nil && len(msgs) > 0 {
+					msg := msgs[0]
+					// 抹杀旧记录
+					q.client.XAck(ctx, q.queueKey, "dddd_agents", msg.ID)
+					// 将原汁原味的任务负载重新投入流中
+					q.client.XAdd(ctx, &redis.XAddArgs{
+						Stream: q.queueKey,
+						Values: msg.Values,
+					})
+					log.Printf("[Dead-Letter] Recovering abandoned message %s (Idle %v). Re-queued as new msg.", msg.ID, p.Idle)
+				}
+			}
+		}
+	}
 }
 
 func (q *TaskQueue) Mode() string {

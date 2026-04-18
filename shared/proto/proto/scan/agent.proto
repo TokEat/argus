@@ -23,6 +23,9 @@ service AgentService {
 
   // EmergencyDump 紧急数据下刷（竞价实例回收前调用）
   rpc EmergencyDump(EmergencyReq) returns (Ack);
+
+  // StreamLogs 节点流水日志黑匣子上传
+  rpc StreamLogs(stream LogPayload) returns (Ack);
 }
 
 // -------------------- 基础消息类型 --------------------
@@ -81,4 +84,11 @@ message TaskCompleteReq {
 
 message EmergencyReq {
   string agent_id = 1;
+}
+
+message LogPayload {
+  string agent_id = 1;
+  string level = 2; // INFO, WARN, ERROR
+  string message = 3;
+  int64 timestamp = 4;
 }

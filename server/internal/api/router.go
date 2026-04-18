@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/md5"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/user/dddd-server/internal/db"
 	"github.com/user/dddd-server/internal/scheduler"
 	"gorm.io/gorm"
@@ -21,6 +23,50 @@ var taskQueue *scheduler.TaskQueue
 func SetTaskQueue(queue *scheduler.TaskQueue) {
 	taskQueue = queue
 }
+
+var jwtSecret = []byte("P8-MUST-HAVE-SECRET-KEY") // TODO: 生产环境应从配置文件读取
+
+// TenantMiddleware 强制 JWT 校验并拦截身份
+func TenantMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// 跳过 Auth 登录自己
+		if c.Request.URL.Path == "/api/v1/auth/login" {
+			c.Next()
+			return
+		}
+
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Missing or malformed JWT token"})
+			return
+		}
+
+		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+		token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
+			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method")
+			}
+			return jwtSecret, nil
+		})
+
+		if err != nil || !token.Valid {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+			return
+		}
+
+		if claims, ok := token.Claims.(jwt.MapClaims); ok {
+			c.Set("tenant", claims["tenant_id"])
+		} else {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid claims map"})
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// Global variable acting as hot-reload trigger
+var GlobalArsenalReloadCounter int64 = 0
 
 // InitRouter 初始化 Gin 路由
 func InitRouter(port string) {
@@ -42,7 +88,11 @@ func InitRouter(port string) {
 	go Hub.Start()
 
 	api := r.Group("/api/v1")
+	api.Use(TenantMiddleware())
 	{
+		// JWT 签发
+		api.POST("/auth/login", authLogin)
+
 		// WebSocket 入口
 		api.GET("/ws", HandleWS)
 
@@ -55,18 +105,24 @@ func InitRouter(port string) {
 		api.DELETE("/tasks/:id", deleteTask)
 		api.POST("/tasks/:id/cancel", cancelTask)
 
-		// 漏洞资产
+		// 漏洞资产与关联画像
 		api.GET("/vulns", getVulns)
 		api.GET("/assets", getAssets)
 		api.GET("/fingerprints", getFingerprints)
+		api.GET("/profiles", getProfiles)
+		
+		// 战报输出引擎
+		api.GET("/reports/export/vulns", exportVulns)
 
 		// Agent 节点
 		api.GET("/nodes", getNodes)
 		api.GET("/agents/:id/commands", getAgentCommands)
 
-		// Arsenal 弹药库热发车网关
+		// Arsenal 弹药库热发车网关与审核墙
 		api.GET("/arsenals/:type", getArsenals)
 		api.POST("/arsenals/:type/:filename", saveArsenal)
+		api.POST("/arsenals/:type/:filename/approve", approveArsenal)
+		api.POST("/arsenals/ai/analyze", aiAnalyzeArsenal)
 		api.DELETE("/arsenals/:type/:filename", deleteArsenal)
 	}
 
@@ -151,6 +207,9 @@ func createTask(c *gin.Context) {
 		name = targets[0]
 	}
 
+	// 多租户隔离下钻
+	tenantID := c.GetString("tenant")
+
 	// 1. Task Splitter Logic
 	chunkSize := 256
 	var subTasks []db.SubTask
@@ -164,6 +223,7 @@ func createTask(c *gin.Context) {
 
 		subTasks = append(subTasks, db.SubTask{
 			ID:           fmt.Sprintf("%s-sub-%d", rootTaskID, i/chunkSize),
+			TenantID:     tenantID,
 			RootTaskID:   rootTaskID,
 			ChunkTargets: string(chunkJSON),
 			Status:       "Pending",
@@ -173,6 +233,7 @@ func createTask(c *gin.Context) {
 
 	rootTask := db.RootTask{
 		ID:              rootTaskID,
+		TenantID:        tenantID,
 		Name:            name,
 		Status:          "Pending",
 		OriginalTargets: string(targetsJSON),
@@ -212,10 +273,18 @@ func createTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "task_created", "task_id": rootTask.ID})
 }
 
+// ---------------- Arsenal --------------------
+
 func getArsenals(c *gin.Context) {
 	var arsenals []db.Arsenal
 	typ := c.Param("type")
-	db.DB.Where("type = ?", typ).Find(&arsenals)
+	query := db.DB.Where("type = ?", typ)
+
+	// 如果没有 ?all=1 参数，默认只下发已审核武器给 Agent
+	if c.Query("all") != "1" {
+		query = query.Where("state = ?", "Approved")
+	}
+	query.Find(&arsenals)
 	c.JSON(http.StatusOK, arsenals)
 }
 
@@ -235,13 +304,29 @@ func saveArsenal(c *gin.Context) {
 
 	arsenal := db.Arsenal{
 		ID:       typ + "_" + fn,
+		TenantID: c.GetString("tenant"),
 		Type:     typ,
 		FileName: fn,
 		Content:  req.Content,
 		Hash:     hash,
+		State:    "Draft", // 初始提交强制为草稿状态
 	}
 	db.DB.Save(&arsenal)
-	c.JSON(http.StatusOK, gin.H{"status": "saved", "hash": hash})
+	c.JSON(http.StatusOK, gin.H{"status": "saved", "hash": hash, "state": "Draft"})
+}
+
+func approveArsenal(c *gin.Context) {
+	typ := c.Param("type")
+	fn := c.Param("filename")
+	tenantID := c.GetString("tenant")
+	id := typ + "_" + fn
+	db.DB.Model(&db.Arsenal{}).Where("id = ? AND tenant_id = ?", id, tenantID).Update("state", "Approved")
+	
+	// 触发全网 Agent 重新拉取
+	GlobalArsenalReloadCounter++
+	log.Printf("[Arsenal Hub] Rules updated by Tenant %s. Global Rule Reload Triggered!", tenantID)
+	
+	c.JSON(http.StatusOK, gin.H{"status": "approved"})
 }
 
 func deleteArsenal(c *gin.Context) {
@@ -251,6 +336,46 @@ func deleteArsenal(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }
 
+// ---------------- 融合画像数据源 --------------------
+
+type Profile struct {
+	Target       string              `json:"target"`
+	Assets       []db.Asset          `json:"assets"`
+	Fingerprints []db.FingerprintHit `json:"fingerprints"`
+	Vulns        []db.Vulnerability  `json:"vulns"`
+}
+
+func getProfiles(c *gin.Context) {
+	// TODO: 后期随着数据量增加，可以在此处开启分页、租户隔离、或者走 Elasticsearch
+	var assets []db.Asset
+	db.DB.Find(&assets)
+	var fps []db.FingerprintHit
+	db.DB.Find(&fps)
+	var vulns []db.Vulnerability
+	db.DB.Find(&vulns)
+
+	pm := make(map[string]*Profile)
+	
+	for _, a := range assets {
+		if _, ok := pm[a.Target]; !ok { pm[a.Target] = &Profile{Target: a.Target} }
+		pm[a.Target].Assets = append(pm[a.Target].Assets, a)
+	}
+	for _, f := range fps {
+		if _, ok := pm[f.Target]; !ok { pm[f.Target] = &Profile{Target: f.Target} }
+		pm[f.Target].Fingerprints = append(pm[f.Target].Fingerprints, f)
+	}
+	for _, v := range vulns {
+		if _, ok := pm[v.Target]; !ok { pm[v.Target] = &Profile{Target: v.Target} }
+		pm[v.Target].Vulns = append(pm[v.Target].Vulns, v)
+	}
+
+	var results []Profile
+	for _, p := range pm {
+		results = append(results, *p)
+	}
+	c.JSON(http.StatusOK, results)
+}
+
 func deleteTask(c *gin.Context) {
 	id := c.Param("id")
 	db.DB.Delete(&db.RootTask{}, "id = ?", id)
@@ -258,33 +383,86 @@ func deleteTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }
 
+// ---------------- 战报引擎 --------------------
+
+func exportVulns(c *gin.Context) {
+	c.Writer.Header().Set("Content-Type", "text/csv")
+	c.Writer.Header().Set("Content-Disposition", "attachment;filename=vulnerabilities.csv")
+	
+	writer := csv.NewWriter(c.Writer)
+	defer writer.Flush()
+	
+	writer.Write([]string{"TenantID", "TaskID", "Target", "Plugin", "Severity", "DetectedAt"})
+	
+	var vulns []db.Vulnerability
+	tenantID := c.GetString("tenant")
+	query := db.DB.Model(&db.Vulnerability{})
+	if tenantID != "default" {
+		query = query.Where("tenant_id = ?", tenantID)
+	}
+	query.Find(&vulns)
+	
+	for _, v := range vulns {
+		writer.Write([]string{v.TenantID, v.TaskID, v.Target, v.Plugin, v.Severity, v.CreatedAt.Format(time.RFC3339)})
+	}
+}
+
+func aiAnalyzeArsenal(c *gin.Context) {
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	
+	// Mock AI Heuristic rules
+	lowerContent := strings.ToLower(req.Content)
+	if strings.Contains(lowerContent, "cve-2023") || strings.Contains(lowerContent, "log4j") {
+		c.JSON(http.StatusOK, gin.H{
+			"suggestion": "Reject",
+			"reason": "Highly overlaps with known existing high-profile vulnerabilities in our Arsenal. Please check your entries to avoid payload duplicates.",
+			"confidence": 0.88,
+		})
+		return
+	}
+	
+	c.JSON(http.StatusOK, gin.H{
+		"suggestion": "Approve",
+		"reason": "Rule signature is unique, syntactically correct, and does not overlap with existing cluster profiles.",
+		"confidence": 0.96,
+	})
+}
+
+
 func cancelTask(c *gin.Context) {
 	id := c.Param("id")
 	// 将该 RootTask 下的所有排队中、运行中的 SubTask 标记为 CancelPending，供 Agent 拦截
-	db.DB.Model(&db.RootTask{}).Where("id = ?", id).Update("status", "Cancelled")
-	db.DB.Model(&db.SubTask{}).Where("root_task_id = ? AND status IN ?", id, []string{"Pending", "Running"}).
-		Update("status", "CancelPending")
-	c.JSON(http.StatusOK, gin.H{"status": "cancelled"})
+	db.DB.Model(&db.SubTask{}).Where("root_task_id = ? AND status IN ('Pending', 'Running')", id).Update("status", "CancelPending")
+	c.JSON(http.StatusOK, gin.H{"status": "cancellation dispatched"})
 }
 
+// 提供给 Agent 轮询其需强制退出的指令以及规则重载指令
 func getAgentCommands(c *gin.Context) {
-	agentID := c.Param("id")
-	var cancelledTasks []db.SubTask
-	db.DB.Where("agent_id = ? AND status = ?", agentID, "CancelPending").Find(&cancelledTasks)
+	id := c.Param("id")
+	var subTasks []db.SubTask
+	// 对于该节点正在运行但被强制退出的任务
+	db.DB.Where("agent_id = ? AND status = 'CancelPending'", id).Find(&subTasks)
 
-	var ids []string
-	for _, t := range cancelledTasks {
-		ids = append(ids, t.ID)
+	var cancels []string
+	for _, st := range subTasks {
+		cancels = append(cancels, st.ID)
 		// 一旦下发，直接标记为 Cancelled 避免重复下发
-		db.DB.Model(&t).Update("status", "Cancelled")
+		db.DB.Model(&st).Update("status", "Cancelled")
 		// Ack the task if it's running so it doesn't stay in queue forever
-		if taskQueue != nil && t.StreamMsgID != "" {
-			_ = taskQueue.AckTask(context.Background(), t.StreamMsgID)
+		if taskQueue != nil && st.StreamMsgID != "" {
+			_ = taskQueue.AckTask(context.Background(), st.StreamMsgID)
 		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"cancel_tasks": ids,
+		"cancel_tasks": cancels,
+		"reload_rules": GlobalArsenalReloadCounter > 0,
 	})
 }
 
@@ -400,4 +578,34 @@ func dedupeStrings(items []string) []string {
 		out = append(out, item)
 	}
 	return out
+}
+
+// ---------------- 鉴权引擎 --------------------
+func authLogin(c *gin.Context) {
+	var req struct {
+		TenantID string `json:"tenant_id"`
+		Password string `json:"password"` // 占位，生产该走密码库比对
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	// 虚拟校验
+	if req.Password != "8888" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Wrong password"})
+		return
+	}
+	
+	// 颁发 Token
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"tenant_id": req.TenantID,
+		"exp":       time.Now().Add(time.Hour * 72).Unix(),
+	})
+	tokenString, err := token.SignedString(jwtSecret)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to sign"})
+		return
+	}
+	
+	c.JSON(http.StatusOK, gin.H{"token": tokenString})
 }

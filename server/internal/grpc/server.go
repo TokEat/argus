@@ -131,11 +131,12 @@ func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb
 				// 利用 PG 的原子更新
 				db.DB.Exec("UPDATE root_tasks SET completed_chunks = completed_chunks + 1 WHERE id = ?", sub.RootTaskID)
 
-			var root db.RootTask
-			if err := db.DB.First(&root, "id = ?", sub.RootTaskID).Error; err == nil {
-				if root.CompletedChunks >= root.TotalChunks {
-					db.DB.Model(&root).Update("status", "FINISHED")
-					log.Printf("[Aggregation] RootTask %s is fully completed! (%d/%d chunks)", root.ID, root.CompletedChunks, root.TotalChunks)
+				var root db.RootTask
+				if err := db.DB.First(&root, "id = ?", sub.RootTaskID).Error; err == nil {
+					if root.CompletedChunks >= root.TotalChunks {
+						db.DB.Model(&root).Update("status", "FINISHED")
+						log.Printf("[Aggregation] RootTask %s is fully completed! (%d/%d chunks)", root.ID, root.CompletedChunks, root.TotalChunks)
+					}
 				}
 			}
 		}
@@ -149,3 +150,19 @@ func (s *Server) EmergencyDump(ctx context.Context, req *pb.EmergencyReq) (*pb.A
 	log.Printf("[EmergencyDump] Agent %s is flushing all local states due to Spot termination signal!", req.AgentId)
 	return &pb.Ack{Success: true, Message: "Safe drop signal received"}, nil
 }
+
+// StreamLogs 遥测日志黑匣子上传通道
+// 注：待用户本地运行 make proto 生成 pb.go 后再取消注释
+// func (s *Server) StreamLogs(stream pb.AgentService_StreamLogsServer) error {
+// 	for {
+// 		payload, err := stream.Recv()
+// 		if err == io.EOF {
+// 			return stream.SendAndClose(&pb.Ack{Success: true})
+// 		}
+// 		if err != nil {
+// 			return err
+// 		}
+// 		
+// 		log.Printf("[Telemetry][Agent %s][%s] %s", payload.AgentId, payload.Level, payload.Message)
+// 	}
+// }

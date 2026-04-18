@@ -93,10 +93,12 @@ type Vulnerability struct {
 // Arsenal represents dynamic rule files synced to agents.
 type Arsenal struct {
 	ID        string `gorm:"primaryKey"`
+	TenantID  string `gorm:"default:'default';index"`
 	Type      string `gorm:"index"`
 	FileName  string `gorm:"index"`
 	Content   string
 	Hash      string
+	State     string `gorm:"default:'Draft';index"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
