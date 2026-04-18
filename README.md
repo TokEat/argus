@@ -1,124 +1,305 @@
-# 工具简介
+<p align="center">
+  <h1 align="center">Argus</h1>
+  <p align="center">
+    <b>分布式攻击面管理与漏洞巡航平台</b>
+  </p>
+  <p align="center">
+    <a href="#快速开始">快速开始</a> •
+    <a href="#架构概览">架构</a> •
+    <a href="#部署模式">部署</a> •
+    <a href="#文档">文档</a>
+  </p>
+</p>
 
-![](https://socialify.git.ci/SleepingBag945/dddd/image?description=1&font=Inter&forks=1&name=1&owner=1&pattern=Circuit%20Board&stargazers=1&theme=Light)
+---
 
+## 简介
 
+**Argus** 是一个企业级分布式攻击面管理 (ASM) 与漏洞巡航平台，由 [dddd](https://github.com/SleepingBag945/dddd) 项目演进而来。
 
-## 特点
+项目形成了清晰的 **控制面 (Control Plane)** 与 **数据面 (Data Plane)** 架构分层，同时保留了开箱即用的单机 CLI 模式，既可作为一线工具快速使用，也可横向扩展为多节点分布式巡航集群。
 
-* 自动识别输入类型，无需手动分类
+## 特性
 
-* 便于拓展的主动/被动指纹识别
+### 🔍 扫描引擎
+- 自动识别输入类型（IP / CIDR / URL / 域名），无需手动分类
+- 完整扫描流水线：`存活探测 → 端口扫描 → 协议识别 → Web 探测 → 指纹识别 → 漏洞检测`
+- 支持复杂 **与/或/非/括号** 逻辑运算的指纹规则，人类友好
+- 集成 Nuclei v3 引擎 + 原生 GoPoc 漏洞探测引擎
+- 指纹-漏洞映射数据库，避免无效发包
+- 高效子域名枚举/爆破，精准泛解析过滤
 
-* 指纹支持复杂 与/或/非/括号 逻辑运算。人类友好。
+### 🌐 分布式架构
+- **Server (控制面)**：任务编排、节点管理、规则中心、结果聚合、多租户隔离
+- **Agent (数据面)**：轻量游击型探针，即插即用、弹性扩缩
+- **Redis Streams** 高可靠调度：任务 XACK 确认、超时回收、死信打捞
+- **gRPC** 双向通信：节点注册、心跳、任务派发、流式结果回传、远程终止
+- 规则库热更新：支持 POC / 指纹 / Workflow 版本化同步
+- JWT 认证 + 多租户隔离中间件
 
-* Nuclei v3支持
+### 📊 数据与运营
+- 结构化三层数据模型：**资产画像** / **指纹组件** / **漏洞**
+- 异步 BatchWriter 防洪落库，支撑多 Agent 高并发回传
+- HTML 漏洞报表（含请求响应详情）
+- CSV 资产导出
+- 审计日志，敏感环境必备
 
-* 便于拓展的指纹漏洞映射数据库，尽量避免无效发包
+### 🔗 资源整合
+- Hunter / Fofa / Quake 空间引擎集成
+- Hunter 低感知模式
+- 零 CGO 依赖（纯 Go SQLite），多平台开箱即用
 
-* 高效的子域名枚举/爆破，精准的泛解析过滤
+---
 
-* Hunter、Fofa、Quake支持
+## 架构概览
 
-* Hunter 低感知模式
+```
+                          ┌─────────────────────────────┐
+                          │      Web Console / API       │
+                          └──────────────┬──────────────┘
+                                         │
+                 ┌───────────────────────────────────────────────┐
+                 │            Control  Plane  (Server)           │
+                 │                                               │
+                 │  ┌──────────┐ ┌──────────┐ ┌───────────────┐ │
+                 │  │ API GW   │ │ Task     │ │ Rule Center / │ │
+                 │  │ (Gin)    │ │ Scheduler│ │ Arsenal       │ │
+                 │  └──────────┘ └──────────┘ └───────────────┘ │
+                 │  ┌──────────┐ ┌──────────┐ ┌───────────────┐ │
+                 │  │ gRPC     │ │ Node     │ │ Result        │ │
+                 │  │ Service  │ │ Registry │ │ Aggregator    │ │
+                 │  └──────────┘ └──────────┘ └───────────────┘ │
+                 └──────────┬──────────┬──────────┬─────────────┘
+                            │          │          │
+                   ┌────────┘    ┌─────┘    ┌─────┘
+                   ▼             ▼          ▼
+              ┌─────────┐  ┌─────────┐ ┌────────┐
+              │PostgreSQL│  │  Redis  │ │ Object │
+              │          │  │ Streams │ │ Store  │
+              └─────────┘  └─────────┘ └────────┘
+                   ▲             ▲
+                   │    gRPC     │
+          ┌────────┴─────────────┴────────┐
+          │     Data  Plane  (Agents)      │
+          │                                │
+          │  ┌──────────────────────────┐  │
+          │  │ Agent Supervisor         │  │
+          │  │  ├─ Heartbeat            │  │
+          │  │  ├─ Rule Sync            │  │
+          │  │  └─ Command Listener     │  │
+          │  ├──────────────────────────┤  │
+          │  │ Scanner Engine           │  │
+          │  │  存活→端口→协议→Web→     │  │
+          │  │  指纹→Workflow→Nuclei/   │  │
+          │  │  GoPoc                   │  │
+          │  └──────────────────────────┘  │
+          │       ... × N Agents ...       │
+          └────────────────────────────────┘
+```
 
-* 低依赖，多系统开箱即用
+---
 
-* 高效的HTML报表，包含漏洞请求响应
+## 部署模式
 
-* 审计日志，敏感环境必备
+Argus 支持三种运行模式：
 
-  
+| 模式 | 组件 | 适用场景 |
+|------|------|----------|
+| **单机 CLI** | `dddd` | 红队打点、安服测试、快速验证 |
+| **分布式集群** | `dddd-server` + N × `dddd-agent` | 企业级 ASM 巡航、大规模资产扫描 |
+| **Agent 单节点** | `dddd-agent` (对接远端 Server) | 云端弹性扩展节点 |
 
-# 快速开始
+---
+
+## 快速开始
 
 ### 安装
 
-Release中下载config.zip与您操作系统对应的二进制文件。直接命令行运行即可。
+从 [Releases](https://github.com/P0lar1ght/argus/releases) 下载对应平台的二进制文件，直接命令行运行即可。
 
+> **提示**：v2.0 起可以独立于 config 文件夹运行。
 
+### 从源码构建
 
-PS: dddd v2.0起，可以独立于config文件夹运行。
+```bash
+# 构建全部组件
+make all
 
-### 最简使用
+# 或单独构建
+make cli        # 单机版 CLI
+make agent      # Agent 探针节点
+make server     # Server 控制面
 
-扫描IP
+# 全平台交叉编译 (Linux/macOS/Windows)
+./build.sh
 
-`dddd -t 192.168.0.1`
+# 启用 UPX 压缩
+./build.sh pack
+```
 
-扫描网段
+产物输出在 `bin/`（make）或 `release/`（build.sh）目录。
 
-`dddd -t 192.168.0.1/24`
+### 单机模式
 
-`dddd -t 192.168.0.0-192.168.0.12`
+```bash
+# 扫描 IP
+dddd -t 192.168.0.1
 
-扫描网站
+# 扫描网段
+dddd -t 192.168.0.1/24
+dddd -t 192.168.0.0-192.168.0.12
 
-`dddd -t http://test.com`
+# 扫描网站
+dddd -t http://test.com
+```
 
+### 分布式模式
 
+```bash
+# 1. 启动基础设施 (Redis + PostgreSQL)
+docker compose -f server/deploy/docker-compose.yml up -d
+
+# 2. 启动 Server 控制面
+./dddd-server
+
+# 3. 启动 Agent 数据面 (可在多台机器上部署)
+./dddd-agent -server <server_addr>
+```
+
+### 应用场景速查
+
+```bash
+# 红队外网 - Hunter 查询备案
+dddd -t 'icp.name="xxxx有限公司"' -hunter -oip
+
+# 红队外网 - Hunter + Fofa 联合
+dddd -t 'icp.name="xxxx有限公司"' -hunter -fofa -oip
+
+# 红队外网 - 子域名枚举
+dddd -t xxx.com -sd
+
+# 红队内网
+dddd -t 172.16.100.0/24
+
+# 安服测试 - 开启审计日志
+dddd -t 172.16.100.1 -a
+
+# 仅指纹识别 (不跑 POC)
+dddd -t http://www.xxx.com -npoc
+dddd -t 172.16.100.11 -npoc
+dddd -t 172.16.120.11:3307 -npoc
+```
 
 ### 输出文件
 
-dddd存在三种文件输出
+| 类型 | 默认文件 | 参数 |
+|------|----------|------|
+| 文本结果 | `result.txt` | `-o` 更改路径，`-ot json` 切换格式 |
+| HTML 报表 | `<timestamp>.html` | `-ho` 更改路径 |
+| 审计日志 | `audit.log`（需 `-a` 开启） | — |
 
-1. txt格式输出（默认选择）
-2. html格式（默认选择）
-3. 审计日志（可选）
+> 扫描可随时终止，结果实时持久化到文件。
 
+---
 
+## 项目结构
 
-所有结果默认输出在 `result.txt`，可通过`-o`参数更改输出文件，`-ot`参数更改输出格式(json)，默认为text。
+```
+argus/
+├── scanner/                   # 数据面 - 扫描引擎核心
+│   ├── cmd/
+│   │   ├── cli/               # dddd 单机 CLI 入口
+│   │   └── agent/             # dddd-agent 分布式探针入口
+│   ├── internal/              # 引擎运行时 (module-private)
+│   │   ├── agent/             # Agent 生命周期管理
+│   │   ├── engine/            # 扫描流水线编排
+│   │   ├── finger/            # 指纹识别引擎
+│   │   ├── vuln/              # 漏洞映射与检测
+│   │   ├── scanner/           # 端口/协议扫描
+│   │   ├── arsenal/           # 规则库管理
+│   │   ├── config/            # 运行时配置
+│   │   ├── output/            # 结果输出
+│   │   └── uncover/           # 空间引擎集成
+│   ├── gopocs/                # Go 原生 POC 引擎
+│   ├── lib/                   # 集成上游引擎 (nuclei/httpx/subfinder/...)
+│   ├── common/                # 兼容层 + 嵌入配置
+│   ├── embed/                 # 嵌入资源
+│   ├── ddout/                 # 统一输出抽象
+│   ├── structs/               # 共享运行时模型
+│   └── utils/                 # 工具函数
+│
+├── server/                    # 控制面 - 调度与管理服务
+│   ├── cmd/dddd-server/       # Server 入口
+│   ├── internal/
+│   │   ├── api/               # REST API (Gin)
+│   │   ├── grpc/              # gRPC Agent 通信服务
+│   │   ├── scheduler/         # Redis Streams 任务调度
+│   │   ├── db/                # PostgreSQL 数据层
+│   │   ├── bootstrap/         # 依赖装配
+│   │   ├── config/            # 服务端配置
+│   │   ├── core/              # 领域模型与用例
+│   │   ├── adapters/          # 端口适配器 (HTTP/gRPC/持久层/队列)
+│   │   ├── cloud/             # 云端集成
+│   │   └── shared/            # 通用工具
+│   └── deploy/                # 部署配置 (docker-compose)
+│
+├── shared/
+│   └── proto/                 # Protobuf 定义 + 生成桩代码
+│
+├── data/                      # 规则库数据 (arsenal.db)
+├── docs/                      # 架构与设计文档
+├── Makefile                   # 构建入口
+├── build.sh                   # 全平台交叉编译脚本
+└── go.work                    # Go workspace
+```
 
-默认HTML格式漏洞输出为   `当前时间戳.html`，可通过`-ho`参数更改输出文件。
+详细的组件职责说明参见 [docs/project-structure.md](docs/project-structure.md)。
 
+---
 
+## 文档
 
-**-a** 参数开启审计日志功能，日志保存在  `audit.log`，记录详细扫描行为。
+| 文档 | 说明 |
+|------|------|
+| [项目结构](docs/project-structure.md) | 目录结构与组件职责 |
+| [架构白皮书](docs/architecture-summary-v2.md) | v2.0 分布式架构演进总结 |
+| [分布式架构设计](docs/distributed-scan-architecture.md) | 详细架构、数据模型与演进路线 |
+| [XMind 大纲](docs/distributed-scan-xmind-outline.md) | 架构脑图导出 |
 
-**扫描可以随时终止**，当有指纹识别、漏扫结果等输出时，会实时保存在文件内。 
+---
 
+## 技术栈
 
+| 领域 | 技术 |
+|------|------|
+| 语言 | Go 1.25+ |
+| 通信 | gRPC + Protobuf |
+| Web 框架 | Gin |
+| 数据库 | PostgreSQL (GORM) |
+| 消息队列 | Redis Streams |
+| 漏洞引擎 | Nuclei v3 / GoPoc |
+| 指纹识别 | 自研引擎 (ddfinger) |
+| DNS | dnsx / subfinder |
+| HTTP 探测 | httpx |
+| 认证 | JWT |
 
-### 应用场景命令速查
+---
 
-红队外网 (Hunter)
+## 参考项目
 
-`dddd -t 'icp.name="xxxx有限公司"' -hunter -oip`
+- [fscan](https://github.com/shadow1ng/fscan)
+- [kscan](https://github.com/lcvvvv/kscan)
+- [gonmap](https://github.com/lcvvvv/gonmap)
+- [nuclei](https://github.com/projectdiscovery/nuclei)
+- [subfinder](https://github.com/projectdiscovery/subfinder)
+- [httpx](https://github.com/projectdiscovery/httpx)
+- [naabu](https://github.com/projectdiscovery/naabu)
+- [gogo](https://github.com/chainreactors/gogo)
+- [afrog](https://github.com/zan8in/afrog)
 
-红队外网 (Hunter查询备案,Fofa补充端口）高效梳理资产
+---
 
-`dddd -t 'icp.name="xxxx有限公司"' -hunter -fofa -oip`
-
-红队外网 (本机枚举子域名)
-
-`dddd -t xxx.com -sd`
-
-红队内网
-
-`./dddd -t 172.16.100.0/24`
-
-安服测试/敏感环境 (开启审计日志~~，便于事后甩锅~~)
-
-`./dddd -t 172.16.100.1 -a`
-
-仅指纹识别
-
-`./dddd -t http://www.xxx.com -npoc`
-
-`./dddd -t 172.16.100.11 -npoc`
-
-`./dddd -t 172.16.120.11:3307 -npoc`
-
-
-
-### 更多信息
-
-当前项目目录结构与组件职责请查看 [docs/project-structure.md](docs/project-structure.md)。
-
-
-
-# 免责声明
+## 免责声明
 
 本工具仅面向**合法授权**的企业安全建设行为，如您需要测试本工具的可用性，请自行搭建靶机环境。
 
@@ -126,34 +307,14 @@ dddd存在三种文件输出
 
 如您在使用本工具的过程中存在任何非法行为，您需自行承担相应后果，我们将不承担任何法律及连带责任。
 
-在安装并使用本工具前，请您**务必审慎阅读、充分理解各条款内容**，限制、免责条款或者其他涉及您重大权益的条款可能会以加粗、加下划线等形式提示您重点注意。 除非您已充分阅读、完全理解并接受本协议所有条款，否则，请您不要安装并使用本工具。您的使用行为或者您以其他任何明示或者默示方式表示接受本协议的，即视为您已阅读并同意本协议的约束。
+在安装并使用本工具前，请您**务必审慎阅读、充分理解各条款内容**，限制、免责条款或者其他涉及您重大权益的条款可能会以加粗、加下划线等形式提示您重点注意。除非您已充分阅读、完全理解并接受本协议所有条款，否则，请您不要安装并使用本工具。您的使用行为或者您以其他任何明示或者默示方式表示接受本协议的，即视为您已阅读并同意本协议的约束。
 
+---
 
+## 许可证
 
-# 参考链接
+[MIT License](LICENSE)
 
-https://github.com/shadow1ng/fscan
+## Star History
 
-https://github.com/lcvvvv/kscan
-
-https://github.com/lcvvvv/gonmap
-
-https://github.com/projectdiscovery/nuclei
-
-https://github.com/projectdiscovery/subfinder
-
-https://github.com/projectdiscovery/httpx
-
-https://github.com/projectdiscovery/naabu
-
-https://github.com/chainreactors/gogo
-
-https://github.com/zan8in/afrog
-
-
-
-## Star History Chart
-
-[![Star History Chart](https://api.star-history.com/svg?repos=SleepingBag945/dddd&type=Date)](https://star-history.com/#SleepingBag945/dddd&Date)
-
-<img align='right' src="https://profile-counter.glitch.me/neo-regeorg/count.svg" width="200">
+[![Star History Chart](https://api.star-history.com/svg?repos=P0lar1ght/argus&type=Date)](https://star-history.com/#P0lar1ght/argus&Date)
