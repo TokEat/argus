@@ -59,6 +59,13 @@ func NewTaskQueue(addr string, password string, db int) *TaskQueue {
 
 	queue.client = rdb
 	queue.mode = "redis"
+
+	// 初始化 Stream 和消费组 (如果不存在则创建)
+	err := rdb.XGroupCreateMkStream(context.Background(), queue.queueKey, "dddd_agents", "$").Err()
+	if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
+		log.Printf("Warning: failed to create consumer group: %v", err)
+	}
+
 	return queue
 }
 
@@ -69,7 +76,7 @@ func (q *TaskQueue) Mode() string {
 	return q.mode
 }
 
-// PushTask 将一个扫描任务压入队列底部
+// PushTask 将一个扫描任务压入 Stream 尾部
 func (q *TaskQueue) PushTask(ctx context.Context, task *pb.Task) error {
 	if q.client == nil {
 		q.mem.pushBack(task)
@@ -81,49 +88,59 @@ func (q *TaskQueue) PushTask(ctx context.Context, task *pb.Task) error {
 		return fmt.Errorf("task marshal error: %w", err)
 	}
 
-	return q.client.LPush(ctx, q.queueKey, data).Err()
+	return q.client.XAdd(ctx, &redis.XAddArgs{
+		Stream: q.queueKey,
+		Values: map[string]interface{}{"payload": data},
+	}).Err()
 }
 
-// PushTaskToFront 将一个恢复的任务推到队列最前方优先执行
+// PushTaskToFront (对于 Stream 我们放弃插队，直接 XADD 尾部或者依赖调度中控分配引擎)
 func (q *TaskQueue) PushTaskToFront(ctx context.Context, task *pb.Task) error {
-	if q.client == nil {
-		q.mem.pushFront(task)
-		return nil
-	}
-
-	data, err := json.Marshal(task)
-	if err != nil {
-		return fmt.Errorf("task marshal error: %w", err)
-	}
-	return q.client.RPush(ctx, q.queueKey, data).Err()
+	return q.PushTask(ctx, task)
 }
 
-// PopTask 从队列顶部弹出一个等待执行的任务 (非阻塞)
-// 返回值为 nil，表示队列为空
-func (q *TaskQueue) PopTask(ctx context.Context) (*pb.Task, error) {
+// PopTask 从 Stream 中通过消费组按需读取任务
+func (q *TaskQueue) PopTask(ctx context.Context, agentID string) (*pb.Task, string, error) {
 	if q.client == nil {
-		return q.mem.pop(ctx, time.Second)
+		t, err := q.mem.pop(ctx, time.Second)
+		return t, "", err
 	}
 
-	// 等待1秒出队，防止 CPU 轮询过高
-	result, err := q.client.BRPop(ctx, 1*time.Second, q.queueKey).Result()
-	if err == redis.Nil {
-		return nil, nil // 队列为空
+	// 等待 1 秒，如果没有拿到则返回空
+	result, err := q.client.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group:    "dddd_agents",
+		Consumer: agentID,
+		Streams:  []string{q.queueKey, ">"},
+		Count:    1,
+		Block:    1 * time.Second,
+	}).Result()
+
+	if err == redis.Nil || len(result) == 0 || len(result[0].Messages) == 0 {
+		return nil, "", nil // 队列为空
 	} else if err != nil {
-		return nil, fmt.Errorf("BRPop error: %w", err)
+		return nil, "", fmt.Errorf("XReadGroup error: %w", err)
 	}
 
-	// BRPop 返回格式为 [keyName, value]
-	if len(result) != 2 {
-		return nil, fmt.Errorf("unexpected brpop format")
+	msg := result[0].Messages[0]
+	payloadStr, ok := msg.Values["payload"].(string)
+	if !ok {
+		return nil, "", fmt.Errorf("invalid payload format in stream")
 	}
 
 	var task pb.Task
-	if err := json.Unmarshal([]byte(result[1]), &task); err != nil {
-		return nil, fmt.Errorf("task unmarshal error: %w", err)
+	if err := json.Unmarshal([]byte(payloadStr), &task); err != nil {
+		return nil, "", fmt.Errorf("task unmarshal error: %w", err)
 	}
 
-	return &task, nil
+	return &task, msg.ID, nil
+}
+
+// AckTask 确认某个 Stream 的消息被成功处理，将其从 Pending 列表抹除
+func (q *TaskQueue) AckTask(ctx context.Context, msgID string) error {
+	if q.client == nil || msgID == "" {
+		return nil
+	}
+	return q.client.XAck(ctx, q.queueKey, "dddd_agents", msgID).Err()
 }
 
 func newMemoryQueue() *memoryQueue {

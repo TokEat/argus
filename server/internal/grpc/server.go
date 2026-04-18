@@ -9,7 +9,6 @@ import (
 	"time"
 
 	pb "github.com/user/dddd-proto/go/scan"
-	"github.com/user/dddd-server/internal/api"
 	"github.com/user/dddd-server/internal/db"
 	"google.golang.org/grpc"
 )
@@ -19,7 +18,8 @@ type Server struct {
 	pb.UnimplementedAgentServiceServer
 	port int
 	// queue 负责从 redis 等调度队列获取任务，当前暂用回调解耦
-	fetchTaskHook func(agentID string) (*pb.Task, error)
+	fetchTaskHook func(agentID string) (*pb.Task, string, error)
+	ackTaskHook   func(msgID string) error
 }
 
 // NewServer 初始化 gRPC Server
@@ -30,8 +30,13 @@ func NewServer(port int) *Server {
 }
 
 // SetFetchTaskHook 注入从队列拉取任务的钩子
-func (s *Server) SetFetchTaskHook(fn func(agentID string) (*pb.Task, error)) {
+func (s *Server) SetFetchTaskHook(fn func(agentID string) (*pb.Task, string, error)) {
 	s.fetchTaskHook = fn
+}
+
+// SetAckTaskHook 注入完成任务后确认的钩子
+func (s *Server) SetAckTaskHook(fn func(msgID string) error) {
+	s.ackTaskHook = fn
 }
 
 // Serve 启动 gRPC 监听
@@ -76,16 +81,18 @@ func (s *Server) Heartbeat(ctx context.Context, req *pb.HeartbeatReq) (*pb.Heart
 
 func (s *Server) FetchTask(ctx context.Context, req *pb.FetchTaskReq) (*pb.Task, error) {
 	var task *pb.Task
+	var msgID string
 	var err error
 	if s.fetchTaskHook != nil {
-		task, err = s.fetchTaskHook(req.AgentId)
+		task, msgID, err = s.fetchTaskHook(req.AgentId)
 	}
 	if task != nil && task.TaskId != "" {
-		// 记录流转：状态变为执行中，挂载关联代理人
-		db.DB.Model(&db.Task{}).Where("id = ?", task.TaskId).
+		// 记录流转：状态变为执行中，挂载关联代理人和流的消息位点
+		db.DB.Model(&db.SubTask{}).Where("id = ?", task.TaskId).
 			Updates(map[string]interface{}{
-				"status":   "Running",
-				"agent_id": req.AgentId,
+				"status":        "Running",
+				"agent_id":      req.AgentId,
+				"stream_msg_id": msgID,
 			})
 	} else if task == nil {
 		task = &pb.Task{}
@@ -103,26 +110,37 @@ func (s *Server) StreamResult(stream pb.AgentService_StreamResultServer) error {
 		if err != nil {
 			return err
 		}
-		log.Printf("[Result Hook] Task %s => Found %s: payload_size=%d", res.TaskId, res.PayloadType, len(res.Payload))
-
-		// 1. 落库持久化
-		_ = db.AddVuln(res.TaskId, res.PayloadType, string(res.Payload))
-
-		// 2. 将此高价值资产/漏洞直接投送给所有订阅了大屏 WebSocket 的前端用户
-		api.Hub.Broadcast(map[string]interface{}{
-			"type":      "scan_result",
-			"task_id":   res.TaskId,
-			"vuln_type": res.PayloadType,
-			"payload":   string(res.Payload),
-			"timestamp": res.Timestamp,
-		})
+		// 异步推入分层缓冲池 (Data Surge Protection & Structured Storage)
+		db.AddResultAsync(res.TaskId, res.PayloadType, string(res.Payload))
 	}
 }
 
 // TaskComplete 任务完成通知
 func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb.Ack, error) {
-	log.Printf("[TaskComplete] Task %s by Agent %s => Status: %s", req.TaskId, req.AgentId, req.Status)
-	db.DB.Model(&db.Task{}).Where("id = ?", req.TaskId).Update("status", req.Status)
+	log.Printf("[TaskComplete] SubTask %s by Agent %s => Status: %s", req.TaskId, req.AgentId, req.Status)
+	db.DB.Model(&db.SubTask{}).Where("id = ?", req.TaskId).Update("status", req.Status)
+
+	if req.Status == "DONE" {
+		var sub db.SubTask
+		if err := db.DB.First(&sub, "id = ?", req.TaskId).Error; err == nil {
+			// 一旦数据库判定找得到，立刻上报 Redis Stream 消费组进行 ACK
+			if s.ackTaskHook != nil && sub.StreamMsgID != "" {
+				_ = s.ackTaskHook(sub.StreamMsgID)
+			}
+			if sub.RootTaskID != "" {
+				// 利用 PG 的原子更新
+				db.DB.Exec("UPDATE root_tasks SET completed_chunks = completed_chunks + 1 WHERE id = ?", sub.RootTaskID)
+
+			var root db.RootTask
+			if err := db.DB.First(&root, "id = ?", sub.RootTaskID).Error; err == nil {
+				if root.CompletedChunks >= root.TotalChunks {
+					db.DB.Model(&root).Update("status", "FINISHED")
+					log.Printf("[Aggregation] RootTask %s is fully completed! (%d/%d chunks)", root.ID, root.CompletedChunks, root.TotalChunks)
+				}
+			}
+		}
+	}
+
 	return &pb.Ack{Success: true}, nil
 }
 

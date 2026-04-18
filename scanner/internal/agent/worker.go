@@ -26,15 +26,18 @@ type Worker struct {
 	serverAddr string
 	apiURL     string
 	client     pb.AgentServiceClient
-	conn       *grpc.ClientConn
-	wg         sync.WaitGroup // 跟踪并发任务
+	conn         *grpc.ClientConn
+	wg           sync.WaitGroup // 跟踪并发任务
+	mu           sync.Mutex
+	runningTasks map[string]context.CancelFunc
 }
 
 func NewWorker(agentID, serverAddr, apiURL string) *Worker {
 	return &Worker{
-		agentID:    agentID,
-		serverAddr: serverAddr,
-		apiURL:     apiURL,
+		agentID:      agentID,
+		serverAddr:   serverAddr,
+		apiURL:       apiURL,
+		runningTasks: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -61,6 +64,8 @@ func (w *Worker) Start() error {
 
 	// 后台心跳维持
 	go w.heartbeatLoop()
+	// 获取动态指命
+	go w.commandLoop()
 
 	// Phase 1: 每个 agent 同一时刻只执行一个任务，进程内不做多任务并发。
 	maxWorkers := 1
@@ -136,33 +141,61 @@ func (w *Worker) heartbeatLoop() {
 	}
 }
 
+func (w *Worker) commandLoop() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		resp, err := http.Get(w.apiURL + "/api/v1/agents/" + w.agentID + "/commands")
+		if err == nil {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			var result struct {
+				CancelTasks []string `json:"cancel_tasks"`
+			}
+			if json.Unmarshal(body, &result) == nil {
+				w.mu.Lock()
+				for _, tid := range result.CancelTasks {
+					if cancel, ok := w.runningTasks[tid]; ok {
+						log.Printf("[Cancel] Received kill instruction for subtask %s from Control Plane!", tid)
+						cancel()
+					}
+				}
+				w.mu.Unlock()
+			}
+		}
+	}
+}
+
 func (w *Worker) syncRules() {
 	log.Println("[Sync] Requesting Arsenal rules from API...")
 
-	// 拉取 POC
-	resp, err := http.Get(w.apiURL + "/api/v1/arsenals/poc")
-	if err == nil {
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(resp.Body)
-		var rules []struct {
-			FileName string `json:"FileName"`
-			Content  string `json:"Content"`
-		}
-		if json.Unmarshal(body, &rules) == nil {
-			if len(rules) > 0 {
-				_ = os.MkdirAll("config/pocs", 0755)
+	ruleTypes := []string{"poc", "finger", "workflow", "dir"}
+
+	for _, rt := range ruleTypes {
+		resp, err := http.Get(w.apiURL + "/api/v1/arsenals/" + rt)
+		if err == nil {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			var rules []struct {
+				FileName string `json:"FileName"`
+				Content  string `json:"Content"`
+			}
+			if json.Unmarshal(body, &rules) == nil && len(rules) > 0 {
+				dirPath := "config"
+				if rt == "poc" {
+					dirPath = "config/pocs"
+				}
+				_ = os.MkdirAll(dirPath, 0755)
 				for _, r := range rules {
-					path := filepath.Join("config/pocs", r.FileName)
+					path := filepath.Join(dirPath, r.FileName)
 					_ = os.WriteFile(path, []byte(r.Content), 0644)
-					log.Printf("[Sync] Reloaded POC -> %s", path)
+					log.Printf("[Sync] Reloaded %s -> %s", rt, path)
 				}
 			}
+		} else {
+			log.Printf("[Sync] Failed to reach API for %s: %v", rt, err)
 		}
-	} else {
-		log.Printf("[Sync] Failed to reach API for POCs: %v", err)
 	}
-
-	// （可视情况扩展对 finger.yaml 的同步覆盖逻辑...）
 }
 
 func (w *Worker) executeTask(task *pb.Task) {
@@ -177,6 +210,19 @@ func (w *Worker) executeTask(task *pb.Task) {
 	cfg.Targets = task.Targets
 	cfg.OutputFile = ""
 	cfg.ReportName = ""
+
+	taskCtx, cancelContext := context.WithCancel(context.Background())
+	defer cancelContext()
+
+	w.mu.Lock()
+	w.runningTasks[task.TaskId] = cancelContext
+	w.mu.Unlock()
+
+	defer func() {
+		w.mu.Lock()
+		delete(w.runningTasks, task.TaskId)
+		w.mu.Unlock()
+	}()
 
 	// 初始化上下文
 	ctx, err := engine.NewScanContext(cfg)
@@ -212,13 +258,28 @@ func (w *Worker) executeTask(task *pb.Task) {
 
 	// 启动引擎
 	log.Printf("Starting Pipeline for Task %s...", task.TaskId)
-	runErr := engine.RunTask(ctx)
+	
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- engine.RunTask(ctx)
+	}()
+
+	var runErr error
+	select {
+	case runErr = <-errCh:
+	case <-taskCtx.Done():
+		log.Printf("[Cancel] Task %s aborted via context cancellation", task.TaskId)
+		runErr = fmt.Errorf("task cancelled by control plane")
+	}
 
 	if stream != nil {
 		_, _ = stream.CloseAndRecv()
 	}
+
+	status := "DONE"
 	if runErr != nil {
-		log.Printf("Pipeline failed for Task %s: %v", task.TaskId, runErr)
+		status = "FAILED"
+		log.Printf("Pipeline execution aborted or failed: %v", runErr)
 		_, _ = w.client.TaskComplete(context.Background(), &pb.TaskCompleteReq{
 			AgentId:      w.agentID,
 			TaskId:       task.TaskId,

@@ -34,6 +34,16 @@ func main() {
 	log.Println("Initializing database...")
 	db.InitDB(dbDSN)
 
+	// Set up the Hub Broadcast Hook for batching to prevent websocket surge
+	db.OnResultBatchSaved = func(count int, rType string) {
+		api.Hub.Broadcast(map[string]interface{}{
+			"type":  "scan_result_batch",
+			"count": count,
+			"rtype": rType,
+		})
+	}
+	db.StartBatchWriters()
+
 	log.Println("Initializing task queue...")
 	queue := scheduler.NewTaskQueue(redisAddr, redisPassword, redisDB)
 	api.SetTaskQueue(queue)
@@ -43,18 +53,22 @@ func main() {
 	srv := grpc.NewServer(grpcPort)
 
 	// 将 queue 的 pop 能力作为 hook 挂载给 gRPC Server
-	srv.SetFetchTaskHook(func(agentID string) (*pb.Task, error) {
-		task, err := queue.PopTask(context.Background())
+	srv.SetFetchTaskHook(func(agentID string) (*pb.Task, string, error) {
+		task, msgID, err := queue.PopTask(context.Background(), agentID)
 		if err != nil {
-			log.Printf("Error popping task for %s: %v", agentID, err)
-			return nil, err
+			log.Printf("Error popping task from stream for %s: %v", agentID, err)
+			return nil, "", err
 		}
 		if task == nil {
 			// 返回空的代表没任务
-			return &pb.Task{}, nil
+			return &pb.Task{}, "", nil
 		}
-		log.Printf("Assigned Task %s to Agent %s", task.TaskId, agentID)
-		return task, nil
+		log.Printf("Assigned Task %s (StreamMsg: %s) to Agent %s", task.TaskId, msgID, agentID)
+		return task, msgID, nil
+	})
+
+	srv.SetAckTaskHook(func(msgID string) error {
+		return queue.AckTask(context.Background(), msgID)
 	})
 
 	// 挂载一个后台协程启动 API HTTP Server
@@ -74,17 +88,17 @@ func main() {
 				log.Printf("[Sweep] Agent %s died.", n.AgentID)
 				db.DB.Model(&n).Update("status", "Offline")
 
-				var zombieTasks []db.Task
+				var zombieTasks []db.SubTask
 				db.DB.Where("agent_id = ? AND status = ?", n.AgentID, "Running").Find(&zombieTasks)
 				for _, z := range zombieTasks {
-					log.Printf("[Recovery] Zombie Task %s recovered from dead agent %s! Pushing to queue front...", z.ID, n.AgentID)
+					log.Printf("[Recovery] Zombie SubTask %s recovered from dead agent %s! Pushing to queue front...", z.ID, n.AgentID)
 					db.DB.Model(&z).Updates(map[string]interface{}{
 						"status":   "Pending",
 						"agent_id": "",
 					})
-					pbTask, err := db.TaskToProto(&z)
+					pbTask, err := db.SubTaskToProto(&z)
 					if err != nil {
-						log.Printf("[Recovery] Failed to rebuild task %s: %v", z.ID, err)
+						log.Printf("[Recovery] Failed to rebuild subtask %s: %v", z.ID, err)
 						continue
 					}
 					_ = queue.PushTaskToFront(context.Background(), pbTask)

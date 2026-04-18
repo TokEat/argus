@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/user/dddd-server/internal/db"
 	"github.com/user/dddd-server/internal/scheduler"
+	"gorm.io/gorm"
 )
 
 var taskQueue *scheduler.TaskQueue
@@ -52,12 +53,16 @@ func InitRouter(port string) {
 		api.GET("/tasks", getTasks)
 		api.POST("/tasks", createTask)
 		api.DELETE("/tasks/:id", deleteTask)
+		api.POST("/tasks/:id/cancel", cancelTask)
 
 		// 漏洞资产
 		api.GET("/vulns", getVulns)
+		api.GET("/assets", getAssets)
+		api.GET("/fingerprints", getFingerprints)
 
 		// Agent 节点
 		api.GET("/nodes", getNodes)
+		api.GET("/agents/:id/commands", getAgentCommands)
 
 		// Arsenal 弹药库热发车网关
 		api.GET("/arsenals/:type", getArsenals)
@@ -85,20 +90,24 @@ func InitRouter(port string) {
 // -------------------- Handlers --------------------
 
 func getStats(c *gin.Context) {
-	var taskCount, nodeCount, vulnCount int64
-	db.DB.Model(&db.Task{}).Count(&taskCount)
+	var taskCount, nodeCount, assetCount, fpCount, vulnCount int64
+	db.DB.Model(&db.RootTask{}).Count(&taskCount)
 	db.DB.Model(&db.Node{}).Count(&nodeCount)
-	db.DB.Model(&db.Vuln{}).Count(&vulnCount)
+	db.DB.Model(&db.Asset{}).Count(&assetCount)
+	db.DB.Model(&db.FingerprintHit{}).Count(&fpCount)
+	db.DB.Model(&db.Vulnerability{}).Count(&vulnCount)
 
 	c.JSON(http.StatusOK, gin.H{
-		"tasks": taskCount,
-		"nodes": nodeCount,
-		"vulns": vulnCount,
+		"tasks":        taskCount,
+		"nodes":        nodeCount,
+		"assets":       assetCount,
+		"fingerprints": fpCount,
+		"vulns":        vulnCount,
 	})
 }
 
 func getTasks(c *gin.Context) {
-	var tasks []db.Task
+	var tasks []db.RootTask
 	db.DB.Order("created_at desc").Limit(50).Find(&tasks)
 	c.JSON(http.StatusOK, tasks)
 }
@@ -136,38 +145,71 @@ func createTask(c *gin.Context) {
 		return
 	}
 
-	taskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
+	rootTaskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = targets[0]
 	}
 
-	task := db.Task{
-		ID:      taskID,
-		Name:    name,
-		Status:  "Pending",
-		Targets: string(targetsJSON),
-		Config:  configJSON,
+	// 1. Task Splitter Logic
+	chunkSize := 256
+	var subTasks []db.SubTask
+	for i := 0; i < len(targets); i += chunkSize {
+		end := i + chunkSize
+		if end > len(targets) {
+			end = len(targets)
+		}
+		chunkTargets := targets[i:end]
+		chunkJSON, _ := json.Marshal(chunkTargets)
+
+		subTasks = append(subTasks, db.SubTask{
+			ID:           fmt.Sprintf("%s-sub-%d", rootTaskID, i/chunkSize),
+			RootTaskID:   rootTaskID,
+			ChunkTargets: string(chunkJSON),
+			Status:       "Pending",
+			Config:       configJSON,
+		})
 	}
-	if err := db.DB.Create(&task).Error; err != nil {
+
+	rootTask := db.RootTask{
+		ID:              rootTaskID,
+		Name:            name,
+		Status:          "Pending",
+		OriginalTargets: string(targetsJSON),
+		Config:          configJSON,
+		TotalChunks:     len(subTasks),
+		CompletedChunks: 0,
+	}
+
+	// 2. Transaction for Root and SubTasks
+	err = db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&rootTask).Error; err != nil {
+			return err
+		}
+		if len(subTasks) > 0 {
+			if err := tx.CreateInBatches(subTasks, 100).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	// 3. Dispatch to Queue
 	if taskQueue != nil {
-		pbTask, err := db.TaskToProto(&task)
-		if err != nil {
-			_ = db.DB.Delete(&db.Task{}, "id = ?", task.ID).Error
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if err := taskQueue.PushTask(context.Background(), pbTask); err != nil {
-			_ = db.DB.Delete(&db.Task{}, "id = ?", task.ID).Error
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
+		for _, st := range subTasks {
+			pbSub, _ := db.SubTaskToProto(&st)
+			if err := taskQueue.PushTask(context.Background(), pbSub); err != nil {
+				log.Printf("Failed to push subtask %s: %v", st.ID, err)
+			}
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "task_created", "task_id": task.ID})
+
+	c.JSON(http.StatusOK, gin.H{"status": "task_created", "task_id": rootTask.ID})
 }
 
 func getArsenals(c *gin.Context) {
@@ -211,14 +253,57 @@ func deleteArsenal(c *gin.Context) {
 
 func deleteTask(c *gin.Context) {
 	id := c.Param("id")
-	db.DB.Delete(&db.Task{}, "id = ?", id)
+	db.DB.Delete(&db.RootTask{}, "id = ?", id)
+	db.DB.Delete(&db.SubTask{}, "root_task_id = ?", id)
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }
 
+func cancelTask(c *gin.Context) {
+	id := c.Param("id")
+	// 将该 RootTask 下的所有排队中、运行中的 SubTask 标记为 CancelPending，供 Agent 拦截
+	db.DB.Model(&db.RootTask{}).Where("id = ?", id).Update("status", "Cancelled")
+	db.DB.Model(&db.SubTask{}).Where("root_task_id = ? AND status IN ?", id, []string{"Pending", "Running"}).
+		Update("status", "CancelPending")
+	c.JSON(http.StatusOK, gin.H{"status": "cancelled"})
+}
+
+func getAgentCommands(c *gin.Context) {
+	agentID := c.Param("id")
+	var cancelledTasks []db.SubTask
+	db.DB.Where("agent_id = ? AND status = ?", agentID, "CancelPending").Find(&cancelledTasks)
+
+	var ids []string
+	for _, t := range cancelledTasks {
+		ids = append(ids, t.ID)
+		// 一旦下发，直接标记为 Cancelled 避免重复下发
+		db.DB.Model(&t).Update("status", "Cancelled")
+		// Ack the task if it's running so it doesn't stay in queue forever
+		if taskQueue != nil && t.StreamMsgID != "" {
+			_ = taskQueue.AckTask(context.Background(), t.StreamMsgID)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"cancel_tasks": ids,
+	})
+}
+
 func getVulns(c *gin.Context) {
-	var vulns []db.Vuln
+	var vulns []db.Vulnerability
 	db.DB.Order("created_at desc").Limit(100).Find(&vulns)
 	c.JSON(http.StatusOK, vulns)
+}
+
+func getAssets(c *gin.Context) {
+	var assets []db.Asset
+	db.DB.Order("created_at desc").Limit(100).Find(&assets)
+	c.JSON(http.StatusOK, assets)
+}
+
+func getFingerprints(c *gin.Context) {
+	var fps []db.FingerprintHit
+	db.DB.Order("created_at desc").Limit(100).Find(&fps)
+	c.JSON(http.StatusOK, fps)
 }
 
 func getNodes(c *gin.Context) {
