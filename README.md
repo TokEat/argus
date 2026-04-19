@@ -268,9 +268,10 @@ argus/
 |------|------|
 | [贡献与协作指南](CONTRIBUTING.md) | 分支模型、命名规范、PR 与发布流程 |
 | [项目结构](docs/project-structure.md) | 目录结构与组件职责 |
-| [架构白皮书](docs/architecture-summary-v2.md) | v2.0 分布式架构演进总结 |
-| [分布式架构设计](docs/distributed-scan-architecture.md) | 详细架构、数据模型与演进路线 |
-| [XMind 大纲](docs/distributed-scan-xmind-outline.md) | 架构脑图导出 |
+| [实现状态总览](docs/implementation-status.md) | 当前代码实现程度与主要缺口 |
+| [接口实现清单](docs/interface-implementations.md) | 当前 `/api/v1`、WebSocket、gRPC 主链路接口 |
+| [分布式架构现状](docs/distributed-scan-architecture.md) | 当前控制面 / 数据面架构与未闭环点 |
+| [规则库初始化](docs/rule-catalog-init.md) | Arsenal 与结构化规则表初始化机制 |
 
 ---
 
