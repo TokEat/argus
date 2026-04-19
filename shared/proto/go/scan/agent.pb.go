@@ -188,7 +188,9 @@ func (x *RegisterResp) GetToken() string {
 type HeartbeatReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
-	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"` // 节点当前状态：IDLE, RUNNING...
+	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`                                  // 节点当前状态：IDLE, RUNNING...
+	RuleVersion   string                 `protobuf:"bytes,3,opt,name=rule_version,json=ruleVersion,proto3" json:"rule_version,omitempty"`     // Agent 当前规则版本号
+	RunningTasks  int32                  `protobuf:"varint,4,opt,name=running_tasks,json=runningTasks,proto3" json:"running_tasks,omitempty"` // Agent 当前运行中任务数
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -237,10 +239,25 @@ func (x *HeartbeatReq) GetStatus() string {
 	return ""
 }
 
+func (x *HeartbeatReq) GetRuleVersion() string {
+	if x != nil {
+		return x.RuleVersion
+	}
+	return ""
+}
+
+func (x *HeartbeatReq) GetRunningTasks() int32 {
+	if x != nil {
+		return x.RunningTasks
+	}
+	return 0
+}
+
 type HeartbeatResp struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Ack             bool                   `protobuf:"varint,1,opt,name=ack,proto3" json:"ack,omitempty"`
-	ShouldTerminate bool                   `protobuf:"varint,2,opt,name=should_terminate,json=shouldTerminate,proto3" json:"should_terminate,omitempty"` // Server有权要求节点退出（例如竞价实例即将被回收或者资源充裕）
+	ShouldTerminate bool                   `protobuf:"varint,2,opt,name=should_terminate,json=shouldTerminate,proto3" json:"should_terminate,omitempty"`   // Server有权要求节点退出（例如竞价实例即将被回收或者资源充裕）
+	ShouldSyncRules bool                   `protobuf:"varint,3,opt,name=should_sync_rules,json=shouldSyncRules,proto3" json:"should_sync_rules,omitempty"` // 通知 Agent 需要同步规则（替代 HTTP 轮询）
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -285,6 +302,13 @@ func (x *HeartbeatResp) GetAck() bool {
 func (x *HeartbeatResp) GetShouldTerminate() bool {
 	if x != nil {
 		return x.ShouldTerminate
+	}
+	return false
+}
+
+func (x *HeartbeatResp) GetShouldSyncRules() bool {
+	if x != nil {
+		return x.ShouldSyncRules
 	}
 	return false
 }
@@ -336,8 +360,10 @@ func (x *FetchTaskReq) GetAgentId() string {
 type Task struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	Targets       []string               `protobuf:"bytes,2,rep,name=targets,proto3" json:"targets,omitempty"` // 目标列表
-	Config        []byte                 `protobuf:"bytes,3,opt,name=config,proto3" json:"config,omitempty"`   // 序列化后的 engine.Config JSON，包含具体扫描参数
+	Targets       []string               `protobuf:"bytes,2,rep,name=targets,proto3" json:"targets,omitempty"`                          // 目标列表
+	Config        []byte                 `protobuf:"bytes,3,opt,name=config,proto3" json:"config,omitempty"`                            // 序列化后的 engine.Config JSON，包含具体扫描参数
+	Priority      int32                  `protobuf:"varint,4,opt,name=priority,proto3" json:"priority,omitempty"`                       // 任务优先级 (0=最高, 1=普通, 2=低优先级)
+	TimeoutSec    int32                  `protobuf:"varint,5,opt,name=timeout_sec,json=timeoutSec,proto3" json:"timeout_sec,omitempty"` // 任务超时秒数 (0=使用默认值)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -391,6 +417,20 @@ func (x *Task) GetConfig() []byte {
 		return x.Config
 	}
 	return nil
+}
+
+func (x *Task) GetPriority() int32 {
+	if x != nil {
+		return x.Priority
+	}
+	return 0
+}
+
+func (x *Task) GetTimeoutSec() int32 {
+	if x != nil {
+		return x.TimeoutSec
+	}
+	return 0
 }
 
 type ScanResult struct {
@@ -575,6 +615,74 @@ func (x *EmergencyReq) GetAgentId() string {
 	return ""
 }
 
+type LogPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	Level         string                 `protobuf:"bytes,2,opt,name=level,proto3" json:"level,omitempty"` // INFO, WARN, ERROR
+	Message       string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
+	Timestamp     int64                  `protobuf:"varint,4,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogPayload) Reset() {
+	*x = LogPayload{}
+	mi := &file_proto_scan_agent_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogPayload) ProtoMessage() {}
+
+func (x *LogPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_scan_agent_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogPayload.ProtoReflect.Descriptor instead.
+func (*LogPayload) Descriptor() ([]byte, []int) {
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *LogPayload) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *LogPayload) GetLevel() string {
+	if x != nil {
+		return x.Level
+	}
+	return ""
+}
+
+func (x *LogPayload) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *LogPayload) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
 var File_proto_scan_agent_proto protoreflect.FileDescriptor
 
 const file_proto_scan_agent_proto_rawDesc = "" +
@@ -592,19 +700,25 @@ const file_proto_scan_agent_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\">\n" +
 	"\fRegisterResp\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\tR\x05token\"A\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"\x89\x01\n" +
 	"\fHeartbeatReq\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\tR\x06status\"L\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x12!\n" +
+	"\frule_version\x18\x03 \x01(\tR\vruleVersion\x12#\n" +
+	"\rrunning_tasks\x18\x04 \x01(\x05R\frunningTasks\"x\n" +
 	"\rHeartbeatResp\x12\x10\n" +
 	"\x03ack\x18\x01 \x01(\bR\x03ack\x12)\n" +
-	"\x10should_terminate\x18\x02 \x01(\bR\x0fshouldTerminate\")\n" +
+	"\x10should_terminate\x18\x02 \x01(\bR\x0fshouldTerminate\x12*\n" +
+	"\x11should_sync_rules\x18\x03 \x01(\bR\x0fshouldSyncRules\")\n" +
 	"\fFetchTaskReq\x12\x19\n" +
-	"\bagent_id\x18\x01 \x01(\tR\aagentId\"Q\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\x8e\x01\n" +
 	"\x04Task\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x18\n" +
 	"\atargets\x18\x02 \x03(\tR\atargets\x12\x16\n" +
-	"\x06config\x18\x03 \x01(\fR\x06config\"\x80\x01\n" +
+	"\x06config\x18\x03 \x01(\fR\x06config\x12\x1a\n" +
+	"\bpriority\x18\x04 \x01(\x05R\bpriority\x12\x1f\n" +
+	"\vtimeout_sec\x18\x05 \x01(\x05R\n" +
+	"timeoutSec\"\x80\x01\n" +
 	"\n" +
 	"ScanResult\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12!\n" +
@@ -617,7 +731,13 @@ const file_proto_scan_agent_proto_rawDesc = "" +
 	"\x06status\x18\x03 \x01(\tR\x06status\x12#\n" +
 	"\rerror_message\x18\x04 \x01(\tR\ferrorMessage\")\n" +
 	"\fEmergencyReq\x12\x19\n" +
-	"\bagent_id\x18\x01 \x01(\tR\aagentId2\xb5\x02\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\"u\n" +
+	"\n" +
+	"LogPayload\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x14\n" +
+	"\x05level\x18\x02 \x01(\tR\x05level\x12\x18\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\x12\x1c\n" +
+	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp2\xe2\x02\n" +
 	"\fAgentService\x121\n" +
 	"\bRegister\x12\x11.scan.RegisterReq\x1a\x12.scan.RegisterResp\x124\n" +
 	"\tHeartbeat\x12\x12.scan.HeartbeatReq\x1a\x13.scan.HeartbeatResp\x12+\n" +
@@ -625,7 +745,9 @@ const file_proto_scan_agent_proto_rawDesc = "" +
 	".scan.Task\x12-\n" +
 	"\fStreamResult\x12\x10.scan.ScanResult\x1a\t.scan.Ack(\x01\x120\n" +
 	"\fTaskComplete\x12\x15.scan.TaskCompleteReq\x1a\t.scan.Ack\x12.\n" +
-	"\rEmergencyDump\x12\x12.scan.EmergencyReq\x1a\t.scan.AckB$Z\"github.com/user/dddd-proto/go/scanb\x06proto3"
+	"\rEmergencyDump\x12\x12.scan.EmergencyReq\x1a\t.scan.Ack\x12+\n" +
+	"\n" +
+	"StreamLogs\x12\x10.scan.LogPayload\x1a\t.scan.Ack(\x01B$Z\"github.com/user/dddd-proto/go/scanb\x06proto3"
 
 var (
 	file_proto_scan_agent_proto_rawDescOnce sync.Once
@@ -639,7 +761,7 @@ func file_proto_scan_agent_proto_rawDescGZIP() []byte {
 	return file_proto_scan_agent_proto_rawDescData
 }
 
-var file_proto_scan_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_proto_scan_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_proto_scan_agent_proto_goTypes = []any{
 	(*Ack)(nil),             // 0: scan.Ack
 	(*RegisterReq)(nil),     // 1: scan.RegisterReq
@@ -651,24 +773,27 @@ var file_proto_scan_agent_proto_goTypes = []any{
 	(*ScanResult)(nil),      // 7: scan.ScanResult
 	(*TaskCompleteReq)(nil), // 8: scan.TaskCompleteReq
 	(*EmergencyReq)(nil),    // 9: scan.EmergencyReq
-	nil,                     // 10: scan.RegisterReq.TagsEntry
+	(*LogPayload)(nil),      // 10: scan.LogPayload
+	nil,                     // 11: scan.RegisterReq.TagsEntry
 }
 var file_proto_scan_agent_proto_depIdxs = []int32{
-	10, // 0: scan.RegisterReq.tags:type_name -> scan.RegisterReq.TagsEntry
+	11, // 0: scan.RegisterReq.tags:type_name -> scan.RegisterReq.TagsEntry
 	1,  // 1: scan.AgentService.Register:input_type -> scan.RegisterReq
 	3,  // 2: scan.AgentService.Heartbeat:input_type -> scan.HeartbeatReq
 	5,  // 3: scan.AgentService.FetchTask:input_type -> scan.FetchTaskReq
 	7,  // 4: scan.AgentService.StreamResult:input_type -> scan.ScanResult
 	8,  // 5: scan.AgentService.TaskComplete:input_type -> scan.TaskCompleteReq
 	9,  // 6: scan.AgentService.EmergencyDump:input_type -> scan.EmergencyReq
-	2,  // 7: scan.AgentService.Register:output_type -> scan.RegisterResp
-	4,  // 8: scan.AgentService.Heartbeat:output_type -> scan.HeartbeatResp
-	6,  // 9: scan.AgentService.FetchTask:output_type -> scan.Task
-	0,  // 10: scan.AgentService.StreamResult:output_type -> scan.Ack
-	0,  // 11: scan.AgentService.TaskComplete:output_type -> scan.Ack
-	0,  // 12: scan.AgentService.EmergencyDump:output_type -> scan.Ack
-	7,  // [7:13] is the sub-list for method output_type
-	1,  // [1:7] is the sub-list for method input_type
+	10, // 7: scan.AgentService.StreamLogs:input_type -> scan.LogPayload
+	2,  // 8: scan.AgentService.Register:output_type -> scan.RegisterResp
+	4,  // 9: scan.AgentService.Heartbeat:output_type -> scan.HeartbeatResp
+	6,  // 10: scan.AgentService.FetchTask:output_type -> scan.Task
+	0,  // 11: scan.AgentService.StreamResult:output_type -> scan.Ack
+	0,  // 12: scan.AgentService.TaskComplete:output_type -> scan.Ack
+	0,  // 13: scan.AgentService.EmergencyDump:output_type -> scan.Ack
+	0,  // 14: scan.AgentService.StreamLogs:output_type -> scan.Ack
+	8,  // [8:15] is the sub-list for method output_type
+	1,  // [1:8] is the sub-list for method input_type
 	1,  // [1:1] is the sub-list for extension type_name
 	1,  // [1:1] is the sub-list for extension extendee
 	0,  // [0:1] is the sub-list for field type_name
@@ -685,7 +810,7 @@ func file_proto_scan_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_scan_agent_proto_rawDesc), len(file_proto_scan_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   11,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

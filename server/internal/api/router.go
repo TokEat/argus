@@ -60,6 +60,15 @@ func TenantMiddleware() gin.HandlerFunc {
 
 		if claims, ok := token.Claims.(jwt.MapClaims); ok {
 			c.Set("tenant", claims["tenant_id"])
+			// 解析角色信息用于 RBAC
+			if role, ok := claims["role"].(string); ok {
+				c.Set("role", role)
+			} else {
+				c.Set("role", "admin") // 兼容旧 token
+			}
+			if uid, ok := claims["user_id"].(string); ok {
+				c.Set("user_id", uid)
+			}
 		} else {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid claims map"})
 			return
@@ -93,6 +102,7 @@ func InitRouter(port string) {
 
 	api := r.Group("/api/v1")
 	api.Use(TenantMiddleware())
+	api.Use(RBACMiddleware())
 	{
 		// JWT 签发
 		api.POST("/auth/login", authLogin)
@@ -162,6 +172,18 @@ func InitRouter(port string) {
 		api.GET("/mcp/keys", listMcpKeys)
 		api.POST("/mcp/keys", saveMcpKey)
 		api.DELETE("/mcp/keys/:id", deleteMcpKey)
+
+		// 数据增强：趋势统计与报表
+		api.GET("/stats/trends", getVulnTrends)
+		api.GET("/stats/severity", getSeverityDistribution)
+		api.GET("/stats/task-results", getTaskResultStats)
+		api.GET("/stats/recent-high-vulns", getRecentHighVulns)
+
+		// Agent 遥测日志
+		api.GET("/agents/:id/logs", getAgentLogs)
+
+		// 规则回滚
+		api.POST("/arsenals/:type/:filename/rollback", rollbackArsenal)
 	}
 
 	// SPA 控制塔前台映射兜底
@@ -261,13 +283,14 @@ func createTask(c *gin.Context) {
 		chunkTargets := targets[i:end]
 		chunkJSON, _ := json.Marshal(chunkTargets)
 
-		subTasks = append(subTasks, db.SubTask{
+	subTasks = append(subTasks, db.SubTask{
 			ID:           fmt.Sprintf("%s-sub-%d", rootTaskID, i/chunkSize),
 			TenantID:     tenantID,
 			RootTaskID:   rootTaskID,
 			ChunkTargets: string(chunkJSON),
 			Status:       "Pending",
 			Config:       configJSON,
+			Priority:     req.Priority,
 			TimeoutSec:   req.TimeoutSec,
 			MaxRetry:     3,
 		})
@@ -352,17 +375,28 @@ func saveArsenal(c *gin.Context) {
 
 	hash := fmt.Sprintf("%x", md5.Sum([]byte(req.Content)))
 
+	// 查找已有记录以保存 PreviousHash 和递增 Version
+	var existing db.Arsenal
+	var previousHash string
+	var version int = 1
+	if db.DB.Where("id = ?", typ+"_"+fn).First(&existing).Error == nil {
+		previousHash = existing.Hash
+		version = existing.Version + 1
+	}
+
 	arsenal := db.Arsenal{
-		ID:       typ + "_" + fn,
-		TenantID: c.GetString("tenant"),
-		Type:     typ,
-		FileName: fn,
-		Content:  req.Content,
-		Hash:     hash,
-		State:    "Draft", // 初始提交强制为草稿状态
+		ID:           typ + "_" + fn,
+		TenantID:     c.GetString("tenant"),
+		Type:         typ,
+		FileName:     fn,
+		Content:      req.Content,
+		Hash:         hash,
+		PreviousHash: previousHash,
+		Version:      version,
+		State:        "Draft",
 	}
 	db.DB.Save(&arsenal)
-	c.JSON(http.StatusOK, gin.H{"status": "saved", "hash": hash, "state": "Draft"})
+	c.JSON(http.StatusOK, gin.H{"status": "saved", "hash": hash, "state": "Draft", "version": version})
 }
 
 func approveArsenal(c *gin.Context) {
@@ -372,11 +406,14 @@ func approveArsenal(c *gin.Context) {
 	id := typ + "_" + fn
 	db.DB.Model(&db.Arsenal{}).Where("id = ? AND tenant_id = ?", id, tenantID).Update("state", "Approved")
 	
+	// 触发版本号递增
+	newVersion := BumpRuleVersion()
+
 	// 触发全网 Agent 重新拉取
 	GlobalArsenalReloadCounter++
-	log.Printf("[Arsenal Hub] Rules updated by Tenant %s. Global Rule Reload Triggered!", tenantID)
+	log.Printf("[Arsenal Hub] Rules approved by Tenant %s. Rule version bumped to %s. Global Reload Triggered!", tenantID, newVersion)
 	
-	c.JSON(http.StatusOK, gin.H{"status": "approved"})
+	c.JSON(http.StatusOK, gin.H{"status": "approved", "rule_version": newVersion})
 }
 
 func deleteArsenal(c *gin.Context) {
@@ -669,9 +706,11 @@ func authLogin(c *gin.Context) {
 		}
 	}
 
-	// 颁发 Token
+	// 颁发 Token（包含角色信息）
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"tenant_id": req.TenantID,
+		"role":      user.Role,
+		"user_id":   fmt.Sprintf("%d", user.ID),
 		"exp":       time.Now().Add(time.Hour * 72).Unix(),
 	})
 	tokenString, err := token.SignedString(jwtSecret)
@@ -1153,4 +1192,95 @@ var (
 	_ = filepath.Base
 	_ = os.Stat
 )
+
+// ==================== 数据增强 API ====================
+
+func getVulnTrends(c *gin.Context) {
+	days := 30
+	if d := c.Query("days"); d != "" {
+		if v, err := strconv.Atoi(d); err == nil && v > 0 {
+			days = v
+		}
+	}
+	c.JSON(http.StatusOK, db.GetVulnTrends(days))
+}
+
+func getSeverityDistribution(c *gin.Context) {
+	c.JSON(http.StatusOK, db.GetSeverityDistribution())
+}
+
+func getTaskResultStats(c *gin.Context) {
+	limit := 20
+	if l := c.Query("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	c.JSON(http.StatusOK, db.GetTaskResultStats(limit))
+}
+
+func getRecentHighVulns(c *gin.Context) {
+	limit := 10
+	if l := c.Query("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	c.JSON(http.StatusOK, db.GetRecentHighVulns(limit))
+}
+
+// ==================== Agent 遥测日志 ====================
+
+func getAgentLogs(c *gin.Context) {
+	agentID := c.Param("id")
+	limit := 100
+	if l := c.Query("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	level := c.Query("level") // 可选过滤: INFO, WARN, ERROR
+
+	var logs []db.AgentLog
+	query := db.DB.Where("agent_id = ?", agentID)
+	if level != "" {
+		query = query.Where("level = ?", level)
+	}
+	query.Order("timestamp DESC").Limit(limit).Find(&logs)
+	c.JSON(http.StatusOK, logs)
+}
+
+// ==================== 规则回滚 ====================
+
+func rollbackArsenal(c *gin.Context) {
+	typ := c.Param("type")
+	fn := c.Param("filename")
+	id := typ + "_" + fn
+
+	var arsenal db.Arsenal
+	if err := db.DB.Where("id = ?", id).First(&arsenal).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
+		return
+	}
+
+	if arsenal.PreviousHash == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No previous version available for rollback"})
+		return
+	}
+
+	// 交换当前版本和上一版本
+	db.DB.Model(&arsenal).Updates(map[string]interface{}{
+		"hash":          arsenal.PreviousHash,
+		"previous_hash": arsenal.Hash,
+		"state":         "Draft", // 回滚后重新审批
+		"version":       arsenal.Version + 1,
+	})
+
+	// 触发全网 Agent 重新拉取
+	newVersion := BumpRuleVersion()
+	GlobalArsenalReloadCounter++
+	log.Printf("[Arsenal Hub] Rule %s/%s rolled back. Rule version: %s", typ, fn, newVersion)
+
+	c.JSON(http.StatusOK, gin.H{"status": "rolled_back", "rule_version": newVersion})
+}
 

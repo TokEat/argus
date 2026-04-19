@@ -41,11 +41,15 @@ type Worker struct {
 	runningTasks map[string]context.CancelFunc
 	maxWorkers   int
 	ruleVersion  string
+	tags         map[string]string
 }
 
-func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int) *Worker {
+func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[string]string) *Worker {
 	if maxWorkers <= 0 {
 		maxWorkers = 1
+	}
+	if tags == nil {
+		tags = make(map[string]string)
 	}
 	return &Worker{
 		agentID:      agentID,
@@ -53,6 +57,7 @@ func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int) *Worker {
 		apiURL:       apiURL,
 		runningTasks: make(map[string]context.CancelFunc),
 		maxWorkers:   maxWorkers,
+		tags:         tags,
 	}
 }
 
@@ -68,6 +73,7 @@ func (w *Worker) Start() error {
 	_, err = w.client.Register(context.Background(), &pb.RegisterReq{
 		AgentId: w.agentID,
 		Version: "v2.0.1",
+		Tags:    w.tags,
 	})
 	if err != nil {
 		return err
@@ -148,12 +154,25 @@ func (w *Worker) heartbeatLoop() {
 	defer ticker.Stop()
 	for range ticker.C {
 		if w.client != nil {
-			_, err := w.client.Heartbeat(context.Background(), &pb.HeartbeatReq{
-				AgentId: w.agentID,
-				Status:  "Alive",
+			// 上报当前规则版本和运行中任务数
+			w.mu.Lock()
+			runningCount := int32(len(w.runningTasks))
+			w.mu.Unlock()
+
+			resp, err := w.client.Heartbeat(context.Background(), &pb.HeartbeatReq{
+				AgentId:      w.agentID,
+				Status:       "Alive",
+				RuleVersion:  w.ruleVersion,
+				RunningTasks: runningCount,
 			})
 			if err != nil {
 				log.Printf("Heartbeat failure: %v", err)
+				continue
+			}
+			// 通过 gRPC 心跳响应接收规则同步信号
+			if resp.ShouldSyncRules {
+				log.Println("[Heartbeat] Server signaled rule sync needed via gRPC!")
+				w.syncRules()
 			}
 		}
 	}

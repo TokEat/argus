@@ -238,6 +238,10 @@ export async function deleteCloudInstance(id: string): Promise<API.MessageRespon
     return request.delete(`/cloud/instances/${id}`);
 }
 
+export async function saveCloudPolicy(policy: any): Promise<API.MessageResponse> {
+    return request.post('/cloud/policy', policy);
+}
+
 // ===========================
 // Build API
 // ===========================
@@ -264,6 +268,44 @@ export async function saveMcpKey(provider: string, key: string): Promise<API.Mes
 
 export async function deleteMcpKey(id: string): Promise<API.MessageResponse> {
     return request.delete(`/mcp/keys/${id}`);
+}
+
+// ===========================
+// Data Enhancement API
+// ===========================
+
+export async function getVulnTrends(days: number = 30): Promise<API.TrendPoint[]> {
+    return request.get('/stats/trends', { params: { days } });
+}
+
+export async function getSeverityDistribution(): Promise<API.SeverityCount[]> {
+    return request.get('/stats/severity');
+}
+
+export async function getTaskResultStats(limit: number = 20): Promise<API.TaskStats[]> {
+    return request.get('/stats/task-results', { params: { limit } });
+}
+
+export async function getRecentHighVulns(limit: number = 10): Promise<API.Vulnerability[]> {
+    return request.get('/stats/recent-high-vulns', { params: { limit } });
+}
+
+// ===========================
+// Agent Log API
+// ===========================
+
+export async function getAgentLogs(agentId: string, limit: number = 100, level?: string): Promise<API.AgentLog[]> {
+    const params: Record<string, string | number> = { limit };
+    if (level) params.level = level;
+    return request.get(`/agents/${agentId}/logs`, { params });
+}
+
+// ===========================
+// Arsenal Rollback API
+// ===========================
+
+export async function rollbackArsenal(type: string, filename: string): Promise<API.MessageResponse> {
+    return request.post(`/arsenals/${type}/${filename}/rollback`);
 }
 
 export default request;

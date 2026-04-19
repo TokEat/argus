@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Button, Space, Tag, Popconfirm, Modal, Input, Table, Empty, App, Form, Select } from 'antd';
+import { ProCard } from '@ant-design/pro-components';
 import {
     PlusOutlined,
     EditOutlined,
@@ -182,19 +183,20 @@ const WorkflowConfig: React.FC = () => {
                 <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新增规则映射</Button>
             </div>
 
-            {filtered.length === 0 && !loading ? (
-                <Empty description="暂无关联映射" style={{ padding: '60px 0' }} />
-            ) : (
-                <Table 
-                    columns={columns} 
-                    dataSource={filtered} 
-                    rowKey="product" 
-                    loading={loading}
-                    pagination={{ pageSize: 15, showSizeChanger: true }} 
-                    size="middle" 
-                    bordered
-                />
-            )}
+            <ProCard className="glass-card" style={{ background: 'transparent', border: 'none', padding: 0 }}>
+                {filtered.length === 0 && !loading ? (
+                    <Empty description="暂无关联映射" style={{ padding: '60px 0' }} />
+                ) : (
+                    <Table 
+                        columns={columns} 
+                        dataSource={filtered} 
+                        rowKey="product" 
+                        loading={loading}
+                        pagination={{ pageSize: 15, showSizeChanger: true }} 
+                        size="middle" 
+                    />
+                )}
+            </ProCard>
 
             <Modal
                 title={isNew ? '添加 Workflow 映射规则' : `编辑规则映射 — ${currentProduct}`}

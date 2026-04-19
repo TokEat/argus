@@ -96,9 +96,7 @@ const McpConfig: React.FC = () => {
     ];
 
     const cardStyle = {
-        background: '#ffffff', borderRadius: 12,
-        border: '1px solid #e2e8f0',
-        boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.04)',
+        background: 'transparent', border: 'none'
     };
 
     return (
@@ -116,7 +114,7 @@ const McpConfig: React.FC = () => {
             </div>
 
             {/* 说明卡片 */}
-            <ProCard style={{ ...cardStyle, marginBottom: 16, background: 'linear-gradient(135deg, #f8fafc, #f1f5f9)' }}
+            <ProCard className="glass-panel" style={{ ...cardStyle, marginBottom: 16 }}
                 bodyStyle={{ padding: '16px 20px' }}>
                 <Text style={{ fontSize: 13, color: '#475569' }}>
                     在此管理各外部服务的 API Key。
@@ -126,7 +124,7 @@ const McpConfig: React.FC = () => {
                 </Text>
             </ProCard>
 
-            <ProCard style={cardStyle}>
+            <ProCard className="glass-card" style={cardStyle}>
                 {loading && keys.length === 0 ? (
                     <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}><Spin size="large" /></div>
                 ) : keys.length === 0 ? (

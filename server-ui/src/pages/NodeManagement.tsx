@@ -120,8 +120,9 @@ const NodeManagement: React.FC = () => {
             key: 'tags',
             render: (tags: string) => {
                 if (!tags) return <Text type="secondary">-</Text>;
+                const colors = ['blue', 'cyan', 'geekblue', 'purple'];
                 return tags.split(',').map((t, i) => (
-                    <Tag key={i} color="blue" style={{ fontSize: 11 }}>{t.trim()}</Tag>
+                    <Tag key={i} color={colors[i % colors.length]} style={{ fontSize: 11, borderRadius: 10 }}>{t.trim()}</Tag>
                 ));
             },
         },
@@ -157,11 +158,7 @@ const NodeManagement: React.FC = () => {
                 </Space>
             </div>
 
-            <ProCard style={{
-                background: '#ffffff', borderRadius: 12,
-                border: '1px solid #e2e8f0',
-                boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.04)',
-            }}>
+            <ProCard className="glass-card" style={{ background: 'transparent', border: 'none' }}>
                 {loading && nodes.length === 0 ? (
                     <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}>
                         <Spin size="large" />

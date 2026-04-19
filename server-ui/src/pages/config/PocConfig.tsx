@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Button, Space, Tag, Popconfirm, Modal, Typography, Input, Table, Empty, App } from 'antd';
+import { ProCard } from '@ant-design/pro-components';
 import {
     PlusOutlined,
     EditOutlined,
@@ -232,18 +233,20 @@ http:
                 </Space>
             </div>
 
-            {filtered.length === 0 && !loading ? (
-                <Empty description="暂无 POC 规则" style={{ padding: '60px 0' }} />
-            ) : (
-                <Table
-                    columns={columns}
-                    dataSource={filtered}
-                    rowKey="ID"
-                    loading={loading}
-                    pagination={{ pageSize: 15, showTotal: (t) => `共 ${t} 条` }}
-                    size="middle"
-                />
-            )}
+            <ProCard className="glass-card" style={{ background: 'transparent', border: 'none', padding: 0 }}>
+                {filtered.length === 0 && !loading ? (
+                    <Empty description="暂无 POC 规则" style={{ padding: '60px 0' }} />
+                ) : (
+                    <Table
+                        columns={columns}
+                        dataSource={filtered}
+                        rowKey="ID"
+                        loading={loading}
+                        pagination={{ pageSize: 15, showTotal: (t) => `共 ${t} 条` }}
+                        size="middle"
+                    />
+                )}
+            </ProCard>
 
             {/* POC Editor Modal */}
             <Modal

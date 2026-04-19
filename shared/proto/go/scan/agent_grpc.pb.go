@@ -25,6 +25,7 @@ const (
 	AgentService_StreamResult_FullMethodName  = "/scan.AgentService/StreamResult"
 	AgentService_TaskComplete_FullMethodName  = "/scan.AgentService/TaskComplete"
 	AgentService_EmergencyDump_FullMethodName = "/scan.AgentService/EmergencyDump"
+	AgentService_StreamLogs_FullMethodName    = "/scan.AgentService/StreamLogs"
 )
 
 // AgentServiceClient is the client API for AgentService service.
@@ -45,6 +46,8 @@ type AgentServiceClient interface {
 	TaskComplete(ctx context.Context, in *TaskCompleteReq, opts ...grpc.CallOption) (*Ack, error)
 	// EmergencyDump 紧急数据下刷（竞价实例回收前调用）
 	EmergencyDump(ctx context.Context, in *EmergencyReq, opts ...grpc.CallOption) (*Ack, error)
+	// StreamLogs 节点流水日志黑匣子上传
+	StreamLogs(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[LogPayload, Ack], error)
 }
 
 type agentServiceClient struct {
@@ -118,6 +121,19 @@ func (c *agentServiceClient) EmergencyDump(ctx context.Context, in *EmergencyReq
 	return out, nil
 }
 
+func (c *agentServiceClient) StreamLogs(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[LogPayload, Ack], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &AgentService_ServiceDesc.Streams[1], AgentService_StreamLogs_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[LogPayload, Ack]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentService_StreamLogsClient = grpc.ClientStreamingClient[LogPayload, Ack]
+
 // AgentServiceServer is the server API for AgentService service.
 // All implementations must embed UnimplementedAgentServiceServer
 // for forward compatibility.
@@ -136,6 +152,8 @@ type AgentServiceServer interface {
 	TaskComplete(context.Context, *TaskCompleteReq) (*Ack, error)
 	// EmergencyDump 紧急数据下刷（竞价实例回收前调用）
 	EmergencyDump(context.Context, *EmergencyReq) (*Ack, error)
+	// StreamLogs 节点流水日志黑匣子上传
+	StreamLogs(grpc.ClientStreamingServer[LogPayload, Ack]) error
 	mustEmbedUnimplementedAgentServiceServer()
 }
 
@@ -163,6 +181,9 @@ func (UnimplementedAgentServiceServer) TaskComplete(context.Context, *TaskComple
 }
 func (UnimplementedAgentServiceServer) EmergencyDump(context.Context, *EmergencyReq) (*Ack, error) {
 	return nil, status.Error(codes.Unimplemented, "method EmergencyDump not implemented")
+}
+func (UnimplementedAgentServiceServer) StreamLogs(grpc.ClientStreamingServer[LogPayload, Ack]) error {
+	return status.Error(codes.Unimplemented, "method StreamLogs not implemented")
 }
 func (UnimplementedAgentServiceServer) mustEmbedUnimplementedAgentServiceServer() {}
 func (UnimplementedAgentServiceServer) testEmbeddedByValue()                      {}
@@ -282,6 +303,13 @@ func _AgentService_EmergencyDump_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentService_StreamLogs_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(AgentServiceServer).StreamLogs(&grpc.GenericServerStream[LogPayload, Ack]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentService_StreamLogsServer = grpc.ClientStreamingServer[LogPayload, Ack]
+
 // AgentService_ServiceDesc is the grpc.ServiceDesc for AgentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -314,6 +342,11 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "StreamResult",
 			Handler:       _AgentService_StreamResult_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "StreamLogs",
+			Handler:       _AgentService_StreamLogs_Handler,
 			ClientStreams: true,
 		},
 	},

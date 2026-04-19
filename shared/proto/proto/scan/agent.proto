@@ -49,11 +49,14 @@ message RegisterResp {
 message HeartbeatReq {
   string agent_id = 1;
   string status = 2;         // 节点当前状态：IDLE, RUNNING...
+  string rule_version = 3;   // Agent 当前规则版本号
+  int32 running_tasks = 4;   // Agent 当前运行中任务数
 }
 
 message HeartbeatResp {
   bool ack = 1;
-  bool should_terminate = 2; // Server有权要求节点退出（例如竞价实例即将被回收或者资源充裕）
+  bool should_terminate = 2;  // Server有权要求节点退出（例如竞价实例即将被回收或者资源充裕）
+  bool should_sync_rules = 3; // 通知 Agent 需要同步规则（替代 HTTP 轮询）
 }
 
 message FetchTaskReq {
@@ -64,6 +67,8 @@ message Task {
   string task_id = 1;
   repeated string targets = 2; // 目标列表
   bytes config = 3;            // 序列化后的 engine.Config JSON，包含具体扫描参数
+  int32 priority = 4;          // 任务优先级 (0=最高, 1=普通, 2=低优先级)
+  int32 timeout_sec = 5;       // 任务超时秒数 (0=使用默认值)
 }
 
 message ScanResult {

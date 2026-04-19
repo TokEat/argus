@@ -31,19 +31,21 @@ type RootTask struct {
 }
 
 type SubTask struct {
-	ID           string `gorm:"primaryKey"`
-	TenantID     string `gorm:"default:'default';index"`
-	RootTaskID   string `gorm:"index"`
-	ChunkTargets string `gorm:"type:text"`
+	ID            string `gorm:"primaryKey"`
+	TenantID      string `gorm:"default:'default';index"`
+	RootTaskID    string `gorm:"index"`
+	ChunkTargets  string `gorm:"type:text"`
 	Status        string `gorm:"index"`
 	AgentID       string `gorm:"index"`
 	Config        string `gorm:"type:text"`
 	StreamMsgID   string
+	Priority      int    `gorm:"default:1;index"` // 0=最高, 1=普通, 2=低
+	AgentSelector string `gorm:"type:text"`       // JSON: 节点标签选择器
 	TimeoutSec    int
-	RetryCount   int
-	MaxRetry     int    `gorm:"default:3"`
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	RetryCount    int
+	MaxRetry      int    `gorm:"default:3"`
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type Node struct {
@@ -80,16 +82,18 @@ type SystemConfig struct {
 }
 
 type Asset struct {
-	ID        uint   `gorm:"primaryKey;autoIncrement"`
-	TenantID  string `gorm:"default:'default';index"`
-	TaskID    string `gorm:"uniqueIndex:idx_asset_dedupe"`
-	Target    string `gorm:"uniqueIndex:idx_asset_dedupe"`
-	Protocol  string `gorm:"uniqueIndex:idx_asset_dedupe"`
-	Port      int
-	URL       string `gorm:"type:text"`
-	Title     string
-	Service   string
-	CreatedAt time.Time
+	ID          uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID    string `gorm:"default:'default';index"`
+	TaskID      string `gorm:"uniqueIndex:idx_asset_dedupe"`
+	Target      string `gorm:"uniqueIndex:idx_asset_dedupe"`
+	Protocol    string `gorm:"uniqueIndex:idx_asset_dedupe"`
+	Port        int
+	URL         string `gorm:"type:text"`
+	Title       string
+	Service     string
+	CertSubject string // TLS 证书主体
+	CertExpiry  *time.Time // TLS 证书过期时间
+	CreatedAt   time.Time
 }
 
 type FingerprintHit struct {
@@ -116,15 +120,27 @@ type Vulnerability struct {
 
 // Arsenal represents dynamic rule files synced to agents.
 type Arsenal struct {
-	ID        string `gorm:"primaryKey"`
-	TenantID  string `gorm:"default:'default';index"`
-	Type      string `gorm:"index"`
-	FileName  string `gorm:"index"`
-	Content   string
-	Hash      string
-	State     string `gorm:"default:'Draft';index"`
+	ID           string `gorm:"primaryKey"`
+	TenantID     string `gorm:"default:'default';index"`
+	Type         string `gorm:"index"`
+	FileName     string `gorm:"index"`
+	Content      string
+	Hash         string
+	PreviousHash string // 上一版本 Hash（用于回滚）
+	Version      int    `gorm:"default:1"` // 自增版本号
+	State        string `gorm:"default:'Draft';index"`
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+// AgentLog 遥测日志模型
+type AgentLog struct {
+	ID        uint   `gorm:"primaryKey;autoIncrement"`
+	AgentID   string `gorm:"index"`
+	Level     string // INFO, WARN, ERROR
+	Message   string `gorm:"type:text"`
+	Timestamp int64  `gorm:"index"`
 	CreatedAt time.Time
-	UpdatedAt time.Time
 }
 
 func InitDB(dsn string) {
@@ -138,7 +154,7 @@ func InitDB(dsn string) {
 		log.Fatalf("failed to initialize PostgreSQL database: %v", err)
 	}
 
-	if err := db.AutoMigrate(&RootTask{}, &SubTask{}, &Node{}, &Asset{}, &FingerprintHit{}, &Vulnerability{}, &Arsenal{}, &User{}, &SystemConfig{}); err != nil {
+	if err := db.AutoMigrate(&RootTask{}, &SubTask{}, &Node{}, &Asset{}, &FingerprintHit{}, &Vulnerability{}, &Arsenal{}, &User{}, &SystemConfig{}, &AgentLog{}); err != nil {
 		log.Fatalf("failed to auto-migrate PostgreSQL database: %v", err)
 	}
 
@@ -213,7 +229,11 @@ func startGenericBatchWriter[T any](ch chan T, saveFunc func(batch []T)) {
 func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 	target := "unknown"
 	var p map[string]interface{}
+	var port int
+	var service, title, severity, plugin string
+
 	if err := json.Unmarshal([]byte(payloadJSON), &p); err == nil {
+		// 提取 target
 		if t, ok := p["target"].(string); ok {
 			target = t
 		} else if t, ok := p["host"].(string); ok {
@@ -221,15 +241,53 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 		} else if t, ok := p["url"].(string); ok {
 			target = t
 		}
+		// 精细化字段提取
+		if v, ok := p["port"].(float64); ok {
+			port = int(v)
+		}
+		if v, ok := p["service"].(string); ok {
+			service = v
+		}
+		if v, ok := p["title"].(string); ok {
+			title = v
+		}
+		if v, ok := p["severity"].(string); ok {
+			severity = v
+		}
+		if v, ok := p["plugin"].(string); ok {
+			plugin = v
+		} else if v, ok := p["name"].(string); ok {
+			plugin = v
+		}
 	}
 
 	switch payloadType {
 	case "asset", "port_scan", "subdomain":
-		assetBuffer <- Asset{TaskID: taskID, Target: target, Protocol: payloadType, URL: payloadJSON, CreatedAt: time.Now()}
+		assetBuffer <- Asset{
+			TaskID: taskID, Target: target, Protocol: payloadType,
+			Port: port, URL: payloadJSON, Title: title, Service: service,
+			CreatedAt: time.Now(),
+		}
 	case "fingerprint", "web_fingerprint", "tech":
-		fpBuffer <- FingerprintHit{TaskID: taskID, Target: target, ProductName: payloadType, Evidence: payloadJSON, CreatedAt: time.Now()}
+		productName := payloadType
+		if plugin != "" {
+			productName = plugin
+		}
+		fpBuffer <- FingerprintHit{
+			TaskID: taskID, Target: target, ProductName: productName,
+			Evidence: payloadJSON, CreatedAt: time.Now(),
+		}
 	default: // nuclei, gopoc
-		vulnBuffer2 <- Vulnerability{TaskID: taskID, Target: target, Plugin: payloadType, Severity: "Unknown", Payload: payloadJSON, CreatedAt: time.Now()}
+		if severity == "" {
+			severity = "Unknown"
+		}
+		if plugin == "" {
+			plugin = payloadType
+		}
+		vulnBuffer2 <- Vulnerability{
+			TaskID: taskID, Target: target, Plugin: plugin,
+			Severity: severity, Payload: payloadJSON, CreatedAt: time.Now(),
+		}
 	}
 }
 
@@ -247,8 +305,10 @@ func SubTaskToProto(task *SubTask) (*pb.Task, error) {
 	}
 
 	return &pb.Task{
-		TaskId:  task.ID,
-		Targets: targets,
-		Config:  config,
+		TaskId:     task.ID,
+		Targets:    targets,
+		Config:     config,
+		Priority:   int32(task.Priority),
+		TimeoutSec: int32(task.TimeoutSec),
 	}, nil
 }

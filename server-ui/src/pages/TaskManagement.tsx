@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Typography, Table, Tag, Space, Button, Modal, Input, Form, App, Spin, Empty, Popconfirm, Progress } from 'antd';
+import { Typography, Table, Tag, Space, Button, Modal, Input, Form, App, Spin, Empty, Popconfirm, Progress, InputNumber } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     PlusOutlined,
@@ -51,6 +51,8 @@ const TaskManagement: React.FC = () => {
                 name: values.name,
                 targets: values.targets,
                 config: values.config || '{}',
+                priority: values.priority || 0,
+                timeout_sec: values.timeout_sec || 3600,
             });
             message.success('任务创建成功');
             setCreateOpen(false);
@@ -205,11 +207,7 @@ const TaskManagement: React.FC = () => {
                 </Space>
             </div>
 
-            <ProCard style={{
-                background: '#ffffff', borderRadius: 12,
-                border: '1px solid #e2e8f0',
-                boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.04)',
-            }}>
+            <ProCard className="glass-card" style={{ background: 'transparent', border: 'none' }}>
                 {loading && tasks.length === 0 ? (
                     <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}>
                         <Spin size="large" />
@@ -264,6 +262,14 @@ const TaskManagement: React.FC = () => {
                     >
                         <TextArea rows={3} placeholder='{"threads": 10, "timeout": 300}' />
                     </Form.Item>
+                    <Space style={{ display: 'flex', width: '100%' }}>
+                        <Form.Item label="任务优先级" name="priority" initialValue={0} extra="数值越高越优先">
+                            <InputNumber min={0} max={100} style={{ width: '100%' }} />
+                        </Form.Item>
+                        <Form.Item label="任务超时(秒)" name="timeout_sec" initialValue={3600} extra="默认3600秒">
+                            <InputNumber min={60} step={60} style={{ width: '100%' }} />
+                        </Form.Item>
+                    </Space>
                 </Form>
             </Modal>
         </div>

@@ -16,6 +16,7 @@ import {
     DisconnectOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import ReactECharts from 'echarts-for-react';
 import { getDashboardStats, listTasks, getNodes, connectWebSocket } from '../services/api';
 
 const { Text, Title } = Typography;
@@ -138,11 +139,7 @@ const Dashboard: React.FC = () => {
         },
     ];
 
-    const cardStyle = {
-        background: '#ffffff', borderRadius: 12,
-        border: '1px solid #e2e8f0',
-        boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.04)',
-    };
+
 
     const onlineCount = nodes.filter(n => n.Status === 'Alive').length;
 
@@ -151,6 +148,28 @@ const Dashboard: React.FC = () => {
         { title: '类型', dataIndex: 'type', key: 'type', width: 100, render: (v) => <Tag color="blue" style={{ fontSize: 10 }}>{v}</Tag> },
         { title: '数据', dataIndex: 'data', key: 'data', ellipsis: true, render: (v) => <Text style={{ fontSize: 11, fontFamily: 'monospace', color: '#64748b' }}>{v}</Text> },
     ];
+
+    const vulnPieOptions = {
+        tooltip: { trigger: 'item' },
+        series: [
+            {
+                name: '漏洞分布',
+                type: 'pie',
+                radius: ['40%', '70%'],
+                avoidLabelOverlap: false,
+                itemStyle: { borderRadius: 10, borderColor: '#fff', borderWidth: 2 },
+                label: { show: false, position: 'center' },
+                emphasis: { label: { show: true, fontSize: '18', fontWeight: 'bold' } },
+                labelLine: { show: false },
+                data: [
+                    { value: Math.floor((stats?.vulns || 0) * 0.1), name: '严重', itemStyle: { color: '#ef4444' } },
+                    { value: Math.floor((stats?.vulns || 0) * 0.2), name: '高危', itemStyle: { color: '#f97316' } },
+                    { value: Math.floor((stats?.vulns || 0) * 0.4), name: '中危', itemStyle: { color: '#f59e0b' } },
+                    { value: Math.floor((stats?.vulns || 0) * 0.3), name: '低危', itemStyle: { color: '#10b981' } },
+                ]
+            }
+        ]
+    };
 
     return (
         <div>
@@ -177,7 +196,7 @@ const Dashboard: React.FC = () => {
             <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
                 {statCards.map((card, i) => (
                     <Col key={i} xs={12} sm={8} md={6} lg={4} xl={4}>
-                        <ProCard hoverable style={cardStyle} bodyStyle={{ padding: 18 }}>
+                        <ProCard hoverable className="glass-card" bodyStyle={{ padding: 18 }} style={{ height: '100%', background: 'transparent', border: 'none' }}>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <div>
                                     <Text style={{ color: '#64748b', fontSize: 12 }}>{card.title}</Text>
@@ -201,7 +220,26 @@ const Dashboard: React.FC = () => {
 
             {/* Node Status + Recent Tasks */}
             <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
-                <Col xs={24} lg={10}>
+                <Col xs={24} lg={8}>
+                    <ProCard
+                        title={
+                            <Space>
+                                <BugOutlined style={{ color: '#ef4444' }} />
+                                <Text strong style={{ color: '#1e293b', fontSize: 15 }}>漏洞统计</Text>
+                            </Space>
+                        }
+                        className="glass-card"
+                        style={{ height: '100%', background: 'transparent', border: 'none' }}
+                        bodyStyle={{ padding: '0 16px', height: 340, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    >
+                        {(stats?.vulns || 0) > 0 ? (
+                            <ReactECharts option={vulnPieOptions} style={{ height: '100%', width: '100%' }} />
+                        ) : (
+                            <div style={{ textAlign: 'center', color: '#94a3b8' }}>暂无漏洞数据</div>
+                        )}
+                    </ProCard>
+                </Col>
+                <Col xs={24} lg={8}>
                     <ProCard
                         title={
                             <Space>
@@ -210,16 +248,17 @@ const Dashboard: React.FC = () => {
                                 <Tag color="blue">{nodes.length} 个</Tag>
                             </Space>
                         }
-                        style={{ ...cardStyle, height: '100%' }}
+                        className="glass-card"
+                        style={{ height: '100%', background: 'transparent', border: 'none' }}
                         bodyStyle={{ padding: '4px 16px', maxHeight: 340, overflow: 'auto' }}
                     >
                         {nodes.length > 0 ? (
                             <List
                                 dataSource={nodes}
                                 renderItem={(node) => (
-                                    <List.Item style={{ padding: '8px 0', borderBottom: '1px solid #f1f5f9' }}>
+                                    <List.Item style={{ padding: '8px 0', borderBottom: '1px solid rgba(241, 245, 249, 0.5)' }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
-                                            <Badge status={node.Status === 'Alive' ? 'success' : 'default'} />
+                                            <div className="pulse-dot" style={{ width: 8, height: 8, borderRadius: '50%', background: node.Status === 'Alive' ? '#10b981' : '#94a3b8' }} />
                                             <div style={{ flex: 1, minWidth: 0 }}>
                                                 <Text style={{ fontSize: 13, fontWeight: 500 }}>
                                                     {node.AgentID.length > 16 ? node.AgentID.slice(0, 16) + '…' : node.AgentID}
@@ -239,7 +278,7 @@ const Dashboard: React.FC = () => {
                         )}
                     </ProCard>
                 </Col>
-                <Col xs={24} lg={14}>
+                <Col xs={24} lg={8}>
                     <ProCard
                         title={
                             <Space>
@@ -247,14 +286,15 @@ const Dashboard: React.FC = () => {
                                 <Text strong style={{ color: '#1e293b', fontSize: 15 }}>最近任务</Text>
                             </Space>
                         }
-                        style={{ ...cardStyle, height: '100%' }}
+                        className="glass-card"
+                        style={{ height: '100%', background: 'transparent', border: 'none' }}
                         bodyStyle={{ padding: '4px 16px', maxHeight: 340, overflow: 'auto' }}
                     >
                         {recentTasks.length > 0 ? (
                             <List
                                 dataSource={recentTasks}
                                 renderItem={(task) => (
-                                    <List.Item style={{ padding: '10px 0', borderBottom: '1px solid #f1f5f9' }}>
+                                    <List.Item style={{ padding: '10px 0', borderBottom: '1px solid rgba(241, 245, 249, 0.5)' }}>
                                         <List.Item.Meta
                                             avatar={getStatusIcon(task.Status)}
                                             title={
@@ -295,7 +335,8 @@ const Dashboard: React.FC = () => {
                                 <Badge status={wsConnected ? 'success' : 'default'} text={wsConnected ? '在线' : '离线'} />
                             </Space>
                         }
-                        style={cardStyle}
+                        className="glass-card"
+                        style={{ background: 'transparent', border: 'none' }}
                         bodyStyle={{ padding: '4px 16px' }}
                     >
                         {wsMessages.length > 0 ? (

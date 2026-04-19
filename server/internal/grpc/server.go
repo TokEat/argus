@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -57,12 +58,21 @@ func (s *Server) Serve() error {
 func (s *Server) Register(ctx context.Context, req *pb.RegisterReq) (*pb.RegisterResp, error) {
 	log.Printf("[Register] Agent %s connected, version: %s", req.AgentId, req.Version)
 
-	// 持久化落地 — 保存 version、capacity 等信息
+	// 序列化 tags
+	tagsJSON := "{}"
+	if len(req.Tags) > 0 {
+		if data, err := json.Marshal(req.Tags); err == nil {
+			tagsJSON = string(data)
+		}
+	}
+
+	// 持久化落地 — 保存完整节点信息
 	db.DB.Save(&db.Node{
 		AgentID:      req.AgentId,
 		Status:       "Alive",
 		Version:      req.Version,
-		Capacity:     1,
+		Tags:         tagsJSON,
+		Capacity:     1, // 默认容量，Agent 可通过心跳上报真实值
 		RunningTasks: 0,
 		LastBeat:     time.Now().UnixMilli(),
 	})
@@ -78,16 +88,44 @@ func (s *Server) Heartbeat(ctx context.Context, req *pb.HeartbeatReq) (*pb.Heart
 	var running int64
 	db.DB.Model(&db.SubTask{}).Where("agent_id = ? AND status = ?", req.AgentId, "Running").Count(&running)
 
-	_ = db.DB.Model(&db.Node{}).Where("agent_id = ?", req.AgentId).
-		Updates(map[string]interface{}{
-			"status":        "Alive",
-			"last_beat":     time.Now().UnixMilli(),
-			"running_tasks": int(running),
-		}).Error
-	return &pb.HeartbeatResp{Ack: true, ShouldTerminate: false}, nil
+	// 更新节点状态（包含规则版本）
+	updates := map[string]interface{}{
+		"status":        "Alive",
+		"last_beat":     time.Now().UnixMilli(),
+		"running_tasks": int(running),
+	}
+	// 如果 Agent 上报了规则版本，保存到 Node
+	if req.RuleVersion != "" {
+		updates["rule_version"] = req.RuleVersion
+	}
+	_ = db.DB.Model(&db.Node{}).Where("agent_id = ?", req.AgentId).Updates(updates).Error
+
+	// 检查是否需要同步规则（通过版本号对比，替代 HTTP 轮询）
+	shouldSync := false
+	var cfg db.SystemConfig
+	if db.DB.Where("key = ?", "rule_version").First(&cfg).Error == nil {
+		if req.RuleVersion != "" && req.RuleVersion != cfg.Value {
+			shouldSync = true
+		}
+	}
+
+	return &pb.HeartbeatResp{
+		Ack:             true,
+		ShouldTerminate: false,
+		ShouldSyncRules: shouldSync,
+	}, nil
 }
 
 func (s *Server) FetchTask(ctx context.Context, req *pb.FetchTaskReq) (*pb.Task, error) {
+	// P0: 容量检查 — 节点超载时不分配任务
+	var node db.Node
+	if db.DB.Where("agent_id = ?", req.AgentId).First(&node).Error == nil {
+		if node.Capacity > 0 && node.RunningTasks >= node.Capacity {
+			log.Printf("[FetchTask] Agent %s at capacity (%d/%d), skipping", req.AgentId, node.RunningTasks, node.Capacity)
+			return &pb.Task{}, nil
+		}
+	}
+
 	var task *pb.Task
 	var msgID string
 	var err error
@@ -177,17 +215,25 @@ func (s *Server) EmergencyDump(ctx context.Context, req *pb.EmergencyReq) (*pb.A
 }
 
 // StreamLogs 遥测日志黑匣子上传通道
-// 注：待用户本地运行 make proto 生成 pb.go 后再取消注释
-// func (s *Server) StreamLogs(stream pb.AgentService_StreamLogsServer) error {
-// 	for {
-// 		payload, err := stream.Recv()
-// 		if err == io.EOF {
-// 			return stream.SendAndClose(&pb.Ack{Success: true})
-// 		}
-// 		if err != nil {
-// 			return err
-// 		}
-// 		
-// 		log.Printf("[Telemetry][Agent %s][%s] %s", payload.AgentId, payload.Level, payload.Message)
-// 	}
-// }
+func (s *Server) StreamLogs(stream pb.AgentService_StreamLogsServer) error {
+	for {
+		payload, err := stream.Recv()
+		if err == io.EOF {
+			return stream.SendAndClose(&pb.Ack{Success: true})
+		}
+		if err != nil {
+			return err
+		}
+
+		// 异步写入数据库
+		db.DB.Create(&db.AgentLog{
+			AgentID:   payload.AgentId,
+			Level:     payload.Level,
+			Message:   payload.Message,
+			Timestamp: payload.Timestamp,
+		})
+
+		log.Printf("[Telemetry][Agent %s][%s] %s", payload.AgentId, payload.Level, payload.Message)
+	}
+}
+

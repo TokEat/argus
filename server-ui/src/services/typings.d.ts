@@ -52,6 +52,8 @@ declare namespace API {
     name: string;
     targets: string;       // 多行文本或 JSON 数组
     config?: string;       // JSON 字符串
+    priority?: number;
+    timeout_sec?: number;
   }
 
   // ======================== Node ========================
@@ -60,9 +62,13 @@ declare namespace API {
   interface AgentNode {
     AgentID: string;
     IP: string;
-    Status: string;    // Alive, Offline
+    Status: string;        // Alive, Offline
     Token: string;
-    Tags: string;
+    Tags: string;          // JSON: 节点标签
+    Version: string;       // Agent 版本
+    Capacity: number;      // 并发容量
+    RunningTasks: number;  // 当前运行任务数
+    RuleVersion: string;   // 规则版本
     LastBeat: number;
     CreatedAt: string;
   }
@@ -125,6 +131,8 @@ declare namespace API {
     FileName: string;
     Content: string;
     Hash: string;
+    PreviousHash: string;
+    Version: number;  // 自增版本号
     State: string;    // Draft, Approved
     CreatedAt: string;
     UpdatedAt: string;
@@ -240,5 +248,36 @@ declare namespace API {
   interface ArsenalManifest {
     rule_version: string;
     items: ManifestItem[];
+  }
+
+  // ======================== 数据增强统计 ========================
+
+  interface TrendPoint {
+    date: string;
+    count: number;
+  }
+
+  interface SeverityCount {
+    severity: string;
+    count: number;
+  }
+
+  interface TaskStats {
+    task_id: string;
+    task_name: string;
+    asset_count: number;
+    fp_count: number;
+    vuln_count: number;
+  }
+
+  // ======================== Agent 日志 ========================
+
+  interface AgentLog {
+    ID: number;
+    AgentID: string;
+    Level: string;
+    Message: string;
+    Timestamp: number;
+    CreatedAt: string;
   }
 }

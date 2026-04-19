@@ -133,9 +133,7 @@ const UserManagement: React.FC = () => {
     ];
 
     const cardStyle = {
-        background: '#ffffff', borderRadius: 12,
-        border: '1px solid #e2e8f0',
-        boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.04)',
+        background: 'transparent', border: 'none'
     };
 
     return (
@@ -151,7 +149,7 @@ const UserManagement: React.FC = () => {
                 </Space>
             </div>
 
-            <ProCard style={cardStyle}>
+            <ProCard className="glass-card" style={cardStyle}>
                 {loading && users.length === 0 ? (
                     <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}><Spin size="large" /></div>
                 ) : users.length === 0 ? (
