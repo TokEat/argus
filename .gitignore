@@ -6,14 +6,10 @@
 *.dylib
 bin/
 bin-*
-dddd
-dddd-agent
-dd
 
 # Output files
 datas/
 *.log
-*.txt
 
 # IDEs
 .idea/
