@@ -6,6 +6,7 @@ package engine
 
 import (
 	"context"
+	"dddd/scanner/ddout"
 	"dddd/scanner/internal/finger"
 	"dddd/scanner/internal/output"
 	"dddd/scanner/internal/scanner/cdn"
@@ -43,7 +44,15 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 	defer gologger.Info().Msg(aurora.BrightGreen("Done!").String())
 
-	cleanup, err := bindLegacyContext(ctx)
+	// Agent 模式（ctx != nil 且有 OutputHook）走无锁路径，允许多任务并发。
+	// CLI 模式保留全局互斥锁以兌容旧代码。
+	var cleanup func()
+	var err error
+	if ctx != nil && ctx.OutputHook != nil {
+		cleanup, err = bindAgentContext(ctx)
+	} else {
+		cleanup, err = bindLegacyContext(ctx)
+	}
 	if err != nil {
 		return err
 	}
@@ -486,6 +495,13 @@ func newPipelineUncoverState(ctx *ScanContext) (*uncover.State, func()) {
 		BannerHMap:      ctx.BannerHMap,
 		BodyHMap:        ctx.BodyHMap,
 		HeaderHMap:      ctx.HeaderHMap,
+	}
+
+	// 如果有 OutputHook，将 uncover 的输出路由到当前任务的 Hook。
+	if ctx.OutputHook != nil {
+		state.EmitFunc = func(msg ddout.OutputMessage) {
+			ctx.OutputHook(toEngineOutputMessage(msg))
+		}
 	}
 
 	return state, func() {

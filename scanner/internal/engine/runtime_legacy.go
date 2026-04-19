@@ -498,6 +498,22 @@ func bindLegacyContext(sc *ScanContext) (func(), error) {
 	}, nil
 }
 
+// bindAgentContext 轻量级上下文绑定，专用于 Agent 并发模式。
+// 不会获取全局互斥锁，不会写入 structs.Global* 全局变量，
+// 从而允许多个任务完全并行执行。
+func bindAgentContext(sc *ScanContext) (func(), error) {
+	if sc == nil {
+		return func() {}, nil
+	}
+
+	if err := sc.loadKnowledgeBase(); err != nil {
+		return nil, err
+	}
+
+	// 返回空的 cleanup，无锁无全局状态恢复
+	return func() {}, nil
+}
+
 func syncLegacyConfigFromContext(sc *ScanContext) {
 	if sc == nil {
 		return

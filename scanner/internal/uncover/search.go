@@ -53,6 +53,19 @@ type State struct {
 	BannerHMap *hybrid.HybridMap
 	BodyHMap   *hybrid.HybridMap
 	HeaderHMap *hybrid.HybridMap
+
+	// EmitFunc 可选的上下文感知输出路由。设置后替代全局 ddout.FormatOutput，
+	// 使多任务并发时输出不会互相串扰。
+	EmitFunc func(ddout.OutputMessage)
+}
+
+// emitOutput 通过 State.EmitFunc（如已设置）或全局 ddout 输出一条消息。
+func emitOutput(state *State, msg ddout.OutputMessage) {
+	if state != nil && state.EmitFunc != nil {
+		state.EmitFunc(msg)
+		return
+	}
+	ddout.FormatOutput(msg)
 }
 
 type hunterResp struct {
@@ -237,7 +250,7 @@ func searchHunterCore(keyword string, cfg Config, state *State) ([]string, []str
 				}
 				if utils.GetItemInArray(results, target) == -1 && (!isCDN || cfg.AllowCDNAssets) {
 					results = append(results, target)
-					ddout.FormatOutput(ddout.OutputMessage{
+					emitOutput(state, ddout.OutputMessage{
 						Type:     "Hunter",
 						IP:       item.IP,
 						Port:     strconv.Itoa(item.Port),
@@ -263,7 +276,7 @@ func searchHunterCore(keyword string, cfg Config, state *State) ([]string, []str
 			target := fmt.Sprintf("%s:%d", item.IP, item.Port)
 			if utils.GetItemInArray(results, target) == -1 && (!isCDN || cfg.AllowCDNAssets) {
 				results = append(results, target)
-				ddout.FormatOutput(ddout.OutputMessage{
+				emitOutput(state, ddout.OutputMessage{
 					Type:          "Hunter",
 					IP:            item.IP,
 					Port:          strconv.Itoa(item.Port),
@@ -375,7 +388,7 @@ func searchFOFACore(keyword string, cfg Config, state *State) []string {
 		}
 		if utils.GetItemInArray(results, addTarget) == -1 && (!isCDN || cfg.AllowCDNAssets) {
 			results = append(results, addTarget)
-			ddout.FormatOutput(ddout.OutputMessage{
+			emitOutput(state, ddout.OutputMessage{
 				Type:     "Fofa",
 				IP:       ip,
 				Port:     port,
@@ -447,7 +460,7 @@ func searchQuakeCore(keyword string, cfg Config, state *State, isVIP bool) []str
 		if len(item.Service.HTTP.URL) == 0 {
 			target := fmt.Sprintf("%s:%d", item.IP, item.Port)
 			if utils.GetItemInArray(results, target) == -1 {
-				ddout.FormatOutput(ddout.OutputMessage{
+				emitOutput(state, ddout.OutputMessage{
 					Type: "Quake",
 					IP:   item.IP,
 					Port: strconv.Itoa(item.Port),
@@ -467,7 +480,7 @@ func searchQuakeCore(keyword string, cfg Config, state *State, isVIP bool) []str
 			target := fmt.Sprintf("%v://%v:%v", strings.ReplaceAll(item.Service.Name, "http/ssl", "https"), item.IP, item.Port)
 			if utils.GetItemInArray(results, target) == -1 {
 				results = append(results, target)
-				ddout.FormatOutput(ddout.OutputMessage{
+				emitOutput(state, ddout.OutputMessage{
 					Type:     "Quake",
 					IP:       item.IP,
 					Port:     strconv.Itoa(item.Port),
@@ -481,7 +494,7 @@ func searchQuakeCore(keyword string, cfg Config, state *State, isVIP bool) []str
 		for _, target := range item.Service.HTTP.URL {
 			if utils.GetItemInArray(results, target) == -1 && (!isCDN || cfg.AllowCDNAssets) {
 				results = append(results, target)
-				ddout.FormatOutput(ddout.OutputMessage{
+				emitOutput(state, ddout.OutputMessage{
 					Type:     "Quake",
 					IP:       item.IP,
 					Port:     strconv.Itoa(item.Port),

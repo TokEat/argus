@@ -41,6 +41,7 @@ message RegisterReq {
   map<string, string> tags = 3; // 节点标签能力
   string os = 4;             // 节点操作系统
   string arch = 5;           // 节点架构
+  int32 capacity = 6;        // 节点最大并发能力(max_workers)
 }
 
 message RegisterResp {

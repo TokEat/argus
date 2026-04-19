@@ -76,11 +76,12 @@ func (w *Worker) Start() error {
 
 	// 1. 注册
 	_, err = w.client.Register(context.Background(), &pb.RegisterReq{
-		AgentId: w.agentID,
-		Version: "v2.0.1",
-		Tags:    w.tags,
-		Os:      runtime.GOOS,
-		Arch:    runtime.GOARCH,
+		AgentId:  w.agentID,
+		Version:  "v2.0.1",
+		Tags:     w.tags,
+		Os:       runtime.GOOS,
+		Arch:     runtime.GOARCH,
+		Capacity: int32(w.effectiveWorkerCount()),
 	})
 	if err != nil {
 		return err
@@ -95,10 +96,11 @@ func (w *Worker) Start() error {
 	// 获取动态指命
 	go w.commandLoop()
 
-	// 当前引擎仍依赖 legacy 全局态，单进程内真实并发能力受限。
+	// 引擎已完成无状态化改造，支持真正的多任务并发。
+	// effectiveWorkers = min(maxWorkers, engine.MaxConcurrentTasks())
 	effectiveWorkers := w.effectiveWorkerCount()
 	if effectiveWorkers < w.maxWorkers {
-		log.Printf("Engine still requires serialized execution; capping worker pool from %d to %d", w.maxWorkers, effectiveWorkers)
+		log.Printf("Engine concurrent limit: capping worker pool from %d to %d", w.maxWorkers, effectiveWorkers)
 	}
 	sem := make(chan struct{}, effectiveWorkers)
 

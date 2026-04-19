@@ -1,10 +1,21 @@
 package engine
 
+import "runtime"
+
 // MaxConcurrentTasks returns the number of scan tasks that can safely execute
 // in parallel within a single agent process.
 //
-// The engine still binds parts of the pipeline onto legacy package globals, so
-// only one task can run safely at a time until that migration is complete.
+// Phase 1.0: Engine refactored to context-isolated execution.
+// All pipeline state flows through ScanContext; globals are only used
+// in CLI (legacy) mode via bindLegacyContext with its own mutex.
+// Agent mode uses bindAgentContext which is fully lock-free.
 func MaxConcurrentTasks() int {
-	return 1
+	n := runtime.NumCPU()
+	if n < 2 {
+		return 2
+	}
+	if n > 16 {
+		return 16
+	}
+	return n
 }

@@ -79,7 +79,7 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterReq) (*pb.Registe
 		Status:       "Alive",
 		Version:      req.Version,
 		Tags:         tagsJSON,
-		Capacity:     1, // 默认容量，Agent 可通过心跳上报真实值
+		Capacity:     int(req.Capacity),
 		RunningTasks: 0,
 		LastBeat:     time.Now().UnixMilli(),
 		OS:           req.Os,
