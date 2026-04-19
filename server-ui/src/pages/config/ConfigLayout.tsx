@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Tabs, Space, Typography } from 'antd';
+import React from 'react';
+import { Tabs } from 'antd';
 import {
     BugOutlined,
     ScanOutlined,
@@ -7,7 +7,7 @@ import {
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 
-const { Text } = Typography;
+
 
 interface ConfigLayoutProps {
     children: React.ReactNode;

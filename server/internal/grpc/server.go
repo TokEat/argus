@@ -57,11 +57,14 @@ func (s *Server) Serve() error {
 func (s *Server) Register(ctx context.Context, req *pb.RegisterReq) (*pb.RegisterResp, error) {
 	log.Printf("[Register] Agent %s connected, version: %s", req.AgentId, req.Version)
 
-	// 持久化落地
+	// 持久化落地 — 保存 version、capacity 等信息
 	db.DB.Save(&db.Node{
-		AgentID:  req.AgentId,
-		Status:   "Alive",
-		LastBeat: time.Now().UnixMilli(),
+		AgentID:      req.AgentId,
+		Status:       "Alive",
+		Version:      req.Version,
+		Capacity:     1,
+		RunningTasks: 0,
+		LastBeat:     time.Now().UnixMilli(),
 	})
 
 	return &pb.RegisterResp{
@@ -71,10 +74,15 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterReq) (*pb.Registe
 }
 
 func (s *Server) Heartbeat(ctx context.Context, req *pb.HeartbeatReq) (*pb.HeartbeatResp, error) {
+	// 从 DB 直接计算节点当前运行中的任务数
+	var running int64
+	db.DB.Model(&db.SubTask{}).Where("agent_id = ? AND status = ?", req.AgentId, "Running").Count(&running)
+
 	_ = db.DB.Model(&db.Node{}).Where("agent_id = ?", req.AgentId).
 		Updates(map[string]interface{}{
-			"status":    "Alive",
-			"last_beat": time.Now().UnixMilli(),
+			"status":        "Alive",
+			"last_beat":     time.Now().UnixMilli(),
+			"running_tasks": int(running),
 		}).Error
 	return &pb.HeartbeatResp{Ack: true, ShouldTerminate: false}, nil
 }
@@ -94,6 +102,15 @@ func (s *Server) FetchTask(ctx context.Context, req *pb.FetchTaskReq) (*pb.Task,
 				"agent_id":      req.AgentId,
 				"stream_msg_id": msgID,
 			})
+		// 更新节点 running_tasks 计数
+		db.DB.Exec("UPDATE nodes SET running_tasks = running_tasks + 1 WHERE agent_id = ?", req.AgentId)
+
+		// 如果 RootTask 还在 Queued，更新为 Running
+		var sub db.SubTask
+		if db.DB.First(&sub, "id = ?", task.TaskId).Error == nil {
+			db.DB.Model(&db.RootTask{}).Where("id = ? AND status = ?", sub.RootTaskID, "Queued").
+				Update("status", "Running")
+		}
 	} else if task == nil {
 		task = &pb.Task{}
 	}
@@ -120,6 +137,9 @@ func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb
 	log.Printf("[TaskComplete] SubTask %s by Agent %s => Status: %s", req.TaskId, req.AgentId, req.Status)
 	db.DB.Model(&db.SubTask{}).Where("id = ?", req.TaskId).Update("status", req.Status)
 
+	// 递减节点 running_tasks
+	db.DB.Exec("UPDATE nodes SET running_tasks = GREATEST(running_tasks - 1, 0) WHERE agent_id = ?", req.AgentId)
+
 	if req.Status == "DONE" {
 		var sub db.SubTask
 		if err := db.DB.First(&sub, "id = ?", req.TaskId).Error; err == nil {
@@ -136,6 +156,11 @@ func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb
 					if root.CompletedChunks >= root.TotalChunks {
 						db.DB.Model(&root).Update("status", "FINISHED")
 						log.Printf("[Aggregation] RootTask %s is fully completed! (%d/%d chunks)", root.ID, root.CompletedChunks, root.TotalChunks)
+					} else if root.CompletedChunks > 0 && root.CompletedChunks < root.TotalChunks {
+						// 部分完成状态
+						if root.Status == "Running" {
+							db.DB.Model(&root).Update("status", "PartialDone")
+						}
 					}
 				}
 			}

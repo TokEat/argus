@@ -89,7 +89,10 @@ func main() {
 			db.DB.Where("status = ? AND last_beat < ?", "Alive", cutoff).Find(&deadNodes)
 			for _, n := range deadNodes {
 				log.Printf("[Sweep] Agent %s died.", n.AgentID)
-				db.DB.Model(&n).Update("status", "Offline")
+				db.DB.Model(&n).Updates(map[string]interface{}{
+					"status":        "Offline",
+					"running_tasks": 0,
+				})
 
 				var zombieTasks []db.SubTask
 				db.DB.Where("agent_id = ? AND status = ?", n.AgentID, "Running").Find(&zombieTasks)
@@ -110,7 +113,17 @@ func main() {
 		}
 	}()
 
+	// 超时 + 重试守护协程
+	go api.StartTaskTimeoutDaemon(context.Background(), queue)
+
+	// 初始化规则版本号（如果尚未设置）
+	if api.GetCurrentRuleVersion() == "" {
+		ver := api.BumpRuleVersion()
+		log.Printf("[Init] Initial rule version set to %s", ver)
+	}
+
 	if err := srv.Serve(); err != nil {
 		log.Fatalf("Failed to serve gRPC: %v", err)
 	}
 }
+

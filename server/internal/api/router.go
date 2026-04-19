@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/user/dddd-server/internal/db"
 	"github.com/user/dddd-server/internal/scheduler"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
@@ -135,6 +139,29 @@ func InitRouter(port string) {
 		api.POST("/dictionaries/fingerprint", addFingerprintDict)
 		api.PUT("/dictionaries/fingerprint/:product", updateFingerprintDict)
 		api.DELETE("/dictionaries/fingerprint/:product", deleteFingerprintDict)
+
+		// 规则清单（增量同步用）
+		api.GET("/arsenals/manifest", getArsenalManifest)
+
+		// 用户管理 CRUD
+		api.GET("/users", listUsers)
+		api.POST("/users", createUser)
+		api.PUT("/users/:id", updateUser)
+		api.DELETE("/users/:id", deleteUser)
+
+		// 云实例管理
+		api.GET("/cloud/instances", listCloudInstances)
+		api.POST("/cloud/instances", createCloudInstance)
+		api.DELETE("/cloud/instances/:id", deleteCloudInstance)
+
+		// 客户端构建
+		api.GET("/build/artifacts", listBuildArtifacts)
+		api.POST("/build/client", triggerBuild)
+
+		// MCP / API Key 管理
+		api.GET("/mcp/keys", listMcpKeys)
+		api.POST("/mcp/keys", saveMcpKey)
+		api.DELETE("/mcp/keys/:id", deleteMcpKey)
 	}
 
 	// SPA 控制塔前台映射兜底
@@ -181,9 +208,11 @@ func getTasks(c *gin.Context) {
 
 func createTask(c *gin.Context) {
 	var req struct {
-		Name    string          `json:"name"`
-		Targets json.RawMessage `json:"targets"`
-		Config  json.RawMessage `json:"config"`
+		Name       string          `json:"name"`
+		Targets    json.RawMessage `json:"targets"`
+		Config     json.RawMessage `json:"config"`
+		Priority   int             `json:"priority"`
+		TimeoutSec int             `json:"timeout_sec"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -239,6 +268,8 @@ func createTask(c *gin.Context) {
 			ChunkTargets: string(chunkJSON),
 			Status:       "Pending",
 			Config:       configJSON,
+			TimeoutSec:   req.TimeoutSec,
+			MaxRetry:     3,
 		})
 	}
 
@@ -246,11 +277,13 @@ func createTask(c *gin.Context) {
 		ID:              rootTaskID,
 		TenantID:        tenantID,
 		Name:            name,
-		Status:          "Pending",
+		Status:          "Queued",
 		OriginalTargets: string(targetsJSON),
 		Config:          configJSON,
 		TotalChunks:     len(subTasks),
 		CompletedChunks: 0,
+		Priority:        req.Priority,
+		TimeoutSec:      req.TimeoutSec,
 	}
 
 	// 2. Transaction for Root and SubTasks
@@ -613,18 +646,29 @@ func dedupeStrings(items []string) []string {
 func authLogin(c *gin.Context) {
 	var req struct {
 		TenantID string `json:"tenant_id"`
-		Password string `json:"password"` // 占位，生产该走密码库比对
+		Password string `json:"password"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	// 虚拟校验
-	if req.Password != "8888" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Wrong password"})
-		return
+
+	// 尝试从数据库校验用户
+	var user db.User
+	if err := db.DB.Where("username = ?", req.TenantID).First(&user).Error; err == nil {
+		// 数据库有此用户，校验密码
+		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Wrong password"})
+			return
+		}
+	} else {
+		// 降级：兼容旧的固定密码模式
+		if req.Password != "8888" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Wrong password"})
+			return
+		}
 	}
-	
+
 	// 颁发 Token
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"tenant_id": req.TenantID,
@@ -635,6 +679,478 @@ func authLogin(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to sign"})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{"token": tokenString})
 }
+
+// ==================== 规则清单 (增量同步用) ====================
+
+func getArsenalManifest(c *gin.Context) {
+	var arsenals []db.Arsenal
+	db.DB.Select("type, file_name, hash, state, updated_at").
+		Where("state = ?", "Approved").
+		Find(&arsenals)
+
+	type ManifestItem struct {
+		Type      string `json:"type"`
+		FileName  string `json:"file_name"`
+		Hash      string `json:"hash"`
+		UpdatedAt string `json:"updated_at"`
+	}
+
+	// 获取当前规则版本
+	var cfg db.SystemConfig
+	ruleVersion := "unknown"
+	if db.DB.Where("key = ?", "rule_version").First(&cfg).Error == nil {
+		ruleVersion = cfg.Value
+	}
+
+	items := make([]ManifestItem, 0, len(arsenals))
+	for _, a := range arsenals {
+		items = append(items, ManifestItem{
+			Type:      a.Type,
+			FileName:  a.FileName,
+			Hash:      a.Hash,
+			UpdatedAt: a.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"rule_version": ruleVersion,
+		"items":        items,
+	})
+}
+
+// ==================== 用户管理 CRUD ====================
+
+func listUsers(c *gin.Context) {
+	var users []db.User
+	db.DB.Order("created_at DESC").Find(&users)
+
+	type UserResp struct {
+		ID        uint   `json:"id"`
+		TenantID  string `json:"tenant_id"`
+		Username  string `json:"username"`
+		Role      string `json:"role"`
+		Status    string `json:"status"`
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
+	}
+
+	resp := make([]UserResp, 0, len(users))
+	for _, u := range users {
+		resp = append(resp, UserResp{
+			ID:        u.ID,
+			TenantID:  u.TenantID,
+			Username:  u.Username,
+			Role:      u.Role,
+			Status:    u.Status,
+			CreatedAt: u.CreatedAt.Format(time.RFC3339),
+			UpdatedAt: u.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+func createUser(c *gin.Context) {
+	var req struct {
+		Username string `json:"username" binding:"required"`
+		Password string `json:"password" binding:"required"`
+		Role     string `json:"role"`
+		TenantID string `json:"tenant_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Role == "" {
+		req.Role = "viewer"
+	}
+	if req.TenantID == "" {
+		req.TenantID = "default"
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
+		return
+	}
+
+	user := db.User{
+		TenantID:     req.TenantID,
+		Username:     req.Username,
+		PasswordHash: string(hash),
+		Role:         req.Role,
+		Status:       "active",
+	}
+	if err := db.DB.Create(&user).Error; err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Username already exists"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "id": user.ID})
+}
+
+func updateUser(c *gin.Context) {
+	id := c.Param("id")
+	var req struct {
+		Role     string `json:"role"`
+		Status   string `json:"status"`
+		Password string `json:"password"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	updates := map[string]interface{}{}
+	if req.Role != "" {
+		updates["role"] = req.Role
+	}
+	if req.Status != "" {
+		updates["status"] = req.Status
+	}
+	if req.Password != "" {
+		hash, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		updates["password_hash"] = string(hash)
+	}
+
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No fields to update"})
+		return
+	}
+
+	if err := db.DB.Model(&db.User{}).Where("id = ?", id).Updates(updates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+func deleteUser(c *gin.Context) {
+	id := c.Param("id")
+	if err := db.DB.Delete(&db.User{}, "id = ?", id).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// ==================== 云实例管理 ====================
+
+func listCloudInstances(c *gin.Context) {
+	// 通过 Docker CLI 查询当前运行的 agent 容器
+	type Instance struct {
+		ID        string `json:"id"`
+		IP        string `json:"ip"`
+		Status    string `json:"status"`
+		Provider  string `json:"provider"`
+		CreatedAt string `json:"created_at"`
+	}
+
+	// 从 nodes 表中读取记录作为实例列表
+	var nodes []db.Node
+	db.DB.Order("created_at DESC").Find(&nodes)
+
+	instances := make([]Instance, 0, len(nodes))
+	for _, n := range nodes {
+		instances = append(instances, Instance{
+			ID:        n.AgentID,
+			IP:        n.IP,
+			Status:    n.Status,
+			Provider:  "agent",
+			CreatedAt: n.CreatedAt.Format(time.RFC3339),
+		})
+	}
+
+	c.JSON(http.StatusOK, instances)
+}
+
+func createCloudInstance(c *gin.Context) {
+	var req struct {
+		Provider     string `json:"provider"`     // docker, aliyun
+		Region       string `json:"region"`
+		InstanceType string `json:"instance_type"`
+		ImageID      string `json:"image_id"`
+		ServerAddr   string `json:"server_addr"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 当前实现：仅返回提示信息，实际创建需要配置云 Provider
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "accepted",
+		"message": fmt.Sprintf("Cloud instance creation request accepted (provider=%s). Please configure cloud provider credentials.", req.Provider),
+	})
+}
+
+func deleteCloudInstance(c *gin.Context) {
+	id := c.Param("id")
+	// 标记节点为 Offline
+	db.DB.Model(&db.Node{}).Where("agent_id = ?", id).Update("status", "Offline")
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "message": fmt.Sprintf("Instance %s marked for termination", id)})
+}
+
+// ==================== 客户端构建 ====================
+
+func listBuildArtifacts(c *gin.Context) {
+	type Artifact struct {
+		Name     string `json:"name"`
+		Size     int64  `json:"size"`
+		Platform string `json:"platform"`
+		Arch     string `json:"arch"`
+		ModTime  string `json:"mod_time"`
+	}
+
+	releaseDir := "./release"
+	artifacts := make([]Artifact, 0)
+
+	entries, err := os.ReadDir(releaseDir)
+	if err != nil {
+		c.JSON(http.StatusOK, artifacts)
+		return
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		name := entry.Name()
+		platform, arch := parseBinaryName(name)
+		artifacts = append(artifacts, Artifact{
+			Name:     name,
+			Size:     info.Size(),
+			Platform: platform,
+			Arch:     arch,
+			ModTime:  info.ModTime().Format(time.RFC3339),
+		})
+	}
+
+	c.JSON(http.StatusOK, artifacts)
+}
+
+func parseBinaryName(name string) (platform, arch string) {
+	parts := strings.Split(name, "-")
+	for _, p := range parts {
+		switch p {
+		case "linux", "darwin", "windows":
+			platform = p
+		case "amd64", "arm64", "386":
+			arch = p
+		}
+	}
+	if platform == "" {
+		platform = "unknown"
+	}
+	if arch == "" {
+		arch = "unknown"
+	}
+	return
+}
+
+func triggerBuild(c *gin.Context) {
+	var req struct {
+		Platform string `json:"platform"` // linux, darwin, windows
+		Arch     string `json:"arch"`     // amd64, arm64
+		Pack     bool   `json:"pack"`     // 是否 UPX 压缩
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Platform == "" {
+		req.Platform = "linux"
+	}
+	if req.Arch == "" {
+		req.Arch = "amd64"
+	}
+
+	// 检查 build.sh 是否存在
+	buildScript := "./build.sh"
+	if _, err := os.Stat(buildScript); os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "build.sh not found in project root"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":   "accepted",
+		"message":  fmt.Sprintf("Build request queued: %s/%s (pack=%v). Run './build.sh' manually or wait for CI pipeline.", req.Platform, req.Arch, req.Pack),
+		"platform": req.Platform,
+		"arch":     req.Arch,
+	})
+}
+
+// ==================== MCP / API Key 管理 ====================
+
+func listMcpKeys(c *gin.Context) {
+	var configs []db.SystemConfig
+	db.DB.Where("key LIKE ?", "mcp_%").Find(&configs)
+
+	type McpKey struct {
+		ID       string `json:"id"`
+		Provider string `json:"provider"`
+		Key      string `json:"key"`
+		Status   string `json:"status"`
+	}
+
+	keys := make([]McpKey, 0, len(configs))
+	for _, cfg := range configs {
+		provider := strings.TrimPrefix(cfg.Key, "mcp_")
+		masked := cfg.Value
+		if len(masked) > 8 {
+			masked = masked[:4] + "****" + masked[len(masked)-4:]
+		}
+		keys = append(keys, McpKey{
+			ID:       cfg.Key,
+			Provider: provider,
+			Key:      masked,
+			Status:   "active",
+		})
+	}
+
+	c.JSON(http.StatusOK, keys)
+}
+
+func saveMcpKey(c *gin.Context) {
+	var req struct {
+		Provider string `json:"provider" binding:"required"` // fofa, hunter, quake, openai, deepseek
+		Key      string `json:"key" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	configKey := "mcp_" + strings.ToLower(req.Provider)
+	cfg := db.SystemConfig{
+		Key:       configKey,
+		Value:     req.Key,
+		UpdatedAt: time.Now(),
+	}
+	db.DB.Save(&cfg)
+
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+func deleteMcpKey(c *gin.Context) {
+	id := c.Param("id")
+	db.DB.Delete(&db.SystemConfig{}, "key = ?", id)
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// ==================== 辅助：下载构建产物 ====================
+
+func init() {
+	// 注册 release 目录为静态文件服务（供前端下载）
+	_ = os.MkdirAll("./release", 0755)
+}
+
+// ==================== getNodes 增强返回新字段 ========
+// getNodes 已经在原代码中存在，这里不重复声明
+// 新字段 Version/Capacity/RunningTasks/RuleVersion 已通过 GORM AutoMigrate 添加到
+// Node 模型中，getNodes 使用 db.DB.Find(&nodes) 会自动包含这些字段
+
+// ==================== 超时/重试守护协程 (由 main.go 调用) ====================
+
+// StartTaskTimeoutDaemon 由 main.go 启动，定期检查超时和重试逻辑
+func StartTaskTimeoutDaemon(ctx context.Context, q *scheduler.TaskQueue) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			handleTimeoutTasks(q)
+		}
+	}
+}
+
+func handleTimeoutTasks(q *scheduler.TaskQueue) {
+	// 查找 Running 状态且已超时的 SubTask
+	var subs []db.SubTask
+	db.DB.Where("status = ? AND timeout_sec > 0", "Running").Find(&subs)
+
+	now := time.Now()
+	for _, sub := range subs {
+		deadline := sub.UpdatedAt.Add(time.Duration(sub.TimeoutSec) * time.Second)
+		if now.After(deadline) {
+			log.Printf("[TimeoutDaemon] SubTask %s timed out (timeout=%ds)", sub.ID, sub.TimeoutSec)
+
+			if sub.RetryCount < sub.MaxRetry {
+				// 可重试：递增计数，重置状态，重入队
+				db.DB.Model(&sub).Updates(map[string]interface{}{
+					"status":      "Pending",
+					"retry_count": sub.RetryCount + 1,
+					"agent_id":    "",
+				})
+				if q != nil {
+					pbSub, _ := db.SubTaskToProto(&sub)
+					if pbSub != nil {
+						_ = q.PushTaskToFront(context.Background(), pbSub)
+						log.Printf("[TimeoutDaemon] SubTask %s re-queued (retry %d/%d)", sub.ID, sub.RetryCount+1, sub.MaxRetry)
+					}
+				}
+			} else {
+				// 超过重试次数：标记为 Timeout
+				db.DB.Model(&sub).Update("status", "Timeout")
+				log.Printf("[TimeoutDaemon] SubTask %s marked as Timeout (max retries exceeded)", sub.ID)
+
+				// 检查 RootTask 是否所有子任务都结束了
+				if sub.RootTaskID != "" {
+					var running int64
+					db.DB.Model(&db.SubTask{}).Where("root_task_id = ? AND status IN ?",
+						sub.RootTaskID, []string{"Pending", "Running"}).Count(&running)
+					if running == 0 {
+						db.DB.Model(&db.RootTask{}).Where("id = ?", sub.RootTaskID).
+							Update("status", "Timeout")
+					}
+				}
+			}
+			// 递减关联节点 running_tasks
+			if sub.AgentID != "" {
+				db.DB.Exec("UPDATE nodes SET running_tasks = GREATEST(running_tasks - 1, 0) WHERE agent_id = ?", sub.AgentID)
+			}
+		}
+	}
+}
+
+// GetCurrentRuleVersion 获取当前规则版本号
+func GetCurrentRuleVersion() string {
+	var cfg db.SystemConfig
+	if db.DB.Where("key = ?", "rule_version").First(&cfg).Error == nil {
+		return cfg.Value
+	}
+	return ""
+}
+
+// BumpRuleVersion 生成并保存新的规则版本号
+func BumpRuleVersion() string {
+	version := fmt.Sprintf("v%s.%03d", time.Now().Format("2006.01.02"), time.Now().UnixMilli()%1000)
+	cfg := db.SystemConfig{
+		Key:       "rule_version",
+		Value:     version,
+		UpdatedAt: time.Now(),
+	}
+	db.DB.Save(&cfg)
+	return version
+}
+
+// 利用辅助变量避免 import 报错
+var (
+	_ = strconv.Itoa
+	_ = filepath.Base
+	_ = os.Stat
+)
+

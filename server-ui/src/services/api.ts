@@ -202,4 +202,68 @@ export function connectWebSocket(onMessage: (data: unknown) => void): WebSocket 
     return ws;
 }
 
+// ===========================
+// User Management API
+// ===========================
+
+export async function listUsers(): Promise<API.User[]> {
+    return request.get('/users');
+}
+
+export async function createUserApi(data: API.CreateUserRequest): Promise<{ status: string; id: number }> {
+    return request.post('/users', data);
+}
+
+export async function updateUserApi(id: number, data: API.UpdateUserRequest): Promise<API.MessageResponse> {
+    return request.put(`/users/${id}`, data);
+}
+
+export async function deleteUserApi(id: number): Promise<API.MessageResponse> {
+    return request.delete(`/users/${id}`);
+}
+
+// ===========================
+// Cloud Instance API
+// ===========================
+
+export async function listCloudInstances(): Promise<API.CloudInstance[]> {
+    return request.get('/cloud/instances');
+}
+
+export async function createCloudInstance(data: API.CreateInstanceRequest): Promise<API.MessageResponse> {
+    return request.post('/cloud/instances', data);
+}
+
+export async function deleteCloudInstance(id: string): Promise<API.MessageResponse> {
+    return request.delete(`/cloud/instances/${id}`);
+}
+
+// ===========================
+// Build API
+// ===========================
+
+export async function listBuildArtifacts(): Promise<API.BuildArtifact[]> {
+    return request.get('/build/artifacts');
+}
+
+export async function triggerBuild(data: API.BuildRequest): Promise<API.MessageResponse> {
+    return request.post('/build/client', data);
+}
+
+// ===========================
+// MCP Key API
+// ===========================
+
+export async function listMcpKeys(): Promise<API.McpKey[]> {
+    return request.get('/mcp/keys');
+}
+
+export async function saveMcpKey(provider: string, key: string): Promise<API.MessageResponse> {
+    return request.post('/mcp/keys', { provider, key });
+}
+
+export async function deleteMcpKey(id: string): Promise<API.MessageResponse> {
+    return request.delete(`/mcp/keys/${id}`);
+}
+
 export default request;

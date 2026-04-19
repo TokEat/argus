@@ -14,7 +14,6 @@ import {
     SafetyOutlined,
     ApiOutlined,
     DatabaseOutlined,
-    EyeOutlined,
     ProfileOutlined,
 } from '@ant-design/icons';
 import BasicLayout from './layouts/BasicLayout';

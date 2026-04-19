@@ -41,18 +41,42 @@ type SubTask struct {
 	StreamMsgID   string
 	TimeoutSec    int
 	RetryCount   int
+	MaxRetry     int    `gorm:"default:3"`
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
 
 type Node struct {
-	AgentID   string `gorm:"primaryKey"`
-	IP        string
-	Status    string
-	Token     string
-	Tags      string
-	LastBeat  int64
-	CreatedAt time.Time
+	AgentID      string `gorm:"primaryKey"`
+	IP           string
+	Status       string
+	Token        string
+	Tags         string
+	Version      string
+	Capacity     int    `gorm:"default:1"`
+	RunningTasks int    `gorm:"default:0"`
+	RuleVersion  string
+	LastBeat     int64
+	CreatedAt    time.Time
+}
+
+// User 用户模型 - 多租户用户管理
+type User struct {
+	ID           uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID     string `gorm:"default:'default';index"`
+	Username     string `gorm:"uniqueIndex"`
+	PasswordHash string
+	Role         string `gorm:"default:'viewer'"` // admin, operator, viewer
+	Status       string `gorm:"default:'active'"` // active, disabled
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+// SystemConfig 系统配置键值存储
+type SystemConfig struct {
+	Key       string `gorm:"primaryKey"`
+	Value     string `gorm:"type:text"`
+	UpdatedAt time.Time
 }
 
 type Asset struct {
@@ -114,7 +138,7 @@ func InitDB(dsn string) {
 		log.Fatalf("failed to initialize PostgreSQL database: %v", err)
 	}
 
-	if err := db.AutoMigrate(&RootTask{}, &SubTask{}, &Node{}, &Asset{}, &FingerprintHit{}, &Vulnerability{}, &Arsenal{}); err != nil {
+	if err := db.AutoMigrate(&RootTask{}, &SubTask{}, &Node{}, &Asset{}, &FingerprintHit{}, &Vulnerability{}, &Arsenal{}, &User{}, &SystemConfig{}); err != nil {
 		log.Fatalf("failed to auto-migrate PostgreSQL database: %v", err)
 	}
 

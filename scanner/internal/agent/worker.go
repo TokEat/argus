@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,22 +24,28 @@ import (
 
 // Worker 是扫描节点的核心
 type Worker struct {
-	agentID    string
-	serverAddr string
-	apiURL     string
-	client     pb.AgentServiceClient
+	agentID      string
+	serverAddr   string
+	apiURL       string
+	client       pb.AgentServiceClient
 	conn         *grpc.ClientConn
-	wg           sync.WaitGroup // 跟踪并发任务
+	wg           sync.WaitGroup
 	mu           sync.Mutex
 	runningTasks map[string]context.CancelFunc
+	maxWorkers   int
+	ruleVersion  string
 }
 
-func NewWorker(agentID, serverAddr, apiURL string) *Worker {
+func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int) *Worker {
+	if maxWorkers <= 0 {
+		maxWorkers = 1
+	}
 	return &Worker{
 		agentID:      agentID,
 		serverAddr:   serverAddr,
 		apiURL:       apiURL,
 		runningTasks: make(map[string]context.CancelFunc),
+		maxWorkers:   maxWorkers,
 	}
 }
 
@@ -68,9 +75,8 @@ func (w *Worker) Start() error {
 	// 获取动态指命
 	go w.commandLoop()
 
-	// Phase 1: 每个 agent 同一时刻只执行一个任务，进程内不做多任务并发。
-	maxWorkers := 1
-	sem := make(chan struct{}, maxWorkers)
+	// 可配置并发数
+	sem := make(chan struct{}, w.maxWorkers)
 
 	// 信号劫持
 	sigCh := make(chan os.Signal, 1)
@@ -83,7 +89,7 @@ func (w *Worker) Start() error {
 		close(quit)
 	}()
 
-	log.Printf("Agent started with worker pool size: %d", maxWorkers)
+	log.Printf("Agent started with worker pool size: %d", w.maxWorkers)
 
 	// 2. 轮询领取任务
 	for {
@@ -173,9 +179,127 @@ func (w *Worker) commandLoop() {
 }
 
 func (w *Worker) syncRules() {
-	log.Println("[Sync] Requesting Arsenal rules from API...")
+	log.Println("[Sync] Checking Arsenal manifest for incremental update...")
+
+	// 1. 获取服务端 manifest
+	manifestURL := w.apiURL + "/api/v1/arsenals/manifest"
+	resp, err := http.Get(manifestURL)
+	if err != nil {
+		log.Printf("[Sync] Failed to fetch manifest, falling back to full sync: %v", err)
+		w.syncRulesFull()
+		return
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	var manifest struct {
+		RuleVersion string `json:"rule_version"`
+		Items       []struct {
+			Type     string `json:"type"`
+			FileName string `json:"file_name"`
+			Hash     string `json:"hash"`
+		} `json:"items"`
+	}
+	if json.Unmarshal(body, &manifest) != nil {
+		log.Println("[Sync] Failed to parse manifest, falling back to full sync")
+		w.syncRulesFull()
+		return
+	}
+
+	// 2. 加载本地 hash 清单
+	localHashes := w.loadLocalManifest()
+
+	// 3. 对比差异，仅下载变更的文件
+	updated := 0
+	for _, item := range manifest.Items {
+		localHash, exists := localHashes[item.Type+"/"+item.FileName]
+		if exists && localHash == item.Hash {
+			continue // 未变更，跳过
+		}
+
+		// 需要更新：备份旧文件 + 下载新文件
+		dirPath := "config"
+		if item.Type == "poc" {
+			dirPath = "config/pocs"
+		}
+		_ = os.MkdirAll(dirPath, 0755)
+		targetPath := filepath.Join(dirPath, item.FileName)
+
+		// 备份旧文件
+		backupDir := "config/.backup"
+		_ = os.MkdirAll(backupDir, 0755)
+		if _, err := os.Stat(targetPath); err == nil {
+			backupPath := filepath.Join(backupDir, item.Type+"_"+item.FileName)
+			data, _ := os.ReadFile(targetPath)
+			_ = os.WriteFile(backupPath, data, 0644)
+		}
+
+		// 下载新内容
+		content := w.downloadRule(item.Type, item.FileName)
+		if content != "" {
+			_ = os.WriteFile(targetPath, []byte(content), 0644)
+			log.Printf("[Sync] Updated %s -> %s (hash: %s)", item.Type, targetPath, item.Hash[:8])
+			localHashes[item.Type+"/"+item.FileName] = item.Hash
+			updated++
+		}
+	}
+
+	// 4. 保存本地 manifest
+	w.saveLocalManifest(localHashes)
+	w.ruleVersion = manifest.RuleVersion
+
+	if updated > 0 {
+		log.Printf("[Sync] Incremental sync complete: %d files updated, rule_version=%s", updated, manifest.RuleVersion)
+	} else {
+		log.Printf("[Sync] All rules up to date, rule_version=%s", manifest.RuleVersion)
+	}
+}
+
+func (w *Worker) downloadRule(ruleType, fileName string) string {
+	url := w.apiURL + "/api/v1/arsenals/" + ruleType
+	resp, err := http.Get(url)
+	if err != nil {
+		return ""
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	var rules []struct {
+		FileName string `json:"FileName"`
+		Content  string `json:"Content"`
+	}
+	if json.Unmarshal(body, &rules) == nil {
+		for _, r := range rules {
+			if r.FileName == fileName {
+				return r.Content
+			}
+		}
+	}
+	return ""
+}
+
+func (w *Worker) loadLocalManifest() map[string]string {
+	hashes := make(map[string]string)
+	data, err := os.ReadFile("config/.manifest.json")
+	if err != nil {
+		return hashes
+	}
+	_ = json.Unmarshal(data, &hashes)
+	return hashes
+}
+
+func (w *Worker) saveLocalManifest(hashes map[string]string) {
+	data, _ := json.MarshalIndent(hashes, "", "  ")
+	_ = os.MkdirAll("config", 0755)
+	_ = os.WriteFile("config/.manifest.json", data, 0644)
+}
+
+// syncRulesFull 全量同步降级方案
+func (w *Worker) syncRulesFull() {
+	log.Println("[Sync] Full sync from Arsenal API...")
 
 	ruleTypes := []string{"poc", "finger", "workflow", "dir"}
+	localHashes := make(map[string]string)
 
 	for _, rt := range ruleTypes {
 		resp, err := http.Get(w.apiURL + "/api/v1/arsenals/" + rt)
@@ -195,6 +319,8 @@ func (w *Worker) syncRules() {
 				for _, r := range rules {
 					path := filepath.Join(dirPath, r.FileName)
 					_ = os.WriteFile(path, []byte(r.Content), 0644)
+					hash := fmt.Sprintf("%x", md5.Sum([]byte(r.Content)))
+					localHashes[rt+"/"+r.FileName] = hash
 					log.Printf("[Sync] Reloaded %s -> %s", rt, path)
 				}
 			}
@@ -202,6 +328,8 @@ func (w *Worker) syncRules() {
 			log.Printf("[Sync] Failed to reach API for %s: %v", rt, err)
 		}
 	}
+
+	w.saveLocalManifest(localHashes)
 }
 
 func (w *Worker) executeTask(task *pb.Task) {

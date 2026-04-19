@@ -159,4 +159,86 @@ declare namespace API {
     status?: string;
     error?: string;
   }
+
+  // ======================== User Management ========================
+
+  interface User {
+    id: number;
+    tenant_id: string;
+    username: string;
+    role: string;       // admin, operator, viewer
+    status: string;     // active, disabled
+    created_at: string;
+    updated_at: string;
+  }
+
+  interface CreateUserRequest {
+    username: string;
+    password: string;
+    role?: string;
+    tenant_id?: string;
+  }
+
+  interface UpdateUserRequest {
+    role?: string;
+    status?: string;
+    password?: string;
+  }
+
+  // ======================== Cloud Instance ========================
+
+  interface CloudInstance {
+    id: string;
+    ip: string;
+    status: string;
+    provider: string;
+    created_at: string;
+  }
+
+  interface CreateInstanceRequest {
+    provider: string;
+    region?: string;
+    instance_type?: string;
+    image_id?: string;
+    server_addr?: string;
+  }
+
+  // ======================== Build Artifacts ========================
+
+  interface BuildArtifact {
+    name: string;
+    size: number;
+    platform: string;
+    arch: string;
+    mod_time: string;
+  }
+
+  interface BuildRequest {
+    platform: string;
+    arch: string;
+    pack?: boolean;
+  }
+
+  // ======================== MCP Keys ========================
+
+  interface McpKey {
+    id: string;
+    provider: string;
+    key: string;
+    status: string;
+  }
+
+  // ======================== Arsenal Manifest ========================
+
+  interface ManifestItem {
+    type: string;
+    file_name: string;
+    hash: string;
+    updated_at: string;
+  }
+
+  interface ArsenalManifest {
+    rule_version: string;
+    items: ManifestItem[];
+  }
 }
