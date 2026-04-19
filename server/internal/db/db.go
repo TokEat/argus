@@ -9,6 +9,7 @@ import (
 	pb "github.com/user/dddd-proto/go/scan"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var DB *gorm.DB
@@ -187,19 +188,19 @@ var OnResultBatchSaved func(count int, rType string)
 
 func StartBatchWriters() {
 	go startGenericBatchWriter(assetBuffer, func(batch []Asset) {
-		DB.CreateInBatches(batch, 500)
+		DB.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(batch, 500)
 		if OnResultBatchSaved != nil && len(batch) > 0 {
 			OnResultBatchSaved(len(batch), "asset")
 		}
 	})
 	go startGenericBatchWriter(fpBuffer, func(batch []FingerprintHit) {
-		DB.CreateInBatches(batch, 500)
+		DB.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(batch, 500)
 		if OnResultBatchSaved != nil && len(batch) > 0 {
 			OnResultBatchSaved(len(batch), "fingerprint")
 		}
 	})
 	go startGenericBatchWriter(vulnBuffer2, func(batch []Vulnerability) {
-		DB.CreateInBatches(batch, 500)
+		DB.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(batch, 500)
 		if OnResultBatchSaved != nil && len(batch) > 0 {
 			OnResultBatchSaved(len(batch), "vuln")
 		}
