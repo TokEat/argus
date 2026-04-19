@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Typography, Table, Tag, Space, Button, Spin, Tooltip, Popover, Badge, Empty, Progress, List } from 'antd';
+import { Typography, Table, Tag, Space, Button, Spin, Tooltip, Badge, Empty, Progress } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     ReloadOutlined,
@@ -128,33 +128,9 @@ const NodeManagement: React.FC = () => {
                 if (percent > 70) color = '#f59e0b'; // Yellow
                 if (percent > 90) color = '#ef4444'; // Red
 
-                const content = (
-                    <div style={{ maxWidth: 300, maxHeight: 400, overflow: 'auto' }}>
-                        <div style={{ marginBottom: 8, fontWeight: 'bold' }}>运行中任务 ({running}/{capacity})</div>
-                        {record.RunningTaskDetails && record.RunningTaskDetails.length > 0 ? (
-                            <List
-                                size="small"
-                                dataSource={record.RunningTaskDetails}
-                                renderItem={(task) => (
-                                    <List.Item>
-                                        <div style={{ wordBreak: 'break-all' }}>
-                                            <Tag color="blue">{task.task_id.split('-')[0]}</Tag>
-                                            <Text style={{ fontSize: 12 }}>
-                                                {task.targets?.join(', ')}
-                                            </Text>
-                                        </div>
-                                    </List.Item>
-                                )}
-                            />
-                        ) : (
-                            <Text type="secondary">暂无详细任务数据</Text>
-                        )}
-                    </div>
-                );
-
                 return (
-                    <Popover content={content} trigger="hover" placement="left">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <Tooltip title={`运行中: ${running} / 容量: ${capacity}`}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <Progress 
                                 percent={percent} 
                                 showInfo={false} 
@@ -164,7 +140,7 @@ const NodeManagement: React.FC = () => {
                             />
                             <Text style={{ fontSize: 11, color: '#64748b', minWidth: 35 }}>{percent}%</Text>
                         </div>
-                    </Popover>
+                    </Tooltip>
                 );
             }
         },

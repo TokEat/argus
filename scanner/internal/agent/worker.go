@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"dddd/scanner/internal/engine"
-	"dddd/scanner/structs"
 	pb "github.com/user/dddd-proto/go/scan"
 
 	"google.golang.org/grpc"
@@ -158,18 +157,13 @@ func (w *Worker) heartbeatLoop() {
 			// 上报当前规则版本和运行中任务数
 			w.mu.Lock()
 			runningCount := int32(len(w.runningTasks))
-			taskIDs := make([]string, 0, runningCount)
-			for tid := range w.runningTasks {
-				taskIDs = append(taskIDs, tid)
-			}
 			w.mu.Unlock()
 
 			resp, err := w.client.Heartbeat(context.Background(), &pb.HeartbeatReq{
-				AgentId:        w.agentID,
-				Status:         "Alive",
-				RuleVersion:    w.ruleVersion,
-				RunningTasks:   runningCount,
-				RunningTaskIds: taskIDs,
+				AgentId:      w.agentID,
+				Status:       "Alive",
+				RuleVersion:  w.ruleVersion,
+				RunningTasks: runningCount,
 			})
 			if err != nil {
 				log.Printf("Heartbeat failure: %v", err)
@@ -372,7 +366,7 @@ func (w *Worker) executeTask(task *pb.Task) {
 	log.Printf("Received Task: %s with targets: %v", task.TaskId, task.Targets)
 
 	// 解析配置
-	cfg := engine.Config(structs.DefaultConfig())
+	var cfg engine.Config
 	if len(task.Config) > 0 {
 		_ = json.Unmarshal(task.Config, &cfg)
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"log"
-	"os"
 	"time"
 
 	pb "github.com/user/dddd-proto/go/scan"
@@ -22,7 +21,6 @@ func main() {
 		redisDB       int
 		grpcPort      int
 		apiAddr       string
-		configDir     string
 	)
 
 	flag.StringVar(&dbDSN, "db", "", "Database DSN. Empty uses local SQLite data/dddd.db")
@@ -31,24 +29,13 @@ func main() {
 	flag.IntVar(&redisDB, "redis-db", 0, "Redis database index")
 	flag.IntVar(&grpcPort, "grpc", 50051, "gRPC listen port")
 	flag.StringVar(&apiAddr, "api", ":8085", "HTTP API listen address")
-	flag.StringVar(&configDir, "config-dir", "", "Path to the directory containing finger.yaml, dir.yaml, workflow.yaml, and pocs/")
 	flag.Parse()
 
 	log.Println("Initializing database...")
 	db.InitDB(dbDSN)
 
-	if configDir == "" {
-		if _, err := os.Stat("scanner/common/config"); err == nil {
-			configDir = "scanner/common/config" // Running from project root
-		} else {
-			configDir = "../scanner/common/config" // Running from release/ or server/
-		}
-	}
-
-	// 启动时确保规则原始文件仓库与结构化规则目录都已初始化到 PostgreSQL。
-	if err := db.BootstrapRuleCatalog(configDir); err != nil {
-		log.Printf("Warning: Failed to bootstrap rule catalog from %s: %v", configDir, err)
-	}
+	// 首次启动时，从 scanner/common/config/ 导入 POC/指纹/Workflow 到 PostgreSQL
+	db.SeedArsenalFromDisk("scanner/common/config")
 
 	// Set up the Hub Broadcast Hook for batching to prevent websocket surge
 	db.OnResultBatchSaved = func(count int, rType string) {
@@ -89,7 +76,7 @@ func main() {
 
 	// 标签不匹配时退回任务：ACK 掉当前消息，按原优先级重新入队
 	srv.SetReturnTaskHook(func(task *pb.Task, msgID string) error {
-		_ = queue.AckTask(context.Background(), msgID)    // ACK 掉旧消息位点
+		_ = queue.AckTask(context.Background(), msgID) // ACK 掉旧消息位点
 		return queue.PushTask(context.Background(), task) // 按原优先级重新入队
 	})
 
@@ -145,3 +132,4 @@ func main() {
 		log.Fatalf("Failed to serve gRPC: %v", err)
 	}
 }
+

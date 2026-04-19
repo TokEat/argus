@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v7.34.1
-// source: scan/agent.proto
+// source: proto/scan/agent.proto
 
 package scan
 
@@ -31,7 +31,7 @@ type Ack struct {
 
 func (x *Ack) Reset() {
 	*x = Ack{}
-	mi := &file_scan_agent_proto_msgTypes[0]
+	mi := &file_proto_scan_agent_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -43,7 +43,7 @@ func (x *Ack) String() string {
 func (*Ack) ProtoMessage() {}
 
 func (x *Ack) ProtoReflect() protoreflect.Message {
-	mi := &file_scan_agent_proto_msgTypes[0]
+	mi := &file_proto_scan_agent_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -56,7 +56,7 @@ func (x *Ack) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Ack.ProtoReflect.Descriptor instead.
 func (*Ack) Descriptor() ([]byte, []int) {
-	return file_scan_agent_proto_rawDescGZIP(), []int{0}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *Ack) GetSuccess() bool {
@@ -84,7 +84,7 @@ type RegisterReq struct {
 
 func (x *RegisterReq) Reset() {
 	*x = RegisterReq{}
-	mi := &file_scan_agent_proto_msgTypes[1]
+	mi := &file_proto_scan_agent_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -96,7 +96,7 @@ func (x *RegisterReq) String() string {
 func (*RegisterReq) ProtoMessage() {}
 
 func (x *RegisterReq) ProtoReflect() protoreflect.Message {
-	mi := &file_scan_agent_proto_msgTypes[1]
+	mi := &file_proto_scan_agent_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -109,7 +109,7 @@ func (x *RegisterReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterReq.ProtoReflect.Descriptor instead.
 func (*RegisterReq) Descriptor() ([]byte, []int) {
-	return file_scan_agent_proto_rawDescGZIP(), []int{1}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *RegisterReq) GetAgentId() string {
@@ -143,7 +143,7 @@ type RegisterResp struct {
 
 func (x *RegisterResp) Reset() {
 	*x = RegisterResp{}
-	mi := &file_scan_agent_proto_msgTypes[2]
+	mi := &file_proto_scan_agent_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -155,7 +155,7 @@ func (x *RegisterResp) String() string {
 func (*RegisterResp) ProtoMessage() {}
 
 func (x *RegisterResp) ProtoReflect() protoreflect.Message {
-	mi := &file_scan_agent_proto_msgTypes[2]
+	mi := &file_proto_scan_agent_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -168,7 +168,7 @@ func (x *RegisterResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterResp.ProtoReflect.Descriptor instead.
 func (*RegisterResp) Descriptor() ([]byte, []int) {
-	return file_scan_agent_proto_rawDescGZIP(), []int{2}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *RegisterResp) GetSuccess() bool {
@@ -186,19 +186,18 @@ func (x *RegisterResp) GetToken() string {
 }
 
 type HeartbeatReq struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	AgentId        string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
-	Status         string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`                                         // 节点当前状态：IDLE, RUNNING...
-	RuleVersion    string                 `protobuf:"bytes,3,opt,name=rule_version,json=ruleVersion,proto3" json:"rule_version,omitempty"`            // Agent 当前规则版本号
-	RunningTasks   int32                  `protobuf:"varint,4,opt,name=running_tasks,json=runningTasks,proto3" json:"running_tasks,omitempty"`        // Agent 当前运行中任务数
-	RunningTaskIds []string               `protobuf:"bytes,5,rep,name=running_task_ids,json=runningTaskIds,proto3" json:"running_task_ids,omitempty"` // Agent 当前正在执行的子任务ID列表
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`                                  // 节点当前状态：IDLE, RUNNING...
+	RuleVersion   string                 `protobuf:"bytes,3,opt,name=rule_version,json=ruleVersion,proto3" json:"rule_version,omitempty"`     // Agent 当前规则版本号
+	RunningTasks  int32                  `protobuf:"varint,4,opt,name=running_tasks,json=runningTasks,proto3" json:"running_tasks,omitempty"` // Agent 当前运行中任务数
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *HeartbeatReq) Reset() {
 	*x = HeartbeatReq{}
-	mi := &file_scan_agent_proto_msgTypes[3]
+	mi := &file_proto_scan_agent_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -210,7 +209,7 @@ func (x *HeartbeatReq) String() string {
 func (*HeartbeatReq) ProtoMessage() {}
 
 func (x *HeartbeatReq) ProtoReflect() protoreflect.Message {
-	mi := &file_scan_agent_proto_msgTypes[3]
+	mi := &file_proto_scan_agent_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -223,7 +222,7 @@ func (x *HeartbeatReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatReq.ProtoReflect.Descriptor instead.
 func (*HeartbeatReq) Descriptor() ([]byte, []int) {
-	return file_scan_agent_proto_rawDescGZIP(), []int{3}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *HeartbeatReq) GetAgentId() string {
@@ -254,13 +253,6 @@ func (x *HeartbeatReq) GetRunningTasks() int32 {
 	return 0
 }
 
-func (x *HeartbeatReq) GetRunningTaskIds() []string {
-	if x != nil {
-		return x.RunningTaskIds
-	}
-	return nil
-}
-
 type HeartbeatResp struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Ack             bool                   `protobuf:"varint,1,opt,name=ack,proto3" json:"ack,omitempty"`
@@ -272,7 +264,7 @@ type HeartbeatResp struct {
 
 func (x *HeartbeatResp) Reset() {
 	*x = HeartbeatResp{}
-	mi := &file_scan_agent_proto_msgTypes[4]
+	mi := &file_proto_scan_agent_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -284,7 +276,7 @@ func (x *HeartbeatResp) String() string {
 func (*HeartbeatResp) ProtoMessage() {}
 
 func (x *HeartbeatResp) ProtoReflect() protoreflect.Message {
-	mi := &file_scan_agent_proto_msgTypes[4]
+	mi := &file_proto_scan_agent_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -297,7 +289,7 @@ func (x *HeartbeatResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatResp.ProtoReflect.Descriptor instead.
 func (*HeartbeatResp) Descriptor() ([]byte, []int) {
-	return file_scan_agent_proto_rawDescGZIP(), []int{4}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *HeartbeatResp) GetAck() bool {
@@ -330,7 +322,7 @@ type FetchTaskReq struct {
 
 func (x *FetchTaskReq) Reset() {
 	*x = FetchTaskReq{}
-	mi := &file_scan_agent_proto_msgTypes[5]
+	mi := &file_proto_scan_agent_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -342,7 +334,7 @@ func (x *FetchTaskReq) String() string {
 func (*FetchTaskReq) ProtoMessage() {}
 
 func (x *FetchTaskReq) ProtoReflect() protoreflect.Message {
-	mi := &file_scan_agent_proto_msgTypes[5]
+	mi := &file_proto_scan_agent_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -355,7 +347,7 @@ func (x *FetchTaskReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchTaskReq.ProtoReflect.Descriptor instead.
 func (*FetchTaskReq) Descriptor() ([]byte, []int) {
-	return file_scan_agent_proto_rawDescGZIP(), []int{5}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *FetchTaskReq) GetAgentId() string {
@@ -378,7 +370,7 @@ type Task struct {
 
 func (x *Task) Reset() {
 	*x = Task{}
-	mi := &file_scan_agent_proto_msgTypes[6]
+	mi := &file_proto_scan_agent_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -390,7 +382,7 @@ func (x *Task) String() string {
 func (*Task) ProtoMessage() {}
 
 func (x *Task) ProtoReflect() protoreflect.Message {
-	mi := &file_scan_agent_proto_msgTypes[6]
+	mi := &file_proto_scan_agent_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -403,7 +395,7 @@ func (x *Task) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Task.ProtoReflect.Descriptor instead.
 func (*Task) Descriptor() ([]byte, []int) {
-	return file_scan_agent_proto_rawDescGZIP(), []int{6}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Task) GetTaskId() string {
@@ -455,7 +447,7 @@ type ScanResult struct {
 
 func (x *ScanResult) Reset() {
 	*x = ScanResult{}
-	mi := &file_scan_agent_proto_msgTypes[7]
+	mi := &file_proto_scan_agent_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -467,7 +459,7 @@ func (x *ScanResult) String() string {
 func (*ScanResult) ProtoMessage() {}
 
 func (x *ScanResult) ProtoReflect() protoreflect.Message {
-	mi := &file_scan_agent_proto_msgTypes[7]
+	mi := &file_proto_scan_agent_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -480,7 +472,7 @@ func (x *ScanResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScanResult.ProtoReflect.Descriptor instead.
 func (*ScanResult) Descriptor() ([]byte, []int) {
-	return file_scan_agent_proto_rawDescGZIP(), []int{7}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ScanResult) GetTaskId() string {
@@ -523,7 +515,7 @@ type TaskCompleteReq struct {
 
 func (x *TaskCompleteReq) Reset() {
 	*x = TaskCompleteReq{}
-	mi := &file_scan_agent_proto_msgTypes[8]
+	mi := &file_proto_scan_agent_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -535,7 +527,7 @@ func (x *TaskCompleteReq) String() string {
 func (*TaskCompleteReq) ProtoMessage() {}
 
 func (x *TaskCompleteReq) ProtoReflect() protoreflect.Message {
-	mi := &file_scan_agent_proto_msgTypes[8]
+	mi := &file_proto_scan_agent_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -548,7 +540,7 @@ func (x *TaskCompleteReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskCompleteReq.ProtoReflect.Descriptor instead.
 func (*TaskCompleteReq) Descriptor() ([]byte, []int) {
-	return file_scan_agent_proto_rawDescGZIP(), []int{8}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *TaskCompleteReq) GetAgentId() string {
@@ -588,7 +580,7 @@ type EmergencyReq struct {
 
 func (x *EmergencyReq) Reset() {
 	*x = EmergencyReq{}
-	mi := &file_scan_agent_proto_msgTypes[9]
+	mi := &file_proto_scan_agent_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -600,7 +592,7 @@ func (x *EmergencyReq) String() string {
 func (*EmergencyReq) ProtoMessage() {}
 
 func (x *EmergencyReq) ProtoReflect() protoreflect.Message {
-	mi := &file_scan_agent_proto_msgTypes[9]
+	mi := &file_proto_scan_agent_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -613,7 +605,7 @@ func (x *EmergencyReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EmergencyReq.ProtoReflect.Descriptor instead.
 func (*EmergencyReq) Descriptor() ([]byte, []int) {
-	return file_scan_agent_proto_rawDescGZIP(), []int{9}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *EmergencyReq) GetAgentId() string {
@@ -635,7 +627,7 @@ type LogPayload struct {
 
 func (x *LogPayload) Reset() {
 	*x = LogPayload{}
-	mi := &file_scan_agent_proto_msgTypes[10]
+	mi := &file_proto_scan_agent_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -647,7 +639,7 @@ func (x *LogPayload) String() string {
 func (*LogPayload) ProtoMessage() {}
 
 func (x *LogPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_scan_agent_proto_msgTypes[10]
+	mi := &file_proto_scan_agent_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -660,7 +652,7 @@ func (x *LogPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogPayload.ProtoReflect.Descriptor instead.
 func (*LogPayload) Descriptor() ([]byte, []int) {
-	return file_scan_agent_proto_rawDescGZIP(), []int{10}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *LogPayload) GetAgentId() string {
@@ -691,11 +683,11 @@ func (x *LogPayload) GetTimestamp() int64 {
 	return 0
 }
 
-var File_scan_agent_proto protoreflect.FileDescriptor
+var File_proto_scan_agent_proto protoreflect.FileDescriptor
 
-const file_scan_agent_proto_rawDesc = "" +
+const file_proto_scan_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x10scan/agent.proto\x12\x04scan\"9\n" +
+	"\x16proto/scan/agent.proto\x12\x04scan\"9\n" +
 	"\x03Ack\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"\xac\x01\n" +
@@ -708,13 +700,12 @@ const file_scan_agent_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\">\n" +
 	"\fRegisterResp\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\tR\x05token\"\xb3\x01\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"\x89\x01\n" +
 	"\fHeartbeatReq\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12!\n" +
 	"\frule_version\x18\x03 \x01(\tR\vruleVersion\x12#\n" +
-	"\rrunning_tasks\x18\x04 \x01(\x05R\frunningTasks\x12(\n" +
-	"\x10running_task_ids\x18\x05 \x03(\tR\x0erunningTaskIds\"x\n" +
+	"\rrunning_tasks\x18\x04 \x01(\x05R\frunningTasks\"x\n" +
 	"\rHeartbeatResp\x12\x10\n" +
 	"\x03ack\x18\x01 \x01(\bR\x03ack\x12)\n" +
 	"\x10should_terminate\x18\x02 \x01(\bR\x0fshouldTerminate\x12*\n" +
@@ -759,19 +750,19 @@ const file_scan_agent_proto_rawDesc = "" +
 	"StreamLogs\x12\x10.scan.LogPayload\x1a\t.scan.Ack(\x01B$Z\"github.com/user/dddd-proto/go/scanb\x06proto3"
 
 var (
-	file_scan_agent_proto_rawDescOnce sync.Once
-	file_scan_agent_proto_rawDescData []byte
+	file_proto_scan_agent_proto_rawDescOnce sync.Once
+	file_proto_scan_agent_proto_rawDescData []byte
 )
 
-func file_scan_agent_proto_rawDescGZIP() []byte {
-	file_scan_agent_proto_rawDescOnce.Do(func() {
-		file_scan_agent_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_scan_agent_proto_rawDesc), len(file_scan_agent_proto_rawDesc)))
+func file_proto_scan_agent_proto_rawDescGZIP() []byte {
+	file_proto_scan_agent_proto_rawDescOnce.Do(func() {
+		file_proto_scan_agent_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_proto_scan_agent_proto_rawDesc), len(file_proto_scan_agent_proto_rawDesc)))
 	})
-	return file_scan_agent_proto_rawDescData
+	return file_proto_scan_agent_proto_rawDescData
 }
 
-var file_scan_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
-var file_scan_agent_proto_goTypes = []any{
+var file_proto_scan_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_proto_scan_agent_proto_goTypes = []any{
 	(*Ack)(nil),             // 0: scan.Ack
 	(*RegisterReq)(nil),     // 1: scan.RegisterReq
 	(*RegisterResp)(nil),    // 2: scan.RegisterResp
@@ -785,7 +776,7 @@ var file_scan_agent_proto_goTypes = []any{
 	(*LogPayload)(nil),      // 10: scan.LogPayload
 	nil,                     // 11: scan.RegisterReq.TagsEntry
 }
-var file_scan_agent_proto_depIdxs = []int32{
+var file_proto_scan_agent_proto_depIdxs = []int32{
 	11, // 0: scan.RegisterReq.tags:type_name -> scan.RegisterReq.TagsEntry
 	1,  // 1: scan.AgentService.Register:input_type -> scan.RegisterReq
 	3,  // 2: scan.AgentService.Heartbeat:input_type -> scan.HeartbeatReq
@@ -808,26 +799,26 @@ var file_scan_agent_proto_depIdxs = []int32{
 	0,  // [0:1] is the sub-list for field type_name
 }
 
-func init() { file_scan_agent_proto_init() }
-func file_scan_agent_proto_init() {
-	if File_scan_agent_proto != nil {
+func init() { file_proto_scan_agent_proto_init() }
+func file_proto_scan_agent_proto_init() {
+	if File_proto_scan_agent_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_scan_agent_proto_rawDesc), len(file_scan_agent_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_scan_agent_proto_rawDesc), len(file_proto_scan_agent_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_scan_agent_proto_goTypes,
-		DependencyIndexes: file_scan_agent_proto_depIdxs,
-		MessageInfos:      file_scan_agent_proto_msgTypes,
+		GoTypes:           file_proto_scan_agent_proto_goTypes,
+		DependencyIndexes: file_proto_scan_agent_proto_depIdxs,
+		MessageInfos:      file_proto_scan_agent_proto_msgTypes,
 	}.Build()
-	File_scan_agent_proto = out.File
-	file_scan_agent_proto_goTypes = nil
-	file_scan_agent_proto_depIdxs = nil
+	File_proto_scan_agent_proto = out.File
+	file_proto_scan_agent_proto_goTypes = nil
+	file_proto_scan_agent_proto_depIdxs = nil
 }

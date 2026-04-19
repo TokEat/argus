@@ -40,9 +40,9 @@ declare namespace API {
     TotalChunks: number;
     CompletedChunks: number;
     Config: string;
-    Capacity?: number;
-    RunningTasks?: number;
-    RuleVersion?: string;
+    Priority: number;
+    TimeoutSec: number;
+    RuleVersion: string;
     CreatedAt: string;
     UpdatedAt: string;
   }
@@ -50,8 +50,8 @@ declare namespace API {
   /** 创建任务请求 (POST /api/v1/tasks) */
   interface CreateTaskRequest {
     name: string;
-    targets: string | string[];               // 多行文本或 JSON 数组
-    config?: Record<string, unknown> | string; // JSON 对象或 JSON 字符串
+    targets: string;       // 多行文本或 JSON 数组
+    config?: string;       // JSON 字符串
     priority?: number;
     timeout_sec?: number;
   }
@@ -68,10 +68,6 @@ declare namespace API {
     Version: string;       // Agent 版本
     Capacity: number;      // 并发容量
     RunningTasks: number;  // 当前运行任务数
-    RunningTaskDetails?: {
-      task_id: string;
-      targets: string[];
-    }[];
     RuleVersion: string;   // 规则版本
     LastBeat: number;
     CreatedAt: string;

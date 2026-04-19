@@ -160,10 +160,6 @@ dddd -t http://test.com
 # 1. 启动基础设施 (Redis + PostgreSQL)
 docker compose -f server/deploy/docker-compose.yml up -d
 
-# PostgreSQL 首次启动会自动执行 server/deploy/postgres 下的建库建表脚本
-# 如果是已有数据库，手工补执行：
-bash server/deploy/postgres/000-init-db.sh
-
 # 2. 启动 Server 控制面
 ./dddd-server
 

@@ -51,7 +51,6 @@ message HeartbeatReq {
   string status = 2;         // 节点当前状态：IDLE, RUNNING...
   string rule_version = 3;   // Agent 当前规则版本号
   int32 running_tasks = 4;   // Agent 当前运行中任务数
-  repeated string running_task_ids = 5; // Agent 当前正在执行的子任务ID列表
 }
 
 message HeartbeatResp {
