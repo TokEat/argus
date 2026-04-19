@@ -1,7 +1,0 @@
-./alibaba_cloud_error.go
-./client.go
-./client_context_func.go
-./client_error.go
-./server_error.go
-./sseresponse_model.go
-./throttling_error.go

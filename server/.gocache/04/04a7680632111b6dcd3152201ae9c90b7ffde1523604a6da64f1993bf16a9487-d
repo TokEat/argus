@@ -1,5 +1,0 @@
-./handler_dictionary.go
-./middleware_rbac.go
-./router.go
-./task_input.go
-./ws.go
