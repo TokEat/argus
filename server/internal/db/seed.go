@@ -24,10 +24,10 @@ func SeedArsenalFromDisk(configBaseDir string) {
 
 	var total int
 
-	// 1. finger.yaml → type=fingerprint
+	// 1. finger.yaml → type=finger
 	fingerPath := filepath.Join(configBaseDir, "finger.yaml")
 	if data, err := os.ReadFile(fingerPath); err == nil {
-		n := seedSingleFile("fingerprint", "finger.yaml", string(data))
+		n := seedSingleFile("finger", "finger.yaml", string(data))
 		total += n
 		log.Printf("[Seed] ✅ Fingerprint: imported %d bytes from finger.yaml", len(data))
 	} else {
@@ -44,10 +44,10 @@ func SeedArsenalFromDisk(configBaseDir string) {
 		log.Printf("[Seed] ⚠ workflow.yaml not found at %s: %v", workflowPath, err)
 	}
 
-	// 3. dir.yaml → type=dirprobe
+	// 3. dir.yaml → type=dir
 	dirPath := filepath.Join(configBaseDir, "dir.yaml")
 	if data, err := os.ReadFile(dirPath); err == nil {
-		n := seedSingleFile("dirprobe", "dir.yaml", string(data))
+		n := seedSingleFile("dir", "dir.yaml", string(data))
 		total += n
 		log.Printf("[Seed] ✅ DirProbe: imported %d bytes from dir.yaml", len(data))
 	} else {
@@ -86,9 +86,10 @@ func SeedArsenalFromDisk(configBaseDir string) {
 }
 
 func seedSingleFile(typ, fileName, content string) int {
+	typ = CanonicalArsenalType(typ)
 	hash := fmt.Sprintf("%x", md5.Sum([]byte(content)))
 	arsenal := Arsenal{
-		ID:        typ + "_" + fileName,
+		ID:        BuildArsenalID(typ, fileName),
 		TenantID:  "default",
 		Type:      typ,
 		FileName:  fileName,

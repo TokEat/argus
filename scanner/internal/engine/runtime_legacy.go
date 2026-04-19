@@ -74,6 +74,9 @@ func ApplyConfigDefaults(cfg *Config) {
 	if cfg.WebTimeout == 0 {
 		cfg.WebTimeout = 10
 	}
+	if cfg.HTTPProxyTestURL == "" {
+		cfg.HTTPProxyTestURL = "https://www.baidu.com"
+	}
 	if cfg.OutputType == "" {
 		cfg.OutputType = "text"
 	}

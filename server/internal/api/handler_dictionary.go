@@ -25,10 +25,8 @@ type WorkflowItem struct {
 
 // fetchAndParseWorkflow 获取并解析数据库中的 workflow.yaml 单体内容
 func fetchAndParseWorkflow() (map[string]WorkflowEntry, *db.Arsenal, error) {
-	var arsenal db.Arsenal
-	// 无论租户隔离如何演进，系统初始化的内置 Workflow 的 id 为固定值
-	res := db.DB.Where("id = ?", "workflow_workflow.yaml").First(&arsenal)
-	if res.Error != nil {
+	arsenal, err := db.FindArsenalByTypeAndFile("workflow", "workflow.yaml")
+	if err != nil {
 		return nil, nil, fmt.Errorf("workflow dictionary not found in arsenal")
 	}
 
@@ -40,7 +38,7 @@ func fetchAndParseWorkflow() (map[string]WorkflowEntry, *db.Arsenal, error) {
 	if data == nil {
 		data = make(map[string]WorkflowEntry)
 	}
-	return data, &arsenal, nil
+	return data, arsenal, nil
 }
 
 // saveWorkflow 序列化数据并覆盖保存回数据库
@@ -58,7 +56,10 @@ func saveWorkflow(data map[string]WorkflowEntry, arsenal *db.Arsenal) error {
 	if err := db.DB.Save(arsenal).Error; err != nil {
 		return err
 	}
-	
+	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+		return err
+	}
+
 	// 通知全局客户端热重载
 	GlobalArsenalReloadCounter++
 	return nil
@@ -196,9 +197,8 @@ type FingerprintItem struct {
 
 // fetchAndParseFingerprint 获取并解析数据库中的 finger.yaml 单体内容
 func fetchAndParseFingerprint() (map[string][]string, *db.Arsenal, error) {
-	var arsenal db.Arsenal
-	res := db.DB.Where("id = ?", "fingerprint_finger.yaml").First(&arsenal)
-	if res.Error != nil {
+	arsenal, err := db.FindArsenalByTypeAndFile("finger", "finger.yaml")
+	if err != nil {
 		return nil, nil, fmt.Errorf("fingerprint dictionary not found in arsenal")
 	}
 
@@ -210,7 +210,7 @@ func fetchAndParseFingerprint() (map[string][]string, *db.Arsenal, error) {
 	if data == nil {
 		data = make(map[string][]string)
 	}
-	return data, &arsenal, nil
+	return data, arsenal, nil
 }
 
 func saveFingerprint(data map[string][]string, arsenal *db.Arsenal) error {
@@ -224,6 +224,9 @@ func saveFingerprint(data map[string][]string, arsenal *db.Arsenal) error {
 	arsenal.Hash = fmt.Sprintf("%x", md5.Sum(out))
 
 	if err := db.DB.Save(arsenal).Error; err != nil {
+		return err
+	}
+	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
 		return err
 	}
 	GlobalArsenalReloadCounter++

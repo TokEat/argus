@@ -44,7 +44,7 @@ type SubTask struct {
 	AgentSelector string `gorm:"type:text"`       // JSON: 节点标签选择器
 	TimeoutSec    int
 	RetryCount    int
-	MaxRetry      int    `gorm:"default:3"`
+	MaxRetry      int `gorm:"default:3"`
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }
@@ -56,9 +56,10 @@ type Node struct {
 	Token        string
 	Tags         string
 	Version      string
-	Capacity     int    `gorm:"default:1"`
-	RunningTasks int    `gorm:"default:0"`
-	RuleVersion  string
+	Capacity       int    `gorm:"default:1"`
+	RunningTasks   int    `gorm:"default:0"`
+	RunningTaskIDs string `gorm:"type:text"` // JSON array of task IDs
+	RuleVersion    string
 	LastBeat     int64
 	CreatedAt    time.Time
 }
@@ -92,7 +93,7 @@ type Asset struct {
 	URL         string `gorm:"type:text"`
 	Title       string
 	Service     string
-	CertSubject string // TLS 证书主体
+	CertSubject string     // TLS 证书主体
 	CertExpiry  *time.Time // TLS 证书过期时间
 	CreatedAt   time.Time
 }
@@ -155,7 +156,23 @@ func InitDB(dsn string) {
 		log.Fatalf("failed to initialize PostgreSQL database: %v", err)
 	}
 
-	if err := db.AutoMigrate(&RootTask{}, &SubTask{}, &Node{}, &Asset{}, &FingerprintHit{}, &Vulnerability{}, &Arsenal{}, &User{}, &SystemConfig{}, &AgentLog{}); err != nil {
+	if err := db.AutoMigrate(
+		&RootTask{},
+		&SubTask{},
+		&Node{},
+		&Asset{},
+		&FingerprintHit{},
+		&Vulnerability{},
+		&Arsenal{},
+		&User{},
+		&SystemConfig{},
+		&AgentLog{},
+		&RuleCatalogBootstrap{},
+		&FingerprintRule{},
+		&PocRule{},
+		&WorkflowRule{},
+		&DirRule{},
+	); err != nil {
 		log.Fatalf("failed to auto-migrate PostgreSQL database: %v", err)
 	}
 
