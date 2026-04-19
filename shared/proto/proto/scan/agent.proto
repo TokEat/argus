@@ -39,6 +39,8 @@ message RegisterReq {
   string agent_id = 1;       // 节点唯一ID (可以由云主机的 instance_id 充当)
   string version = 2;        // dddd-agent 版本
   map<string, string> tags = 3; // 节点标签能力
+  string os = 4;             // 节点操作系统
+  string arch = 5;           // 节点架构
 }
 
 message RegisterResp {
@@ -52,6 +54,8 @@ message HeartbeatReq {
   string rule_version = 3;   // Agent 当前规则版本号
   int32 running_tasks = 4;   // Agent 当前运行中任务数
   repeated string running_task_ids = 5; // Agent 当前正在执行的子任务ID列表
+  float cpu_usage = 6;       // CPU 使用率 0-100
+  float mem_usage = 7;       // 内存 使用率 0-100
 }
 
 message HeartbeatResp {

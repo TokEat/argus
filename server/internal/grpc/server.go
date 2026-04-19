@@ -82,6 +82,8 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterReq) (*pb.Registe
 		Capacity:     1, // 默认容量，Agent 可通过心跳上报真实值
 		RunningTasks: 0,
 		LastBeat:     time.Now().UnixMilli(),
+		OS:           req.Os,
+		Arch:         req.Arch,
 	})
 
 	return &pb.RegisterResp{
@@ -108,6 +110,8 @@ func (s *Server) Heartbeat(ctx context.Context, req *pb.HeartbeatReq) (*pb.Heart
 		"last_beat":        time.Now().UnixMilli(),
 		"running_tasks":    int(req.RunningTasks), // 采用 Agent 上报的真实运行任务数
 		"running_task_ids": taskIDsJSON,
+		"cpu_usage":        req.CpuUsage,
+		"mem_usage":        req.MemUsage,
 	}
 	// 如果 Agent 上报了规则版本，保存到 Node
 	if req.RuleVersion != "" {

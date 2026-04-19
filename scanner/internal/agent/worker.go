@@ -12,10 +12,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/shirou/gopsutil/v3/cpu"
+	"github.com/shirou/gopsutil/v3/mem"
 
 	"dddd/scanner/internal/engine"
 	"dddd/scanner/structs"
@@ -75,6 +79,8 @@ func (w *Worker) Start() error {
 		AgentId: w.agentID,
 		Version: "v2.0.1",
 		Tags:    w.tags,
+		Os:      runtime.GOOS,
+		Arch:    runtime.GOARCH,
 	})
 	if err != nil {
 		return err
@@ -164,12 +170,24 @@ func (w *Worker) heartbeatLoop() {
 			}
 			w.mu.Unlock()
 
+			// 采集硬件资源
+			var cpuUsage float64
+			var memUsage float64
+			if p, err := cpu.Percent(0, false); err == nil && len(p) > 0 {
+				cpuUsage = p[0]
+			}
+			if v, err := mem.VirtualMemory(); err == nil {
+				memUsage = v.UsedPercent
+			}
+
 			resp, err := w.client.Heartbeat(context.Background(), &pb.HeartbeatReq{
 				AgentId:        w.agentID,
 				Status:         "Alive",
 				RuleVersion:    w.ruleVersion,
 				RunningTasks:   runningCount,
 				RunningTaskIds: taskIDs,
+				CpuUsage:       float32(cpuUsage),
+				MemUsage:       float32(memUsage),
 			})
 			if err != nil {
 				log.Printf("Heartbeat failure: %v", err)

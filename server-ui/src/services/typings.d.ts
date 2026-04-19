@@ -73,6 +73,10 @@ declare namespace API {
       targets: string[];
     }[];
     RuleVersion: string;   // 规则版本
+    OS?: string;
+    Arch?: string;
+    CPUUsage?: number;
+    MemUsage?: number;
     LastBeat: number;
     CreatedAt: string;
   }

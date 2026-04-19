@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Typography, Table, Tag, Space, Button, Spin, Tooltip, Popover, Badge, Empty, Progress, List } from 'antd';
+import { Typography, Tag, Space, Button, Spin, Tooltip, Popover, Badge, Empty, Progress, List, Row, Col, Divider } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     ReloadOutlined,
@@ -7,8 +7,12 @@ import {
     WifiOutlined,
     DisconnectOutlined,
     FieldTimeOutlined,
+    DesktopOutlined,
+    TagsOutlined,
+    AppstoreOutlined,
+    DashboardOutlined,
+    HddOutlined
 } from '@ant-design/icons';
-import type { ColumnsType } from 'antd/es/table';
 import { getNodes } from '../services/api';
 
 const { Title, Text } = Typography;
@@ -49,190 +53,231 @@ const NodeManagement: React.FC = () => {
         return `${Math.floor(diff / 3600000)}小时前`;
     };
 
-    const columns: ColumnsType<API.AgentNode> = [
-        {
-            title: '状态',
-            dataIndex: 'Status',
-            key: 'status',
-            width: 80,
-            render: (status: string) => {
-                const isAlive = status === 'Alive';
-                return (
-                    <Badge
-                        status={isAlive ? 'success' : 'default'}
-                        text={
-                            <Tag
-                                color={isAlive ? '#10b981' : '#94a3b8'}
-                                style={{ borderRadius: 20, fontSize: 11 }}
-                            >
-                                {isAlive ? '在线' : '离线'}
-                            </Tag>
-                        }
-                    />
-                );
-            },
-            filters: [
-                { text: '在线', value: 'Alive' },
-                { text: '离线', value: 'Offline' },
-            ],
-            onFilter: (value, record) => record.Status === value,
-        },
-        {
-            title: 'Agent ID',
-            dataIndex: 'AgentID',
-            key: 'agent_id',
-            ellipsis: true,
-            render: (id: string) => (
-                <Tooltip title={id}>
-                    <Text copyable={{ text: id }} style={{ fontFamily: 'monospace', fontSize: 12 }}>
-                        {id.length > 20 ? `${id.slice(0, 20)}...` : id}
-                    </Text>
-                </Tooltip>
-            ),
-        },
-        {
-            title: 'IP 地址',
-            dataIndex: 'IP',
-            key: 'ip',
-            width: 140,
-            render: (ip: string) => ip || <Text type="secondary">-</Text>,
-        },
-        {
-            title: '最后心跳',
-            dataIndex: 'LastBeat',
-            key: 'last_beat',
-            width: 200,
-            sorter: (a, b) => a.LastBeat - b.LastBeat,
-            render: (ts: number) => (
-                <Tooltip title={formatLastBeat(ts)}>
-                    <Space size={4}>
-                        <FieldTimeOutlined style={{ color: '#64748b' }} />
-                        <Text style={{ fontSize: 12, color: '#64748b' }}>
-                            {getTimeSince(ts)}
-                        </Text>
-                    </Space>
-                </Tooltip>
-            ),
-        },
-        {
-            title: '当前负载',
-            key: 'workload',
-            width: 150,
-            render: (_, record) => {
-                if (record.Status !== 'Alive') return <Text type="secondary">-</Text>;
-                const running = record.RunningTasks || 0;
-                const capacity = record.Capacity || 10; // Default capacity if not set
-                const percent = Math.min(100, Math.round((running / capacity) * 100));
-                
-                let color = '#10b981'; // Green
-                if (percent > 70) color = '#f59e0b'; // Yellow
-                if (percent > 90) color = '#ef4444'; // Red
+    const renderTags = (tagsStr: string) => {
+        if (!tagsStr) return <Text type="secondary" style={{ fontSize: 12 }}>无标签</Text>;
+        const colors = ['blue', 'cyan', 'geekblue', 'purple'];
+        return tagsStr.split(',').map((t, i) => (
+            <Tag key={i} color={colors[i % colors.length]} style={{ fontSize: 11, borderRadius: 10, border: 'none' }}>
+                {t.trim()}
+            </Tag>
+        ));
+    };
 
-                const content = (
-                    <div style={{ maxWidth: 300, maxHeight: 400, overflow: 'auto' }}>
-                        <div style={{ marginBottom: 8, fontWeight: 'bold' }}>运行中任务 ({running}/{capacity})</div>
-                        {record.RunningTaskDetails && record.RunningTaskDetails.length > 0 ? (
-                            <List
-                                size="small"
-                                dataSource={record.RunningTaskDetails}
-                                renderItem={(task) => (
-                                    <List.Item>
-                                        <div style={{ wordBreak: 'break-all' }}>
-                                            <Tag color="blue">{task.task_id.split('-')[0]}</Tag>
-                                            <Text style={{ fontSize: 12 }}>
-                                                {task.targets?.join(', ')}
-                                            </Text>
-                                        </div>
-                                    </List.Item>
-                                )}
-                            />
-                        ) : (
-                            <Text type="secondary">暂无详细任务数据</Text>
+    const renderNodeCard = (record: API.AgentNode) => {
+        const isAlive = record.Status === 'Alive';
+        const running = record.RunningTasks || 0;
+        const capacity = record.Capacity || 10;
+        const percent = Math.min(100, Math.round((running / capacity) * 100));
+        
+        let color = '#10b981'; // Green
+        if (percent > 70) color = '#f59e0b'; // Yellow
+        if (percent > 90) color = '#ef4444'; // Red
+
+        const cpuPercent = record.CPUUsage ? Math.round(record.CPUUsage) : 0;
+        const memPercent = record.MemUsage ? Math.round(record.MemUsage) : 0;
+        
+        let cpuColor = '#10b981';
+        if (cpuPercent > 60) cpuColor = '#f59e0b';
+        if (cpuPercent > 85) cpuColor = '#ef4444';
+
+        let memColor = '#10b981';
+        if (memPercent > 60) memColor = '#f59e0b';
+        if (memPercent > 85) memColor = '#ef4444';
+
+        const taskContent = (
+            <div style={{ maxWidth: 300, maxHeight: 400, overflow: 'auto' }}>
+                <div style={{ marginBottom: 8, fontWeight: 'bold' }}>运行中任务 ({running}/{capacity})</div>
+                {record.RunningTaskDetails && record.RunningTaskDetails.length > 0 ? (
+                    <List
+                        size="small"
+                        dataSource={record.RunningTaskDetails}
+                        renderItem={(task) => (
+                            <List.Item>
+                                <div style={{ wordBreak: 'break-all' }}>
+                                    <Tag color="blue">{task.task_id.split('-')[0]}</Tag>
+                                    <Text style={{ fontSize: 12 }}>
+                                        {task.targets?.join(', ')}
+                                    </Text>
+                                </div>
+                            </List.Item>
                         )}
-                    </div>
-                );
+                    />
+                ) : (
+                    <Text type="secondary">暂无详细任务数据</Text>
+                )}
+            </div>
+        );
 
-                return (
-                    <Popover content={content} trigger="hover" placement="left">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                            <Progress 
-                                percent={percent} 
-                                showInfo={false} 
-                                size="small" 
-                                strokeColor={color} 
-                                style={{ margin: 0, flex: 1 }} 
-                            />
-                            <Text style={{ fontSize: 11, color: '#64748b', minWidth: 35 }}>{percent}%</Text>
+        return (
+            <Col xs={24} sm={12} md={12} lg={8} xl={6} key={record.AgentID}>
+                <ProCard 
+                    className="glass-card node-card hover-lift"
+                    style={{ 
+                        borderRadius: 16, 
+                        border: '1px solid rgba(255, 255, 255, 0.4)',
+                        overflow: 'hidden',
+                        height: '100%'
+                    }}
+                    bodyStyle={{ padding: 20 }}
+                >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div style={{ 
+                                width: 40, 
+                                height: 40, 
+                                borderRadius: 12, 
+                                background: isAlive ? 'rgba(16, 185, 129, 0.1)' : 'rgba(148, 163, 184, 0.1)',
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                justifyContent: 'center',
+                                color: isAlive ? '#10b981' : '#94a3b8'
+                            }}>
+                                <DesktopOutlined style={{ fontSize: 20 }} />
+                            </div>
+                            <div>
+                                <Tooltip title={record.AgentID}>
+                                    <Text copyable={{ text: record.AgentID }} style={{ fontWeight: 600, fontSize: 15, color: '#1e293b' }}>
+                                        {record.AgentID.substring(0, 8)}...
+                                    </Text>
+                                </Tooltip>
+                                <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                                    {record.IP || '未知 IP'}
+                                </div>
+                            </div>
                         </div>
-                    </Popover>
-                );
-            }
-        },
-        {
-            title: '标签',
-            dataIndex: 'Tags',
-            key: 'tags',
-            render: (tags: string) => {
-                if (!tags) return <Text type="secondary">-</Text>;
-                const colors = ['blue', 'cyan', 'geekblue', 'purple'];
-                return tags.split(',').map((t, i) => (
-                    <Tag key={i} color={colors[i % colors.length]} style={{ fontSize: 11, borderRadius: 10 }}>{t.trim()}</Tag>
-                ));
-            },
-        },
-        {
-            title: '注册时间',
-            dataIndex: 'CreatedAt',
-            key: 'created_at',
-            width: 170,
-            render: (v: string) => <Text style={{ fontSize: 12, color: '#64748b' }}>{v}</Text>,
-        },
-    ];
+                        <Badge
+                            status={isAlive ? 'success' : 'default'}
+                            text={
+                                <span style={{ color: isAlive ? '#10b981' : '#94a3b8', fontSize: 12, fontWeight: 500 }}>
+                                    {isAlive ? '在线' : '离线'}
+                                </span>
+                            }
+                        />
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        <div>
+                            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+                                <TagsOutlined style={{ marginRight: 6 }} />能力标签
+                            </Text>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                                {record.OS && <Tag color="default" style={{ fontSize: 11, borderRadius: 10, border: '1px solid #e2e8f0' }}>{record.OS}</Tag>}
+                                {record.Arch && <Tag color="default" style={{ fontSize: 11, borderRadius: 10, border: '1px solid #e2e8f0' }}>{record.Arch}</Tag>}
+                                {renderTags(record.Tags)}
+                            </div>
+                        </div>
+
+                        <div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                                <Text type="secondary" style={{ fontSize: 12 }}>
+                                    <AppstoreOutlined style={{ marginRight: 6 }} />当前负载 ({running}/{capacity})
+                                </Text>
+                            </div>
+                            {isAlive ? (
+                                <Popover content={taskContent} trigger="hover" placement="top">
+                                    <div style={{ cursor: 'pointer' }}>
+                                        <Progress 
+                                            percent={percent} 
+                                            showInfo={false} 
+                                            size="small" 
+                                            strokeColor={color} 
+                                            trailColor="rgba(0,0,0,0.04)"
+                                            style={{ margin: 0 }} 
+                                        />
+                                    </div>
+                                </Popover>
+                            ) : (
+                                <Progress percent={0} showInfo={false} size="small" style={{ margin: 0 }} />
+                            )}
+                        </div>
+
+                        {/* 硬件负载指标 */}
+                        <div style={{ display: 'flex', gap: 16, marginTop: 4 }}>
+                            <div style={{ flex: 1 }}>
+                                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>
+                                    <DashboardOutlined style={{ marginRight: 4 }} />CPU
+                                </Text>
+                                <Progress percent={isAlive ? cpuPercent : 0} size="small" strokeColor={cpuColor} format={(p) => <span style={{fontSize: 10}}>{p}%</span>} />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>
+                                    <HddOutlined style={{ marginRight: 4 }} />内存
+                                </Text>
+                                <Progress percent={isAlive ? memPercent : 0} size="small" strokeColor={memColor} format={(p) => <span style={{fontSize: 10}}>{p}%</span>} />
+                            </div>
+                        </div>
+
+                        <Divider style={{ margin: '8px 0' }} />
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                            <Text type="secondary">规则版本: <Text strong>{record.RuleVersion || '未知'}</Text></Text>
+                            <Text type="secondary">引擎: <Text strong>{record.Version || '-'}</Text></Text>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
+                            <Tooltip title={formatLastBeat(record.LastBeat)}>
+                                <Space size={4}>
+                                    <FieldTimeOutlined style={{ color: '#64748b' }} />
+                                    <Text style={{ color: '#64748b' }}>心跳: {getTimeSince(record.LastBeat)}</Text>
+                                </Space>
+                            </Tooltip>
+                        </div>
+                    </div>
+                </ProCard>
+            </Col>
+        );
+    };
 
     const onlineCount = nodes.filter(n => n.Status === 'Alive').length;
     const offlineCount = nodes.length - onlineCount;
 
     return (
-        <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                <Title level={4} style={{ margin: 0, color: '#1e293b', fontWeight: 600 }}>
-                    <ClusterOutlined style={{ marginRight: 8, color: '#0ea5e9' }} />
-                    节点管理
-                </Title>
+        <div style={{ paddingBottom: 40 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+                <div>
+                    <Title level={3} style={{ margin: 0, color: '#1e293b', fontWeight: 600 }}>
+                        <ClusterOutlined style={{ marginRight: 12, color: '#0ea5e9' }} />
+                        分布式节点大屏
+                    </Title>
+                    <Text type="secondary" style={{ marginTop: 4, display: 'block' }}>实时监控与管理全局扫描算力池</Text>
+                </div>
                 <Space>
-                    <Tag color="#10b981" style={{ borderRadius: 20 }}>
+                    <Tag color="success" style={{ borderRadius: 20, padding: '4px 12px', border: 'none', background: 'rgba(16, 185, 129, 0.1)', color: '#10b981' }}>
                         <WifiOutlined /> 在线 {onlineCount}
                     </Tag>
-                    <Tag color="#94a3b8" style={{ borderRadius: 20 }}>
+                    <Tag color="default" style={{ borderRadius: 20, padding: '4px 12px', border: 'none', background: 'rgba(148, 163, 184, 0.1)', color: '#64748b' }}>
                         <DisconnectOutlined /> 离线 {offlineCount}
                     </Tag>
-                    <Button icon={<ReloadOutlined />} onClick={fetchNodes} loading={loading}>
-                        刷新
+                    <Button type="primary" icon={<ReloadOutlined />} onClick={fetchNodes} loading={loading} style={{ borderRadius: 8 }}>
+                        实时刷新
                     </Button>
                 </Space>
             </div>
 
-            <ProCard className="glass-card" style={{ background: 'transparent', border: 'none' }}>
-                {loading && nodes.length === 0 ? (
-                    <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}>
-                        <Spin size="large" />
-                    </div>
-                ) : nodes.length === 0 ? (
-                    <Empty
-                        image={Empty.PRESENTED_IMAGE_SIMPLE}
-                        description="暂无已注册的 Agent 节点"
-                        style={{ padding: '60px 0' }}
-                    />
-                ) : (
-                    <Table
-                        columns={columns}
-                        dataSource={nodes}
-                        rowKey="AgentID"
-                        pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 个节点` }}
-                        size="middle"
-                    />
-                )}
-            </ProCard>
+            {loading && nodes.length === 0 ? (
+                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 400 }}>
+                    <Spin size="large" />
+                </div>
+            ) : nodes.length === 0 ? (
+                <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description="当前集群暂无计算节点接入"
+                    style={{ padding: '100px 0', background: 'rgba(255,255,255,0.4)', borderRadius: 16 }}
+                />
+            ) : (
+                <Row gutter={[20, 20]}>
+                    {nodes.map(node => renderNodeCard(node))}
+                </Row>
+            )}
+            
+            <style>{`
+                .node-card {
+                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                }
+                .hover-lift:hover {
+                    transform: translateY(-4px);
+                    box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.08), 0 4px 12px -4px rgba(0, 0, 0, 0.04);
+                }
+            `}</style>
         </div>
     );
 };

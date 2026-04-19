@@ -60,6 +60,10 @@ type Node struct {
 	RunningTasks   int    `gorm:"default:0"`
 	RunningTaskIDs string `gorm:"type:text"` // JSON array of task IDs
 	RuleVersion    string
+	OS             string
+	Arch           string
+	CPUUsage       float32
+	MemUsage       float32
 	LastBeat     int64
 	CreatedAt    time.Time
 }

@@ -78,6 +78,8 @@ type RegisterReq struct {
 	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`                                                      // 节点唯一ID (可以由云主机的 instance_id 充当)
 	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`                                                                     // dddd-agent 版本
 	Tags          map[string]string      `protobuf:"bytes,3,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // 节点标签能力
+	Os            string                 `protobuf:"bytes,4,opt,name=os,proto3" json:"os,omitempty"`                                                                               // 节点操作系统
+	Arch          string                 `protobuf:"bytes,5,opt,name=arch,proto3" json:"arch,omitempty"`                                                                           // 节点架构
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -131,6 +133,20 @@ func (x *RegisterReq) GetTags() map[string]string {
 		return x.Tags
 	}
 	return nil
+}
+
+func (x *RegisterReq) GetOs() string {
+	if x != nil {
+		return x.Os
+	}
+	return ""
+}
+
+func (x *RegisterReq) GetArch() string {
+	if x != nil {
+		return x.Arch
+	}
+	return ""
 }
 
 type RegisterResp struct {
@@ -192,6 +208,8 @@ type HeartbeatReq struct {
 	RuleVersion    string                 `protobuf:"bytes,3,opt,name=rule_version,json=ruleVersion,proto3" json:"rule_version,omitempty"`            // Agent 当前规则版本号
 	RunningTasks   int32                  `protobuf:"varint,4,opt,name=running_tasks,json=runningTasks,proto3" json:"running_tasks,omitempty"`        // Agent 当前运行中任务数
 	RunningTaskIds []string               `protobuf:"bytes,5,rep,name=running_task_ids,json=runningTaskIds,proto3" json:"running_task_ids,omitempty"` // Agent 当前正在执行的子任务ID列表
+	CpuUsage       float32                `protobuf:"fixed32,6,opt,name=cpu_usage,json=cpuUsage,proto3" json:"cpu_usage,omitempty"`                   // CPU 使用率 0-100
+	MemUsage       float32                `protobuf:"fixed32,7,opt,name=mem_usage,json=memUsage,proto3" json:"mem_usage,omitempty"`                   // 内存 使用率 0-100
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -259,6 +277,20 @@ func (x *HeartbeatReq) GetRunningTaskIds() []string {
 		return x.RunningTaskIds
 	}
 	return nil
+}
+
+func (x *HeartbeatReq) GetCpuUsage() float32 {
+	if x != nil {
+		return x.CpuUsage
+	}
+	return 0
+}
+
+func (x *HeartbeatReq) GetMemUsage() float32 {
+	if x != nil {
+		return x.MemUsage
+	}
+	return 0
 }
 
 type HeartbeatResp struct {
@@ -698,23 +730,27 @@ const file_scan_agent_proto_rawDesc = "" +
 	"\x10scan/agent.proto\x12\x04scan\"9\n" +
 	"\x03Ack\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\xac\x01\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xd0\x01\n" +
 	"\vRegisterReq\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12/\n" +
-	"\x04tags\x18\x03 \x03(\v2\x1b.scan.RegisterReq.TagsEntryR\x04tags\x1a7\n" +
+	"\x04tags\x18\x03 \x03(\v2\x1b.scan.RegisterReq.TagsEntryR\x04tags\x12\x0e\n" +
+	"\x02os\x18\x04 \x01(\tR\x02os\x12\x12\n" +
+	"\x04arch\x18\x05 \x01(\tR\x04arch\x1a7\n" +
 	"\tTagsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\">\n" +
 	"\fRegisterResp\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\tR\x05token\"\xb3\x01\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"\xed\x01\n" +
 	"\fHeartbeatReq\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12!\n" +
 	"\frule_version\x18\x03 \x01(\tR\vruleVersion\x12#\n" +
 	"\rrunning_tasks\x18\x04 \x01(\x05R\frunningTasks\x12(\n" +
-	"\x10running_task_ids\x18\x05 \x03(\tR\x0erunningTaskIds\"x\n" +
+	"\x10running_task_ids\x18\x05 \x03(\tR\x0erunningTaskIds\x12\x1b\n" +
+	"\tcpu_usage\x18\x06 \x01(\x02R\bcpuUsage\x12\x1b\n" +
+	"\tmem_usage\x18\a \x01(\x02R\bmemUsage\"x\n" +
 	"\rHeartbeatResp\x12\x10\n" +
 	"\x03ack\x18\x01 \x01(\bR\x03ack\x12)\n" +
 	"\x10should_terminate\x18\x02 \x01(\bR\x0fshouldTerminate\x12*\n" +
