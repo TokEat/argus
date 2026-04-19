@@ -18,7 +18,7 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import ReactECharts from 'echarts-for-react';
-import { getDashboardStats, listTasks, getNodes, connectWebSocket } from '../services/api';
+import { getDashboardStats, listTasks, getNodes, connectWebSocket, getQueueDepth } from '../services/api';
 
 const { Text, Title } = Typography;
 
@@ -27,20 +27,23 @@ const Dashboard: React.FC = () => {
     const [stats, setStats] = useState<API.DashboardStats | null>(null);
     const [recentTasks, setRecentTasks] = useState<API.RootTask[]>([]);
     const [nodes, setNodes] = useState<API.AgentNode[]>([]);
+    const [queueDepth, setQueueDepth] = useState<any>(null);
     const [wsConnected, setWsConnected] = useState(false);
     const [wsMessages, setWsMessages] = useState<{ time: string; type: string; data: string }[]>([]);
     const wsRef = useRef<WebSocket | null>(null);
 
     const fetchData = useCallback(async () => {
         try {
-            const [statsRes, tasksRes, nodesRes] = await Promise.all([
+            const [statsRes, tasksRes, nodesRes, queueRes] = await Promise.all([
                 getDashboardStats(),
                 listTasks(),
                 getNodes(),
+                getQueueDepth().catch(() => null),
             ]);
             setStats(statsRes);
             setRecentTasks((tasksRes || []).slice(0, 8));
             setNodes(nodesRes || []);
+            if (queueRes) setQueueDepth(queueRes);
         } catch (error) {
             console.error('Failed to fetch dashboard data:', error);
         } finally {
@@ -117,6 +120,143 @@ const Dashboard: React.FC = () => {
         );
     }
 
+    const DispatchVisualizer: React.FC<{ nodes: any[], wsMessages: any[], queueDepth: any }> = ({ nodes, wsMessages, queueDepth }) => {
+        const [animations, setAnimations] = useState<{ id: string; agentIndex: number; taskId: string }[]>([]);
+        
+        const activeNodes = nodes.filter(n => n.Status === 'Alive');
+    
+        useEffect(() => {
+            const latestMsg = wsMessages[0];
+            if (latestMsg && latestMsg.type === 'task_claimed') {
+                try {
+                    const data = JSON.parse(latestMsg.data);
+                    if (data.agent_id) {
+                        const agentIndex = activeNodes.findIndex(n => n.AgentID === data.agent_id);
+                        if (agentIndex !== -1) {
+                            const animId = Math.random().toString(36).substring(7);
+                            setAnimations(prev => [...prev, { id: animId, agentIndex, taskId: data.task_id }]);
+                            setTimeout(() => {
+                                setAnimations(prev => prev.filter(a => a.id !== animId));
+                            }, 800);
+                        }
+                    }
+                } catch (e) {}
+            }
+        }, [wsMessages, activeNodes]);
+    
+        const totalQueued = queueDepth ? Object.values(queueDepth.depth || {}).reduce((a: any, b: any) => a + b, 0) : 0;
+        
+        const queueTooltip = (
+            <div>
+                <div><strong>Urgent 紧急:</strong> {queueDepth?.depth?.['dddd:tasks:urgent'] || 0}</div>
+                <div><strong>Normal 普通:</strong> {queueDepth?.depth?.['dddd:tasks:normal'] || 0}</div>
+                <div><strong>Low 低级:</strong> {queueDepth?.depth?.['dddd:tasks:low'] || 0}</div>
+            </div>
+        );
+    
+        return (
+            <div style={{ display: 'flex', alignItems: 'stretch', height: 280 }}>
+                {/* Redis Block */}
+                <div style={{ width: 120, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Tooltip title={queueTooltip} placement="right">
+                        <div className="glass-card" style={{ padding: 20, textAlign: 'center', borderRadius: 12, border: '1px solid #e2e8f0', background: '#f8fafc', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', cursor: 'pointer' }}>
+                            <DatabaseOutlined style={{ fontSize: 32, color: '#ef4444' }} />
+                            <div style={{ marginTop: 8, fontWeight: 'bold' }}>Redis 队列</div>
+                            <Tag color="error" style={{ marginTop: 8 }}>{totalQueued as React.ReactNode} 积压</Tag>
+                        </div>
+                    </Tooltip>
+                </div>
+    
+                {/* Animation Flow Area */}
+                <div style={{ flex: 1, position: 'relative', overflow: 'hidden', borderTop: '1px dashed #e2e8f0', borderBottom: '1px dashed #e2e8f0', margin: '0 20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ color: '#94a3b8', fontSize: 12, letterSpacing: 2, opacity: 0.5 }}>TASK FLOW</div>
+                    {animations.map(anim => {
+                        const topPercent = activeNodes.length > 1 
+                            ? (anim.agentIndex / (activeNodes.length - 1)) * 80 + 10 
+                            : 50;
+                        return (
+                            <div key={anim.id} style={{
+                                position: 'absolute',
+                                left: 0,
+                                top: '50%',
+                                width: 90,
+                                padding: '4px 8px',
+                                background: 'linear-gradient(90deg, #10b981, #0ea5e9)',
+                                color: '#fff',
+                                fontSize: 10,
+                                borderRadius: 12,
+                                whiteSpace: 'nowrap',
+                                boxShadow: '0 0 10px rgba(16, 185, 129, 0.5)',
+                                transition: 'all 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
+                                transform: 'translate(0, -50%)',
+                            }}
+                            ref={el => {
+                                if (el) {
+                                    setTimeout(() => {
+                                        el.style.left = 'calc(100% - 100px)';
+                                        el.style.top = `${topPercent}%`;
+                                    }, 10);
+                                }
+                            }}
+                            >
+                                <RocketOutlined /> {anim.taskId.slice(0,6)}
+                            </div>
+                        );
+                    })}
+                </div>
+    
+                {/* Agents Block */}
+                <div style={{ width: 220, display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto', paddingRight: 10 }}>
+                    {activeNodes.length > 0 ? activeNodes.map(node => {
+                        let taskIds: string[] = [];
+                        try {
+                            taskIds = JSON.parse(node.RunningTaskIds || '[]');
+                        } catch (e) {}
+    
+                        const tooltip = (
+                            <div style={{ maxWidth: 200 }}>
+                                <div>运行中: {node.RunningTasks}/{node.Capacity}</div>
+                                {taskIds.map((id: string) => <div key={id} style={{ fontSize: 10, color: '#94a3b8' }}>{id}</div>)}
+                            </div>
+                        );
+    
+                        return (
+                            <Tooltip title={tooltip} placement="left" key={node.AgentID}>
+                                <div style={{ 
+                                    padding: 10, 
+                                    borderRadius: 8, 
+                                    border: '1px solid #e2e8f0', 
+                                    background: '#fff',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 10,
+                                    boxShadow: '0 1px 3px 0 rgb(0 0 0 / 0.1)',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s'
+                                }}
+                                onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.02)'}
+                                onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                                >
+                                    <Badge status="processing" color={taskIds.length > 0 ? '#10b981' : '#94a3b8'} />
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontWeight: 500, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                            {node.AgentID}
+                                        </div>
+                                    </div>
+                                    <Tag color={taskIds.length > 0 ? "processing" : "default"} style={{ margin: 0 }}>
+                                        {node.RunningTasks}
+                                    </Tag>
+                                </div>
+                            </Tooltip>
+                        );
+                    }) : (
+                        <div style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center', marginTop: 50 }}>无可用节点</div>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
     const statCards = [
         {
             title: '节点总数', value: stats?.nodes ?? 0, icon: <ClusterOutlined />,
@@ -172,32 +312,6 @@ const Dashboard: React.FC = () => {
         ]
     };
 
-    const workloadBarOptions = {
-        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-        grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-        xAxis: { 
-            type: 'category', 
-            data: nodes.filter(n => n.Status === 'Alive').map(n => n.AgentID.slice(0, 8)), 
-            axisLabel: { color: '#64748b', fontSize: 10 } 
-        },
-        yAxis: { type: 'value', axisLabel: { color: '#64748b' }, splitLine: { lineStyle: { type: 'dashed', color: '#e2e8f0' } } },
-        series: [
-            {
-                name: '运行中任务',
-                type: 'bar',
-                stack: 'total',
-                itemStyle: { color: '#0ea5e9', borderRadius: [4, 4, 0, 0] },
-                data: nodes.filter(n => n.Status === 'Alive').map(n => n.RunningTasks || 0)
-            },
-            {
-                name: '剩余容量',
-                type: 'bar',
-                stack: 'total',
-                itemStyle: { color: '#e2e8f0', borderRadius: [4, 4, 0, 0] },
-                data: nodes.filter(n => n.Status === 'Alive').map(n => Math.max(0, (n.Capacity || 10) - (n.RunningTasks || 0)))
-            }
-        ]
-    };
 
     return (
         <div>
@@ -368,10 +482,10 @@ const Dashboard: React.FC = () => {
                         bodyStyle={{ padding: '16px', height: 280 }}
                     >
                         {onlineCount > 0 ? (
-                            <ReactECharts option={workloadBarOptions} style={{ height: '100%', width: '100%' }} />
+                            <DispatchVisualizer nodes={nodes} wsMessages={wsMessages} queueDepth={queueDepth} />
                         ) : (
                             <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
-                                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无在线计算节点，无法展示算力矩阵" />
+                                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无在线计算节点，无法展示调度流" />
                             </div>
                         )}
                     </ProCard>

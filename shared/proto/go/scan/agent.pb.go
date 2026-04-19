@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v7.34.1
-// source: proto/scan/agent.proto
+// source: scan/agent.proto
 
 package scan
 
@@ -31,7 +31,7 @@ type Ack struct {
 
 func (x *Ack) Reset() {
 	*x = Ack{}
-	mi := &file_proto_scan_agent_proto_msgTypes[0]
+	mi := &file_scan_agent_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -43,7 +43,7 @@ func (x *Ack) String() string {
 func (*Ack) ProtoMessage() {}
 
 func (x *Ack) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[0]
+	mi := &file_scan_agent_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -56,7 +56,7 @@ func (x *Ack) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Ack.ProtoReflect.Descriptor instead.
 func (*Ack) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{0}
+	return file_scan_agent_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *Ack) GetSuccess() bool {
@@ -87,7 +87,7 @@ type RegisterReq struct {
 
 func (x *RegisterReq) Reset() {
 	*x = RegisterReq{}
-	mi := &file_proto_scan_agent_proto_msgTypes[1]
+	mi := &file_scan_agent_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -99,7 +99,7 @@ func (x *RegisterReq) String() string {
 func (*RegisterReq) ProtoMessage() {}
 
 func (x *RegisterReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[1]
+	mi := &file_scan_agent_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -112,7 +112,7 @@ func (x *RegisterReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterReq.ProtoReflect.Descriptor instead.
 func (*RegisterReq) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{1}
+	return file_scan_agent_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *RegisterReq) GetAgentId() string {
@@ -167,7 +167,7 @@ type RegisterResp struct {
 
 func (x *RegisterResp) Reset() {
 	*x = RegisterResp{}
-	mi := &file_proto_scan_agent_proto_msgTypes[2]
+	mi := &file_scan_agent_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -179,7 +179,7 @@ func (x *RegisterResp) String() string {
 func (*RegisterResp) ProtoMessage() {}
 
 func (x *RegisterResp) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[2]
+	mi := &file_scan_agent_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -192,7 +192,7 @@ func (x *RegisterResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterResp.ProtoReflect.Descriptor instead.
 func (*RegisterResp) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{2}
+	return file_scan_agent_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *RegisterResp) GetSuccess() bool {
@@ -224,7 +224,7 @@ type HeartbeatReq struct {
 
 func (x *HeartbeatReq) Reset() {
 	*x = HeartbeatReq{}
-	mi := &file_proto_scan_agent_proto_msgTypes[3]
+	mi := &file_scan_agent_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -236,7 +236,7 @@ func (x *HeartbeatReq) String() string {
 func (*HeartbeatReq) ProtoMessage() {}
 
 func (x *HeartbeatReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[3]
+	mi := &file_scan_agent_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -249,7 +249,7 @@ func (x *HeartbeatReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatReq.ProtoReflect.Descriptor instead.
 func (*HeartbeatReq) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{3}
+	return file_scan_agent_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *HeartbeatReq) GetAgentId() string {
@@ -306,13 +306,15 @@ type HeartbeatResp struct {
 	Ack             bool                   `protobuf:"varint,1,opt,name=ack,proto3" json:"ack,omitempty"`
 	ShouldTerminate bool                   `protobuf:"varint,2,opt,name=should_terminate,json=shouldTerminate,proto3" json:"should_terminate,omitempty"`   // Server有权要求节点退出（例如竞价实例即将被回收或者资源充裕）
 	ShouldSyncRules bool                   `protobuf:"varint,3,opt,name=should_sync_rules,json=shouldSyncRules,proto3" json:"should_sync_rules,omitempty"` // 通知 Agent 需要同步规则（替代 HTTP 轮询）
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// tasks_available 心跳响应中携带队列任务数，Agent 据此决定是否发起 ClaimTask
+	TasksAvailable int32 `protobuf:"varint,4,opt,name=tasks_available,json=tasksAvailable,proto3" json:"tasks_available,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *HeartbeatResp) Reset() {
 	*x = HeartbeatResp{}
-	mi := &file_proto_scan_agent_proto_msgTypes[4]
+	mi := &file_scan_agent_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -324,7 +326,7 @@ func (x *HeartbeatResp) String() string {
 func (*HeartbeatResp) ProtoMessage() {}
 
 func (x *HeartbeatResp) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[4]
+	mi := &file_scan_agent_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -337,7 +339,7 @@ func (x *HeartbeatResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatResp.ProtoReflect.Descriptor instead.
 func (*HeartbeatResp) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{4}
+	return file_scan_agent_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *HeartbeatResp) GetAck() bool {
@@ -361,6 +363,13 @@ func (x *HeartbeatResp) GetShouldSyncRules() bool {
 	return false
 }
 
+func (x *HeartbeatResp) GetTasksAvailable() int32 {
+	if x != nil {
+		return x.TasksAvailable
+	}
+	return 0
+}
+
 type FetchTaskReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
@@ -370,7 +379,7 @@ type FetchTaskReq struct {
 
 func (x *FetchTaskReq) Reset() {
 	*x = FetchTaskReq{}
-	mi := &file_proto_scan_agent_proto_msgTypes[5]
+	mi := &file_scan_agent_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -382,7 +391,7 @@ func (x *FetchTaskReq) String() string {
 func (*FetchTaskReq) ProtoMessage() {}
 
 func (x *FetchTaskReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[5]
+	mi := &file_scan_agent_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -395,7 +404,7 @@ func (x *FetchTaskReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchTaskReq.ProtoReflect.Descriptor instead.
 func (*FetchTaskReq) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{5}
+	return file_scan_agent_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *FetchTaskReq) GetAgentId() string {
@@ -403,6 +412,189 @@ func (x *FetchTaskReq) GetAgentId() string {
 		return x.AgentId
 	}
 	return ""
+}
+
+// AgentSignal Agent→Server 的信号（通过 Subscribe 流上行）
+type AgentSignal struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	FreeSlots     int32                  `protobuf:"varint,2,opt,name=free_slots,json=freeSlots,proto3" json:"free_slots,omitempty"`   // 当前空闲 worker 数量
+	SignalType    string                 `protobuf:"bytes,3,opt,name=signal_type,json=signalType,proto3" json:"signal_type,omitempty"` // "ready" | "capacity_update" | "ping"
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AgentSignal) Reset() {
+	*x = AgentSignal{}
+	mi := &file_scan_agent_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AgentSignal) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AgentSignal) ProtoMessage() {}
+
+func (x *AgentSignal) ProtoReflect() protoreflect.Message {
+	mi := &file_scan_agent_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AgentSignal.ProtoReflect.Descriptor instead.
+func (*AgentSignal) Descriptor() ([]byte, []int) {
+	return file_scan_agent_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *AgentSignal) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *AgentSignal) GetFreeSlots() int32 {
+	if x != nil {
+		return x.FreeSlots
+	}
+	return 0
+}
+
+func (x *AgentSignal) GetSignalType() string {
+	if x != nil {
+		return x.SignalType
+	}
+	return ""
+}
+
+// TaskNotify Server→Agent 的任务通知（通过 Subscribe 流下行）
+type TaskNotify struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	AvailableTasks int32                  `protobuf:"varint,1,opt,name=available_tasks,json=availableTasks,proto3" json:"available_tasks,omitempty"` // 队列中可领取的任务数
+	Priority       int32                  `protobuf:"varint,2,opt,name=priority,proto3" json:"priority,omitempty"`                                   // 最高优先级任务的级别
+	NotifyType     string                 `protobuf:"bytes,3,opt,name=notify_type,json=notifyType,proto3" json:"notify_type,omitempty"`              // "new_task" | "task_returned" | "heartbeat_check"
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *TaskNotify) Reset() {
+	*x = TaskNotify{}
+	mi := &file_scan_agent_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskNotify) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskNotify) ProtoMessage() {}
+
+func (x *TaskNotify) ProtoReflect() protoreflect.Message {
+	mi := &file_scan_agent_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskNotify.ProtoReflect.Descriptor instead.
+func (*TaskNotify) Descriptor() ([]byte, []int) {
+	return file_scan_agent_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *TaskNotify) GetAvailableTasks() int32 {
+	if x != nil {
+		return x.AvailableTasks
+	}
+	return 0
+}
+
+func (x *TaskNotify) GetPriority() int32 {
+	if x != nil {
+		return x.Priority
+	}
+	return 0
+}
+
+func (x *TaskNotify) GetNotifyType() string {
+	if x != nil {
+		return x.NotifyType
+	}
+	return ""
+}
+
+// ClaimTaskReq Agent 主动认领任务的请求
+type ClaimTaskReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	FreeSlots     int32                  `protobuf:"varint,2,opt,name=free_slots,json=freeSlots,proto3" json:"free_slots,omitempty"`                                               // 当前空闲 worker 数，用于批量认领决策
+	Tags          map[string]string      `protobuf:"bytes,3,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // 节点标签，用于标签路由匹配
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClaimTaskReq) Reset() {
+	*x = ClaimTaskReq{}
+	mi := &file_scan_agent_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClaimTaskReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClaimTaskReq) ProtoMessage() {}
+
+func (x *ClaimTaskReq) ProtoReflect() protoreflect.Message {
+	mi := &file_scan_agent_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClaimTaskReq.ProtoReflect.Descriptor instead.
+func (*ClaimTaskReq) Descriptor() ([]byte, []int) {
+	return file_scan_agent_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ClaimTaskReq) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *ClaimTaskReq) GetFreeSlots() int32 {
+	if x != nil {
+		return x.FreeSlots
+	}
+	return 0
+}
+
+func (x *ClaimTaskReq) GetTags() map[string]string {
+	if x != nil {
+		return x.Tags
+	}
+	return nil
 }
 
 type Task struct {
@@ -418,7 +610,7 @@ type Task struct {
 
 func (x *Task) Reset() {
 	*x = Task{}
-	mi := &file_proto_scan_agent_proto_msgTypes[6]
+	mi := &file_scan_agent_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -430,7 +622,7 @@ func (x *Task) String() string {
 func (*Task) ProtoMessage() {}
 
 func (x *Task) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[6]
+	mi := &file_scan_agent_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -443,7 +635,7 @@ func (x *Task) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Task.ProtoReflect.Descriptor instead.
 func (*Task) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{6}
+	return file_scan_agent_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Task) GetTaskId() string {
@@ -495,7 +687,7 @@ type ScanResult struct {
 
 func (x *ScanResult) Reset() {
 	*x = ScanResult{}
-	mi := &file_proto_scan_agent_proto_msgTypes[7]
+	mi := &file_scan_agent_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -507,7 +699,7 @@ func (x *ScanResult) String() string {
 func (*ScanResult) ProtoMessage() {}
 
 func (x *ScanResult) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[7]
+	mi := &file_scan_agent_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -520,7 +712,7 @@ func (x *ScanResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScanResult.ProtoReflect.Descriptor instead.
 func (*ScanResult) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{7}
+	return file_scan_agent_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ScanResult) GetTaskId() string {
@@ -563,7 +755,7 @@ type TaskCompleteReq struct {
 
 func (x *TaskCompleteReq) Reset() {
 	*x = TaskCompleteReq{}
-	mi := &file_proto_scan_agent_proto_msgTypes[8]
+	mi := &file_scan_agent_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -575,7 +767,7 @@ func (x *TaskCompleteReq) String() string {
 func (*TaskCompleteReq) ProtoMessage() {}
 
 func (x *TaskCompleteReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[8]
+	mi := &file_scan_agent_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -588,7 +780,7 @@ func (x *TaskCompleteReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskCompleteReq.ProtoReflect.Descriptor instead.
 func (*TaskCompleteReq) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{8}
+	return file_scan_agent_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *TaskCompleteReq) GetAgentId() string {
@@ -628,7 +820,7 @@ type EmergencyReq struct {
 
 func (x *EmergencyReq) Reset() {
 	*x = EmergencyReq{}
-	mi := &file_proto_scan_agent_proto_msgTypes[9]
+	mi := &file_scan_agent_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -640,7 +832,7 @@ func (x *EmergencyReq) String() string {
 func (*EmergencyReq) ProtoMessage() {}
 
 func (x *EmergencyReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[9]
+	mi := &file_scan_agent_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -653,7 +845,7 @@ func (x *EmergencyReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EmergencyReq.ProtoReflect.Descriptor instead.
 func (*EmergencyReq) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{9}
+	return file_scan_agent_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *EmergencyReq) GetAgentId() string {
@@ -675,7 +867,7 @@ type LogPayload struct {
 
 func (x *LogPayload) Reset() {
 	*x = LogPayload{}
-	mi := &file_proto_scan_agent_proto_msgTypes[10]
+	mi := &file_scan_agent_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -687,7 +879,7 @@ func (x *LogPayload) String() string {
 func (*LogPayload) ProtoMessage() {}
 
 func (x *LogPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[10]
+	mi := &file_scan_agent_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -700,7 +892,7 @@ func (x *LogPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogPayload.ProtoReflect.Descriptor instead.
 func (*LogPayload) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{10}
+	return file_scan_agent_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *LogPayload) GetAgentId() string {
@@ -731,11 +923,11 @@ func (x *LogPayload) GetTimestamp() int64 {
 	return 0
 }
 
-var File_proto_scan_agent_proto protoreflect.FileDescriptor
+var File_scan_agent_proto protoreflect.FileDescriptor
 
-const file_proto_scan_agent_proto_rawDesc = "" +
+const file_scan_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x16proto/scan/agent.proto\x12\x04scan\"9\n" +
+	"\x10scan/agent.proto\x12\x04scan\"9\n" +
 	"\x03Ack\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"\xec\x01\n" +
@@ -759,13 +951,34 @@ const file_proto_scan_agent_proto_rawDesc = "" +
 	"\rrunning_tasks\x18\x04 \x01(\x05R\frunningTasks\x12(\n" +
 	"\x10running_task_ids\x18\x05 \x03(\tR\x0erunningTaskIds\x12\x1b\n" +
 	"\tcpu_usage\x18\x06 \x01(\x02R\bcpuUsage\x12\x1b\n" +
-	"\tmem_usage\x18\a \x01(\x02R\bmemUsage\"x\n" +
+	"\tmem_usage\x18\a \x01(\x02R\bmemUsage\"\xa1\x01\n" +
 	"\rHeartbeatResp\x12\x10\n" +
 	"\x03ack\x18\x01 \x01(\bR\x03ack\x12)\n" +
 	"\x10should_terminate\x18\x02 \x01(\bR\x0fshouldTerminate\x12*\n" +
-	"\x11should_sync_rules\x18\x03 \x01(\bR\x0fshouldSyncRules\")\n" +
+	"\x11should_sync_rules\x18\x03 \x01(\bR\x0fshouldSyncRules\x12'\n" +
+	"\x0ftasks_available\x18\x04 \x01(\x05R\x0etasksAvailable\")\n" +
 	"\fFetchTaskReq\x12\x19\n" +
-	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\x8e\x01\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\"h\n" +
+	"\vAgentSignal\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1d\n" +
+	"\n" +
+	"free_slots\x18\x02 \x01(\x05R\tfreeSlots\x12\x1f\n" +
+	"\vsignal_type\x18\x03 \x01(\tR\n" +
+	"signalType\"r\n" +
+	"\n" +
+	"TaskNotify\x12'\n" +
+	"\x0favailable_tasks\x18\x01 \x01(\x05R\x0eavailableTasks\x12\x1a\n" +
+	"\bpriority\x18\x02 \x01(\x05R\bpriority\x12\x1f\n" +
+	"\vnotify_type\x18\x03 \x01(\tR\n" +
+	"notifyType\"\xb3\x01\n" +
+	"\fClaimTaskReq\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1d\n" +
+	"\n" +
+	"free_slots\x18\x02 \x01(\x05R\tfreeSlots\x120\n" +
+	"\x04tags\x18\x03 \x03(\v2\x1c.scan.ClaimTaskReq.TagsEntryR\x04tags\x1a7\n" +
+	"\tTagsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8e\x01\n" +
 	"\x04Task\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x18\n" +
 	"\atargets\x18\x02 \x03(\tR\atargets\x12\x16\n" +
@@ -791,10 +1004,13 @@ const file_proto_scan_agent_proto_rawDesc = "" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x14\n" +
 	"\x05level\x18\x02 \x01(\tR\x05level\x12\x18\n" +
 	"\amessage\x18\x03 \x01(\tR\amessage\x12\x1c\n" +
-	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp2\xe2\x02\n" +
+	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp2\xc5\x03\n" +
 	"\fAgentService\x121\n" +
 	"\bRegister\x12\x11.scan.RegisterReq\x1a\x12.scan.RegisterResp\x124\n" +
-	"\tHeartbeat\x12\x12.scan.HeartbeatReq\x1a\x13.scan.HeartbeatResp\x12+\n" +
+	"\tHeartbeat\x12\x12.scan.HeartbeatReq\x1a\x13.scan.HeartbeatResp\x124\n" +
+	"\tSubscribe\x12\x11.scan.AgentSignal\x1a\x10.scan.TaskNotify(\x010\x01\x12+\n" +
+	"\tClaimTask\x12\x12.scan.ClaimTaskReq\x1a\n" +
+	".scan.Task\x12+\n" +
 	"\tFetchTask\x12\x12.scan.FetchTaskReq\x1a\n" +
 	".scan.Task\x12-\n" +
 	"\fStreamResult\x12\x10.scan.ScanResult\x1a\t.scan.Ack(\x01\x120\n" +
@@ -804,75 +1020,84 @@ const file_proto_scan_agent_proto_rawDesc = "" +
 	"StreamLogs\x12\x10.scan.LogPayload\x1a\t.scan.Ack(\x01B$Z\"github.com/user/dddd-proto/go/scanb\x06proto3"
 
 var (
-	file_proto_scan_agent_proto_rawDescOnce sync.Once
-	file_proto_scan_agent_proto_rawDescData []byte
+	file_scan_agent_proto_rawDescOnce sync.Once
+	file_scan_agent_proto_rawDescData []byte
 )
 
-func file_proto_scan_agent_proto_rawDescGZIP() []byte {
-	file_proto_scan_agent_proto_rawDescOnce.Do(func() {
-		file_proto_scan_agent_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_proto_scan_agent_proto_rawDesc), len(file_proto_scan_agent_proto_rawDesc)))
+func file_scan_agent_proto_rawDescGZIP() []byte {
+	file_scan_agent_proto_rawDescOnce.Do(func() {
+		file_scan_agent_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_scan_agent_proto_rawDesc), len(file_scan_agent_proto_rawDesc)))
 	})
-	return file_proto_scan_agent_proto_rawDescData
+	return file_scan_agent_proto_rawDescData
 }
 
-var file_proto_scan_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
-var file_proto_scan_agent_proto_goTypes = []any{
+var file_scan_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_scan_agent_proto_goTypes = []any{
 	(*Ack)(nil),             // 0: scan.Ack
 	(*RegisterReq)(nil),     // 1: scan.RegisterReq
 	(*RegisterResp)(nil),    // 2: scan.RegisterResp
 	(*HeartbeatReq)(nil),    // 3: scan.HeartbeatReq
 	(*HeartbeatResp)(nil),   // 4: scan.HeartbeatResp
 	(*FetchTaskReq)(nil),    // 5: scan.FetchTaskReq
-	(*Task)(nil),            // 6: scan.Task
-	(*ScanResult)(nil),      // 7: scan.ScanResult
-	(*TaskCompleteReq)(nil), // 8: scan.TaskCompleteReq
-	(*EmergencyReq)(nil),    // 9: scan.EmergencyReq
-	(*LogPayload)(nil),      // 10: scan.LogPayload
-	nil,                     // 11: scan.RegisterReq.TagsEntry
+	(*AgentSignal)(nil),     // 6: scan.AgentSignal
+	(*TaskNotify)(nil),      // 7: scan.TaskNotify
+	(*ClaimTaskReq)(nil),    // 8: scan.ClaimTaskReq
+	(*Task)(nil),            // 9: scan.Task
+	(*ScanResult)(nil),      // 10: scan.ScanResult
+	(*TaskCompleteReq)(nil), // 11: scan.TaskCompleteReq
+	(*EmergencyReq)(nil),    // 12: scan.EmergencyReq
+	(*LogPayload)(nil),      // 13: scan.LogPayload
+	nil,                     // 14: scan.RegisterReq.TagsEntry
+	nil,                     // 15: scan.ClaimTaskReq.TagsEntry
 }
-var file_proto_scan_agent_proto_depIdxs = []int32{
-	11, // 0: scan.RegisterReq.tags:type_name -> scan.RegisterReq.TagsEntry
-	1,  // 1: scan.AgentService.Register:input_type -> scan.RegisterReq
-	3,  // 2: scan.AgentService.Heartbeat:input_type -> scan.HeartbeatReq
-	5,  // 3: scan.AgentService.FetchTask:input_type -> scan.FetchTaskReq
-	7,  // 4: scan.AgentService.StreamResult:input_type -> scan.ScanResult
-	8,  // 5: scan.AgentService.TaskComplete:input_type -> scan.TaskCompleteReq
-	9,  // 6: scan.AgentService.EmergencyDump:input_type -> scan.EmergencyReq
-	10, // 7: scan.AgentService.StreamLogs:input_type -> scan.LogPayload
-	2,  // 8: scan.AgentService.Register:output_type -> scan.RegisterResp
-	4,  // 9: scan.AgentService.Heartbeat:output_type -> scan.HeartbeatResp
-	6,  // 10: scan.AgentService.FetchTask:output_type -> scan.Task
-	0,  // 11: scan.AgentService.StreamResult:output_type -> scan.Ack
-	0,  // 12: scan.AgentService.TaskComplete:output_type -> scan.Ack
-	0,  // 13: scan.AgentService.EmergencyDump:output_type -> scan.Ack
-	0,  // 14: scan.AgentService.StreamLogs:output_type -> scan.Ack
-	8,  // [8:15] is the sub-list for method output_type
-	1,  // [1:8] is the sub-list for method input_type
-	1,  // [1:1] is the sub-list for extension type_name
-	1,  // [1:1] is the sub-list for extension extendee
-	0,  // [0:1] is the sub-list for field type_name
+var file_scan_agent_proto_depIdxs = []int32{
+	14, // 0: scan.RegisterReq.tags:type_name -> scan.RegisterReq.TagsEntry
+	15, // 1: scan.ClaimTaskReq.tags:type_name -> scan.ClaimTaskReq.TagsEntry
+	1,  // 2: scan.AgentService.Register:input_type -> scan.RegisterReq
+	3,  // 3: scan.AgentService.Heartbeat:input_type -> scan.HeartbeatReq
+	6,  // 4: scan.AgentService.Subscribe:input_type -> scan.AgentSignal
+	8,  // 5: scan.AgentService.ClaimTask:input_type -> scan.ClaimTaskReq
+	5,  // 6: scan.AgentService.FetchTask:input_type -> scan.FetchTaskReq
+	10, // 7: scan.AgentService.StreamResult:input_type -> scan.ScanResult
+	11, // 8: scan.AgentService.TaskComplete:input_type -> scan.TaskCompleteReq
+	12, // 9: scan.AgentService.EmergencyDump:input_type -> scan.EmergencyReq
+	13, // 10: scan.AgentService.StreamLogs:input_type -> scan.LogPayload
+	2,  // 11: scan.AgentService.Register:output_type -> scan.RegisterResp
+	4,  // 12: scan.AgentService.Heartbeat:output_type -> scan.HeartbeatResp
+	7,  // 13: scan.AgentService.Subscribe:output_type -> scan.TaskNotify
+	9,  // 14: scan.AgentService.ClaimTask:output_type -> scan.Task
+	9,  // 15: scan.AgentService.FetchTask:output_type -> scan.Task
+	0,  // 16: scan.AgentService.StreamResult:output_type -> scan.Ack
+	0,  // 17: scan.AgentService.TaskComplete:output_type -> scan.Ack
+	0,  // 18: scan.AgentService.EmergencyDump:output_type -> scan.Ack
+	0,  // 19: scan.AgentService.StreamLogs:output_type -> scan.Ack
+	11, // [11:20] is the sub-list for method output_type
+	2,  // [2:11] is the sub-list for method input_type
+	2,  // [2:2] is the sub-list for extension type_name
+	2,  // [2:2] is the sub-list for extension extendee
+	0,  // [0:2] is the sub-list for field type_name
 }
 
-func init() { file_proto_scan_agent_proto_init() }
-func file_proto_scan_agent_proto_init() {
-	if File_proto_scan_agent_proto != nil {
+func init() { file_scan_agent_proto_init() }
+func file_scan_agent_proto_init() {
+	if File_scan_agent_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_scan_agent_proto_rawDesc), len(file_proto_scan_agent_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_scan_agent_proto_rawDesc), len(file_scan_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_proto_scan_agent_proto_goTypes,
-		DependencyIndexes: file_proto_scan_agent_proto_depIdxs,
-		MessageInfos:      file_proto_scan_agent_proto_msgTypes,
+		GoTypes:           file_scan_agent_proto_goTypes,
+		DependencyIndexes: file_scan_agent_proto_depIdxs,
+		MessageInfos:      file_scan_agent_proto_msgTypes,
 	}.Build()
-	File_proto_scan_agent_proto = out.File
-	file_proto_scan_agent_proto_goTypes = nil
-	file_proto_scan_agent_proto_depIdxs = nil
+	File_scan_agent_proto = out.File
+	file_scan_agent_proto_goTypes = nil
+	file_scan_agent_proto_depIdxs = nil
 }

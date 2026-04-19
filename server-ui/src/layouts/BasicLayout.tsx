@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
-import { Layout, Menu, Avatar, Dropdown, Space, Typography, ConfigProvider, theme, message } from 'antd';
+import { Layout, Menu, Avatar, Dropdown, Space, Typography, ConfigProvider, theme, message, Select } from 'antd';
 import type { MenuProps } from 'antd';
 import {
     MenuFoldOutlined,
     MenuUnfoldOutlined,
     UserOutlined,
     LogoutOutlined,
+    ProjectOutlined,
 } from '@ant-design/icons';
 import type { RouteConfig } from '../routes';
 import { menuRoutes } from '../routes';
+import { listProjects } from '../services/api';
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -17,6 +19,8 @@ const { Text } = Typography;
 const BasicLayout: React.FC = () => {
     const [collapsed, setCollapsed] = useState(false);
     const [tenantId, setTenantId] = useState('default');
+    const [projects, setProjects] = useState<API.Project[]>([]);
+    const [selectedProject, setSelectedProject] = useState<string>('');
     const navigate = useNavigate();
     const location = useLocation();
 
@@ -28,7 +32,28 @@ const BasicLayout: React.FC = () => {
         }
         const tid = localStorage.getItem('tenant_id') || 'default';
         setTenantId(tid);
+
+        listProjects().then(res => {
+            const list = res || [];
+            setProjects(list);
+            const savedProj = localStorage.getItem('active_project_id');
+            if (savedProj && list.some(p => p.ID === savedProj)) {
+                setSelectedProject(savedProj);
+            } else if (list.length > 0) {
+                setSelectedProject(list[0].ID);
+                localStorage.setItem('active_project_id', list[0].ID);
+            }
+        }).catch(err => {
+            console.error('Failed to fetch projects', err);
+        });
     }, [navigate]);
+
+    const handleProjectChange = (value: string) => {
+        setSelectedProject(value);
+        localStorage.setItem('active_project_id', value);
+        // Force reload to update all child components with new project scope
+        window.location.reload();
+    };
 
     const handleLogout = () => {
         localStorage.removeItem('token');
@@ -224,6 +249,20 @@ const BasicLayout: React.FC = () => {
                             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                         >
                             {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                        </div>
+
+                        <div style={{ flex: 1, paddingLeft: 24 }}>
+                            <Space>
+                                <ProjectOutlined style={{ color: '#0ea5e9' }} />
+                                <Select
+                                    value={selectedProject}
+                                    onChange={handleProjectChange}
+                                    style={{ width: 250 }}
+                                    placeholder="请选择项目上下文"
+                                    options={projects.map(p => ({ label: p.Name, value: p.ID }))}
+                                    dropdownMatchSelectWidth={false}
+                                />
+                            </Space>
                         </div>
 
                         <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">

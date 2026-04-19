@@ -27,6 +27,17 @@ declare namespace API {
     vulns: number;
   }
 
+  // ======================== Project ========================
+
+  interface Project {
+    ID: string;
+    TenantID: string;
+    Name: string;
+    Description: string;
+    Status: string;
+    CreatedAt: string;
+  }
+
   // ======================== Task ========================
 
   /** RootTask (GET /api/v1/tasks) */
@@ -49,6 +60,7 @@ declare namespace API {
 
   /** 创建任务请求 (POST /api/v1/tasks) */
   interface CreateTaskRequest {
+    project_id: string;
     name: string;
     targets: string | string[];               // 多行文本或 JSON 数组
     config?: Record<string, unknown> | string; // JSON 对象或 JSON 字符串

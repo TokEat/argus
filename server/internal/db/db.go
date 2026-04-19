@@ -14,9 +14,51 @@ import (
 
 var DB *gorm.DB
 
+// WSBroadcastHook is called to push real-time updates to connected WebSocket clients
+var WSBroadcastHook func(msg interface{})
+
+type Project struct {
+	ID            string         `gorm:"primaryKey"`
+	TenantID      string         `gorm:"default:'default';index"`
+	Name          string         `gorm:"index"`
+	Description   string         `gorm:"type:text"`
+	Tags          string         `gorm:"type:jsonb"`
+	SeedTargets   string         `gorm:"type:jsonb"`
+	Scope         string         `gorm:"type:jsonb"`
+	DefaultConfig string         `gorm:"type:jsonb"`
+	NodeAffinity  string         `gorm:"type:jsonb"`
+	Status        string         `gorm:"default:'active';index"`
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	DeletedAt     gorm.DeletedAt `gorm:"index"`
+}
+
+type ProjectMember struct {
+	ProjectID string `gorm:"primaryKey"`
+	UserID    string `gorm:"primaryKey"`
+	Role      string `gorm:"default:'operator'"`
+	CreatedAt time.Time
+}
+
+type CronTask struct {
+	ID        string         `gorm:"primaryKey"`
+	ProjectID string         `gorm:"index"`
+	Name      string
+	CronExpr  string         `gorm:"index"`
+	Targets   string         `gorm:"type:jsonb"`
+	Config    string         `gorm:"type:jsonb"`
+	NextRunAt *time.Time     `gorm:"index"`
+	Status    string         `gorm:"default:'active';index"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt `gorm:"index"`
+}
+
 type RootTask struct {
 	ID              string `gorm:"primaryKey"`
 	TenantID        string `gorm:"default:'default';index"`
+	ProjectID       string `gorm:"index"`
+	CronTaskID      string `gorm:"index"`
 	UserID          string `gorm:"index"`
 	Name            string
 	OriginalTargets string `gorm:"type:text"`
@@ -34,6 +76,7 @@ type RootTask struct {
 type SubTask struct {
 	ID            string `gorm:"primaryKey"`
 	TenantID      string `gorm:"default:'default';index"`
+	ProjectID     string `gorm:"index"`
 	RootTaskID    string `gorm:"index"`
 	ChunkTargets  string `gorm:"type:text"`
 	Status        string `gorm:"index"`
@@ -87,40 +130,113 @@ type SystemConfig struct {
 	UpdatedAt time.Time
 }
 
+type Domain struct {
+	ID        uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID  string `gorm:"default:'default';index:idx_domain_dedupe"`
+	ProjectID string `gorm:"index:idx_domain_dedupe,unique"`
+	Name      string `gorm:"index:idx_domain_dedupe,unique"`
+	TaskID    string `gorm:"index"`
+	Tags      string `gorm:"type:jsonb"`
+	Records   string `gorm:"type:jsonb"`
+	ICP       string
+	Whois     string `gorm:"type:jsonb"`
+	Status    string `gorm:"default:'alive';index"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 type Asset struct {
 	ID          uint   `gorm:"primaryKey;autoIncrement"`
 	TenantID    string `gorm:"default:'default';index"`
-	TaskID      string `gorm:"uniqueIndex:idx_asset_dedupe"`
-	Target      string `gorm:"uniqueIndex:idx_asset_dedupe"`
-	Protocol    string `gorm:"uniqueIndex:idx_asset_dedupe"`
+	ProjectID   string `gorm:"index:idx_asset_dedupe,unique"`
+	TaskID      string `gorm:"index"`
+	Target      string `gorm:"index:idx_asset_dedupe,unique"`
+	Protocol    string `gorm:"index:idx_asset_dedupe,unique"`
 	Port        int
 	URL         string `gorm:"type:text"`
 	Title       string
 	Service     string
 	CertSubject string     // TLS 证书主体
 	CertExpiry  *time.Time // TLS 证书过期时间
+	Tags        string `gorm:"type:jsonb"`
+	Status      string `gorm:"default:'alive';index"`
+	OwnerID     string `gorm:"index"`
+	CredID      string `gorm:"index"`
 	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type Credential struct {
+	ID        string         `gorm:"primaryKey"`
+	ProjectID string         `gorm:"index"`
+	Name      string
+	Type      string         `gorm:"index"`
+	Content   string         `gorm:"type:text"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt `gorm:"index"`
 }
 
 type FingerprintHit struct {
 	ID          uint   `gorm:"primaryKey;autoIncrement"`
 	TenantID    string `gorm:"default:'default';index"`
-	TaskID      string `gorm:"uniqueIndex:idx_fp_dedupe"`
-	Target      string `gorm:"uniqueIndex:idx_fp_dedupe"`
-	ProductName string `gorm:"uniqueIndex:idx_fp_dedupe"`
+	ProjectID   string `gorm:"index:idx_fp_dedupe,unique"`
+	TaskID      string `gorm:"index"`
+	Target      string `gorm:"index:idx_fp_dedupe,unique"`
+	ProductName string `gorm:"index:idx_fp_dedupe,unique"`
 	RuleName    string
 	Evidence    string `gorm:"type:text"`
 	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type Vulnerability struct {
+	ID           uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID     string `gorm:"default:'default';index"`
+	ProjectID    string `gorm:"index:idx_vuln_new_dedupe,unique"`
+	TaskID       string `gorm:"index"`
+	Target       string `gorm:"index:idx_vuln_new_dedupe,unique"`
+	Plugin       string `gorm:"index:idx_vuln_new_dedupe,unique"`
+	Severity     string
+	Status       string `gorm:"default:'open';index"`
+	Assignee     string `gorm:"index"`
+	IgnoreReason string `gorm:"type:text"`
+	VerifyTaskID string `gorm:"index"`
+	Payload      string `gorm:"type:text"`
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+type NotificationRule struct {
 	ID        uint   `gorm:"primaryKey;autoIncrement"`
-	TenantID  string `gorm:"default:'default';index"`
-	TaskID    string `gorm:"uniqueIndex:idx_vuln_new_dedupe"`
-	Target    string `gorm:"uniqueIndex:idx_vuln_new_dedupe"`
-	Plugin    string `gorm:"uniqueIndex:idx_vuln_new_dedupe"`
-	Severity  string
-	Payload   string `gorm:"type:text"`
+	ProjectID string `gorm:"index"`
+	Event     string `gorm:"index"`
+	Channel   string
+	Config    string `gorm:"type:jsonb"`
+	Status    string `gorm:"default:'enabled'"`
+	CreatedAt time.Time
+}
+
+type AssetChangeLog struct {
+	ID         uint   `gorm:"primaryKey;autoIncrement"`
+	ProjectID  string `gorm:"index"`
+	TaskID     string `gorm:"index"`
+	EntityType string `gorm:"index"`
+	EntityID   uint   `gorm:"index"`
+	ChangeType string `gorm:"index"`
+	Details    string `gorm:"type:jsonb"`
+	CreatedAt  time.Time
+}
+
+type Report struct {
+	ID        string `gorm:"primaryKey"`
+	ProjectID string `gorm:"index"`
+	Name      string
+	Type      string `gorm:"index"`
+	Format    string
+	FileURL   string `gorm:"type:text"`
+	Status    string `gorm:"default:'pending'"`
+	CreatedBy string `gorm:"index"`
 	CreatedAt time.Time
 }
 
@@ -161,12 +277,20 @@ func InitDB(dsn string) {
 	}
 
 	if err := db.AutoMigrate(
+		&Project{},
+		&ProjectMember{},
+		&CronTask{},
 		&RootTask{},
 		&SubTask{},
-		&Node{},
+		&NotificationRule{},
+		&Domain{},
 		&Asset{},
+		&Credential{},
 		&FingerprintHit{},
 		&Vulnerability{},
+		&AssetChangeLog{},
+		&Report{},
+		&Node{},
 		&Arsenal{},
 		&User{},
 		&SystemConfig{},
@@ -209,19 +333,28 @@ var OnResultBatchSaved func(count int, rType string)
 
 func StartBatchWriters() {
 	go startGenericBatchWriter(assetBuffer, func(batch []Asset) {
-		DB.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(batch, 500)
+		DB.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "project_id"}, {Name: "target"}, {Name: "protocol"}},
+			DoUpdates: clause.AssignmentColumns([]string{"task_id", "port", "url", "title", "service", "cert_subject", "cert_expiry", "status", "updated_at"}),
+		}).CreateInBatches(batch, 500)
 		if OnResultBatchSaved != nil && len(batch) > 0 {
 			OnResultBatchSaved(len(batch), "asset")
 		}
 	})
 	go startGenericBatchWriter(fpBuffer, func(batch []FingerprintHit) {
-		DB.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(batch, 500)
+		DB.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "project_id"}, {Name: "target"}, {Name: "product_name"}},
+			DoUpdates: clause.AssignmentColumns([]string{"task_id", "rule_name", "evidence", "updated_at"}),
+		}).CreateInBatches(batch, 500)
 		if OnResultBatchSaved != nil && len(batch) > 0 {
 			OnResultBatchSaved(len(batch), "fingerprint")
 		}
 	})
 	go startGenericBatchWriter(vulnBuffer2, func(batch []Vulnerability) {
-		DB.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(batch, 500)
+		DB.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "project_id"}, {Name: "target"}, {Name: "plugin"}},
+			DoUpdates: clause.AssignmentColumns([]string{"task_id", "severity", "payload", "updated_at", "status"}),
+		}).CreateInBatches(batch, 500)
 		if OnResultBatchSaved != nil && len(batch) > 0 {
 			OnResultBatchSaved(len(batch), "vuln")
 		}
@@ -249,6 +382,19 @@ func startGenericBatchWriter[T any](ch chan T, saveFunc func(batch []T)) {
 }
 
 func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
+	// 查询任务所属的项目与租户 (可优化为 LRU 缓存避免高频查库)
+	var subTask SubTask
+	projectID := "default_project"
+	tenantID := "default"
+	if err := DB.Select("project_id", "tenant_id").Where("id = ?", taskID).First(&subTask).Error; err == nil {
+		if subTask.ProjectID != "" {
+			projectID = subTask.ProjectID
+		}
+		if subTask.TenantID != "" {
+			tenantID = subTask.TenantID
+		}
+	}
+
 	target := "unknown"
 	var p map[string]interface{}
 	var port int
@@ -283,12 +429,20 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 		}
 	}
 
+	if WSBroadcastHook != nil {
+		WSBroadcastHook(map[string]interface{}{
+			"type":    payloadType,
+			"target":  target,
+			"payload": payloadJSON,
+		})
+	}
+
 	switch payloadType {
 	case "asset", "port_scan", "subdomain":
 		assetBuffer <- Asset{
-			TaskID: taskID, Target: target, Protocol: payloadType,
+			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, Target: target, Protocol: payloadType,
 			Port: port, URL: payloadJSON, Title: title, Service: service,
-			CreatedAt: time.Now(),
+			Tags: "[]", Status: "alive", CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
 	case "fingerprint", "web_fingerprint", "tech":
 		productName := payloadType
@@ -296,8 +450,8 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 			productName = plugin
 		}
 		fpBuffer <- FingerprintHit{
-			TaskID: taskID, Target: target, ProductName: productName,
-			Evidence: payloadJSON, CreatedAt: time.Now(),
+			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, Target: target, ProductName: productName,
+			Evidence: payloadJSON, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
 	default: // nuclei, gopoc
 		if severity == "" {
@@ -307,8 +461,8 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 			plugin = payloadType
 		}
 		vulnBuffer2 <- Vulnerability{
-			TaskID: taskID, Target: target, Plugin: plugin,
-			Severity: severity, Payload: payloadJSON, CreatedAt: time.Now(),
+			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, Target: target, Plugin: plugin,
+			Severity: severity, Payload: payloadJSON, Status: "open", CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
 	}
 }

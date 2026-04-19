@@ -29,7 +29,7 @@ func ApplyConfigDefaults(cfg *Config) {
 		if runtime.GOOS == "linux" {
 			cfg.TCPPortScanThreads = 4000
 		} else {
-			cfg.TCPPortScanThreads = 1000
+			cfg.TCPPortScanThreads = 2000
 		}
 	}
 	if cfg.SYNPortScanThreads == 0 {
@@ -39,7 +39,7 @@ func ApplyConfigDefaults(cfg *Config) {
 		cfg.PortsThreshold = 300
 	}
 	if cfg.TCPPortScanTimeout == 0 {
-		cfg.TCPPortScanTimeout = 6
+		cfg.TCPPortScanTimeout = 3
 	}
 	if cfg.MasscanPath == "" {
 		cfg.MasscanPath = "masscan"
@@ -48,7 +48,7 @@ func ApplyConfigDefaults(cfg *Config) {
 		cfg.GetBannerThreads = 500
 	}
 	if cfg.GetBannerTimeout == 0 {
-		cfg.GetBannerTimeout = 5
+		cfg.GetBannerTimeout = 3
 	}
 	if cfg.SubdomainBruteForceThreads == 0 {
 		cfg.SubdomainBruteForceThreads = 150

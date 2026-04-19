@@ -16,19 +16,15 @@ import (
 
 func main() {
 	var (
-		dbDSN         string
-		redisAddr     string
-		redisPassword string
-		redisDB       int
-		grpcPort      int
-		apiAddr       string
-		configDir     string
+		dbDSN    string
+		amqpURL  string
+		grpcPort int
+		apiAddr  string
+		configDir string
 	)
 
 	flag.StringVar(&dbDSN, "db", "", "Database DSN. Empty uses local SQLite data/dddd.db")
-	flag.StringVar(&redisAddr, "redis", "", "Redis address. Empty or unreachable falls back to in-memory queue")
-	flag.StringVar(&redisPassword, "redis-password", "", "Redis password")
-	flag.IntVar(&redisDB, "redis-db", 0, "Redis database index")
+	flag.StringVar(&amqpURL, "amqp", "amqp://guest:guest@localhost:5672/", "RabbitMQ AMQP URL. Empty falls back to in-memory queue")
 	flag.IntVar(&grpcPort, "grpc", 50051, "gRPC listen port")
 	flag.StringVar(&apiAddr, "api", ":8085", "HTTP API listen address")
 	flag.StringVar(&configDir, "config-dir", "", "Path to the directory containing finger.yaml, dir.yaml, workflow.yaml, and pocs/")
@@ -61,22 +57,37 @@ func main() {
 	db.StartBatchWriters()
 
 	log.Println("Initializing task queue...")
-	queue := scheduler.NewTaskQueue(redisAddr, redisPassword, redisDB)
+	queue := scheduler.NewTaskQueue(amqpURL)
 	api.SetTaskQueue(queue)
 	log.Printf("Task queue mode: %s", queue.Mode())
 
 	log.Printf("Initializing gRPC server on :%d...", grpcPort)
 	srv := grpc.NewServer(grpcPort)
 
-	// 将 queue 的 pop 能力作为 hook 挂载给 gRPC Server
-	srv.SetFetchTaskHook(func(agentID string) (*pb.Task, string, error) {
-		task, msgID, err := queue.PopTask(context.Background(), agentID)
+	// ---- 挂载 RabbitMQ 队列 Hooks ----
+
+	// ClaimTask 使用 TryPopTask（完全非阻塞，即时返回）
+	srv.SetClaimTaskHook(func(agentID string) (*pb.Task, string, error) {
+		task, msgID, err := queue.TryPopTask(context.Background(), agentID)
 		if err != nil {
-			log.Printf("Error popping task from stream for %s: %v", agentID, err)
+			log.Printf("Error claiming task for %s: %v", agentID, err)
 			return nil, "", err
 		}
 		if task == nil {
-			// 返回空的代表没任务
+			return &pb.Task{}, "", nil
+		}
+		log.Printf("Agent %s claimed Task %s (MsgID: %s)", agentID, task.TaskId, msgID)
+		return task, msgID, nil
+	})
+
+	// FetchTask 兼容旧版 Agent：保留阻塞等待（最多 1 秒）
+	srv.SetFetchTaskHook(func(agentID string) (*pb.Task, string, error) {
+		task, msgID, err := queue.PopTask(context.Background(), agentID)
+		if err != nil {
+			log.Printf("Error popping task for %s: %v", agentID, err)
+			return nil, "", err
+		}
+		if task == nil {
 			return &pb.Task{}, "", nil
 		}
 		log.Printf("Assigned Task %s (StreamMsg: %s) to Agent %s", task.TaskId, msgID, agentID)
@@ -87,10 +98,35 @@ func main() {
 		return queue.AckTask(context.Background(), msgID)
 	})
 
-	// 标签不匹配时退回任务：ACK 掉当前消息，按原优先级重新入队
+	// 标签不匹配时退回任务：Nack + requeue（RabbitMQ 原生重新入队）
 	srv.SetReturnTaskHook(func(task *pb.Task, msgID string) error {
-		_ = queue.AckTask(context.Background(), msgID)    // ACK 掉旧消息位点
-		return queue.PushTask(context.Background(), task) // 按原优先级重新入队
+		return queue.NackTask(context.Background(), msgID)
+	})
+
+	// 队列深度查询 Hook（用于心跳响应和防饥饿通知）
+	srv.SetQueueDepthHook(func() int32 {
+		depths := queue.QueueDepth(context.Background())
+		var total int64
+		for _, d := range depths {
+			total += d
+		}
+		return int32(total)
+	})
+
+	// ★ 将 gRPC Server 的 NotifyHub 暴露给 API 层
+	// 当 createTask 完成入队后，API 层通过此引用广播通知所有在线 Agent
+	api.SetNotifyHub(srv.Hub)
+
+	// 注册 UI 动画广播 Hook
+	srv.SetOnTaskClaimedHook(func(agentID, taskID string) {
+		if api.Hub != nil {
+			api.Hub.Broadcast(map[string]interface{}{
+				"type":     "task_claimed",
+				"task_id":  taskID,
+				"agent_id": agentID,
+				"time":     time.Now().UnixMilli(),
+			})
+		}
 	})
 
 	// 挂载一个后台协程启动 API HTTP Server
@@ -98,36 +134,19 @@ func main() {
 		api.InitRouter(apiAddr)
 	}()
 
-	// 挂载一个死亡节点扫雷与任务抢救协程
+	// 挂载节点离线状态判定协程
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		for range ticker.C {
 			var deadNodes []db.Node
-			// 60秒收不到心跳即判定为掉线
 			cutoff := time.Now().UnixMilli() - 60000
 			db.DB.Where("status = ? AND last_beat < ?", "Alive", cutoff).Find(&deadNodes)
 			for _, n := range deadNodes {
-				log.Printf("[Sweep] Agent %s died.", n.AgentID)
+				log.Printf("[Heartbeat] Agent %s marked as offline.", n.AgentID)
 				db.DB.Model(&n).Updates(map[string]interface{}{
 					"status":        "Offline",
 					"running_tasks": 0,
 				})
-
-				var zombieTasks []db.SubTask
-				db.DB.Where("agent_id = ? AND status = ?", n.AgentID, "Running").Find(&zombieTasks)
-				for _, z := range zombieTasks {
-					log.Printf("[Recovery] Zombie SubTask %s recovered from dead agent %s! Pushing to queue front...", z.ID, n.AgentID)
-					db.DB.Model(&z).Updates(map[string]interface{}{
-						"status":   "Pending",
-						"agent_id": "",
-					})
-					pbTask, err := db.SubTaskToProto(&z)
-					if err != nil {
-						log.Printf("[Recovery] Failed to rebuild subtask %s: %v", z.ID, err)
-						continue
-					}
-					_ = queue.PushTaskToFront(context.Background(), pbTask)
-				}
 			}
 		}
 	}()

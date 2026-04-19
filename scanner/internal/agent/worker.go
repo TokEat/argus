@@ -47,6 +47,11 @@ type Worker struct {
 	maxWorkers   int
 	ruleVersion  string
 	tags         map[string]string
+
+	// sem 并发控制信号量
+	sem chan struct{}
+	// freeSlots 当前空闲 worker 数（原子操作）
+	freeSlots atomic.Int32
 }
 
 func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[string]string) *Worker {
@@ -75,13 +80,14 @@ func (w *Worker) Start() error {
 	w.client = pb.NewAgentServiceClient(conn)
 
 	// 1. 注册
+	effectiveWorkers := w.effectiveWorkerCount()
 	_, err = w.client.Register(context.Background(), &pb.RegisterReq{
 		AgentId:  w.agentID,
-		Version:  "v2.0.1",
+		Version:  "v2.1.0",
 		Tags:     w.tags,
 		Os:       runtime.GOOS,
 		Arch:     runtime.GOARCH,
-		Capacity: int32(w.effectiveWorkerCount()),
+		Capacity: int32(effectiveWorkers),
 	})
 	if err != nil {
 		return err
@@ -91,18 +97,16 @@ func (w *Worker) Start() error {
 	// 开机同步热更新规则库 (Arsenal)
 	w.syncRules()
 
+	// 初始化并发控制
+	w.sem = make(chan struct{}, effectiveWorkers)
+	w.freeSlots.Store(int32(effectiveWorkers))
+
 	// 后台心跳维持
 	go w.heartbeatLoop()
-	// 获取动态指命
+	// 获取动态指令
 	go w.commandLoop()
 
-	// 引擎已完成无状态化改造，支持真正的多任务并发。
-	// effectiveWorkers = min(maxWorkers, engine.MaxConcurrentTasks())
-	effectiveWorkers := w.effectiveWorkerCount()
-	if effectiveWorkers < w.maxWorkers {
-		log.Printf("Engine concurrent limit: capping worker pool from %d to %d", w.maxWorkers, effectiveWorkers)
-	}
-	sem := make(chan struct{}, effectiveWorkers)
+	log.Printf("Agent started with worker pool size: %d", effectiveWorkers)
 
 	// 信号劫持
 	sigCh := make(chan os.Signal, 1)
@@ -115,9 +119,8 @@ func (w *Worker) Start() error {
 		close(quit)
 	}()
 
-	log.Printf("Agent started with worker pool size: %d", effectiveWorkers)
-
-	// 2. 轮询领取任务
+	// ★ 核心调度循环：Subscribe 通知 + ClaimTask 认领
+	// 持续尝试建立 Subscribe 流，断开后自动重连
 	for {
 		select {
 		case <-quit:
@@ -127,32 +130,131 @@ func (w *Worker) Start() error {
 		default:
 		}
 
-		// 阻塞等待资源额度
-		sem <- struct{}{}
+		w.subscribeAndClaim(quit)
 
-		task, err := w.client.FetchTask(context.Background(), &pb.FetchTaskReq{
-			AgentId: w.agentID,
+		// Subscribe 断开后，等待 2 秒重连
+		select {
+		case <-quit:
+			w.wg.Wait()
+			return nil
+		case <-time.After(2 * time.Second):
+			log.Println("[Subscribe] Reconnecting to server...")
+		}
+	}
+}
+
+// subscribeAndClaim 建立 Subscribe 流并监听任务通知，收到通知后 ClaimTask 认领
+func (w *Worker) subscribeAndClaim(quit chan struct{}) {
+	stream, err := w.client.Subscribe(context.Background())
+	if err != nil {
+		log.Printf("[Subscribe] Failed to connect: %v", err)
+		return
+	}
+
+	// 发送初始 AgentSignal（携带 agent_id 和初始空闲容量）
+	if err := stream.Send(&pb.AgentSignal{
+		AgentId:    w.agentID,
+		FreeSlots:  w.freeSlots.Load(),
+		SignalType: "ready",
+	}); err != nil {
+		log.Printf("[Subscribe] Failed to send initial signal: %v", err)
+		return
+	}
+
+	log.Printf("[Subscribe] Stream established, listening for task notifications...")
+
+	// 启动后台定期上报容量变化
+	stopCapacity := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopCapacity:
+				return
+			case <-ticker.C:
+				_ = stream.Send(&pb.AgentSignal{
+					AgentId:    w.agentID,
+					FreeSlots:  w.freeSlots.Load(),
+					SignalType: "capacity_update",
+				})
+			}
+		}
+	}()
+	defer close(stopCapacity)
+
+	for {
+		select {
+		case <-quit:
+			return
+		default:
+		}
+
+		// 接收 Server 推送的 TaskNotify
+		notify, err := stream.Recv()
+		if err == io.EOF {
+			log.Println("[Subscribe] Server closed the stream (EOF)")
+			return
+		}
+		if err != nil {
+			log.Printf("[Subscribe] Stream error: %v", err)
+			return
+		}
+
+		log.Printf("[Subscribe] Received notification: type=%s, available=%d, priority=%d",
+			notify.NotifyType, notify.AvailableTasks, notify.Priority)
+
+		// 有空闲 worker 就立即去认领任务
+		w.claimAvailableTasks()
+	}
+}
+
+// claimAvailableTasks 在收到通知后，尽可能多地认领任务（填满空闲 worker）
+func (w *Worker) claimAvailableTasks() {
+	for {
+		// 检查是否有空闲 worker
+		free := w.freeSlots.Load()
+		if free <= 0 {
+			return // 满载，等下次通知
+		}
+
+		// 尝试获取一个 worker 额度
+		select {
+		case w.sem <- struct{}{}:
+		default:
+			return // 信号量满
+		}
+
+		// 向 Server 认领任务
+		task, err := w.client.ClaimTask(context.Background(), &pb.ClaimTaskReq{
+			AgentId:   w.agentID,
+			FreeSlots: w.freeSlots.Load(),
+			Tags:      w.tags,
 		})
 
 		if err != nil {
-			log.Printf("FetchTask error (will retry): %v", err)
-			<-sem // 释放
-			time.Sleep(5 * time.Second)
-			continue
+			log.Printf("[ClaimTask] Error: %v", err)
+			<-w.sem // 释放
+			return
 		}
 
 		if task.TaskId == "" {
-			// 没有任务，闲置等待
-			<-sem // 释放
-			time.Sleep(3 * time.Second)
-			continue
+			// 队列已空
+			<-w.sem // 释放
+			return
 		}
 
-		// 协程派发任务
+		// 认领成功，启动协程执行任务
+		w.freeSlots.Add(-1)
 		w.wg.Add(1)
 		go func(t *pb.Task) {
 			defer w.wg.Done()
-			defer func() { <-sem }() // 执行完毕释放 quota
+			defer func() {
+				<-w.sem
+				w.freeSlots.Add(1)
+				// 通知 Server 容量变化，让 Server 知道可以继续派发
+				// （Server 在 TaskComplete 时也会检查队列并主动通知）
+			}()
 			w.executeTask(t)
 		}(task)
 	}
@@ -163,7 +265,6 @@ func (w *Worker) heartbeatLoop() {
 	defer ticker.Stop()
 	for range ticker.C {
 		if w.client != nil {
-			// 上报当前规则版本和运行中任务数
 			w.mu.Lock()
 			runningCount := int32(len(w.runningTasks))
 			taskIDs := make([]string, 0, runningCount)
@@ -172,7 +273,6 @@ func (w *Worker) heartbeatLoop() {
 			}
 			w.mu.Unlock()
 
-			// 采集硬件资源
 			var cpuUsage float64
 			var memUsage float64
 			if p, err := cpu.Percent(0, false); err == nil && len(p) > 0 {
@@ -195,10 +295,15 @@ func (w *Worker) heartbeatLoop() {
 				log.Printf("Heartbeat failure: %v", err)
 				continue
 			}
-			// 通过 gRPC 心跳响应接收规则同步信号
 			if resp.ShouldSyncRules {
 				log.Println("[Heartbeat] Server signaled rule sync needed via gRPC!")
 				w.syncRules()
+			}
+
+			// 防饥饿兜底：心跳响应中如果 Server 告知有任务但我们有空闲，就主动认领
+			if resp.TasksAvailable > 0 && w.freeSlots.Load() > 0 {
+				log.Printf("[Heartbeat] Server reports %d tasks available, attempting claim...", resp.TasksAvailable)
+				w.claimAvailableTasks()
 			}
 		}
 	}
@@ -237,7 +342,6 @@ func (w *Worker) commandLoop() {
 func (w *Worker) syncRules() {
 	log.Println("[Sync] Checking Arsenal manifest for incremental update...")
 
-	// 1. 获取服务端 manifest
 	manifestURL := w.apiURL + "/api/v1/arsenals/manifest"
 	resp, err := http.Get(manifestURL)
 	if err != nil {
@@ -262,18 +366,15 @@ func (w *Worker) syncRules() {
 		return
 	}
 
-	// 2. 加载本地 hash 清单
 	localHashes := w.loadLocalManifest()
 
-	// 3. 对比差异，仅下载变更的文件
 	updated := 0
 	for _, item := range manifest.Items {
 		localHash, exists := localHashes[item.Type+"/"+item.FileName]
 		if exists && localHash == item.Hash {
-			continue // 未变更，跳过
+			continue
 		}
 
-		// 需要更新：备份旧文件 + 下载新文件
 		dirPath := "config"
 		if item.Type == "poc" {
 			dirPath = "config/pocs"
@@ -281,7 +382,6 @@ func (w *Worker) syncRules() {
 		_ = os.MkdirAll(dirPath, 0755)
 		targetPath := filepath.Join(dirPath, item.FileName)
 
-		// 备份旧文件
 		backupDir := "config/.backup"
 		_ = os.MkdirAll(backupDir, 0755)
 		if _, err := os.Stat(targetPath); err == nil {
@@ -290,7 +390,6 @@ func (w *Worker) syncRules() {
 			_ = os.WriteFile(backupPath, data, 0644)
 		}
 
-		// 下载新内容
 		content := w.downloadRule(item.Type, item.FileName)
 		if content != "" {
 			_ = os.WriteFile(targetPath, []byte(content), 0644)
@@ -300,7 +399,6 @@ func (w *Worker) syncRules() {
 		}
 	}
 
-	// 4. 保存本地 manifest
 	w.saveLocalManifest(localHashes)
 	w.ruleVersion = manifest.RuleVersion
 
@@ -350,7 +448,6 @@ func (w *Worker) saveLocalManifest(hashes map[string]string) {
 	_ = os.WriteFile("config/.manifest.json", data, 0644)
 }
 
-// syncRulesFull 全量同步降级方案
 func (w *Worker) syncRulesFull() {
 	log.Println("[Sync] Full sync from Arsenal API...")
 
@@ -391,17 +488,14 @@ func (w *Worker) syncRulesFull() {
 func (w *Worker) executeTask(task *pb.Task) {
 	log.Printf("Received Task: %s with targets: %v", task.TaskId, task.Targets)
 
-	// 解析配置
 	cfg := engine.Config(structs.DefaultConfig())
 	if len(task.Config) > 0 {
 		_ = json.Unmarshal(task.Config, &cfg)
 	}
-	// 强制覆盖 target 为下发的 target
 	cfg.Targets = task.Targets
 	cfg.OutputFile = ""
 	cfg.ReportName = ""
 
-	// 初始化上下文
 	ctx, err := newScanContext(cfg)
 	if err != nil {
 		log.Printf("Failed to initialize scan context for task %s: %v", task.TaskId, err)
@@ -429,7 +523,7 @@ func (w *Worker) executeTask(task *pb.Task) {
 		w.mu.Unlock()
 	}()
 
-	// 挂载 OutputHook 进行 gRPC Stream 实时回传 (Task 1.7)
+	// 挂载 OutputHook 进行 gRPC Stream 实时回传
 	stream, err := w.client.StreamResult(context.Background())
 	if err != nil {
 		err = fmt.Errorf("open grpc result stream: %w", err)
@@ -470,6 +564,29 @@ func (w *Worker) executeTask(task *pb.Task) {
 		}
 	}
 
+	// 挂载阶段进度回调
+	ctx.PhaseHook = func(phase engine.PhaseEvent) {
+		streamMu.Lock()
+		defer streamMu.Unlock()
+
+		if streamErr != nil {
+			return
+		}
+
+		payload, err := json.Marshal(phase)
+		if err != nil {
+			return
+		}
+
+		log.Printf("[Phase] Task %s: %s %s %s", task.TaskId, phase.Phase, phase.Status, phase.Message)
+		_ = stream.Send(&pb.ScanResult{
+			TaskId:      task.TaskId,
+			PayloadType: "phase",
+			Payload:     payload,
+			Timestamp:   time.Now().UnixMilli(),
+		})
+	}
+
 	// 启动引擎
 	log.Printf("Starting Pipeline for Task %s...", task.TaskId)
 
@@ -495,7 +612,6 @@ func (w *Worker) executeTask(task *pb.Task) {
 	}
 	log.Printf("Finished Pipeline for Task %s.", task.TaskId)
 
-	// 回传任务完成
 	w.reportTaskCompletion(task.TaskId, "DONE", "")
 }
 

@@ -272,6 +272,7 @@ argus/
 | [接口实现清单](docs/interface-implementations.md) | 当前 `/api/v1`、WebSocket、gRPC 主链路接口 |
 | [分布式架构现状](docs/distributed-scan-architecture.md) | 当前控制面 / 数据面架构与未闭环点 |
 | [规则库初始化](docs/rule-catalog-init.md) | Arsenal 与结构化规则表初始化机制 |
+| [白皮书规划稿](docs/whitepaper-plan.md) | 正式技术白皮书的定位、目录与写作方案 |
 
 ---
 

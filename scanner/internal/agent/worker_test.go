@@ -39,7 +39,7 @@ func TestWorkerExecuteTaskReportsCancelled(t *testing.T) {
 	client := &fakeAgentClient{
 		stream: &fakeResultStream{},
 	}
-	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 4)
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 4, nil)
 	worker.client = client
 
 	done := make(chan struct{})
@@ -101,7 +101,7 @@ func TestWorkerExecuteTaskFailsOnResultStreamSendError(t *testing.T) {
 			sendErr: errors.New("stream broken"),
 		},
 	}
-	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 1)
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
 	worker.client = client
 
 	worker.executeTask(&pb.Task{TaskId: "task-stream", Targets: []string{"127.0.0.1"}})
@@ -120,7 +120,7 @@ func TestWorkerExecuteTaskFailsOnResultStreamSendError(t *testing.T) {
 }
 
 func TestEffectiveWorkerCountCapsToEngineLimit(t *testing.T) {
-	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 8)
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 8, nil)
 	if got := worker.effectiveWorkerCount(); got != 1 {
 		t.Fatalf("expected effective worker count to be capped at 1, got %d", got)
 	}
@@ -161,6 +161,18 @@ func (c *fakeAgentClient) TaskComplete(ctx context.Context, in *pb.TaskCompleteR
 
 func (c *fakeAgentClient) EmergencyDump(ctx context.Context, in *pb.EmergencyReq, opts ...grpc.CallOption) (*pb.Ack, error) {
 	return &pb.Ack{Success: true}, nil
+}
+
+func (c *fakeAgentClient) Subscribe(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[pb.AgentSignal, pb.TaskNotify], error) {
+	return nil, nil
+}
+
+func (c *fakeAgentClient) ClaimTask(ctx context.Context, in *pb.ClaimTaskReq, opts ...grpc.CallOption) (*pb.Task, error) {
+	return &pb.Task{}, nil
+}
+
+func (c *fakeAgentClient) StreamLogs(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[pb.LogPayload, pb.Ack], error) {
+	return nil, nil
 }
 
 type fakeResultStream struct {
@@ -212,7 +224,8 @@ func (s *fakeResultStream) RecvMsg(m any) error {
 		if err != nil {
 			return err
 		}
-		*ack = *resp
+		ack.Success = resp.Success
+		ack.Message = resp.Message
 		return nil
 	}
 	return io.EOF

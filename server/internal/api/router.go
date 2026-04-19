@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -17,15 +16,22 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/user/dddd-server/internal/db"
+	grpcpkg "github.com/user/dddd-server/internal/grpc"
 	"github.com/user/dddd-server/internal/scheduler"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
 var taskQueue *scheduler.TaskQueue
+var notifyHub *grpcpkg.NotifyHub
 
 func SetTaskQueue(queue *scheduler.TaskQueue) {
 	taskQueue = queue
+}
+
+// SetNotifyHub 注入 gRPC NotifyHub 引用，用于 createTask 后广播通知 Agent
+func SetNotifyHub(hub *grpcpkg.NotifyHub) {
+	notifyHub = hub
 }
 
 var jwtSecret = []byte("P8-MUST-HAVE-SECRET-KEY") // TODO: 生产环境应从配置文件读取
@@ -99,6 +105,9 @@ func InitRouter(port string) {
 
 	// 启动 WebSocket 广播中心
 	go Hub.Start()
+	
+	// 连接底层的实时推流 Hook
+	db.WSBroadcastHook = Hub.Broadcast
 
 	api := r.Group("/api/v1")
 	api.Use(TenantMiddleware())
@@ -112,6 +121,10 @@ func InitRouter(port string) {
 
 		// Dashboard 统计数据
 		api.GET("/stats", getStats)
+
+		// 项目 CRUD
+		api.GET("/projects", getProjects)
+		api.POST("/projects", createProject)
 
 		// 任务 CRUD
 		api.GET("/tasks", getTasks)
@@ -226,14 +239,61 @@ func getStats(c *gin.Context) {
 	})
 }
 
+func getProjects(c *gin.Context) {
+	var projects []db.Project
+	tenantID := c.GetString("tenant")
+	db.DB.Where("tenant_id = ?", tenantID).Order("created_at desc").Find(&projects)
+	c.JSON(http.StatusOK, projects)
+}
+
+func createProject(c *gin.Context) {
+	var req struct {
+		Name        string `json:"name" binding:"required"`
+		Description string `json:"description"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	tenantID := c.GetString("tenant")
+	project := db.Project{
+		ID:            fmt.Sprintf("proj-%d", time.Now().UnixNano()),
+		TenantID:      tenantID,
+		Name:          req.Name,
+		Description:   req.Description,
+		Tags:          "[]",
+		SeedTargets:   "[]",
+		Scope:         "[]",
+		DefaultConfig: "{}",
+		NodeAffinity:  "{}",
+		Status:        "active",
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+
+	if err := db.DB.Create(&project).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, project)
+}
+
 func getTasks(c *gin.Context) {
 	var tasks []db.RootTask
-	db.DB.Order("created_at desc").Limit(50).Find(&tasks)
+	tenantID := c.GetString("tenant")
+	query := db.DB.Where("tenant_id = ?", tenantID)
+	if projectID := c.Query("project_id"); projectID != "" {
+		query = query.Where("project_id = ?", projectID)
+	}
+	query.Order("created_at desc").Limit(50).Find(&tasks)
 	c.JSON(http.StatusOK, tasks)
 }
 
 func createTask(c *gin.Context) {
 	var req struct {
+		ProjectID  string          `json:"project_id"`
 		Name       string          `json:"name"`
 		Targets    json.RawMessage `json:"targets"`
 		Config     json.RawMessage `json:"config"`
@@ -242,6 +302,11 @@ func createTask(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.ProjectID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "project_id is required"})
 		return
 	}
 
@@ -285,33 +350,83 @@ func createTask(c *gin.Context) {
 	// 多租户隔离下钻
 	tenantID := c.GetString("tenant")
 
-	// 1. Task Splitter Logic
-	chunkSize := 256
-	var subTasks []db.SubTask
-	for i := 0; i < len(targets); i += chunkSize {
-		end := i + chunkSize
-		if end > len(targets) {
-			end = len(targets)
-		}
-		chunkTargets := targets[i:end]
-		chunkJSON, _ := json.Marshal(chunkTargets)
+	// 1. Atomic Task Splitter — 原子级任务拆分
+	//
+	// 拆分规则：
+	//   - 每个 URL       → 1 个子任务
+	//   - 每个 IP        → 1 个子任务
+	//   - 每个 CIDR(C段) → 1 个子任务（保持整体，不展开为单个IP）
+	//   - 每个 IP Range  → 1 个子任务（保持整体）
+	//   - 每个 IP:Port   → 1 个子任务
+	//   - 每个 Domain    → 1 个子任务
+	//   - 每个 Domain:Port → 1 个子任务
+	//   - OSINT 查询     → 每条查询 1 个子任务
+	//
+	// 这保证了每个 Agent 认领到的都是一个轻量原子任务，
+	// 所有在线 Agent 可以均匀分摊工作量，杜绝资源浪费。
 
-		subTasks = append(subTasks, db.SubTask{
-			ID:           fmt.Sprintf("%s-sub-%d", rootTaskID, i/chunkSize),
-			TenantID:     tenantID,
-			RootTaskID:   rootTaskID,
-			ChunkTargets: string(chunkJSON),
-			Status:       "Pending",
-			Config:       configJSON,
-			Priority:     req.Priority,
-			TimeoutSec:   req.TimeoutSec,
-			MaxRetry:     3,
-		})
+	var subTasks []db.SubTask
+
+	if targetMode == taskTargetModeDirect {
+		for idx, target := range targets {
+			typ := detectDirectTargetType(target)
+			if typ == "" {
+				typ = "unknown"
+			}
+
+			// 标签路由：按目标类型分配节点亲和性
+			selectorJSON := "{}"
+			switch typ {
+			case "url":
+				selectorJSON = `{"target_type": "url"}`
+			case "ip", "cidr", "ip_range", "ip_port":
+				selectorJSON = `{"target_type": "ip"}`
+			case "domain", "domain_port":
+				selectorJSON = `{"target_type": "domain"}`
+			}
+
+			chunkJSON, _ := json.Marshal([]string{target})
+
+			subTasks = append(subTasks, db.SubTask{
+				ID:            fmt.Sprintf("%s-sub-%d-%s", rootTaskID, idx, typ),
+				TenantID:      tenantID,
+				ProjectID:     req.ProjectID,
+				RootTaskID:    rootTaskID,
+				ChunkTargets:  string(chunkJSON),
+				Status:        "Pending",
+				Config:        configJSON,
+				Priority:      req.Priority,
+				TimeoutSec:    req.TimeoutSec,
+				MaxRetry:      3,
+				AgentSelector: selectorJSON,
+			})
+		}
+	} else {
+		// OSINT 模式（Hunter/Fofa/Quake）：每条查询一个子任务
+		selectorJSON := `{"target_type": "osint"}`
+		for idx, query := range targets {
+			chunkJSON, _ := json.Marshal([]string{query})
+
+			subTasks = append(subTasks, db.SubTask{
+				ID:            fmt.Sprintf("%s-sub-%d-%s", rootTaskID, idx, string(targetMode)),
+				TenantID:      tenantID,
+				ProjectID:     req.ProjectID,
+				RootTaskID:    rootTaskID,
+				ChunkTargets:  string(chunkJSON),
+				Status:        "Pending",
+				Config:        configJSON,
+				Priority:      req.Priority,
+				TimeoutSec:    req.TimeoutSec,
+				MaxRetry:      3,
+				AgentSelector: selectorJSON,
+			})
+		}
 	}
 
 	rootTask := db.RootTask{
 		ID:              rootTaskID,
 		TenantID:        tenantID,
+		ProjectID:       req.ProjectID,
 		Name:            name,
 		Status:          "Queued",
 		OriginalTargets: string(targetsJSON),
@@ -341,13 +456,21 @@ func createTask(c *gin.Context) {
 	}
 
 	// 3. Dispatch to Queue
+	pushedCount := 0
 	if taskQueue != nil {
 		for _, st := range subTasks {
 			pbSub, _ := db.SubTaskToProto(&st)
 			if err := taskQueue.PushTask(context.Background(), pbSub); err != nil {
 				log.Printf("Failed to push subtask %s: %v", st.ID, err)
+			} else {
+				pushedCount++
 			}
 		}
+	}
+
+	// 4. ★ 广播通知所有在线 Agent：有新任务可以认领了！
+	if notifyHub != nil && pushedCount > 0 {
+		notifyHub.BroadcastNewTask(int32(pushedCount), int32(req.Priority))
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -689,40 +812,6 @@ func parseTargets(raw json.RawMessage) ([]string, error) {
 	}
 
 	return dedupeStrings(targets), nil
-}
-
-func normalizeConfigPayload(raw json.RawMessage) (string, error) {
-	if len(raw) == 0 {
-		return "{}", nil
-	}
-
-	trimmed := strings.TrimSpace(string(raw))
-	if trimmed == "" || trimmed == "null" {
-		return "{}", nil
-	}
-
-	switch trimmed[0] {
-	case '"':
-		var input string
-		if err := json.Unmarshal(raw, &input); err != nil {
-			return "", err
-		}
-		input = strings.TrimSpace(input)
-		if input == "" {
-			return "{}", nil
-		}
-		if !json.Valid([]byte(input)) {
-			return "", fmt.Errorf("config must be valid json")
-		}
-		return input, nil
-	case '{':
-		if !json.Valid(raw) {
-			return "", fmt.Errorf("config must be valid json")
-		}
-		return string(raw), nil
-	default:
-		return "", fmt.Errorf("config must be a json object or json string")
-	}
 }
 
 func splitTargets(input string) []string {
@@ -1259,12 +1348,6 @@ func BumpRuleVersion() string {
 	return version
 }
 
-// 利用辅助变量避免 import 报错
-var (
-	_ = strconv.Itoa
-	_ = filepath.Base
-	_ = os.Stat
-)
 
 // ==================== 数据增强 API ====================
 
@@ -1399,43 +1482,50 @@ func appendTargets(c *gin.Context) {
 
 	tenantID := c.GetString("tenant")
 
-	// 获取当前最大的 sub 编号
-	var maxSub db.SubTask
-	db.DB.Where("root_task_id = ?", rootTaskID).Order("id DESC").First(&maxSub)
-	baseIndex := 0
-	if maxSub.ID != "" {
-		// 从 "task-xxx-sub-N" 中解析 N
-		parts := strings.Split(maxSub.ID, "-sub-")
-		if len(parts) == 2 {
-			if n, err := strconv.Atoi(parts[1]); err == nil {
-				baseIndex = n + 1
-			}
-		}
-	}
+	// 获取当前已有子任务数量作为新子任务的起始编号
+	var existingCount int64
+	db.DB.Model(&db.SubTask{}).Where("root_task_id = ?", rootTaskID).Count(&existingCount)
+	baseIndex := int(existingCount)
 
-	// 拆分成 SubTasks
-	chunkSize := 256
+	// 原子拆分成 SubTasks（每个目标一个子任务）
 	var newSubTasks []db.SubTask
 	configJSON := rootTask.Config
+	targetMode := detectTargetModeFromStoredConfig(configJSON)
 
-	for i := 0; i < len(newTargets); i += chunkSize {
-		end := i + chunkSize
-		if end > len(newTargets) {
-			end = len(newTargets)
+	for idx, target := range newTargets {
+		typ := "unknown"
+		selectorJSON := "{}"
+		if targetMode == taskTargetModeDirect {
+			typ = detectDirectTargetType(target)
+			if typ == "" {
+				typ = "unknown"
+			}
+			switch typ {
+			case "url":
+				selectorJSON = `{"target_type": "url"}`
+			case "ip", "cidr", "ip_range", "ip_port":
+				selectorJSON = `{"target_type": "ip"}`
+			case "domain", "domain_port":
+				selectorJSON = `{"target_type": "domain"}`
+			}
+		} else {
+			typ = string(targetMode)
+			selectorJSON = `{"target_type": "osint"}`
 		}
-		chunkTargets := newTargets[i:end]
-		chunkJSON, _ := json.Marshal(chunkTargets)
 
+		chunkJSON, _ := json.Marshal([]string{target})
 		newSubTasks = append(newSubTasks, db.SubTask{
-			ID:           fmt.Sprintf("%s-sub-%d", rootTaskID, baseIndex+i/chunkSize),
-			TenantID:     tenantID,
-			RootTaskID:   rootTaskID,
-			ChunkTargets: string(chunkJSON),
-			Status:       "Pending",
-			Config:       configJSON,
-			Priority:     rootTask.Priority,
-			TimeoutSec:   rootTask.TimeoutSec,
-			MaxRetry:     3,
+			ID:            fmt.Sprintf("%s-sub-%d-%s", rootTaskID, baseIndex+idx, typ),
+			TenantID:      tenantID,
+			ProjectID:     rootTask.ProjectID,
+			RootTaskID:    rootTaskID,
+			ChunkTargets:  string(chunkJSON),
+			Status:        "Pending",
+			Config:        configJSON,
+			Priority:      rootTask.Priority,
+			TimeoutSec:    rootTask.TimeoutSec,
+			MaxRetry:      3,
+			AgentSelector: selectorJSON,
 		})
 	}
 
@@ -1457,13 +1547,21 @@ func appendTargets(c *gin.Context) {
 	}
 
 	// 推入调度队列
+	pushedCount := 0
 	if taskQueue != nil {
 		for _, st := range newSubTasks {
 			pbSub, _ := db.SubTaskToProto(&st)
 			if err := taskQueue.PushTask(context.Background(), pbSub); err != nil {
 				log.Printf("Failed to push appended subtask %s: %v", st.ID, err)
+			} else {
+				pushedCount++
 			}
 		}
+	}
+
+	// ★ 广播通知所有在线 Agent
+	if notifyHub != nil && pushedCount > 0 {
+		notifyHub.BroadcastNewTask(int32(pushedCount), int32(rootTask.Priority))
 	}
 
 	log.Printf("[AppendTargets] Added %d new subtasks to RootTask %s (%d targets)", len(newSubTasks), rootTaskID, len(newTargets))

@@ -23,6 +23,7 @@ import (
 	"dddd/scanner/utils"
 	"embed"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/logrusorgru/aurora"
@@ -43,6 +44,14 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	var ips []string
 
 	defer gologger.Info().Msg(aurora.BrightGreen("Done!").String())
+
+	// Agent 模式优化：默认跳过 ICMP 存活探测，避免在无 root 权限
+	// 的环境下 fallback 到极慢的逐个 ping 子进程模式。
+	if ctx != nil && ctx.OutputHook != nil {
+		if !ctx.Config.TCPPing {
+			ctx.Config.SkipHostDiscovery = true
+		}
+	}
 
 	// Agent 模式（ctx != nil 且有 OutputHook）走无锁路径，允许多任务并发。
 	// CLI 模式保留全局互斥锁以兌容旧代码。
@@ -67,9 +76,11 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		return err
 	}
 
+	emitPhase(ctx, PhaseSearchEngine, "start", "")
 	if err := p.searchEngine(ctx, &cfg); err != nil {
 		return err
 	}
+	emitPhase(ctx, PhaseSearchEngine, "end", "")
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
 	}
@@ -101,10 +112,12 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 	// 子域名枚举
 	if cfg.Subdomain && len(domains) > 0 {
+		emitPhase(ctx, PhaseSubdomain, "start", fmt.Sprintf("%d domains", len(domains)))
 		subdomains := subdomain.Enumerate(domains, currentSubdomainConfig(ctx))
 		for _, each := range subdomains {
 			domains = append(domains, each)
 		}
+		emitPhase(ctx, PhaseSubdomain, "end", fmt.Sprintf("%d domains found", len(domains)))
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
@@ -115,6 +128,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	var cdnDomains []string
 	var tIPs []string
 	if len(domains) > 0 {
+		emitPhase(ctx, PhaseCDN, "start", fmt.Sprintf("%d domains", len(domains)))
 		cdnDomains, _, tIPs = cdn.CheckCDNs(domains, cfg.SubdomainBruteForceThreads)
 		for _, each := range tIPs {
 			if cfg.AllowLocalAreaDomain && utils.IsLocalIP(each) {
@@ -122,6 +136,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 			}
 			ips = append(ips, each)
 		}
+		emitPhase(ctx, PhaseCDN, "end", fmt.Sprintf("%d cdn, %d ips", len(cdnDomains), len(tIPs)))
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
@@ -145,7 +160,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		if !cfg.SkipHostDiscovery {
 			var ICMPAlive []string
 			if !cfg.NoICMPPing {
+				emitPhase(ctx, PhaseICMP, "start", fmt.Sprintf("%d ips", len(ips)))
 				ICMPAlive = discovery.CheckLive(ips, false)
+				emitPhase(ctx, PhaseICMP, "end", fmt.Sprintf("%d alive", len(ICMPAlive)))
 			}
 
 			var TCPAlive []string
@@ -157,6 +174,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 						uncheck = append(uncheck, ip)
 					}
 				}
+				emitPhase(ctx, PhaseTCPPing, "start", fmt.Sprintf("%d ips", len(uncheck)))
 				gologger.Info().Msg("TCP存活探测")
 				tcpAliveIPPort := portscan.ScanTCP(uncheck, "80,443,3389,445,22",
 					cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, false)
@@ -164,6 +182,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 					t := strings.Split(tIPPort, ":")
 					TCPAlive = append(TCPAlive, t[0])
 				}
+				emitPhase(ctx, PhaseTCPPing, "end", fmt.Sprintf("%d alive", len(TCPAlive)))
 			}
 
 			ips = append(ips, ICMPAlive...)
@@ -180,6 +199,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 			}
 		}
 
+		emitPhase(ctx, PhasePortScan, "start", fmt.Sprintf("%d ips, type=%s", len(ips), cfg.PortScanType))
 		if cfg.PortScanType == "syn" {
 			tmpIPPort = portscan.ScanSYN(ips, cfg.MasscanPath, cfg.SYNPortScanThreads)
 		} else {
@@ -187,6 +207,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		}
 
 		tmpIPPort = portscan.RemoveFirewall(tmpIPPort, cfg.PortsThreshold)
+		emitPhase(ctx, PhasePortScan, "end", fmt.Sprintf("%d open ports", len(tmpIPPort)))
 
 		for _, each := range tmpIPPort {
 			ipPort = append(ipPort, each)
@@ -203,7 +224,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		getProtocalInput = append(getProtocalInput, each)
 	}
 	if len(getProtocalInput) > 0 {
+		emitPhase(ctx, PhaseProtocol, "start", fmt.Sprintf("%d targets", len(getProtocalInput)))
 		currentProtocolRuntime(ctx).Identify(getProtocalInput, cfg.GetBannerThreads, cfg.GetBannerTimeout)
+		emitPhase(ctx, PhaseProtocol, "end", "")
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
@@ -224,10 +247,12 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	}
 	urls = utils.RemoveDuplicateElement(urls)
 
+	emitPhase(ctx, PhaseHTTPProbe, "start", fmt.Sprintf("%d urls", len(urls)))
 	httpx.CallHTTPx(urls, webRuntime.URLCallback,
 		cfg.HTTPProxy,
 		cfg.WebThreads,
 		cfg.WebTimeout)
+	emitPhase(ctx, PhaseHTTPProbe, "end", "")
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
 	}
@@ -238,10 +263,12 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 	// 域名绑定资产探测
 	if !cfg.NoHostBind {
+		emitPhase(ctx, PhaseHostBind, "start", "")
 		webRuntime.HostBindCheck(cfg.HTTPProxy, cfg.WebThreads, cfg.WebTimeout)
 		if ctx != nil {
 			syncContextFromLegacy(ctx)
 		}
+		emitPhase(ctx, PhaseHostBind, "end", "")
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
@@ -294,6 +321,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 			}
 		}
 		checkURLs = utils.RemoveDuplicateElement(checkURLs)
+		emitPhase(ctx, PhaseDirBrute, "start", fmt.Sprintf("%d urls", len(checkURLs)))
 		gologger.Info().Msg("开始主动指纹探测")
 		httpx.DirBrute(checkURLs,
 			webRuntime.DirBruteCallback,
@@ -301,6 +329,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 			cfg.WebThreads,
 			cfg.WebTimeout)
 		gologger.AuditTimeLogger("主动指纹探测结束")
+		emitPhase(ctx, PhaseDirBrute, "end", "")
 		if ctx != nil {
 			syncContextFromLegacy(ctx)
 		}
@@ -310,7 +339,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	}
 
 	// 指纹识别
+	emitPhase(ctx, PhaseFingerprint, "start", "")
 	fingerRuntime.Identify()
+	emitPhase(ctx, PhaseFingerprint, "end", "")
 	if ctx != nil {
 		syncContextFromLegacy(ctx)
 	}
@@ -348,17 +379,20 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	var nucleiResults []nucleiOutput.ResultEvent
 	TargetAndPocsName, count := mapper.GetPocs(resultMap, currentPipelineWorkflowDB(ctx), cfg.DisableGeneralPoc)
 	if count > 0 {
+		emitPhase(ctx, PhaseNuclei, "start", fmt.Sprintf("%d pocs", count))
 		nucleiResults = nuclei.Call(TargetAndPocsName,
 			cfg.HTTPProxy,
 			output.AddResultByResultEvent,
 			"", cfg.NoInteractsh, currentPipelineEmbedPocs(ctx),
 			cfg.NucleiTemplate, strings.Split(cfg.ExcludeTags, ","),
 			strings.Split(cfg.Severities, ","))
+		emitPhase(ctx, PhaseNuclei, "end", "")
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
 	}
 
+	emitPhase(ctx, PhaseGoPoc, "start", "")
 	var goPocResults []structs.GoPocsResultType
 	goPocResults = append(goPocResults, gopoc.TelnetCVEOnly(
 		currentPipelineIPPortMap(ctx),
@@ -376,6 +410,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 			nucleiResults,
 		)...)
 	}
+	emitPhase(ctx, PhaseGoPoc, "end", "")
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
 	}
@@ -443,6 +478,18 @@ func checkPipelineCancelled(ctx *ScanContext) error {
 		return err
 	}
 	return nil
+}
+
+// emitPhase 安全地触发阶段进度回调。
+func emitPhase(ctx *ScanContext, phase, status, message string) {
+	if ctx == nil || ctx.PhaseHook == nil {
+		return
+	}
+	ctx.PhaseHook(PhaseEvent{
+		Phase:   phase,
+		Status:  status,
+		Message: message,
+	})
 }
 
 func currentSubdomainConfig(ctx *ScanContext) subdomain.Config {

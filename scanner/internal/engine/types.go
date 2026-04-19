@@ -85,3 +85,29 @@ type OutputMessage struct {
 	Show          string           `json:"-"`
 	Nuclei        string           `json:"nuclei,omitempty"`
 }
+
+// --- 阶段进度事件 ---
+
+// PhaseEvent 描述 Pipeline 扫描阶段的进度事件。
+type PhaseEvent struct {
+	Phase   string `json:"phase"`             // 阶段标识
+	Status  string `json:"status"`            // "start" | "end"
+	Message string `json:"message,omitempty"` // 可选附加信息（如目标数量）
+}
+
+// Pipeline 扫描阶段常量
+const (
+	PhaseSearchEngine    = "search_engine"
+	PhaseSubdomain       = "subdomain"
+	PhaseCDN             = "cdn_check"
+	PhaseICMP            = "icmp_discovery"
+	PhaseTCPPing         = "tcp_ping"
+	PhasePortScan        = "port_scan"
+	PhaseProtocol        = "protocol_identify"
+	PhaseHTTPProbe       = "http_probe"
+	PhaseHostBind        = "host_bind"
+	PhaseDirBrute        = "dir_brute"
+	PhaseFingerprint     = "fingerprint"
+	PhaseNuclei          = "nuclei_scan"
+	PhaseGoPoc           = "gopoc_scan"
+)

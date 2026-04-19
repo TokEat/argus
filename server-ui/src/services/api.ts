@@ -59,11 +59,23 @@ export async function getDashboardStats(): Promise<API.DashboardStats> {
 }
 
 // ===========================
+// Project API
+// ===========================
+
+export async function listProjects(): Promise<API.Project[]> {
+    return request.get('/projects');
+}
+
+export async function createProject(data: { name: string; description?: string }): Promise<API.Project> {
+    return request.post('/projects', data);
+}
+
+// ===========================
 // Task API
 // ===========================
 
-export async function listTasks(): Promise<API.RootTask[]> {
-    return request.get('/tasks');
+export async function listTasks(projectId?: string): Promise<API.RootTask[]> {
+    return request.get('/tasks', { params: projectId ? { project_id: projectId } : {} });
 }
 
 export async function createTask(data: API.CreateTaskRequest): Promise<{ status: string; task_id: string }> {

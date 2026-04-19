@@ -32,7 +32,7 @@ import {
     StopOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { cancelTask, createTask, deleteTask, listTasks } from '../services/api';
+import { cancelTask, createTask, deleteTask, listTasks, listProjects } from '../services/api';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -160,11 +160,13 @@ const TaskManagement: React.FC = () => {
     const { message } = App.useApp();
     const navigate = useNavigate();
     const sourceMode = (Form.useWatch('source_mode', form) as TaskSourceMode | undefined) || 'direct';
+    const globalProjectId = localStorage.getItem('active_project_id') || '';
+    const [projects, setProjects] = useState<API.Project[]>([]);
 
     const fetchTasks = async () => {
         setLoading(true);
         try {
-            const result = await listTasks();
+            const result = await listTasks(globalProjectId);
             setTasks(result || []);
         } catch (error) {
             console.error('Failed to fetch tasks:', error);
@@ -173,8 +175,18 @@ const TaskManagement: React.FC = () => {
         }
     };
 
+    const fetchProjects = async () => {
+        try {
+            const result = await listProjects();
+            setProjects(result || []);
+        } catch (error) {
+            console.error('Failed to fetch projects:', error);
+        }
+    };
+
     useEffect(() => {
         fetchTasks();
+        fetchProjects();
         const timer = setInterval(fetchTasks, 10000);
         return () => clearInterval(timer);
     }, []);
@@ -190,7 +202,15 @@ const TaskManagement: React.FC = () => {
                 ...advancedConfig,
             };
 
+            const selectedProjectId = values.project_id;
+            if (!selectedProjectId) {
+                message.error('请选择所属项目');
+                setCreating(false);
+                return;
+            }
+
             await createTask({
+                project_id: selectedProjectId,
                 name: values.name,
                 targets: values.targets,
                 config: configObj,
@@ -399,13 +419,31 @@ const TaskManagement: React.FC = () => {
                 width={920}
                 destroyOnHidden
             >
-                <Form form={form} layout="vertical" style={{ marginTop: 16 }} initialValues={createInitialValues}>
+                <Form 
+                    form={form} 
+                    layout="vertical" 
+                    style={{ marginTop: 16 }} 
+                    initialValues={{
+                        ...createInitialValues,
+                        project_id: globalProjectId || undefined
+                    }}
+                >
                     <Row gutter={16}>
+                        <Col span={12}>
+                            <Form.Item label="所属项目" name="project_id" rules={[{ required: true, message: '请选择所属项目' }]}>
+                                <Select 
+                                    placeholder="选择扫描任务归属的项目"
+                                    options={projects.map(p => ({ label: p.Name, value: p.ID }))}
+                                />
+                            </Form.Item>
+                        </Col>
                         <Col span={12}>
                             <Form.Item label="任务名称" name="name" rules={[{ required: true, message: '请输入任务名称' }]}>
                                 <Input placeholder="输入任务名称" />
                             </Form.Item>
                         </Col>
+                    </Row>
+                    <Row gutter={16}>
                         <Col span={12}>
                             <Form.Item label="目标来源" name="source_mode">
                                 <Select options={sourceModeOptions} />

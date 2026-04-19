@@ -9,18 +9,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/redis/go-redis/v9"
+	amqp "github.com/rabbitmq/amqp091-go"
 	pb "github.com/user/dddd-proto/go/scan"
 )
 
 // ============================================================================
-// 多优先级 Redis Stream 任务队列
+// 多优先级 RabbitMQ 任务队列
 //
 // 架构设计:
-//   - 三级优先级 Stream: dddd:tasks:urgent / dddd:tasks:normal / dddd:tasks:low
-//   - 回收任务走 urgent 级别，确保死亡节点的任务被优先重新执行
-//   - PopTask 按优先级降序依次尝试 XREADGROUP，高优先级先消费
-//   - 内存队列 fallback 同步支持优先级排序
+//   - 三级优先级队列: dddd.tasks.urgent / dddd.tasks.normal / dddd.tasks.low
+//   - 使用 basic.get (pull 模式) 按优先级降序消费，高优先级先消费
+//   - 手动 ACK 保证任务可靠投递（Server 崩溃时 RabbitMQ 自动 requeue）
+//   - 内存队列 fallback 用于无 RabbitMQ 的开发环境
 //   - 支持队列深度监控 (QueueDepth)
 // ============================================================================
 
@@ -28,70 +28,86 @@ const (
 	PriorityUrgent = 0 // 回收/紧急任务
 	PriorityNormal = 1 // 普通任务（默认）
 	PriorityLow    = 2 // 低优先级/后台扫描
-
-	consumerGroup = "dddd_agents"
 )
 
-// priorityStreams 按优先级从高到低的 Stream Key
-var priorityStreams = []string{
-	"dddd:tasks:urgent", // P0: 回收任务、紧急任务
-	"dddd:tasks:normal", // P1: 普通任务
-	"dddd:tasks:low",    // P2: 低优先级
+// priorityQueues 按优先级从高到低的 Queue 名
+var priorityQueues = []string{
+	"dddd.tasks.urgent", // P0: 回收任务、紧急任务
+	"dddd.tasks.normal", // P1: 普通任务
+	"dddd.tasks.low",    // P2: 低优先级
 }
 
-// TaskQueue 封装基于 Redis 的多优先级任务队列分配器
+// pendingDelivery 记录一次未确认的消息投递
+type pendingDelivery struct {
+	tag       uint64
+	queueName string
+	agentID   string
+	claimedAt time.Time
+}
+
+// TaskQueue 封装基于 RabbitMQ 的多优先级任务队列
 type TaskQueue struct {
-	client *redis.Client
-	mem    *memoryQueue
-	mode   string
+	conn *amqp.Connection
+	ch   *amqp.Channel
+	chMu sync.Mutex // 保护 channel 操作的并发安全
+	mem  *memoryQueue
+	mode string
+
+	// pendingAcks 跟踪未确认的投递: compositeID → *pendingDelivery
+	pendingAcks sync.Map
 }
 
-// NewTaskQueue 初始化队列（Redis 模式或内存 Fallback）
-func NewTaskQueue(addr string, password string, db int) *TaskQueue {
+// NewTaskQueue 初始化队列（RabbitMQ 模式或内存 Fallback）
+func NewTaskQueue(amqpURL string) *TaskQueue {
 	queue := &TaskQueue{}
 
-	addr = strings.TrimSpace(addr)
-	if addr == "" {
+	amqpURL = strings.TrimSpace(amqpURL)
+	if amqpURL == "" {
 		queue.mode = "memory"
 		queue.mem = newMemoryQueue()
 		return queue
 	}
 
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     addr,
-		Password: password,
-		DB:       db,
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		log.Printf("redis unavailable at %s, falling back to in-memory queue: %v", addr, err)
-		_ = rdb.Close()
+	conn, err := amqp.Dial(amqpURL)
+	if err != nil {
+		log.Printf("RabbitMQ unavailable at %s, falling back to in-memory queue: %v", amqpURL, err)
 		queue.mode = "memory"
 		queue.mem = newMemoryQueue()
 		return queue
 	}
 
-	queue.client = rdb
-	queue.mode = "redis"
+	ch, err := conn.Channel()
+	if err != nil {
+		conn.Close()
+		log.Printf("Failed to open RabbitMQ channel, falling back to in-memory queue: %v", err)
+		queue.mode = "memory"
+		queue.mem = newMemoryQueue()
+		return queue
+	}
 
-	// 为每个优先级 Stream 创建消费组
-	for _, streamKey := range priorityStreams {
-		err := rdb.XGroupCreateMkStream(context.Background(), streamKey, consumerGroup, "$").Err()
-		if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
-			log.Printf("Warning: failed to create consumer group for %s: %v", streamKey, err)
+	queue.conn = conn
+	queue.ch = ch
+	queue.mode = "rabbitmq"
+
+	// 声明三级优先级队列（持久化）
+	for _, queueName := range priorityQueues {
+		_, err := ch.QueueDeclare(
+			queueName,
+			true,  // durable — 队列持久化
+			false, // auto-delete
+			false, // exclusive
+			false, // no-wait
+			nil,
+		)
+		if err != nil {
+			log.Printf("Warning: failed to declare queue %s: %v", queueName, err)
 		}
 	}
 
-	// 兼容旧版：如果旧的 dddd:tasks:pending 中还有残余消息，迁移到 normal 队列
-	go queue.migrateOldStream()
+	// 启动超时投递回收守护
+	go queue.staleSalvage()
 
-	// 启动死信回收守护
-	go queue.daemonSalvage()
-
-	log.Printf("[TaskQueue] Initialized with %d priority streams", len(priorityStreams))
+	log.Printf("[TaskQueue] RabbitMQ initialized with %d priority queues", len(priorityQueues))
 	return queue
 }
 
@@ -102,35 +118,47 @@ func (q *TaskQueue) Mode() string {
 	return q.mode
 }
 
+// Close 关闭 RabbitMQ 连接
+func (q *TaskQueue) Close() {
+	if q.ch != nil {
+		q.ch.Close()
+	}
+	if q.conn != nil {
+		q.conn.Close()
+	}
+}
+
 // ============================================================================
 // Push 入队
 // ============================================================================
 
-// PushTask 将任务按优先级路由到对应 Stream
+// PushTask 将任务按优先级路由到对应 Queue
 func (q *TaskQueue) PushTask(ctx context.Context, task *pb.Task) error {
-	if q.client == nil {
+	if q.conn == nil {
 		q.mem.push(task, int(task.Priority))
 		return nil
 	}
 
-	streamKey := priorityToStream(int(task.Priority))
-
+	queueName := priorityToQueue(int(task.Priority))
 	data, err := json.Marshal(task)
 	if err != nil {
 		return fmt.Errorf("task marshal error: %w", err)
 	}
 
-	return q.client.XAdd(ctx, &redis.XAddArgs{
-		Stream: streamKey,
-		Values: map[string]interface{}{"payload": data},
-	}).Err()
+	q.chMu.Lock()
+	defer q.chMu.Unlock()
+
+	return q.ch.PublishWithContext(ctx, "", queueName, false, false, amqp.Publishing{
+		ContentType:  "application/json",
+		DeliveryMode: amqp.Persistent, // 消息持久化
+		Body:         data,
+	})
 }
 
 // PushTaskToFront 将恢复/抢救的任务压入最高优先级 urgent 队列
-// 与 PushTask 不同：无论原始优先级是什么，都进 urgent 确保优先执行
 func (q *TaskQueue) PushTaskToFront(ctx context.Context, task *pb.Task) error {
-	if q.client == nil {
-		q.mem.push(task, PriorityUrgent) // 内存模式：插到队首
+	if q.conn == nil {
+		q.mem.push(task, PriorityUrgent)
 		return nil
 	}
 
@@ -139,230 +167,198 @@ func (q *TaskQueue) PushTaskToFront(ctx context.Context, task *pb.Task) error {
 		return fmt.Errorf("task marshal error: %w", err)
 	}
 
-	// 强制写入 urgent 队列
-	return q.client.XAdd(ctx, &redis.XAddArgs{
-		Stream: priorityStreams[PriorityUrgent],
-		Values: map[string]interface{}{"payload": data},
-	}).Err()
+	q.chMu.Lock()
+	defer q.chMu.Unlock()
+
+	return q.ch.PublishWithContext(ctx, "", priorityQueues[PriorityUrgent], false, false, amqp.Publishing{
+		ContentType:  "application/json",
+		DeliveryMode: amqp.Persistent,
+		Body:         data,
+	})
 }
 
 // ============================================================================
 // Pop 出队 — 多优先级降序消费
 // ============================================================================
 
-// PopTask 按优先级从高到低依次尝试读取任务
-// 先尝试 urgent，再 normal，最后 low；每级不阻塞（非阻塞轮询）
-// 只有全部为空时才阻塞等待 1s（在最低优先级上）
-func (q *TaskQueue) PopTask(ctx context.Context, agentID string) (*pb.Task, string, error) {
-	if q.client == nil {
-		t, err := q.mem.pop(ctx, time.Second)
-		return t, "", err
+// TryPopTask 完全非阻塞：按优先级从高到低依次 basic.get，立即返回
+func (q *TaskQueue) TryPopTask(ctx context.Context, agentID string) (*pb.Task, string, error) {
+	if q.conn == nil {
+		q.mem.mu.Lock()
+		if len(q.mem.tasks) > 0 {
+			task := q.mem.tasks[0].task
+			q.mem.tasks = q.mem.tasks[1:]
+			q.mem.mu.Unlock()
+			return task, "", nil
+		}
+		q.mem.mu.Unlock()
+		return nil, "", nil
 	}
 
-	// 依次尝试高优先级 Stream（非阻塞）
-	for i, streamKey := range priorityStreams {
-		blockTime := time.Duration(0) // 非阻塞
-		if i == len(priorityStreams)-1 {
-			blockTime = 1 * time.Second // 最低优先级阻塞等待
-		}
+	q.chMu.Lock()
+	defer q.chMu.Unlock()
 
-		result, err := q.client.XReadGroup(ctx, &redis.XReadGroupArgs{
-			Group:    consumerGroup,
-			Consumer: agentID,
-			Streams:  []string{streamKey, ">"},
-			Count:    1,
-			Block:    blockTime,
-		}).Result()
-
-		if err == redis.Nil || len(result) == 0 || len(result[0].Messages) == 0 {
-			continue // 此优先级为空，尝试下一级
-		}
+	for _, queueName := range priorityQueues {
+		msg, ok, err := q.ch.Get(queueName, false) // autoAck=false, 手动确认
 		if err != nil {
-			return nil, "", fmt.Errorf("XReadGroup error on %s: %w", streamKey, err)
+			return nil, "", fmt.Errorf("RabbitMQ Get error on %s: %w", queueName, err)
 		}
-
-		msg := result[0].Messages[0]
-		payloadStr, ok := msg.Values["payload"].(string)
 		if !ok {
-			// 格式错误，ACK 掉避免反复消费
-			q.client.XAck(ctx, streamKey, consumerGroup, msg.ID)
-			continue
+			continue // 此队列为空，尝试下一级
 		}
 
 		var task pb.Task
-		if err := json.Unmarshal([]byte(payloadStr), &task); err != nil {
-			q.client.XAck(ctx, streamKey, consumerGroup, msg.ID)
+		if err := json.Unmarshal(msg.Body, &task); err != nil {
+			// 格式错误，直接 ACK 掉避免反复消费
+			_ = q.ch.Ack(msg.DeliveryTag, false)
+			log.Printf("[TaskQueue] Discarded malformed message from %s: %v", queueName, err)
 			continue
 		}
 
-		// msgID 编码为 "streamKey|msgID" 以便 AckTask 时知道回哪个 Stream
-		compositeID := streamKey + "|" + msg.ID
+		// 生成 compositeID 并记录投递信息
+		compositeID := fmt.Sprintf("%s|%d", queueName, msg.DeliveryTag)
+		q.pendingAcks.Store(compositeID, &pendingDelivery{
+			tag:       msg.DeliveryTag,
+			queueName: queueName,
+			agentID:   agentID,
+			claimedAt: time.Now(),
+		})
+
 		return &task, compositeID, nil
 	}
 
 	return nil, "", nil // 全部为空
 }
 
+// PopTask 阻塞版本：先尝试立即获取，失败后等待 500ms 重试一次
+func (q *TaskQueue) PopTask(ctx context.Context, agentID string) (*pb.Task, string, error) {
+	if q.conn == nil {
+		t, err := q.mem.pop(ctx, time.Second)
+		return t, "", err
+	}
+
+	// 先尝试立即获取
+	task, id, err := q.TryPopTask(ctx, agentID)
+	if err != nil || task != nil {
+		return task, id, err
+	}
+
+	// 短暂等待后重试
+	time.Sleep(500 * time.Millisecond)
+	return q.TryPopTask(ctx, agentID)
+}
+
 // ============================================================================
-// Ack 确认
+// Ack / Nack 确认
 // ============================================================================
 
-// AckTask 确认任务完成，从 Pending 列表中移除
-// compositeID 格式: "streamKey|msgID"
+// AckTask 确认任务完成
 func (q *TaskQueue) AckTask(ctx context.Context, compositeID string) error {
-	if q.client == nil || compositeID == "" {
+	if q.conn == nil || compositeID == "" {
 		return nil
 	}
 
-	parts := strings.SplitN(compositeID, "|", 2)
-	if len(parts) != 2 {
-		// 兼容旧格式（不带 stream 前缀的纯 msgID）
-		// 尝试在所有 stream 中 ACK
-		for _, streamKey := range priorityStreams {
-			_ = q.client.XAck(ctx, streamKey, consumerGroup, compositeID).Err()
-		}
+	val, ok := q.pendingAcks.LoadAndDelete(compositeID)
+	if !ok {
+		return nil // 已确认或未知
+	}
+
+	pd := val.(*pendingDelivery)
+	q.chMu.Lock()
+	defer q.chMu.Unlock()
+
+	return q.ch.Ack(pd.tag, false)
+}
+
+// NackTask 拒绝并重新入队（用于标签不匹配退回）
+func (q *TaskQueue) NackTask(ctx context.Context, compositeID string) error {
+	if q.conn == nil || compositeID == "" {
 		return nil
 	}
 
-	streamKey, msgID := parts[0], parts[1]
-	return q.client.XAck(ctx, streamKey, consumerGroup, msgID).Err()
+	val, ok := q.pendingAcks.LoadAndDelete(compositeID)
+	if !ok {
+		return nil
+	}
+
+	pd := val.(*pendingDelivery)
+	q.chMu.Lock()
+	defer q.chMu.Unlock()
+
+	return q.ch.Nack(pd.tag, false, true) // requeue=true
 }
 
 // ============================================================================
 // 队列监控
 // ============================================================================
 
-// QueueDepth 返回各优先级队列的待处理消息数
+// QueueDepth 返回各优先级队列中可消费的消息数（Ready 状态）
 func (q *TaskQueue) QueueDepth(ctx context.Context) map[string]int64 {
 	depths := make(map[string]int64)
-	if q.client == nil {
+	if q.conn == nil {
 		q.mem.mu.Lock()
 		depths["memory"] = int64(len(q.mem.tasks))
 		q.mem.mu.Unlock()
 		return depths
 	}
 
-	for _, streamKey := range priorityStreams {
-		info, err := q.client.XInfoStream(ctx, streamKey).Result()
+	q.chMu.Lock()
+	defer q.chMu.Unlock()
+
+	for _, queueName := range priorityQueues {
+		info, err := q.ch.QueueInspect(queueName)
 		if err == nil {
-			depths[streamKey] = info.Length
+			// QueueInspect.Messages = Ready + Unacked
+			// 但我们只关心 Ready（可被消费的数量）
+			depths[queueName] = int64(info.Messages)
 		}
 	}
 	return depths
 }
 
-// PendingCount 返回各优先级队列中仍在处理中（未 ACK）的消息数
+// PendingCount 返回各队列中正在处理中（未 ACK）的消息数
 func (q *TaskQueue) PendingCount(ctx context.Context) map[string]int64 {
 	counts := make(map[string]int64)
-	if q.client == nil {
-		return counts
-	}
-
-	for _, streamKey := range priorityStreams {
-		info, err := q.client.XPending(ctx, streamKey, consumerGroup).Result()
-		if err == nil {
-			counts[streamKey] = info.Count
-		}
-	}
+	q.pendingAcks.Range(func(key, value any) bool {
+		pd := value.(*pendingDelivery)
+		counts[pd.queueName]++
+		return true
+	})
 	return counts
 }
 
 // ============================================================================
-// 死信回收守护协程
+// 超时投递回收守护
 // ============================================================================
 
-// daemonSalvage 定期审查所有 Stream 的 Pending 队列，抢救孤儿任务
-func (q *TaskQueue) daemonSalvage() {
-	if q.mode != "redis" {
+// staleSalvage 定期检查长时间未 ACK 的投递并 Nack 重新入队
+func (q *TaskQueue) staleSalvage() {
+	if q.mode != "rabbitmq" {
 		return
 	}
+
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
 	for range ticker.C {
-		ctx := context.Background()
-		totalRecovered := 0
+		staleThreshold := time.Now().Add(-30 * time.Minute)
+		recovered := 0
 
-		for _, streamKey := range priorityStreams {
-			pendings, err := q.client.XPendingExt(ctx, &redis.XPendingExtArgs{
-				Stream: streamKey,
-				Group:  consumerGroup,
-				Start:  "-",
-				End:    "+",
-				Count:  100,
-				Idle:   30 * time.Minute, // 从 1h 缩短到 30min，更激进的回收
-			}).Result()
-
-			if err != nil || len(pendings) == 0 {
-				continue
+		q.pendingAcks.Range(func(key, value any) bool {
+			pd := value.(*pendingDelivery)
+			if pd.claimedAt.Before(staleThreshold) {
+				compositeID := key.(string)
+				log.Printf("[Stale-Salvage] Nacking stale delivery %s (agent=%s, age=%v)",
+					compositeID, pd.agentID, time.Since(pd.claimedAt))
+				_ = q.NackTask(context.Background(), compositeID)
+				recovered++
 			}
-
-			for _, p := range pendings {
-				msgs, claimErr := q.client.XClaim(ctx, &redis.XClaimArgs{
-					Stream:   streamKey,
-					Group:    consumerGroup,
-					MinIdle:  30 * time.Minute,
-					Messages: []string{p.ID},
-					Consumer: "daemon_salvager",
-				}).Result()
-
-				if claimErr != nil || len(msgs) == 0 {
-					continue
-				}
-
-				msg := msgs[0]
-				// ACK 掉旧消息
-				q.client.XAck(ctx, streamKey, consumerGroup, msg.ID)
-				// 重新投入 urgent 队列（回收任务优先执行）
-				q.client.XAdd(ctx, &redis.XAddArgs{
-					Stream: priorityStreams[PriorityUrgent],
-					Values: msg.Values,
-				})
-				totalRecovered++
-				log.Printf("[Dead-Letter] Recovered abandoned msg %s from %s (Idle %v) → urgent queue",
-					msg.ID, streamKey, p.Idle)
-			}
-		}
-
-		if totalRecovered > 0 {
-			log.Printf("[Dead-Letter] Salvage cycle: recovered %d tasks", totalRecovered)
-		}
-	}
-}
-
-// migrateOldStream 将旧 Stream (dddd:tasks:pending) 的残留消息迁移到新的 normal 队列
-func (q *TaskQueue) migrateOldStream() {
-	if q.client == nil {
-		return
-	}
-	ctx := context.Background()
-	oldKey := "dddd:tasks:pending"
-
-	// 检查旧 Stream 是否存在
-	exists, err := q.client.Exists(ctx, oldKey).Result()
-	if err != nil || exists == 0 {
-		return
-	}
-
-	// 读取所有未消费的消息
-	msgs, err := q.client.XRange(ctx, oldKey, "-", "+").Result()
-	if err != nil || len(msgs) == 0 {
-		return
-	}
-
-	migrated := 0
-	for _, msg := range msgs {
-		q.client.XAdd(ctx, &redis.XAddArgs{
-			Stream: priorityStreams[PriorityNormal],
-			Values: msg.Values,
+			return true
 		})
-		migrated++
-	}
 
-	if migrated > 0 {
-		log.Printf("[Migration] Moved %d tasks from old stream '%s' to '%s'", migrated, oldKey, priorityStreams[PriorityNormal])
-		// 删除旧 Stream
-		q.client.Del(ctx, oldKey)
+		if recovered > 0 {
+			log.Printf("[Stale-Salvage] Recovered %d stale deliveries", recovered)
+		}
 	}
 }
 
@@ -370,14 +366,14 @@ func (q *TaskQueue) migrateOldStream() {
 // 辅助函数
 // ============================================================================
 
-func priorityToStream(priority int) string {
+func priorityToQueue(priority int) string {
 	switch {
 	case priority <= PriorityUrgent:
-		return priorityStreams[PriorityUrgent]
+		return priorityQueues[PriorityUrgent]
 	case priority >= PriorityLow:
-		return priorityStreams[PriorityLow]
+		return priorityQueues[PriorityLow]
 	default:
-		return priorityStreams[PriorityNormal]
+		return priorityQueues[PriorityNormal]
 	}
 }
 
@@ -405,11 +401,9 @@ func newMemoryQueue() *memoryQueue {
 // push 按优先级插入，越小优先级越高
 func (q *memoryQueue) push(task *pb.Task, priority int) {
 	q.mu.Lock()
-	// 找到第一个优先级比当前低的位置，插入其前面
 	inserted := false
 	for i, t := range q.tasks {
 		if t.priority > priority {
-			// 在位置 i 处插入
 			q.tasks = append(q.tasks[:i+1], q.tasks[i:]...)
 			q.tasks[i] = memoryTask{task: task, priority: priority}
 			inserted = true

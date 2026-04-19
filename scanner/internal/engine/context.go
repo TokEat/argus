@@ -102,6 +102,11 @@ type ScanContext struct {
 	// 如果为 nil，则使用默认的本地文件输出。
 	OutputHook func(msg OutputMessage)
 
+	// PhaseHook 阶段进度回调。Pipeline 每进入一个扫描阶段时触发。
+	// 用于实时向 Server 推送扫描进度，让 UI 显示当前扫描所处阶段。
+	// 如果为 nil，则不上报阶段进度。
+	PhaseHook func(phase PhaseEvent)
+
 	// --- 生命周期 ---
 
 	// Ctx 用于取消正在运行的扫描
