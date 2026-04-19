@@ -78,6 +78,14 @@ export async function cancelTask(taskId: string): Promise<API.MessageResponse> {
     return request.post(`/tasks/${taskId}/cancel`);
 }
 
+export async function appendTargets(taskId: string, targets: string): Promise<{ status: string; new_subtasks: number; new_targets: number; total_chunks: number }> {
+    return request.post(`/tasks/${taskId}/append`, { targets });
+}
+
+export async function getQueueDepth(): Promise<{ depth: Record<string, number>; pending: Record<string, number>; mode: string }> {
+    return request.get('/queue/depth');
+}
+
 // ===========================
 // Results API
 // ===========================

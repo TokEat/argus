@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Typography, Table, Tag, Space, Button, Spin, Tooltip, Badge, Empty } from 'antd';
+import { Typography, Table, Tag, Space, Button, Spin, Tooltip, Badge, Empty, Progress } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     ReloadOutlined,
@@ -113,6 +113,36 @@ const NodeManagement: React.FC = () => {
                     </Space>
                 </Tooltip>
             ),
+        },
+        {
+            title: '当前负载',
+            key: 'workload',
+            width: 150,
+            render: (_, record) => {
+                if (record.Status !== 'Alive') return <Text type="secondary">-</Text>;
+                const running = record.RunningTasks || 0;
+                const capacity = record.Capacity || 10; // Default capacity if not set
+                const percent = Math.min(100, Math.round((running / capacity) * 100));
+                
+                let color = '#10b981'; // Green
+                if (percent > 70) color = '#f59e0b'; // Yellow
+                if (percent > 90) color = '#ef4444'; // Red
+
+                return (
+                    <Tooltip title={`运行中: ${running} / 容量: ${capacity}`}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <Progress 
+                                percent={percent} 
+                                showInfo={false} 
+                                size="small" 
+                                strokeColor={color} 
+                                style={{ margin: 0, flex: 1 }} 
+                            />
+                            <Text style={{ fontSize: 11, color: '#64748b', minWidth: 35 }}>{percent}%</Text>
+                        </div>
+                    </Tooltip>
+                );
+            }
         },
         {
             title: '标签',

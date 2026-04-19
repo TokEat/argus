@@ -7,7 +7,8 @@
     <a href="#快速开始">快速开始</a> •
     <a href="#架构概览">架构</a> •
     <a href="#部署模式">部署</a> •
-    <a href="#文档">文档</a>
+    <a href="#文档">文档</a> •
+    <a href="#贡献与协作">协作</a>
   </p>
 </p>
 
@@ -261,10 +262,24 @@ argus/
 
 | 文档 | 说明 |
 |------|------|
+| [贡献与协作指南](CONTRIBUTING.md) | 分支模型、命名规范、PR 与发布流程 |
 | [项目结构](docs/project-structure.md) | 目录结构与组件职责 |
 | [架构白皮书](docs/architecture-summary-v2.md) | v2.0 分布式架构演进总结 |
 | [分布式架构设计](docs/distributed-scan-architecture.md) | 详细架构、数据模型与演进路线 |
 | [XMind 大纲](docs/distributed-scan-xmind-outline.md) | 架构脑图导出 |
+
+---
+
+## 贡献与协作
+
+团队协作建议采用：
+
+- `main` 作为唯一稳定主线
+- 所有开发从 `feat/*`、`fix/*`、`refactor/*` 等短生命周期分支发起
+- 仅在需要版本冻结时创建 `release/*`
+- 线上紧急修复使用 `hotfix/*`
+
+详细规则见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ---
 

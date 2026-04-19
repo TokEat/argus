@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { Row, Col, Typography, List, Tag, Space, Spin, Badge, Tooltip, Table } from 'antd';
+import { Row, Col, Typography, List, Tag, Space, Spin, Badge, Tooltip, Table, Empty } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     ClusterOutlined,
@@ -14,6 +14,7 @@ import {
     ThunderboltOutlined,
     WifiOutlined,
     DisconnectOutlined,
+    BarChartOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import ReactECharts from 'echarts-for-react';
@@ -171,6 +172,33 @@ const Dashboard: React.FC = () => {
         ]
     };
 
+    const workloadBarOptions = {
+        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+        grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+        xAxis: { 
+            type: 'category', 
+            data: nodes.filter(n => n.Status === 'Alive').map(n => n.AgentID.slice(0, 8)), 
+            axisLabel: { color: '#64748b', fontSize: 10 } 
+        },
+        yAxis: { type: 'value', axisLabel: { color: '#64748b' }, splitLine: { lineStyle: { type: 'dashed', color: '#e2e8f0' } } },
+        series: [
+            {
+                name: '运行中任务',
+                type: 'bar',
+                stack: 'total',
+                itemStyle: { color: '#0ea5e9', borderRadius: [4, 4, 0, 0] },
+                data: nodes.filter(n => n.Status === 'Alive').map(n => n.RunningTasks || 0)
+            },
+            {
+                name: '剩余容量',
+                type: 'bar',
+                stack: 'total',
+                itemStyle: { color: '#e2e8f0', borderRadius: [4, 4, 0, 0] },
+                data: nodes.filter(n => n.Status === 'Alive').map(n => Math.max(0, (n.Capacity || 10) - (n.RunningTasks || 0)))
+            }
+        ]
+    };
+
     return (
         <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
@@ -319,6 +347,32 @@ const Dashboard: React.FC = () => {
                             />
                         ) : (
                             <div style={{ textAlign: 'center', padding: '50px 0', color: '#94a3b8' }}>暂无任务</div>
+                        )}
+                    </ProCard>
+                </Col>
+            </Row>
+
+            {/* Agent Workload Dashboard */}
+            <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
+                <Col span={24}>
+                    <ProCard
+                        title={
+                            <Space>
+                                <BarChartOutlined style={{ color: '#8b5cf6' }} />
+                                <Text strong style={{ color: '#1e293b', fontSize: 15 }}>Redis 队列与算力分布 (Multi-Agent Dispatch)</Text>
+                                {onlineCount > 0 && <Tag color="purple">动态调度中</Tag>}
+                            </Space>
+                        }
+                        className="glass-card"
+                        style={{ background: 'transparent', border: 'none' }}
+                        bodyStyle={{ padding: '16px', height: 280 }}
+                    >
+                        {onlineCount > 0 ? (
+                            <ReactECharts option={workloadBarOptions} style={{ height: '100%', width: '100%' }} />
+                        ) : (
+                            <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
+                                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无在线计算节点，无法展示算力矩阵" />
+                            </div>
                         )}
                     </ProCard>
                 </Col>

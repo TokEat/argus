@@ -74,6 +74,12 @@ func main() {
 		return queue.AckTask(context.Background(), msgID)
 	})
 
+	// 标签不匹配时退回任务：ACK 掉当前消息，按原优先级重新入队
+	srv.SetReturnTaskHook(func(task *pb.Task, msgID string) error {
+		_ = queue.AckTask(context.Background(), msgID) // ACK 掉旧消息位点
+		return queue.PushTask(context.Background(), task) // 按原优先级重新入队
+	})
+
 	// 挂载一个后台协程启动 API HTTP Server
 	go func() {
 		api.InitRouter(apiAddr)

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 	"time"
 
 	pb "github.com/user/dddd-proto/go/scan"
@@ -19,8 +20,9 @@ type Server struct {
 	pb.UnimplementedAgentServiceServer
 	port int
 	// queue 负责从 redis 等调度队列获取任务，当前暂用回调解耦
-	fetchTaskHook func(agentID string) (*pb.Task, string, error)
-	ackTaskHook   func(msgID string) error
+	fetchTaskHook  func(agentID string) (*pb.Task, string, error)
+	ackTaskHook    func(msgID string) error
+	returnTaskHook func(task *pb.Task, msgID string) error // 标签不匹配时退回任务
 }
 
 // NewServer 初始化 gRPC Server
@@ -38,6 +40,11 @@ func (s *Server) SetFetchTaskHook(fn func(agentID string) (*pb.Task, string, err
 // SetAckTaskHook 注入完成任务后确认的钩子
 func (s *Server) SetAckTaskHook(fn func(msgID string) error) {
 	s.ackTaskHook = fn
+}
+
+// SetReturnTaskHook 注入标签不匹配时退回任务的钩子
+func (s *Server) SetReturnTaskHook(fn func(task *pb.Task, msgID string) error) {
+	s.returnTaskHook = fn
 }
 
 // Serve 启动 gRPC 监听
@@ -117,7 +124,7 @@ func (s *Server) Heartbeat(ctx context.Context, req *pb.HeartbeatReq) (*pb.Heart
 }
 
 func (s *Server) FetchTask(ctx context.Context, req *pb.FetchTaskReq) (*pb.Task, error) {
-	// P0: 容量检查 — 节点超载时不分配任务
+	// 1. 容量检查 — 节点超载时不分配任务
 	var node db.Node
 	if db.DB.Where("agent_id = ?", req.AgentId).First(&node).Error == nil {
 		if node.Capacity > 0 && node.RunningTasks >= node.Capacity {
@@ -126,14 +133,38 @@ func (s *Server) FetchTask(ctx context.Context, req *pb.FetchTaskReq) (*pb.Task,
 		}
 	}
 
+	// 2. 从队列拉取任务（支持标签路由重试）
+	const maxRetries = 3
 	var task *pb.Task
 	var msgID string
 	var err error
-	if s.fetchTaskHook != nil {
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if s.fetchTaskHook == nil {
+			break
+		}
 		task, msgID, err = s.fetchTaskHook(req.AgentId)
+		if err != nil || task == nil || task.TaskId == "" {
+			break // 队列为空或出错
+		}
+
+		// 3. 标签路由检查
+		if !s.matchAgentSelector(task.TaskId, node.Tags) {
+			// 不匹配：退回队列（保持原优先级），继续尝试下一个
+			log.Printf("[FetchTask] Task %s selector mismatch for Agent %s, returning to queue", task.TaskId, req.AgentId)
+			if s.returnTaskHook != nil {
+				_ = s.returnTaskHook(task, msgID)
+			}
+			task = nil
+			msgID = ""
+			continue
+		}
+
+		break // 匹配成功
 	}
+
 	if task != nil && task.TaskId != "" {
-		// 记录流转：状态变为执行中，挂载关联代理人和流的消息位点
+		// 4. 记录流转：状态变为执行中
 		db.DB.Model(&db.SubTask{}).Where("id = ?", task.TaskId).
 			Updates(map[string]interface{}{
 				"status":        "Running",
@@ -149,10 +180,46 @@ func (s *Server) FetchTask(ctx context.Context, req *pb.FetchTaskReq) (*pb.Task,
 			db.DB.Model(&db.RootTask{}).Where("id = ? AND status = ?", sub.RootTaskID, "Queued").
 				Update("status", "Running")
 		}
+
+		log.Printf("[FetchTask] Dispatched task %s → Agent %s", task.TaskId, req.AgentId)
 	} else if task == nil {
 		task = &pb.Task{}
 	}
 	return task, err
+}
+
+// matchAgentSelector 检查任务的 AgentSelector 是否匹配节点的 Tags
+// 如果任务没有 AgentSelector，则所有节点都可以执行
+func (s *Server) matchAgentSelector(taskID string, nodeTags string) bool {
+	var sub db.SubTask
+	if db.DB.Select("agent_selector").Where("id = ?", taskID).First(&sub).Error != nil {
+		return true // 查不到就放行
+	}
+
+	selector := strings.TrimSpace(sub.AgentSelector)
+	if selector == "" || selector == "{}" {
+		return true // 无选择器约束
+	}
+
+	// 解析选择器: {"region": "cn-shanghai", "type": "vuln-scan"}
+	var selectorMap map[string]string
+	if err := json.Unmarshal([]byte(selector), &selectorMap); err != nil {
+		return true // 解析失败放行
+	}
+
+	// 解析节点标签
+	var tagMap map[string]string
+	if err := json.Unmarshal([]byte(nodeTags), &tagMap); err != nil {
+		return len(selectorMap) == 0 // 节点无标签，仅当选择器为空时匹配
+	}
+
+	// 所有选择器键值必须在节点标签中匹配
+	for key, val := range selectorMap {
+		if nodeVal, ok := tagMap[key]; !ok || nodeVal != val {
+			return false
+		}
+	}
+	return true
 }
 
 // StreamResult 流式接收客户端回传的结果

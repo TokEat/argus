@@ -118,6 +118,10 @@ func InitRouter(port string) {
 		api.POST("/tasks", createTask)
 		api.DELETE("/tasks/:id", deleteTask)
 		api.POST("/tasks/:id/cancel", cancelTask)
+		api.POST("/tasks/:id/append", appendTargets) // 动态追加目标
+
+		// 队列监控
+		api.GET("/queue/depth", getQueueDepth)
 
 		// 漏洞资产与关联画像
 		api.GET("/vulns", getVulns)
@@ -1284,3 +1288,130 @@ func rollbackArsenal(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "rolled_back", "rule_version": newVersion})
 }
 
+// ==================== 动态追加目标 ====================
+
+// appendTargets 向运行中的任务动态追加目标
+// POST /tasks/:id/append  body: { "targets": "1.1.1.1\n2.2.2.2" }
+func appendTargets(c *gin.Context) {
+	rootTaskID := c.Param("id")
+
+	var req struct {
+		Targets json.RawMessage `json:"targets"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 校验 RootTask 存在
+	var rootTask db.RootTask
+	if err := db.DB.Where("id = ?", rootTaskID).First(&rootTask).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+		return
+	}
+
+	// 解析新目标
+	newTargets, err := parseTargets(req.Targets)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(newTargets) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No targets to append"})
+		return
+	}
+
+	tenantID := c.GetString("tenant")
+
+	// 获取当前最大的 sub 编号
+	var maxSub db.SubTask
+	db.DB.Where("root_task_id = ?", rootTaskID).Order("id DESC").First(&maxSub)
+	baseIndex := 0
+	if maxSub.ID != "" {
+		// 从 "task-xxx-sub-N" 中解析 N
+		parts := strings.Split(maxSub.ID, "-sub-")
+		if len(parts) == 2 {
+			if n, err := strconv.Atoi(parts[1]); err == nil {
+				baseIndex = n + 1
+			}
+		}
+	}
+
+	// 拆分成 SubTasks
+	chunkSize := 256
+	var newSubTasks []db.SubTask
+	configJSON := rootTask.Config
+
+	for i := 0; i < len(newTargets); i += chunkSize {
+		end := i + chunkSize
+		if end > len(newTargets) {
+			end = len(newTargets)
+		}
+		chunkTargets := newTargets[i:end]
+		chunkJSON, _ := json.Marshal(chunkTargets)
+
+		newSubTasks = append(newSubTasks, db.SubTask{
+			ID:           fmt.Sprintf("%s-sub-%d", rootTaskID, baseIndex+i/chunkSize),
+			TenantID:     tenantID,
+			RootTaskID:   rootTaskID,
+			ChunkTargets: string(chunkJSON),
+			Status:       "Pending",
+			Config:       configJSON,
+			Priority:     rootTask.Priority,
+			TimeoutSec:   rootTask.TimeoutSec,
+			MaxRetry:     3,
+		})
+	}
+
+	// 事务写入新 SubTasks
+	err = db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.CreateInBatches(newSubTasks, 100).Error; err != nil {
+			return err
+		}
+		// 更新 RootTask 的 TotalChunks 和状态
+		return tx.Model(&rootTask).Updates(map[string]interface{}{
+			"total_chunks": gorm.Expr("total_chunks + ?", len(newSubTasks)),
+			"status":       "Running", // 如果之前是 FINISHED/PartialDone，重新激活
+		}).Error
+	})
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 推入调度队列
+	if taskQueue != nil {
+		for _, st := range newSubTasks {
+			pbSub, _ := db.SubTaskToProto(&st)
+			if err := taskQueue.PushTask(context.Background(), pbSub); err != nil {
+				log.Printf("Failed to push appended subtask %s: %v", st.ID, err)
+			}
+		}
+	}
+
+	log.Printf("[AppendTargets] Added %d new subtasks to RootTask %s (%d targets)", len(newSubTasks), rootTaskID, len(newTargets))
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":        "appended",
+		"new_subtasks":  len(newSubTasks),
+		"new_targets":   len(newTargets),
+		"total_chunks":  rootTask.TotalChunks + len(newSubTasks),
+	})
+}
+
+// ==================== 队列深度监控 ====================
+
+func getQueueDepth(c *gin.Context) {
+	if taskQueue == nil {
+		c.JSON(http.StatusOK, gin.H{"error": "queue not initialized"})
+		return
+	}
+
+	ctx := context.Background()
+	c.JSON(http.StatusOK, gin.H{
+		"depth":   taskQueue.QueueDepth(ctx),
+		"pending": taskQueue.PendingCount(ctx),
+		"mode":    taskQueue.Mode(),
+	})
+}
