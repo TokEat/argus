@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -20,6 +22,11 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+)
+
+var (
+	newScanContext = engine.NewScanContext
+	runScanTask    = engine.RunTask
 )
 
 // Worker 是扫描节点的核心
@@ -75,8 +82,12 @@ func (w *Worker) Start() error {
 	// 获取动态指命
 	go w.commandLoop()
 
-	// 可配置并发数
-	sem := make(chan struct{}, w.maxWorkers)
+	// 当前引擎仍依赖 legacy 全局态，单进程内真实并发能力受限。
+	effectiveWorkers := w.effectiveWorkerCount()
+	if effectiveWorkers < w.maxWorkers {
+		log.Printf("Engine still requires serialized execution; capping worker pool from %d to %d", w.maxWorkers, effectiveWorkers)
+	}
+	sem := make(chan struct{}, effectiveWorkers)
 
 	// 信号劫持
 	sigCh := make(chan os.Signal, 1)
@@ -89,7 +100,7 @@ func (w *Worker) Start() error {
 		close(quit)
 	}()
 
-	log.Printf("Agent started with worker pool size: %d", w.maxWorkers)
+	log.Printf("Agent started with worker pool size: %d", effectiveWorkers)
 
 	// 2. 轮询领取任务
 	for {
@@ -345,11 +356,26 @@ func (w *Worker) executeTask(task *pb.Task) {
 	cfg.OutputFile = ""
 	cfg.ReportName = ""
 
-	taskCtx, cancelContext := context.WithCancel(context.Background())
-	defer cancelContext()
+	// 初始化上下文
+	ctx, err := newScanContext(cfg)
+	if err != nil {
+		log.Printf("Failed to initialize scan context for task %s: %v", task.TaskId, err)
+		w.reportTaskCompletion(task.TaskId, "FAILED", err.Error())
+		return
+	}
+	defer ctx.Close()
+	ctx.TaskID = task.TaskId
+
+	var cancelRequested atomic.Bool
+	cancelTask := func() {
+		cancelRequested.Store(true)
+		if ctx.Cancel != nil {
+			ctx.Cancel()
+		}
+	}
 
 	w.mu.Lock()
-	w.runningTasks[task.TaskId] = cancelContext
+	w.runningTasks[task.TaskId] = cancelTask
 	w.mu.Unlock()
 
 	defer func() {
@@ -358,74 +384,104 @@ func (w *Worker) executeTask(task *pb.Task) {
 		w.mu.Unlock()
 	}()
 
-	// 初始化上下文
-	ctx, err := engine.NewScanContext(cfg)
-	if err != nil {
-		log.Printf("Failed to initialize scan context for task %s: %v", task.TaskId, err)
-		_, _ = w.client.TaskComplete(context.Background(), &pb.TaskCompleteReq{
-			AgentId:      w.agentID,
-			TaskId:       task.TaskId,
-			Status:       "FAILED",
-			ErrorMessage: err.Error(),
-		})
-		return
-	}
-	defer ctx.Reset()
-	defer ctx.Close()
-	ctx.TaskID = task.TaskId
-
 	// 挂载 OutputHook 进行 gRPC Stream 实时回传 (Task 1.7)
 	stream, err := w.client.StreamResult(context.Background())
-	if err == nil {
-		ctx.OutputHook = func(msg engine.OutputMessage) {
-			payload, _ := json.Marshal(msg)
-			_ = stream.Send(&pb.ScanResult{
-				TaskId:      task.TaskId,
-				PayloadType: msg.Type,
-				Payload:     payload,
-				Timestamp:   time.Now().UnixMilli(),
-			})
+	if err != nil {
+		err = fmt.Errorf("open grpc result stream: %w", err)
+		log.Printf("Failed to open grpc stream for task %s: %v", task.TaskId, err)
+		w.reportTaskCompletion(task.TaskId, "FAILED", err.Error())
+		return
+	}
+
+	var streamMu sync.Mutex
+	var streamErr error
+	ctx.OutputHook = func(msg engine.OutputMessage) {
+		streamMu.Lock()
+		defer streamMu.Unlock()
+
+		if streamErr != nil {
+			return
 		}
-	} else {
-		log.Printf("Failed to open grpc stream: %v", err)
+
+		payload, err := json.Marshal(msg)
+		if err != nil {
+			streamErr = fmt.Errorf("marshal result payload: %w", err)
+			if ctx.Cancel != nil {
+				ctx.Cancel()
+			}
+			return
+		}
+
+		if err := stream.Send(&pb.ScanResult{
+			TaskId:      task.TaskId,
+			PayloadType: msg.Type,
+			Payload:     payload,
+			Timestamp:   time.Now().UnixMilli(),
+		}); err != nil {
+			streamErr = fmt.Errorf("send scan result: %w", err)
+			if ctx.Cancel != nil {
+				ctx.Cancel()
+			}
+		}
 	}
 
 	// 启动引擎
 	log.Printf("Starting Pipeline for Task %s...", task.TaskId)
-	
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- engine.RunTask(ctx)
-	}()
 
-	var runErr error
-	select {
-	case runErr = <-errCh:
-	case <-taskCtx.Done():
-		log.Printf("[Cancel] Task %s aborted via context cancellation", task.TaskId)
-		runErr = fmt.Errorf("task cancelled by control plane")
+	runErr := runScanTask(ctx)
+
+	if streamErr != nil && (runErr == nil || (!cancelRequested.Load() && errors.Is(runErr, context.Canceled))) {
+		runErr = streamErr
 	}
-
-	if stream != nil {
-		_, _ = stream.CloseAndRecv()
+	if closeErr := closeResultStream(stream); closeErr != nil && (runErr == nil || (!cancelRequested.Load() && errors.Is(runErr, context.Canceled))) {
+		runErr = closeErr
 	}
 
 	if runErr != nil {
+		if cancelRequested.Load() && errors.Is(runErr, context.Canceled) {
+			log.Printf("[Cancel] Task %s aborted via control-plane cancellation", task.TaskId)
+			w.reportTaskCompletion(task.TaskId, "CANCELLED", "task cancelled by control plane")
+			return
+		}
+
 		log.Printf("Pipeline execution aborted or failed: %v", runErr)
-		_, _ = w.client.TaskComplete(context.Background(), &pb.TaskCompleteReq{
-			AgentId:      w.agentID,
-			TaskId:       task.TaskId,
-			Status:       "FAILED",
-			ErrorMessage: runErr.Error(),
-		})
+		w.reportTaskCompletion(task.TaskId, "FAILED", runErr.Error())
 		return
 	}
 	log.Printf("Finished Pipeline for Task %s.", task.TaskId)
 
 	// 回传任务完成
+	w.reportTaskCompletion(task.TaskId, "DONE", "")
+}
+
+func (w *Worker) effectiveWorkerCount() int {
+	engineLimit := engine.MaxConcurrentTasks()
+	if engineLimit <= 0 || w.maxWorkers <= engineLimit {
+		return w.maxWorkers
+	}
+	return engineLimit
+}
+
+func (w *Worker) reportTaskCompletion(taskID, status, errMessage string) {
 	_, _ = w.client.TaskComplete(context.Background(), &pb.TaskCompleteReq{
-		AgentId: w.agentID,
-		TaskId:  task.TaskId,
-		Status:  "DONE",
+		AgentId:      w.agentID,
+		TaskId:       taskID,
+		Status:       status,
+		ErrorMessage: errMessage,
 	})
+}
+
+func closeResultStream(stream grpc.ClientStreamingClient[pb.ScanResult, pb.Ack]) error {
+	if stream == nil {
+		return nil
+	}
+
+	ack, err := stream.CloseAndRecv()
+	if err != nil {
+		return fmt.Errorf("close grpc result stream: %w", err)
+	}
+	if ack != nil && !ack.Success {
+		return fmt.Errorf("result stream rejected by server: %s", ack.Message)
+	}
+	return nil
 }

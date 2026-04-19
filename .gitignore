@@ -31,3 +31,6 @@ vendor/
 
 release/
 data/
+**/node_modules
+
+**/dist

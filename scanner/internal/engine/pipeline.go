@@ -5,6 +5,7 @@
 package engine
 
 import (
+	"context"
 	"dddd/scanner/internal/finger"
 	"dddd/scanner/internal/output"
 	"dddd/scanner/internal/scanner/cdn"
@@ -20,6 +21,7 @@ import (
 	"dddd/scanner/structs"
 	"dddd/scanner/utils"
 	"embed"
+	"errors"
 	"strings"
 
 	"github.com/logrusorgru/aurora"
@@ -52,7 +54,16 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	webRuntime := currentWebRuntime(ctx)
 	fingerRuntime := currentFingerRuntime(ctx)
 
-	p.searchEngine(ctx, &cfg)
+	if err := checkPipelineCancelled(ctx); err != nil {
+		return err
+	}
+
+	if err := p.searchEngine(ctx, &cfg); err != nil {
+		return err
+	}
+	if err := checkPipelineCancelled(ctx); err != nil {
+		return err
+	}
 
 	for _, input := range cfg.Targets {
 		inputType := utils.GetInputType(input)
@@ -86,6 +97,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 			domains = append(domains, each)
 		}
 	}
+	if err := checkPipelineCancelled(ctx); err != nil {
+		return err
+	}
 	domains = utils.RemoveDuplicateElement(domains)
 
 	// CDN 检测
@@ -100,6 +114,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 			ips = append(ips, each)
 		}
 	}
+	if err := checkPipelineCancelled(ctx); err != nil {
+		return err
+	}
 	ips = utils.RemoveDuplicateElement(ips)
 
 	// 处理带CDN的域名
@@ -113,6 +130,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 	// 端口扫描
 	if len(ips) > 0 {
+		if err := checkPipelineCancelled(ctx); err != nil {
+			return err
+		}
 		if !cfg.SkipHostDiscovery {
 			var ICMPAlive []string
 			if !cfg.NoICMPPing {
@@ -164,6 +184,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		}
 		ipPort = utils.RemoveDuplicateElement(ipPort)
 	}
+	if err := checkPipelineCancelled(ctx); err != nil {
+		return err
+	}
 
 	// 协议识别
 	getProtocalInput := ipPort
@@ -172,6 +195,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	}
 	if len(getProtocalInput) > 0 {
 		currentProtocolRuntime(ctx).Identify(getProtocalInput, cfg.GetBannerThreads, cfg.GetBannerTimeout)
+	}
+	if err := checkPipelineCancelled(ctx); err != nil {
+		return err
 	}
 
 	if ctx != nil {
@@ -193,6 +219,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		cfg.HTTPProxy,
 		cfg.WebThreads,
 		cfg.WebTimeout)
+	if err := checkPipelineCancelled(ctx); err != nil {
+		return err
+	}
 
 	if ctx != nil {
 		syncContextFromLegacy(ctx)
@@ -204,6 +233,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		if ctx != nil {
 			syncContextFromLegacy(ctx)
 		}
+	}
+	if err := checkPipelineCancelled(ctx); err != nil {
+		return err
 	}
 
 	var aliveURLs []string
@@ -231,6 +263,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		if enableLocalReports {
 			output.GenerateHTMLReportFooter()
 			output.GenerateAssetReport()
+		}
+		if err := checkPipelineCancelled(ctx); err != nil {
+			return err
 		}
 		return nil
 	}
@@ -261,11 +296,17 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 			syncContextFromLegacy(ctx)
 		}
 	}
+	if err := checkPipelineCancelled(ctx); err != nil {
+		return err
+	}
 
 	// 指纹识别
 	fingerRuntime.Identify()
 	if ctx != nil {
 		syncContextFromLegacy(ctx)
+	}
+	if err := checkPipelineCancelled(ctx); err != nil {
+		return err
 	}
 
 	// 合并 dir-fallback 指纹
@@ -305,6 +346,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 			cfg.NucleiTemplate, strings.Split(cfg.ExcludeTags, ","),
 			strings.Split(cfg.Severities, ","))
 	}
+	if err := checkPipelineCancelled(ctx); err != nil {
+		return err
+	}
 
 	var goPocResults []structs.GoPocsResultType
 	goPocResults = append(goPocResults, gopoc.TelnetCVEOnly(
@@ -323,6 +367,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 			nucleiResults,
 		)...)
 	}
+	if err := checkPipelineCancelled(ctx); err != nil {
+		return err
+	}
 
 	if ctx != nil {
 		ctx.GoPocsResults = toEngineGoPocResults(goPocResults)
@@ -337,7 +384,11 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 }
 
 // searchEngine 调用网络空间搜索引擎获取资产。
-func (p *Pipeline) searchEngine(ctx *ScanContext, cfg *Config) {
+func (p *Pipeline) searchEngine(ctx *ScanContext, cfg *Config) error {
+	if err := checkPipelineCancelled(ctx); err != nil {
+		return err
+	}
+
 	searchCfg := currentUncoverConfig(ctx)
 	searchState, syncBack := newPipelineUncoverState(ctx)
 	defer syncBack()
@@ -345,12 +396,12 @@ func (p *Pipeline) searchEngine(ctx *ScanContext, cfg *Config) {
 	if cfg.Hunter && !cfg.Fofa {
 		cfg.Targets, _ = uncover.HunterSearch(cfg.Targets, searchCfg, searchState)
 		setPipelineConfig(ctx, *cfg)
-		return
+		return checkPipelineCancelled(ctx)
 	}
 	if cfg.Fofa && !cfg.Hunter {
 		cfg.Targets = uncover.FOFASearch(cfg.Targets, searchCfg, searchState)
 		setPipelineConfig(ctx, *cfg)
-		return
+		return checkPipelineCancelled(ctx)
 	}
 	if cfg.Fofa && cfg.Hunter {
 		targets, tIPs := uncover.HunterSearch(cfg.Targets, searchCfg, searchState)
@@ -363,12 +414,26 @@ func (p *Pipeline) searchEngine(ctx *ScanContext, cfg *Config) {
 		cfg.Targets = append(cfg.Targets, targets...)
 		cfg.Targets = utils.RemoveDuplicateElement(cfg.Targets)
 		setPipelineConfig(ctx, *cfg)
-		return
+		return checkPipelineCancelled(ctx)
 	}
 	if cfg.Quake {
 		cfg.Targets = uncover.QuakeSearch(cfg.Targets, searchCfg, searchState)
 		setPipelineConfig(ctx, *cfg)
 	}
+	return checkPipelineCancelled(ctx)
+}
+
+func checkPipelineCancelled(ctx *ScanContext) error {
+	if ctx == nil || ctx.Ctx == nil {
+		return nil
+	}
+	if err := ctx.Ctx.Err(); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return context.Canceled
+		}
+		return err
+	}
+	return nil
 }
 
 func currentSubdomainConfig(ctx *ScanContext) subdomain.Config {
