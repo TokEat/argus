@@ -128,7 +128,7 @@ func InitRouter(port string) {
 		api.GET("/assets", getAssets)
 		api.GET("/fingerprints", getFingerprints)
 		api.GET("/profiles", getProfiles)
-		
+
 		// 战报输出引擎
 		api.GET("/reports/export/vulns", exportVulns)
 
@@ -245,19 +245,28 @@ func createTask(c *gin.Context) {
 		return
 	}
 
-	targets, err := parseTargets(req.Targets)
+	if req.Priority < 0 || req.Priority > 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "priority must be 0 (urgent), 1 (normal), or 2 (low)"})
+		return
+	}
+	if req.TimeoutSec < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "timeout_sec must be greater than or equal to 0"})
+		return
+	}
+
+	configJSON, targetMode, err := normalizeTaskConfigPayload(req.Config)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	targets, targetSummary, err := parseAndValidateTargetsForMode(req.Targets, targetMode)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	if len(targets) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "targets is empty"})
-		return
-	}
-
-	configJSON, err := normalizeConfigPayload(req.Config)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -287,7 +296,7 @@ func createTask(c *gin.Context) {
 		chunkTargets := targets[i:end]
 		chunkJSON, _ := json.Marshal(chunkTargets)
 
-	subTasks = append(subTasks, db.SubTask{
+		subTasks = append(subTasks, db.SubTask{
 			ID:           fmt.Sprintf("%s-sub-%d", rootTaskID, i/chunkSize),
 			TenantID:     tenantID,
 			RootTaskID:   rootTaskID,
@@ -341,15 +350,19 @@ func createTask(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "task_created", "task_id": rootTask.ID})
+	c.JSON(http.StatusOK, gin.H{
+		"status":         "task_created",
+		"task_id":        rootTask.ID,
+		"target_summary": targetSummary,
+	})
 }
 
 // ---------------- Arsenal --------------------
 
 func getArsenals(c *gin.Context) {
 	var arsenals []db.Arsenal
-	typ := c.Param("type")
-	query := db.DB.Where("type = ?", typ)
+	typ := db.CanonicalArsenalType(c.Param("type"))
+	query := db.DB.Where("type IN ?", db.ArsenalTypeAliases(typ))
 
 	// 如果没有 ?all=1 参数，默认只下发已审核武器给 Agent
 	if c.Query("all") != "1" {
@@ -366,7 +379,7 @@ func getArsenals(c *gin.Context) {
 }
 
 func saveArsenal(c *gin.Context) {
-	typ := c.Param("type")
+	typ := db.CanonicalArsenalType(c.Param("type"))
 	fn := c.Param("filename")
 
 	var req struct {
@@ -383,13 +396,13 @@ func saveArsenal(c *gin.Context) {
 	var existing db.Arsenal
 	var previousHash string
 	var version int = 1
-	if db.DB.Where("id = ?", typ+"_"+fn).First(&existing).Error == nil {
+	if db.DB.Where("id = ?", db.BuildArsenalID(typ, fn)).First(&existing).Error == nil {
 		previousHash = existing.Hash
 		version = existing.Version + 1
 	}
 
 	arsenal := db.Arsenal{
-		ID:           typ + "_" + fn,
+		ID:           db.BuildArsenalID(typ, fn),
 		TenantID:     c.GetString("tenant"),
 		Type:         typ,
 		FileName:     fn,
@@ -399,31 +412,52 @@ func saveArsenal(c *gin.Context) {
 		Version:      version,
 		State:        "Draft",
 	}
-	db.DB.Save(&arsenal)
+	if err := db.DB.Save(&arsenal).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "saved", "hash": hash, "state": "Draft", "version": version})
 }
 
 func approveArsenal(c *gin.Context) {
-	typ := c.Param("type")
+	typ := db.CanonicalArsenalType(c.Param("type"))
 	fn := c.Param("filename")
 	tenantID := c.GetString("tenant")
-	id := typ + "_" + fn
-	db.DB.Model(&db.Arsenal{}).Where("id = ? AND tenant_id = ?", id, tenantID).Update("state", "Approved")
-	
+	id := db.BuildArsenalID(typ, fn)
+	if err := db.DB.Model(&db.Arsenal{}).Where("id = ? AND tenant_id = ?", id, tenantID).Update("state", "Approved").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
 	// 触发版本号递增
 	newVersion := BumpRuleVersion()
 
 	// 触发全网 Agent 重新拉取
 	GlobalArsenalReloadCounter++
 	log.Printf("[Arsenal Hub] Rules approved by Tenant %s. Rule version bumped to %s. Global Reload Triggered!", tenantID, newVersion)
-	
+
 	c.JSON(http.StatusOK, gin.H{"status": "approved", "rule_version": newVersion})
 }
 
 func deleteArsenal(c *gin.Context) {
-	typ := c.Param("type")
+	typ := db.CanonicalArsenalType(c.Param("type"))
 	fn := c.Param("filename")
-	db.DB.Delete(&db.Arsenal{}, "id = ?", typ+"_"+fn)
+	if err := db.DB.Delete(&db.Arsenal{}, "id = ?", db.BuildArsenalID(typ, fn)).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }
 
@@ -446,17 +480,23 @@ func getProfiles(c *gin.Context) {
 	db.DB.Find(&vulns)
 
 	pm := make(map[string]*Profile)
-	
+
 	for _, a := range assets {
-		if _, ok := pm[a.Target]; !ok { pm[a.Target] = &Profile{Target: a.Target} }
+		if _, ok := pm[a.Target]; !ok {
+			pm[a.Target] = &Profile{Target: a.Target}
+		}
 		pm[a.Target].Assets = append(pm[a.Target].Assets, a)
 	}
 	for _, f := range fps {
-		if _, ok := pm[f.Target]; !ok { pm[f.Target] = &Profile{Target: f.Target} }
+		if _, ok := pm[f.Target]; !ok {
+			pm[f.Target] = &Profile{Target: f.Target}
+		}
 		pm[f.Target].Fingerprints = append(pm[f.Target].Fingerprints, f)
 	}
 	for _, v := range vulns {
-		if _, ok := pm[v.Target]; !ok { pm[v.Target] = &Profile{Target: v.Target} }
+		if _, ok := pm[v.Target]; !ok {
+			pm[v.Target] = &Profile{Target: v.Target}
+		}
 		pm[v.Target].Vulns = append(pm[v.Target].Vulns, v)
 	}
 
@@ -479,12 +519,12 @@ func deleteTask(c *gin.Context) {
 func exportVulns(c *gin.Context) {
 	c.Writer.Header().Set("Content-Type", "text/csv")
 	c.Writer.Header().Set("Content-Disposition", "attachment;filename=vulnerabilities.csv")
-	
+
 	writer := csv.NewWriter(c.Writer)
 	defer writer.Flush()
-	
+
 	writer.Write([]string{"TenantID", "TaskID", "Target", "Plugin", "Severity", "DetectedAt"})
-	
+
 	var vulns []db.Vulnerability
 	tenantID := c.GetString("tenant")
 	query := db.DB.Model(&db.Vulnerability{})
@@ -492,7 +532,7 @@ func exportVulns(c *gin.Context) {
 		query = query.Where("tenant_id = ?", tenantID)
 	}
 	query.Find(&vulns)
-	
+
 	for _, v := range vulns {
 		writer.Write([]string{v.TenantID, v.TaskID, v.Target, v.Plugin, v.Severity, v.CreatedAt.Format(time.RFC3339)})
 	}
@@ -506,25 +546,24 @@ func aiAnalyzeArsenal(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	// Mock AI Heuristic rules
 	lowerContent := strings.ToLower(req.Content)
 	if strings.Contains(lowerContent, "cve-2023") || strings.Contains(lowerContent, "log4j") {
 		c.JSON(http.StatusOK, gin.H{
 			"suggestion": "Reject",
-			"reason": "Highly overlaps with known existing high-profile vulnerabilities in our Arsenal. Please check your entries to avoid payload duplicates.",
+			"reason":     "Highly overlaps with known existing high-profile vulnerabilities in our Arsenal. Please check your entries to avoid payload duplicates.",
 			"confidence": 0.88,
 		})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"suggestion": "Approve",
-		"reason": "Rule signature is unique, syntactically correct, and does not overlap with existing cluster profiles.",
+		"reason":     "Rule signature is unique, syntactically correct, and does not overlap with existing cluster profiles.",
 		"confidence": 0.96,
 	})
 }
-
 
 func cancelTask(c *gin.Context) {
 	id := c.Param("id")
@@ -587,10 +626,40 @@ func getFingerprints(c *gin.Context) {
 	c.JSON(http.StatusOK, fps)
 }
 
+type NodeResponse struct {
+	db.Node
+	RunningTaskDetails []map[string]interface{} `json:"RunningTaskDetails"`
+}
+
 func getNodes(c *gin.Context) {
 	var nodes []db.Node
 	db.DB.Find(&nodes)
-	c.JSON(http.StatusOK, nodes)
+
+	var resp []NodeResponse
+	for _, n := range nodes {
+		nr := NodeResponse{
+			Node:               n,
+			RunningTaskDetails: make([]map[string]interface{}, 0),
+		}
+		if n.RunningTaskIDs != "" && n.RunningTaskIDs != "[]" {
+			var ids []string
+			if err := json.Unmarshal([]byte(n.RunningTaskIDs), &ids); err == nil && len(ids) > 0 {
+				var subTasks []db.SubTask
+				db.DB.Where("id IN ?", ids).Find(&subTasks)
+				for _, sub := range subTasks {
+					var targets []string
+					_ = json.Unmarshal([]byte(sub.ChunkTargets), &targets)
+					nr.RunningTaskDetails = append(nr.RunningTaskDetails, map[string]interface{}{
+						"task_id": sub.ID,
+						"targets": targets,
+					})
+				}
+			}
+		}
+		resp = append(resp, nr)
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 func parseTargets(raw json.RawMessage) ([]string, error) {
@@ -751,7 +820,7 @@ func getArsenalManifest(c *gin.Context) {
 	items := make([]ManifestItem, 0, len(arsenals))
 	for _, a := range arsenals {
 		items = append(items, ManifestItem{
-			Type:      a.Type,
+			Type:      db.CanonicalArsenalType(a.Type),
 			FileName:  a.FileName,
 			Hash:      a.Hash,
 			UpdatedAt: a.UpdatedAt.Format(time.RFC3339),
@@ -914,7 +983,7 @@ func listCloudInstances(c *gin.Context) {
 
 func createCloudInstance(c *gin.Context) {
 	var req struct {
-		Provider     string `json:"provider"`     // docker, aliyun
+		Provider     string `json:"provider"` // docker, aliyun
 		Region       string `json:"region"`
 		InstanceType string `json:"instance_type"`
 		ImageID      string `json:"image_id"`
@@ -1257,9 +1326,9 @@ func getAgentLogs(c *gin.Context) {
 // ==================== 规则回滚 ====================
 
 func rollbackArsenal(c *gin.Context) {
-	typ := c.Param("type")
+	typ := db.CanonicalArsenalType(c.Param("type"))
 	fn := c.Param("filename")
-	id := typ + "_" + fn
+	id := db.BuildArsenalID(typ, fn)
 
 	var arsenal db.Arsenal
 	if err := db.DB.Where("id = ?", id).First(&arsenal).Error; err != nil {
@@ -1273,12 +1342,19 @@ func rollbackArsenal(c *gin.Context) {
 	}
 
 	// 交换当前版本和上一版本
-	db.DB.Model(&arsenal).Updates(map[string]interface{}{
+	if err := db.DB.Model(&arsenal).Updates(map[string]interface{}{
 		"hash":          arsenal.PreviousHash,
 		"previous_hash": arsenal.Hash,
 		"state":         "Draft", // 回滚后重新审批
 		"version":       arsenal.Version + 1,
-	})
+	}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
 	// 触发全网 Agent 重新拉取
 	newVersion := BumpRuleVersion()
@@ -1311,7 +1387,7 @@ func appendTargets(c *gin.Context) {
 	}
 
 	// 解析新目标
-	newTargets, err := parseTargets(req.Targets)
+	newTargets, targetSummary, err := parseAndValidateTargetsForMode(req.Targets, detectTargetModeFromStoredConfig(rootTask.Config))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1393,10 +1469,11 @@ func appendTargets(c *gin.Context) {
 	log.Printf("[AppendTargets] Added %d new subtasks to RootTask %s (%d targets)", len(newSubTasks), rootTaskID, len(newTargets))
 
 	c.JSON(http.StatusOK, gin.H{
-		"status":        "appended",
-		"new_subtasks":  len(newSubTasks),
-		"new_targets":   len(newTargets),
-		"total_chunks":  rootTask.TotalChunks + len(newSubTasks),
+		"status":         "appended",
+		"new_subtasks":   len(newSubTasks),
+		"new_targets":    len(newTargets),
+		"total_chunks":   rootTask.TotalChunks + len(newSubTasks),
+		"target_summary": targetSummary,
 	})
 }
 

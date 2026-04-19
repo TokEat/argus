@@ -1,0 +1,12 @@
+./cli_profile.go
+./credentials.go
+./default.go
+./ecs_ram_role.go
+./env.go
+./hook.go
+./oidc.go
+./profile.go
+./ram_role_arn.go
+./static_ak.go
+./static_sts.go
+./uri.go

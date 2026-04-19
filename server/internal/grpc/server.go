@@ -95,11 +95,19 @@ func (s *Server) Heartbeat(ctx context.Context, req *pb.HeartbeatReq) (*pb.Heart
 	var running int64
 	db.DB.Model(&db.SubTask{}).Where("agent_id = ? AND status = ?", req.AgentId, "Running").Count(&running)
 
+	// 从 DB 计算或者信任 Agent 的真实数据
+	taskIDsJSON := "[]"
+	if len(req.RunningTaskIds) > 0 {
+		b, _ := json.Marshal(req.RunningTaskIds)
+		taskIDsJSON = string(b)
+	}
+
 	// 更新节点状态（包含规则版本）
 	updates := map[string]interface{}{
-		"status":        "Alive",
-		"last_beat":     time.Now().UnixMilli(),
-		"running_tasks": int(running),
+		"status":           "Alive",
+		"last_beat":        time.Now().UnixMilli(),
+		"running_tasks":    int(req.RunningTasks), // 采用 Agent 上报的真实运行任务数
+		"running_task_ids": taskIDsJSON,
 	}
 	// 如果 Agent 上报了规则版本，保存到 Node
 	if req.RuleVersion != "" {
