@@ -212,22 +212,65 @@ export async function deleteFingerprintDict(product: string): Promise<API.Messag
 }
 
 // ===========================
-// WebSocket
+// WebSocket（自动重连）
 // ===========================
 
-export function connectWebSocket(onMessage: (data: unknown) => void): WebSocket {
+export function connectWebSocket(
+    onMessage: (data: unknown) => void,
+    onStatusChange?: (connected: boolean) => void,
+): WebSocket {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const token = localStorage.getItem('token');
-    const ws = new WebSocket(`${protocol}//${window.location.host}/api/v1/ws?token=${token}`);
-    ws.onmessage = (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            onMessage(data);
-        } catch {
-            // ignore
-        }
-    };
-    return ws;
+    const url = `${protocol}//${window.location.host}/api/v1/ws?token=${token}`;
+
+    let reconnectDelay = 2000;
+    const maxDelay = 30000;
+    let destroyed = false;
+
+    function connect(): WebSocket {
+        const ws = new WebSocket(url);
+
+        ws.onopen = () => {
+            reconnectDelay = 2000; // 连接成功后重置退避
+            onStatusChange?.(true);
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                onMessage(data);
+            } catch {
+                // ignore malformed messages
+            }
+        };
+
+        ws.onerror = () => {
+            // 静默处理，onclose 会触发重连
+        };
+
+        ws.onclose = () => {
+            onStatusChange?.(false);
+            if (destroyed) return;
+            // 指数退避重连
+            setTimeout(() => {
+                if (!destroyed) {
+                    connect();
+                }
+            }, reconnectDelay);
+            reconnectDelay = Math.min(reconnectDelay * 1.5, maxDelay);
+        };
+
+        // 扩展 close 方法以支持外部销毁
+        const originalClose = ws.close.bind(ws);
+        ws.close = (code?: number, reason?: string) => {
+            destroyed = true;
+            originalClose(code, reason);
+        };
+
+        return ws;
+    }
+
+    return connect();
 }
 
 // ===========================

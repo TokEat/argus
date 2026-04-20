@@ -69,23 +69,22 @@ const Dashboard: React.FC = () => {
 
     // WebSocket
     useEffect(() => {
-        const ws = connectWebSocket((data: unknown) => {
-            setWsConnected(true);
-            const msg = data as Record<string, unknown>;
-            setWsMessages((prev) => [
-                {
-                    time: new Date().toLocaleTimeString('zh-CN'),
-                    type: String(msg.type || msg.event || 'data'),
-                    data: JSON.stringify(msg),
-                },
-                ...prev.slice(0, 49),
-            ]);
-            // Auto-refresh stats when we receive a WS message
-            fetchData();
-        });
-        ws.onopen = () => setWsConnected(true);
-        ws.onclose = () => setWsConnected(false);
-        ws.onerror = () => setWsConnected(false);
+        const ws = connectWebSocket(
+            (data: unknown) => {
+                const msg = data as Record<string, unknown>;
+                setWsMessages((prev) => [
+                    {
+                        time: new Date().toLocaleTimeString('zh-CN'),
+                        type: String(msg.type || msg.event || 'data'),
+                        data: JSON.stringify(msg),
+                    },
+                    ...prev.slice(0, 49),
+                ]);
+                // Auto-refresh stats when we receive a WS message
+                fetchData();
+            },
+            (connected) => setWsConnected(connected),
+        );
         return () => {
             ws.close();
         };

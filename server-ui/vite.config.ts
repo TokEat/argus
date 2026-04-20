@@ -7,10 +7,22 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/api/v1': {
+      // WebSocket 专用代理（必须在通用 /api/v1 之前，路径更精确优先匹配）
+      '/api/v1/ws': {
         target: 'http://localhost:8085',
         changeOrigin: true,
         ws: true,
+        // 后端未启动时静默忽略，不抛 EPIPE
+        configure: (proxy) => {
+          proxy.on('error', (err) => {
+            console.warn('[Vite WS Proxy] Backend unavailable:', err.message);
+          });
+        },
+      },
+      // REST API 代理（不代理 WS）
+      '/api/v1': {
+        target: 'http://localhost:8085',
+        changeOrigin: true,
       },
     },
   },

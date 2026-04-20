@@ -206,6 +206,11 @@ type Vulnerability struct {
 	IgnoreReason string `gorm:"type:text"`
 	VerifyTaskID string `gorm:"index"`
 	Payload      string `gorm:"type:text"`
+	Request      string `gorm:"type:text"` // HTTP 请求包原文
+	Response     string `gorm:"type:text"` // HTTP 响应包原文
+	Description  string `gorm:"type:text"` // 漏洞描述
+	Reference    string `gorm:"type:text"` // 参考链接 (JSON array)
+	MatchedAt    string `gorm:"type:text"` // 匹配位置 URL
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -356,7 +361,7 @@ func StartBatchWriters() {
 	go startGenericBatchWriter(vulnBuffer2, func(batch []Vulnerability) {
 		DB.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "project_id"}, {Name: "target"}, {Name: "plugin"}},
-			DoUpdates: clause.AssignmentColumns([]string{"task_id", "severity", "payload", "updated_at", "status"}),
+			DoUpdates: clause.AssignmentColumns([]string{"task_id", "severity", "payload", "request", "response", "description", "reference", "matched_at", "updated_at", "status"}),
 		}).CreateInBatches(batch, 500)
 		if OnResultBatchSaved != nil && len(batch) > 0 {
 			OnResultBatchSaved(len(batch), "vuln")
@@ -596,6 +601,9 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 		if plugin == "" {
 			plugin = payloadType
 		}
+
+		var reqData, respData, description, reference, matchedAt string
+
 		// GoPoc 类型提取
 		if payloadType == "GoPoc" {
 			if goPoc, ok := p["go_poc"].(map[string]interface{}); ok {
@@ -608,17 +616,79 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 				if sec, ok := goPoc["security"].(string); ok && sec != "" {
 					severity = sec
 				}
+				if left, ok := goPoc["InfoLeft"].(string); ok {
+					reqData = left
+				}
+				if right, ok := goPoc["InfoRight"].(string); ok {
+					respData = right
+				}
+				if desc, ok := goPoc["Description"].(string); ok {
+					description = desc
+				}
 			}
 		}
-		// Nuclei 类型提取
+
+		// Nuclei 类型提取：nuclei 字段是完整 ResultEvent 的 JSON 字符串
 		if payloadType == "Nuclei" {
 			if nucleiStr, ok := p["nuclei"].(string); ok && nucleiStr != "" {
-				plugin = nucleiStr
+				plugin = nucleiStr // 向后兼容：保留原始字符串作为 plugin
+
+				// 二次解析 ResultEvent JSON，提取 request/response/info 等字段
+				var event map[string]interface{}
+				if json.Unmarshal([]byte(nucleiStr), &event) == nil {
+					// 提取 template-id 作为更精确的 plugin 名
+					if tid, ok := event["template-id"].(string); ok && tid != "" {
+						plugin = tid
+					}
+					// 提取 request / response
+					if r, ok := event["request"].(string); ok {
+						reqData = r
+					}
+					if r, ok := event["response"].(string); ok {
+						respData = r
+					}
+					// 多步骤 Packet 数组（优先级高于单 request/response）
+					if packets, ok := event["interaction"].([]interface{}); ok && len(packets) > 0 {
+						// interaction 暂不处理
+						_ = packets
+					}
+					// 提取 matched URL
+					if m, ok := event["matched-at"].(string); ok {
+						matchedAt = m
+					} else if m, ok := event["matched"].(string); ok {
+						matchedAt = m
+					}
+					// 提取 host 作为 target
+					if h, ok := event["host"].(string); ok && h != "" {
+						target = h
+					}
+					// 提取 severity
+					if info, ok := event["info"].(map[string]interface{}); ok {
+						if s, ok := info["severity"].(string); ok && s != "" {
+							severity = s
+						}
+						if d, ok := info["description"].(string); ok {
+							description = d
+						}
+						if refs, ok := info["reference"]; ok {
+							if refBytes, err := json.Marshal(refs); err == nil {
+								reference = string(refBytes)
+							}
+						}
+						if name, ok := info["name"].(string); ok && name != "" {
+							description = name + "\n" + description
+						}
+					}
+				}
 			}
 		}
+
 		vulnBuffer2 <- Vulnerability{
 			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, Target: target, Plugin: plugin,
-			Severity: severity, Payload: payloadJSON, Status: "open", CreatedAt: time.Now(), UpdatedAt: time.Now(),
+			Severity: severity, Payload: payloadJSON, Status: "open",
+			Request: reqData, Response: respData, Description: description,
+			Reference: reference, MatchedAt: matchedAt,
+			CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
 	}
 }

@@ -5,6 +5,7 @@ import {
     App,
     Button,
     Col,
+    Collapse,
     Divider,
     Empty,
     Form,
@@ -20,16 +21,29 @@ import {
     Switch,
     Table,
     Tag,
+    Tooltip,
     Typography,
 } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
+    AimOutlined,
+    ApiOutlined,
+    AuditOutlined,
+    BugOutlined,
+    CloudServerOutlined,
     DeleteOutlined,
+    ExperimentOutlined,
     EyeOutlined,
+    GlobalOutlined,
+    InfoCircleOutlined,
+    KeyOutlined,
     PlusOutlined,
+    RadarChartOutlined,
     ReloadOutlined,
     RocketOutlined,
+    SearchOutlined,
     StopOutlined,
+    WifiOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { cancelTask, createTask, deleteTask, listTasks, listProjects } from '../services/api';
@@ -512,252 +526,304 @@ const TaskManagement: React.FC = () => {
                                 <InputNumber min={0} step={60} style={{ width: '100%' }} />
                             </Form.Item>
                         </Col>
-                        <Col span={8}>
-                            <Form.Item label="端口范围" name="Ports" extra="留空时使用默认 Top1000">
-                                <Input placeholder="80,443,8080,8443" />
-                            </Form.Item>
-                        </Col>
                     </Row>
 
-                    <Divider orientation="left">扫描参数</Divider>
-                    <Row gutter={16}>
-                        <Col span={8}>
-                            <Form.Item label="端口扫描方式" name="PortScanType">
-                                <Select options={[
-                                    { value: 'tcp', label: 'TCP' },
-                                    { value: 'syn', label: 'SYN' },
-                                ]} />
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item label="TCP 扫描线程" name="TCPPortScanThreads">
-                                <InputNumber min={1} style={{ width: '100%' }} />
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item label="SYN 扫描线程" name="SYNPortScanThreads">
-                                <InputNumber min={1} style={{ width: '100%' }} />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-
-                    <Row gutter={16}>
-                        <Col span={8}>
-                            <Form.Item label="协议识别线程" name="GetBannerThreads">
-                                <InputNumber min={1} style={{ width: '100%' }} />
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item label="协议识别超时(秒)" name="GetBannerTimeout">
-                                <InputNumber min={1} style={{ width: '100%' }} />
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item label="Web 探针线程" name="WebThreads">
-                                <InputNumber min={1} style={{ width: '100%' }} />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-
-                    <Row gutter={16}>
-                        <Col span={8}>
-                            <Form.Item label="Web 超时(秒)" name="WebTimeout">
-                                <InputNumber min={1} style={{ width: '100%' }} />
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item label="GoPoc 线程" name="GoPocThreads">
-                                <InputNumber min={1} style={{ width: '100%' }} />
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item label="端口数阈值" name="PortsThreshold">
-                                <InputNumber min={1} style={{ width: '100%' }} />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-
-                    <Row gutter={16}>
-                        <Col span={8}>
-                            <Form.Item label="端口扫描超时(秒)" name="TCPPortScanTimeout">
-                                <InputNumber min={1} style={{ width: '100%' }} />
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item label="排除 Tags" name="ExcludeTags">
-                                <Input placeholder="etag1,etag2" />
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item label="漏洞等级过滤" name="Severities">
-                                <Input placeholder="critical,high" />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-
-                    <Row gutter={16}>
-                        <Col span={12}>
-                            <Form.Item label="限定 POC 名称" name="PocNameForSearch">
-                                <Input placeholder="nginx" />
-                            </Form.Item>
-                        </Col>
-                        <Col span={12}>
-                            <Form.Item label="自定义弱口令" name="Password" extra="格式示例：admin : password">
-                                <Input placeholder="admin : password" />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-
-                    <Row gutter={16}>
-                        <Col span={12}>
-                            <Form.Item label="弱口令文件" name="PasswordFile">
-                                <Input placeholder="config/password.txt" />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-
-                    <Divider orientation="left">布尔开关</Divider>
-                    <Row gutter={16}>
-                        <Col span={8}>
-                            <Form.Item label="跳过主机发现" name="SkipHostDiscovery" valuePropName="checked">
-                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item label="禁用 ICMP 探测" name="NoICMPPing" valuePropName="checked">
-                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item label="启用 TCP 探活" name="TCPPing" valuePropName="checked">
-                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-
-                    <Row gutter={16}>
-                        <Col span={8}>
-                            <Form.Item label="子域名枚举" name="Subdomain" valuePropName="checked">
-                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item label="关闭子域爆破" name="NoSubdomainBruteForce" valuePropName="checked">
-                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item label="关闭被动子域枚举" name="NoSubFinder" valuePropName="checked">
-                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-
-                    <Row gutter={16}>
-                        <Col span={8}>
-                            <Form.Item label="允许 CDN 资产" name="AllowCDNAssets" valuePropName="checked">
-                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item label="允许解析到内网" name="AllowLocalAreaDomain" valuePropName="checked">
-                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item label="关闭域名绑定探测" name="NoHostBind" valuePropName="checked">
-                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-
-                    <Row gutter={16}>
-                        <Col span={8}>
-                            <Form.Item label="关闭主动目录指纹" name="NoDirSearch" valuePropName="checked">
-                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item label="关闭漏洞探测" name="NoPoc" valuePropName="checked">
-                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item label="启用 GoPoc" name="GolangPoc" valuePropName="checked">
-                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-
-                    <Row gutter={16}>
-                        <Col span={8}>
-                            <Form.Item label="禁用通用 POC" name="DisableGeneralPoc" valuePropName="checked">
-                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                            </Form.Item>
-                        </Col>
-                        {sourceMode !== 'direct' && (
-                            <Col span={8}>
-                                <Form.Item label="搜索引擎输出 IP:Port" name="OnlyIPPort" valuePropName="checked">
-                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                                </Form.Item>
-                            </Col>
-                        )}
-                        {sourceMode === 'hunter' && (
-                            <Col span={8}>
-                                <Form.Item label="低感知模式" name="LowPerceptionMode" valuePropName="checked">
-                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                                </Form.Item>
-                            </Col>
-                        )}
-                    </Row>
-
-                    {sourceMode !== 'direct' && (
-                        <>
-                            <Divider orientation="left">搜索引擎参数</Divider>
-                            <Row gutter={16}>
-                                {(sourceMode === 'hunter' || sourceMode === 'hunter_fofa') && (
+                    <Divider orientation="left">扫描配置</Divider>
+                    <Collapse
+                        bordered={false}
+                        style={{ background: 'transparent' }}
+                        items={[
+                            {
+                                key: 'portscan',
+                                label: <Space><RadarChartOutlined style={{ color: '#0ea5e9' }} />端口扫描</Space>,
+                                children: (
                                     <>
+                                        <Row gutter={16}>
+                                            <Col span={8}>
+                                                <Form.Item label="端口范围" name="Ports" extra="留空使用默认 Top1000">
+                                                    <Input placeholder="80,443,8080,8443" />
+                                                </Form.Item>
+                                            </Col>
+                                            <Col span={8}>
+                                                <Form.Item label="扫描方式" name="PortScanType">
+                                                    <Select options={[
+                                                        { value: 'tcp', label: 'TCP 连接扫描' },
+                                                        { value: 'syn', label: 'SYN 半开扫描' },
+                                                    ]} />
+                                                </Form.Item>
+                                            </Col>
+                                            <Col span={8}>
+                                                <Form.Item label={<>端口数阈值 <Tooltip title="单IP端口数超过此值将被丢弃"><InfoCircleOutlined /></Tooltip></>} name="PortsThreshold">
+                                                    <InputNumber min={1} style={{ width: '100%' }} />
+                                                </Form.Item>
+                                            </Col>
+                                        </Row>
+                                        <Row gutter={16}>
+                                            <Col span={8}>
+                                                <Form.Item label="TCP 扫描线程" name="TCPPortScanThreads">
+                                                    <InputNumber min={1} style={{ width: '100%' }} />
+                                                </Form.Item>
+                                            </Col>
+                                            <Col span={8}>
+                                                <Form.Item label="SYN 扫描线程" name="SYNPortScanThreads">
+                                                    <InputNumber min={1} style={{ width: '100%' }} />
+                                                </Form.Item>
+                                            </Col>
+                                            <Col span={8}>
+                                                <Form.Item label="端口扫描超时(秒)" name="TCPPortScanTimeout">
+                                                    <InputNumber min={1} style={{ width: '100%' }} />
+                                                </Form.Item>
+                                            </Col>
+                                        </Row>
+                                    </>
+                                ),
+                            },
+                            {
+                                key: 'alive',
+                                label: <Space><WifiOutlined style={{ color: '#10b981' }} />主机发现</Space>,
+                                children: (
+                                    <Row gutter={16}>
                                         <Col span={8}>
-                                            <Form.Item label="Hunter 每页数量" name="HunterPageSize">
-                                                <InputNumber min={1} max={100} style={{ width: '100%' }} />
+                                            <Form.Item label={<>跳过主机发现 <Tooltip title="禁用ICMP和TCP探活，直接扫描"><InfoCircleOutlined /></Tooltip></>} name="SkipHostDiscovery" valuePropName="checked">
+                                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
                                             </Form.Item>
                                         </Col>
                                         <Col span={8}>
-                                            <Form.Item label="Hunter 最大页数" name="HunterMaxPageCount">
+                                            <Form.Item label="禁用 ICMP 探测" name="NoICMPPing" valuePropName="checked">
+                                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                                            </Form.Item>
+                                        </Col>
+                                        <Col span={8}>
+                                            <Form.Item label="启用 TCP 探活" name="TCPPing" valuePropName="checked">
+                                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                                            </Form.Item>
+                                        </Col>
+                                    </Row>
+                                ),
+                            },
+                            {
+                                key: 'nmap',
+                                label: <Space><ApiOutlined style={{ color: '#8b5cf6' }} />协议识别</Space>,
+                                children: (
+                                    <Row gutter={16}>
+                                        <Col span={12}>
+                                            <Form.Item label="协议识别线程" name="GetBannerThreads">
                                                 <InputNumber min={1} style={{ width: '100%' }} />
                                             </Form.Item>
                                         </Col>
+                                        <Col span={12}>
+                                            <Form.Item label="协议识别超时(秒)" name="GetBannerTimeout">
+                                                <InputNumber min={1} style={{ width: '100%' }} />
+                                            </Form.Item>
+                                        </Col>
+                                    </Row>
+                                ),
+                            },
+                            {
+                                key: 'subdomain',
+                                label: <Space><GlobalOutlined style={{ color: '#f59e0b' }} />子域名探测</Space>,
+                                children: (
+                                    <>
+                                        <Row gutter={16}>
+                                            <Col span={8}>
+                                                <Form.Item label="开启子域名枚举" name="Subdomain" valuePropName="checked">
+                                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                                                </Form.Item>
+                                            </Col>
+                                            <Col span={8}>
+                                                <Form.Item label="关闭子域爆破" name="NoSubdomainBruteForce" valuePropName="checked">
+                                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                                                </Form.Item>
+                                            </Col>
+                                            <Col span={8}>
+                                                <Form.Item label="关闭被动枚举" name="NoSubFinder" valuePropName="checked">
+                                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                                                </Form.Item>
+                                            </Col>
+                                        </Row>
+                                        <Row gutter={16}>
+                                            <Col span={8}>
+                                                <Form.Item label="允许 CDN 资产" name="AllowCDNAssets" valuePropName="checked">
+                                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                                                </Form.Item>
+                                            </Col>
+                                            <Col span={8}>
+                                                <Form.Item label="允许解析到内网" name="AllowLocalAreaDomain" valuePropName="checked">
+                                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                                                </Form.Item>
+                                            </Col>
+                                            <Col span={8}>
+                                                <Form.Item label="关闭域名绑定探测" name="NoHostBind" valuePropName="checked">
+                                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                                                </Form.Item>
+                                            </Col>
+                                        </Row>
                                     </>
-                                )}
-                                {(sourceMode === 'fofa' || sourceMode === 'hunter_fofa') && (
-                                    <Col span={8}>
-                                        <Form.Item label="Fofa 最大数量" name="FofaMaxCount">
-                                            <InputNumber min={1} max={10000} style={{ width: '100%' }} />
-                                        </Form.Item>
-                                    </Col>
-                                )}
-                                {sourceMode === 'quake' && (
-                                    <Col span={8}>
-                                        <Form.Item label="Quake 最大数量" name="QuakeSize">
-                                            <InputNumber min={1} style={{ width: '100%' }} />
-                                        </Form.Item>
-                                    </Col>
-                                )}
-                            </Row>
-                        </>
-                    )}
+                                ),
+                            },
+                            {
+                                key: 'web',
+                                label: <Space><SearchOutlined style={{ color: '#06b6d4' }} />Web 探针</Space>,
+                                children: (
+                                    <Row gutter={16}>
+                                        <Col span={8}>
+                                            <Form.Item label="Web 探针线程" name="WebThreads">
+                                                <InputNumber min={1} style={{ width: '100%' }} />
+                                            </Form.Item>
+                                        </Col>
+                                        <Col span={8}>
+                                            <Form.Item label="Web 超时(秒)" name="WebTimeout">
+                                                <InputNumber min={1} style={{ width: '100%' }} />
+                                            </Form.Item>
+                                        </Col>
+                                        <Col span={8}>
+                                            <Form.Item label="关闭主动目录指纹" name="NoDirSearch" valuePropName="checked">
+                                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                                            </Form.Item>
+                                        </Col>
+                                    </Row>
+                                ),
+                            },
+                            {
+                                key: 'vuln',
+                                label: <Space><BugOutlined style={{ color: '#ef4444' }} />漏洞探测</Space>,
+                                children: (
+                                    <>
+                                        <Row gutter={16}>
+                                            <Col span={8}>
+                                                <Form.Item label="关闭漏洞探测" name="NoPoc" valuePropName="checked">
+                                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                                                </Form.Item>
+                                            </Col>
+                                            <Col span={8}>
+                                                <Form.Item label="启用 GoPoc" name="GolangPoc" valuePropName="checked">
+                                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                                                </Form.Item>
+                                            </Col>
+                                            <Col span={8}>
+                                                <Form.Item label="禁用通用 POC" name="DisableGeneralPoc" valuePropName="checked">
+                                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                                                </Form.Item>
+                                            </Col>
+                                        </Row>
+                                        <Row gutter={16}>
+                                            <Col span={8}>
+                                                <Form.Item label="GoPoc 线程" name="GoPocThreads">
+                                                    <InputNumber min={1} style={{ width: '100%' }} />
+                                                </Form.Item>
+                                            </Col>
+                                            <Col span={8}>
+                                                <Form.Item label="排除 Tags" name="ExcludeTags">
+                                                    <Input placeholder="etag1,etag2" />
+                                                </Form.Item>
+                                            </Col>
+                                            <Col span={8}>
+                                                <Form.Item label="漏洞等级过滤" name="Severities">
+                                                    <Input placeholder="critical,high" />
+                                                </Form.Item>
+                                            </Col>
+                                        </Row>
+                                        <Row gutter={16}>
+                                            <Col span={12}>
+                                                <Form.Item label="限定 POC 名称" name="PocNameForSearch">
+                                                    <Input placeholder="模糊匹配，如 nginx" />
+                                                </Form.Item>
+                                            </Col>
+                                        </Row>
+                                    </>
+                                ),
+                            },
+                            {
+                                key: 'passwd',
+                                label: <Space><KeyOutlined style={{ color: '#f97316' }} />爆破密码</Space>,
+                                children: (
+                                    <Row gutter={16}>
+                                        <Col span={12}>
+                                            <Form.Item label="自定义弱口令" name="Password" extra="格式: admin : password">
+                                                <Input placeholder="admin : password" />
+                                            </Form.Item>
+                                        </Col>
+                                        <Col span={12}>
+                                            <Form.Item label="弱口令文件" name="PasswordFile">
+                                                <Input placeholder="config/password.txt" />
+                                            </Form.Item>
+                                        </Col>
+                                    </Row>
+                                ),
+                            },
 
-                    <Divider orientation="left">高级配置</Divider>
-                    <Form.Item
-                        label="额外 Agent 配置 JSON"
-                        name="advanced_config_json"
-                        extra="这里填的 JSON 会直接合并进任务配置；键名请使用 Agent 实际配置字段，例如 NucleiTemplate、APIConfigFilePath、NoInteractsh。"
-                    >
-                        <TextArea
-                            rows={6}
-                            placeholder={`{\n  "NucleiTemplate": "config/pocs",\n  "APIConfigFilePath": "config/api-config.yaml",\n  "NoInteractsh": true\n}`}
-                        />
-                    </Form.Item>
+                            ...(sourceMode !== 'direct' ? [{
+                                key: 'uncover',
+                                label: <Space><CloudServerOutlined style={{ color: '#6366f1' }} />网络空间搜索引擎</Space>,
+                                children: (
+                                    <>
+                                        <Row gutter={16}>
+                                            {sourceMode !== 'direct' && (
+                                                <Col span={8}>
+                                                    <Form.Item label="输出 IP:Port 格式" name="OnlyIPPort" valuePropName="checked">
+                                                        <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                                                    </Form.Item>
+                                                </Col>
+                                            )}
+                                            {sourceMode === 'hunter' && (
+                                                <Col span={8}>
+                                                    <Form.Item label={<>低感知模式 <Tooltip title="从Hunter直接取响应判断指纹，跳过端口扫描"><InfoCircleOutlined /></Tooltip></>} name="LowPerceptionMode" valuePropName="checked">
+                                                        <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                                                    </Form.Item>
+                                                </Col>
+                                            )}
+                                        </Row>
+                                        <Row gutter={16}>
+                                            {(sourceMode === 'hunter' || sourceMode === 'hunter_fofa') && (
+                                                <>
+                                                    <Col span={8}>
+                                                        <Form.Item label="Hunter 每页数量" name="HunterPageSize">
+                                                            <InputNumber min={1} max={100} style={{ width: '100%' }} />
+                                                        </Form.Item>
+                                                    </Col>
+                                                    <Col span={8}>
+                                                        <Form.Item label="Hunter 最大页数" name="HunterMaxPageCount">
+                                                            <InputNumber min={1} style={{ width: '100%' }} />
+                                                        </Form.Item>
+                                                    </Col>
+                                                </>
+                                            )}
+                                            {(sourceMode === 'fofa' || sourceMode === 'hunter_fofa') && (
+                                                <Col span={8}>
+                                                    <Form.Item label="Fofa 最大数量" name="FofaMaxCount">
+                                                        <InputNumber min={1} max={10000} style={{ width: '100%' }} />
+                                                    </Form.Item>
+                                                </Col>
+                                            )}
+                                            {sourceMode === 'quake' && (
+                                                <Col span={8}>
+                                                    <Form.Item label="Quake 最大数量" name="QuakeSize">
+                                                        <InputNumber min={1} style={{ width: '100%' }} />
+                                                    </Form.Item>
+                                                </Col>
+                                            )}
+                                        </Row>
+                                    </>
+                                ),
+                            }] : []),
+                            {
+                                key: 'advanced',
+                                label: <Space><ExperimentOutlined style={{ color: '#64748b' }} />高级配置</Space>,
+                                children: (
+                                    <Form.Item
+                                        label="额外 Agent 配置 JSON"
+                                        name="advanced_config_json"
+                                        extra="JSON 会直接合并进任务配置；键名请使用 Agent 实际配置字段，例如 NucleiTemplate、APIConfigFilePath、NoInteractsh。"
+                                    >
+                                        <TextArea
+                                            rows={6}
+                                            placeholder={`{\n  "NucleiTemplate": "config/pocs",\n  "APIConfigFilePath": "config/api-config.yaml",\n  "NoInteractsh": true\n}`}
+                                        />
+                                    </Form.Item>
+                                ),
+                            },
+                        ]}
+                    />
                 </Form>
             </Modal>
         </div>

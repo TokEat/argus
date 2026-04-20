@@ -118,6 +118,11 @@ declare namespace API {
     Plugin: string;
     Severity: string;
     Payload: string;
+    Request: string;
+    Response: string;
+    Description: string;
+    Reference: string;
+    MatchedAt: string;
     CreatedAt: string;
   }
 

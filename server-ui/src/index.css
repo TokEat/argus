@@ -760,6 +760,43 @@ body {
 
 
 /* ===========================
+   Task Modal Collapse Panels
+   =========================== */
+.ant-modal .ant-collapse {
+  border: none !important;
+}
+
+.ant-modal .ant-collapse > .ant-collapse-item {
+  border: 1px solid var(--border-color) !important;
+  border-radius: var(--border-radius-sm) !important;
+  margin-bottom: 8px !important;
+  overflow: hidden;
+  transition: all var(--transition-fast);
+}
+
+.ant-modal .ant-collapse > .ant-collapse-item:hover {
+  border-color: var(--primary-light) !important;
+  box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.08);
+}
+
+.ant-modal .ant-collapse > .ant-collapse-item > .ant-collapse-header {
+  padding: 10px 16px !important;
+  font-weight: 500;
+  color: var(--text-color) !important;
+  background: var(--bg-color-light) !important;
+  border-radius: 0 !important;
+}
+
+.ant-modal .ant-collapse > .ant-collapse-item-active > .ant-collapse-header {
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%) !important;
+  color: var(--primary-dark) !important;
+}
+
+.ant-modal .ant-collapse-content > .ant-collapse-content-box {
+  padding: 16px !important;
+}
+
+/* ===========================
    Glassmorphism Utility Classes
    =========================== */
 .glass-container {

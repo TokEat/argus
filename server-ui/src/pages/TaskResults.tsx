@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Typography, Table, Tag, Tabs, Space, Spin, Button, Tooltip, Empty } from 'antd';
+import { Typography, Table, Tag, Tabs, Space, Spin, Button, Tooltip, Empty, Drawer, Descriptions, Divider } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     BugOutlined,
@@ -8,6 +8,9 @@ import {
     DownloadOutlined,
     ArrowLeftOutlined,
     ReloadOutlined,
+    SendOutlined,
+    CloudDownloadOutlined,
+    LinkOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -22,6 +25,8 @@ const TaskResults: React.FC = () => {
     const [assets, setAssets] = useState<API.Asset[]>([]);
     const [fingerprints, setFingerprints] = useState<API.FingerprintHit[]>([]);
     const [activeTab, setActiveTab] = useState('vulns');
+    const [selectedVuln, setSelectedVuln] = useState<API.Vulnerability | null>(null);
+    const [drawerOpen, setDrawerOpen] = useState(false);
     const navigate = useNavigate();
 
     const fetchData = async () => {
@@ -59,6 +64,21 @@ const TaskResults: React.FC = () => {
             window.URL.revokeObjectURL(url);
         } catch {
             console.error('Export failed');
+        }
+    };
+
+    const handleVulnClick = (record: API.Vulnerability) => {
+        setSelectedVuln(record);
+        setDrawerOpen(true);
+    };
+
+    const parseReferences = (ref: string): string[] => {
+        if (!ref) return [];
+        try {
+            const parsed = JSON.parse(ref);
+            return Array.isArray(parsed) ? parsed : [ref];
+        } catch {
+            return ref ? [ref] : [];
         }
     };
 
@@ -104,15 +124,25 @@ const TaskResults: React.FC = () => {
             defaultSortOrder: 'ascend',
         },
         {
-            title: 'Payload',
-            dataIndex: 'Payload',
-            key: 'payload',
+            title: '匹配位置',
+            dataIndex: 'MatchedAt',
+            key: 'matched_at',
             ellipsis: true,
-            render: (v: string) => (
-                <Tooltip title={v}>
-                    <Text copyable={{ text: v }} style={{ fontSize: 12, color: '#64748b' }}>{v?.slice(0, 80)}</Text>
-                </Tooltip>
-            ),
+            render: (v: string) => v ? (
+                <Text style={{ fontSize: 12, fontFamily: 'monospace', color: '#0ea5e9' }}>{v}</Text>
+            ) : <Text type="secondary">-</Text>,
+        },
+        {
+            title: '请求/响应',
+            key: 'has_packet',
+            width: 90,
+            align: 'center',
+            render: (_: unknown, record: API.Vulnerability) => {
+                const hasData = record.Request || record.Response;
+                return hasData
+                    ? <Tag color="green" style={{ cursor: 'pointer' }}><SendOutlined /> 有</Tag>
+                    : <Text type="secondary" style={{ fontSize: 12 }}>-</Text>;
+            },
         },
         {
             title: '发现时间',
@@ -282,6 +312,10 @@ const TaskResults: React.FC = () => {
                                         rowKey="ID"
                                         pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
                                         size="middle"
+                                        onRow={(record) => ({
+                                            onClick: () => handleVulnClick(record),
+                                            style: { cursor: 'pointer' },
+                                        })}
                                     />
                                 ),
                             },
@@ -315,6 +349,143 @@ const TaskResults: React.FC = () => {
                     />
                 )}
             </ProCard>
+
+            {/* 漏洞详情 Drawer */}
+            <Drawer
+                title={
+                    <Space>
+                        <BugOutlined style={{ color: getSeverityColor(selectedVuln?.Severity || '') }} />
+                        <span>漏洞详情</span>
+                        {selectedVuln && <Tag color={getSeverityColor(selectedVuln.Severity)}>{selectedVuln.Severity}</Tag>}
+                    </Space>
+                }
+                open={drawerOpen}
+                onClose={() => setDrawerOpen(false)}
+                width={860}
+                destroyOnClose
+            >
+                {selectedVuln && (
+                    <div>
+                        <Descriptions column={2} bordered size="small">
+                            <Descriptions.Item label="插件 / 模板" span={2}>
+                                <Text strong copyable>{selectedVuln.Plugin}</Text>
+                            </Descriptions.Item>
+                            <Descriptions.Item label="目标">
+                                <Text copyable style={{ fontFamily: 'monospace' }}>{selectedVuln.Target}</Text>
+                            </Descriptions.Item>
+                            <Descriptions.Item label="危害等级">
+                                <Tag color={getSeverityColor(selectedVuln.Severity)}>{selectedVuln.Severity}</Tag>
+                            </Descriptions.Item>
+                            {selectedVuln.MatchedAt && (
+                                <Descriptions.Item label="匹配位置" span={2}>
+                                    <a href={selectedVuln.MatchedAt} target="_blank" rel="noopener noreferrer">
+                                        <LinkOutlined /> {selectedVuln.MatchedAt}
+                                    </a>
+                                </Descriptions.Item>
+                            )}
+                            <Descriptions.Item label="发现时间" span={2}>
+                                {selectedVuln.CreatedAt}
+                            </Descriptions.Item>
+                        </Descriptions>
+
+                        {selectedVuln.Description && (
+                            <>
+                                <Divider orientation="left" style={{ fontSize: 13 }}>漏洞描述</Divider>
+                                <div style={{
+                                    background: '#f8fafc', border: '1px solid #e2e8f0',
+                                    borderRadius: 8, padding: '12px 16px', whiteSpace: 'pre-wrap',
+                                    fontSize: 13, lineHeight: 1.6, color: '#334155',
+                                }}>
+                                    {selectedVuln.Description}
+                                </div>
+                            </>
+                        )}
+
+                        {parseReferences(selectedVuln.Reference).length > 0 && (
+                            <>
+                                <Divider orientation="left" style={{ fontSize: 13 }}>参考链接</Divider>
+                                <ul style={{ paddingLeft: 20 }}>
+                                    {parseReferences(selectedVuln.Reference).map((ref, i) => (
+                                        <li key={i} style={{ marginBottom: 4 }}>
+                                            <a href={ref} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13 }}>
+                                                {ref}
+                                            </a>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </>
+                        )}
+
+                        {(selectedVuln.Request || selectedVuln.Response) && (
+                            <>
+                                <Divider orientation="left" style={{ fontSize: 13 }}>
+                                    <SendOutlined /> 请求 / <CloudDownloadOutlined /> 响应
+                                </Divider>
+                                <div style={{ display: 'flex', gap: 12 }}>
+                                    {/* 请求包 */}
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{
+                                            background: '#0f172a', color: '#4ade80',
+                                            borderRadius: '8px 8px 0 0', padding: '8px 12px',
+                                            fontSize: 12, fontWeight: 600, display: 'flex',
+                                            alignItems: 'center', gap: 6,
+                                        }}>
+                                            <SendOutlined /> Request
+                                        </div>
+                                        <pre style={{
+                                            background: '#1e293b', color: '#e2e8f0',
+                                            margin: 0, padding: 12, borderRadius: '0 0 8px 8px',
+                                            fontSize: 12, lineHeight: 1.5, fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                                            whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                                            maxHeight: 400, overflow: 'auto',
+                                            border: '1px solid #334155', borderTop: 'none',
+                                        }}>
+                                            {selectedVuln.Request || '(无请求数据)'}
+                                        </pre>
+                                    </div>
+                                    {/* 响应包 */}
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{
+                                            background: '#0f172a', color: '#fb923c',
+                                            borderRadius: '8px 8px 0 0', padding: '8px 12px',
+                                            fontSize: 12, fontWeight: 600, display: 'flex',
+                                            alignItems: 'center', gap: 6,
+                                        }}>
+                                            <CloudDownloadOutlined /> Response
+                                        </div>
+                                        <pre style={{
+                                            background: '#1e293b', color: '#e2e8f0',
+                                            margin: 0, padding: 12, borderRadius: '0 0 8px 8px',
+                                            fontSize: 12, lineHeight: 1.5, fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                                            whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                                            maxHeight: 400, overflow: 'auto',
+                                            border: '1px solid #334155', borderTop: 'none',
+                                        }}>
+                                            {selectedVuln.Response || '(无响应数据)'}
+                                        </pre>
+                                    </div>
+                                </div>
+                            </>
+                        )}
+
+                        {selectedVuln.Payload && (
+                            <>
+                                <Divider orientation="left" style={{ fontSize: 13 }}>原始 Payload</Divider>
+                                <pre style={{
+                                    background: '#f1f5f9', border: '1px solid #e2e8f0',
+                                    borderRadius: 8, padding: 12, fontSize: 11, maxHeight: 200,
+                                    overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                                }}>
+                                    {(() => {
+                                        try { return JSON.stringify(JSON.parse(selectedVuln.Payload), null, 2); }
+                                        catch { return selectedVuln.Payload; }
+                                    })()}
+                                </pre>
+                            </>
+                        )}
+                    </div>
+                )}
+            </Drawer>
         </div>
     );
 };

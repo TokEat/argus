@@ -108,6 +108,13 @@ func TenantMiddleware() gin.HandlerFunc {
 		}
 
 		authHeader := c.GetHeader("Authorization")
+		// WebSocket 握手无法携带 Authorization Header，
+		// 前端通过 ?token=xxx query 参数传递 JWT，需要回退提取。
+		if (authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ")) {
+			if qToken := c.Query("token"); qToken != "" {
+				authHeader = "Bearer " + qToken
+			}
+		}
 		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Missing or malformed JWT token"})
 			return
