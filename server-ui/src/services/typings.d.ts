@@ -190,6 +190,11 @@ declare namespace API {
     rules: string[];
   }
 
+  interface DirItem {
+    product: string;
+    paths: string[];
+  }
+
   // ======================== Agent Commands ========================
 
   /** Agent 轮询命令 (GET /api/v1/agents/:id/commands) */

@@ -211,6 +211,22 @@ export async function deleteFingerprintDict(product: string): Promise<API.Messag
     return request.delete(`/dictionaries/fingerprint/${encodeURIComponent(product)}`);
 }
 
+export async function getDirDict(): Promise<API.DirItem[]> {
+    return request.get('/dictionaries/dir');
+}
+
+export async function addDirDict(data: API.DirItem): Promise<API.MessageResponse> {
+    return request.post('/dictionaries/dir', data);
+}
+
+export async function updateDirDict(oldProduct: string, data: API.DirItem): Promise<API.MessageResponse> {
+    return request.put(`/dictionaries/dir/${encodeURIComponent(oldProduct)}`, data);
+}
+
+export async function deleteDirDict(product: string): Promise<API.MessageResponse> {
+    return request.delete(`/dictionaries/dir/${encodeURIComponent(product)}`);
+}
+
 // ===========================
 // WebSocket（自动重连）
 // ===========================

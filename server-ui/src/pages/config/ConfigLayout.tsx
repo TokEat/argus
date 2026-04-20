@@ -4,6 +4,7 @@ import {
     BugOutlined,
     ScanOutlined,
     ApartmentOutlined,
+    FolderOpenOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -20,6 +21,7 @@ const ConfigLayout: React.FC<ConfigLayoutProps> = ({ children }) => {
     const tabItems = [
         { key: '/config/poc', label: 'POC 弹药库', icon: <BugOutlined /> },
         { key: '/config/active-finger', label: '指纹弹药库', icon: <ScanOutlined /> },
+        { key: '/config/dir', label: 'Dir 探测规则', icon: <FolderOpenOutlined /> },
         { key: '/config/workflow', label: 'Workflow 弹药库', icon: <ApartmentOutlined /> },
     ];
 

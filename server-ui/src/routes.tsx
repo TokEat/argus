@@ -28,6 +28,7 @@ import ProjectManagement from './pages/ProjectManagement';
 import ConfigLayout from './pages/config/ConfigLayout';
 import PocConfig from './pages/config/PocConfig';
 import ActiveFingerConfig from './pages/config/DirConfig';
+import DirProbeConfig from './pages/config/DirProbeConfig';
 import WorkflowConfig from './pages/config/WorkflowConfig';
 import ClientBuild from './pages/ClientBuild';
 import UserManagement from './pages/UserManagement';
@@ -106,6 +107,13 @@ export const menuRoutes: RouteConfig[] = [
                 name: '指纹弹药库',
                 icon: <ScanOutlined />,
                 element: <ConfigLayout><ActiveFingerConfig /></ConfigLayout>,
+                hideInMenu: true,
+            },
+            {
+                path: '/config/dir',
+                name: 'Dir 探测规则',
+                icon: <ScanOutlined />,
+                element: <ConfigLayout><DirProbeConfig /></ConfigLayout>,
                 hideInMenu: true,
             },
             {

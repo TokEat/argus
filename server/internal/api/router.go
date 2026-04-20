@@ -236,6 +236,11 @@ func InitRouter(port string) {
 		api.PUT("/dictionaries/fingerprint/:product", updateFingerprintDict)
 		api.DELETE("/dictionaries/fingerprint/:product", deleteFingerprintDict)
 
+		api.GET("/dictionaries/dir", getDirDict)
+		api.POST("/dictionaries/dir", addDirDict)
+		api.PUT("/dictionaries/dir/:product", updateDirDict)
+		api.DELETE("/dictionaries/dir/:product", deleteDirDict)
+
 		// 规则清单（增量同步用）
 		api.GET("/arsenals/manifest", getArsenalManifest)
 
