@@ -19,15 +19,15 @@ import (
 
 // NotifyHub 管理所有在线 Agent 的 Subscribe 流连接
 type NotifyHub struct {
-	mu      sync.RWMutex
-	agents  map[string]*agentConn // agentID → connection
+	mu     sync.RWMutex
+	agents map[string]*agentConn // agentID → connection
 }
 
 // agentConn 单个 Agent 的连接状态
 type agentConn struct {
 	agentID   string
 	stream    pb.AgentService_SubscribeServer
-	freeSlots int32  // Agent 上报的空闲 worker 数
+	freeSlots int32 // Agent 上报的空闲 worker 数
 	tags      map[string]string
 	sendMu    sync.Mutex // 保护 stream.Send 的并发安全
 }
@@ -64,8 +64,8 @@ func (h *NotifyHub) Unregister(agentID string) {
 
 // UpdateFreeSlots 更新 Agent 的空闲容量
 func (h *NotifyHub) UpdateFreeSlots(agentID string, freeSlots int32) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
 	if conn, ok := h.agents[agentID]; ok {
 		conn.freeSlots = freeSlots

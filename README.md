@@ -33,8 +33,9 @@
 ### 🌐 分布式架构
 - **Server (控制面)**：任务编排、节点管理、规则中心、结果聚合、多租户隔离
 - **Agent (数据面)**：轻量游击型探针，即插即用、弹性扩缩
-- **Redis Streams** 高可靠调度：任务 XACK 确认、超时回收、死信打捞
+- **RabbitMQ** 三级优先队列调度：手动 ACK/Nack、超时回收、死节点任务打捞、Channel 自动重建
 - **gRPC** 双向通信：节点注册、心跳、任务派发、流式结果回传、远程终止
+- **PSK 预共享密钥鉴权**：生产模式强制 Agent 双向认证
 - 规则库热更新：支持 POC / 指纹 / Workflow 版本化同步
 - JWT 认证 + 多租户隔离中间件
 
@@ -156,20 +157,70 @@ dddd -t http://test.com
 
 ### 分布式模式
 
+#### 基础设施
+
 ```bash
-# 1. 启动基础设施 (Redis + PostgreSQL)
+# 1. 启动基础设施 (RabbitMQ + PostgreSQL)
 docker compose -f server/deploy/docker-compose.yml up -d
 
 # PostgreSQL 首次启动会自动执行 server/deploy/postgres 下的建库建表脚本
 # 如果是已有数据库，手工补执行：
 bash server/deploy/postgres/000-init-db.sh
-
-# 2. 启动 Server 控制面
-./dddd-server
-
-# 3. 启动 Agent 数据面 (可在多台机器上部署)
-./dddd-agent -server <server_addr>
 ```
+
+#### 安全配置
+
+分布式部署**必须**配置以下环境变量（缺失将拒绝启动）：
+
+| 环境变量 | 说明 | 示例 |
+|---------|------|------|
+| `ARGUS_AGENT_PSK` | Agent-Server 双向认证预共享密钥 | `openssl rand -hex 32` |
+| `ARGUS_JWT_SECRET` | Web API JWT 签名密钥 | `openssl rand -hex 32` |
+
+> **安全约束**：生产模式下两个环境变量必须设置，否则 Server 会直接 Fatal 退出。开发环境可通过 `--dev` flag 跳过。
+
+#### 生产部署
+
+```bash
+# 2. 启动 Server 控制面
+export ARGUS_AGENT_PSK="$(openssl rand -hex 32)"
+export ARGUS_JWT_SECRET="$(openssl rand -hex 32)"
+./dddd-server --grpc 50051 --api :8085
+
+# 3. 启动 Agent 数据面 (可在多台机器上部署，PSK 必须与 Server 端一致)
+export ARGUS_AGENT_PSK="<与 Server 相同的密钥>"
+./dddd-agent --server <server_addr>:50051 --id agent-1 --workers 4
+```
+
+#### 开发模式
+
+```bash
+# 跳过安全检查（仅限开发/测试）
+./dddd-server --dev
+./dddd-agent --server 127.0.0.1:50051
+```
+
+#### Server 命令行参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--db` | 空（SQLite） | 数据库 DSN |
+| `--amqp` | `amqp://guest:guest@localhost:5672/` | RabbitMQ 地址，空则回退内存队列 |
+| `--grpc` | `50051` | gRPC 监听端口 |
+| `--api` | `:8085` | HTTP API 监听地址 |
+| `--agent-psk` | 空 | Agent PSK（也可通过 `ARGUS_AGENT_PSK` 设置） |
+| `--dev` | `false` | 开发模式，跳过安全检查 |
+
+#### Agent 命令行参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--server` | `127.0.0.1:50051` | Server gRPC 地址 |
+| `--api` | `http://127.0.0.1:8085` | Server REST API 地址 |
+| `--id` | `agent-local-1` | Agent 唯一标识 |
+| `--workers` | `1` | 并发 worker 数 |
+| `--tags` | 空 | 节点标签 `key1=val1,key2=val2` |
+| `--psk` | 空 | PSK 密钥（也可通过 `ARGUS_AGENT_PSK` 设置） |
 
 ### 应用场景速查
 
@@ -297,12 +348,12 @@ argus/
 | 通信 | gRPC + Protobuf |
 | Web 框架 | Gin |
 | 数据库 | PostgreSQL (GORM) |
-| 消息队列 | Redis Streams |
+| 消息队列 | RabbitMQ (内置内存 Fallback) |
 | 漏洞引擎 | Nuclei v3 / GoPoc |
 | 指纹识别 | 自研引擎 (ddfinger) |
 | DNS | dnsx / subfinder |
 | HTTP 探测 | httpx |
-| 认证 | JWT |
+| 认证 | JWT + PSK (gRPC) |
 
 ---
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	pb "github.com/user/dddd-proto/go/scan"
@@ -63,8 +64,10 @@ type RootTask struct {
 	Name            string
 	OriginalTargets string `gorm:"type:text"`
 	Status          string `gorm:"index"`
-	TotalChunks     int
-	CompletedChunks int
+	TotalChunks     int              // 批次总数（聚合后的 SubTask 数量）
+	CompletedChunks int              // 已完成批次数
+	TotalTargets    int              // 原始目标总数（用于目标维度进度）
+	CompletedTargets int             // 已完成目标数
 	Config          string `gorm:"type:text"`
 	Priority        int
 	TimeoutSec      int
@@ -381,18 +384,74 @@ func startGenericBatchWriter[T any](ch chan T, saveFunc func(batch []T)) {
 	}
 }
 
+// taskOwnerEntry 缓存任务归属信息
+type taskOwnerEntry struct {
+	ProjectID string
+	TenantID  string
+}
+
+// taskOwnerLRU 有界 LRU 缓存，防止长期运行内存膨胀
+type taskOwnerLRU struct {
+	mu       sync.Mutex
+	items    map[string]*taskOwnerEntry
+	order    []string // 插入顺序，用于淘汰
+	maxSize  int
+}
+
+func newTaskOwnerLRU(maxSize int) *taskOwnerLRU {
+	return &taskOwnerLRU{
+		items:   make(map[string]*taskOwnerEntry, maxSize),
+		order:   make([]string, 0, maxSize),
+		maxSize: maxSize,
+	}
+}
+
+func (c *taskOwnerLRU) Load(key string) (*taskOwnerEntry, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.items[key]
+	return entry, ok
+}
+
+func (c *taskOwnerLRU) Store(key string, entry *taskOwnerEntry) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, exists := c.items[key]; exists {
+		c.items[key] = entry
+		return
+	}
+	// 淘汰最旧的条目
+	if len(c.order) >= c.maxSize {
+		evictKey := c.order[0]
+		c.order = c.order[1:]
+		delete(c.items, evictKey)
+	}
+	c.items[key] = entry
+	c.order = append(c.order, key)
+}
+
+// taskOwnerCache 有界 LRU：最多缓存 10000 个 taskID 映射
+var taskOwnerCache = newTaskOwnerLRU(10000)
+
 func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
-	// 查询任务所属的项目与租户 (可优化为 LRU 缓存避免高频查库)
-	var subTask SubTask
+	// 优先从 LRU 缓存查找任务归属
 	projectID := "default_project"
 	tenantID := "default"
-	if err := DB.Select("project_id", "tenant_id").Where("id = ?", taskID).First(&subTask).Error; err == nil {
-		if subTask.ProjectID != "" {
-			projectID = subTask.ProjectID
+	if entry, ok := taskOwnerCache.Load(taskID); ok {
+		projectID = entry.ProjectID
+		tenantID = entry.TenantID
+	} else {
+		// 缓存未命中，查库并缓存结果
+		var subTask SubTask
+		if err := DB.Select("project_id", "tenant_id").Where("id = ?", taskID).First(&subTask).Error; err == nil {
+			if subTask.ProjectID != "" {
+				projectID = subTask.ProjectID
+			}
+			if subTask.TenantID != "" {
+				tenantID = subTask.TenantID
+			}
 		}
-		if subTask.TenantID != "" {
-			tenantID = subTask.TenantID
-		}
+		taskOwnerCache.Store(taskID, &taskOwnerEntry{ProjectID: projectID, TenantID: tenantID})
 	}
 
 	target := "unknown"
@@ -438,27 +497,124 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 	}
 
 	switch payloadType {
-	case "asset", "port_scan", "subdomain":
+	case "asset", "port_scan", "subdomain",
+		"Web", "Protocol", "PortScan", "IPAlive", "Domain", "Domain-Bind":
+		// Agent 通过 ddout.OutputMessage 发送的 Type 为大写开头（如 Web/Protocol/PortScan/IPAlive/Domain）
+		// 统一归入资产表
+
+		// 对 Web 类型提取更丰富的字段
+		if payloadType == "Web" || payloadType == "Domain-Bind" {
+			if uri, ok := p["uri"].(string); ok && target == "unknown" {
+				target = uri
+			}
+			if web, ok := p["web"].(map[string]interface{}); ok {
+				if t, ok := web["title"].(string); ok && t != "" {
+					title = t
+				}
+				if s, ok := web["status"].(string); ok && s != "" {
+					service = "http/" + s
+				}
+			}
+		}
+		if payloadType == "PortScan" {
+			if ip, ok := p["ip"].(string); ok {
+				target = ip
+				if portStr, ok := p["port"].(string); ok {
+					target = ip + ":" + portStr
+				}
+			}
+		}
+		if payloadType == "Protocol" {
+			if ip, ok := p["ip"].(string); ok {
+				target = ip
+				if portStr, ok := p["port"].(string); ok {
+					target = ip + ":" + portStr
+				}
+			}
+			if proto, ok := p["protocol"].(string); ok {
+				service = proto
+			}
+		}
+		if payloadType == "Domain" {
+			if domain, ok := p["domain"].(string); ok {
+				target = domain
+			}
+		}
+		if payloadType == "IPAlive" {
+			if ip, ok := p["ip"].(string); ok {
+				target = ip
+			}
+		}
+
 		assetBuffer <- Asset{
 			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, Target: target, Protocol: payloadType,
 			Port: port, URL: payloadJSON, Title: title, Service: service,
 			Tags: "[]", Status: "alive", CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
-	case "fingerprint", "web_fingerprint", "tech":
+	case "fingerprint", "web_fingerprint", "tech",
+		"Finger", "Active-Finger":
+		// Agent 通过 ddout 发送的指纹 Type 为 Finger/Active-Finger
 		productName := payloadType
 		if plugin != "" {
 			productName = plugin
+		}
+		// 从 finger 数组提取产品名
+		if productName == payloadType {
+			if fingers, ok := p["finger"].([]interface{}); ok && len(fingers) > 0 {
+				names := make([]string, 0, len(fingers))
+				for _, f := range fingers {
+					if s, ok := f.(string); ok {
+						names = append(names, s)
+					}
+				}
+				if len(names) > 0 {
+					productName = strings.Join(names, ",")
+				}
+			}
+		}
+		if uri, ok := p["uri"].(string); ok && target == "unknown" {
+			target = uri
 		}
 		fpBuffer <- FingerprintHit{
 			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, Target: target, ProductName: productName,
 			Evidence: payloadJSON, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
-	default: // nuclei, gopoc
+	case "phase":
+		// Agent PhaseHook 发送的阶段进度事件，仅广播到 WebSocket，不入库
+		if WSBroadcastHook != nil {
+			WSBroadcastHook(map[string]interface{}{
+				"type":    "phase",
+				"task_id": taskID,
+				"payload": payloadJSON,
+			})
+		}
+		return
+	default: // nuclei, gopoc, GoPoc, Nuclei
 		if severity == "" {
 			severity = "Unknown"
 		}
 		if plugin == "" {
 			plugin = payloadType
+		}
+		// GoPoc 类型提取
+		if payloadType == "GoPoc" {
+			if goPoc, ok := p["go_poc"].(map[string]interface{}); ok {
+				if name, ok := goPoc["poc_name"].(string); ok && name != "" {
+					plugin = name
+				}
+				if t, ok := goPoc["target"].(string); ok && t != "" {
+					target = t
+				}
+				if sec, ok := goPoc["security"].(string); ok && sec != "" {
+					severity = sec
+				}
+			}
+		}
+		// Nuclei 类型提取
+		if payloadType == "Nuclei" {
+			if nucleiStr, ok := p["nuclei"].(string); ok && nucleiStr != "" {
+				plugin = nucleiStr
+			}
 		}
 		vulnBuffer2 <- Vulnerability{
 			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, Target: target, Plugin: plugin,

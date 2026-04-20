@@ -33,6 +33,7 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { cancelTask, createTask, deleteTask, listTasks, listProjects } from '../services/api';
+import { getTaskStatusMeta, isTaskCancellable, isTaskFailedLike, isTaskFinished, normalizeTaskStatus } from '../utils/taskStatus';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -255,14 +256,7 @@ const TaskManagement: React.FC = () => {
     };
 
     const getStatusTag = (status: string) => {
-        const map: Record<string, { color: string; text: string }> = {
-            Pending: { color: 'orange', text: '等待中' },
-            Running: { color: 'processing', text: '运行中' },
-            FINISHED: { color: 'success', text: '已完成' },
-            Cancelled: { color: 'default', text: '已取消' },
-            CancelPending: { color: 'warning', text: '取消中' },
-        };
-        const { color, text } = map[status] || { color: 'default', text: status };
+        const { color, text } = getTaskStatusMeta(status);
         return <Tag color={color}>{text}</Tag>;
     };
 
@@ -288,31 +282,57 @@ const TaskManagement: React.FC = () => {
             width: 100,
             render: (status: string) => getStatusTag(status),
             filters: [
-                { text: '等待中', value: 'Pending' },
+                { text: '等待中', value: 'Queued' },
                 { text: '运行中', value: 'Running' },
+                { text: '部分完成', value: 'PartialDone' },
                 { text: '已完成', value: 'FINISHED' },
+                { text: '失败', value: 'Failed' },
+                { text: '超时', value: 'Timeout' },
+                { text: '取消中', value: 'CancelPending' },
                 { text: '已取消', value: 'Cancelled' },
             ],
-            onFilter: (value, record) => record.Status === value,
+            onFilter: (value, record) => normalizeTaskStatus(record.Status) === normalizeTaskStatus(String(value)),
         },
         {
             title: '进度',
             key: 'progress',
-            width: 160,
+            width: 180,
             render: (_, record) => {
-                if (record.TotalChunks === 0) return <Text type="secondary">-</Text>;
-                const pct = Math.round((record.CompletedChunks / record.TotalChunks) * 100);
+                // 优先展示目标维度进度，降级使用批次维度
+                const hasTargetProgress = record.TotalTargets > 0;
+                const total = hasTargetProgress ? record.TotalTargets : record.TotalChunks;
+                const completed = hasTargetProgress ? record.CompletedTargets : record.CompletedChunks;
+                if (total === 0) return <Text type="secondary">-</Text>;
+                const pct = Math.round((completed / total) * 100);
+                const normalized = normalizeTaskStatus(record.Status);
+                const progressStatus = isTaskFinished(normalized)
+                    ? 'success'
+                    : isTaskFailedLike(normalized)
+                        ? 'exception'
+                        : normalized === 'CANCELLED'
+                            ? 'normal'
+                            : 'active';
+                const strokeColor = isTaskFinished(normalized)
+                    ? '#10b981'
+                    : isTaskFailedLike(normalized)
+                        ? '#ef4444'
+                        : normalized === 'CANCELLED'
+                            ? '#94a3b8'
+                            : '#0ea5e9';
                 return (
                     <Space direction="vertical" size={0} style={{ width: '100%' }}>
                         <Progress
                             percent={pct}
                             size="small"
-                            status={pct >= 100 ? 'success' : 'active'}
-                            strokeColor={pct >= 100 ? '#10b981' : '#0ea5e9'}
+                            status={progressStatus}
+                            strokeColor={strokeColor}
                             style={{ marginBottom: 0 }}
                         />
                         <Text style={{ fontSize: 11, color: '#94a3b8' }}>
-                            {record.CompletedChunks}/{record.TotalChunks} 分片
+                            {hasTargetProgress
+                                ? `${record.CompletedTargets}/${record.TotalTargets} 目标 · ${record.CompletedChunks}/${record.TotalChunks} 批次`
+                                : `${record.CompletedChunks}/${record.TotalChunks} 分片`
+                            }
                         </Text>
                     </Space>
                 );
@@ -349,7 +369,7 @@ const TaskManagement: React.FC = () => {
                         onClick={() => navigate(`/tasks/${record.ID}/results`)}>
                         结果
                     </Button>
-                    {(record.Status === 'Pending' || record.Status === 'Running') && (
+                    {isTaskCancellable(record.Status) && (
                         <Popconfirm title="确认取消此任务？" onConfirm={() => handleCancel(record.ID)}>
                             <Button type="text" size="small" danger icon={<StopOutlined />}>
                                 取消
@@ -745,4 +765,3 @@ const TaskManagement: React.FC = () => {
 };
 
 export default TaskManagement;
-

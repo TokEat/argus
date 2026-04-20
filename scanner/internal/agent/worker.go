@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -25,9 +26,84 @@ import (
 	"dddd/scanner/structs"
 	pb "github.com/user/dddd-proto/go/scan"
 
+	"github.com/projectdiscovery/gologger"
+	"github.com/projectdiscovery/gologger/levels"
+	gologgerWriter "github.com/projectdiscovery/gologger/writer"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+// grpcTeeWriter 实现 gologger Writer 接口，将日志同时写入本地终端和 gRPC StreamLogs。
+type grpcTeeWriter struct {
+	original gologgerWriter.Writer
+	stream   pb.AgentService_StreamLogsClient
+	agentID  string
+	taskID   string
+	mu       sync.Mutex
+	closed   bool
+}
+
+func (w *grpcTeeWriter) Write(data []byte, level levels.Level) {
+	// 1. 始终写入本地终端
+	if w.original != nil {
+		w.original.Write(data, level)
+	}
+
+	// 2. 尝试通过 gRPC 回传（非阻塞，忽略发送失败）
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed || w.stream == nil {
+		return
+	}
+
+	levelStr := "INFO"
+	switch level {
+	case levels.LevelError, levels.LevelFatal:
+		levelStr = "ERROR"
+	case levels.LevelWarning:
+		levelStr = "WARN"
+	case levels.LevelDebug, levels.LevelVerbose:
+		levelStr = "DEBUG"
+	}
+
+	msg := strings.TrimSpace(string(data))
+	if msg == "" {
+		return
+	}
+
+	_ = w.stream.Send(&pb.LogPayload{
+		AgentId:   w.agentID,
+		Level:     levelStr,
+		Message:   fmt.Sprintf("[Task:%s] %s", w.taskID, msg),
+		Timestamp: time.Now().UnixMilli(),
+	})
+}
+
+func (w *grpcTeeWriter) Close() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return
+	}
+	w.closed = true
+	if w.stream != nil {
+		_, _ = w.stream.CloseAndRecv()
+	}
+}
+
+// perRPCPSK 实现 gRPC PerRPCCredentials，在每个 RPC 调用中自动附加 x-agent-psk metadata
+type perRPCPSK struct {
+	psk string
+}
+
+func (p *perRPCPSK) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
+	return map[string]string{"x-agent-psk": p.psk}, nil
+}
+
+func (p *perRPCPSK) RequireTransportSecurity() bool {
+	return false // 当前使用 insecure，生产环境应开启 TLS
+}
 
 var (
 	newScanContext = engine.NewScanContext
@@ -39,6 +115,7 @@ type Worker struct {
 	agentID      string
 	serverAddr   string
 	apiURL       string
+	psk          string // 预共享密钥，空则不发送鉴权信息
 	client       pb.AgentServiceClient
 	conn         *grpc.ClientConn
 	wg           sync.WaitGroup
@@ -71,8 +148,43 @@ func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[stri
 	}
 }
 
+// SetPSK 设置 Agent 预共享密钥
+func (w *Worker) SetPSK(psk string) {
+	w.psk = psk
+}
+
+// apiGet 统一执行 Agent -> Server 的内部 HTTP GET，并附加 PSK 头。
+func (w *Worker) apiGet(url string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if w.psk != "" {
+		req.Header.Set("x-agent-psk", w.psk)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		resp.Body.Close()
+		return nil, fmt.Errorf("GET %s returned status %d: %s", url, resp.StatusCode, string(body))
+	}
+	return resp, nil
+}
+
 func (w *Worker) Start() error {
-	conn, err := grpc.NewClient(w.serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	dialOpts := []grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}
+	if w.psk != "" {
+		dialOpts = append(dialOpts, grpc.WithPerRPCCredentials(&perRPCPSK{psk: w.psk}))
+		log.Printf("[Auth] PSK authentication enabled")
+	}
+
+	conn, err := grpc.NewClient(w.serverAddr, dialOpts...)
 	if err != nil {
 		return err
 	}
@@ -313,28 +425,31 @@ func (w *Worker) commandLoop() {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
-		resp, err := http.Get(w.apiURL + "/api/v1/agents/" + w.agentID + "/commands")
-		if err == nil {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			var result struct {
-				CancelTasks []string `json:"cancel_tasks"`
-				ReloadRules bool     `json:"reload_rules"`
+		resp, err := w.apiGet(w.apiURL + "/api/v1/agents/" + w.agentID + "/commands")
+		if err != nil {
+			log.Printf("[Command] Poll failed: %v", err)
+			continue
+		}
+
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		var result struct {
+			CancelTasks []string `json:"cancel_tasks"`
+			ReloadRules bool     `json:"reload_rules"`
+		}
+		if json.Unmarshal(body, &result) == nil {
+			if result.ReloadRules {
+				log.Println("[Command] Received dynamic rule hot-reload signal from Control Plane!")
+				w.syncRules()
 			}
-			if json.Unmarshal(body, &result) == nil {
-				if result.ReloadRules {
-					log.Println("[Command] Received dynamic rule hot-reload signal from Control Plane!")
-					w.syncRules()
+			w.mu.Lock()
+			for _, tid := range result.CancelTasks {
+				if cancel, ok := w.runningTasks[tid]; ok {
+					log.Printf("[Cancel] Received kill instruction for subtask %s from Control Plane!", tid)
+					cancel()
 				}
-				w.mu.Lock()
-				for _, tid := range result.CancelTasks {
-					if cancel, ok := w.runningTasks[tid]; ok {
-						log.Printf("[Cancel] Received kill instruction for subtask %s from Control Plane!", tid)
-						cancel()
-					}
-				}
-				w.mu.Unlock()
 			}
+			w.mu.Unlock()
 		}
 	}
 }
@@ -343,7 +458,7 @@ func (w *Worker) syncRules() {
 	log.Println("[Sync] Checking Arsenal manifest for incremental update...")
 
 	manifestURL := w.apiURL + "/api/v1/arsenals/manifest"
-	resp, err := http.Get(manifestURL)
+	resp, err := w.apiGet(manifestURL)
 	if err != nil {
 		log.Printf("[Sync] Failed to fetch manifest, falling back to full sync: %v", err)
 		w.syncRulesFull()
@@ -411,8 +526,9 @@ func (w *Worker) syncRules() {
 
 func (w *Worker) downloadRule(ruleType, fileName string) string {
 	url := w.apiURL + "/api/v1/arsenals/" + ruleType
-	resp, err := http.Get(url)
+	resp, err := w.apiGet(url)
 	if err != nil {
+		log.Printf("[Sync] Failed to fetch %s rules: %v", ruleType, err)
 		return ""
 	}
 	body, _ := io.ReadAll(resp.Body)
@@ -455,7 +571,7 @@ func (w *Worker) syncRulesFull() {
 	localHashes := make(map[string]string)
 
 	for _, rt := range ruleTypes {
-		resp, err := http.Get(w.apiURL + "/api/v1/arsenals/" + rt)
+		resp, err := w.apiGet(w.apiURL + "/api/v1/arsenals/" + rt)
 		if err == nil {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
@@ -487,6 +603,15 @@ func (w *Worker) syncRulesFull() {
 
 func (w *Worker) executeTask(task *pb.Task) {
 	log.Printf("Received Task: %s with targets: %v", task.TaskId, task.Targets)
+
+	// 挂载 gologger TeeWriter，将扫描日志回传 Server
+	teeWriter := w.installLogTeeWriter(task.TaskId)
+	defer func() {
+		if teeWriter != nil {
+			gologger.DefaultLogger.SetWriter(teeWriter.original)
+			teeWriter.Close()
+		}
+	}()
 
 	cfg := engine.Config(structs.DefaultConfig())
 	if len(task.Config) > 0 {
@@ -645,4 +770,30 @@ func closeResultStream(stream grpc.ClientStreamingClient[pb.ScanResult, pb.Ack])
 		return fmt.Errorf("result stream rejected by server: %s", ack.Message)
 	}
 	return nil
+}
+
+// installLogTeeWriter 将 gologger 的 Writer 替换为 TeeWriter，
+// 使扫描日志同时输出到本地终端和通过 gRPC StreamLogs 回传 Server。
+// 返回 TeeWriter 供 defer 恢复原始 Writer。
+func (w *Worker) installLogTeeWriter(taskID string) *grpcTeeWriter {
+	logStream, err := w.client.StreamLogs(context.Background())
+	if err != nil {
+		log.Printf("[LogTee] Failed to open StreamLogs for task %s: %v (logs will only appear locally)", taskID, err)
+		return nil
+	}
+
+	// 保存当前 Writer（CLI Writer）
+	originalWriter := gologgerWriter.NewCLI()
+
+	tee := &grpcTeeWriter{
+		original: originalWriter,
+		stream:   logStream,
+		agentID:  w.agentID,
+		taskID:   taskID,
+	}
+
+	gologger.DefaultLogger.SetWriter(tee)
+	log.Printf("[LogTee] Streaming scan logs for task %s to Server", taskID)
+
+	return tee
 }

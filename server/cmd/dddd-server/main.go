@@ -16,11 +16,13 @@ import (
 
 func main() {
 	var (
-		dbDSN    string
-		amqpURL  string
-		grpcPort int
-		apiAddr  string
+		dbDSN     string
+		amqpURL   string
+		grpcPort  int
+		apiAddr   string
 		configDir string
+		agentPSK  string
+		devMode   bool
 	)
 
 	flag.StringVar(&dbDSN, "db", "", "Database DSN. Empty uses local SQLite data/dddd.db")
@@ -28,7 +30,24 @@ func main() {
 	flag.IntVar(&grpcPort, "grpc", 50051, "gRPC listen port")
 	flag.StringVar(&apiAddr, "api", ":8085", "HTTP API listen address")
 	flag.StringVar(&configDir, "config-dir", "", "Path to the directory containing finger.yaml, dir.yaml, workflow.yaml, and pocs/")
+	flag.StringVar(&agentPSK, "agent-psk", "", "Pre-shared key for Agent authentication (env: ARGUS_AGENT_PSK)")
+	flag.BoolVar(&devMode, "dev", false, "Enable development mode (skip mandatory security checks)")
 	flag.Parse()
+
+	// 环境变量优先级高于 flag
+	if envPSK := os.Getenv("ARGUS_AGENT_PSK"); envPSK != "" {
+		agentPSK = envPSK
+	}
+
+	// 生产模式安全强制检查
+	if !devMode {
+		if agentPSK == "" {
+			log.Fatalf("[SECURITY] ARGUS_AGENT_PSK is required in production mode. Use --dev to skip.")
+		}
+		if os.Getenv("ARGUS_JWT_SECRET") == "" {
+			log.Fatalf("[SECURITY] ARGUS_JWT_SECRET is required in production mode. Use --dev to skip.")
+		}
+	}
 
 	log.Println("Initializing database...")
 	db.InitDB(dbDSN)
@@ -59,10 +78,12 @@ func main() {
 	log.Println("Initializing task queue...")
 	queue := scheduler.NewTaskQueue(amqpURL)
 	api.SetTaskQueue(queue)
+	api.SetAgentPSK(agentPSK)
 	log.Printf("Task queue mode: %s", queue.Mode())
 
 	log.Printf("Initializing gRPC server on :%d...", grpcPort)
 	srv := grpc.NewServer(grpcPort)
+	srv.SetPSK(agentPSK)
 
 	// ---- 挂载 RabbitMQ 队列 Hooks ----
 
@@ -90,7 +111,7 @@ func main() {
 		if task == nil {
 			return &pb.Task{}, "", nil
 		}
-		log.Printf("Assigned Task %s (StreamMsg: %s) to Agent %s", task.TaskId, msgID, agentID)
+		log.Printf("Assigned Task %s (MsgID: %s) to Agent %s", task.TaskId, msgID, agentID)
 		return task, msgID, nil
 	})
 
@@ -134,7 +155,7 @@ func main() {
 		api.InitRouter(apiAddr)
 	}()
 
-	// 挂载节点离线状态判定协程
+	// 挂载节点离线状态判定协程（含任务回收）
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		for range ticker.C {
@@ -147,6 +168,48 @@ func main() {
 					"status":        "Offline",
 					"running_tasks": 0,
 				})
+
+				// 回收该节点持有的 Running 任务：退回队列重新调度
+				var orphanTasks []db.SubTask
+				db.DB.Where("agent_id = ? AND status IN ?", n.AgentID, []string{"Running", "CancelPending"}).Find(&orphanTasks)
+				for _, sub := range orphanTasks {
+					// ACK 掉旧的 MQ 消息（如果还在）
+					if sub.StreamMsgID != "" {
+						_ = queue.AckTask(context.Background(), sub.StreamMsgID)
+					}
+
+					nextStatus := "Dispatching"
+					if db.NormalizeSubTaskStatus(sub.Status) == "CANCELPENDING" {
+						nextStatus = "Cancelled"
+					}
+
+					db.DB.Model(&db.SubTask{}).Where("id = ?", sub.ID).Updates(map[string]interface{}{
+						"status":        nextStatus,
+						"agent_id":      "",
+						"stream_msg_id": "",
+					})
+
+					// Running 任务重新入队
+					if nextStatus == "Dispatching" {
+						pbTask, err := db.SubTaskToProto(&sub)
+						if err == nil && pbTask != nil {
+							if pushErr := queue.PushTaskToFront(context.Background(), pbTask); pushErr == nil {
+								db.DB.Model(&db.SubTask{}).Where("id = ? AND status = ?", sub.ID, "Dispatching").
+									Update("status", "Pending")
+							}
+						}
+					}
+
+					if sub.RootTaskID != "" {
+						db.RefreshRootTaskStatus(sub.RootTaskID)
+					}
+					log.Printf("[DeadNode] Recovered subtask %s from dead agent %s → %s", sub.ID, n.AgentID, nextStatus)
+				}
+
+				// 回收后通知在线 Agent
+				if len(orphanTasks) > 0 {
+					srv.Hub.BroadcastNewTask(int32(len(orphanTasks)), 0)
+				}
 			}
 		}
 	}()

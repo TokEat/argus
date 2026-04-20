@@ -121,8 +121,12 @@ func TestWorkerExecuteTaskFailsOnResultStreamSendError(t *testing.T) {
 
 func TestEffectiveWorkerCountCapsToEngineLimit(t *testing.T) {
 	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 8, nil)
-	if got := worker.effectiveWorkerCount(); got != 1 {
-		t.Fatalf("expected effective worker count to be capped at 1, got %d", got)
+	expected := engine.MaxConcurrentTasks()
+	if expected > 8 {
+		expected = 8
+	}
+	if got := worker.effectiveWorkerCount(); got != expected {
+		t.Fatalf("expected effective worker count to be capped at %d, got %d", expected, got)
 	}
 }
 

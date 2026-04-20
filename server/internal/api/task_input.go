@@ -445,3 +445,120 @@ func isURL(str string) bool {
 	rest := str[index+3:]
 	return isNetloc(rest) || isNetlocPort(rest) || isHostPath(rest)
 }
+
+// ============================================================================
+// 批次聚合工具函数
+//
+// 激进档默认批大小：
+//   - URL/Domain 类：32
+//   - IP/CIDR/IPRange/IP:Port 类：64
+//   - OSINT 查询：32
+// ============================================================================
+
+// targetBatchGroup 表示同一类型目标的一个批次
+type targetBatchGroup struct {
+	TargetType    string   // 目标类型标识 (ip, url, domain, osint, ...)
+	SelectorJSON  string   // 标签路由选择器 JSON
+	Targets       []string // 该批次内的目标列表
+}
+
+// batchSizeForTargetType 返回给定目标类型的激进档批大小
+func batchSizeForTargetType(targetType string) int {
+	switch targetType {
+	case "url":
+		return 32
+	case "domain", "domain_port":
+		return 32
+	case "ip", "cidr", "ip_range", "ip_port":
+		return 64
+	default:
+		// osint, unknown 等
+		return 32
+	}
+}
+
+// selectorForTargetType 返回给定目标类型对应的节点选择器 JSON
+func selectorForTargetType(targetType string) string {
+	switch targetType {
+	case "url":
+		return `{"target_type": "url"}`
+	case "ip", "cidr", "ip_range", "ip_port":
+		return `{"target_type": "ip"}`
+	case "domain", "domain_port":
+		return `{"target_type": "domain"}`
+	case "osint":
+		return `{"target_type": "osint"}`
+	default:
+		return "{}"
+	}
+}
+
+// groupAndBatchTargets 将目标按类型分组后切批，返回 targetBatchGroup 列表
+// 对于 direct 模式：按 detectDirectTargetType 分组
+// 对于 OSINT 模式：统一归为 osint 类型
+func groupAndBatchTargets(targets []string, targetMode taskTargetMode) []targetBatchGroup {
+	if targetMode != taskTargetModeDirect {
+		// OSINT 模式：所有目标统一类型
+		return batchTargetsOfType(targets, "osint", selectorForTargetType("osint"))
+	}
+
+	// Direct 模式：按目标类型分组
+	grouped := make(map[string][]string) // targetType -> targets
+	groupOrder := make([]string, 0)      // 保持稳定顺序
+	for _, target := range targets {
+		typ := detectDirectTargetType(target)
+		if typ == "" {
+			typ = "unknown"
+		}
+		if _, exists := grouped[typ]; !exists {
+			groupOrder = append(groupOrder, typ)
+		}
+		grouped[typ] = append(grouped[typ], target)
+	}
+
+	var batches []targetBatchGroup
+	for _, typ := range groupOrder {
+		selectorJSON := selectorForTargetType(typ)
+		batches = append(batches, batchTargetsOfType(grouped[typ], typ, selectorJSON)...)
+	}
+	return batches
+}
+
+// batchTargetsOfType 将同一类型的目标按批大小切分
+func batchTargetsOfType(targets []string, targetType, selectorJSON string) []targetBatchGroup {
+	batchSize := batchSizeForTargetType(targetType)
+	chunks := chunkSlice(targets, batchSize)
+	batches := make([]targetBatchGroup, 0, len(chunks))
+	for _, chunk := range chunks {
+		batches = append(batches, targetBatchGroup{
+			TargetType:   targetType,
+			SelectorJSON: selectorJSON,
+			Targets:      chunk,
+		})
+	}
+	return batches
+}
+
+// chunkSlice 将字符串切片按指定大小切分
+func chunkSlice(items []string, size int) [][]string {
+	if size <= 0 {
+		size = 1
+	}
+	var chunks [][]string
+	for i := 0; i < len(items); i += size {
+		end := i + size
+		if end > len(items) {
+			end = len(items)
+		}
+		chunks = append(chunks, items[i:end])
+	}
+	return chunks
+}
+
+// batchProfile 描述一次聚合操作的批次概况
+type batchProfile struct {
+	TotalTargets  int            `json:"total_targets"`
+	TotalBatches  int            `json:"total_batches"`
+	BatchesByType map[string]int `json:"batches_by_type"` // targetType -> batch count
+	BatchSize     map[string]int `json:"batch_size"`      // targetType -> configured batch size
+}

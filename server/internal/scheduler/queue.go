@@ -47,11 +47,12 @@ type pendingDelivery struct {
 
 // TaskQueue 封装基于 RabbitMQ 的多优先级任务队列
 type TaskQueue struct {
-	conn *amqp.Connection
-	ch   *amqp.Channel
-	chMu sync.Mutex // 保护 channel 操作的并发安全
-	mem  *memoryQueue
-	mode string
+	conn    *amqp.Connection
+	ch      *amqp.Channel
+	chMu    sync.Mutex // 保护 channel 操作的并发安全
+	amqpURL string     // 保留连接地址用于自动重连
+	mem     *memoryQueue
+	mode    string
 
 	// pendingAcks 跟踪未确认的投递: compositeID → *pendingDelivery
 	pendingAcks sync.Map
@@ -87,6 +88,7 @@ func NewTaskQueue(amqpURL string) *TaskQueue {
 
 	queue.conn = conn
 	queue.ch = ch
+	queue.amqpURL = amqpURL
 	queue.mode = "rabbitmq"
 
 	// 声明三级优先级队列（持久化）
@@ -128,6 +130,43 @@ func (q *TaskQueue) Close() {
 	}
 }
 
+// ensureChannel 在操作前检测 Channel 健康状态，如果 Channel 或 Connection 已关闭则自动重建。
+// 调用方必须已持有 chMu 锁。
+func (q *TaskQueue) ensureChannel() error {
+	if q.ch != nil && !q.ch.IsClosed() {
+		return nil // Channel 健康
+	}
+
+	log.Printf("[TaskQueue] Channel is closed, attempting to rebuild...")
+
+	// 如果连接也断了，先重建连接
+	if q.conn == nil || q.conn.IsClosed() {
+		conn, err := amqp.Dial(q.amqpURL)
+		if err != nil {
+			return fmt.Errorf("RabbitMQ reconnect failed: %w", err)
+		}
+		q.conn = conn
+		log.Printf("[TaskQueue] RabbitMQ connection re-established")
+	}
+
+	ch, err := q.conn.Channel()
+	if err != nil {
+		return fmt.Errorf("RabbitMQ channel reopen failed: %w", err)
+	}
+	q.ch = ch
+
+	// 重新声明队列（幂等操作）
+	for _, queueName := range priorityQueues {
+		_, err := ch.QueueDeclare(queueName, true, false, false, false, nil)
+		if err != nil {
+			log.Printf("[TaskQueue] Warning: failed to re-declare queue %s: %v", queueName, err)
+		}
+	}
+
+	log.Printf("[TaskQueue] Channel rebuilt successfully")
+	return nil
+}
+
 // ============================================================================
 // Push 入队
 // ============================================================================
@@ -147,6 +186,10 @@ func (q *TaskQueue) PushTask(ctx context.Context, task *pb.Task) error {
 
 	q.chMu.Lock()
 	defer q.chMu.Unlock()
+
+	if err := q.ensureChannel(); err != nil {
+		return err
+	}
 
 	return q.ch.PublishWithContext(ctx, "", queueName, false, false, amqp.Publishing{
 		ContentType:  "application/json",
@@ -169,6 +212,10 @@ func (q *TaskQueue) PushTaskToFront(ctx context.Context, task *pb.Task) error {
 
 	q.chMu.Lock()
 	defer q.chMu.Unlock()
+
+	if err := q.ensureChannel(); err != nil {
+		return err
+	}
 
 	return q.ch.PublishWithContext(ctx, "", priorityQueues[PriorityUrgent], false, false, amqp.Publishing{
 		ContentType:  "application/json",
@@ -197,6 +244,10 @@ func (q *TaskQueue) TryPopTask(ctx context.Context, agentID string) (*pb.Task, s
 
 	q.chMu.Lock()
 	defer q.chMu.Unlock()
+
+	if err := q.ensureChannel(); err != nil {
+		return nil, "", err
+	}
 
 	for _, queueName := range priorityQueues {
 		msg, ok, err := q.ch.Get(queueName, false) // autoAck=false, 手动确认
@@ -267,6 +318,9 @@ func (q *TaskQueue) AckTask(ctx context.Context, compositeID string) error {
 	q.chMu.Lock()
 	defer q.chMu.Unlock()
 
+	if err := q.ensureChannel(); err != nil {
+		return err
+	}
 	return q.ch.Ack(pd.tag, false)
 }
 
@@ -285,6 +339,9 @@ func (q *TaskQueue) NackTask(ctx context.Context, compositeID string) error {
 	q.chMu.Lock()
 	defer q.chMu.Unlock()
 
+	if err := q.ensureChannel(); err != nil {
+		return err
+	}
 	return q.ch.Nack(pd.tag, false, true) // requeue=true
 }
 
@@ -305,12 +362,18 @@ func (q *TaskQueue) QueueDepth(ctx context.Context) map[string]int64 {
 	q.chMu.Lock()
 	defer q.chMu.Unlock()
 
+	pendingByQueue := q.pendingCountByQueue()
+
 	for _, queueName := range priorityQueues {
 		info, err := q.ch.QueueInspect(queueName)
 		if err == nil {
 			// QueueInspect.Messages = Ready + Unacked
-			// 但我们只关心 Ready（可被消费的数量）
-			depths[queueName] = int64(info.Messages)
+			// 可消费积压 = 总量 - 当前进程持有的未确认投递
+			ready := int64(info.Messages) - pendingByQueue[queueName]
+			if ready < 0 {
+				ready = 0
+			}
+			depths[queueName] = ready
 		}
 	}
 	return depths
@@ -318,6 +381,10 @@ func (q *TaskQueue) QueueDepth(ctx context.Context) map[string]int64 {
 
 // PendingCount 返回各队列中正在处理中（未 ACK）的消息数
 func (q *TaskQueue) PendingCount(ctx context.Context) map[string]int64 {
+	return q.pendingCountByQueue()
+}
+
+func (q *TaskQueue) pendingCountByQueue() map[string]int64 {
 	counts := make(map[string]int64)
 	q.pendingAcks.Range(func(key, value any) bool {
 		pd := value.(*pendingDelivery)

@@ -4,6 +4,13 @@
 declare namespace API {
 
   // ======================== Auth ========================
+  interface PaginatedResponse<T> {
+    data: T[];
+    page: number;
+    page_size: number;
+    total: number;
+  }
+
 
   /** 登录请求 (Server: tenant_id + password) */
   interface LoginRequest {
@@ -47,10 +54,13 @@ declare namespace API {
     UserID: string;
     Name: string;
     OriginalTargets: string;
-    Status: string;            // Pending, Running, FINISHED, Cancelled
-    TotalChunks: number;
-    CompletedChunks: number;
+    Status: string;            // Queued, Pending, Running, PartialDone, FINISHED, Failed, Timeout, CancelPending, Cancelled
+    TotalChunks: number;       // 批次总数
+    CompletedChunks: number;   // 已完成批次数
+    TotalTargets: number;      // 原始目标总数
+    CompletedTargets: number;  // 已完成目标数
     Config: string;
+    Priority?: number;
     Capacity?: number;
     RunningTasks?: number;
     RuleVersion?: string;
@@ -80,9 +90,13 @@ declare namespace API {
     Version: string;       // Agent 版本
     Capacity: number;      // 并发容量
     RunningTasks: number;  // 当前运行任务数
+    RunningTaskIDs?: string; // JSON array of task IDs (Server GORM field)
+    RunningTaskIds?: string; // 兼容历史字段命名
     RunningTaskDetails?: {
       task_id: string;
       targets: string[];
+      target_count: number;
+      target_preview: string[];
     }[];
     RuleVersion: string;   // 规则版本
     OS?: string;

@@ -6,6 +6,7 @@ import (
 	errorutil "github.com/projectdiscovery/utils/errors"
 	"os"
 	"strings"
+	"time"
 )
 
 func RemoveDuplicateElement(input []string) []string {
@@ -39,14 +40,65 @@ func RemoveUsedUrl(urls []string) []string {
 
 var GlobalUsedUrl []string
 
+func sanitizeTimeout(timeout int) int {
+	if timeout <= 0 {
+		return 10
+	}
+	return timeout
+}
+
+func sanitizeThreads(threads int) int {
+	if threads <= 0 {
+		return 50
+	}
+	return threads
+}
+
+// runEnumerationWithGuard 为 httpx 枚举增加总耗时保护，避免单阶段无限卡住。
+func runEnumerationWithGuard(httpxRunner *runner.Runner, stage string, timeoutSec int, targetCount int) bool {
+	if httpxRunner == nil {
+		return true
+	}
+	timeoutSec = sanitizeTimeout(timeoutSec)
+	if targetCount <= 0 {
+		targetCount = 1
+	}
+	// 总预算：每个目标 timeout 秒，再留固定余量；最低 45s。
+	budget := time.Duration(timeoutSec*(targetCount+1)+30) * time.Second
+	minBudget := 45 * time.Second
+	if budget < minBudget {
+		budget = minBudget
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		httpxRunner.RunEnumeration()
+	}()
+
+	select {
+	case <-done:
+		return true
+	case <-time.After(budget):
+		gologger.Error().Msgf("[%s] httpx enumeration exceeded %s (targets=%d, timeout=%ds), force closing runner",
+			stage, budget, targetCount, timeoutSec)
+		httpxRunner.Close()
+		return false
+	}
+}
+
 func CallHTTPx(urls []string, callBack func(resp runner.Result), proxy string, threads int, timeout int) {
 	gologger.Info().Msg("获取Web响应中")
+
+	timeout = sanitizeTimeout(timeout)
+	threads = sanitizeThreads(threads)
 
 	nextUrls := RemoveDuplicateElement(urls)
 	gologger.AuditLogger("响应探测目标: %s", strings.Join(nextUrls, ","))
 
 	times := 0
 	for len(nextUrls) > 0 && times < 3 {
+		gologger.Info().Msgf("[HTTPProbe] pass=%d targets=%d threads=%d timeout=%ds", times+1, len(nextUrls), threads, timeout)
 		options := runner.Options{
 			Methods:                   "GET",
 			InputTargetHost:           nextUrls,
@@ -81,7 +133,10 @@ func CallHTTPx(urls []string, callBack func(resp runner.Result), proxy string, t
 		}
 		GlobalUsedUrl = RemoveDuplicateElement(GlobalUsedUrl)
 
-		httpxRunner.RunEnumeration()
+		if ok := runEnumerationWithGuard(httpxRunner, "http_probe", timeout, len(nextUrls)); !ok {
+			// 阶段已超时保护触发，避免任务卡死，直接退出本阶段。
+			break
+		}
 		nextUrls = RemoveUsedUrl(httpxRunner.NextCheckUrl)
 		httpxRunner.Close()
 		times += 1
@@ -99,6 +154,8 @@ func init() {
 
 func DirBrute(urls []string, callBack func(resp runner.Result), proxy string, threads int, timeout int) {
 	urls = RemoveDuplicateElement(urls)
+	timeout = sanitizeTimeout(timeout)
+	threads = sanitizeThreads(threads)
 
 	options := runner.Options{
 		Methods:                   "GET",
@@ -129,6 +186,6 @@ func DirBrute(urls []string, callBack func(resp runner.Result), proxy string, th
 	}
 	httpxRunner.CallBack = callBack
 
-	httpxRunner.RunEnumeration()
+	_ = runEnumerationWithGuard(httpxRunner, "dir_brute", timeout, len(urls))
 	httpxRunner.Close()
 }

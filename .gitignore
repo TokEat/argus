@@ -6,6 +6,9 @@
 *.dylib
 bin/
 bin-*
+scanner/agent
+server/dddd-server
+**/.gocache/
 
 # Output files
 datas/
@@ -15,6 +18,7 @@ datas/
 .idea/
 .claude/
 .vscode/
+config/
 
 # OS files
 .DS_Store
@@ -30,3 +34,4 @@ data/
 **/node_modules
 
 **/dist
+

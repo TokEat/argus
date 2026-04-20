@@ -53,15 +53,13 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		}
 	}
 
-	// Agent 模式（ctx != nil 且有 OutputHook）走无锁路径，允许多任务并发。
-	// CLI 模式保留全局互斥锁以兌容旧代码。
+	// 兜底稳定性策略：
+	// 目前仍有若干组件依赖 ddout 全局 Sink 与 legacy 全局状态，
+	// 若走无锁 Agent 绑定会导致结果不回传或阶段异常阻塞。
+	// 因此统一走 bindLegacyContext，确保结果闭环与阶段可结束。
 	var cleanup func()
 	var err error
-	if ctx != nil && ctx.OutputHook != nil {
-		cleanup, err = bindAgentContext(ctx)
-	} else {
-		cleanup, err = bindLegacyContext(ctx)
-	}
+	cleanup, err = bindLegacyContext(ctx)
 	if err != nil {
 		return err
 	}

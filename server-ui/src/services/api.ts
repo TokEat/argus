@@ -94,7 +94,15 @@ export async function appendTargets(taskId: string, targets: string): Promise<{ 
     return request.post(`/tasks/${taskId}/append`, { targets });
 }
 
-export async function getQueueDepth(): Promise<{ depth: Record<string, number>; pending: Record<string, number>; mode: string }> {
+export async function getQueueDepth(): Promise<{
+    depth: Record<string, number>;
+    pending: Record<string, number>;
+    mode: string;
+    ready_batches: number;
+    pending_batches: number;
+    ready_targets: number;
+    pending_targets: number;
+}> {
     return request.get('/queue/depth');
 }
 
@@ -114,8 +122,8 @@ export async function getFingerprints(taskId?: string): Promise<API.FingerprintH
     return request.get('/fingerprints', { params: taskId ? { task_id: taskId } : {} });
 }
 
-export async function getProfiles(): Promise<API.Profile[]> {
-    return request.get('/profiles');
+export async function getProfiles(page: number = 1, pageSize: number = 50, search: string = ''): Promise<API.PaginatedResponse<API.Profile>> {
+    return request.get('/profiles', { params: { page, page_size: pageSize, search } });
 }
 
 export async function exportVulns(): Promise<Blob> {

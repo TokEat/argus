@@ -16,34 +16,30 @@ const { Title, Text } = Typography;
 const ProfilesView: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [profiles, setProfiles] = useState<API.Profile[]>([]);
-    const [filtered, setFiltered] = useState<API.Profile[]>([]);
+    const [total, setTotal] = useState(0);
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(20);
     const [searchKeyword, setSearchKeyword] = useState('');
 
     useEffect(() => {
-        fetchData();
-    }, []);
+        const timer = setTimeout(() => {
+            fetchData();
+        }, 300);
+        return () => clearTimeout(timer);
+    }, [page, pageSize, searchKeyword]);
 
     const fetchData = async () => {
         setLoading(true);
         try {
-            const result = await getProfiles();
-            setProfiles(result || []);
-            setFiltered(result || []);
+            const result = await getProfiles(page, pageSize, searchKeyword);
+            setProfiles(result.data || []);
+            setTotal(result.total || 0);
         } catch (error) {
             console.error('Failed to fetch profiles:', error);
         } finally {
             setLoading(false);
         }
     };
-
-    useEffect(() => {
-        if (!searchKeyword) {
-            setFiltered(profiles);
-        } else {
-            const lower = searchKeyword.toLowerCase();
-            setFiltered(profiles.filter(p => p.target.toLowerCase().includes(lower)));
-        }
-    }, [searchKeyword, profiles]);
 
     const getSeverityColor = (severity: string) => {
         const map: Record<string, string> = {
@@ -156,7 +152,7 @@ const ProfilesView: React.FC = () => {
                         style={{ width: 260 }}
                         allowClear
                     />
-                    <Tag color="default">{filtered.length} 个目标</Tag>
+                    <Tag color="default">{total} 个目标</Tag>
                 </Space>
             </div>
 
@@ -165,14 +161,20 @@ const ProfilesView: React.FC = () => {
                     <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}>
                         <Spin size="large" />
                     </div>
-                ) : filtered.length === 0 ? (
+                ) : profiles.length === 0 ? (
                     <Empty description="暂无画像数据" style={{ padding: '60px 0' }} />
                 ) : (
                     <Table
                         columns={columns}
-                        dataSource={filtered}
+                        dataSource={profiles}
                         rowKey="target"
-                        pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 个目标` }}
+                        pagination={{ 
+                            current: page,
+                            pageSize: pageSize,
+                            total: total,
+                            showTotal: (t) => `共 ${t} 个目标`,
+                            onChange: (p, ps) => { setPage(p); setPageSize(ps); }
+                        }}
                         size="middle"
                         expandable={{
                             expandedRowRender: (record) => (

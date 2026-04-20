@@ -42,6 +42,8 @@ type RootTask struct {
 	TimeoutSeconds  int
 	TotalChunks     int
 	CompletedChunks int
+	TotalTargets     int  // 原始目标总数
+	CompletedTargets int  // 已完成目标数
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }

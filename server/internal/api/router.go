@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/md5"
+	"crypto/subtle"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -24,9 +25,50 @@ import (
 
 var taskQueue *scheduler.TaskQueue
 var notifyHub *grpcpkg.NotifyHub
+var agentPSK string
+
+const (
+	subTaskStatusDispatching = "Dispatching"
+	cancelPendingSettleGrace = 45 * time.Second
+)
 
 func SetTaskQueue(queue *scheduler.TaskQueue) {
 	taskQueue = queue
+}
+
+// SetAgentPSK 注入 Agent 预共享密钥，用于 Agent 内部 API 鉴权。
+func SetAgentPSK(psk string) {
+	agentPSK = strings.TrimSpace(psk)
+}
+
+func isAgentInternalEndpoint(c *gin.Context) bool {
+	if c.Request.Method != http.MethodGet {
+		return false
+	}
+	path := c.Request.URL.Path
+	if strings.HasPrefix(path, "/api/v1/agents/") && strings.HasSuffix(path, "/commands") {
+		return true
+	}
+	if path == "/api/v1/arsenals/manifest" {
+		return true
+	}
+	if strings.HasPrefix(path, "/api/v1/arsenals/") {
+		rest := strings.TrimPrefix(path, "/api/v1/arsenals/")
+		return rest != "" && !strings.Contains(rest, "/")
+	}
+	return false
+}
+
+func validateAgentPSK(c *gin.Context) bool {
+	// 与 gRPC 保持一致：未配置 PSK 时允许开发模式开放访问。
+	if agentPSK == "" {
+		return true
+	}
+	token := strings.TrimSpace(c.GetHeader("x-agent-psk"))
+	if token == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(token), []byte(agentPSK)) == 1
 }
 
 // SetNotifyHub 注入 gRPC NotifyHub 引用，用于 createTask 后广播通知 Agent
@@ -34,13 +76,33 @@ func SetNotifyHub(hub *grpcpkg.NotifyHub) {
 	notifyHub = hub
 }
 
-var jwtSecret = []byte("P8-MUST-HAVE-SECRET-KEY") // TODO: 生产环境应从配置文件读取
+// jwtSecret 从环境变量 ARGUS_JWT_SECRET 读取，未设置则使用默认值（仅限开发环境）
+var jwtSecret = func() []byte {
+	if secret := os.Getenv("ARGUS_JWT_SECRET"); secret != "" {
+		return []byte(secret)
+	}
+	log.Println("[Auth] WARNING: ARGUS_JWT_SECRET not set, using insecure default (dev only)")
+	return []byte("P8-MUST-HAVE-SECRET-KEY")
+}()
 
 // TenantMiddleware 强制 JWT 校验并拦截身份
 func TenantMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 跳过 Auth 登录自己
 		if c.Request.URL.Path == "/api/v1/auth/login" {
+			c.Next()
+			return
+		}
+
+		// Agent 内部 API：使用 PSK 鉴权（无需 JWT）。
+		if isAgentInternalEndpoint(c) {
+			if !validateAgentPSK(c) {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing agent pre-shared key"})
+				return
+			}
+			// 注入默认身份，兼容 RBAC 逻辑。
+			c.Set("tenant", "default")
+			c.Set("role", "admin")
 			c.Next()
 			return
 		}
@@ -105,7 +167,7 @@ func InitRouter(port string) {
 
 	// 启动 WebSocket 广播中心
 	go Hub.Start()
-	
+
 	// 连接底层的实时推流 Hook
 	db.WSBroadcastHook = Hub.Broadcast
 
@@ -288,7 +350,74 @@ func getTasks(c *gin.Context) {
 		query = query.Where("project_id = ?", projectID)
 	}
 	query.Order("created_at desc").Limit(50).Find(&tasks)
-	c.JSON(http.StatusOK, tasks)
+
+	// 增强返回：包含目标维度进度
+	type TaskResponse struct {
+		db.RootTask
+	}
+	resp := make([]TaskResponse, 0, len(tasks))
+	for _, t := range tasks {
+		resp = append(resp, TaskResponse{RootTask: t})
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+func dispatchSubTasks(ctx context.Context, q *scheduler.TaskQueue, subTasks []db.SubTask) (map[int]int, int) {
+	pushedByPriority := make(map[int]int)
+	if len(subTasks) == 0 {
+		return pushedByPriority, 0
+	}
+	if q == nil {
+		return pushedByPriority, len(subTasks)
+	}
+
+	dispatchPending := 0
+	for _, st := range subTasks {
+		pbSub, err := db.SubTaskToProto(&st)
+		if err != nil || pbSub == nil {
+			log.Printf("[Dispatch] Failed to encode subtask %s: %v", st.ID, err)
+			dispatchPending++
+			continue
+		}
+
+		if err := q.PushTask(ctx, pbSub); err != nil {
+			log.Printf("[Dispatch] Failed to push subtask %s: %v", st.ID, err)
+			dispatchPending++
+			continue
+		}
+
+		// 入队成功后再将状态推进为 Pending，避免“先改状态后崩溃”导致任务既不在队列也不可恢复。
+		updateRes := db.DB.Model(&db.SubTask{}).
+			Where("id = ? AND status = ?", st.ID, subTaskStatusDispatching).
+			Update("status", "Pending")
+		if updateRes.Error != nil {
+			log.Printf("[Dispatch] Subtask %s queued but status transition to Pending failed: %v", st.ID, updateRes.Error)
+		}
+
+		pushedByPriority[st.Priority]++
+	}
+
+	return pushedByPriority, dispatchPending
+}
+
+func totalDispatchedTasks(pushedByPriority map[int]int) int {
+	total := 0
+	for _, n := range pushedByPriority {
+		total += n
+	}
+	return total
+}
+
+func broadcastDispatchedTasks(pushedByPriority map[int]int) {
+	if notifyHub == nil {
+		return
+	}
+	for priority, count := range pushedByPriority {
+		if count <= 0 {
+			continue
+		}
+		notifyHub.BroadcastNewTask(int32(count), int32(priority))
+	}
 }
 
 func createTask(c *gin.Context) {
@@ -340,6 +469,10 @@ func createTask(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	if taskQueue == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "task queue not initialized"})
+		return
+	}
 
 	rootTaskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
 	name := strings.TrimSpace(req.Name)
@@ -350,91 +483,63 @@ func createTask(c *gin.Context) {
 	// 多租户隔离下钻
 	tenantID := c.GetString("tenant")
 
-	// 1. Atomic Task Splitter — 原子级任务拆分
+	// ================================================================
+	// 批次聚合入队（激进档）
 	//
-	// 拆分规则：
-	//   - 每个 URL       → 1 个子任务
-	//   - 每个 IP        → 1 个子任务
-	//   - 每个 CIDR(C段) → 1 个子任务（保持整体，不展开为单个IP）
-	//   - 每个 IP Range  → 1 个子任务（保持整体）
-	//   - 每个 IP:Port   → 1 个子任务
-	//   - 每个 Domain    → 1 个子任务
-	//   - 每个 Domain:Port → 1 个子任务
-	//   - OSINT 查询     → 每条查询 1 个子任务
-	//
-	// 这保证了每个 Agent 认领到的都是一个轻量原子任务，
-	// 所有在线 Agent 可以均匀分摊工作量，杜绝资源浪费。
+	// 替代原有"每目标一个SubTask"的原子拆分：
+	//   1. 按 target_type 分组
+	//   2. 每组按激进档批大小切片生成聚合 SubTask
+	//   3. 聚合后 TotalChunks = 批次数（不再等于目标数）
+	//   4. TotalTargets 记录原始目标总数用于进度展示
+	// ================================================================
+
+	batches := groupAndBatchTargets(targets, targetMode)
 
 	var subTasks []db.SubTask
+	profile := batchProfile{
+		TotalTargets:  len(targets),
+		TotalBatches:  len(batches),
+		BatchesByType: make(map[string]int),
+		BatchSize:     make(map[string]int),
+	}
 
-	if targetMode == taskTargetModeDirect {
-		for idx, target := range targets {
-			typ := detectDirectTargetType(target)
-			if typ == "" {
-				typ = "unknown"
-			}
+	for idx, batch := range batches {
+		chunkJSON, _ := json.Marshal(batch.Targets)
 
-			// 标签路由：按目标类型分配节点亲和性
-			selectorJSON := "{}"
-			switch typ {
-			case "url":
-				selectorJSON = `{"target_type": "url"}`
-			case "ip", "cidr", "ip_range", "ip_port":
-				selectorJSON = `{"target_type": "ip"}`
-			case "domain", "domain_port":
-				selectorJSON = `{"target_type": "domain"}`
-			}
+		subTasks = append(subTasks, db.SubTask{
+			ID:            fmt.Sprintf("%s-batch-%d-%s", rootTaskID, idx, batch.TargetType),
+			TenantID:      tenantID,
+			ProjectID:     req.ProjectID,
+			RootTaskID:    rootTaskID,
+			ChunkTargets:  string(chunkJSON),
+			Status:        subTaskStatusDispatching,
+			Config:        configJSON,
+			Priority:      req.Priority,
+			TimeoutSec:    req.TimeoutSec,
+			MaxRetry:      3,
+			AgentSelector: batch.SelectorJSON,
+		})
 
-			chunkJSON, _ := json.Marshal([]string{target})
-
-			subTasks = append(subTasks, db.SubTask{
-				ID:            fmt.Sprintf("%s-sub-%d-%s", rootTaskID, idx, typ),
-				TenantID:      tenantID,
-				ProjectID:     req.ProjectID,
-				RootTaskID:    rootTaskID,
-				ChunkTargets:  string(chunkJSON),
-				Status:        "Pending",
-				Config:        configJSON,
-				Priority:      req.Priority,
-				TimeoutSec:    req.TimeoutSec,
-				MaxRetry:      3,
-				AgentSelector: selectorJSON,
-			})
-		}
-	} else {
-		// OSINT 模式（Hunter/Fofa/Quake）：每条查询一个子任务
-		selectorJSON := `{"target_type": "osint"}`
-		for idx, query := range targets {
-			chunkJSON, _ := json.Marshal([]string{query})
-
-			subTasks = append(subTasks, db.SubTask{
-				ID:            fmt.Sprintf("%s-sub-%d-%s", rootTaskID, idx, string(targetMode)),
-				TenantID:      tenantID,
-				ProjectID:     req.ProjectID,
-				RootTaskID:    rootTaskID,
-				ChunkTargets:  string(chunkJSON),
-				Status:        "Pending",
-				Config:        configJSON,
-				Priority:      req.Priority,
-				TimeoutSec:    req.TimeoutSec,
-				MaxRetry:      3,
-				AgentSelector: selectorJSON,
-			})
+		profile.BatchesByType[batch.TargetType]++
+		if _, ok := profile.BatchSize[batch.TargetType]; !ok {
+			profile.BatchSize[batch.TargetType] = batchSizeForTargetType(batch.TargetType)
 		}
 	}
 
 	rootTask := db.RootTask{
-		ID:              rootTaskID,
-		TenantID:        tenantID,
-		ProjectID:       req.ProjectID,
-		Name:            name,
-		Status:          "Queued",
-		OriginalTargets: string(targetsJSON),
-		Config:          configJSON,
-		TotalChunks:     len(subTasks),
-		CompletedChunks: 0,
-		Priority:        req.Priority,
-		TimeoutSec:      req.TimeoutSec,
+		ID:               rootTaskID,
+		TenantID:         tenantID,
+		ProjectID:        req.ProjectID,
+		Name:             name,
+		Status:           "Queued",
+		OriginalTargets:  string(targetsJSON),
+		Config:           configJSON,
+		TotalChunks:      len(subTasks),
+		CompletedChunks:  0,
+		TotalTargets:     len(targets),
+		CompletedTargets: 0,
+		Priority:         req.Priority,
+		TimeoutSec:       req.TimeoutSec,
 	}
 
 	// 2. Transaction for Root and SubTasks
@@ -455,28 +560,28 @@ func createTask(c *gin.Context) {
 		return
 	}
 
-	// 3. Dispatch to Queue
-	pushedCount := 0
-	if taskQueue != nil {
-		for _, st := range subTasks {
-			pbSub, _ := db.SubTaskToProto(&st)
-			if err := taskQueue.PushTask(context.Background(), pbSub); err != nil {
-				log.Printf("Failed to push subtask %s: %v", st.ID, err)
-			} else {
-				pushedCount++
-			}
-		}
+	// 3. Dispatch to Queue（闭环保证：失败任务保留 Dispatching，守护协程会继续补投）
+	pushedByPriority, dispatchPending := dispatchSubTasks(context.Background(), taskQueue, subTasks)
+	pushedCount := totalDispatchedTasks(pushedByPriority)
+	broadcastDispatchedTasks(pushedByPriority)
+	if dispatchPending > 0 {
+		log.Printf("[CreateTask] RootTask %s has %d batches pending dispatch recovery", rootTask.ID, dispatchPending)
 	}
 
-	// 4. ★ 广播通知所有在线 Agent：有新任务可以认领了！
-	if notifyHub != nil && pushedCount > 0 {
-		notifyHub.BroadcastNewTask(int32(pushedCount), int32(req.Priority))
-	}
+	log.Printf("[CreateTask] RootTask %s: %d targets → %d batches (profile: %v)",
+		rootTask.ID, len(targets), len(subTasks), profile.BatchesByType)
 
 	c.JSON(http.StatusOK, gin.H{
-		"status":         "task_created",
-		"task_id":        rootTask.ID,
-		"target_summary": targetSummary,
+		"status":           "task_created",
+		"task_id":          rootTask.ID,
+		"target_summary":   targetSummary,
+		"dispatched":       pushedCount,
+		"dispatch_pending": dispatchPending,
+		"batch_profile":    profile,
+		"batch_summary": gin.H{
+			"total_targets": len(targets),
+			"total_batches": len(subTasks),
+		},
 	})
 }
 
@@ -594,40 +699,92 @@ type Profile struct {
 }
 
 func getProfiles(c *gin.Context) {
-	// TODO: 后期随着数据量增加，可以在此处开启分页、租户隔离、或者走 Elasticsearch
-	var assets []db.Asset
-	db.DB.Find(&assets)
-	var fps []db.FingerprintHit
-	db.DB.Find(&fps)
-	var vulns []db.Vulnerability
-	db.DB.Find(&vulns)
-
-	pm := make(map[string]*Profile)
-
-	for _, a := range assets {
-		if _, ok := pm[a.Target]; !ok {
-			pm[a.Target] = &Profile{Target: a.Target}
+	tenantID := c.GetString("tenant")
+	page := 1
+	pageSize := 50
+	if p := c.Query("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
 		}
-		pm[a.Target].Assets = append(pm[a.Target].Assets, a)
+	}
+	if ps := c.Query("page_size"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 && v <= 200 {
+			pageSize = v
+		}
+	}
+
+	// 先分页获取去重的 target 列表
+	var targets []string
+	query := db.DB.Model(&db.Asset{}).Select("DISTINCT target")
+	if tenantID != "" {
+		query = query.Where("tenant_id = ?", tenantID)
+	}
+	if search := c.Query("search"); search != "" {
+		query = query.Where("target LIKE ?", "%"+search+"%")
+	}
+	query.Order("target").Offset((page-1)*pageSize).Limit(pageSize).Pluck("target", &targets)
+
+	if len(targets) == 0 {
+		c.JSON(http.StatusOK, gin.H{"data": []Profile{}, "page": page, "page_size": pageSize, "total": 0})
+		return
+	}
+
+	// 批量查询这些 target 的关联数据（含租户隔离）
+	var assets []db.Asset
+	assocQ := db.DB.Where("target IN ?", targets)
+	if tenantID != "" {
+		assocQ = assocQ.Where("tenant_id = ?", tenantID)
+	}
+	assocQ.Find(&assets)
+
+	var fps []db.FingerprintHit
+	fpQ := db.DB.Where("target IN ?", targets)
+	if tenantID != "" {
+		fpQ = fpQ.Where("tenant_id = ?", tenantID)
+	}
+	fpQ.Find(&fps)
+
+	var vulns []db.Vulnerability
+	vulnQ := db.DB.Where("target IN ?", targets)
+	if tenantID != "" {
+		vulnQ = vulnQ.Where("tenant_id = ?", tenantID)
+	}
+	vulnQ.Find(&vulns)
+
+	pm := make(map[string]*Profile, len(targets))
+	for _, t := range targets {
+		pm[t] = &Profile{Target: t}
+	}
+	for _, a := range assets {
+		if p, ok := pm[a.Target]; ok {
+			p.Assets = append(p.Assets, a)
+		}
 	}
 	for _, f := range fps {
-		if _, ok := pm[f.Target]; !ok {
-			pm[f.Target] = &Profile{Target: f.Target}
+		if p, ok := pm[f.Target]; ok {
+			p.Fingerprints = append(p.Fingerprints, f)
 		}
-		pm[f.Target].Fingerprints = append(pm[f.Target].Fingerprints, f)
 	}
 	for _, v := range vulns {
-		if _, ok := pm[v.Target]; !ok {
-			pm[v.Target] = &Profile{Target: v.Target}
+		if p, ok := pm[v.Target]; ok {
+			p.Vulns = append(p.Vulns, v)
 		}
-		pm[v.Target].Vulns = append(pm[v.Target].Vulns, v)
 	}
 
-	var results []Profile
-	for _, p := range pm {
-		results = append(results, *p)
+	results := make([]Profile, 0, len(targets))
+	for _, t := range targets {
+		results = append(results, *pm[t])
 	}
-	c.JSON(http.StatusOK, results)
+
+	// 统计总数
+	var total int64
+	countQ := db.DB.Model(&db.Asset{}).Select("COUNT(DISTINCT target)")
+	if tenantID != "" {
+		countQ = countQ.Where("tenant_id = ?", tenantID)
+	}
+	countQ.Count(&total)
+
+	c.JSON(http.StatusOK, gin.H{"data": results, "page": page, "page_size": pageSize, "total": total})
 }
 
 func deleteTask(c *gin.Context) {
@@ -690,9 +847,42 @@ func aiAnalyzeArsenal(c *gin.Context) {
 
 func cancelTask(c *gin.Context) {
 	id := c.Param("id")
-	// 将该 RootTask 下的所有排队中、运行中的 SubTask 标记为 CancelPending，供 Agent 拦截
-	db.DB.Model(&db.SubTask{}).Where("root_task_id = ? AND status IN ('Pending', 'Running')", id).Update("status", "CancelPending")
-	c.JSON(http.StatusOK, gin.H{"status": "cancellation dispatched"})
+	cancelledWithoutClaim := int64(0)
+	cancelPendingRunning := int64(0)
+
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&db.SubTask{}).
+			Where("root_task_id = ? AND status IN ?", id, []string{"Pending", "Recovered", subTaskStatusDispatching}).
+			Updates(map[string]interface{}{
+				"status":        "Cancelled",
+				"agent_id":      "",
+				"stream_msg_id": "",
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		cancelledWithoutClaim = res.RowsAffected
+
+		res = tx.Model(&db.SubTask{}).
+			Where("root_task_id = ? AND status IN ?", id, []string{"Running", "CancelPending"}).
+			Update("status", "CancelPending")
+		if res.Error != nil {
+			return res.Error
+		}
+		cancelPendingRunning = res.RowsAffected
+		return nil
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	db.RefreshRootTaskStatus(id)
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":                   "cancellation dispatched",
+		"cancelled_without_claim":  cancelledWithoutClaim,
+		"cancel_pending_on_agents": cancelPendingRunning,
+	})
 }
 
 // 提供给 Agent 轮询其需强制退出的指令以及规则重载指令
@@ -705,12 +895,6 @@ func getAgentCommands(c *gin.Context) {
 	var cancels []string
 	for _, st := range subTasks {
 		cancels = append(cancels, st.ID)
-		// 一旦下发，直接标记为 Cancelled 避免重复下发
-		db.DB.Model(&st).Update("status", "Cancelled")
-		// Ack the task if it's running so it doesn't stay in queue forever
-		if taskQueue != nil && st.StreamMsgID != "" {
-			_ = taskQueue.AckTask(context.Background(), st.StreamMsgID)
-		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -723,7 +907,20 @@ func getVulns(c *gin.Context) {
 	var vulns []db.Vulnerability
 	query := db.DB.Order("created_at desc")
 	if taskID := c.Query("task_id"); taskID != "" {
-		query = query.Where("task_id = ?", taskID)
+		// 支持 root_task_id 关联查询：如果传入的是 RootTask ID，查询其所有子任务的结果
+		var rootTask db.RootTask
+		if db.DB.Where("id = ?", taskID).First(&rootTask).Error == nil {
+			// 是 RootTask，关联全部子任务
+			var subTaskIDs []string
+			db.DB.Model(&db.SubTask{}).Where("root_task_id = ?", taskID).Pluck("id", &subTaskIDs)
+			if len(subTaskIDs) > 0 {
+				query = query.Where("task_id IN ?", subTaskIDs)
+			} else {
+				query = query.Where("task_id = ?", taskID)
+			}
+		} else {
+			query = query.Where("task_id = ?", taskID)
+		}
 	}
 	query.Limit(500).Find(&vulns)
 	c.JSON(http.StatusOK, vulns)
@@ -733,7 +930,18 @@ func getAssets(c *gin.Context) {
 	var assets []db.Asset
 	query := db.DB.Order("created_at desc")
 	if taskID := c.Query("task_id"); taskID != "" {
-		query = query.Where("task_id = ?", taskID)
+		var rootTask db.RootTask
+		if db.DB.Where("id = ?", taskID).First(&rootTask).Error == nil {
+			var subTaskIDs []string
+			db.DB.Model(&db.SubTask{}).Where("root_task_id = ?", taskID).Pluck("id", &subTaskIDs)
+			if len(subTaskIDs) > 0 {
+				query = query.Where("task_id IN ?", subTaskIDs)
+			} else {
+				query = query.Where("task_id = ?", taskID)
+			}
+		} else {
+			query = query.Where("task_id = ?", taskID)
+		}
 	}
 	query.Limit(500).Find(&assets)
 	c.JSON(http.StatusOK, assets)
@@ -743,7 +951,18 @@ func getFingerprints(c *gin.Context) {
 	var fps []db.FingerprintHit
 	query := db.DB.Order("created_at desc")
 	if taskID := c.Query("task_id"); taskID != "" {
-		query = query.Where("task_id = ?", taskID)
+		var rootTask db.RootTask
+		if db.DB.Where("id = ?", taskID).First(&rootTask).Error == nil {
+			var subTaskIDs []string
+			db.DB.Model(&db.SubTask{}).Where("root_task_id = ?", taskID).Pluck("id", &subTaskIDs)
+			if len(subTaskIDs) > 0 {
+				query = query.Where("task_id IN ?", subTaskIDs)
+			} else {
+				query = query.Where("task_id = ?", taskID)
+			}
+		} else {
+			query = query.Where("task_id = ?", taskID)
+		}
 	}
 	query.Limit(500).Find(&fps)
 	c.JSON(http.StatusOK, fps)
@@ -772,9 +991,17 @@ func getNodes(c *gin.Context) {
 				for _, sub := range subTasks {
 					var targets []string
 					_ = json.Unmarshal([]byte(sub.ChunkTargets), &targets)
+					// 生成目标预览（前5个）
+					previewLimit := 5
+					preview := targets
+					if len(preview) > previewLimit {
+						preview = preview[:previewLimit]
+					}
 					nr.RunningTaskDetails = append(nr.RunningTaskDetails, map[string]interface{}{
-						"task_id": sub.ID,
-						"targets": targets,
+						"task_id":        sub.ID,
+						"targets":        targets,
+						"target_count":   len(targets),
+						"target_preview": preview,
 					})
 				}
 			}
@@ -1273,56 +1500,170 @@ func StartTaskTimeoutDaemon(ctx context.Context, q *scheduler.TaskQueue) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			recoverDispatchingTasks(q)
 			handleTimeoutTasks(q)
 		}
 	}
 }
 
-func handleTimeoutTasks(q *scheduler.TaskQueue) {
-	// 查找 Running 状态且已超时的 SubTask
+func recoverDispatchingTasks(q *scheduler.TaskQueue) {
+	if q == nil {
+		return
+	}
+
 	var subs []db.SubTask
-	db.DB.Where("status = ? AND timeout_sec > 0", "Running").Find(&subs)
+	db.DB.Where("status = ?", subTaskStatusDispatching).
+		Order("updated_at asc").
+		Limit(200).
+		Find(&subs)
+	if len(subs) == 0 {
+		return
+	}
+
+	pushedByPriority, dispatchPending := dispatchSubTasks(context.Background(), q, subs)
+	pushedCount := totalDispatchedTasks(pushedByPriority)
+	if pushedCount > 0 {
+		broadcastDispatchedTasks(pushedByPriority)
+	}
+	if pushedCount > 0 || dispatchPending > 0 {
+		log.Printf("[DispatchRecover] scanned=%d dispatched=%d pending=%d", len(subs), pushedCount, dispatchPending)
+	}
+}
+
+func handleTimeoutTasks(q *scheduler.TaskQueue) {
+	// 查找超时运行任务 + 长时间未收敛的取消任务
+	var subs []db.SubTask
+	db.DB.Where("(status = ? AND timeout_sec > 0) OR status = ?", "Running", "CancelPending").Find(&subs)
 
 	now := time.Now()
 	for _, sub := range subs {
-		deadline := sub.UpdatedAt.Add(time.Duration(sub.TimeoutSec) * time.Second)
-		if now.After(deadline) {
-			log.Printf("[TimeoutDaemon] SubTask %s timed out (timeout=%ds)", sub.ID, sub.TimeoutSec)
-
-			if sub.RetryCount < sub.MaxRetry {
-				// 可重试：递增计数，重置状态，重入队
-				db.DB.Model(&sub).Updates(map[string]interface{}{
-					"status":      "Pending",
-					"retry_count": sub.RetryCount + 1,
-					"agent_id":    "",
-				})
-				if q != nil {
-					pbSub, _ := db.SubTaskToProto(&sub)
-					if pbSub != nil {
-						_ = q.PushTaskToFront(context.Background(), pbSub)
-						log.Printf("[TimeoutDaemon] SubTask %s re-queued (retry %d/%d)", sub.ID, sub.RetryCount+1, sub.MaxRetry)
-					}
-				}
-			} else {
-				// 超过重试次数：标记为 Timeout
-				db.DB.Model(&sub).Update("status", "Timeout")
-				log.Printf("[TimeoutDaemon] SubTask %s marked as Timeout (max retries exceeded)", sub.ID)
-
-				// 检查 RootTask 是否所有子任务都结束了
-				if sub.RootTaskID != "" {
-					var running int64
-					db.DB.Model(&db.SubTask{}).Where("root_task_id = ? AND status IN ?",
-						sub.RootTaskID, []string{"Pending", "Running"}).Count(&running)
-					if running == 0 {
-						db.DB.Model(&db.RootTask{}).Where("id = ?", sub.RootTaskID).
-							Update("status", "Timeout")
-					}
-				}
+		if db.NormalizeSubTaskStatus(sub.Status) == "CANCELPENDING" {
+			cancelDeadline := sub.UpdatedAt.Add(cancelPendingSettleGrace)
+			if now.Before(cancelDeadline) {
+				continue
 			}
-			// 递减关联节点 running_tasks
+
+			if q != nil && sub.StreamMsgID != "" {
+				_ = q.AckTask(context.Background(), sub.StreamMsgID)
+			}
+
+			updateRes := db.DB.Model(&db.SubTask{}).
+				Where("id = ? AND status = ?", sub.ID, "CancelPending").
+				Updates(map[string]interface{}{
+					"status":        "Cancelled",
+					"agent_id":      "",
+					"stream_msg_id": "",
+				})
+			if updateRes.Error != nil {
+				log.Printf("[TimeoutDaemon] Failed to settle CancelPending subtask %s: %v", sub.ID, updateRes.Error)
+				continue
+			}
+			if updateRes.RowsAffected == 0 {
+				continue
+			}
+
+			log.Printf("[TimeoutDaemon] SubTask %s force-settled to Cancelled after %s grace", sub.ID, cancelPendingSettleGrace)
 			if sub.AgentID != "" {
 				db.DB.Exec("UPDATE nodes SET running_tasks = GREATEST(running_tasks - 1, 0) WHERE agent_id = ?", sub.AgentID)
 			}
+			if sub.RootTaskID != "" {
+				db.RefreshRootTaskStatus(sub.RootTaskID)
+			}
+			continue
+		}
+
+		deadline := sub.UpdatedAt.Add(time.Duration(sub.TimeoutSec) * time.Second)
+		if now.Before(deadline) {
+			continue
+		}
+
+		log.Printf("[TimeoutDaemon] SubTask %s timed out (timeout=%ds)", sub.ID, sub.TimeoutSec)
+		if sub.RetryCount < sub.MaxRetry {
+			recoveredByNack := false
+			if q != nil && sub.StreamMsgID != "" {
+				if err := q.NackTask(context.Background(), sub.StreamMsgID); err != nil {
+					log.Printf("[TimeoutDaemon] Nack failed for subtask %s: %v", sub.ID, err)
+				} else {
+					recoveredByNack = true
+				}
+			}
+
+			nextStatus := subTaskStatusDispatching
+			if recoveredByNack {
+				nextStatus = "Pending"
+			}
+
+			updateRes := db.DB.Model(&sub).Where("status = ?", "Running").Updates(map[string]interface{}{
+				"status":        nextStatus,
+				"retry_count":   sub.RetryCount + 1,
+				"agent_id":      "",
+				"stream_msg_id": "",
+			})
+			if updateRes.Error != nil {
+				log.Printf("[TimeoutDaemon] Failed to recover timed-out subtask %s: %v", sub.ID, updateRes.Error)
+				continue
+			}
+			if updateRes.RowsAffected == 0 {
+				continue
+			}
+
+			// 对无法通过 Nack 回收的任务立即尝试补投，失败则交由 dispatch 守护继续处理。
+			if !recoveredByNack && q != nil {
+				_, dispatchPending := dispatchSubTasks(context.Background(), q, []db.SubTask{sub})
+				if dispatchPending == 0 {
+					broadcastDispatchedTasks(map[int]int{sub.Priority: 1})
+				}
+			}
+
+			log.Printf("[TimeoutDaemon] SubTask %s recovered (retry %d/%d)", sub.ID, sub.RetryCount+1, sub.MaxRetry)
+		} else {
+			// 超过重试次数：先尝试拆批（多目标批次的最后机会）
+			if q != nil && sub.StreamMsgID != "" {
+				_ = q.AckTask(context.Background(), sub.StreamMsgID)
+			}
+
+			// 尝试二分拆分重试（绕过 retry_count 上限检查，直接看目标数）
+			var targets []string
+			_ = json.Unmarshal([]byte(sub.ChunkTargets), &targets)
+			if len(targets) > 1 {
+				// 重置重试次数以允许拆分（拆分后的子批次用新的预算）
+				sub.RetryCount = 0
+				splitSubs, didSplit := db.SplitFailedSubTask(&sub)
+				if didSplit && q != nil {
+					_, dispatchPending := dispatchSubTasks(context.Background(), q, splitSubs)
+					if dispatchPending == 0 {
+						broadcastDispatchedTasks(map[int]int{sub.Priority: 1})
+					}
+					log.Printf("[TimeoutDaemon] SubTask %s split into %d sub-batches (last-resort)", sub.ID, len(splitSubs))
+					if sub.AgentID != "" {
+						db.DB.Exec("UPDATE nodes SET running_tasks = GREATEST(running_tasks - 1, 0) WHERE agent_id = ?", sub.AgentID)
+					}
+					continue
+				}
+			}
+
+			updateRes := db.DB.Model(&sub).Where("status = ?", "Running").Updates(map[string]interface{}{
+				"status":        "Timeout",
+				"agent_id":      "",
+				"stream_msg_id": "",
+			})
+			if updateRes.Error != nil {
+				log.Printf("[TimeoutDaemon] Failed to mark subtask %s as Timeout: %v", sub.ID, updateRes.Error)
+				continue
+			}
+			if updateRes.RowsAffected == 0 {
+				continue
+			}
+
+			log.Printf("[TimeoutDaemon] SubTask %s marked as Timeout (max retries exceeded)", sub.ID)
+			if sub.RootTaskID != "" {
+				db.RefreshRootTaskStatus(sub.RootTaskID)
+			}
+		}
+
+		// 递减关联节点 running_tasks
+		if sub.AgentID != "" {
+			db.DB.Exec("UPDATE nodes SET running_tasks = GREATEST(running_tasks - 1, 0) WHERE agent_id = ?", sub.AgentID)
 		}
 	}
 }
@@ -1347,7 +1688,6 @@ func BumpRuleVersion() string {
 	db.DB.Save(&cfg)
 	return version
 }
-
 
 // ==================== 数据增强 API ====================
 
@@ -1470,7 +1810,8 @@ func appendTargets(c *gin.Context) {
 	}
 
 	// 解析新目标
-	newTargets, targetSummary, err := parseAndValidateTargetsForMode(req.Targets, detectTargetModeFromStoredConfig(rootTask.Config))
+	targetMode := detectTargetModeFromStoredConfig(rootTask.Config)
+	newTargets, targetSummary, err := parseAndValidateTargetsForMode(req.Targets, targetMode)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1479,54 +1820,49 @@ func appendTargets(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "No targets to append"})
 		return
 	}
+	if taskQueue == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "task queue not initialized"})
+		return
+	}
 
 	tenantID := c.GetString("tenant")
 
-	// 获取当前已有子任务数量作为新子任务的起始编号
+	// 获取当前已有子任务数量作为新批次的起始编号
 	var existingCount int64
 	db.DB.Model(&db.SubTask{}).Where("root_task_id = ?", rootTaskID).Count(&existingCount)
 	baseIndex := int(existingCount)
 
-	// 原子拆分成 SubTasks（每个目标一个子任务）
-	var newSubTasks []db.SubTask
+	// 聚合切批生成 SubTasks
+	batches := groupAndBatchTargets(newTargets, targetMode)
 	configJSON := rootTask.Config
-	targetMode := detectTargetModeFromStoredConfig(configJSON)
 
-	for idx, target := range newTargets {
-		typ := "unknown"
-		selectorJSON := "{}"
-		if targetMode == taskTargetModeDirect {
-			typ = detectDirectTargetType(target)
-			if typ == "" {
-				typ = "unknown"
-			}
-			switch typ {
-			case "url":
-				selectorJSON = `{"target_type": "url"}`
-			case "ip", "cidr", "ip_range", "ip_port":
-				selectorJSON = `{"target_type": "ip"}`
-			case "domain", "domain_port":
-				selectorJSON = `{"target_type": "domain"}`
-			}
-		} else {
-			typ = string(targetMode)
-			selectorJSON = `{"target_type": "osint"}`
-		}
+	var newSubTasks []db.SubTask
+	profile := batchProfile{
+		TotalTargets:  len(newTargets),
+		TotalBatches:  len(batches),
+		BatchesByType: make(map[string]int),
+		BatchSize:     make(map[string]int),
+	}
 
-		chunkJSON, _ := json.Marshal([]string{target})
+	for idx, batch := range batches {
+		chunkJSON, _ := json.Marshal(batch.Targets)
 		newSubTasks = append(newSubTasks, db.SubTask{
-			ID:            fmt.Sprintf("%s-sub-%d-%s", rootTaskID, baseIndex+idx, typ),
+			ID:            fmt.Sprintf("%s-batch-%d-%s", rootTaskID, baseIndex+idx, batch.TargetType),
 			TenantID:      tenantID,
 			ProjectID:     rootTask.ProjectID,
 			RootTaskID:    rootTaskID,
 			ChunkTargets:  string(chunkJSON),
-			Status:        "Pending",
+			Status:        subTaskStatusDispatching,
 			Config:        configJSON,
 			Priority:      rootTask.Priority,
 			TimeoutSec:    rootTask.TimeoutSec,
 			MaxRetry:      3,
-			AgentSelector: selectorJSON,
+			AgentSelector: batch.SelectorJSON,
 		})
+		profile.BatchesByType[batch.TargetType]++
+		if _, ok := profile.BatchSize[batch.TargetType]; !ok {
+			profile.BatchSize[batch.TargetType] = batchSizeForTargetType(batch.TargetType)
+		}
 	}
 
 	// 事务写入新 SubTasks
@@ -1534,10 +1870,11 @@ func appendTargets(c *gin.Context) {
 		if err := tx.CreateInBatches(newSubTasks, 100).Error; err != nil {
 			return err
 		}
-		// 更新 RootTask 的 TotalChunks 和状态
+		// 更新 RootTask 的 TotalChunks/TotalTargets 和状态
 		return tx.Model(&rootTask).Updates(map[string]interface{}{
-			"total_chunks": gorm.Expr("total_chunks + ?", len(newSubTasks)),
-			"status":       "Running", // 如果之前是 FINISHED/PartialDone，重新激活
+			"total_chunks":  gorm.Expr("total_chunks + ?", len(newSubTasks)),
+			"total_targets": gorm.Expr("total_targets + ?", len(newTargets)),
+			"status":        "Running", // 如果之前是 FINISHED/PartialDone，重新激活
 		}).Error
 	})
 
@@ -1546,32 +1883,29 @@ func appendTargets(c *gin.Context) {
 		return
 	}
 
-	// 推入调度队列
-	pushedCount := 0
-	if taskQueue != nil {
-		for _, st := range newSubTasks {
-			pbSub, _ := db.SubTaskToProto(&st)
-			if err := taskQueue.PushTask(context.Background(), pbSub); err != nil {
-				log.Printf("Failed to push appended subtask %s: %v", st.ID, err)
-			} else {
-				pushedCount++
-			}
-		}
+	// 推入调度队列（失败保留 Dispatching，守护协程继续补投）
+	pushedByPriority, dispatchPending := dispatchSubTasks(context.Background(), taskQueue, newSubTasks)
+	pushedCount := totalDispatchedTasks(pushedByPriority)
+	broadcastDispatchedTasks(pushedByPriority)
+	if dispatchPending > 0 {
+		log.Printf("[AppendTargets] RootTask %s has %d batches pending dispatch recovery", rootTaskID, dispatchPending)
 	}
 
-	// ★ 广播通知所有在线 Agent
-	if notifyHub != nil && pushedCount > 0 {
-		notifyHub.BroadcastNewTask(int32(pushedCount), int32(rootTask.Priority))
-	}
-
-	log.Printf("[AppendTargets] Added %d new subtasks to RootTask %s (%d targets)", len(newSubTasks), rootTaskID, len(newTargets))
+	log.Printf("[AppendTargets] RootTask %s: appended %d targets → %d batches", rootTaskID, len(newTargets), len(newSubTasks))
 
 	c.JSON(http.StatusOK, gin.H{
-		"status":         "appended",
-		"new_subtasks":   len(newSubTasks),
-		"new_targets":    len(newTargets),
-		"total_chunks":   rootTask.TotalChunks + len(newSubTasks),
-		"target_summary": targetSummary,
+		"status":           "appended",
+		"new_subtasks":     len(newSubTasks),
+		"new_targets":      len(newTargets),
+		"total_chunks":     rootTask.TotalChunks + len(newSubTasks),
+		"target_summary":   targetSummary,
+		"dispatched":       pushedCount,
+		"dispatch_pending": dispatchPending,
+		"batch_profile":    profile,
+		"batch_summary": gin.H{
+			"total_targets": len(newTargets),
+			"total_batches": len(newSubTasks),
+		},
 	})
 }
 
@@ -1584,9 +1918,49 @@ func getQueueDepth(c *gin.Context) {
 	}
 
 	ctx := context.Background()
+	depth := taskQueue.QueueDepth(ctx)
+	pending := taskQueue.PendingCount(ctx)
+
+	// 计算批次维度总量
+	readyBatches := int64(0)
+	pendingBatches := int64(0)
+	for _, v := range depth {
+		readyBatches += v
+	}
+	for _, v := range pending {
+		pendingBatches += v
+	}
+
+	// 从 DB 统计目标维度（按 SubTask 状态聚合 ChunkTargets 中的目标数量）
+	var readyTargets, pendingTargets int64
+	type targetCountResult struct {
+		Status string
+		Cnt    int64
+	}
+	var results []targetCountResult
+	db.DB.Raw(`
+		SELECT status, SUM(jsonb_array_length(chunk_targets::jsonb)) as cnt
+		FROM sub_tasks
+		WHERE status IN ('Pending', 'Dispatching', 'Running', 'Recovered')
+		GROUP BY status
+	`).Scan(&results)
+	for _, r := range results {
+		switch db.NormalizeSubTaskStatus(r.Status) {
+		case "PENDING", "DISPATCHING", "RECOVERED":
+			readyTargets += r.Cnt
+		case "RUNNING":
+			pendingTargets += r.Cnt
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"depth":   taskQueue.QueueDepth(ctx),
-		"pending": taskQueue.PendingCount(ctx),
-		"mode":    taskQueue.Mode(),
+		"depth":           depth,
+		"pending":         pending,
+		"mode":            taskQueue.Mode(),
+		"ready_batches":   readyBatches,
+		"pending_batches": pendingBatches,
+		"ready_targets":   readyTargets,
+		"pending_targets": pendingTargets,
 	})
 }
+
