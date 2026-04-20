@@ -125,6 +125,8 @@ func CanonicalArsenalType(raw string) string {
 		return "dir"
 	case "poc":
 		return "poc"
+	case "apiconfig":
+		return "apiconfig"
 	default:
 		return strings.ToLower(strings.TrimSpace(raw))
 	}
@@ -140,6 +142,8 @@ func ArsenalTypeAliases(raw string) []string {
 		return []string{"workflow"}
 	case "poc":
 		return []string{"poc"}
+	case "apiconfig":
+		return []string{"apiconfig"}
 	default:
 		normalized := strings.ToLower(strings.TrimSpace(raw))
 		if normalized == "" {

@@ -489,3 +489,111 @@ func deleteDirDict(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "deleted", "product": product})
 }
 
+// ---------------------- API Keys Config ----------------------
+
+// ApiKeyEntry represents one API provider's key configuration
+type ApiKeyEntry struct {
+	Provider string   `json:"provider"`
+	Keys     []string `json:"keys"`
+}
+
+// getApiKeysConfig returns the current api-config from the Arsenal
+func getApiKeysConfig(c *gin.Context) {
+	arsenal, err := db.FindArsenalByTypeAndFile("apiconfig", "api-config.yaml")
+	if err != nil {
+		// 如果不存在，返回空默认配置
+		c.JSON(http.StatusOK, defaultApiKeyEntries())
+		return
+	}
+
+	var data map[string][]string
+	if err := yaml.Unmarshal([]byte(arsenal.Content), &data); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse api-config"})
+		return
+	}
+
+	var results []ApiKeyEntry
+	for provider, keys := range data {
+		results = append(results, ApiKeyEntry{Provider: provider, Keys: keys})
+	}
+	c.JSON(http.StatusOK, results)
+}
+
+// saveApiKeysConfig updates the api-config in the Arsenal and triggers Agent reload
+func saveApiKeysConfig(c *gin.Context) {
+	var entries []ApiKeyEntry
+	if err := c.ShouldBindJSON(&entries); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 转换为 YAML 格式的 map
+	data := make(map[string][]string)
+	for _, entry := range entries {
+		provider := strings.TrimSpace(entry.Provider)
+		if provider == "" {
+			continue
+		}
+		data[provider] = entry.Keys
+	}
+
+	out, err := yaml.Marshal(data)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to serialize config"})
+		return
+	}
+
+	contentStr := string(out)
+	hash := fmt.Sprintf("%x", md5.Sum(out))
+
+	// 查找或创建 Arsenal 记录
+	arsenal, findErr := db.FindArsenalByTypeAndFile("apiconfig", "api-config.yaml")
+	if findErr != nil {
+		// 不存在则创建
+		arsenal = &db.Arsenal{
+			ID:       db.BuildArsenalID("apiconfig", "api-config.yaml"),
+			TenantID: "default",
+			Type:     "apiconfig",
+			FileName: "api-config.yaml",
+			Content:  contentStr,
+			Hash:     hash,
+			State:    "Approved",
+			Version:  1,
+		}
+		if err := db.DB.Create(arsenal).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create config"})
+			return
+		}
+	} else {
+		arsenal.Content = contentStr
+		arsenal.Hash = hash
+		arsenal.State = "Approved" // API 密钥自动审核通过
+		arsenal.Version++
+		if err := db.DB.Save(arsenal).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save config"})
+			return
+		}
+	}
+
+	// 触发全网 Agent 规则重载
+	GlobalArsenalReloadCounter++
+
+	c.JSON(http.StatusOK, gin.H{"status": "saved", "hash": hash})
+}
+
+// defaultApiKeyEntries returns the default empty provider list
+func defaultApiKeyEntries() []ApiKeyEntry {
+	providers := []string{
+		"bevigil", "binaryedge", "bufferover", "c99", "censys",
+		"certspotter", "chaos", "chinaz", "dnsdb", "dnsrepo",
+		"fofa", "fullhunt", "github", "hunter", "intelx",
+		"leakix", "passivetotal", "quake", "robtex", "securitytrails",
+		"shodan", "threatbook", "virustotal", "whoisxmlapi", "zoomeye",
+		"zoomeyeapi",
+	}
+	entries := make([]ApiKeyEntry, len(providers))
+	for i, p := range providers {
+		entries[i] = ApiKeyEntry{Provider: p, Keys: []string{}}
+	}
+	return entries
+}

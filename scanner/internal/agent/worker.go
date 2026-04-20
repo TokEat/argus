@@ -567,7 +567,7 @@ func (w *Worker) saveLocalManifest(hashes map[string]string) {
 func (w *Worker) syncRulesFull() {
 	log.Println("[Sync] Full sync from Arsenal API...")
 
-	ruleTypes := []string{"poc", "finger", "workflow", "dir"}
+	ruleTypes := []string{"poc", "finger", "workflow", "dir", "apiconfig"}
 	localHashes := make(map[string]string)
 
 	for _, rt := range ruleTypes {

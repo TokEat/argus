@@ -244,6 +244,10 @@ func InitRouter(port string) {
 		// 规则清单（增量同步用）
 		api.GET("/arsenals/manifest", getArsenalManifest)
 
+		// API 密钥集中管理
+		api.GET("/config/api-keys", getApiKeysConfig)
+		api.PUT("/config/api-keys", saveApiKeysConfig)
+
 		// 用户管理 CRUD
 		api.GET("/users", listUsers)
 		api.POST("/users", createUser)

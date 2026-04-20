@@ -195,6 +195,11 @@ declare namespace API {
     paths: string[];
   }
 
+  interface ApiKeyEntry {
+    provider: string;
+    keys: string[];
+  }
+
   // ======================== Agent Commands ========================
 
   /** Agent 轮询命令 (GET /api/v1/agents/:id/commands) */

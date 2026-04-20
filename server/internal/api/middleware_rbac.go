@@ -44,6 +44,8 @@ var permissionRules = map[string]string{
 	"DELETE:/mcp/keys/*":"admin",
 	"POST:/cloud/*":     "admin",
 	"DELETE:/cloud/*":   "admin",
+	"GET:/config/api-keys":  "admin",
+	"PUT:/config/api-keys":  "admin",
 }
 
 // RBACMiddleware 基于角色的访问控制中间件

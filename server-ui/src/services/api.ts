@@ -228,6 +228,18 @@ export async function deleteDirDict(product: string): Promise<API.MessageRespons
 }
 
 // ===========================
+// API Keys 集中配置
+// ===========================
+
+export async function getApiKeysConfig(): Promise<API.ApiKeyEntry[]> {
+    return request.get('/config/api-keys');
+}
+
+export async function saveApiKeysConfig(data: API.ApiKeyEntry[]): Promise<API.MessageResponse> {
+    return request.put('/config/api-keys', data);
+}
+
+// ===========================
 // WebSocket（自动重连）
 // ===========================
 

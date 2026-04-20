@@ -12,7 +12,7 @@ import {
     BuildOutlined,
     TeamOutlined,
     SafetyOutlined,
-    ApiOutlined,
+    KeyOutlined,
     DatabaseOutlined,
     ProfileOutlined,
     ProjectOutlined,
@@ -33,7 +33,8 @@ import WorkflowConfig from './pages/config/WorkflowConfig';
 import ClientBuild from './pages/ClientBuild';
 import UserManagement from './pages/UserManagement';
 import RoleManagement from './pages/RoleManagement';
-import McpConfig from './pages/McpConfig';
+
+import ApiKeysConfig from './pages/ApiKeysConfig';
 import Login from './pages/Login';
 
 // Route configuration with menu info
@@ -154,11 +155,12 @@ export const menuRoutes: RouteConfig[] = [
                 icon: <SafetyOutlined />,
                 element: <RoleManagement />,
             },
+
             {
-                path: '/mcp',
-                name: 'MCP 配置',
-                icon: <ApiOutlined />,
-                element: <McpConfig />,
+                path: '/api-keys',
+                name: 'API 密钥',
+                icon: <KeyOutlined />,
+                element: <ApiKeysConfig />,
             },
         ],
     },
