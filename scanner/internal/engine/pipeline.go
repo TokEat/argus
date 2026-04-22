@@ -22,6 +22,7 @@ import (
 	"dddd/scanner/structs"
 	"dddd/scanner/utils"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -67,20 +68,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	}
 	defer cleanup()
 
-	// ★ 关键修复：桥接 ddout.OutputSink → ctx.OutputHook
-	// 多个模块（Nuclei 回调、CDN 检测、子域名枚举等）内部直接调用 ddout.FormatOutput()，
-	// 绕过了 Pipeline 的 ctx.OutputHook。在 Agent 模式下，安装全局 OutputSink 桥接，
-	// 确保所有通过 ddout.FormatOutput 发出的消息也能路由到 gRPC 回传。
-	if ctx != nil && ctx.OutputHook != nil {
-		prevSink := ddout.SetOutputSink(func(msg structs.OutputMessage) {
-			ctx.OutputHook(toEngineOutputMessage(msg))
-		})
-		defer ddout.SetOutputSink(prevSink)
-	}
-
 	cfg := currentPipelineConfig(ctx)
 	enableLocalReports := ctx == nil || ctx.OutputHook == nil
-	
+
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
 	}
@@ -122,7 +112,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	// 子域名枚举
 	if cfg.Subdomain && len(domains) > 0 {
 		emitPhase(ctx, PhaseSubdomain, "start", fmt.Sprintf("%d domains", len(domains)))
-		subdomains := subdomain.Enumerate(domains, currentSubdomainConfig(ctx))
+		subdomains := subdomain.Enumerate(domains, currentSubdomainConfig(ctx, emit))
 		for _, each := range subdomains {
 			domains = append(domains, each)
 		}
@@ -138,7 +128,15 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	var tIPs []string
 	if len(domains) > 0 {
 		emitPhase(ctx, PhaseCDN, "start", fmt.Sprintf("%d domains", len(domains)))
-		cdnDomains, _, tIPs = cdn.CheckCDNs(domains, cfg.SubdomainBruteForceThreads)
+		cdnDomains, _, tIPs = cdn.CheckCDNs(
+			domains,
+			cfg.SubdomainBruteForceThreads,
+			ctx.IPDomainMap,
+			&ctx.IPDomainMapLock,
+			func(msg ddout.OutputMessage) {
+				emit(msg)
+			},
+		)
 		for _, each := range tIPs {
 			if cfg.AllowLocalAreaDomain && utils.IsLocalIP(each) {
 				continue
@@ -263,7 +261,6 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		return err
 	}
 
-
 	// 域名绑定资产探测
 	if !cfg.NoHostBind {
 		emitPhase(ctx, PhaseHostBind, "start", "")
@@ -289,9 +286,10 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		if enableLocalReports {
 			output.InitReportName()
 		}
+		addResult := buildNucleiResultHandler(ctx, enableLocalReports)
 		nuclei.Call(TargetAndPocsName,
 			cfg.HTTPProxy,
-			output.AddResultByResultEvent,
+			addResult,
 			cfg.PocNameForSearch,
 			cfg.NoInteractsh,
 			currentPipelineEmbedPocs(ctx), cfg.NucleiTemplate, strings.Split(cfg.ExcludeTags, ","),
@@ -330,7 +328,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 			cfg.WebTimeout)
 		gologger.AuditTimeLogger("主动指纹探测结束")
 		emitPhase(ctx, PhaseDirBrute, "end", "")
-		}
+	}
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
 	}
@@ -374,9 +372,10 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	TargetAndPocsName, count := mapper.GetPocs(resultMap, currentPipelineWorkflowDB(ctx), cfg.DisableGeneralPoc)
 	if count > 0 {
 		emitPhase(ctx, PhaseNuclei, "start", fmt.Sprintf("%d pocs", count))
+		addResult := buildNucleiResultHandler(ctx, enableLocalReports)
 		nucleiResults = nuclei.Call(TargetAndPocsName,
 			cfg.HTTPProxy,
-			output.AddResultByResultEvent,
+			addResult,
 			"", cfg.NoInteractsh, currentPipelineEmbedPocs(ctx),
 			cfg.NucleiTemplate, strings.Split(cfg.ExcludeTags, ","),
 			strings.Split(cfg.Severities, ","))
@@ -393,7 +392,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		cfg.GoPocThreads,
 		cfg.Password,
 		cfg.PasswordFile,
-	emit,
+		emit,
 	)...)
 
 	if cfg.GolangPoc {
@@ -403,7 +402,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 			cfg.Password,
 			cfg.PasswordFile,
 			nucleiResults,
-		emit,
+			emit,
 		)...)
 	}
 	emitPhase(ctx, PhaseGoPoc, "end", "")
@@ -488,7 +487,7 @@ func emitPhase(ctx *ScanContext, phase, status, message string) {
 	})
 }
 
-func currentSubdomainConfig(ctx *ScanContext) subdomain.Config {
+func currentSubdomainConfig(ctx *ScanContext, emit func(structs.OutputMessage)) subdomain.Config {
 	cfg := currentPipelineConfig(ctx)
 	return subdomain.Config{
 		NoSubdomainBruteForce:      cfg.NoSubdomainBruteForce,
@@ -496,6 +495,9 @@ func currentSubdomainConfig(ctx *ScanContext) subdomain.Config {
 		SubdomainBruteForceThreads: cfg.SubdomainBruteForceThreads,
 		SubdomainWordListFile:      cfg.SubdomainWordListFile,
 		APIConfigFilePath:          cfg.APIConfigFilePath,
+		EmitFunc: func(msg ddout.OutputMessage) {
+			emit(msg)
+		},
 	}
 }
 
@@ -511,6 +513,29 @@ func currentUncoverConfig(ctx *ScanContext) uncover.Config {
 		LowPerceptionMode:          cfg.LowPerceptionMode,
 		OnlyIPPort:                 cfg.OnlyIPPort,
 		AllowCDNAssets:             cfg.AllowCDNAssets,
+	}
+}
+
+func buildNucleiResultHandler(ctx *ScanContext, enableLocalReports bool) func(result nucleiOutput.ResultEvent) {
+	if enableLocalReports || ctx == nil || ctx.OutputHook == nil {
+		return output.AddResultByResultEvent
+	}
+
+	return func(result nucleiOutput.ResultEvent) {
+		payload, err := json.Marshal(result)
+		if err != nil {
+			return
+		}
+		show := fmt.Sprintf("[%s] [%s] %v",
+			result.TemplateID,
+			result.Info.SeverityHolder.Severity.String(),
+			result.Matched,
+		)
+		ctx.OutputHook(OutputMessage{
+			Type:   "Nuclei",
+			Nuclei: string(payload),
+			Show:   show,
+		})
 	}
 }
 

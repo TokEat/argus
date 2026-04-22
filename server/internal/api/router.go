@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -26,6 +27,7 @@ import (
 var taskQueue *scheduler.TaskQueue
 var notifyHub *grpcpkg.NotifyHub
 var agentPSK string
+var developmentMode bool
 
 const (
 	subTaskStatusDispatching = "Dispatching"
@@ -39,6 +41,10 @@ func SetTaskQueue(queue *scheduler.TaskQueue) {
 // SetAgentPSK 注入 Agent 预共享密钥，用于 Agent 内部 API 鉴权。
 func SetAgentPSK(psk string) {
 	agentPSK = strings.TrimSpace(psk)
+}
+
+func SetDevelopmentMode(enabled bool) {
+	developmentMode = enabled
 }
 
 func isAgentInternalEndpoint(c *gin.Context) bool {
@@ -80,6 +86,56 @@ func SetNotifyHub(hub *grpcpkg.NotifyHub) {
 	notifyHub = hub
 }
 
+func currentTenantID(c *gin.Context) string {
+	tenantID := strings.TrimSpace(c.GetString("tenant"))
+	if tenantID == "" {
+		return "default"
+	}
+	return tenantID
+}
+
+func currentRuleVersionValue() string {
+	if version := strings.TrimSpace(GetCurrentRuleVersion()); version != "" {
+		return version
+	}
+	return "unknown"
+}
+
+func shouldAgentReloadRules(agentRuleVersion, ruleVersion string) bool {
+	ruleVersion = strings.TrimSpace(ruleVersion)
+	if ruleVersion == "" || ruleVersion == "unknown" {
+		return false
+	}
+	return strings.TrimSpace(agentRuleVersion) != ruleVersion
+}
+
+func resolveScopedTaskIDs(tenantID, taskID string) []string {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil
+	}
+
+	var rootTask db.RootTask
+	if err := db.DB.Select("id").Where("id = ? AND tenant_id = ?", taskID, tenantID).First(&rootTask).Error; err == nil {
+		var subTaskIDs []string
+		db.DB.Model(&db.SubTask{}).
+			Where("root_task_id = ? AND tenant_id = ?", taskID, tenantID).
+			Pluck("id", &subTaskIDs)
+		if len(subTaskIDs) > 0 {
+			return subTaskIDs
+		}
+	}
+
+	return []string{taskID}
+}
+
+func scopedNodeQuery(tenantID string) *gorm.DB {
+	if tenantID == "default" {
+		return db.DB.Where("tenant_id = ? OR tenant_id = ''", tenantID)
+	}
+	return db.DB.Where("tenant_id = ?", tenantID)
+}
+
 // jwtSecret 从环境变量 ARGUS_JWT_SECRET 读取，未设置则使用默认值（仅限开发环境）
 var jwtSecret = func() []byte {
 	if secret := os.Getenv("ARGUS_JWT_SECRET"); secret != "" {
@@ -114,7 +170,7 @@ func TenantMiddleware() gin.HandlerFunc {
 		authHeader := c.GetHeader("Authorization")
 		// WebSocket 握手无法携带 Authorization Header，
 		// 前端通过 ?token=xxx query 参数传递 JWT，需要回退提取。
-		if (authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ")) {
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
 			if qToken := c.Query("token"); qToken != "" {
 				authHeader = "Bearer " + qToken
 			}
@@ -615,7 +671,7 @@ func createTask(c *gin.Context) {
 func getArsenals(c *gin.Context) {
 	var arsenals []db.Arsenal
 	typ := db.CanonicalArsenalType(c.Param("type"))
-	query := db.DB.Where("type IN ?", db.ArsenalTypeAliases(typ))
+	query := db.DB.Where("tenant_id = ? AND type IN ?", currentTenantID(c), db.ArsenalTypeAliases(typ))
 
 	// 如果没有 ?all=1 参数，默认只下发已审核武器给 Agent
 	if c.Query("all") != "1" {
@@ -634,6 +690,7 @@ func getArsenals(c *gin.Context) {
 func saveArsenal(c *gin.Context) {
 	typ := db.CanonicalArsenalType(c.Param("type"))
 	fn := c.Param("filename")
+	tenantID := currentTenantID(c)
 
 	var req struct {
 		Content string `json:"content"`
@@ -649,14 +706,16 @@ func saveArsenal(c *gin.Context) {
 	var existing db.Arsenal
 	var previousHash string
 	var version int = 1
-	if db.DB.Where("id = ?", db.BuildArsenalID(typ, fn)).First(&existing).Error == nil {
+	approvedChanged := false
+	if err := db.DB.Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).First(&existing).Error; err == nil {
 		previousHash = existing.Hash
 		version = existing.Version + 1
+		approvedChanged = strings.EqualFold(existing.State, "Approved")
 	}
 
 	arsenal := db.Arsenal{
-		ID:           db.BuildArsenalID(typ, fn),
-		TenantID:     c.GetString("tenant"),
+		ID:           db.BuildTenantArsenalID(tenantID, typ, fn),
+		TenantID:     tenantID,
 		Type:         typ,
 		FileName:     fn,
 		Content:      req.Content,
@@ -673,15 +732,18 @@ func saveArsenal(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "saved", "hash": hash, "state": "Draft", "version": version})
+	resp := gin.H{"status": "saved", "hash": hash, "state": "Draft", "version": version}
+	if approvedChanged {
+		resp["rule_version"] = BumpRuleVersion()
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 func approveArsenal(c *gin.Context) {
 	typ := db.CanonicalArsenalType(c.Param("type"))
 	fn := c.Param("filename")
-	tenantID := c.GetString("tenant")
-	id := db.BuildArsenalID(typ, fn)
-	if err := db.DB.Model(&db.Arsenal{}).Where("id = ? AND tenant_id = ?", id, tenantID).Update("state", "Approved").Error; err != nil {
+	tenantID := currentTenantID(c)
+	if err := db.DB.Model(&db.Arsenal{}).Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).Update("state", "Approved").Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -692,9 +754,6 @@ func approveArsenal(c *gin.Context) {
 
 	// 触发版本号递增
 	newVersion := BumpRuleVersion()
-
-	// 触发全网 Agent 重新拉取
-	GlobalArsenalReloadCounter++
 	log.Printf("[Arsenal Hub] Rules approved by Tenant %s. Rule version bumped to %s. Global Reload Triggered!", tenantID, newVersion)
 
 	c.JSON(http.StatusOK, gin.H{"status": "approved", "rule_version": newVersion})
@@ -703,7 +762,13 @@ func approveArsenal(c *gin.Context) {
 func deleteArsenal(c *gin.Context) {
 	typ := db.CanonicalArsenalType(c.Param("type"))
 	fn := c.Param("filename")
-	if err := db.DB.Delete(&db.Arsenal{}, "id = ?", db.BuildArsenalID(typ, fn)).Error; err != nil {
+	tenantID := currentTenantID(c)
+	var arsenal db.Arsenal
+	if err := db.DB.Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).First(&arsenal).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
+		return
+	}
+	if err := db.DB.Delete(&db.Arsenal{}, "tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -711,7 +776,11 @@ func deleteArsenal(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
+	resp := gin.H{"status": "deleted"}
+	if strings.EqualFold(arsenal.State, "Approved") {
+		resp["rule_version"] = BumpRuleVersion()
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // ---------------- 融合画像数据源 --------------------
@@ -913,38 +982,39 @@ func cancelTask(c *gin.Context) {
 // 提供给 Agent 轮询其需强制退出的指令以及规则重载指令
 func getAgentCommands(c *gin.Context) {
 	id := c.Param("id")
+	tenantID := currentTenantID(c)
 	var subTasks []db.SubTask
 	// 对于该节点正在运行但被强制退出的任务
-	db.DB.Where("agent_id = ? AND status = 'CancelPending'", id).Find(&subTasks)
+	db.DB.Where("agent_id = ? AND tenant_id = ? AND status = 'CancelPending'", id, tenantID).Find(&subTasks)
 
 	var cancels []string
 	for _, st := range subTasks {
 		cancels = append(cancels, st.ID)
 	}
 
+	ruleVersion := currentRuleVersionValue()
+	reloadRules := false
+	var node db.Node
+	if err := scopedNodeQuery(tenantID).Select("rule_version").Where("agent_id = ?", id).First(&node).Error; err == nil {
+		reloadRules = shouldAgentReloadRules(node.RuleVersion, ruleVersion)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"cancel_tasks": cancels,
-		"reload_rules": GlobalArsenalReloadCounter > 0,
+		"reload_rules": reloadRules,
+		"rule_version": ruleVersion,
 	})
 }
 
 func getVulns(c *gin.Context) {
 	var vulns []db.Vulnerability
-	query := db.DB.Order("created_at desc")
+	tenantID := currentTenantID(c)
+	query := db.DB.Where("tenant_id = ?", tenantID).Order("created_at desc")
 	if taskID := c.Query("task_id"); taskID != "" {
-		// 支持 root_task_id 关联查询：如果传入的是 RootTask ID，查询其所有子任务的结果
-		var rootTask db.RootTask
-		if db.DB.Where("id = ?", taskID).First(&rootTask).Error == nil {
-			// 是 RootTask，关联全部子任务
-			var subTaskIDs []string
-			db.DB.Model(&db.SubTask{}).Where("root_task_id = ?", taskID).Pluck("id", &subTaskIDs)
-			if len(subTaskIDs) > 0 {
-				query = query.Where("task_id IN ?", subTaskIDs)
-			} else {
-				query = query.Where("task_id = ?", taskID)
-			}
-		} else {
-			query = query.Where("task_id = ?", taskID)
+		if scopedTaskIDs := resolveScopedTaskIDs(tenantID, taskID); len(scopedTaskIDs) > 1 {
+			query = query.Where("task_id IN ?", scopedTaskIDs)
+		} else if len(scopedTaskIDs) == 1 {
+			query = query.Where("task_id = ?", scopedTaskIDs[0])
 		}
 	}
 	query.Limit(500).Find(&vulns)
@@ -953,19 +1023,13 @@ func getVulns(c *gin.Context) {
 
 func getAssets(c *gin.Context) {
 	var assets []db.Asset
-	query := db.DB.Order("created_at desc")
+	tenantID := currentTenantID(c)
+	query := db.DB.Where("tenant_id = ?", tenantID).Order("created_at desc")
 	if taskID := c.Query("task_id"); taskID != "" {
-		var rootTask db.RootTask
-		if db.DB.Where("id = ?", taskID).First(&rootTask).Error == nil {
-			var subTaskIDs []string
-			db.DB.Model(&db.SubTask{}).Where("root_task_id = ?", taskID).Pluck("id", &subTaskIDs)
-			if len(subTaskIDs) > 0 {
-				query = query.Where("task_id IN ?", subTaskIDs)
-			} else {
-				query = query.Where("task_id = ?", taskID)
-			}
-		} else {
-			query = query.Where("task_id = ?", taskID)
+		if scopedTaskIDs := resolveScopedTaskIDs(tenantID, taskID); len(scopedTaskIDs) > 1 {
+			query = query.Where("task_id IN ?", scopedTaskIDs)
+		} else if len(scopedTaskIDs) == 1 {
+			query = query.Where("task_id = ?", scopedTaskIDs[0])
 		}
 	}
 	query.Limit(500).Find(&assets)
@@ -974,19 +1038,13 @@ func getAssets(c *gin.Context) {
 
 func getFingerprints(c *gin.Context) {
 	var fps []db.FingerprintHit
-	query := db.DB.Order("created_at desc")
+	tenantID := currentTenantID(c)
+	query := db.DB.Where("tenant_id = ?", tenantID).Order("created_at desc")
 	if taskID := c.Query("task_id"); taskID != "" {
-		var rootTask db.RootTask
-		if db.DB.Where("id = ?", taskID).First(&rootTask).Error == nil {
-			var subTaskIDs []string
-			db.DB.Model(&db.SubTask{}).Where("root_task_id = ?", taskID).Pluck("id", &subTaskIDs)
-			if len(subTaskIDs) > 0 {
-				query = query.Where("task_id IN ?", subTaskIDs)
-			} else {
-				query = query.Where("task_id = ?", taskID)
-			}
-		} else {
-			query = query.Where("task_id = ?", taskID)
+		if scopedTaskIDs := resolveScopedTaskIDs(tenantID, taskID); len(scopedTaskIDs) > 1 {
+			query = query.Where("task_id IN ?", scopedTaskIDs)
+		} else if len(scopedTaskIDs) == 1 {
+			query = query.Where("task_id = ?", scopedTaskIDs[0])
 		}
 	}
 	query.Limit(500).Find(&fps)
@@ -999,8 +1057,9 @@ type NodeResponse struct {
 }
 
 func getNodes(c *gin.Context) {
+	tenantID := currentTenantID(c)
 	var nodes []db.Node
-	db.DB.Find(&nodes)
+	scopedNodeQuery(tenantID).Find(&nodes)
 
 	var resp []NodeResponse
 	for _, n := range nodes {
@@ -1012,7 +1071,7 @@ func getNodes(c *gin.Context) {
 			var ids []string
 			if err := json.Unmarshal([]byte(n.RunningTaskIDs), &ids); err == nil && len(ids) > 0 {
 				var subTasks []db.SubTask
-				db.DB.Where("id IN ?", ids).Find(&subTasks)
+				db.DB.Where("tenant_id = ? AND id IN ?", tenantID, ids).Find(&subTasks)
 				for _, sub := range subTasks {
 					var targets []string
 					_ = json.Unmarshal([]byte(sub.ChunkTargets), &targets)
@@ -1104,27 +1163,41 @@ func authLogin(c *gin.Context) {
 		return
 	}
 
+	req.TenantID = strings.TrimSpace(req.TenantID)
+	if req.TenantID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tenant_id is required"})
+		return
+	}
+
 	// 尝试从数据库校验用户
 	var user db.User
+	tenantClaim := req.TenantID
+	roleClaim := "admin"
+	userIDClaim := "dev:" + req.TenantID
 	if err := db.DB.Where("username = ?", req.TenantID).First(&user).Error; err == nil {
 		// 数据库有此用户，校验密码
 		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Wrong password"})
 			return
 		}
-	} else {
-		// 降级：兼容旧的固定密码模式
-		if req.Password != "8888" {
+		tenantClaim = user.TenantID
+		roleClaim = user.Role
+		userIDClaim = fmt.Sprintf("%d", user.ID)
+	} else if errors.Is(err, gorm.ErrRecordNotFound) {
+		if !developmentMode || req.Password != "8888" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Wrong password"})
 			return
 		}
+	} else {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query user"})
+		return
 	}
 
 	// 颁发 Token（包含角色信息）
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"tenant_id": req.TenantID,
-		"role":      user.Role,
-		"user_id":   fmt.Sprintf("%d", user.ID),
+		"tenant_id": tenantClaim,
+		"role":      roleClaim,
+		"user_id":   userIDClaim,
 		"exp":       time.Now().Add(time.Hour * 72).Unix(),
 	})
 	tokenString, err := token.SignedString(jwtSecret)
@@ -1140,8 +1213,9 @@ func authLogin(c *gin.Context) {
 
 func getArsenalManifest(c *gin.Context) {
 	var arsenals []db.Arsenal
+	tenantID := currentTenantID(c)
 	db.DB.Select("type, file_name, hash, state, updated_at").
-		Where("state = ?", "Approved").
+		Where("tenant_id = ? AND state = ?", tenantID, "Approved").
 		Find(&arsenals)
 
 	type ManifestItem struct {
@@ -1151,12 +1225,7 @@ func getArsenalManifest(c *gin.Context) {
 		UpdatedAt string `json:"updated_at"`
 	}
 
-	// 获取当前规则版本
-	var cfg db.SystemConfig
-	ruleVersion := "unknown"
-	if db.DB.Where("key = ?", "rule_version").First(&cfg).Error == nil {
-		ruleVersion = cfg.Value
-	}
+	ruleVersion := currentRuleVersionValue()
 
 	items := make([]ManifestItem, 0, len(arsenals))
 	for _, a := range arsenals {
@@ -1776,10 +1845,10 @@ func getAgentLogs(c *gin.Context) {
 func rollbackArsenal(c *gin.Context) {
 	typ := db.CanonicalArsenalType(c.Param("type"))
 	fn := c.Param("filename")
-	id := db.BuildArsenalID(typ, fn)
+	tenantID := currentTenantID(c)
 
 	var arsenal db.Arsenal
-	if err := db.DB.Where("id = ?", id).First(&arsenal).Error; err != nil {
+	if err := db.DB.Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).First(&arsenal).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
 		return
 	}
@@ -1806,7 +1875,6 @@ func rollbackArsenal(c *gin.Context) {
 
 	// 触发全网 Agent 重新拉取
 	newVersion := BumpRuleVersion()
-	GlobalArsenalReloadCounter++
 	log.Printf("[Arsenal Hub] Rule %s/%s rolled back. Rule version: %s", typ, fn, newVersion)
 
 	c.JSON(http.StatusOK, gin.H{"status": "rolled_back", "rule_version": newVersion})
@@ -1988,4 +2056,3 @@ func getQueueDepth(c *gin.Context) {
 		"pending_targets": pendingTargets,
 	})
 }
-

@@ -158,6 +158,7 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterReq) (*pb.Registe
 	}
 
 	db.DB.Save(&db.Node{
+		TenantID:     "default",
 		AgentID:      req.AgentId,
 		Status:       "Alive",
 		Version:      req.Version,

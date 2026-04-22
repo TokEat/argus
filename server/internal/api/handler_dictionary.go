@@ -23,9 +23,16 @@ type WorkflowItem struct {
 	Pocs    []string `json:"pocs"`
 }
 
+func syncRuleCatalogAndBumpVersion() (string, error) {
+	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+		return "", err
+	}
+	return BumpRuleVersion(), nil
+}
+
 // fetchAndParseWorkflow 获取并解析数据库中的 workflow.yaml 单体内容
-func fetchAndParseWorkflow() (map[string]WorkflowEntry, *db.Arsenal, error) {
-	arsenal, err := db.FindArsenalByTypeAndFile("workflow", "workflow.yaml")
+func fetchAndParseWorkflow(tenantID string) (map[string]WorkflowEntry, *db.Arsenal, error) {
+	arsenal, err := db.FindTenantArsenalByTypeAndFile(tenantID, "workflow", "workflow.yaml")
 	if err != nil {
 		return nil, nil, fmt.Errorf("workflow dictionary not found in arsenal")
 	}
@@ -53,20 +60,16 @@ func saveWorkflow(data map[string]WorkflowEntry, arsenal *db.Arsenal) error {
 
 	arsenal.Content = contentStr
 	arsenal.Hash = hash
+	arsenal.Version++
 	if err := db.DB.Save(arsenal).Error; err != nil {
 		return err
 	}
-	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
-		return err
-	}
-
-	// 通知全局客户端热重载
-	GlobalArsenalReloadCounter++
-	return nil
+	_, err = syncRuleCatalogAndBumpVersion()
+	return err
 }
 
 func getWorkflowDict(c *gin.Context) {
-	data, _, err := fetchAndParseWorkflow()
+	data, _, err := fetchAndParseWorkflow(currentTenantID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -96,7 +99,7 @@ func addWorkflowDict(c *gin.Context) {
 		return
 	}
 
-	data, arsenal, err := fetchAndParseWorkflow()
+	data, arsenal, err := fetchAndParseWorkflow(currentTenantID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -128,7 +131,7 @@ func updateWorkflowDict(c *gin.Context) {
 		return
 	}
 
-	data, arsenal, err := fetchAndParseWorkflow()
+	data, arsenal, err := fetchAndParseWorkflow(currentTenantID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -167,7 +170,7 @@ func updateWorkflowDict(c *gin.Context) {
 func deleteWorkflowDict(c *gin.Context) {
 	product := c.Param("product")
 
-	data, arsenal, err := fetchAndParseWorkflow()
+	data, arsenal, err := fetchAndParseWorkflow(currentTenantID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -196,8 +199,8 @@ type FingerprintItem struct {
 }
 
 // fetchAndParseFingerprint 获取并解析数据库中的 finger.yaml 单体内容
-func fetchAndParseFingerprint() (map[string][]string, *db.Arsenal, error) {
-	arsenal, err := db.FindArsenalByTypeAndFile("finger", "finger.yaml")
+func fetchAndParseFingerprint(tenantID string) (map[string][]string, *db.Arsenal, error) {
+	arsenal, err := db.FindTenantArsenalByTypeAndFile(tenantID, "finger", "finger.yaml")
 	if err != nil {
 		return nil, nil, fmt.Errorf("fingerprint dictionary not found in arsenal")
 	}
@@ -222,19 +225,17 @@ func saveFingerprint(data map[string][]string, arsenal *db.Arsenal) error {
 	contentStr := string(out)
 	arsenal.Content = contentStr
 	arsenal.Hash = fmt.Sprintf("%x", md5.Sum(out))
+	arsenal.Version++
 
 	if err := db.DB.Save(arsenal).Error; err != nil {
 		return err
 	}
-	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
-		return err
-	}
-	GlobalArsenalReloadCounter++
-	return nil
+	_, err = syncRuleCatalogAndBumpVersion()
+	return err
 }
 
 func getFingerprintDict(c *gin.Context) {
-	data, _, err := fetchAndParseFingerprint()
+	data, _, err := fetchAndParseFingerprint(currentTenantID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -262,7 +263,7 @@ func addFingerprintDict(c *gin.Context) {
 		return
 	}
 
-	data, arsenal, err := fetchAndParseFingerprint()
+	data, arsenal, err := fetchAndParseFingerprint(currentTenantID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -289,7 +290,7 @@ func updateFingerprintDict(c *gin.Context) {
 		return
 	}
 
-	data, arsenal, err := fetchAndParseFingerprint()
+	data, arsenal, err := fetchAndParseFingerprint(currentTenantID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -320,7 +321,7 @@ func updateFingerprintDict(c *gin.Context) {
 
 func deleteFingerprintDict(c *gin.Context) {
 	product := c.Param("product")
-	data, arsenal, err := fetchAndParseFingerprint()
+	data, arsenal, err := fetchAndParseFingerprint(currentTenantID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -346,8 +347,8 @@ type DirItem struct {
 	Paths   []string `json:"paths"`
 }
 
-func fetchAndParseDir() (map[string][]string, *db.Arsenal, error) {
-	arsenal, err := db.FindArsenalByTypeAndFile("dir", "dir.yaml")
+func fetchAndParseDir(tenantID string) (map[string][]string, *db.Arsenal, error) {
+	arsenal, err := db.FindTenantArsenalByTypeAndFile(tenantID, "dir", "dir.yaml")
 	if err != nil {
 		return nil, nil, fmt.Errorf("dir dictionary not found in arsenal")
 	}
@@ -372,19 +373,17 @@ func saveDir(data map[string][]string, arsenal *db.Arsenal) error {
 	contentStr := string(out)
 	arsenal.Content = contentStr
 	arsenal.Hash = fmt.Sprintf("%x", md5.Sum(out))
+	arsenal.Version++
 
 	if err := db.DB.Save(arsenal).Error; err != nil {
 		return err
 	}
-	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
-		return err
-	}
-	GlobalArsenalReloadCounter++
-	return nil
+	_, err = syncRuleCatalogAndBumpVersion()
+	return err
 }
 
 func getDirDict(c *gin.Context) {
-	data, _, err := fetchAndParseDir()
+	data, _, err := fetchAndParseDir(currentTenantID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -412,7 +411,7 @@ func addDirDict(c *gin.Context) {
 		return
 	}
 
-	data, arsenal, err := fetchAndParseDir()
+	data, arsenal, err := fetchAndParseDir(currentTenantID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -439,7 +438,7 @@ func updateDirDict(c *gin.Context) {
 		return
 	}
 
-	data, arsenal, err := fetchAndParseDir()
+	data, arsenal, err := fetchAndParseDir(currentTenantID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -470,7 +469,7 @@ func updateDirDict(c *gin.Context) {
 
 func deleteDirDict(c *gin.Context) {
 	product := c.Param("product")
-	data, arsenal, err := fetchAndParseDir()
+	data, arsenal, err := fetchAndParseDir(currentTenantID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -499,7 +498,7 @@ type ApiKeyEntry struct {
 
 // getApiKeysConfig returns the current api-config from the Arsenal
 func getApiKeysConfig(c *gin.Context) {
-	arsenal, err := db.FindArsenalByTypeAndFile("apiconfig", "api-config.yaml")
+	arsenal, err := db.FindTenantArsenalByTypeAndFile(currentTenantID(c), "apiconfig", "api-config.yaml")
 	if err != nil {
 		// 如果不存在，返回空默认配置
 		c.JSON(http.StatusOK, defaultApiKeyEntries())
@@ -521,6 +520,7 @@ func getApiKeysConfig(c *gin.Context) {
 
 // saveApiKeysConfig updates the api-config in the Arsenal and triggers Agent reload
 func saveApiKeysConfig(c *gin.Context) {
+	tenantID := currentTenantID(c)
 	var entries []ApiKeyEntry
 	if err := c.ShouldBindJSON(&entries); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -547,12 +547,12 @@ func saveApiKeysConfig(c *gin.Context) {
 	hash := fmt.Sprintf("%x", md5.Sum(out))
 
 	// 查找或创建 Arsenal 记录
-	arsenal, findErr := db.FindArsenalByTypeAndFile("apiconfig", "api-config.yaml")
+	arsenal, findErr := db.FindTenantArsenalByTypeAndFile(tenantID, "apiconfig", "api-config.yaml")
 	if findErr != nil {
 		// 不存在则创建
 		arsenal = &db.Arsenal{
-			ID:       db.BuildArsenalID("apiconfig", "api-config.yaml"),
-			TenantID: "default",
+			ID:       db.BuildTenantArsenalID(tenantID, "apiconfig", "api-config.yaml"),
+			TenantID: tenantID,
 			Type:     "apiconfig",
 			FileName: "api-config.yaml",
 			Content:  contentStr,
@@ -575,8 +575,10 @@ func saveApiKeysConfig(c *gin.Context) {
 		}
 	}
 
-	// 触发全网 Agent 规则重载
-	GlobalArsenalReloadCounter++
+	if _, err := syncRuleCatalogAndBumpVersion(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sync config"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "saved", "hash": hash})
 }

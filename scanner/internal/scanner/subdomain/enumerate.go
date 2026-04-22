@@ -22,6 +22,7 @@ type Config struct {
 	SubdomainBruteForceThreads int
 	SubdomainWordListFile      string
 	APIConfigFilePath          string
+	EmitFunc                   func(ddout.OutputMessage)
 }
 
 // Enumerate runs active and passive subdomain enumeration without relying on
@@ -39,14 +40,14 @@ func Enumerate(domains []string, cfg Config) []string {
 			results = append(results, calldnsx.CallDNSx(
 				domain,
 				cfg.SubdomainBruteForceThreads,
-				dnsCallback,
+				dnsCallback(cfg.EmitFunc),
 				dict,
 				cfg.SubdomainWordListFile,
 			)...)
 		}
 
 		if !cfg.NoSubFinder {
-			results = append(results, subFinder(domain, cfg.APIConfigFilePath)...)
+			results = append(results, subFinder(domain, cfg.APIConfigFilePath, cfg.EmitFunc)...)
 		}
 	}
 
@@ -54,14 +55,14 @@ func Enumerate(domains []string, cfg Config) []string {
 	return removeEmpty(results)
 }
 
-func subFinder(domain string, providerConfig string) []string {
+func subFinder(domain string, providerConfig string, emit func(ddout.OutputMessage)) []string {
 	runnerInstance, err := runner.NewRunner(&runner.Options{
 		Threads:            10,
 		Timeout:            15,
 		MaxEnumerationTime: 5,
 		Resolvers:          resolve.DefaultResolvers,
 		ResultCallback: func(s *resolve.HostEntry) {
-			ddout.FormatOutput(ddout.OutputMessage{
+			emitOutput(emit, ddout.OutputMessage{
 				Type:          "DNS-SubFinder",
 				Domain:        s.Host,
 				AdditionalMsg: s.Source,
@@ -91,11 +92,21 @@ func subFinder(domain string, providerConfig string) []string {
 	return removeEmpty(strings.Split(string(data), "\n"))
 }
 
-func dnsCallback(subdomain string) {
-	ddout.FormatOutput(ddout.OutputMessage{
-		Type:   "DNS-Brute",
-		Domain: subdomain,
-	})
+func dnsCallback(emit func(ddout.OutputMessage)) func(string) {
+	return func(subdomain string) {
+		emitOutput(emit, ddout.OutputMessage{
+			Type:   "DNS-Brute",
+			Domain: subdomain,
+		})
+	}
+}
+
+func emitOutput(emit func(ddout.OutputMessage), msg ddout.OutputMessage) {
+	if emit != nil {
+		emit(msg)
+		return
+	}
+	ddout.FormatOutput(msg)
 }
 
 //go:embed subdomains.txt

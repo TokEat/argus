@@ -39,7 +39,6 @@ type grpcTeeWriter struct {
 	original gologgerWriter.Writer
 	stream   pb.AgentService_StreamLogsClient
 	agentID  string
-	taskID   string
 	mu       sync.Mutex
 	closed   bool
 }
@@ -75,7 +74,7 @@ func (w *grpcTeeWriter) Write(data []byte, level levels.Level) {
 	_ = w.stream.Send(&pb.LogPayload{
 		AgentId:   w.agentID,
 		Level:     levelStr,
-		Message:   fmt.Sprintf("[Task:%s] %s", w.taskID, msg),
+		Message:   msg,
 		Timestamp: time.Now().UnixMilli(),
 	})
 }
@@ -129,6 +128,9 @@ type Worker struct {
 	sem chan struct{}
 	// freeSlots 当前空闲 worker 数（原子操作）
 	freeSlots atomic.Int32
+
+	logTee *grpcTeeWriter
+	stopCh chan struct{}
 }
 
 func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[string]string) *Worker {
@@ -145,6 +147,7 @@ func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[stri
 		runningTasks: make(map[string]context.CancelFunc),
 		maxWorkers:   maxWorkers,
 		tags:         tags,
+		stopCh:       make(chan struct{}),
 	}
 }
 
@@ -206,6 +209,13 @@ func (w *Worker) Start() error {
 	}
 	log.Printf("Agent %s successfully registered to %s", w.agentID, w.serverAddr)
 
+	w.logTee = w.installGlobalLogTeeWriter()
+	defer func() {
+		if w.logTee != nil {
+			w.logTee.Close()
+		}
+	}()
+
 	// 开机同步热更新规则库 (Arsenal)
 	w.syncRules()
 
@@ -228,6 +238,7 @@ func (w *Worker) Start() error {
 	go func() {
 		<-sigCh
 		log.Println("Received termination signal, waiting for running tasks to drain...")
+		close(w.stopCh)
 		close(quit)
 	}()
 
@@ -436,9 +447,10 @@ func (w *Worker) commandLoop() {
 		var result struct {
 			CancelTasks []string `json:"cancel_tasks"`
 			ReloadRules bool     `json:"reload_rules"`
+			RuleVersion string   `json:"rule_version"`
 		}
 		if json.Unmarshal(body, &result) == nil {
-			if result.ReloadRules {
+			if result.ReloadRules && result.RuleVersion != "" && result.RuleVersion != "unknown" && result.RuleVersion != w.ruleVersion {
 				log.Println("[Command] Received dynamic rule hot-reload signal from Control Plane!")
 				w.syncRules()
 			}
@@ -592,18 +604,14 @@ func truncHash(h string) string {
 func (w *Worker) executeTask(task *pb.Task) {
 	log.Printf("Received Task: %s with targets: %v", task.TaskId, task.Targets)
 
-	// 挂载 gologger TeeWriter，将扫描日志回传 Server
-	teeWriter := w.installLogTeeWriter(task.TaskId)
-	defer func() {
-		if teeWriter != nil {
-			gologger.DefaultLogger.SetWriter(teeWriter.original)
-			teeWriter.Close()
-		}
-	}()
-
 	cfg := engine.Config(structs.DefaultConfig())
 	if len(task.Config) > 0 {
-		_ = json.Unmarshal(task.Config, &cfg)
+		if err := json.Unmarshal(task.Config, &cfg); err != nil {
+			err = fmt.Errorf("decode task config: %w", err)
+			log.Printf("Failed to decode config for task %s: %v", task.TaskId, err)
+			w.reportTaskCompletion(task.TaskId, "FAILED", err.Error())
+			return
+		}
 	}
 	cfg.Targets = task.Targets
 	cfg.OutputFile = ""
@@ -737,12 +745,16 @@ func (w *Worker) effectiveWorkerCount() int {
 }
 
 func (w *Worker) reportTaskCompletion(taskID, status, errMessage string) {
-	_, _ = w.client.TaskComplete(context.Background(), &pb.TaskCompleteReq{
+	req := &pb.TaskCompleteReq{
 		AgentId:      w.agentID,
 		TaskId:       taskID,
 		Status:       status,
 		ErrorMessage: errMessage,
-	})
+	}
+	if err := w.sendTaskCompletionWithRetry(req, 5); err != nil {
+		log.Printf("[TaskComplete] Failed to persist completion for %s after retries: %v", taskID, err)
+		go w.retryTaskCompletionAsync(req)
+	}
 }
 
 func closeResultStream(stream grpc.ClientStreamingClient[pb.ScanResult, pb.Ack]) error {
@@ -760,28 +772,102 @@ func closeResultStream(stream grpc.ClientStreamingClient[pb.ScanResult, pb.Ack])
 	return nil
 }
 
-// installLogTeeWriter 将 gologger 的 Writer 替换为 TeeWriter，
-// 使扫描日志同时输出到本地终端和通过 gRPC StreamLogs 回传 Server。
-// 返回 TeeWriter 供 defer 恢复原始 Writer。
-func (w *Worker) installLogTeeWriter(taskID string) *grpcTeeWriter {
+func (w *Worker) sendTaskCompletionWithRetry(req *pb.TaskCompleteReq, attempts int) error {
+	if attempts <= 0 {
+		attempts = 1
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		lastErr = w.tryTaskComplete(req)
+		if lastErr == nil {
+			return nil
+		}
+		if attempt == attempts {
+			break
+		}
+		select {
+		case <-w.stopCh:
+			return lastErr
+		case <-time.After(taskCompleteBackoff(attempt)):
+		}
+	}
+	return lastErr
+}
+
+func (w *Worker) retryTaskCompletionAsync(req *pb.TaskCompleteReq) {
+	for attempt := 1; ; attempt++ {
+		select {
+		case <-w.stopCh:
+			return
+		default:
+		}
+
+		if err := w.tryTaskComplete(req); err == nil {
+			log.Printf("[TaskComplete] Eventually persisted completion for %s", req.TaskId)
+			return
+		}
+
+		select {
+		case <-w.stopCh:
+			return
+		case <-time.After(taskCompleteBackoff(attempt + 5)):
+		}
+	}
+}
+
+func (w *Worker) tryTaskComplete(req *pb.TaskCompleteReq) error {
+	if w.client == nil {
+		return errors.New("agent client is not initialized")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ack, err := w.client.TaskComplete(ctx, req)
+	if err != nil {
+		return err
+	}
+	if ack != nil && !ack.Success {
+		return fmt.Errorf("task completion rejected: %s", ack.Message)
+	}
+	return nil
+}
+
+func taskCompleteBackoff(attempt int) time.Duration {
+	switch {
+	case attempt <= 1:
+		return 500 * time.Millisecond
+	case attempt == 2:
+		return time.Second
+	case attempt == 3:
+		return 2 * time.Second
+	case attempt == 4:
+		return 5 * time.Second
+	default:
+		return 10 * time.Second
+	}
+}
+
+// installGlobalLogTeeWriter 将 gologger 的 Writer 替换为单个全局 TeeWriter，
+// 避免多任务并发时互相抢占 DefaultLogger 的 Writer。
+func (w *Worker) installGlobalLogTeeWriter() *grpcTeeWriter {
 	logStream, err := w.client.StreamLogs(context.Background())
 	if err != nil {
-		log.Printf("[LogTee] Failed to open StreamLogs for task %s: %v (logs will only appear locally)", taskID, err)
+		log.Printf("[LogTee] Failed to open StreamLogs: %v (logs will only appear locally)", err)
 		return nil
 	}
 
-	// 保存当前 Writer（CLI Writer）
 	originalWriter := gologgerWriter.NewCLI()
 
 	tee := &grpcTeeWriter{
 		original: originalWriter,
 		stream:   logStream,
 		agentID:  w.agentID,
-		taskID:   taskID,
 	}
 
 	gologger.DefaultLogger.SetWriter(tee)
-	log.Printf("[LogTee] Streaming scan logs for task %s to Server", taskID)
+	log.Printf("[LogTee] Streaming agent logs to Server")
 
 	return tee
 }

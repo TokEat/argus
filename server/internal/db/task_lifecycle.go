@@ -82,10 +82,10 @@ func RefreshRootTaskStatus(rootTaskID string) {
 	// 计算已完成目标数（从已完成批次的 ChunkTargets 聚合）
 	var completedTargets int64
 	DB.Raw(`
-		SELECT COALESCE(SUM(jsonb_array_length(chunk_targets::jsonb)), 0)
-		FROM sub_tasks
-		WHERE root_task_id = ? AND status = 'Done'
-	`, rootTaskID).Scan(&completedTargets)
+			SELECT COALESCE(SUM(jsonb_array_length(chunk_targets::jsonb)), 0)
+			FROM sub_tasks
+			WHERE root_task_id = ? AND UPPER(status) = 'DONE'
+		`, rootTaskID).Scan(&completedTargets)
 
 	DB.Model(&RootTask{}).Where("id = ?", rootTaskID).Updates(map[string]interface{}{
 		"status":            nextStatus,
@@ -135,11 +135,11 @@ func SplitFailedSubTask(sub *SubTask) ([]SubTask, bool) {
 
 	// 原 SubTask 改写为第一半目标，回到 Dispatching
 	if err := DB.Model(sub).Updates(map[string]interface{}{
-		"chunk_targets":  string(firstJSON),
-		"status":         "Dispatching",
-		"retry_count":    sub.RetryCount + 1,
-		"agent_id":       "",
-		"stream_msg_id":  "",
+		"chunk_targets": string(firstJSON),
+		"status":        "Dispatching",
+		"retry_count":   sub.RetryCount + 1,
+		"agent_id":      "",
+		"stream_msg_id": "",
 	}).Error; err != nil {
 		log.Printf("[SplitRetry] Failed to update first-half subtask %s: %v", sub.ID, err)
 		return nil, false
@@ -183,4 +183,3 @@ func SplitFailedSubTask(sub *SubTask) ([]SubTask, bool) {
 
 	return []SubTask{*sub, sibling}, true
 }
-

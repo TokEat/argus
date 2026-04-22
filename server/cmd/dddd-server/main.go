@@ -79,6 +79,7 @@ func main() {
 	queue := scheduler.NewTaskQueue(amqpURL)
 	api.SetTaskQueue(queue)
 	api.SetAgentPSK(agentPSK)
+	api.SetDevelopmentMode(devMode)
 	log.Printf("Task queue mode: %s", queue.Mode())
 
 	log.Printf("Initializing gRPC server on :%d...", grpcPort)

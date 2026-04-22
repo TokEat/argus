@@ -19,16 +19,16 @@ var DB *gorm.DB
 var WSBroadcastHook func(msg interface{})
 
 type Project struct {
-	ID            string         `gorm:"primaryKey"`
-	TenantID      string         `gorm:"default:'default';index"`
-	Name          string         `gorm:"index"`
-	Description   string         `gorm:"type:text"`
-	Tags          string         `gorm:"type:jsonb"`
-	SeedTargets   string         `gorm:"type:jsonb"`
-	Scope         string         `gorm:"type:jsonb"`
-	DefaultConfig string         `gorm:"type:jsonb"`
-	NodeAffinity  string         `gorm:"type:jsonb"`
-	Status        string         `gorm:"default:'active';index"`
+	ID            string `gorm:"primaryKey"`
+	TenantID      string `gorm:"default:'default';index"`
+	Name          string `gorm:"index"`
+	Description   string `gorm:"type:text"`
+	Tags          string `gorm:"type:jsonb"`
+	SeedTargets   string `gorm:"type:jsonb"`
+	Scope         string `gorm:"type:jsonb"`
+	DefaultConfig string `gorm:"type:jsonb"`
+	NodeAffinity  string `gorm:"type:jsonb"`
+	Status        string `gorm:"default:'active';index"`
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	DeletedAt     gorm.DeletedAt `gorm:"index"`
@@ -42,38 +42,38 @@ type ProjectMember struct {
 }
 
 type CronTask struct {
-	ID        string         `gorm:"primaryKey"`
-	ProjectID string         `gorm:"index"`
+	ID        string `gorm:"primaryKey"`
+	ProjectID string `gorm:"index"`
 	Name      string
-	CronExpr  string         `gorm:"index"`
-	Targets   string         `gorm:"type:jsonb"`
-	Config    string         `gorm:"type:jsonb"`
-	NextRunAt *time.Time     `gorm:"index"`
-	Status    string         `gorm:"default:'active';index"`
+	CronExpr  string     `gorm:"index"`
+	Targets   string     `gorm:"type:jsonb"`
+	Config    string     `gorm:"type:jsonb"`
+	NextRunAt *time.Time `gorm:"index"`
+	Status    string     `gorm:"default:'active';index"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt gorm.DeletedAt `gorm:"index"`
 }
 
 type RootTask struct {
-	ID              string `gorm:"primaryKey"`
-	TenantID        string `gorm:"default:'default';index"`
-	ProjectID       string `gorm:"index"`
-	CronTaskID      string `gorm:"index"`
-	UserID          string `gorm:"index"`
-	Name            string
-	OriginalTargets string `gorm:"type:text"`
-	Status          string `gorm:"index"`
-	TotalChunks     int              // 批次总数（聚合后的 SubTask 数量）
-	CompletedChunks int              // 已完成批次数
-	TotalTargets    int              // 原始目标总数（用于目标维度进度）
-	CompletedTargets int             // 已完成目标数
-	Config          string `gorm:"type:text"`
-	Priority        int
-	TimeoutSec      int
-	RuleVersion     string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID               string `gorm:"primaryKey"`
+	TenantID         string `gorm:"default:'default';index"`
+	ProjectID        string `gorm:"index"`
+	CronTaskID       string `gorm:"index"`
+	UserID           string `gorm:"index"`
+	Name             string
+	OriginalTargets  string `gorm:"type:text"`
+	Status           string `gorm:"index"`
+	TotalChunks      int    // 批次总数（聚合后的 SubTask 数量）
+	CompletedChunks  int    // 已完成批次数
+	TotalTargets     int    // 原始目标总数（用于目标维度进度）
+	CompletedTargets int    // 已完成目标数
+	Config           string `gorm:"type:text"`
+	Priority         int
+	TimeoutSec       int
+	RuleVersion      string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type SubTask struct {
@@ -96,12 +96,13 @@ type SubTask struct {
 }
 
 type Node struct {
-	AgentID      string `gorm:"primaryKey"`
-	IP           string
-	Status       string
-	Token        string
-	Tags         string
-	Version      string
+	TenantID       string `gorm:"default:'default';index"`
+	AgentID        string `gorm:"primaryKey"`
+	IP             string
+	Status         string
+	Token          string
+	Tags           string
+	Version        string
 	Capacity       int    `gorm:"default:1"`
 	RunningTasks   int    `gorm:"default:0"`
 	RunningTaskIDs string `gorm:"type:text"` // JSON array of task IDs
@@ -110,8 +111,8 @@ type Node struct {
 	Arch           string
 	CPUUsage       float32
 	MemUsage       float32
-	LastBeat     int64
-	CreatedAt    time.Time
+	LastBeat       int64
+	CreatedAt      time.Time
 }
 
 // User 用户模型 - 多租户用户管理
@@ -161,20 +162,20 @@ type Asset struct {
 	Service     string
 	CertSubject string     // TLS 证书主体
 	CertExpiry  *time.Time // TLS 证书过期时间
-	Tags        string `gorm:"type:jsonb"`
-	Status      string `gorm:"default:'alive';index"`
-	OwnerID     string `gorm:"index"`
-	CredID      string `gorm:"index"`
+	Tags        string     `gorm:"type:jsonb"`
+	Status      string     `gorm:"default:'alive';index"`
+	OwnerID     string     `gorm:"index"`
+	CredID      string     `gorm:"index"`
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
 
 type Credential struct {
-	ID        string         `gorm:"primaryKey"`
-	ProjectID string         `gorm:"index"`
+	ID        string `gorm:"primaryKey"`
+	ProjectID string `gorm:"index"`
 	Name      string
-	Type      string         `gorm:"index"`
-	Content   string         `gorm:"type:text"`
+	Type      string `gorm:"index"`
+	Content   string `gorm:"type:text"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt gorm.DeletedAt `gorm:"index"`
@@ -397,10 +398,10 @@ type taskOwnerEntry struct {
 
 // taskOwnerLRU 有界 LRU 缓存，防止长期运行内存膨胀
 type taskOwnerLRU struct {
-	mu       sync.Mutex
-	items    map[string]*taskOwnerEntry
-	order    []string // 插入顺序，用于淘汰
-	maxSize  int
+	mu      sync.Mutex
+	items   map[string]*taskOwnerEntry
+	order   []string // 插入顺序，用于淘汰
+	maxSize int
 }
 
 func newTaskOwnerLRU(maxSize int) *taskOwnerLRU {

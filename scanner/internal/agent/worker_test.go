@@ -119,6 +119,47 @@ func TestWorkerExecuteTaskFailsOnResultStreamSendError(t *testing.T) {
 	}
 }
 
+func TestWorkerExecuteTaskFailsOnInvalidTaskConfig(t *testing.T) {
+	client := &fakeAgentClient{
+		stream: &fakeResultStream{},
+	}
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	worker.client = client
+
+	worker.executeTask(&pb.Task{
+		TaskId:  "task-invalid-config",
+		Targets: []string{"127.0.0.1"},
+		Config:  []byte("{invalid"),
+	})
+
+	if len(client.taskCompleteReqs) != 1 {
+		t.Fatalf("expected 1 TaskComplete request, got %d", len(client.taskCompleteReqs))
+	}
+
+	req := client.taskCompleteReqs[0]
+	if req.Status != "FAILED" {
+		t.Fatalf("expected status FAILED, got %s", req.Status)
+	}
+	if req.ErrorMessage == "" {
+		t.Fatalf("expected invalid config error message")
+	}
+}
+
+func TestReportTaskCompletionRetriesTransientFailures(t *testing.T) {
+	client := &fakeAgentClient{
+		stream:           &fakeResultStream{},
+		taskCompleteErrs: []error{errors.New("temporary"), errors.New("temporary")},
+	}
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	worker.client = client
+
+	worker.reportTaskCompletion("task-retry", "DONE", "")
+
+	if len(client.taskCompleteReqs) != 3 {
+		t.Fatalf("expected 3 TaskComplete attempts, got %d", len(client.taskCompleteReqs))
+	}
+}
+
 func TestEffectiveWorkerCountCapsToEngineLimit(t *testing.T) {
 	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 8, nil)
 	expected := engine.MaxConcurrentTasks()
@@ -135,6 +176,8 @@ type fakeAgentClient struct {
 	streamErr         error
 	taskCompleteReqs  []*pb.TaskCompleteReq
 	taskCompleteReqsM sync.Mutex
+	taskCompleteErrs  []error
+	taskCompleteAck   *pb.Ack
 }
 
 func (c *fakeAgentClient) Register(ctx context.Context, in *pb.RegisterReq, opts ...grpc.CallOption) (*pb.RegisterResp, error) {
@@ -160,6 +203,16 @@ func (c *fakeAgentClient) TaskComplete(ctx context.Context, in *pb.TaskCompleteR
 	c.taskCompleteReqsM.Lock()
 	defer c.taskCompleteReqsM.Unlock()
 	c.taskCompleteReqs = append(c.taskCompleteReqs, in)
+	if len(c.taskCompleteErrs) > 0 {
+		err := c.taskCompleteErrs[0]
+		c.taskCompleteErrs = c.taskCompleteErrs[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
+	if c.taskCompleteAck != nil {
+		return c.taskCompleteAck, nil
+	}
 	return &pb.Ack{Success: true}, nil
 }
 

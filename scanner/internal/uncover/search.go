@@ -617,7 +617,7 @@ func buildDomainCDNMap(domains []string, threads int) map[string]bool {
 	}
 
 	gologger.Info().Msgf("正在查询 [%v] 个域名是否为CDN资产", len(domains))
-	cdnDomains, normalDomains, _ := cdn.CheckCDNs(domains, threads)
+	cdnDomains, normalDomains, _ := cdn.CheckCDNs(domains, threads, nil, nil, nil)
 	for _, domain := range cdnDomains {
 		result[domain] = true
 	}

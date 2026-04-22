@@ -3,10 +3,12 @@
 package cdn
 
 import (
+	"dddd/scanner/ddout"
 	utlcdn "dddd/scanner/utils/cdn"
+	"sync"
 )
 
 // CheckCDNs 批量 CDN 检测。
-func CheckCDNs(domains []string, threads int) (cdnDomains []string, cdnResults interface{}, ips []string) {
-	return utlcdn.CheckCDNs(domains, threads)
+func CheckCDNs(domains []string, threads int, ipDomainMap map[string][]string, ipDomainMapLock *sync.Mutex, emit func(ddout.OutputMessage)) (cdnDomains []string, cdnResults interface{}, ips []string) {
+	return utlcdn.CheckCDNs(domains, threads, ipDomainMap, ipDomainMapLock, emit)
 }

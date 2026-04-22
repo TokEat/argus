@@ -4,12 +4,13 @@ import (
 	"dddd/scanner/ddout"
 	"dddd/scanner/structs"
 	"dddd/scanner/utils"
-	"github.com/miekg/dns"
-	"github.com/projectdiscovery/gologger"
 	"net"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/miekg/dns"
+	"github.com/projectdiscovery/gologger"
 )
 
 var domainServers = []string{
@@ -99,8 +100,11 @@ func CheckCDN(domain string) (bool, string, []net.IP) {
 	return false, "", ips
 }
 
-func CheckCDNs(domains []string, threads int) (rCDNDomains []string, normalDomains []string, rIPs []string) {
+func CheckCDNs(domains []string, threads int, ipDomainMap map[string][]string, ipDomainMapLock *sync.Mutex, emit func(ddout.OutputMessage)) (rCDNDomains []string, normalDomains []string, rIPs []string) {
 	domains = utils.RemoveDuplicateElement(domains)
+	if len(domains) == 0 {
+		return nil, nil, nil
+	}
 
 	Addrs := make(chan string, len(domains))
 	defer close(Addrs)
@@ -112,6 +116,9 @@ func CheckCDNs(domains []string, threads int) (rCDNDomains []string, normalDomai
 	var normalDomainsLock sync.Mutex
 	var rIPsLock sync.Mutex
 
+	if threads <= 0 {
+		threads = 1
+	}
 	if threads > len(domains) {
 		threads = len(domains)
 	}
@@ -127,7 +134,7 @@ func CheckCDNs(domains []string, threads int) (rCDNDomains []string, normalDomai
 
 			if result.IsCDN {
 				// gologger.Silent().Msgf("[CDN-Domain] %v [%v]", result.Domain, result.CDNName)
-				ddout.FormatOutput(ddout.OutputMessage{
+				emitOutput(emit, ddout.OutputMessage{
 					Type:          "CDN-Domain",
 					IP:            "",
 					IPs:           nil,
@@ -156,35 +163,10 @@ func CheckCDNs(domains []string, threads int) (rCDNDomains []string, normalDomai
 					// show := fmt.Sprintf("[RealIP] %v => ", result.Domain)
 					for _, ip := range result.IPs {
 						ips = append(ips, ip.String())
-						structs.GlobalIPDomainMapLock.Lock()
-						_, ok := structs.GlobalIPDomainMap[ip.String()]
-						structs.GlobalIPDomainMapLock.Unlock()
-						if ok {
-							// 存在于这个Map中
-							structs.GlobalIPDomainMapLock.Lock()
-							dms, _ := structs.GlobalIPDomainMap[ip.String()]
-							structs.GlobalIPDomainMapLock.Unlock()
-							flag := false
-							for _, dm := range dms {
-								if dm == result.Domain {
-									flag = true
-									break
-								}
-							}
-							if !flag { // 没有这个域名
-								structs.GlobalIPDomainMapLock.Lock()
-								structs.GlobalIPDomainMap[ip.String()] = append(structs.GlobalIPDomainMap[ip.String()],
-									result.Domain)
-								structs.GlobalIPDomainMapLock.Unlock()
-							}
-						} else {
-							structs.GlobalIPDomainMapLock.Lock()
-							structs.GlobalIPDomainMap[ip.String()] = []string{result.Domain}
-							structs.GlobalIPDomainMapLock.Unlock()
-						}
+						addIPDomainMapping(ipDomainMap, ipDomainMapLock, ip.String(), result.Domain)
 					}
 
-					ddout.FormatOutput(ddout.OutputMessage{
+					emitOutput(emit, ddout.OutputMessage{
 						Type:          "RealIP",
 						IP:            "",
 						IPs:           ips,
@@ -225,6 +207,42 @@ func CheckCDNs(domains []string, threads int) (rCDNDomains []string, normalDomai
 
 	gologger.Info().Msg("CDN识别完毕")
 	return rCDNDomains, normalDomains, utils.RemoveDuplicateElement(rIPs)
+}
+
+func emitOutput(emit func(ddout.OutputMessage), msg ddout.OutputMessage) {
+	if emit != nil {
+		emit(msg)
+		return
+	}
+	ddout.FormatOutput(msg)
+}
+
+func addIPDomainMapping(ipDomainMap map[string][]string, ipDomainMapLock *sync.Mutex, ip string, domain string) {
+	if ip == "" || domain == "" {
+		return
+	}
+
+	targetMap := ipDomainMap
+	targetLock := ipDomainMapLock
+	if targetMap == nil {
+		targetMap = structs.GlobalIPDomainMap
+		targetLock = &structs.GlobalIPDomainMapLock
+	}
+	if targetMap == nil {
+		return
+	}
+
+	if targetLock != nil {
+		targetLock.Lock()
+		defer targetLock.Unlock()
+	}
+
+	for _, existing := range targetMap[ip] {
+		if existing == domain {
+			return
+		}
+	}
+	targetMap[ip] = append(targetMap[ip], domain)
 }
 
 type DomainItem struct {

@@ -89,7 +89,7 @@ func seedSingleFile(typ, fileName, content string) int {
 	typ = CanonicalArsenalType(typ)
 	hash := fmt.Sprintf("%x", md5.Sum([]byte(content)))
 	arsenal := Arsenal{
-		ID:        BuildArsenalID(typ, fileName),
+		ID:        BuildTenantArsenalID("default", typ, fileName),
 		TenantID:  "default",
 		Type:      typ,
 		FileName:  fileName,

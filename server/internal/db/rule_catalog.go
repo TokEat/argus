@@ -153,19 +153,32 @@ func ArsenalTypeAliases(raw string) []string {
 	}
 }
 
-func BuildArsenalID(typ, fileName string) string {
-	return CanonicalArsenalType(typ) + "_" + fileName
+func BuildTenantArsenalID(tenantID, typ, fileName string) string {
+	tenantID = strings.TrimSpace(tenantID)
+	baseID := CanonicalArsenalType(typ) + "_" + fileName
+	if tenantID == "" || tenantID == "default" {
+		return baseID
+	}
+	return tenantID + "_" + baseID
 }
 
-func FindArsenalByTypeAndFile(typ, fileName string) (*Arsenal, error) {
+func BuildArsenalID(typ, fileName string) string {
+	return BuildTenantArsenalID("default", typ, fileName)
+}
+
+func FindTenantArsenalByTypeAndFile(tenantID, typ, fileName string) (*Arsenal, error) {
 	var arsenal Arsenal
-	err := DB.Where("type IN ? AND file_name = ?", ArsenalTypeAliases(typ), fileName).
+	err := DB.Where("tenant_id = ? AND type IN ? AND file_name = ?", strings.TrimSpace(tenantID), ArsenalTypeAliases(typ), fileName).
 		Order("updated_at DESC").
 		First(&arsenal).Error
 	if err != nil {
 		return nil, err
 	}
 	return &arsenal, nil
+}
+
+func FindArsenalByTypeAndFile(typ, fileName string) (*Arsenal, error) {
+	return FindTenantArsenalByTypeAndFile("default", typ, fileName)
 }
 
 func BootstrapRuleCatalog(configBaseDir string) error {
@@ -285,13 +298,13 @@ func normalizeLegacyArsenalTypes() error {
 				return err
 			}
 			for _, row := range rows {
-				newID := BuildArsenalID(newType, row.FileName)
+				newID := BuildTenantArsenalID(row.TenantID, newType, row.FileName)
 				if row.ID == newID && row.Type == newType {
 					continue
 				}
 
 				var existing Arsenal
-				err := tx.Where("id = ?", newID).First(&existing).Error
+				err := tx.Where("id = ? AND tenant_id = ?", newID, row.TenantID).First(&existing).Error
 				if err == nil {
 					if row.UpdatedAt.After(existing.UpdatedAt) {
 						row.ID = newID
@@ -300,7 +313,7 @@ func normalizeLegacyArsenalTypes() error {
 							return saveErr
 						}
 					}
-					if delErr := tx.Delete(&Arsenal{}, "id = ?", BuildArsenalID(oldType, row.FileName)).Error; delErr != nil {
+					if delErr := tx.Delete(&Arsenal{}, "id = ? AND tenant_id = ?", BuildTenantArsenalID(row.TenantID, oldType, row.FileName), row.TenantID).Error; delErr != nil {
 						return delErr
 					}
 					continue
@@ -310,10 +323,11 @@ func normalizeLegacyArsenalTypes() error {
 				}
 
 				if execErr := tx.Exec(
-					"UPDATE arsenals SET id = ?, type = ? WHERE id = ?",
+					"UPDATE arsenals SET id = ?, type = ? WHERE id = ? AND tenant_id = ?",
 					newID,
 					newType,
-					BuildArsenalID(oldType, row.FileName),
+					BuildTenantArsenalID(row.TenantID, oldType, row.FileName),
+					row.TenantID,
 				).Error; execErr != nil {
 					return execErr
 				}

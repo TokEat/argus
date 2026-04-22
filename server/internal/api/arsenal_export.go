@@ -11,8 +11,8 @@ import (
 
 	"github.com/user/dddd-server/internal/db"
 
-	"github.com/glebarez/sqlite"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -85,7 +85,7 @@ func (agentDirProbe) TableName() string { return "dir_probes" }
 // buildArsenalSQLiteDB 从 PostgreSQL 的结构化规则表中读取已启用的规则，
 // 构建一个与 Agent 端 arsenal.db 完全兼容的 SQLite 文件。
 // 返回临时文件路径和文件内容的 MD5 Hash。调用者负责在使用后删除临时文件。
-func buildArsenalSQLiteDB() (filePath string, hash string, err error) {
+func buildArsenalSQLiteDB(tenantID string) (filePath string, hash string, err error) {
 	tmpFile, err := os.CreateTemp("", "arsenal-export-*.db")
 	if err != nil {
 		return "", "", fmt.Errorf("创建临时文件失败: %w", err)
@@ -117,7 +117,7 @@ func buildArsenalSQLiteDB() (filePath string, hash string, err error) {
 
 	// --- 导入指纹 ---
 	var fpRules []db.FingerprintRule
-	db.DB.Where("enabled = ?", true).Find(&fpRules)
+	db.DB.Where("tenant_id = ? AND enabled = ?", tenantID, true).Find(&fpRules)
 	if len(fpRules) > 0 {
 		batch := make([]agentFingerprint, 0, len(fpRules))
 		for _, r := range fpRules {
@@ -127,7 +127,7 @@ func buildArsenalSQLiteDB() (filePath string, hash string, err error) {
 				Category:    r.Category,
 				Tags:        "",
 				Enabled:     true,
-				Source:       "server",
+				Source:      "server",
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			})
@@ -137,7 +137,7 @@ func buildArsenalSQLiteDB() (filePath string, hash string, err error) {
 
 	// --- 导入 POC（需要从 Arsenal 表获取完整 Content）---
 	var pocRules []db.PocRule
-	db.DB.Where("enabled = ?", true).Find(&pocRules)
+	db.DB.Where("tenant_id = ? AND enabled = ?", tenantID, true).Find(&pocRules)
 	if len(pocRules) > 0 {
 		// 收集所有 POC 的 ArtifactID，批量查询 Arsenal 表获取 Content
 		artifactIDs := make([]string, 0, len(pocRules))
@@ -150,7 +150,7 @@ func buildArsenalSQLiteDB() (filePath string, hash string, err error) {
 		contentMap := make(map[string]string) // artifactID → Content
 		if len(artifactIDs) > 0 {
 			var arsenals []db.Arsenal
-			db.DB.Select("id, content").Where("id IN ?", artifactIDs).Find(&arsenals)
+			db.DB.Select("id, content").Where("tenant_id = ? AND id IN ?", tenantID, artifactIDs).Find(&arsenals)
 			for _, a := range arsenals {
 				contentMap[a.ID] = a.Content
 			}
@@ -169,7 +169,7 @@ func buildArsenalSQLiteDB() (filePath string, hash string, err error) {
 				Author:      r.Author,
 				Description: r.Description,
 				Enabled:     true,
-				Source:       "server",
+				Source:      "server",
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			})
@@ -179,7 +179,7 @@ func buildArsenalSQLiteDB() (filePath string, hash string, err error) {
 
 	// --- 导入 Workflow ---
 	var wfRules []db.WorkflowRule
-	db.DB.Where("enabled = ?", true).Find(&wfRules)
+	db.DB.Where("tenant_id = ? AND enabled = ?", tenantID, true).Find(&wfRules)
 	if len(wfRules) > 0 {
 		batch := make([]agentWorkflow, 0, len(wfRules))
 		for _, r := range wfRules {
@@ -197,7 +197,7 @@ func buildArsenalSQLiteDB() (filePath string, hash string, err error) {
 
 	// --- 导入 DirProbe ---
 	var dirRules []db.DirRule
-	db.DB.Where("enabled = ?", true).Find(&dirRules)
+	db.DB.Where("tenant_id = ? AND enabled = ?", tenantID, true).Find(&dirRules)
 	if len(dirRules) > 0 {
 		batch := make([]agentDirProbe, 0, len(dirRules))
 		for _, r := range dirRules {
@@ -239,7 +239,8 @@ func buildArsenalSQLiteDB() (filePath string, hash string, err error) {
 // getArsenalDB 构建并下载 Agent 端可直接使用的 arsenal.db 文件。
 // GET /api/v1/arsenals/db
 func getArsenalDB(c *gin.Context) {
-	tmpPath, hash, err := buildArsenalSQLiteDB()
+	tenantID := currentTenantID(c)
+	tmpPath, hash, err := buildArsenalSQLiteDB(tenantID)
 	if err != nil {
 		log.Printf("[ArsenalExport] 构建失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -258,23 +259,17 @@ func getArsenalDBHash(c *gin.Context) {
 	// 使用与 manifest 相同的聚合 Hash 逻辑（基于 Arsenal 表内容），
 	// 这样无需每次都构建完整 SQLite 文件。
 	var arsenals []db.Arsenal
+	tenantID := currentTenantID(c)
 	db.DB.Select("tenant_id, type, file_name, hash, state, version").
-		Where("state = ?", "Approved").
+		Where("tenant_id = ? AND state = ?", tenantID, "Approved").
 		Order("tenant_id, type, file_name").
 		Find(&arsenals)
 
 	aggregateHash := buildExportAggregateHash(arsenals)
 
-	// 同时返回 rule_version 供日志展示
-	var cfg db.SystemConfig
-	ruleVersion := "unknown"
-	if db.DB.Where("key = ?", "rule_version").First(&cfg).Error == nil {
-		ruleVersion = cfg.Value
-	}
-
 	c.JSON(http.StatusOK, gin.H{
-		"hash":         aggregateHash,
-		"rule_version": ruleVersion,
+		"hash":          aggregateHash,
+		"rule_version":  currentRuleVersionValue(),
 		"arsenal_count": len(arsenals),
 	})
 }
@@ -301,11 +296,12 @@ func buildExportAggregateHash(arsenals []db.Arsenal) string {
 
 // getArsenalDBStats 返回 DB 导出的统计信息（调试用）。
 func getArsenalDBStats(c *gin.Context) {
+	tenantID := currentTenantID(c)
 	var fpCount, pocCount, wfCount, dirCount int64
-	db.DB.Model(&db.FingerprintRule{}).Where("enabled = ?", true).Count(&fpCount)
-	db.DB.Model(&db.PocRule{}).Where("enabled = ?", true).Count(&pocCount)
-	db.DB.Model(&db.WorkflowRule{}).Where("enabled = ?", true).Count(&wfCount)
-	db.DB.Model(&db.DirRule{}).Where("enabled = ?", true).Count(&dirCount)
+	db.DB.Model(&db.FingerprintRule{}).Where("tenant_id = ? AND enabled = ?", tenantID, true).Count(&fpCount)
+	db.DB.Model(&db.PocRule{}).Where("tenant_id = ? AND enabled = ?", tenantID, true).Count(&pocCount)
+	db.DB.Model(&db.WorkflowRule{}).Where("tenant_id = ? AND enabled = ?", tenantID, true).Count(&wfCount)
+	db.DB.Model(&db.DirRule{}).Where("tenant_id = ? AND enabled = ?", tenantID, true).Count(&dirCount)
 
 	dbSize := int64(0)
 	dbPath := filepath.Join("data", "arsenal.db")
@@ -314,10 +310,10 @@ func getArsenalDBStats(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"fingerprints": fpCount,
-		"pocs":         pocCount,
-		"workflows":    wfCount,
-		"dir_probes":   dirCount,
+		"fingerprints":  fpCount,
+		"pocs":          pocCount,
+		"workflows":     wfCount,
+		"dir_probes":    dirCount,
 		"local_db_size": dbSize,
 	})
 }
