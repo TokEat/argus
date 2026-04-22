@@ -48,6 +48,13 @@ func init() {
 	SignatureStats[Unsigned] = &atomic.Uint64{}
 }
 
+// ResetTemplateCache 清空全局模板解析缓存。
+// 在同一进程多次调用 Nuclei 引擎时，应在每次启动前调用此函数，
+// 避免上一次的失败缓存污染后续解析。
+func ResetTemplateCache() {
+	parsedTemplatesCache = cache.New()
+}
+
 func EmbedParse(f embed.FS, filePath string, preprocessor Preprocessor, options protocols.ExecutorOptions) (*Template, error) {
 	if !options.DoNotCache {
 		if value, err := parsedTemplatesCache.Has(filePath); value != nil {

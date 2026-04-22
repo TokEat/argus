@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/projectdiscovery/clistats"
@@ -45,6 +46,10 @@ type StatsTicker struct {
 	tickDuration time.Duration
 }
 
+// metricsOnce 确保 clistats 的 /metrics HTTP handler 只向全局
+// DefaultServeMux 注册一次。Go 1.22+ 对重复路由注册会 panic。
+var metricsOnce sync.Once
+
 // NewStatsTicker creates and returns a new progress tracking object.
 func NewStatsTicker(duration int, active, outputJSON, cloud bool, port int) (Progress, error) {
 	var tickDuration time.Duration
@@ -56,10 +61,14 @@ func NewStatsTicker(duration int, active, outputJSON, cloud bool, port int) (Pro
 
 	progress := &StatsTicker{}
 
-	statsOpts := &clistats.DefaultOptions
-	statsOpts.ListenPort = port
-	// metrics port is enabled by default and is not configurable with new version of clistats
-	// by default 63636 is used and than can be modified with -mp flag
+	// 使用值副本避免修改全局 DefaultOptions。
+	// Web 只在首次调用时启用，后续调用关闭以防止重复注册 /metrics。
+	enableWeb := false
+	metricsOnce.Do(func() { enableWeb = true })
+	statsOpts := &clistats.Options{
+		ListenPort: port,
+		Web:        enableWeb,
+	}
 
 	stats, err := clistats.NewWithOptions(context.TODO(), statsOpts)
 	if err != nil {

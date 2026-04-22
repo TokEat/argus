@@ -4,7 +4,6 @@ import (
 	"embed"
 	"fmt"
 	"os"
-	"os/signal"
 	"runtime"
 	"runtime/pprof"
 	"strings"
@@ -18,7 +17,9 @@ import (
 	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
 	"github.com/projectdiscovery/nuclei/v3/pkg/exportrunner"
 	"github.com/projectdiscovery/nuclei/v3/pkg/operators/common/dsl"
+	"github.com/projectdiscovery/nuclei/v3/pkg/templates"
 	"github.com/projectdiscovery/nuclei/v3/pkg/types"
+	"github.com/projectdiscovery/nuclei/v3/pkg/utils/stats"
 	errorutil "github.com/projectdiscovery/utils/errors"
 	fileutil "github.com/projectdiscovery/utils/file"
 )
@@ -26,7 +27,6 @@ import (
 var (
 	cfgFile    string
 	memProfile string // optional profile file path
-	options    = &types.Options{}
 )
 
 func CallNuclei(TargetAndPocsName map[string][]string,
@@ -39,13 +39,28 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 	excludeTags []string,
 	severities []string) []output.ResultEvent {
 
+	// Task 2.1: 清空全局 Results，防止跨 batch 调用结果累积。
+	output.ResultsLock.Lock()
+	output.Results = nil
+	output.ResultsLock.Unlock()
+
+	// 重置全局统计计数器，防止跨 batch runtime warning 累积。
+	stats.Reset()
+
+	// 重置模板解析缓存，防止上一次 batch 的失败缓存污染后续解析。
+	templates.ResetTemplateCache()
+
+	// Task 2.2: options 局部化，避免并发调用时数据竞争。
+	options := &types.Options{}
+
 	// 设置结果回调
 	output.AddResultCallback = callBack
 	if err := exportrunner.ExportRunnerConfigureOptions(); err != nil {
-		gologger.Fatal().Msgf("Could not initialize options: %s\n", err)
+		gologger.Error().Msgf("Could not initialize options: %s\n", err)
+		return []output.ResultEvent{}
 	}
 
-	readConfig(TargetAndPocsName, proxy, nameForSearch, NoInteractsh, np, excludeTags)
+	readConfig(options, TargetAndPocsName, proxy, nameForSearch, NoInteractsh, np, excludeTags)
 	// configPath, _ := flagSet.GetConfigFilePath()
 
 	if options.ListDslSignatures {
@@ -58,7 +73,8 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 	if memProfile != "" {
 		f, err := os.Create(memProfile)
 		if err != nil {
-			gologger.Fatal().Msgf("profile: could not create memory profile %q: %v", memProfile, err)
+			gologger.Error().Msgf("profile: could not create memory profile %q: %v", memProfile, err)
+			return []output.ResultEvent{}
 		}
 		old := runtime.MemProfileRate
 		runtime.MemProfileRate = 4096
@@ -76,7 +92,8 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 
 	nucleiRunner, err := exportrunner.ExportRunnerNew(options)
 	if err != nil {
-		gologger.Fatal().Msgf("Could not create runner: %s\n", err)
+		gologger.Error().Msgf("Could not create runner: %s\n", err)
+		return []output.ResultEvent{}
 	}
 	if nucleiRunner == nil {
 		return []output.ResultEvent{}
@@ -85,24 +102,16 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 	nucleiRunner.EmbedPocsFS = fs
 	nucleiRunner.EnableSeverities = severities
 
-	// Setup graceful exits
+	// Task 2.3: 移除 signal handler — Agent 有自己的生命周期管理，
+	// 此处的 SIGINT 处理会泄漏 goroutine 且可能杀死宿主进程。
 	resumeFileName := types.DefaultResumeFilePath()
-	c := make(chan os.Signal, 1)
-	defer close(c)
-	signal.Notify(c, os.Interrupt)
-	go func() {
-		for range c {
-			gologger.Info().Msgf("CTRL+C pressed: Exiting\n")
-			nucleiRunner.Close()
-			os.Exit(1)
-		}
-	}()
 
 	if err := nucleiRunner.RunEnumeration(TargetAndPocsName); err != nil {
+		// Task 1.2: Fatal→Error，防止 Nuclei 错误杀死 Agent 进程。
 		if options.Validate {
-			gologger.Fatal().Msgf("Could not validate templates: %s\n", err)
+			gologger.Error().Msgf("Could not validate templates: %s\n", err)
 		} else {
-			gologger.Fatal().Msgf("Could not run nuclei: %s\n", err)
+			gologger.Error().Msgf("Could not run nuclei: %s\n", err)
 		}
 	}
 	nucleiRunner.Close()
@@ -113,7 +122,8 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 	return output.Results
 }
 
-func readConfig(TargetAndPocsName map[string][]string,
+func readConfig(options *types.Options,
+	TargetAndPocsName map[string][]string,
 	proxy string,
 	nameForSearch string,
 	NoInteractsh bool,

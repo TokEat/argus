@@ -54,6 +54,17 @@ func New() *Storage {
 	return &Storage{data: make(map[string]*storageDataItem), mutex: &sync.RWMutex{}}
 }
 
+// Reset resets all counters to zero while preserving entries and descriptions.
+// This is useful when the nuclei engine is called multiple times within the
+// same process to prevent stats from accumulating across invocations.
+func Reset() {
+	Default.mutex.RLock()
+	defer Default.mutex.RUnlock()
+	for _, item := range Default.data {
+		atomic.StoreInt64(&item.value, 0)
+	}
+}
+
 // NewEntry creates a new entry in the storage object
 func (s *Storage) NewEntry(name, description string) {
 	s.mutex.Lock()

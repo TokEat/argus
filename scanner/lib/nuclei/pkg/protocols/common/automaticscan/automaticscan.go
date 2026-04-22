@@ -92,24 +92,32 @@ func New(opts Options) (*Service, error) {
 	// Collect path for default directories we want to look for templates in
 	var allTemplates []string
 
+	// 用 basename 做去重：同一个模板在文件系统上是绝对路径
+	// （如 /abs/.../config/pocs/xxx.yaml），在 embed.FS 中是相对路径
+	// （如 config/pocs/xxx.yaml），精确匹配会导致去重失败。
+	seenBasenames := make(map[string]struct{})
+
+	// 文件系统路径优先 — 绝对路径可直接 os.Open，不需要 embed fallback。
 	for _, directory := range defaultTemplatesDirectories {
 		tps, _ := opts.ExecuterOpts.Catalog.GetTemplatePath(directory)
-		allTemplates = append(allTemplates, tps...)
+		for _, tp := range tps {
+			base := filepath.Base(tp)
+			if _, exists := seenBasenames[base]; !exists {
+				seenBasenames[base] = struct{}{}
+				allTemplates = append(allTemplates, tp)
+			}
+		}
 	}
 
+	// embed.FS 路径仅补充文件系统中不存在的模板（如 CLI 内嵌模式独有的 POC）。
 	tps, err := getTemplatePathByFS(opts.ExecuterOpts.EmbedPocs)
 	if err != nil {
 		return nil, errors.Wrap(err, "could not get templates in embed directory")
 	}
 	for _, v := range tps {
-		flag := false
-		for _, a := range allTemplates {
-			if a == v {
-				flag = true
-				break
-			}
-		}
-		if !flag {
+		base := filepath.Base(v)
+		if _, exists := seenBasenames[base]; !exists {
+			seenBasenames[base] = struct{}{}
 			allTemplates = append(allTemplates, v)
 		}
 	}

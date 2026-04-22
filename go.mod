@@ -12,6 +12,7 @@ require (
 	github.com/projectdiscovery/dnsx v1.1.6
 	github.com/projectdiscovery/gologger v1.1.12
 	github.com/satori/go.uuid v1.2.0
+	github.com/shirou/gopsutil/v3 v3.23.7
 	github.com/sijms/go-ora/v2 v2.7.9
 	github.com/tomatome/grdp v0.1.0
 	github.com/user/dddd-proto v0.0.0-00010101000000-000000000000
@@ -187,7 +188,6 @@ require (
 	github.com/sashabaranov/go-openai v1.15.3 // indirect
 	github.com/segmentio/ksuid v1.0.4 // indirect
 	github.com/sergi/go-diff v1.2.0 // indirect
-	github.com/shirou/gopsutil/v3 v3.23.7 // indirect
 	github.com/shoenig/go-m1cpu v0.1.6 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/skeema/knownhosts v1.1.1 // indirect
