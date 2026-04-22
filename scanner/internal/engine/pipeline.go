@@ -67,6 +67,17 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	}
 	defer cleanup()
 
+	// ★ 关键修复：桥接 ddout.OutputSink → ctx.OutputHook
+	// 多个模块（Nuclei 回调、CDN 检测、子域名枚举等）内部直接调用 ddout.FormatOutput()，
+	// 绕过了 Pipeline 的 ctx.OutputHook。在 Agent 模式下，安装全局 OutputSink 桥接，
+	// 确保所有通过 ddout.FormatOutput 发出的消息也能路由到 gRPC 回传。
+	if ctx != nil && ctx.OutputHook != nil {
+		prevSink := ddout.SetOutputSink(func(msg structs.OutputMessage) {
+			ctx.OutputHook(toEngineOutputMessage(msg))
+		})
+		defer ddout.SetOutputSink(prevSink)
+	}
+
 	cfg := currentPipelineConfig(ctx)
 	enableLocalReports := ctx == nil || ctx.OutputHook == nil
 	
@@ -352,17 +363,6 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	if cfg.NoPoc {
 		gologger.Info().Msg("跳过漏洞探测")
 		return nil
-	}
-
-	// ★ 关键修复：桥接 ddout.OutputSink → ctx.OutputHook
-	// Nuclei 回调 (report.AddResultByResultEvent) 内部直接调用 ddout.FormatOutput()，
-	// 绕过了 Pipeline 的 ctx.OutputHook。在 Agent 模式下，安装 OutputSink 桥接，
-	// 确保 Nuclei/GoPoc 结果通过 ddout.FormatOutput 发出的消息也能路由到 gRPC 回传。
-	if ctx != nil && ctx.OutputHook != nil {
-		prevSink := ddout.SetOutputSink(func(msg structs.OutputMessage) {
-			ctx.OutputHook(toEngineOutputMessage(msg))
-		})
-		defer ddout.SetOutputSink(prevSink)
 	}
 
 	// 漏洞检测
