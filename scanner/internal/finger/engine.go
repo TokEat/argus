@@ -2,7 +2,7 @@
 package finger
 
 import (
-	"dddd/scanner/ddout"
+
 	"dddd/scanner/lib/ddfinger"
 	"dddd/scanner/structs"
 	"fmt"
@@ -23,6 +23,7 @@ type Runtime struct {
 	BodyHMap      *hybrid.HybridMap
 	HeaderHMap    *hybrid.HybridMap
 	FingerprintDB []structs.FingerPEntity
+	emit          func(structs.OutputMessage)
 }
 
 func NewRuntime(
@@ -33,6 +34,7 @@ func NewRuntime(
 	bodyHMap *hybrid.HybridMap,
 	headerHMap *hybrid.HybridMap,
 	fingerprintDB []structs.FingerPEntity,
+	emit func(structs.OutputMessage),
 ) *Runtime {
 	return &Runtime{
 		IPPortMap:     ipPortMap,
@@ -42,6 +44,7 @@ func NewRuntime(
 		BodyHMap:      bodyHMap,
 		HeaderHMap:    headerHMap,
 		FingerprintDB: fingerprintDB,
+		emit:          emit,
 	}
 }
 
@@ -81,11 +84,13 @@ func (rt *Runtime) identifyServices() {
 
 		uri := fmt.Sprintf("%s://%s", protocol, hostPort)
 		rt.ResultMap[uri] = results
-		ddout.FormatOutput(ddout.OutputMessage{
-			Type:   "Finger",
-			Finger: results,
-			URI:    uri,
-		})
+		if rt.emit != nil {
+			rt.emit(structs.OutputMessage{
+				Type:   "Finger",
+				URI:    uri,
+				Finger: results,
+			})
+		}
 	}
 }
 
@@ -111,15 +116,17 @@ func (rt *Runtime) identifyWeb() {
 			}
 
 			rt.ResultMap[fullURL] = results
-			ddout.FormatOutput(ddout.OutputMessage{
-				Type: "Finger",
-				Web: ddout.WebInfo{
-					Status: strconv.Itoa(pathEntity.StatusCode),
-					Title:  pathEntity.Title,
-				},
-				Finger: results,
-				URI:    fullURL,
-			})
+			if rt.emit != nil {
+				rt.emit(structs.OutputMessage{
+					Type: "Finger",
+					Web: structs.WebInfo{
+						Status: strconv.Itoa(pathEntity.StatusCode),
+						Title:  pathEntity.Title,
+					},
+					Finger: results,
+					URI:    fullURL,
+				})
+			}
 		}
 	}
 }

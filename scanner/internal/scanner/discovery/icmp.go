@@ -4,10 +4,11 @@ package discovery
 
 import (
 	"dddd/scanner/common"
+	"dddd/scanner/ddout"
 )
 
 // CheckLive ICMP 存活探测。
 // 桥接 common.CheckLive()
-func CheckLive(ips []string, ping bool) []string {
-	return common.CheckLive(ips, ping)
+func CheckLive(ips []string, ping bool, emit func(ddout.OutputMessage)) []string {
+	return common.CheckLive(ips, ping, emit)
 }

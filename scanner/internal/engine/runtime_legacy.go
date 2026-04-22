@@ -2,7 +2,6 @@ package engine
 
 import (
 	commoncfg "dddd/scanner/common"
-	commonreport "dddd/scanner/common/report"
 	"dddd/scanner/ddout"
 	"dddd/scanner/internal/arsenal"
 	"dddd/scanner/lib/ddfinger"
@@ -14,12 +13,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 
 	"gopkg.in/yaml.v3"
 )
 
-var legacyBindingMu sync.Mutex
 
 func ApplyConfigDefaults(cfg *Config) {
 	if cfg.PortScanType == "" {
@@ -240,18 +237,31 @@ func (sc *ScanContext) tryLoadFromArsenalDB() bool {
 
 	log.Printf("[Arsenal] 已加载: 指纹 %d, Workflow %d, Dir %d",
 		len(sc.FingerprintDB), len(sc.WorkFlowDB), len(sc.DirDB))
+
+	// 任何一个核心知识库为空都不可信，回退到 YAML 保底
+	if len(sc.FingerprintDB) == 0 || len(sc.WorkFlowDB) == 0 || len(sc.DirDB) == 0 {
+		log.Println("[Arsenal] 核心知识库不完整，回退到 YAML fallback")
+		// 清空已加载的不完整数据，让 loadKnowledgeBase 走 fallback 分支重新填充
+		sc.FingerprintDB = nil
+		sc.WorkFlowDB = nil
+		sc.DirDB = nil
+		return false
+	}
 	return true
 }
 
-// exportPocsToTempDir 将数据库中的 POC 导出到临时目录。
+// exportPocsToTempDir 将数据库中的 POC 导出到固定临时目录，避免泄漏。
+// 使用固定路径 + 原子清空，确保每次导出都是干净的。
 func exportPocsToTempDir() (string, error) {
 	pocs, err := arsenal.GetAllEnabledPocs()
 	if err != nil || len(pocs) == 0 {
 		return "", err
 	}
 
-	tmpDir, err := os.MkdirTemp("", "dddd-pocs-*")
-	if err != nil {
+	tmpDir := filepath.Join(os.TempDir(), "dddd-pocs")
+	// 清空旧内容，确保一致性
+	_ = os.RemoveAll(tmpDir)
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
 		return "", fmt.Errorf("创建 POC 临时目录失败: %w", err)
 	}
 
@@ -416,90 +426,8 @@ func mergeWorkflowYAML(dst map[string]WorkFlowEntity, data []byte) error {
 	return nil
 }
 
-func bindLegacyContext(sc *ScanContext) (func(), error) {
-	if sc == nil {
-		return func() {}, nil
-	}
-
-	if err := sc.loadKnowledgeBase(); err != nil {
-		return nil, err
-	}
-
-	legacyBindingMu.Lock()
-
-	prevConfig := structs.GlobalConfig
-	prevEmbedPocs := structs.GlobalEmbedPocs
-	prevBannerHMap := structs.GlobalBannerHMap
-	prevBodyHMap := structs.GlobalHttpBodyHMap
-	prevHeaderHMap := structs.GlobalHttpHeaderHMap
-	prevIPPortMap := structs.GlobalIPPortMap
-	prevIPDomainMap := structs.GlobalIPDomainMap
-	prevURLMap := structs.GlobalURLMap
-	prevResultMap := structs.GlobalResultMap
-	prevDirFallbackMap := structs.DirFallbackResultMap
-	prevGoPocResults := structs.GoPocsResults
-	prevFingerprintDB := structs.FingerprintDB
-	prevWorkflowDB := structs.WorkFlowDB
-	prevDirDB := structs.DirDB
-	prevAddScanNum := structs.AddScanNum
-	prevAddScanEnd := structs.AddScanEnd
-	prevOutputType := ddout.OutputType
-	prevOutputFileName := ddout.OutputFileName
-	prevSink := ddout.SetOutputSink(func(msg ddout.OutputMessage) {
-		if sc.OutputHook != nil {
-			sc.OutputHook(toEngineOutputMessage(msg))
-		}
-	})
-
-	structs.GlobalConfig = structs.Config(sc.Config)
-	structs.GlobalEmbedPocs = sc.EmbedPocs
-	structs.GlobalBannerHMap = sc.BannerHMap
-	structs.GlobalHttpBodyHMap = sc.BodyHMap
-	structs.GlobalHttpHeaderHMap = sc.HeaderHMap
-	structs.GlobalIPPortMap = sc.IPPortMap
-	structs.GlobalIPDomainMap = sc.IPDomainMap
-	structs.GlobalURLMap = toStructURLMap(sc.URLMap)
-	structs.GlobalResultMap = sc.ResultMap
-	structs.DirFallbackResultMap = sc.DirFallbackResultMap
-	structs.GoPocsResults = toStructGoPocResults(sc.GoPocsResults)
-	structs.FingerprintDB = toStructFingerDB(sc.FingerprintDB)
-	structs.WorkFlowDB = toStructWorkflowDB(sc.WorkFlowDB)
-	structs.DirDB = cloneDirDB(sc.DirDB)
-	structs.AddScanNum = sc.AddScanNum
-	structs.AddScanEnd = sc.AddScanEnd
-	ddout.OutputType = sc.Config.OutputType
-	ddout.OutputFileName = sc.Config.OutputFile
-	commonreport.ResetState()
-
-	return func() {
-		syncContextFromLegacy(sc)
-
-		ddout.SetOutputSink(prevSink)
-		ddout.OutputType = prevOutputType
-		ddout.OutputFileName = prevOutputFileName
-		structs.GlobalConfig = prevConfig
-		structs.GlobalEmbedPocs = prevEmbedPocs
-		structs.GlobalBannerHMap = prevBannerHMap
-		structs.GlobalHttpBodyHMap = prevBodyHMap
-		structs.GlobalHttpHeaderHMap = prevHeaderHMap
-		structs.GlobalIPPortMap = prevIPPortMap
-		structs.GlobalIPDomainMap = prevIPDomainMap
-		structs.GlobalURLMap = prevURLMap
-		structs.GlobalResultMap = prevResultMap
-		structs.DirFallbackResultMap = prevDirFallbackMap
-		structs.GoPocsResults = prevGoPocResults
-		structs.FingerprintDB = prevFingerprintDB
-		structs.WorkFlowDB = prevWorkflowDB
-		structs.DirDB = prevDirDB
-		structs.AddScanNum = prevAddScanNum
-		structs.AddScanEnd = prevAddScanEnd
-		commonreport.ResetState()
-		legacyBindingMu.Unlock()
-	}, nil
-}
-
-// bindAgentContext 轻量级上下文绑定，专用于 Agent 并发模式。
-// 不会获取全局互斥锁，不会写入 structs.Global* 全局变量，
+// bindAgentContext 无锁上下文绑定。
+// 仅加载知识库，不写全局变量，不获取互斥锁，
 // 从而允许多个任务完全并行执行。
 func bindAgentContext(sc *ScanContext) (func(), error) {
 	if sc == nil {
@@ -510,32 +438,7 @@ func bindAgentContext(sc *ScanContext) (func(), error) {
 		return nil, err
 	}
 
-	// 返回空的 cleanup，无锁无全局状态恢复
 	return func() {}, nil
-}
-
-func syncLegacyConfigFromContext(sc *ScanContext) {
-	if sc == nil {
-		return
-	}
-
-	structs.GlobalConfig = structs.Config(sc.Config)
-}
-
-func syncContextFromLegacy(sc *ScanContext) {
-	if sc == nil {
-		return
-	}
-
-	sc.Config = Config(structs.GlobalConfig)
-	sc.IPPortMap = structs.GlobalIPPortMap
-	sc.IPDomainMap = structs.GlobalIPDomainMap
-	sc.URLMap = toEngineURLMap(structs.GlobalURLMap)
-	sc.ResultMap = structs.GlobalResultMap
-	sc.DirFallbackResultMap = structs.DirFallbackResultMap
-	sc.GoPocsResults = toEngineGoPocResults(structs.GoPocsResults)
-	sc.AddScanNum = structs.AddScanNum
-	sc.AddScanEnd = structs.AddScanEnd
 }
 
 func cloneDirDB(src map[string][]string) map[string][]string {

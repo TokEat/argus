@@ -521,7 +521,7 @@ func (store *Store) LoadTemplatesWithNames(f embed.FS, templatesList []string,
 		}
 		enableSeveritiesOK = append(enableSeveritiesOK, v)
 	}
-	for _, v := range excludeTagsOK {
+	for _, v := range excludeTags {
 		if v == "" {
 			continue
 		}
@@ -567,7 +567,7 @@ func (store *Store) LoadTemplatesWithNames(f embed.FS, templatesList []string,
 		if len(enableSeveritiesOK) > 0 {
 			isExclude := true
 
-			for _, s := range enableSeverities {
+			for _, s := range enableSeveritiesOK {
 				if strings.ToLower(s) == strings.ToLower(parsed.Info.SeverityHolder.Severity.String()) {
 					isExclude = false
 					break

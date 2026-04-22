@@ -33,6 +33,7 @@ type Runtime struct {
 	DirFallbackResultMapMu *sync.Mutex
 
 	fingerprintByProduct map[string][]structs.FingerPEntity
+	emit                 func(structs.OutputMessage)
 }
 
 func NewRuntime(
@@ -46,7 +47,13 @@ func NewRuntime(
 	workFlowDB map[string]structs.WorkFlowEntity,
 	dirFallbackResultMap map[string][]string,
 	dirFallbackResultMapMu *sync.Mutex,
+	emit func(structs.OutputMessage),
 ) *Runtime {
+	if emit == nil {
+		emit = func(msg structs.OutputMessage) {
+			ddout.FormatOutput(msg)
+		}
+	}
 	runtime := &Runtime{
 		URLMap:                 urlMap,
 		URLMapLock:             urlMapLock,
@@ -58,6 +65,7 @@ func NewRuntime(
 		WorkFlowDB:             workFlowDB,
 		DirFallbackResultMap:   dirFallbackResultMap,
 		DirFallbackResultMapMu: dirFallbackResultMapMu,
+		emit:                   emit,
 		fingerprintByProduct:   make(map[string][]structs.FingerPEntity),
 	}
 
@@ -79,14 +87,17 @@ func (rt *Runtime) URLCallback(resp runner.Result) {
 		return
 	}
 
-	ddout.FormatOutput(ddout.OutputMessage{
-		Type: "Web",
-		URI:  resp.URL,
-		Web: ddout.WebInfo{
-			Status: strconv.Itoa(resp.StatusCode),
-			Title:  resp.Title,
-		},
-	})
+	if rt.emit != nil {
+		rt.emit(structs.OutputMessage{
+			Type: "Web",
+			Web: structs.WebInfo{
+				Status: strconv.Itoa(resp.StatusCode),
+				Title:  resp.Title,
+			},
+			URI:    resp.URL,
+			Finger: nil,
+		})
+	}
 }
 
 // DirBruteCallback 目录爆破回调。
@@ -101,11 +112,12 @@ func (rt *Runtime) DirBruteCallback(resp runner.Result) {
 			rootURL, _ := rt.upsertResponse(resp)
 
 			if success {
-				ddout.FormatOutput(ddout.OutputMessage{
+				rt.emit(ddout.OutputMessage{
 					Type:   "Active-Finger",
 					Finger: []string{productName},
 					URI:    resp.URL,
 				})
+
 				continue
 			}
 
@@ -117,12 +129,13 @@ func (rt *Runtime) DirBruteCallback(resp runner.Result) {
 				continue
 			}
 
-			ddout.FormatOutput(ddout.OutputMessage{
+			rt.emit(ddout.OutputMessage{
 				Type:          "Active-Finger",
 				Finger:        []string{productName},
 				URI:           resp.URL,
 				AdditionalMsg: "[dir-fallback]",
 			})
+
 			rt.addDirFallback(rootURL, productName)
 		}
 	}
@@ -177,7 +190,10 @@ func (rt *Runtime) HostBindCheck(httpProxy string, webThreads int, webTimeout in
 	rt.unlockURLMap()
 
 	urls = utils.RemoveDuplicateElement(urls)
-	httpx.DirBrute(urls, rt.HostBindCallback, httpProxy, webThreads, webTimeout)
+	gologger.Info().Msgf("[HostBind] 域名绑定探测目标数=%d (URLMap=%d, IPDomainMap=%d)", len(urls), len(rt.URLMap), len(rt.IPDomainMap))
+	if len(urls) > 0 {
+		httpx.DirBrute(urls, rt.HostBindCallback, httpProxy, webThreads, webTimeout)
+	}
 	gologger.AuditTimeLogger("域名绑定资产发现结束")
 }
 
@@ -187,14 +203,16 @@ func (rt *Runtime) HostBindCallback(resp runner.Result) {
 		return
 	}
 
-	ddout.FormatOutput(ddout.OutputMessage{
-		Type: "Domain-Bind",
-		Web: ddout.WebInfo{
-			Status: strconv.Itoa(resp.StatusCode),
-		},
-		URI:           resp.URL,
-		AdditionalMsg: resp.Title,
-	})
+	if rt.emit != nil {
+		rt.emit(structs.OutputMessage{
+			Type: "Domain-Bind",
+			Web: structs.WebInfo{
+				Status: strconv.Itoa(resp.StatusCode),
+			},
+			URI:           resp.URL,
+			AdditionalMsg: resp.Title,
+		})
+	}
 
 	rt.upsertResponse(resp)
 }

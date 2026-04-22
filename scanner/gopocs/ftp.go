@@ -78,7 +78,7 @@ func FtpConn(info *structs.HostInfo, user string, pass string) (flag bool, err e
 				}
 			}
 
-			ddout.FormatOutput(ddout.OutputMessage{
+			info.Emit(ddout.OutputMessage{
 				Type:     "GoPoc",
 				IP:       "",
 				IPs:      nil,

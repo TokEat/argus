@@ -1,7 +1,7 @@
 package gopocs
 
 import (
-	"dddd/scanner/common"
+	"dddd/scanner/utils"
 	"dddd/scanner/ddout"
 	"dddd/scanner/structs"
 	"encoding/binary"
@@ -34,7 +34,7 @@ func MS17010(info *structs.HostInfo) error {
 func MS17010Scan(info *structs.HostInfo) error {
 	ip := info.Host
 	// connecting to a host in LAN if reachable should be very quick
-	conn, err := common.WrapperTcpWithTimeout("tcp", ip+":445", time.Duration(7)*time.Second)
+	conn, err := utils.WrapperTcpWithTimeout("tcp", ip+":445", time.Duration(7)*time.Second)
 	defer func() {
 		if conn != nil {
 			conn.Close()
@@ -141,7 +141,7 @@ func MS17010Scan(info *structs.HostInfo) error {
 		result := fmt.Sprintf("MS17-010 %s (%s)", ip, os)
 		// gologger.Silent().Msg(result)
 
-		ddout.FormatOutput(ddout.OutputMessage{
+		info.Emit(ddout.OutputMessage{
 			Type:     "GoPoc",
 			IP:       "",
 			IPs:      nil,

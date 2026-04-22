@@ -38,6 +38,13 @@ type Pipeline struct{}
 // Run 执行完整的扫描流水线。
 func (p *Pipeline) Run(ctx *ScanContext) error {
 	var domains []string
+	emit := func(msg structs.OutputMessage) {
+		if ctx != nil && ctx.OutputHook != nil {
+			ctx.OutputHook(toEngineOutputMessage(msg))
+		} else {
+			ddout.FormatOutput(msg)
+		}
+	}
 	var urls []string
 	var domainPort []string
 	var ipPort []string
@@ -53,13 +60,8 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		}
 	}
 
-	// 兜底稳定性策略：
-	// 目前仍有若干组件依赖 ddout 全局 Sink 与 legacy 全局状态，
-	// 若走无锁 Agent 绑定会导致结果不回传或阶段异常阻塞。
-	// 因此统一走 bindLegacyContext，确保结果闭环与阶段可结束。
-	var cleanup func()
-	var err error
-	cleanup, err = bindLegacyContext(ctx)
+	// 无锁上下文绑定：仅加载知识库，不写全局变量，不获取互斥锁。
+	cleanup, err := bindAgentContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -67,9 +69,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 	cfg := currentPipelineConfig(ctx)
 	enableLocalReports := ctx == nil || ctx.OutputHook == nil
-	webRuntime := currentWebRuntime(ctx)
-	fingerRuntime := currentFingerRuntime(ctx)
-
+	
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
 	}
@@ -159,7 +159,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 			var ICMPAlive []string
 			if !cfg.NoICMPPing {
 				emitPhase(ctx, PhaseICMP, "start", fmt.Sprintf("%d ips", len(ips)))
-				ICMPAlive = discovery.CheckLive(ips, false)
+				ICMPAlive = discovery.CheckLive(ips, false, emit)
 				emitPhase(ctx, PhaseICMP, "end", fmt.Sprintf("%d alive", len(ICMPAlive)))
 			}
 
@@ -175,7 +175,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 				emitPhase(ctx, PhaseTCPPing, "start", fmt.Sprintf("%d ips", len(uncheck)))
 				gologger.Info().Msg("TCP存活探测")
 				tcpAliveIPPort := portscan.ScanTCP(uncheck, "80,443,3389,445,22",
-					cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, false)
+					cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, false, emit)
 				for _, tIPPort := range tcpAliveIPPort {
 					t := strings.Split(tIPPort, ":")
 					TCPAlive = append(TCPAlive, t[0])
@@ -199,9 +199,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 		emitPhase(ctx, PhasePortScan, "start", fmt.Sprintf("%d ips, type=%s", len(ips), cfg.PortScanType))
 		if cfg.PortScanType == "syn" {
-			tmpIPPort = portscan.ScanSYN(ips, cfg.MasscanPath, cfg.SYNPortScanThreads)
+			tmpIPPort = portscan.ScanSYN(ips, cfg.MasscanPath, cfg.SYNPortScanThreads, emit)
 		} else {
-			tmpIPPort = portscan.ScanTCP(ips, cfg.Ports, cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, true)
+			tmpIPPort = portscan.ScanTCP(ips, cfg.Ports, cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, true, emit)
 		}
 
 		tmpIPPort = portscan.RemoveFirewall(tmpIPPort, cfg.PortsThreshold)
@@ -223,17 +223,14 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	}
 	if len(getProtocalInput) > 0 {
 		emitPhase(ctx, PhaseProtocol, "start", fmt.Sprintf("%d targets", len(getProtocalInput)))
-		currentProtocolRuntime(ctx).Identify(getProtocalInput, cfg.GetBannerThreads, cfg.GetBannerTimeout)
+		currentProtocolRuntime(ctx, emit).Identify(getProtocalInput, cfg.GetBannerThreads, cfg.GetBannerTimeout)
 		emitPhase(ctx, PhaseProtocol, "end", "")
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
 	}
 
-	if ctx != nil {
-		syncContextFromLegacy(ctx)
-		cfg = currentPipelineConfig(ctx)
-	}
+	cfg = currentPipelineConfig(ctx)
 
 	// HTTP 探测
 	for hostPort, service := range currentPipelineIPPortMap(ctx) {
@@ -246,7 +243,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	urls = utils.RemoveDuplicateElement(urls)
 
 	emitPhase(ctx, PhaseHTTPProbe, "start", fmt.Sprintf("%d urls", len(urls)))
-	httpx.CallHTTPx(urls, webRuntime.URLCallback,
+	httpx.CallHTTPx(urls, currentWebRuntime(ctx, emit).URLCallback,
 		cfg.HTTPProxy,
 		cfg.WebThreads,
 		cfg.WebTimeout)
@@ -255,17 +252,11 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		return err
 	}
 
-	if ctx != nil {
-		syncContextFromLegacy(ctx)
-	}
 
 	// 域名绑定资产探测
 	if !cfg.NoHostBind {
 		emitPhase(ctx, PhaseHostBind, "start", "")
-		webRuntime.HostBindCheck(cfg.HTTPProxy, cfg.WebThreads, cfg.WebTimeout)
-		if ctx != nil {
-			syncContextFromLegacy(ctx)
-		}
+		currentWebRuntime(ctx, emit).HostBindCheck(cfg.HTTPProxy, cfg.WebThreads, cfg.WebTimeout)
 		emitPhase(ctx, PhaseHostBind, "end", "")
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {
@@ -296,7 +287,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 			strings.Split(cfg.Severities, ","))
 		if enableLocalReports {
 			output.GenerateHTMLReportFooter()
-			output.GenerateAssetReport()
+			output.GenerateAssetReport(cfg.OutputFile)
 		}
 		if err := checkPipelineCancelled(ctx); err != nil {
 			return err
@@ -322,27 +313,21 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		emitPhase(ctx, PhaseDirBrute, "start", fmt.Sprintf("%d urls", len(checkURLs)))
 		gologger.Info().Msg("开始主动指纹探测")
 		httpx.DirBrute(checkURLs,
-			webRuntime.DirBruteCallback,
+			currentWebRuntime(ctx, emit).DirBruteCallback,
 			cfg.HTTPProxy,
 			cfg.WebThreads,
 			cfg.WebTimeout)
 		gologger.AuditTimeLogger("主动指纹探测结束")
 		emitPhase(ctx, PhaseDirBrute, "end", "")
-		if ctx != nil {
-			syncContextFromLegacy(ctx)
 		}
-	}
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
 	}
 
 	// 指纹识别
 	emitPhase(ctx, PhaseFingerprint, "start", "")
-	fingerRuntime.Identify()
+	currentFingerRuntime(ctx, emit).Identify()
 	emitPhase(ctx, PhaseFingerprint, "end", "")
-	if ctx != nil {
-		syncContextFromLegacy(ctx)
-	}
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
 	}
@@ -397,6 +382,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		cfg.GoPocThreads,
 		cfg.Password,
 		cfg.PasswordFile,
+	emit,
 	)...)
 
 	if cfg.GolangPoc {
@@ -406,6 +392,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 			cfg.Password,
 			cfg.PasswordFile,
 			nucleiResults,
+		emit,
 		)...)
 	}
 	emitPhase(ctx, PhaseGoPoc, "end", "")
@@ -419,7 +406,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 	if enableLocalReports {
 		output.GenerateHTMLReportFooter()
-		output.GenerateAssetReport()
+		output.GenerateAssetReport(cfg.OutputFile)
 	}
 
 	return nil
@@ -555,145 +542,79 @@ func newPipelineUncoverState(ctx *ScanContext) (*uncover.State, func()) {
 }
 
 func currentPipelineConfig(ctx *ScanContext) Config {
-	if ctx != nil {
-		return ctx.Config
-	}
-	return Config(structs.GlobalConfig)
+	return ctx.Config
 }
 
 func setPipelineConfig(ctx *ScanContext, cfg Config) {
-	if ctx != nil {
-		ctx.Config = cfg
-		syncLegacyConfigFromContext(ctx)
-		return
-	}
-	structs.GlobalConfig = structs.Config(cfg)
+	ctx.Config = cfg
 }
 
 func currentPipelineIPPortMap(ctx *ScanContext) map[string]string {
-	if ctx != nil {
-		return ctx.IPPortMap
-	}
-	return structs.GlobalIPPortMap
+	return ctx.IPPortMap
 }
 
-func currentWebRuntime(ctx *ScanContext) *web.Runtime {
-	if ctx != nil {
-		return web.NewRuntime(
-			ctx.URLMap,
-			&ctx.URLMapLock,
-			ctx.IPDomainMap,
-			ctx.BodyHMap,
-			ctx.HeaderHMap,
-			ctx.DirDB,
-			ctx.FingerprintDB,
-			ctx.WorkFlowDB,
-			ctx.DirFallbackResultMap,
-			&ctx.DirFallbackResultMapLock,
-		)
-	}
-
+func currentWebRuntime(ctx *ScanContext, emit func(structs.OutputMessage)) *web.Runtime {
 	return web.NewRuntime(
-		structs.GlobalURLMap,
-		&structs.GlobalURLMapLock,
-		structs.GlobalIPDomainMap,
-		structs.GlobalHttpBodyHMap,
-		structs.GlobalHttpHeaderHMap,
-		structs.DirDB,
-		structs.FingerprintDB,
-		structs.WorkFlowDB,
-		structs.DirFallbackResultMap,
-		&structs.DirFallbackResultMapLock,
+		ctx.URLMap,
+		&ctx.URLMapLock,
+		ctx.IPDomainMap,
+		ctx.BodyHMap,
+		ctx.HeaderHMap,
+		ctx.DirDB,
+		ctx.FingerprintDB,
+		ctx.WorkFlowDB,
+		ctx.DirFallbackResultMap,
+		&ctx.DirFallbackResultMapLock,
+		emit,
 	)
 }
 
-func currentFingerRuntime(ctx *ScanContext) *finger.Runtime {
-	if ctx != nil {
-		return finger.NewRuntime(
-			ctx.IPPortMap,
-			ctx.URLMap,
-			ctx.ResultMap,
-			ctx.BannerHMap,
-			ctx.BodyHMap,
-			ctx.HeaderHMap,
-			ctx.FingerprintDB,
-		)
-	}
-
+func currentFingerRuntime(ctx *ScanContext, emit func(structs.OutputMessage)) *finger.Runtime {
 	return finger.NewRuntime(
-		structs.GlobalIPPortMap,
-		structs.GlobalURLMap,
-		structs.GlobalResultMap,
-		structs.GlobalBannerHMap,
-		structs.GlobalHttpBodyHMap,
-		structs.GlobalHttpHeaderHMap,
-		structs.FingerprintDB,
+		ctx.IPPortMap,
+		ctx.URLMap,
+		ctx.ResultMap,
+		ctx.BannerHMap,
+		ctx.BodyHMap,
+		ctx.HeaderHMap,
+		ctx.FingerprintDB,
+		emit,
 	)
 }
 
-func currentProtocolRuntime(ctx *ScanContext) *protocol.Runtime {
-	if ctx != nil {
-		return protocol.NewRuntime(
-			ctx.IPPortMap,
-			&ctx.IPPortMapLock,
-			ctx.BannerHMap,
-		)
-	}
-
+func currentProtocolRuntime(ctx *ScanContext, emit func(structs.OutputMessage)) *protocol.Runtime {
 	return protocol.NewRuntime(
-		structs.GlobalIPPortMap,
-		&structs.GlobalIPPortMapLock,
-		structs.GlobalBannerHMap,
+		ctx.IPPortMap,
+		&ctx.IPPortMapLock,
+		ctx.BannerHMap,
+		emit,
 	)
 }
 
 func currentPipelineURLMap(ctx *ScanContext) map[string]URLEntity {
-	if ctx != nil {
-		return ctx.URLMap
-	}
-	return structs.GlobalURLMap
+	return ctx.URLMap
 }
 
 func currentPipelineDirDB(ctx *ScanContext) map[string][]string {
-	if ctx != nil {
-		return ctx.DirDB
-	}
-	return structs.DirDB
+	return ctx.DirDB
 }
 
 func currentPipelineResultMap(ctx *ScanContext) map[string][]string {
-	if ctx != nil {
-		return ctx.ResultMap
-	}
-	return structs.GlobalResultMap
+	return ctx.ResultMap
 }
 
 func setPipelineResultMap(ctx *ScanContext, resultMap map[string][]string) {
-	if ctx != nil {
-		ctx.ResultMap = resultMap
-		structs.GlobalResultMap = resultMap
-		return
-	}
-	structs.GlobalResultMap = resultMap
+	ctx.ResultMap = resultMap
 }
 
 func currentPipelineDirFallbackResultMap(ctx *ScanContext) map[string][]string {
-	if ctx != nil {
-		return ctx.DirFallbackResultMap
-	}
-	return structs.DirFallbackResultMap
+	return ctx.DirFallbackResultMap
 }
 
 func currentPipelineWorkflowDB(ctx *ScanContext) map[string]structs.WorkFlowEntity {
-	if ctx != nil {
-		return ctx.WorkFlowDB
-	}
-	return structs.WorkFlowDB
+	return ctx.WorkFlowDB
 }
 
 func currentPipelineEmbedPocs(ctx *ScanContext) embed.FS {
-	if ctx != nil {
-		return ctx.EmbedPocs
-	}
-	return structs.GlobalEmbedPocs
+	return ctx.EmbedPocs
 }

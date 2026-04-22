@@ -93,7 +93,7 @@ func MysqlConn(info *structs.HostInfo, user string, pass string) (flag bool, err
 			}
 			gologger.AuditLogger("[Go] [MYSQL-Brute] %s Result:\n%s", showData, msg)
 
-			ddout.FormatOutput(ddout.OutputMessage{
+			info.Emit(ddout.OutputMessage{
 				Type:     "GoPoc",
 				IP:       "",
 				IPs:      nil,

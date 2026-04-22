@@ -5,7 +5,6 @@ import (
 	"dddd/scanner/lib/ddfinger"
 	"dddd/scanner/structs"
 	"dddd/scanner/utils"
-	"embed"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -70,8 +69,8 @@ var EmbedFingerData string
 //go:embed config/api-config.yaml
 var EmbedAPIConfigData string
 
-//go:embed config/pocs/*
-var EmbedNucleiPocs embed.FS
+// EmbedNucleiPocs 由 embed_pocs.go (默认内嵌) 或 embed_nopocs.go (noembed tag) 提供。
+// Agent 模式构建时使用 -tags noembed 可跳过内嵌 POC，减小二进制体积。
 
 func fileExists(filePath string) bool {
 	_, err := os.Stat(filePath)

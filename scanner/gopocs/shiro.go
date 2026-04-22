@@ -148,7 +148,7 @@ func ShiroKeyCheck(info *structs.HostInfo) {
 
 			showData := fmt.Sprintf("Host: %v\nkey: %v\nmode: %v\n", url, key, tp)
 
-			ddout.FormatOutput(ddout.OutputMessage{
+			info.Emit(ddout.OutputMessage{
 				Type:     "GoPoc",
 				IP:       "",
 				IPs:      nil,

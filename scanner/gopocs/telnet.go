@@ -47,7 +47,7 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 
 		showData := fmt.Sprintf("Host: %v:%v\nUnauthorized\n", info.Host, info.Ports)
 
-		ddout.FormatOutput(ddout.OutputMessage{
+		info.Emit(ddout.OutputMessage{
 			Type:     "GoPoc",
 			IP:       "",
 			IPs:      nil,
@@ -127,7 +127,7 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 
 					showData := fmt.Sprintf("Host: %v:%v\nPass: %v\n", info.Host, info.Ports, pass)
 
-					ddout.FormatOutput(ddout.OutputMessage{
+					info.Emit(ddout.OutputMessage{
 						Type:     "GoPoc",
 						IP:       "",
 						IPs:      nil,
@@ -160,7 +160,7 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 
 					showData := fmt.Sprintf("Host: %v:%v\nUser: %v\nPass: %v\n", info.Host, info.Ports, user, pass)
 
-					ddout.FormatOutput(ddout.OutputMessage{
+					info.Emit(ddout.OutputMessage{
 						Type:     "GoPoc",
 						IP:       "",
 						IPs:      nil,

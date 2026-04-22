@@ -294,7 +294,7 @@ func reportVulnerability(info *structs.HostInfo, trigger string) {
 	showData := fmt.Sprintf("Host: %v:%v\nPayload: USER=\"-f root\"\nTrigger: %s", info.Host, info.Ports, trigger)
 	result := fmt.Sprintf("Telnet://%v:%v CVE-2026-PENDING Auth Bypass", info.Host, info.Ports)
 
-	ddout.FormatOutput(ddout.OutputMessage{
+	info.Emit(ddout.OutputMessage{
 		Type: "GoPoc",
 		GoPoc: ddout.GoPocsResultType{
 			PocName:     "Telnet-Auth-Bypass",

@@ -61,7 +61,7 @@ func PostgresConn(info *structs.HostInfo, user string, pass string) (flag bool, 
 
 			showData := fmt.Sprintf("Host: %v:%v\nUsername: %v\nPassword: %v\n", Host, Port, Username, Password)
 
-			ddout.FormatOutput(ddout.OutputMessage{
+			info.Emit(ddout.OutputMessage{
 				Type:     "GoPoc",
 				IP:       "",
 				IPs:      nil,

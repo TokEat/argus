@@ -2,7 +2,6 @@ package report
 
 import (
 	"bufio"
-	"dddd/scanner/structs"
 	"fmt"
 	"html"
 	"os"
@@ -146,8 +145,7 @@ func isFingerprint(s string) bool {
 }
 
 // GenerateAssetReport reads the output result file and generates an HTML asset report
-func GenerateAssetReport() {
-	outputFile := structs.GlobalConfig.OutputFile
+func GenerateAssetReport(outputFile string) {
 	if outputFile == "" {
 		return
 	}

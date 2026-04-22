@@ -378,7 +378,9 @@ func (r *Runner) prepareInput() {
 			numHosts += numTargetsFile
 		}
 	}
-	if fileutil.HasStdin() {
+	// 仅在未通过 InputTargetHost 提供目标时才尝试从 stdin 读取
+	// Agent 模式下 stdin 可能是 pipe，HasStdin() 会返回 true 导致永久阻塞
+	if len(r.options.InputTargetHost) == 0 && fileutil.HasStdin() {
 		numTargetsStdin, err := r.loadAndCloseFile(os.Stdin)
 		if err != nil {
 			gologger.Fatal().Msgf("Could not read input from stdin: %s\n", err)
@@ -444,7 +446,8 @@ func (r *Runner) streamInput() (chan string, error) {
 				}
 			}
 		}
-		if fileutil.HasStdin() {
+		// 仅在未通过 InputTargetHost 提供目标时才尝试从 stdin 读取
+		if len(r.options.InputTargetHost) == 0 && fileutil.HasStdin() {
 			fchan, err := fileutil.ReadFileWithReader(os.Stdin)
 			if err != nil {
 				return

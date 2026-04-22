@@ -14,32 +14,15 @@ import (
 	"github.com/projectdiscovery/gologger"
 )
 
-// GoPocsResultType 复用 structs 中的类型。
+// WebInfo is an alias for backward compatibility (optional but good).
+type WebInfo = structs.WebInfo
+
+// OutputMessage is an alias.
+type OutputMessage = structs.OutputMessage
+
+// GoPocsResultType is an alias.
 type GoPocsResultType = structs.GoPocsResultType
 
-// WebInfo Web 页面信息。
-type WebInfo struct {
-	Status string `json:"status,omitempty"`
-	Title  string `json:"title,omitempty"`
-}
-
-// OutputMessage 统一输出消息格式。
-type OutputMessage struct {
-	Type          string           `json:"type,omitempty"`
-	IP            string           `json:"ip,omitempty"`
-	IPs           []string         `json:"ips,omitempty"`
-	Port          string           `json:"port,omitempty"`
-	Protocol      string           `json:"protocol,omitempty"`
-	Web           WebInfo          `json:"web,omitempty"`
-	Finger        []string         `json:"finger,omitempty"`
-	Domain        string           `json:"domain,omitempty"`
-	GoPoc         GoPocsResultType `json:"go_poc,omitempty"`
-	URI           string           `json:"uri,omitempty"`
-	City          string           `json:"city,omitempty"`
-	AdditionalMsg string           `json:"am,omitempty"`
-	Show          string           `json:"-"`
-	Nuclei        string           `json:"nuclei,omitempty"`
-}
 
 // OutputType 当前输出格式 ("text" 或 "json")。
 var OutputType string = "text"

@@ -1,7 +1,7 @@
 package gopocs
 
 import (
-	"dddd/scanner/common"
+	"dddd/scanner/utils"
 	"dddd/scanner/ddout"
 	"dddd/scanner/structs"
 	"encoding/hex"
@@ -46,7 +46,7 @@ func MongodbUnauth(info *structs.HostInfo) (flag bool, err error) {
 	realhost := fmt.Sprintf("%s:%v", info.Host, info.Ports)
 
 	checkUnAuth := func(address string, packet []byte) (string, error) {
-		conn, err := common.WrapperTcpWithTimeout("tcp", realhost, time.Duration(6)*time.Second)
+		conn, err := utils.WrapperTcpWithTimeout("tcp", realhost, time.Duration(6)*time.Second)
 		if err != nil {
 			return "", err
 		}
@@ -87,7 +87,7 @@ func MongodbUnauth(info *structs.HostInfo) (flag bool, err error) {
 		result := fmt.Sprintf("Mongodb://%s Unauthorized", realhost)
 		// gologger.Silent().Msg(result)
 
-		ddout.FormatOutput(ddout.OutputMessage{
+		info.Emit(ddout.OutputMessage{
 			Type:     "GoPoc",
 			IP:       "",
 			IPs:      nil,

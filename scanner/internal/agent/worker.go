@@ -455,150 +455,138 @@ func (w *Worker) commandLoop() {
 }
 
 func (w *Worker) syncRules() {
-	log.Println("[Sync] Checking Arsenal manifest for incremental update...")
+	log.Println("[Sync] Checking Arsenal DB for updates...")
 
-	manifestURL := w.apiURL + "/api/v1/arsenals/manifest"
-	resp, err := w.apiGet(manifestURL)
+	// 1. 探测 Server 端 DB hash（轻量级 JSON 请求）
+	hashURL := w.apiURL + "/api/v1/arsenals/db/hash"
+	resp, err := w.apiGet(hashURL)
 	if err != nil {
-		log.Printf("[Sync] Failed to fetch manifest, falling back to full sync: %v", err)
-		w.syncRulesFull()
+		log.Printf("[Sync] Failed to fetch DB hash (server may not support DB sync): %v", err)
 		return
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 
-	var manifest struct {
-		RuleVersion string `json:"rule_version"`
-		Items       []struct {
-			Type     string `json:"type"`
-			FileName string `json:"file_name"`
-			Hash     string `json:"hash"`
-		} `json:"items"`
+	var hashResp struct {
+		Hash         string `json:"hash"`
+		RuleVersion  string `json:"rule_version"`
+		ArsenalCount int    `json:"arsenal_count"`
 	}
-	if json.Unmarshal(body, &manifest) != nil {
-		log.Println("[Sync] Failed to parse manifest, falling back to full sync")
-		w.syncRulesFull()
+	if err := json.Unmarshal(body, &hashResp); err != nil {
+		log.Printf("[Sync] Failed to parse DB hash response: %v", err)
 		return
 	}
 
-	localHashes := w.loadLocalManifest()
+	if hashResp.Hash == "" {
+		log.Println("[Sync] Server returned empty hash (no approved rules), skipping")
+		w.ruleVersion = hashResp.RuleVersion
+		return
+	}
 
-	updated := 0
-	for _, item := range manifest.Items {
-		localHash, exists := localHashes[item.Type+"/"+item.FileName]
-		if exists && localHash == item.Hash {
-			continue
-		}
+	// 2. 与本地存储的 hash 对比
+	localHash := w.loadLocalDBHash()
+	if localHash == hashResp.Hash {
+		log.Printf("[Sync] Arsenal DB up to date (hash=%s, version=%s, rules=%d)",
+			hashResp.Hash[:8], hashResp.RuleVersion, hashResp.ArsenalCount)
+		w.ruleVersion = hashResp.RuleVersion
+		return
+	}
 
-		dirPath := "config"
-		if item.Type == "poc" {
-			dirPath = "config/pocs"
-		}
-		_ = os.MkdirAll(dirPath, 0755)
-		targetPath := filepath.Join(dirPath, item.FileName)
+	// 3. Hash 不同，下载完整 DB 文件
+	log.Printf("[Sync] Arsenal DB outdated (local=%s, remote=%s), downloading...",
+		truncHash(localHash), hashResp.Hash[:8])
 
-		backupDir := "config/.backup"
+	dbURL := w.apiURL + "/api/v1/arsenals/db"
+	dbResp, err := w.apiGet(dbURL)
+	if err != nil {
+		log.Printf("[Sync] Failed to download arsenal.db: %v", err)
+		return
+	}
+	dbData, err := io.ReadAll(dbResp.Body)
+	dbResp.Body.Close()
+	if err != nil {
+		log.Printf("[Sync] Failed to read arsenal.db response: %v", err)
+		return
+	}
+
+	if len(dbData) == 0 {
+		log.Println("[Sync] Downloaded empty DB, skipping")
+		return
+	}
+
+	// 4. 原子替换：先写临时文件，再 rename
+	dbDir := "data"
+	_ = os.MkdirAll(dbDir, 0755)
+	dbPath := filepath.Join(dbDir, "arsenal.db")
+
+	tmpFile, err := os.CreateTemp(dbDir, "arsenal-*.db.tmp")
+	if err != nil {
+		log.Printf("[Sync] Failed to create temp file: %v", err)
+		return
+	}
+	tmpPath := tmpFile.Name()
+
+	if _, err := tmpFile.Write(dbData); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		log.Printf("[Sync] Failed to write temp DB file: %v", err)
+		return
+	}
+	tmpFile.Close()
+
+	// 备份旧 DB
+	if _, err := os.Stat(dbPath); err == nil {
+		backupDir := filepath.Join(dbDir, ".backup")
 		_ = os.MkdirAll(backupDir, 0755)
-		if _, err := os.Stat(targetPath); err == nil {
-			backupPath := filepath.Join(backupDir, item.Type+"_"+item.FileName)
-			data, _ := os.ReadFile(targetPath)
-			_ = os.WriteFile(backupPath, data, 0644)
-		}
-
-		content := w.downloadRule(item.Type, item.FileName)
-		if content != "" {
-			_ = os.WriteFile(targetPath, []byte(content), 0644)
-			log.Printf("[Sync] Updated %s -> %s (hash: %s)", item.Type, targetPath, item.Hash[:8])
-			localHashes[item.Type+"/"+item.FileName] = item.Hash
-			updated++
+		backupPath := filepath.Join(backupDir, "arsenal.db.bak")
+		if oldData, err := os.ReadFile(dbPath); err == nil {
+			_ = os.WriteFile(backupPath, oldData, 0644)
 		}
 	}
 
-	w.saveLocalManifest(localHashes)
-	w.ruleVersion = manifest.RuleVersion
-
-	if updated > 0 {
-		log.Printf("[Sync] Incremental sync complete: %d files updated, rule_version=%s", updated, manifest.RuleVersion)
-	} else {
-		log.Printf("[Sync] All rules up to date, rule_version=%s", manifest.RuleVersion)
+	// 原子 rename
+	if err := os.Rename(tmpPath, dbPath); err != nil {
+		os.Remove(tmpPath)
+		log.Printf("[Sync] Failed to replace arsenal.db: %v", err)
+		return
 	}
+
+	// 5. 保存 hash + 更新版本
+	serverHash := dbResp.Header.Get("X-Arsenal-Hash")
+	if serverHash == "" {
+		serverHash = fmt.Sprintf("%x", md5.Sum(dbData))
+	}
+	w.saveLocalDBHash(serverHash)
+	w.ruleVersion = hashResp.RuleVersion
+
+	log.Printf("[Sync] ✅ Arsenal DB updated: size=%d bytes, hash=%s, version=%s",
+		len(dbData), serverHash[:8], hashResp.RuleVersion)
 }
 
-func (w *Worker) downloadRule(ruleType, fileName string) string {
-	url := w.apiURL + "/api/v1/arsenals/" + ruleType
-	resp, err := w.apiGet(url)
+// loadLocalDBHash 读取本地存储的 DB hash（用于增量对比）。
+func (w *Worker) loadLocalDBHash() string {
+	data, err := os.ReadFile("data/.arsenal_hash")
 	if err != nil {
-		log.Printf("[Sync] Failed to fetch %s rules: %v", ruleType, err)
 		return ""
 	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-
-	var rules []struct {
-		FileName string `json:"FileName"`
-		Content  string `json:"Content"`
-	}
-	if json.Unmarshal(body, &rules) == nil {
-		for _, r := range rules {
-			if r.FileName == fileName {
-				return r.Content
-			}
-		}
-	}
-	return ""
+	return strings.TrimSpace(string(data))
 }
 
-func (w *Worker) loadLocalManifest() map[string]string {
-	hashes := make(map[string]string)
-	data, err := os.ReadFile("config/.manifest.json")
-	if err != nil {
-		return hashes
-	}
-	_ = json.Unmarshal(data, &hashes)
-	return hashes
+// saveLocalDBHash 保存 DB hash 到本地文件。
+func (w *Worker) saveLocalDBHash(hash string) {
+	_ = os.MkdirAll("data", 0755)
+	_ = os.WriteFile("data/.arsenal_hash", []byte(hash), 0644)
 }
 
-func (w *Worker) saveLocalManifest(hashes map[string]string) {
-	data, _ := json.MarshalIndent(hashes, "", "  ")
-	_ = os.MkdirAll("config", 0755)
-	_ = os.WriteFile("config/.manifest.json", data, 0644)
-}
-
-func (w *Worker) syncRulesFull() {
-	log.Println("[Sync] Full sync from Arsenal API...")
-
-	ruleTypes := []string{"poc", "finger", "workflow", "dir", "apiconfig"}
-	localHashes := make(map[string]string)
-
-	for _, rt := range ruleTypes {
-		resp, err := w.apiGet(w.apiURL + "/api/v1/arsenals/" + rt)
-		if err == nil {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			var rules []struct {
-				FileName string `json:"FileName"`
-				Content  string `json:"Content"`
-			}
-			if json.Unmarshal(body, &rules) == nil && len(rules) > 0 {
-				dirPath := "config"
-				if rt == "poc" {
-					dirPath = "config/pocs"
-				}
-				_ = os.MkdirAll(dirPath, 0755)
-				for _, r := range rules {
-					path := filepath.Join(dirPath, r.FileName)
-					_ = os.WriteFile(path, []byte(r.Content), 0644)
-					hash := fmt.Sprintf("%x", md5.Sum([]byte(r.Content)))
-					localHashes[rt+"/"+r.FileName] = hash
-					log.Printf("[Sync] Reloaded %s -> %s", rt, path)
-				}
-			}
-		} else {
-			log.Printf("[Sync] Failed to reach API for %s: %v", rt, err)
-		}
+// truncHash 截断 hash 用于日志显示。
+func truncHash(h string) string {
+	if len(h) >= 8 {
+		return h[:8]
 	}
-
-	w.saveLocalManifest(localHashes)
+	if h == "" {
+		return "(none)"
+	}
+	return h
 }
 
 func (w *Worker) executeTask(task *pb.Task) {

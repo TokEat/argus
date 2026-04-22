@@ -85,7 +85,14 @@ for target in "${TARGETS[@]}"; do
         echo -n "  编译 [${name}] ... "
 
         # 编译命令 (CGO_ENABLED=0 保障跨平台通过，去除符号表缩减体积)
+        # Agent 模式使用 -tags noembed 跳过内嵌 POC，依赖 Server 同步
+        BUILD_TAGS=""
+        if [ "$name" == "dddd-agent" ]; then
+            BUILD_TAGS="-tags noembed"
+        fi
+
         CGO_ENABLED=0 GOOS="${os}" GOARCH="${arch}" go build \
+            ${BUILD_TAGS} \
             -ldflags="-s -w" \
             -trimpath \
             -o "${OUT_FILE}" "${path}"

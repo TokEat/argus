@@ -77,7 +77,7 @@ func SmblConn(info *structs.HostInfo, user string, pass string) (flag bool, err 
 	// gologger.Silent().Msg(result)
 	showData := fmt.Sprintf("Host: %v:%v\nUsername: %v\nPassword: %v\n", info.Host, info.Ports, user, pass)
 
-	ddout.FormatOutput(ddout.OutputMessage{
+	info.Emit(ddout.OutputMessage{
 		Type:     "GoPoc",
 		IP:       "",
 		IPs:      nil,

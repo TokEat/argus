@@ -46,15 +46,20 @@ func writeFile(result string, filename string) {
 
 var ReportIndex = 1
 var headerWritten = false
+var globalReportName = ""
 
 func ResetState() {
 	headerWritten = false
 	ReportIndex = 1
 }
 
+func SetReportName(name string) {
+	globalReportName = name
+}
+
 func InitReportName() {
-	if structs.GlobalConfig.ReportName == "" {
-		structs.GlobalConfig.ReportName = strconv.Itoa(int(time.Now().Unix())) + ".html"
+	if globalReportName == "" {
+		globalReportName = strconv.Itoa(int(time.Now().Unix())) + ".html"
 	}
 	ResetState()
 }
@@ -64,7 +69,7 @@ func ensureHeader() {
 		return
 	}
 	showData := defaultHeader()
-	writeFile(showData, structs.GlobalConfig.ReportName)
+	writeFile(showData, globalReportName)
 	headerWritten = true
 }
 
@@ -74,10 +79,10 @@ func HasResults() bool {
 }
 
 func GenerateHTMLReportFooter() {
-	if structs.GlobalConfig.ReportName == "" || !headerWritten {
+	if globalReportName == "" || !headerWritten {
 		return
 	}
-	writeFile("\n</body>\n</html>", structs.GlobalConfig.ReportName)
+	writeFile("\n</body>\n</html>", globalReportName)
 }
 
 func AddResultByResultEvent(result output.ResultEvent) {
@@ -93,7 +98,7 @@ func AddResultByResultEvent(result output.ResultEvent) {
 		})
 	}
 
-	if structs.GlobalConfig.ReportName == "" {
+	if globalReportName == "" {
 		return
 	}
 	ensureHeader()
@@ -169,13 +174,13 @@ func AddResultByResultEvent(result output.ResultEvent) {
 
 	d += footer
 
-	writeFile(d, structs.GlobalConfig.ReportName)
+	writeFile(d, globalReportName)
 
 	ReportIndex += 1
 }
 
 func AddResultByGoPocResult(result structs.GoPocsResultType) {
-	if structs.GlobalConfig.ReportName == "" {
+	if globalReportName == "" {
 		return
 	}
 	ensureHeader()
@@ -219,7 +224,7 @@ func AddResultByGoPocResult(result structs.GoPocsResultType) {
 
 	footer := "</tbody></table>"
 	d := title + header + bodyinfo + body + footer
-	writeFile(d, structs.GlobalConfig.ReportName)
+	writeFile(d, globalReportName)
 
 	ReportIndex += 1
 }

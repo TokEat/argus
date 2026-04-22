@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
-	"dddd/scanner/common/report"
 	"dddd/scanner/structs"
 	"dddd/scanner/utils"
 	"encoding/base64"
 	"net"
 	"os"
 	"strings"
-	"sync"
 )
 
 var PluginList = map[string]interface{}{
@@ -36,7 +34,6 @@ var PluginList = map[string]interface{}{
 	"Telnet-Bypass":       TelnetBypassScan,
 }
 
-var WriteResultLock sync.Mutex
 
 func InitDictionaries() {
 	initDic()
@@ -228,19 +225,10 @@ func CheckErrs(err error) bool {
 	return false
 }
 
-func GoPocWriteResult(result structs.GoPocsResultType) {
-	WriteResultLock.Lock()
-	structs.GoPocsResults = append(structs.GoPocsResults, result)
-	report.AddResultByGoPocResult(result)
-	WriteResultLock.Unlock()
-}
-
 func writeResult(info *structs.HostInfo, result structs.GoPocsResultType) {
 	if info != nil && info.WriteResult != nil {
 		info.WriteResult(result)
-		return
 	}
-	GoPocWriteResult(result)
 }
 
 func readDict(name string) string {
@@ -268,34 +256,34 @@ func initDic() {
 	if fileExists(basePath + "ftp.txt") {
 		ftpUserPasswdDict = readDict(basePath + "ftp.txt")
 	}
-	if fileExists(basePath + "") {
+	if fileExists(basePath + "mssql.txt") {
 		mssqlUserPasswdDict = readDict(basePath + "mssql.txt")
 	}
-	if fileExists(basePath + "") {
+	if fileExists(basePath + "mysql.txt") {
 		mysqlUserPasswdDict = readDict(basePath + "mysql.txt")
 	}
-	if fileExists(basePath + "") {
+	if fileExists(basePath + "oracle.txt") {
 		oracleUserPasswdDict = readDict(basePath + "oracle.txt")
 	}
-	if fileExists(basePath + "") {
+	if fileExists(basePath + "postgresql.txt") {
 		postgreSQLUserPasswdDict = readDict(basePath + "postgresql.txt")
 	}
-	if fileExists(basePath + "") {
+	if fileExists(basePath + "rdp.txt") {
 		rdpUserPasswdDict = readDict(basePath + "rdp.txt")
 	}
-	if fileExists(basePath + "") {
+	if fileExists(basePath + "redis.txt") {
 		redisUserPasswdDict = readDict(basePath + "redis.txt")
 	}
-	if fileExists(basePath + "") {
+	if fileExists(basePath + "smb.txt") {
 		smbUserPasswdDict = readDict(basePath + "smb.txt")
 	}
-	if fileExists(basePath + "") {
+	if fileExists(basePath + "ssh.txt") {
 		sshUserPasswdDict = readDict(basePath + "ssh.txt")
 	}
-	if fileExists(basePath + "") {
+	if fileExists(basePath + "telnet.txt") {
 		telnetUserPasswdDict = readDict(basePath + "telnet.txt")
 	}
-	if fileExists(basePath + "") {
+	if fileExists(basePath + "shirokeys.txt") {
 		ShiroKeys = readDict(basePath + "shirokeys.txt")
 	}
 

@@ -2,6 +2,7 @@ package gopocs
 
 import (
 	"dddd/scanner/common/report"
+	"dddd/scanner/ddout"
 	"dddd/scanner/structs"
 	"fmt"
 	"reflect"
@@ -19,13 +20,14 @@ type scanTask struct {
 
 type dispatcher struct {
 	progressMu   sync.Mutex
-	resultsMu    sync.Mutex
 	currentCount int
-	allCount     int
 	results      []structs.GoPocsResultType
+	resultsMu    sync.Mutex
+	allCount     int
+	emit         func(structs.OutputMessage)
 }
 
-func (d *dispatcher) addScan(scantype string, info structs.HostInfo, ch chan struct{}, wg *sync.WaitGroup) {
+func (d *dispatcher) addScan(name string, info structs.HostInfo, ch chan struct{}, wg *sync.WaitGroup) {
 	d.progressMu.Lock()
 	d.currentCount++
 	currentCount := d.currentCount
@@ -33,7 +35,7 @@ func (d *dispatcher) addScan(scantype string, info structs.HostInfo, ch chan str
 	d.progressMu.Unlock()
 
 	if currentCount%100 == 0 {
-		gologger.Info().Msgf("[GoPoc] 当前进度: %v %v [%v/%v]", scantype, info.Host+":"+info.Ports, currentCount, allCount)
+		gologger.Info().Msgf("[GoPoc] 当前进度: %v %v [%v/%v]", name, info.Host+":"+info.Ports, currentCount, allCount)
 	}
 
 	ch <- struct{}{}
@@ -41,12 +43,24 @@ func (d *dispatcher) addScan(scantype string, info structs.HostInfo, ch chan str
 	go func() {
 		defer wg.Done()
 		defer func() { <-ch }()
-		d.scanFunc(scantype, &info)
+		info.WriteResult = d.writeResult
+		info.Emit = d.emit
+		d.scanFunc(name, &info)
 	}()
 }
 
 func (d *dispatcher) scanFunc(name string, info *structs.HostInfo) {
-	f := reflect.ValueOf(PluginList[name])
+	defer func() {
+		if r := recover(); r != nil {
+			gologger.Error().Msgf("[GoPoc] Plugin '%s' panic: %v", name, r)
+		}
+	}()
+	plugin, ok := PluginList[name]
+	if !ok || plugin == nil {
+		gologger.Error().Msgf("[GoPoc] Plugin '%s' not found in PluginList", name)
+		return
+	}
+	f := reflect.ValueOf(plugin)
 	in := []reflect.Value{reflect.ValueOf(info)}
 	f.Call(in)
 }
@@ -71,17 +85,26 @@ func GoPocsDispatcher(nucleiResults []output.ResultEvent) {
 		structs.GlobalConfig.Password,
 		structs.GlobalConfig.PasswordFile,
 		nucleiResults,
+		nil, // no emit in CLI global fallback
 	)
 }
 
-func Dispatch(ipPortMap map[string]string, goPocThreads int, password string, passwordFile string, nucleiResults []output.ResultEvent) []structs.GoPocsResultType {
+func Dispatch(ipPortMap map[string]string, goPocThreads int, password string, passwordFile string, nucleiResults []output.ResultEvent, emit func(structs.OutputMessage)) []structs.GoPocsResultType {
 	if len(ipPortMap) == 0 && len(nucleiResults) == 0 {
 		return nil
 	}
 
 	InitDictionaries()
 
-	dispatcher := &dispatcher{}
+	if emit == nil {
+		emit = func(msg structs.OutputMessage) {
+			ddout.FormatOutput(msg)
+		}
+	}
+
+	dispatcher := &dispatcher{
+		emit: emit,
+	}
 
 	plan := buildScanPlan(ipPortMap, password, passwordFile, dispatcher.writeResult)
 	dispatcher.allCount = len(plan) + len(nucleiResults)

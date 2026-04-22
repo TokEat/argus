@@ -1,8 +1,8 @@
 package gopocs
 
 import (
+	"dddd/scanner/utils"
 	"bytes"
-	"dddd/scanner/common"
 	"dddd/scanner/ddout"
 	"dddd/scanner/structs"
 	"encoding/hex"
@@ -27,7 +27,7 @@ func Findnet(info *structs.HostInfo) error {
 
 func FindnetScan(info *structs.HostInfo) error {
 	realhost := fmt.Sprintf("%s:%v", info.Host, info.Ports)
-	conn, err := common.WrapperTcpWithTimeout("tcp", realhost, time.Duration(6)*time.Second)
+	conn, err := utils.WrapperTcpWithTimeout("tcp", realhost, time.Duration(6)*time.Second)
 	defer func() {
 		if conn != nil {
 			conn.Close()
@@ -141,7 +141,7 @@ func read(info *structs.HostInfo, text []byte, host string) error {
 		result += " => " + v
 	}
 	// gologger.Silent().Msg("[GoPoc] RPC:" + result)
-	ddout.FormatOutput(ddout.OutputMessage{
+	info.Emit(ddout.OutputMessage{
 		Type:     "GoPoc",
 		IP:       "",
 		IPs:      nil,

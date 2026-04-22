@@ -17,8 +17,8 @@ func GenerateHTMLReportFooter() {
 }
 
 // GenerateAssetReport 生成资产报告。
-func GenerateAssetReport() {
-	report.GenerateAssetReport()
+func GenerateAssetReport(outputFile string) {
+	report.GenerateAssetReport(outputFile)
 }
 
 // AddResultByResultEvent 添加扫描结果到报告（Nuclei 回调）。

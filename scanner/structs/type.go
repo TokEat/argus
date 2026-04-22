@@ -20,6 +20,30 @@ const (
 	TypeUnSupport  = 0
 )
 
+// WebInfo Web 页面信息。
+type WebInfo struct {
+	Status string `json:"status,omitempty"`
+	Title  string `json:"title,omitempty"`
+}
+
+// OutputMessage 统一输出消息格式。
+type OutputMessage struct {
+	Type          string           `json:"type,omitempty"`
+	IP            string           `json:"ip,omitempty"`
+	IPs           []string         `json:"ips,omitempty"`
+	Port          string           `json:"port,omitempty"`
+	Protocol      string           `json:"protocol,omitempty"`
+	Web           WebInfo          `json:"web,omitempty"`
+	Finger        []string         `json:"finger,omitempty"`
+	Domain        string           `json:"domain,omitempty"`
+	GoPoc         GoPocsResultType `json:"go_poc,omitempty"`
+	URI           string           `json:"uri,omitempty"`
+	City          string           `json:"city,omitempty"`
+	AdditionalMsg string           `json:"am,omitempty"`
+	Show          string           `json:"-"`
+	Nuclei        string           `json:"nuclei,omitempty"`
+}
+
 type Config struct {
 	Targets                    []string
 	Ports                      string
@@ -204,6 +228,7 @@ type HostInfo struct {
 	Password     string
 	PasswordFile string
 	WriteResult  func(GoPocsResultType)
+	Emit         func(OutputMessage)
 }
 
 var AddScanNum int

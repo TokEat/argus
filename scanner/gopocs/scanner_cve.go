@@ -1,6 +1,7 @@
 package gopocs
 
 import (
+	"dddd/scanner/ddout"
 	"dddd/scanner/structs"
 	"strings"
 	"sync"
@@ -13,10 +14,11 @@ func TelnetCVEOnlyDispatcher() {
 		structs.GlobalConfig.GoPocThreads,
 		structs.GlobalConfig.Password,
 		structs.GlobalConfig.PasswordFile,
+		nil,
 	)
 }
 
-func TelnetBypassDispatch(ipPortMap map[string]string, goPocThreads int, password string, passwordFile string) []structs.GoPocsResultType {
+func TelnetBypassDispatch(ipPortMap map[string]string, goPocThreads int, password string, passwordFile string, emit func(structs.OutputMessage)) []structs.GoPocsResultType {
 	if len(ipPortMap) == 0 {
 		return nil
 	}
@@ -25,7 +27,15 @@ func TelnetBypassDispatch(ipPortMap map[string]string, goPocThreads int, passwor
 		goPocThreads = 1
 	}
 
-	dispatcher := &dispatcher{}
+	if emit == nil {
+		emit = func(msg structs.OutputMessage) {
+			ddout.FormatOutput(msg)
+		}
+	}
+
+	dispatcher := &dispatcher{
+		emit: emit,
+	}
 	var ch = make(chan struct{}, goPocThreads)
 	var wg = sync.WaitGroup{}
 

@@ -1,7 +1,6 @@
 package gopocs
 
 import (
-	"dddd/scanner/common"
 	"dddd/scanner/ddout"
 	"dddd/scanner/structs"
 	"dddd/scanner/utils"
@@ -100,7 +99,7 @@ func RedisScan(info *structs.HostInfo) (tmperr error) {
 func RedisConn(info *structs.HostInfo, pass string) (flag bool, err error) {
 	flag = false
 	realhost := fmt.Sprintf("%s:%v", info.Host, info.Ports)
-	conn, err := common.WrapperTcpWithTimeout("tcp", realhost, time.Duration(6)*time.Second)
+	conn, err := utils.WrapperTcpWithTimeout("tcp", realhost, time.Duration(6)*time.Second)
 	defer func() {
 		if conn != nil {
 			conn.Close()
@@ -129,7 +128,7 @@ func RedisConn(info *structs.HostInfo, pass string) (flag bool, err error) {
 
 		showData := fmt.Sprintf("Host: %v\nPassword: %v\n", realhost, pass)
 
-		ddout.FormatOutput(ddout.OutputMessage{
+		info.Emit(ddout.OutputMessage{
 			Type:     "GoPoc",
 			IP:       "",
 			IPs:      nil,
@@ -164,7 +163,7 @@ func RedisConn(info *structs.HostInfo, pass string) (flag bool, err error) {
 func RedisUnauth(info *structs.HostInfo) (flag bool, err error) {
 	flag = false
 	realhost := fmt.Sprintf("%s:%v", info.Host, info.Ports)
-	conn, err := common.WrapperTcpWithTimeout("tcp", realhost, time.Duration(6)*time.Second)
+	conn, err := utils.WrapperTcpWithTimeout("tcp", realhost, time.Duration(6)*time.Second)
 	defer func() {
 		if conn != nil {
 			conn.Close()
@@ -195,7 +194,7 @@ func RedisUnauth(info *structs.HostInfo) (flag bool, err error) {
 
 		showData := fmt.Sprintf("Host: %v\nUnauthorized\n", realhost)
 
-		ddout.FormatOutput(ddout.OutputMessage{
+		info.Emit(ddout.OutputMessage{
 			Type:     "GoPoc",
 			IP:       "",
 			IPs:      nil,

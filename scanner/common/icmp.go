@@ -16,6 +16,7 @@ import (
 
 var (
 	AliveHosts []string
+	aliveMu    sync.Mutex
 	OS         = runtime.GOOS
 	ExistHosts = make(map[string]struct{})
 	livewg     sync.WaitGroup
@@ -30,23 +31,31 @@ func IsContain(items []string, item string) bool {
 	return false
 }
 
-func CheckLive(hostslist []string, Ping bool) []string {
+func CheckLive(hostslist []string, Ping bool, emit func(ddout.OutputMessage)) []string {
 	gologger.AuditTimeLogger("ICMP发包探测存活，目标IP如下")
 	gologger.AuditLogger("%s", strings.Join(hostslist, ","))
+	aliveMu.Lock()
 	AliveHosts = nil
 	ExistHosts = make(map[string]struct{})
+	aliveMu.Unlock()
 	chanHosts := make(chan string, len(hostslist))
 	go func() {
 		for ip := range chanHosts {
-			if _, ok := ExistHosts[ip]; !ok && IsContain(hostslist, ip) {
+			aliveMu.Lock()
+			_, exists := ExistHosts[ip]
+			aliveMu.Unlock()
+			if !exists && IsContain(hostslist, ip) {
+				aliveMu.Lock()
 				ExistHosts[ip] = struct{}{}
-				// gologger.Silent().Msgf("[ICMP-Alive] %v", ip)
-				ddout.FormatOutput(ddout.OutputMessage{
-					Type:          "IPAlive",
-					IP:            ip,
-					AdditionalMsg: "ICMP",
-				})
 				AliveHosts = append(AliveHosts, ip)
+				aliveMu.Unlock()
+				if emit != nil {
+					emit(ddout.OutputMessage{
+						Type:          "IPAlive",
+						IP:            ip,
+						AdditionalMsg: "ICMP",
+					})
+				}
 			}
 			livewg.Done()
 		}
@@ -108,7 +117,10 @@ func RunIcmp1(hostslist []string, conn *icmp.PacketConn, chanHosts chan string) 
 	//根据hosts数量修改icmp监听时间
 	start := time.Now()
 	for {
-		if len(AliveHosts) == len(hostslist) {
+		aliveMu.Lock()
+		aliveCount := len(AliveHosts)
+		aliveMu.Unlock()
+		if aliveCount == len(hostslist) {
 			break
 		}
 		since := time.Now().Sub(start)
@@ -262,7 +274,14 @@ func genSequence(v int16) (byte, byte) {
 }
 
 func genIdentifier(host string) (byte, byte) {
-	return host[0], host[1]
+	var id0, id1 byte
+	if len(host) > 0 {
+		id0 = host[0]
+	}
+	if len(host) > 1 {
+		id1 = host[1]
+	}
+	return id0, id1
 }
 
 func ArrayCountValueTop(arrInit []string, length int, flag bool) (arrTop []string, arrLen []int) {

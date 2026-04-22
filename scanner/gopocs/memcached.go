@@ -1,7 +1,7 @@
 package gopocs
 
 import (
-	"dddd/scanner/common"
+	"dddd/scanner/utils"
 	"dddd/scanner/ddout"
 	"dddd/scanner/structs"
 	"encoding/hex"
@@ -13,7 +13,7 @@ import (
 
 func MemcachedScan(info *structs.HostInfo) (err error) {
 	realhost := fmt.Sprintf("%s:%v", info.Host, info.Ports)
-	client, err := common.WrapperTcpWithTimeout("tcp", realhost, time.Duration(6)*time.Second)
+	client, err := utils.WrapperTcpWithTimeout("tcp", realhost, time.Duration(6)*time.Second)
 	defer func() {
 		if client != nil {
 			client.Close()
@@ -33,7 +33,7 @@ func MemcachedScan(info *structs.HostInfo) (err error) {
 						result := fmt.Sprintf("Memcached://%s Unauthorized", realhost)
 						// gologger.Silent().Msg(result)
 
-						ddout.FormatOutput(ddout.OutputMessage{
+						info.Emit(ddout.OutputMessage{
 							Type:     "GoPoc",
 							IP:       "",
 							IPs:      nil,

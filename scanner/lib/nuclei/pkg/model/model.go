@@ -73,6 +73,11 @@ type Info struct {
 	Classification *Classification `json:"classification,omitempty" yaml:"classification,omitempty" jsonschema:"title=classification info for the template,description=Classification information for the template"`
 
 	// description: |
+	//   Yakit-specific metadata for templates exported from Yakit WebFuzzer.
+	//   This field is used to maintain compatibility with Yakit-generated POC templates.
+	YakitInfo map[string]interface{} `json:"yakit-info,omitempty" yaml:"yakit-info,omitempty" jsonschema:"-"`
+
+	// description: |
 	//   Remediation steps for the template.
 	//
 	//   You can go in-depth here on how to mitigate the problem found by this template.

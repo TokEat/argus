@@ -1,7 +1,7 @@
 package gopocs
 
 import (
-	"dddd/scanner/common"
+	"dddd/scanner/utils"
 	"dddd/scanner/ddout"
 	"dddd/scanner/structs"
 	"fmt"
@@ -16,7 +16,7 @@ func ADBScan(info *structs.HostInfo) {
 func aDBUnauthorized(info *structs.HostInfo, ip string, port string) (error, string) {
 	result := "ADB> host::features=shell_v2,cmd,stat_v2,ls_v2,fixed_push_mkdir,apex,abb,fixed_push_symlink_timestamp,abb_exec,remount_shell,track_app,sendrecv_v2,sendrecv_v2_brotli,sendrecv_v2_lz4,sendrecv_v2_zstd,sendrecv_v2_dry_run_send,openscreen_mdns\n"
 	realHost := ip + ":" + port
-	conn, err := common.WrapperTcpWithTimeout("tcp", realHost, time.Duration(6)*time.Second)
+	conn, err := utils.WrapperTcpWithTimeout("tcp", realHost, time.Duration(6)*time.Second)
 	if err == nil {
 		defer func() {
 			if conn != nil {
@@ -93,7 +93,7 @@ func aDBUnauthorized(info *structs.HostInfo, ip string, port string) (error, str
 
 	// fmt.Println(result)
 	if result != "" {
-		ddout.FormatOutput(ddout.OutputMessage{
+		info.Emit(ddout.OutputMessage{
 			Type:     "GoPoc",
 			IP:       "",
 			IPs:      nil,

@@ -1,8 +1,8 @@
 package gopocs
 
 import (
+	"dddd/scanner/utils"
 	"bytes"
-	"dddd/scanner/common"
 	"dddd/scanner/ddout"
 	"dddd/scanner/structs"
 	"encoding/hex"
@@ -28,7 +28,7 @@ func NetBIOS(info *structs.HostInfo) error {
 		showData := fmt.Sprintf("Host: %v\nInfo: %v", realhost, output)
 
 		// gologger.Silent().Msg("[GoPoc] " + result)
-		ddout.FormatOutput(ddout.OutputMessage{
+		info.Emit(ddout.OutputMessage{
 			Type:     "GoPoc",
 			IP:       "",
 			IPs:      nil,
@@ -73,7 +73,7 @@ func NetBIOS1(info *structs.HostInfo) (netbios NetBiosInfo, err error) {
 	}
 	realhost := fmt.Sprintf("%s:%v", info.Host, info.Ports)
 	var conn net.Conn
-	conn, err = common.WrapperTcpWithTimeout("tcp", realhost, time.Duration(6)*time.Second)
+	conn, err = utils.WrapperTcpWithTimeout("tcp", realhost, time.Duration(6)*time.Second)
 	defer func() {
 		if conn != nil {
 			conn.Close()

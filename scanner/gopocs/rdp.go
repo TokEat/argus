@@ -1,7 +1,7 @@
 package gopocs
 
 import (
-	"dddd/scanner/common"
+	"dddd/scanner/utils"
 	"dddd/scanner/ddout"
 	"dddd/scanner/structs"
 	_ "embed"
@@ -87,7 +87,7 @@ func worker(info *structs.HostInfo, host, domain string, port int, wg *sync.Wait
 			// gologger.Silent().Msg("[GoPoc] " + result)
 			showData := fmt.Sprintf("Host: %v:%v\nUsername: %v\nPassword: %v\n", host, port, user, pass)
 
-			ddout.FormatOutput(ddout.OutputMessage{
+			info.Emit(ddout.OutputMessage{
 				Type:     "GoPoc",
 				IP:       "",
 				IPs:      nil,
@@ -157,7 +157,7 @@ func NewClient(host string, logLevel glog.LEVEL) *Client {
 }
 
 func (g *Client) Login(domain, user, pwd string, timeout int64) error {
-	conn, err := common.WrapperTcpWithTimeout("tcp", g.Host, time.Duration(timeout)*time.Second)
+	conn, err := utils.WrapperTcpWithTimeout("tcp", g.Host, time.Duration(timeout)*time.Second)
 	defer func() {
 		if conn != nil {
 			conn.Close()

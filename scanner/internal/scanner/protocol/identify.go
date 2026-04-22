@@ -2,7 +2,7 @@
 package protocol
 
 import (
-	"dddd/scanner/ddout"
+	"dddd/scanner/structs"
 	"fmt"
 	"strconv"
 	"strings"
@@ -18,13 +18,15 @@ type Runtime struct {
 	IPPortMap     map[string]string
 	IPPortMapLock *sync.Mutex
 	BannerHMap    *hybrid.HybridMap
+	emit          func(structs.OutputMessage)
 }
 
-func NewRuntime(ipPortMap map[string]string, ipPortMapLock *sync.Mutex, bannerHMap *hybrid.HybridMap) *Runtime {
+func NewRuntime(ipPortMap map[string]string, ipPortMapLock *sync.Mutex, bannerHMap *hybrid.HybridMap, emit func(structs.OutputMessage)) *Runtime {
 	return &Runtime{
 		IPPortMap:     ipPortMap,
 		IPPortMapLock: ipPortMapLock,
 		BannerHMap:    bannerHMap,
+		emit:          emit,
 	}
 }
 
@@ -88,6 +90,33 @@ func (rt *Runtime) Identify(hostPorts []string, threads int, timeout int) {
 	wg.Wait()
 	close(addrs)
 	close(results)
+
+	// ★ 诊断日志：协议识别结果汇总
+	httpCount, httpsCount, tcpCount, otherCount := 0, 0, 0, 0
+	rt.lock()
+	for hostPort, proto := range rt.IPPortMap {
+		switch proto {
+		case "http":
+			httpCount++
+		case "https":
+			httpsCount++
+		case "tcp":
+			tcpCount++
+		default:
+			otherCount++
+		}
+		// 少量目标时逐条打印
+		if len(rt.IPPortMap) <= 30 {
+			gologger.Info().Msgf("[Protocol] %s → %s", hostPort, proto)
+		}
+	}
+	rt.unlock()
+	gologger.Info().Msgf("[Protocol] 协议识别汇总: http=%d, https=%d, tcp=%d, 其他=%d, 总计=%d",
+		httpCount, httpsCount, tcpCount, otherCount, len(rt.IPPortMap))
+	if httpCount == 0 && httpsCount == 0 && len(rt.IPPortMap) > 0 {
+		gologger.Warning().Msg("[Protocol] ⚠ 未识别到任何 HTTP/HTTPS 服务！后续 HTTP 探测将无目标")
+	}
+
 	gologger.AuditTimeLogger("TCP指纹识别结束")
 }
 
@@ -110,12 +139,14 @@ func (rt *Runtime) handleResult(found protocolResult) {
 			proto = "telnet"
 		}
 		rt.storeProtocol(hostPort, proto)
-		ddout.FormatOutput(ddout.OutputMessage{
-			Type:     "Nmap",
-			IP:       found.IP,
-			Port:     strconv.Itoa(found.Port),
-			Protocol: "tcp",
-		})
+		if rt.emit != nil {
+			rt.emit(structs.OutputMessage{
+				Type:     "Nmap",
+				IP:       found.IP,
+				Port:     strconv.Itoa(found.Port),
+				Protocol: "tcp",
+			})
+		}
 		return
 	}
 
@@ -137,12 +168,14 @@ func (rt *Runtime) handleResult(found protocolResult) {
 	if proto == "" {
 		proto = "tcp"
 	}
-	ddout.FormatOutput(ddout.OutputMessage{
-		Type:     "Nmap",
-		IP:       found.IP,
-		Port:     strconv.Itoa(found.Port),
-		Protocol: proto,
-	})
+	if rt.emit != nil {
+		rt.emit(structs.OutputMessage{
+			Type:     "Nmap",
+			IP:       found.IP,
+			Port:     strconv.Itoa(found.Port),
+			Protocol: proto,
+		})
+	}
 }
 
 func (rt *Runtime) storeProtocol(hostPort string, protocol string) {

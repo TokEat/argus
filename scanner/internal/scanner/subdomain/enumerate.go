@@ -3,9 +3,9 @@ package subdomain
 
 import (
 	"bytes"
-	"dddd/scanner/common"
 	"dddd/scanner/ddout"
 	"dddd/scanner/utils"
+	_ "embed"
 	"io"
 	"strings"
 
@@ -98,8 +98,11 @@ func dnsCallback(subdomain string) {
 	})
 }
 
+//go:embed subdomains.txt
+var embedSubdomainDict string
+
 func embeddedWordlist() []string {
-	t := strings.ReplaceAll(common.EmbedSubdomainDict, "\r\n", "\n")
+	t := strings.ReplaceAll(embedSubdomainDict, "\r\n", "\n")
 	return removeEmpty(strings.Split(t, "\n"))
 }
 

@@ -52,6 +52,10 @@ func isAgentInternalEndpoint(c *gin.Context) bool {
 	if path == "/api/v1/arsenals/manifest" {
 		return true
 	}
+	// Agent 整体 DB 同步端点
+	if path == "/api/v1/arsenals/db" || path == "/api/v1/arsenals/db/hash" || path == "/api/v1/arsenals/db/stats" {
+		return true
+	}
 	if strings.HasPrefix(path, "/api/v1/arsenals/") {
 		rest := strings.TrimPrefix(path, "/api/v1/arsenals/")
 		return rest != "" && !strings.Contains(rest, "/")
@@ -243,6 +247,11 @@ func InitRouter(port string) {
 
 		// 规则清单（增量同步用）
 		api.GET("/arsenals/manifest", getArsenalManifest)
+
+		// Arsenal DB 整体同步（Agent 用）
+		api.GET("/arsenals/db", getArsenalDB)
+		api.GET("/arsenals/db/hash", getArsenalDBHash)
+		api.GET("/arsenals/db/stats", getArsenalDBStats)
 
 		// API 密钥集中管理
 		api.GET("/config/api-keys", getApiKeysConfig)

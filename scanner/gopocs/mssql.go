@@ -120,7 +120,7 @@ func MssqlConn(info *structs.HostInfo, user string, pass string) (flag bool, err
 			r := verifyMssql(db)
 			gologger.AuditLogger("[Go] [MSSQL-Brute] %s Result:\n%s", showData, r)
 
-			ddout.FormatOutput(ddout.OutputMessage{
+			info.Emit(ddout.OutputMessage{
 				Type:     "GoPoc",
 				IP:       "",
 				IPs:      nil,

@@ -16,16 +16,15 @@ import (
 	"sync"
 	"time"
 
-	"dddd/scanner/common"
 
 	"github.com/projectdiscovery/gologger"
 )
 
-func ScanTCP(ips []string, ports string, timeout int, workers int, portsThreshold int, portScan bool) []string {
+func ScanTCP(ips []string, ports string, timeout int, workers int, portsThreshold int, portScan bool, emit func(ddout.OutputMessage)) []string {
 	var aliveAddress []string
 	gologger.AuditTimeLogger("开始TCP端口扫描，端口设置: %s\nTCP端口扫描目标:%s", ports, strings.Join(ips, ","))
 
-	probePorts := common.ParsePort(ports)
+	probePorts := ParsePort(ports)
 	rand.Seed(time.Now().UnixNano())
 	rand.Shuffle(len(probePorts), func(i, j int) {
 		probePorts[i], probePorts[j] = probePorts[j], probePorts[i]
@@ -69,7 +68,7 @@ func ScanTCP(ips []string, ports string, timeout int, workers int, portsThreshol
 	for i := 0; i < workers; i++ {
 		go func() {
 			for item := range addrs {
-				portConnect(item, results, timeout, portScan, portsThreshold, &backlist, &backlistLock, &wg)
+				portConnect(item, results, timeout, portScan, portsThreshold, &backlist, &backlistLock, &wg, emit)
 				wg.Done()
 			}
 		}()
@@ -89,12 +88,49 @@ func ScanTCP(ips []string, ports string, timeout int, workers int, portsThreshol
 	return aliveAddress
 }
 
+func ParsePort(ports string) (scanPorts []int) {
+	if ports == "" {
+		return
+	}
+	slices := strings.Split(ports, ",")
+	for _, port := range slices {
+		port = strings.TrimSpace(port)
+		if port == "" {
+			continue
+		}
+		upper := port
+		if strings.Contains(port, "-") {
+			ranges := strings.Split(port, "-")
+			if len(ranges) < 2 {
+				continue
+			}
+
+			startPort, _ := strconv.Atoi(ranges[0])
+			endPort, _ := strconv.Atoi(ranges[1])
+			if startPort < endPort {
+				port = ranges[0]
+				upper = ranges[1]
+			} else {
+				port = ranges[1]
+				upper = ranges[0]
+			}
+		}
+		start, _ := strconv.Atoi(port)
+		end, _ := strconv.Atoi(upper)
+		for i := start; i <= end; i++ {
+			scanPorts = append(scanPorts, i)
+		}
+	}
+	scanPorts = utils.RemoveDuplicateElementInt(scanPorts)
+	return scanPorts
+}
+
 type addr struct {
 	ip   string
 	port int
 }
 
-func portConnect(item addr, respondingHosts chan<- string, adjustedTimeout int, portScan bool, portsThreshold int, backlist *map[string]struct{}, backlistLock *sync.Mutex, wg *sync.WaitGroup) {
+func portConnect(item addr, respondingHosts chan<- string, adjustedTimeout int, portScan bool, portsThreshold int, backlist *map[string]struct{}, backlistLock *sync.Mutex, wg *sync.WaitGroup, emit func(ddout.OutputMessage)) {
 	backlistLock.Lock()
 	_, blocked := (*backlist)[item.ip]
 	backlistLock.Unlock()
@@ -102,7 +138,7 @@ func portConnect(item addr, respondingHosts chan<- string, adjustedTimeout int, 
 		return
 	}
 
-	conn, err := common.WrapperTcpWithTimeout("tcp4", fmt.Sprintf("%s:%d", item.ip, item.port), time.Duration(adjustedTimeout)*time.Second)
+	conn, err := utils.WrapperTcpWithTimeout("tcp4", fmt.Sprintf("%s:%d", item.ip, item.port), time.Duration(adjustedTimeout)*time.Second)
 	defer func() {
 		if conn != nil {
 			conn.Close()
@@ -113,31 +149,43 @@ func portConnect(item addr, respondingHosts chan<- string, adjustedTimeout int, 
 	}
 
 	if portScan {
-		ddout.FormatOutput(ddout.OutputMessage{
-			Type: "PortScan",
-			IP:   item.ip,
-			Port: strconv.Itoa(item.port),
-		})
+		if emit != nil {
+			emit(ddout.OutputMessage{
+				Type: "PortScan",
+				IP:   item.ip,
+				Port: strconv.Itoa(item.port),
+			})
+		}
 	} else {
-		ddout.FormatOutput(ddout.OutputMessage{
-			Type:          "IPAlive",
-			IP:            item.ip,
-			AdditionalMsg: "TCP:" + strconv.Itoa(item.port),
-		})
+		if emit != nil {
+			emit(ddout.OutputMessage{
+				Type:          "IPAlive",
+				IP:            item.ip,
+				AdditionalMsg: "TCP:" + strconv.Itoa(item.port),
+			})
+		}
 	}
 	wg.Add(1)
 	respondingHosts <- item.ip + ":" + strconv.Itoa(item.port)
 }
 
-func ScanSYN(ips []string, masscanPath string, synThreads int) []string {
+func ScanSYN(ips []string, masscanPath string, synThreads int, emit func(ddout.OutputMessage)) []string {
 	ipsPayload := strings.Join(utils.RemoveDuplicateElement(ips), "\n")
-	if err := os.WriteFile("masscan_tmp.txt", []byte(ipsPayload), 0o666); err != nil {
+	tmpFile, err := os.CreateTemp("", "masscan-targets-*.txt")
+	if err != nil {
 		return []string{}
 	}
-	defer os.Remove("masscan_tmp.txt")
+	tmpFileName := tmpFile.Name()
+	if _, err := tmpFile.Write([]byte(ipsPayload)); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpFileName)
+		return []string{}
+	}
+	tmpFile.Close()
+	defer os.Remove(tmpFileName)
 
 	ms := masscan.New(masscanPath)
-	ms.SetFileName("masscan_tmp.txt")
+	ms.SetFileName(tmpFileName)
 	ms.SetPorts("1-65535")
 	ms.SetRate(strconv.Itoa(synThreads))
 	gologger.Info().Msgf("调用masscan进行SYN端口扫描")
@@ -165,11 +213,13 @@ func ScanSYN(ips []string, masscanPath string, synThreads int) []string {
 		if len(parts) != 2 {
 			continue
 		}
-		ddout.FormatOutput(ddout.OutputMessage{
-			Type: "PortScan",
-			IP:   parts[0],
-			Port: parts[1],
-		})
+		if emit != nil {
+			emit(ddout.OutputMessage{
+				Type: "PortScan",
+				IP:   parts[0],
+				Port: parts[1],
+			})
+		}
 	}
 	return results
 }
