@@ -102,6 +102,10 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 	nucleiRunner.EmbedPocsFS = fs
 	nucleiRunner.EnableSeverities = severities
 
+	// 调试日志：打印 Nuclei 实际加载的模板路径
+	pwd, _ := os.Getwd()
+	gologger.Info().Msgf("[Nuclei] CWD=%s, Templates=%v", pwd, options.Templates)
+
 	// Task 2.3: 移除 signal handler — Agent 有自己的生命周期管理，
 	// 此处的 SIGINT 处理会泄漏 goroutine 且可能杀死宿主进程。
 	resumeFileName := types.DefaultResumeFilePath()

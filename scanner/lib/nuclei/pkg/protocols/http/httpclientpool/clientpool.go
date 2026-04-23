@@ -37,6 +37,15 @@ var (
 	clientPool        *mapsutil.SyncLockMap[string, *retryablehttp.Client]
 )
 
+// Reset 清除全局客户端池状态，允许下次 Init 重新创建客户端。
+// 在长驻进程（如 Agent）中每次 Nuclei 执行结束后调用。
+func Reset() {
+	normalClient = nil
+	rawHttpClient = nil
+	Dialer = nil
+	clientPool = nil
+}
+
 // Init initializes the clientpool implementation
 func Init(options *types.Options) error {
 	// Don't create clients if already created in the past.

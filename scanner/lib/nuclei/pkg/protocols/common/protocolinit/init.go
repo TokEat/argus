@@ -77,5 +77,6 @@ var userAgents = []string{
 }
 
 func Close() {
-	protocolstate.Dialer.Close()
+	protocolstate.Close()
+	httpclientpool.Reset()
 }

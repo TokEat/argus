@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/logrusorgru/aurora"
 	"github.com/projectdiscovery/gologger"
@@ -286,7 +287,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		if enableLocalReports {
 			output.InitReportName()
 		}
-		addResult := buildNucleiResultHandler(ctx, enableLocalReports)
+		addResult, _ := buildNucleiResultHandler(ctx, enableLocalReports)
 		nuclei.Call(TargetAndPocsName,
 			cfg.HTTPProxy,
 			addResult,
@@ -372,17 +373,21 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	TargetAndPocsName, count := mapper.GetPocs(resultMap, currentPipelineWorkflowDB(ctx), cfg.DisableGeneralPoc)
 	gologger.Info().Msgf("[Pipeline] Nuclei 映射结果: targets=%d pocs=%d template_path=%s", len(TargetAndPocsName), count, cfg.NucleiTemplate)
 	for target, pocs := range TargetAndPocsName {
-		gologger.AuditLogger("[Pipeline] %s → %v", target, pocs)
+		gologger.Info().Msgf("[Pipeline]   %s → %v", target, pocs)
 	}
 	if count > 0 {
 		emitPhase(ctx, PhaseNuclei, "start", fmt.Sprintf("%d pocs", count))
-		addResult := buildNucleiResultHandler(ctx, enableLocalReports)
+		addResult, collector := buildNucleiResultHandler(ctx, enableLocalReports)
 		nucleiResults = nuclei.Call(TargetAndPocsName,
 			cfg.HTTPProxy,
 			addResult,
 			"", cfg.NoInteractsh, currentPipelineEmbedPocs(ctx),
 			cfg.NucleiTemplate, strings.Split(cfg.ExcludeTags, ","),
 			strings.Split(cfg.Severities, ","))
+		// 合并：nuclei.Call 返回的结果（CLI 模式） + 回调收集的结果（Agent 模式）
+		if collected := collector.snapshot(); len(collected) > 0 {
+			nucleiResults = append(nucleiResults, collected...)
+		}
 		emitPhase(ctx, PhaseNuclei, "end", "")
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {
@@ -533,9 +538,34 @@ func currentUncoverConfig(ctx *ScanContext) uncover.Config {
 	}
 }
 
-func buildNucleiResultHandler(ctx *ScanContext, enableLocalReports bool) func(result nucleiOutput.ResultEvent) {
+// nucleiResultCollector 在 Nuclei 回调中同步收集结果副本。
+// Agent 模式下 OutputHook 会把结果推给 gRPC，但 GoPoc 引擎需要
+// 本地拿到这些结果来触发联动任务（如 Shiro-Key-Crack）。
+type nucleiResultCollector struct {
+	mu      sync.Mutex
+	results []nucleiOutput.ResultEvent
+}
+
+func (c *nucleiResultCollector) add(result nucleiOutput.ResultEvent) {
+	c.mu.Lock()
+	c.results = append(c.results, result)
+	c.mu.Unlock()
+}
+
+func (c *nucleiResultCollector) snapshot() []nucleiOutput.ResultEvent {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]nucleiOutput.ResultEvent(nil), c.results...)
+}
+
+func buildNucleiResultHandler(ctx *ScanContext, enableLocalReports bool) (func(result nucleiOutput.ResultEvent), *nucleiResultCollector) {
+	collector := &nucleiResultCollector{}
+
 	if enableLocalReports || ctx == nil || ctx.OutputHook == nil {
-		return output.AddResultByResultEvent
+		return func(result nucleiOutput.ResultEvent) {
+			output.AddResultByResultEvent(result)
+			collector.add(result)
+		}, collector
 	}
 
 	return func(result nucleiOutput.ResultEvent) {
@@ -553,7 +583,8 @@ func buildNucleiResultHandler(ctx *ScanContext, enableLocalReports bool) func(re
 			Nuclei: string(payload),
 			Show:   show,
 		})
-	}
+		collector.add(result)
+	}, collector
 }
 
 func newPipelineUncoverState(ctx *ScanContext) (*uncover.State, func()) {

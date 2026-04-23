@@ -723,13 +723,13 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 		// GoPoc 类型提取
 		if payloadType == "GoPoc" {
 			if goPoc, ok := p["go_poc"].(map[string]interface{}); ok {
-				if name, ok := goPoc["poc_name"].(string); ok && name != "" {
+				if name, ok := goPoc["PocName"].(string); ok && name != "" {
 					plugin = name
 				}
-				if t, ok := goPoc["target"].(string); ok && t != "" {
+				if t, ok := goPoc["Target"].(string); ok && t != "" {
 					target = t
 				}
-				if sec, ok := goPoc["security"].(string); ok && sec != "" {
+				if sec, ok := goPoc["Security"].(string); ok && sec != "" {
 					severity = sec
 				}
 				if left, ok := goPoc["InfoLeft"].(string); ok {

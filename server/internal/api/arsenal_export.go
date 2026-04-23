@@ -156,8 +156,14 @@ func buildArsenalSQLiteDB(tenantID string) (filePath string, hash string, err er
 			}
 		}
 
+		// 按 Name 去重，避免 uniqueIndex 冲突导致整批插入失败
+		seen := make(map[string]bool, len(pocRules))
 		batch := make([]agentPoc, 0, len(pocRules))
 		for _, r := range pocRules {
+			if seen[r.Name] {
+				continue
+			}
+			seen[r.Name] = true
 			content := contentMap[r.ArtifactID]
 			batch = append(batch, agentPoc{
 				Name:        r.Name,
@@ -174,7 +180,9 @@ func buildArsenalSQLiteDB(tenantID string) (filePath string, hash string, err er
 				UpdatedAt:   now,
 			})
 		}
-		sdb.CreateInBatches(batch, 500)
+		if err := sdb.CreateInBatches(batch, 500).Error; err != nil {
+			log.Printf("[ArsenalExport] ⚠️ POC 批量写入 SQLite 失败: %v (count=%d)", err, len(batch))
+		}
 	}
 
 	// --- 导入 Workflow ---
