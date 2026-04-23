@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Typography, Table, Tag, Tabs, Space, Spin, Button, Tooltip, Empty, Drawer, Descriptions, Divider } from 'antd';
+import { Typography, Table, Tag, Tabs, Space, Spin, Button, Tooltip, Empty, Drawer, Descriptions, Divider, Popover } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     BugOutlined,
@@ -15,6 +15,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { useNavigate, useParams } from 'react-router-dom';
 import { getVulns, getAssets, getFingerprints, exportVulns } from '../services/api';
+import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
 
@@ -83,18 +84,20 @@ const TaskResults: React.FC = () => {
     };
 
     const getSeverityColor = (severity: string) => {
+        const normalized = severity ? severity.charAt(0).toUpperCase() + severity.slice(1).toLowerCase() : 'Unknown';
         const map: Record<string, string> = {
             Critical: '#ef4444', High: '#f97316', Medium: '#f59e0b',
-            Low: '#3b82f6', Info: '#6b7280', Unknown: '#94a3b8',
+            Low: '#3b82f6', Info: '#14b8a6', Unknown: '#94a3b8',
         };
-        return map[severity] || '#94a3b8';
+        return map[normalized] || '#94a3b8';
     };
 
     const getSeverityWeight = (severity: string) => {
+        const normalized = severity ? severity.charAt(0).toUpperCase() + severity.slice(1).toLowerCase() : 'Unknown';
         const map: Record<string, number> = {
             Critical: 5, High: 4, Medium: 3, Low: 2, Info: 1, Unknown: 0,
         };
-        return map[severity] || 0;
+        return map[normalized] || 0;
     };
 
     const vulnColumns: ColumnsType<API.Vulnerability> = [
@@ -117,9 +120,15 @@ const TaskResults: React.FC = () => {
             dataIndex: 'Severity',
             key: 'severity',
             width: 100,
-            render: (v: string) => <Tag color={getSeverityColor(v)}>{v}</Tag>,
+            render: (v: string) => {
+                const normalized = v ? v.charAt(0).toUpperCase() + v.slice(1).toLowerCase() : 'Unknown';
+                return <Tag color={getSeverityColor(normalized)}>{normalized}</Tag>;
+            },
             filters: ['Critical', 'High', 'Medium', 'Low', 'Info', 'Unknown'].map(s => ({ text: s, value: s })),
-            onFilter: (value, record) => record.Severity === value,
+            onFilter: (value, record) => {
+                const normalized = record.Severity ? record.Severity.charAt(0).toUpperCase() + record.Severity.slice(1).toLowerCase() : 'Unknown';
+                return normalized === value;
+            },
             sorter: (a, b) => getSeverityWeight(b.Severity) - getSeverityWeight(a.Severity),
             defaultSortOrder: 'ascend',
         },
@@ -150,7 +159,10 @@ const TaskResults: React.FC = () => {
             key: 'created_at',
             width: 170,
             sorter: (a, b) => new Date(a.CreatedAt).getTime() - new Date(b.CreatedAt).getTime(),
-            render: (v: string) => <Text style={{ fontSize: 12, color: '#64748b' }}>{v}</Text>,
+            render: (v: string) => {
+                if (!v) return '-';
+                return <Text style={{ fontSize: 12, color: '#64748b' }}>{dayjs(v).format('YYYY-MM-DD HH:mm:ss')}</Text>;
+            },
         },
     ];
 
@@ -207,7 +219,10 @@ const TaskResults: React.FC = () => {
             dataIndex: 'CreatedAt',
             key: 'created_at',
             width: 170,
-            render: (v: string) => <Text style={{ fontSize: 12, color: '#64748b' }}>{v}</Text>,
+            render: (v: string) => {
+                if (!v) return '-';
+                return <Text style={{ fontSize: 12, color: '#64748b' }}>{dayjs(v).format('YYYY-MM-DD HH:mm:ss')}</Text>;
+            },
         },
     ];
 
@@ -226,28 +241,57 @@ const TaskResults: React.FC = () => {
             render: (v: string) => <Tag color="cyan">{v}</Tag>,
         },
         {
-            title: '规则',
-            dataIndex: 'RuleName',
-            key: 'rule_name',
-            ellipsis: true,
-        },
-        {
             title: '证据',
             dataIndex: 'Evidence',
             key: 'evidence',
-            ellipsis: true,
-            render: (v: string) => (
-                <Tooltip title={v}>
-                    <Text style={{ fontSize: 12, color: '#64748b' }}>{v?.slice(0, 80)}</Text>
-                </Tooltip>
-            ),
+            render: (v: string) => {
+                if (!v) return <Text type="secondary">-</Text>;
+                try {
+                    const parsed = JSON.parse(v);
+                    const web = parsed.web;
+                    return (
+                        <Popover 
+                            content={<pre style={{ maxWidth: 500, maxHeight: 400, overflow: 'auto', fontSize: 12, margin: 0 }}>{JSON.stringify(parsed, null, 2)}</pre>} 
+                            title={<span style={{ fontSize: 13 }}>完整证据 (JSON)</span>}
+                            trigger="hover"
+                            placement="left"
+                        >
+                            <Space size={4} style={{ cursor: 'pointer' }}>
+                                {web?.status && (
+                                    <Tag color={String(web.status) === '200' ? 'green' : (String(web.status).startsWith('3') ? 'blue' : 'orange')} style={{ margin: 0 }}>
+                                        {web.status}
+                                    </Tag>
+                                )}
+                                {web?.title ? (
+                                    <Text style={{ fontSize: 12, color: '#64748b', maxWidth: 250 }} ellipsis={{ tooltip: web.title }}>
+                                        {web.title}
+                                    </Text>
+                                ) : (
+                                    <Text style={{ fontSize: 12, color: '#64748b', maxWidth: 250 }} ellipsis>
+                                        {v}
+                                    </Text>
+                                )}
+                            </Space>
+                        </Popover>
+                    );
+                } catch {
+                    return (
+                        <Tooltip title={v}>
+                            <Text style={{ fontSize: 12, color: '#64748b', maxWidth: 260 }} ellipsis>{v}</Text>
+                        </Tooltip>
+                    );
+                }
+            },
         },
         {
             title: '发现时间',
             dataIndex: 'CreatedAt',
             key: 'created_at',
             width: 170,
-            render: (v: string) => <Text style={{ fontSize: 12, color: '#64748b' }}>{v}</Text>,
+            render: (v: string) => {
+                if (!v) return '-';
+                return <Text style={{ fontSize: 12, color: '#64748b' }}>{dayjs(v).format('YYYY-MM-DD HH:mm:ss')}</Text>;
+            },
         },
     ];
 
@@ -278,11 +322,14 @@ const TaskResults: React.FC = () => {
                 </Space>
                 <Space>
                     {/* Severity breakdown */}
-                    {Object.entries(severityStats).map(([severity, count]) => (
-                        <Tag key={severity} color={getSeverityColor(severity)}>
-                            {severity}: {count}
-                        </Tag>
-                    ))}
+                    {Object.entries(severityStats).map(([severity, count]) => {
+                        const normalized = severity ? severity.charAt(0).toUpperCase() + severity.slice(1).toLowerCase() : 'Unknown';
+                        return (
+                            <Tag key={severity} color={getSeverityColor(normalized)}>
+                                {normalized}: {count}
+                            </Tag>
+                        );
+                    })}
                     <Tag color="blue"><GlobalOutlined /> 资产 {assets.length}</Tag>
                     <Tag color="cyan"><ScanOutlined /> 指纹 {fingerprints.length}</Tag>
                     <Button icon={<ReloadOutlined />} onClick={fetchData} loading={loading}>刷新</Button>
@@ -307,6 +354,7 @@ const TaskResults: React.FC = () => {
                                 label: <span><BugOutlined /> 漏洞 ({vulns.length})</span>,
                                 children: (
                                     <Table
+                                        bordered
                                         columns={vulnColumns}
                                         dataSource={vulns}
                                         rowKey="ID"
@@ -316,6 +364,7 @@ const TaskResults: React.FC = () => {
                                             onClick: () => handleVulnClick(record),
                                             style: { cursor: 'pointer' },
                                         })}
+                                        rowClassName={(_, index) => index % 2 === 1 ? 'table-row-light' : 'table-row-dark'}
                                     />
                                 ),
                             },
@@ -324,11 +373,13 @@ const TaskResults: React.FC = () => {
                                 label: <span><GlobalOutlined /> 资产 ({assets.length})</span>,
                                 children: (
                                     <Table
+                                        bordered
                                         columns={assetColumns}
                                         dataSource={assets}
                                         rowKey="ID"
                                         pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
                                         size="middle"
+                                        rowClassName={(_, index) => index % 2 === 1 ? 'table-row-light' : 'table-row-dark'}
                                     />
                                 ),
                             },
@@ -337,11 +388,13 @@ const TaskResults: React.FC = () => {
                                 label: <span><ScanOutlined /> 指纹 ({fingerprints.length})</span>,
                                 children: (
                                     <Table
+                                        bordered
                                         columns={fpColumns}
                                         dataSource={fingerprints}
                                         rowKey="ID"
                                         pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
                                         size="middle"
+                                        rowClassName={(_, index) => index % 2 === 1 ? 'table-row-light' : 'table-row-dark'}
                                     />
                                 ),
                             },
@@ -374,7 +427,9 @@ const TaskResults: React.FC = () => {
                                 <Text copyable style={{ fontFamily: 'monospace' }}>{selectedVuln.Target}</Text>
                             </Descriptions.Item>
                             <Descriptions.Item label="危害等级">
-                                <Tag color={getSeverityColor(selectedVuln.Severity)}>{selectedVuln.Severity}</Tag>
+                                <Tag color={getSeverityColor(selectedVuln.Severity ? selectedVuln.Severity.charAt(0).toUpperCase() + selectedVuln.Severity.slice(1).toLowerCase() : 'Unknown')}>
+                                    {selectedVuln.Severity ? selectedVuln.Severity.charAt(0).toUpperCase() + selectedVuln.Severity.slice(1).toLowerCase() : 'Unknown'}
+                                </Tag>
                             </Descriptions.Item>
                             {selectedVuln.MatchedAt && (
                                 <Descriptions.Item label="匹配位置" span={2}>
@@ -384,7 +439,7 @@ const TaskResults: React.FC = () => {
                                 </Descriptions.Item>
                             )}
                             <Descriptions.Item label="发现时间" span={2}>
-                                {selectedVuln.CreatedAt}
+                                {selectedVuln.CreatedAt ? dayjs(selectedVuln.CreatedAt).format('YYYY-MM-DD HH:mm:ss') : '-'}
                             </Descriptions.Item>
                         </Descriptions>
 

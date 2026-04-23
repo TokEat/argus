@@ -2,6 +2,7 @@ package db
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strings"
 	"sync"
@@ -575,12 +576,23 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 
 	if err := json.Unmarshal([]byte(payloadJSON), &p); err == nil {
 		// 提取 target
-		if t, ok := p["target"].(string); ok {
+		if t, ok := p["target"].(string); ok && t != "" {
 			target = t
-		} else if t, ok := p["host"].(string); ok {
+		} else if t, ok := p["host"].(string); ok && t != "" {
 			target = t
-		} else if t, ok := p["url"].(string); ok {
+		} else if t, ok := p["url"].(string); ok && t != "" {
 			target = t
+		} else if t, ok := p["ip"].(string); ok && t != "" {
+			target = t
+			if portStr, ok := p["port"].(string); ok && portStr != "" {
+				target = t + ":" + portStr
+			} else if portFl, ok := p["port"].(float64); ok && portFl > 0 {
+				target = t + ":" + fmt.Sprint(portFl)
+			}
+		} else if gp, ok := p["go_poc"].(map[string]interface{}); ok {
+			if t, ok := gp["Target"].(string); ok && t != "" {
+				target = t
+			}
 		}
 		// 精细化字段提取
 		if v, ok := p["port"].(float64); ok {

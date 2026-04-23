@@ -782,13 +782,11 @@ const TaskManagement: React.FC = () => {
                                 children: (
                                     <>
                                         <Row gutter={16}>
-                                            {sourceMode !== 'direct' && (
-                                                <Col span={8}>
-                                                    <Form.Item label="输出 IP:Port 格式" name="OnlyIPPort" valuePropName="checked">
-                                                        <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                                                    </Form.Item>
-                                                </Col>
-                                            )}
+                                            <Col span={8}>
+                                                <Form.Item label="输出 IP:Port 格式" name="OnlyIPPort" valuePropName="checked">
+                                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                                                </Form.Item>
+                                            </Col>
                                             {sourceMode === 'hunter' && (
                                                 <Col span={8}>
                                                     <Form.Item label={<>低感知模式 <Tooltip title="从Hunter直接取响应判断指纹，跳过端口扫描"><InfoCircleOutlined /></Tooltip></>} name="LowPerceptionMode" valuePropName="checked">

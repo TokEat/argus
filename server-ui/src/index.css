@@ -875,3 +875,11 @@ body {
     font-size: 22px;
   }
 }
+
+.table-row-light {
+    background-color: #fafafa;
+}
+.table-row-dark {
+    background-color: #ffffff;
+}
+
