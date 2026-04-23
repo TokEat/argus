@@ -10,6 +10,7 @@ import {
     SearchOutlined,
     LinkOutlined,
     DisconnectOutlined,
+    WarningOutlined,
 } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import type { ColumnsType } from 'antd/es/table';
@@ -114,6 +115,29 @@ http:
         setEditorVisible(true);
     };
 
+    /** 校验新建文件名是否与现有 POC 重名（兼容带不带 .yaml 后缀两种写法） */
+    const checkDuplicate = (raw: string): API.Arsenal | null => {
+        const name = raw.trim();
+        if (!name) return null;
+        const withExt = /\.ya?ml$/i.test(name) ? name : `${name}.yaml`;
+        const stripped = name.replace(/\.ya?ml$/i, '');
+        return arsenals.find((a) => {
+            const aStripped = a.FileName.replace(/\.ya?ml$/i, '');
+            return a.FileName === name || a.FileName === withExt || aStripped === stripped;
+        }) || null;
+    };
+
+    const duplicateOf = useMemo(() => (isNew ? checkDuplicate(newFileName) : null),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [isNew, newFileName, arsenals]);
+
+    const doSave = async (fileName: string) => {
+        await saveArsenal('poc', fileName, editorContent);
+        msg.success(isNew ? (duplicateOf ? `POC ${fileName} 已覆盖（重置为草稿状态）` : 'POC 创建成功（草稿状态）') : 'POC 更新成功');
+        setEditorVisible(false);
+        fetchData();
+    };
+
     const handleSave = async () => {
         try {
             const fileName = isNew ? newFileName.trim() : currentArsenal?.FileName || '';
@@ -121,10 +145,30 @@ http:
                 msg.error('请输入文件名');
                 return;
             }
-            await saveArsenal('poc', fileName, editorContent);
-            msg.success(isNew ? 'POC 创建成功（草稿状态）' : 'POC 更新成功');
-            setEditorVisible(false);
-            fetchData();
+            if (isNew && duplicateOf) {
+                Modal.confirm({
+                    title: '文件名已存在，将覆盖现有 POC',
+                    icon: <WarningOutlined style={{ color: '#faad14' }} />,
+                    content: (
+                        <div>
+                            <p>弹药库中已存在 <Text code>{duplicateOf.FileName}</Text>（当前状态：{duplicateOf.State}）。</p>
+                            <p>继续保存将<strong>覆盖其内容</strong>，并把状态<strong>强制重置为草稿</strong>，需要重新审核才能生效。</p>
+                            {getUsage(duplicateOf.FileName).length > 0 && (
+                                <p style={{ color: '#ef4444' }}>⚠ 该 POC 当前被 {getUsage(duplicateOf.FileName).length} 个 Workflow 引用，覆盖后所有引用都会立即失效（直到重新审核）。</p>
+                            )}
+                        </div>
+                    ),
+                    okText: '确认覆盖',
+                    okButtonProps: { danger: true },
+                    cancelText: '取消',
+                    onOk: async () => {
+                        try { await doSave(duplicateOf.FileName); }
+                        catch (e: unknown) { msg.error(typeof e === 'string' ? e : '保存失败'); }
+                    },
+                });
+                return;
+            }
+            await doSave(fileName);
         } catch (error: unknown) {
             msg.error(typeof error === 'string' ? error : '保存失败');
         }
@@ -326,7 +370,15 @@ http:
                             value={newFileName}
                             onChange={(e) => setNewFileName(e.target.value)}
                             placeholder="例: CVE-2024-XXXX.yaml"
+                            status={duplicateOf ? 'warning' : undefined}
+                            suffix={duplicateOf ? <WarningOutlined style={{ color: '#faad14' }} /> : undefined}
                         />
+                        {duplicateOf && (
+                            <div style={{ marginTop: 6, fontSize: 12, color: '#d97706' }}>
+                                <WarningOutlined /> 已存在 <Text code>{duplicateOf.FileName}</Text>（{duplicateOf.State}），保存将覆盖并重置为草稿
+                                {getUsage(duplicateOf.FileName).length > 0 && <span style={{ color: '#ef4444' }}>，且会让 {getUsage(duplicateOf.FileName).length} 个 Workflow 引用立即失效</span>}
+                            </div>
+                        )}
                     </div>
                 )}
                 <div style={{ height: 500, border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
