@@ -282,6 +282,8 @@ func InitRouter(port string) {
 
 		// Agent 节点
 		api.GET("/nodes", getNodes)
+		api.DELETE("/nodes/:id", deleteNode)
+		api.POST("/nodes/clean", cleanOfflineNodes)
 		api.GET("/agents/:id/commands", getAgentCommands)
 
 		// Arsenal 弹药库热发车网关与审核墙
@@ -1235,6 +1237,35 @@ func getNodes(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+func deleteNode(c *gin.Context) {
+	agentID := c.Param("id")
+	tenantID := currentTenantID(c)
+
+	res := scopedNodeQuery(tenantID).Where("agent_id = ?", agentID).Delete(&db.Node{})
+	if res.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": res.Error.Error()})
+		return
+	}
+	if res.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Node not found or already deleted"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
+}
+
+func cleanOfflineNodes(c *gin.Context) {
+	tenantID := currentTenantID(c)
+
+	res := scopedNodeQuery(tenantID).Where("status = ?", "Offline").Delete(&db.Node{})
+	if res.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": res.Error.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "cleaned", "count": res.RowsAffected})
 }
 
 func parseTargets(raw json.RawMessage) ([]string, error) {

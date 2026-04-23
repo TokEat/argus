@@ -148,6 +148,14 @@ export async function getNodes(): Promise<API.AgentNode[]> {
     return request.get('/nodes');
 }
 
+export async function deleteNode(agentId: string): Promise<API.MessageResponse> {
+    return request.delete(`/nodes/${encodeURIComponent(agentId)}`);
+}
+
+export async function cleanOfflineNodes(): Promise<{ status: string; count: number }> {
+    return request.post('/nodes/clean');
+}
+
 export async function getAgentCommands(agentId: string): Promise<API.AgentCommands> {
     return request.get(`/agents/${agentId}/commands`);
 }

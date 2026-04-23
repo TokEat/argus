@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Typography, Tag, Space, Button, Spin, Tooltip, Popover, Badge, Empty, Progress, List, Row, Col, Divider } from 'antd';
+import { Typography, Tag, Space, Button, Spin, Tooltip, Popover, Badge, Empty, Progress, List, Row, Col, Divider, message, Popconfirm } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     ReloadOutlined,
@@ -11,9 +11,11 @@ import {
     TagsOutlined,
     AppstoreOutlined,
     DashboardOutlined,
-    HddOutlined
+    HddOutlined,
+    DeleteOutlined,
+    ClearOutlined
 } from '@ant-design/icons';
-import { getNodes } from '../services/api';
+import { getNodes, deleteNode, cleanOfflineNodes } from '../services/api';
 
 const { Title, Text } = Typography;
 
@@ -38,6 +40,26 @@ const NodeManagement: React.FC = () => {
         const timer = setInterval(fetchNodes, 10000);
         return () => clearInterval(timer);
     }, []);
+
+    const handleCleanOffline = async () => {
+        try {
+            const res = await cleanOfflineNodes();
+            message.success(`成功清理 ${res.count} 个离线节点`);
+            fetchNodes();
+        } catch (e: any) {
+            message.error(e || '清理失败');
+        }
+    };
+
+    const handleDeleteNode = async (agentId: string) => {
+        try {
+            await deleteNode(agentId);
+            message.success('删除成功');
+            fetchNodes();
+        } catch (e: any) {
+            message.error(e || '删除失败');
+        }
+    };
 
     const formatLastBeat = (ts: number) => {
         if (!ts) return '-';
@@ -145,14 +167,27 @@ const NodeManagement: React.FC = () => {
                                 </div>
                             </div>
                         </div>
-                        <Badge
-                            status={isAlive ? 'success' : 'default'}
-                            text={
-                                <span style={{ color: isAlive ? '#10b981' : '#94a3b8', fontSize: 12, fontWeight: 500 }}>
-                                    {isAlive ? '在线' : '离线'}
-                                </span>
-                            }
-                        />
+                        <Space>
+                            <Badge
+                                status={isAlive ? 'success' : 'default'}
+                                text={
+                                    <span style={{ color: isAlive ? '#10b981' : '#94a3b8', fontSize: 12, fontWeight: 500 }}>
+                                        {isAlive ? '在线' : '离线'}
+                                    </span>
+                                }
+                            />
+                            {!isAlive && (
+                                <Popconfirm
+                                    title="删除节点"
+                                    description="确定要删除该离线节点吗？"
+                                    onConfirm={() => handleDeleteNode(record.AgentID)}
+                                    okText="删除"
+                                    cancelText="取消"
+                                >
+                                    <Button type="text" danger icon={<DeleteOutlined />} size="small" />
+                                </Popconfirm>
+                            )}
+                        </Space>
                     </div>
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -247,6 +282,19 @@ const NodeManagement: React.FC = () => {
                     <Tag color="default" style={{ borderRadius: 20, padding: '4px 12px', border: 'none', background: 'rgba(148, 163, 184, 0.1)', color: '#64748b' }}>
                         <DisconnectOutlined /> 离线 {offlineCount}
                     </Tag>
+                    {offlineCount > 0 && (
+                        <Popconfirm
+                            title="清理离线节点"
+                            description="确定要清理所有离线的节点吗？"
+                            onConfirm={handleCleanOffline}
+                            okText="清理"
+                            cancelText="取消"
+                        >
+                            <Button danger icon={<ClearOutlined />} style={{ borderRadius: 8 }}>
+                                清理离线
+                            </Button>
+                        </Popconfirm>
+                    )}
                     <Button type="primary" icon={<ReloadOutlined />} onClick={fetchNodes} loading={loading} style={{ borderRadius: 8 }}>
                         实时刷新
                     </Button>

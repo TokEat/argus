@@ -254,6 +254,13 @@ func main() {
 					srv.Hub.BroadcastNewTask(int32(len(orphanTasks)), 0)
 				}
 			}
+
+			// 自动清理长时间离线的节点（10分钟无心跳直接从数据库删除，避免大屏和数据库堆积）
+			cleanCutoff := time.Now().UnixMilli() - 600000 // 10分钟
+			res := db.DB.Where("status = ? AND last_beat < ?", "Offline", cleanCutoff).Delete(&db.Node{})
+			if res.RowsAffected > 0 {
+				log.Printf("[Heartbeat] Auto-cleaned %d long-offline agents.", res.RowsAffected)
+			}
 		}
 	}()
 
