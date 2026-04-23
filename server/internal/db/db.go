@@ -431,6 +431,77 @@ func normalizeTarget(raw string) string {
 	return raw
 }
 
+func splitFingerprintToken(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if !strings.Contains(raw, ",") {
+		return []string{raw}
+	}
+	parts := strings.Split(raw, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		result = append(result, part)
+	}
+	return result
+}
+
+func extractFingerprintProductNames(payloadType, plugin string, payload map[string]interface{}) []string {
+	candidates := make([]string, 0, 4)
+
+	if plugin != "" {
+		candidates = append(candidates, splitFingerprintToken(plugin)...)
+	}
+
+	if payload != nil {
+		if raw, ok := payload["finger"]; ok {
+			switch typed := raw.(type) {
+			case []interface{}:
+				for _, item := range typed {
+					if name, ok := item.(string); ok {
+						candidates = append(candidates, splitFingerprintToken(name)...)
+					}
+				}
+			case []string:
+				for _, item := range typed {
+					candidates = append(candidates, splitFingerprintToken(item)...)
+				}
+			case string:
+				candidates = append(candidates, splitFingerprintToken(typed)...)
+			}
+		}
+	}
+
+	if len(candidates) == 0 {
+		fallback := strings.TrimSpace(payloadType)
+		switch fallback {
+		case "", "Finger", "Active-Finger", "fingerprint", "web_fingerprint", "tech":
+		default:
+			candidates = append(candidates, fallback)
+		}
+	}
+
+	seen := make(map[string]struct{}, len(candidates))
+	result := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || strings.EqualFold(candidate, "unknown") {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		result = append(result, candidate)
+	}
+	return result
+}
+
 func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 	// 优先从 LRU 缓存查找任务归属
 	projectID := "default_project"
@@ -557,33 +628,23 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 		}
 	case "fingerprint", "web_fingerprint", "tech",
 		"Finger", "Active-Finger":
-		// Agent 通过 ddout 发送的指纹 Type 为 Finger/Active-Finger
-		productName := payloadType
-		if plugin != "" {
-			productName = plugin
-		}
-		// 从 finger 数组提取产品名
-		if productName == payloadType {
-			if fingers, ok := p["finger"].([]interface{}); ok && len(fingers) > 0 {
-				names := make([]string, 0, len(fingers))
-				for _, f := range fingers {
-					if s, ok := f.(string); ok {
-						names = append(names, s)
-					}
-				}
-				if len(names) > 0 {
-					productName = strings.Join(names, ",")
-				}
-			}
-		}
+		// Agent 通过 ddout 发送的指纹 Type 为 Finger/Active-Finger。
+		// 原实现将 finger[] 拼接成一个字符串，容易产生“顺序变化导致重复”
+		// 和“单产品维度漏报”。这里改为逐产品名写入。
 		if uri, ok := p["uri"].(string); ok && target == "unknown" {
 			target = uri
 		}
 		// 归一化 target，确保三表关联一致性
 		target = normalizeTarget(target)
-		fpBuffer <- FingerprintHit{
-			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID, Target: target, ProductName: productName,
-			Evidence: payloadJSON, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		productNames := extractFingerprintProductNames(payloadType, plugin, p)
+		if len(productNames) == 0 {
+			break
+		}
+		for _, productName := range productNames {
+			fpBuffer <- FingerprintHit{
+				TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID, Target: target, ProductName: productName,
+				Evidence: payloadJSON, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+			}
 		}
 	case "phase":
 		// Agent PhaseHook 发送的阶段进度事件，仅广播到 WebSocket，不入库

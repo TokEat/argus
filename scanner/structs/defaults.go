@@ -29,6 +29,7 @@ func DefaultConfig() Config {
 		OutputType:                 "text",
 		NoInteractsh:               true,
 		GoPocThreads:               50,
+		GolangPoc:                  true,
 		APIConfigFilePath:          "config/api-config.yaml",
 		NucleiTemplate:             "config/pocs",
 		WorkflowYamlPath:           "config/workflow.yaml",

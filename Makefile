@@ -1,7 +1,15 @@
-.PHONY: cli agent server legacy all clean docker infra-up infra-down infra-logs db-init db-migrate setup-local
+.PHONY: cli agent server legacy all clean docker infra-up infra-down infra-logs db-init db-migrate db-verify setup-local smoke-local
 
 COMPOSE_FILE := server/deploy/docker-compose.yml
 DOCKER_COMPOSE := docker compose -f $(COMPOSE_FILE)
+DB_HOST ?= 127.0.0.1
+POSTGRES_PORT ?= 5432
+DB_PORT ?= $(POSTGRES_PORT)
+POSTGRES_USER ?= postgres
+POSTGRES_PASSWORD ?= root
+POSTGRES_DB ?= dddd
+DB_MIGRATION_MODE ?= apply
+DB_DSN ?= host=$(DB_HOST) user=$(POSTGRES_USER) password=$(POSTGRES_PASSWORD) dbname=$(POSTGRES_DB) port=$(DB_PORT) sslmode=disable
 
 # dddd CLI 单机版
 cli:
@@ -39,9 +47,15 @@ db-init:
 	$(DOCKER_COMPOSE) exec -T postgres bash -lc '/docker-entrypoint-initdb.d/000-init-db.sh'
 
 db-migrate:
-	go run ./server/cmd/dddd-server --migrate-only --dev
+	go run ./server/cmd/dddd-server --db "$(DB_DSN)" --migrate-only --db-migration-mode $(DB_MIGRATION_MODE) $(if $(filter dev-auto,$(DB_MIGRATION_MODE)),--dev,)
+
+db-verify:
+	go run ./server/cmd/dddd-server --db "$(DB_DSN)" --migrate-only --db-migration-mode verify
 
 setup-local:
 	bash server/deploy/setup-local.sh
+
+smoke-local:
+	bash test/setup-local-smoke.sh
 
 docker: setup-local

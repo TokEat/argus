@@ -13,6 +13,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -136,14 +137,18 @@ func scopedNodeQuery(tenantID string) *gorm.DB {
 	return db.DB.Where("tenant_id = ?", tenantID)
 }
 
-// jwtSecret 从环境变量 ARGUS_JWT_SECRET 读取，未设置则使用默认值（仅限开发环境）
-var jwtSecret = func() []byte {
+var jwtSecretWarningOnce sync.Once
+
+// currentJWTSecret 从环境变量 ARGUS_JWT_SECRET 读取，未设置则使用默认值（仅限开发环境）
+func currentJWTSecret() []byte {
 	if secret := os.Getenv("ARGUS_JWT_SECRET"); secret != "" {
 		return []byte(secret)
 	}
-	log.Println("[Auth] WARNING: ARGUS_JWT_SECRET not set, using insecure default (dev only)")
+	jwtSecretWarningOnce.Do(func() {
+		log.Println("[Auth] WARNING: ARGUS_JWT_SECRET not set, using insecure default (dev only)")
+	})
 	return []byte("P8-MUST-HAVE-SECRET-KEY")
-}()
+}
 
 // TenantMiddleware 强制 JWT 校验并拦截身份
 func TenantMiddleware() gin.HandlerFunc {
@@ -185,7 +190,7 @@ func TenantMiddleware() gin.HandlerFunc {
 			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, fmt.Errorf("unexpected signing method")
 			}
-			return jwtSecret, nil
+			return currentJWTSecret(), nil
 		})
 
 		if err != nil || !token.Valid {
@@ -1296,7 +1301,7 @@ func authLogin(c *gin.Context) {
 
 	req.TenantID = strings.TrimSpace(req.TenantID)
 	req.Username = strings.TrimSpace(req.Username)
-	
+
 	// Backward compatibility: if username is empty but tenant_id is provided, use tenant_id as username
 	// This supports the legacy login flow where tenant_id was used as the username
 	loginUsername := req.Username
@@ -1347,7 +1352,7 @@ func authLogin(c *gin.Context) {
 		"user_id":   userIDClaim,
 		"exp":       time.Now().Add(time.Hour * 72).Unix(),
 	})
-	tokenString, err := token.SignedString(jwtSecret)
+	tokenString, err := token.SignedString(currentJWTSecret())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to sign"})
 		return

@@ -370,6 +370,10 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 	var nucleiResults []nucleiOutput.ResultEvent
 	TargetAndPocsName, count := mapper.GetPocs(resultMap, currentPipelineWorkflowDB(ctx), cfg.DisableGeneralPoc)
+	gologger.Info().Msgf("[Pipeline] Nuclei 映射结果: targets=%d pocs=%d template_path=%s", len(TargetAndPocsName), count, cfg.NucleiTemplate)
+	for target, pocs := range TargetAndPocsName {
+		gologger.AuditLogger("[Pipeline] %s → %v", target, pocs)
+	}
 	if count > 0 {
 		emitPhase(ctx, PhaseNuclei, "start", fmt.Sprintf("%d pocs", count))
 		addResult := buildNucleiResultHandler(ctx, enableLocalReports)

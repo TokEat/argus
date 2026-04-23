@@ -44,8 +44,9 @@ func main() {
 		agentPSK = envPSK
 	}
 
-	// 生产模式安全强制检查
-	if !devMode {
+	// 生产模式安全强制检查。
+	// 数据库初始化/迁移场景不需要启动 API/gRPC，也不依赖运行期鉴权密钥。
+	if !devMode && !migrateOnly {
 		if agentPSK == "" {
 			log.Fatalf("[SECURITY] ARGUS_AGENT_PSK is required in production mode. Use --dev to skip.")
 		}
@@ -159,6 +160,11 @@ func main() {
 	// 标签不匹配时退回任务：Nack + requeue（RabbitMQ 原生重新入队）
 	srv.SetReturnTaskHook(func(task *pb.Task, msgID string) error {
 		return queue.NackTask(context.Background(), msgID)
+	})
+
+	// 用于重试/拆分产生的全新任务（没有老 msgID）入队
+	srv.SetRequeueTaskHook(func(task *pb.Task) error {
+		return queue.PushTaskToFront(context.Background(), task)
 	})
 
 	// 队列深度查询 Hook（用于心跳响应和防饥饿通知）

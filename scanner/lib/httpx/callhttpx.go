@@ -1,13 +1,9 @@
 package httpx
 
 import (
-	"crypto/tls"
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/httpx/runner"
 	errorutil "github.com/projectdiscovery/utils/errors"
-	"net"
-	gohttp "net/http"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -99,47 +95,7 @@ func CallHTTPx(urls []string, callBack func(resp runner.Result), proxy string, t
 
 	nextUrls := RemoveDuplicateElement(urls)
 	if len(nextUrls) == 0 {
-		gologger.Info().Msg("[HTTPProbe] 无目标，跳过")
 		return
-	}
-
-	// ★ 连通性预检测：在 httpx 启动前快速验证目标可达性
-	if proxy != "" {
-		gologger.Info().Msgf("[HTTPProbe] 使用HTTP代理: %s", proxy)
-	}
-	for _, u := range nextUrls {
-		if host := extractHostPort(u); host != "" {
-			conn, err := net.DialTimeout("tcp", host, 5*time.Second)
-			if err != nil {
-				gologger.Warning().Msgf("[HTTPProbe] ⚠ TCP连通性预检失败: %s → %v (httpx可能也会超时)", host, err)
-			} else {
-				conn.Close()
-				gologger.Info().Msgf("[HTTPProbe] ✓ TCP连通性检测通过: %s", host)
-			}
-		}
-	}
-
-	// ★ 原生 HTTP 预探测：绕过 httpx，直接用 Go 标准库验证 HTTP 可达性
-	if len(nextUrls) <= 5 {
-		httpClient := &gohttp.Client{
-			Timeout: 8 * time.Second,
-			Transport: &gohttp.Transport{
-				TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
-				DisableKeepAlives: true,
-			},
-			CheckRedirect: func(req *gohttp.Request, via []*gohttp.Request) error {
-				return gohttp.ErrUseLastResponse
-			},
-		}
-		for _, u := range nextUrls {
-			resp, err := httpClient.Get(u)
-			if err != nil {
-				gologger.Warning().Msgf("[HTTPProbe] ⚠ 原生HTTP探测失败: %s → %v", u, err)
-			} else {
-				gologger.Info().Msgf("[HTTPProbe] ✓ 原生HTTP探测成功: %s → %d", u, resp.StatusCode)
-				resp.Body.Close()
-			}
-		}
 	}
 
 	gologger.AuditLogger("响应探测目标: %s", strings.Join(nextUrls, ","))
@@ -248,23 +204,4 @@ func DirBrute(urls []string, callBack func(resp runner.Result), proxy string, th
 
 	_ = runEnumerationWithGuard(httpxRunner, "dir_brute", timeout, len(urls))
 	httpxRunner.Close()
-}
-
-// extractHostPort 从 URL 字符串中提取 host:port 用于 TCP 连通性检测。
-func extractHostPort(rawURL string) string {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return ""
-	}
-	host := parsed.Hostname()
-	port := parsed.Port()
-	if port == "" {
-		switch parsed.Scheme {
-		case "https":
-			port = "443"
-		default:
-			port = "80"
-		}
-	}
-	return net.JoinHostPort(host, port)
 }

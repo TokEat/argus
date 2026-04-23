@@ -109,9 +109,9 @@ func (rt *Runtime) DirBruteCallback(resp runner.Result) {
 	for _, path := range rt.matchingDirPaths(resp.Path) {
 		for _, productName := range rt.DirDB[path] {
 			success := rt.matchesProduct(resp, productName)
-			rootURL, _ := rt.upsertResponse(resp)
 
 			if success {
+				rt.upsertResponse(resp)
 				rt.emit(ddout.OutputMessage{
 					Type:   "Active-Finger",
 					Finger: []string{productName},
@@ -126,6 +126,11 @@ func (rt *Runtime) DirBruteCallback(resp runner.Result) {
 			}
 			workflowEntity, ok := rt.WorkFlowDB[productName]
 			if !ok || !workflowEntity.DirFallback {
+				continue
+			}
+
+			rootURL, _ := rt.upsertResponse(resp)
+			if rootURL == "" {
 				continue
 			}
 

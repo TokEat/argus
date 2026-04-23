@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sync"
 
+	"dddd/scanner/structs"
+
 	"github.com/projectdiscovery/hmap/store/hybrid"
 )
 
@@ -153,6 +155,8 @@ func NewScanContext(cfg Config) (*ScanContext, error) {
 		BannerHMap: hmBanner,
 		BodyHMap:   hmBody,
 		HeaderHMap: hmHeader,
+
+		EmbedPocs: structs.GlobalEmbedPocs,
 
 		Ctx:    ctx,
 		Cancel: cancel,

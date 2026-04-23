@@ -26,7 +26,7 @@
   - 不直接依赖 HTTP / gRPC 细节
 - `core/domain`
   - 只放领域模型和领域接口
-  - 不依赖 Gin / gRPC / GORM / Redis
+  - 不依赖 Gin / gRPC / GORM / 具体消息队列实现
 - `core/usecase`
   - 只放控制面的业务编排
   - 依赖 `core/domain` 接口，不依赖具体适配器

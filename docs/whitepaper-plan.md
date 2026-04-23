@@ -144,11 +144,11 @@
 - 总体架构图
 - 控制面职责
 - 数据面职责
-- PostgreSQL / Redis / gRPC / Web Console 的作用边界
+- PostgreSQL / RabbitMQ / gRPC / Web Console 的作用边界
 
 建议重点：
 
-- 为什么调度走 Redis Streams
+- 为什么调度走 RabbitMQ 多优先级队列
 - 为什么结果拆成资产 / 指纹 / 漏洞三层
 - 为什么规则要中心化
 
@@ -193,7 +193,7 @@
 
 建议包含：
 
-- Redis Streams 调度模型
+- RabbitMQ 多优先级调度模型
 - gRPC 通信设计
 - BatchWriter 防洪落库
 - Arsenal 与结构化规则表双层设计

@@ -24,12 +24,19 @@
 make infra-up
 make db-init
 make db-migrate
+make db-verify
 ```
 
 也可以直接一键完成：
 
 ```bash
 bash server/deploy/setup-local.sh
+```
+
+需要做一遍完整本地冒烟校验时，可执行：
+
+```bash
+make smoke-local
 ```
 
 如果你只想单独执行 PostgreSQL bootstrap，则使用：

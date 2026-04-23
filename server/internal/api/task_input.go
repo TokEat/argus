@@ -111,6 +111,7 @@ func defaultTaskScanConfig() taskScanConfig {
 		FofaMaxCount:               100,
 		QuakeSize:                  100,
 		GoPocThreads:               50,
+		GolangPoc:                  true,
 		NoInteractsh:               true,
 		OutputFile:                 "result.txt",
 		OutputType:                 "text",

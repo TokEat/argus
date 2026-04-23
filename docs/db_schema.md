@@ -21,7 +21,7 @@
 | 组件 | 职责 | 是否在本文覆盖 |
 |------|------|----------------|
 | PostgreSQL | 控制面元数据、任务状态、结果聚合、规则治理、系统配置 | 是 |
-| Redis Streams / 队列 | 任务排队、Pending/ACK、死任务打捞 | 否 |
+| RabbitMQ / 队列 | 任务排队、Pending/ACK、死任务打捞 | 否 |
 | 对象存储 / 文件系统 | 报表文件、构建产物、规则源文件 | 仅覆盖元数据表 |
 | Agent 本地磁盘 | Manifest、增量同步缓存、扫描中间文件 | 否 |
 
@@ -171,7 +171,7 @@
 | `status` | string | 子任务状态机 | Index |
 | `agent_id` | string | 当前认领节点 | Index |
 | `config` | text | 当前批次配置 JSON | Text |
-| `stream_msg_id` | string | 队列消息句柄 / Stream 消息标识 | - |
+| `stream_msg_id` | string | 队列消息句柄 / MQ 消息标识 | - |
 | `priority` | int | 调度优先级，默认 `1` | Index, Default:`1` |
 | `agent_selector` | text | 节点标签选择器 JSON | Text |
 | `timeout_sec` | int | 批次超时秒数 | - |

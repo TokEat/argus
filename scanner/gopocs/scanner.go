@@ -124,19 +124,19 @@ func Dispatch(ipPortMap map[string]string, goPocThreads int, password string, pa
 		dispatcher.addScan(task.Name, task.Info, ch, &wg)
 	}
 
-	// 各类指纹
-	//for host, fingers := range structs.GlobalResultMap {
-	//
-	//}
-	/*
-		for _, result := range nucleiResults {
-			if result.TemplateID == "shiro-detect" {
-				AddScan("Shiro-Key-Crack",
-					structs.HostInfo{Url: result.Matched},
-					&ch, &wg)
-			}
+	// Nuclei 检测到 Shiro 后自动触发 Shiro Key 爆破
+	for _, result := range nucleiResults {
+		if result.TemplateID == "shiro-detect" {
+			dispatcher.addScan("Shiro-Key-Crack",
+				structs.HostInfo{
+					Url:          result.Matched,
+					Password:     password,
+					PasswordFile: passwordFile,
+				},
+				ch, &wg)
 		}
-	*/
+	}
+
 	wg.Wait()
 	fmt.Printf("\r\033[K")
 	gologger.Info().Msg("Golang Poc引擎扫描结束")

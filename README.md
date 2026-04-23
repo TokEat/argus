@@ -176,6 +176,9 @@ make db-init
 
 # 3. 执行业务 schema migration
 make db-migrate
+
+# 4. 做一遍本地搭建冒烟校验（可选）
+make smoke-local
 ```
 
 #### 安全配置

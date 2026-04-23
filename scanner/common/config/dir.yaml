@@ -39,3 +39,9 @@ springboot-env:
   - "/js/..;/actuator"
 东方通:
   - "/ejbserver/ejb"
+Camunda:
+  - "/camunda/app/welcome/default/"
+  - "/camunda/"
+Apache-Tomcat:
+  - "/manager/html"
+  - "/host-manager/html"

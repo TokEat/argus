@@ -34,6 +34,7 @@ type Server struct {
 	fetchTaskHook     func(agentID string) (*pb.Task, string, error) // 兼容旧版
 	ackTaskHook       func(msgID string) error                       // ACK 确认
 	returnTaskHook    func(task *pb.Task, msgID string) error        // 退回队列
+	requeueTaskHook   func(task *pb.Task) error                      // 重新入队（用于重试/拆分）
 	queueDepthHook    func() int32                                   // 获取队列深度
 	onTaskClaimedHook func(agentID, taskID string)                   // UI 广播 Hook
 }
@@ -67,6 +68,10 @@ func (s *Server) SetAckTaskHook(fn func(msgID string) error) {
 
 func (s *Server) SetReturnTaskHook(fn func(task *pb.Task, msgID string) error) {
 	s.returnTaskHook = fn
+}
+
+func (s *Server) SetRequeueTaskHook(fn func(task *pb.Task) error) {
+	s.requeueTaskHook = fn
 }
 
 func (s *Server) SetQueueDepthHook(fn func() int32) {
@@ -491,13 +496,32 @@ func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb
 					continue
 				}
 				pbSub.Priority = 0 // urgent 优先级
-				if s.returnTaskHook != nil {
-					if err := s.returnTaskHook(pbSub, ""); err != nil {
+				if s.requeueTaskHook != nil {
+					if err := s.requeueTaskHook(pbSub); err != nil {
 						log.Printf("[SplitRetry] Failed to enqueue split subtask %s: %v", splitSub.ID, err)
 					}
 				}
 			}
 			log.Printf("[SplitRetry] Task %s split into %d sub-batches and re-enqueued", req.TaskId, len(splitSubs))
+		} else if sub.RetryCount < sub.MaxRetry {
+			// 普通重试：单目标批次失败或无法拆分时，走常规重试流程
+			log.Printf("[Retry] Task %s failed, regular retry (%d/%d)", req.TaskId, sub.RetryCount+1, sub.MaxRetry)
+			
+			sub.RetryCount++
+			if err := db.DB.Model(&sub).Where("id = ?", req.TaskId).Updates(map[string]interface{}{
+				"status": "Dispatching",
+				"retry_count": sub.RetryCount,
+			}).Error; err == nil {
+				pbSub, err := db.SubTaskToProto(&sub)
+				if err == nil && pbSub != nil {
+					pbSub.Priority = 0 // 优先调度重试任务
+					if s.requeueTaskHook != nil {
+						if err := s.requeueTaskHook(pbSub); err != nil {
+							log.Printf("[Retry] Failed to requeue task %s: %v", sub.ID, err)
+						}
+					}
+				}
+			}
 		}
 	}
 

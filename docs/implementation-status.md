@@ -27,7 +27,7 @@
 | API Gateway | Gin REST API 主路由 | `server/internal/api/router.go` |
 | 身份与权限 | JWT 登录校验 + RBAC 中间件 | `server/internal/api/router.go` `server/internal/api/middleware_rbac.go` |
 | 任务管理 | RootTask / SubTask 创建、拆分、查询、删除、取消、追加目标 | `server/internal/api/router.go` |
-| 调度队列 | Redis Streams 多优先级队列 + 内存 fallback | `server/internal/scheduler/queue.go` |
+| 调度队列 | RabbitMQ 多优先级队列 + 内存 fallback | `server/internal/scheduler/queue.go` |
 | 队列恢复 | Dead-Letter 回收、旧队列迁移、死亡节点任务抢救 | `server/internal/scheduler/queue.go` `server/cmd/dddd-server/main.go` |
 | 超时与重试 | 基于 `timeout_sec` 的超时扫描与自动重试守护协程 | `server/internal/api/router.go` |
 | gRPC 通信 | `Register` / `Heartbeat` / `FetchTask` / `StreamResult` / `TaskComplete` / `EmergencyDump` / `StreamLogs` | `server/internal/grpc/server.go` |

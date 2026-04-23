@@ -41,7 +41,7 @@ Argus 当前采用典型的 `Control Plane + Data Plane` 结构：
 
 当前调度器位于 `server/internal/scheduler/queue.go`，已实现：
 
-- Redis Streams 多优先级队列
+- RabbitMQ 多优先级队列
 - 内存 fallback
 - Dead-Letter 回收
 - 旧队列迁移
@@ -161,7 +161,7 @@ Argus 当前采用典型的 `Control Plane + Data Plane` 结构：
 2. 服务端规范化目标与配置
 3. 服务端生成 `RootTask`
 4. 服务端按 256 个目标切分为多个 `SubTask`
-5. 服务端将 `SubTask` 序列化后写入 Redis Streams
+5. 服务端将 `SubTask` 序列化后写入 RabbitMQ 优先级队列
 6. Agent 通过 gRPC `FetchTask` 拉取任务
 7. 服务端将命中的 `SubTask` 状态改为 `Running`
 8. Agent 执行扫描流水线

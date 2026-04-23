@@ -47,14 +47,14 @@ graph TD
         A[Web UI 控制台] -->|HTTP/REST| B[API Server]
         B <--> C{Scheduler 调度器}
         C <-->|状态持久化| D[(PostgreSQL)]
-        C -->|发布任务| E[(Redis Streams)]
+        C -->|发布任务| E[(RabbitMQ 优先级队列)]
         F[gRPC Server] <--> C
         F <-->|数据回写| D
     end
     
     subgraph 数据面 Data Plane
-        E -->|订阅拉取| G[Scanner Agent 节点]
-        E -->|订阅拉取| H[Scanner Agent 节点]
+        E -->|由 Server 认领并分发| G[Scanner Agent 节点]
+        E -->|由 Server 认领并分发| H[Scanner Agent 节点]
         G -.->|心跳保活/结果流式上报| F
         H -.->|心跳保活/结果流式上报| F
     end
@@ -62,15 +62,15 @@ graph TD
 
 ### 3.1 控制面（Control Plane）
 控制面是整个 Argus 平台的大脑，主要由 API Server、调度器和 gRPC Server 组成。
-- **职责**：负责接管用户交互（API/Web）、保存长效状态（PostgreSQL）、处理任务拆分与调度（Redis）、以及对接所有 Agent 节点的心跳与鉴权验证（gRPC）。
+- **职责**：负责接管用户交互（API/Web）、保存长效状态（PostgreSQL）、处理任务拆分与调度（RabbitMQ）、以及对接所有 Agent 节点的心跳与鉴权验证（gRPC）。
 - **组件分工**：
   - **PostgreSQL**：作为唯一事实来源（Source of Truth），存放用户、资产目录、节点状态、规则清单和漏洞告警。
-  - **Redis Streams**：作为高性能任务下发队列，利用消费者组（Consumer Group）机制保证分布式任务的不重复、不丢失。
+  - **RabbitMQ**：作为多优先级任务队列，结合手动 `ACK/NACK`、服务端投递跟踪和超时回收机制，保证任务在节点异常时可以重新入队。
 
 ### 3.2 数据面（Data Plane）
 数据面由多个分布式的 Scanner Agent 构成。
-- **职责**：负责从 Redis Streams 拉取由控制面拆分好的轻量级子任务（SubTask），执行真实的 TCP 探活、指纹识别、PoC 验证等操作，并将结果及自身健康度实时反馈给 gRPC Server。
-- **设计哲学**：Agent 被设计为“无状态且用后即抛”的，任何 Agent 断线不会导致任务彻底失败，控制面会通过 Redis 队列的超时重写机制进行回收补发。
+- **职责**：负责通过 gRPC 向控制面认领由 RabbitMQ 承载的轻量级子任务（SubTask），执行真实的 TCP 探活、指纹识别、PoC 验证等操作，并将结果及自身健康度实时反馈给 gRPC Server。
+- **设计哲学**：Agent 被设计为“无状态且用后即抛”的，任何 Agent 断线不会导致任务彻底失败，控制面会通过 RabbitMQ 未确认消息回收和数据库侧死节点恢复形成双保险。
 
 ---
 
@@ -84,23 +84,25 @@ Argus 的系统运转并不依赖于混乱的网状通信，而是基于四条�
 sequenceDiagram
     participant User as 用户/控制台
     participant Scheduler as 调度中心
-    participant Redis as Redis 流队列
+    participant MQ as RabbitMQ 优先级队列
     participant Agent as 扫描节点
 
     User->>Scheduler: 1. 创建 RootTask (例如：扫描 10.0.0.0/8)
     Scheduler->>Scheduler: 2. 目标标准化与 SubTask 拆解
-    Scheduler->>Redis: 3. 下发 SubTask 到队列
-    Agent->>Redis: 4. 根据自身余量认领任务
-    Agent->>Agent: 5. 执行引擎扫描
-    Agent->>Scheduler: 6. 上报完成状态
-    Scheduler->>User: 7. 聚合更新 RootTask 最终进度
+    Scheduler->>MQ: 3. 下发 SubTask 到队列
+    Agent->>Scheduler: 4. 根据自身余量发起 ClaimTask
+    Scheduler->>MQ: 5. 从高优先级队列取出任务
+    Agent->>Agent: 6. 执行引擎扫描
+    Agent->>Scheduler: 7. 上报完成状态
+    Scheduler->>MQ: 8. ACK 完成消息
+    Scheduler->>User: 9. 聚合更新 RootTask 最终进度
 ```
 
 ### 4.2 节点闭环（Node Lifecycle）
 节点生命周期严格受控，杜绝“僵尸节点”占用资源。
 1. **注册（Register）**：Agent 启动，向 gRPC 端口发起注册请求，上报 CPU/内存余量及并发上限。
 2. **心跳（Heartbeat）**：每隔指定秒数向控制面发送存活脉冲包。
-3. **掉线识别与回收**：若控制面连续未收到心跳，将节点标为 Offline，并在 Redis 中收回该节点认领但未完成的任务（Dead Letter Queue 处理机制）。
+3. **掉线识别与回收**：若控制面连续未收到心跳，将节点标为 Offline，并将该节点未完成任务重新标记和补投到高优先级队列。
 
 ### 4.3 规则闭环（Rule Lifecycle）
 规则治理不再是把 yaml 文件拷贝到服务器，而是真正的中心化同步。
@@ -123,8 +125,10 @@ graph LR
 
 ## 5. 关键技术设计
 
-### 5.1 Redis Streams 分布式调度模型
-为什么不使用 RabbitMQ 或 Kafka？在 ASM 场景下，任务通常具有突发性。Redis Streams 原生支持 Consumer Group 机制，不仅提供了完善的 `XACK`（消息确认）和 `XCLAIM`（未响应消息所有权转移），而且具备极低的部署维护成本。通过合理利用这些特性，Argus 确保了分布式任务分发的“至少执行一次”语意和崩溃恢复能力。
+### 5.1 RabbitMQ 多优先级调度模型
+Argus 当前采用 RabbitMQ 作为任务下发队列，而不是让 Agent 直接连接数据库，也没有引入更重的 Kafka 集群。原因在于 ASM 场景下任务具有明显的突发性和优先级差异，RabbitMQ 适合承载这类“控制面集中编排、数据面快速认领”的工作负载。
+
+当前实现中，控制面维护 `urgent / normal / low` 三档优先级队列，通过 `basic.get` 从高到低取任务，并在服务端保留未确认投递的跟踪信息。任务正常完成后执行 `ACK`；标签不匹配时执行 `NACK requeue`；若长时间未确认，则由守护协程重新入队。结合数据库侧的死节点恢复，Argus 实现了“至少执行一次”的调度语义与故障恢复能力。
 
 ### 5.2 并发解耦的无状态执行器
 Argus 扫描引擎抛弃了传统工具中常见的全局变量锁定，实现了真正的全量并发。任何 `scanner/internal` 下的任务执行完全依赖 Context 的上下文传递，确保各并发协程之间互不干涉，充分榨干单机硬件的 CPU 性能。
@@ -152,7 +156,7 @@ Argus 不仅强调后端的健壮，同样注重前端的人机交互体验与�
 ### 7.1 已落地并跑通的主链路
 - [x] 分布式微服务架构底座建设。
 - [x] 基于 gRPC 的 Agent 动态注册、心跳保活与状态同步。
-- [x] Redis Streams 的任务并发下发、削峰填谷与消费组调度。
+- [x] RabbitMQ 多优先级队列的任务并发下发、削峰填谷与 ACK/NACK 调度。
 - [x] PostgreSQL 中目标扫描结果的三层模型化存储。
 - [x] Argus UI 现代化玻璃态视觉交互与多套管理页面。
 

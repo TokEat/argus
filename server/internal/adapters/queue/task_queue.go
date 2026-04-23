@@ -7,7 +7,7 @@ import (
 	"github.com/user/dddd-server/internal/shared/apperr"
 )
 
-// TaskQueueAdapter 预留给 Redis Streams / Redis List / MQ 等具体实现。
+// TaskQueueAdapter 预留给 RabbitMQ / 其他 MQ 适配实现。
 type TaskQueueAdapter struct {
 	name string
 }

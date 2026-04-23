@@ -13,13 +13,18 @@ POSTGRES_USER="${POSTGRES_USER:-postgres}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-root}"
 POSTGRES_DB="${POSTGRES_DB:-dddd}"
 DB_HOST="${DB_HOST:-127.0.0.1}"
-DB_PORT="${DB_PORT:-5432}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+DB_PORT="${DB_PORT:-${POSTGRES_PORT}}"
 DB_MIGRATION_MODE="${DB_MIGRATION_MODE:-apply}"
 
+RABBITMQ_HOST="${RABBITMQ_HOST:-127.0.0.1}"
+RABBITMQ_PORT="${RABBITMQ_PORT:-5672}"
+RABBITMQ_MANAGEMENT_PORT="${RABBITMQ_MANAGEMENT_PORT:-15672}"
 RABBITMQ_DEFAULT_USER="${RABBITMQ_DEFAULT_USER:-guest}"
 RABBITMQ_DEFAULT_PASS="${RABBITMQ_DEFAULT_PASS:-guest}"
 
 DB_DSN="${DB_DSN:-host=${DB_HOST} user=${POSTGRES_USER} password=${POSTGRES_PASSWORD} dbname=${POSTGRES_DB} port=${DB_PORT} sslmode=disable}"
+AMQP_URL="${AMQP_URL:-amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@${RABBITMQ_HOST}:${RABBITMQ_PORT}/}"
 
 log() {
   printf '[setup-local] %s\n' "$*"
@@ -60,22 +65,39 @@ wait_for_service() {
 }
 
 run_migrate_only() {
-  if [[ -x "${ROOT_DIR}/bin/dddd-server" ]]; then
-    (
-      cd "${ROOT_DIR}"
-      ./bin/dddd-server --db "${DB_DSN}" --migrate-only --dev --db-migration-mode "${DB_MIGRATION_MODE}"
-    )
-    return
-  fi
-
-  require_cmd go
   (
     cd "${ROOT_DIR}"
-    go run ./server/cmd/dddd-server --db "${DB_DSN}" --migrate-only --dev --db-migration-mode "${DB_MIGRATION_MODE}"
+    if [[ -x "${ROOT_DIR}/bin/dddd-server" ]]; then
+      if [[ "${DB_MIGRATION_MODE}" == "dev-auto" ]]; then
+        ./bin/dddd-server --db "${DB_DSN}" --migrate-only --db-migration-mode "${DB_MIGRATION_MODE}" --dev
+      else
+        ./bin/dddd-server --db "${DB_DSN}" --migrate-only --db-migration-mode "${DB_MIGRATION_MODE}"
+      fi
+      return
+    fi
+
+    require_cmd go
+    if [[ "${DB_MIGRATION_MODE}" == "dev-auto" ]]; then
+      go run ./server/cmd/dddd-server --db "${DB_DSN}" --migrate-only --db-migration-mode "${DB_MIGRATION_MODE}" --dev
+    else
+      go run ./server/cmd/dddd-server --db "${DB_DSN}" --migrate-only --db-migration-mode "${DB_MIGRATION_MODE}"
+    fi
   )
 }
 
+next_server_command() {
+  if [[ -x "${ROOT_DIR}/bin/dddd-server" ]]; then
+    printf './bin/dddd-server --db "%s" --dev' "${DB_DSN}"
+    return
+  fi
+
+  printf 'make server && ./bin/dddd-server --db "%s" --dev' "${DB_DSN}"
+}
+
 require_cmd docker
+
+export POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_PORT
+export RABBITMQ_DEFAULT_USER RABBITMQ_DEFAULT_PASS RABBITMQ_PORT RABBITMQ_MANAGEMENT_PORT
 
 log "starting local infrastructure: ${RABBITMQ_SERVICE}, ${POSTGRES_SERVICE}"
 "${COMPOSE_CMD[@]}" up -d --remove-orphans "${RABBITMQ_SERVICE}" "${POSTGRES_SERVICE}"
@@ -91,10 +113,10 @@ run_migrate_only
 
 cat <<EOF
 [setup-local] local infrastructure is ready
-[setup-local] RabbitMQ AMQP: amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@127.0.0.1:5672/
-[setup-local] RabbitMQ UI:   http://127.0.0.1:15672
+[setup-local] RabbitMQ AMQP: ${AMQP_URL}
+[setup-local] RabbitMQ UI:   http://${RABBITMQ_HOST}:${RABBITMQ_MANAGEMENT_PORT}
 [setup-local] PostgreSQL:    host=${DB_HOST} port=${DB_PORT} dbname=${POSTGRES_DB} user=${POSTGRES_USER}
 [setup-local] Next:
-[setup-local]   ./bin/dddd-server --db "${DB_DSN}" --dev
+[setup-local]   $(next_server_command)
 [setup-local]   ./bin/dddd-agent --server 127.0.0.1:50051
 EOF
