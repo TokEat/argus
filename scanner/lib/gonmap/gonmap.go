@@ -42,8 +42,24 @@ func initWithFilter(filter int) {
 		probeUsed:          emptyProbeList,
 		bypassAllProbePort: []int{161, 137, 139, 135, 389, 443, 548, 1433, 6379, 1883, 5432, 1521, 3389, 3388, 3389, 33890, 33900},
 		sslSecondProbeMap:  []string{"TCP_TerminalServerCookie", "TCP_TerminalServer"},
-		allProbeMap:        []string{"TCP_GetRequest", "TCP_NULL", "TCP_JDWP", "TCP_redis-server", "TCP_ms-sql-s", "TCP_adbConnect"},
-		sslProbeMap:        []string{"TCP_TLSSessionReq", "TCP_SSLSessionReq", "TCP_SSLv23SessionReq"},
+		// Non-standard port fallback probes: only include high-value protocols
+		// that are frequently deployed on custom ports and cannot be reliably
+		// identified by generic probes.
+		allProbeMap: []string{
+			"TCP_GetRequest",
+			"TCP_NULL",
+			"TCP_JDWP",
+			"TCP_redis-server",
+			"TCP_ms-sql-s",
+			"TCP_adbConnect",
+			"TCP_SMBProgNeg",
+			"TCP_mongodb",
+			"TCP_oracle-tns",
+			"TCP_TerminalServer",
+			"TCP_TerminalServerCookie",
+			"TCP_Memcache",
+		},
+		sslProbeMap: []string{"TCP_TLSSessionReq", "TCP_SSLSessionReq", "TCP_SSLv23SessionReq"},
 	}
 	for i := 0; i <= 65535; i++ {
 		nmap.portProbeMap[i] = []string{}
