@@ -246,13 +246,17 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
     };
 
     const handleDeletePocCompletely = async (fileName: string) => {
+        // workflow.pocs 里存的是不带后缀的短名（如 'CVE-2019-17382'），
+        // 但 arsenals.file_name 是完整文件名（如 'CVE-2019-17382.yaml'）。
+        // 后端按 file_name 精确匹配，所以删除时必须补 .yaml 后缀。
+        const realFileName = /\.ya?ml$/i.test(fileName) ? fileName : `${fileName}.yaml`;
         try {
-            await deleteArsenal('poc', fileName);
+            await deleteArsenal('poc', realFileName);
             message.success(`POC ${fileName} 已从弹药库删除`);
             handleRemovePocFromWorkflow(fileName);
             loadRefData();
         } catch {
-            message.error('POC 删除失败');
+            message.error('POC 删除失败（请确认该 POC 文件存在于弹药库）');
         }
     };
 
