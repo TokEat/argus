@@ -17,7 +17,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-
 func ApplyConfigDefaults(cfg *Config) {
 	if cfg.PortScanType == "" {
 		cfg.PortScanType = "tcp"
@@ -608,6 +607,7 @@ func toEngineOutputMessage(msg ddout.OutputMessage) OutputMessage {
 			Target:      msg.GoPoc.Target,
 			InfoLeft:    msg.GoPoc.InfoLeft,
 			InfoRight:   msg.GoPoc.InfoRight,
+			ShowMsg:     msg.GoPoc.ShowMsg,
 		},
 		URI:           msg.URI,
 		City:          msg.City,

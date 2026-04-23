@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"crypto/md5"
+	"dddd/scanner/ddout"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,6 +42,9 @@ type grpcTeeWriter struct {
 	agentID  string
 	mu       sync.Mutex
 	closed   bool
+	queue    chan *pb.LogPayload
+	stopCh   chan struct{}
+	doneCh   chan struct{}
 }
 
 func (w *grpcTeeWriter) Write(data []byte, level levels.Level) {
@@ -71,21 +75,57 @@ func (w *grpcTeeWriter) Write(data []byte, level levels.Level) {
 		return
 	}
 
-	_ = w.stream.Send(&pb.LogPayload{
+	payload := &pb.LogPayload{
 		AgentId:   w.agentID,
 		Level:     levelStr,
 		Message:   msg,
 		Timestamp: time.Now().UnixMilli(),
-	})
+	}
+
+	select {
+	case w.queue <- payload:
+	default:
+		// 避免日志回传阻塞扫描主流程；队列满时丢弃本条远端日志。
+	}
+}
+
+func (w *grpcTeeWriter) runSender() {
+	defer close(w.doneCh)
+	for {
+		select {
+		case <-w.stopCh:
+			for {
+				select {
+				case payload := <-w.queue:
+					if payload == nil || w.stream == nil {
+						continue
+					}
+					_ = w.stream.Send(payload)
+				default:
+					return
+				}
+			}
+		case payload := <-w.queue:
+			if payload == nil || w.stream == nil {
+				continue
+			}
+			_ = w.stream.Send(payload)
+		}
+	}
 }
 
 func (w *grpcTeeWriter) Close() {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	if w.closed {
+		w.mu.Unlock()
 		return
 	}
 	w.closed = true
+	close(w.stopCh)
+	w.mu.Unlock()
+
+	<-w.doneCh
+
 	if w.stream != nil {
 		_, _ = w.stream.CloseAndRecv()
 	}
@@ -656,6 +696,8 @@ func (w *Worker) executeTask(task *pb.Task) {
 	var streamMu sync.Mutex
 	var streamErr error
 	ctx.OutputHook = func(msg engine.OutputMessage) {
+		mirrorAgentConsoleOutput(msg)
+
 		streamMu.Lock()
 		defer streamMu.Unlock()
 
@@ -864,10 +906,65 @@ func (w *Worker) installGlobalLogTeeWriter() *grpcTeeWriter {
 		original: originalWriter,
 		stream:   logStream,
 		agentID:  w.agentID,
+		queue:    make(chan *pb.LogPayload, 1024),
+		stopCh:   make(chan struct{}),
+		doneCh:   make(chan struct{}),
 	}
+	go tee.runSender()
 
 	gologger.DefaultLogger.SetWriter(tee)
 	log.Printf("[LogTee] Streaming agent logs to Server")
 
 	return tee
+}
+
+func mirrorAgentConsoleOutput(msg engine.OutputMessage) {
+	if !shouldMirrorAgentOutput(msg.Type) {
+		return
+	}
+
+	line := ddout.Render(toDDOutOutputMessage(msg))
+	if line == "" {
+		return
+	}
+	fmt.Println(line)
+}
+
+func shouldMirrorAgentOutput(messageType string) bool {
+	switch messageType {
+	case "Finger", "Active-Finger", "GoPoc", "Domain-Bind":
+		return true
+	default:
+		return false
+	}
+}
+
+func toDDOutOutputMessage(msg engine.OutputMessage) ddout.OutputMessage {
+	return ddout.OutputMessage{
+		Type:     msg.Type,
+		IP:       msg.IP,
+		IPs:      append([]string(nil), msg.IPs...),
+		Port:     msg.Port,
+		Protocol: msg.Protocol,
+		Web: ddout.WebInfo{
+			Status: msg.Web.Status,
+			Title:  msg.Web.Title,
+		},
+		Finger: append([]string(nil), msg.Finger...),
+		Domain: msg.Domain,
+		GoPoc: ddout.GoPocsResultType{
+			PocName:     msg.GoPoc.PocName,
+			Security:    msg.GoPoc.Security,
+			Description: msg.GoPoc.Description,
+			Target:      msg.GoPoc.Target,
+			InfoLeft:    msg.GoPoc.InfoLeft,
+			InfoRight:   msg.GoPoc.InfoRight,
+			ShowMsg:     msg.GoPoc.ShowMsg,
+		},
+		URI:           msg.URI,
+		City:          msg.City,
+		AdditionalMsg: msg.AdditionalMsg,
+		Show:          msg.Show,
+		Nuclei:        msg.Nuclei,
+	}
 }

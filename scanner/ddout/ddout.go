@@ -23,7 +23,6 @@ type OutputMessage = structs.OutputMessage
 // GoPocsResultType is an alias.
 type GoPocsResultType = structs.GoPocsResultType
 
-
 // OutputType 当前输出格式 ("text" 或 "json")。
 var OutputType string = "text"
 
@@ -107,10 +106,31 @@ func formatLine(msg OutputMessage) string {
 		return strings.Join(parts, " ")
 	case "Finger":
 		return fmt.Sprintf("[Finger] %s [%s]", msg.URI, strings.Join(msg.Finger, ","))
+	case "Active-Finger":
+		line := fmt.Sprintf("[Active-Finger] %s [%s]", msg.URI, strings.Join(msg.Finger, ","))
+		if msg.AdditionalMsg != "" {
+			line += " " + msg.AdditionalMsg
+		}
+		return line
+	case "Domain-Bind":
+		if msg.Web.Status != "" {
+			return fmt.Sprintf("[Domain-Bind] [%s] %s", msg.Web.Status, msg.URI)
+		}
+		return fmt.Sprintf("[Domain-Bind] %s", msg.URI)
 	case "Nuclei":
-		return fmt.Sprintf("[Vuln] %s", msg.Nuclei)
+		if msg.Show != "" {
+			return fmt.Sprintf("[Nuclei] %s", msg.Show)
+		}
+		return fmt.Sprintf("[Nuclei] %s", msg.Nuclei)
 	case "GoPoc":
-		return fmt.Sprintf("[Poc] %s %s %s", msg.GoPoc.Target, msg.GoPoc.PocName, msg.GoPoc.Description)
+		detail := strings.TrimSpace(msg.GoPoc.ShowMsg)
+		if detail == "" {
+			detail = strings.TrimSpace(fmt.Sprintf("%s %s %s", msg.GoPoc.Target, msg.GoPoc.PocName, msg.GoPoc.Description))
+		}
+		if msg.GoPoc.Security != "" {
+			return fmt.Sprintf("[%s] %s", msg.GoPoc.Security, detail)
+		}
+		return fmt.Sprintf("[GoPoc] %s", detail)
 	case "Domain":
 		return fmt.Sprintf("[Domain] %s -> %s", msg.Domain, strings.Join(msg.IPs, ","))
 	default:
@@ -119,6 +139,11 @@ func formatLine(msg OutputMessage) string {
 		}
 		return ""
 	}
+}
+
+// Render returns the text-mode line for a message without writing it.
+func Render(msg OutputMessage) string {
+	return formatLine(msg)
 }
 
 func appendToFile(filename, line string) {

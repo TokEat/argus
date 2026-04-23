@@ -467,14 +467,14 @@ type targetBatchGroup struct {
 func batchSizeForTargetType(targetType string) int {
 	switch targetType {
 	case "url":
-		return 32
+		return 200
 	case "domain", "domain_port":
-		return 32
+		return 500
 	case "ip", "cidr", "ip_range", "ip_port":
-		return 64
+		return 1000
 	default:
 		// osint, unknown 等
-		return 32
+		return 200
 	}
 }
 

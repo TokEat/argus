@@ -177,12 +177,29 @@ func readConfig(options *types.Options,
 	// 不嵌入可执行文件是为了方便增删poc。
 	// dddd v2.0开始默认支持内嵌，此文件夹内的pocs做补充处理
 
-	if strings.HasPrefix(np, "/") || np[1] == ':' {
-		// unix绝对路径，windows绝对路径
-		options.Templates = []string{np}
+	if nameForSearch != "" {
+		if strings.HasPrefix(np, "/") || len(np) > 1 && np[1] == ':' {
+			options.Templates = []string{np}
+		} else {
+			options.Templates = []string{pwd + "/" + np}
+		}
 	} else {
-		// 相对路径转绝对路径
-		options.Templates = []string{pwd + "/" + np}
+		var pocPaths []string
+		uniquePocs := make(map[string]bool)
+		for _, pocs := range TargetAndPocsName {
+			for _, p := range pocs {
+				if !uniquePocs[p] {
+					uniquePocs[p] = true
+					// 使用相对路径，以确保嵌入式文件系统(embedFS)和物理磁盘都可以兼容匹配到文件
+					if strings.HasPrefix(np, "/") || len(np) > 1 && np[1] == ':' {
+						pocPaths = append(pocPaths, np+"/"+p)
+					} else {
+						pocPaths = append(pocPaths, np+"/"+p)
+					}
+				}
+			}
+		}
+		options.Templates = pocPaths
 	}
 
 	// list of template urls to run (comma-separated, file)

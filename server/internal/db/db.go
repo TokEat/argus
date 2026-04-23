@@ -295,30 +295,72 @@ var OnResultBatchSaved func(count int, rType string)
 
 func StartBatchWriters() {
 	go startGenericBatchWriter(assetBuffer, func(batch []Asset) {
+		unique := make(map[string]Asset)
+		var keys []string
+		for _, a := range batch {
+			k := a.ProjectID + "|" + a.Target + "|" + a.Protocol
+			if _, exists := unique[k]; !exists {
+				keys = append(keys, k)
+			}
+			unique[k] = a
+		}
+		var finalBatch []Asset
+		for _, k := range keys {
+			finalBatch = append(finalBatch, unique[k])
+		}
+
 		DB.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "project_id"}, {Name: "target"}, {Name: "protocol"}},
 			DoUpdates: clause.AssignmentColumns([]string{"task_id", "root_task_id", "port", "url", "title", "service", "cert_subject", "cert_expiry", "status", "updated_at"}),
-		}).CreateInBatches(batch, 500)
-		if OnResultBatchSaved != nil && len(batch) > 0 {
-			OnResultBatchSaved(len(batch), "asset")
+		}).CreateInBatches(finalBatch, 500)
+		if OnResultBatchSaved != nil && len(finalBatch) > 0 {
+			OnResultBatchSaved(len(finalBatch), "asset")
 		}
 	})
 	go startGenericBatchWriter(fpBuffer, func(batch []FingerprintHit) {
+		unique := make(map[string]FingerprintHit)
+		var keys []string
+		for _, f := range batch {
+			k := f.ProjectID + "|" + f.Target + "|" + f.ProductName
+			if _, exists := unique[k]; !exists {
+				keys = append(keys, k)
+			}
+			unique[k] = f
+		}
+		var finalBatch []FingerprintHit
+		for _, k := range keys {
+			finalBatch = append(finalBatch, unique[k])
+		}
+
 		DB.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "project_id"}, {Name: "target"}, {Name: "product_name"}},
 			DoUpdates: clause.AssignmentColumns([]string{"task_id", "root_task_id", "rule_name", "evidence", "updated_at"}),
-		}).CreateInBatches(batch, 500)
-		if OnResultBatchSaved != nil && len(batch) > 0 {
-			OnResultBatchSaved(len(batch), "fingerprint")
+		}).CreateInBatches(finalBatch, 500)
+		if OnResultBatchSaved != nil && len(finalBatch) > 0 {
+			OnResultBatchSaved(len(finalBatch), "fingerprint")
 		}
 	})
 	go startGenericBatchWriter(vulnBuffer2, func(batch []Vulnerability) {
+		unique := make(map[string]Vulnerability)
+		var keys []string
+		for _, v := range batch {
+			k := v.ProjectID + "|" + v.Target + "|" + v.Plugin
+			if _, exists := unique[k]; !exists {
+				keys = append(keys, k)
+			}
+			unique[k] = v
+		}
+		var finalBatch []Vulnerability
+		for _, k := range keys {
+			finalBatch = append(finalBatch, unique[k])
+		}
+
 		DB.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "project_id"}, {Name: "target"}, {Name: "plugin"}},
 			DoUpdates: clause.AssignmentColumns([]string{"task_id", "root_task_id", "severity", "payload", "request", "response", "description", "reference", "matched_at", "updated_at", "status"}),
-		}).CreateInBatches(batch, 500)
-		if OnResultBatchSaved != nil && len(batch) > 0 {
-			OnResultBatchSaved(len(batch), "vuln")
+		}).CreateInBatches(finalBatch, 500)
+		if OnResultBatchSaved != nil && len(finalBatch) > 0 {
+			OnResultBatchSaved(len(finalBatch), "vuln")
 		}
 	})
 }

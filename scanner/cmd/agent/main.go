@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -13,7 +14,9 @@ import (
 func main() {
 	serverAddr := flag.String("server", "127.0.0.1:50051", "Server gRPC address")
 	apiURL := flag.String("api", "http://127.0.0.1:8085", "Server REST HTTP API address")
-	agentID := flag.String("id", "agent-local-1", "Agent unique ID")
+	hostname, _ := os.Hostname()
+	defaultID := fmt.Sprintf("agent-%s-%d", hostname, os.Getpid())
+	agentID := flag.String("id", defaultID, "Agent unique ID")
 	workers := flag.Int("workers", 0, "Number of concurrent worker goroutines (0=auto-detect from CPU cores)")
 	tagsStr := flag.String("tags", "", "Node tags in key1=val1,key2=val2 format")
 	psk := flag.String("psk", "", "Pre-shared key for Server authentication (env: ARGUS_AGENT_PSK)")

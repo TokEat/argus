@@ -171,6 +171,38 @@ func TestEffectiveWorkerCountCapsToEngineLimit(t *testing.T) {
 	}
 }
 
+func TestShouldMirrorAgentOutput(t *testing.T) {
+	cases := map[string]bool{
+		"Finger":        true,
+		"Active-Finger": true,
+		"GoPoc":         true,
+		"Domain-Bind":   true,
+		"Web":           false,
+	}
+
+	for messageType, expected := range cases {
+		if got := shouldMirrorAgentOutput(messageType); got != expected {
+			t.Fatalf("unexpected mirror decision for %s: got %v want %v", messageType, got, expected)
+		}
+	}
+}
+
+func TestToDDOutOutputMessageKeepsShowMsg(t *testing.T) {
+	src := engine.OutputMessage{
+		Type: "GoPoc",
+		GoPoc: engine.GoPocsResultType{
+			PocName:  "Shiro Weak Key",
+			ShowMsg:  "http://127.0.0.1:8081 key=xxx",
+			Security: "CRITICAL",
+		},
+	}
+
+	got := toDDOutOutputMessage(src)
+	if got.GoPoc.ShowMsg != src.GoPoc.ShowMsg {
+		t.Fatalf("show message lost during conversion: got %q want %q", got.GoPoc.ShowMsg, src.GoPoc.ShowMsg)
+	}
+}
+
 type fakeAgentClient struct {
 	stream            grpc.ClientStreamingClient[pb.ScanResult, pb.Ack]
 	streamErr         error
