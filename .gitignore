@@ -20,6 +20,7 @@ datas/
 .claude/
 .vscode/
 config/
+!server-ui/src/pages/config/
 
 # OS files
 .DS_Store
