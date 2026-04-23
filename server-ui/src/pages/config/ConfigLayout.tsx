@@ -19,10 +19,10 @@ const ConfigLayout: React.FC<ConfigLayoutProps> = ({ children }) => {
     const location = useLocation();
 
     const tabItems = [
+        { key: '/config/workflow', label: 'Workflow 编排', icon: <ApartmentOutlined /> },
         { key: '/config/poc', label: 'POC 弹药库', icon: <BugOutlined /> },
         { key: '/config/active-finger', label: '指纹弹药库', icon: <ScanOutlined /> },
         { key: '/config/dir', label: 'Dir 探测规则', icon: <FolderOpenOutlined /> },
-        { key: '/config/workflow', label: 'Workflow 弹药库', icon: <ApartmentOutlined /> },
     ];
 
     return (

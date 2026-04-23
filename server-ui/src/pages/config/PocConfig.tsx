@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Button, Space, Tag, Popconfirm, Modal, Typography, Input, Table, Empty, App } from 'antd';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Button, Space, Tag, Popconfirm, Modal, Typography, Input, Table, Empty, App, Tooltip, Segmented } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     PlusOutlined,
@@ -8,17 +8,21 @@ import {
     BugOutlined,
     CheckOutlined,
     SearchOutlined,
+    LinkOutlined,
+    DisconnectOutlined,
 } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import type { ColumnsType } from 'antd/es/table';
-import { listArsenals, saveArsenal, deleteArsenal, approveArsenal, aiAnalyzeArsenal } from '../../services/api';
+import { listArsenals, saveArsenal, deleteArsenal, approveArsenal, aiAnalyzeArsenal, getWorkflowDict } from '../../services/api';
 
 const { Text } = Typography;
 
 const PocConfig: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [arsenals, setArsenals] = useState<API.Arsenal[]>([]);
-    const [filtered, setFiltered] = useState<API.Arsenal[]>([]);
+    /** key: 不带后缀的 POC 名，value: 引用它的 workflow product 列表 */
+    const [usageMap, setUsageMap] = useState<Map<string, string[]>>(new Map());
+    const [usageFilter, setUsageFilter] = useState<'all' | 'in_workflow' | 'not_in_workflow'>('all');
     const [searchKeyword, setSearchKeyword] = useState('');
     const [editorVisible, setEditorVisible] = useState(false);
     const [isNew, setIsNew] = useState(false);
@@ -30,9 +34,21 @@ const PocConfig: React.FC = () => {
     const fetchData = async () => {
         setLoading(true);
         try {
-            const result = await listArsenals('poc');
-            setArsenals(result || []);
-            applyFilter(result || [], searchKeyword);
+            const [pocs, wfs] = await Promise.all([
+                listArsenals('poc'),
+                getWorkflowDict().catch(() => [] as API.WorkflowItem[]),
+            ]);
+            setArsenals(pocs || []);
+            // 构造引用反向索引：POC 名（去后缀后） -> workflow product 列表
+            const map = new Map<string, string[]>();
+            (wfs || []).forEach((wf) => {
+                (wf.pocs || []).forEach((rawName) => {
+                    const key = rawName.replace(/\.(ya?ml)$/i, '');
+                    if (!map.has(key)) map.set(key, []);
+                    map.get(key)!.push(wf.product);
+                });
+            });
+            setUsageMap(map);
         } catch {
             msg.error('加载 POC 弹药库失败');
         } finally {
@@ -44,18 +60,27 @@ const PocConfig: React.FC = () => {
         fetchData();
     }, []);
 
-    const applyFilter = (data: API.Arsenal[], keyword: string) => {
-        if (!keyword) {
-            setFiltered(data);
-        } else {
-            const lower = keyword.toLowerCase();
-            setFiltered(data.filter(a => a.FileName.toLowerCase().includes(lower)));
-        }
+    /** 返回该 POC 被哪些 workflow 引用（同时考虑带/不带后缀） */
+    const getUsage = (fileName: string): string[] => {
+        const stripped = fileName.replace(/\.(ya?ml)$/i, '');
+        return usageMap.get(stripped) || usageMap.get(fileName) || [];
     };
 
-    useEffect(() => {
-        applyFilter(arsenals, searchKeyword);
-    }, [searchKeyword, arsenals]);
+    const filtered = useMemo(() => {
+        let arr = arsenals;
+        if (usageFilter === 'in_workflow') arr = arr.filter((a) => getUsage(a.FileName).length > 0);
+        else if (usageFilter === 'not_in_workflow') arr = arr.filter((a) => getUsage(a.FileName).length === 0);
+        if (!searchKeyword) return arr;
+        const lower = searchKeyword.toLowerCase();
+        return arr.filter((a) => a.FileName.toLowerCase().includes(lower));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [arsenals, searchKeyword, usageFilter, usageMap]);
+
+    const usageStats = useMemo(() => {
+        const inWf = arsenals.filter((a) => getUsage(a.FileName).length > 0).length;
+        return { inWf, notInWf: arsenals.length - inWf };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [arsenals, usageMap]);
 
     const handleCreate = () => {
         setIsNew(true);
@@ -174,6 +199,28 @@ http:
             onFilter: (value, record) => record.State === value,
         },
         {
+            title: (
+                <Tooltip title="该 POC 是否被任何 Workflow 引用。未被引用的 POC 不会被扫描器主动触发。">
+                    <Space size={4}><LinkOutlined /><span>Workflow 关联</span></Space>
+                </Tooltip>
+            ),
+            key: 'usage',
+            width: 200,
+            render: (_, record) => {
+                const used = getUsage(record.FileName);
+                if (used.length === 0) {
+                    return <Tag icon={<DisconnectOutlined />} color="default">不在 Workflow</Tag>;
+                }
+                return (
+                    <Tooltip title={used.slice(0, 20).join(', ') + (used.length > 20 ? ` +${used.length - 20}` : '')}>
+                        <Tag icon={<LinkOutlined />} color="blue">
+                            {used.length} 个 Workflow
+                        </Tag>
+                    </Tooltip>
+                );
+            },
+        },
+        {
             title: 'Hash',
             dataIndex: 'Hash',
             key: 'hash',
@@ -216,15 +263,26 @@ http:
 
     return (
         <>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-                <Input
-                    placeholder="搜索 POC..."
-                    prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
-                    value={searchKeyword}
-                    onChange={(e) => setSearchKeyword(e.target.value)}
-                    style={{ width: 260 }}
-                    allowClear
-                />
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
+                <Space wrap>
+                    <Input
+                        placeholder="搜索 POC..."
+                        prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
+                        value={searchKeyword}
+                        onChange={(e) => setSearchKeyword(e.target.value)}
+                        style={{ width: 260 }}
+                        allowClear
+                    />
+                    <Segmented
+                        value={usageFilter}
+                        onChange={(v) => setUsageFilter(v as typeof usageFilter)}
+                        options={[
+                            { label: `全部 (${arsenals.length})`, value: 'all' },
+                            { label: `在 Workflow 中 (${usageStats.inWf})`, value: 'in_workflow' },
+                            { label: `不在 Workflow 中 (${usageStats.notInWf})`, value: 'not_in_workflow' },
+                        ]}
+                    />
+                </Space>
                 <Space>
                     <Tag>{filtered.length} / {arsenals.length} 条</Tag>
                     <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>

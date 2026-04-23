@@ -86,7 +86,7 @@ export const menuRoutes: RouteConfig[] = [
         element: <ProfilesView />,
     },
     {
-        path: '/config/poc',
+        path: '/config/workflow',
         name: '弹药库管理',
         icon: <DatabaseOutlined />,
     },
@@ -96,6 +96,13 @@ export const menuRoutes: RouteConfig[] = [
         icon: <DatabaseOutlined />,
         hideInMenu: true,
         children: [
+            {
+                path: '/config/workflow',
+                name: 'Workflow 编排',
+                icon: <ApartmentOutlined />,
+                element: <ConfigLayout><WorkflowConfig /></ConfigLayout>,
+                hideInMenu: true,
+            },
             {
                 path: '/config/poc',
                 name: 'POC 弹药库',
@@ -115,13 +122,6 @@ export const menuRoutes: RouteConfig[] = [
                 name: 'Dir 探测规则',
                 icon: <ScanOutlined />,
                 element: <ConfigLayout><DirProbeConfig /></ConfigLayout>,
-                hideInMenu: true,
-            },
-            {
-                path: '/config/workflow',
-                name: 'Workflow 弹药库',
-                icon: <ApartmentOutlined />,
-                element: <ConfigLayout><WorkflowConfig /></ConfigLayout>,
                 hideInMenu: true,
             },
         ],
