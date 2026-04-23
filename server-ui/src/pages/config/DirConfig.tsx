@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Button, Space, Tag, Popconfirm, Modal, Input, Table, Empty, App, Form, Select } from 'antd';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Button, Space, Tag, Popconfirm, Modal, Input, Table, Empty, App, Form, Select, Segmented, Tooltip } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     PlusOutlined,
@@ -7,15 +7,31 @@ import {
     DeleteOutlined,
     SearchOutlined,
     ScanOutlined,
+    LinkOutlined,
+    DisconnectOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { getFingerprintDict, addFingerprintDict, updateFingerprintDict, deleteFingerprintDict } from '../../services/api';
+import {
+    getFingerprintDict,
+    addFingerprintDict,
+    updateFingerprintDict,
+    deleteFingerprintDict,
+    getWorkflowDict,
+    getDirDict,
+} from '../../services/api';
+
+interface EnrichedFingerprint extends API.FingerprintItem {
+    _refWorkflow: boolean;
+    _refDir: boolean;
+}
 
 const DirConfig: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [dictionaries, setDictionaries] = useState<API.FingerprintItem[]>([]);
-    const [filtered, setFiltered] = useState<API.FingerprintItem[]>([]);
+    const [workflowProducts, setWorkflowProducts] = useState<Set<string>>(new Set());
+    const [dirProducts, setDirProducts] = useState<Set<string>>(new Set());
     const [searchKeyword, setSearchKeyword] = useState('');
+    const [refFilter, setRefFilter] = useState<'all' | 'linked' | 'orphan'>('all');
     const [modalVisible, setModalVisible] = useState(false);
     const [isNew, setIsNew] = useState(false);
     const [currentProduct, setCurrentProduct] = useState<string>('');
@@ -25,8 +41,14 @@ const DirConfig: React.FC = () => {
     const fetchData = async () => {
         setLoading(true);
         try {
-            const result = await getFingerprintDict();
-            setDictionaries(result || []);
+            const [fps, wfs, dirs] = await Promise.all([
+                getFingerprintDict(),
+                getWorkflowDict(),
+                getDirDict(),
+            ]);
+            setDictionaries(fps || []);
+            setWorkflowProducts(new Set((wfs || []).map((w) => w.product)));
+            setDirProducts(new Set((dirs || []).map((d) => d.product)));
         } catch {
             message.error('加载 Fingerprint 指纹库失败');
         } finally {
@@ -36,17 +58,32 @@ const DirConfig: React.FC = () => {
 
     useEffect(() => { fetchData(); }, []);
 
-    useEffect(() => {
-        if (!searchKeyword) {
-            setFiltered(dictionaries);
-        } else {
-            const lower = searchKeyword.toLowerCase();
-            setFiltered(dictionaries.filter(d => 
-                d.product.toLowerCase().includes(lower) || 
-                d.rules?.some(p => p.toLowerCase().includes(lower))
-            ));
-        }
-    }, [searchKeyword, dictionaries]);
+    const enriched: EnrichedFingerprint[] = useMemo(
+        () =>
+            dictionaries.map((d) => ({
+                ...d,
+                _refWorkflow: workflowProducts.has(d.product),
+                _refDir: dirProducts.has(d.product),
+            })),
+        [dictionaries, workflowProducts, dirProducts],
+    );
+
+    const filtered = useMemo(() => {
+        let arr = enriched;
+        if (refFilter === 'linked') arr = arr.filter((d) => d._refWorkflow || d._refDir);
+        else if (refFilter === 'orphan') arr = arr.filter((d) => !d._refWorkflow && !d._refDir);
+        if (!searchKeyword) return arr;
+        const lower = searchKeyword.toLowerCase();
+        return arr.filter((d) =>
+            d.product.toLowerCase().includes(lower) ||
+            d.rules?.some((p) => p.toLowerCase().includes(lower)),
+        );
+    }, [enriched, searchKeyword, refFilter]);
+
+    const stats = useMemo(() => {
+        const linked = enriched.filter((e) => e._refWorkflow || e._refDir).length;
+        return { total: enriched.length, linked, orphan: enriched.length - linked };
+    }, [enriched]);
 
     const handleCreate = () => {
         setIsNew(true);
@@ -103,16 +140,47 @@ const DirConfig: React.FC = () => {
         }
     };
 
-    const columns: ColumnsType<API.FingerprintItem> = [
+    const columns: ColumnsType<EnrichedFingerprint> = [
         {
             title: '指纹标识产品名 (Product)',
             dataIndex: 'product',
             key: 'product',
-            width: 300,
+            width: 280,
+            sorter: (a, b) => a.product.localeCompare(b.product),
             render: (text: string) => (
                 <Space>
                     <ScanOutlined style={{ color: '#0ea5e9' }} />
                     <span style={{ fontWeight: 600 }}>{text}</span>
+                </Space>
+            ),
+        },
+        {
+            title: 'Workflow / Dir 关联',
+            key: 'reference',
+            width: 200,
+            filters: [
+                { text: '已关联 Workflow', value: 'wf' },
+                { text: '已关联 Dir', value: 'dir' },
+                { text: '未关联', value: 'orphan' },
+            ],
+            onFilter: (v, r) => v === 'wf' ? r._refWorkflow : v === 'dir' ? r._refDir : !r._refWorkflow && !r._refDir,
+            render: (_, r) => (
+                <Space size={4}>
+                    {r._refWorkflow ? (
+                        <Tooltip title="在 workflow.yaml 中被引用，该指纹命中后会触发 POC">
+                            <Tag color="green" icon={<LinkOutlined />}>Workflow</Tag>
+                        </Tooltip>
+                    ) : null}
+                    {r._refDir ? (
+                        <Tooltip title="在 dir.yaml 中被引用，该指纹命中后会触发路径探测">
+                            <Tag color="blue" icon={<LinkOutlined />}>Dir</Tag>
+                        </Tooltip>
+                    ) : null}
+                    {!r._refWorkflow && !r._refDir ? (
+                        <Tooltip title="该指纹不被任何 Workflow 或 Dir 规则引用，扫描命中后什么也不会发生">
+                            <Tag color="default" icon={<DisconnectOutlined />}>未关联</Tag>
+                        </Tooltip>
+                    ) : null}
                 </Space>
             ),
         },
@@ -123,9 +191,9 @@ const DirConfig: React.FC = () => {
             render: (rules: string[]) => (
                 <Space wrap style={{ padding: '4px 0' }}>
                     {rules?.map((r, idx) => (
-                        <Tag 
-                            color="cyan" 
-                            key={idx} 
+                        <Tag
+                            color="cyan"
+                            key={idx}
                             style={{ whiteSpace: 'normal', wordBreak: 'break-all', maxWidth: '600px', padding: '4px 8px' }}
                         >
                             <span style={{ fontFamily: 'monospace', fontSize: '13px' }}>{r}</span>
@@ -152,29 +220,43 @@ const DirConfig: React.FC = () => {
 
     return (
         <>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-                <Input
-                    placeholder="搜索指纹产品特征或规则内容..."
-                    prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
-                    value={searchKeyword}
-                    onChange={(e) => setSearchKeyword(e.target.value)}
-                    style={{ width: 280 }}
-                    allowClear
-                />
-                <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新增特征指纹</Button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
+                <Space wrap>
+                    <Input
+                        placeholder="搜索指纹产品特征或规则内容..."
+                        prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
+                        value={searchKeyword}
+                        onChange={(e) => setSearchKeyword(e.target.value)}
+                        style={{ width: 280 }}
+                        allowClear
+                    />
+                    <Segmented
+                        value={refFilter}
+                        onChange={(v) => setRefFilter(v as typeof refFilter)}
+                        options={[
+                            { label: `全部 (${stats.total})`, value: 'all' },
+                            { label: `已关联 (${stats.linked})`, value: 'linked' },
+                            { label: `未关联 (${stats.orphan})`, value: 'orphan' },
+                        ]}
+                    />
+                </Space>
+                <Space>
+                    <Tag>{filtered.length} / {enriched.length} 条</Tag>
+                    <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新增特征指纹</Button>
+                </Space>
             </div>
 
             <ProCard className="glass-card" style={{ background: 'transparent', border: 'none', padding: 0 }}>
                 {filtered.length === 0 && !loading ? (
                     <Empty description="暂无指纹特征" style={{ padding: '60px 0' }} />
                 ) : (
-                    <Table 
-                        columns={columns} 
-                        dataSource={filtered} 
-                        rowKey="product" 
+                    <Table
+                        columns={columns}
+                        dataSource={filtered}
+                        rowKey="product"
                         loading={loading}
-                        pagination={{ pageSize: 15, showSizeChanger: true }} 
-                        size="middle" 
+                        pagination={{ pageSize: 15, showSizeChanger: true }}
+                        size="middle"
                     />
                 )}
             </ProCard>
