@@ -624,8 +624,8 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 
 	switch payloadType {
 	case "asset", "port_scan", "subdomain",
-		"Web", "Protocol", "PortScan", "IPAlive", "Domain", "Domain-Bind":
-		// Agent 通过 ddout.OutputMessage 发送的 Type 为大写开头（如 Web/Protocol/PortScan/IPAlive/Domain）
+		"Web", "Protocol", "PortScan", "IPAlive", "Domain", "Domain-Bind", "Nmap":
+		// Agent 通过 ddout.OutputMessage 发送的 Type 为大写开头（如 Web/Protocol/PortScan/IPAlive/Domain/Nmap）
 		// 统一归入资产表
 
 		// 对 Web 类型提取更丰富的字段
@@ -650,7 +650,7 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 				}
 			}
 		}
-		if payloadType == "Protocol" {
+		if payloadType == "Protocol" || payloadType == "Nmap" {
 			if ip, ok := p["ip"].(string); ok {
 				target = ip
 				if portStr, ok := p["port"].(string); ok {

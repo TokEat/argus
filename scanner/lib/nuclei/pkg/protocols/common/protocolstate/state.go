@@ -138,7 +138,11 @@ func Init(options *types.Options) error {
 
 	// override dialer in mysql
 	mysql.RegisterDialContext("tcp", func(ctx context.Context, addr string) (net.Conn, error) {
-		return Dialer.Dial(ctx, "tcp", addr)
+		if Dialer != nil {
+			return Dialer.Dial(ctx, "tcp", addr)
+		}
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", addr)
 	})
 
 	return nil
