@@ -1,3 +1,6 @@
+-- Historical schema snapshot kept for legacy reproduction and upgrade testing.
+-- New environments should use dddd-server migrations instead of executing this file directly.
+
 BEGIN;
 
 SET client_min_messages TO WARNING;

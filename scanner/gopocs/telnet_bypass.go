@@ -38,7 +38,7 @@ func TelnetBypassScan(info *structs.HostInfo) (bool, error) {
 	gologger.Info().Msgf("[Go] [TelnetBypass] Start checking %s:%s", info.Host, info.Ports)
 	address := fmt.Sprintf("%s:%s", info.Host, info.Ports)
 	// 连接超时设置为5秒
-	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
+	conn, err := net.DialTimeout("tcp", address, 3*time.Second)
 	if err != nil {
 		gologger.Info().Msgf("[Go] [TelnetBypass] Connection failed to %s: %s", address, err)
 		return false, err
@@ -64,8 +64,8 @@ func TelnetBypassScan(info *structs.HostInfo) (bool, error) {
 	startTime := time.Now()
 
 	// Negotiation Ioop
-	for time.Since(startTime) < 8*time.Second {
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	for time.Since(startTime) < 5*time.Second {
+		conn.SetReadDeadline(time.Now().Add(1500 * time.Millisecond))
 		n, err := conn.Read(buffer)
 
 		if err != nil {
@@ -178,7 +178,7 @@ func TelnetBypassScan(info *structs.HostInfo) (bool, error) {
 		return false, nil
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 
 	// 直接发送 id 命令
 	_, err = conn.Write([]byte("id\n"))
@@ -189,7 +189,7 @@ func TelnetBypassScan(info *structs.HostInfo) (bool, error) {
 
 	// 循环读取响应
 	var totalResponse []byte
-	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 
 	// 尝试读取多次，类似 Python 的 for range(3)
 	for i := 0; i < 3; i++ {

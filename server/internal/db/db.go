@@ -2,13 +2,12 @@ package db
 
 import (
 	"encoding/json"
-	"log"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	pb "github.com/user/dddd-proto/go/scan"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -154,6 +153,7 @@ type Asset struct {
 	TenantID    string `gorm:"default:'default';index"`
 	ProjectID   string `gorm:"index:idx_asset_dedupe,unique"`
 	TaskID      string `gorm:"index"`
+	RootTaskID  string `gorm:"index"`
 	Target      string `gorm:"index:idx_asset_dedupe,unique"`
 	Protocol    string `gorm:"index:idx_asset_dedupe,unique"`
 	Port        int
@@ -186,6 +186,7 @@ type FingerprintHit struct {
 	TenantID    string `gorm:"default:'default';index"`
 	ProjectID   string `gorm:"index:idx_fp_dedupe,unique"`
 	TaskID      string `gorm:"index"`
+	RootTaskID  string `gorm:"index"`
 	Target      string `gorm:"index:idx_fp_dedupe,unique"`
 	ProductName string `gorm:"index:idx_fp_dedupe,unique"`
 	RuleName    string
@@ -199,6 +200,7 @@ type Vulnerability struct {
 	TenantID     string `gorm:"default:'default';index"`
 	ProjectID    string `gorm:"index:idx_vuln_new_dedupe,unique"`
 	TaskID       string `gorm:"index"`
+	RootTaskID   string `gorm:"index"`
 	Target       string `gorm:"index:idx_vuln_new_dedupe,unique"`
 	Plugin       string `gorm:"index:idx_vuln_new_dedupe,unique"`
 	Severity     string
@@ -251,17 +253,18 @@ type Report struct {
 
 // Arsenal represents dynamic rule files synced to agents.
 type Arsenal struct {
-	ID           string `gorm:"primaryKey"`
-	TenantID     string `gorm:"default:'default';index"`
-	Type         string `gorm:"index"`
-	FileName     string `gorm:"index"`
-	Content      string
-	Hash         string
-	PreviousHash string // 上一版本 Hash（用于回滚）
-	Version      int    `gorm:"default:1"` // 自增版本号
-	State        string `gorm:"default:'Draft';index"`
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID              string `gorm:"primaryKey"`
+	TenantID        string `gorm:"default:'default';index"`
+	Type            string `gorm:"index"`
+	FileName        string `gorm:"index"`
+	Content         string
+	Hash            string
+	PreviousHash    string // 上一版本 Hash（用于回滚）
+	PreviousContent string `gorm:"type:text"` // 上一版本内容（用于回滚）
+	Version         int    `gorm:"default:1"` // 自增版本号
+	State           string `gorm:"default:'Draft';index"`
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // AgentLog 遥测日志模型
@@ -272,56 +275,6 @@ type AgentLog struct {
 	Message   string `gorm:"type:text"`
 	Timestamp int64  `gorm:"index"`
 	CreatedAt time.Time
-}
-
-func InitDB(dsn string) {
-	if strings.TrimSpace(dsn) == "" {
-		dsn = "host=127.0.0.1 user=postgres password=root dbname=dddd port=5432 sslmode=disable"
-		log.Printf("No DSN provided, using default: %s", dsn)
-	}
-
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		log.Fatalf("failed to initialize PostgreSQL database: %v", err)
-	}
-
-	if err := db.AutoMigrate(
-		&Project{},
-		&ProjectMember{},
-		&CronTask{},
-		&RootTask{},
-		&SubTask{},
-		&NotificationRule{},
-		&Domain{},
-		&Asset{},
-		&Credential{},
-		&FingerprintHit{},
-		&Vulnerability{},
-		&AssetChangeLog{},
-		&Report{},
-		&Node{},
-		&Arsenal{},
-		&User{},
-		&SystemConfig{},
-		&AgentLog{},
-		&RuleCatalogBootstrap{},
-		&FingerprintRule{},
-		&PocRule{},
-		&WorkflowRule{},
-		&DirRule{},
-	); err != nil {
-		log.Fatalf("failed to auto-migrate PostgreSQL database: %v", err)
-	}
-
-	DB = db
-	log.Printf("PostgreSQL database initialized successfully.")
-}
-
-func isPostgresDSN(dsn string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(dsn))
-	return strings.HasPrefix(normalized, "postgres://") ||
-		strings.HasPrefix(normalized, "postgresql://") ||
-		strings.Contains(normalized, "host=")
 }
 
 func UpdateNodeHeartbeat(agentID string) error {
@@ -344,7 +297,7 @@ func StartBatchWriters() {
 	go startGenericBatchWriter(assetBuffer, func(batch []Asset) {
 		DB.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "project_id"}, {Name: "target"}, {Name: "protocol"}},
-			DoUpdates: clause.AssignmentColumns([]string{"task_id", "port", "url", "title", "service", "cert_subject", "cert_expiry", "status", "updated_at"}),
+			DoUpdates: clause.AssignmentColumns([]string{"task_id", "root_task_id", "port", "url", "title", "service", "cert_subject", "cert_expiry", "status", "updated_at"}),
 		}).CreateInBatches(batch, 500)
 		if OnResultBatchSaved != nil && len(batch) > 0 {
 			OnResultBatchSaved(len(batch), "asset")
@@ -353,7 +306,7 @@ func StartBatchWriters() {
 	go startGenericBatchWriter(fpBuffer, func(batch []FingerprintHit) {
 		DB.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "project_id"}, {Name: "target"}, {Name: "product_name"}},
-			DoUpdates: clause.AssignmentColumns([]string{"task_id", "rule_name", "evidence", "updated_at"}),
+			DoUpdates: clause.AssignmentColumns([]string{"task_id", "root_task_id", "rule_name", "evidence", "updated_at"}),
 		}).CreateInBatches(batch, 500)
 		if OnResultBatchSaved != nil && len(batch) > 0 {
 			OnResultBatchSaved(len(batch), "fingerprint")
@@ -362,7 +315,7 @@ func StartBatchWriters() {
 	go startGenericBatchWriter(vulnBuffer2, func(batch []Vulnerability) {
 		DB.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "project_id"}, {Name: "target"}, {Name: "plugin"}},
-			DoUpdates: clause.AssignmentColumns([]string{"task_id", "severity", "payload", "request", "response", "description", "reference", "matched_at", "updated_at", "status"}),
+			DoUpdates: clause.AssignmentColumns([]string{"task_id", "root_task_id", "severity", "payload", "request", "response", "description", "reference", "matched_at", "updated_at", "status"}),
 		}).CreateInBatches(batch, 500)
 		if OnResultBatchSaved != nil && len(batch) > 0 {
 			OnResultBatchSaved(len(batch), "vuln")
@@ -392,8 +345,9 @@ func startGenericBatchWriter[T any](ch chan T, saveFunc func(batch []T)) {
 
 // taskOwnerEntry 缓存任务归属信息
 type taskOwnerEntry struct {
-	ProjectID string
-	TenantID  string
+	ProjectID  string
+	TenantID   string
+	RootTaskID string
 }
 
 // taskOwnerLRU 有界 LRU 缓存，防止长期运行内存膨胀
@@ -439,25 +393,66 @@ func (c *taskOwnerLRU) Store(key string, entry *taskOwnerEntry) {
 // taskOwnerCache 有界 LRU：最多缓存 10000 个 taskID 映射
 var taskOwnerCache = newTaskOwnerLRU(10000)
 
+// normalizeTarget 将各种格式的 target 归一化为统一格式，
+// 确保同一主机在 assets / fingerprint_hits / vulnerabilities 三表中的 target 值一致。
+//
+// 规则：
+//   - 纯 IP → 保持原样: "192.168.1.1"
+//   - IP:Port → 保持原样: "192.168.1.1:80"
+//   - URL → 提取为 scheme://host:port（保留 scheme 和端口）: "https://example.com:443"
+//   - 域名 → 保持原样: "example.com"
+func normalizeTarget(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "unknown" {
+		return raw
+	}
+
+	// 尝试解析为 URL
+	if strings.Contains(raw, "://") {
+		if u, err := url.Parse(raw); err == nil && u.Host != "" {
+			host := u.Hostname()
+			port := u.Port()
+			// 补全默认端口
+			if port == "" {
+				switch u.Scheme {
+				case "https":
+					port = "443"
+				case "http":
+					port = "80"
+				}
+			}
+			if port != "" {
+				return u.Scheme + "://" + host + ":" + port
+			}
+			return u.Scheme + "://" + host
+		}
+	}
+
+	return raw
+}
+
 func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 	// 优先从 LRU 缓存查找任务归属
 	projectID := "default_project"
 	tenantID := "default"
+	rootTaskID := ""
 	if entry, ok := taskOwnerCache.Load(taskID); ok {
 		projectID = entry.ProjectID
 		tenantID = entry.TenantID
+		rootTaskID = entry.RootTaskID
 	} else {
 		// 缓存未命中，查库并缓存结果
 		var subTask SubTask
-		if err := DB.Select("project_id", "tenant_id").Where("id = ?", taskID).First(&subTask).Error; err == nil {
+		if err := DB.Select("project_id", "tenant_id", "root_task_id").Where("id = ?", taskID).First(&subTask).Error; err == nil {
 			if subTask.ProjectID != "" {
 				projectID = subTask.ProjectID
 			}
 			if subTask.TenantID != "" {
 				tenantID = subTask.TenantID
 			}
+			rootTaskID = subTask.RootTaskID
 		}
-		taskOwnerCache.Store(taskID, &taskOwnerEntry{ProjectID: projectID, TenantID: tenantID})
+		taskOwnerCache.Store(taskID, &taskOwnerEntry{ProjectID: projectID, TenantID: tenantID, RootTaskID: rootTaskID})
 	}
 
 	target := "unknown"
@@ -552,8 +547,11 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 			}
 		}
 
+		// 归一化 target，确保三表关联一致性
+		target = normalizeTarget(target)
+
 		assetBuffer <- Asset{
-			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, Target: target, Protocol: payloadType,
+			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID, Target: target, Protocol: payloadType,
 			Port: port, URL: payloadJSON, Title: title, Service: service,
 			Tags: "[]", Status: "alive", CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
@@ -581,8 +579,10 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 		if uri, ok := p["uri"].(string); ok && target == "unknown" {
 			target = uri
 		}
+		// 归一化 target，确保三表关联一致性
+		target = normalizeTarget(target)
 		fpBuffer <- FingerprintHit{
-			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, Target: target, ProductName: productName,
+			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID, Target: target, ProductName: productName,
 			Evidence: payloadJSON, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
 	case "phase":
@@ -684,8 +684,11 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 			}
 		}
 
+		// 归一化 target，确保三表关联一致性
+		target = normalizeTarget(target)
+
 		vulnBuffer2 <- Vulnerability{
-			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, Target: target, Plugin: plugin,
+			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID, Target: target, Plugin: plugin,
 			Severity: severity, Payload: payloadJSON, Status: "open",
 			Request: reqData, Response: respData, Description: description,
 			Reference: reference, MatchedAt: matchedAt,

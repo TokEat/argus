@@ -1,8 +1,15 @@
-# Argus 项目隔离与资产入库 - 数据库 schema 设计方案 (P8 终极版)
+# Argus 项目隔离与资产入库 - 数据库 schema 演进方案 (P8 历史稿)
 
-根据当前 `server/internal/db/db.go` 的结构，为了实现**“按项目区分任务”**以及**“测绘发现的资产归档入库”**，并将 Argus 提升至对标商业级 ASM（攻击面管理）的标准，我们需要在数据库中引入 `Project` 概念、重构资产聚合维度，并采用 PostgreSQL 原生的工程最佳实践（如 JSONB、软删除）。
+本文保留为“Argus 从早期任务级入库，演进到项目级隔离与资产归档”的设计过程记录，主要解释当时为什么要引入 `Project`、为什么要把结果去重键从 `task_id` 调整到 `project_id`。
 
-以下是端到端的全链路库表架构设计。
+当前完整且可对照代码的数据库设计，请以 [db_schema.md](./db_schema.md) 为准。相比本历史稿，现行设计已经继续补充了以下内容：
+
+- `reports` 报表元数据表
+- `rule_catalog_bootstraps`、`fingerprint_rules`、`poc_rules`、`workflow_rules`、`dir_rules` 结构化规则治理表
+- `nodes`、`users`、`system_configs` 的扩展字段
+- `sub_tasks` / `root_tasks` 的完整状态机与调度补充字段
+
+以下内容仍可作为理解 schema 演进背景的参考。
 
 ---
 

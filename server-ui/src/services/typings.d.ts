@@ -78,6 +78,48 @@ declare namespace API {
     timeout_sec?: number;
   }
 
+  /** 子任务摘要 (GET /api/v1/tasks/:id) */
+  interface SubTaskSummary {
+    id: string;
+    status: string;
+    agent_id: string;
+    target_count: number;
+    retry_count: number;
+    max_retry: number;
+    priority: number;
+    timeout_sec: number;
+    created_at: string;
+    updated_at: string;
+  }
+
+  /** 任务详情响应 (GET /api/v1/tasks/:id) */
+  interface TaskDetailResponse {
+    task: {
+      id: string;
+      name: string;
+      status: string;
+      priority: number;
+      total_chunks: number;
+      completed_chunks: number;
+      total_targets: number;
+      completed_targets: number;
+      timeout_sec: number;
+      original_targets: string;
+      config: Record<string, unknown> | string;
+      rule_version: string;
+      created_at: string;
+      updated_at: string;
+    };
+    sub_tasks: SubTaskSummary[];
+    status_distribution: Record<string, number>;
+    result_stats: {
+      assets: number;
+      fingerprints: number;
+      vulns: number;
+      severity: Record<string, number>;
+    };
+  }
+
   // ======================== Node ========================
 
   /** Agent 节点 (GET /api/v1/nodes) */

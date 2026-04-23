@@ -5,6 +5,7 @@ import (
 	"flag"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	pb "github.com/user/dddd-proto/go/scan"
@@ -16,22 +17,26 @@ import (
 
 func main() {
 	var (
-		dbDSN     string
-		amqpURL   string
-		grpcPort  int
-		apiAddr   string
-		configDir string
-		agentPSK  string
-		devMode   bool
+		dbDSN           string
+		amqpURL         string
+		grpcPort        int
+		apiAddr         string
+		configDir       string
+		agentPSK        string
+		devMode         bool
+		migrateOnly     bool
+		dbMigrationMode string
 	)
 
-	flag.StringVar(&dbDSN, "db", "", "Database DSN. Empty uses local SQLite data/dddd.db")
+	flag.StringVar(&dbDSN, "db", "", "PostgreSQL DSN. Empty uses the built-in local PostgreSQL default.")
 	flag.StringVar(&amqpURL, "amqp", "amqp://guest:guest@localhost:5672/", "RabbitMQ AMQP URL. Empty falls back to in-memory queue")
 	flag.IntVar(&grpcPort, "grpc", 50051, "gRPC listen port")
 	flag.StringVar(&apiAddr, "api", ":8085", "HTTP API listen address")
 	flag.StringVar(&configDir, "config-dir", "", "Path to the directory containing finger.yaml, dir.yaml, workflow.yaml, and pocs/")
 	flag.StringVar(&agentPSK, "agent-psk", "", "Pre-shared key for Agent authentication (env: ARGUS_AGENT_PSK)")
 	flag.BoolVar(&devMode, "dev", false, "Enable development mode (skip mandatory security checks)")
+	flag.BoolVar(&migrateOnly, "migrate-only", false, "Apply/verify PostgreSQL schema and exit without starting services")
+	flag.StringVar(&dbMigrationMode, "db-migration-mode", string(db.MigrationModeApply), "Database migration mode: apply|verify|dev-auto")
 	flag.Parse()
 
 	// 环境变量优先级高于 flag
@@ -49,8 +54,39 @@ func main() {
 		}
 	}
 
-	log.Println("Initializing database...")
-	db.InitDB(dbDSN)
+	migrationMode, err := db.ParseMigrationMode(dbMigrationMode)
+	if err != nil {
+		log.Fatalf("Invalid db migration mode: %v", err)
+	}
+	if migrationMode == db.MigrationModeDevAuto && !devMode {
+		log.Fatalf("db migration mode 'dev-auto' requires --dev")
+	}
+
+	if strings.TrimSpace(dbDSN) == "" {
+		log.Printf("No DSN provided, using default PostgreSQL DSN: %s", db.DefaultPostgresDSN)
+	}
+
+	log.Println("Opening PostgreSQL database connection...")
+	conn, err := db.OpenDB(dbDSN)
+	if err != nil {
+		log.Fatalf("Failed to open PostgreSQL database: %v", err)
+	}
+	db.SetDB(conn)
+
+	log.Printf("Applying database migrations (mode=%s)...", migrationMode)
+	if err := db.ApplyMigrations(conn, migrationMode); err != nil {
+		log.Fatalf("Failed to apply database migrations: %v", err)
+	}
+
+	log.Println("Verifying database schema...")
+	if err := db.VerifySchema(conn); err != nil {
+		log.Fatalf("Failed to verify database schema: %v", err)
+	}
+
+	if migrateOnly {
+		log.Println("Database migrations and schema verification completed successfully.")
+		return
+	}
 
 	if configDir == "" {
 		if _, err := os.Stat("scanner/common/config"); err == nil {
@@ -62,7 +98,7 @@ func main() {
 
 	// 启动时确保规则原始文件仓库与结构化规则目录都已初始化到 PostgreSQL。
 	if err := db.BootstrapRuleCatalog(configDir); err != nil {
-		log.Printf("Warning: Failed to bootstrap rule catalog from %s: %v", configDir, err)
+		log.Fatalf("Failed to bootstrap rule catalog from %s: %v", configDir, err)
 	}
 
 	// Set up the Hub Broadcast Hook for batching to prevent websocket surge

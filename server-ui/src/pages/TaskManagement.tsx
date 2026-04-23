@@ -3,10 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import {
     Alert,
     App,
+    Badge,
     Button,
     Col,
     Collapse,
+    Descriptions,
     Divider,
+    Drawer,
     Empty,
     Form,
     Input,
@@ -18,6 +21,7 @@ import {
     Select,
     Space,
     Spin,
+    Statistic,
     Switch,
     Table,
     Tag,
@@ -46,7 +50,7 @@ import {
     WifiOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { cancelTask, createTask, deleteTask, listTasks, listProjects } from '../services/api';
+import { cancelTask, createTask, deleteTask, listTasks, listProjects, getTaskDetail } from '../services/api';
 import { getTaskStatusMeta, isTaskCancellable, isTaskFailedLike, isTaskFinished, normalizeTaskStatus } from '../utils/taskStatus';
 
 const { Title, Text } = Typography;
@@ -177,6 +181,9 @@ const TaskManagement: React.FC = () => {
     const sourceMode = (Form.useWatch('source_mode', form) as TaskSourceMode | undefined) || 'direct';
     const globalProjectId = localStorage.getItem('active_project_id') || '';
     const [projects, setProjects] = useState<API.Project[]>([]);
+    const [detailOpen, setDetailOpen] = useState(false);
+    const [detailLoading, setDetailLoading] = useState(false);
+    const [taskDetail, setTaskDetail] = useState<API.TaskDetailResponse | null>(null);
 
     const fetchTasks = async () => {
         setLoading(true);
@@ -266,6 +273,19 @@ const TaskManagement: React.FC = () => {
             fetchTasks();
         } catch {
             message.error('取消失败');
+        }
+    };
+
+    const handleShowDetail = async (taskId: string) => {
+        setDetailOpen(true);
+        setDetailLoading(true);
+        try {
+            const result = await getTaskDetail(taskId);
+            setTaskDetail(result);
+        } catch {
+            message.error('获取任务详情失败');
+        } finally {
+            setDetailLoading(false);
         }
     };
 
@@ -379,6 +399,10 @@ const TaskManagement: React.FC = () => {
             width: 200,
             render: (_, record) => (
                 <Space size={4}>
+                    <Button type="link" size="small" icon={<InfoCircleOutlined />}
+                        onClick={() => handleShowDetail(record.ID)}>
+                        详情
+                    </Button>
                     <Button type="link" size="small" icon={<EyeOutlined />}
                         onClick={() => navigate(`/tasks/${record.ID}/results`)}>
                         结果
@@ -826,6 +850,245 @@ const TaskManagement: React.FC = () => {
                     />
                 </Form>
             </Modal>
+
+            {/* 任务详情 Drawer */}
+            <Drawer
+                title={
+                    taskDetail ? (
+                        <Space>
+                            <RocketOutlined style={{ color: '#10b981' }} />
+                            <span>{taskDetail.task.name}</span>
+                            {getStatusTag(taskDetail.task.status)}
+                        </Space>
+                    ) : '任务详情'
+                }
+                open={detailOpen}
+                onClose={() => { setDetailOpen(false); setTaskDetail(null); }}
+                width={920}
+                destroyOnClose
+            >
+                {detailLoading ? (
+                    <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 0' }}>
+                        <Spin size="large" />
+                    </div>
+                ) : taskDetail ? (
+                    <div>
+                        {/* 概况统计卡片 */}
+                        <Row gutter={16} style={{ marginBottom: 24 }}>
+                            <Col span={6}>
+                                <div style={{
+                                    background: 'linear-gradient(135deg, #0ea5e9 0%, #06b6d4 100%)',
+                                    borderRadius: 12, padding: '20px 16px', color: '#fff',
+                                }}>
+                                    <Statistic
+                                        title={<span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }}>进度</span>}
+                                        value={taskDetail.task.total_targets > 0
+                                            ? Math.round((taskDetail.task.completed_targets / taskDetail.task.total_targets) * 100)
+                                            : taskDetail.task.total_chunks > 0
+                                                ? Math.round((taskDetail.task.completed_chunks / taskDetail.task.total_chunks) * 100)
+                                                : 0}
+                                        suffix="%"
+                                        valueStyle={{ color: '#fff', fontSize: 28, fontWeight: 700 }}
+                                    />
+                                </div>
+                            </Col>
+                            <Col span={6}>
+                                <div style={{
+                                    background: 'linear-gradient(135deg, #3b82f6 0%, #6366f1 100%)',
+                                    borderRadius: 12, padding: '20px 16px', color: '#fff',
+                                }}>
+                                    <Statistic
+                                        title={<span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }}>资产</span>}
+                                        value={taskDetail.result_stats.assets}
+                                        valueStyle={{ color: '#fff', fontSize: 28, fontWeight: 700 }}
+                                    />
+                                </div>
+                            </Col>
+                            <Col span={6}>
+                                <div style={{
+                                    background: 'linear-gradient(135deg, #06b6d4 0%, #14b8a6 100%)',
+                                    borderRadius: 12, padding: '20px 16px', color: '#fff',
+                                }}>
+                                    <Statistic
+                                        title={<span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }}>指纹</span>}
+                                        value={taskDetail.result_stats.fingerprints}
+                                        valueStyle={{ color: '#fff', fontSize: 28, fontWeight: 700 }}
+                                    />
+                                </div>
+                            </Col>
+                            <Col span={6}>
+                                <div style={{
+                                    background: 'linear-gradient(135deg, #ef4444 0%, #f97316 100%)',
+                                    borderRadius: 12, padding: '20px 16px', color: '#fff',
+                                }}>
+                                    <Statistic
+                                        title={<span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }}>漏洞</span>}
+                                        value={taskDetail.result_stats.vulns}
+                                        valueStyle={{ color: '#fff', fontSize: 28, fontWeight: 700 }}
+                                    />
+                                </div>
+                            </Col>
+                        </Row>
+
+                        {/* 漏洞严重度分布 */}
+                        {taskDetail.result_stats.vulns > 0 && (
+                            <div style={{ marginBottom: 20 }}>
+                                <Space wrap>
+                                    {Object.entries(taskDetail.result_stats.severity).map(([sev, count]) => {
+                                        const colorMap: Record<string, string> = {
+                                            Critical: '#ef4444', High: '#f97316', Medium: '#f59e0b',
+                                            Low: '#3b82f6', Info: '#6b7280', Unknown: '#94a3b8',
+                                        };
+                                        return (
+                                            <Tag key={sev} color={colorMap[sev] || '#94a3b8'} style={{ fontSize: 12 }}>
+                                                {sev}: {count}
+                                            </Tag>
+                                        );
+                                    })}
+                                </Space>
+                            </div>
+                        )}
+
+                        {/* 任务基本信息 */}
+                        <Descriptions column={2} bordered size="small" style={{ marginBottom: 20 }}>
+                            <Descriptions.Item label="任务 ID">
+                                <Text copyable style={{ fontFamily: 'monospace', fontSize: 12 }}>{taskDetail.task.id}</Text>
+                            </Descriptions.Item>
+                            <Descriptions.Item label="优先级">
+                                {({ 0: 'P0 / 紧急', 1: 'P1 / 普通', 2: 'P2 / 低' } as Record<number, string>)[taskDetail.task.priority] || String(taskDetail.task.priority)}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="目标进度">
+                                <Space>
+                                    <Progress
+                                        type="circle"
+                                        size={40}
+                                        percent={taskDetail.task.total_targets > 0
+                                            ? Math.round((taskDetail.task.completed_targets / taskDetail.task.total_targets) * 100)
+                                            : 0}
+                                    />
+                                    <Text style={{ fontSize: 12 }}>
+                                        {taskDetail.task.completed_targets}/{taskDetail.task.total_targets} 目标
+                                    </Text>
+                                </Space>
+                            </Descriptions.Item>
+                            <Descriptions.Item label="批次进度">
+                                <Space>
+                                    <Progress
+                                        type="circle"
+                                        size={40}
+                                        percent={taskDetail.task.total_chunks > 0
+                                            ? Math.round((taskDetail.task.completed_chunks / taskDetail.task.total_chunks) * 100)
+                                            : 0}
+                                    />
+                                    <Text style={{ fontSize: 12 }}>
+                                        {taskDetail.task.completed_chunks}/{taskDetail.task.total_chunks} 批次
+                                    </Text>
+                                </Space>
+                            </Descriptions.Item>
+                            <Descriptions.Item label="超时时间">
+                                {taskDetail.task.timeout_sec > 0 ? `${taskDetail.task.timeout_sec} 秒` : '未设置'}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="规则版本">
+                                <Tag color="blue">{taskDetail.task.rule_version || '-'}</Tag>
+                            </Descriptions.Item>
+                            <Descriptions.Item label="创建时间" span={2}>
+                                {taskDetail.task.created_at}
+                            </Descriptions.Item>
+                        </Descriptions>
+
+                        {/* 原始目标 */}
+                        {taskDetail.task.original_targets && (
+                            <>
+                                <Divider orientation="left" style={{ fontSize: 13 }}>
+                                    <AimOutlined style={{ marginRight: 4 }} />原始目标
+                                </Divider>
+                                <pre style={{
+                                    background: '#f1f5f9', border: '1px solid #e2e8f0',
+                                    borderRadius: 8, padding: 12, fontSize: 12,
+                                    maxHeight: 160, overflow: 'auto', whiteSpace: 'pre-wrap',
+                                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                                    color: '#334155',
+                                }}>
+                                    {taskDetail.task.original_targets}
+                                </pre>
+                            </>
+                        )}
+
+                        {/* 扫描配置 */}
+                        {taskDetail.task.config && typeof taskDetail.task.config === 'object' && (
+                            <>
+                                <Divider orientation="left" style={{ fontSize: 13 }}>
+                                    <AuditOutlined style={{ marginRight: 4 }} />扫描配置
+                                </Divider>
+                                <pre style={{
+                                    background: '#0f172a', color: '#e2e8f0',
+                                    borderRadius: 8, padding: 12, fontSize: 11,
+                                    maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap',
+                                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                                }}>
+                                    {JSON.stringify(taskDetail.task.config, null, 2)}
+                                </pre>
+                            </>
+                        )}
+
+                        {/* 子任务状态分布 */}
+                        {Object.keys(taskDetail.status_distribution).length > 0 && (
+                            <>
+                                <Divider orientation="left" style={{ fontSize: 13 }}>
+                                    批次状态分布
+                                </Divider>
+                                <Space wrap style={{ marginBottom: 12 }}>
+                                    {Object.entries(taskDetail.status_distribution).map(([status, count]) => {
+                                        const { color, text } = getTaskStatusMeta(status);
+                                        return (
+                                            <Badge key={status} count={count} color={color === 'processing' ? '#1677ff' : undefined} overflowCount={9999}>
+                                                <Tag color={color} style={{ marginRight: 0 }}>{text}</Tag>
+                                            </Badge>
+                                        );
+                                    })}
+                                </Space>
+                            </>
+                        )}
+
+                        {/* 子任务列表 */}
+                        <Divider orientation="left" style={{ fontSize: 13 }}>
+                            子任务列表 ({taskDetail.sub_tasks.length})
+                        </Divider>
+                        <Table
+                            dataSource={taskDetail.sub_tasks}
+                            rowKey="id"
+                            size="small"
+                            pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 个批次` }}
+                            columns={[
+                                {
+                                    title: '批次 ID', dataIndex: 'id', key: 'id', ellipsis: true, width: 220,
+                                    render: (v: string) => <Text style={{ fontFamily: 'monospace', fontSize: 11 }}>{v}</Text>,
+                                },
+                                {
+                                    title: '状态', dataIndex: 'status', key: 'status', width: 90,
+                                    render: (v: string) => getStatusTag(v),
+                                },
+                                {
+                                    title: 'Agent', dataIndex: 'agent_id', key: 'agent_id', ellipsis: true, width: 140,
+                                    render: (v: string) => v ? <Tag color="blue" style={{ fontSize: 11 }}>{v}</Tag> : <Text type="secondary">-</Text>,
+                                },
+                                {
+                                    title: '目标数', dataIndex: 'target_count', key: 'target_count', width: 80,
+                                    sorter: (a, b) => a.target_count - b.target_count,
+                                },
+                                {
+                                    title: '重试', key: 'retry', width: 70,
+                                    render: (_, r) => <Text style={{ fontSize: 12 }}>{r.retry_count}/{r.max_retry}</Text>,
+                                },
+                                {
+                                    title: '更新时间', dataIndex: 'updated_at', key: 'updated_at', width: 170,
+                                    render: (v: string) => <Text style={{ fontSize: 11, color: '#64748b' }}>{v}</Text>,
+                                },
+                            ]}
+                        />
+                    </div>
+                ) : null}
+            </Drawer>
         </div>
     );
 };

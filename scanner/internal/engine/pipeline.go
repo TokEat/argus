@@ -385,27 +385,40 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		return err
 	}
 
-	emitPhase(ctx, PhaseGoPoc, "start", "")
+	ipPortMap := currentPipelineIPPortMap(ctx)
+	telnetTargets := 0
+	for _, svc := range ipPortMap {
+		if svc == "telnet" {
+			telnetTargets++
+		}
+	}
+	emitPhase(ctx, PhaseGoPoc, "start", fmt.Sprintf("telnet=%d, total_services=%d", telnetTargets, len(ipPortMap)))
 	var goPocResults []structs.GoPocsResultType
+
+	emitPhase(ctx, "gopoc_telnet_cve", "start", fmt.Sprintf("%d targets", telnetTargets))
 	goPocResults = append(goPocResults, gopoc.TelnetCVEOnly(
-		currentPipelineIPPortMap(ctx),
+		ipPortMap,
 		cfg.GoPocThreads,
 		cfg.Password,
 		cfg.PasswordFile,
 		emit,
 	)...)
+	emitPhase(ctx, "gopoc_telnet_cve", "end", fmt.Sprintf("%d results", len(goPocResults)))
 
 	if cfg.GolangPoc {
-		goPocResults = append(goPocResults, gopoc.Dispatch(
-			currentPipelineIPPortMap(ctx),
+		emitPhase(ctx, "gopoc_dispatch", "start", fmt.Sprintf("%d services", len(ipPortMap)))
+		dispatchResults := gopoc.Dispatch(
+			ipPortMap,
 			cfg.GoPocThreads,
 			cfg.Password,
 			cfg.PasswordFile,
 			nucleiResults,
 			emit,
-		)...)
+		)
+		goPocResults = append(goPocResults, dispatchResults...)
+		emitPhase(ctx, "gopoc_dispatch", "end", fmt.Sprintf("%d results", len(dispatchResults)))
 	}
-	emitPhase(ctx, PhaseGoPoc, "end", "")
+	emitPhase(ctx, PhaseGoPoc, "end", fmt.Sprintf("%d total results", len(goPocResults)))
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
 	}

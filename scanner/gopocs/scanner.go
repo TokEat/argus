@@ -34,7 +34,7 @@ func (d *dispatcher) addScan(name string, info structs.HostInfo, ch chan struct{
 	allCount := d.allCount
 	d.progressMu.Unlock()
 
-	if currentCount%100 == 0 {
+	if currentCount%10 == 0 || currentCount == allCount {
 		gologger.Info().Msgf("[GoPoc] 当前进度: %v %v [%v/%v]", name, info.Host+":"+info.Ports, currentCount, allCount)
 	}
 

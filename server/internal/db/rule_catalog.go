@@ -186,7 +186,9 @@ func BootstrapRuleCatalog(configBaseDir string) error {
 		return fmt.Errorf("normalize legacy arsenal types: %w", err)
 	}
 
-	SeedArsenalFromDisk(configBaseDir)
+	if err := SeedArsenalFromDisk(configBaseDir); err != nil {
+		return fmt.Errorf("seed arsenals from disk: %w", err)
+	}
 
 	if err := SyncRuleCatalogFromArsenal(); err != nil {
 		return fmt.Errorf("sync structured rule catalog: %w", err)
@@ -207,8 +209,11 @@ func SyncRuleCatalogFromArsenal() error {
 	if err := DB.Where("key = ?", RuleCatalogBootstrapKey).First(&bootstrap).Error; err == nil {
 		if bootstrap.SchemaVersion == RuleCatalogSchemaVersion &&
 			bootstrap.AggregateHash == aggregateHash &&
-			(bootstrap.Status == RuleCatalogStatusReady || bootstrap.Status == RuleCatalogStatusPartial || bootstrap.Status == RuleCatalogStatusEmpty) {
+			(bootstrap.Status == RuleCatalogStatusReady || bootstrap.Status == RuleCatalogStatusEmpty) {
 			return nil
+		}
+		if bootstrap.Status == RuleCatalogStatusPartial && bootstrap.AggregateHash == aggregateHash {
+			log.Printf("[RuleCatalog] previous materialization was partial (errors: %s), retrying...", bootstrap.LastError)
 		}
 	}
 
@@ -282,6 +287,9 @@ func SyncRuleCatalogFromArsenal() error {
 		len(materialized.dirs),
 		len(materialized.errors),
 	)
+	if len(materialized.errors) > 0 {
+		return fmt.Errorf("rule catalog materialized with %d errors: %s", len(materialized.errors), summarizeRuleCatalogErrors(materialized.errors))
+	}
 	return nil
 }
 

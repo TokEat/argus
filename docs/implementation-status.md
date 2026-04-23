@@ -31,7 +31,7 @@
 | 队列恢复 | Dead-Letter 回收、旧队列迁移、死亡节点任务抢救 | `server/internal/scheduler/queue.go` `server/cmd/dddd-server/main.go` |
 | 超时与重试 | 基于 `timeout_sec` 的超时扫描与自动重试守护协程 | `server/internal/api/router.go` |
 | gRPC 通信 | `Register` / `Heartbeat` / `FetchTask` / `StreamResult` / `TaskComplete` / `EmergencyDump` / `StreamLogs` | `server/internal/grpc/server.go` |
-| 数据模型 | PostgreSQL GORM AutoMigrate 全模型 | `server/internal/db/db.go` |
+| 数据模型 | PostgreSQL migration runner + schema verify | `server/internal/db` |
 | 结果入库 | Asset / FingerprintHit / Vulnerability 三层结构化存储 | `server/internal/db/db.go` |
 | 防洪落库 | BatchWriter 异步缓冲写入 | `server/internal/db/db.go` |
 | Arsenal 管理 | POC / Finger / Workflow / Dir 的 CRUD、审批、Manifest、回滚 | `server/internal/api/router.go` |

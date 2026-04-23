@@ -5,6 +5,8 @@ import (
 	"dddd/scanner/structs"
 	"strings"
 	"sync"
+
+	"github.com/projectdiscovery/gologger"
 )
 
 // TelnetCVEOnlyDispatcher 独立运行 Telnet CVE 扫描，不依赖 NoGolangPoc 开关
@@ -33,14 +35,9 @@ func TelnetBypassDispatch(ipPortMap map[string]string, goPocThreads int, passwor
 		}
 	}
 
-	dispatcher := &dispatcher{
-		emit: emit,
-	}
-	var ch = make(chan struct{}, goPocThreads)
-	var wg = sync.WaitGroup{}
-
+	// 先构建任务列表，以便正确设置 allCount
+	var tasks []scanTask
 	for hostPort, protocol := range ipPortMap {
-		// gologger.Info().Msgf("[Debug] Checking %s protocol: %s", hostPort, protocol)
 		t := strings.Split(hostPort, ":")
 		if len(t) != 2 {
 			continue
@@ -48,16 +45,34 @@ func TelnetBypassDispatch(ipPortMap map[string]string, goPocThreads int, passwor
 		host := t[0]
 		port := t[1]
 
-		// 只要是 Telnet 协议 或者 端口是 23
 		if protocol == "telnet" || port == "23" {
-			dispatcher.addScan("Telnet-Bypass", structs.HostInfo{
-				Host:         host,
-				Ports:        port,
-				Password:     password,
-				PasswordFile: passwordFile,
-				WriteResult:  dispatcher.writeResult,
-			}, ch, &wg)
+			tasks = append(tasks, scanTask{
+				Name: "Telnet-Bypass",
+				Info: structs.HostInfo{
+					Host:         host,
+					Ports:        port,
+					Password:     password,
+					PasswordFile: passwordFile,
+				},
+			})
 		}
+	}
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	dispatcher := &dispatcher{
+		emit:     emit,
+		allCount: len(tasks),
+	}
+
+	gologger.Info().Msgf("[TelnetCVE] 启动 Telnet 高危 CVE 专项检测, 目标数: %d", len(tasks))
+
+	var ch = make(chan struct{}, goPocThreads)
+	var wg = sync.WaitGroup{}
+	for _, task := range tasks {
+		task.Info.WriteResult = dispatcher.writeResult
+		dispatcher.addScan(task.Name, task.Info, ch, &wg)
 	}
 	wg.Wait()
 	return dispatcher.snapshotResults()

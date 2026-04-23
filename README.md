@@ -163,9 +163,10 @@ dddd -t http://test.com
 # 1. 启动基础设施 (RabbitMQ + PostgreSQL)
 docker compose -f server/deploy/docker-compose.yml up -d
 
-# PostgreSQL 首次启动会自动执行 server/deploy/postgres 下的建库建表脚本
-# 如果是已有数据库，手工补执行：
+# PostgreSQL 首次启动会自动执行 server/deploy/postgres 下的建库建用户脚本
+# 然后执行 schema migration：
 bash server/deploy/postgres/000-init-db.sh
+./dddd-server --migrate-only
 ```
 
 #### 安全配置
@@ -204,7 +205,9 @@ export ARGUS_AGENT_PSK="<与 Server 相同的密钥>"
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--db` | 空（SQLite） | 数据库 DSN |
+| `--db` | 空（内置 PostgreSQL 默认 DSN） | PostgreSQL 数据库 DSN |
+| `--migrate-only` | `false` | 只执行数据库 migration 和 schema verify，然后退出 |
+| `--db-migration-mode` | `apply` | 数据库迁移模式：`apply` / `verify` / `dev-auto` |
 | `--amqp` | `amqp://guest:guest@localhost:5672/` | RabbitMQ 地址，空则回退内存队列 |
 | `--grpc` | `50051` | gRPC 监听端口 |
 | `--api` | `:8085` | HTTP API 监听地址 |

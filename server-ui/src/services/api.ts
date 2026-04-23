@@ -90,6 +90,10 @@ export async function cancelTask(taskId: string): Promise<API.MessageResponse> {
     return request.post(`/tasks/${taskId}/cancel`);
 }
 
+export async function getTaskDetail(taskId: string): Promise<API.TaskDetailResponse> {
+    return request.get(`/tasks/${taskId}`);
+}
+
 export async function appendTargets(taskId: string, targets: string): Promise<{ status: string; new_subtasks: number; new_targets: number; total_chunks: number }> {
     return request.post(`/tasks/${taskId}/append`, { targets });
 }

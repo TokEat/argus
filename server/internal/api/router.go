@@ -257,6 +257,7 @@ func InitRouter(port string) {
 
 		// 任务 CRUD
 		api.GET("/tasks", getTasks)
+		api.GET("/tasks/:id", getTaskDetail)
 		api.POST("/tasks", createTask)
 		api.DELETE("/tasks/:id", deleteTask)
 		api.POST("/tasks/:id/cancel", cancelTask)
@@ -366,12 +367,13 @@ func InitRouter(port string) {
 // -------------------- Handlers --------------------
 
 func getStats(c *gin.Context) {
+	tenantID := currentTenantID(c)
 	var taskCount, nodeCount, assetCount, fpCount, vulnCount int64
-	db.DB.Model(&db.RootTask{}).Count(&taskCount)
-	db.DB.Model(&db.Node{}).Count(&nodeCount)
-	db.DB.Model(&db.Asset{}).Count(&assetCount)
-	db.DB.Model(&db.FingerprintHit{}).Count(&fpCount)
-	db.DB.Model(&db.Vulnerability{}).Count(&vulnCount)
+	db.DB.Model(&db.RootTask{}).Where("tenant_id = ?", tenantID).Count(&taskCount)
+	scopedNodeQuery(tenantID).Model(&db.Node{}).Count(&nodeCount)
+	db.DB.Model(&db.Asset{}).Where("tenant_id = ?", tenantID).Count(&assetCount)
+	db.DB.Model(&db.FingerprintHit{}).Where("tenant_id = ?", tenantID).Count(&fpCount)
+	db.DB.Model(&db.Vulnerability{}).Where("tenant_id = ?", tenantID).Count(&vulnCount)
 
 	c.JSON(http.StatusOK, gin.H{
 		"tasks":        taskCount,
@@ -441,6 +443,129 @@ func getTasks(c *gin.Context) {
 		resp = append(resp, TaskResponse{RootTask: t})
 	}
 	c.JSON(http.StatusOK, resp)
+}
+
+// getTaskDetail 返回单个任务的详细信息，包括子任务列表和结果统计
+func getTaskDetail(c *gin.Context) {
+	taskID := c.Param("id")
+	tenantID := currentTenantID(c)
+
+	// 查询 RootTask
+	var rootTask db.RootTask
+	if err := db.DB.Where("id = ? AND tenant_id = ?", taskID, tenantID).First(&rootTask).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+		return
+	}
+
+	// 查询关联的所有 SubTask
+	var subTasks []db.SubTask
+	db.DB.Where("root_task_id = ? AND tenant_id = ?", taskID, tenantID).
+		Order("created_at asc").Find(&subTasks)
+
+	// 子任务状态分布统计
+	statusDistribution := make(map[string]int)
+	for _, st := range subTasks {
+		statusDistribution[st.Status]++
+	}
+
+	// 构建子任务摘要（不暴露完整 Config 和 ChunkTargets 原文）
+	type SubTaskSummary struct {
+		ID          string    `json:"id"`
+		Status      string    `json:"status"`
+		AgentID     string    `json:"agent_id"`
+		TargetCount int       `json:"target_count"`
+		RetryCount  int       `json:"retry_count"`
+		MaxRetry    int       `json:"max_retry"`
+		Priority    int       `json:"priority"`
+		TimeoutSec  int       `json:"timeout_sec"`
+		CreatedAt   time.Time `json:"created_at"`
+		UpdatedAt   time.Time `json:"updated_at"`
+	}
+	subSummaries := make([]SubTaskSummary, 0, len(subTasks))
+	for _, st := range subTasks {
+		var targets []string
+		targetCount := 0
+		if json.Unmarshal([]byte(st.ChunkTargets), &targets) == nil {
+			targetCount = len(targets)
+		}
+		subSummaries = append(subSummaries, SubTaskSummary{
+			ID:          st.ID,
+			Status:      st.Status,
+			AgentID:     st.AgentID,
+			TargetCount: targetCount,
+			RetryCount:  st.RetryCount,
+			MaxRetry:    st.MaxRetry,
+			Priority:    st.Priority,
+			TimeoutSec:  st.TimeoutSec,
+			CreatedAt:   st.CreatedAt,
+			UpdatedAt:   st.UpdatedAt,
+		})
+	}
+
+	// 结果统计（通过 root_task_id 直接关联到 RootTask，不受 upsert 改写 task_id 影响）
+	var assetCount, fpCount, vulnCount int64
+	db.DB.Model(&db.Asset{}).Where("root_task_id = ? AND tenant_id = ?", taskID, tenantID).Count(&assetCount)
+	db.DB.Model(&db.FingerprintHit{}).Where("root_task_id = ? AND tenant_id = ?", taskID, tenantID).Count(&fpCount)
+	db.DB.Model(&db.Vulnerability{}).Where("root_task_id = ? AND tenant_id = ?", taskID, tenantID).Count(&vulnCount)
+
+	// Fallback: 如果 root_task_id 为空（旧数据），用 task_id IN subTaskIDs 兜底
+	if assetCount == 0 && fpCount == 0 && vulnCount == 0 && len(subTasks) > 0 {
+		subTaskIDs := make([]string, len(subTasks))
+		for i, st := range subTasks {
+			subTaskIDs[i] = st.ID
+		}
+		db.DB.Model(&db.Asset{}).Where("task_id IN ? AND tenant_id = ?", subTaskIDs, tenantID).Count(&assetCount)
+		db.DB.Model(&db.FingerprintHit{}).Where("task_id IN ? AND tenant_id = ?", subTaskIDs, tenantID).Count(&fpCount)
+		db.DB.Model(&db.Vulnerability{}).Where("task_id IN ? AND tenant_id = ?", subTaskIDs, tenantID).Count(&vulnCount)
+	}
+
+	// 漏洞严重度分布
+	type sevCount struct {
+		Severity string
+		Cnt      int64
+	}
+	var sevDist []sevCount
+	db.DB.Model(&db.Vulnerability{}).
+		Select("severity, count(*) as cnt").
+		Where("root_task_id = ? AND tenant_id = ?", taskID, tenantID).
+		Group("severity").Scan(&sevDist)
+	severityMap := make(map[string]int64)
+	for _, s := range sevDist {
+		severityMap[s.Severity] = s.Cnt
+	}
+
+	// 解析原始配置为 JSON 对象返回
+	var configObj interface{}
+	if json.Unmarshal([]byte(rootTask.Config), &configObj) != nil {
+		configObj = rootTask.Config
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"task": gin.H{
+			"id":                rootTask.ID,
+			"name":              rootTask.Name,
+			"status":            rootTask.Status,
+			"priority":          rootTask.Priority,
+			"total_chunks":      rootTask.TotalChunks,
+			"completed_chunks":  rootTask.CompletedChunks,
+			"total_targets":     rootTask.TotalTargets,
+			"completed_targets": rootTask.CompletedTargets,
+			"timeout_sec":       rootTask.TimeoutSec,
+			"original_targets":  rootTask.OriginalTargets,
+			"config":            configObj,
+			"rule_version":      rootTask.RuleVersion,
+			"created_at":        rootTask.CreatedAt,
+			"updated_at":        rootTask.UpdatedAt,
+		},
+		"sub_tasks":           subSummaries,
+		"status_distribution": statusDistribution,
+		"result_stats": gin.H{
+			"assets":       assetCount,
+			"fingerprints": fpCount,
+			"vulns":        vulnCount,
+			"severity":     severityMap,
+		},
+	})
 }
 
 func dispatchSubTasks(ctx context.Context, q *scheduler.TaskQueue, subTasks []db.SubTask) (map[int]int, int) {
@@ -702,27 +827,30 @@ func saveArsenal(c *gin.Context) {
 
 	hash := fmt.Sprintf("%x", md5.Sum([]byte(req.Content)))
 
-	// 查找已有记录以保存 PreviousHash 和递增 Version
+	// 查找已有记录以保存 PreviousHash/PreviousContent 和递增 Version
 	var existing db.Arsenal
 	var previousHash string
+	var previousContent string
 	var version int = 1
 	approvedChanged := false
 	if err := db.DB.Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).First(&existing).Error; err == nil {
 		previousHash = existing.Hash
+		previousContent = existing.Content // 保存当前内容用于回滚
 		version = existing.Version + 1
 		approvedChanged = strings.EqualFold(existing.State, "Approved")
 	}
 
 	arsenal := db.Arsenal{
-		ID:           db.BuildTenantArsenalID(tenantID, typ, fn),
-		TenantID:     tenantID,
-		Type:         typ,
-		FileName:     fn,
-		Content:      req.Content,
-		Hash:         hash,
-		PreviousHash: previousHash,
-		Version:      version,
-		State:        "Draft",
+		ID:              db.BuildTenantArsenalID(tenantID, typ, fn),
+		TenantID:        tenantID,
+		Type:            typ,
+		FileName:        fn,
+		Content:         req.Content,
+		Hash:            hash,
+		PreviousHash:    previousHash,
+		PreviousContent: previousContent,
+		Version:         version,
+		State:           "Draft",
 	}
 	if err := db.DB.Save(&arsenal).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -870,11 +998,14 @@ func getProfiles(c *gin.Context) {
 		results = append(results, *pm[t])
 	}
 
-	// 统计总数
+	// 统计总数（同步 search 过滤条件）
 	var total int64
 	countQ := db.DB.Model(&db.Asset{}).Select("COUNT(DISTINCT target)")
 	if tenantID != "" {
 		countQ = countQ.Where("tenant_id = ?", tenantID)
+	}
+	if search := c.Query("search"); search != "" {
+		countQ = countQ.Where("target LIKE ?", "%"+search+"%")
 	}
 	countQ.Count(&total)
 
@@ -883,8 +1014,9 @@ func getProfiles(c *gin.Context) {
 
 func deleteTask(c *gin.Context) {
 	id := c.Param("id")
-	db.DB.Delete(&db.RootTask{}, "id = ?", id)
-	db.DB.Delete(&db.SubTask{}, "root_task_id = ?", id)
+	tenantID := currentTenantID(c)
+	db.DB.Delete(&db.RootTask{}, "id = ? AND tenant_id = ?", id, tenantID)
+	db.DB.Delete(&db.SubTask{}, "root_task_id = ? AND tenant_id = ?", id, tenantID)
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }
 
@@ -900,11 +1032,8 @@ func exportVulns(c *gin.Context) {
 	writer.Write([]string{"TenantID", "TaskID", "Target", "Plugin", "Severity", "DetectedAt"})
 
 	var vulns []db.Vulnerability
-	tenantID := c.GetString("tenant")
-	query := db.DB.Model(&db.Vulnerability{})
-	if tenantID != "default" {
-		query = query.Where("tenant_id = ?", tenantID)
-	}
+	tenantID := currentTenantID(c)
+	query := db.DB.Model(&db.Vulnerability{}).Where("tenant_id = ?", tenantID)
 	query.Find(&vulns)
 
 	for _, v := range vulns {
@@ -941,12 +1070,13 @@ func aiAnalyzeArsenal(c *gin.Context) {
 
 func cancelTask(c *gin.Context) {
 	id := c.Param("id")
+	tenantID := currentTenantID(c)
 	cancelledWithoutClaim := int64(0)
 	cancelPendingRunning := int64(0)
 
 	if err := db.DB.Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&db.SubTask{}).
-			Where("root_task_id = ? AND status IN ?", id, []string{"Pending", "Recovered", subTaskStatusDispatching}).
+			Where("root_task_id = ? AND tenant_id = ? AND status IN ?", id, tenantID, []string{"Pending", "Recovered", subTaskStatusDispatching}).
 			Updates(map[string]interface{}{
 				"status":        "Cancelled",
 				"agent_id":      "",
@@ -958,7 +1088,7 @@ func cancelTask(c *gin.Context) {
 		cancelledWithoutClaim = res.RowsAffected
 
 		res = tx.Model(&db.SubTask{}).
-			Where("root_task_id = ? AND status IN ?", id, []string{"Running", "CancelPending"}).
+			Where("root_task_id = ? AND tenant_id = ? AND status IN ?", id, tenantID, []string{"Running", "CancelPending"}).
 			Update("status", "CancelPending")
 		if res.Error != nil {
 			return res.Error
@@ -1182,12 +1312,17 @@ func authLogin(c *gin.Context) {
 		}
 		tenantClaim = user.TenantID
 		roleClaim = user.Role
+		if roleClaim == "" {
+			roleClaim = "viewer"
+		}
 		userIDClaim = fmt.Sprintf("%d", user.ID)
 	} else if errors.Is(err, gorm.ErrRecordNotFound) {
 		if !developmentMode || req.Password != "8888" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Wrong password"})
 			return
 		}
+		// 开发模式降级：强制使用 default 租户，与 Agent 注册的默认 tenant_id 保持一致
+		tenantClaim = "default"
 	} else {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query user"})
 		return
@@ -1579,7 +1714,7 @@ func init() {
 
 // ==================== getNodes 增强返回新字段 ========
 // getNodes 已经在原代码中存在，这里不重复声明
-// 新字段 Version/Capacity/RunningTasks/RuleVersion 已通过 GORM AutoMigrate 添加到
+// 新字段 Version/Capacity/RunningTasks/RuleVersion 已通过数据库 migration runner 收敛到
 // Node 模型中，getNodes 使用 db.DB.Find(&nodes) 会自动包含这些字段
 
 // ==================== 超时/重试守护协程 (由 main.go 调用) ====================
@@ -1786,37 +1921,40 @@ func BumpRuleVersion() string {
 // ==================== 数据增强 API ====================
 
 func getVulnTrends(c *gin.Context) {
+	tenantID := currentTenantID(c)
 	days := 30
 	if d := c.Query("days"); d != "" {
 		if v, err := strconv.Atoi(d); err == nil && v > 0 {
 			days = v
 		}
 	}
-	c.JSON(http.StatusOK, db.GetVulnTrends(days))
+	c.JSON(http.StatusOK, db.GetVulnTrends(tenantID, days))
 }
 
 func getSeverityDistribution(c *gin.Context) {
-	c.JSON(http.StatusOK, db.GetSeverityDistribution())
+	c.JSON(http.StatusOK, db.GetSeverityDistribution(currentTenantID(c)))
 }
 
 func getTaskResultStats(c *gin.Context) {
+	tenantID := currentTenantID(c)
 	limit := 20
 	if l := c.Query("limit"); l != "" {
 		if v, err := strconv.Atoi(l); err == nil && v > 0 {
 			limit = v
 		}
 	}
-	c.JSON(http.StatusOK, db.GetTaskResultStats(limit))
+	c.JSON(http.StatusOK, db.GetTaskResultStats(tenantID, limit))
 }
 
 func getRecentHighVulns(c *gin.Context) {
+	tenantID := currentTenantID(c)
 	limit := 10
 	if l := c.Query("limit"); l != "" {
 		if v, err := strconv.Atoi(l); err == nil && v > 0 {
 			limit = v
 		}
 	}
-	c.JSON(http.StatusOK, db.GetRecentHighVulns(limit))
+	c.JSON(http.StatusOK, db.GetRecentHighVulns(tenantID, limit))
 }
 
 // ==================== Agent 遥测日志 ====================
@@ -1858,12 +1996,14 @@ func rollbackArsenal(c *gin.Context) {
 		return
 	}
 
-	// 交换当前版本和上一版本
+	// 交换当前版本和上一版本（含 Content 内容回滚）
 	if err := db.DB.Model(&arsenal).Updates(map[string]interface{}{
-		"hash":          arsenal.PreviousHash,
-		"previous_hash": arsenal.Hash,
-		"state":         "Draft", // 回滚后重新审批
-		"version":       arsenal.Version + 1,
+		"content":          arsenal.PreviousContent,
+		"previous_content": arsenal.Content,
+		"hash":             arsenal.PreviousHash,
+		"previous_hash":    arsenal.Hash,
+		"state":            "Draft", // 回滚后重新审批
+		"version":          arsenal.Version + 1,
 	}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1895,9 +2035,9 @@ func appendTargets(c *gin.Context) {
 		return
 	}
 
-	// 校验 RootTask 存在
+	// 校验 RootTask 存在（含租户隔离）
 	var rootTask db.RootTask
-	if err := db.DB.Where("id = ?", rootTaskID).First(&rootTask).Error; err != nil {
+	if err := db.DB.Where("id = ? AND tenant_id = ?", rootTaskID, currentTenantID(c)).First(&rootTask).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
 		return
 	}

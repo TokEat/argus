@@ -4,7 +4,6 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SQL_DIR="${SCRIPT_DIR}/sql"
 BOOTSTRAP_SQL="${SQL_DIR}/001-bootstrap.sql"
-SCHEMA_SQL="${SQL_DIR}/010-schema.sql"
 
 DB_PORT="${DB_PORT:-${PGPORT:-5432}}"
 DB_SUPERDB="${DB_SUPERDB:-${PGSUPERDB:-postgres}}"
@@ -50,9 +49,5 @@ PGPASSWORD="${DB_SUPERPASSWORD}" psql \
   -v "app_db_password=${APP_DB_PASSWORD}" \
   -f "${BOOTSTRAP_SQL}"
 
-echo "[postgres-init] apply schema to '${APP_DB_NAME}'"
-PGPASSWORD="${APP_DB_PASSWORD}" psql \
-  "${PSQL_COMMON_ARGS[@]}" \
-  -U "${APP_DB_USER}" \
-  -d "${APP_DB_NAME}" \
-  -f "${SCHEMA_SQL}"
+echo "[postgres-init] bootstrap complete"
+echo "[postgres-init] next step: run dddd-server --migrate-only (or start dddd-server normally) to apply schema migrations"

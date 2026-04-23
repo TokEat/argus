@@ -80,7 +80,7 @@ Argus 当前采用典型的 `Control Plane + Data Plane` 结构：
 
 已接入能力：
 
-- PostgreSQL AutoMigrate
+- PostgreSQL migration runner + schema verify
 - BatchWriter 异步防洪落库
 - 趋势 / 严重度 / 任务结果统计
 - 漏洞 CSV 导出
