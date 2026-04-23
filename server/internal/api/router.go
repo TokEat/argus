@@ -1286,6 +1286,7 @@ func dedupeStrings(items []string) []string {
 func authLogin(c *gin.Context) {
 	var req struct {
 		TenantID string `json:"tenant_id"`
+		Username string `json:"username"`
 		Password string `json:"password"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1294,17 +1295,28 @@ func authLogin(c *gin.Context) {
 	}
 
 	req.TenantID = strings.TrimSpace(req.TenantID)
-	if req.TenantID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "tenant_id is required"})
-		return
+	req.Username = strings.TrimSpace(req.Username)
+	
+	// Backward compatibility: if username is empty but tenant_id is provided, use tenant_id as username
+	// This supports the legacy login flow where tenant_id was used as the username
+	loginUsername := req.Username
+	if loginUsername == "" {
+		if req.TenantID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "username or tenant_id is required"})
+			return
+		}
+		loginUsername = req.TenantID
 	}
 
 	// 尝试从数据库校验用户
 	var user db.User
 	tenantClaim := req.TenantID
+	if tenantClaim == "" {
+		tenantClaim = "default" // default fallback if neither provided
+	}
 	roleClaim := "admin"
-	userIDClaim := "dev:" + req.TenantID
-	if err := db.DB.Where("username = ?", req.TenantID).First(&user).Error; err == nil {
+	userIDClaim := "dev:" + loginUsername
+	if err := db.DB.Where("username = ?", loginUsername).First(&user).Error; err == nil {
 		// 数据库有此用户，校验密码
 		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Wrong password"})

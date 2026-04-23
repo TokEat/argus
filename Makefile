@@ -1,4 +1,7 @@
-.PHONY: cli agent server legacy all clean docker
+.PHONY: cli agent server legacy all clean docker infra-up infra-down infra-logs db-init db-migrate setup-local
+
+COMPOSE_FILE := server/deploy/docker-compose.yml
+DOCKER_COMPOSE := docker compose -f $(COMPOSE_FILE)
 
 # dddd CLI 单机版
 cli:
@@ -23,6 +26,22 @@ all: cli agent server
 clean:
 	rm -rf bin/
 
-# Docker 镜像（Phase 2 使用）
-docker:
-	@echo "No project Dockerfile found. Use server/deploy/docker-compose.yml for local Redis setup."
+infra-up:
+	$(DOCKER_COMPOSE) up -d --remove-orphans rabbitmq postgres
+
+infra-down:
+	$(DOCKER_COMPOSE) down --remove-orphans
+
+infra-logs:
+	$(DOCKER_COMPOSE) logs -f rabbitmq postgres
+
+db-init:
+	$(DOCKER_COMPOSE) exec -T postgres bash -lc '/docker-entrypoint-initdb.d/000-init-db.sh'
+
+db-migrate:
+	go run ./server/cmd/dddd-server --migrate-only --dev
+
+setup-local:
+	bash server/deploy/setup-local.sh
+
+docker: setup-local

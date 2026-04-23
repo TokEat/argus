@@ -75,10 +75,11 @@
                             │          │          │
                    ┌────────┘    ┌─────┘    ┌─────┘
                    ▼             ▼          ▼
-              ┌─────────┐  ┌─────────┐ ┌────────┐
-              │PostgreSQL│  │  Redis  │ │ Object │
-              │          │  │ Streams │ │ Store  │
-              └─────────┘  └─────────┘ └────────┘
+              ┌──────────┐  ┌──────────┐ ┌────────┐
+              │PostgreSQL│  │RabbitMQ  │ │ Object │
+              │          │  │ Priority │ │ Store  │
+              │          │  │ Queues   │ │        │
+              └──────────┘  └──────────┘ └────────┘
                    ▲             ▲
                    │    gRPC     │
           ┌────────┴─────────────┴────────┐
@@ -160,13 +161,21 @@ dddd -t http://test.com
 #### 基础设施
 
 ```bash
-# 1. 启动基础设施 (RabbitMQ + PostgreSQL)
-docker compose -f server/deploy/docker-compose.yml up -d
+# 一键启动 RabbitMQ、PostgreSQL，并完成建库/建用户/migration
+make setup-local
+```
 
-# PostgreSQL 首次启动会自动执行 server/deploy/postgres 下的建库建用户脚本
-# 然后执行 schema migration：
-bash server/deploy/postgres/000-init-db.sh
-./dddd-server --migrate-only
+如果你想拆步执行：
+
+```bash
+# 1. 启动基础设施
+make infra-up
+
+# 2. 初始化数据库角色与数据库
+make db-init
+
+# 3. 执行业务 schema migration
+make db-migrate
 ```
 
 #### 安全配置
@@ -292,7 +301,7 @@ argus/
 │   ├── internal/
 │   │   ├── api/               # REST API (Gin)
 │   │   ├── grpc/              # gRPC Agent 通信服务
-│   │   ├── scheduler/         # Redis Streams 任务调度
+│   │   ├── scheduler/         # RabbitMQ 多优先级任务调度
 │   │   ├── db/                # PostgreSQL 数据层
 │   │   ├── bootstrap/         # 依赖装配
 │   │   ├── config/            # 服务端配置

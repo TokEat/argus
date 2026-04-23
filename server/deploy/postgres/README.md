@@ -21,6 +21,20 @@
 ## 手工执行
 
 ```bash
+make infra-up
+make db-init
+make db-migrate
+```
+
+也可以直接一键完成：
+
+```bash
+bash server/deploy/setup-local.sh
+```
+
+如果你只想单独执行 PostgreSQL bootstrap，则使用：
+
+```bash
 bash server/deploy/postgres/000-init-db.sh
 ./dddd-server --migrate-only
 ```
@@ -40,7 +54,7 @@ bash server/deploy/postgres/000-init-db.sh
 
 ## Docker 自动执行
 
-`server/deploy/docker-compose.yml` 已将 `server/deploy/postgres` 挂载到 `/docker-entrypoint-initdb.d`。  
+`server/deploy/docker-compose.yml` 已将 `server/deploy/postgres` 挂载到 `/docker-entrypoint-initdb.d`。
 当 PostgreSQL 数据目录是全新目录时，容器启动会自动执行初始化脚本。
 
 如果 `server/deploy/data/postgres/` 已经存在旧数据，官方镜像不会重复执行这些初始化脚本。此时直接运行 `dddd-server` 即可自动完成增量迁移；如果数据库或角色尚未创建，再手工执行 `000-init-db.sh`。
