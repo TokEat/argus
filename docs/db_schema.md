@@ -438,6 +438,27 @@
 
 联合唯一约束：`(tenant_id, source_file)`。
 
+#### `arsenal_ai_reviews`
+
+| 字段 | 类型 | 说明 | 约束 / 索引 |
+|------|------|------|-------------|
+| `id` | uint | 主键 | PK |
+| `tenant_id` | string | 租户隔离键 | Index |
+| `type` | string | 规则类型，当前支持 `poc` | Index |
+| `file_name` | string | 分析时的文件名 | Index |
+| `content_hash` | string | 被分析内容哈希 | Index, Cache Index |
+| `suggestion` | string | AI 建议：Approve / Revise / Reject | Index |
+| `confidence` | float | 置信度 | - |
+| `summary` / `reason` | text | 摘要与原因 | Text |
+| `issues` | jsonb | 静态检查与模型问题列表 | JSONB |
+| `duplicate_candidates` | jsonb | 重复候选列表 | JSONB |
+| `raw_response` | jsonb | LLM 原始 JSON 响应 | JSONB |
+| `provider` / `model` | string | 模型来源与名称 | - |
+| `created_by` | string | 触发分析的用户 | Index |
+| `created_at` | timestamp | 审计时间 | - |
+
+缓存索引：`(tenant_id, type, content_hash, created_at DESC)`。
+
 #### `workflow_rules`
 
 | 字段 | 类型 | 说明 | 约束 / 索引 |

@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Drawer, Button, Space, Input, Tag, App, Modal } from 'antd';
+import { Alert, Divider, Drawer, Button, Space, Input, Tag, App, Modal, Typography } from 'antd';
 import { BugOutlined } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import { saveArsenal, approveArsenal, listArsenals, aiAnalyzeArsenal } from '../../services/api';
 import PocDebugPanel from './PocDebugPanel';
+
+const { Text } = Typography;
 
 interface PocInlineEditorProps {
     open: boolean;
@@ -40,6 +42,18 @@ http:
         words:
           - "keyword"
 `;
+
+const suggestionMeta = (suggestion: string): { color: string; alertType: 'success' | 'warning' | 'error' | 'info'; label: string } => {
+    if (suggestion === 'Approve') return { color: 'green', alertType: 'success', label: '建议通过' };
+    if (suggestion === 'Reject') return { color: 'red', alertType: 'error', label: '建议拒绝' };
+    return { color: 'orange', alertType: 'warning', label: '建议修改' };
+};
+
+const issueColor = (severity: string): string => {
+    if (severity === 'critical' || severity === 'error') return 'red';
+    if (severity === 'warning') return 'orange';
+    return 'blue';
+};
 
 const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
     open,
@@ -117,19 +131,56 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
     const handleAi = async () => {
         setAnalyzing(true);
         try {
-            const r = await aiAnalyzeArsenal(content);
+            const r = await aiAnalyzeArsenal({
+                type: 'poc',
+                file_name: editingFileName,
+                content,
+            });
+            const meta = suggestionMeta(r.suggestion);
             Modal.info({
                 title: 'AI 分析结果',
+                width: 720,
                 content: (
-                    <div>
-                        <p>建议：<Tag color={r.suggestion === 'Approve' ? 'green' : 'red'}>{r.suggestion}</Tag></p>
-                        <p>原因：{r.reason}</p>
-                        <p>置信度：{(r.confidence * 100).toFixed(0)}%</p>
+                    <div style={{ marginTop: 8 }}>
+                        <Alert
+                            type={meta.alertType}
+                            showIcon
+                            message={
+                                <Space>
+                                    <Tag color={meta.color}>{r.suggestion}</Tag>
+                                    <Text strong>{meta.label}</Text>
+                                    {r.cached && <Tag>缓存结果</Tag>}
+                                </Space>
+                            }
+                            description={r.summary || r.reason}
+                        />
+                        <div style={{ marginTop: 16 }}>
+                            <p>原因：{r.reason || '-'}</p>
+                            <p>置信度：{(r.confidence * 100).toFixed(0)}%</p>
+                        </div>
+                        {(r.issues || []).length > 0 && (
+                            <>
+                                <Divider style={{ margin: '12px 0' }} />
+                                <Space direction="vertical" style={{ width: '100%' }}>
+                                    {(r.issues || []).map((issue, idx) => (
+                                        <div key={`${issue.category}-${idx}`} style={{ padding: 10, border: '1px solid #e2e8f0', borderRadius: 6 }}>
+                                            <Space wrap>
+                                                <Tag color={issueColor(issue.severity)}>{issue.severity}</Tag>
+                                                <Tag>{issue.category}</Tag>
+                                                {issue.line ? <Text type="secondary">line {issue.line}</Text> : null}
+                                            </Space>
+                                            <div style={{ marginTop: 6 }}>{issue.message}</div>
+                                            {issue.suggestion && <Text type="secondary" style={{ fontSize: 12 }}>{issue.suggestion}</Text>}
+                                        </div>
+                                    ))}
+                                </Space>
+                            </>
+                        )}
                     </div>
                 ),
             });
-        } catch {
-            message.error('AI 分析失败');
+        } catch (err: unknown) {
+            message.error(typeof err === 'string' ? err : 'AI 分析失败');
         } finally {
             setAnalyzing(false);
         }

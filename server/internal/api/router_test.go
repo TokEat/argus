@@ -24,3 +24,20 @@ func TestShouldAgentReloadRules(t *testing.T) {
 		})
 	}
 }
+
+func TestAIPermissions(t *testing.T) {
+	tests := []struct {
+		method string
+		path   string
+		want   string
+	}{
+		{method: "POST", path: "/api/v1/ai/arsenal/analyze", want: "operator"},
+		{method: "GET", path: "/api/v1/ai/config", want: "admin"},
+		{method: "PUT", path: "/api/v1/ai/config", want: "admin"},
+	}
+	for _, tt := range tests {
+		if got := matchPermission(tt.method, tt.path); got != tt.want {
+			t.Fatalf("%s %s expected %s, got %s", tt.method, tt.path, tt.want, got)
+		}
+	}
+}

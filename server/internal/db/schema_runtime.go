@@ -23,6 +23,7 @@ func schemaModels() []interface{} {
 		&Report{},
 		&Node{},
 		&Arsenal{},
+		&ArsenalAIReview{},
 		&User{},
 		&SystemConfig{},
 		&AgentLog{},

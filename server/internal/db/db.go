@@ -272,6 +272,26 @@ type Arsenal struct {
 	UpdatedAt       time.Time
 }
 
+// ArsenalAIReview stores AI-assisted review evidence for one arsenal content hash.
+type ArsenalAIReview struct {
+	ID                  uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID            string `gorm:"default:'default';index"`
+	Type                string `gorm:"index"`
+	FileName            string `gorm:"index"`
+	ContentHash         string `gorm:"index"`
+	Suggestion          string `gorm:"index"`
+	Confidence          float64
+	Summary             string `gorm:"type:text"`
+	Reason              string `gorm:"type:text"`
+	Issues              string `gorm:"type:jsonb"`
+	DuplicateCandidates string `gorm:"type:jsonb"`
+	RawResponse         string `gorm:"type:jsonb"`
+	Provider            string
+	Model               string
+	CreatedBy           string `gorm:"index"`
+	CreatedAt           time.Time
+}
+
 // AgentLog 遥测日志模型
 type AgentLog struct {
 	ID        uint   `gorm:"primaryKey;autoIncrement"`

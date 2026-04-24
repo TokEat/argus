@@ -183,8 +183,17 @@ export async function deleteArsenal(type: string, filename: string): Promise<API
     return request.delete(`/arsenals/${type}/${filename}`);
 }
 
-export async function aiAnalyzeArsenal(content: string): Promise<{ suggestion: string; reason: string; confidence: number }> {
-    return request.post('/arsenals/ai/analyze', { content });
+export async function aiAnalyzeArsenal(data: API.AIAnalyzeRequest | string): Promise<API.AIAnalysisResult> {
+    const payload: API.AIAnalyzeRequest = typeof data === 'string' ? { type: 'poc', content: data } : data;
+    return request.post('/ai/arsenal/analyze', payload);
+}
+
+export async function getAIConfig(): Promise<API.AIConfig> {
+    return request.get('/ai/config');
+}
+
+export async function saveAIConfig(data: API.AIConfig): Promise<API.AIConfig> {
+    return request.put('/ai/config', data);
 }
 
 export async function debugPoc(data: API.DebugPocRequest): Promise<{ session_id: string; status: string }> {

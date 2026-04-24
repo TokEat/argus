@@ -77,7 +77,8 @@
 | `POST` | `/arsenals/:type/:filename/approve` | 是 | 审批通过规则并递增 `rule_version` |
 | `POST` | `/arsenals/:type/:filename/rollback` | 是 | 交换当前版本与 `previous_hash`，回滚后重新置为 `Draft` 并递增 `rule_version` |
 | `DELETE` | `/arsenals/:type/:filename` | 是 | 删除规则记录 |
-| `POST` | `/arsenals/ai/analyze` | 是 | 基于关键词的 mock 审查接口，不接真实 LLM |
+| `POST` | `/ai/arsenal/analyze` | 是 | Server 侧 POC AI 审查：静态检查 + OpenAI-compatible LLM + 按内容 hash 缓存 |
+| `POST` | `/arsenals/ai/analyze` | 是 | 兼容旧前端的 POC AI 审查入口，内部转到真实分析逻辑 |
 | `GET` | `/arsenals/manifest` | 是 | 返回已审批规则清单、哈希和值班版本号 `rule_version` |
 
 ### Workflow / Fingerprint 字典
@@ -104,6 +105,8 @@
 | `GET` | `/mcp/keys` | 是 | 从 `SystemConfig` 读取 `mcp_%` 配置并脱敏返回 |
 | `POST` | `/mcp/keys` | 是 | 保存 `provider/key` 到 `SystemConfig` |
 | `DELETE` | `/mcp/keys/:id` | 是 | 删除对应 `SystemConfig.key` |
+| `GET` | `/ai/config` | 是 | 读取 Server 侧 AI 配置，API Key 脱敏返回，不下发 Agent |
+| `PUT` | `/ai/config` | 是 | 保存 Server 侧 AI 配置：`ai_base_url` / `ai_api_key` / `ai_model` |
 
 ### 云实例与构建
 
