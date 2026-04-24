@@ -1137,9 +1137,9 @@ func getAgentCommands(c *gin.Context) {
 
 	ruleVersion := currentRuleVersionValue()
 	reloadRules := false
-	var node db.Node
-	if err := scopedNodeQuery(tenantID).Select("rule_version").Where("agent_id = ?", id).First(&node).Error; err == nil {
-		reloadRules = shouldAgentReloadRules(node.RuleVersion, ruleVersion)
+	var nodes []db.Node
+	if err := scopedNodeQuery(tenantID).Select("rule_version").Where("agent_id = ?", id).Limit(1).Find(&nodes).Error; err == nil && len(nodes) > 0 {
+		reloadRules = shouldAgentReloadRules(nodes[0].RuleVersion, ruleVersion)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
