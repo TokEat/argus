@@ -307,7 +307,8 @@ func nodeHasAnyKey(node *yaml.Node, keys ...string) bool {
 	if node == nil {
 		return false
 	}
-	if node.Kind == yaml.MappingNode {
+	switch node.Kind {
+	case yaml.MappingNode:
 		for i := 0; i+1 < len(node.Content); i += 2 {
 			for _, key := range keys {
 				if strings.EqualFold(node.Content[i].Value, key) {
@@ -318,10 +319,11 @@ func nodeHasAnyKey(node *yaml.Node, keys ...string) bool {
 				return true
 			}
 		}
-	}
-	for _, child := range node.Content {
-		if nodeHasAnyKey(child, keys...) {
-			return true
+	case yaml.DocumentNode, yaml.SequenceNode:
+		for _, child := range node.Content {
+			if nodeHasAnyKey(child, keys...) {
+				return true
+			}
 		}
 	}
 	return false

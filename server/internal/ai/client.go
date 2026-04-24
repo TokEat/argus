@@ -19,6 +19,11 @@ type HTTPClient struct {
 	Client *http.Client
 }
 
+var defaultHTTPClient = &http.Client{
+	Timeout:   45 * time.Second,
+	Transport: http.DefaultTransport.(*http.Transport).Clone(),
+}
+
 type ChatMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
@@ -27,7 +32,7 @@ type ChatMessage struct {
 func (c *HTTPClient) CompleteJSON(ctx context.Context, cfg Config, messages []ChatMessage) (string, error) {
 	client := c.Client
 	if client == nil {
-		client = &http.Client{Timeout: 45 * time.Second}
+		client = defaultHTTPClient
 	}
 
 	body := map[string]interface{}{

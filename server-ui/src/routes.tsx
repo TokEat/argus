@@ -16,6 +16,7 @@ import {
     DatabaseOutlined,
     ProfileOutlined,
     ProjectOutlined,
+    RobotOutlined,
 } from '@ant-design/icons';
 import BasicLayout from './layouts/BasicLayout';
 import Dashboard from './pages/Dashboard';
@@ -35,6 +36,7 @@ import UserManagement from './pages/UserManagement';
 import RoleManagement from './pages/RoleManagement';
 
 import ApiKeysConfig from './pages/ApiKeysConfig';
+import AIConfig from './pages/AIConfig';
 import Login from './pages/Login';
 
 // Route configuration with menu info
@@ -161,6 +163,12 @@ export const menuRoutes: RouteConfig[] = [
                 name: 'API 密钥',
                 icon: <KeyOutlined />,
                 element: <ApiKeysConfig />,
+            },
+            {
+                path: '/ai-config',
+                name: 'AI 配置',
+                icon: <RobotOutlined />,
+                element: <AIConfig />,
             },
         ],
     },
