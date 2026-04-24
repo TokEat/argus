@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Alert, Divider, Drawer, Button, Space, Input, Tag, App, Modal, Typography } from 'antd';
+import { Drawer, Button, Space, Input, App } from 'antd';
 import { BugOutlined } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
-import { saveArsenal, approveArsenal, listArsenals, aiAnalyzeArsenal } from '../../services/api';
+import { saveArsenal, approveArsenal, listArsenals } from '../../services/api';
 import PocDebugPanel from './PocDebugPanel';
-
-const { Text } = Typography;
+import PocAiPanel from './PocAiPanel';
 
 interface PocInlineEditorProps {
     open: boolean;
@@ -43,18 +42,6 @@ http:
           - "keyword"
 `;
 
-const suggestionMeta = (suggestion: string): { color: string; alertType: 'success' | 'warning' | 'error' | 'info'; label: string } => {
-    if (suggestion === 'Approve') return { color: 'green', alertType: 'success', label: '建议通过' };
-    if (suggestion === 'Reject') return { color: 'red', alertType: 'error', label: '建议拒绝' };
-    return { color: 'orange', alertType: 'warning', label: '建议修改' };
-};
-
-const issueColor = (severity: string): string => {
-    if (severity === 'critical' || severity === 'error') return 'red';
-    if (severity === 'warning') return 'orange';
-    return 'blue';
-};
-
 const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
     open,
     fileName,
@@ -70,8 +57,8 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
     const [editingFileName, setEditingFileName] = useState<string>('');
     const [loading, setLoading] = useState<boolean>(false);
     const [saving, setSaving] = useState<boolean>(false);
-    const [analyzing, setAnalyzing] = useState<boolean>(false);
     const [debugVisible, setDebugVisible] = useState<boolean>(false);
+    const [aiVisible, setAiVisible] = useState<boolean>(false);
 
     useEffect(() => {
         if (!open) return;
@@ -128,78 +115,24 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
         }
     };
 
-    const handleAi = async () => {
-        setAnalyzing(true);
-        try {
-            const r = await aiAnalyzeArsenal({
-                type: 'poc',
-                file_name: editingFileName,
-                content,
-            });
-            const meta = suggestionMeta(r.suggestion);
-            Modal.info({
-                title: 'AI 分析结果',
-                width: 720,
-                content: (
-                    <div style={{ marginTop: 8 }}>
-                        <Alert
-                            type={meta.alertType}
-                            showIcon
-                            message={
-                                <Space>
-                                    <Tag color={meta.color}>{r.suggestion}</Tag>
-                                    <Text strong>{meta.label}</Text>
-                                    {r.cached && <Tag>缓存结果</Tag>}
-                                </Space>
-                            }
-                            description={r.summary || r.reason}
-                        />
-                        <div style={{ marginTop: 16 }}>
-                            <p>原因：{r.reason || '-'}</p>
-                            <p>置信度：{(r.confidence * 100).toFixed(0)}%</p>
-                        </div>
-                        {(r.issues || []).length > 0 && (
-                            <>
-                                <Divider style={{ margin: '12px 0' }} />
-                                <Space direction="vertical" style={{ width: '100%' }}>
-                                    {(r.issues || []).map((issue, idx) => (
-                                        <div key={`${issue.category}-${idx}`} style={{ padding: 10, border: '1px solid #e2e8f0', borderRadius: 6 }}>
-                                            <Space wrap>
-                                                <Tag color={issueColor(issue.severity)}>{issue.severity}</Tag>
-                                                <Tag>{issue.category}</Tag>
-                                                {issue.line ? <Text type="secondary">line {issue.line}</Text> : null}
-                                            </Space>
-                                            <div style={{ marginTop: 6 }}>{issue.message}</div>
-                                            {issue.suggestion && <Text type="secondary" style={{ fontSize: 12 }}>{issue.suggestion}</Text>}
-                                        </div>
-                                    ))}
-                                </Space>
-                            </>
-                        )}
-                    </div>
-                ),
-            });
-        } catch (err: unknown) {
-            message.error(typeof err === 'string' ? err : 'AI 分析失败');
-        } finally {
-            setAnalyzing(false);
-        }
-    };
+
 
     return (
         <Drawer
             title={isNew ? '新建 POC' : `编辑 POC — ${fileName}`}
             open={open}
             onClose={onClose}
-            width={debugVisible ? 1300 : 760}
+            width={(debugVisible || aiVisible) ? 1300 : 760}
             destroyOnClose
             footer={
                 <div style={{ textAlign: 'right' }}>
                     <Space>
-                        <Button icon={<BugOutlined />} onClick={() => setDebugVisible((v) => !v)}>
+                        <Button icon={<BugOutlined />} onClick={() => { setDebugVisible((v) => !v); setAiVisible(false); }}>
                             {debugVisible ? '收起调试' : '调试'}
                         </Button>
-                        <Button onClick={handleAi} loading={analyzing}>AI 分析</Button>
+                        <Button onClick={() => { setAiVisible((v) => !v); setDebugVisible(false); }}>
+                            {aiVisible ? '收起 AI 分析' : 'AI 分析'}
+                        </Button>
                         <Button onClick={onClose}>取消</Button>
                         <Button type="primary" onClick={handleSave} loading={saving}>
                             {autoApprove ? '保存并审核' : '保存（草稿）'}
@@ -231,11 +164,12 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
                         />
                     </div>
                 </div>
-                {debugVisible && (
-                    <div style={{ width: 520, flexShrink: 0, display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
-                        <PocDebugPanel visible={debugVisible} pocContent={content} />
-                    </div>
-                )}
+                <div style={{ width: 520, flexShrink: 0, display: debugVisible ? 'flex' : 'none', flexDirection: 'column', overflowY: 'auto' }}>
+                    <PocDebugPanel visible={debugVisible} pocContent={content} />
+                </div>
+                <div style={{ width: 520, flexShrink: 0, display: aiVisible ? 'flex' : 'none', flexDirection: 'column', overflowY: 'auto' }}>
+                    <PocAiPanel visible={aiVisible} pocContent={content} fileName={editingFileName || fileName || 'untitled.yaml'} />
+                </div>
             </div>
         </Drawer>
     );

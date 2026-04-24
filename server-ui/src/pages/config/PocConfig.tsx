@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Alert, Button, Divider, Space, Tag, Popconfirm, Modal, Typography, Input, Table, Empty, App, Tooltip, Segmented } from 'antd';
+import { Button, Space, Tag, Popconfirm, Modal, Typography, Input, Table, Empty, App, Tooltip, Segmented } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     PlusOutlined,
@@ -14,22 +14,11 @@ import {
 } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import type { ColumnsType } from 'antd/es/table';
-import { listArsenals, saveArsenal, deleteArsenal, approveArsenal, aiAnalyzeArsenal, getWorkflowDict } from '../../services/api';
+import { listArsenals, saveArsenal, deleteArsenal, approveArsenal, getWorkflowDict } from '../../services/api';
 import PocDebugPanel from './PocDebugPanel';
+import PocAiPanel from './PocAiPanel';
 
 const { Text } = Typography;
-
-const suggestionMeta = (suggestion: string): { color: string; alertType: 'success' | 'warning' | 'error' | 'info'; label: string } => {
-    if (suggestion === 'Approve') return { color: 'green', alertType: 'success', label: '建议通过' };
-    if (suggestion === 'Reject') return { color: 'red', alertType: 'error', label: '建议拒绝' };
-    return { color: 'orange', alertType: 'warning', label: '建议修改' };
-};
-
-const issueColor = (severity: string): string => {
-    if (severity === 'critical' || severity === 'error') return 'red';
-    if (severity === 'warning') return 'orange';
-    return 'blue';
-};
 
 const PocConfig: React.FC = () => {
     const [loading, setLoading] = useState(true);
@@ -44,7 +33,7 @@ const PocConfig: React.FC = () => {
     const [editorContent, setEditorContent] = useState('');
     const [newFileName, setNewFileName] = useState('');
     const [debugVisible, setDebugVisible] = useState(false);
-    const [aiLoading, setAiLoading] = useState(false);
+    const [aiVisible, setAiVisible] = useState(false);
     const { message: msg } = App.useApp();
 
     const fetchData = async () => {
@@ -211,88 +200,7 @@ http:
         }
     };
 
-    const handleAiAnalyze = async () => {
-        const fileName = isNew ? newFileName.trim() : currentArsenal?.FileName || '';
-        setAiLoading(true);
-        try {
-            const result = await aiAnalyzeArsenal({
-                type: 'poc',
-                file_name: fileName,
-                content: editorContent,
-            });
-            const meta = suggestionMeta(result.suggestion);
-            Modal.info({
-                title: 'AI 分析结果',
-                width: 720,
-                content: (
-                    <div style={{ marginTop: 8 }}>
-                        <Alert
-                            type={meta.alertType}
-                            showIcon
-                            message={
-                                <Space>
-                                    <Tag color={meta.color}>{result.suggestion}</Tag>
-                                    <Text strong>{meta.label}</Text>
-                                    {result.cached && <Tag>缓存结果</Tag>}
-                                </Space>
-                            }
-                            description={result.summary || result.reason}
-                        />
-                        <div style={{ marginTop: 16 }}>
-                            <p><strong>置信度：</strong>{(result.confidence * 100).toFixed(0)}%</p>
-                            <p><strong>原因：</strong>{result.reason || '-'}</p>
-                            <p><strong>模型：</strong>{result.provider || '-'}{result.model ? ` / ${result.model}` : ''}</p>
-                        </div>
-                        <Divider style={{ margin: '12px 0' }} />
-                        <div>
-                            <Text strong>问题列表</Text>
-                            {(result.issues || []).length > 0 ? (
-                                <Space direction="vertical" style={{ width: '100%', marginTop: 8 }}>
-                                    {(result.issues || []).map((issue, idx) => (
-                                        <div key={`${issue.category}-${idx}`} style={{ padding: 10, border: '1px solid #e2e8f0', borderRadius: 6 }}>
-                                            <Space wrap>
-                                                <Tag color={issueColor(issue.severity)}>{issue.severity}</Tag>
-                                                <Tag>{issue.category}</Tag>
-                                                {issue.line ? <Text type="secondary">line {issue.line}</Text> : null}
-                                            </Space>
-                                            <div style={{ marginTop: 6 }}>{issue.message}</div>
-                                            {issue.suggestion && <Text type="secondary" style={{ fontSize: 12 }}>{issue.suggestion}</Text>}
-                                        </div>
-                                    ))}
-                                </Space>
-                            ) : (
-                                <div style={{ marginTop: 8 }}><Text type="secondary">未发现明确问题</Text></div>
-                            )}
-                        </div>
-                        {(result.duplicate_candidates || []).length > 0 && (
-                            <>
-                                <Divider style={{ margin: '12px 0' }} />
-                                <div>
-                                    <Text strong>重复候选</Text>
-                                    <Space direction="vertical" style={{ width: '100%', marginTop: 8 }}>
-                                        {(result.duplicate_candidates || []).map((candidate) => (
-                                            <div key={`${candidate.file_name}-${candidate.content_hash}`} style={{ padding: 10, border: '1px solid #e2e8f0', borderRadius: 6 }}>
-                                                <Space wrap>
-                                                    <Text code>{candidate.file_name}</Text>
-                                                    <Tag color={candidate.score >= 1 ? 'red' : 'orange'}>{Math.round(candidate.score * 100)}%</Tag>
-                                                    {candidate.severity && <Tag>{candidate.severity}</Tag>}
-                                                </Space>
-                                                <div style={{ marginTop: 6 }}><Text type="secondary">{candidate.reason}</Text></div>
-                                            </div>
-                                        ))}
-                                    </Space>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                ),
-            });
-        } catch (error: unknown) {
-            msg.error(typeof error === 'string' ? error : 'AI 分析失败');
-        } finally {
-            setAiLoading(false);
-        }
-    };
+
 
     const getStateTag = (state: string) => {
         if (state === 'Approved') return <Tag color="green">已审核</Tag>;
@@ -437,13 +345,15 @@ http:
                 title={isNew ? '新建 POC' : `编辑 POC — ${currentArsenal?.FileName}`}
                 open={editorVisible}
                 onCancel={() => setEditorVisible(false)}
-                width={debugVisible ? 1400 : 900}
+                width={(debugVisible || aiVisible) ? 1400 : 900}
                 style={{ top: 40 }}
                 footer={[
-                    <Button key="debug" icon={<BugOutlined />} onClick={() => setDebugVisible((v) => !v)}>
+                    <Button key="debug" icon={<BugOutlined />} onClick={() => { setDebugVisible((v) => !v); setAiVisible(false); }}>
                         {debugVisible ? '收起调试' : '调试'}
                     </Button>,
-                    <Button key="ai" loading={aiLoading} onClick={handleAiAnalyze}>AI 分析</Button>,
+                    <Button key="ai" onClick={() => { setAiVisible((v) => !v); setDebugVisible(false); }}>
+                        {aiVisible ? '收起 AI 分析' : 'AI 分析'}
+                    </Button>,
                     <Button key="cancel" onClick={() => setEditorVisible(false)}>取消</Button>,
                     <Button key="save" type="primary" onClick={handleSave}>保存（草稿）</Button>,
                 ]}
@@ -480,11 +390,12 @@ http:
                             />
                         </div>
                     </div>
-                    {debugVisible && (
-                        <div style={{ width: 550, flexShrink: 0, display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
-                            <PocDebugPanel visible={debugVisible} pocContent={editorContent} />
-                        </div>
-                    )}
+                    <div style={{ width: 550, flexShrink: 0, display: debugVisible ? 'flex' : 'none', flexDirection: 'column', overflowY: 'auto' }}>
+                        <PocDebugPanel visible={debugVisible} pocContent={editorContent} />
+                    </div>
+                    <div style={{ width: 550, flexShrink: 0, display: aiVisible ? 'flex' : 'none', flexDirection: 'column', overflowY: 'auto' }}>
+                        <PocAiPanel visible={aiVisible} pocContent={editorContent} fileName={isNew ? newFileName.trim() : currentArsenal?.FileName || ''} />
+                    </div>
                 </div>
             </Modal>
         </>

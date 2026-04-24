@@ -291,6 +291,12 @@ declare namespace API {
     api_key_masked?: string;
   }
 
+  interface AIModelInfo {
+    id: string;
+    object?: string;
+    owned_by?: string;
+  }
+
   // ======================== Dictionary API ========================
 
   interface WorkflowItem {

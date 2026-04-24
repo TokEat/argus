@@ -19,7 +19,7 @@ const supportsDebug = (version?: string): boolean => {
     return Number.isFinite(major) && Number.isFinite(minor) && (major > 2 || (major === 2 && minor >= 2));
 };
 
-const PocDebugPanel: React.FC<PocDebugPanelProps> = ({ pocContent, visible }) => {
+const PocDebugPanel: React.FC<PocDebugPanelProps> = ({ pocContent }) => {
     const { message } = App.useApp();
     const [form] = Form.useForm<API.DebugPocRequest>();
     const [nodes, setNodes] = useState<API.AgentNode[]>([]);
@@ -52,7 +52,6 @@ const PocDebugPanel: React.FC<PocDebugPanelProps> = ({ pocContent, visible }) =>
     };
 
     useEffect(() => {
-        if (!visible) return;
         fetchNodes();
         const ws = connectWebSocket((data) => {
             const event = data as API.DebugEvent;
@@ -72,7 +71,7 @@ const PocDebugPanel: React.FC<PocDebugPanelProps> = ({ pocContent, visible }) =>
         });
         return () => ws.close();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [visible]);
+    }, []);
 
     const resetOutput = () => {
         setLogs([]);
@@ -119,8 +118,6 @@ const PocDebugPanel: React.FC<PocDebugPanelProps> = ({ pocContent, visible }) =>
             message.error(typeof err === 'string' ? err : '取消调试失败');
         }
     };
-
-    if (!visible) return null;
 
     const latest = results[results.length - 1];
 

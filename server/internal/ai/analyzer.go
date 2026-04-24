@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -42,24 +43,38 @@ func (a *Analyzer) Analyze(ctx context.Context, req AnalyzeRequest) (*AnalysisRe
 	}
 
 	hash := contentMD5(req.Content)
+	log.Printf("[AI] analyze start: tenant=%s file=%s type=%s hash=%s content_len=%d force=%v",
+		req.TenantID, req.FileName, req.Type, hash, len(req.Content), req.Force)
+
 	if !req.Force {
 		if cached, err := a.cachedReview(ctx, req.TenantID, req.Type, hash); err == nil {
 			cached.Cached = true
+			log.Printf("[AI] cache hit: hash=%s suggestion=%s", hash, cached.Suggestion)
 			return cached, nil
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("[AI] cache lookup error: %v", err)
 			return nil, err
 		}
+		log.Printf("[AI] cache miss: hash=%s", hash)
 	}
 
 	cfg, err := LoadConfig(a.DB)
 	if err != nil {
+		log.Printf("[AI] config load failed: %v", err)
 		return nil, err
 	}
+	log.Printf("[AI] config loaded: base_url=%s model=%s has_key=%v", cfg.BaseURL, cfg.Model, cfg.APIKey != "")
 
+	start := time.Now()
 	static := runStaticChecks(ctx, a.DB, req.TenantID, req.FileName, req.Content, hash)
+	log.Printf("[AI] static checks done: issues=%d duplicates=%d blocking=%v elapsed=%s",
+		len(static.Issues), len(static.DuplicateCandidates), blockingStatic(static.Issues), time.Since(start))
+
 	if blockingStatic(static.Issues) {
 		resp := staticOnlyResponse(static, hash)
+		log.Printf("[AI] static blocking → suggestion=%s (skipping LLM)", resp.Suggestion)
 		if err := a.storeReview(ctx, req, resp, `{"static_only":true}`); err != nil {
+			log.Printf("[AI] store review error: %v", err)
 			return nil, err
 		}
 		return resp, nil
@@ -69,14 +84,23 @@ func (a *Analyzer) Analyze(ctx context.Context, req AnalyzeRequest) (*AnalysisRe
 	if client == nil {
 		client = &HTTPClient{}
 	}
+
+	log.Printf("[AI] calling LLM: model=%s endpoint=%s/chat/completions", cfg.Model, cfg.BaseURL)
+	llmStart := time.Now()
 	raw, err := client.CompleteJSON(ctx, cfg, buildMessages(req, static))
 	if err != nil {
+		log.Printf("[AI] LLM call failed after %s: %v", time.Since(llmStart), err)
 		return nil, err
 	}
+	log.Printf("[AI] LLM response received: elapsed=%s raw_len=%d", time.Since(llmStart), len(raw))
+
 	parsed, err := parseLLMAnalysis(raw)
 	if err != nil {
+		log.Printf("[AI] LLM JSON parse failed: %v | raw: %.500s", err, raw)
 		return nil, err
 	}
+	log.Printf("[AI] LLM parsed: suggestion=%s confidence=%.2f issues=%d",
+		parsed.Suggestion, parsed.Confidence, len(parsed.Issues))
 
 	resp := &AnalysisResponse{
 		Suggestion:          normalizeSuggestion(parsed.Suggestion),
@@ -98,20 +122,27 @@ func (a *Analyzer) Analyze(ctx context.Context, req AnalyzeRequest) (*AnalysisRe
 	}
 
 	if err := a.storeReview(ctx, req, resp, stripJSONFences(raw)); err != nil {
+		log.Printf("[AI] store review error: %v", err)
 		return nil, err
 	}
+	log.Printf("[AI] analyze complete: suggestion=%s confidence=%.2f total_issues=%d total_elapsed=%s",
+		resp.Suggestion, resp.Confidence, len(resp.Issues), time.Since(start))
 	return resp, nil
 }
 
 func (a *Analyzer) cachedReview(ctx context.Context, tenantID, typ, hash string) (*AnalysisResponse, error) {
-	var review db.ArsenalAIReview
+	var reviews []db.ArsenalAIReview
 	if err := a.DB.WithContext(ctx).
 		Where("tenant_id = ? AND type = ? AND content_hash = ?", tenantID, typ, hash).
 		Order("created_at DESC, id DESC").
-		First(&review).Error; err != nil {
+		Limit(1).
+		Find(&reviews).Error; err != nil {
 		return nil, err
 	}
-	return reviewToResponse(review)
+	if len(reviews) == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return reviewToResponse(reviews[0])
 }
 
 func (a *Analyzer) storeReview(ctx context.Context, req AnalyzeRequest, resp *AnalysisResponse, raw string) error {
@@ -193,14 +224,16 @@ func buildMessages(req AnalyzeRequest, static staticResult) []ChatMessage {
 POC 内容：
 %s`, req.FileName, string(staticJSON), string(duplicateJSON), content)
 
-	system := `你是安全扫描平台的 POC 审核助手。只输出一个 JSON 对象，不要输出 Markdown。
-JSON 字段必须包含：
-suggestion: "Approve" | "Revise" | "Reject"
-confidence: 0 到 1 的数字
-summary: 一句话概括该 POC 的检测目标和主要逻辑
-reason: 给出审核建议的核心原因
-issues: 数组，每项包含 severity、category、message、suggestion，可选 line
-审查重点：YAML/Nuclei 结构、检测条件是否可靠、误报风险、破坏性或外连副作用、是否需要人工复核。`
+	system := "你是安全扫描平台的 POC 审核助手。\n" +
+		"请先输出你的审计思考过程，最后输出一个包含结构化结论的 JSON 对象。\n" +
+		"务必将最终的 JSON 放在 ```json 和 ``` 包裹的代码块中。\n" +
+		"JSON 字段必须包含：\n" +
+		"suggestion: \"Approve\" | \"Revise\" | \"Reject\"\n" +
+		"confidence: 0 到 1 的数字\n" +
+		"summary: 一句话概括该 POC 的检测目标和主要逻辑\n" +
+		"reason: 给出审核建议的核心原因\n" +
+		"issues: 数组，每项包含 severity、category、message、suggestion，可选 line\n" +
+		"审查重点：YAML/Nuclei 结构、检测条件是否可靠、误报风险、破坏性或外连副作用、是否需要人工复核。"
 	return []ChatMessage{
 		{Role: "system", Content: system},
 		{Role: "user", Content: user},
@@ -220,13 +253,24 @@ func parseLLMAnalysis(raw string) (llmAnalysis, error) {
 
 func stripJSONFences(raw string) string {
 	raw = strings.TrimSpace(raw)
-	if !strings.HasPrefix(raw, "```") {
-		return raw
+	
+	// 提取 ```json ... ``` 块
+	start := strings.LastIndex(raw, "```json")
+	if start != -1 {
+		end := strings.LastIndex(raw[start+7:], "```")
+		if end != -1 {
+			return strings.TrimSpace(raw[start+7 : start+7+end])
+		}
 	}
-	raw = strings.TrimPrefix(raw, "```json")
-	raw = strings.TrimPrefix(raw, "```")
-	raw = strings.TrimSuffix(raw, "```")
-	return strings.TrimSpace(raw)
+	
+	// 提取 {...}
+	startBracket := strings.Index(raw, "{")
+	endBracket := strings.LastIndex(raw, "}")
+	if startBracket != -1 && endBracket != -1 && endBracket > startBracket {
+		return strings.TrimSpace(raw[startBracket : endBracket+1])
+	}
+	
+	return raw
 }
 
 func blockingStatic(issues []Issue) bool {

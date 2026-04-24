@@ -290,7 +290,10 @@ func InitRouter(port string) {
 		// Server-side AI analysis and configuration (not distributed to Agents)
 		api.GET("/ai/config", getAIConfig)
 		api.PUT("/ai/config", saveAIConfig)
+		api.GET("/ai/models", listAIModels)
+		api.POST("/ai/test", testAIConnection)
 		api.POST("/ai/arsenal/analyze", analyzeArsenalWithAI)
+		api.POST("/ai/arsenal/analyze/stream", analyzeArsenalStream)
 
 		// Arsenal 弹药库热发车网关与审核墙
 		api.POST("/arsenals/ai/analyze", aiAnalyzeArsenal)
