@@ -21,11 +21,14 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	AgentService_Register_FullMethodName      = "/scan.AgentService/Register"
 	AgentService_Heartbeat_FullMethodName     = "/scan.AgentService/Heartbeat"
+	AgentService_Subscribe_FullMethodName     = "/scan.AgentService/Subscribe"
+	AgentService_ClaimTask_FullMethodName     = "/scan.AgentService/ClaimTask"
 	AgentService_FetchTask_FullMethodName     = "/scan.AgentService/FetchTask"
 	AgentService_StreamResult_FullMethodName  = "/scan.AgentService/StreamResult"
 	AgentService_TaskComplete_FullMethodName  = "/scan.AgentService/TaskComplete"
 	AgentService_EmergencyDump_FullMethodName = "/scan.AgentService/EmergencyDump"
 	AgentService_StreamLogs_FullMethodName    = "/scan.AgentService/StreamLogs"
+	AgentService_StreamDebug_FullMethodName   = "/scan.AgentService/StreamDebug"
 )
 
 // AgentServiceClient is the client API for AgentService service.
@@ -38,7 +41,14 @@ type AgentServiceClient interface {
 	Register(ctx context.Context, in *RegisterReq, opts ...grpc.CallOption) (*RegisterResp, error)
 	// Heartbeat 节点心跳保活
 	Heartbeat(ctx context.Context, in *HeartbeatReq, opts ...grpc.CallOption) (*HeartbeatResp, error)
-	// FetchTask 领取分配给该节点的扫描任务
+	// Subscribe 建立 Server→Agent 的任务通知双向流。
+	// Agent 连接后持续监听，Server 有新任务时主动推送 TaskNotify。
+	// Agent 通过 AgentSignal 上报状态变更（如容量变化）。
+	Subscribe(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentSignal, TaskNotify], error)
+	// ClaimTask Agent 主动认领任务（原子操作，保证不重复领取）。
+	// Agent 收到 TaskNotify 后调用此接口从 Redis 队列中领取任务。
+	ClaimTask(ctx context.Context, in *ClaimTaskReq, opts ...grpc.CallOption) (*Task, error)
+	// FetchTask 领取分配给该节点的扫描任务（兼容旧版，作为 fallback）
 	FetchTask(ctx context.Context, in *FetchTaskReq, opts ...grpc.CallOption) (*Task, error)
 	// StreamResult 流式回传扫描产生的中间结果（如单独发现的一个漏洞）
 	StreamResult(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ScanResult, Ack], error)
@@ -48,6 +58,8 @@ type AgentServiceClient interface {
 	EmergencyDump(ctx context.Context, in *EmergencyReq, opts ...grpc.CallOption) (*Ack, error)
 	// StreamLogs 节点流水日志黑匣子上传
 	StreamLogs(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[LogPayload, Ack], error)
+	// StreamDebug Agent 侧 POC 调试事件流。
+	StreamDebug(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[DebugEvent, Ack], error)
 }
 
 type agentServiceClient struct {
@@ -78,6 +90,29 @@ func (c *agentServiceClient) Heartbeat(ctx context.Context, in *HeartbeatReq, op
 	return out, nil
 }
 
+func (c *agentServiceClient) Subscribe(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentSignal, TaskNotify], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &AgentService_ServiceDesc.Streams[0], AgentService_Subscribe_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[AgentSignal, TaskNotify]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentService_SubscribeClient = grpc.BidiStreamingClient[AgentSignal, TaskNotify]
+
+func (c *agentServiceClient) ClaimTask(ctx context.Context, in *ClaimTaskReq, opts ...grpc.CallOption) (*Task, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Task)
+	err := c.cc.Invoke(ctx, AgentService_ClaimTask_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *agentServiceClient) FetchTask(ctx context.Context, in *FetchTaskReq, opts ...grpc.CallOption) (*Task, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Task)
@@ -90,7 +125,7 @@ func (c *agentServiceClient) FetchTask(ctx context.Context, in *FetchTaskReq, op
 
 func (c *agentServiceClient) StreamResult(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ScanResult, Ack], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &AgentService_ServiceDesc.Streams[0], AgentService_StreamResult_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &AgentService_ServiceDesc.Streams[1], AgentService_StreamResult_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +158,7 @@ func (c *agentServiceClient) EmergencyDump(ctx context.Context, in *EmergencyReq
 
 func (c *agentServiceClient) StreamLogs(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[LogPayload, Ack], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &AgentService_ServiceDesc.Streams[1], AgentService_StreamLogs_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &AgentService_ServiceDesc.Streams[2], AgentService_StreamLogs_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -133,6 +168,19 @@ func (c *agentServiceClient) StreamLogs(ctx context.Context, opts ...grpc.CallOp
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AgentService_StreamLogsClient = grpc.ClientStreamingClient[LogPayload, Ack]
+
+func (c *agentServiceClient) StreamDebug(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[DebugEvent, Ack], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &AgentService_ServiceDesc.Streams[3], AgentService_StreamDebug_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[DebugEvent, Ack]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentService_StreamDebugClient = grpc.ClientStreamingClient[DebugEvent, Ack]
 
 // AgentServiceServer is the server API for AgentService service.
 // All implementations must embed UnimplementedAgentServiceServer
@@ -144,7 +192,14 @@ type AgentServiceServer interface {
 	Register(context.Context, *RegisterReq) (*RegisterResp, error)
 	// Heartbeat 节点心跳保活
 	Heartbeat(context.Context, *HeartbeatReq) (*HeartbeatResp, error)
-	// FetchTask 领取分配给该节点的扫描任务
+	// Subscribe 建立 Server→Agent 的任务通知双向流。
+	// Agent 连接后持续监听，Server 有新任务时主动推送 TaskNotify。
+	// Agent 通过 AgentSignal 上报状态变更（如容量变化）。
+	Subscribe(grpc.BidiStreamingServer[AgentSignal, TaskNotify]) error
+	// ClaimTask Agent 主动认领任务（原子操作，保证不重复领取）。
+	// Agent 收到 TaskNotify 后调用此接口从 Redis 队列中领取任务。
+	ClaimTask(context.Context, *ClaimTaskReq) (*Task, error)
+	// FetchTask 领取分配给该节点的扫描任务（兼容旧版，作为 fallback）
 	FetchTask(context.Context, *FetchTaskReq) (*Task, error)
 	// StreamResult 流式回传扫描产生的中间结果（如单独发现的一个漏洞）
 	StreamResult(grpc.ClientStreamingServer[ScanResult, Ack]) error
@@ -154,6 +209,8 @@ type AgentServiceServer interface {
 	EmergencyDump(context.Context, *EmergencyReq) (*Ack, error)
 	// StreamLogs 节点流水日志黑匣子上传
 	StreamLogs(grpc.ClientStreamingServer[LogPayload, Ack]) error
+	// StreamDebug Agent 侧 POC 调试事件流。
+	StreamDebug(grpc.ClientStreamingServer[DebugEvent, Ack]) error
 	mustEmbedUnimplementedAgentServiceServer()
 }
 
@@ -170,6 +227,12 @@ func (UnimplementedAgentServiceServer) Register(context.Context, *RegisterReq) (
 func (UnimplementedAgentServiceServer) Heartbeat(context.Context, *HeartbeatReq) (*HeartbeatResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method Heartbeat not implemented")
 }
+func (UnimplementedAgentServiceServer) Subscribe(grpc.BidiStreamingServer[AgentSignal, TaskNotify]) error {
+	return status.Error(codes.Unimplemented, "method Subscribe not implemented")
+}
+func (UnimplementedAgentServiceServer) ClaimTask(context.Context, *ClaimTaskReq) (*Task, error) {
+	return nil, status.Error(codes.Unimplemented, "method ClaimTask not implemented")
+}
 func (UnimplementedAgentServiceServer) FetchTask(context.Context, *FetchTaskReq) (*Task, error) {
 	return nil, status.Error(codes.Unimplemented, "method FetchTask not implemented")
 }
@@ -184,6 +247,9 @@ func (UnimplementedAgentServiceServer) EmergencyDump(context.Context, *Emergency
 }
 func (UnimplementedAgentServiceServer) StreamLogs(grpc.ClientStreamingServer[LogPayload, Ack]) error {
 	return status.Error(codes.Unimplemented, "method StreamLogs not implemented")
+}
+func (UnimplementedAgentServiceServer) StreamDebug(grpc.ClientStreamingServer[DebugEvent, Ack]) error {
+	return status.Error(codes.Unimplemented, "method StreamDebug not implemented")
 }
 func (UnimplementedAgentServiceServer) mustEmbedUnimplementedAgentServiceServer() {}
 func (UnimplementedAgentServiceServer) testEmbeddedByValue()                      {}
@@ -238,6 +304,31 @@ func _AgentService_Heartbeat_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AgentServiceServer).Heartbeat(ctx, req.(*HeartbeatReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_Subscribe_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(AgentServiceServer).Subscribe(&grpc.GenericServerStream[AgentSignal, TaskNotify]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentService_SubscribeServer = grpc.BidiStreamingServer[AgentSignal, TaskNotify]
+
+func _AgentService_ClaimTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClaimTaskReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).ClaimTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_ClaimTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).ClaimTask(ctx, req.(*ClaimTaskReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -310,6 +401,13 @@ func _AgentService_StreamLogs_Handler(srv interface{}, stream grpc.ServerStream)
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AgentService_StreamLogsServer = grpc.ClientStreamingServer[LogPayload, Ack]
 
+func _AgentService_StreamDebug_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(AgentServiceServer).StreamDebug(&grpc.GenericServerStream[DebugEvent, Ack]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentService_StreamDebugServer = grpc.ClientStreamingServer[DebugEvent, Ack]
+
 // AgentService_ServiceDesc is the grpc.ServiceDesc for AgentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -326,6 +424,10 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _AgentService_Heartbeat_Handler,
 		},
 		{
+			MethodName: "ClaimTask",
+			Handler:    _AgentService_ClaimTask_Handler,
+		},
+		{
 			MethodName: "FetchTask",
 			Handler:    _AgentService_FetchTask_Handler,
 		},
@@ -340,6 +442,12 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 	},
 	Streams: []grpc.StreamDesc{
 		{
+			StreamName:    "Subscribe",
+			Handler:       _AgentService_Subscribe_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
 			StreamName:    "StreamResult",
 			Handler:       _AgentService_StreamResult_Handler,
 			ClientStreams: true,
@@ -347,6 +455,11 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "StreamLogs",
 			Handler:       _AgentService_StreamLogs_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "StreamDebug",
+			Handler:       _AgentService_StreamDebug_Handler,
 			ClientStreams: true,
 		},
 	},

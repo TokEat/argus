@@ -506,10 +506,10 @@ func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb
 		} else if sub.RetryCount < sub.MaxRetry {
 			// 普通重试：单目标批次失败或无法拆分时，走常规重试流程
 			log.Printf("[Retry] Task %s failed, regular retry (%d/%d)", req.TaskId, sub.RetryCount+1, sub.MaxRetry)
-			
+
 			sub.RetryCount++
 			if err := db.DB.Model(&sub).Where("id = ?", req.TaskId).Updates(map[string]interface{}{
-				"status": "Dispatching",
+				"status":      "Dispatching",
 				"retry_count": sub.RetryCount,
 			}).Error; err == nil {
 				pbSub, err := db.SubTaskToProto(&sub)
@@ -589,6 +589,28 @@ func (s *Server) StreamLogs(stream pb.AgentService_StreamLogsServer) error {
 		})
 
 		log.Printf("[Telemetry][Agent %s][%s] %s", payload.AgentId, payload.Level, payload.Message)
+	}
+}
+
+// ============================================================================
+// StreamDebug — 接收 Agent 侧 POC 调试事件（不入库）
+// ============================================================================
+
+func (s *Server) StreamDebug(stream pb.AgentService_StreamDebugServer) error {
+	for {
+		event, err := stream.Recv()
+		if err == io.EOF {
+			return stream.SendAndClose(&pb.Ack{Success: true})
+		}
+		if err != nil {
+			return err
+		}
+		if event == nil {
+			continue
+		}
+		if db.DebugEventHook != nil {
+			db.DebugEventHook(event)
+		}
 	}
 }
 

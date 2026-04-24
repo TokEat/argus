@@ -28,6 +28,7 @@ const (
 	AgentService_TaskComplete_FullMethodName  = "/scan.AgentService/TaskComplete"
 	AgentService_EmergencyDump_FullMethodName = "/scan.AgentService/EmergencyDump"
 	AgentService_StreamLogs_FullMethodName    = "/scan.AgentService/StreamLogs"
+	AgentService_StreamDebug_FullMethodName   = "/scan.AgentService/StreamDebug"
 )
 
 // AgentServiceClient is the client API for AgentService service.
@@ -57,6 +58,8 @@ type AgentServiceClient interface {
 	EmergencyDump(ctx context.Context, in *EmergencyReq, opts ...grpc.CallOption) (*Ack, error)
 	// StreamLogs 节点流水日志黑匣子上传
 	StreamLogs(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[LogPayload, Ack], error)
+	// StreamDebug Agent 侧 POC 调试事件流。
+	StreamDebug(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[DebugEvent, Ack], error)
 }
 
 type agentServiceClient struct {
@@ -166,6 +169,19 @@ func (c *agentServiceClient) StreamLogs(ctx context.Context, opts ...grpc.CallOp
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AgentService_StreamLogsClient = grpc.ClientStreamingClient[LogPayload, Ack]
 
+func (c *agentServiceClient) StreamDebug(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[DebugEvent, Ack], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &AgentService_ServiceDesc.Streams[3], AgentService_StreamDebug_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[DebugEvent, Ack]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentService_StreamDebugClient = grpc.ClientStreamingClient[DebugEvent, Ack]
+
 // AgentServiceServer is the server API for AgentService service.
 // All implementations must embed UnimplementedAgentServiceServer
 // for forward compatibility.
@@ -193,6 +209,8 @@ type AgentServiceServer interface {
 	EmergencyDump(context.Context, *EmergencyReq) (*Ack, error)
 	// StreamLogs 节点流水日志黑匣子上传
 	StreamLogs(grpc.ClientStreamingServer[LogPayload, Ack]) error
+	// StreamDebug Agent 侧 POC 调试事件流。
+	StreamDebug(grpc.ClientStreamingServer[DebugEvent, Ack]) error
 	mustEmbedUnimplementedAgentServiceServer()
 }
 
@@ -229,6 +247,9 @@ func (UnimplementedAgentServiceServer) EmergencyDump(context.Context, *Emergency
 }
 func (UnimplementedAgentServiceServer) StreamLogs(grpc.ClientStreamingServer[LogPayload, Ack]) error {
 	return status.Error(codes.Unimplemented, "method StreamLogs not implemented")
+}
+func (UnimplementedAgentServiceServer) StreamDebug(grpc.ClientStreamingServer[DebugEvent, Ack]) error {
+	return status.Error(codes.Unimplemented, "method StreamDebug not implemented")
 }
 func (UnimplementedAgentServiceServer) mustEmbedUnimplementedAgentServiceServer() {}
 func (UnimplementedAgentServiceServer) testEmbeddedByValue()                      {}
@@ -380,6 +401,13 @@ func _AgentService_StreamLogs_Handler(srv interface{}, stream grpc.ServerStream)
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AgentService_StreamLogsServer = grpc.ClientStreamingServer[LogPayload, Ack]
 
+func _AgentService_StreamDebug_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(AgentServiceServer).StreamDebug(&grpc.GenericServerStream[DebugEvent, Ack]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentService_StreamDebugServer = grpc.ClientStreamingServer[DebugEvent, Ack]
+
 // AgentService_ServiceDesc is the grpc.ServiceDesc for AgentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -427,6 +455,11 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "StreamLogs",
 			Handler:       _AgentService_StreamLogs_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "StreamDebug",
+			Handler:       _AgentService_StreamDebug_Handler,
 			ClientStreams: true,
 		},
 	},

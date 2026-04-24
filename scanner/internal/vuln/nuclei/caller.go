@@ -5,9 +5,12 @@ package nuclei
 import (
 	"dddd/scanner/common/callnuclei"
 	"embed"
+	"sync"
 
 	"github.com/projectdiscovery/nuclei/v3/pkg/output"
 )
+
+var callMu sync.Mutex
 
 // Call 调用 Nuclei 进行漏洞扫描。
 func Call(targetAndPocsName map[string][]string,
@@ -20,6 +23,9 @@ func Call(targetAndPocsName map[string][]string,
 	excludeTags []string,
 	severities []string,
 ) []output.ResultEvent {
+	callMu.Lock()
+	defer callMu.Unlock()
+
 	return callnuclei.CallNuclei(targetAndPocsName, httpProxy, addResult,
 		pocNameForSearch, noInteractsh, embedPocs, nucleiTemplate,
 		excludeTags, severities)

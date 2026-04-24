@@ -15,6 +15,7 @@ import {
 import Editor from '@monaco-editor/react';
 import type { ColumnsType } from 'antd/es/table';
 import { listArsenals, saveArsenal, deleteArsenal, approveArsenal, aiAnalyzeArsenal, getWorkflowDict } from '../../services/api';
+import PocDebugPanel from './PocDebugPanel';
 
 const { Text } = Typography;
 
@@ -30,6 +31,7 @@ const PocConfig: React.FC = () => {
     const [currentArsenal, setCurrentArsenal] = useState<API.Arsenal | null>(null);
     const [editorContent, setEditorContent] = useState('');
     const [newFileName, setNewFileName] = useState('');
+    const [debugVisible, setDebugVisible] = useState(false);
     const { message: msg } = App.useApp();
 
     const fetchData = async () => {
@@ -105,6 +107,7 @@ http:
         words:
           - "keyword"
 `);
+        setDebugVisible(false);
         setEditorVisible(true);
     };
 
@@ -112,6 +115,7 @@ http:
         setIsNew(false);
         setCurrentArsenal(record);
         setEditorContent(record.Content);
+        setDebugVisible(false);
         setEditorVisible(true);
     };
 
@@ -355,41 +359,54 @@ http:
                 title={isNew ? '新建 POC' : `编辑 POC — ${currentArsenal?.FileName}`}
                 open={editorVisible}
                 onCancel={() => setEditorVisible(false)}
-                width={900}
+                width={debugVisible ? 1400 : 900}
+                style={{ top: 40 }}
                 footer={[
+                    <Button key="debug" icon={<BugOutlined />} onClick={() => setDebugVisible((v) => !v)}>
+                        {debugVisible ? '收起调试' : '调试'}
+                    </Button>,
                     <Button key="ai" onClick={handleAiAnalyze}>AI 分析</Button>,
                     <Button key="cancel" onClick={() => setEditorVisible(false)}>取消</Button>,
                     <Button key="save" type="primary" onClick={handleSave}>保存（草稿）</Button>,
                 ]}
                 destroyOnClose
             >
-                {isNew && (
-                    <div style={{ marginBottom: 16 }}>
-                        <Text strong style={{ display: 'block', marginBottom: 8 }}>文件名 *</Text>
-                        <Input
-                            value={newFileName}
-                            onChange={(e) => setNewFileName(e.target.value)}
-                            placeholder="例: CVE-2024-XXXX.yaml"
-                            status={duplicateOf ? 'warning' : undefined}
-                            suffix={duplicateOf ? <WarningOutlined style={{ color: '#faad14' }} /> : undefined}
-                        />
-                        {duplicateOf && (
-                            <div style={{ marginTop: 6, fontSize: 12, color: '#d97706' }}>
-                                <WarningOutlined /> 已存在 <Text code>{duplicateOf.FileName}</Text>（{duplicateOf.State}），保存将覆盖并重置为草稿
-                                {getUsage(duplicateOf.FileName).length > 0 && <span style={{ color: '#ef4444' }}>，且会让 {getUsage(duplicateOf.FileName).length} 个 Workflow 引用立即失效</span>}
+                <div style={{ display: 'flex', gap: 16, height: 'calc(100vh - 200px)', minHeight: 600 }}>
+                    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                        {isNew && (
+                            <div style={{ marginBottom: 16 }}>
+                                <Text strong style={{ display: 'block', marginBottom: 8 }}>文件名 *</Text>
+                                <Input
+                                    value={newFileName}
+                                    onChange={(e) => setNewFileName(e.target.value)}
+                                    placeholder="例: CVE-2024-XXXX.yaml"
+                                    status={duplicateOf ? 'warning' : undefined}
+                                    suffix={duplicateOf ? <WarningOutlined style={{ color: '#faad14' }} /> : undefined}
+                                />
+                                {duplicateOf && (
+                                    <div style={{ marginTop: 6, fontSize: 12, color: '#d97706' }}>
+                                        <WarningOutlined /> 已存在 <Text code>{duplicateOf.FileName}</Text>（{duplicateOf.State}），保存将覆盖并重置为草稿
+                                        {getUsage(duplicateOf.FileName).length > 0 && <span style={{ color: '#ef4444' }}>，且会让 {getUsage(duplicateOf.FileName).length} 个 Workflow 引用立即失效</span>}
+                                    </div>
+                                )}
                             </div>
                         )}
+                        <div style={{ flex: 1, border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
+                            <Editor
+                                height="100%"
+                                language="yaml"
+                                theme="vs-dark"
+                                value={editorContent}
+                                onChange={(val) => setEditorContent(val || '')}
+                                options={{ minimap: { enabled: false }, fontSize: 13 }}
+                            />
+                        </div>
                     </div>
-                )}
-                <div style={{ height: 500, border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
-                    <Editor
-                        height="100%"
-                        language="yaml"
-                        theme="vs-dark"
-                        value={editorContent}
-                        onChange={(val) => setEditorContent(val || '')}
-                        options={{ minimap: { enabled: false }, fontSize: 13 }}
-                    />
+                    {debugVisible && (
+                        <div style={{ width: 550, flexShrink: 0, display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+                            <PocDebugPanel visible={debugVisible} pocContent={editorContent} />
+                        </div>
+                    )}
                 </div>
             </Modal>
         </>

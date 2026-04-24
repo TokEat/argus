@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Drawer, Button, Space, Input, Tag, App, Modal } from 'antd';
+import { BugOutlined } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import { saveArsenal, approveArsenal, listArsenals, aiAnalyzeArsenal } from '../../services/api';
+import PocDebugPanel from './PocDebugPanel';
 
 interface PocInlineEditorProps {
     open: boolean;
@@ -55,12 +57,14 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
     const [loading, setLoading] = useState<boolean>(false);
     const [saving, setSaving] = useState<boolean>(false);
     const [analyzing, setAnalyzing] = useState<boolean>(false);
+    const [debugVisible, setDebugVisible] = useState<boolean>(false);
 
     useEffect(() => {
         if (!open) return;
         if (isNew) {
             setEditingFileName(suggestedFileName || '');
             setContent(initialContent || POC_TEMPLATE);
+            setDebugVisible(false);
             return;
         }
         // 编辑已存在 POC：从 listArsenals 拉取最新内容（避免外部传入 stale）
@@ -73,6 +77,7 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
                 const found = all?.find((a) => lookups.includes(a.FileName));
                 setContent(found?.Content || '');
                 setEditingFileName(found?.FileName || (fileName as string));
+                setDebugVisible(false);
             } catch {
                 message.error('加载 POC 内容失败');
             } finally {
@@ -135,11 +140,14 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
             title={isNew ? '新建 POC' : `编辑 POC — ${fileName}`}
             open={open}
             onClose={onClose}
-            width={760}
+            width={debugVisible ? 1300 : 760}
             destroyOnClose
             footer={
                 <div style={{ textAlign: 'right' }}>
                     <Space>
+                        <Button icon={<BugOutlined />} onClick={() => setDebugVisible((v) => !v)}>
+                            {debugVisible ? '收起调试' : '调试'}
+                        </Button>
                         <Button onClick={handleAi} loading={analyzing}>AI 分析</Button>
                         <Button onClick={onClose}>取消</Button>
                         <Button type="primary" onClick={handleSave} loading={saving}>
@@ -149,25 +157,34 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
                 </div>
             }
         >
-            {isNew && (
-                <div style={{ marginBottom: 12 }}>
-                    <div style={{ marginBottom: 6, fontSize: 12, color: '#64748b' }}>文件名 *</div>
-                    <Input
-                        value={editingFileName}
-                        placeholder="例：CVE-2024-XXXX.yaml"
-                        onChange={(e) => setEditingFileName(e.target.value)}
-                    />
+            <div style={{ display: 'flex', gap: 16, height: '100%' }}>
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                    {isNew && (
+                        <div style={{ marginBottom: 12 }}>
+                            <div style={{ marginBottom: 6, fontSize: 12, color: '#64748b' }}>文件名 *</div>
+                            <Input
+                                value={editingFileName}
+                                placeholder="例：CVE-2024-XXXX.yaml"
+                                onChange={(e) => setEditingFileName(e.target.value)}
+                            />
+                        </div>
+                    )}
+                    <div style={{ flex: 1, border: '1px solid #e2e8f0', borderRadius: 6, overflow: 'hidden' }}>
+                        <Editor
+                            height="100%"
+                            language="yaml"
+                            theme="vs-dark"
+                            value={content}
+                            onChange={(v) => setContent(v || '')}
+                            options={{ minimap: { enabled: false }, fontSize: 13, readOnly: loading }}
+                        />
+                    </div>
                 </div>
-            )}
-            <div style={{ height: 'calc(100vh - 220px)', border: '1px solid #e2e8f0', borderRadius: 6, overflow: 'hidden' }}>
-                <Editor
-                    height="100%"
-                    language="yaml"
-                    theme="vs-dark"
-                    value={content}
-                    onChange={(v) => setContent(v || '')}
-                    options={{ minimap: { enabled: false }, fontSize: 13, readOnly: loading }}
-                />
+                {debugVisible && (
+                    <div style={{ width: 520, flexShrink: 0, display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+                        <PocDebugPanel visible={debugVisible} pocContent={content} />
+                    </div>
+                )}
             </div>
         </Drawer>
     );

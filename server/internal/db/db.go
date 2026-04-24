@@ -18,6 +18,10 @@ var DB *gorm.DB
 // WSBroadcastHook is called to push real-time updates to connected WebSocket clients
 var WSBroadcastHook func(msg interface{})
 
+// DebugEventHook receives transient Agent-side POC debug events. These events
+// are intentionally not persisted with scan results.
+var DebugEventHook func(event *pb.DebugEvent)
+
 type Project struct {
 	ID            string `gorm:"primaryKey"`
 	TenantID      string `gorm:"default:'default';index"`

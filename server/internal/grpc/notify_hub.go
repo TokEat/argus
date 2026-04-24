@@ -1,6 +1,7 @@
 package grpc
 
 import (
+	"errors"
 	"log"
 	"sync"
 
@@ -22,6 +23,8 @@ type NotifyHub struct {
 	mu     sync.RWMutex
 	agents map[string]*agentConn // agentID → connection
 }
+
+var ErrAgentOffline = errors.New("agent is offline")
 
 // agentConn 单个 Agent 的连接状态
 type agentConn struct {
@@ -77,6 +80,41 @@ func (h *NotifyHub) OnlineAgentCount() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return len(h.agents)
+}
+
+// IsAgentOnline 返回指定 Agent 是否存在活跃 Subscribe 流连接。
+func (h *NotifyHub) IsAgentOnline(agentID string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	_, ok := h.agents[agentID]
+	return ok
+}
+
+// SendDebugCommand 通过现有 Subscribe 流向指定 Agent 下发 POC 调试命令。
+func (h *NotifyHub) SendDebugCommand(agentID string, cmd *pb.DebugCommand) error {
+	h.mu.RLock()
+	conn, ok := h.agents[agentID]
+	h.mu.RUnlock()
+
+	if !ok {
+		return ErrAgentOffline
+	}
+
+	notify := &pb.TaskNotify{
+		NotifyType:     "debug_command",
+		DebugCommand:   cmd,
+		AvailableTasks: 0,
+	}
+
+	conn.sendMu.Lock()
+	err := conn.stream.Send(notify)
+	conn.sendMu.Unlock()
+	if err != nil {
+		log.Printf("[NotifyHub] Failed to send debug command to Agent %s: %v", agentID, err)
+		return err
+	}
+
+	return nil
 }
 
 // BroadcastNewTask 新任务入队后广播通知所有有空闲容量的 Agent。

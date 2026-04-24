@@ -85,6 +85,7 @@ func validateAgentPSK(c *gin.Context) bool {
 // SetNotifyHub 注入 gRPC NotifyHub 引用，用于 createTask 后广播通知 Agent
 func SetNotifyHub(hub *grpcpkg.NotifyHub) {
 	notifyHub = hub
+	db.DebugEventHook = handleAgentDebugEvent
 }
 
 func currentTenantID(c *gin.Context) string {
@@ -287,8 +288,10 @@ func InitRouter(port string) {
 		api.GET("/agents/:id/commands", getAgentCommands)
 
 		// Arsenal 弹药库热发车网关与审核墙
+		api.POST("/arsenals/:type", debugPocGateway)
 		api.GET("/arsenals/:type", getArsenals)
 		api.POST("/arsenals/:type/:filename", saveArsenal)
+		api.POST("/arsenals/:type/:filename/cancel", cancelDebugSessionGateway)
 		api.POST("/arsenals/:type/:filename/approve", approveArsenal)
 		api.POST("/arsenals/ai/analyze", aiAnalyzeArsenal)
 		api.DELETE("/arsenals/:type/:filename", deleteArsenal)
@@ -1024,12 +1027,12 @@ func deleteTask(c *gin.Context) {
 	tenantID := currentTenantID(c)
 	db.DB.Delete(&db.RootTask{}, "id = ? AND tenant_id = ?", id, tenantID)
 	db.DB.Delete(&db.SubTask{}, "root_task_id = ? AND tenant_id = ?", id, tenantID)
-	
+
 	// 删除任务关联的扫描结果
 	db.DB.Where("root_task_id = ? AND tenant_id = ?", id, tenantID).Delete(&db.Asset{})
 	db.DB.Where("root_task_id = ? AND tenant_id = ?", id, tenantID).Delete(&db.FingerprintHit{})
 	db.DB.Where("root_task_id = ? AND tenant_id = ?", id, tenantID).Delete(&db.Vulnerability{})
-	
+
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }
 
