@@ -219,6 +219,33 @@ declare namespace API {
     UpdatedAt: string;
   }
 
+  interface DebugPocRequest {
+    agent_id: string;
+    poc_content: string;
+    target_url: string;
+    proxy?: string;
+    timeout_sec?: number;
+  }
+
+  interface DebugEvent {
+    type: 'debug_log' | 'debug_result' | 'debug_complete';
+    session_id: string;
+    agent_id?: string;
+    tenant_id?: string;
+    timestamp: number;
+    level?: string;
+    message?: string;
+    matched?: boolean;
+    template_id?: string;
+    severity?: string;
+    matched_at?: string;
+    request?: string;
+    response?: string;
+    extracted?: string[];
+    duration_ms?: number;
+    error?: string;
+  }
+
   // ======================== Dictionary API ========================
 
   interface WorkflowItem {

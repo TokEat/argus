@@ -78,6 +78,9 @@ type RegisterReq struct {
 	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`                                                      // 节点唯一ID (可以由云主机的 instance_id 充当)
 	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`                                                                     // dddd-agent 版本
 	Tags          map[string]string      `protobuf:"bytes,3,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // 节点标签能力
+	Os            string                 `protobuf:"bytes,4,opt,name=os,proto3" json:"os,omitempty"`                                                                               // 节点操作系统
+	Arch          string                 `protobuf:"bytes,5,opt,name=arch,proto3" json:"arch,omitempty"`                                                                           // 节点架构
+	Capacity      int32                  `protobuf:"varint,6,opt,name=capacity,proto3" json:"capacity,omitempty"`                                                                  // 节点最大并发能力(max_workers)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -133,6 +136,27 @@ func (x *RegisterReq) GetTags() map[string]string {
 	return nil
 }
 
+func (x *RegisterReq) GetOs() string {
+	if x != nil {
+		return x.Os
+	}
+	return ""
+}
+
+func (x *RegisterReq) GetArch() string {
+	if x != nil {
+		return x.Arch
+	}
+	return ""
+}
+
+func (x *RegisterReq) GetCapacity() int32 {
+	if x != nil {
+		return x.Capacity
+	}
+	return 0
+}
+
 type RegisterResp struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
@@ -186,13 +210,16 @@ func (x *RegisterResp) GetToken() string {
 }
 
 type HeartbeatReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
-	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`                                  // 节点当前状态：IDLE, RUNNING...
-	RuleVersion   string                 `protobuf:"bytes,3,opt,name=rule_version,json=ruleVersion,proto3" json:"rule_version,omitempty"`     // Agent 当前规则版本号
-	RunningTasks  int32                  `protobuf:"varint,4,opt,name=running_tasks,json=runningTasks,proto3" json:"running_tasks,omitempty"` // Agent 当前运行中任务数
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	AgentId        string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	Status         string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`                                         // 节点当前状态：IDLE, RUNNING...
+	RuleVersion    string                 `protobuf:"bytes,3,opt,name=rule_version,json=ruleVersion,proto3" json:"rule_version,omitempty"`            // Agent 当前规则版本号
+	RunningTasks   int32                  `protobuf:"varint,4,opt,name=running_tasks,json=runningTasks,proto3" json:"running_tasks,omitempty"`        // Agent 当前运行中任务数
+	RunningTaskIds []string               `protobuf:"bytes,5,rep,name=running_task_ids,json=runningTaskIds,proto3" json:"running_task_ids,omitempty"` // Agent 当前正在执行的子任务ID列表
+	CpuUsage       float32                `protobuf:"fixed32,6,opt,name=cpu_usage,json=cpuUsage,proto3" json:"cpu_usage,omitempty"`                   // CPU 使用率 0-100
+	MemUsage       float32                `protobuf:"fixed32,7,opt,name=mem_usage,json=memUsage,proto3" json:"mem_usage,omitempty"`                   // 内存 使用率 0-100
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *HeartbeatReq) Reset() {
@@ -253,13 +280,36 @@ func (x *HeartbeatReq) GetRunningTasks() int32 {
 	return 0
 }
 
+func (x *HeartbeatReq) GetRunningTaskIds() []string {
+	if x != nil {
+		return x.RunningTaskIds
+	}
+	return nil
+}
+
+func (x *HeartbeatReq) GetCpuUsage() float32 {
+	if x != nil {
+		return x.CpuUsage
+	}
+	return 0
+}
+
+func (x *HeartbeatReq) GetMemUsage() float32 {
+	if x != nil {
+		return x.MemUsage
+	}
+	return 0
+}
+
 type HeartbeatResp struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Ack             bool                   `protobuf:"varint,1,opt,name=ack,proto3" json:"ack,omitempty"`
 	ShouldTerminate bool                   `protobuf:"varint,2,opt,name=should_terminate,json=shouldTerminate,proto3" json:"should_terminate,omitempty"`   // Server有权要求节点退出（例如竞价实例即将被回收或者资源充裕）
 	ShouldSyncRules bool                   `protobuf:"varint,3,opt,name=should_sync_rules,json=shouldSyncRules,proto3" json:"should_sync_rules,omitempty"` // 通知 Agent 需要同步规则（替代 HTTP 轮询）
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// tasks_available 心跳响应中携带队列任务数，Agent 据此决定是否发起 ClaimTask
+	TasksAvailable int32 `protobuf:"varint,4,opt,name=tasks_available,json=tasksAvailable,proto3" json:"tasks_available,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *HeartbeatResp) Reset() {
@@ -313,6 +363,13 @@ func (x *HeartbeatResp) GetShouldSyncRules() bool {
 	return false
 }
 
+func (x *HeartbeatResp) GetTasksAvailable() int32 {
+	if x != nil {
+		return x.TasksAvailable
+	}
+	return 0
+}
+
 type FetchTaskReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
@@ -357,6 +414,290 @@ func (x *FetchTaskReq) GetAgentId() string {
 	return ""
 }
 
+// AgentSignal Agent→Server 的信号（通过 Subscribe 流上行）
+type AgentSignal struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	FreeSlots     int32                  `protobuf:"varint,2,opt,name=free_slots,json=freeSlots,proto3" json:"free_slots,omitempty"`   // 当前空闲 worker 数量
+	SignalType    string                 `protobuf:"bytes,3,opt,name=signal_type,json=signalType,proto3" json:"signal_type,omitempty"` // "ready" | "capacity_update" | "ping"
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AgentSignal) Reset() {
+	*x = AgentSignal{}
+	mi := &file_proto_scan_agent_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AgentSignal) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AgentSignal) ProtoMessage() {}
+
+func (x *AgentSignal) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_scan_agent_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AgentSignal.ProtoReflect.Descriptor instead.
+func (*AgentSignal) Descriptor() ([]byte, []int) {
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *AgentSignal) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *AgentSignal) GetFreeSlots() int32 {
+	if x != nil {
+		return x.FreeSlots
+	}
+	return 0
+}
+
+func (x *AgentSignal) GetSignalType() string {
+	if x != nil {
+		return x.SignalType
+	}
+	return ""
+}
+
+// TaskNotify Server→Agent 的任务通知（通过 Subscribe 流下行）
+type TaskNotify struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	AvailableTasks int32                  `protobuf:"varint,1,opt,name=available_tasks,json=availableTasks,proto3" json:"available_tasks,omitempty"` // 队列中可领取的任务数
+	Priority       int32                  `protobuf:"varint,2,opt,name=priority,proto3" json:"priority,omitempty"`                                   // 最高优先级任务的级别
+	NotifyType     string                 `protobuf:"bytes,3,opt,name=notify_type,json=notifyType,proto3" json:"notify_type,omitempty"`              // "new_task" | "task_returned" | "heartbeat_check"
+	DebugCommand   *DebugCommand          `protobuf:"bytes,4,opt,name=debug_command,json=debugCommand,proto3" json:"debug_command,omitempty"`        // 可选：Server 定向下发的 POC debug 命令
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *TaskNotify) Reset() {
+	*x = TaskNotify{}
+	mi := &file_proto_scan_agent_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskNotify) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskNotify) ProtoMessage() {}
+
+func (x *TaskNotify) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_scan_agent_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskNotify.ProtoReflect.Descriptor instead.
+func (*TaskNotify) Descriptor() ([]byte, []int) {
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *TaskNotify) GetAvailableTasks() int32 {
+	if x != nil {
+		return x.AvailableTasks
+	}
+	return 0
+}
+
+func (x *TaskNotify) GetPriority() int32 {
+	if x != nil {
+		return x.Priority
+	}
+	return 0
+}
+
+func (x *TaskNotify) GetNotifyType() string {
+	if x != nil {
+		return x.NotifyType
+	}
+	return ""
+}
+
+func (x *TaskNotify) GetDebugCommand() *DebugCommand {
+	if x != nil {
+		return x.DebugCommand
+	}
+	return nil
+}
+
+// DebugCommand Server→Agent 的临时 POC 调试命令。
+type DebugCommand struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Action        string                 `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"` // "start_debug" | "cancel_debug"
+	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	TenantId      string                 `protobuf:"bytes,3,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	PocContent    string                 `protobuf:"bytes,4,opt,name=poc_content,json=pocContent,proto3" json:"poc_content,omitempty"`
+	TargetUrl     string                 `protobuf:"bytes,5,opt,name=target_url,json=targetUrl,proto3" json:"target_url,omitempty"`
+	Proxy         string                 `protobuf:"bytes,6,opt,name=proxy,proto3" json:"proxy,omitempty"`
+	TimeoutSec    int32                  `protobuf:"varint,7,opt,name=timeout_sec,json=timeoutSec,proto3" json:"timeout_sec,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DebugCommand) Reset() {
+	*x = DebugCommand{}
+	mi := &file_proto_scan_agent_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DebugCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DebugCommand) ProtoMessage() {}
+
+func (x *DebugCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_scan_agent_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DebugCommand.ProtoReflect.Descriptor instead.
+func (*DebugCommand) Descriptor() ([]byte, []int) {
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *DebugCommand) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *DebugCommand) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *DebugCommand) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *DebugCommand) GetPocContent() string {
+	if x != nil {
+		return x.PocContent
+	}
+	return ""
+}
+
+func (x *DebugCommand) GetTargetUrl() string {
+	if x != nil {
+		return x.TargetUrl
+	}
+	return ""
+}
+
+func (x *DebugCommand) GetProxy() string {
+	if x != nil {
+		return x.Proxy
+	}
+	return ""
+}
+
+func (x *DebugCommand) GetTimeoutSec() int32 {
+	if x != nil {
+		return x.TimeoutSec
+	}
+	return 0
+}
+
+// ClaimTaskReq Agent 主动认领任务的请求
+type ClaimTaskReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	FreeSlots     int32                  `protobuf:"varint,2,opt,name=free_slots,json=freeSlots,proto3" json:"free_slots,omitempty"`                                               // 当前空闲 worker 数，用于批量认领决策
+	Tags          map[string]string      `protobuf:"bytes,3,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // 节点标签，用于标签路由匹配
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClaimTaskReq) Reset() {
+	*x = ClaimTaskReq{}
+	mi := &file_proto_scan_agent_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClaimTaskReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClaimTaskReq) ProtoMessage() {}
+
+func (x *ClaimTaskReq) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_scan_agent_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClaimTaskReq.ProtoReflect.Descriptor instead.
+func (*ClaimTaskReq) Descriptor() ([]byte, []int) {
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ClaimTaskReq) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *ClaimTaskReq) GetFreeSlots() int32 {
+	if x != nil {
+		return x.FreeSlots
+	}
+	return 0
+}
+
+func (x *ClaimTaskReq) GetTags() map[string]string {
+	if x != nil {
+		return x.Tags
+	}
+	return nil
+}
+
 type Task struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
@@ -370,7 +711,7 @@ type Task struct {
 
 func (x *Task) Reset() {
 	*x = Task{}
-	mi := &file_proto_scan_agent_proto_msgTypes[6]
+	mi := &file_proto_scan_agent_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -382,7 +723,7 @@ func (x *Task) String() string {
 func (*Task) ProtoMessage() {}
 
 func (x *Task) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[6]
+	mi := &file_proto_scan_agent_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -395,7 +736,7 @@ func (x *Task) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Task.ProtoReflect.Descriptor instead.
 func (*Task) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{6}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Task) GetTaskId() string {
@@ -447,7 +788,7 @@ type ScanResult struct {
 
 func (x *ScanResult) Reset() {
 	*x = ScanResult{}
-	mi := &file_proto_scan_agent_proto_msgTypes[7]
+	mi := &file_proto_scan_agent_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -459,7 +800,7 @@ func (x *ScanResult) String() string {
 func (*ScanResult) ProtoMessage() {}
 
 func (x *ScanResult) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[7]
+	mi := &file_proto_scan_agent_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -472,7 +813,7 @@ func (x *ScanResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScanResult.ProtoReflect.Descriptor instead.
 func (*ScanResult) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{7}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ScanResult) GetTaskId() string {
@@ -515,7 +856,7 @@ type TaskCompleteReq struct {
 
 func (x *TaskCompleteReq) Reset() {
 	*x = TaskCompleteReq{}
-	mi := &file_proto_scan_agent_proto_msgTypes[8]
+	mi := &file_proto_scan_agent_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -527,7 +868,7 @@ func (x *TaskCompleteReq) String() string {
 func (*TaskCompleteReq) ProtoMessage() {}
 
 func (x *TaskCompleteReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[8]
+	mi := &file_proto_scan_agent_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -540,7 +881,7 @@ func (x *TaskCompleteReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskCompleteReq.ProtoReflect.Descriptor instead.
 func (*TaskCompleteReq) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{8}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *TaskCompleteReq) GetAgentId() string {
@@ -580,7 +921,7 @@ type EmergencyReq struct {
 
 func (x *EmergencyReq) Reset() {
 	*x = EmergencyReq{}
-	mi := &file_proto_scan_agent_proto_msgTypes[9]
+	mi := &file_proto_scan_agent_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -592,7 +933,7 @@ func (x *EmergencyReq) String() string {
 func (*EmergencyReq) ProtoMessage() {}
 
 func (x *EmergencyReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[9]
+	mi := &file_proto_scan_agent_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -605,7 +946,7 @@ func (x *EmergencyReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EmergencyReq.ProtoReflect.Descriptor instead.
 func (*EmergencyReq) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{9}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *EmergencyReq) GetAgentId() string {
@@ -627,7 +968,7 @@ type LogPayload struct {
 
 func (x *LogPayload) Reset() {
 	*x = LogPayload{}
-	mi := &file_proto_scan_agent_proto_msgTypes[10]
+	mi := &file_proto_scan_agent_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -639,7 +980,7 @@ func (x *LogPayload) String() string {
 func (*LogPayload) ProtoMessage() {}
 
 func (x *LogPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[10]
+	mi := &file_proto_scan_agent_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -652,7 +993,7 @@ func (x *LogPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogPayload.ProtoReflect.Descriptor instead.
 func (*LogPayload) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{10}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *LogPayload) GetAgentId() string {
@@ -683,6 +1024,171 @@ func (x *LogPayload) GetTimestamp() int64 {
 	return 0
 }
 
+// DebugEvent Agent→Server 的 POC 调试事件。
+type DebugEvent struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	TenantId      string                 `protobuf:"bytes,2,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	SessionId     string                 `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Type          string                 `protobuf:"bytes,4,opt,name=type,proto3" json:"type,omitempty"` // debug_log | debug_result | debug_complete
+	Timestamp     int64                  `protobuf:"varint,5,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	Level         string                 `protobuf:"bytes,6,opt,name=level,proto3" json:"level,omitempty"`
+	Message       string                 `protobuf:"bytes,7,opt,name=message,proto3" json:"message,omitempty"`
+	Matched       bool                   `protobuf:"varint,8,opt,name=matched,proto3" json:"matched,omitempty"`
+	TemplateId    string                 `protobuf:"bytes,9,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
+	Severity      string                 `protobuf:"bytes,10,opt,name=severity,proto3" json:"severity,omitempty"`
+	MatchedAt     string                 `protobuf:"bytes,11,opt,name=matched_at,json=matchedAt,proto3" json:"matched_at,omitempty"`
+	Request       string                 `protobuf:"bytes,12,opt,name=request,proto3" json:"request,omitempty"`
+	Response      string                 `protobuf:"bytes,13,opt,name=response,proto3" json:"response,omitempty"`
+	Extracted     []string               `protobuf:"bytes,14,rep,name=extracted,proto3" json:"extracted,omitempty"`
+	DurationMs    int64                  `protobuf:"varint,15,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	Error         string                 `protobuf:"bytes,16,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DebugEvent) Reset() {
+	*x = DebugEvent{}
+	mi := &file_proto_scan_agent_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DebugEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DebugEvent) ProtoMessage() {}
+
+func (x *DebugEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_scan_agent_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DebugEvent.ProtoReflect.Descriptor instead.
+func (*DebugEvent) Descriptor() ([]byte, []int) {
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *DebugEvent) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *DebugEvent) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *DebugEvent) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *DebugEvent) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *DebugEvent) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *DebugEvent) GetLevel() string {
+	if x != nil {
+		return x.Level
+	}
+	return ""
+}
+
+func (x *DebugEvent) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *DebugEvent) GetMatched() bool {
+	if x != nil {
+		return x.Matched
+	}
+	return false
+}
+
+func (x *DebugEvent) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
+	}
+	return ""
+}
+
+func (x *DebugEvent) GetSeverity() string {
+	if x != nil {
+		return x.Severity
+	}
+	return ""
+}
+
+func (x *DebugEvent) GetMatchedAt() string {
+	if x != nil {
+		return x.MatchedAt
+	}
+	return ""
+}
+
+func (x *DebugEvent) GetRequest() string {
+	if x != nil {
+		return x.Request
+	}
+	return ""
+}
+
+func (x *DebugEvent) GetResponse() string {
+	if x != nil {
+		return x.Response
+	}
+	return ""
+}
+
+func (x *DebugEvent) GetExtracted() []string {
+	if x != nil {
+		return x.Extracted
+	}
+	return nil
+}
+
+func (x *DebugEvent) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+func (x *DebugEvent) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 var File_proto_scan_agent_proto protoreflect.FileDescriptor
 
 const file_proto_scan_agent_proto_rawDesc = "" +
@@ -690,28 +1196,68 @@ const file_proto_scan_agent_proto_rawDesc = "" +
 	"\x16proto/scan/agent.proto\x12\x04scan\"9\n" +
 	"\x03Ack\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\xac\x01\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xec\x01\n" +
 	"\vRegisterReq\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12/\n" +
-	"\x04tags\x18\x03 \x03(\v2\x1b.scan.RegisterReq.TagsEntryR\x04tags\x1a7\n" +
+	"\x04tags\x18\x03 \x03(\v2\x1b.scan.RegisterReq.TagsEntryR\x04tags\x12\x0e\n" +
+	"\x02os\x18\x04 \x01(\tR\x02os\x12\x12\n" +
+	"\x04arch\x18\x05 \x01(\tR\x04arch\x12\x1a\n" +
+	"\bcapacity\x18\x06 \x01(\x05R\bcapacity\x1a7\n" +
 	"\tTagsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\">\n" +
 	"\fRegisterResp\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\tR\x05token\"\x89\x01\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"\xed\x01\n" +
 	"\fHeartbeatReq\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12!\n" +
 	"\frule_version\x18\x03 \x01(\tR\vruleVersion\x12#\n" +
-	"\rrunning_tasks\x18\x04 \x01(\x05R\frunningTasks\"x\n" +
+	"\rrunning_tasks\x18\x04 \x01(\x05R\frunningTasks\x12(\n" +
+	"\x10running_task_ids\x18\x05 \x03(\tR\x0erunningTaskIds\x12\x1b\n" +
+	"\tcpu_usage\x18\x06 \x01(\x02R\bcpuUsage\x12\x1b\n" +
+	"\tmem_usage\x18\a \x01(\x02R\bmemUsage\"\xa1\x01\n" +
 	"\rHeartbeatResp\x12\x10\n" +
 	"\x03ack\x18\x01 \x01(\bR\x03ack\x12)\n" +
 	"\x10should_terminate\x18\x02 \x01(\bR\x0fshouldTerminate\x12*\n" +
-	"\x11should_sync_rules\x18\x03 \x01(\bR\x0fshouldSyncRules\")\n" +
+	"\x11should_sync_rules\x18\x03 \x01(\bR\x0fshouldSyncRules\x12'\n" +
+	"\x0ftasks_available\x18\x04 \x01(\x05R\x0etasksAvailable\")\n" +
 	"\fFetchTaskReq\x12\x19\n" +
-	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\x8e\x01\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\"h\n" +
+	"\vAgentSignal\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1d\n" +
+	"\n" +
+	"free_slots\x18\x02 \x01(\x05R\tfreeSlots\x12\x1f\n" +
+	"\vsignal_type\x18\x03 \x01(\tR\n" +
+	"signalType\"\xab\x01\n" +
+	"\n" +
+	"TaskNotify\x12'\n" +
+	"\x0favailable_tasks\x18\x01 \x01(\x05R\x0eavailableTasks\x12\x1a\n" +
+	"\bpriority\x18\x02 \x01(\x05R\bpriority\x12\x1f\n" +
+	"\vnotify_type\x18\x03 \x01(\tR\n" +
+	"notifyType\x127\n" +
+	"\rdebug_command\x18\x04 \x01(\v2\x12.scan.DebugCommandR\fdebugCommand\"\xd9\x01\n" +
+	"\fDebugCommand\x12\x16\n" +
+	"\x06action\x18\x01 \x01(\tR\x06action\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x1b\n" +
+	"\ttenant_id\x18\x03 \x01(\tR\btenantId\x12\x1f\n" +
+	"\vpoc_content\x18\x04 \x01(\tR\n" +
+	"pocContent\x12\x1d\n" +
+	"\n" +
+	"target_url\x18\x05 \x01(\tR\ttargetUrl\x12\x14\n" +
+	"\x05proxy\x18\x06 \x01(\tR\x05proxy\x12\x1f\n" +
+	"\vtimeout_sec\x18\a \x01(\x05R\n" +
+	"timeoutSec\"\xb3\x01\n" +
+	"\fClaimTaskReq\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1d\n" +
+	"\n" +
+	"free_slots\x18\x02 \x01(\x05R\tfreeSlots\x120\n" +
+	"\x04tags\x18\x03 \x03(\v2\x1c.scan.ClaimTaskReq.TagsEntryR\x04tags\x1a7\n" +
+	"\tTagsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8e\x01\n" +
 	"\x04Task\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x18\n" +
 	"\atargets\x18\x02 \x03(\tR\atargets\x12\x16\n" +
@@ -737,17 +1283,44 @@ const file_proto_scan_agent_proto_rawDesc = "" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x14\n" +
 	"\x05level\x18\x02 \x01(\tR\x05level\x12\x18\n" +
 	"\amessage\x18\x03 \x01(\tR\amessage\x12\x1c\n" +
-	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp2\xe2\x02\n" +
+	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp\"\xc6\x03\n" +
+	"\n" +
+	"DebugEvent\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1b\n" +
+	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x03 \x01(\tR\tsessionId\x12\x12\n" +
+	"\x04type\x18\x04 \x01(\tR\x04type\x12\x1c\n" +
+	"\ttimestamp\x18\x05 \x01(\x03R\ttimestamp\x12\x14\n" +
+	"\x05level\x18\x06 \x01(\tR\x05level\x12\x18\n" +
+	"\amessage\x18\a \x01(\tR\amessage\x12\x18\n" +
+	"\amatched\x18\b \x01(\bR\amatched\x12\x1f\n" +
+	"\vtemplate_id\x18\t \x01(\tR\n" +
+	"templateId\x12\x1a\n" +
+	"\bseverity\x18\n" +
+	" \x01(\tR\bseverity\x12\x1d\n" +
+	"\n" +
+	"matched_at\x18\v \x01(\tR\tmatchedAt\x12\x18\n" +
+	"\arequest\x18\f \x01(\tR\arequest\x12\x1a\n" +
+	"\bresponse\x18\r \x01(\tR\bresponse\x12\x1c\n" +
+	"\textracted\x18\x0e \x03(\tR\textracted\x12\x1f\n" +
+	"\vduration_ms\x18\x0f \x01(\x03R\n" +
+	"durationMs\x12\x14\n" +
+	"\x05error\x18\x10 \x01(\tR\x05error2\xf3\x03\n" +
 	"\fAgentService\x121\n" +
 	"\bRegister\x12\x11.scan.RegisterReq\x1a\x12.scan.RegisterResp\x124\n" +
-	"\tHeartbeat\x12\x12.scan.HeartbeatReq\x1a\x13.scan.HeartbeatResp\x12+\n" +
+	"\tHeartbeat\x12\x12.scan.HeartbeatReq\x1a\x13.scan.HeartbeatResp\x124\n" +
+	"\tSubscribe\x12\x11.scan.AgentSignal\x1a\x10.scan.TaskNotify(\x010\x01\x12+\n" +
+	"\tClaimTask\x12\x12.scan.ClaimTaskReq\x1a\n" +
+	".scan.Task\x12+\n" +
 	"\tFetchTask\x12\x12.scan.FetchTaskReq\x1a\n" +
 	".scan.Task\x12-\n" +
 	"\fStreamResult\x12\x10.scan.ScanResult\x1a\t.scan.Ack(\x01\x120\n" +
 	"\fTaskComplete\x12\x15.scan.TaskCompleteReq\x1a\t.scan.Ack\x12.\n" +
 	"\rEmergencyDump\x12\x12.scan.EmergencyReq\x1a\t.scan.Ack\x12+\n" +
 	"\n" +
-	"StreamLogs\x12\x10.scan.LogPayload\x1a\t.scan.Ack(\x01B$Z\"github.com/user/dddd-proto/go/scanb\x06proto3"
+	"StreamLogs\x12\x10.scan.LogPayload\x1a\t.scan.Ack(\x01\x12,\n" +
+	"\vStreamDebug\x12\x10.scan.DebugEvent\x1a\t.scan.Ack(\x01B$Z\"github.com/user/dddd-proto/go/scanb\x06proto3"
 
 var (
 	file_proto_scan_agent_proto_rawDescOnce sync.Once
@@ -761,7 +1334,7 @@ func file_proto_scan_agent_proto_rawDescGZIP() []byte {
 	return file_proto_scan_agent_proto_rawDescData
 }
 
-var file_proto_scan_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_proto_scan_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_proto_scan_agent_proto_goTypes = []any{
 	(*Ack)(nil),             // 0: scan.Ack
 	(*RegisterReq)(nil),     // 1: scan.RegisterReq
@@ -769,34 +1342,48 @@ var file_proto_scan_agent_proto_goTypes = []any{
 	(*HeartbeatReq)(nil),    // 3: scan.HeartbeatReq
 	(*HeartbeatResp)(nil),   // 4: scan.HeartbeatResp
 	(*FetchTaskReq)(nil),    // 5: scan.FetchTaskReq
-	(*Task)(nil),            // 6: scan.Task
-	(*ScanResult)(nil),      // 7: scan.ScanResult
-	(*TaskCompleteReq)(nil), // 8: scan.TaskCompleteReq
-	(*EmergencyReq)(nil),    // 9: scan.EmergencyReq
-	(*LogPayload)(nil),      // 10: scan.LogPayload
-	nil,                     // 11: scan.RegisterReq.TagsEntry
+	(*AgentSignal)(nil),     // 6: scan.AgentSignal
+	(*TaskNotify)(nil),      // 7: scan.TaskNotify
+	(*DebugCommand)(nil),    // 8: scan.DebugCommand
+	(*ClaimTaskReq)(nil),    // 9: scan.ClaimTaskReq
+	(*Task)(nil),            // 10: scan.Task
+	(*ScanResult)(nil),      // 11: scan.ScanResult
+	(*TaskCompleteReq)(nil), // 12: scan.TaskCompleteReq
+	(*EmergencyReq)(nil),    // 13: scan.EmergencyReq
+	(*LogPayload)(nil),      // 14: scan.LogPayload
+	(*DebugEvent)(nil),      // 15: scan.DebugEvent
+	nil,                     // 16: scan.RegisterReq.TagsEntry
+	nil,                     // 17: scan.ClaimTaskReq.TagsEntry
 }
 var file_proto_scan_agent_proto_depIdxs = []int32{
-	11, // 0: scan.RegisterReq.tags:type_name -> scan.RegisterReq.TagsEntry
-	1,  // 1: scan.AgentService.Register:input_type -> scan.RegisterReq
-	3,  // 2: scan.AgentService.Heartbeat:input_type -> scan.HeartbeatReq
-	5,  // 3: scan.AgentService.FetchTask:input_type -> scan.FetchTaskReq
-	7,  // 4: scan.AgentService.StreamResult:input_type -> scan.ScanResult
-	8,  // 5: scan.AgentService.TaskComplete:input_type -> scan.TaskCompleteReq
-	9,  // 6: scan.AgentService.EmergencyDump:input_type -> scan.EmergencyReq
-	10, // 7: scan.AgentService.StreamLogs:input_type -> scan.LogPayload
-	2,  // 8: scan.AgentService.Register:output_type -> scan.RegisterResp
-	4,  // 9: scan.AgentService.Heartbeat:output_type -> scan.HeartbeatResp
-	6,  // 10: scan.AgentService.FetchTask:output_type -> scan.Task
-	0,  // 11: scan.AgentService.StreamResult:output_type -> scan.Ack
-	0,  // 12: scan.AgentService.TaskComplete:output_type -> scan.Ack
-	0,  // 13: scan.AgentService.EmergencyDump:output_type -> scan.Ack
-	0,  // 14: scan.AgentService.StreamLogs:output_type -> scan.Ack
-	8,  // [8:15] is the sub-list for method output_type
-	1,  // [1:8] is the sub-list for method input_type
-	1,  // [1:1] is the sub-list for extension type_name
-	1,  // [1:1] is the sub-list for extension extendee
-	0,  // [0:1] is the sub-list for field type_name
+	16, // 0: scan.RegisterReq.tags:type_name -> scan.RegisterReq.TagsEntry
+	8,  // 1: scan.TaskNotify.debug_command:type_name -> scan.DebugCommand
+	17, // 2: scan.ClaimTaskReq.tags:type_name -> scan.ClaimTaskReq.TagsEntry
+	1,  // 3: scan.AgentService.Register:input_type -> scan.RegisterReq
+	3,  // 4: scan.AgentService.Heartbeat:input_type -> scan.HeartbeatReq
+	6,  // 5: scan.AgentService.Subscribe:input_type -> scan.AgentSignal
+	9,  // 6: scan.AgentService.ClaimTask:input_type -> scan.ClaimTaskReq
+	5,  // 7: scan.AgentService.FetchTask:input_type -> scan.FetchTaskReq
+	11, // 8: scan.AgentService.StreamResult:input_type -> scan.ScanResult
+	12, // 9: scan.AgentService.TaskComplete:input_type -> scan.TaskCompleteReq
+	13, // 10: scan.AgentService.EmergencyDump:input_type -> scan.EmergencyReq
+	14, // 11: scan.AgentService.StreamLogs:input_type -> scan.LogPayload
+	15, // 12: scan.AgentService.StreamDebug:input_type -> scan.DebugEvent
+	2,  // 13: scan.AgentService.Register:output_type -> scan.RegisterResp
+	4,  // 14: scan.AgentService.Heartbeat:output_type -> scan.HeartbeatResp
+	7,  // 15: scan.AgentService.Subscribe:output_type -> scan.TaskNotify
+	10, // 16: scan.AgentService.ClaimTask:output_type -> scan.Task
+	10, // 17: scan.AgentService.FetchTask:output_type -> scan.Task
+	0,  // 18: scan.AgentService.StreamResult:output_type -> scan.Ack
+	0,  // 19: scan.AgentService.TaskComplete:output_type -> scan.Ack
+	0,  // 20: scan.AgentService.EmergencyDump:output_type -> scan.Ack
+	0,  // 21: scan.AgentService.StreamLogs:output_type -> scan.Ack
+	0,  // 22: scan.AgentService.StreamDebug:output_type -> scan.Ack
+	13, // [13:23] is the sub-list for method output_type
+	3,  // [3:13] is the sub-list for method input_type
+	3,  // [3:3] is the sub-list for extension type_name
+	3,  // [3:3] is the sub-list for extension extendee
+	0,  // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_proto_scan_agent_proto_init() }
@@ -810,7 +1397,7 @@ func file_proto_scan_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_scan_agent_proto_rawDesc), len(file_proto_scan_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

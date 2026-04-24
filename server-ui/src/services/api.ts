@@ -187,6 +187,14 @@ export async function aiAnalyzeArsenal(content: string): Promise<{ suggestion: s
     return request.post('/arsenals/ai/analyze', { content });
 }
 
+export async function debugPoc(data: API.DebugPocRequest): Promise<{ session_id: string; status: string }> {
+    return request.post('/arsenals/debug', data);
+}
+
+export async function cancelDebugSession(sessionId: string): Promise<API.MessageResponse> {
+    return request.post(`/arsenals/debug/${encodeURIComponent(sessionId)}/cancel`);
+}
+
 // ===========================
 // Dictionary API
 // ===========================

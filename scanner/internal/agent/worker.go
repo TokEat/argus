@@ -149,6 +149,8 @@ var (
 	runScanTask    = engine.RunTask
 )
 
+const agentVersion = "v2.2.0"
+
 // Worker 是扫描节点的核心
 type Worker struct {
 	agentID      string
@@ -171,6 +173,10 @@ type Worker struct {
 
 	logTee *grpcTeeWriter
 	stopCh chan struct{}
+
+	debugMu      sync.Mutex
+	debugCancel  context.CancelFunc
+	debugSession string
 }
 
 func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[string]string) *Worker {
@@ -238,7 +244,7 @@ func (w *Worker) Start() error {
 	effectiveWorkers := w.effectiveWorkerCount()
 	_, err = w.client.Register(context.Background(), &pb.RegisterReq{
 		AgentId:  w.agentID,
-		Version:  "v2.1.0",
+		Version:  agentVersion,
 		Tags:     w.tags,
 		Os:       runtime.GOOS,
 		Arch:     runtime.GOARCH,
@@ -366,6 +372,11 @@ func (w *Worker) subscribeAndClaim(quit chan struct{}) {
 
 		log.Printf("[Subscribe] Received notification: type=%s, available=%d, priority=%d",
 			notify.NotifyType, notify.AvailableTasks, notify.Priority)
+
+		if notify.DebugCommand != nil {
+			w.handleDebugCommand(notify.DebugCommand)
+			continue
+		}
 
 		// 有空闲 worker 就立即去认领任务
 		w.claimAvailableTasks()

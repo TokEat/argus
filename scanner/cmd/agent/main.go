@@ -58,4 +58,3 @@ func main() {
 		log.Fatalf("Agent worker failed to start: %v", err)
 	}
 }
-

@@ -264,6 +264,10 @@ func (c *fakeAgentClient) StreamLogs(ctx context.Context, opts ...grpc.CallOptio
 	return nil, nil
 }
 
+func (c *fakeAgentClient) StreamDebug(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[pb.DebugEvent, pb.Ack], error) {
+	return nil, nil
+}
+
 type fakeResultStream struct {
 	sendErr  error
 	closeErr error
