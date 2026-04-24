@@ -242,7 +242,7 @@ func InitRouter(port string) {
 	go Hub.Start()
 
 	// 连接底层的实时推流 Hook
-	db.WSBroadcastHook = Hub.Broadcast
+	db.WSBroadcastHook = Hub.BroadcastToTenant
 
 	api := r.Group("/api/v1")
 	api.Use(TenantMiddleware())

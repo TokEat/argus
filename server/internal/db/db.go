@@ -16,7 +16,7 @@ import (
 var DB *gorm.DB
 
 // WSBroadcastHook is called to push real-time updates to connected WebSocket clients
-var WSBroadcastHook func(msg interface{})
+var WSBroadcastHook func(tenantID string, msg interface{})
 
 // DebugEventHook receives transient Agent-side POC debug events. These events
 // are intentionally not persisted with scan results.
@@ -619,7 +619,7 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 	}
 
 	if WSBroadcastHook != nil {
-		WSBroadcastHook(map[string]interface{}{
+		WSBroadcastHook(tenantID, map[string]interface{}{
 			"type":    payloadType,
 			"target":  target,
 			"payload": payloadJSON,
@@ -707,7 +707,7 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 	case "phase":
 		// Agent PhaseHook 发送的阶段进度事件，仅广播到 WebSocket，不入库
 		if WSBroadcastHook != nil {
-			WSBroadcastHook(map[string]interface{}{
+			WSBroadcastHook(tenantID, map[string]interface{}{
 				"type":    "phase",
 				"task_id": taskID,
 				"payload": payloadJSON,

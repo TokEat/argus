@@ -186,7 +186,7 @@ func debugPoc(c *gin.Context) {
 
 	go expireDebugSession(session)
 
-	Hub.Broadcast(map[string]interface{}{
+	Hub.BroadcastToTenant(tenantID, map[string]interface{}{
 		"type":       "debug_log",
 		"session_id": session.SessionID,
 		"agent_id":   req.AgentID,
@@ -221,7 +221,7 @@ func cancelDebugSession(c *gin.Context) {
 		return
 	}
 
-	Hub.Broadcast(map[string]interface{}{
+	Hub.BroadcastToTenant(session.TenantID, map[string]interface{}{
 		"type":       "debug_log",
 		"session_id": session.SessionID,
 		"agent_id":   session.AgentID,
@@ -259,7 +259,7 @@ func handleAgentDebugEvent(event *pb.DebugEvent) {
 		"duration_ms": event.DurationMs,
 		"error":       event.Error,
 	}
-	Hub.Broadcast(payload)
+	Hub.BroadcastToTenant(session.TenantID, payload)
 
 	if event.Type == "debug_complete" {
 		pocDebugSessions.finish(event.SessionId)
@@ -272,7 +272,7 @@ func expireDebugSession(session *debugSession) {
 		if _, ok := pocDebugSessions.get(session.SessionID); !ok {
 			return
 		}
-		Hub.Broadcast(map[string]interface{}{
+		Hub.BroadcastToTenant(session.TenantID, map[string]interface{}{
 			"type":        "debug_complete",
 			"session_id":  session.SessionID,
 			"agent_id":    session.AgentID,
