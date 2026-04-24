@@ -16,6 +16,7 @@ import {
     Divider,
     Badge,
     AutoComplete,
+    Alert,
 } from 'antd';
 import {
     PlusOutlined,
@@ -26,6 +27,7 @@ import {
     BugOutlined,
     CheckOutlined,
     WarningOutlined,
+    GlobalOutlined,
 } from '@ant-design/icons';
 import {
     addWorkflowDict,
@@ -44,6 +46,8 @@ interface WorkflowEditDrawerProps {
     open: boolean;
     /** 要编辑的 workflow product key；为空表示新建 */
     workflow?: API.WorkflowItem;
+    /** 是否为通用探测规则模式 */
+    isGeneralPoc?: boolean;
     onClose: () => void;
     onSaved?: () => void;
 }
@@ -57,9 +61,12 @@ interface WorkflowEditDrawerProps {
  * 一个 Drawer 内即可对 Workflow / Fingerprint / POC 三类弹药做修改，
  * 无需在多个 Tab 之间跳转。
  */
+const GENERAL_POC_PREFIX = 'General-Poc-';
+
 const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
     open,
     workflow,
+    isGeneralPoc: isGPMode = false,
     onClose,
     onSaved,
 }) => {
@@ -101,8 +108,11 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
         if (!open) return;
         loadRefData();
         if (isNew) {
-            form.setFieldsValue({ product: '', type: ['web'] });
-            setWatchedProduct('');
+            form.setFieldsValue({
+                product: isGPMode ? GENERAL_POC_PREFIX : '',
+                type: isGPMode ? ['root', 'base'] : ['web'],
+            });
+            setWatchedProduct(isGPMode ? GENERAL_POC_PREFIX : '');
             setPocsState([]);
         } else {
             form.setFieldsValue({
@@ -115,9 +125,11 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open, workflow]);
 
+    const isCurrentGP = watchedProduct.startsWith(GENERAL_POC_PREFIX);
+
     const fingerprintBound = useMemo(
-        () => !!watchedProduct && fingerprintProducts.has(watchedProduct),
-        [watchedProduct, fingerprintProducts],
+        () => !!watchedProduct && !isCurrentGP && fingerprintProducts.has(watchedProduct),
+        [watchedProduct, fingerprintProducts, isCurrentGP],
     );
 
     const handleSaveWorkflow = async () => {
@@ -264,8 +276,9 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
         <Drawer
             title={
                 <Space>
-                    <ApartmentOutlined style={{ color: '#8b5cf6' }} />
-                    <span>{isNew ? '新建 Workflow' : `编辑 Workflow — ${workflow?.product}`}</span>
+                    {isCurrentGP ? <GlobalOutlined style={{ color: '#f59e0b' }} /> : <ApartmentOutlined style={{ color: '#8b5cf6' }} />}
+                    <span>{isNew ? (isGPMode ? '新建通用探测规则' : '新建 Workflow') : `编辑 Workflow — ${workflow?.product}`}</span>
+                    {isCurrentGP && <Tag color="orange">全局探测</Tag>}
                 </Space>
             }
             open={open}
@@ -324,17 +337,50 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
                 </Form.Item>
 
                 <Form.Item
-                    label="触发阶段 (type)"
+                    label={
+                        <Tooltip title="决定 POC 作用于目标 URL 的哪个层级。可多选组合。">
+                            <span>触发阶段 (type)</span>
+                        </Tooltip>
+                    }
                     name="type"
-                    extra="常用值：web / tcp / udp。回车录入。"
+                    extra="控制 POC 模板作用于 URL 的哪些层级，可多选组合使用。"
                 >
-                    <Select mode="tags" placeholder="例：web" />
+                    <Select
+                        mode="multiple"
+                        placeholder="选择触发阶段"
+                        options={[
+                            { label: 'root — 根路径 (scheme://host)', value: 'root' },
+                            { label: 'base — 完整路径 (scheme://host/a/b/c)', value: 'base' },
+                            { label: 'dir — 逐级目录 (scheme://host/a, /a/b, ...)', value: 'dir' },
+                            { label: 'dir-fallback — 目录探测命中 200 时直接标记指纹', value: 'dir-fallback' },
+                        ]}
+                        optionRender={(option) => (
+                            <Tooltip title={
+                                option.value === 'root' ? '对目标的根路径发送 POC 请求，如 http://target/' :
+                                option.value === 'base' ? '对目标的完整发现路径发送 POC 请求，如 http://target/admin/login' :
+                                option.value === 'dir' ? '对目标路径的每一级父目录逐一发送 POC 请求，如 /admin → /, /admin' :
+                                '当主动目录探测命中 200 时，直接将该指纹标记到目标上，无需 finger 引擎二次验证'
+                            } placement="left">
+                                <span>{option.label}</span>
+                            </Tooltip>
+                        )}
+                    />
                 </Form.Item>
             </Form>
 
             <Divider style={{ margin: '4px 0 12px' }} />
 
-            {/* 2. 指纹绑定 */}
+            {/* 2. 指纹绑定 — General-Poc 模式下隐藏 */}
+            {isCurrentGP ? (
+                <Alert
+                    message="通用探测规则不依赖指纹识别，将对所有扫描目标自动生效"
+                    description="在 workflow.yaml 中以 General-Poc- 前缀命名的条目会被 mapper 自动识别为全局规则，无需指纹匹配即可触发关联的 POC 模板。"
+                    type="info"
+                    showIcon
+                    icon={<GlobalOutlined />}
+                    style={{ marginBottom: 12 }}
+                />
+            ) : (
             <Card
                 size="small"
                 style={{ marginBottom: 12 }}
@@ -383,6 +429,7 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
                     </div>
                 )}
             </Card>
+            )}
 
             {/* 3. POC 关联 */}
             <Card
