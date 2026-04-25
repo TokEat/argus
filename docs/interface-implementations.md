@@ -77,8 +77,6 @@
 | `POST` | `/arsenals/:type/:filename/approve` | 是 | 审批通过规则并递增 `rule_version` |
 | `POST` | `/arsenals/:type/:filename/rollback` | 是 | 交换当前版本与 `previous_hash`，回滚后重新置为 `Draft` 并递增 `rule_version` |
 | `DELETE` | `/arsenals/:type/:filename` | 是 | 删除规则记录 |
-| `POST` | `/ai/arsenal/analyze` | 是 | Server 侧 POC AI 审查：静态检查 + OpenAI-compatible LLM + 按内容 hash 缓存 |
-| `POST` | `/arsenals/ai/analyze` | 是 | 兼容旧前端的 POC AI 审查入口，内部转到真实分析逻辑 |
 | `GET` | `/arsenals/manifest` | 是 | 返回已审批规则清单、哈希和值班版本号 `rule_version` |
 
 ### Workflow / Fingerprint 字典
@@ -107,6 +105,17 @@
 | `DELETE` | `/mcp/keys/:id` | 是 | 删除对应 `SystemConfig.key` |
 | `GET` | `/ai/config` | 是 | 读取 Server 侧 AI 配置，API Key 脱敏返回，不下发 Agent |
 | `PUT` | `/ai/config` | 是 | 保存 Server 侧 AI 配置：`ai_base_url` / `ai_api_key` / `ai_model` |
+| `GET` | `/ai/models` | 是 | 请求配置的大模型网关，返回支持的模型列表；支持 url / key 动态探测重写 |
+| `POST` | `/ai/test` | 是 | 发送 ping 测试大模型连通性，返回连通状态与延时 |
+
+### AI Copilot 与工具链
+
+| 方法 | 路径 | 鉴权 | 当前实现 |
+|------|------|------|----------|
+| `POST` | `/ai/chat` | 是 | 全局 AI Copilot 聊天入口，接收 `messages` 和 `page_context`，流式返回 (SSE) Agent Loop 过程（含 ToolCalling 和最终回答） |
+| `POST` | `/ai/arsenal/analyze` | 是 | Server 侧 POC AI 审查：静态检查 + OpenAI-compatible LLM + 按内容 hash 缓存（同步版） |
+| `POST` | `/ai/arsenal/analyze/stream` | 是 | Server 侧 POC AI 审查：流式执行检查与大模型推理分析 (SSE) |
+| `POST` | `/arsenals/ai/analyze` | 是 | 兼容旧前端的 POC AI 审查入口，内部转到真实分析逻辑 |
 
 ### 云实例与构建
 

@@ -42,6 +42,8 @@
 | WebSocket Hub | 结果批量写入后的服务端广播 | `server/internal/api/ws.go` |
 | 报表导出 | 漏洞 CSV 导出 | `server/internal/api/router.go` |
 | 系统管理 | 用户 CRUD、MCP Key CRUD、构建产物列表、Agent 日志查询 | `server/internal/api/router.go` |
+| AI Copilot | 全局 AI 助手、多轮对话、流式输出、在线/离线 Agent 上下文感知 | `server/internal/ai/` `server/internal/api/ai_handlers.go` |
+| AI 工具链 (Tool Calling) | Nuclei 文档检索、知识库查询、POC 分析审查、执行诊断 | `server/internal/ai/tools_builtins.go` |
 
 ### 数据面 (Agent)
 
@@ -52,6 +54,7 @@
 | 任务取消中断 | `context.Cancel` 注入扫描上下文 | `scanner/internal/agent/worker.go` |
 | 并发框架 | Worker Pool 与引擎并发上限协同控制 | `scanner/internal/agent/worker.go` |
 | 增量规则同步框架 | 本地 Manifest / Hash 比对、差异下载、全量降级同步 | `scanner/internal/agent/worker.go` |
+| POC 调试拦截 | 拦截 Nuclei/GoPoc 调试请求响应，构建交织 Execution Trace | `scanner/internal/agent/debug.go` `scanner/lib/nuclei/pkg/tmplexec/exec.go` |
 
 ### 扫描引擎
 
@@ -77,9 +80,11 @@
 | TaskManagement | 任务创建 / 查询 / 取消 / 删除可用 |
 | TaskResults | 漏洞 / 资产 / 指纹结果查看可用 |
 | ProfilesView | 融合画像查询可用 |
-| POC / Workflow / Dir 配置页 | 可视化 CRUD 可用 |
+| POC / Workflow / Dir 配置页 | 可视化 CRUD 可用，已接入在线调试与 AI 辅助增强 |
 | UserManagement | 可用 |
 | McpConfig | 可用 |
+| AI Copilot | 全局 Drawer 交互，支持表格/多行引用/代码块渲染 |
+| AI Config | 大模型渠道、参数配置及连通性测试 |
 
 ---
 
@@ -88,7 +93,7 @@
 | 模块 | 当前现状 | 主要缺口 |
 |------|----------|----------|
 | Agent 控制链路 | `commandLoop`、规则同步、Manifest 增量下载代码都已写 | Agent 侧用匿名 `http.Get` 请求受 JWT 保护的 API；`Register` 返回的 token 仅为 `dummy_token_*`，且未被 Agent 使用，导致取消指令和规则热同步主链路未真正打通 |
-| WebSocket 实时看板 | 服务端广播 Hub 已可工作 | 前端用 `?token=` 建连，后端只认 `Authorization: Bearer`，浏览器实时订阅链路未闭环 |
+| WebSocket 实时看板 | 服务端广播 Hub 已可工作，已实现基于租户的数据隔离 | 前端用 `?token=` 建连，后端只认 `Authorization: Bearer`，浏览器实时订阅链路未完全对接 |
 | 优先级 / 标签 / 容量调度 | 多优先级队列、节点标签匹配、`capacity` 字段与负载展示均已存在 | 任务创建接口未暴露 `agent_selector`；Agent 无法向服务端上报容量，Server 注册时容量固定为 `1` |
 | 任务状态机 | `DONE` 场景可聚合 RootTask，`timeout_sec` / 重试已落地 | `FAILED` / `CANCELLED` / `TIMEOUT` 对 RootTask 的最终收敛仍不完整 |
 | 云资源编排 | `CloudProvider`、Docker Provider、阿里云 ECS Provider、`ResourceManager` 已实现 | 未接入 `main.go` 和真实调度链路；现有云实例 API 仍是 mock / 标记离线 |
@@ -97,7 +102,6 @@
 | 遥测日志黑匣子 | gRPC `StreamLogs` 服务端与查询接口已实现 | Agent 端没有日志上报发送器，前端也没有日志页面入口 |
 | Spot 回收处理 | `StartSpotTerminationListener` 已实现 | Agent 启动链路未调用该监听器 |
 | Dashboard 数据增强 | 趋势、严重度、任务结果统计、高危漏洞接口已实现 | Dashboard 图表仍有部分前端静态推算，未完全消费真实统计接口 |
-| AI 规则审查 | `/arsenals/ai/analyze` 已可返回建议 | 当前仅关键词启发式 mock，未接真实 LLM |
 | 角色权限系统 | RBAC 中间件已启用，用户角色字段可生效 | 角色管理页是静态说明页，没有角色 CRUD / 权限矩阵管理接口 |
 | Clean Architecture 迁移 | `core/usecase`、`adapters`、`bootstrap` 目录结构已搭好 | `/api/v2`、新 HTTP/gRPC adapter、仓储与 usecase 仍是 scaffold / `ErrNotImplemented` |
 
@@ -115,7 +119,6 @@
 | **对象存储层** | 报告文件、规则包、二进制产物的独立文件 / 对象存储 |
 | **租户治理** | 任务配额、并发额度、租户级资源限制 |
 | **EXP / GoPoc 元数据中心** | GoPoc / EXP 的动态索引、版本化、审核与管理 |
-| **真实 LLM 集成** | OpenAI / DeepSeek 等审查与建议能力接入 |
 
 ---
 
@@ -130,4 +133,3 @@
 | P1 | 接通遥测日志链路 | Agent 发送 `StreamLogs`，前端补日志查看页 |
 | P2 | 推进 Clean Architecture 迁移 | 逐步把 `router.go` 中的直接业务逻辑迁入 usecase / adapter |
 | P2 | 接入真实云资源编排 | 把 Docker / ECS Provider 挂到调度链路，而不是停留在独立实现 |
-| P3 | 接入真实 LLM | 用真实模型替换当前规则审查 mock |
