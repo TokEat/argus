@@ -29,13 +29,16 @@ var permissionRules = map[string]string{
 	"GET:/ws":           "viewer",
 
 	// 操作类 — operator 以上
-	"POST:/tasks":              "operator",
-	"POST:/tasks/*/cancel":     "operator",
-	"DELETE:/tasks/*":          "operator",
-	"POST:/arsenals/*":         "operator",
-	"DELETE:/arsenals/*":       "operator",
-	"POST:/ai/arsenal/analyze": "operator",
-	"POST:/build/client":       "operator",
+	"POST:/tasks":                     "operator",
+	"POST:/tasks/*/cancel":            "operator",
+	"DELETE:/tasks/*":                 "operator",
+	"POST:/arsenals/*":                "operator",
+	"POST:/arsenals/ai/analyze":       "operator",
+	"DELETE:/arsenals/*":              "operator",
+	"POST:/ai/arsenal/analyze":        "operator",
+	"POST:/ai/arsenal/analyze/stream": "operator",
+	"POST:/ai/chat":                   "operator",
+	"POST:/build/client":              "operator",
 
 	// 管理类 — admin only
 	"POST:/users":          "admin",
@@ -49,6 +52,8 @@ var permissionRules = map[string]string{
 	"PUT:/config/api-keys": "admin",
 	"GET:/ai/config":       "admin",
 	"PUT:/ai/config":       "admin",
+	"GET:/ai/models":       "admin",
+	"POST:/ai/test":        "admin",
 }
 
 // RBACMiddleware 基于角色的访问控制中间件

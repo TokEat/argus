@@ -287,13 +287,14 @@ func InitRouter(port string) {
 		api.POST("/nodes/clean", cleanOfflineNodes)
 		api.GET("/agents/:id/commands", getAgentCommands)
 
-		// Server-side AI analysis and configuration (not distributed to Agents)
+		// Server-side AI analysis and configuration
 		api.GET("/ai/config", getAIConfig)
 		api.PUT("/ai/config", saveAIConfig)
 		api.GET("/ai/models", listAIModels)
 		api.POST("/ai/test", testAIConnection)
 		api.POST("/ai/arsenal/analyze", analyzeArsenalWithAI)
 		api.POST("/ai/arsenal/analyze/stream", analyzeArsenalStream)
+		api.POST("/ai/chat", globalAIChat)
 
 		// Arsenal 弹药库热发车网关与审核墙
 		api.POST("/arsenals/ai/analyze", aiAnalyzeArsenal)

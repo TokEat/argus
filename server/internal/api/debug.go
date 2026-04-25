@@ -29,11 +29,12 @@ type debugRequest struct {
 }
 
 type debugSession struct {
-	SessionID string
-	TenantID  string
-	AgentID   string
-	StartedAt time.Time
-	Timeout   time.Duration
+	SessionID  string
+	TenantID   string
+	AgentID    string
+	StartedAt  time.Time
+	Timeout    time.Duration
+	ResultChan chan map[string]interface{}
 }
 
 type debugSessionManager struct {
@@ -47,7 +48,7 @@ var pocDebugSessions = &debugSessionManager{
 	activeTenant: make(map[string]string),
 }
 
-func (m *debugSessionManager) start(tenantID, agentID string, timeout time.Duration) (*debugSession, bool) {
+func (m *debugSessionManager) start(tenantID, agentID string, timeout time.Duration, resultChan chan map[string]interface{}) (*debugSession, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -56,12 +57,14 @@ func (m *debugSessionManager) start(tenantID, agentID string, timeout time.Durat
 	}
 
 	session := &debugSession{
-		SessionID: newDebugSessionID(),
-		TenantID:  tenantID,
-		AgentID:   agentID,
-		StartedAt: time.Now(),
-		Timeout:   timeout,
+		SessionID:  newDebugSessionID(),
+		TenantID:   tenantID,
+		AgentID:    agentID,
+		StartedAt:  time.Time{}, // handled below to ensure consistent timestamp
+		Timeout:    timeout,
+		ResultChan: resultChan,
 	}
+	session.StartedAt = time.Now()
 	m.sessions[session.SessionID] = session
 	m.activeTenant[tenantID] = session.SessionID
 	return session, true
@@ -163,7 +166,7 @@ func debugPoc(c *gin.Context) {
 		return
 	}
 
-	session, ok := pocDebugSessions.start(tenantID, req.AgentID, time.Duration(req.TimeoutSec)*time.Second)
+	session, ok := pocDebugSessions.start(tenantID, req.AgentID, time.Duration(req.TimeoutSec)*time.Second, nil)
 	if !ok {
 		c.JSON(http.StatusConflict, gin.H{"error": "tenant already has a running debug session"})
 		return
@@ -261,6 +264,10 @@ func handleAgentDebugEvent(event *pb.DebugEvent) {
 	}
 	Hub.BroadcastToTenant(session.TenantID, payload)
 
+	if session.ResultChan != nil && (event.Type == "debug_result" || event.Type == "debug_complete") {
+		session.ResultChan <- payload
+	}
+
 	if event.Type == "debug_complete" {
 		pocDebugSessions.finish(event.SessionId)
 	}
@@ -272,7 +279,7 @@ func expireDebugSession(session *debugSession) {
 		if _, ok := pocDebugSessions.get(session.SessionID); !ok {
 			return
 		}
-		Hub.BroadcastToTenant(session.TenantID, map[string]interface{}{
+		payload := map[string]interface{}{
 			"type":        "debug_complete",
 			"session_id":  session.SessionID,
 			"agent_id":    session.AgentID,
@@ -280,7 +287,11 @@ func expireDebugSession(session *debugSession) {
 			"timestamp":   time.Now().UnixMilli(),
 			"duration_ms": time.Since(session.StartedAt).Milliseconds(),
 			"error":       "debug session timed out waiting for agent completion",
-		})
+		}
+		Hub.BroadcastToTenant(session.TenantID, payload)
+		if session.ResultChan != nil {
+			session.ResultChan <- payload
+		}
 		pocDebugSessions.finish(session.SessionID)
 	}
 }
