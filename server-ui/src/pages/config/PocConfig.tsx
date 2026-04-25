@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Button, Space, Tag, Popconfirm, Modal, Typography, Input, Table, Empty, App, Tooltip, Segmented } from 'antd';
+import { Button, Space, Tag, Popconfirm, Modal, Drawer, Typography, Input, Table, Empty, App, Tooltip, Segmented } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     PlusOutlined,
@@ -11,15 +11,18 @@ import {
     LinkOutlined,
     DisconnectOutlined,
     WarningOutlined,
+    RobotOutlined,
 } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import type { ColumnsType } from 'antd/es/table';
-import { listArsenals, saveArsenal, deleteArsenal, approveArsenal, aiAnalyzeArsenal, getWorkflowDict } from '../../services/api';
+import { listArsenals, saveArsenal, deleteArsenal, approveArsenal, getWorkflowDict } from '../../services/api';
+import { useGlobalAI, useAutoContext } from '../../contexts/GlobalAIContext';
 import PocDebugPanel from './PocDebugPanel';
 
 const { Text } = Typography;
 
 const PocConfig: React.FC = () => {
+    const { visible, openGlobalAI, registerEditableTarget } = useGlobalAI();
     const [loading, setLoading] = useState(true);
     const [arsenals, setArsenals] = useState<API.Arsenal[]>([]);
     /** key: 不带后缀的 POC 名，value: 引用它的 workflow product 列表 */
@@ -32,6 +35,26 @@ const PocConfig: React.FC = () => {
     const [editorContent, setEditorContent] = useState('');
     const [newFileName, setNewFileName] = useState('');
     const [debugVisible, setDebugVisible] = useState(false);
+
+    useAutoContext(editorVisible ? {
+        action: 'editing_poc_in_modal',
+        file_name: isNew ? newFileName : currentArsenal?.FileName || 'untitled.yaml',
+        poc_content: editorContent,
+        editable_target: {
+            type: 'poc',
+            label: isNew ? newFileName : currentArsenal?.FileName || 'untitled.yaml'
+        }
+    } : {});
+
+    const handleDiagnose = (contextData: any) => {
+        setDebugVisible(false);
+        openGlobalAI({
+            module: 'poc_list',
+            action: 'debug',
+            raw_data: contextData,
+            file_name: isNew ? newFileName.trim() : currentArsenal?.FileName || ''
+        });
+    };
     const { message: msg } = App.useApp();
 
     const fetchData = async () => {
@@ -142,6 +165,33 @@ http:
         fetchData();
     };
 
+    const saveDraftFromAI = async () => {
+        const fileName = isNew ? newFileName.trim() : currentArsenal?.FileName || '';
+        if (!fileName) {
+            throw '请输入文件名';
+        }
+        if (isNew && duplicateOf) {
+            throw '文件名已存在，请使用编辑器底部保存按钮确认覆盖';
+        }
+        const finalName = fileName;
+        await saveArsenal('poc', finalName, editorContent);
+        msg.success(isNew ? (duplicateOf ? `POC ${finalName} 已覆盖（重置为草稿状态）` : 'POC 创建成功（草稿状态）') : 'POC 更新成功');
+        fetchData();
+    };
+
+    useEffect(() => {
+        if (!editorVisible) return undefined;
+        return registerEditableTarget({
+            id: 'poc-config-editor',
+            type: 'poc',
+            label: isNew ? newFileName || 'untitled.yaml' : currentArsenal?.FileName || 'untitled.yaml',
+            getContent: () => editorContent,
+            applyContent: (nextContent: string) => setEditorContent(nextContent),
+            saveDraft: saveDraftFromAI,
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [editorVisible, isNew, newFileName, currentArsenal?.FileName, editorContent, duplicateOf, registerEditableTarget]);
+
     const handleSave = async () => {
         try {
             const fileName = isNew ? newFileName.trim() : currentArsenal?.FileName || '';
@@ -198,23 +248,7 @@ http:
         }
     };
 
-    const handleAiAnalyze = async () => {
-        try {
-            const result = await aiAnalyzeArsenal(editorContent);
-            Modal.info({
-                title: 'AI 分析结果',
-                content: (
-                    <div>
-                        <p><strong>建议：</strong><Tag color={result.suggestion === 'Approve' ? 'green' : 'red'}>{result.suggestion}</Tag></p>
-                        <p><strong>原因：</strong>{result.reason}</p>
-                        <p><strong>置信度：</strong>{(result.confidence * 100).toFixed(0)}%</p>
-                    </div>
-                ),
-            });
-        } catch {
-            msg.error('AI 分析失败');
-        }
-    };
+
 
     const getStateTag = (state: string) => {
         if (state === 'Approved') return <Tag color="green">已审核</Tag>;
@@ -354,28 +388,58 @@ http:
                 )}
             </ProCard>
 
-            {/* POC Editor Modal */}
-            <Modal
+            {/* POC Editor Drawer */}
+            <Drawer
                 title={isNew ? '新建 POC' : `编辑 POC — ${currentArsenal?.FileName}`}
                 open={editorVisible}
-                onCancel={() => setEditorVisible(false)}
+                onClose={() => setEditorVisible(false)}
                 width={debugVisible ? 1400 : 900}
-                style={{ top: 40 }}
-                footer={[
-                    <Button key="debug" icon={<BugOutlined />} onClick={() => setDebugVisible((v) => !v)}>
-                        {debugVisible ? '收起调试' : '调试'}
-                    </Button>,
-                    <Button key="ai" onClick={handleAiAnalyze}>AI 分析</Button>,
-                    <Button key="cancel" onClick={() => setEditorVisible(false)}>取消</Button>,
-                    <Button key="save" type="primary" onClick={handleSave}>保存（草稿）</Button>,
-                ]}
+                style={{ transform: visible ? 'translateX(-400px)' : 'none', transition: 'transform 0.3s' }}
+                mask={!visible} // Remove mask if AI drawer is open so user can interact with both
+                maskClosable={false}
+                footer={
+                    <div style={{ textAlign: 'right' }}>
+                        <Space>
+                            <Button icon={<BugOutlined />} onClick={() => { setDebugVisible((v) => !v); }}>
+                                {debugVisible ? '收起调试' : '调试'}
+                            </Button>
+                            <Button onClick={() => openGlobalAI({
+                                module: 'poc_list',
+                                action: 'review',
+                                file_name: isNew ? newFileName.trim() : currentArsenal?.FileName || '',
+                                suggested_prompt: '请审查当前 POC，指出误报风险、结构问题和可改进点；如果需要修改，请输出完整更新后的 YAML。'
+                            })}>
+                                AI 分析
+                            </Button>
+                            <Button onClick={() => setEditorVisible(false)}>取消</Button>
+                            <Button type="primary" onClick={handleSave}>保存（草稿）</Button>
+                        </Space>
+                    </div>
+                }
                 destroyOnClose
             >
                 <div style={{ display: 'flex', gap: 16, height: 'calc(100vh - 200px)', minHeight: 600 }}>
                     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 12 }}>
+                            <div style={{ flex: 1 }}>
+                                {isNew && <Text strong style={{ display: 'block', marginBottom: 8 }}>文件名 *</Text>}
+                                {!isNew && <Text strong style={{ display: 'block', marginBottom: 8, color: '#64748b' }}>POC 代码编辑</Text>}
+                            </div>
+                            <Button
+                                type="dashed"
+                                icon={<RobotOutlined />}
+                                onClick={() => openGlobalAI({
+                                    module: 'poc_list',
+                                    action: 'generate',
+                                    file_name: isNew ? newFileName.trim() : currentArsenal?.FileName || '',
+                                    suggested_prompt: '请基于当前编辑器内容生成或优化这个 POC，输出完整可应用的 YAML。'
+                                })}
+                            >
+                                AI 辅助生成
+                            </Button>
+                        </div>
                         {isNew && (
                             <div style={{ marginBottom: 16 }}>
-                                <Text strong style={{ display: 'block', marginBottom: 8 }}>文件名 *</Text>
                                 <Input
                                     value={newFileName}
                                     onChange={(e) => setNewFileName(e.target.value)}
@@ -402,13 +466,11 @@ http:
                             />
                         </div>
                     </div>
-                    {debugVisible && (
-                        <div style={{ width: 550, flexShrink: 0, display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
-                            <PocDebugPanel visible={debugVisible} pocContent={editorContent} />
-                        </div>
-                    )}
+                    <div style={{ width: 550, flexShrink: 0, display: debugVisible ? 'flex' : 'none', flexDirection: 'column', overflowY: 'auto' }}>
+                        <PocDebugPanel visible={debugVisible} pocContent={editorContent} onDiagnose={handleDiagnose} />
+                    </div>
                 </div>
-            </Modal>
+            </Drawer>
         </>
     );
 };

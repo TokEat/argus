@@ -52,6 +52,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { cancelTask, createTask, deleteTask, listTasks, listProjects, getTaskDetail } from '../services/api';
 import { getTaskStatusMeta, isTaskCancellable, isTaskFailedLike, isTaskFinished, normalizeTaskStatus } from '../utils/taskStatus';
+import { useAutoContext } from '../contexts/GlobalAIContext';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -212,6 +213,15 @@ const TaskManagement: React.FC = () => {
         const timer = setInterval(fetchTasks, 10000);
         return () => clearInterval(timer);
     }, []);
+
+    useAutoContext({
+        task_stats: {
+            total: tasks.length,
+            running: tasks.filter(t => t.Status === 'RUNNING').length,
+            failed: tasks.filter(t => t.Status === 'FAILED' || t.Status === 'ERROR').length,
+        },
+        viewing_task_detail: detailOpen ? taskDetail : null,
+    });
 
     const handleCreate = async () => {
         try {

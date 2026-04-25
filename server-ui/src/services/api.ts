@@ -183,8 +183,123 @@ export async function deleteArsenal(type: string, filename: string): Promise<API
     return request.delete(`/arsenals/${type}/${filename}`);
 }
 
-export async function aiAnalyzeArsenal(content: string): Promise<{ suggestion: string; reason: string; confidence: number }> {
-    return request.post('/arsenals/ai/analyze', { content });
+export async function aiAnalyzeArsenal(data: API.AIAnalyzeRequest | string): Promise<API.AIAnalysisResult> {
+    const payload: API.AIAnalyzeRequest = typeof data === 'string' ? { type: 'poc', content: data } : data;
+    return request.post('/ai/arsenal/analyze', payload, { timeout: 90000 });
+}
+
+/** SSE streaming version of AI analysis — real-time token output */
+export function aiAnalyzeArsenalStream(
+    data: API.AIAnalyzeRequest | string,
+    callbacks: {
+        onStatus?: (phase: string, message: string) => void;
+        onToken?: (content: string) => void;
+        onToolStart?: (toolName: string, args: string) => void;
+        onToolEnd?: (toolName: string, result: string) => void;
+        onResult?: (result: API.AIAnalysisResult) => void;
+        onError?: (message: string) => void;
+    },
+): { abort: () => void } {
+    const payload: API.AIAnalyzeRequest = typeof data === 'string' ? { type: 'poc', content: data } : data;
+    const controller = new AbortController();
+    const token = localStorage.getItem('token');
+
+    (async () => {
+        try {
+            const resp = await fetch('/api/v1/ai/arsenal/analyze/stream', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify(payload),
+                signal: controller.signal,
+            });
+
+            if (!resp.ok || !resp.body) {
+                const text = await resp.text();
+                callbacks.onError?.(text || `HTTP ${resp.status}`);
+                return;
+            }
+
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let currentEvent = '';
+            let finishedNormally = false;
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) {
+                        currentEvent = line.slice(7).trim();
+                    } else if (line.startsWith('data: ') && currentEvent) {
+                        const jsonStr = line.slice(6);
+                        try {
+                            const data = JSON.parse(jsonStr);
+                            switch (currentEvent) {
+                                case 'status':
+                                    callbacks.onStatus?.(data.phase, data.message);
+                                    break;
+                                case 'token':
+                                    callbacks.onToken?.(data.content);
+                                    break;
+                                case 'tool_start':
+                                    callbacks.onToolStart?.(data.name, data.args);
+                                    break;
+                                case 'tool_end':
+                                    callbacks.onToolEnd?.(data.name, data.result);
+                                    break;
+                                case 'result':
+                                    finishedNormally = true;
+                                    callbacks.onResult?.(data);
+                                    break;
+                                case 'error':
+                                    finishedNormally = true;
+                                    callbacks.onError?.(data.message);
+                                    break;
+                            }
+                        } catch (e) {
+                            console.error('Failed to parse SSE data:', jsonStr, e);
+                        }
+                        currentEvent = '';
+                    }
+                }
+            }
+
+            if (!finishedNormally) {
+                callbacks.onError?.('流式传输意外断开');
+            }
+        } catch (err: unknown) {
+            if ((err as Error)?.name !== 'AbortError') {
+                callbacks.onError?.(err instanceof Error ? err.message : 'Stream failed');
+            }
+        }
+    })();
+
+    return { abort: () => controller.abort() };
+}
+
+export async function getAIConfig(): Promise<API.AIConfig> {
+    return request.get('/ai/config');
+}
+
+export async function saveAIConfig(data: API.AIConfig): Promise<API.AIConfig> {
+    return request.put('/ai/config', data);
+}
+
+export async function listAIModels(params?: { base_url?: string; api_key?: string }): Promise<{ models: API.AIModelInfo[] }> {
+    return request.get('/ai/models', { params });
+}
+
+export async function testAIConnection(): Promise<{ success: boolean; response?: string; error?: string; elapsed_ms: number; base_url: string; model: string }> {
+    return request.post('/ai/test', {}, { timeout: 60000 });
 }
 
 export async function debugPoc(data: API.DebugPocRequest): Promise<{ session_id: string; status: string }> {

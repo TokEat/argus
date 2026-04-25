@@ -158,13 +158,12 @@ func (request *Request) MakeResultEventItem(wrapped *output.InternalWrappedEvent
 		fields.Path = types.ToString(wrapped.InternalEvent["path"])
 	}
 	Packet := make(map[int]output.RequestResponsePair)
-	index := 1
-	for true {
+	for index := 0; index <= 20; index++ {
 		d := output.RequestResponsePair{}
 		reqT, reqOK := wrapped.InternalEvent[fmt.Sprintf("request_%v", index)]
 		rspT, rspOK := wrapped.InternalEvent[fmt.Sprintf("response_%v", index)]
 		if !reqOK && !rspOK {
-			break
+			continue
 		}
 		if reqOK {
 			d.Request = types.ToString(reqT)
@@ -173,7 +172,6 @@ func (request *Request) MakeResultEventItem(wrapped *output.InternalWrappedEvent
 			d.Response = types.ToString(rspT)
 		}
 		Packet[index] = d
-		index++
 	}
 	data := &output.ResultEvent{
 		TemplateID:       types.ToString(wrapped.InternalEvent["template-id"]),

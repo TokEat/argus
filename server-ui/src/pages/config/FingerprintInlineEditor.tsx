@@ -5,6 +5,7 @@ import {
     addFingerprintDict,
     updateFingerprintDict,
 } from '../../services/api';
+import { useAutoContext } from '../../contexts/GlobalAIContext';
 
 interface FingerprintInlineEditorProps {
     open: boolean;
@@ -57,6 +58,15 @@ const FingerprintInlineEditor: React.FC<FingerprintInlineEditorProps> = ({
         })();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open, product]);
+
+    useAutoContext({
+        editing_fingerprint_rule: open ? {
+            product: form.getFieldValue('product') || product || defaultProduct,
+            rules: form.getFieldValue('rules') || [],
+            is_new: isNew,
+            not_found_in_db: notFound
+        } : null
+    });
 
     const handleSave = async () => {
         try {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -157,18 +158,30 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 		cmd.TargetUrl: []string{templateName},
 	}
 
-	nuclei.Call(targetAndPocs, cmd.Proxy, func(result output.ResultEvent) {
+	// CallDebug 启用 MatcherStatus=true，Nuclei 对未命中模板也会触发回调
+	// （通过 WriteFailure），回调中 MatcherStatus 为 false 的就是未命中事件。
+	nuclei.CallDebug(targetAndPocs, cmd.Proxy, func(result output.ResultEvent) {
 		if stopped.Load() {
 			return
 		}
+
+		reqData := result.Request
+		respData := result.Response
+
+		// 多步骤模板：result.Packet 包含所有请求/响应对（按步骤索引），
+		// result.Request/Response 只有最后一步的数据。
+		if len(result.Packet) > 1 {
+			reqData, respData = mergePacketPairs(result.Packet)
+		}
+
 		send(&pb.DebugEvent{
 			Type:       "debug_result",
-			Matched:    true,
+			Matched:    result.MatcherStatus,
 			TemplateId: result.TemplateID,
 			Severity:   result.Info.SeverityHolder.Severity.String(),
 			MatchedAt:  result.Matched,
-			Request:    result.Request,
-			Response:   result.Response,
+			Request:    reqData,
+			Response:   respData,
 			Extracted:  result.ExtractedResults,
 		})
 	}, "", true, common.EmbedNucleiPocs, tmpDir, nil, nil)
@@ -220,4 +233,41 @@ func logDebugLocal(level, format string, args ...interface{}) {
 	default:
 		fmt.Printf("[Debug][INFO] %s\n", msg)
 	}
+}
+
+// mergePacketPairs 将多步骤模板的所有请求/响应对按序合并，
+// 用分隔线标注步骤编号，方便在单个 Editor 中查看所有步骤。
+func mergePacketPairs(packets map[int]output.RequestResponsePair) (string, string) {
+	if len(packets) == 0 {
+		return "", ""
+	}
+
+	// 按步骤索引排序
+	keys := make([]int, 0, len(packets))
+	for k := range packets {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+
+	if len(packets) == 1 {
+		// 单步骤，保持 Request 和 Response 分离
+		pair := packets[keys[0]]
+		return pair.Request, pair.Response
+	}
+
+	// 多步骤，交织合并到 Request 中作为完整 trace
+	var traceParts []string
+	for i, idx := range keys {
+		pair := packets[idx]
+		sep := fmt.Sprintf("============= Step %d =============", i+1)
+		traceParts = append(traceParts, sep)
+		if pair.Request != "" {
+			traceParts = append(traceParts, "[Request]\n"+strings.TrimRight(pair.Request, "\r\n"))
+		}
+		if pair.Response != "" {
+			traceParts = append(traceParts, "[Response]\n"+strings.TrimRight(pair.Response, "\r\n"))
+		}
+	}
+
+	return strings.Join(traceParts, "\n\n"), ""
 }

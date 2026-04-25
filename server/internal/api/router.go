@@ -287,13 +287,22 @@ func InitRouter(port string) {
 		api.POST("/nodes/clean", cleanOfflineNodes)
 		api.GET("/agents/:id/commands", getAgentCommands)
 
+		// Server-side AI analysis and configuration
+		api.GET("/ai/config", getAIConfig)
+		api.PUT("/ai/config", saveAIConfig)
+		api.GET("/ai/models", listAIModels)
+		api.POST("/ai/test", testAIConnection)
+		api.POST("/ai/arsenal/analyze", analyzeArsenalWithAI)
+		api.POST("/ai/arsenal/analyze/stream", analyzeArsenalStream)
+		api.POST("/ai/chat", globalAIChat)
+
 		// Arsenal 弹药库热发车网关与审核墙
+		api.POST("/arsenals/ai/analyze", aiAnalyzeArsenal)
 		api.POST("/arsenals/:type", debugPocGateway)
 		api.GET("/arsenals/:type", getArsenals)
 		api.POST("/arsenals/:type/:filename", saveArsenal)
 		api.POST("/arsenals/:type/:filename/cancel", cancelDebugSessionGateway)
 		api.POST("/arsenals/:type/:filename/approve", approveArsenal)
-		api.POST("/arsenals/ai/analyze", aiAnalyzeArsenal)
 		api.DELETE("/arsenals/:type/:filename", deleteArsenal)
 
 		// Dictionary Parsing Gateway (for workflow etc)
@@ -1055,33 +1064,6 @@ func exportVulns(c *gin.Context) {
 	for _, v := range vulns {
 		writer.Write([]string{v.TenantID, v.TaskID, v.Target, v.Plugin, v.Severity, v.CreatedAt.Format(time.RFC3339)})
 	}
-}
-
-func aiAnalyzeArsenal(c *gin.Context) {
-	var req struct {
-		Content string `json:"content"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Mock AI Heuristic rules
-	lowerContent := strings.ToLower(req.Content)
-	if strings.Contains(lowerContent, "cve-2023") || strings.Contains(lowerContent, "log4j") {
-		c.JSON(http.StatusOK, gin.H{
-			"suggestion": "Reject",
-			"reason":     "Highly overlaps with known existing high-profile vulnerabilities in our Arsenal. Please check your entries to avoid payload duplicates.",
-			"confidence": 0.88,
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"suggestion": "Approve",
-		"reason":     "Rule signature is unique, syntactically correct, and does not overlap with existing cluster profiles.",
-		"confidence": 0.96,
-	})
 }
 
 func cancelTask(c *gin.Context) {

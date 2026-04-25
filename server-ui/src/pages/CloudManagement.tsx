@@ -5,6 +5,7 @@ import { CloudOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, WifiOutlin
 import type { ColumnsType } from 'antd/es/table';
 import Editor from '@monaco-editor/react';
 import { listCloudInstances, createCloudInstance, deleteCloudInstance, saveCloudPolicy } from '../services/api';
+import { useAutoContext } from '../contexts/GlobalAIContext';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -73,6 +74,15 @@ systemctl start argus-agent
             return () => clearInterval(timer);
         }
     }, [activeTab]);
+
+    useAutoContext({
+        cloud_assets: {
+            total_instances: instances.length,
+            online_instances: instances.filter(i => i.status === 'Alive' || i.status === 'Running').length,
+            providers_configured: credentials.map(c => c.provider)
+        },
+        cloud_active_tab: activeTab
+    });
 
     const handleCreate = () => {
         form.resetFields();

@@ -16,6 +16,7 @@ import {
     ClearOutlined
 } from '@ant-design/icons';
 import { getNodes, deleteNode, cleanOfflineNodes } from '../services/api';
+import { useAutoContext } from '../contexts/GlobalAIContext';
 
 const { Title, Text } = Typography;
 
@@ -40,6 +41,17 @@ const NodeManagement: React.FC = () => {
         const timer = setInterval(fetchNodes, 10000);
         return () => clearInterval(timer);
     }, []);
+
+    const onlineCount = nodes.filter(n => n.Status === 'Alive').length;
+    const offlineCount = nodes.length - onlineCount;
+
+    useAutoContext({
+        node_stats: {
+            total: nodes.length,
+            online: onlineCount,
+            offline: offlineCount,
+        },
+    });
 
     const handleCleanOffline = async () => {
         try {
@@ -261,9 +273,6 @@ const NodeManagement: React.FC = () => {
             </Col>
         );
     };
-
-    const onlineCount = nodes.filter(n => n.Status === 'Alive').length;
-    const offlineCount = nodes.length - onlineCount;
 
     return (
         <div style={{ paddingBottom: 40 }}>

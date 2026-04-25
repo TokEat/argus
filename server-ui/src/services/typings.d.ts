@@ -246,6 +246,59 @@ declare namespace API {
     error?: string;
   }
 
+  interface AIAnalysisIssue {
+    severity: 'info' | 'warning' | 'error' | 'critical' | string;
+    category: string;
+    message: string;
+    line?: number;
+    suggestion?: string;
+  }
+
+  interface AIDuplicateCandidate {
+    file_name: string;
+    name: string;
+    severity?: string;
+    content_hash?: string;
+    reason: string;
+    score: number;
+  }
+
+  interface AIAnalyzeRequest {
+    action?: 'review' | 'generate' | 'debug';
+    type?: string;
+    file_name?: string;
+    content: string;
+    force?: boolean;
+    context?: any;
+  }
+
+  interface AIAnalysisResult {
+    suggestion: 'Approve' | 'Revise' | 'Reject' | string;
+    confidence: number;
+    summary: string;
+    reason: string;
+    issues: AIAnalysisIssue[];
+    duplicate_candidates: AIDuplicateCandidate[];
+    content_hash: string;
+    cached: boolean;
+    provider: string;
+    model: string;
+  }
+
+  interface AIConfig {
+    base_url: string;
+    api_key?: string;
+    model: string;
+    has_api_key?: boolean;
+    api_key_masked?: string;
+  }
+
+  interface AIModelInfo {
+    id: string;
+    object?: string;
+    owned_by?: string;
+  }
+
   // ======================== Dictionary API ========================
 
   interface WorkflowItem {

@@ -1,13 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
 import { Layout, Menu, Avatar, Dropdown, Space, Typography, ConfigProvider, theme, message, Select } from 'antd';
 import type { MenuProps } from 'antd';
+import Draggable from 'react-draggable';
 import {
     MenuFoldOutlined,
     MenuUnfoldOutlined,
     UserOutlined,
     LogoutOutlined,
     ProjectOutlined,
+    SecurityScanOutlined,
 } from '@ant-design/icons';
 import type { RouteConfig } from '../routes';
 import { menuRoutes } from '../routes';
@@ -16,13 +18,45 @@ import { listProjects } from '../services/api';
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
 
+import { useGlobalAI } from '../contexts/GlobalAIContext';
+import GlobalAIChatDrawer from '../components/GlobalAIChatDrawer';
+
 const BasicLayout: React.FC = () => {
+    const { visible, pageContext, editableTarget, openGlobalAI, closeGlobalAI, setPageContext } = useGlobalAI();
+    const draggableRef = useRef<HTMLDivElement>(null);
+    const dragPos = useRef({ x: 0, y: 0 });
     const [collapsed, setCollapsed] = useState(false);
     const [tenantId, setTenantId] = useState('default');
     const [projects, setProjects] = useState<API.Project[]>([]);
     const [selectedProject, setSelectedProject] = useState<string>('');
     const navigate = useNavigate();
     const location = useLocation();
+
+    // Auto Route Context Injection
+    useEffect(() => {
+        let module = 'global';
+        const path = location.pathname;
+        if (path.startsWith('/assets')) module = 'asset_list';
+        else if (path.startsWith('/tasks/') && path.endsWith('/results')) module = 'task_results';
+        else if (path.startsWith('/tasks')) module = 'task_list';
+        else if (path.startsWith('/nodes')) module = 'node_list';
+        else if (path.startsWith('/config/poc')) module = 'poc_list';
+        else if (path.startsWith('/config/workflow')) module = 'workflow_list';
+        else if (path.startsWith('/config/dir')) module = 'dir_list';
+        else if (path.startsWith('/config/active-finger')) module = 'fingerprint_list';
+        else if (path.startsWith('/arsenals/poc')) module = 'poc_list';
+        else if (path.startsWith('/arsenals/dict')) module = 'dict_list';
+        else if (path.startsWith('/arsenals/workflow')) module = 'workflow_list';
+        else if (path.startsWith('/knowledge')) module = 'knowledge_base';
+        else if (path.startsWith('/dashboard')) module = 'dashboard';
+
+        setPageContext((prev) => ({
+            ...prev,
+            route: path,
+            module: module,
+        }));
+        // We do NOT want to clear selected_data here, because useAutoContext will handle local component unmounts.
+    }, [location.pathname]);
 
     useEffect(() => {
         const token = localStorage.getItem('token');
@@ -51,7 +85,6 @@ const BasicLayout: React.FC = () => {
     const handleProjectChange = (value: string) => {
         setSelectedProject(value);
         localStorage.setItem('active_project_id', value);
-        // Force reload to update all child components with new project scope
         window.location.reload();
     };
 
@@ -78,7 +111,6 @@ const BasicLayout: React.FC = () => {
         },
     ];
 
-    // Convert RouteConfig to Menu items
     const getMenuItems = (routes: RouteConfig[]): MenuProps['items'] => {
         return routes
             .filter((route) => !route.hideInMenu)
@@ -99,7 +131,6 @@ const BasicLayout: React.FC = () => {
             });
     };
 
-    // Find selected keys based on current path
     const getSelectedKeys = (): string[] => {
         const pathname = location.pathname;
         if (pathname.startsWith('/config')) return ['/config/poc'];
@@ -116,7 +147,6 @@ const BasicLayout: React.FC = () => {
         return ['/dashboard'];
     };
 
-    // Find open keys for submenus
     const getOpenKeys = (): string[] => {
         const pathname = location.pathname;
         for (const route of menuRoutes) {
@@ -160,6 +190,171 @@ const BasicLayout: React.FC = () => {
                 },
             }}
         >
+            <style>{`
+                .argus-ai-fab-shell {
+                    position: fixed;
+                    right: 28px;
+                    bottom: 34px;
+                    z-index: 9999;
+                    width: 170px;
+                    height: 76px;
+                    cursor: move;
+                    display: flex;
+                    align-items: center;
+                    justify-content: flex-end;
+                    overflow: visible;
+                    pointer-events: none;
+                }
+
+                .argus-ai-fab {
+                    pointer-events: auto;
+                    position: relative;
+                    width: 64px;
+                    height: 64px;
+                    border: 1px solid rgba(14, 165, 233, 0.24);
+                    border-radius: 999px;
+                    background: rgba(255, 255, 255, 0.72);
+                    backdrop-filter: blur(24px) saturate(180%);
+                    -webkit-backdrop-filter: blur(24px) saturate(180%);
+                    box-shadow:
+                        0 18px 40px rgba(15, 23, 42, 0.14),
+                        0 8px 20px rgba(14, 165, 233, 0.16),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.86);
+                    color: #0f172a;
+                    outline: none;
+                    overflow: hidden;
+                    display: flex;
+                    align-items: center;
+                    justify-content: flex-end;
+                    padding: 8px;
+                    transition:
+                        width 280ms cubic-bezier(0.2, 0.8, 0.2, 1),
+                        transform 220ms ease,
+                        box-shadow 220ms ease,
+                        border-color 220ms ease,
+                        background 220ms ease;
+                }
+
+                .argus-ai-fab::before {
+                    content: "";
+                    position: absolute;
+                    inset: -1px;
+                    border-radius: inherit;
+                    background: conic-gradient(
+                        from 120deg,
+                        rgba(14, 165, 233, 0),
+                        rgba(14, 165, 233, 0.52),
+                        rgba(99, 102, 241, 0.3),
+                        rgba(14, 165, 233, 0)
+                    );
+                    opacity: 0;
+                    transition: opacity 220ms ease;
+                    animation: argus-fab-ring 4s linear infinite;
+                }
+
+                .argus-ai-fab::after {
+                    content: "";
+                    position: absolute;
+                    inset: 1px;
+                    border-radius: inherit;
+                    background: linear-gradient(135deg, rgba(255,255,255,0.92), rgba(240, 249, 255, 0.72));
+                }
+
+                .argus-ai-fab-core,
+                .argus-ai-fab-label {
+                    position: relative;
+                    z-index: 1;
+                }
+
+                .argus-ai-fab-core {
+                    width: 46px;
+                    height: 46px;
+                    flex: 0 0 46px;
+                    border-radius: 50%;
+                    background:
+                        radial-gradient(circle at 35% 25%, rgba(255,255,255,0.95), rgba(255,255,255,0.2) 34%, transparent 35%),
+                        linear-gradient(145deg, #38bdf8 0%, #0ea5e9 42%, #2563eb 100%);
+                    box-shadow:
+                        0 10px 26px rgba(37, 99, 235, 0.28),
+                        inset 0 1px 0 rgba(255,255,255,0.42);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    overflow: hidden;
+                }
+
+                .argus-ai-fab-core::before {
+                    content: "";
+                    position: absolute;
+                    width: 150%;
+                    height: 1px;
+                    left: -25%;
+                    top: 50%;
+                    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.86), transparent);
+                    transform: translateY(-16px) rotate(-18deg);
+                    opacity: 0.72;
+                    animation: argus-fab-scan 2.8s ease-in-out infinite;
+                }
+
+                .argus-ai-fab-icon {
+                    color: #fff;
+                    font-size: 22px;
+                    filter: drop-shadow(0 2px 5px rgba(15, 23, 42, 0.22));
+                }
+
+                .argus-ai-fab-label {
+                    width: 0;
+                    opacity: 0;
+                    color: #0f172a;
+                    font-size: 13px;
+                    font-weight: 650;
+                    white-space: nowrap;
+                    text-align: left;
+                    transform: translateX(8px);
+                    transition:
+                        width 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
+                        opacity 180ms ease,
+                        transform 220ms ease;
+                }
+
+                .argus-ai-fab:hover,
+                .argus-ai-fab:focus-visible {
+                    width: 152px;
+                    transform: translateY(-2px) scale(1.015);
+                    border-color: rgba(14, 165, 233, 0.42);
+                    background: rgba(255, 255, 255, 0.82);
+                    box-shadow:
+                        0 24px 54px rgba(15, 23, 42, 0.18),
+                        0 12px 28px rgba(14, 165, 233, 0.22),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.9);
+                }
+
+                .argus-ai-fab:hover::before,
+                .argus-ai-fab:focus-visible::before {
+                    opacity: 1;
+                }
+
+                .argus-ai-fab:hover .argus-ai-fab-label,
+                .argus-ai-fab:focus-visible .argus-ai-fab-label {
+                    width: 76px;
+                    opacity: 1;
+                    transform: translateX(0);
+                }
+
+                .argus-ai-fab:active {
+                    transform: translateY(0) scale(0.98);
+                }
+
+                @keyframes argus-fab-ring {
+                    to { transform: rotate(360deg); }
+                }
+
+                @keyframes argus-fab-scan {
+                    0%, 100% { transform: translateY(-17px) rotate(-18deg); opacity: 0; }
+                    18%, 70% { opacity: 0.76; }
+                    55% { transform: translateY(18px) rotate(-18deg); opacity: 0.5; }
+                }
+            `}</style>
             <Layout style={{ minHeight: '100vh' }}>
                 <Sider
                     trigger={null}
@@ -293,6 +488,50 @@ const BasicLayout: React.FC = () => {
                     </Content>
                 </Layout>
             </Layout>
+
+            <GlobalAIChatDrawer
+                visible={visible}
+                onClose={closeGlobalAI}
+                pageContext={pageContext}
+                editableTarget={editableTarget}
+            />
+            <Draggable nodeRef={draggableRef} bounds="parent" defaultPosition={{ x: 0, y: 0 }}
+                onStart={(_, data) => {
+                    dragPos.current = { x: data.x, y: data.y };
+                    (window as any).isDraggingAI = false;
+                }}
+                onStop={(_, data) => {
+                    const dx = Math.abs(data.x - dragPos.current.x);
+                    const dy = Math.abs(data.y - dragPos.current.y);
+                    if (dx > 3 || dy > 3) {
+                        (window as any).isDraggingAI = true;
+                        setTimeout(() => {
+                            (window as any).isDraggingAI = false;
+                        }, 100);
+                    } else {
+                        (window as any).isDraggingAI = false;
+                    }
+                }}
+            >
+                <div ref={draggableRef} className="argus-ai-fab-shell">
+                    <button
+                        type="button"
+                        className="argus-ai-fab"
+                        onClick={() => {
+                            if (!(window as any).isDraggingAI) {
+                                openGlobalAI();
+                            }
+                        }}
+                        aria-label="唤起 Argus Copilot"
+                        title="按住拖动 / 点击唤起 Argus Copilot"
+                    >
+                        <span className="argus-ai-fab-label">Copilot</span>
+                        <span className="argus-ai-fab-core">
+                            <SecurityScanOutlined className="argus-ai-fab-icon" />
+                        </span>
+                    </button>
+                </div>
+            </Draggable>
         </ConfigProvider>
     );
 };

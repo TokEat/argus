@@ -19,6 +19,7 @@ import {
     getWorkflowDict,
     getDirDict,
 } from '../../services/api';
+import { useAutoContext } from '../../contexts/GlobalAIContext';
 
 interface EnrichedFingerprint extends API.FingerprintItem {
     _refWorkflow: boolean;
@@ -57,6 +58,19 @@ const DirConfig: React.FC = () => {
     };
 
     useEffect(() => { fetchData(); }, []);
+
+    useAutoContext({
+        fingerprint_dictionary: {
+            total_rules: dictionaries.length,
+            search_keyword: searchKeyword,
+            ref_filter: refFilter,
+        },
+        editing_fingerprint_rule: modalVisible ? {
+            product: currentProduct,
+            rules: form.getFieldValue('rules'),
+            is_new: isNew
+        } : null
+    });
 
     const enriched: EnrichedFingerprint[] = useMemo(
         () =>

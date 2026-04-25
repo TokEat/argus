@@ -79,6 +79,16 @@ func VerifySchema(db *gorm.DB) error {
 			Indexes: []string{"idx_arsenals_type", "idx_arsenals_state"},
 		},
 		{
+			Table:   "arsenal_ai_reviews",
+			Columns: []string{"tenant_id", "type", "file_name", "content_hash", "suggestion", "confidence", "issues", "duplicate_candidates", "raw_response"},
+			Indexes: []string{"idx_arsenal_ai_reviews_cache", "idx_arsenal_ai_reviews_content_hash", "idx_arsenal_ai_reviews_suggestion"},
+		},
+		{
+			Table:   "ai_tool_invocations",
+			Columns: []string{"tenant_id", "user_id", "module", "tool_name", "args_summary", "agent_id", "target_url", "duration_ms", "status", "error_summary", "created_at"},
+			Indexes: []string{"idx_ai_tool_invocations_tenant_id", "idx_ai_tool_invocations_user_id", "idx_ai_tool_invocations_module", "idx_ai_tool_invocations_tool_name", "idx_ai_tool_invocations_status"},
+		},
+		{
 			Table:   "notification_rules",
 			Columns: []string{"project_id", "event", "channel", "config", "status"},
 			Indexes: []string{"idx_notification_rules_project_id", "idx_notification_rules_event"},
