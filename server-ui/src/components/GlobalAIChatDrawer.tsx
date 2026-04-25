@@ -259,8 +259,8 @@ const MarkdownMessage: React.FC<{ content: string }> = ({ content }) => {
         if (heading) {
             flushAll();
             const level = Math.min(heading[1].length, 6);
-            const Tag = `h${level}` as keyof JSX.IntrinsicElements;
-            blocks.push(<Tag key={`h-${blocks.length}`}>{renderInlineMarkdown(heading[2])}</Tag>);
+            const TagName = `h${level}`;
+            blocks.push(React.createElement(TagName, { key: `h-${blocks.length}` }, renderInlineMarkdown(heading[2])));
             i++;
             continue;
         }
