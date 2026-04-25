@@ -120,8 +120,6 @@ const PocDebugPanel: React.FC<PocDebugPanelProps> = ({ pocContent, onDiagnose })
         }
     };
 
-    const latest = results[results.length - 1];
-
     return (
         <Card
             size="small"
@@ -198,9 +196,9 @@ const PocDebugPanel: React.FC<PocDebugPanelProps> = ({ pocContent, onDiagnose })
                     {complete && (
                         <Alert
                             style={{ marginBottom: 12 }}
-                            type={complete.error ? 'error' : results.length > 0 ? 'success' : 'info'}
+                            type={complete.error ? 'error' : results.some((r) => r.matched) ? 'success' : 'info'}
                             showIcon
-                            message={complete.error ? complete.error : results.length > 0 ? 'POC 命中' : '未命中'}
+                            message={complete.error ? complete.error : results.some((r) => r.matched) ? 'POC 命中' : '未命中'}
                             description={complete.duration_ms ? `耗时 ${complete.duration_ms}ms` : undefined}
                             action={
                                 <Button
@@ -214,27 +212,70 @@ const PocDebugPanel: React.FC<PocDebugPanelProps> = ({ pocContent, onDiagnose })
                             }
                         />
                     )}
-                    {!latest ? (
+                    {results.length === 0 && !complete ? (
                         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无命中结果" />
                     ) : (
-                        <Space direction="vertical" style={{ width: '100%' }}>
-                            <Space wrap style={{ justifyContent: 'space-between', width: '100%' }}>
-                                <Space wrap>
-                                    <Tag color="green">命中</Tag>
-                                    <Tag>{latest.template_id}</Tag>
-                                    <Tag color="red">{latest.severity || 'unknown'}</Tag>
-                                    <Text copyable>{latest.matched_at}</Text>
-                                </Space>
-                            </Space>
-                            {latest.extracted && latest.extracted.length > 0 && (
-                                <Text type="secondary">Extracted: {latest.extracted.join(', ')}</Text>
+                        <Space direction="vertical" style={{ width: '100%' }} size={12}>
+                            {results.map((item, idx) => (
+                                <Card
+                                    key={idx}
+                                    size="small"
+                                    type="inner"
+                                    title={
+                                        <Space wrap>
+                                            {item.matched ? (
+                                                <>
+                                                    <Tag color="green">命中</Tag>
+                                                    <Tag>{item.template_id}</Tag>
+                                                    <Tag color="red">{item.severity || 'unknown'}</Tag>
+                                                    <Text copyable>{item.matched_at}</Text>
+                                                </>
+                                            ) : (
+                                                <Tag color="orange">未命中 — 请求/响应记录</Tag>
+                                            )}
+                                        </Space>
+                                    }
+                                >
+                                    {item.matched && item.extracted && item.extracted.length > 0 && (
+                                        <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+                                            Extracted: {item.extracted.join(', ')}
+                                        </Text>
+                                    )}
+                                    {(item.request || item.response) ? (
+                                        <>
+                                            <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+                                                Request
+                                            </Text>
+                                            <div style={{ height: 180, border: '1px solid #e2e8f0', borderRadius: 6, overflow: 'hidden' }}>
+                                                <Editor
+                                                    height="100%"
+                                                    language="http"
+                                                    theme="vs-dark"
+                                                    value={item.request || '(empty)'}
+                                                    options={{ readOnly: true, minimap: { enabled: false }, fontSize: 12 }}
+                                                />
+                                            </div>
+                                            <Text strong style={{ fontSize: 12, display: 'block', margin: '8px 0 4px' }}>
+                                                Response
+                                            </Text>
+                                            <div style={{ height: 220, border: '1px solid #e2e8f0', borderRadius: 6, overflow: 'hidden' }}>
+                                                <Editor
+                                                    height="100%"
+                                                    language="http"
+                                                    theme="vs-dark"
+                                                    value={item.response || '(empty)'}
+                                                    options={{ readOnly: true, minimap: { enabled: false }, fontSize: 12 }}
+                                                />
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <Text type="secondary">无请求/响应数据</Text>
+                                    )}
+                                </Card>
+                            ))}
+                            {results.length === 0 && complete && !complete.error && (
+                                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="未捕获到请求记录" />
                             )}
-                            <div style={{ height: 180, border: '1px solid #e2e8f0' }}>
-                                <Editor height="100%" language="http" theme="vs-dark" value={latest.request || ''} options={{ readOnly: true, minimap: { enabled: false }, fontSize: 12 }} />
-                            </div>
-                            <div style={{ height: 220, border: '1px solid #e2e8f0' }}>
-                                <Editor height="100%" language="http" theme="vs-dark" value={latest.response || ''} options={{ readOnly: true, minimap: { enabled: false }, fontSize: 12 }} />
-                            </div>
                         </Space>
                     )}
                 </Card>

@@ -30,3 +30,25 @@ func Call(targetAndPocsName map[string][]string,
 		pocNameForSearch, noInteractsh, embedPocs, nucleiTemplate,
 		excludeTags, severities)
 }
+
+// CallDebug 调用 Nuclei 并启用 StoreResponse，将所有 HTTP 请求/响应
+// 存储到 storeResponseDir 目录。用于 POC 调试场景。
+func CallDebug(targetAndPocsName map[string][]string,
+	httpProxy string,
+	addResult func(result output.ResultEvent),
+	pocNameForSearch string,
+	noInteractsh bool,
+	embedPocs embed.FS,
+	nucleiTemplate string,
+	excludeTags []string,
+	severities []string,
+	storeResponseDir string,
+) []output.ResultEvent {
+	callMu.Lock()
+	defer callMu.Unlock()
+
+	return callnuclei.CallNucleiDebug(targetAndPocsName, httpProxy, addResult,
+		pocNameForSearch, noInteractsh, embedPocs, nucleiTemplate,
+		excludeTags, severities, storeResponseDir)
+}
+

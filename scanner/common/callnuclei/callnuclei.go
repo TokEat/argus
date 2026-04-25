@@ -126,6 +126,77 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 	return output.Results
 }
 
+// CallNucleiDebug 与 CallNuclei 相同，但启用 StoreResponse 模式，
+// 将所有 HTTP 请求/响应保存到 storeDir 目录。
+// 用于 POC 调试场景，确保即使未命中也能查看请求包。
+func CallNucleiDebug(TargetAndPocsName map[string][]string,
+	proxy string,
+	callBack func(result output.ResultEvent),
+	nameForSearch string,
+	NoInteractsh bool,
+	fs embed.FS,
+	np string,
+	excludeTags []string,
+	severities []string,
+	storeDir string) []output.ResultEvent {
+
+	output.ResultsLock.Lock()
+	output.Results = nil
+	output.ResultsLock.Unlock()
+
+	stats.Reset()
+	templates.ResetTemplateCache()
+
+	options := &types.Options{}
+	output.AddResultCallback = callBack
+	if err := exportrunner.ExportRunnerConfigureOptions(); err != nil {
+		gologger.Error().Msgf("Could not initialize options: %s\n", err)
+		return []output.ResultEvent{}
+	}
+
+	readConfig(options, TargetAndPocsName, proxy, nameForSearch, NoInteractsh, np, excludeTags)
+
+	// Enable StoreResponse for debug mode
+	options.StoreResponse = true
+	options.StoreResponseDir = storeDir
+
+	if options.ListDslSignatures {
+		return []output.ResultEvent{}
+	}
+
+	exportrunner.ExportRunnerParseOptions(options)
+
+	nucleiRunner, err := exportrunner.ExportRunnerNew(options)
+	if err != nil {
+		gologger.Error().Msgf("Could not create runner: %s\n", err)
+		return []output.ResultEvent{}
+	}
+	if nucleiRunner == nil {
+		return []output.ResultEvent{}
+	}
+
+	nucleiRunner.EmbedPocsFS = fs
+	nucleiRunner.EnableSeverities = severities
+
+	pwd, _ := os.Getwd()
+	gologger.Info().Msgf("[Nuclei][Debug] CWD=%s, Templates=%v, StoreDir=%s", pwd, options.Templates, storeDir)
+
+	resumeFileName := types.DefaultResumeFilePath()
+
+	if err := nucleiRunner.RunEnumeration(TargetAndPocsName); err != nil {
+		if options.Validate {
+			gologger.Error().Msgf("Could not validate templates: %s\n", err)
+		} else {
+			gologger.Error().Msgf("Could not run nuclei: %s\n", err)
+		}
+	}
+	nucleiRunner.Close()
+	if fileutil.FileExists(resumeFileName) {
+		os.Remove(resumeFileName)
+	}
+	return output.Results
+}
+
 func readConfig(options *types.Options,
 	TargetAndPocsName map[string][]string,
 	proxy string,
