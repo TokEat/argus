@@ -1,25 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { Drawer, Button, Space, Input, App } from 'antd';
-import { BugOutlined } from '@ant-design/icons';
+import { BugOutlined, RobotOutlined } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import { saveArsenal, approveArsenal, listArsenals } from '../../services/api';
 import PocDebugPanel from './PocDebugPanel';
-import PocAiPanel from './PocAiPanel';
+import { useGlobalAI, useAutoContext } from '../../contexts/GlobalAIContext';
 
 interface PocInlineEditorProps {
     open: boolean;
-    /** 已存在的 POC 文件名；为空表示新建模式 */
     fileName?: string;
-    /** 自动审核（保存后立即调用 approveArsenal） */
     autoApprove?: boolean;
-    /** 默认填入的初始内容（仅新建时生效） */
     initialContent?: string;
-    /** 默认建议的文件名（仅新建时生效） */
     suggestedFileName?: string;
     onClose: () => void;
-    /**
-     * 保存成功后回调；fileName 是最终落库的文件名（新建场景下由用户输入）。
-     */
     onSaved?: (fileName: string) => void;
 }
 
@@ -51,6 +44,7 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
     onClose,
     onSaved,
 }) => {
+    const { visible: aiVisible, openGlobalAI, registerEditableTarget } = useGlobalAI();
     const isNew = !fileName;
     const { message } = App.useApp();
     const [content, setContent] = useState<string>('');
@@ -58,7 +52,27 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
     const [loading, setLoading] = useState<boolean>(false);
     const [saving, setSaving] = useState<boolean>(false);
     const [debugVisible, setDebugVisible] = useState<boolean>(false);
-    const [aiVisible, setAiVisible] = useState<boolean>(false);
+
+    // Dynamically inject the editor state into Global AI Context
+    useAutoContext(open ? {
+        action: 'editing_poc',
+        file_name: editingFileName || fileName || 'untitled.yaml',
+        poc_content: content,
+        editable_target: {
+            type: 'poc',
+            label: editingFileName || fileName || 'untitled.yaml'
+        }
+    } : {});
+
+    const handleDiagnose = (contextData: any) => {
+        setDebugVisible(false);
+        openGlobalAI({
+            module: 'poc_inline',
+            action: 'debug',
+            raw_data: contextData,
+            file_name: editingFileName || fileName || 'untitled.yaml'
+        });
+    };
 
     useEffect(() => {
         if (!open) return;
@@ -68,8 +82,6 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
             setDebugVisible(false);
             return;
         }
-        // 编辑已存在 POC：从 listArsenals 拉取最新内容（避免外部传入 stale）
-        // workflow.yaml 中可能用不带后缀的名引用，这里同时尝试匹配带 / 不带后缀的形式。
         (async () => {
             setLoading(true);
             try {
@@ -85,7 +97,6 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
                 setLoading(false);
             }
         })();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open, fileName]);
 
     const handleSave = async () => {
@@ -115,23 +126,59 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
         }
     };
 
+    const saveDraftFromAI = async () => {
+        const finalName = (editingFileName || '').trim();
+        if (!finalName) {
+            throw '请输入文件名';
+        }
+        if (isNew && !/\.(yml|yaml)$/i.test(finalName)) {
+            message.warning('建议使用 .yaml 后缀');
+        }
+        setSaving(true);
+        try {
+            await saveArsenal('poc', finalName, content);
+            message.success(isNew ? 'POC 已创建（草稿）' : 'POC 已保存（草稿）');
+            onSaved?.(finalName);
+        } finally {
+            setSaving(false);
+        }
+    };
 
+    useEffect(() => {
+        if (!open) return undefined;
+        return registerEditableTarget({
+            id: 'poc-inline-editor',
+            type: 'poc',
+            label: editingFileName || fileName || 'untitled.yaml',
+            getContent: () => content,
+            applyContent: (nextContent: string) => setContent(nextContent),
+            saveDraft: saveDraftFromAI,
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open, editingFileName, fileName, content, registerEditableTarget]);
 
     return (
         <Drawer
             title={isNew ? '新建 POC' : `编辑 POC — ${fileName}`}
             open={open}
             onClose={onClose}
-            width={(debugVisible || aiVisible) ? 1300 : 760}
+            width={debugVisible ? 1300 : 760}
             destroyOnClose
+            style={{ transform: aiVisible ? 'translateX(-500px)' : 'none', transition: 'transform 0.3s' }}
+            mask={!aiVisible}
             footer={
                 <div style={{ textAlign: 'right' }}>
                     <Space>
-                        <Button icon={<BugOutlined />} onClick={() => { setDebugVisible((v) => !v); setAiVisible(false); }}>
+                        <Button icon={<BugOutlined />} onClick={() => { setDebugVisible((v) => !v); }}>
                             {debugVisible ? '收起调试' : '调试'}
                         </Button>
-                        <Button onClick={() => { setAiVisible((v) => !v); setDebugVisible(false); }}>
-                            {aiVisible ? '收起 AI 分析' : 'AI 分析'}
+                        <Button onClick={() => openGlobalAI({
+                            module: 'poc_inline',
+                            action: 'review',
+                            file_name: editingFileName || fileName || 'untitled.yaml',
+                            suggested_prompt: '请审查当前 POC，指出误报风险、结构问题和可改进点；如果需要修改，请输出完整更新后的 YAML。'
+                        })}>
+                            AI 分析
                         </Button>
                         <Button onClick={onClose}>取消</Button>
                         <Button type="primary" onClick={handleSave} loading={saving}>
@@ -143,16 +190,31 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
         >
             <div style={{ display: 'flex', gap: 16, height: '100%' }}>
                 <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                    {isNew && (
-                        <div style={{ marginBottom: 12 }}>
-                            <div style={{ marginBottom: 6, fontSize: 12, color: '#64748b' }}>文件名 *</div>
-                            <Input
-                                value={editingFileName}
-                                placeholder="例：CVE-2024-XXXX.yaml"
-                                onChange={(e) => setEditingFileName(e.target.value)}
-                            />
+                    <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                        <div style={{ flex: 1, marginRight: 16 }}>
+                            {isNew && <div style={{ marginBottom: 6, fontSize: 12, color: '#64748b' }}>文件名 *</div>}
+                            {!isNew && <div style={{ marginBottom: 6, fontSize: 12, color: '#64748b' }}>POC 代码编辑</div>}
+                            {isNew && (
+                                <Input
+                                    value={editingFileName}
+                                    placeholder="例：CVE-2024-XXXX.yaml"
+                                    onChange={(e) => setEditingFileName(e.target.value)}
+                                />
+                            )}
                         </div>
-                    )}
+                        <Button
+                            type="dashed"
+                            icon={<RobotOutlined />}
+                            onClick={() => openGlobalAI({
+                                module: 'poc_inline',
+                                action: 'generate',
+                                file_name: editingFileName || fileName || 'untitled.yaml',
+                                suggested_prompt: '请基于当前编辑器内容生成或优化这个 POC，输出完整可应用的 YAML。'
+                            })}
+                        >
+                            AI 辅助生成
+                        </Button>
+                    </div>
                     <div style={{ flex: 1, border: '1px solid #e2e8f0', borderRadius: 6, overflow: 'hidden' }}>
                         <Editor
                             height="100%"
@@ -165,10 +227,7 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
                     </div>
                 </div>
                 <div style={{ width: 520, flexShrink: 0, display: debugVisible ? 'flex' : 'none', flexDirection: 'column', overflowY: 'auto' }}>
-                    <PocDebugPanel visible={debugVisible} pocContent={content} />
-                </div>
-                <div style={{ width: 520, flexShrink: 0, display: aiVisible ? 'flex' : 'none', flexDirection: 'column', overflowY: 'auto' }}>
-                    <PocAiPanel visible={aiVisible} pocContent={content} fileName={editingFileName || fileName || 'untitled.yaml'} />
+                    <PocDebugPanel visible={debugVisible} pocContent={content} onDiagnose={handleDiagnose} />
                 </div>
             </div>
         </Drawer>

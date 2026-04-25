@@ -10,6 +10,7 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { getDirDict, addDirDict, updateDirDict, deleteDirDict, getFingerprintDict } from '../../services/api';
+import { useAutoContext } from '../../contexts/GlobalAIContext';
 
 const DirProbeConfig: React.FC = () => {
     const [loading, setLoading] = useState(true);
@@ -37,6 +38,18 @@ const DirProbeConfig: React.FC = () => {
     };
 
     useEffect(() => { fetchData(); }, []);
+
+    useAutoContext({
+        dir_dictionary: {
+            total_rules: dictionaries.length,
+            search_keyword: searchKeyword,
+        },
+        editing_dir_rule: modalVisible ? {
+            product: currentProduct,
+            paths: form.getFieldValue('paths'),
+            is_new: isNew
+        } : null
+    });
 
     useEffect(() => {
         if (!searchKeyword) {

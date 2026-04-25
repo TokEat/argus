@@ -15,6 +15,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { useNavigate, useParams } from 'react-router-dom';
 import { getVulns, getAssets, getFingerprints, exportVulns } from '../services/api';
+import { useAutoContext } from '../contexts/GlobalAIContext';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
@@ -51,6 +52,17 @@ const TaskResults: React.FC = () => {
     useEffect(() => {
         fetchData();
     }, [taskId]);
+
+    useAutoContext({
+        task_id: taskId,
+        active_tab: activeTab,
+        stats: {
+            vulns: vulns.length,
+            assets: assets.length,
+            fingerprints: fingerprints.length,
+        },
+        viewing_vuln: drawerOpen ? selectedVuln : null,
+    });
 
     const handleExport = async () => {
         try {
@@ -250,8 +262,8 @@ const TaskResults: React.FC = () => {
                     const parsed = JSON.parse(v);
                     const web = parsed.web;
                     return (
-                        <Popover 
-                            content={<pre style={{ maxWidth: 500, maxHeight: 400, overflow: 'auto', fontSize: 12, margin: 0 }}>{JSON.stringify(parsed, null, 2)}</pre>} 
+                        <Popover
+                            content={<pre style={{ maxWidth: 500, maxHeight: 400, overflow: 'auto', fontSize: 12, margin: 0 }}>{JSON.stringify(parsed, null, 2)}</pre>}
                             title={<span style={{ fontSize: 13 }}>完整证据 (JSON)</span>}
                             trigger="hover"
                             placement="left"

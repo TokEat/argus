@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, App, Button, Card, Col, Empty, Form, Input, InputNumber, Row, Select, Space, Tag, Typography } from 'antd';
-import { BugOutlined, CloseCircleOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons';
+import { BugOutlined, CloseCircleOutlined, PlayCircleOutlined, ReloadOutlined, RobotOutlined } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import { cancelDebugSession, connectWebSocket, debugPoc, getNodes } from '../../services/api';
 
@@ -9,6 +9,7 @@ const { Text } = Typography;
 interface PocDebugPanelProps {
     pocContent: string;
     visible: boolean;
+    onDiagnose?: (context: any) => void;
 }
 
 const supportsDebug = (version?: string): boolean => {
@@ -19,7 +20,7 @@ const supportsDebug = (version?: string): boolean => {
     return Number.isFinite(major) && Number.isFinite(minor) && (major > 2 || (major === 2 && minor >= 2));
 };
 
-const PocDebugPanel: React.FC<PocDebugPanelProps> = ({ pocContent }) => {
+const PocDebugPanel: React.FC<PocDebugPanelProps> = ({ pocContent, onDiagnose }) => {
     const { message } = App.useApp();
     const [form] = Form.useForm<API.DebugPocRequest>();
     const [nodes, setNodes] = useState<API.AgentNode[]>([]);
@@ -191,7 +192,7 @@ const PocDebugPanel: React.FC<PocDebugPanelProps> = ({ pocContent }) => {
                     ))}
                 </Card>
             </div>
-            
+
             <div style={{ marginTop: 14 }}>
                 <Card size="small" title="匹配结果" styles={{ body: { minHeight: 240 } }}>
                     {complete && (
@@ -201,17 +202,29 @@ const PocDebugPanel: React.FC<PocDebugPanelProps> = ({ pocContent }) => {
                             showIcon
                             message={complete.error ? complete.error : results.length > 0 ? 'POC 命中' : '未命中'}
                             description={complete.duration_ms ? `耗时 ${complete.duration_ms}ms` : undefined}
+                            action={
+                                <Button
+                                    size="small"
+                                    type="dashed"
+                                    icon={<RobotOutlined />}
+                                    onClick={() => onDiagnose?.({ logs, results, complete, config: form.getFieldsValue() })}
+                                >
+                                    召唤智能体诊断
+                                </Button>
+                            }
                         />
                     )}
                     {!latest ? (
                         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无命中结果" />
                     ) : (
                         <Space direction="vertical" style={{ width: '100%' }}>
-                            <Space wrap>
-                                <Tag color="green">命中</Tag>
-                                <Tag>{latest.template_id}</Tag>
-                                <Tag color="red">{latest.severity || 'unknown'}</Tag>
-                                <Text copyable>{latest.matched_at}</Text>
+                            <Space wrap style={{ justifyContent: 'space-between', width: '100%' }}>
+                                <Space wrap>
+                                    <Tag color="green">命中</Tag>
+                                    <Tag>{latest.template_id}</Tag>
+                                    <Tag color="red">{latest.severity || 'unknown'}</Tag>
+                                    <Text copyable>{latest.matched_at}</Text>
+                                </Space>
                             </Space>
                             {latest.extracted && latest.extracted.length > 0 && (
                                 <Text type="secondary">Extracted: {latest.extracted.join(', ')}</Text>

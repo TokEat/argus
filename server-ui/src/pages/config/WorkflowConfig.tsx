@@ -31,6 +31,8 @@ interface EnrichedWorkflow extends API.WorkflowItem {
 const GENERAL_POC_PREFIX = 'General-Poc-';
 const isGeneralPoc = (product: string) => product.startsWith(GENERAL_POC_PREFIX);
 
+import { useAutoContext } from '../../contexts/GlobalAIContext';
+
 const WorkflowConfig: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [dictionaries, setDictionaries] = useState<API.WorkflowItem[]>([]);
@@ -116,6 +118,12 @@ const WorkflowConfig: React.FC = () => {
         const totalPocs = scoped.reduce((sum, e) => sum + (e.pocs?.length || 0), 0);
         return { total, fpMissing, pocMissing, totalPocs };
     }, [enriched, ruleScope]);
+
+    useAutoContext({
+        workflow_scope: ruleScope,
+        workflow_stats: stats,
+        total_pocs_in_db: pocFileCount
+    });
 
     const handleCreate = () => setDrawer({ open: true, workflow: undefined, isGeneralPoc: ruleScope === 'general' });
     const handleEdit = (record: API.WorkflowItem) => setDrawer({ open: true, workflow: record, isGeneralPoc: isGeneralPoc(record.product) });

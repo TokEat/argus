@@ -20,6 +20,7 @@ import type { ColumnsType } from 'antd/es/table';
 import ReactECharts from 'echarts-for-react';
 import { getDashboardStats, listTasks, getNodes, connectWebSocket, getQueueDepth } from '../services/api';
 import { getTaskStatusMeta, normalizeTaskStatus } from '../utils/taskStatus';
+import { useAutoContext } from '../contexts/GlobalAIContext';
 
 const { Text, Title } = Typography;
 
@@ -66,6 +67,15 @@ const Dashboard: React.FC = () => {
         const timer = setInterval(fetchData, 15000);
         return () => clearInterval(timer);
     }, [fetchData]);
+
+    useAutoContext({
+        dashboard_metrics: stats,
+        recent_tasks: recentTasks.length,
+        nodes: {
+            total: nodes.length,
+            online: nodes.filter(n => n.Status === 'Alive').length
+        }
+    });
 
     // WebSocket
     useEffect(() => {
