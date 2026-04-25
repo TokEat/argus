@@ -126,9 +126,10 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 	return output.Results
 }
 
-// CallNucleiDebug 与 CallNuclei 相同，但启用 StoreResponse 模式，
-// 将所有 HTTP 请求/响应保存到 storeDir 目录。
-// 用于 POC 调试场景，确保即使未命中也能查看请求包。
+// CallNucleiDebug 与 CallNuclei 相同，但启用 MatcherStatus 模式。
+// MatcherStatus=true 使 Nuclei 对未命中的模板也调用 WriteFailure，
+// 该回调会生成 ResultEvent（含 Request/Response，MatcherStatus=false），
+// 从而让调试场景下即使未命中也能查看请求包和响应包。
 func CallNucleiDebug(TargetAndPocsName map[string][]string,
 	proxy string,
 	callBack func(result output.ResultEvent),
@@ -137,8 +138,7 @@ func CallNucleiDebug(TargetAndPocsName map[string][]string,
 	fs embed.FS,
 	np string,
 	excludeTags []string,
-	severities []string,
-	storeDir string) []output.ResultEvent {
+	severities []string) []output.ResultEvent {
 
 	output.ResultsLock.Lock()
 	output.Results = nil
@@ -156,9 +156,9 @@ func CallNucleiDebug(TargetAndPocsName map[string][]string,
 
 	readConfig(options, TargetAndPocsName, proxy, nameForSearch, NoInteractsh, np, excludeTags)
 
-	// Enable StoreResponse for debug mode
-	options.StoreResponse = true
-	options.StoreResponseDir = storeDir
+	// Enable MatcherStatus so WriteFailure fires for non-matching templates,
+	// giving us request/response data even when the POC doesn't match.
+	options.MatcherStatus = true
 
 	if options.ListDslSignatures {
 		return []output.ResultEvent{}
@@ -179,7 +179,7 @@ func CallNucleiDebug(TargetAndPocsName map[string][]string,
 	nucleiRunner.EnableSeverities = severities
 
 	pwd, _ := os.Getwd()
-	gologger.Info().Msgf("[Nuclei][Debug] CWD=%s, Templates=%v, StoreDir=%s", pwd, options.Templates, storeDir)
+	gologger.Info().Msgf("[Nuclei][Debug] CWD=%s, Templates=%v, MatcherStatus=true", pwd, options.Templates)
 
 	resumeFileName := types.DefaultResumeFilePath()
 

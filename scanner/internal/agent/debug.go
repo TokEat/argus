@@ -87,7 +87,6 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 	var stopped atomic.Bool
 	var completeSent atomic.Bool
 	startedAt := time.Now()
-	var hasMatchedResult atomic.Bool
 
 	send := func(event *pb.DebugEvent) {
 		if event == nil {
@@ -139,10 +138,6 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 		return
 	}
 
-	// StoreResponse directory for capturing all request/response pairs
-	storeDir := filepath.Join(tmpDir, "debug-responses")
-	os.MkdirAll(storeDir, 0700)
-
 	send(&pb.DebugEvent{
 		Type:    "debug_log",
 		Level:   "INFO",
@@ -162,14 +157,15 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 		cmd.TargetUrl: []string{templateName},
 	}
 
+	// CallDebug 启用 MatcherStatus=true，Nuclei 对未命中模板也会触发回调
+	// （通过 WriteFailure），回调中 MatcherStatus 为 false 的就是未命中事件。
 	nuclei.CallDebug(targetAndPocs, cmd.Proxy, func(result output.ResultEvent) {
 		if stopped.Load() {
 			return
 		}
-		hasMatchedResult.Store(true)
 		send(&pb.DebugEvent{
 			Type:       "debug_result",
-			Matched:    true,
+			Matched:    result.MatcherStatus,
 			TemplateId: result.TemplateID,
 			Severity:   result.Info.SeverityHolder.Severity.String(),
 			MatchedAt:  result.Matched,
@@ -177,73 +173,12 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 			Response:   result.Response,
 			Extracted:  result.ExtractedResults,
 		})
-	}, "", true, common.EmbedNucleiPocs, tmpDir, nil, nil, storeDir)
+	}, "", true, common.EmbedNucleiPocs, tmpDir, nil, nil)
 
 	close(done)
-
-	// If no match was found, try to read stored request/response files
-	// so the user can still see what was sent/received
-	if !hasMatchedResult.Load() && !stopped.Load() {
-		sendStoredResponses(storeDir, send)
-	}
-
 	if !completeSent.Load() {
 		sendComplete("")
 	}
-}
-
-// sendStoredResponses reads Nuclei's StoreResponse directory and sends
-// debug_result events with matched=false so the frontend can display
-// the raw request/response even when the POC didn't match.
-func sendStoredResponses(storeDir string, send func(*pb.DebugEvent)) {
-	entries, err := os.ReadDir(storeDir)
-	if err != nil {
-		return
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			subDir := filepath.Join(storeDir, entry.Name())
-			subEntries, err := os.ReadDir(subDir)
-			if err != nil {
-				continue
-			}
-			for _, sub := range subEntries {
-				if sub.IsDir() {
-					sendReqRespFromDir(filepath.Join(subDir, sub.Name()), send)
-				}
-			}
-		}
-	}
-}
-
-func sendReqRespFromDir(dir string, send func(*pb.DebugEvent)) {
-	reqData := readFileIfExists(filepath.Join(dir, "request.txt"))
-	respData := readFileIfExists(filepath.Join(dir, "response.txt"))
-
-	if reqData == "" && respData == "" {
-		return
-	}
-
-	send(&pb.DebugEvent{
-		Type:     "debug_result",
-		Matched:  false,
-		Request:  reqData,
-		Response: respData,
-	})
-}
-
-func readFileIfExists(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	// Limit to 64KB to prevent huge responses
-	const maxSize = 64 * 1024
-	if len(data) > maxSize {
-		return string(data[:maxSize]) + "\n... [truncated]"
-	}
-	return string(data)
 }
 
 func (w *Worker) sendOneShotDebugComplete(cmd *pb.DebugCommand, errMsg string) {
