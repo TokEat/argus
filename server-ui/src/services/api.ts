@@ -194,6 +194,8 @@ export function aiAnalyzeArsenalStream(
     callbacks: {
         onStatus?: (phase: string, message: string) => void;
         onToken?: (content: string) => void;
+        onToolStart?: (toolName: string, args: string) => void;
+        onToolEnd?: (toolName: string, result: string) => void;
         onResult?: (result: API.AIAnalysisResult) => void;
         onError?: (message: string) => void;
     },
@@ -247,6 +249,12 @@ export function aiAnalyzeArsenalStream(
                                     break;
                                 case 'token':
                                     callbacks.onToken?.(data.content);
+                                    break;
+                                case 'tool_start':
+                                    callbacks.onToolStart?.(data.name, data.args);
+                                    break;
+                                case 'tool_end':
+                                    callbacks.onToolEnd?.(data.name, data.result);
                                     break;
                                 case 'result':
                                     finishedNormally = true;

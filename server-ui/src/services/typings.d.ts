@@ -264,10 +264,12 @@ declare namespace API {
   }
 
   interface AIAnalyzeRequest {
+    action?: 'review' | 'generate' | 'debug';
     type?: string;
     file_name?: string;
     content: string;
     force?: boolean;
+    context?: any;
   }
 
   interface AIAnalysisResult {

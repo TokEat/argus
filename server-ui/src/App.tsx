@@ -6,6 +6,8 @@ import routes from './routes';
 
 const router = createBrowserRouter(routes);
 
+import { GlobalAIProvider } from './contexts/GlobalAIContext';
+
 const App: React.FC = () => {
   return (
     <ConfigProvider
@@ -18,9 +20,11 @@ const App: React.FC = () => {
         },
       }}
     >
-      <AntApp>
-        <RouterProvider router={router} />
-      </AntApp>
+      <GlobalAIProvider>
+        <AntApp>
+          <RouterProvider router={router} />
+        </AntApp>
+      </GlobalAIProvider>
     </ConfigProvider>
   );
 };
