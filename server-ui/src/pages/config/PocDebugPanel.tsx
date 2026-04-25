@@ -242,32 +242,49 @@ const PocDebugPanel: React.FC<PocDebugPanelProps> = ({ pocContent, onDiagnose })
                                         </Text>
                                     )}
                                     {(item.request || item.response) ? (
-                                        <>
-                                            <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
-                                                Request
-                                            </Text>
-                                            <div style={{ height: 180, border: '1px solid #e2e8f0', borderRadius: 6, overflow: 'hidden' }}>
-                                                <Editor
-                                                    height="100%"
-                                                    language="http"
-                                                    theme="vs-dark"
-                                                    value={item.request || '(empty)'}
-                                                    options={{ readOnly: true, minimap: { enabled: false }, fontSize: 12 }}
-                                                />
-                                            </div>
-                                            <Text strong style={{ fontSize: 12, display: 'block', margin: '8px 0 4px' }}>
-                                                Response
-                                            </Text>
-                                            <div style={{ height: 220, border: '1px solid #e2e8f0', borderRadius: 6, overflow: 'hidden' }}>
-                                                <Editor
-                                                    height="100%"
-                                                    language="http"
-                                                    theme="vs-dark"
-                                                    value={item.response || '(empty)'}
-                                                    options={{ readOnly: true, minimap: { enabled: false }, fontSize: 12 }}
-                                                />
-                                            </div>
-                                        </>
+                                        item.request && !item.response ? (
+                                            <>
+                                                <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+                                                    Execution Trace
+                                                </Text>
+                                                <div style={{ height: 380, border: '1px solid #e2e8f0', borderRadius: 6, overflow: 'hidden' }}>
+                                                    <Editor
+                                                        height="100%"
+                                                        language="http"
+                                                        theme="vs-dark"
+                                                        value={item.request || ''}
+                                                        options={{ readOnly: true, minimap: { enabled: false }, fontSize: 12 }}
+                                                    />
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+                                                    Request
+                                                </Text>
+                                                <div style={{ height: 180, border: '1px solid #e2e8f0', borderRadius: 6, overflow: 'hidden' }}>
+                                                    <Editor
+                                                        height="100%"
+                                                        language="http"
+                                                        theme="vs-dark"
+                                                        value={item.request || ''}
+                                                        options={{ readOnly: true, minimap: { enabled: false }, fontSize: 12 }}
+                                                    />
+                                                </div>
+                                                <Text strong style={{ fontSize: 12, display: 'block', marginTop: 12, marginBottom: 4 }}>
+                                                    Response
+                                                </Text>
+                                                <div style={{ height: 180, border: '1px solid #e2e8f0', borderRadius: 6, overflow: 'hidden' }}>
+                                                    <Editor
+                                                        height="100%"
+                                                        language="http"
+                                                        theme="vs-dark"
+                                                        value={item.response || ''}
+                                                        options={{ readOnly: true, minimap: { enabled: false }, fontSize: 12 }}
+                                                    />
+                                                </div>
+                                            </>
+                                        )
                                     ) : (
                                         <Text type="secondary">无请求/响应数据</Text>
                                     )}

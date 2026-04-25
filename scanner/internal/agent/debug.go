@@ -249,18 +249,25 @@ func mergePacketPairs(packets map[int]output.RequestResponsePair) (string, strin
 	}
 	sort.Ints(keys)
 
-	var reqParts, respParts []string
+	if len(packets) == 1 {
+		// 单步骤，保持 Request 和 Response 分离
+		pair := packets[keys[0]]
+		return pair.Request, pair.Response
+	}
+
+	// 多步骤，交织合并到 Request 中作为完整 trace
+	var traceParts []string
 	for i, idx := range keys {
 		pair := packets[idx]
-		// 人类友好的步骤编号从 1 开始
-		sep := fmt.Sprintf("──── Step %d ────", i+1)
+		sep := fmt.Sprintf("============= Step %d =============", i+1)
+		traceParts = append(traceParts, sep)
 		if pair.Request != "" {
-			reqParts = append(reqParts, sep+"\n"+strings.TrimRight(pair.Request, "\r\n"))
+			traceParts = append(traceParts, "[Request]\n"+strings.TrimRight(pair.Request, "\r\n"))
 		}
 		if pair.Response != "" {
-			respParts = append(respParts, sep+"\n"+strings.TrimRight(pair.Response, "\r\n"))
+			traceParts = append(traceParts, "[Response]\n"+strings.TrimRight(pair.Response, "\r\n"))
 		}
 	}
 
-	return strings.Join(reqParts, "\n\n"), strings.Join(respParts, "\n\n")
+	return strings.Join(traceParts, "\n\n"), ""
 }
