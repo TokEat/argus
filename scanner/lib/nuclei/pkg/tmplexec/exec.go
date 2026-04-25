@@ -111,6 +111,8 @@ func (e *TemplateExecuter) Execute(ctx *scan.ScanContext) (bool, error) {
 	}()
 
 	var lastMatcherEvent *output.InternalWrappedEvent
+	var allStepEvents []*output.InternalWrappedEvent
+
 	writeFailureCallback := func(event *output.InternalWrappedEvent, matcherStatus bool) {
 		if !results.Load() && matcherStatus {
 			if err := e.options.Output.WriteFailure(event); err != nil {
@@ -125,6 +127,24 @@ func (e *TemplateExecuter) Execute(ctx *scan.ScanContext) (bool, error) {
 			// something went wrong
 			return
 		}
+		
+		allStepEvents = append(allStepEvents, event)
+
+		// Merge all previous steps into the current event's InternalEvent
+		// so that MakeResultEventItem and WriteFailure can extract them into Packet
+		if event.InternalEvent != nil {
+			for i, ev := range allStepEvents {
+				if ev.InternalEvent != nil {
+					if req, ok := ev.InternalEvent["request"]; ok {
+						event.InternalEvent[fmt.Sprintf("request_%d", i)] = req
+					}
+					if resp, ok := ev.InternalEvent["response"]; ok {
+						event.InternalEvent[fmt.Sprintf("response_%d", i)] = resp
+					}
+				}
+			}
+		}
+
 		// check for internal true matcher event
 		if event.HasOperatorResult() && event.OperatorsResult.Matched && event.OperatorsResult.Operators != nil {
 			// note all matchers should have internal:true if it is a combination then print it
