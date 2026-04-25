@@ -41,7 +41,8 @@ const safeHref = (href: string) => {
 
 const renderInlineMarkdown = (text: string): React.ReactNode[] => {
     const nodes: React.ReactNode[] = [];
-    const pattern = /(\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
+    // Order matters: bold before italic, strikethrough, inline code, links
+    const pattern = /(\*\*(.+?)\*\*|\*(.+?)\*|~~(.+?)~~|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
     let lastIndex = 0;
     let match: RegExpExecArray | null;
 
@@ -52,11 +53,15 @@ const renderInlineMarkdown = (text: string): React.ReactNode[] => {
         if (match[2]) {
             nodes.push(<strong key={`b-${match.index}`}>{match[2]}</strong>);
         } else if (match[3]) {
-            nodes.push(<code key={`c-${match.index}`}>{match[3]}</code>);
-        } else if (match[4] && match[5]) {
+            nodes.push(<em key={`i-${match.index}`}>{match[3]}</em>);
+        } else if (match[4]) {
+            nodes.push(<del key={`s-${match.index}`}>{match[4]}</del>);
+        } else if (match[5]) {
+            nodes.push(<code key={`c-${match.index}`}>{match[5]}</code>);
+        } else if (match[6] && match[7]) {
             nodes.push(
-                <a key={`a-${match.index}`} href={safeHref(match[5])} target="_blank" rel="noreferrer">
-                    {match[4]}
+                <a key={`a-${match.index}`} href={safeHref(match[7])} target="_blank" rel="noreferrer">
+                    {match[6]}
                 </a>,
             );
         }
@@ -69,6 +74,28 @@ const renderInlineMarkdown = (text: string): React.ReactNode[] => {
     return nodes;
 };
 
+/** Check if a line looks like a table separator row: | --- | --- | */
+const isTableSeparator = (line: string) => /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line.trim());
+
+/** Parse a table row string into cells */
+const parseTableCells = (line: string): string[] => {
+    let trimmed = line.trim();
+    if (trimmed.startsWith('|')) trimmed = trimmed.slice(1);
+    if (trimmed.endsWith('|')) trimmed = trimmed.slice(0, -1);
+    return trimmed.split('|').map((cell) => cell.trim());
+};
+
+/** Parse alignment from separator row */
+const parseTableAlign = (line: string): ('left' | 'center' | 'right' | undefined)[] => {
+    return parseTableCells(line).map((cell) => {
+        const trimmed = cell.trim().replace(/\s/g, '');
+        if (trimmed.startsWith(':') && trimmed.endsWith(':')) return 'center';
+        if (trimmed.endsWith(':')) return 'right';
+        if (trimmed.startsWith(':')) return 'left';
+        return undefined;
+    });
+};
+
 const MarkdownMessage: React.FC<{ content: string }> = ({ content }) => {
     const blocks: React.ReactNode[] = [];
     const lines = content.replace(/\r\n/g, '\n').split('\n');
@@ -76,7 +103,9 @@ const MarkdownMessage: React.FC<{ content: string }> = ({ content }) => {
     let listItems: string[] = [];
     let listType: 'ul' | 'ol' | null = null;
     let codeLines: string[] = [];
+    let codeLang = '';
     let inCode = false;
+    let quoteLines: string[] = [];
 
     const flushParagraph = () => {
         if (paragraph.length === 0) return;
@@ -100,83 +129,189 @@ const MarkdownMessage: React.FC<{ content: string }> = ({ content }) => {
 
     const flushCode = () => {
         blocks.push(
-            <pre key={`code-${blocks.length}`}>
+            <pre key={`code-${blocks.length}`} data-lang={codeLang || undefined}>
                 <code>{codeLines.join('\n')}</code>
             </pre>,
         );
         codeLines = [];
+        codeLang = '';
     };
 
-    lines.forEach((line) => {
+    const flushQuote = () => {
+        if (quoteLines.length === 0) return;
+        blocks.push(
+            <blockquote key={`q-${blocks.length}`}>
+                {quoteLines.map((ql, qi) => (
+                    <span key={qi}>{renderInlineMarkdown(ql)}{qi < quoteLines.length - 1 ? <br /> : null}</span>
+                ))}
+            </blockquote>,
+        );
+        quoteLines = [];
+    };
+
+    const flushAll = () => {
+        flushParagraph();
+        flushList();
+        flushQuote();
+    };
+
+    /** Try to consume a table starting at lineIndex, returns next line index or -1 if not a table */
+    const tryConsumeTable = (startIdx: number): number => {
+        // Need at least header + separator
+        if (startIdx + 1 >= lines.length) return -1;
+        const headerLine = lines[startIdx].trim();
+        const sepLine = lines[startIdx + 1].trim();
+        if (!headerLine.includes('|') || !isTableSeparator(sepLine)) return -1;
+
+        const headers = parseTableCells(headerLine);
+        const aligns = parseTableAlign(sepLine);
+        const bodyRows: string[][] = [];
+        let idx = startIdx + 2;
+        while (idx < lines.length) {
+            const row = lines[idx].trim();
+            if (!row || !row.includes('|')) break;
+            bodyRows.push(parseTableCells(row));
+            idx++;
+        }
+
+        blocks.push(
+            <div key={`tw-${blocks.length}`} className="ai-md-table-wrap">
+                <table key={`t-${blocks.length}`}>
+                    <thead>
+                        <tr>
+                            {headers.map((h, hi) => (
+                                <th key={hi} style={aligns[hi] ? { textAlign: aligns[hi] } : undefined}>
+                                    {renderInlineMarkdown(h)}
+                                </th>
+                            ))}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {bodyRows.map((row, ri) => (
+                            <tr key={ri}>
+                                {headers.map((_, ci) => (
+                                    <td key={ci} style={aligns[ci] ? { textAlign: aligns[ci] } : undefined}>
+                                        {renderInlineMarkdown(row[ci] || '')}
+                                    </td>
+                                ))}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>,
+        );
+
+        return idx;
+    };
+
+    let i = 0;
+    while (i < lines.length) {
+        const line = lines[i];
         const trimmed = line.trim();
 
+        // --- Fenced code block ---
         if (trimmed.startsWith('```')) {
-            flushParagraph();
-            flushList();
+            flushAll();
             if (inCode) {
                 flushCode();
                 inCode = false;
             } else {
                 inCode = true;
+                codeLang = trimmed.slice(3).trim();
                 codeLines = [];
             }
-            return;
+            i++;
+            continue;
         }
-
         if (inCode) {
             codeLines.push(line);
-            return;
+            i++;
+            continue;
         }
 
+        // --- Empty line ---
         if (!trimmed) {
-            flushParagraph();
-            flushList();
-            return;
+            flushAll();
+            i++;
+            continue;
         }
 
-        const heading = /^(#{1,4})\s+(.+)$/.exec(trimmed);
+        // --- Horizontal rule ---
+        if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+            flushAll();
+            blocks.push(<hr key={`hr-${blocks.length}`} />);
+            i++;
+            continue;
+        }
+
+        // --- Table (must be checked before paragraph accumulation) ---
+        if (trimmed.includes('|') && i + 1 < lines.length && isTableSeparator(lines[i + 1]?.trim())) {
+            flushAll();
+            const nextIdx = tryConsumeTable(i);
+            if (nextIdx > 0) {
+                i = nextIdx;
+                continue;
+            }
+        }
+
+        // --- Heading ---
+        const heading = /^(#{1,6})\s+(.+)$/.exec(trimmed);
         if (heading) {
-            flushParagraph();
-            flushList();
-            const level = heading[1].length;
+            flushAll();
+            const level = Math.min(heading[1].length, 6);
             const Tag = `h${level}` as keyof JSX.IntrinsicElements;
             blocks.push(<Tag key={`h-${blocks.length}`}>{renderInlineMarkdown(heading[2])}</Tag>);
-            return;
+            i++;
+            continue;
         }
 
-        const quote = /^>\s+(.+)$/.exec(trimmed);
-        if (quote) {
+        // --- Blockquote (supports multi-line) ---
+        const quoteMatch = /^>\s?(.*)$/.exec(trimmed);
+        if (quoteMatch) {
             flushParagraph();
             flushList();
-            blocks.push(<blockquote key={`q-${blocks.length}`}>{renderInlineMarkdown(quote[1])}</blockquote>);
-            return;
+            quoteLines.push(quoteMatch[1]);
+            i++;
+            continue;
+        }
+        // If we were in a quote and this line is not a quote, flush
+        if (quoteLines.length > 0) {
+            flushQuote();
         }
 
-        const unordered = /^[-*]\s+(.+)$/.exec(trimmed);
+        // --- Unordered list ---
+        const unordered = /^[-*+]\s+(.+)$/.exec(trimmed);
         if (unordered) {
             flushParagraph();
+            flushQuote();
             if (listType && listType !== 'ul') flushList();
             listType = 'ul';
             listItems.push(unordered[1]);
-            return;
+            i++;
+            continue;
         }
 
-        const ordered = /^\d+\.\s+(.+)$/.exec(trimmed);
+        // --- Ordered list ---
+        const ordered = /^\d+[.)]\s+(.+)$/.exec(trimmed);
         if (ordered) {
             flushParagraph();
+            flushQuote();
             if (listType && listType !== 'ol') flushList();
             listType = 'ol';
             listItems.push(ordered[1]);
-            return;
+            i++;
+            continue;
         }
 
+        // --- Paragraph text ---
         flushList();
+        flushQuote();
         paragraph.push(trimmed);
-    });
+        i++;
+    }
 
     if (inCode) flushCode();
-    flushParagraph();
-    flushList();
+    flushAll();
 
     return <div className="ai-markdown">{blocks}</div>;
 };
@@ -802,13 +937,17 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
                 .ai-markdown ul:last-child,
                 .ai-markdown ol:last-child,
                 .ai-markdown pre:last-child,
-                .ai-markdown blockquote:last-child {
+                .ai-markdown blockquote:last-child,
+                .ai-markdown table:last-child,
+                .ai-markdown hr:last-child {
                     margin-bottom: 0;
                 }
                 .ai-markdown h1,
                 .ai-markdown h2,
                 .ai-markdown h3,
-                .ai-markdown h4 {
+                .ai-markdown h4,
+                .ai-markdown h5,
+                .ai-markdown h6 {
                     margin: 12px 0 8px;
                     font-weight: 650;
                     line-height: 1.35;
@@ -818,6 +957,8 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
                 .ai-markdown h2 { font-size: 17px; }
                 .ai-markdown h3 { font-size: 16px; }
                 .ai-markdown h4 { font-size: 15px; }
+                .ai-markdown h5 { font-size: 14px; }
+                .ai-markdown h6 { font-size: 13px; color: #475569; }
                 .ai-markdown ul,
                 .ai-markdown ol {
                     margin: 0 0 10px;
@@ -830,6 +971,14 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
                 .ai-markdown strong {
                     font-weight: 650;
                     color: #0f172a;
+                }
+                .ai-markdown em {
+                    font-style: italic;
+                    color: #334155;
+                }
+                .ai-markdown del {
+                    text-decoration: line-through;
+                    color: #94a3b8;
                 }
                 .ai-markdown code {
                     font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -859,12 +1008,58 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
                     background: #f8fafc;
                     color: #475569;
                 }
+                .ai-markdown blockquote span {
+                    display: inline;
+                }
                 .ai-markdown a {
                     color: #0284c7;
                     text-decoration: none;
                 }
                 .ai-markdown a:hover {
                     text-decoration: underline;
+                }
+                .ai-markdown hr {
+                    margin: 14px 0;
+                    border: none;
+                    height: 1px;
+                    background: linear-gradient(90deg, transparent, #cbd5e1, transparent);
+                }
+                .ai-md-table-wrap {
+                    margin: 0 0 10px;
+                    overflow-x: auto;
+                    border-radius: 10px;
+                    border: 1px solid rgba(226, 232, 240, 0.82);
+                }
+                .ai-markdown table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    font-size: 13px;
+                    line-height: 1.5;
+                }
+                .ai-markdown thead {
+                    background: rgba(241, 245, 249, 0.82);
+                }
+                .ai-markdown th {
+                    padding: 8px 12px;
+                    font-weight: 650;
+                    color: #0f172a;
+                    text-align: left;
+                    border-bottom: 2px solid rgba(203, 213, 225, 0.62);
+                    white-space: nowrap;
+                }
+                .ai-markdown td {
+                    padding: 7px 12px;
+                    color: #334155;
+                    border-bottom: 1px solid rgba(226, 232, 240, 0.52);
+                }
+                .ai-markdown tbody tr:last-child td {
+                    border-bottom: none;
+                }
+                .ai-markdown tbody tr:nth-child(even) {
+                    background: rgba(248, 250, 252, 0.56);
+                }
+                .ai-markdown tbody tr:hover {
+                    background: rgba(224, 242, 254, 0.36);
                 }
             `}</style>
             <Drawer
