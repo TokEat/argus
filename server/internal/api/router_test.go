@@ -51,8 +51,8 @@ func TestAIPermissions(t *testing.T) {
 
 func TestCopilotProfileAndContextCompaction(t *testing.T) {
 	profile := resolveCopilotProfile("poc_inline")
-	if profile.MaxTurns <= 4 || len(profile.Tools) != 3 {
-		t.Fatalf("expected poc profile to enable focused tools, got %+v", profile)
+	if profile.MaxTurns <= 4 || len(profile.Tools) != 4 {
+		t.Fatalf("expected poc profile to enable 4 focused tools (incl node_capacity), got %+v", profile)
 	}
 
 	compact := compactPageContext(map[string]interface{}{
@@ -70,5 +70,23 @@ func TestCopilotProfileAndContextCompaction(t *testing.T) {
 	}
 	if got, ok := compact["long_text"].(string); !ok || len(got) >= 7000 {
 		t.Fatalf("expected long text truncation")
+	}
+}
+
+func TestCopilotProfileNodeCapacityGlobal(t *testing.T) {
+	// node_capacity should be available in ALL profiles
+	modules := []string{"global", "poc_list", "poc_inline", "task_list", "task_results", "node_list", "asset_list", "workflow_list", "fingerprint_list", "dir_list", "dict_list", "dashboard", "unknown_module"}
+	for _, mod := range modules {
+		profile := resolveCopilotProfile(mod)
+		found := false
+		for _, tool := range profile.Tools {
+			if tool == "node_capacity" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("module %q should include node_capacity tool, got tools: %v", mod, profile.Tools)
+		}
 	}
 }

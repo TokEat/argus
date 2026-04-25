@@ -270,11 +270,30 @@ func globalAIChat(c *gin.Context) {
 
 	// Inject contextual state if available
 	if pageContext != nil {
-		ctxBytes, _ := json.MarshalIndent(pageContext, "", "  ")
-		finalMessages = append(finalMessages, aipkg.ChatMessage{
-			Role:    "system",
-			Content: fmt.Sprintf("【内部上下文，用户当前不可见】用户当前的页面环境与数据状态如下：\n%s", string(ctxBytes)),
-		})
+		// Separate ambient context from page context for clearer LLM understanding
+		ambient, hasAmbient := pageContext["_ambient"]
+		pageOnly := make(map[string]interface{}, len(pageContext))
+		for k, v := range pageContext {
+			if k != "_ambient" {
+				pageOnly[k] = v
+			}
+		}
+		if len(pageOnly) > 0 {
+			ctxBytes, _ := json.MarshalIndent(pageOnly, "", "  ")
+			finalMessages = append(finalMessages, aipkg.ChatMessage{
+				Role:    "system",
+				Content: fmt.Sprintf("【内部上下文，用户当前不可见】用户当前的页面环境与数据状态如下：\n%s", string(ctxBytes)),
+			})
+		}
+		if hasAmbient {
+			if ambientMap, ok := ambient.(map[string]interface{}); ok && len(ambientMap) > 0 {
+				ambientBytes, _ := json.MarshalIndent(ambientMap, "", "  ")
+				finalMessages = append(finalMessages, aipkg.ChatMessage{
+					Role:    "system",
+					Content: fmt.Sprintf("【全局常驻上下文】以下是平台的实时运行状态，不依赖于用户当前所在页面：\n%s", string(ambientBytes)),
+				})
+			}
+		}
 	}
 
 	finalMessages = append(finalMessages, req.Messages...)
@@ -301,34 +320,35 @@ func resolveCopilotModule(pageContext map[string]interface{}) string {
 }
 
 func resolveCopilotProfile(module string) copilotProfile {
-	base := "你是 Argus 平台的全局安全智能助手 (Argus Copilot)。你需要基于当前页面上下文协助用户分析资产、任务、漏洞和规则配置。回答要克制、准确，涉及平台动作时先说明风险和前置条件，不要虚构已经执行的操作。"
+	base := "你是 Argus 平台的全局安全智能助手 (Argus Copilot)。你需要基于当前页面上下文协助用户分析资产、任务、漏洞和规则配置。回答要克制、准确，涉及平台动作时先说明风险和前置条件，不要虚构已经执行的操作。全局常驻上下文中包含实时 Agent 节点数据，用户可能随时询问节点状态，请直接基于上下文回答。"
 	profile := copilotProfile{
 		SystemPrompt: base,
 		MaxTurns:     4,
+		Tools:        []string{"node_capacity"}, // 全局默认可查节点
 	}
 
 	switch module {
 	case "poc_list", "poc_inline":
-		profile.Tools = []string{"argus_docs", "sandbox_debug", "workflow_recommend"}
+		profile.Tools = []string{"argus_docs", "sandbox_debug", "workflow_recommend", "node_capacity"}
 		profile.MaxTurns = 8
 		profile.SystemPrompt = base + " 用户当前正在处理 POC。优先关注 Nuclei YAML 结构、误报风险、无害验证和 Workflow 挂载关系。只有在上下文提供 agent_id、target_url 和完整 poc_content 时，才可以调用 RunSandboxDebug；修改 POC 后应建议或执行沙箱验证。如果用户要求生成、修复、重写或优化 POC，请输出完整的更新后 POC，并放在单独的 ```yaml 代码块中；不要声称已经保存，前端会让用户确认后应用到当前编辑器。"
 	case "task_results":
-		profile.Tools = []string{"task_insight", "vulnerability_explain"}
+		profile.Tools = []string{"task_insight", "vulnerability_explain", "node_capacity"}
 		profile.SystemPrompt = base + " 用户当前正在查看扫描结果。请重点解释漏洞证据、请求响应、影响范围、复现条件和处置建议；不要编造未出现在上下文中的报文。"
 	case "task_list":
-		profile.Tools = []string{"task_insight"}
+		profile.Tools = []string{"task_insight", "node_capacity"}
 		profile.SystemPrompt = base + " 用户当前正在查看任务列表。请重点分析失败、超时、取消、重试和节点负载导致的问题，并给出可执行的排查顺序。"
 	case "node_list":
 		profile.Tools = []string{"node_capacity"}
 		profile.SystemPrompt = base + " 用户当前正在查看 Agent 节点。请重点关注在线率、容量、运行中任务、版本兼容性和资源瓶颈。"
 	case "asset_list":
-		profile.Tools = []string{"asset_search", "dict_strategy", "vulnerability_explain"}
+		profile.Tools = []string{"asset_search", "dict_strategy", "vulnerability_explain", "node_capacity"}
 		profile.SystemPrompt = base + " 用户当前正在查看资产。请重点关注资产暴露面、指纹、开放端口、协议识别和下一步探测策略。"
 	case "workflow_list", "fingerprint_list":
-		profile.Tools = []string{"argus_docs", "workflow_recommend", "workflow_conflicts", "dict_strategy"}
+		profile.Tools = []string{"argus_docs", "workflow_recommend", "workflow_conflicts", "dict_strategy", "node_capacity"}
 		profile.SystemPrompt = base + " 用户当前正在维护弹药库配置。请帮助用户理清 Workflow、指纹、目录探测和 POC 之间的挂载关系，优先给出小步、可回滚的配置建议。"
 	case "dir_list", "dict_list":
-		profile.Tools = []string{"argus_docs", "dict_strategy"}
+		profile.Tools = []string{"argus_docs", "dict_strategy", "node_capacity"}
 		profile.SystemPrompt = base + " 用户当前正在维护弹药库配置。请帮助用户理清 Workflow、指纹、目录探测和 POC 之间的挂载关系，优先给出小步、可回滚的配置建议。"
 	case "dashboard":
 		profile.Tools = []string{"task_insight", "node_capacity"}

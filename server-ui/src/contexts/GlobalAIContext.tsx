@@ -1,5 +1,6 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
+import { getNodes } from '../services/api';
 
 export interface PageContext {
     module?: string;
@@ -34,6 +35,52 @@ export const GlobalAIProvider: React.FC<{ children: ReactNode }> = ({ children }
     const [visible, setVisible] = useState(false);
     const [pageContext, setContext] = useState<PageContext>({});
     const [editableTarget, setEditableTarget] = useState<AIEditableTarget | undefined>();
+    const [ambientContext, setAmbientContext] = useState<Record<string, unknown>>({});
+
+    // Ambient Context: 30s polling for agent fleet status
+    useEffect(() => {
+        let cancelled = false;
+        const poll = async () => {
+            try {
+                const nodes = await getNodes();
+                if (cancelled) return;
+                const online = nodes.filter((n: API.AgentNode) => n.Status === 'Alive');
+                const sorted = [...online].sort((a, b) => (b.RunningTasks || 0) - (a.RunningTasks || 0));
+                const capped = sorted.length > 20 ? sorted.slice(0, 20) : sorted;
+                setAmbientContext((prev) => ({
+                    ...prev,
+                    agent_fleet: {
+                        total: nodes.length,
+                        online: online.length,
+                        offline: nodes.length - online.length,
+                        agents: capped.map((n: API.AgentNode) => ({
+                            agent_id: n.AgentID,
+                            ip: n.IP,
+                            status: n.Status,
+                            version: n.Version,
+                            os: n.OS,
+                            capacity: n.Capacity,
+                            running_tasks: n.RunningTasks,
+                            cpu: Math.round(n.CPUUsage || 0),
+                            mem: Math.round(n.MemUsage || 0),
+                        })),
+                        ...(sorted.length > 20 ? { _truncated_note: `showing top 20 of ${sorted.length} online agents` } : {}),
+                    },
+                }));
+            } catch {
+                // silent — ambient data is best-effort
+            }
+        };
+        poll();
+        const timer = setInterval(poll, 30_000);
+        return () => { cancelled = true; clearInterval(timer); };
+    }, []);
+
+    // Merge page context with ambient context
+    const mergedContext = useMemo<PageContext>(() => ({
+        ...pageContext,
+        _ambient: ambientContext,
+    }), [pageContext, ambientContext]);
 
     const openGlobalAI = (contextData?: PageContext) => {
         if (contextData) {
@@ -54,7 +101,7 @@ export const GlobalAIProvider: React.FC<{ children: ReactNode }> = ({ children }
     }, []);
 
     return (
-        <GlobalAIContext.Provider value={{ visible, pageContext, editableTarget, openGlobalAI, closeGlobalAI, setPageContext: setContext, registerEditableTarget }}>
+        <GlobalAIContext.Provider value={{ visible, pageContext: mergedContext, editableTarget, openGlobalAI, closeGlobalAI, setPageContext: setContext, registerEditableTarget }}>
             {children}
         </GlobalAIContext.Provider>
     );
