@@ -292,6 +292,22 @@ type ArsenalAIReview struct {
 	CreatedAt           time.Time
 }
 
+// AIToolInvocation stores internal audit evidence for Copilot tool calls.
+type AIToolInvocation struct {
+	ID           uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID     string `gorm:"default:'default';index"`
+	UserID       string `gorm:"index"`
+	Module       string `gorm:"index"`
+	ToolName     string `gorm:"index"`
+	ArgsSummary  string `gorm:"type:jsonb"`
+	AgentID      string `gorm:"index"`
+	TargetURL    string `gorm:"type:text"`
+	DurationMS   int64
+	Status       string `gorm:"index"`
+	ErrorSummary string `gorm:"type:text"`
+	CreatedAt    time.Time
+}
+
 // AgentLog 遥测日志模型
 type AgentLog struct {
 	ID        uint   `gorm:"primaryKey;autoIncrement"`
