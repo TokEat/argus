@@ -14,6 +14,8 @@ import (
 
 type ChatClient interface {
 	CompleteJSON(ctx context.Context, cfg Config, messages []ChatMessage) (string, error)
+	CompleteWithTools(ctx context.Context, cfg Config, messages []ChatMessage, tools []ToolDefinition) (string, []ToolCall, error)
+	StreamWithTools(ctx context.Context, cfg Config, messages []ChatMessage, tools []ToolDefinition, onToken func(token string), onToolCall func(toolCall ToolCall)) (string, []ToolCall, error)
 }
 
 type HTTPClient struct {
@@ -26,8 +28,29 @@ var defaultHTTPClient = &http.Client{
 }
 
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string      `json:"role"`
+	Content    string      `json:"content"`
+	Name       string      `json:"name,omitempty"`
+	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+	ToolCallID string      `json:"tool_call_id,omitempty"`
+}
+
+type ToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"` // usually "function"
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+type ToolDefinition struct {
+	Type     string `json:"type"` // usually "function"
+	Function struct {
+		Name        string      `json:"name"`
+		Description string      `json:"description"`
+		Parameters  interface{} `json:"parameters"` // JSON Schema map[string]interface{}
+	} `json:"function"`
 }
 
 func (c *HTTPClient) CompleteJSON(ctx context.Context, cfg Config, messages []ChatMessage) (string, error) {

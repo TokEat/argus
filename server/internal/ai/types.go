@@ -25,10 +25,12 @@ type PublicConfig struct {
 type AnalyzeRequest struct {
 	TenantID string
 	UserID   string
+	Action   string `json:"action"` // "review", "generate", "debug"
 	Type     string `json:"type"`
 	FileName string `json:"file_name"`
 	Content  string `json:"content"`
 	Force    bool   `json:"force"`
+	Context  map[string]interface{} `json:"context"` // used for debug session info
 }
 
 type Issue struct {

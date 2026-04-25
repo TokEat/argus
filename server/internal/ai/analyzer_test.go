@@ -20,6 +20,19 @@ func (f *fakeChatClient) CompleteJSON(ctx context.Context, cfg Config, messages 
 	return f.raw, nil
 }
 
+func (f *fakeChatClient) CompleteWithTools(ctx context.Context, cfg Config, messages []ChatMessage, tools []ToolDefinition) (string, []ToolCall, error) {
+	f.calls++
+	return f.raw, nil, nil
+}
+
+func (f *fakeChatClient) StreamWithTools(ctx context.Context, cfg Config, messages []ChatMessage, tools []ToolDefinition, onToken func(token string), onToolCall func(toolCall ToolCall)) (string, []ToolCall, error) {
+	f.calls++
+	if onToken != nil {
+		onToken(f.raw)
+	}
+	return f.raw, nil, nil
+}
+
 func testDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	store, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
