@@ -6,6 +6,8 @@
 
 本文用于同步当前 AI Copilot / POC AI 能力的实现状态、架构边界、收口风险和后续推进计划。当前阶段的重点不是重新定义愿景，而是把已经在分支中形成的能力梳理清楚，避免结构化 POC 审查和全局 Copilot 对话两条线互相覆盖。
 
+> 关联文档：[implementation-status.md](implementation-status.md) | [interface-implementations.md](interface-implementations.md)
+
 ## 1. 当前实现进度
 
 | 模块 | 进度 | 状态 |

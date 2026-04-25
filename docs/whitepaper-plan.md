@@ -92,9 +92,9 @@
 
 这些应继续由现有文档承担：
 
-- `docs/interface-implementations.md`
-- `docs/implementation-status.md`
-- `docs/project-structure.md`
+- [interface-implementations.md](interface-implementations.md)
+- [implementation-status.md](implementation-status.md)
+- [project-structure.md](project-structure.md)
 
 ---
 
@@ -233,7 +233,7 @@
 - 已有代码但未闭环能力
 - 明确尚未完成能力
 
-这一章应和 `docs/implementation-status.md` 保持一致，但表达更偏对外。
+这一章应和 [implementation-status.md](implementation-status.md) 保持一致，但表达更偏对外。
 
 ### 第八章：典型落地场景
 
@@ -277,17 +277,17 @@
 
 | 文档 | 角色 |
 |------|------|
-| `README.md` | 项目入口、快速认知、安装与使用 |
-| `docs/project-structure.md` | 代码结构解释 |
-| `docs/interface-implementations.md` | 接口现状与联调依据 |
-| `docs/implementation-status.md` | 当前实现边界 |
-| `docs/distributed-scan-architecture.md` | 当前架构现状 |
-| `docs/whitepaper-plan.md` | 白皮书规划与写作蓝图 |
+| [README.md](../README.md) | 项目入口、快速认知、安装与使用 |
+| [project-structure.md](project-structure.md) | 代码结构解释 |
+| [interface-implementations.md](interface-implementations.md) | 接口现状与联调依据 |
+| [implementation-status.md](implementation-status.md) | 当前实现边界 |
+| [distributed-scan-architecture.md](distributed-scan-architecture.md) | 当前架构现状 |
+| [whitepaper-plan.md](whitepaper-plan.md) | 白皮书规划与写作蓝图 |
 | 未来正式白皮书 | 对外统一叙事与深度说明 |
 
 建议正式白皮书文件名：
 
-- `docs/argus-technical-whitepaper.md`
+- [argus-technical-whitepaper.md](argus-technical-whitepaper.md)
 
 当前这份规划稿完成后，下一步就可以据此起草正式正文。
 
@@ -341,11 +341,11 @@ Argus 当前最容易出现的问题，不是功能太少，而是文档太容�
 
 为了保证白皮书内容与代码一致，建议正文主要取材于这些现有文件：
 
-- `README.md`
-- `docs/implementation-status.md`
-- `docs/interface-implementations.md`
-- `docs/distributed-scan-architecture.md`
-- `docs/rule-catalog-init.md`
+- [README.md](../README.md)
+- [implementation-status.md](implementation-status.md)
+- [interface-implementations.md](interface-implementations.md)
+- [distributed-scan-architecture.md](distributed-scan-architecture.md)
+- [rule-catalog-init.md](rule-catalog-init.md)
 - `server/internal/api/router.go`
 - `server/internal/grpc/server.go`
 - `server/internal/scheduler/queue.go`

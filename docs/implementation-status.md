@@ -4,7 +4,7 @@
 >
 > 标注说明：`✅` = 已实现并接入主链路 | `⚠️` = 代码已存在但链路未闭环 / 仅部分可用 | `❌` = 尚未实现
 >
-> 接口清单另见：`docs/interface-implementations.md`
+> 接口清单另见：[interface-implementations.md](interface-implementations.md)
 
 ---
 

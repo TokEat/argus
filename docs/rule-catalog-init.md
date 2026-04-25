@@ -1,5 +1,7 @@
 # 规则库 PostgreSQL 初始化设计
 
+> 相关架构文档：[db_schema.md](db_schema.md) | [project-schema-design.md](project-schema-design.md) | [agent-pull-architecture.md](agent-pull-architecture.md)
+
 当前控制面将规则数据拆成两层：
 
 - `arsenals`

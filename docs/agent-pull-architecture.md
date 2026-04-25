@@ -1,5 +1,7 @@
 # Argus 分布式扫描引擎调度架构：Agent-Pull 模式
 
+> 相关文档：[project-structure.md](project-structure.md) | [distributed-scan-architecture.md](distributed-scan-architecture.md)
+
 本文档详细记录了 Argus 分布式扫描引擎从早期的“Server 强管控下推”演进到“Agent 按需拉取 (Agent-Pull)”的核心架构设计。该设计旨在解决长连接风暴、跨网络 NAT 穿透以及复杂故障恢复机制带来的痛点，实现天然的解耦、高可靠性与极致的横向扩展能力。
 
 ## 1. 架构核心思想

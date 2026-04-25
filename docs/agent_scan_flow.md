@@ -1,5 +1,7 @@
 # Agent 扫描引擎流水线 (Pipeline) 流程图
 
+> 相关架构文档：[project-structure.md](project-structure.md) | [distributed-scan-architecture.md](distributed-scan-architecture.md)
+
 以下是 Argus Agent 端扫描任务流水线 (`scanner/internal/engine/pipeline.go`) 的核心执行流程图：
 
 ```mermaid
