@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -163,14 +164,24 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 		if stopped.Load() {
 			return
 		}
+
+		reqData := result.Request
+		respData := result.Response
+
+		// 多步骤模板：result.Packet 包含所有请求/响应对（按步骤索引），
+		// result.Request/Response 只有最后一步的数据。
+		if len(result.Packet) > 1 {
+			reqData, respData = mergePacketPairs(result.Packet)
+		}
+
 		send(&pb.DebugEvent{
 			Type:       "debug_result",
 			Matched:    result.MatcherStatus,
 			TemplateId: result.TemplateID,
 			Severity:   result.Info.SeverityHolder.Severity.String(),
 			MatchedAt:  result.Matched,
-			Request:    result.Request,
-			Response:   result.Response,
+			Request:    reqData,
+			Response:   respData,
 			Extracted:  result.ExtractedResults,
 		})
 	}, "", true, common.EmbedNucleiPocs, tmpDir, nil, nil)
@@ -222,4 +233,34 @@ func logDebugLocal(level, format string, args ...interface{}) {
 	default:
 		fmt.Printf("[Debug][INFO] %s\n", msg)
 	}
+}
+
+// mergePacketPairs 将多步骤模板的所有请求/响应对按序合并，
+// 用分隔线标注步骤编号，方便在单个 Editor 中查看所有步骤。
+func mergePacketPairs(packets map[int]output.RequestResponsePair) (string, string) {
+	if len(packets) == 0 {
+		return "", ""
+	}
+
+	// 按步骤索引排序
+	keys := make([]int, 0, len(packets))
+	for k := range packets {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+
+	var reqParts, respParts []string
+	for i, idx := range keys {
+		pair := packets[idx]
+		// 人类友好的步骤编号从 1 开始
+		sep := fmt.Sprintf("──── Step %d ────", i+1)
+		if pair.Request != "" {
+			reqParts = append(reqParts, sep+"\n"+strings.TrimRight(pair.Request, "\r\n"))
+		}
+		if pair.Response != "" {
+			respParts = append(respParts, sep+"\n"+strings.TrimRight(pair.Response, "\r\n"))
+		}
+	}
+
+	return strings.Join(reqParts, "\n\n"), strings.Join(respParts, "\n\n")
 }

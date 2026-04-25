@@ -399,6 +399,33 @@ func (w *StandardWriter) WriteFailure(wrappedEvent *InternalWrappedEvent) error 
 		TemplateEncoded: w.encodeTemplate(types.ToString(event["template-path"])),
 		Error:           types.ToString(event["error"]),
 	}
+
+	// Extract multi-step request/response pairs (request_0, response_0, ...)
+	// so debug/failure events also include all steps, not just the last one.
+	// NeedsRequestCondition uses currentIndex starting from 0,
+	// while MakeResultEventItem starts from 1 — we check both ranges.
+	packet := make(map[int]RequestResponsePair)
+	for idx := 0; idx <= 20; idx++ {
+		reqKey := fmt.Sprintf("request_%d", idx)
+		respKey := fmt.Sprintf("response_%d", idx)
+		reqVal, reqOK := event[reqKey]
+		respVal, respOK := event[respKey]
+		if !reqOK && !respOK {
+			continue
+		}
+		pair := RequestResponsePair{}
+		if reqOK {
+			pair.Request = types.ToString(reqVal)
+		}
+		if respOK {
+			pair.Response = types.ToString(respVal)
+		}
+		packet[idx] = pair
+	}
+	if len(packet) > 0 {
+		data.Packet = packet
+	}
+
 	return w.Write(data)
 }
 
