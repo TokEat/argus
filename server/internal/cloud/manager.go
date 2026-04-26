@@ -160,6 +160,62 @@ func (rm *ResourceManager) waitAndActivate(ctx context.Context, cloudInst *db.Cl
 	log.Printf("[Provision] Instance %s is ready at IP: %s", cloudInst.ID, ip)
 }
 
+// RebootInstance 重启云实例（保留机器，OS 级重启以恢复 Agent）
+func (rm *ResourceManager) RebootInstance(ctx context.Context, cloudInst *db.CloudInstance) error {
+	log.Printf("[Reboot] Rebooting instance %s (provider_id=%s, reboot_count=%d)",
+		cloudInst.ID, cloudInst.ProviderInstanceID, cloudInst.RebootCount)
+
+	// 更新状态为 Rebooting
+	if rm.database != nil {
+		rm.database.Model(cloudInst).Updates(map[string]interface{}{
+			"status":       db.CloudStatusRebooting,
+			"reboot_count": cloudInst.RebootCount + 1,
+		})
+	}
+
+	// 调用云 API 重启
+	if cloudInst.ProviderInstanceID != "" {
+		if err := rm.provider.RebootInstance(cloudInst.ProviderInstanceID); err != nil {
+			log.Printf("[Reboot] Failed to reboot instance %s: %v", cloudInst.ProviderInstanceID, err)
+			if rm.database != nil {
+				rm.database.Model(cloudInst).Updates(map[string]interface{}{
+					"status":        db.CloudStatusError,
+					"error_message": fmt.Sprintf("Reboot failed: %v", err),
+				})
+			}
+			return err
+		}
+	}
+
+	// 异步等待重启后恢复
+	go rm.waitRebootRecovery(ctx, cloudInst)
+
+	log.Printf("[Reboot] Instance %s reboot initiated, waiting for agent re-registration...", cloudInst.ID)
+	return nil
+}
+
+// waitRebootRecovery 等待重启后 Agent 重新上线
+func (rm *ResourceManager) waitRebootRecovery(ctx context.Context, cloudInst *db.CloudInstance) {
+	// 等待实例重新进入 Running 状态（OS 层面）
+	err := rm.provider.WaitReady(cloudInst.ProviderInstanceID, 5*time.Minute)
+	if err != nil {
+		log.Printf("[Reboot] WaitReady after reboot failed for %s: %v", cloudInst.ID, err)
+		if rm.database != nil {
+			rm.database.Model(cloudInst).Updates(map[string]interface{}{
+				"status":        db.CloudStatusError,
+				"error_message": fmt.Sprintf("Post-reboot WaitReady failed: %v", err),
+			})
+		}
+		return
+	}
+
+	// OS 已就绪，将状态改回 WaitingReady，等待 Agent 通过 gRPC 重新注册
+	if rm.database != nil {
+		rm.database.Model(cloudInst).Update("status", db.CloudStatusWaitingReady)
+	}
+	log.Printf("[Reboot] Instance %s OS is ready, awaiting agent re-registration", cloudInst.ID)
+}
+
 // TerminateInstance 销毁实例并更新 DB
 func (rm *ResourceManager) TerminateInstance(ctx context.Context, cloudInst *db.CloudInstance) error {
 	log.Printf("[Recycle] Tearing down instance %s (provider_id=%s)", cloudInst.ID, cloudInst.ProviderInstanceID)

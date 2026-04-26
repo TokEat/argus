@@ -56,14 +56,31 @@ AutoScaler 作为一个守护协程，每 30 秒执行一次全局评估：
 
 为了防止因为网络异常或进程崩溃导致云端计费流失，设计了三套兜底机制：
 
-1. **HeartbeatReaper (心跳判死 + 自动销毁 - 30s)**：每 30 秒扫描所有 `Alive` 状态但超过 60 秒无心跳的 Agent 节点。一旦判定死亡：
+1. **HeartbeatReaper (心跳判死 + 梯度容错 - 30s)**：每 30 秒扫描所有 `Alive` 状态但超过 60 秒无心跳的 Agent 节点。一旦判定死亡：
    - 回收该节点持有的所有 `Running` 子任务，退回队列重新调度给其他存活节点。
-   - **查询 `cloud_instances` 表**：若该 `agent_id` 关联了一条状态为 `Running/WaitingReady/Provisioning` 的云实例记录，立即异步调用云厂商 API 销毁底层机器，避免空转计费。
+   - **查询 `cloud_instances` 表**：若该 `agent_id` 关联了一条活跃的云实例记录，执行**梯度容错策略**：
+     - `reboot_count < 2`：调用云厂商 `RebootInstance` API 对实例执行 OS 级强制重启。由于 Agent 进程通过 systemd `Restart=always` 配置守护，系统重启后 Agent 将自动拉起并重新注册。实例状态转为 `Rebooting` → `WaitingReady`。
+     - `reboot_count >= 2`：已经重启过 2 次仍然无法恢复，说明可能是底层硬件故障或镜像损坏，直接调用 `TerminateInstance` 销毁机器。
    - 10 分钟无心跳的 `Offline` 节点将从数据库中彻底删除。
 2. **Reconciler (实例对账 - 5min)**：查询数据库中标记为 `Running` 的实例，向云厂商拉取真实列表；若云端已不存在，则修正数据库状态为 `Terminated`。
 3. **OrphanSweeper (孤儿回收 - 10min)**：扫描存活时间超过策略设定的 `instance_ttl_minutes` 的实例，强制进行销毁，防止异常实例无限计费。
 
-> **设计意图**：三重机制形成梯度防御——HeartbeatReaper 提供**分钟级**的快速响应（Agent 断线 60 秒内即触发销毁），Reconciler 覆盖**云端状态偏差**的修复，OrphanSweeper 是最终的**兜底安全网**。
+> **设计意图**：三重机制形成梯度防御——HeartbeatReaper 以**先重启、再销毁**的柔性策略提供分钟级响应，避免因短暂的进程崩溃就浪费一台已预热的机器；Reconciler 覆盖**云端状态偏差**的修复；OrphanSweeper 是最终的**兜底安全网**。
+
+```mermaid
+stateDiagram-v2
+    [*] --> Provisioning: AutoScaler 创建
+    Provisioning --> WaitingReady: 云 API 返回实例 ID
+    WaitingReady --> Running: Agent gRPC 注册成功
+    Running --> Rebooting: Agent 断线 (reboot < 2)
+    Rebooting --> WaitingReady: OS 重启完成
+    WaitingReady --> Running: Agent 重新注册
+    Running --> Terminating: Agent 断线 (reboot >= 2) / 缩容 / TTL
+    Rebooting --> Error: 重启失败
+    Provisioning --> Error: 创建失败
+    Terminating --> Terminated: 云 API 销毁成功
+    Error --> Terminating: 人工或 OrphanSweeper 清理
+```
 
 ### 3.3 Spot 竞价实例回收感知
 

@@ -36,6 +36,9 @@ type CloudProvider interface {
 	// GetInstanceIP 获取实例的公网/私网通信IP
 	GetInstanceIP(instanceID string) (string, error)
 
+	// RebootInstance 重启实例（保留机器，只做 OS 级重启以恢复 Agent 进程）
+	RebootInstance(instanceID string) error
+
 	// TerminateInstance 销毁实例释放资源
 	TerminateInstance(instanceID string) error
 

@@ -130,6 +130,18 @@ func (p *ECSProvider) GetInstanceIP(instanceID string) (string, error) {
 	return "", fmt.Errorf("no public IP found")
 }
 
+func (p *ECSProvider) RebootInstance(instanceID string) error {
+	req := &ecs.RebootInstanceRequest{
+		InstanceId: tea.String(instanceID),
+		ForceStop:  tea.Bool(true), // 强制重启，防止 Agent 假死导致 graceful shutdown 卡住
+	}
+	_, err := p.client.RebootInstance(req)
+	if err != nil {
+		return fmt.Errorf("RebootInstance error: %w", err)
+	}
+	return nil
+}
+
 func (p *ECSProvider) TerminateInstance(instanceID string) error {
 	req := &ecs.DeleteInstancesRequest{
 		InstanceId: []*string{tea.String(instanceID)},

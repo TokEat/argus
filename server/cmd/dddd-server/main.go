@@ -274,13 +274,14 @@ func main() {
 					srv.Hub.BroadcastNewTask(int32(len(orphanTasks)), 0)
 				}
 
-				// ★ 若断线 Agent 对应的是一台云实例，自动销毁底层机器，防止空转计费
+				// ★ 若断线 Agent 对应的是一台云实例，执行梯度容错策略：
+				//   重启次数 < 2  → 尝试 OS 级重启（保留机器，等 Agent 自动恢复）
+				//   重启次数 >= 2 → 放弃治疗，直接销毁底层机器
 				var cloudInst db.CloudInstance
 				if err := db.DB.Where("agent_id = ? AND status IN ?", n.AgentID, []string{
 					db.CloudStatusRunning, db.CloudStatusWaitingReady, db.CloudStatusProvisioning,
 				}).First(&cloudInst).Error; err == nil {
-					log.Printf("[Heartbeat] Dead agent %s is a cloud instance (%s), scheduling termination...",
-						n.AgentID, cloudInst.ProviderInstanceID)
+					const maxRebootAttempts = 2
 					go func(inst db.CloudInstance) {
 						var account db.CloudAccount
 						if err := db.DB.First(&account, "id = ?", inst.CloudAccountID).Error; err != nil {
@@ -294,10 +295,22 @@ func main() {
 						}
 						mgr := cloud.NewResourceManager(provider)
 						mgr.SetDB(db.DB)
-						if err := mgr.TerminateInstance(context.Background(), &inst); err != nil {
-							log.Printf("[Heartbeat] Failed to terminate cloud instance %s: %v", inst.ID, err)
+
+						if inst.RebootCount < maxRebootAttempts {
+							log.Printf("[Heartbeat] Dead agent %s → cloud instance %s: attempting reboot (%d/%d)",
+								n.AgentID, inst.ProviderInstanceID, inst.RebootCount+1, maxRebootAttempts)
+							if err := mgr.RebootInstance(context.Background(), &inst); err != nil {
+								log.Printf("[Heartbeat] Reboot failed, falling back to terminate: %v", err)
+								_ = mgr.TerminateInstance(context.Background(), &inst)
+							}
 						} else {
-							log.Printf("[Heartbeat] Cloud instance %s terminated successfully", inst.ID)
+							log.Printf("[Heartbeat] Dead agent %s → cloud instance %s: max reboots exhausted (%d), terminating",
+								n.AgentID, inst.ProviderInstanceID, inst.RebootCount)
+							if err := mgr.TerminateInstance(context.Background(), &inst); err != nil {
+								log.Printf("[Heartbeat] Failed to terminate cloud instance %s: %v", inst.ID, err)
+							} else {
+								log.Printf("[Heartbeat] Cloud instance %s terminated successfully", inst.ID)
+							}
 						}
 					}(cloudInst)
 				}

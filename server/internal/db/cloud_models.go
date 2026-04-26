@@ -66,6 +66,7 @@ type CloudInstance struct {
 	Region             string                                   // 实例所在区域
 	Status             string `gorm:"default:'Provisioning';index"` // 状态机见下方
 	Spot               bool   `gorm:"default:false"`            // 是否竞价实例
+	RebootCount        int    `gorm:"default:0"`                // 累计重启次数（用于梯度容错策略）
 	ErrorMessage       string `gorm:"type:text"`                // 创建/运行错误信息
 	LaunchedAt         *time.Time                               // 实例创建时间
 	ReadyAt            *time.Time                               // 实例就绪时间 (Agent 注册成功)
@@ -79,6 +80,7 @@ type CloudInstance struct {
 //   Provisioning  → 正在创建实例
 //   WaitingReady  → 实例已创建，等待 Agent 注册
 //   Running       → Agent 已注册并正常运行
+//   Rebooting     → 正在重启中（Agent 断线后触发的 OS 级重启）
 //   Terminating   → 正在销毁
 //   Terminated    → 已销毁
 //   Error         → 创建或运行出错
@@ -88,6 +90,7 @@ const (
 	CloudStatusProvisioning = "Provisioning"
 	CloudStatusWaitingReady = "WaitingReady"
 	CloudStatusRunning      = "Running"
+	CloudStatusRebooting    = "Rebooting"
 	CloudStatusTerminating  = "Terminating"
 	CloudStatusTerminated   = "Terminated"
 	CloudStatusError        = "Error"
