@@ -68,6 +68,44 @@ AutoScaler 作为一个守护协程，每 30 秒执行一次全局评估：
 
 虽然计算资源（实例）是云端动态创建的，但 Argus 的任务分发核心依旧严格遵循**按需拉取 (Agent-Pull)** 架构，结合 RabbitMQ 实现对云端动态实例的无缝分发：
 
+```mermaid
+sequenceDiagram
+    participant RMQ as RabbitMQ
+    participant Server as Argus Server (AutoScaler)
+    participant Cloud as Cloud Provider (Aliyun ECS)
+    participant Instance as Spot Instance (Cloud-Init)
+    participant Agent as Argus Agent
+    
+    loop 每 30 秒评估
+        Server->>RMQ: 检查全局队列深度 (Queue Depth)
+        alt 深度 > 扩容阈值 (Scale Up)
+            Server->>Cloud: RunInstances (竞价/按量) 注入 UserData
+            Cloud-->>Server: 返回实例 ID (处于 Provisioning)
+            Cloud->>Instance: 启动机器并执行 Cloud-Init
+            Instance->>Agent: 下载并作为守护进程启动 Agent
+            Agent->>Server: gRPC 注册上线 (携带 --tags "cloud")
+        else 深度 <= 缩容阈值 (Scale Down)
+            Server->>Cloud: Terminate 销毁空闲实例
+        end
+    end
+    
+    loop 任务分发 (Agent-Pull)
+        Agent->>Server: gRPC ClaimTask (基于自身并发容量)
+        Server->>RMQ: 拉取 SubTask
+        RMQ-->>Server: 返回任务数据
+        Server-->>Agent: 下发任务
+        Agent->>Agent: 执行扫描/漏洞验证
+        Agent->>RMQ: 任务完成，发送 ACK
+    end
+    
+    opt 竞价实例被强行回收
+        Cloud->>Instance: HTTP 元数据接口下发 5 分钟回收警告
+        Instance->>Agent: 触发 SpotTerminationListener
+        Agent->>Agent: EmergencyDump 保存当前状态
+        Agent->>Server: 优雅下线并停止拉取新任务
+    end
+```
+
 1. **去中心化认领**：Server 端（AutoScaler）只负责根据全局队列深度（Queue Depth）来决定是否要“买机器”。它**绝对不会**硬性指定某台云主机去执行特定的任务。
 2. **实例自启动与融入**：通过 Cloud-Init 拉起的 Agent，启动后会自动通过 gRPC 连接 Server，成为一个标准算力节点。
 3. **基于信号量的弹药消耗**：Agent 一旦上线，就和普通的物理机节点一样，通过 `NotifyHub` 接收队列更新广播，并根据自身的并发池限制，主动向 Server 发起 `ClaimTask`。
