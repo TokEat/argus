@@ -16,6 +16,7 @@ import (
 	"github.com/user/dddd-server/internal/db"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
@@ -94,7 +95,21 @@ func (s *Server) Serve() error {
 		return fmt.Errorf("failed to listen: %w", err)
 	}
 
-	opts := []grpc.ServerOption{}
+	opts := []grpc.ServerOption{
+		// Server 端 Keepalive 参数：主动检测死连接
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionIdle:     5 * time.Minute,  // 空闲 5 分钟后发送 GOAWAY 让客户端重连
+			MaxConnectionAge:      2 * time.Hour,     // 连接存活上限，到期后优雅关闭让客户端重连
+			MaxConnectionAgeGrace: 30 * time.Second,  // GOAWAY 后给予 30 秒完成正在进行的 RPC
+			Time:                  30 * time.Second,  // 每 30 秒向客户端发送 keepalive ping
+			Timeout:               10 * time.Second,  // 10 秒无 ping 回复判定连接死亡
+		}),
+		// 允许客户端以较高频率发送 keepalive ping（配合 Agent 端的 30 秒间隔）
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             10 * time.Second, // 允许客户端最短 10 秒发一次 ping
+			PermitWithoutStream: true,              // 允许无活跃流时也发 ping
+		}),
+	}
 	if s.psk != "" {
 		opts = append(opts,
 			grpc.UnaryInterceptor(s.unaryPSKInterceptor),
@@ -414,7 +429,25 @@ func (s *Server) Heartbeat(ctx context.Context, req *pb.HeartbeatReq) (*pb.Heart
 	if req.RuleVersion != "" {
 		updates["rule_version"] = req.RuleVersion
 	}
-	_ = db.DB.Model(&db.Node{}).Where("agent_id = ?", req.AgentId).Updates(updates).Error
+
+	// Upsert 语义：如果节点记录被自动清理协程删除了（10 分钟离线 → DELETE），
+	// 心跳应该重新创建记录，避免 Agent 在运行但 UI 不可见的"幽灵节点"问题。
+	res := db.DB.Model(&db.Node{}).Where("agent_id = ?", req.AgentId).Updates(updates)
+	if res.Error == nil && res.RowsAffected == 0 {
+		// 节点记录不存在（被清理或从未注册），重新创建
+		db.DB.Save(&db.Node{
+			TenantID:       "default",
+			AgentID:        req.AgentId,
+			Status:         "Alive",
+			LastBeat:       time.Now().UnixMilli(),
+			RunningTasks:   int(req.RunningTasks),
+			RunningTaskIDs: taskIDsJSON,
+			CPUUsage:       float32(req.CpuUsage),
+			MemUsage:       float32(req.MemUsage),
+			RuleVersion:    req.RuleVersion,
+		})
+		log.Printf("[Heartbeat] Re-created node record for Agent %s (was previously cleaned up)", req.AgentId)
+	}
 
 	// 检查是否需要同步规则
 	shouldSync := false

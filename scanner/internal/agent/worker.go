@@ -33,6 +33,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
 
 // grpcTeeWriter 实现 gologger Writer 接口，将日志同时写入本地终端和 gRPC StreamLogs。
@@ -174,6 +175,9 @@ type Worker struct {
 	logTee *grpcTeeWriter
 	stopCh chan struct{}
 
+	// reconnectCh 用于心跳连续失败时通知主循环重建 Subscribe 流
+	reconnectCh chan struct{}
+
 	debugMu      sync.Mutex
 	debugCancel  context.CancelFunc
 	debugSession string
@@ -194,6 +198,7 @@ func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[stri
 		maxWorkers:   maxWorkers,
 		tags:         tags,
 		stopCh:       make(chan struct{}),
+		reconnectCh:  make(chan struct{}, 1),
 	}
 }
 
@@ -227,6 +232,12 @@ func (w *Worker) apiGet(url string) (*http.Response, error) {
 func (w *Worker) Start() error {
 	dialOpts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		// TCP Keepalive：防止空闲连接被 NAT/防火墙/LB 静默丢弃
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                30 * time.Second, // 每 30 秒发送一次 keepalive ping
+			Timeout:             10 * time.Second, // 10 秒无响应判定连接死亡
+			PermitWithoutStream: true,              // 即使没有活跃 RPC 流也发送 ping
+		}),
 	}
 	if w.psk != "" {
 		dialOpts = append(dialOpts, grpc.WithPerRPCCredentials(&perRPCPSK{psk: w.psk}))
@@ -299,6 +310,12 @@ func (w *Worker) Start() error {
 		default:
 		}
 
+		// 清空重连信号（防止残留信号导致立即退出）
+		select {
+		case <-w.reconnectCh:
+		default:
+		}
+
 		w.subscribeAndClaim(quit)
 
 		// Subscribe 断开后，等待 2 秒重连
@@ -355,6 +372,10 @@ func (w *Worker) subscribeAndClaim(quit chan struct{}) {
 	for {
 		select {
 		case <-quit:
+			return
+		case <-w.reconnectCh:
+			// 心跳连续失败触发 Subscribe 流重建
+			log.Println("[Subscribe] Heartbeat detected connection failure, forcing stream reconnect...")
 			return
 		default:
 		}
@@ -437,6 +458,10 @@ func (w *Worker) claimAvailableTasks() {
 func (w *Worker) heartbeatLoop() {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
+
+	consecutiveFailures := 0
+	const maxConsecutiveFailures = 3
+
 	for range ticker.C {
 		if w.client != nil {
 			w.mu.Lock()
@@ -456,7 +481,9 @@ func (w *Worker) heartbeatLoop() {
 				memUsage = v.UsedPercent
 			}
 
-			resp, err := w.client.Heartbeat(context.Background(), &pb.HeartbeatReq{
+			// 给心跳 RPC 加超时，避免在死连接上无限阻塞
+			hbCtx, hbCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			resp, err := w.client.Heartbeat(hbCtx, &pb.HeartbeatReq{
 				AgentId:        w.agentID,
 				Status:         "Alive",
 				RuleVersion:    w.ruleVersion,
@@ -465,10 +492,27 @@ func (w *Worker) heartbeatLoop() {
 				CpuUsage:       float32(cpuUsage),
 				MemUsage:       float32(memUsage),
 			})
+			hbCancel()
+
 			if err != nil {
-				log.Printf("Heartbeat failure: %v", err)
+				consecutiveFailures++
+				log.Printf("[Heartbeat] Failure (%d/%d): %v", consecutiveFailures, maxConsecutiveFailures, err)
+
+				if consecutiveFailures >= maxConsecutiveFailures {
+					log.Printf("[Heartbeat] %d consecutive failures detected, triggering Subscribe reconnect...", consecutiveFailures)
+					consecutiveFailures = 0
+					// 非阻塞发送重连信号
+					select {
+					case w.reconnectCh <- struct{}{}:
+					default:
+					}
+				}
 				continue
 			}
+
+			// 心跳成功，重置失败计数
+			consecutiveFailures = 0
+
 			if resp.ShouldSyncRules {
 				log.Println("[Heartbeat] Server signaled rule sync needed via gRPC!")
 				w.syncRules()
