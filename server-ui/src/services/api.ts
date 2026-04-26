@@ -515,6 +515,10 @@ export async function deleteCloudInstance(id: string): Promise<API.MessageRespon
     return request.delete(`/cloud/instances/${id}`);
 }
 
+export async function rebootCloudInstance(id: string): Promise<API.MessageResponse> {
+    return request.post(`/cloud/instances/${id}/reboot`);
+}
+
 // Dashboard
 export async function getCloudDashboard(): Promise<API.CloudDashboard> {
     return request.get('/cloud/dashboard');

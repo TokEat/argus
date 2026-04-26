@@ -356,6 +356,7 @@ func InitRouter(port string) {
 		api.GET("/cloud/instances", listCloudInstancesReal)
 		api.POST("/cloud/instances", createCloudInstanceManual)
 		api.DELETE("/cloud/instances/:id", deleteCloudInstanceReal)
+		api.POST("/cloud/instances/:id/reboot", rebootCloudInstance)
 		// 云仪表盘
 		api.GET("/cloud/dashboard", cloudDashboard)
 

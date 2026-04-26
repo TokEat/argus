@@ -385,6 +385,55 @@ func deleteCloudInstanceReal(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "message": fmt.Sprintf("Instance %s is being terminated", id)})
 }
 
+func rebootCloudInstance(c *gin.Context) {
+	id := c.Param("id")
+	tenantID := currentTenantID(c)
+
+	var inst db.CloudInstance
+	if err := db.DB.Where("id = ? AND tenant_id = ?", id, tenantID).First(&inst).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Instance not found"})
+		return
+	}
+
+	// 只允许对 Running / Error / WaitingReady 状态的实例执行重启
+	allowed := map[string]bool{
+		db.CloudStatusRunning:      true,
+		db.CloudStatusError:        true,
+		db.CloudStatusWaitingReady: true,
+	}
+	if !allowed[inst.Status] {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Cannot reboot instance in %s status", inst.Status),
+		})
+		return
+	}
+
+	if inst.ProviderInstanceID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance has no provider ID yet"})
+		return
+	}
+
+	// 异步执行重启
+	go func() {
+		var account db.CloudAccount
+		if err := db.DB.First(&account, "id = ?", inst.CloudAccountID).Error; err != nil {
+			return
+		}
+		provider, err := cloud.NewProviderFromAccount(&account)
+		if err != nil {
+			return
+		}
+		rm := cloud.NewResourceManager(provider)
+		rm.SetDB(db.DB)
+		_ = rm.RebootInstance(nil, &inst)
+	}()
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "ok",
+		"message": fmt.Sprintf("Instance %s reboot initiated", id),
+	})
+}
+
 // ==================== 云仪表盘 ====================
 
 func cloudDashboard(c *gin.Context) {

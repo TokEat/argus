@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { Typography, Table, Tag, Space, Button, Spin, Empty, Modal, Form, Input, Select, message, Popconfirm, Badge, Tabs, Switch, InputNumber, Row, Col, Alert } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
-import { CloudOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, WifiOutlined, KeyOutlined, SettingOutlined, AppstoreOutlined, CodeOutlined, PlayCircleOutlined } from '@ant-design/icons';
+import { CloudOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, WifiOutlined, KeyOutlined, SettingOutlined, AppstoreOutlined, CodeOutlined, PlayCircleOutlined, SyncOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import Editor from '@monaco-editor/react';
 import { 
-    listCloudInstances, createCloudInstance, deleteCloudInstance, 
+    listCloudInstances, createCloudInstance, deleteCloudInstance, rebootCloudInstance,
     listCloudAccounts, createCloudAccount, deleteCloudAccount, testCloudAccount,
     listCloudPolicies, createCloudPolicy, updateCloudPolicy, toggleCloudPolicy,
     getCloudDashboard 
@@ -268,11 +268,25 @@ systemctl start argus-agent
             render: (v: string) => <Text style={{ fontSize: 12, color: '#64748b' }}>{v ? new Date(v).toLocaleString('zh-CN') : '-'}</Text>,
         },
         {
-            title: '操作', key: 'actions', width: 100,
-            render: (_, record) => (
-                <Popconfirm title="确认销毁此云主机？" onConfirm={() => handleDeleteInstance(record.id)}>
-                    <Button type="link" size="small" danger icon={<DeleteOutlined />}>销毁</Button>
-                </Popconfirm>
+            title: '操作', key: 'actions', width: 180,
+            render: (_: any, record: API.CloudInstance) => (
+                <Space>
+                    <Popconfirm title="确认重启此云主机？Agent 将通过 systemd 自动恢复。" onConfirm={async () => {
+                        try {
+                            await rebootCloudInstance(record.id);
+                            message.success('重启指令已下发');
+                            fetchInstances();
+                        } catch (err) {
+                            message.error(`重启失败: ${err}`);
+                        }
+                    }}>
+                        <Button type="link" size="small" icon={<SyncOutlined />}
+                            disabled={!['Running', 'Error', 'WaitingReady'].includes(record.status)}>重启</Button>
+                    </Popconfirm>
+                    <Popconfirm title="确认销毁此云主机？" onConfirm={() => handleDeleteInstance(record.id)}>
+                        <Button type="link" size="small" danger icon={<DeleteOutlined />}>销毁</Button>
+                    </Popconfirm>
+                </Space>
             ),
         },
     ];
