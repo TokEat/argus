@@ -457,14 +457,57 @@ export async function deleteUserApi(id: number): Promise<API.MessageResponse> {
 }
 
 // ===========================
-// Cloud Instance API
+// Cloud Resource API
 // ===========================
 
+// Accounts
+export async function listCloudAccounts(): Promise<API.CloudAccount[]> {
+    return request.get('/cloud/accounts');
+}
+
+export async function createCloudAccount(data: API.CreateCloudAccountRequest): Promise<API.MessageResponse> {
+    return request.post('/cloud/accounts', data);
+}
+
+export async function updateCloudAccount(id: string, data: Partial<API.CreateCloudAccountRequest>): Promise<API.MessageResponse> {
+    return request.put(`/cloud/accounts/${id}`, data);
+}
+
+export async function deleteCloudAccount(id: string): Promise<API.MessageResponse> {
+    return request.delete(`/cloud/accounts/${id}`);
+}
+
+export async function testCloudAccount(id: string): Promise<API.MessageResponse> {
+    return request.post(`/cloud/accounts/${id}/test`);
+}
+
+// Policies
+export async function listCloudPolicies(): Promise<API.CloudScalingPolicy[]> {
+    return request.get('/cloud/policies');
+}
+
+export async function createCloudPolicy(data: Partial<API.CloudScalingPolicy>): Promise<API.MessageResponse> {
+    return request.post('/cloud/policies', data);
+}
+
+export async function updateCloudPolicy(id: string, data: Partial<API.CloudScalingPolicy>): Promise<API.MessageResponse> {
+    return request.put(`/cloud/policies/${id}`, data);
+}
+
+export async function deleteCloudPolicy(id: string): Promise<API.MessageResponse> {
+    return request.delete(`/cloud/policies/${id}`);
+}
+
+export async function toggleCloudPolicy(id: string): Promise<API.MessageResponse> {
+    return request.post(`/cloud/policies/${id}/toggle`);
+}
+
+// Instances
 export async function listCloudInstances(): Promise<API.CloudInstance[]> {
     return request.get('/cloud/instances');
 }
 
-export async function createCloudInstance(data: API.CreateInstanceRequest): Promise<API.MessageResponse> {
+export async function createCloudInstance(data: API.CreateCloudInstanceRequest): Promise<API.MessageResponse> {
     return request.post('/cloud/instances', data);
 }
 
@@ -472,8 +515,9 @@ export async function deleteCloudInstance(id: string): Promise<API.MessageRespon
     return request.delete(`/cloud/instances/${id}`);
 }
 
-export async function saveCloudPolicy(policy: any): Promise<API.MessageResponse> {
-    return request.post('/cloud/policy', policy);
+// Dashboard
+export async function getCloudDashboard(): Promise<API.CloudDashboard> {
+    return request.get('/cloud/dashboard');
 }
 
 // ===========================

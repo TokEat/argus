@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "agent-pull-architecture.md",
+                "file": "cloud-resource-scheduling.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "agent-pull-architecture"
+              "title": "cloud-resource-scheduling"
             }
           }
         ]
@@ -94,7 +94,7 @@
             "state": {
               "type": "backlink",
               "state": {
-                "file": "agent-pull-architecture.md",
+                "file": "cloud-resource-scheduling.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -104,7 +104,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "agent-pull-architecture 的反向链接列表"
+              "title": "cloud-resource-scheduling 的反向链接列表"
             }
           },
           {
@@ -113,12 +113,12 @@
             "state": {
               "type": "outgoing-link",
               "state": {
-                "file": "agent-pull-architecture.md",
+                "file": "cloud-resource-scheduling.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "agent-pull-architecture 的出链列表"
+              "title": "cloud-resource-scheduling 的出链列表"
             }
           },
           {
@@ -156,13 +156,13 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "agent-pull-architecture.md",
+                "file": "cloud-resource-scheduling.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "agent-pull-architecture 的大纲"
+              "title": "cloud-resource-scheduling 的大纲"
             }
           }
         ]
@@ -185,17 +185,19 @@
   },
   "active": "b4b667da51d5d7bd",
   "lastOpenFiles": [
-    "ai_copilot_architecture.md",
-    "argus-technical-whitepaper.md",
-    "db_schema.md",
-    "distributed-scan-architecture.md",
+    "未命名.canvas",
     "implementation-status.md",
+    "distributed-scan-architecture.md",
+    "agent-pull-architecture.md",
+    "agent_scan_flow.md",
+    "argus-technical-whitepaper.md",
+    "cloud-resource-scheduling.md",
+    "ai_copilot_architecture.md",
+    "db_schema.md",
     "interface-implementations.md",
     "project-structure.md",
     "whitepaper-plan.md",
     "rule-catalog-init.md",
-    "project-schema-design.md",
-    "agent-pull-architecture.md",
-    "agent_scan_flow.md"
+    "project-schema-design.md"
   ]
 }

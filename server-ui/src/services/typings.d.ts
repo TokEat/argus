@@ -364,22 +364,88 @@ declare namespace API {
     password?: string;
   }
 
-  // ======================== Cloud Instance ========================
+  // ======================== Cloud Resource Scheduling ========================
+
+  interface CloudAccount {
+    id: string;
+    tenant_id: string;
+    name: string;
+    provider: string;
+    region?: string;
+    default_image_id?: string;
+    default_instance_type?: string;
+    default_security_group?: string;
+    default_v_switch?: string;
+    status: string;
+    created_at: string;
+    updated_at: string;
+  }
+
+  interface CloudScalingPolicy {
+    id: string;
+    tenant_id: string;
+    cloud_account_id: string;
+    name: string;
+    enabled: boolean;
+    min_instances: number;
+    max_instances: number;
+    scale_up_threshold: number;
+    scale_down_threshold: number;
+    cooldown_seconds: number;
+    instance_ttl_minutes: number;
+    spot_strategy: string;
+    max_spot_price: number;
+    user_data_template: string;
+    last_scale_action?: string;
+    created_at: string;
+    updated_at: string;
+  }
 
   interface CloudInstance {
     id: string;
+    tenant_id: string;
+    cloud_account_id: string;
+    policy_id: string;
+    provider_instance_id: string;
+    agent_id: string;
     ip: string;
+    region: string;
     status: string;
-    provider: string;
+    spot: boolean;
+    error_message?: string;
+    launched_at?: string;
+    ready_at?: string;
+    terminated_at?: string;
     created_at: string;
+    updated_at: string;
   }
 
-  interface CreateInstanceRequest {
+  interface CloudDashboard {
+    active_accounts: number;
+    enabled_policies: number;
+    running_instances: number;
+    recent_events: {
+      timestamp: string;
+      message: string;
+      level: string;
+    }[];
+  }
+
+  interface CreateCloudAccountRequest {
+    name: string;
     provider: string;
+    access_key_id: string;
+    access_key_secret: string;
     region?: string;
-    instance_type?: string;
-    image_id?: string;
-    server_addr?: string;
+    default_image_id?: string;
+    default_instance_type?: string;
+    default_security_group?: string;
+    default_v_switch?: string;
+  }
+
+  interface CreateCloudInstanceRequest {
+    account_id: string;
+    count: number;
   }
 
   // ======================== Build Artifacts ========================
