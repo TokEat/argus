@@ -144,6 +144,12 @@ func (as *AutoScaler) calculateScaleUpCount(queueDepth, threshold, running, maxI
 	return needed
 }
 
+// ScaleUpManual 手动触发扩容，绕过队列判定和冷却期限制
+func (as *AutoScaler) ScaleUpManual(ctx context.Context, policy *db.CloudScalingPolicy, count int) {
+	log.Printf("[AutoScaler] Manual Scale UP: policy=%s launching %d instances", policy.Name, count)
+	as.scaleUp(ctx, policy, count)
+}
+
 // scaleUp 执行扩容操作
 func (as *AutoScaler) scaleUp(ctx context.Context, policy *db.CloudScalingPolicy, count int) {
 	// 加载云账号凭证

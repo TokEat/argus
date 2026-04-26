@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
@@ -373,6 +374,15 @@ func createCloudInstanceManual(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AutoScaler not initialized"})
 		return
 	}
+
+	var policy db.CloudScalingPolicy
+	if err := db.DB.Where("cloud_account_id = ? AND tenant_id = ?", req.AccountID, tenantID).First(&policy).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "该凭证尚未绑定 AutoScaler 策略。请先配置策略以获取 Cloud-Init 等参数。"})
+		return
+	}
+
+	// 异步调用手动扩容
+	go cloudAutoScaler.ScaleUpManual(context.Background(), &policy, req.Count)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "accepted",
