@@ -28,6 +28,8 @@ type CloudAccount struct {
 	DefaultInstanceType  string // 默认实例规格，如 ecs.c6.large
 	DefaultSecurityGroup string // 默认安全组 ID
 	DefaultVSwitch       string // 默认虚拟交换机 ID
+	OSSBucket            string // OSS 存储桶名称（用于 Agent 二进制分发）
+	OSSEndpoint          string // OSS 内网 Endpoint（如 oss-cn-shanghai-internal.aliyuncs.com）
 	Status               string `gorm:"default:'active';index"` // active, disabled
 	CreatedAt            time.Time
 	UpdatedAt            time.Time

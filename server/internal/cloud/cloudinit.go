@@ -16,12 +16,13 @@ import (
 
 // CloudInitVars 模板变量集合
 type CloudInitVars struct {
-	ServerAddr string // Server gRPC 地址，如 10.0.0.1:50051
-	APIURL     string // Server HTTP API 地址，如 http://10.0.0.1:8085
-	AgentID    string // 预分配的 Agent ID
-	TenantID   string // 租户 ID
-	Tags       string // 逗号分隔的标签字符串
-	PSK        string // Agent 预共享密钥
+	ServerAddr  string // Server gRPC 地址，如 10.0.0.1:50051
+	APIURL      string // Server HTTP API 地址，如 http://10.0.0.1:8085
+	AgentID     string // 预分配的 Agent ID
+	TenantID    string // 租户 ID
+	Tags        string // 逗号分隔的标签字符串
+	PSK         string // Agent 预共享密钥
+	DownloadURL string // Agent 二进制下载地址（OSS 预签名 URL 或 Server HTTP URL）
 }
 
 // DefaultCloudInitTemplate 默认 Cloud-Init 模板
@@ -33,8 +34,8 @@ set -ex
 
 echo "[Argus] Starting agent provisioning..."
 
-# 下载 Agent 二进制
-DOWNLOAD_URL="{{.APIURL}}/release/dddd-agent-linux-amd64"
+# 下载 Agent 二进制（优先使用 OSS 预签名 URL，fallback 到 Server HTTP）
+DOWNLOAD_URL="{{.DownloadURL}}"
 AGENT_BIN="/usr/local/bin/dddd-agent"
 
 for i in 1 2 3 4 5; do

@@ -41,6 +41,8 @@ func listCloudAccounts(c *gin.Context) {
 		DefaultInstanceType  string `json:"default_instance_type"`
 		DefaultSecurityGroup string `json:"default_security_group"`
 		DefaultVSwitch       string `json:"default_v_switch"`
+		OSSBucket            string `json:"oss_bucket"`
+		OSSEndpoint          string `json:"oss_endpoint"`
 		Status               string `json:"status"`
 		CreatedAt            string `json:"created_at"`
 	}
@@ -59,6 +61,8 @@ func listCloudAccounts(c *gin.Context) {
 			DefaultInstanceType:  a.DefaultInstanceType,
 			DefaultSecurityGroup: a.DefaultSecurityGroup,
 			DefaultVSwitch:       a.DefaultVSwitch,
+			OSSBucket:            a.OSSBucket,
+			OSSEndpoint:          a.OSSEndpoint,
 			Status:               a.Status,
 			CreatedAt:            a.CreatedAt.Format(time.RFC3339),
 		})
@@ -78,6 +82,8 @@ func createCloudAccount(c *gin.Context) {
 		DefaultInstanceType  string `json:"default_instance_type"`
 		DefaultSecurityGroup string `json:"default_security_group"`
 		DefaultVSwitch       string `json:"default_v_switch"`
+		OSSBucket            string `json:"oss_bucket"`
+		OSSEndpoint          string `json:"oss_endpoint"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -108,6 +114,8 @@ func createCloudAccount(c *gin.Context) {
 		DefaultInstanceType:  req.DefaultInstanceType,
 		DefaultSecurityGroup: req.DefaultSecurityGroup,
 		DefaultVSwitch:       req.DefaultVSwitch,
+		OSSBucket:            req.OSSBucket,
+		OSSEndpoint:          req.OSSEndpoint,
 		Status:               "active",
 	}
 
@@ -132,6 +140,8 @@ func updateCloudAccount(c *gin.Context) {
 		DefaultVSwitch       string `json:"default_v_switch"`
 		AccessKeyID          string `json:"access_key_id"`
 		AccessKeySecret      string `json:"access_key_secret"`
+		OSSBucket            string `json:"oss_bucket"`
+		OSSEndpoint          string `json:"oss_endpoint"`
 		Status               string `json:"status"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -168,6 +178,12 @@ func updateCloudAccount(c *gin.Context) {
 	if req.AccessKeySecret != "" {
 		enc, _ := cloud.EncryptSecret(req.AccessKeySecret)
 		updates["access_key_secret"] = enc
+	}
+	if req.OSSBucket != "" {
+		updates["oss_bucket"] = req.OSSBucket
+	}
+	if req.OSSEndpoint != "" {
+		updates["oss_endpoint"] = req.OSSEndpoint
 	}
 
 	if len(updates) == 0 {
@@ -477,3 +493,79 @@ func cloudDashboard(c *gin.Context) {
 		"recent_events":     recentInstances,
 	})
 }
+
+// ==================== OSS Agent 分发 ====================
+
+// uploadAgentToOSS 将 release 目录中的 Agent 二进制上传到指定账号的 OSS 存储桶
+func uploadAgentToOSS(c *gin.Context) {
+	accountID := c.Param("id")
+	tenantID := currentTenantID(c)
+
+	var account db.CloudAccount
+	if err := db.DB.Where("id = ? AND tenant_id = ?", accountID, tenantID).First(&account).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found"})
+		return
+	}
+
+	if account.OSSBucket == "" || account.OSSEndpoint == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "OSS not configured for this account. Please set oss_bucket and oss_endpoint."})
+		return
+	}
+
+	uploader, err := cloud.NewOSSFromAccount(&account)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create OSS client: %v", err)})
+		return
+	}
+
+	releaseDir := "./release"
+	results, err := uploader.UploadAgentBinaries(releaseDir)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Upload failed: %v", err)})
+		return
+	}
+
+	successCount := 0
+	for _, r := range results {
+		if r.Success {
+			successCount++
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "ok",
+		"message": fmt.Sprintf("Uploaded %d/%d agent binaries to OSS", successCount, len(results)),
+		"results": results,
+	})
+}
+
+// testOSSConnection 测试指定账号的 OSS 连通性
+func testOSSConnection(c *gin.Context) {
+	accountID := c.Param("id")
+	tenantID := currentTenantID(c)
+
+	var account db.CloudAccount
+	if err := db.DB.Where("id = ? AND tenant_id = ?", accountID, tenantID).First(&account).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found"})
+		return
+	}
+
+	if account.OSSBucket == "" || account.OSSEndpoint == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "OSS not configured"})
+		return
+	}
+
+	uploader, err := cloud.NewOSSFromAccount(&account)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"status": "error", "message": fmt.Sprintf("Failed to create OSS client: %v", err)})
+		return
+	}
+
+	if err := uploader.TestConnection(); err != nil {
+		c.JSON(http.StatusOK, gin.H{"status": "error", "message": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "OSS connection successful"})
+}
+

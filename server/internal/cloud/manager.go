@@ -44,15 +44,27 @@ func (rm *ResourceManager) ProvisionInstance(
 	// 生成 Agent ID
 	agentID := fmt.Sprintf("cloud-%s-%d", account.Provider, time.Now().UnixNano())
 
+	// 生成 Agent 二进制下载 URL：优先 OSS 预签名，fallback 到 Server HTTP
+	downloadURL := fmt.Sprintf("%s/release/dddd-agent-linux-amd64", apiURL)
+	if account.OSSBucket != "" && account.OSSEndpoint != "" {
+		ossURL, err := GenerateAgentDownloadURL(account, "linux", "amd64")
+		if err != nil {
+			log.Printf("[Provision] OSS presigned URL failed, falling back to server HTTP: %v", err)
+		} else {
+			downloadURL = ossURL
+		}
+	}
+
 	// 渲染 Cloud-Init 脚本
 	tmpl := policy.UserDataTemplate
 	userData, err := RenderCloudInitBase64(tmpl, CloudInitVars{
-		ServerAddr: grpcAddr,
-		APIURL:     apiURL,
-		AgentID:    agentID,
-		TenantID:   account.TenantID,
-		Tags:       "cloud,auto-scaled",
-		PSK:        psk,
+		ServerAddr:  grpcAddr,
+		APIURL:      apiURL,
+		AgentID:     agentID,
+		TenantID:    account.TenantID,
+		Tags:        "cloud,auto-scaled",
+		PSK:         psk,
+		DownloadURL: downloadURL,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("render cloud-init: %w", err)

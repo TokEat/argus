@@ -481,6 +481,14 @@ export async function testCloudAccount(id: string): Promise<API.MessageResponse>
     return request.post(`/cloud/accounts/${id}/test`);
 }
 
+export async function uploadAgentToOSS(id: string): Promise<any> {
+    return request.post(`/cloud/accounts/${id}/oss/upload`);
+}
+
+export async function testOSSConnection(id: string): Promise<API.MessageResponse> {
+    return request.post(`/cloud/accounts/${id}/oss/test`);
+}
+
 // Policies
 export async function listCloudPolicies(): Promise<API.CloudScalingPolicy[]> {
     return request.get('/cloud/policies');

@@ -376,6 +376,8 @@ declare namespace API {
     default_instance_type?: string;
     default_security_group?: string;
     default_v_switch?: string;
+    oss_bucket?: string;
+    oss_endpoint?: string;
     status: string;
     created_at: string;
     updated_at: string;

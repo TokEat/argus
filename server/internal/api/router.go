@@ -346,6 +346,8 @@ func InitRouter(port string) {
 		api.PUT("/cloud/accounts/:id", updateCloudAccount)
 		api.DELETE("/cloud/accounts/:id", deleteCloudAccount)
 		api.POST("/cloud/accounts/:id/test", testCloudAccount)
+		api.POST("/cloud/accounts/:id/oss/upload", uploadAgentToOSS)
+		api.POST("/cloud/accounts/:id/oss/test", testOSSConnection)
 		// 伸缩策略管理
 		api.GET("/cloud/policies", listCloudPolicies)
 		api.POST("/cloud/policies", createCloudPolicy)
@@ -384,6 +386,7 @@ func InitRouter(port string) {
 
 	// SPA 控制塔前台映射兜底
 	r.Static("/assets", "./server-ui/dist/assets")
+	r.Static("/release", "./release") // Agent 二进制分发（OSS fallback）
 	r.StaticFile("/favicon.ico", "./server-ui/dist/favicon.ico")
 	r.NoRoute(func(c *gin.Context) {
 		if !strings.HasPrefix(c.Request.URL.Path, "/api/") {

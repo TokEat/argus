@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { Typography, Table, Tag, Space, Button, Spin, Empty, Modal, Form, Input, Select, message, Popconfirm, Badge, Tabs, Switch, InputNumber, Row, Col, Alert } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
-import { CloudOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, WifiOutlined, KeyOutlined, SettingOutlined, AppstoreOutlined, CodeOutlined, PlayCircleOutlined, SyncOutlined } from '@ant-design/icons';
+import { CloudOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, WifiOutlined, KeyOutlined, SettingOutlined, AppstoreOutlined, CodeOutlined, PlayCircleOutlined, SyncOutlined, CloudUploadOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import Editor from '@monaco-editor/react';
 import { 
     listCloudInstances, createCloudInstance, deleteCloudInstance, rebootCloudInstance,
     listCloudAccounts, createCloudAccount, deleteCloudAccount, testCloudAccount,
+    uploadAgentToOSS, testOSSConnection,
     listCloudPolicies, createCloudPolicy, updateCloudPolicy, toggleCloudPolicy,
     getCloudDashboard 
 } from '../services/api';
@@ -309,10 +310,34 @@ systemctl start argus-agent
             render: (v: string) => <Text style={{ fontSize: 12 }}>{new Date(v).toLocaleString('zh-CN')}</Text>
         },
         {
-            title: '操作', key: 'action',
+            title: '操作', key: 'action', width: 320,
             render: (_: any, record: API.CloudAccount) => (
                 <Space>
-                    <Button type="link" size="small" icon={<PlayCircleOutlined />} onClick={() => handleTestAk(record.id)}>连通性测试</Button>
+                    <Button type="link" size="small" icon={<PlayCircleOutlined />} onClick={() => handleTestAk(record.id)}>连通性</Button>
+                    {record.oss_bucket && (
+                        <>
+                            <Button type="link" size="small" icon={<CloudUploadOutlined />}
+                                onClick={async () => {
+                                    try {
+                                        message.loading({ content: '正在上传 Agent 二进制到 OSS...', key: 'oss-upload', duration: 0 });
+                                        const res = await uploadAgentToOSS(record.id);
+                                        message.success({ content: res.message || '上传完成', key: 'oss-upload' });
+                                    } catch (err) {
+                                        message.error({ content: `上传失败: ${err}`, key: 'oss-upload' });
+                                    }
+                                }}>上传 Agent</Button>
+                            <Button type="link" size="small"
+                                onClick={async () => {
+                                    try {
+                                        const res = await testOSSConnection(record.id);
+                                        if (res.status === 'ok') message.success('OSS 连通性正常');
+                                        else message.error(`OSS 连接失败: ${res.message}`);
+                                    } catch (err) {
+                                        message.error(`OSS 测试失败: ${err}`);
+                                    }
+                                }}>测试 OSS</Button>
+                        </>
+                    )}
                     <Popconfirm title="确认删除此凭证？" onConfirm={() => handleDeleteAk(record.id)}>
                         <Button type="link" danger size="small">删除</Button>
                     </Popconfirm>
@@ -512,6 +537,16 @@ systemctl start argus-agent
                     </Form.Item>
                     <Form.Item name="access_key_secret" label="Access Key Secret" rules={[{ required: true }]}>
                         <Input.Password placeholder="输入 SK" />
+                    </Form.Item>
+                    <Form.Item label="OSS 配置（可选，用于 Agent 二进制分发）" style={{ marginBottom: 4 }}>
+                        <Input.Group compact style={{ display: 'flex', gap: 8 }}>
+                            <Form.Item name="oss_bucket" noStyle>
+                                <Input placeholder="Bucket 名称，如 argus-release" style={{ flex: 1 }} />
+                            </Form.Item>
+                            <Form.Item name="oss_endpoint" noStyle>
+                                <Input placeholder="Endpoint，如 oss-cn-shanghai-internal.aliyuncs.com" style={{ flex: 2 }} />
+                            </Form.Item>
+                        </Input.Group>
                     </Form.Item>
                 </Form>
             </Modal>
