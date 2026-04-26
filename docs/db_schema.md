@@ -537,6 +537,73 @@
 - 补全 `users` 的密码哈希、状态字段，以及 `system_configs` 对 `mcp_*` API Key 的承载方式。
 - 修正任务状态机，明确 `PartialDone`、`Dispatching`、`Recovered`、`CancelPending` 等中间态。
 - 明确 PostgreSQL 只保存报表元数据，不直接保存报表文件本体。
+- 补全云资源编排三表：`cloud_accounts`、`cloud_scaling_policies`、`cloud_instances`。
+
+---
+
+## 5.1 云资源编排
+
+> 云资源编排三表已落地，对应 GORM 模型在 `server/internal/db/cloud_models.go`，SQL migration 为 `060_add_cloud_tables.sql`。
+
+#### `cloud_accounts`
+
+| 字段 | 类型 | 说明 | 约束 / 索引 |
+|------|------|------|-------------|
+| `id` | string | 凭证主键 | PK |
+| `tenant_id` | string | 租户隔离键 | Index, Default:`default` |
+| `name` | string | 凭证名称 | - |
+| `provider` | string | 云厂商标识 (aliyun/aws/tencent) | Index |
+| `access_key_id` | string | AES-256-GCM 加密的 AccessKey ID | - |
+| `access_key_secret` | string | AES-256-GCM 加密的 AccessKey Secret | - |
+| `region` | string | 默认区域 | - |
+| `default_image_id` | string | 默认镜像 ID | - |
+| `default_instance_type` | string | 默认实例规格 | - |
+| `default_security_group` | string | 默认安全组 ID | - |
+| `default_v_switch` | string | 默认虚拟交换机 ID | - |
+| `status` | string | 凭证状态 (active/disabled) | Index, Default:`active` |
+| `created_at` / `updated_at` | timestamp | 时间戳 | - |
+
+#### `cloud_scaling_policies`
+
+| 字段 | 类型 | 说明 | 约束 / 索引 |
+|------|------|------|-------------|
+| `id` | string | 策略主键 | PK |
+| `tenant_id` | string | 租户隔离键 | Index, Default:`default` |
+| `cloud_account_id` | string | 关联 CloudAccount | Index |
+| `name` | string | 策略名称 | - |
+| `enabled` | boolean | 是否启用 | Index, Default:`false` |
+| `min_instances` | integer | 最小实例数 | Default:`0` |
+| `max_instances` | integer | 最大实例数（硬上限） | Default:`5` |
+| `scale_up_threshold` | integer | 扩容队列阈值 | Default:`50` |
+| `scale_down_threshold` | integer | 缩容空闲阈值 | Default:`3` |
+| `cooldown_seconds` | integer | 冷却时间（秒） | Default:`300` |
+| `instance_ttl_minutes` | integer | 实例最大存活时间（分钟） | Default:`120` |
+| `spot_strategy` | string | 竞价策略 | Default:`NoSpot` |
+| `max_spot_price` | float64 | 竞价最高价 | - |
+| `user_data_template` | text | Cloud-Init 模板 | - |
+| `last_scale_action` | timestamp | 最近伸缩操作时间 | Nullable |
+| `created_at` / `updated_at` | timestamp | 时间戳 | - |
+
+#### `cloud_instances`
+
+| 字段 | 类型 | 说明 | 约束 / 索引 |
+|------|------|------|-------------|
+| `id` | string | 实例主键 | PK |
+| `tenant_id` | string | 租户隔离键 | Index, Default:`default` |
+| `cloud_account_id` | string | 关联 CloudAccount | Index |
+| `policy_id` | string | 关联 CloudScalingPolicy | Index |
+| `provider_instance_id` | string | 云厂商侧实例 ID | Index |
+| `agent_id` | string | 对应的 Argus Agent ID | Index |
+| `ip` | string | 实例 IP | - |
+| `region` | string | 实例区域 | - |
+| `status` | string | 实例状态 | Index, Default:`Provisioning` |
+| `spot` | boolean | 是否竞价实例 | Default:`false` |
+| `error_message` | text | 错误信息 | - |
+| `launched_at` / `ready_at` / `terminated_at` | timestamp | 生命周期时间戳 | Nullable |
+| `created_at` / `updated_at` | timestamp | 记录时间戳 | - |
+| `deleted_at` | timestamp | 软删除 | Index, Nullable |
+
+> `cloud_instances.status` 状态机：`Provisioning` → `WaitingReady` → `Running` → `Terminating` → `Terminated`，异常时为 `Error`。
 
 ---
 
@@ -546,7 +613,6 @@
 
 | 能力域 | 建议表 | 原因 |
 |--------|--------|------|
-| 云资源编排 | `cloud_accounts`、`cloud_scaling_policies`、`cloud_instances` | 当前 Cloud 管理仍主要是 mock，缺少凭证、策略、实例生命周期持久化 |
 | 租户治理 | `tenant_quotas`、`tenant_usage_snapshots` | 任务配额、并发额度、租户级资源限制尚未落库 |
 | 角色权限矩阵 | `roles`、`permissions`、`role_bindings` | 现阶段仅有用户角色字段，没有可管理的权限矩阵 |
 | 构建与发布 | `build_jobs`、`build_artifacts` | 当前客户端构建接口只返回 `accepted`，缺少任务状态跟踪 |

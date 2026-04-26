@@ -146,12 +146,10 @@ Argus 当前采用典型的 `Control Plane + Data Plane` 结构：
 
 ### Spot 回收
 
-当前已有 `StartSpotTerminationListener` 实现。
+当前已有 `StartSpotTerminationListener` 实现，并已在 Agent 启动链路中激活。
 
-当前问题：
-
-- 启动链路没有调用该监听器
-- 所以竞价实例回收保护还停留在“代码存在”阶段
+- 环境变量 `ARGUS_SPOT=1` 或 `--tags` 包含 `cloud` 标签时自动启用
+- 检测到竞价实例回收通知后，触发 `EmergencyDump` 并通过心跳将任务状态重置回队列
 
 ## 4. 任务流转现状
 
@@ -206,26 +204,36 @@ Argus 当前采用典型的 `Control Plane + Data Plane` 结构：
 
 ## 6. 云资源编排现状
 
-当前云资源代码位于：
+当前云资源编排代码位于：
 
-- `server/internal/cloud/provider.go`
-- `server/internal/cloud/manager.go`
-- `server/internal/cloud/docker/container.go`
-- `server/internal/cloud/aliyun/ecs.go`
+- `server/internal/cloud/provider.go` — CloudProvider 抽象接口 + InstanceConfig
+- `server/internal/cloud/provider_factory.go` — Provider 注册表模式工厂（打破循环导入）
+- `server/internal/cloud/autoscaler.go` — AutoScaler 自动伸缩引擎
+- `server/internal/cloud/manager.go` — ResourceManager 实例生命周期管理（含 DB 持久化）
+- `server/internal/cloud/cloudinit.go` — Cloud-Init 模板引擎
+- `server/internal/cloud/crypto.go` — AES-256-GCM 凭证加解密
+- `server/internal/cloud/aliyun/ecs.go` — 阿里云 ECS Provider（已 init 自注册）
 
-当前已实现：
+### 已实现并接入主链路
 
-- 抽象 `CloudProvider`
-- Docker Provider
-- 阿里云 ECS Provider
-- `ResourceManager`
+- **AutoScaler 决策循环**：在 `main.go` 中启动，每 30 秒评估队列深度与伸缩策略
+  - Scale Up：队列积压 > threshold 且 实例数 < max → 创建 ECS 实例
+  - Scale Down：队列空闲 且 存在闲置实例 且 实例数 > min → 销毁实例
+  - 冷却期机制防止扩缩容震荡
+- **实例对账协程**：每 5 分钟对比 DB 中 Running 实例与云端实际状态
+- **孤儿回收协程**：每 10 分钟清理超过策略 TTL 的实例
+- **数据库持久化**：`cloud_accounts`、`cloud_scaling_policies`、`cloud_instances` 三表
+- **凭证安全**：AES-256-GCM 加密存储 AccessKey，API 返回脱敏
+- **Cloud-Init 自动化**：Go template 渲染 Agent 启动脚本，注入 Server 地址、AgentID、PSK
+- **14 个 REST API 端点**：凭证 CRUD + 连通性测试、策略 CRUD + 开关、实例列表/创建/销毁、仪表盘
+- **Provider 注册表模式**：aliyun 包在 `init()` 中自注册，`cloud` 包不直接导入 Provider 子包
+- **Spot 实例支持**：Agent 启动时自动激活 `StartSpotTerminationListener`（检测 `ARGUS_SPOT=1` 或 cloud 标签）
 
-当前问题：
+### 当前限制
 
-- 这部分未被 `main.go` 挂载
-- `/api/v1/cloud/instances` 仍是 mock 视图
-- `/cloud/policy` 后端接口不存在
-- Cloud-Init 模板与 Agent CLI 参数仍未对齐
+- 前端 CloudManagement 页面尚未对接新 API（仍使用占位数据）
+- 仅实现阿里云 ECS Provider，AWS/腾讯云需通过注册表扩展
+- 未实现人工审批流（扩容直接执行）
 
 ## 7. 前端现状
 
@@ -256,12 +264,12 @@ Argus 当前采用典型的 `Control Plane + Data Plane` 结构：
 
 1. Agent 鉴权链路
    - 让 Agent 能够合法访问受 JWT 保护的 REST 接口
-2. Cloud / Build 假接口
-   - 让云策略、实例编排、客户端构建不再停留在 `accepted`
-3. RootTask 终态收敛
+2. RootTask 终态收敛
    - 补齐 `FAILED / CANCELLED / TIMEOUT` 的聚合逻辑
-4. 节点容量与标签调度
+3. 节点容量与标签调度
    - 让调度真正利用多 worker 和节点路由
+4. CloudManagement 前端对接
+   - 前端页面接入已完成的 14 个云资源 API 端点
 
 ## 9. 建议阅读顺序
 

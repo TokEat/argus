@@ -7,6 +7,7 @@
 - 当前活跃 HTTP 接口来源：
   - `server/internal/api/router.go`
   - `server/internal/api/handler_dictionary.go`
+  - `server/internal/api/handler_cloud.go`
 - 当前活跃 WebSocket 接口来源：
   - `server/internal/api/ws.go`
 - 当前活跃 gRPC 接口来源：
@@ -117,13 +118,26 @@
 | `POST` | `/ai/arsenal/analyze/stream` | 是 | Server 侧 POC AI 审查：流式执行检查与大模型推理分析 (SSE) |
 | `POST` | `/arsenals/ai/analyze` | 是 | 兼容旧前端的 POC AI 审查入口，内部转到真实分析逻辑 |
 
-### 云实例与构建
+### 云资源编排
 
 | 方法 | 路径 | 鉴权 | 当前实现 |
 |------|------|------|----------|
-| `GET` | `/cloud/instances` | 是 | 当前不查询真实云资源，而是将 `nodes` 表映射为实例列表 |
-| `POST` | `/cloud/instances` | 是 | 仅校验输入并返回 `accepted`，未真正创建实例 |
-| `DELETE` | `/cloud/instances/:id` | 是 | 仅将对应节点标记为 `Offline` |
+| `GET` | `/cloud/accounts` | 是 | 返回当前租户的云账号凭证列表（AccessKey 脱敏返回） |
+| `POST` | `/cloud/accounts` | 是 | 创建云账号凭证，AccessKey ID/Secret 使用 AES-256-GCM 加密入库 |
+| `PUT` | `/cloud/accounts/:id` | 是 | 更新云账号信息（支持部分更新，凭证变更时重新加密） |
+| `DELETE` | `/cloud/accounts/:id` | 是 | 删除云账号凭证 |
+| `POST` | `/cloud/accounts/:id/test` | 是 | 测试云账号连通性（创建 Provider 并调用 ListInstances 验证） |
+| `GET` | `/cloud/policies` | 是 | 返回当前租户的伸缩策略列表 |
+| `POST` | `/cloud/policies` | 是 | 创建伸缩策略（含阈值、冷却期、竞价配置、Cloud-Init 模板等） |
+| `PUT` | `/cloud/policies/:id` | 是 | 更新伸缩策略 |
+| `DELETE` | `/cloud/policies/:id` | 是 | 删除伸缩策略 |
+| `POST` | `/cloud/policies/:id/toggle` | 是 | 切换伸缩策略启用/禁用状态 |
+| `GET` | `/cloud/instances` | 是 | 返回当前租户的云实例列表（含状态、IP、AgentID、Spot 标识） |
+| `POST` | `/cloud/instances` | 是 | 手动创建云实例（指定 account_id 和数量，单次上限 10） |
+| `DELETE` | `/cloud/instances/:id` | 是 | 销毁指定云实例（异步执行，同时标记关联 Node 为 Offline） |
+| `GET` | `/cloud/dashboard` | 是 | 云仪表盘汇总：活跃账号数、启用策略数、运行实例数、最近事件 |
+
+### 构建
 | `GET` | `/build/artifacts` | 是 | 扫描 `./release` 目录并返回产物列表 |
 | `POST` | `/build/client` | 是 | 仅校验 `build.sh` 是否存在并返回 `accepted`，未真正触发构建 |
 
