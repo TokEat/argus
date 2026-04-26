@@ -94,6 +94,8 @@ AutoScaler 作为一个守护协程，每 30 秒执行一次全局评估：
 - 将 AutoScaler 与守护协程注入 `main.go` 并与 API 层绑定。
 - 采用 Provider 注册表模式（`init()` 自注册）打通包循环依赖。
 
-⏳ **Phase 8 (待实施)**
-- **前端对接**：当前 Server-UI (`CloudManagement` 页面) 仍使用占位数据，需全面对接这 14 个已落地的后端 API。
+✅ **Phase 8 (已完成)**
+- **前端对接**：Server-UI (`CloudManagement` 页面) 已全面对接 14 个后端 API，实现凭证管理、连通性测试、策略全量配置与仪表盘大屏的数据闭环。
+
+⏳ **Phase 9 (待实施)**
 - **多云扩展**：基于已有的 `CloudProvider` 抽象，横向补充 AWS EC2、腾讯云 CVM 等实现。

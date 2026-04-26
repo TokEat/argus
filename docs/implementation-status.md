@@ -98,8 +98,8 @@
 | WebSocket 实时看板 | 服务端广播 Hub 已可工作，已实现基于租户的数据隔离 | 前端用 `?token=` 建连，后端只认 `Authorization: Bearer`，浏览器实时订阅链路未完全对接 |
 | 优先级 / 标签 / 容量调度 | 多优先级队列、节点标签匹配、`capacity` 字段与负载展示均已存在 | 任务创建接口未暴露 `agent_selector`；Agent 无法向服务端上报容量，Server 注册时容量固定为 `1` |
 | 任务状态机 | `DONE` 场景可聚合 RootTask，`timeout_sec` / 重试已落地 | `FAILED` / `CANCELLED` / `TIMEOUT` 对 RootTask 的最终收敛仍不完整 |
-| 云资源编排 | AutoScaler 自动伸缩引擎已接入 `main.go`、阿里云 ECS Provider 已注册、14 个 REST API 已替换 mock | 前端 CloudManagement 页面尚未接入真实 API |
-| CloudManagement 页面 | 后端已提供完整的凭证/策略/实例 CRUD 和仪表盘 API | 前端尚未对接新 API，仍使用占位数据 |
+| 云资源编排 | AutoScaler 自动伸缩引擎已接入 `main.go`、阿里云 ECS Provider 已注册、14 个 REST API 已替换 mock | 前端 CloudManagement 已完成对接 |
+| CloudManagement 页面 | 后端已提供完整的凭证/策略/实例 CRUD 和仪表盘 API | 前端已全量接入真实后端 API 数据流，并支持策略下发 |
 | ClientBuild 页面 | 可列出 `release/` 目录产物 | 构建触发接口仅返回 `accepted`；`/release/*` 下载路径未真正挂成静态文件服务 |
 | 遥测日志黑匣子 | gRPC `StreamLogs` 服务端与查询接口已实现 | Agent 端没有日志上报发送器，前端也没有日志页面入口 |
 | Spot 回收处理 | `StartSpotTerminationListener` 已实现 | Agent 启动链路未调用该监听器 |
@@ -131,5 +131,4 @@
 | P1 | 完善任务状态收敛 | 补齐 `FAILED / CANCELLED / TIMEOUT` 的 RootTask 聚合与终态计算 |
 | P1 | 完善节点容量与标签路由 | 让 Agent 上报容量，任务创建支持 `agent_selector` |
 | P1 | 接通遥测日志链路 | Agent 发送 `StreamLogs`，前端补日志查看页 |
-| P1 | CloudManagement 前端真实化 | 接入已完成的 14 个云资源 API 端点 |
 | P2 | 推进 Clean Architecture 迁移 | 逐步把 `router.go` 中的直接业务逻辑迁入 usecase / adapter |

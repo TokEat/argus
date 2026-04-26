@@ -162,11 +162,10 @@ Argus 不仅强调后端的健壮，同样注重前端的人机交互体验与�
 
 ### 7.2 正在优化与闭环中的能力
 - [ ] **Agent 鉴权链路增强**：目前 Agent 注册主要依赖基础可达性，更严格的 JWT/Token 加密校验正在集成中。
-- [ ] **CloudManagement 前端对接**：后端已提供 14 个云资源 REST API，前端页面尚未对接。
 - [ ] **RootTask 终态收敛逻辑**：强化从千万级 SubTask 中准确判定并修改父级 RootTask 完成状态的高效算法。
 
 ### 7.3 已落地但仍在演进的能力
-- [x] **云资源弹性调度**：已实现 AutoScaler 自动伸缩引擎，支持阿里云 ECS，含凭证加密、Cloud-Init 自动化、实例对账与 TTL 回收。
+- [x] **云资源弹性调度与前端闭环**：已实现 AutoScaler 自动伸缩引擎，支持阿里云 ECS，前端 `CloudManagement` 页面已完成 14 个 REST API 数据流打通。
 - [x] **AI Copilot 与工具链**：已内置基于 LLM 的 AI 助手、POC 分析审查、流式 Tool Calling。
 
 ---
@@ -193,7 +192,6 @@ Argus 将沿着云原生、高自治方向持续演进。
 
 ### 近端计划（近期核心目标）
 - 打通和加固 Agent 与控制面的强安全双向鉴权。
-- CloudManagement 前端对接已完成的 14 个云资源 API 端点，实现全 UI 闭环。
 - 优化 RootTask 的精确进度计算和终态收敛效率。
 
 ### 中期计划

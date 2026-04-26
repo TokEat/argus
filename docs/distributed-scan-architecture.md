@@ -231,7 +231,6 @@ Argus 当前采用典型的 `Control Plane + Data Plane` 结构：
 
 ### 当前限制
 
-- 前端 CloudManagement 页面尚未对接新 API（仍使用占位数据）
 - 仅实现阿里云 ECS Provider，AWS/腾讯云需通过注册表扩展
 - 未实现人工审批流（扩容直接执行）
 
@@ -268,8 +267,6 @@ Argus 当前采用典型的 `Control Plane + Data Plane` 结构：
    - 补齐 `FAILED / CANCELLED / TIMEOUT` 的聚合逻辑
 3. 节点容量与标签调度
    - 让调度真正利用多 worker 和节点路由
-4. CloudManagement 前端对接
-   - 前端页面接入已完成的 14 个云资源 API 端点
 
 ## 9. 建议阅读顺序
 
