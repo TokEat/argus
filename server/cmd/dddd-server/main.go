@@ -273,6 +273,34 @@ func main() {
 				if len(orphanTasks) > 0 {
 					srv.Hub.BroadcastNewTask(int32(len(orphanTasks)), 0)
 				}
+
+				// ★ 若断线 Agent 对应的是一台云实例，自动销毁底层机器，防止空转计费
+				var cloudInst db.CloudInstance
+				if err := db.DB.Where("agent_id = ? AND status IN ?", n.AgentID, []string{
+					db.CloudStatusRunning, db.CloudStatusWaitingReady, db.CloudStatusProvisioning,
+				}).First(&cloudInst).Error; err == nil {
+					log.Printf("[Heartbeat] Dead agent %s is a cloud instance (%s), scheduling termination...",
+						n.AgentID, cloudInst.ProviderInstanceID)
+					go func(inst db.CloudInstance) {
+						var account db.CloudAccount
+						if err := db.DB.First(&account, "id = ?", inst.CloudAccountID).Error; err != nil {
+							log.Printf("[Heartbeat] Cannot load cloud account for instance %s: %v", inst.ID, err)
+							return
+						}
+						provider, err := cloud.NewProviderFromAccount(&account)
+						if err != nil {
+							log.Printf("[Heartbeat] Cannot create provider for instance %s: %v", inst.ID, err)
+							return
+						}
+						mgr := cloud.NewResourceManager(provider)
+						mgr.SetDB(db.DB)
+						if err := mgr.TerminateInstance(context.Background(), &inst); err != nil {
+							log.Printf("[Heartbeat] Failed to terminate cloud instance %s: %v", inst.ID, err)
+						} else {
+							log.Printf("[Heartbeat] Cloud instance %s terminated successfully", inst.ID)
+						}
+					}(cloudInst)
+				}
 			}
 
 			// 自动清理长时间离线的节点（10分钟无心跳直接从数据库删除，避免大屏和数据库堆积）
