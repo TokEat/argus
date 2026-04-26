@@ -11,10 +11,14 @@
             "id": "b4b667da51d5d7bd",
             "type": "leaf",
             "state": {
-              "type": "graph",
-              "state": {},
-              "icon": "lucide-git-fork",
-              "title": "关系图谱"
+              "type": "markdown",
+              "state": {
+                "file": "agent-pull-architecture.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "agent-pull-architecture"
             }
           }
         ]
@@ -90,6 +94,7 @@
             "state": {
               "type": "backlink",
               "state": {
+                "file": "agent-pull-architecture.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -99,7 +104,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "反向链接"
+              "title": "agent-pull-architecture 的反向链接列表"
             }
           },
           {
@@ -108,11 +113,12 @@
             "state": {
               "type": "outgoing-link",
               "state": {
+                "file": "agent-pull-architecture.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "出链"
+              "title": "agent-pull-architecture 的出链列表"
             }
           },
           {
@@ -150,12 +156,13 @@
             "state": {
               "type": "outline",
               "state": {
+                "file": "agent-pull-architecture.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "大纲"
+              "title": "agent-pull-architecture 的大纲"
             }
           }
         ]
@@ -178,17 +185,17 @@
   },
   "active": "b4b667da51d5d7bd",
   "lastOpenFiles": [
-    "project-structure.md",
-    "rule-catalog-init.md",
-    "whitepaper-plan.md",
-    "agent-pull-architecture.md",
-    "agent_scan_flow.md",
     "ai_copilot_architecture.md",
     "argus-technical-whitepaper.md",
-    "implementation-status.md",
-    "project-schema-design.md",
-    "interface-implementations.md",
+    "db_schema.md",
     "distributed-scan-architecture.md",
-    "db_schema.md"
+    "implementation-status.md",
+    "interface-implementations.md",
+    "project-structure.md",
+    "whitepaper-plan.md",
+    "rule-catalog-init.md",
+    "project-schema-design.md",
+    "agent-pull-architecture.md",
+    "agent_scan_flow.md"
   ]
 }

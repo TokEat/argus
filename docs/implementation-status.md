@@ -44,6 +44,7 @@
 | 系统管理 | 用户 CRUD、MCP Key CRUD、构建产物列表、Agent 日志查询 | `server/internal/api/router.go` |
 | AI Copilot | 全局 AI 助手、多轮对话、流式输出、在线/离线 Agent 上下文感知 | `server/internal/ai/` `server/internal/api/ai_handlers.go` |
 | AI 工具链 (Tool Calling) | Nuclei 文档检索、知识库查询、POC 分析审查、执行诊断 | `server/internal/ai/tools_builtins.go` |
+| 云资源编排 | AutoScaler 自动伸缩引擎、阿里云 ECS Provider、实例对账与孤儿回收、AES-256-GCM 凭证加密 | `server/internal/cloud/` |
 
 ### 数据面 (Agent)
 
@@ -55,6 +56,7 @@
 | 并发框架 | Worker Pool 与引擎并发上限协同控制 | `scanner/internal/agent/worker.go` |
 | 增量规则同步框架 | 本地 Manifest / Hash 比对、差异下载、全量降级同步 | `scanner/internal/agent/worker.go` |
 | POC 调试拦截 | 拦截 Nuclei/GoPoc 调试请求响应，构建交织 Execution Trace | `scanner/internal/agent/debug.go` `scanner/lib/nuclei/pkg/tmplexec/exec.go` |
+| Spot 回收监听 | 云厂商竞价实例中断检测、紧急数据回传 | `scanner/internal/agent/signal.go` |
 
 ### 扫描引擎
 
@@ -96,8 +98,8 @@
 | WebSocket 实时看板 | 服务端广播 Hub 已可工作，已实现基于租户的数据隔离 | 前端用 `?token=` 建连，后端只认 `Authorization: Bearer`，浏览器实时订阅链路未完全对接 |
 | 优先级 / 标签 / 容量调度 | 多优先级队列、节点标签匹配、`capacity` 字段与负载展示均已存在 | 任务创建接口未暴露 `agent_selector`；Agent 无法向服务端上报容量，Server 注册时容量固定为 `1` |
 | 任务状态机 | `DONE` 场景可聚合 RootTask，`timeout_sec` / 重试已落地 | `FAILED` / `CANCELLED` / `TIMEOUT` 对 RootTask 的最终收敛仍不完整 |
-| 云资源编排 | `CloudProvider`、Docker Provider、阿里云 ECS Provider、`ResourceManager` 已实现 | 未接入 `main.go` 和真实调度链路；现有云实例 API 仍是 mock / 标记离线 |
-| CloudManagement 页面 | 实例列表与删除动作已能打到后端 | 凭证列表是前端占位数据；`/cloud/policy` 后端不存在；Cloud-Init 脚本使用了 Agent 当前并不支持的 `--token` 参数 |
+| 云资源编排 | AutoScaler 自动伸缩引擎已接入 `main.go`、阿里云 ECS Provider 已注册、14 个 REST API 已替换 mock | 前端 CloudManagement 页面尚未接入真实 API |
+| CloudManagement 页面 | 后端已提供完整的凭证/策略/实例 CRUD 和仪表盘 API | 前端尚未对接新 API，仍使用占位数据 |
 | ClientBuild 页面 | 可列出 `release/` 目录产物 | 构建触发接口仅返回 `accepted`；`/release/*` 下载路径未真正挂成静态文件服务 |
 | 遥测日志黑匣子 | gRPC `StreamLogs` 服务端与查询接口已实现 | Agent 端没有日志上报发送器，前端也没有日志页面入口 |
 | Spot 回收处理 | `StartSpotTerminationListener` 已实现 | Agent 启动链路未调用该监听器 |
@@ -112,7 +114,6 @@
 | 类别 | 未实现功能 |
 |------|-----------|
 | **Clean Architecture 落地** | `core/usecase` 真正承接业务逻辑，替换当前 `router.go` 直连数据库模式 |
-| **真实云调度** | 自动伸缩策略持久化、实例创建/等待就绪/回收的真实运行链路 |
 | **容器化隔离执行** | 每任务隔离 Runner、网络代理、CPU / 内存限制 |
 | **角色管理后台** | 角色 CRUD、权限矩阵配置、可视化授权管理 |
 | **真实客户端构建链路** | API 触发本地或 CI 构建、构建状态追踪、构建产物分发 |
@@ -127,9 +128,8 @@
 | 优先级 | 功能 | 说明 |
 |--------|------|------|
 | P0 | 打通 Agent 鉴权链路 | 统一 gRPC 注册 token、Agent REST 调用鉴权、WebSocket 鉴权 |
-| P0 | 修复 Cloud / Build 假接口 | 补齐 `/cloud/policy`、真实构建触发、`/release/*` 下载服务、移除或实现 `--token` |
 | P1 | 完善任务状态收敛 | 补齐 `FAILED / CANCELLED / TIMEOUT` 的 RootTask 聚合与终态计算 |
 | P1 | 完善节点容量与标签路由 | 让 Agent 上报容量，任务创建支持 `agent_selector` |
 | P1 | 接通遥测日志链路 | Agent 发送 `StreamLogs`，前端补日志查看页 |
+| P1 | CloudManagement 前端真实化 | 接入已完成的 14 个云资源 API 端点 |
 | P2 | 推进 Clean Architecture 迁移 | 逐步把 `router.go` 中的直接业务逻辑迁入 usecase / adapter |
-| P2 | 接入真实云资源编排 | 把 Docker / ECS Provider 挂到调度链路，而不是停留在独立实现 |

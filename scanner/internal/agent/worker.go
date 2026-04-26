@@ -285,6 +285,12 @@ func (w *Worker) Start() error {
 	// 获取动态指令
 	go w.commandLoop()
 
+	// Spot 竞价实例回收监听：当 Agent 运行在云实例上时自动启用
+	if os.Getenv("ARGUS_SPOT") == "1" || w.tags["cloud"] != "" {
+		log.Println("[Spot] Spot termination listener enabled")
+		w.StartSpotTerminationListener()
+	}
+
 	log.Printf("Agent started with worker pool size: %d", effectiveWorkers)
 
 	// 信号劫持

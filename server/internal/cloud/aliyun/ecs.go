@@ -10,8 +10,15 @@ import (
 	"github.com/user/dddd-server/internal/cloud"
 )
 
+func init() {
+	cloud.RegisterProviderFactory("aliyun", func(akID, akSecret, region string) (cloud.CloudProvider, error) {
+		return NewECSProvider(akID, akSecret, region)
+	})
+}
+
 type ECSProvider struct {
-	client *ecs.Client
+	client   *ecs.Client
+	regionId string
 }
 
 func NewECSProvider(accessKeyId, accessKeySecret, regionId string) (*ECSProvider, error) {
@@ -24,7 +31,7 @@ func NewECSProvider(accessKeyId, accessKeySecret, regionId string) (*ECSProvider
 	if err != nil {
 		return nil, err
 	}
-	return &ECSProvider{client: client}, nil
+	return &ECSProvider{client: client, regionId: regionId}, nil
 }
 
 func (p *ECSProvider) CreateInstance(cfg cloud.InstanceConfig) (*cloud.Instance, error) {
@@ -41,10 +48,24 @@ func (p *ECSProvider) CreateInstance(cfg cloud.InstanceConfig) (*cloud.Instance,
 		Amount:                  tea.Int32(1),
 	}
 
+	// 注入 Argus 管理标签
+	var tagList []*ecs.RunInstancesRequestTag
+	for k, v := range cfg.Tags {
+		tagList = append(tagList, &ecs.RunInstancesRequestTag{
+			Key:   tea.String(k),
+			Value: tea.String(v),
+		})
+	}
+	if len(tagList) > 0 {
+		req.Tag = tagList
+	}
+
 	// 竞价实例支持
 	if cfg.MaxPrice > 0 {
 		req.SpotStrategy = tea.String(cfg.SpotStrategy)
 		req.SpotPriceLimit = tea.Float32(float32(cfg.MaxPrice))
+	} else if cfg.SpotStrategy != "" && cfg.SpotStrategy != "NoSpot" {
+		req.SpotStrategy = tea.String(cfg.SpotStrategy)
 	} else {
 		req.SpotStrategy = tea.String("NoSpot")
 	}
@@ -72,7 +93,7 @@ func (p *ECSProvider) WaitReady(instanceID string, timeout time.Duration) error 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		req := &ecs.DescribeInstancesRequest{
-			RegionId:    tea.String(""), // 自动推断
+			RegionId:    tea.String(p.regionId),
 			InstanceIds: tea.String(fmt.Sprintf("[\"%s\"]", instanceID)),
 		}
 		res, err := p.client.DescribeInstances(req)

@@ -33,6 +33,10 @@ func schemaModels() []interface{} {
 		&PocRule{},
 		&WorkflowRule{},
 		&DirRule{},
+		// 云资源编排
+		&CloudAccount{},
+		&CloudScalingPolicy{},
+		&CloudInstance{},
 	}
 }
 

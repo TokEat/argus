@@ -339,10 +339,25 @@ func InitRouter(port string) {
 		api.PUT("/users/:id", updateUser)
 		api.DELETE("/users/:id", deleteUser)
 
+		// ====== 云资源编排 ======
+		// 云账号凭证管理
+		api.GET("/cloud/accounts", listCloudAccounts)
+		api.POST("/cloud/accounts", createCloudAccount)
+		api.PUT("/cloud/accounts/:id", updateCloudAccount)
+		api.DELETE("/cloud/accounts/:id", deleteCloudAccount)
+		api.POST("/cloud/accounts/:id/test", testCloudAccount)
+		// 伸缩策略管理
+		api.GET("/cloud/policies", listCloudPolicies)
+		api.POST("/cloud/policies", createCloudPolicy)
+		api.PUT("/cloud/policies/:id", updateCloudPolicy)
+		api.DELETE("/cloud/policies/:id", deleteCloudPolicy)
+		api.POST("/cloud/policies/:id/toggle", toggleCloudPolicy)
 		// 云实例管理
-		api.GET("/cloud/instances", listCloudInstances)
-		api.POST("/cloud/instances", createCloudInstance)
-		api.DELETE("/cloud/instances/:id", deleteCloudInstance)
+		api.GET("/cloud/instances", listCloudInstancesReal)
+		api.POST("/cloud/instances", createCloudInstanceManual)
+		api.DELETE("/cloud/instances/:id", deleteCloudInstanceReal)
+		// 云仪表盘
+		api.GET("/cloud/dashboard", cloudDashboard)
 
 		// 客户端构建
 		api.GET("/build/artifacts", listBuildArtifacts)
@@ -1536,61 +1551,7 @@ func deleteUser(c *gin.Context) {
 }
 
 // ==================== 云实例管理 ====================
-
-func listCloudInstances(c *gin.Context) {
-	// 通过 Docker CLI 查询当前运行的 agent 容器
-	type Instance struct {
-		ID        string `json:"id"`
-		IP        string `json:"ip"`
-		Status    string `json:"status"`
-		Provider  string `json:"provider"`
-		CreatedAt string `json:"created_at"`
-	}
-
-	// 从 nodes 表中读取记录作为实例列表
-	var nodes []db.Node
-	db.DB.Order("created_at DESC").Find(&nodes)
-
-	instances := make([]Instance, 0, len(nodes))
-	for _, n := range nodes {
-		instances = append(instances, Instance{
-			ID:        n.AgentID,
-			IP:        n.IP,
-			Status:    n.Status,
-			Provider:  "agent",
-			CreatedAt: n.CreatedAt.Format(time.RFC3339),
-		})
-	}
-
-	c.JSON(http.StatusOK, instances)
-}
-
-func createCloudInstance(c *gin.Context) {
-	var req struct {
-		Provider     string `json:"provider"` // docker, aliyun
-		Region       string `json:"region"`
-		InstanceType string `json:"instance_type"`
-		ImageID      string `json:"image_id"`
-		ServerAddr   string `json:"server_addr"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// 当前实现：仅返回提示信息，实际创建需要配置云 Provider
-	c.JSON(http.StatusOK, gin.H{
-		"status":  "accepted",
-		"message": fmt.Sprintf("Cloud instance creation request accepted (provider=%s). Please configure cloud provider credentials.", req.Provider),
-	})
-}
-
-func deleteCloudInstance(c *gin.Context) {
-	id := c.Param("id")
-	// 标记节点为 Offline
-	db.DB.Model(&db.Node{}).Where("agent_id = ?", id).Update("status", "Offline")
-	c.JSON(http.StatusOK, gin.H{"status": "ok", "message": fmt.Sprintf("Instance %s marked for termination", id)})
-}
+// (已迁移到 handler_cloud.go)
 
 // ==================== 客户端构建 ====================
 

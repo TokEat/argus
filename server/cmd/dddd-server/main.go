@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -10,6 +11,8 @@ import (
 
 	pb "github.com/user/dddd-proto/go/scan"
 	"github.com/user/dddd-server/internal/api"
+	"github.com/user/dddd-server/internal/cloud"
+	_ "github.com/user/dddd-server/internal/cloud/aliyun" // 注册阿里云 ECS Provider
 	"github.com/user/dddd-server/internal/db"
 	"github.com/user/dddd-server/internal/grpc"
 	"github.com/user/dddd-server/internal/scheduler"
@@ -192,6 +195,23 @@ func main() {
 			})
 		}
 	})
+
+	// ====== 云资源动态调度 ======
+	autoScaler := cloud.NewAutoScaler(conn, queue)
+	autoScaler.SetServerAddrs(
+		fmt.Sprintf("0.0.0.0:%d", grpcPort), // gRPC 地址 (Cloud-Init 中 Agent 连接用)
+		"http://0.0.0.0"+apiAddr,            // HTTP API 地址
+		agentPSK,
+	)
+	api.SetAutoScaler(autoScaler)
+
+	// 启动自动伸缩决策循环
+	scalerCtx, scalerCancel := context.WithCancel(context.Background())
+	defer scalerCancel()
+	go autoScaler.Start(scalerCtx)
+	go autoScaler.StartReconciler(scalerCtx, 5*time.Minute)
+	go autoScaler.StartOrphanSweeper(scalerCtx, 10*time.Minute)
+	log.Println("[Cloud] AutoScaler and background reconcilers started")
 
 	// 挂载一个后台协程启动 API HTTP Server
 	go func() {
