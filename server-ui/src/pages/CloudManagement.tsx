@@ -538,6 +538,32 @@ systemctl start argus-agent
                     <Form.Item name="access_key_secret" label="Access Key Secret" rules={[{ required: true }]}>
                         <Input.Password placeholder="输入 SK" />
                     </Form.Item>
+                    
+                    <Form.Item name="region" label="地域 (Region)" rules={[{ required: true }]} initialValue="cn-shanghai" extra="必填，云资源将创建在此地域">
+                        <Input placeholder="例如：cn-shanghai" />
+                    </Form.Item>
+                    
+                    <Form.Item label="默认云主机硬件配置" style={{ marginBottom: 4 }} extra="选填，如果留空将使用云厂商 API 的默认值">
+                        <Input.Group compact style={{ display: 'flex', gap: 8 }}>
+                            <Form.Item name="default_instance_type" noStyle>
+                                <Input placeholder="实例规格 (如 ecs.c6.large)" style={{ flex: 1 }} />
+                            </Form.Item>
+                            <Form.Item name="default_image_id" noStyle>
+                                <Input placeholder="系统镜像 ID (如 ubuntu_22_04)" style={{ flex: 1 }} />
+                            </Form.Item>
+                        </Input.Group>
+                    </Form.Item>
+                    
+                    <Form.Item label="网络与安全配置" style={{ marginBottom: 4 }}>
+                        <Input.Group compact style={{ display: 'flex', gap: 8 }}>
+                            <Form.Item name="default_security_group" noStyle>
+                                <Input placeholder="安全组 ID" style={{ flex: 1 }} />
+                            </Form.Item>
+                            <Form.Item name="default_v_switch" noStyle>
+                                <Input placeholder="虚拟交换机 ID" style={{ flex: 1 }} />
+                            </Form.Item>
+                        </Input.Group>
+                    </Form.Item>
                     <Form.Item label="OSS 配置（可选，用于 Agent 二进制分发）" style={{ marginBottom: 4 }}>
                         <Input.Group compact style={{ display: 'flex', gap: 8 }}>
                             <Form.Item name="oss_bucket" noStyle>
