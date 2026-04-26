@@ -25,8 +25,10 @@
 | **Provider Factory** | 注册表模式工厂，提供各云厂商实现的创建入口，打破包循环依赖。 | `provider_factory.go` |
 | **CloudProvider** | 屏蔽底层云厂商差异的抽象接口（定义 `Provision` / `Terminate` / `List`）。 | `provider.go` |
 | **Aliyun ECS** | 阿里云的具体 Provider 实现，负责调用阿里云 SDK 执行实例生命周期。 | `aliyun/ecs.go` |
+| **Aliyun OSS** | 阿里云 OSS 客户端，负责 Agent 二进制分片上传和预签名 URL 生成。 | `aliyun/oss.go` |
+| **OSS Distribute** | Agent 二进制分发抽象层，OSSUploader 接口 + 预签名 URL 生成。 | `oss_distribute.go` |
 | **ResourceManager** | 实例级管理器，桥接 Provider API 与 PostgreSQL 数据库状态同步。 | `manager.go` |
-| **Cloud-Init** | 实例初始化模板引擎，使用 Base64 注入带参启动脚本 (AgentID/TenantID/PSK/Addr)。 | `cloudinit.go` |
+| **Cloud-Init** | 实例初始化模板引擎，注册 systemd 服务并注入 OSS 下载 URL。 | `cloudinit.go` |
 | **Crypto** | AES-256-GCM 凭证加解密层，保护云厂商 AccessKey 落库安全。 | `crypto.go` |
 
 ### 2.2 数据库模型
@@ -82,7 +84,45 @@ stateDiagram-v2
     Error --> Terminating: 人工或 OrphanSweeper 清理
 ```
 
-### 3.3 Spot 竞价实例回收感知
+### 3.3 Agent 二进制分发机制
+
+云实例通过 Cloud-Init 脚本在启动时自动下载并部署 Agent。系统支持两种分发通道：
+
+| 方式 | 触发条件 | 下载速度 | 安全性 |
+|------|----------|----------|--------|
+| **OSS 预签名 URL（推荐）** | CloudAccount 配置了 `oss_bucket` + `oss_endpoint` | 内网 > 200MB/s | 预签名 URL，1 小时过期 |
+| **Server HTTP Fallback** | 未配置 OSS | 取决于 Server 带宽 | 无鉴权，依赖安全组 |
+
+**OSS 分发完整流程：**
+
+```mermaid
+sequenceDiagram
+    participant Admin as 管理员
+    participant Server as Argus Server
+    participant OSS as 阿里云 OSS
+    participant ECS as 新建 ECS 实例
+
+    Note over Admin,Server: Phase 1: 构建 + 上传
+    Admin->>Server: build.sh --component dddd-agent
+    Admin->>Server: POST /cloud/accounts/:id/oss/upload
+    Server->>OSS: 分片上传 release/dddd-agent-* (~100MB)
+    OSS-->>Server: 上传完成
+
+    Note over Server,ECS: Phase 2: 实例创建 + 自动部署
+    Server->>Server: ProvisionInstance → GeneratePresignedURL
+    Server->>ECS: RunInstances (Cloud-Init 脚本含 OSS 预签名 URL)
+    ECS->>OSS: curl 下载 Agent 二进制 (内网高速)
+    ECS->>ECS: 注册 systemd 服务 + 启动 Agent
+    ECS->>Server: gRPC 注册上线
+```
+
+**操作步骤：**
+
+1. 在 **云凭证管理** 中创建凭证时填写 OSS Bucket 和 Endpoint
+2. 点击凭证行的 **"上传 Agent"** 按钮，将 `release/` 中的 Agent 二进制上传到 OSS
+3. 后续所有通过该凭证创建的云实例，Cloud-Init 将自动从 OSS 下载 Agent
+
+### 3.4 Spot 竞价实例回收感知
 
 - **Agent 侧**：启动时检测到环境变量 `ARGUS_SPOT=1` 或 `cloud` 标签时，激活 `StartSpotTerminationListener`。
 - **中断响应**：Agent 通过内部 HTTP 元数据接口感知到云厂商（如阿里云提前 5 分钟）的回收警告。
