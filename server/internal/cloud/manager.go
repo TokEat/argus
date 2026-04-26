@@ -132,7 +132,7 @@ func (rm *ResourceManager) ProvisionInstance(
 
 // waitAndActivate 等待实例就绪并更新 DB 状态
 func (rm *ResourceManager) waitAndActivate(ctx context.Context, cloudInst *db.CloudInstance) {
-	err := rm.provider.WaitReady(cloudInst.ProviderInstanceID, 5*time.Minute)
+	err := rm.provider.WaitReady(ctx, cloudInst.ProviderInstanceID, 5*time.Minute)
 	if err != nil {
 		log.Printf("[Provision] WaitReady failed for %s: %v, tearing down", cloudInst.ID, err)
 		if rm.database != nil {
@@ -197,7 +197,7 @@ func (rm *ResourceManager) RebootInstance(ctx context.Context, cloudInst *db.Clo
 // waitRebootRecovery 等待重启后 Agent 重新上线
 func (rm *ResourceManager) waitRebootRecovery(ctx context.Context, cloudInst *db.CloudInstance) {
 	// 等待实例重新进入 Running 状态（OS 层面）
-	err := rm.provider.WaitReady(cloudInst.ProviderInstanceID, 5*time.Minute)
+	err := rm.provider.WaitReady(ctx, cloudInst.ProviderInstanceID, 5*time.Minute)
 	if err != nil {
 		log.Printf("[Reboot] WaitReady after reboot failed for %s: %v", cloudInst.ID, err)
 		if rm.database != nil {
@@ -229,6 +229,13 @@ func (rm *ResourceManager) TerminateInstance(ctx context.Context, cloudInst *db.
 	if cloudInst.ProviderInstanceID != "" {
 		if err := rm.provider.TerminateInstance(cloudInst.ProviderInstanceID); err != nil {
 			log.Printf("[Recycle] Failed to terminate provider instance %s: %v", cloudInst.ProviderInstanceID, err)
+			// 回滚状态为 Error，确保兆底协程能再次捕获
+			if rm.database != nil {
+				rm.database.Model(cloudInst).Updates(map[string]interface{}{
+					"status":        db.CloudStatusError,
+					"error_message": fmt.Sprintf("Terminate failed: %v", err),
+				})
+			}
 			return err
 		}
 	}

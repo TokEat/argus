@@ -1,6 +1,7 @@
 package aliyun
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -89,31 +90,42 @@ func (p *ECSProvider) CreateInstance(cfg cloud.InstanceConfig) (*cloud.Instance,
 	}, nil
 }
 
-func (p *ECSProvider) WaitReady(instanceID string, timeout time.Duration) error {
+// WaitReady 等待实例进入 Running 状态，支持 context 取消以防 goroutine 泄漏。
+func (p *ECSProvider) WaitReady(ctx context.Context, instanceID string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		req := &ecs.DescribeInstancesRequest{
-			RegionId:    tea.String(p.regionId),
-			InstanceIds: tea.String(fmt.Sprintf("[\"%s\"]", instanceID)),
-		}
-		res, err := p.client.DescribeInstances(req)
-		if err != nil {
-			return err
-		}
-		if len(res.Body.Instances.Instance) > 0 {
-			status := *res.Body.Instances.Instance[0].Status
-			if status == "Running" {
-				return nil
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled while waiting for instance %s: %w", instanceID, ctx.Err())
+		case <-ticker.C:
+			if time.Now().After(deadline) {
+				return fmt.Errorf("timeout waiting for instance %s to be running", instanceID)
+			}
+			req := &ecs.DescribeInstancesRequest{
+				RegionId:    tea.String(p.regionId),
+				InstanceIds: tea.String(fmt.Sprintf(`["%s"]`, instanceID)),
+			}
+			res, err := p.client.DescribeInstances(req)
+			if err != nil {
+				return err
+			}
+			if len(res.Body.Instances.Instance) > 0 {
+				status := *res.Body.Instances.Instance[0].Status
+				if status == "Running" {
+					return nil
+				}
 			}
 		}
-		time.Sleep(5 * time.Second)
 	}
-	return fmt.Errorf("timeout waiting for instance %s to be running", instanceID)
 }
 
 func (p *ECSProvider) GetInstanceIP(instanceID string) (string, error) {
 	req := &ecs.DescribeInstancesRequest{
-		InstanceIds: tea.String(fmt.Sprintf("[\"%s\"]", instanceID)),
+		RegionId:    tea.String(p.regionId), // 修复：补充 RegionId 防止跨区域查询失败
+		InstanceIds: tea.String(fmt.Sprintf(`["%s"]`, instanceID)),
 	}
 	res, err := p.client.DescribeInstances(req)
 	if err != nil {
@@ -151,6 +163,7 @@ func (p *ECSProvider) TerminateInstance(instanceID string) error {
 	return err
 }
 
+// ListInstances 带分页的实例列表查询，修复默认只返回前 10 条的问题。
 func (p *ECSProvider) ListInstances(tags map[string]string) ([]*cloud.Instance, error) {
 	var tagFilters []*ecs.DescribeInstancesRequestTag
 	for k, v := range tags {
@@ -160,25 +173,41 @@ func (p *ECSProvider) ListInstances(tags map[string]string) ([]*cloud.Instance, 
 		})
 	}
 
-	req := &ecs.DescribeInstancesRequest{
-		Tag: tagFilters,
-	}
-	res, err := p.client.DescribeInstances(req)
-	if err != nil {
-		return nil, err
+	var allInstances []*cloud.Instance
+	pageNumber := int32(1)
+	const pageSize = int32(100) // 阿里云单页最大值
+
+	for {
+		req := &ecs.DescribeInstancesRequest{
+			RegionId:   tea.String(p.regionId),
+			Tag:        tagFilters,
+			PageSize:   tea.Int32(pageSize),
+			PageNumber: tea.Int32(pageNumber),
+		}
+		res, err := p.client.DescribeInstances(req)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, inst := range res.Body.Instances.Instance {
+			ip := ""
+			if len(inst.PublicIpAddress.IpAddress) > 0 {
+				ip = *inst.PublicIpAddress.IpAddress[0]
+			}
+			allInstances = append(allInstances, &cloud.Instance{
+				ID:     *inst.InstanceId,
+				Status: *inst.Status,
+				IP:     ip,
+			})
+		}
+
+		// 检查是否还有更多页
+		totalCount := *res.Body.TotalCount
+		if int32(len(allInstances)) >= totalCount {
+			break
+		}
+		pageNumber++
 	}
 
-	var instances []*cloud.Instance
-	for _, inst := range res.Body.Instances.Instance {
-		ip := ""
-		if len(inst.PublicIpAddress.IpAddress) > 0 {
-			ip = *inst.PublicIpAddress.IpAddress[0]
-		}
-		instances = append(instances, &cloud.Instance{
-			ID:     *inst.InstanceId,
-			Status: *inst.Status,
-			IP:     ip,
-		})
-	}
-	return instances, nil
+	return allInstances, nil
 }

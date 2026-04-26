@@ -55,19 +55,37 @@ fi
 # 创建日志目录
 mkdir -p /var/log/argus
 
-# 启动 Agent
-nohup "$AGENT_BIN" \
+# 注册为 systemd 服务（确保 OS 重启或进程崩溃后自动恢复）
+cat > /etc/systemd/system/argus-agent.service <<EOF
+[Unit]
+Description=Argus Scanning Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$AGENT_BIN \
     --server "{{.ServerAddr}}" \
     --id "{{.AgentID}}" \
     --api "{{.APIURL}}" \
     --tags "cloud,auto-scaled" \
-    --spot \
-{{- if .PSK}}
-    --psk "{{.PSK}}" \
-{{- end}}
-    > /var/log/argus/agent.log 2>&1 &
+    --spot{{if .PSK}} \
+    --psk "{{.PSK}}"{{end}}
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/argus/agent.log
+StandardError=append:/var/log/argus/agent.log
+LimitNOFILE=65536
 
-echo "[Argus] Agent started with PID $!"
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable argus-agent
+systemctl start argus-agent
+
+echo "[Argus] Agent registered as systemd service and started"
 `
 
 // RenderCloudInit 将模板渲染为最终的 Cloud-Init 脚本。

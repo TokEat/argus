@@ -180,6 +180,18 @@ func updateCloudAccount(c *gin.Context) {
 		return
 	}
 
+	// 如果凭证被更新，清除 AutoScaler 中缓存的旧 Provider
+	if _, hasAK := updates["access_key_id"]; hasAK {
+		if cloudAutoScaler != nil {
+			cloudAutoScaler.InvalidateManager(id)
+		}
+	}
+	if _, hasSK := updates["access_key_secret"]; hasSK {
+		if cloudAutoScaler != nil {
+			cloudAutoScaler.InvalidateManager(id)
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 

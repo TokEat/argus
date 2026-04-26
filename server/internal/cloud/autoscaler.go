@@ -159,8 +159,14 @@ func (as *AutoScaler) scaleUp(ctx context.Context, policy *db.CloudScalingPolicy
 		return
 	}
 
+	// 使用信号量限制并发创建数，防止触发云厂商 API 限流
+	const maxConcurrentProvisions = 5
+	sem := make(chan struct{}, maxConcurrentProvisions)
+
 	for i := 0; i < count; i++ {
+		sem <- struct{}{}
 		go func(idx int) {
+			defer func() { <-sem }()
 			instance, err := manager.ProvisionInstance(ctx, &account, policy, as.grpcAddr, as.apiURL, as.psk)
 			if err != nil {
 				log.Printf("[AutoScaler] Failed to provision instance %d/%d: %v", idx+1, count, err)
@@ -260,6 +266,15 @@ func (as *AutoScaler) getOrCreateManager(account *db.CloudAccount) (*ResourceMan
 	return manager, nil
 }
 
+// InvalidateManager 清除指定云账号的缓存 Manager。
+// 当用户更新了 AK/SK 凭证时，必须调用此方法以确保后续操作使用新凭证。
+func (as *AutoScaler) InvalidateManager(accountID string) {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	delete(as.managers, accountID)
+	log.Printf("[AutoScaler] Manager cache invalidated for account %s", accountID)
+}
+
 // StartReconciler 启动实例对账协程（定期检查 DB 中 Running 实例在云端是否存活）
 func (as *AutoScaler) StartReconciler(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
@@ -280,7 +295,9 @@ func (as *AutoScaler) StartReconciler(ctx context.Context, interval time.Duratio
 // reconcile 对账：检查 DB 中 Running/WaitingReady 状态的实例是否在云端仍然存在
 func (as *AutoScaler) reconcile(ctx context.Context) {
 	var instances []db.CloudInstance
-	as.db.Where("status IN ?", []string{db.CloudStatusRunning, db.CloudStatusWaitingReady}).Find(&instances)
+	as.db.Where("status IN ?", []string{
+		db.CloudStatusRunning, db.CloudStatusWaitingReady, db.CloudStatusRebooting,
+	}).Find(&instances)
 
 	if len(instances) == 0 {
 		return

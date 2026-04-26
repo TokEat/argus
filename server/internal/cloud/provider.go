@@ -1,6 +1,9 @@
 package cloud
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // InstanceConfig 定义了创建云实例所需的通用配置
 type InstanceConfig struct {
@@ -31,7 +34,8 @@ type CloudProvider interface {
 	CreateInstance(cfg InstanceConfig) (*Instance, error)
 
 	// WaitReady 等待实例状态变更为可运行（如操作系统就绪，网络分配完成）
-	WaitReady(instanceID string, timeout time.Duration) error
+	// ctx 用于支持取消，防止 Server 关停时 goroutine 泄漏。
+	WaitReady(ctx context.Context, instanceID string, timeout time.Duration) error
 
 	// GetInstanceIP 获取实例的公网/私网通信IP
 	GetInstanceIP(instanceID string) (string, error)
