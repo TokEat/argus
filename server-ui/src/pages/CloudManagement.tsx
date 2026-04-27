@@ -15,6 +15,21 @@ import { useAutoContext } from '../contexts/GlobalAIContext';
 
 const { Title, Text, Paragraph } = Typography;
 
+// 统一错误提取：兼容 string / Error / Axios rejected / Antd ValidateErrorEntity
+const extractErrorMsg = (err: unknown): string | null => {
+    if (!err) return null;
+    if (typeof err === 'string') return err;
+    if (err instanceof Error) return err.message;
+    if (typeof err === 'object') {
+        const obj = err as Record<string, any>;
+        // Ant Design 表单校验失败 (ValidateErrorEntity) 不弹后端错误
+        if (obj.errorFields) return null;
+        if (obj.error) return String(obj.error);
+        if (obj.message) return String(obj.message);
+    }
+    return String(err);
+};
+
 const CloudManagement: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [instances, setInstances] = useState<API.CloudInstance[]>([]);
@@ -155,7 +170,8 @@ systemctl start argus-agent
             fetchInstances();
             fetchDashboard();
         } catch (err) {
-            if (typeof err === 'string') message.error(err);
+            const msg = extractErrorMsg(err);
+            if (msg) message.error(msg);
         }
     };
 
@@ -166,7 +182,8 @@ systemctl start argus-agent
             fetchInstances();
             fetchDashboard();
         } catch (err) {
-            if (typeof err === 'string') message.error(err);
+            const msg = extractErrorMsg(err);
+            if (msg) message.error(msg);
         }
     };
 
@@ -179,7 +196,8 @@ systemctl start argus-agent
             fetchAccounts();
             fetchDashboard();
         } catch (err) {
-            if (typeof err === 'string') message.error(err);
+            const msg = extractErrorMsg(err);
+            if (msg) message.error(msg);
         }
     };
 
@@ -190,7 +208,8 @@ systemctl start argus-agent
             fetchAccounts();
             fetchDashboard();
         } catch (err) {
-            if (typeof err === 'string') message.error(err);
+            const msg = extractErrorMsg(err);
+            if (msg) message.error(msg);
         }
     };
 
@@ -218,7 +237,8 @@ systemctl start argus-agent
             }
             fetchDashboard();
         } catch (err) {
-            if (typeof err === 'string') message.error(err);
+            const msg = extractErrorMsg(err);
+            if (msg) message.error(msg);
         }
     };
 
@@ -230,7 +250,8 @@ systemctl start argus-agent
             fetchPolicies();
             fetchDashboard();
         } catch (err) {
-            if (typeof err === 'string') message.error(err);
+            const msg = extractErrorMsg(err);
+            if (msg) message.error(msg);
         }
     };
 
