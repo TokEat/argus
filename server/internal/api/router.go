@@ -348,6 +348,8 @@ func InitRouter(port string) {
 		api.POST("/cloud/accounts/:id/test", testCloudAccount)
 		api.POST("/cloud/accounts/:id/oss/upload", uploadAgentToOSS)
 		api.POST("/cloud/accounts/:id/oss/test", testOSSConnection)
+		api.GET("/cloud/accounts/:id/discover", discoverCloudResources)
+		api.POST("/cloud/accounts/:id/auto-configure", autoConfigureCloudAccount)
 		// 伸缩策略管理
 		api.GET("/cloud/policies", listCloudPolicies)
 		api.POST("/cloud/policies", createCloudPolicy)

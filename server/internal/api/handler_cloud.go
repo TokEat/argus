@@ -579,3 +579,81 @@ func testOSSConnection(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "OSS connection successful"})
 }
 
+// discoverCloudResources 通过 AK/SK 自动发现该地域下可用的云资源
+func discoverCloudResources(c *gin.Context) {
+	accountID := c.Param("id")
+	tenantID := currentTenantID(c)
+
+	var account db.CloudAccount
+	if err := db.DB.Where("id = ? AND tenant_id = ?", accountID, tenantID).First(&account).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found"})
+		return
+	}
+
+	provider, err := cloud.NewProviderFromAccount(&account)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("创建 Provider 失败: %v", err)})
+		return
+	}
+
+	// 类型断言为 ECSProvider 以调用 DiscoverResources
+	type discoverer interface {
+		DiscoverResources() (interface{}, error)
+	}
+	disc, ok := provider.(discoverer)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "该 Provider 不支持资源发现"})
+		return
+	}
+
+	result, err := disc.DiscoverResources()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("资源发现失败: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// autoConfigureCloudAccount 将用户选择的发现结果写入 CloudAccount 配置
+func autoConfigureCloudAccount(c *gin.Context) {
+	accountID := c.Param("id")
+	tenantID := currentTenantID(c)
+
+	var req struct {
+		DefaultInstanceType  string `json:"default_instance_type"`
+		DefaultImageID       string `json:"default_image_id"`
+		DefaultSecurityGroup string `json:"default_security_group"`
+		DefaultVSwitch       string `json:"default_v_switch"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	updates := map[string]interface{}{}
+	if req.DefaultInstanceType != "" {
+		updates["default_instance_type"] = req.DefaultInstanceType
+	}
+	if req.DefaultImageID != "" {
+		updates["default_image_id"] = req.DefaultImageID
+	}
+	if req.DefaultSecurityGroup != "" {
+		updates["default_security_group"] = req.DefaultSecurityGroup
+	}
+	if req.DefaultVSwitch != "" {
+		updates["default_v_switch"] = req.DefaultVSwitch
+	}
+
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "没有需要更新的字段"})
+		return
+	}
+
+	if err := db.DB.Model(&db.CloudAccount{}).Where("id = ? AND tenant_id = ?", accountID, tenantID).Updates(updates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "配置已更新"})
+}

@@ -527,6 +527,20 @@ export async function rebootCloudInstance(id: string): Promise<API.MessageRespon
     return request.post(`/cloud/instances/${id}/reboot`);
 }
 
+// Resource Discovery
+export async function discoverCloudResources(accountId: string): Promise<any> {
+    return request.get(`/cloud/accounts/${accountId}/discover`);
+}
+
+export async function autoConfigureCloudAccount(accountId: string, data: {
+    default_instance_type?: string;
+    default_image_id?: string;
+    default_security_group?: string;
+    default_v_switch?: string;
+}): Promise<API.MessageResponse> {
+    return request.post(`/cloud/accounts/${accountId}/auto-configure`, data);
+}
+
 // Dashboard
 export async function getCloudDashboard(): Promise<API.CloudDashboard> {
     return request.get('/cloud/dashboard');
