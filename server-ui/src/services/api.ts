@@ -541,6 +541,10 @@ export async function autoConfigureCloudAccount(accountId: string, data: {
     return request.post(`/cloud/accounts/${accountId}/auto-configure`, data);
 }
 
+export async function oneClickSetup(accountId: string): Promise<any> {
+    return request.post(`/cloud/accounts/${accountId}/one-click-setup`);
+}
+
 // Dashboard
 export async function getCloudDashboard(): Promise<API.CloudDashboard> {
     return request.get('/cloud/dashboard');

@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -656,4 +658,153 @@ func autoConfigureCloudAccount(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "配置已更新"})
+}
+
+// oneClickSetup 一键配置：自动发现资源 → 选择最优默认值 → 写入凭证 → 创建策略
+func oneClickSetup(c *gin.Context) {
+	accountID := c.Param("id")
+	tenantID := currentTenantID(c)
+
+	var account db.CloudAccount
+	if err := db.DB.Where("id = ? AND tenant_id = ?", accountID, tenantID).First(&account).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found"})
+		return
+	}
+
+	// 1. 创建 Provider
+	provider, err := cloud.NewProviderFromAccount(&account)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("创建 Provider 失败: %v", err)})
+		return
+	}
+
+	type discoverer interface {
+		DiscoverResources() (interface{}, error)
+	}
+	disc, ok := provider.(discoverer)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "该 Provider 不支持资源发现"})
+		return
+	}
+
+	// 2. 自动发现资源
+	rawResult, err := disc.DiscoverResources()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("资源发现失败: %v", err)})
+		return
+	}
+
+	// 类型安全解析发现结果
+	type resourceItem struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+		Desc string `json:"desc"`
+	}
+	type instanceTypeItem struct {
+		ID     string  `json:"id"`
+		CPU    int     `json:"cpu"`
+		Memory float64 `json:"memory_gb"`
+		Family string  `json:"family"`
+	}
+	type discoveryResult struct {
+		SecurityGroups []resourceItem     `json:"security_groups"`
+		VSwitches      []resourceItem     `json:"v_switches"`
+		Images         []resourceItem     `json:"images"`
+		InstanceTypes  []instanceTypeItem `json:"instance_types"`
+	}
+
+	// 通过 JSON 往返转换提取结构体
+	jsonBytes, _ := json.Marshal(rawResult)
+	var result discoveryResult
+	json.Unmarshal(jsonBytes, &result)
+
+	// 3. 智能选择默认值
+	updates := map[string]interface{}{}
+	chosen := map[string]string{}
+
+	// 实例规格：优先选 ecs.c6.large (2核4G，性价比最高)
+	if account.DefaultInstanceType == "" && len(result.InstanceTypes) > 0 {
+		pick := result.InstanceTypes[0].ID
+		for _, it := range result.InstanceTypes {
+			if it.ID == "ecs.c6.large" {
+				pick = it.ID
+				break
+			}
+		}
+		updates["default_instance_type"] = pick
+		chosen["instance_type"] = pick
+	}
+
+	// 镜像：优先选包含 ubuntu 22 的最新版
+	if account.DefaultImageID == "" && len(result.Images) > 0 {
+		pick := result.Images[0].ID
+		for _, img := range result.Images {
+			if contains(img.Name, "ubuntu") && contains(img.Name, "22") {
+				pick = img.ID
+				break
+			}
+		}
+		updates["default_image_id"] = pick
+		chosen["image_id"] = pick
+	}
+
+	// 安全组：取第一个
+	if account.DefaultSecurityGroup == "" && len(result.SecurityGroups) > 0 {
+		updates["default_security_group"] = result.SecurityGroups[0].ID
+		chosen["security_group"] = result.SecurityGroups[0].ID
+	}
+
+	// 交换机：取第一个
+	if account.DefaultVSwitch == "" && len(result.VSwitches) > 0 {
+		updates["default_v_switch"] = result.VSwitches[0].ID
+		chosen["v_switch"] = result.VSwitches[0].ID
+	}
+
+	// 4. 写入凭证
+	if len(updates) > 0 {
+		db.DB.Model(&db.CloudAccount{}).Where("id = ? AND tenant_id = ?", accountID, tenantID).Updates(updates)
+	}
+
+	// 5. 如果该凭证没有绑定策略，自动创建一个默认策略
+	policyCreated := false
+	var existingPolicy db.CloudScalingPolicy
+	if err := db.DB.Where("cloud_account_id = ? AND tenant_id = ?", accountID, tenantID).First(&existingPolicy).Error; err != nil {
+		newPolicy := db.CloudScalingPolicy{
+			ID:                 fmt.Sprintf("cp-%d", time.Now().UnixNano()),
+			TenantID:           tenantID,
+			CloudAccountID:     accountID,
+			Name:               fmt.Sprintf("自动策略 - %s", account.Name),
+			Enabled:            false, // 默认关闭，让用户手动开启
+			MinInstances:       0,
+			MaxInstances:       5,
+			ScaleUpThreshold:   50,
+			ScaleDownThreshold: 3,
+			CooldownSeconds:    300,
+			InstanceTTLMinutes: 120,
+			SpotStrategy:       "SpotAsPriceGo", // 默认使用竞价，最省钱
+		}
+		if err := db.DB.Create(&newPolicy).Error; err == nil {
+			policyCreated = true
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":         "ok",
+		"message":        "一键配置完成",
+		"chosen":         chosen,
+		"policy_created": policyCreated,
+		"discovery": gin.H{
+			"security_groups": len(result.SecurityGroups),
+			"v_switches":      len(result.VSwitches),
+			"images":          len(result.Images),
+			"instance_types":  len(result.InstanceTypes),
+		},
+	})
+}
+
+// contains 检查字符串是否包含子串（忽略大小写）
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub ||
+		len(s) > 0 && len(sub) > 0 &&
+			(strings.Contains(strings.ToLower(s), strings.ToLower(sub))))
 }

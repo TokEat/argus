@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Typography, Table, Tag, Space, Button, Spin, Empty, Modal, Form, Input, Select, message, Popconfirm, Badge, Tabs, Switch, InputNumber, Row, Col, Alert, Descriptions } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
-import { CloudOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, WifiOutlined, KeyOutlined, SettingOutlined, AppstoreOutlined, CodeOutlined, PlayCircleOutlined, SyncOutlined, CloudUploadOutlined, SearchOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { CloudOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, WifiOutlined, KeyOutlined, SettingOutlined, AppstoreOutlined, CodeOutlined, PlayCircleOutlined, SyncOutlined, CloudUploadOutlined, SearchOutlined, CheckCircleOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import Editor from '@monaco-editor/react';
 import { 
@@ -10,7 +10,7 @@ import {
     uploadAgentToOSS, testOSSConnection,
     listCloudPolicies, createCloudPolicy, updateCloudPolicy, toggleCloudPolicy,
     getCloudDashboard,
-    discoverCloudResources, autoConfigureCloudAccount
+    discoverCloudResources, autoConfigureCloudAccount, oneClickSetup
 } from '../services/api';
 import { useAutoContext } from '../contexts/GlobalAIContext';
 
@@ -298,6 +298,34 @@ systemctl start argus-agent
         }
     };
 
+    const handleOneClickSetup = async (accountId: string) => {
+        const account = accounts.find(a => a.id === accountId);
+        message.loading({ content: `正在为「${account?.name || accountId}」执行一键配置...`, key: 'one-click', duration: 0 });
+        try {
+            const res = await oneClickSetup(accountId);
+            const parts: string[] = [];
+            if (res.chosen) {
+                const c = res.chosen;
+                if (c.instance_type) parts.push(`规格: ${c.instance_type}`);
+                if (c.image_id) parts.push(`镜像: ${c.image_id.substring(0, 20)}...`);
+                if (c.security_group) parts.push(`安全组: ${c.security_group}`);
+                if (c.v_switch) parts.push(`交换机: ${c.v_switch}`);
+            }
+            const policyMsg = res.policy_created ? '，已自动创建调度策略' : '';
+            message.success({
+                content: `一键配置完成！${parts.length > 0 ? parts.join(' | ') : '无需更新'}${policyMsg}`,
+                key: 'one-click',
+                duration: 5,
+            });
+            fetchAccounts();
+            fetchPolicies();
+            fetchDashboard();
+        } catch (err) {
+            const msg = extractErrorMsg(err);
+            message.error({ content: `一键配置失败: ${msg}`, key: 'one-click' });
+        }
+    };
+
     const instanceColumns: ColumnsType<API.CloudInstance> = [
         {
             title: '状态', dataIndex: 'status', key: 'status', width: 100,
@@ -381,9 +409,12 @@ systemctl start argus-agent
             render: (s: string) => <Tag color={s === 'active' ? 'success' : 'default'}>{s === 'active' ? '正常' : '已禁用'}</Tag>
         },
         {
-            title: '操作', key: 'action', width: 380,
+            title: '操作', key: 'action', width: 430,
             render: (_: any, record: API.CloudAccount) => (
                 <Space>
+                    <Button type="link" size="small" icon={<ThunderboltOutlined />}
+                        style={{ color: '#0ea5e9', fontWeight: 600 }}
+                        onClick={() => handleOneClickSetup(record.id)}>一键配置</Button>
                     <Button type="link" size="small" icon={<SearchOutlined />} onClick={() => handleDiscover(record.id)}>自动探测</Button>
                     <Button type="link" size="small" icon={<PlayCircleOutlined />} onClick={() => handleTestAk(record.id)}>连通性</Button>
                     {record.oss_bucket && (
