@@ -671,7 +671,6 @@ func oneClickSetup(c *gin.Context) {
 		return
 	}
 
-	// 1. 创建 Provider
 	provider, err := cloud.NewProviderFromAccount(&account)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("创建 Provider 失败: %v", err)})
@@ -687,14 +686,12 @@ func oneClickSetup(c *gin.Context) {
 		return
 	}
 
-	// 2. 自动发现资源
 	rawResult, err := disc.DiscoverResources()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("资源发现失败: %v", err)})
 		return
 	}
 
-	// 类型安全解析发现结果
 	type resourceItem struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
@@ -713,17 +710,16 @@ func oneClickSetup(c *gin.Context) {
 		InstanceTypes  []instanceTypeItem `json:"instance_types"`
 	}
 
-	// 通过 JSON 往返转换提取结构体
 	jsonBytes, _ := json.Marshal(rawResult)
 	var result discoveryResult
 	json.Unmarshal(jsonBytes, &result)
 
-	// 3. 智能选择默认值
+	var warnings []string
 	updates := map[string]interface{}{}
 	chosen := map[string]string{}
 
-	// 实例规格：优先选 ecs.c6.large (2核4G，性价比最高)
-	if account.DefaultInstanceType == "" && len(result.InstanceTypes) > 0 {
+	// 实例规格：总是覆盖，优先 ecs.c6.large
+	if len(result.InstanceTypes) > 0 {
 		pick := result.InstanceTypes[0].ID
 		for _, it := range result.InstanceTypes {
 			if it.ID == "ecs.c6.large" {
@@ -733,39 +729,50 @@ func oneClickSetup(c *gin.Context) {
 		}
 		updates["default_instance_type"] = pick
 		chosen["instance_type"] = pick
+	} else {
+		warnings = append(warnings, "未发现可用的实例规格（可能缺少 DescribeInstanceTypes 权限）")
 	}
 
-	// 镜像：优先选包含 ubuntu 22 的最新版
-	if account.DefaultImageID == "" && len(result.Images) > 0 {
+	// 镜像：总是覆盖，优先 ubuntu 22
+	if len(result.Images) > 0 {
 		pick := result.Images[0].ID
+		pickName := result.Images[0].Name
 		for _, img := range result.Images {
-			if contains(img.Name, "ubuntu") && contains(img.Name, "22") {
+			if containsIgnoreCase(img.Name, "ubuntu") && containsIgnoreCase(img.Name, "22") {
 				pick = img.ID
+				pickName = img.Name
 				break
 			}
 		}
 		updates["default_image_id"] = pick
 		chosen["image_id"] = pick
+		chosen["image_name"] = pickName
+	} else {
+		warnings = append(warnings, "未发现可用的系统镜像（可能缺少 DescribeImages 权限）")
 	}
 
-	// 安全组：取第一个
-	if account.DefaultSecurityGroup == "" && len(result.SecurityGroups) > 0 {
+	// 安全组：总是覆盖
+	if len(result.SecurityGroups) > 0 {
 		updates["default_security_group"] = result.SecurityGroups[0].ID
 		chosen["security_group"] = result.SecurityGroups[0].ID
+		chosen["security_group_name"] = result.SecurityGroups[0].Name
+	} else {
+		warnings = append(warnings, "未发现安全组。请确认: 1) AK/SK 有 DescribeSecurityGroups 权限 2) 该地域下已创建 VPC 和安全组")
 	}
 
-	// 交换机：取第一个
-	if account.DefaultVSwitch == "" && len(result.VSwitches) > 0 {
+	// 交换机：总是覆盖
+	if len(result.VSwitches) > 0 {
 		updates["default_v_switch"] = result.VSwitches[0].ID
 		chosen["v_switch"] = result.VSwitches[0].ID
+		chosen["v_switch_name"] = result.VSwitches[0].Name
+	} else {
+		warnings = append(warnings, "未发现交换机 (VSwitch)。请确认: 1) AK/SK 有 DescribeVSwitches 权限 2) 该地域下已创建 VPC 和交换机")
 	}
 
-	// 4. 写入凭证
 	if len(updates) > 0 {
 		db.DB.Model(&db.CloudAccount{}).Where("id = ? AND tenant_id = ?", accountID, tenantID).Updates(updates)
 	}
 
-	// 5. 如果该凭证没有绑定策略，自动创建一个默认策略
 	policyCreated := false
 	var existingPolicy db.CloudScalingPolicy
 	if err := db.DB.Where("cloud_account_id = ? AND tenant_id = ?", accountID, tenantID).First(&existingPolicy).Error; err != nil {
@@ -774,25 +781,36 @@ func oneClickSetup(c *gin.Context) {
 			TenantID:           tenantID,
 			CloudAccountID:     accountID,
 			Name:               fmt.Sprintf("自动策略 - %s", account.Name),
-			Enabled:            false, // 默认关闭，让用户手动开启
+			Enabled:            false,
 			MinInstances:       0,
 			MaxInstances:       5,
 			ScaleUpThreshold:   50,
 			ScaleDownThreshold: 3,
 			CooldownSeconds:    300,
 			InstanceTTLMinutes: 120,
-			SpotStrategy:       "SpotAsPriceGo", // 默认使用竞价，最省钱
+			SpotStrategy:       "SpotAsPriceGo",
 		}
 		if err := db.DB.Create(&newPolicy).Error; err == nil {
 			policyCreated = true
 		}
 	}
 
+	// 重新读取最新配置
+	db.DB.Where("id = ?", accountID).First(&account)
+
 	c.JSON(http.StatusOK, gin.H{
 		"status":         "ok",
 		"message":        "一键配置完成",
 		"chosen":         chosen,
+		"warnings":       warnings,
 		"policy_created": policyCreated,
+		"current_config": gin.H{
+			"region":         account.Region,
+			"instance_type":  account.DefaultInstanceType,
+			"image_id":       account.DefaultImageID,
+			"security_group": account.DefaultSecurityGroup,
+			"v_switch":       account.DefaultVSwitch,
+		},
 		"discovery": gin.H{
 			"security_groups": len(result.SecurityGroups),
 			"v_switches":      len(result.VSwitches),
@@ -802,9 +820,7 @@ func oneClickSetup(c *gin.Context) {
 	})
 }
 
-// contains 检查字符串是否包含子串（忽略大小写）
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub ||
-		len(s) > 0 && len(sub) > 0 &&
-			(strings.Contains(strings.ToLower(s), strings.ToLower(sub))))
+func containsIgnoreCase(s, sub string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(sub))
 }
+

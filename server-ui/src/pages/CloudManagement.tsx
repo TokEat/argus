@@ -53,6 +53,8 @@ const CloudManagement: React.FC = () => {
     const [discoverAccountId, setDiscoverAccountId] = useState<string>('');
     const [discoverSaving, setDiscoverSaving] = useState(false);
     const [discoverForm] = Form.useForm();
+    const [setupResultOpen, setSetupResultOpen] = useState(false);
+    const [setupResult, setSetupResult] = useState<any>(null);
     
     const [userDataScript, setUserDataScript] = useState(`#!/bin/bash
 systemctl stop firewalld
@@ -303,20 +305,9 @@ systemctl start argus-agent
         message.loading({ content: `正在为「${account?.name || accountId}」执行一键配置...`, key: 'one-click', duration: 0 });
         try {
             const res = await oneClickSetup(accountId);
-            const parts: string[] = [];
-            if (res.chosen) {
-                const c = res.chosen;
-                if (c.instance_type) parts.push(`规格: ${c.instance_type}`);
-                if (c.image_id) parts.push(`镜像: ${c.image_id.substring(0, 20)}...`);
-                if (c.security_group) parts.push(`安全组: ${c.security_group}`);
-                if (c.v_switch) parts.push(`交换机: ${c.v_switch}`);
-            }
-            const policyMsg = res.policy_created ? '，已自动创建调度策略' : '';
-            message.success({
-                content: `一键配置完成！${parts.length > 0 ? parts.join(' | ') : '无需更新'}${policyMsg}`,
-                key: 'one-click',
-                duration: 5,
-            });
+            message.destroy('one-click');
+            setSetupResult(res);
+            setSetupResultOpen(true);
             fetchAccounts();
             fetchPolicies();
             fetchDashboard();
@@ -767,6 +758,82 @@ systemctl start argus-agent
                 ) : (
                     <div style={{ textAlign: 'center', padding: '40px 0', color: '#94a3b8' }}>
                         <Text type="secondary">探测失败，请检查 AK/SK 权限是否包含 ECS 读取权限。</Text>
+                    </div>
+                )}
+            </Modal>
+
+            {/* 一键配置结果弹窗 */}
+            <Modal
+                title={<><ThunderboltOutlined style={{ color: '#0ea5e9' }} /> 一键配置结果</>}
+                open={setupResultOpen}
+                onCancel={() => setSetupResultOpen(false)}
+                footer={[<Button key="ok" type="primary" onClick={() => setSetupResultOpen(false)}>知道了</Button>]}
+                width={640}
+            >
+                {setupResult && (
+                    <div>
+                        {/* 警告信息 */}
+                        {setupResult.warnings && setupResult.warnings.length > 0 && (
+                            <Alert
+                                type="warning" showIcon
+                                style={{ marginBottom: 16 }}
+                                message="部分资源发现失败"
+                                description={
+                                    <ul style={{ margin: 0, paddingLeft: 16 }}>
+                                        {setupResult.warnings.map((w: string, i: number) => (
+                                            <li key={i} style={{ marginBottom: 4 }}>{w}</li>
+                                        ))}
+                                    </ul>
+                                }
+                            />
+                        )}
+
+                        {/* 策略信息 */}
+                        {setupResult.policy_created && (
+                            <Alert type="success" showIcon message="已自动创建调度策略（默认关闭），请在「引擎调度 & 开关」标签页中查看和启用。" style={{ marginBottom: 16 }} />
+                        )}
+
+                        {/* 当前配置 */}
+                        <Descriptions title="当前凭证配置" bordered size="small" column={1}
+                            labelStyle={{ width: 120, fontWeight: 500, background: '#f8fafc' }}
+                            contentStyle={{ fontFamily: 'monospace', fontSize: 13 }}
+                        >
+                            <Descriptions.Item label="地域">
+                                {setupResult.current_config?.region ?
+                                    <Tag color="green">{setupResult.current_config.region}</Tag> :
+                                    <Tag color="red">未配置</Tag>}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="实例规格">
+                                {setupResult.current_config?.instance_type ?
+                                    <><Tag color="blue">{setupResult.current_config.instance_type}</Tag>
+                                    {setupResult.chosen?.instance_type && <Tag color="cyan">本次更新</Tag>}</> :
+                                    <Tag color="red">未配置</Tag>}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="系统镜像">
+                                {setupResult.current_config?.image_id ?
+                                    <><Text code style={{ fontSize: 12 }}>{setupResult.current_config.image_id}</Text>
+                                    {setupResult.chosen?.image_name && <Text type="secondary" style={{ marginLeft: 8, fontSize: 11 }}>({setupResult.chosen.image_name})</Text>}
+                                    {setupResult.chosen?.image_id && <Tag color="cyan" style={{ marginLeft: 4 }}>本次更新</Tag>}</> :
+                                    <Tag color="red">未配置</Tag>}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="安全组">
+                                {setupResult.current_config?.security_group ?
+                                    <><Text code style={{ fontSize: 12 }}>{setupResult.current_config.security_group}</Text>
+                                    {setupResult.chosen?.security_group && <Tag color="cyan" style={{ marginLeft: 4 }}>本次更新</Tag>}</> :
+                                    <Tag color="red">未配置 — 需在阿里云控制台创建安全组</Tag>}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="交换机">
+                                {setupResult.current_config?.v_switch ?
+                                    <><Text code style={{ fontSize: 12 }}>{setupResult.current_config.v_switch}</Text>
+                                    {setupResult.chosen?.v_switch && <Tag color="cyan" style={{ marginLeft: 4 }}>本次更新</Tag>}</> :
+                                    <Tag color="red">未配置 — 需在阿里云控制台创建 VPC 和交换机</Tag>}
+                            </Descriptions.Item>
+                        </Descriptions>
+
+                        {/* 发现统计 */}
+                        <div style={{ marginTop: 16, padding: '8px 12px', background: '#f1f5f9', borderRadius: 6, fontSize: 12, color: '#64748b' }}>
+                            资源发现统计：实例规格 {setupResult.discovery?.instance_types || 0} 个 | 镜像 {setupResult.discovery?.images || 0} 个 | 安全组 {setupResult.discovery?.security_groups || 0} 个 | 交换机 {setupResult.discovery?.v_switches || 0} 个
+                        </div>
                     </div>
                 )}
             </Modal>
