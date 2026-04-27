@@ -17,11 +17,13 @@ import {
     ProfileOutlined,
     ProjectOutlined,
     RobotOutlined,
+    ThunderboltOutlined,
 } from '@ant-design/icons';
 import BasicLayout from './layouts/BasicLayout';
 import Dashboard from './pages/Dashboard';
 import NodeManagement from './pages/NodeManagement';
 import CloudManagement from './pages/CloudManagement';
+import CloudDeploy from './pages/CloudDeploy';
 import TaskManagement from './pages/TaskManagement';
 import TaskResults from './pages/TaskResults';
 import ProfilesView from './pages/ProfilesView';
@@ -133,6 +135,12 @@ export const menuRoutes: RouteConfig[] = [
         name: '实例配置',
         icon: <CloudOutlined />,
         element: <CloudManagement />,
+    },
+    {
+        path: '/cloud-deploy',
+        name: 'Agent 部署',
+        icon: <ThunderboltOutlined />,
+        element: <CloudDeploy />,
     },
     {
         path: '/client-build',
