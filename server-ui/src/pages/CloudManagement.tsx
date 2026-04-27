@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Typography, Table, Tag, Space, Button, Spin, Empty, Modal, Form, Input, Select, message, Popconfirm, Badge, Tabs, Switch, InputNumber, Row, Col, Alert } from 'antd';
+import { Typography, Table, Tag, Space, Button, Spin, Empty, Modal, Form, Input, Select, message, Popconfirm, Badge, Tabs, Switch, InputNumber, Row, Col, Alert, Descriptions } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
-import { CloudOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, WifiOutlined, KeyOutlined, SettingOutlined, AppstoreOutlined, CodeOutlined, PlayCircleOutlined, SyncOutlined, CloudUploadOutlined } from '@ant-design/icons';
+import { CloudOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, WifiOutlined, KeyOutlined, SettingOutlined, AppstoreOutlined, CodeOutlined, PlayCircleOutlined, SyncOutlined, CloudUploadOutlined, SearchOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import Editor from '@monaco-editor/react';
 import { 
@@ -9,7 +9,8 @@ import {
     listCloudAccounts, createCloudAccount, deleteCloudAccount, testCloudAccount,
     uploadAgentToOSS, testOSSConnection,
     listCloudPolicies, createCloudPolicy, updateCloudPolicy, toggleCloudPolicy,
-    getCloudDashboard 
+    getCloudDashboard,
+    discoverCloudResources, autoConfigureCloudAccount
 } from '../services/api';
 import { useAutoContext } from '../contexts/GlobalAIContext';
 
@@ -44,6 +45,14 @@ const CloudManagement: React.FC = () => {
     const [policyForm] = Form.useForm();
     const [activeTab, setActiveTab] = useState('instances');
     const [currentPolicyId, setCurrentPolicyId] = useState<string | null>(null);
+
+    // 资源发现
+    const [discoverModalOpen, setDiscoverModalOpen] = useState(false);
+    const [discovering, setDiscovering] = useState(false);
+    const [discoveryData, setDiscoveryData] = useState<any>(null);
+    const [discoverAccountId, setDiscoverAccountId] = useState<string>('');
+    const [discoverSaving, setDiscoverSaving] = useState(false);
+    const [discoverForm] = Form.useForm();
     
     const [userDataScript, setUserDataScript] = useState(`#!/bin/bash
 systemctl stop firewalld
@@ -255,6 +264,40 @@ systemctl start argus-agent
         }
     };
 
+    // 资源自动探测
+    const handleDiscover = async (accountId: string) => {
+        setDiscoverAccountId(accountId);
+        setDiscovering(true);
+        setDiscoverModalOpen(true);
+        setDiscoveryData(null);
+        discoverForm.resetFields();
+        try {
+            const data = await discoverCloudResources(accountId);
+            setDiscoveryData(data);
+        } catch (err) {
+            const msg = extractErrorMsg(err);
+            if (msg) message.error(`资源探测失败: ${msg}`);
+        } finally {
+            setDiscovering(false);
+        }
+    };
+
+    const handleSaveDiscovery = async () => {
+        try {
+            const values = await discoverForm.validateFields();
+            setDiscoverSaving(true);
+            await autoConfigureCloudAccount(discoverAccountId, values);
+            message.success('云资源配置已自动保存到凭证');
+            setDiscoverModalOpen(false);
+            fetchAccounts();
+        } catch (err) {
+            const msg = extractErrorMsg(err);
+            if (msg) message.error(msg);
+        } finally {
+            setDiscoverSaving(false);
+        }
+    };
+
     const instanceColumns: ColumnsType<API.CloudInstance> = [
         {
             title: '状态', dataIndex: 'status', key: 'status', width: 100,
@@ -323,17 +366,25 @@ systemctl start argus-agent
             render: (p: string) => <Tag color="blue">{p.toUpperCase()}</Tag>
         },
         {
+            title: '地域', dataIndex: 'region', key: 'region',
+            render: (r: string) => r ? <Tag color="green">{r}</Tag> : <Tag color="red">未配置</Tag>
+        },
+        {
+            title: '配置状态', key: 'config_status',
+            render: (_: any, record: API.CloudAccount) => {
+                const ok = record.default_instance_type && record.default_image_id && record.default_security_group && record.default_v_switch;
+                return ok ? <Tag color="success" icon={<CheckCircleOutlined />}>已就绪</Tag> : <Tag color="warning">待配置</Tag>;
+            }
+        },
+        {
             title: '状态', dataIndex: 'status', key: 'status',
             render: (s: string) => <Tag color={s === 'active' ? 'success' : 'default'}>{s === 'active' ? '正常' : '已禁用'}</Tag>
         },
         {
-            title: '更新时间', dataIndex: 'updated_at', key: 'updated_at',
-            render: (v: string) => <Text style={{ fontSize: 12 }}>{new Date(v).toLocaleString('zh-CN')}</Text>
-        },
-        {
-            title: '操作', key: 'action', width: 320,
+            title: '操作', key: 'action', width: 380,
             render: (_: any, record: API.CloudAccount) => (
                 <Space>
+                    <Button type="link" size="small" icon={<SearchOutlined />} onClick={() => handleDiscover(record.id)}>自动探测</Button>
                     <Button type="link" size="small" icon={<PlayCircleOutlined />} onClick={() => handleTestAk(record.id)}>连通性</Button>
                     {record.oss_bucket && (
                         <>
@@ -366,6 +417,23 @@ systemctl start argus-agent
             )
         }
     ];
+
+    // 凭证展开行：显示详细配置
+    const expandedAccountRow = (record: API.CloudAccount) => (
+        <div style={{ padding: '8px 16px' }}>
+            <Descriptions size="small" column={3} bordered
+                labelStyle={{ background: '#f8fafc', fontWeight: 500, width: 120 }}
+                contentStyle={{ fontFamily: 'monospace', fontSize: 12 }}
+            >
+                <Descriptions.Item label="实例规格">{record.default_instance_type || <Text type="danger">未配置</Text>}</Descriptions.Item>
+                <Descriptions.Item label="系统镜像">{record.default_image_id || <Text type="danger">未配置</Text>}</Descriptions.Item>
+                <Descriptions.Item label="安全组">{record.default_security_group || <Text type="danger">未配置</Text>}</Descriptions.Item>
+                <Descriptions.Item label="交换机">{record.default_v_switch || <Text type="danger">未配置</Text>}</Descriptions.Item>
+                <Descriptions.Item label="OSS Bucket">{record.oss_bucket || <Text type="secondary">未配置</Text>}</Descriptions.Item>
+                <Descriptions.Item label="OSS Endpoint">{record.oss_endpoint || <Text type="secondary">未配置</Text>}</Descriptions.Item>
+            </Descriptions>
+        </div>
+    );
 
     const cardStyle = { background: 'transparent', border: 'none' };
 
@@ -518,8 +586,13 @@ systemctl start argus-agent
                             label: <span><KeyOutlined /> API 凭证管理</span>,
                             children: (
                                 <div style={{ padding: '20px 0' }}>
-                                    <Alert message="所有 AccessKey 和 Secret 均在入库前通过 AES-256-GCM 算法进行加密存储，保护您的云资产安全。" type="success" showIcon style={{ marginBottom: 16 }} />
-                                    <Table columns={credColumns} dataSource={accounts} rowKey="id" pagination={false} size="middle" />
+                                    <Alert message="所有 AccessKey 和 Secret 均在入库前通过 AES-256-GCM 算法进行加密存储。点击「自动探测」可通过 AK/SK 自动发现云资源并配置。" type="success" showIcon style={{ marginBottom: 16 }} />
+                                    <Table columns={credColumns} dataSource={accounts} rowKey="id" pagination={false} size="middle"
+                                        expandable={{
+                                            expandedRowRender: expandedAccountRow,
+                                            rowExpandable: () => true,
+                                        }}
+                                    />
                                 </div>
                             ),
                         }
@@ -596,6 +669,75 @@ systemctl start argus-agent
                         </Input.Group>
                     </Form.Item>
                 </Form>
+            </Modal>
+
+            {/* 资源自动探测弹窗 */}
+            <Modal
+                title={<><SearchOutlined /> 云资源自动探测</>}
+                open={discoverModalOpen}
+                onCancel={() => setDiscoverModalOpen(false)}
+                footer={discoveryData ? [
+                    <Button key="cancel" onClick={() => setDiscoverModalOpen(false)}>取消</Button>,
+                    <Button key="save" type="primary" loading={discoverSaving} onClick={handleSaveDiscovery} icon={<CheckCircleOutlined />}>
+                        保存配置
+                    </Button>,
+                ] : null}
+                width={720}
+                destroyOnClose
+            >
+                {discovering ? (
+                    <div style={{ textAlign: 'center', padding: '60px 0' }}>
+                        <Spin size="large" />
+                        <div style={{ marginTop: 16 }}><Text type="secondary">正在通过 AK/SK 查询云资源...</Text></div>
+                    </div>
+                ) : discoveryData ? (
+                    <Form form={discoverForm} layout="vertical">
+                        <Alert
+                            message="以下资源已通过你的 AK/SK 从云厂商 API 自动获取，请在每一项中选择合适的值后保存。"
+                            type="info" showIcon style={{ marginBottom: 20 }}
+                        />
+                        <Form.Item name="default_instance_type" label={`实例规格 (发现 ${discoveryData.instance_types?.length || 0} 个)`}
+                            rules={[{ required: true, message: '请选择实例规格' }]}>
+                            <Select placeholder="选择实例规格" showSearch optionFilterProp="label"
+                                options={(discoveryData.instance_types || []).map((it: any) => ({
+                                    value: it.id,
+                                    label: `${it.id}  —  ${it.cpu}核 ${it.memory_gb}GB  (${it.family})`,
+                                }))}
+                            />
+                        </Form.Item>
+                        <Form.Item name="default_image_id" label={`系统镜像 (发现 ${discoveryData.images?.length || 0} 个)`}
+                            rules={[{ required: true, message: '请选择系统镜像' }]}>
+                            <Select placeholder="选择系统镜像" showSearch optionFilterProp="label"
+                                options={(discoveryData.images || []).map((img: any) => ({
+                                    value: img.id,
+                                    label: `${img.name}  —  ${img.desc}`,
+                                }))}
+                            />
+                        </Form.Item>
+                        <Form.Item name="default_security_group" label={`安全组 (发现 ${discoveryData.security_groups?.length || 0} 个)`}
+                            rules={[{ required: true, message: '请选择安全组' }]}>
+                            <Select placeholder="选择安全组" showSearch optionFilterProp="label"
+                                options={(discoveryData.security_groups || []).map((sg: any) => ({
+                                    value: sg.id,
+                                    label: `${sg.id}  —  ${sg.name || '(无名称)'}  ${sg.desc}`,
+                                }))}
+                            />
+                        </Form.Item>
+                        <Form.Item name="default_v_switch" label={`虚拟交换机 (发现 ${discoveryData.v_switches?.length || 0} 个)`}
+                            rules={[{ required: true, message: '请选择交换机' }]}>
+                            <Select placeholder="选择交换机" showSearch optionFilterProp="label"
+                                options={(discoveryData.v_switches || []).map((vsw: any) => ({
+                                    value: vsw.id,
+                                    label: `${vsw.id}  —  ${vsw.name || '(无名称)'}  ${vsw.desc}`,
+                                }))}
+                            />
+                        </Form.Item>
+                    </Form>
+                ) : (
+                    <div style={{ textAlign: 'center', padding: '40px 0', color: '#94a3b8' }}>
+                        <Text type="secondary">探测失败，请检查 AK/SK 权限是否包含 ECS 读取权限。</Text>
+                    </div>
+                )}
             </Modal>
         </div>
     );
