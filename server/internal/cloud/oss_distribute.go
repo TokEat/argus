@@ -14,12 +14,21 @@ import (
 // 通过 OSSUploader 接口解耦具体云厂商实现。
 // ============================================================================
 
+// OSSFileInfo 表示 OSS 存储桶中的文件信息
+type OSSFileInfo struct {
+	Key          string    `json:"key"`
+	Size         int64     `json:"size"`
+	LastModified time.Time `json:"last_modified"`
+}
+
 // OSSUploader OSS 操作抽象接口
 type OSSUploader interface {
 	UploadFile(localPath, objectKey string) error
 	GeneratePresignedURL(objectKey string, expiry time.Duration) (string, error)
 	UploadAgentBinaries(releaseDir string) ([]OSSUploadResult, error)
 	TestConnection() error
+	ListFiles(prefix string) ([]OSSFileInfo, error)
+	DeleteFile(objectKey string) error
 }
 
 // OSSUploadResult 上传结果

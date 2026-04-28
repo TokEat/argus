@@ -116,7 +116,7 @@ func (as *AutoScaler) evaluatePolicy(ctx context.Context, policy *db.CloudScalin
 		if needed > 0 {
 			log.Printf("[AutoScaler] Scale UP: policy=%s queue=%d threshold=%d running=%d max=%d → launching %d instances",
 				policy.Name, queueDepth, policy.ScaleUpThreshold, runningInstances, policy.MaxInstances, needed)
-			as.scaleUp(ctx, policy, int(needed))
+			as.scaleUp(ctx, policy, int(needed), "", "")
 		}
 		return
 	}
@@ -145,18 +145,28 @@ func (as *AutoScaler) calculateScaleUpCount(queueDepth, threshold, running, maxI
 }
 
 // ScaleUpManual 手动触发扩容，绕过队列判定和冷却期限制
-func (as *AutoScaler) ScaleUpManual(ctx context.Context, policy *db.CloudScalingPolicy, count int) {
-	log.Printf("[AutoScaler] Manual Scale UP: policy=%s launching %d instances", policy.Name, count)
-	as.scaleUp(ctx, policy, count)
+func (as *AutoScaler) ScaleUpManual(ctx context.Context, policy *db.CloudScalingPolicy, count int, instanceTypeOverride, regionOverride string) {
+	log.Printf("[AutoScaler] Manual Scale UP: policy=%s launching %d instances (type=%s, region=%s)", policy.Name, count, instanceTypeOverride, regionOverride)
+	as.scaleUp(ctx, policy, count, instanceTypeOverride, regionOverride)
 }
 
 // scaleUp 执行扩容操作
-func (as *AutoScaler) scaleUp(ctx context.Context, policy *db.CloudScalingPolicy, count int) {
+func (as *AutoScaler) scaleUp(ctx context.Context, policy *db.CloudScalingPolicy, count int, instanceTypeOverride, regionOverride string) {
 	// 加载云账号凭证
 	var account db.CloudAccount
 	if err := as.db.First(&account, "id = ? AND status = ?", policy.CloudAccountID, "active").Error; err != nil {
 		log.Printf("[AutoScaler] Failed to load cloud account %s: %v", policy.CloudAccountID, err)
 		return
+	}
+
+	// 如果指定了规格覆盖，临时替换（不修改数据库）
+	if instanceTypeOverride != "" {
+		log.Printf("[AutoScaler] Instance type override: %s -> %s", account.DefaultInstanceType, instanceTypeOverride)
+		account.DefaultInstanceType = instanceTypeOverride
+	}
+	if regionOverride != "" {
+		log.Printf("[AutoScaler] Region override: %s -> %s", account.Region, regionOverride)
+		account.Region = regionOverride
 	}
 
 	manager, err := as.getOrCreateManager(&account)

@@ -69,8 +69,7 @@ ExecStart=$AGENT_BIN \
     --server "{{.ServerAddr}}" \
     --id "{{.AgentID}}" \
     --api "{{.APIURL}}" \
-    --tags "cloud,auto-scaled" \
-    --spot{{if .PSK}} \
+    --tags "{{.Tags}}"{{if .PSK}} \
     --psk "{{.PSK}}"{{end}}
 Restart=always
 RestartSec=5

@@ -29,6 +29,13 @@ func NewResourceManager(provider CloudProvider) *ResourceManager {
 	}
 }
 
+func nonNilContext(ctx context.Context) context.Context {
+	if ctx != nil {
+		return ctx
+	}
+	return context.Background()
+}
+
 // SetDB 设置数据库引用
 func (rm *ResourceManager) SetDB(database *gorm.DB) {
 	rm.database = database
@@ -41,6 +48,13 @@ func (rm *ResourceManager) ProvisionInstance(
 	policy *db.CloudScalingPolicy,
 	grpcAddr, apiURL, psk string,
 ) (*db.CloudInstance, error) {
+	ctx = nonNilContext(ctx)
+
+	// 弹性扩缩创建实例必须指定 Region
+	if account.Region == "" {
+		return nil, fmt.Errorf("该云凭证尚未配置地域 (Region)，请先在凭证管理中选择地域后再执行弹性扩缩")
+	}
+
 	// 生成 Agent ID
 	agentID := fmt.Sprintf("cloud-%s-%d", account.Provider, time.Now().UnixNano())
 
@@ -57,15 +71,15 @@ func (rm *ResourceManager) ProvisionInstance(
 
 	// 渲染 Cloud-Init 脚本
 	tmpl := policy.UserDataTemplate
-	userData, err := RenderCloudInitBase64(tmpl, CloudInitVars{
-		ServerAddr:  grpcAddr,
-		APIURL:      apiURL,
-		AgentID:     agentID,
-		TenantID:    account.TenantID,
-		Tags:        "cloud,auto-scaled",
-		PSK:         psk,
-		DownloadURL: downloadURL,
-	})
+		userData, err := RenderCloudInitBase64(tmpl, CloudInitVars{
+			ServerAddr:  grpcAddr,
+			APIURL:      apiURL,
+			AgentID:     agentID,
+			TenantID:    account.TenantID,
+			Tags:        "cloud=true,auto_scaled=true,target_type=all",
+			PSK:         psk,
+			DownloadURL: downloadURL,
+		})
 	if err != nil {
 		return nil, fmt.Errorf("render cloud-init: %w", err)
 	}
@@ -144,6 +158,7 @@ func (rm *ResourceManager) ProvisionInstance(
 
 // waitAndActivate 等待实例就绪并更新 DB 状态
 func (rm *ResourceManager) waitAndActivate(ctx context.Context, cloudInst *db.CloudInstance) {
+	ctx = nonNilContext(ctx)
 	err := rm.provider.WaitReady(ctx, cloudInst.ProviderInstanceID, 5*time.Minute)
 	if err != nil {
 		log.Printf("[Provision] WaitReady failed for %s: %v, tearing down", cloudInst.ID, err)
@@ -160,20 +175,19 @@ func (rm *ResourceManager) waitAndActivate(ctx context.Context, cloudInst *db.Cl
 	// 获取 IP
 	ip, _ := rm.provider.GetInstanceIP(cloudInst.ProviderInstanceID)
 
-	now := time.Now()
 	if rm.database != nil {
-		rm.database.Model(cloudInst).Updates(map[string]interface{}{
-			"ip":       ip,
-			"status":   db.CloudStatusRunning,
-			"ready_at": &now,
-		})
+		rm.database.Model(cloudInst).Update("ip", ip)
+		rm.database.Model(cloudInst).
+			Where("status IN ?", []string{db.CloudStatusProvisioning, db.CloudStatusWaitingReady}).
+			Update("status", db.CloudStatusWaitingReady)
 	}
 
-	log.Printf("[Provision] Instance %s is ready at IP: %s", cloudInst.ID, ip)
+	log.Printf("[Provision] Instance %s OS is ready at IP: %s, waiting for agent registration", cloudInst.ID, ip)
 }
 
 // RebootInstance 重启云实例（保留机器，OS 级重启以恢复 Agent）
 func (rm *ResourceManager) RebootInstance(ctx context.Context, cloudInst *db.CloudInstance) error {
+	ctx = nonNilContext(ctx)
 	log.Printf("[Reboot] Rebooting instance %s (provider_id=%s, reboot_count=%d)",
 		cloudInst.ID, cloudInst.ProviderInstanceID, cloudInst.RebootCount)
 
@@ -208,6 +222,7 @@ func (rm *ResourceManager) RebootInstance(ctx context.Context, cloudInst *db.Clo
 
 // waitRebootRecovery 等待重启后 Agent 重新上线
 func (rm *ResourceManager) waitRebootRecovery(ctx context.Context, cloudInst *db.CloudInstance) {
+	ctx = nonNilContext(ctx)
 	// 等待实例重新进入 Running 状态（OS 层面）
 	err := rm.provider.WaitReady(ctx, cloudInst.ProviderInstanceID, 5*time.Minute)
 	if err != nil {
@@ -223,7 +238,9 @@ func (rm *ResourceManager) waitRebootRecovery(ctx context.Context, cloudInst *db
 
 	// OS 已就绪，将状态改回 WaitingReady，等待 Agent 通过 gRPC 重新注册
 	if rm.database != nil {
-		rm.database.Model(cloudInst).Update("status", db.CloudStatusWaitingReady)
+		rm.database.Model(cloudInst).
+			Where("status = ?", db.CloudStatusRebooting).
+			Update("status", db.CloudStatusWaitingReady)
 	}
 	log.Printf("[Reboot] Instance %s OS is ready, awaiting agent re-registration", cloudInst.ID)
 }
