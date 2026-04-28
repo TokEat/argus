@@ -122,6 +122,9 @@ func main() {
 		if os.Getenv("ARGUS_JWT_SECRET") == "" {
 			log.Fatalf("[SECURITY] ARGUS_JWT_SECRET is required in production mode. Use --dev to skip.")
 		}
+		if err := cloud.ValidateEncryptKeyEnv(); err != nil {
+			log.Fatalf("[SECURITY] %v. Use --dev to skip.", err)
+		}
 	}
 
 	migrationMode, err := db.ParseMigrationMode(dbMigrationMode)

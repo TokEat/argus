@@ -19,6 +19,8 @@
 #   POSTGRES_PORT        PostgreSQL 端口（默认: 5432）
 #   RABBITMQ_PORT        RabbitMQ 端口（默认: 5672）
 #   ARGUS_AGENT_PSK      Agent 认证预共享密钥（默认: 自动生成）
+#   ARGUS_JWT_SECRET     API JWT 签名密钥（默认: 自动生成）
+#   ARGUS_ENCRYPT_KEY    凭证加密密钥（默认: 自动生成，Base64 32字节）
 #   ARGUS_API_PORT       HTTP API 端口（默认: 8085）
 #   ARGUS_GRPC_PORT      gRPC 端口（默认: 50051）
 # ==============================================================================
@@ -32,6 +34,11 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 # ---- 默认值（与 Makefile / docker-compose.yml 保持一致）----
+# 生成 Base64 编码的 32 字节密钥（用于 ARGUS_ENCRYPT_KEY）
+gen_encrypt_key() {
+    openssl rand -base64 32 2>/dev/null | tr -d '\n' || \
+    head -c 32 /dev/urandom | base64 | tr -d '\n'
+}
 POSTGRES_USER="${POSTGRES_USER:-postgres}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-root}"
 POSTGRES_DB="${POSTGRES_DB:-dddd}"
@@ -44,6 +51,8 @@ RABBITMQ_DEFAULT_PASS="${RABBITMQ_DEFAULT_PASS:-guest}"
 API_PORT="${ARGUS_API_PORT:-8085}"
 GRPC_PORT="${ARGUS_GRPC_PORT:-50051}"
 AGENT_PSK="${ARGUS_AGENT_PSK:-$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | xxd -p)}"
+JWT_SECRET="${ARGUS_JWT_SECRET:-$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | xxd -p)}"
+ENCRYPT_KEY="${ARGUS_ENCRYPT_KEY:-$(gen_encrypt_key)}"
 PUBLIC_IP=""
 
 # 自动定位项目根目录（脚本在 deploy/ 目录下）
@@ -57,6 +66,8 @@ while [[ $# -gt 0 ]]; do
         --public-ip)  PUBLIC_IP="$2";           shift 2 ;;
         --db-password) POSTGRES_PASSWORD="$2";  shift 2 ;;
         --psk)        AGENT_PSK="$2";           shift 2 ;;
+        --jwt-secret) JWT_SECRET="$2";          shift 2 ;;
+        --encrypt-key) ENCRYPT_KEY="$2";        shift 2 ;;
         -h|--help)    head -25 "$0" | grep '^#' | sed 's/^# //'; exit 0 ;;
         *)            echo -e "${RED}未知参数: $1${NC}"; exit 1 ;;
     esac
@@ -84,11 +95,12 @@ echo -e "  公网 IP:    ${GREEN}${PUBLIC_IP}${NC}"
 echo -e "  API 端口:   ${GREEN}${API_PORT}${NC}"
 echo -e "  gRPC 端口:  ${GREEN}${GRPC_PORT}${NC}"
 echo -e "  Agent PSK:  ${GREEN}${AGENT_PSK}${NC}"
-echo -e "  PostgreSQL: ${GREEN}${POSTGRES_USER}@127.0.0.1:${POSTGRES_PORT}/${POSTGRES_DB}${NC}"
-echo -e "  RabbitMQ:   ${GREEN}${RABBITMQ_DEFAULT_USER}@127.0.0.1:${RABBITMQ_PORT}${NC}"
+echo -e "  JWT Secret: ${GREEN}已生成/已加载${NC}"
+echo -e "  EncryptKey: ${GREEN}已生成/已加载 (base64, 32-byte)${NC}"
+echo -e "  PostgreSQL: ${GREEN}${POSTGRES_USER}:****@127.0.0.1:${POSTGRES_PORT}/${POSTGRES_DB}${NC}"
+echo -e "  RabbitMQ:   ${GREEN}${RABBITMQ_DEFAULT_USER}:****@127.0.0.1:${RABBITMQ_PORT}${NC}"
 echo -e "${BLUE}================================================${NC}"
 echo ""
-
 # ============================================================
 # Step 1: 安装 Docker
 # ============================================================
@@ -206,7 +218,7 @@ echo -e "${GREEN}[✔] 二进制部署完成${NC}"
 # ============================================================
 echo -e "${YELLOW}[4/6] 执行数据库迁移...${NC}"
 
-"$INSTALL_DIR/bin/dddd-server" --db "$DB_DSN" --migrate-only --db-migration-mode apply --dev
+"$INSTALL_DIR/bin/dddd-server" --db "$DB_DSN" --migrate-only --db-migration-mode apply --config-dir "$INSTALL_DIR/config"
 echo -e "${GREEN}[✔] 数据库迁移完成${NC}"
 
 # ============================================================
@@ -227,13 +239,15 @@ User=root
 WorkingDirectory=${INSTALL_DIR}
 Environment=ARGUS_PUBLIC_IP=${PUBLIC_IP}
 Environment=ARGUS_AGENT_PSK=${AGENT_PSK}
+Environment=ARGUS_JWT_SECRET=${JWT_SECRET}
+Environment=ARGUS_ENCRYPT_KEY=${ENCRYPT_KEY}
 ExecStart=${INSTALL_DIR}/bin/dddd-server \\
     -db "${DB_DSN}" \\
     -amqp "${AMQP_URL}" \\
     -api ":${API_PORT}" \\
     -grpc ${GRPC_PORT} \\
     -agent-psk "${AGENT_PSK}" \\
-    -dev
+    -config-dir "${INSTALL_DIR}/config"
 Restart=always
 RestartSec=5
 StandardOutput=append:${INSTALL_DIR}/logs/server.log

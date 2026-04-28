@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 	"sync"
 )
 
@@ -23,7 +24,7 @@ import (
 // ============================================================================
 
 const (
-	envKeyName    = "ARGUS_ENCRYPT_KEY"
+	envKeyName = "ARGUS_ENCRYPT_KEY"
 	// 开发环境降级密钥 — 固定 32 字节，仅用于本地开发，生产环境绝不应使用
 	devFallbackKey = "argus-dev-encrypt-key-do-not-use"
 )
@@ -59,6 +60,27 @@ func resolveEncryptKey() []byte {
 		log.Printf("[Crypto] ⚠️  WARNING: Using development fallback encryption key. Set %s in production!", envKeyName)
 	})
 	return encryptKey
+}
+
+// ValidateEncryptKeyEnv validates production encryption key configuration.
+// Accepts either:
+// 1) Base64-encoded 32-byte key; or
+// 2) Raw 32-byte key string.
+func ValidateEncryptKeyEnv() error {
+	raw := strings.TrimSpace(os.Getenv(envKeyName))
+	if raw == "" {
+		return fmt.Errorf("%s is required in production", envKeyName)
+	}
+	if decoded, err := base64.StdEncoding.DecodeString(raw); err == nil {
+		if len(decoded) == 32 {
+			return nil
+		}
+		return fmt.Errorf("%s base64 must decode to 32 bytes (got %d)", envKeyName, len(decoded))
+	}
+	if len(raw) == 32 {
+		return nil
+	}
+	return fmt.Errorf("%s must be a valid base64 32-byte key or raw 32-byte key", envKeyName)
 }
 
 // EncryptSecret 使用 AES-256-GCM 加密明文，返回 Base64 编码的密文 (nonce + ciphertext)。
