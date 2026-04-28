@@ -95,6 +95,7 @@ func main() {
 		devMode         bool
 		migrateOnly     bool
 		dbMigrationMode string
+		seedFromDB      string
 	)
 
 	flag.StringVar(&dbDSN, "db", "", "PostgreSQL DSN. Empty uses the built-in local PostgreSQL default.")
@@ -106,6 +107,7 @@ func main() {
 	flag.BoolVar(&devMode, "dev", false, "Enable development mode (skip mandatory security checks)")
 	flag.BoolVar(&migrateOnly, "migrate-only", false, "Apply/verify PostgreSQL schema and exit without starting services")
 	flag.StringVar(&dbMigrationMode, "db-migration-mode", string(db.MigrationModeApply), "Database migration mode: apply|verify|dev-auto")
+	flag.StringVar(&seedFromDB, "seed-from-db", "", "Path to SQLite db file containing precompiled rule assets to seed into PostgreSQL and exit")
 	flag.Parse()
 
 	// 环境变量优先级高于 flag
@@ -115,7 +117,7 @@ func main() {
 
 	// 生产模式安全强制检查。
 	// 数据库初始化/迁移场景不需要启动 API/gRPC，也不依赖运行期鉴权密钥。
-	if !devMode && !migrateOnly {
+	if !devMode && !migrateOnly && seedFromDB == "" {
 		if agentPSK == "" {
 			log.Fatalf("[SECURITY] ARGUS_AGENT_PSK is required in production mode. Use --dev to skip.")
 		}
@@ -169,9 +171,13 @@ func main() {
 		}
 	}
 
-	// 启动时确保规则原始文件仓库与结构化规则目录都已初始化到 PostgreSQL。
-	if err := db.BootstrapRuleCatalog(configDir); err != nil {
-		log.Fatalf("Failed to bootstrap rule catalog from %s: %v", configDir, err)
+	if seedFromDB != "" {
+		log.Printf("Seeding rule catalog from precompiled database: %s", seedFromDB)
+		if err := db.SeedArsenalFromSQLite(seedFromDB); err != nil {
+			log.Fatalf("Failed to seed from DB: %v", err)
+		}
+		log.Println("Database seed completed successfully.")
+		return
 	}
 
 	// Set up the Hub Broadcast Hook for batching to prevent websocket surge

@@ -181,21 +181,7 @@ func FindArsenalByTypeAndFile(typ, fileName string) (*Arsenal, error) {
 	return FindTenantArsenalByTypeAndFile("default", typ, fileName)
 }
 
-func BootstrapRuleCatalog(configBaseDir string) error {
-	if err := normalizeLegacyArsenalTypes(); err != nil {
-		return fmt.Errorf("normalize legacy arsenal types: %w", err)
-	}
 
-	if err := SeedArsenalFromDisk(configBaseDir); err != nil {
-		return fmt.Errorf("seed arsenals from disk: %w", err)
-	}
-
-	if err := SyncRuleCatalogFromArsenal(); err != nil {
-		return fmt.Errorf("sync structured rule catalog: %w", err)
-	}
-
-	return nil
-}
 
 func SyncRuleCatalogFromArsenal() error {
 	var arsenals []Arsenal

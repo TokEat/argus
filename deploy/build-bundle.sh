@@ -1,0 +1,111 @@
+#!/bin/bash
+# ==============================================================================
+# Argus 生产环境打包脚本
+#
+# 该脚本用于将 Argus 项目打包为一键部署的产物 (tar.gz)
+# 产物包含：
+# 1. 预编译的 server 和 agent 二进制文件
+# 2. docker-compose.yml 和必要的数据库初始化脚本
+# 3. 生产环境的 setup-server.sh 部署脚本
+#
+# 用法: 
+#   ./deploy/build-bundle.sh [版本号]
+# 示例:
+#   ./deploy/build-bundle.sh v1.0.0
+# ==============================================================================
+
+set -euo pipefail
+
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+VERSION=${1:-"latest"}
+BUNDLE_NAME="argus-release-${VERSION}"
+BUNDLE_DIR="${ROOT_DIR}/${BUNDLE_NAME}"
+ARCHIVE_NAME="${BUNDLE_NAME}-linux-amd64.tar.gz"
+
+echo -e "${BLUE}================================================${NC}"
+echo -e "${BLUE}       Argus 生产环境打包工具                   ${NC}"
+echo -e "${BLUE}================================================${NC}"
+echo -e "  版本号: ${GREEN}${VERSION}${NC}"
+echo -e "  产物名: ${GREEN}${ARCHIVE_NAME}${NC}"
+echo -e "${BLUE}================================================${NC}"
+echo ""
+
+# 1. 编译 Linux/amd64 二进制文件
+echo -e "${YELLOW}[1/3] 编译项目二进制文件...${NC}"
+cd "${ROOT_DIR}"
+# 调用全平台构建脚本，只构建服务端和Agent的 linux/amd64 架构
+./build.sh --component dddd-server,dddd-agent --target linux/amd64
+
+if [[ ! -f "${ROOT_DIR}/release/dddd-server-linux-amd64" ]] || [[ ! -f "${ROOT_DIR}/release/dddd-agent-linux-amd64" ]]; then
+    echo -e "${RED}[!] 编译失败或未找到产物，请检查构建日志。${NC}"
+    exit 1
+fi
+
+# 1.5 编译前端控制台
+echo -e "${YELLOW}[1.5/3] 编译前端页面...${NC}"
+cd "${ROOT_DIR}/server-ui"
+npm install
+npm run build
+cd "${ROOT_DIR}"
+
+# 2. 准备打包目录结构
+echo -e "${YELLOW}[2/3] 整理部署文件与资源...${NC}"
+rm -rf "${BUNDLE_DIR}"
+mkdir -p "${BUNDLE_DIR}/bin"
+mkdir -p "${BUNDLE_DIR}/deploy/postgres"
+
+# 拷贝二进制
+echo "  -> 拷贝服务端和 Agent..."
+cp "${ROOT_DIR}/release/dddd-server-linux-amd64" "${BUNDLE_DIR}/bin/"
+cp "${ROOT_DIR}/release/dddd-agent-linux-amd64" "${BUNDLE_DIR}/bin/"
+
+# 拷贝前端产物
+echo "  -> 拷贝前端控制台..."
+mkdir -p "${BUNDLE_DIR}/server-ui"
+if [[ -d "${ROOT_DIR}/server-ui/dist" ]]; then
+    cp -r "${ROOT_DIR}/server-ui/dist" "${BUNDLE_DIR}/server-ui/"
+else
+    echo -e "${YELLOW}[!] 警告: 未找到前端产物 server-ui/dist${NC}"
+fi
+
+# 拷贝部署脚本和配置
+echo "  -> 拷贝环境部署脚本和 Docker 编排文件..."
+cp "${SCRIPT_DIR}/setup-server.sh" "${BUNDLE_DIR}/deploy/"
+cp "${SCRIPT_DIR}/uninstall-server.sh" "${BUNDLE_DIR}/deploy/"
+cp "${SCRIPT_DIR}/docker-compose.yml" "${BUNDLE_DIR}/deploy/"
+
+# 生成并拷贝预编译的规则数据库
+echo "  -> 编译规则资产库为单文件 DB..."
+cd "${ROOT_DIR}/server"
+go build -o build_seed_db scripts/build_seed_db.go
+cd "${ROOT_DIR}"
+./server/build_seed_db
+if [[ -f "${ROOT_DIR}/deploy/arsenal_seed.db" ]]; then
+    cp "${ROOT_DIR}/deploy/arsenal_seed.db" "${BUNDLE_DIR}/deploy/"
+fi
+
+# 拷贝数据库初始化脚本
+if [[ -d "${ROOT_DIR}/server/deploy/postgres" ]]; then
+    cp -r "${ROOT_DIR}/server/deploy/postgres/"* "${BUNDLE_DIR}/deploy/postgres/" 2>/dev/null || true
+fi
+
+# 3. 压缩打包
+echo -e "${YELLOW}[3/3] 生成发行包...${NC}"
+cd "${ROOT_DIR}"
+tar -czf "${SCRIPT_DIR}/${ARCHIVE_NAME}" "${BUNDLE_NAME}"
+rm -rf "${BUNDLE_DIR}"
+
+echo -e "${GREEN}[✔] 打包完成: ${SCRIPT_DIR}/${ARCHIVE_NAME}${NC}"
+echo -e "部署说明:"
+echo -e "  1. 将 ${ARCHIVE_NAME} 上传到目标云实例。"
+echo -e "  2. 执行解压: tar -xzf ${ARCHIVE_NAME}"
+echo -e "  3. 进入解压后的目录并运行部署脚本: cd ${BUNDLE_NAME} && sudo ./deploy/setup-server.sh"
+echo ""

@@ -262,7 +262,7 @@ type Arsenal struct {
 	TenantID        string `gorm:"default:'default';index"`
 	Type            string `gorm:"index"`
 	FileName        string `gorm:"index"`
-	Content         string
+	Content         string `gorm:"type:text"`
 	Hash            string
 	PreviousHash    string // 上一版本 Hash（用于回滚）
 	PreviousContent string `gorm:"type:text"` // 上一版本内容（用于回滚）
