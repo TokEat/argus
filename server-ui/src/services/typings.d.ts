@@ -445,6 +445,24 @@ declare namespace API {
     default_v_switch?: string;
   }
 
+  interface RegionInfo {
+    region_id: string;
+    local_name: string;
+    endpoint: string;
+  }
+
+  interface ReleaseFileInfo {
+    name: string;
+    size: number;
+    modified: string;
+  }
+
+  interface OSSFileInfo {
+    key: string;
+    size: number;
+    last_modified: string;
+  }
+
   interface CreateCloudInstanceRequest {
     account_id: string;
     count: number;

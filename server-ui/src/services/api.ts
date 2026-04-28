@@ -527,6 +527,71 @@ export async function rebootCloudInstance(id: string): Promise<API.MessageRespon
     return request.post(`/cloud/instances/${id}/reboot`);
 }
 
+// Region Discovery
+export async function listCloudRegions(accountId: string): Promise<{ regions: API.RegionInfo[] }> {
+    return request.get(`/cloud/accounts/${accountId}/regions`);
+}
+
+export async function updateCloudAccountRegion(accountId: string, region: string): Promise<API.MessageResponse> {
+    return request.put(`/cloud/accounts/${accountId}`, { region });
+}
+
+// Agent 分发
+export async function listReleaseFiles(accountId: string): Promise<{ files: API.ReleaseFileInfo[]; release_dir: string }> {
+    return request.get(`/cloud/accounts/${accountId}/release-files`);
+}
+
+export async function uploadServerAgent(accountId: string, files?: string[]): Promise<any> {
+    return request.post(`/cloud/accounts/${accountId}/oss/upload`, files ? { files } : undefined);
+}
+
+export async function uploadLocalAgent(
+    accountId: string,
+    files: File[],
+    onProgress?: (percent: number) => void,
+): Promise<any> {
+    const formData = new FormData();
+    files.forEach(f => formData.append('files', f));
+
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `/api/cloud/accounts/${accountId}/oss/upload-local`);
+
+        const token = localStorage.getItem('token');
+        if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+        xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable && onProgress) {
+                onProgress(Math.round((e.loaded / e.total) * 100));
+            }
+        };
+
+        xhr.onload = () => {
+            try {
+                const data = JSON.parse(xhr.responseText);
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    resolve(data);
+                } else {
+                    reject(data?.error || data?.message || `上传失败 (${xhr.status})`);
+                }
+            } catch {
+                reject(`上传失败: ${xhr.statusText}`);
+            }
+        };
+
+        xhr.onerror = () => reject('网络错误');
+        xhr.send(formData);
+    });
+}
+
+export async function listOSSFiles(accountId: string, prefix?: string): Promise<{ files: API.OSSFileInfo[]; bucket: string; prefix: string }> {
+    return request.get(`/cloud/accounts/${accountId}/oss/files`, { params: prefix ? { prefix } : undefined });
+}
+
+export async function deleteOSSFile(accountId: string, objectKey: string): Promise<API.MessageResponse> {
+    return request.post(`/cloud/accounts/${accountId}/oss/delete`, { object_key: objectKey });
+}
+
 // Resource Discovery
 export async function discoverCloudResources(accountId: string): Promise<any> {
     return request.get(`/cloud/accounts/${accountId}/discover`);
@@ -543,6 +608,37 @@ export async function autoConfigureCloudAccount(accountId: string, data: {
 
 export async function oneClickSetup(accountId: string): Promise<any> {
     return request.post(`/cloud/accounts/${accountId}/one-click-setup`);
+}
+
+// Permission Check
+export async function checkCloudPermissions(accountId: string): Promise<any> {
+    return request.get(`/cloud/accounts/${accountId}/permissions`, { timeout: 60000 });
+}
+
+// Price Query
+export async function queryCloudPrice(accountId: string, params?: { instance_type?: string; spot_strategy?: string; region?: string }): Promise<{
+    instance_type: string;
+    region: string;
+    spot_strategy: string;
+    instance_price: number;
+    spot_price: number;
+    spot_discount: number;
+    total_hourly: number;
+    currency: string;
+    price_unit: string;
+    status?: string;
+    message?: string;
+}> {
+    return request.get(`/cloud/accounts/${accountId}/price`, { params });
+}
+
+// Available Instance Types
+export async function listAvailableInstanceTypes(accountId: string, params?: { spot_strategy?: string; region?: string }): Promise<{
+    instance_types: { id: string; cpu: number; memory_gb: number; family: string; status: string }[];
+    region: string;
+    default_type: string;
+}> {
+    return request.get(`/cloud/accounts/${accountId}/instance-types`, { params, timeout: 30000 });
 }
 
 // Dashboard
