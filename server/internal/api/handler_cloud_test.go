@@ -1,0 +1,382 @@
+package api
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
+	"github.com/user/dddd-server/internal/cloud"
+	"github.com/user/dddd-server/internal/db"
+	"gorm.io/gorm"
+)
+
+type fakeCloudProvider struct {
+	discovery interface{}
+}
+
+func (p *fakeCloudProvider) CreateInstance(cfg cloud.InstanceConfig) (*cloud.Instance, error) {
+	return &cloud.Instance{ID: "fake-instance"}, nil
+}
+
+func (p *fakeCloudProvider) WaitReady(ctx context.Context, instanceID string, timeout time.Duration) error {
+	return nil
+}
+
+func (p *fakeCloudProvider) GetInstanceIP(instanceID string) (string, error) {
+	return "10.0.0.8", nil
+}
+
+func (p *fakeCloudProvider) RebootInstance(instanceID string) error {
+	return nil
+}
+
+func (p *fakeCloudProvider) TerminateInstance(instanceID string) error {
+	return nil
+}
+
+func (p *fakeCloudProvider) ListInstances(tags map[string]string) ([]*cloud.Instance, error) {
+	return nil, nil
+}
+
+func (p *fakeCloudProvider) DiscoverResources() (interface{}, error) {
+	return p.discovery, nil
+}
+
+type fakeOSSUploader struct {
+	files         []cloud.OSSFileInfo
+	uploadResults []cloud.OSSUploadResult
+	uploadErr     error
+}
+
+func (o *fakeOSSUploader) UploadFile(localPath, objectKey string) error {
+	return nil
+}
+
+func (o *fakeOSSUploader) GeneratePresignedURL(objectKey string, expiry time.Duration) (string, error) {
+	return "https://example.com/" + objectKey, nil
+}
+
+func (o *fakeOSSUploader) UploadAgentBinaries(releaseDir string) ([]cloud.OSSUploadResult, error) {
+	return o.uploadResults, o.uploadErr
+}
+
+func (o *fakeOSSUploader) TestConnection() error {
+	return nil
+}
+
+func (o *fakeOSSUploader) ListFiles(prefix string) ([]cloud.OSSFileInfo, error) {
+	return o.files, nil
+}
+
+func (o *fakeOSSUploader) DeleteFile(objectKey string) error {
+	return nil
+}
+
+var (
+	registerCloudHandlerTestFactories sync.Once
+	fakeProviderDiscovery             interface{}
+	fakeUploader                      *fakeOSSUploader
+)
+
+func ensureCloudHandlerTestFactories() {
+	registerCloudHandlerTestFactories.Do(func() {
+		cloud.RegisterProviderFactory("fake-review", func(akID, akSecret, region string) (cloud.CloudProvider, error) {
+			return &fakeCloudProvider{discovery: fakeProviderDiscovery}, nil
+		})
+		cloud.RegisterOSSFactory("fake-review", func(akID, akSecret, endpoint, bucket string) (cloud.OSSUploader, error) {
+			return fakeUploader, nil
+		})
+	})
+}
+
+func setupCloudHandlerTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.NewReplacer("/", "_", " ", "_").Replace(t.Name()))
+	store, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := store.AutoMigrate(
+		&db.CloudAccount{},
+		&db.CloudScalingPolicy{},
+		&db.CloudInstance{},
+	); err != nil {
+		t.Fatalf("automigrate: %v", err)
+	}
+	old := db.DB
+	db.DB = store
+	t.Cleanup(func() {
+		db.DB = old
+	})
+	return store
+}
+
+func newTenantContext(method, target string) (*gin.Context, *httptest.ResponseRecorder) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(method, target, nil)
+	ctx.Set("tenant", "default")
+	return ctx, recorder
+}
+
+func TestDeleteCloudAccountBlocksActiveInstances(t *testing.T) {
+	store := setupCloudHandlerTestDB(t)
+	account := db.CloudAccount{ID: "ca-1", TenantID: "default", Name: "test"}
+	if err := store.Create(&account).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	if err := store.Create(&db.CloudInstance{
+		ID:             "ci-1",
+		TenantID:       "default",
+		CloudAccountID: account.ID,
+		Status:         db.CloudStatusRunning,
+	}).Error; err != nil {
+		t.Fatalf("seed cloud instance: %v", err)
+	}
+
+	ctx, recorder := newTenantContext(http.MethodDelete, "/cloud/accounts/"+account.ID)
+	ctx.Params = gin.Params{{Key: "id", Value: account.ID}}
+	deleteCloudAccount(ctx)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+
+	var count int64
+	store.Model(&db.CloudAccount{}).Where("id = ?", account.ID).Count(&count)
+	if count != 1 {
+		t.Fatalf("expected account to remain, count=%d", count)
+	}
+}
+
+func TestDeleteCloudAccountBlocksBoundPolicies(t *testing.T) {
+	store := setupCloudHandlerTestDB(t)
+	account := db.CloudAccount{ID: "ca-2", TenantID: "default", Name: "test"}
+	if err := store.Create(&account).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	if err := store.Create(&db.CloudScalingPolicy{
+		ID:             "cp-1",
+		TenantID:       "default",
+		CloudAccountID: account.ID,
+		Name:           "policy",
+	}).Error; err != nil {
+		t.Fatalf("seed policy: %v", err)
+	}
+
+	ctx, recorder := newTenantContext(http.MethodDelete, "/cloud/accounts/"+account.ID)
+	ctx.Params = gin.Params{{Key: "id", Value: account.ID}}
+	deleteCloudAccount(ctx)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestCreateCloudPolicyBindsSnakeCasePayload(t *testing.T) {
+	store := setupCloudHandlerTestDB(t)
+	account := db.CloudAccount{ID: "ca-policy", TenantID: "default", Name: "test"}
+	if err := store.Create(&account).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+
+	body := `{
+		"name": "policy",
+		"cloud_account_id": "ca-policy",
+		"min_instances": 1,
+		"max_instances": 7,
+		"scale_up_threshold": 42,
+		"scale_down_threshold": 2,
+		"cooldown_seconds": 180,
+		"instance_ttl_minutes": 60,
+		"spot_strategy": "SpotAsPriceGo",
+		"user_data_template": "cloud-init-template"
+	}`
+	ctx, recorder := newTenantContext(http.MethodPost, "/cloud/policies")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/cloud/policies", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Set("tenant", "default")
+	createCloudPolicy(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+
+	var policy db.CloudScalingPolicy
+	if err := store.Where("cloud_account_id = ?", account.ID).First(&policy).Error; err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	if policy.CloudAccountID != account.ID ||
+		policy.MinInstances != 1 ||
+		policy.MaxInstances != 7 ||
+		policy.ScaleUpThreshold != 42 ||
+		policy.ScaleDownThreshold != 2 ||
+		policy.CooldownSeconds != 180 ||
+		policy.InstanceTTLMinutes != 60 ||
+		policy.SpotStrategy != "SpotAsPriceGo" ||
+		policy.UserDataTemplate != "cloud-init-template" {
+		t.Fatalf("policy was not bound from snake_case payload: %+v", policy)
+	}
+}
+
+func TestOneClickSetupFailsWhenRequiredAgentArtifactIsUnavailable(t *testing.T) {
+	ensureCloudHandlerTestFactories()
+	fakeProviderDiscovery = map[string]interface{}{
+		"security_groups": []map[string]string{{"id": "sg-1", "name": "sg"}},
+		"v_switches":      []map[string]string{{"id": "vsw-1", "name": "vsw"}},
+		"images":          []map[string]string{{"id": "img-1", "name": "ubuntu-22"}},
+		"instance_types":  []map[string]interface{}{{"id": "ecs.c6.large", "cpu": 2, "memory_gb": 4.0, "family": "ecs.c6"}},
+	}
+	fakeUploader = &fakeOSSUploader{}
+
+	store := setupCloudHandlerTestDB(t)
+	akID, err := cloud.EncryptSecret("ak")
+	if err != nil {
+		t.Fatalf("encrypt ak: %v", err)
+	}
+	akSecret, err := cloud.EncryptSecret("sk")
+	if err != nil {
+		t.Fatalf("encrypt sk: %v", err)
+	}
+	account := db.CloudAccount{
+		ID:              "ca-3",
+		TenantID:        "default",
+		Name:            "fake",
+		Provider:        "fake-review",
+		AccessKeyID:     akID,
+		AccessKeySecret: akSecret,
+		Region:          "cn-test",
+		OSSBucket:       "bucket",
+		OSSEndpoint:     "endpoint",
+	}
+	if err := store.Create(&account).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+
+	ctx, recorder := newTenantContext(http.MethodPost, "/cloud/accounts/"+account.ID+"/one-click-setup")
+	ctx.Params = gin.Params{{Key: "id", Value: account.ID}}
+	oneClickSetup(ctx)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "Agent binary is not ready for OSS distribution") {
+		t.Fatalf("expected artifact readiness error, got %s", recorder.Body.String())
+	}
+
+	var policies int64
+	store.Model(&db.CloudScalingPolicy{}).Where("cloud_account_id = ?", account.ID).Count(&policies)
+	if policies != 0 {
+		t.Fatalf("expected no policy to be created on artifact readiness failure, got %d", policies)
+	}
+}
+
+func TestUploadAgentToOSSFailsWhenRequiredArtifactMissing(t *testing.T) {
+	ensureCloudHandlerTestFactories()
+	fakeUploader = &fakeOSSUploader{
+		uploadResults: []cloud.OSSUploadResult{
+			{
+				Filename:  "dddd-agent-linux-arm64",
+				ObjectKey: "argus/agent/dddd-agent-linux-arm64",
+				Success:   true,
+			},
+		},
+	}
+
+	store := setupCloudHandlerTestDB(t)
+	akID, err := cloud.EncryptSecret("ak")
+	if err != nil {
+		t.Fatalf("encrypt ak: %v", err)
+	}
+	akSecret, err := cloud.EncryptSecret("sk")
+	if err != nil {
+		t.Fatalf("encrypt sk: %v", err)
+	}
+	account := db.CloudAccount{
+		ID:              "ca-upload",
+		TenantID:        "default",
+		Name:            "fake",
+		Provider:        "fake-review",
+		AccessKeyID:     akID,
+		AccessKeySecret: akSecret,
+		Region:          "cn-test",
+		OSSBucket:       "bucket",
+		OSSEndpoint:     "endpoint",
+	}
+	if err := store.Create(&account).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+
+	ctx, recorder := newTenantContext(http.MethodPost, "/cloud/accounts/"+account.ID+"/oss/upload")
+	ctx.Params = gin.Params{{Key: "id", Value: account.ID}}
+	uploadAgentToOSS(ctx)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "Required agent binary") {
+		t.Fatalf("expected required artifact error, got %s", recorder.Body.String())
+	}
+}
+
+func TestUploadAgentToOSSSucceedsWhenRequiredArtifactUploadedWithNonCriticalFailure(t *testing.T) {
+	ensureCloudHandlerTestFactories()
+	fakeUploader = &fakeOSSUploader{
+		uploadResults: []cloud.OSSUploadResult{
+			{
+				Filename:  "dddd-agent-linux-amd64",
+				ObjectKey: requiredAgentObjectKey,
+				Success:   true,
+			},
+			{
+				Filename:  "dddd-agent-darwin-arm64",
+				ObjectKey: "argus/agent/dddd-agent-darwin-arm64",
+				Success:   false,
+				Error:     "not supported in this release",
+			},
+		},
+	}
+
+	store := setupCloudHandlerTestDB(t)
+	akID, err := cloud.EncryptSecret("ak")
+	if err != nil {
+		t.Fatalf("encrypt ak: %v", err)
+	}
+	akSecret, err := cloud.EncryptSecret("sk")
+	if err != nil {
+		t.Fatalf("encrypt sk: %v", err)
+	}
+	account := db.CloudAccount{
+		ID:              "ca-upload-partial",
+		TenantID:        "default",
+		Name:            "fake",
+		Provider:        "fake-review",
+		AccessKeyID:     akID,
+		AccessKeySecret: akSecret,
+		Region:          "cn-test",
+		OSSBucket:       "bucket",
+		OSSEndpoint:     "endpoint",
+	}
+	if err := store.Create(&account).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+
+	ctx, recorder := newTenantContext(http.MethodPost, "/cloud/accounts/"+account.ID+"/oss/upload")
+	ctx.Params = gin.Params{{Key: "id", Value: account.ID}}
+	uploadAgentToOSS(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"failed_count":1`) {
+		t.Fatalf("expected non-critical failure count, got %s", recorder.Body.String())
+	}
+}

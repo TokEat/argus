@@ -99,15 +99,15 @@ func (s *Server) Serve() error {
 		// Server 端 Keepalive 参数：主动检测死连接
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			MaxConnectionIdle:     5 * time.Minute,  // 空闲 5 分钟后发送 GOAWAY 让客户端重连
-			MaxConnectionAge:      2 * time.Hour,     // 连接存活上限，到期后优雅关闭让客户端重连
-			MaxConnectionAgeGrace: 30 * time.Second,  // GOAWAY 后给予 30 秒完成正在进行的 RPC
-			Time:                  30 * time.Second,  // 每 30 秒向客户端发送 keepalive ping
-			Timeout:               10 * time.Second,  // 10 秒无 ping 回复判定连接死亡
+			MaxConnectionAge:      2 * time.Hour,    // 连接存活上限，到期后优雅关闭让客户端重连
+			MaxConnectionAgeGrace: 30 * time.Second, // GOAWAY 后给予 30 秒完成正在进行的 RPC
+			Time:                  30 * time.Second, // 每 30 秒向客户端发送 keepalive ping
+			Timeout:               10 * time.Second, // 10 秒无 ping 回复判定连接死亡
 		}),
 		// 允许客户端以较高频率发送 keepalive ping（配合 Agent 端的 30 秒间隔）
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             10 * time.Second, // 允许客户端最短 10 秒发一次 ping
-			PermitWithoutStream: true,              // 允许无活跃流时也发 ping
+			PermitWithoutStream: true,             // 允许无活跃流时也发 ping
 		}),
 	}
 	if s.psk != "" {
@@ -177,8 +177,21 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterReq) (*pb.Registe
 		}
 	}
 
+	// 多租户：从 Agent 标签中提取 tenant_id（Cloud-Init 会注入），
+	// 回退到关联 CloudInstance 的 tenant_id，最终兜底 "default"。
+	tenantID := "default"
+	if tid, ok := req.Tags["tenant_id"]; ok && strings.TrimSpace(tid) != "" {
+		tenantID = strings.TrimSpace(tid)
+	} else {
+		// 尝试从已有的 CloudInstance 记录中继承 tenant_id
+		var cloudInst db.CloudInstance
+		if err := db.DB.Select("tenant_id").Where("agent_id = ?", req.AgentId).First(&cloudInst).Error; err == nil && cloudInst.TenantID != "" {
+			tenantID = cloudInst.TenantID
+		}
+	}
+
 	db.DB.Save(&db.Node{
-		TenantID:     "default",
+		TenantID:     tenantID,
 		AgentID:      req.AgentId,
 		Status:       "Alive",
 		Version:      req.Version,
@@ -192,6 +205,18 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterReq) (*pb.Registe
 
 	token := generateSessionToken()
 	db.DB.Model(&db.Node{}).Where("agent_id = ?", req.AgentId).Update("token", token)
+	now := time.Now()
+	db.DB.Model(&db.CloudInstance{}).
+		Where("agent_id = ? AND status IN ?", req.AgentId, []string{
+			db.CloudStatusProvisioning,
+			db.CloudStatusWaitingReady,
+			db.CloudStatusRebooting,
+			db.CloudStatusRunning,
+		}).
+		Updates(map[string]interface{}{
+			"status":   db.CloudStatusRunning,
+			"ready_at": &now,
+		})
 
 	return &pb.RegisterResp{
 		Success: true,

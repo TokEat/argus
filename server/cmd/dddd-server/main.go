@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -17,6 +18,71 @@ import (
 	"github.com/user/dddd-server/internal/grpc"
 	"github.com/user/dddd-server/internal/scheduler"
 )
+
+func resolveOutboundHost() (string, error) {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err == nil {
+		defer conn.Close()
+		if udpAddr, ok := conn.LocalAddr().(*net.UDPAddr); ok && udpAddr.IP != nil && !udpAddr.IP.IsUnspecified() {
+			return udpAddr.IP.String(), nil
+		}
+	}
+
+	hostname, hostErr := os.Hostname()
+	if hostErr == nil {
+		hostname = strings.TrimSpace(hostname)
+		if hostname != "" && hostname != "localhost" {
+			return hostname, nil
+		}
+	}
+
+	if err != nil {
+		return "", err
+	}
+	return "", fmt.Errorf("unable to resolve advertise host from network interfaces")
+}
+
+func isRoutableAdvertiseHost(host string) bool {
+	host = strings.TrimSpace(strings.Trim(host, "[]"))
+	if host == "" || host == "0.0.0.0" || host == "::" || strings.EqualFold(host, "localhost") {
+		return false
+	}
+	ip := net.ParseIP(host)
+	if ip != nil && (ip.IsUnspecified() || ip.IsLoopback()) {
+		return false
+	}
+	return true
+}
+
+func buildCloudAdvertiseAddrs(grpcPort int, apiAddr, publicIP, publicAPI string, detectHost func() (string, error)) (string, string, error) {
+	publicIP = strings.TrimSpace(publicIP)
+	publicAPI = strings.TrimSpace(publicAPI)
+	if publicIP != "" {
+		grpcAddr := fmt.Sprintf("%s:%d", publicIP, grpcPort)
+		if publicAPI != "" {
+			return grpcAddr, publicAPI, nil
+		}
+		return grpcAddr, fmt.Sprintf("http://%s%s", publicIP, apiAddr), nil
+	}
+
+	host, port, err := net.SplitHostPort(apiAddr)
+	if err != nil {
+		return "", "", fmt.Errorf("parse api bind address %q: %w", apiAddr, err)
+	}
+	if !isRoutableAdvertiseHost(host) {
+		host, err = detectHost()
+		if err != nil {
+			return "", "", fmt.Errorf("resolve advertise host: %w", err)
+		}
+	}
+
+	grpcAddr := fmt.Sprintf("%s:%d", host, grpcPort)
+	apiURL := fmt.Sprintf("http://%s:%s", host, port)
+	if publicAPI != "" {
+		apiURL = publicAPI
+	}
+	return grpcAddr, apiURL, nil
+}
 
 func main() {
 	var (
@@ -198,11 +264,21 @@ func main() {
 
 	// ====== 云资源动态调度 ======
 	autoScaler := cloud.NewAutoScaler(conn, queue)
-	autoScaler.SetServerAddrs(
-		fmt.Sprintf("0.0.0.0:%d", grpcPort), // gRPC 地址 (Cloud-Init 中 Agent 连接用)
-		"http://0.0.0.0"+apiAddr,            // HTTP API 地址
-		agentPSK,
+
+	// Cloud-Init 中注入给 Agent 的 Server 地址
+	// 优先使用环境变量，确保云实例上的 Agent 能通过公网地址连接 Server
+	cloudGRPCAddr, cloudAPIURL, err := buildCloudAdvertiseAddrs(
+		grpcPort,
+		apiAddr,
+		os.Getenv("ARGUS_PUBLIC_IP"),
+		os.Getenv("ARGUS_PUBLIC_API"),
+		resolveOutboundHost,
 	)
+	if err != nil {
+		log.Fatalf("[Cloud] failed to determine routable advertise endpoints: %v. Set ARGUS_PUBLIC_IP or ARGUS_PUBLIC_API explicitly.", err)
+	}
+	log.Printf("[Cloud] Using advertise endpoints for Cloud-Init: gRPC=%s API=%s", cloudGRPCAddr, cloudAPIURL)
+	autoScaler.SetServerAddrs(cloudGRPCAddr, cloudAPIURL, agentPSK)
 	api.SetAutoScaler(autoScaler)
 
 	// 启动自动伸缩决策循环
