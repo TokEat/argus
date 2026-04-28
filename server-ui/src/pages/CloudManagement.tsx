@@ -1527,7 +1527,6 @@ echo "[Argus] Agent registered as systemd service and started"
                                     if (!account) return null;
 
                                     const configReady = !!(account.region && account.default_instance_type && account.default_image_id);
-                                    const networkReady = !!(account.default_security_group && account.default_v_switch);
                                     const ossReady = !!(account.oss_bucket && account.oss_endpoint);
 
                                     // 找到关联策略

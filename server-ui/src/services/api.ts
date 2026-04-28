@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AxiosInstance, AxiosResponse } from 'axios';
+import type { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 
 // 创建 axios 实例 — 对齐 Server 端路由前缀 /api/v1
 const request: AxiosInstance = axios.create({
@@ -14,6 +14,7 @@ const request: AxiosInstance = axios.create({
 request.interceptors.request.use(
     (config) => {
         const token = localStorage.getItem('token');
+        (config as AxiosRequestConfig & { __authTokenSnapshot?: string }).__authTokenSnapshot = token || '';
         if (token) {
             config.headers.Authorization = `Bearer ${token}`;
         }
@@ -31,7 +32,13 @@ request.interceptors.response.use(
     },
     (error) => {
         if (error.response?.status === 401) {
-            if (!window.location.pathname.includes('/login')) {
+            // 防止竞态：
+            // 某些旧请求（例如登录前发出的请求）晚到 401，不应清掉新登录后的 token。
+            const currentToken = localStorage.getItem('token') || '';
+            const snapshotToken = ((error.config as AxiosRequestConfig & { __authTokenSnapshot?: string })?.__authTokenSnapshot || '') as string;
+            const isStale401 = snapshotToken !== '' && currentToken !== '' && snapshotToken !== currentToken;
+
+            if (!isStale401 && !window.location.pathname.includes('/login')) {
                 localStorage.removeItem('token');
                 window.location.href = '/login';
             }
