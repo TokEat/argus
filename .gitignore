@@ -37,6 +37,9 @@ data/
 
 **/dist
 bak/
+*.tar.gz
+*.db
+server/build_seed_db
 
 # 测试
 test/

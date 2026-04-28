@@ -58,7 +58,7 @@ PUBLIC_IP=""
 # 自动定位项目根目录（脚本在 deploy/ 目录下）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-COMPOSE_FILE="${ROOT_DIR}/server/deploy/docker-compose.yml"
+COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
 
 # 解析参数
 while [[ $# -gt 0 ]]; do
@@ -86,7 +86,7 @@ fi
 # DSN（与 Makefile 格式一致）
 DB_DSN="host=127.0.0.1 user=${POSTGRES_USER} password=${POSTGRES_PASSWORD} dbname=${POSTGRES_DB} port=${POSTGRES_PORT} sslmode=disable"
 AMQP_URL="amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@127.0.0.1:${RABBITMQ_PORT}/"
-INSTALL_DIR="/opt/argus"
+INSTALL_DIR="${ROOT_DIR}"
 
 echo -e "${BLUE}================================================${NC}"
 echo -e "${BLUE}       Argus Server 一键部署                    ${NC}"
@@ -137,6 +137,7 @@ fi
 # 导出环境变量供 docker-compose 使用
 export POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_PORT
 export RABBITMQ_DEFAULT_USER RABBITMQ_DEFAULT_PASS RABBITMQ_PORT RABBITMQ_MANAGEMENT_PORT
+export INSTALL_DIR
 
 docker compose -f "$COMPOSE_FILE" up -d --remove-orphans rabbitmq postgres
 
@@ -173,10 +174,12 @@ echo -e "${GREEN}[✔] 基础设施就绪${NC}"
 echo -e "${YELLOW}[3/6] 部署 Server 二进制...${NC}"
 
 mkdir -p "$INSTALL_DIR"/{bin,data,logs,config,release}
+mkdir -p "$INSTALL_DIR/server-ui/dist"
 
 # 查找 server 二进制（按优先级）
 SERVER_BIN=""
 for candidate in \
+    "${ROOT_DIR}/bin/dddd-server-linux-amd64" \
     "${ROOT_DIR}/bin/dddd-server" \
     "${ROOT_DIR}/release/dddd-server-linux-amd64" \
     "${ROOT_DIR}/dddd-server-linux-amd64" \
@@ -188,6 +191,28 @@ for candidate in \
 done
 
 if [[ -z "$SERVER_BIN" ]]; then
+    shopt -s nullglob
+    tar_files=("${SCRIPT_DIR}"/argus-release-*.tar.gz "${ROOT_DIR}"/argus-release-*.tar.gz)
+    shopt -u nullglob
+
+    if [[ ${#tar_files[@]} -gt 0 ]]; then
+        TAR_FILE="${tar_files[0]}"
+        echo -e "${YELLOW}  检测到安装包: ${TAR_FILE}，正在自动解压...${NC}"
+        tar -xzf "$TAR_FILE" -C "${ROOT_DIR}"
+        # 解压后通常会有一个 argus-release-xxx 目录，再次尝试查找
+        for candidate in \
+            "${ROOT_DIR}"/argus-release-*/bin/dddd-server-linux-amd64 \
+            "${ROOT_DIR}/bin/dddd-server-linux-amd64" \
+            "${ROOT_DIR}/bin/dddd-server"; do
+            if [[ -f "$candidate" ]]; then
+                SERVER_BIN="$candidate"
+                break
+            fi
+        done
+    fi
+fi
+
+if [[ -z "$SERVER_BIN" ]]; then
     echo -e "${RED}[!] 找不到 dddd-server 二进制文件${NC}"
     echo -e "    请先在开发机编译:"
     echo -e "      ${YELLOW}./build.sh --component dddd-server --target linux/amd64${NC}"
@@ -195,23 +220,54 @@ if [[ -z "$SERVER_BIN" ]]; then
     exit 1
 fi
 
-cp "$SERVER_BIN" "$INSTALL_DIR/bin/dddd-server"
+if [[ "$SERVER_BIN" != "$INSTALL_DIR/bin/dddd-server" ]]; then
+    rm -f "$INSTALL_DIR/bin/dddd-server"
+    cp "$SERVER_BIN" "$INSTALL_DIR/bin/dddd-server"
+fi
 chmod +x "$INSTALL_DIR/bin/dddd-server"
 echo -e "  Server: ${GREEN}${SERVER_BIN} → ${INSTALL_DIR}/bin/dddd-server${NC}"
 
 # 部署 Agent 二进制（用于 HTTP 分发给云实例）
+AGENT_BIN=""
 for candidate in \
+    "${ROOT_DIR}/bin/dddd-agent-linux-amd64" \
     "${ROOT_DIR}/release/dddd-agent-linux-amd64" \
     "${ROOT_DIR}/dddd-agent-linux-amd64" \
-    "./dddd-agent-linux-amd64"; do
+    "./dddd-agent-linux-amd64" \
+    "${ROOT_DIR}"/argus-release-*/bin/dddd-agent-linux-amd64; do
     if [[ -f "$candidate" ]]; then
-        cp "$candidate" "$INSTALL_DIR/release/"
-        echo -e "  Agent:  ${GREEN}${candidate} → ${INSTALL_DIR}/release/${NC}"
+        AGENT_BIN="$candidate"
         break
     fi
 done
 
-echo -e "${GREEN}[✔] 二进制部署完成${NC}"
+if [[ -n "$AGENT_BIN" ]]; then
+    if [[ "$AGENT_BIN" != "$INSTALL_DIR/release/dddd-agent-linux-amd64" ]]; then
+        rm -f "$INSTALL_DIR/release/dddd-agent-linux-amd64"
+        cp "$AGENT_BIN" "$INSTALL_DIR/release/dddd-agent-linux-amd64"
+    fi
+    echo -e "  Agent:  ${GREEN}${AGENT_BIN} → ${INSTALL_DIR}/release/dddd-agent-linux-amd64${NC}"
+fi
+
+# 部署组件配置
+CONFIG_SRC=""
+for candidate in \
+    "${ROOT_DIR}/config" \
+    "${ROOT_DIR}"/argus-release-*/config; do
+    if [[ -d "$candidate" && "$(ls -A "$candidate" 2>/dev/null)" ]]; then
+        CONFIG_SRC="$candidate"
+        break
+    fi
+done
+
+if [[ -n "$CONFIG_SRC" ]]; then
+    if [[ "$CONFIG_SRC" != "$INSTALL_DIR/config" ]]; then
+        cp -r "$CONFIG_SRC/"* "$INSTALL_DIR/config/" 2>/dev/null || true
+    fi
+    echo -e "  Config: ${GREEN}${CONFIG_SRC} → ${INSTALL_DIR}/config/${NC}"
+fi
+
+echo -e "${GREEN}[✔] 二进制及配置部署完成${NC}"
 
 # ============================================================
 # Step 4: 数据库迁移
@@ -220,6 +276,39 @@ echo -e "${YELLOW}[4/6] 执行数据库迁移...${NC}"
 
 "$INSTALL_DIR/bin/dddd-server" --db "$DB_DSN" --migrate-only --db-migration-mode apply --config-dir "$INSTALL_DIR/config"
 echo -e "${GREEN}[✔] 数据库迁移完成${NC}"
+
+# ============================================================
+# Step 4.5: 导入规则资产库
+# ============================================================
+echo -e "${YELLOW}[4.5/6] 导入安全规则资产库 (从预编译 DB 中恢复)...${NC}"
+
+if [[ -f "${SCRIPT_DIR}/arsenal_seed.db" ]]; then
+    "$INSTALL_DIR/bin/dddd-server" --db "$DB_DSN" --seed-from-db "${SCRIPT_DIR}/arsenal_seed.db"
+    echo -e "${GREEN}[✔] 规则资产导入完成${NC}"
+else
+    echo -e "${YELLOW}[!] 未找到预编译的 arsenal_seed.db，跳过规则导入${NC}"
+fi
+
+# 部署前端静态资源
+FRONTEND_SRC=""
+for candidate in \
+    "${ROOT_DIR}/server-ui/dist" \
+    "${SCRIPT_DIR}/../server-ui/dist" \
+    "${ROOT_DIR}"/argus-release-*/server-ui/dist; do
+    if [[ -d "$candidate" && "$(ls -A "$candidate" 2>/dev/null)" ]]; then
+        FRONTEND_SRC="$candidate"
+        break
+    fi
+done
+
+if [[ -n "$FRONTEND_SRC" ]]; then
+    if [[ "$FRONTEND_SRC" != "$INSTALL_DIR/server-ui/dist" ]]; then
+        cp -r "$FRONTEND_SRC/"* "$INSTALL_DIR/server-ui/dist/" 2>/dev/null || true
+    fi
+    echo -e "  Frontend: ${GREEN}${FRONTEND_SRC} → ${INSTALL_DIR}/server-ui/dist${NC}"
+else
+    echo -e "${YELLOW}  [!] 未找到前端静态资源 (server-ui/dist)，控制台界面可能无法访问。${NC}"
+fi
 
 # ============================================================
 # Step 5: 创建 systemd 服务
