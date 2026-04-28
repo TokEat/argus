@@ -340,11 +340,12 @@ argus/
 |------|------|
 | [贡献与协作指南](CONTRIBUTING.md) | 分支模型、命名规范、PR 与发布流程 |
 | [项目结构](docs/project-structure.md) | 目录结构与组件职责 |
-| [实现状态总览](docs/implementation-status.md) | 当前代码实现程度与主要缺口 |
-| [接口实现清单](docs/interface-implementations.md) | 当前 `/api/v1`、WebSocket、gRPC 主链路接口 |
-| [分布式架构现状](docs/distributed-scan-architecture.md) | 当前控制面 / 数据面架构与未闭环点 |
-| [规则库初始化](docs/rule-catalog-init.md) | Arsenal 与结构化规则表初始化机制 |
-| [白皮书规划稿](docs/whitepaper-plan.md) | 正式技术白皮书的定位、目录与写作方案 |
+| [实现状态与接口清单](docs/implementation-status.md) | 当前实现程度、主要缺口、`/api/v1` / WebSocket / gRPC 主链路接口 |
+| [数据库设计总览](docs/db_schema.md) | 当前 schema、索引策略、项目隔离演进与规则库初始化机制 |
+| [分布式扫描架构](docs/distributed-scan-architecture.md) | 控制面 / 数据面架构、Agent-Pull 调度与 Agent 扫描流水线 |
+| [云资源动态调度](docs/cloud-resource-scheduling.md) | AutoScaler、云实例生命周期、Spot 回收与未来演进 |
+| [AI Copilot 架构](docs/ai_copilot_architecture.md) | 全局 Copilot、工具调用、POC AI 审查和后续路线 |
+| [技术白皮书](docs/argus-technical-whitepaper.md) | 对外技术定位、核心闭环、典型场景与演进路线 |
 
 ---
 

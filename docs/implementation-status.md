@@ -4,7 +4,7 @@
 >
 > 标注说明：`✅` = 已实现并接入主链路 | `⚠️` = 代码已存在但链路未闭环 / 仅部分可用 | `❌` = 尚未实现
 >
-> 接口清单另见：[interface-implementations.md](interface-implementations.md)
+> 当前接口清单已经合并到本文末尾，避免实现状态与接口状态分散维护。
 
 ---
 
@@ -97,7 +97,7 @@
 | Agent 控制链路 | `commandLoop`、规则同步、Manifest 增量下载代码都已写 | Agent 侧用匿名 `http.Get` 请求受 JWT 保护的 API；`Register` 返回的 token 仅为 `dummy_token_*`，且未被 Agent 使用，导致取消指令和规则热同步主链路未真正打通 |
 | WebSocket 实时看板 | 服务端广播 Hub 已可工作，已实现基于租户的数据隔离 | 前端用 `?token=` 建连，后端只认 `Authorization: Bearer`，浏览器实时订阅链路未完全对接 |
 | 优先级 / 标签 / 容量调度 | 多优先级队列、节点标签匹配、`capacity` 字段与负载展示均已存在 | 任务创建接口未暴露 `agent_selector`；Agent 无法向服务端上报容量，Server 注册时容量固定为 `1` |
-| 任务状态机 | `DONE` 场景可聚合 RootTask，`timeout_sec` / 重试已落地 | `FAILED` / `CANCELLED` / `TIMEOUT` 对 RootTask 的最终收敛仍不完整 |
+| 任务状态机 | `DONE` / `FAILED` / `CANCELLED` / `TIMEOUT` 的 RootTask 聚合已收口；存在活跃子任务时保持 `Running` / `PartialDone`，无活跃子任务时按 `Timeout > Failed > Cancelled > FINISHED` 收敛 | 后续可继续补充失败原因统计和前端展示 |
 | 云资源编排 | AutoScaler 自动伸缩引擎已接入 `main.go`、阿里云 ECS Provider 已注册、Cloud-Init 地址注入/实例状态收敛/OSS 制品就绪校验已打通、NoStock 多可用区+多规格自动重试+规格降级引擎已实现 | 多云 Provider 扩展与端到端生命周期集成测试仍不足 |
 | CloudManagement 页面 | 后端已提供完整的凭证/策略/实例 CRUD、仪表盘 API、实时价格查询、可用规格列表（23 个端点）；前端已集成手动弹容地域可选+规格可选+实时价格预估 | 前端已全量接入真实后端 API 数据流，并支持策略下发 |
 | ClientBuild 页面 | 可列出 `release/` 目录产物 | 构建触发接口仅返回 `accepted`；`/release/*` 下载路径未真正挂成静态文件服务 |
@@ -128,7 +128,62 @@
 | 优先级 | 功能 | 说明 |
 |--------|------|------|
 | P0 | 打通 Agent 鉴权链路 | 统一 gRPC 注册 token、Agent REST 调用鉴权、WebSocket 鉴权 |
-| P1 | 完善任务状态收敛 | 补齐 `FAILED / CANCELLED / TIMEOUT` 的 RootTask 聚合与终态计算 |
+| 已收口 | 完善任务状态收敛 | 已补齐 `FAILED / CANCELLED / TIMEOUT` 的 RootTask 聚合与终态计算 |
 | P1 | 完善节点容量与标签路由 | 让 Agent 上报容量，任务创建支持 `agent_selector` |
 | P1 | 接通遥测日志链路 | Agent 发送 `StreamLogs`，前端补日志查看页 |
 | P2 | 推进 Clean Architecture 迁移 | 逐步把 `router.go` 中的直接业务逻辑迁入 usecase / adapter |
+
+---
+
+## 六、当前接口实现清单
+
+本文只描述从 `server/cmd/dddd-server/main.go` 接线进入运行链路的接口，不把 `server/internal/adapters/httpapi`、`server/internal/adapters/grpcagent` 等 Clean Architecture scaffold 视为可用接口。
+
+### 通用约定
+
+- HTTP 基础前缀：`/api/v1`
+- HTTP 鉴权：JWT Bearer Token，`POST /api/v1/auth/login` 例外
+- WebSocket：`GET /api/v1/ws`
+- gRPC 服务：`scan.AgentService`
+- 协议定义：`shared/proto/proto/scan/agent.proto`
+
+### HTTP REST
+
+| 模块 | 代表接口 | 当前实现 |
+|------|----------|----------|
+| 认证与会话 | `POST /auth/login` | 数据库用户优先，兼容开发密码，成功后签发 JWT |
+| 任务与队列 | `GET/POST/DELETE /tasks`、`POST /tasks/:id/cancel`、`POST /tasks/:id/append`、`GET /queue/depth` | RootTask / SubTask 创建、取消、追加、队列深度查询 |
+| 统计、结果与画像 | `/stats*`、`/vulns`、`/assets`、`/fingerprints`、`/profiles`、`/reports/export/vulns` | 统计聚合、结果查询、画像聚合、漏洞 CSV 导出 |
+| 节点与 Agent 指令 | `GET /nodes`、`GET /agents/:id/commands`、`GET /agents/:id/logs` | 节点列表、取消/规则重载指令、Agent 日志查询 |
+| Arsenal 与规则 | `/arsenals/:type`、`/arsenals/manifest`、审批/回滚/删除接口 | 原始规则 CRUD、审批、回滚、Manifest 与 `rule_version` |
+| 字典 | `/dictionaries/workflow`、`/dictionaries/fingerprint` | Workflow / Fingerprint 结构化 CRUD，并回写 Arsenal |
+| 用户与系统配置 | `/users`、`/mcp/keys`、`/ai/config`、`/ai/models`、`/ai/test` | 用户管理、MCP Key、AI 配置与模型连通性测试 |
+| AI Copilot | `POST /ai/chat`、`POST /ai/arsenal/analyze`、`POST /ai/arsenal/analyze/stream` | 全局 Copilot SSE、POC AI 审查同步/流式入口 |
+| 云资源编排 | `/cloud/accounts*`、`/cloud/policies*`、`/cloud/instances*`、`/cloud/dashboard` | 云凭证、策略、实例生命周期、OSS、一键配置、仪表盘 |
+| 构建 | `GET /build/artifacts`、`POST /build/client` | 产物列表可用；构建触发仍只返回 `accepted` |
+
+### WebSocket
+
+| 路径 | 当前实现 |
+|------|----------|
+| `GET /ws` | 建立实时连接并加入广播 Hub，当前主要用于结果批量写入后的 `scan_result_batch` 事件 |
+
+### gRPC
+
+| RPC | 当前实现 |
+|-----|----------|
+| `Register` | 节点注册，写入/更新 `nodes`，记录容量、标签、OS/Arch、租户与节点会话 token |
+| `Heartbeat` | 更新节点存活时间、运行任务数、运行任务列表与规则版本，并判断是否需要同步规则 |
+| `Subscribe` | Agent 长连接等待任务通知和控制信号 |
+| `ClaimTask` | Agent 主动认领任务，支持 RabbitMQ 原子领取、标签匹配、容量回写和终态消息丢弃 |
+| `FetchTask` | 兼容旧 Agent 的轮询接口，内部委托领取逻辑 |
+| `StreamResult` | 接收 Agent 流式结果并异步写入结果缓冲池 |
+| `TaskComplete` | 更新子任务状态、ACK 队列、递减节点运行数，并刷新 RootTask 聚合状态 |
+| `EmergencyDump` | Spot 或紧急中断场景的兜底上报入口 |
+| `StreamLogs` | 接收 Agent 日志流并写入 `agent_logs` 表 |
+
+### 维护约定
+
+- 新增或删除 `/api/v1` 路由时，同步更新本节。
+- 如果启用 `/api/v2`，单独增加版本化接口小节，不与当前主链路混写。
+- 对只返回 `accepted`、mock 或 scaffold 的接口，必须明确标注是否真正执行后端动作。

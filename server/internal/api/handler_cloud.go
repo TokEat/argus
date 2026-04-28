@@ -53,6 +53,7 @@ func listCloudAccounts(c *gin.Context) {
 		OSSEndpoint          string `json:"oss_endpoint"`
 		Status               string `json:"status"`
 		CreatedAt            string `json:"created_at"`
+		UpdatedAt            string `json:"updated_at"`
 	}
 
 	resp := make([]AccountResp, 0, len(accounts))
@@ -73,6 +74,7 @@ func listCloudAccounts(c *gin.Context) {
 			OSSEndpoint:          a.OSSEndpoint,
 			Status:               a.Status,
 			CreatedAt:            a.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:            a.UpdatedAt.Format(time.RFC3339),
 		})
 	}
 
@@ -533,7 +535,7 @@ func deleteCloudInstanceReal(c *gin.Context) {
 		}
 		rm := cloud.NewResourceManager(provider)
 		rm.SetDB(db.DB)
-		_ = rm.TerminateInstance(nil, &inst)
+		_ = rm.TerminateInstance(context.Background(), &inst)
 	}()
 
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "message": fmt.Sprintf("Instance %s is being terminated", id)})

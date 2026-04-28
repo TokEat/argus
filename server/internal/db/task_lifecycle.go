@@ -65,27 +65,31 @@ func RefreshRootTaskStatus(rootTaskID string) {
 		} else {
 			nextStatus = "Running"
 		}
-	case done == total:
-		nextStatus = "FINISHED"
-	case done > 0:
-		nextStatus = "PartialDone"
 	case timeout > 0:
 		nextStatus = "Timeout"
 	case failed > 0:
 		nextStatus = "Failed"
-	case cancelled == total:
+	case cancelled > 0:
 		nextStatus = "Cancelled"
+	case done == total:
+		nextStatus = "FINISHED"
 	default:
 		nextStatus = "Queued"
 	}
 
 	// 计算已完成目标数（从已完成批次的 ChunkTargets 聚合）
 	var completedTargets int64
-	DB.Raw(`
-			SELECT COALESCE(SUM(jsonb_array_length(chunk_targets::jsonb)), 0)
-			FROM sub_tasks
-			WHERE root_task_id = ? AND UPPER(status) = 'DONE'
-		`, rootTaskID).Scan(&completedTargets)
+	var doneChunks []SubTask
+	DB.Select("chunk_targets").
+		Where("root_task_id = ? AND UPPER(status) = ?", rootTaskID, "DONE").
+		Find(&doneChunks)
+	for _, chunk := range doneChunks {
+		var targets []string
+		if err := json.Unmarshal([]byte(chunk.ChunkTargets), &targets); err != nil {
+			continue
+		}
+		completedTargets += int64(len(targets))
+	}
 
 	DB.Model(&RootTask{}).Where("id = ?", rootTaskID).Updates(map[string]interface{}{
 		"status":            nextStatus,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/user/dddd-server/internal/db"
@@ -195,24 +196,36 @@ func (as *AutoScaler) scaleUp(ctx context.Context, policy *db.CloudScalingPolicy
 	// 使用信号量限制并发创建数，防止触发云厂商 API 限流
 	const maxConcurrentProvisions = 5
 	sem := make(chan struct{}, maxConcurrentProvisions)
+	var wg sync.WaitGroup
+	var successCount int64
 
 	for i := 0; i < count; i++ {
+		wg.Add(1)
 		sem <- struct{}{}
 		go func(idx int) {
+			defer wg.Done()
 			defer func() { <-sem }()
 			instance, err := manager.ProvisionInstance(ctx, &account, policy, as.grpcAddr, as.apiURL, as.psk)
 			if err != nil {
 				log.Printf("[AutoScaler] Failed to provision instance %d/%d: %v", idx+1, count, err)
 				return
 			}
+			atomic.AddInt64(&successCount, 1)
 			log.Printf("[AutoScaler] Instance provisioned: id=%s provider_id=%s agent_id=%s",
 				instance.ID, instance.ProviderInstanceID, instance.AgentID)
 		}(i)
 	}
 
-	// 更新冷却时间戳
-	now := time.Now()
-	as.db.Model(policy).Update("last_scale_action", &now)
+	// 等待所有创建完成，仅在至少一个成功时才更新冷却时间戳
+	// 防止全部创建失败（如 NoStock）时错误进入冷却期导致扩容延迟
+	wg.Wait()
+	if atomic.LoadInt64(&successCount) > 0 {
+		now := time.Now()
+		as.db.Model(policy).Update("last_scale_action", &now)
+		log.Printf("[AutoScaler] Scale UP complete: %d/%d instances created successfully", successCount, count)
+	} else {
+		log.Printf("[AutoScaler] Scale UP failed: all %d instance creation attempts failed, cooldown NOT updated", count)
+	}
 }
 
 // scaleDown 执行缩容操作
@@ -329,7 +342,7 @@ func (as *AutoScaler) StartReconciler(ctx context.Context, interval time.Duratio
 func (as *AutoScaler) reconcile(ctx context.Context) {
 	var instances []db.CloudInstance
 	as.db.Where("status IN ?", []string{
-		db.CloudStatusRunning, db.CloudStatusWaitingReady, db.CloudStatusRebooting,
+		db.CloudStatusProvisioning, db.CloudStatusRunning, db.CloudStatusWaitingReady, db.CloudStatusRebooting,
 	}).Find(&instances)
 
 	if len(instances) == 0 {
@@ -411,7 +424,7 @@ func (as *AutoScaler) sweepOrphans(ctx context.Context) {
 		as.db.Where(
 			"policy_id = ? AND status IN ? AND created_at < ?",
 			policy.ID,
-			[]string{db.CloudStatusRunning, db.CloudStatusWaitingReady},
+			[]string{db.CloudStatusRunning, db.CloudStatusWaitingReady, db.CloudStatusError},
 			cutoff,
 		).Find(&expired)
 

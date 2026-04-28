@@ -562,7 +562,7 @@ export async function uploadLocalAgent(
 
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        xhr.open('POST', `/api/cloud/accounts/${accountId}/oss/upload-local`);
+        xhr.open('POST', `/api/v1/cloud/accounts/${accountId}/oss/upload-local`);
 
         const token = localStorage.getItem('token');
         if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);

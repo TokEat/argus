@@ -264,10 +264,10 @@ Argus 当前采用典型的 `Control Plane + Data Plane` 结构：
 
 1. Agent 鉴权链路
    - 让 Agent 能够合法访问受 JWT 保护的 REST 接口
-2. RootTask 终态收敛
-   - 补齐 `FAILED / CANCELLED / TIMEOUT` 的聚合逻辑
-3. 节点容量与标签调度
+2. 节点容量与标签调度
    - 让调度真正利用多 worker 和节点路由
+3. 遥测日志前端
+   - 给 Agent 日志查询补页面入口
 
 ## 9. 建议阅读顺序
 
@@ -275,6 +275,76 @@ Argus 当前采用典型的 `Control Plane + Data Plane` 结构：
 
 1. `docs/project-structure.md`
 2. `docs/implementation-status.md`
-3. `docs/interface-implementations.md`
-4. 本文档
-5. `docs/rule-catalog-init.md`
+3. 本文档
+4. `docs/db_schema.md`
+5. `docs/cloud-resource-scheduling.md`
+
+---
+
+## 10. Agent-Pull 调度模型
+
+Argus 的分布式调度已经从早期“Server 强管控下推”演进为“Agent 按需拉取”。Server 是任务池维护者与事件通知器，Agent 是主动消费方，根据本地并发槽和任务标签自行认领任务。这个模型解决跨网络 NAT、长连接风暴和中心化容量判断漂移问题。
+
+核心解耦点：
+
+- Server 通过 RabbitMQ 多优先级队列维护任务池，不直接把任务强推给特定 Agent。
+- Agent 通过本地 semaphore 判断是否还有容量；容量不足时忽略通知，容量可用时调用 `ClaimTask`。
+- RabbitMQ 未确认投递 + `ACK/NACK` 保证队列层可回收；数据库心跳与死节点恢复负责兜底补投。
+- 标签匹配发生在领取阶段；不匹配的任务会 `NACK requeue` 并继续尝试后续任务。
+
+核心流转：
+
+1. 用户创建任务，Server 切分 `SubTask` 并按优先级入队。
+2. `NotifyHub` 向在线 Agent 的 `Subscribe` 流广播队列可用事件。
+3. Agent 有空闲容量时发起 `ClaimTask`，Server 从队列原子领取并校验标签。
+4. Agent 执行扫描，使用 `StreamResult` 实时回传漏洞、资产、指纹等中间结果。
+5. Agent 完成后调用 `TaskComplete`，Server 更新子任务状态、执行队列 `ACK`、刷新 RootTask 聚合状态。
+6. 如果队列仍有积压，Server 在完成回报后再次通知当前 Agent，避免资源空闲。
+
+容错策略：
+
+- Agent 正常完成：`TaskComplete` 后 ACK 队列消息。
+- Agent 异常掉线：队列层未 ACK 消息由 stale salvage 执行 NACK 回收。
+- 死节点兜底：心跳判断离线后，将数据库中仍处于 `Running / CancelPending` 的子任务重置并补投。
+- Spot 回收：Agent 侧监听云厂商中断信号并尽量执行 `EmergencyDump`，无预警强杀时依赖心跳与队列回收。
+
+## 11. Agent 扫描流水线
+
+Agent 端扫描任务由 `scanner/internal/engine/pipeline.go` 编排，主流程如下：
+
+```mermaid
+graph TD
+    Start(["开始扫描"]) --> Init["上下文绑定"]
+    Init --> Search{"启用空间测绘?"}
+    Search -- 是 --> SearchEngine["Fofa/Hunter/Quake 检索"]
+    SearchEngine --> Parse["解析目标"]
+    Search -- 否 --> Parse
+    Parse --> Subdomain{"子域名探测?"}
+    Subdomain -- 是 --> SubdomainRun["SubFinder / Brute"]
+    SubdomainRun --> CDN["CDN 识别"]
+    Subdomain -- 否 --> CDN
+    CDN --> Alive{"存活探测?"}
+    Alive -- 是 --> Ping["ICMP / TCP Ping"]
+    Alive -- 否 --> PortScan["端口扫描"]
+    Ping --> PortScan
+    PortScan --> Protocol["协议识别 / Banner"]
+    Protocol --> HTTPX["HTTPX Web 探测"]
+    HTTPX --> Dir["目录与主动指纹探测"]
+    Dir --> Fingerprint["指纹识别与合并"]
+    Fingerprint --> Poc{"启用漏洞探测?"}
+    Poc -- 否 --> End(["结束"])
+    Poc -- 是 --> Mapper["mapper.GetPocs 指纹到模板映射"]
+    Mapper --> Nuclei["Nuclei 模板扫描"]
+    Nuclei --> GoPoc["GoPoc 联动执行"]
+    GoPoc --> End
+```
+
+指纹到模板映射由 `mapper.GetPocs()` 完成：
+
+- 输入是 `target -> fingerprint[]` 的识别结果和 workflow 规则。
+- 指纹关联规则按产品名精确匹配，例如 `Tomcat -> tomcat-manager-weak.yaml`。
+- `General-Poc-*` 是通用主动探测规则，会追加到所有 HTTP 目标，不依赖指纹命中。
+- 模板按 URL 层级和文件名去重后交给 Nuclei 执行。
+- Nuclei 结果会通过 `nucleiResultCollector` 传给 GoPoc 调度器，实现如 Shiro 检测命中后触发 Key 爆破的联动。
+
+`General-Poc-*` 的设计价值是“反向指纹识别”：用主动 Probe 判定技术栈，补齐被动/目录指纹未识别的场景。以 Shiro 为例，通用模板对 HTTP 目标发送 `rememberMe` 探测请求，命中后可继续触发 GoPoc 的 Shiro Key 爆破链路。

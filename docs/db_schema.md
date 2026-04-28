@@ -621,3 +621,43 @@
 | 构建与发布 | `build_jobs`、`build_artifacts` | 当前客户端构建接口只返回 `accepted`，缺少任务状态跟踪 |
 
 这些建议表不属于当前已落地 schema，单独列出是为了避免后续架构扩展继续走“接口先行、数据模型缺位”的老路。
+
+---
+
+## 附录 A：项目隔离与资产入库演进背景
+
+Argus 早期结果入库以 `task_id` 为主要关联键，适合一次性扫描，但不适合持续巡航后的资产归档、漏洞修复态追踪和多轮扫描去重。当前 schema 已经将长期资产、域名、指纹、漏洞等结果统一沉淀到 `project_id` 维度，并保留 `task_id` 作为本次扫描来源。
+
+这次演进的核心设计判断是：
+
+- `projects` 是长期业务容器，承载授权边界、默认配置、初始目标、成员和后续巡航任务。
+- `root_tasks` / `sub_tasks` 只描述一次执行，不再作为资产生命周期的唯一真相源。
+- `domains`、`assets`、`fingerprint_hits`、`vulnerabilities` 使用 `project_id + target + 业务键` 做去重，避免同一项目多次扫描产生重复资产。
+- 误删影响大的实体使用软删除，例如 `projects`、`cron_tasks`、`credentials`。
+- 资产变更需要独立流水，`asset_change_logs` 用于描述发现、新增、消失、属性变化等事件，而不是把历史塞回资产主表。
+- 凭证必须加密存储，不使用 JSONB 明文查询；`credentials.content` 是密文承载字段。
+
+历史 schema 草案的具体结构体内容已经合并进本文的当前 schema 与上述设计背景，不再单独保留拆分稿。
+
+## 附录 B：规则库 PostgreSQL 初始化流程
+
+控制面将规则数据拆成两层：
+
+- `arsenals`：原始规则文件仓库，直接服务于 Agent 的增量/全量同步。
+- 结构化规则表：由 `arsenals` 物化生成，便于统计、检索、审批、AI 工具理解和后续治理。
+
+启动 `dddd-server` 时的初始化流程：
+
+1. 规范化历史 `arsenals.type`，将 `fingerprint -> finger`、`dirprobe -> dir` 等旧别名迁移到标准类型。
+2. 如果 `arsenals` 为空，则从 `scanner/common/config` 首次导入 `finger.yaml`、`workflow.yaml`、`dir.yaml`、`pocs/*.yaml`。
+3. 计算当前 `arsenals` 的聚合哈希。
+4. 如果聚合哈希未变化，则跳过结构化回填。
+5. 如果聚合哈希变化，则重建 `rule_catalog_bootstraps`、`fingerprint_rules`、`poc_rules`、`workflow_rules`、`dir_rules`。
+
+设计约束：
+
+- `arsenals` 是规则同步的唯一原始来源，不引入第二套真相源。
+- 结构化规则表只作为查询和治理视图，由原始规则物化生成。
+- 保存、审批、删除、回滚规则后，都会重新同步结构化规则表。
+- 字典编辑接口对 `finger.yaml` / `workflow.yaml` 的修改，也会联动刷新结构化表。
+- Agent 侧同步仍使用 `poc` / `finger` / `workflow` / `dir` 四类。

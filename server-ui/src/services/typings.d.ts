@@ -414,6 +414,7 @@ declare namespace API {
     region: string;
     status: string;
     spot: boolean;
+    reboot_count: number;
     error_message?: string;
     launched_at?: string;
     ready_at?: string;
@@ -426,11 +427,8 @@ declare namespace API {
     active_accounts: number;
     enabled_policies: number;
     running_instances: number;
-    recent_events: {
-      timestamp: string;
-      message: string;
-      level: string;
-    }[];
+    total_instances: number;
+    recent_events: CloudInstance[];
   }
 
   interface CreateCloudAccountRequest {
@@ -466,6 +464,8 @@ declare namespace API {
   interface CreateCloudInstanceRequest {
     account_id: string;
     count: number;
+    instance_type?: string;
+    region?: string;
   }
 
   // ======================== Build Artifacts ========================
