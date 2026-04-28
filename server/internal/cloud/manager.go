@@ -58,15 +58,13 @@ func (rm *ResourceManager) ProvisionInstance(
 	// 生成 Agent ID
 	agentID := fmt.Sprintf("cloud-%s-%d", account.Provider, time.Now().UnixNano())
 
-	// 生成 Agent 二进制下载 URL：优先 OSS 预签名，fallback 到 Server HTTP
-	downloadURL := fmt.Sprintf("%s/release/dddd-agent-linux-amd64", apiURL)
-	if account.OSSBucket != "" && account.OSSEndpoint != "" {
-		ossURL, err := GenerateAgentDownloadURL(account, "linux", "amd64")
-		if err != nil {
-			log.Printf("[Provision] OSS presigned URL failed, falling back to server HTTP: %v", err)
-		} else {
-			downloadURL = ossURL
-		}
+	// 生成 Agent 二进制下载 URL（OSS 为唯一分发通道）
+	if account.OSSBucket == "" || account.OSSEndpoint == "" {
+		return nil, fmt.Errorf("该云凭证未配置 OSS (Bucket/Endpoint)，无法分发 Agent 二进制。请先在凭证管理中配置 OSS 或执行一键配置")
+	}
+	downloadURL, err := GenerateAgentDownloadURL(account, "linux", "amd64")
+	if err != nil {
+		return nil, fmt.Errorf("生成 OSS 预签名 URL 失败: %w（请确认 OSS 中已上传 Agent 制品）", err)
 	}
 
 	// 渲染 Cloud-Init 脚本

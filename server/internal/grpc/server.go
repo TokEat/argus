@@ -621,8 +621,71 @@ func (s *Server) StreamResult(stream pb.AgentService_StreamResultServer) error {
 // ============================================================================
 
 func (s *Server) EmergencyDump(ctx context.Context, req *pb.EmergencyReq) (*pb.Ack, error) {
-	log.Printf("[EmergencyDump] Agent %s is flushing all local states due to Spot termination signal!", req.AgentId)
-	return &pb.Ack{Success: true, Message: "Safe drop signal received"}, nil
+	agentID := req.AgentId
+	log.Printf("[EmergencyDump] Agent %s triggered Spot termination emergency dump!", agentID)
+
+	// 1. 将 Node 立即标记为 Offline，防止 HeartbeatReaper 重复处理
+	db.DB.Model(&db.Node{}).Where("agent_id = ?", agentID).Updates(map[string]interface{}{
+		"status":        "Offline",
+		"running_tasks": 0,
+	})
+
+	// 2. 回收该 Agent 所有 Running 任务，退回队列重新调度
+	var orphanTasks []db.SubTask
+	db.DB.Where("agent_id = ? AND status IN ?", agentID, []string{"Running", "CancelPending"}).Find(&orphanTasks)
+
+	recovered := 0
+	for _, sub := range orphanTasks {
+		// ACK 掉旧的 MQ 消息
+		if sub.StreamMsgID != "" && s.ackTaskHook != nil {
+			_ = s.ackTaskHook(sub.StreamMsgID)
+		}
+
+		nextStatus := "Dispatching"
+		if db.NormalizeSubTaskStatus(sub.Status) == "CANCELPENDING" {
+			nextStatus = "Cancelled"
+		}
+
+		db.DB.Model(&db.SubTask{}).Where("id = ?", sub.ID).Updates(map[string]interface{}{
+			"status":        nextStatus,
+			"agent_id":      "",
+			"stream_msg_id": "",
+		})
+
+		// Running 任务重新入队
+		if nextStatus == "Dispatching" && s.requeueTaskHook != nil {
+			pbTask, err := db.SubTaskToProto(&sub)
+			if err == nil && pbTask != nil {
+				if pushErr := s.requeueTaskHook(pbTask); pushErr == nil {
+					db.DB.Model(&db.SubTask{}).Where("id = ? AND status = ?", sub.ID, "Dispatching").
+						Update("status", "Pending")
+					recovered++
+				}
+			}
+		}
+
+		if sub.RootTaskID != "" {
+			db.RefreshRootTaskStatus(sub.RootTaskID)
+		}
+	}
+
+	// 3. 通知在线 Agent 有回收的任务可领取
+	if recovered > 0 {
+		s.Hub.BroadcastNewTask(int32(recovered), 0)
+	}
+
+	// 4. 将关联的云实例标记为即将终止（Spot 回收后云端会自动销毁）
+	db.DB.Model(&db.CloudInstance{}).
+		Where("agent_id = ? AND status IN ?", agentID, []string{
+			db.CloudStatusRunning, db.CloudStatusWaitingReady,
+		}).
+		Updates(map[string]interface{}{
+			"status":        db.CloudStatusTerminating,
+			"error_message": "Spot instance preempted by cloud provider",
+		})
+
+	log.Printf("[EmergencyDump] Agent %s: recovered %d tasks, marked node offline", agentID, recovered)
+	return &pb.Ack{Success: true, Message: fmt.Sprintf("Emergency dump processed: %d tasks recovered", recovered)}, nil
 }
 
 // ============================================================================

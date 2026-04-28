@@ -284,7 +284,7 @@ set -ex
 
 echo "[Argus] Starting agent provisioning..."
 
-# 下载 Agent 二进制（优先使用 OSS 预签名 URL，fallback 到 Server HTTP）
+# 下载 Agent 二进制（通过 OSS 预签名 URL 内网高速分发）
 DOWNLOAD_URL="{{.DownloadURL}}"
 AGENT_BIN="/usr/local/bin/dddd-agent"
 
@@ -1300,7 +1300,7 @@ echo "[Argus] Agent registered as systemd service and started"
                                 <div style={{ padding: '20px 0' }}>
                                     <Alert
                                         message="Agent 二进制分发管理"
-                                        description="弹性扩缩创建的 ECS 实例需要下载 Agent 二进制。配置了 OSS 的凭证可通过内网高速分发，否则回退到 Server HTTP 下载。"
+                                        description="弹性扩缩创建的 ECS 实例通过 OSS 内网高速下载 Agent 二进制（预签名 URL，1小时过期）。请确保凭证已配置 OSS Bucket 和 Endpoint，并已上传 Agent 制品。"
                                         type="info"
                                         showIcon
                                         style={{ marginBottom: 16 }}
@@ -1336,7 +1336,7 @@ echo "[Argus] Agent registered as systemd service and started"
                                                         const ossReady = !!(record.oss_bucket && record.oss_endpoint);
                                                         return ossReady
                                                             ? <Tag color="blue">OSS 内网高速分发</Tag>
-                                                            : <Tag color="orange">Server HTTP Fallback</Tag>;
+                                                            : <Tag color="red">未配置 OSS（无法分发）</Tag>;
                                                     }
                                                 },
                                                 {

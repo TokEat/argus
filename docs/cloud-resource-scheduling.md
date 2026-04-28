@@ -92,18 +92,19 @@ stateDiagram-v2
 
 ### 3.3 Agent 二进制分发机制
 
-云实例通过 Cloud-Init 脚本在启动时自动下载并部署 Agent。系统支持两种分发通道：
+云实例通过 Cloud-Init 脚本在启动时自动下载并部署 Agent。**OSS 预签名 URL 是唯一的分发通道**：
 
-| 方式 | 触发条件 | 下载速度 | 安全性 |
-|------|----------|----------|--------|
-| **OSS 预签名 URL（推荐）** | CloudAccount 配置了 `oss_bucket` + `oss_endpoint` | 内网 > 200MB/s | 预签名 URL，1 小时过期 |
-| **Server HTTP Fallback** | 未配置 OSS | 取决于 Server 带宽 | 无鉴权，依赖安全组 |
+| 方式 | 下载速度 | 安全性 | 备注 |
+|------|----------|--------|------|
+| **OSS 预签名 URL** | 内网 > 200MB/s | 预签名 URL，1 小时过期 | CloudAccount 必须配置 `oss_bucket` + `oss_endpoint` |
+
+> **设计决策**：早期版本曾设计 Server HTTP Fallback 作为未配置 OSS 时的兜底下载方式，但在实践中发现：(1) Server 本身没有注册文件下载端点，该路径实际不可用；(2) 走公网带宽下载 ~100MB 二进制在高并发冷启动场景下必然成为瓶颈。因此在 v5.4 修订中移除 Fallback 逻辑，**ProvisionInstance 在 OSS 未配置时直接报错**，强制要求凭证配置 OSS 或通过一键配置自动创建。
 
 **当前实现约束（已与代码同步）**
 
 - Cloud-Init 中注入给 Agent 的 `--server` / `--api` 地址必须是可路由地址。系统会优先使用 `ARGUS_PUBLIC_IP` 与 `ARGUS_PUBLIC_API`；未设置时会自动探测本机的出站地址，不再把 `0.0.0.0` 写入实例脚本。
 - 默认 Cloud-Init 模板与前端模板保持一致，Agent 启动参数使用 `--tags "cloud=true,auto_scaled=true,target_type=all"`；若配置了 PSK，则额外追加 `--psk`。
-- 若启用了 OSS 分发，一键配置在返回成功前会同步校验 `argus/agent/dddd-agent-linux-amd64` 是否已经可用；缺失时会尝试上传，仍不可用则直接报错，避免后续新实例反复下载 404。
+- 一键配置在返回成功前会同步校验 `argus/agent/dddd-agent-linux-amd64` 是否已经可用；缺失时会尝试上传，仍不可用则直接报错，避免后续新实例反复下载 404。
 
 **OSS 分发完整流程：**
 
@@ -137,11 +138,16 @@ sequenceDiagram
 
 ### 3.4 Spot 竞价实例回收感知
 
-- **Agent 侧**：启动时检测到环境变量 `ARGUS_SPOT=1` 或 `cloud` 标签时，激活 `StartSpotTerminationListener`。
-- **中断响应**：Agent 通过内部 HTTP 元数据接口感知到云厂商（如阿里云提前 5 分钟）的回收警告。
-- **自救动作**：立即触发 `EmergencyDump` 将当前处理进度回落，并放弃拉取新任务，优雅等待被系统销毁。
+- **Agent 侧**：启动时检测到环境变量 `ARGUS_SPOT=1` 或 `cloud` 标签时，激活 `StartSpotTerminationListener`（`scanner/internal/agent/signal.go`）。
+- **中断响应**：Agent 每 30 秒轮询阿里云元数据接口 `http://100.100.100.200/latest/meta-data/instance/spot/termination-time`，感知到回收警告后立即触发 `EmergencyDump` gRPC。
+- **Server 端处理**（`server/internal/grpc/server.go:EmergencyDump`）：
+  1. 将 Node 立即标记为 `Offline`，防止 HeartbeatReaper 60 秒超时后重复处理
+  2. 回收该 Agent 所有 `Running` 子任务，ACK 旧消息并重新入队给其他存活节点
+  3. 通过 `NotifyHub` 广播回收的任务数量，触发在线 Agent 立即认领
+  4. 将关联的 `CloudInstance` 标记为 `Terminating`（Spot 回收后云端会自动销毁）
+- **零任务丢失**：整个流程从 Agent 感知到 Server 完成任务回收，耗时 < 1 秒，远在 5 分钟回收窗口内。
 
-### 3.4 云端任务分发逻辑 (Agent-Pull 协同)
+### 3.5 云端任务分发逻辑 (Agent-Pull 协同)
 
 虽然计算资源（实例）是云端动态创建的，但 Argus 的任务分发核心依旧严格遵循**按需拉取 (Agent-Pull)** 架构，结合 RabbitMQ 实现对云端动态实例的无缝分发：
 
@@ -190,7 +196,7 @@ sequenceDiagram
 
 ---
 
-## 4. API 设计 (23 个端点)
+## 4. API 设计 (28 个端点)
 
 云管控的 REST API 均在 `server/internal/api/handler_cloud.go` 中实现：
 
@@ -201,23 +207,28 @@ sequenceDiagram
 | **凭证** | Update | `PUT /cloud/accounts/:id` | 更新凭证配置（区域、镜像、安全组等） |
 | **凭证** | Delete | `DELETE /cloud/accounts/:id` | 仅当无活跃实例且无绑定伸缩策略时允许删除 |
 | **凭证** | Test | `POST /cloud/accounts/:id/test` | 测试云端连通性 |
-| **凭证** | OSS Upload | `POST /cloud/accounts/:id/oss/upload` | 上传 `release/` 中的 Agent 二进制到 OSS |
+| **凭证** | OSS Upload | `POST /cloud/accounts/:id/oss/upload` | 从 Server release/ 上传 Agent 到 OSS |
+| **凭证** | OSS Local Upload | `POST /cloud/accounts/:id/oss/upload-local` | 前端本地文件直传 OSS |
 | **凭证** | OSS Test | `POST /cloud/accounts/:id/oss/test` | 测试 OSS 连通性 |
+| **凭证** | OSS Files | `GET /cloud/accounts/:id/oss/files` | 列出 OSS 中的 Agent 制品 |
+| **凭证** | OSS Delete | `POST /cloud/accounts/:id/oss/delete` | 删除 OSS 中指定文件 |
+| **凭证** | Release Files | `GET /cloud/accounts/:id/release-files` | 列出 Server 本地 release/ 目录 |
+| **凭证** | Regions | `GET /cloud/accounts/:id/regions` | 查询云厂商所有可用地域 |
 | **凭证** | Discover | `GET /cloud/accounts/:id/discover` | 自动探测云资源（ECS 规格、镜像、安全组、交换机） |
 | **凭证** | AutoConfigure | `POST /cloud/accounts/:id/auto-configure` | 保存探测结果到凭证配置 |
 | **凭证** | OneClickSetup | `POST /cloud/accounts/:id/one-click-setup` | 一键配置：探测 + 自动创建网络/OSS + 校验 Agent 制品就绪 + 建策略 |
 | **凭证** | Permissions | `GET /cloud/accounts/:id/permissions` | AK/SK 权限检查（STS 身份 + RAM 策略比对） |
-| **凭证** | Price | `GET /cloud/accounts/:id/price` | 查询当前规格的实时价格（按量/竞价），支持 `instance_type`、`spot_strategy`、`region` 参数覆盖 |
-| **凭证** | InstanceTypes | `GET /cloud/accounts/:id/instance-types` | 查询指定地域下有库存的实例规格列表（含 CPU/内存/库存状态），支持 `region`、`spot_strategy` 参数覆盖 |
+| **凭证** | Price | `GET /cloud/accounts/:id/price` | 实时价格查询（按量/竞价），支持 `region` 参数覆盖 |
+| **凭证** | InstanceTypes | `GET /cloud/accounts/:id/instance-types` | 有库存的实例规格列表（含 CPU/内存），支持 `region`、`spot_strategy` 参数覆盖 |
 | **策略** | List | `GET /cloud/policies` | - |
 | **策略** | Create | `POST /cloud/policies` | - |
 | **策略** | Update | `PUT /cloud/policies/:id` | - |
 | **策略** | Delete | `DELETE /cloud/policies/:id` | - |
 | **策略** | Toggle | `POST /cloud/policies/:id/toggle` | 动态启停伸缩策略 |
 | **实例** | List | `GET /cloud/instances` | 实例列表查询 |
-| **实例** | Create | `POST /cloud/instances` | 人工手动弹容（含可用区智能路由 + 实时价格预估 + 地域/规格可选覆盖） |
+| **实例** | Create | `POST /cloud/instances` | 手动弹容（含可用区智能路由 + 价格预估 + 地域/规格覆盖） |
 | **实例** | Delete | `DELETE /cloud/instances/:id` | 人工强制缩容 |
-| **实例** | Reboot | `POST /cloud/instances/:id/reboot` | OS 级重启（保留机器）；重启后回到 `WaitingReady` 等待 Agent 重注册 |
+| **实例** | Reboot | `POST /cloud/instances/:id/reboot` | OS 级重启；重启后回到 `WaitingReady` 等待 Agent 重注册 |
 | **大屏** | Dashboard | `GET /cloud/dashboard` | 活跃账号数、实例统计与最新事件 |
 
 ---
@@ -274,7 +285,13 @@ sequenceDiagram
 - **[P2] 库存过滤放宽**：`queryAvailableZones` 新增接受 `ClosedWithStock` 状态（限量库存但仍可购买），扩大可用区搜索范围。
 - **[P2] 价格/规格 API Region 覆盖**：`queryCloudPrice` 和 `listAvailableInstanceTypes` 均支持 `?region=xxx` 查询参数覆盖凭证默认地域，供前端跨地域比价/选规格。
 
-⏳ **Phase 11 (待实施)**
+### 5.4 2026-04-28 Phase 11a 文档与功能修订
+
+- **移除 Server HTTP Fallback**：统一 Agent 分发通道为 OSS。`ProvisionInstance` 在 OSS 未配置时直接返回错误，不再尝试构造 Server HTTP 下载 URL。设计理由：Server 端从未注册文件下载路由，该路径实际不可用；且公网带宽在高并发冷启动场景下必然成为瓶颈。
+- **EmergencyDump 数据持久化**：从空壳日志改为实际的紧急回收逻辑——Agent 感知 Spot 回收后调用 `EmergencyDump` RPC，Server 端立即将 Node 标记 Offline、回收所有 Running 任务重新入队、标记 CloudInstance 为 Terminating。整个流程 < 1 秒完成，实现零任务丢失。
+- **文档修订**：API 端点表从 21/23 条补齐至实际的 28 条；修复 §3.4 章节编号重复；更新 §3.3 和 §3.4 描述与代码同步。
+
+⏳ **Phase 11b (待实施)**
 - **多云扩展**：基于已有的 `CloudProvider` 抽象，横向补充 AWS EC2、腾讯云 CVM 等实现。
 - **EventBridge 集成**：打通云厂商事件总线，实现 Spot 回收的毫秒级推送通知。
 
@@ -293,14 +310,14 @@ sequenceDiagram
 - **演进**：引入**阶梯式缩容 (Cooldown)**，并结合云厂商计费周期的**踩点回收**（如：在按小时计费周期结束前 5 分钟再执行释放），最大化利用已购资源。
 
 ### 6.3 冷启动效率瓶颈
-- **局限**：当前 Cloud-Init 通过 OSS 内网下载 Agent 二进制（约 100MB），正常耗时约 10-30 秒。但如果未配置 OSS 而走 Server HTTP Fallback，下载速度受限于公网带宽，首次启动可能需要数分钟。
+- **局限**：当前 Cloud-Init 通过 OSS 内网下载 Agent 二进制（约 100MB），正常耗时约 10-30 秒。跨地域 OSS 下载可能更慢。
 - **演进**：优化 Agent 二进制体积（UPX 压缩、按架构拆分），或利用 OSS 多地域同步实现就近下载。
 
 > **关于「黄金镜像」方案**：该方案（将 Agent 预烘焙到系统镜像中）已被评估后放弃。原因：Argus Agent 是单一 Go 二进制，体积约 100MB，通过 OSS 内网下载仅需数秒，预烘焙带来的秒级提升不值得承担镜像维护和版本同步的复杂度。当前架构使用**公共镜像 + OSS 分发**，兼容所有实例系列（含 `ecs.e` 经济型），无需自定义镜像。
 
 ### 6.4 Spot 实例回收感知的盲区
-- **局限**：系统完全依赖 Agent 侧定期轮询云主机底层的 Metadata 接口获取 5 分钟警告。在极端资源枯竭情况下，云厂商可能跳过警告直接强杀，导致 `EmergencyDump` 无法执行。
-- **演进**：在管控层面打通云厂商的事件总线（如 Aliyun EventBridge / AWS EventBridge）。当底层基础设施产生实例释放事件时，通过 Webhook 毫秒级推给 Server 端，由 Server 立刻标记该节点不可用，并将未完成任务快速重分配，缩小处理盲区。
+- **局限**：系统依赖 Agent 侧 30 秒轮询元数据接口获取 5 分钟警告。`EmergencyDump` 已实现完整的任务回收和云实例状态同步，但在极端资源枯竭情况下，云厂商可能跳过警告直接强杀，导致 `EmergencyDump` 无法执行。此时 HeartbeatReaper 60 秒超时仍为兜底。
+- **演进**：在管控层面打通云厂商的事件总线（如 Aliyun EventBridge / AWS EventBridge）。当底层基础设施产生实例释放事件时，通过 Webhook 毫秒级推给 Server 端，实现对 Agent 无法触发 EmergencyDump 场景的补充覆盖。
 
 ### 6.5 异构算力池支持不足
 - **局限**：当前单套调度策略仅支持一种实例规格设定，无法区分“计算密集型”（如暴破）和“网络密集型”（如端口扫描）任务的特定机型需求。
