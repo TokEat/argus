@@ -122,3 +122,33 @@ func (o *OSSClient) TestConnection() error {
 	_, err := o.bucket.ListObjects(oss.MaxKeys(1))
 	return err
 }
+
+// ListFiles 列出存储桶中的文件
+func (o *OSSClient) ListFiles(prefix string) ([]cloud.OSSFileInfo, error) {
+	var results []cloud.OSSFileInfo
+	marker := ""
+	for {
+		lsRes, err := o.bucket.ListObjects(oss.Prefix(prefix), oss.Marker(marker), oss.MaxKeys(100))
+		if err != nil {
+			return nil, err
+		}
+		for _, object := range lsRes.Objects {
+			results = append(results, cloud.OSSFileInfo{
+				Key:          object.Key,
+				Size:         object.Size,
+				LastModified: object.LastModified,
+			})
+		}
+		if lsRes.IsTruncated {
+			marker = lsRes.NextMarker
+		} else {
+			break
+		}
+	}
+	return results, nil
+}
+
+// DeleteFile 删除存储桶中的文件
+func (o *OSSClient) DeleteFile(objectKey string) error {
+	return o.bucket.DeleteObject(objectKey)
+}

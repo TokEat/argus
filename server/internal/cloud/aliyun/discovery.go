@@ -38,7 +38,11 @@ type InstanceTypeItem struct {
 
 // DiscoverResources 根据 AK/SK 自动发现该地域下可用的云资源
 func (p *ECSProvider) DiscoverResources() (interface{}, error) {
+	if p.regionId == "" {
+		return nil, fmt.Errorf("资源发现需要指定地域 (Region)，请先选择地域后再执行")
+	}
 	result := &DiscoveryResult{}
+
 
 	// 1. 查询安全组
 	sgReq := &ecs.DescribeSecurityGroupsRequest{
