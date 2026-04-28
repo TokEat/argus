@@ -63,10 +63,6 @@ func isAgentInternalEndpoint(c *gin.Context) bool {
 	if path == "/api/v1/arsenals/db" || path == "/api/v1/arsenals/db/hash" || path == "/api/v1/arsenals/db/stats" {
 		return true
 	}
-	if strings.HasPrefix(path, "/api/v1/arsenals/") {
-		rest := strings.TrimPrefix(path, "/api/v1/arsenals/")
-		return rest != "" && !strings.Contains(rest, "/")
-	}
 	return false
 }
 
@@ -1450,8 +1446,9 @@ func getArsenalManifest(c *gin.Context) {
 // ==================== 用户管理 CRUD ====================
 
 func listUsers(c *gin.Context) {
+	tenantID := currentTenantID(c)
 	var users []db.User
-	db.DB.Order("created_at DESC").Find(&users)
+	db.DB.Where("tenant_id = ?", tenantID).Order("created_at DESC").Find(&users)
 
 	type UserResp struct {
 		ID        uint   `json:"id"`
@@ -1494,9 +1491,12 @@ func createUser(c *gin.Context) {
 	if req.Role == "" {
 		req.Role = "viewer"
 	}
-	if req.TenantID == "" {
-		req.TenantID = "default"
+	tenantID := currentTenantID(c)
+	if req.TenantID != "" && req.TenantID != tenantID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "cannot create user for another tenant"})
+		return
 	}
+	req.TenantID = tenantID
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
@@ -1521,6 +1521,7 @@ func createUser(c *gin.Context) {
 
 func updateUser(c *gin.Context) {
 	id := c.Param("id")
+	tenantID := currentTenantID(c)
 	var req struct {
 		Role     string `json:"role"`
 		Status   string `json:"status"`
@@ -1548,8 +1549,13 @@ func updateUser(c *gin.Context) {
 		return
 	}
 
-	if err := db.DB.Model(&db.User{}).Where("id = ?", id).Updates(updates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	res := db.DB.Model(&db.User{}).Where("id = ? AND tenant_id = ?", id, tenantID).Updates(updates)
+	if res.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": res.Error.Error()})
+		return
+	}
+	if res.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
 
@@ -1558,8 +1564,14 @@ func updateUser(c *gin.Context) {
 
 func deleteUser(c *gin.Context) {
 	id := c.Param("id")
-	if err := db.DB.Delete(&db.User{}, "id = ?", id).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	tenantID := currentTenantID(c)
+	res := db.DB.Delete(&db.User{}, "id = ? AND tenant_id = ?", id, tenantID)
+	if res.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": res.Error.Error()})
+		return
+	}
+	if res.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -1976,6 +1988,7 @@ func getRecentHighVulns(c *gin.Context) {
 
 func getAgentLogs(c *gin.Context) {
 	agentID := c.Param("id")
+	tenantID := currentTenantID(c)
 	limit := 100
 	if l := c.Query("limit"); l != "" {
 		if v, err := strconv.Atoi(l); err == nil && v > 0 {
@@ -1983,6 +1996,12 @@ func getAgentLogs(c *gin.Context) {
 		}
 	}
 	level := c.Query("level") // 可选过滤: INFO, WARN, ERROR
+
+	var node db.Node
+	if err := scopedNodeQuery(tenantID).Select("id").Where("agent_id = ?", agentID).First(&node).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Agent not found"})
+		return
+	}
 
 	var logs []db.AgentLog
 	query := db.DB.Where("agent_id = ?", agentID)
@@ -2077,7 +2096,7 @@ func appendTargets(c *gin.Context) {
 
 	// 获取当前已有子任务数量作为新批次的起始编号
 	var existingCount int64
-	db.DB.Model(&db.SubTask{}).Where("root_task_id = ?", rootTaskID).Count(&existingCount)
+	db.DB.Model(&db.SubTask{}).Where("root_task_id = ? AND tenant_id = ?", rootTaskID, tenantID).Count(&existingCount)
 	baseIndex := int(existingCount)
 
 	// 聚合切批生成 SubTasks
@@ -2165,6 +2184,7 @@ func getQueueDepth(c *gin.Context) {
 		return
 	}
 
+	tenantID := currentTenantID(c)
 	ctx := context.Background()
 	depth := taskQueue.QueueDepth(ctx)
 	pending := taskQueue.PendingCount(ctx)
@@ -2187,11 +2207,11 @@ func getQueueDepth(c *gin.Context) {
 	}
 	var results []targetCountResult
 	db.DB.Raw(`
-		SELECT status, SUM(jsonb_array_length(chunk_targets::jsonb)) as cnt
-		FROM sub_tasks
-		WHERE status IN ('Pending', 'Dispatching', 'Running', 'Recovered')
-		GROUP BY status
-	`).Scan(&results)
+			SELECT status, SUM(jsonb_array_length(chunk_targets::jsonb)) as cnt
+			FROM sub_tasks
+			WHERE tenant_id = ? AND status IN ('Pending', 'Dispatching', 'Running', 'Recovered')
+			GROUP BY status
+		`, tenantID).Scan(&results)
 	for _, r := range results {
 		switch db.NormalizeSubTaskStatus(r.Status) {
 		case "PENDING", "DISPATCHING", "RECOVERED":

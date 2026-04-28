@@ -1,8 +1,11 @@
 package api
 
 import (
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestShouldAgentReloadRules(t *testing.T) {
@@ -88,5 +91,33 @@ func TestCopilotProfileNodeCapacityGlobal(t *testing.T) {
 		if !found {
 			t.Fatalf("module %q should include node_capacity tool, got tools: %v", mod, profile.Tools)
 		}
+	}
+}
+
+func TestIsAgentInternalEndpoint(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		want   bool
+	}{
+		{name: "agent commands is internal", method: "GET", path: "/api/v1/agents/a1/commands", want: true},
+		{name: "manifest is internal", method: "GET", path: "/api/v1/arsenals/manifest", want: true},
+		{name: "arsenal db is internal", method: "GET", path: "/api/v1/arsenals/db", want: true},
+		{name: "arsenal db hash is internal", method: "GET", path: "/api/v1/arsenals/db/hash", want: true},
+		{name: "arsenal db stats is internal", method: "GET", path: "/api/v1/arsenals/db/stats", want: true},
+		{name: "workflow page arsenal list is NOT internal", method: "GET", path: "/api/v1/arsenals/poc", want: false},
+		{name: "non GET should not be internal", method: "POST", path: "/api/v1/arsenals/db", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(tt.method, tt.path, nil)
+			if got := isAgentInternalEndpoint(c); got != tt.want {
+				t.Fatalf("%s %s expected %v, got %v", tt.method, tt.path, tt.want, got)
+			}
+		})
 	}
 }

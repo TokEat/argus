@@ -79,16 +79,33 @@ func (as *AutoScaler) evaluate(ctx context.Context) {
 		return // 没有启用的策略，跳过
 	}
 
-	// 查询队列深度
-	depths := as.queue.QueueDepth(ctx)
-	var totalQueueDepth int64
-	for _, d := range depths {
-		totalQueueDepth += d
-	}
+	// 按租户统计积压目标数，避免跨租户误扩容。
+	queueDepthByTenant := as.queryPendingTargetsByTenant()
 
 	for _, policy := range policies {
-		as.evaluatePolicy(ctx, &policy, totalQueueDepth)
+		as.evaluatePolicy(ctx, &policy, queueDepthByTenant[policy.TenantID])
 	}
+}
+
+func (as *AutoScaler) queryPendingTargetsByTenant() map[string]int64 {
+	// 与 API 层 getQueueDepth 口径一致：Pending/Dispatching/Recovered 视为可消费积压。
+	type row struct {
+		TenantID string
+		Cnt      int64
+	}
+	var rows []row
+	as.db.Raw(`
+		SELECT tenant_id, COALESCE(SUM(jsonb_array_length(chunk_targets::jsonb)), 0) AS cnt
+		FROM sub_tasks
+		WHERE status IN ('Pending', 'Dispatching', 'Recovered')
+		GROUP BY tenant_id
+	`).Scan(&rows)
+
+	result := make(map[string]int64, len(rows))
+	for _, r := range rows {
+		result[r.TenantID] = r.Cnt
+	}
+	return result
 }
 
 // evaluatePolicy 对单个策略执行伸缩判定

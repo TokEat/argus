@@ -521,7 +521,7 @@ func deleteCloudInstanceReal(c *gin.Context) {
 	// 异步销毁有云端ID的活跃实例
 	go func() {
 		var account db.CloudAccount
-		if err := db.DB.First(&account, "id = ?", inst.CloudAccountID).Error; err != nil {
+		if err := db.DB.First(&account, "id = ? AND tenant_id = ?", inst.CloudAccountID, inst.TenantID).Error; err != nil {
 			// 凭证也找不到，直接标记终止
 			db.DB.Model(&inst).Updates(map[string]interface{}{"status": db.CloudStatusTerminated})
 			return
@@ -570,7 +570,7 @@ func rebootCloudInstance(c *gin.Context) {
 	// 异步执行重启
 	go func() {
 		var account db.CloudAccount
-		if err := db.DB.First(&account, "id = ?", inst.CloudAccountID).Error; err != nil {
+		if err := db.DB.First(&account, "id = ? AND tenant_id = ?", inst.CloudAccountID, inst.TenantID).Error; err != nil {
 			return
 		}
 		provider, err := cloud.NewProviderFromAccount(&account)
@@ -703,20 +703,24 @@ func uploadAgentToOSS(c *gin.Context) {
 
 	// 如果指定了 files 列表，只上传指定文件
 	if len(req.Files) > 0 {
-		filterSet := make(map[string]bool)
-		for _, f := range req.Files {
-			filterSet[f] = true
-		}
-
 		var results []cloud.OSSUploadResult
 		for _, fname := range req.Files {
-			localPath := filepath.Join(releaseDir, fname)
-			objectKey := fmt.Sprintf("argus/agent/%s", fname)
+			safeName, safeErr := sanitizeReleaseFilename(fname)
+			if safeErr != nil {
+				results = append(results, cloud.OSSUploadResult{
+					Filename: fname,
+					Error:    safeErr.Error(),
+				})
+				continue
+			}
+
+			localPath := filepath.Join(releaseDir, safeName)
+			objectKey := fmt.Sprintf("argus/agent/%s", safeName)
 
 			info, err := os.Stat(localPath)
 			if err != nil {
 				results = append(results, cloud.OSSUploadResult{
-					Filename:  fname,
+					Filename:  safeName,
 					ObjectKey: objectKey,
 					Error:     fmt.Sprintf("文件不存在: %v", err),
 				})
@@ -724,7 +728,7 @@ func uploadAgentToOSS(c *gin.Context) {
 			}
 
 			result := cloud.OSSUploadResult{
-				Filename:  fname,
+				Filename:  safeName,
 				ObjectKey: objectKey,
 				Size:      info.Size(),
 			}
@@ -794,6 +798,21 @@ func uploadAgentToOSS(c *gin.Context) {
 		"failed_count": failedCount,
 		"results":      results,
 	})
+}
+
+func sanitizeReleaseFilename(name string) (string, error) {
+	clean := strings.TrimSpace(name)
+	if clean == "" {
+		return "", fmt.Errorf("文件名不能为空")
+	}
+	clean = filepath.Clean(clean)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/") || strings.Contains(clean, "\\") {
+		return "", fmt.Errorf("非法文件名: %s", name)
+	}
+	if !strings.HasPrefix(clean, "dddd-agent-") {
+		return "", fmt.Errorf("仅允许上传 Agent 二进制文件: %s", clean)
+	}
+	return clean, nil
 }
 
 // uploadLocalAgentToOSS 接收本地上传的文件，保存到 ./release 目录并推送到 OSS
@@ -1345,7 +1364,7 @@ func oneClickSetup(c *gin.Context) {
 	}
 
 	// 重新读取最新配置
-	db.DB.Where("id = ?", accountID).First(&account)
+	db.DB.Where("id = ? AND tenant_id = ?", accountID, tenantID).First(&account)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":         "ok",
@@ -1544,7 +1563,7 @@ func queryCloudPrice(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"instance_type":  instanceType,
-		"region":         account.Region,
+		"region":         region,
 		"spot_strategy":  spotStrategy,
 		"instance_price": priceInfo.InstancePrice,
 		"spot_price":     priceInfo.SpotPrice,

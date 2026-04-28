@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -19,17 +20,30 @@ var roleHierarchy = map[string]int{
 // 权限映射：endpoint pattern => 最低角色
 var permissionRules = map[string]string{
 	// 读操作 — viewer 即可
-	"GET:/tasks":        "viewer",
-	"GET:/nodes":        "viewer",
-	"GET:/vulns":        "viewer",
-	"GET:/assets":       "viewer",
-	"GET:/fingerprints": "viewer",
-	"GET:/profiles":     "viewer",
-	"GET:/stats":        "viewer",
-	"GET:/ws":           "viewer",
+	"GET:/projects":                "viewer",
+	"GET:/tasks":                   "viewer",
+	"GET:/tasks/*":                 "viewer",
+	"GET:/nodes":                   "viewer",
+	"GET:/vulns":                   "viewer",
+	"GET:/assets":                  "viewer",
+	"GET:/fingerprints":            "viewer",
+	"GET:/profiles":                "viewer",
+	"GET:/stats":                   "viewer",
+	"GET:/stats/trends":            "viewer",
+	"GET:/stats/severity":          "viewer",
+	"GET:/stats/task-results":      "viewer",
+	"GET:/stats/recent-high-vulns": "viewer",
+	"GET:/reports/export/vulns":    "viewer",
+	"GET:/arsenals/*":              "viewer",
+	"GET:/dictionaries/*":          "viewer",
+	"GET:/ws":                      "viewer",
 
 	// 操作类 — operator 以上
+	"GET:/queue/depth":                "operator",
+	"GET:/build/artifacts":            "operator",
+	"GET:/agents/*/logs":              "operator",
 	"POST:/tasks":                     "operator",
+	"POST:/tasks/*/append":            "operator",
 	"POST:/tasks/*/cancel":            "operator",
 	"DELETE:/tasks/*":                 "operator",
 	"POST:/arsenals/*":                "operator",
@@ -46,7 +60,11 @@ var permissionRules = map[string]string{
 	"DELETE:/users/*":      "admin",
 	"POST:/mcp/keys":       "admin",
 	"DELETE:/mcp/keys/*":   "admin",
+	"GET:/mcp/keys":        "admin",
+	"GET:/users":           "admin",
+	"GET:/cloud/*":         "admin",
 	"POST:/cloud/*":        "admin",
+	"PUT:/cloud/*":         "admin",
 	"DELETE:/cloud/*":      "admin",
 	"GET:/config/api-keys": "admin",
 	"PUT:/config/api-keys": "admin",
@@ -108,21 +126,64 @@ func matchPermission(method string, path string) string {
 		return role
 	}
 
-	// 通配符匹配：逐级替换路径段为 *
-	parts := strings.Split(cleanPath, "/")
-	for i := len(parts) - 1; i >= 1; i-- {
-		pattern := make([]string, len(parts))
-		copy(pattern, parts)
-		pattern[i] = "*"
-		key = method + ":" + strings.Join(pattern, "/")
-		if role, ok := permissionRules[key]; ok {
-			return role
+	// 通配符匹配：支持多段匹配，按 pattern 长度降序选择最具体规则。
+	type candidate struct {
+		pattern string
+		role    string
+	}
+	var candidates []candidate
+	for ruleKey, role := range permissionRules {
+		parts := strings.SplitN(ruleKey, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		if parts[0] != method {
+			continue
+		}
+		pattern := parts[1]
+		if wildcardPathMatch(pattern, cleanPath) {
+			candidates = append(candidates, candidate{pattern: pattern, role: role})
 		}
 	}
-
-	// 默认：GET 请求 viewer 可访问，其他需要 operator
-	if method == "GET" {
-		return "viewer"
+	if len(candidates) > 0 {
+		sort.Slice(candidates, func(i, j int) bool {
+			return len(candidates[i].pattern) > len(candidates[j].pattern)
+		})
+		return candidates[0].role
 	}
-	return "operator"
+
+	// 默认最小权限：未显式声明的接口按 admin 处理，避免新增路由时误开放。
+	return "admin"
+}
+
+// wildcardPathMatch 判断规则 pattern 是否匹配实际 path。
+// 规则:
+// 1) pattern 末尾为 "/*" 时，匹配该前缀下任意深度路径；
+// 2) 其余情况按路径段匹配，"*" 表示当前段任意值。
+func wildcardPathMatch(pattern string, path string) bool {
+	if pattern == path {
+		return true
+	}
+	if strings.HasSuffix(pattern, "/*") {
+		base := strings.TrimSuffix(pattern, "/*")
+		if path == base {
+			return true
+		}
+		return strings.HasPrefix(path, base+"/")
+	}
+
+	patternParts := strings.Split(strings.Trim(pattern, "/"), "/")
+	pathParts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(patternParts) != len(pathParts) {
+		return false
+	}
+	for i := range patternParts {
+		if patternParts[i] == "*" {
+			continue
+		}
+		if patternParts[i] != pathParts[i] {
+			return false
+		}
+	}
+	return true
 }
