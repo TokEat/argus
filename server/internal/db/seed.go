@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // SeedArsenalFromDisk 从磁盘上的 scanner/common/config/ 目录读取规则库数据,
@@ -149,7 +150,11 @@ func seedSingleFile(tx *gorm.DB, typ, fileName, content string) error {
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	if err := tx.Create(&arsenal).Error; err != nil {
+	// 使用 Upsert 防止唯一键冲突导致事务 abort (SQLSTATE 25P02)
+	if err := tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"content", "hash", "state", "updated_at"}),
+	}).Create(&arsenal).Error; err != nil {
 		return fmt.Errorf("seed %s/%s failed: %w", typ, fileName, err)
 	}
 	return nil
