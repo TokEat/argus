@@ -34,6 +34,7 @@ func TestIdentifyServiceFingerprints(t *testing.T) {
 				Rule:        ddfinger.ParseRule(`banner="openssh" && protocol="ssh"`),
 			},
 		},
+		nil,
 	)
 
 	rt.Identify()
@@ -94,6 +95,7 @@ func TestIdentifyWebFingerprints(t *testing.T) {
 				Rule:        ddfinger.ParseRule(`body="acme admin" && title="admin"`),
 			},
 		},
+		nil,
 	)
 
 	rt.Identify()
