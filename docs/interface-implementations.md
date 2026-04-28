@@ -125,8 +125,14 @@
 | `GET` | `/cloud/accounts` | 是 | 返回当前租户的云账号凭证列表（AccessKey 脱敏返回） |
 | `POST` | `/cloud/accounts` | 是 | 创建云账号凭证，AccessKey ID/Secret 使用 AES-256-GCM 加密入库 |
 | `PUT` | `/cloud/accounts/:id` | 是 | 更新云账号信息（支持部分更新，凭证变更时重新加密） |
-| `DELETE` | `/cloud/accounts/:id` | 是 | 删除云账号凭证 |
+| `DELETE` | `/cloud/accounts/:id` | 是 | 删除云账号凭证；若仍有关联的活跃实例或伸缩策略则拒绝删除 |
 | `POST` | `/cloud/accounts/:id/test` | 是 | 测试云账号连通性（创建 Provider 并调用 ListInstances 验证） |
+| `POST` | `/cloud/accounts/:id/oss/upload` | 是 | 上传 `release/` 目录中的 Agent 二进制到 OSS |
+| `POST` | `/cloud/accounts/:id/oss/test` | 是 | 测试 OSS 连通性 |
+| `GET` | `/cloud/accounts/:id/discover` | 是 | 自动探测实例规格、镜像、安全组、交换机等云资源 |
+| `POST` | `/cloud/accounts/:id/auto-configure` | 是 | 将探测到的默认资源写回云账号配置 |
+| `POST` | `/cloud/accounts/:id/one-click-setup` | 是 | 一键配置资源并在成功前校验必需 Agent 制品已可从 OSS 下载 |
+| `GET` | `/cloud/accounts/:id/permissions` | 是 | 检查当前 AK/SK 身份及一键配置所需 RAM 权限 |
 | `GET` | `/cloud/policies` | 是 | 返回当前租户的伸缩策略列表 |
 | `POST` | `/cloud/policies` | 是 | 创建伸缩策略（含阈值、冷却期、竞价配置、Cloud-Init 模板等） |
 | `PUT` | `/cloud/policies/:id` | 是 | 更新伸缩策略 |
@@ -135,6 +141,7 @@
 | `GET` | `/cloud/instances` | 是 | 返回当前租户的云实例列表（含状态、IP、AgentID、Spot 标识） |
 | `POST` | `/cloud/instances` | 是 | 手动创建云实例（指定 account_id 和数量，单次上限 10） |
 | `DELETE` | `/cloud/instances/:id` | 是 | 销毁指定云实例（异步执行，同时标记关联 Node 为 Offline） |
+| `POST` | `/cloud/instances/:id/reboot` | 是 | 执行 OS 级重启；实例先转入 `Rebooting`，待 OS ready 后回到 `WaitingReady` 等待 Agent 重注册 |
 | `GET` | `/cloud/dashboard` | 是 | 云仪表盘汇总：活跃账号数、启用策略数、运行实例数、最近事件 |
 
 ### 构建

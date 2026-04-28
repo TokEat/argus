@@ -98,11 +98,11 @@
 | WebSocket 实时看板 | 服务端广播 Hub 已可工作，已实现基于租户的数据隔离 | 前端用 `?token=` 建连，后端只认 `Authorization: Bearer`，浏览器实时订阅链路未完全对接 |
 | 优先级 / 标签 / 容量调度 | 多优先级队列、节点标签匹配、`capacity` 字段与负载展示均已存在 | 任务创建接口未暴露 `agent_selector`；Agent 无法向服务端上报容量，Server 注册时容量固定为 `1` |
 | 任务状态机 | `DONE` 场景可聚合 RootTask，`timeout_sec` / 重试已落地 | `FAILED` / `CANCELLED` / `TIMEOUT` 对 RootTask 的最终收敛仍不完整 |
-| 云资源编排 | AutoScaler 自动伸缩引擎已接入 `main.go`、阿里云 ECS Provider 已注册、14 个 REST API 已替换 mock | 前端 CloudManagement 已完成对接 |
-| CloudManagement 页面 | 后端已提供完整的凭证/策略/实例 CRUD 和仪表盘 API | 前端已全量接入真实后端 API 数据流，并支持策略下发 |
+| 云资源编排 | AutoScaler 自动伸缩引擎已接入 `main.go`、阿里云 ECS Provider 已注册、Cloud-Init 地址注入/实例状态收敛/OSS 制品就绪校验已打通、NoStock 多可用区+多规格自动重试+规格降级引擎已实现 | 多云 Provider 扩展与端到端生命周期集成测试仍不足 |
+| CloudManagement 页面 | 后端已提供完整的凭证/策略/实例 CRUD、仪表盘 API、实时价格查询、可用规格列表（23 个端点）；前端已集成手动弹容地域可选+规格可选+实时价格预估 | 前端已全量接入真实后端 API 数据流，并支持策略下发 |
 | ClientBuild 页面 | 可列出 `release/` 目录产物 | 构建触发接口仅返回 `accepted`；`/release/*` 下载路径未真正挂成静态文件服务 |
 | 遥测日志黑匣子 | gRPC `StreamLogs` 服务端与查询接口已实现 | Agent 端没有日志上报发送器，前端也没有日志页面入口 |
-| Spot 回收处理 | `StartSpotTerminationListener` 已实现 | Agent 启动链路未调用该监听器 |
+| Spot 回收处理 | `StartSpotTerminationListener` 已实现，Agent 在 `ARGUS_SPOT=1` 或 `cloud=...` 标签下会自动启用 | 云厂商直接强杀且无预警时仍依赖心跳回收兜底 |
 | Dashboard 数据增强 | 趋势、严重度、任务结果统计、高危漏洞接口已实现 | Dashboard 图表仍有部分前端静态推算，未完全消费真实统计接口 |
 | 角色权限系统 | RBAC 中间件已启用，用户角色字段可生效 | 角色管理页是静态说明页，没有角色 CRUD / 权限矩阵管理接口 |
 | Clean Architecture 迁移 | `core/usecase`、`adapters`、`bootstrap` 目录结构已搭好 | `/api/v2`、新 HTTP/gRPC adapter、仓储与 usecase 仍是 scaffold / `ErrNotImplemented` |

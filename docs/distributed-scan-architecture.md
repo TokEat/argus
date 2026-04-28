@@ -148,7 +148,7 @@ Argus 当前采用典型的 `Control Plane + Data Plane` 结构：
 
 当前已有 `StartSpotTerminationListener` 实现，并已在 Agent 启动链路中激活。
 
-- 环境变量 `ARGUS_SPOT=1` 或 `--tags` 包含 `cloud` 标签时自动启用
+- 环境变量 `ARGUS_SPOT=1` 或 `--tags` 中包含 `cloud=...` 时自动启用
 - 检测到竞价实例回收通知后，触发 `EmergencyDump` 并通过心跳将任务状态重置回队列
 
 ## 4. 任务流转现状
@@ -225,9 +225,10 @@ Argus 当前采用典型的 `Control Plane + Data Plane` 结构：
 - **数据库持久化**：`cloud_accounts`、`cloud_scaling_policies`、`cloud_instances` 三表
 - **凭证安全**：AES-256-GCM 加密存储 AccessKey，API 返回脱敏
 - **Cloud-Init 自动化**：Go template 渲染 Agent 启动脚本，注入 Server 地址、AgentID、PSK
-- **14 个 REST API 端点**：凭证 CRUD + 连通性测试、策略 CRUD + 开关、实例列表/创建/销毁、仪表盘
+- **实例状态真相收敛**：OS ready 只会把实例维持在 `WaitingReady`；只有 Agent 成功 `Register` 后才会进入 `Running`
+- **21 个 REST API 端点**：覆盖凭证、策略、实例、Agent OSS 分发、权限检查和一键配置
 - **Provider 注册表模式**：aliyun 包在 `init()` 中自注册，`cloud` 包不直接导入 Provider 子包
-- **Spot 实例支持**：Agent 启动时自动激活 `StartSpotTerminationListener`（检测 `ARGUS_SPOT=1` 或 cloud 标签）
+- **Spot 实例支持**：Agent 启动时自动激活 `StartSpotTerminationListener`（检测 `ARGUS_SPOT=1` 或 `cloud=...` 标签）
 
 ### 当前限制
 

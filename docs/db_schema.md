@@ -543,7 +543,7 @@
 
 ## 5.1 云资源编排
 
-> 云资源编排三表已落地，对应 GORM 模型在 `server/internal/db/cloud_models.go`，SQL migration 为 `060_add_cloud_tables.sql`。
+> 云资源编排三表已落地，对应 GORM 模型在 `server/internal/db/cloud_models.go`，SQL migration 为 `060_add_cloud_tables.sql`、`070_add_oss_fields.sql`、`080_add_cloud_instance_reboot_count.sql`。
 
 #### `cloud_accounts`
 
@@ -561,6 +561,8 @@
 | `default_security_group` | string | 默认安全组 ID | - |
 | `default_v_switch` | string | 默认虚拟交换机 ID | - |
 | `status` | string | 凭证状态 (active/disabled) | Index, Default:`active` |
+| `oss_bucket` | string | OSS Bucket 名称（Agent 分发） | - |
+| `oss_endpoint` | string | OSS Endpoint | - |
 | `created_at` / `updated_at` | timestamp | 时间戳 | - |
 
 #### `cloud_scaling_policies`
@@ -599,11 +601,12 @@
 | `status` | string | 实例状态 | Index, Default:`Provisioning` |
 | `spot` | boolean | 是否竞价实例 | Default:`false` |
 | `error_message` | text | 错误信息 | - |
+| `reboot_count` | integer | 重启计数（梯度容错：<2 重启，>=2 销毁） | Default:`0` |
 | `launched_at` / `ready_at` / `terminated_at` | timestamp | 生命周期时间戳 | Nullable |
 | `created_at` / `updated_at` | timestamp | 记录时间戳 | - |
 | `deleted_at` | timestamp | 软删除 | Index, Nullable |
 
-> `cloud_instances.status` 状态机：`Provisioning` → `WaitingReady` → `Running` → `Terminating` → `Terminated`，异常时为 `Error`。
+> `cloud_instances.status` 状态机：`Provisioning` → `WaitingReady` → `Running` → `Rebooting` / `Terminating` → `WaitingReady` / `Terminated`，异常时为 `Error`。其中 `WaitingReady` 只表示 OS 已 ready，仍需等待 Agent 成功注册后才进入 `Running`。
 
 ---
 

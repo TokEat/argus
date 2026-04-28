@@ -24,7 +24,7 @@
 | **AutoScaler** | 核心调度引擎，负责 30s 一次的评估决策（扩缩容判定）、实例对账、孤儿回收。 | `autoscaler.go` |
 | **Provider Factory** | 注册表模式工厂，提供各云厂商实现的创建入口，打破包循环依赖。 | `provider_factory.go` |
 | **CloudProvider** | 屏蔽底层云厂商差异的抽象接口（定义 `Provision` / `Terminate` / `List`）。 | `provider.go` |
-| **Aliyun ECS** | 阿里云的具体 Provider 实现，负责调用阿里云 SDK 执行实例生命周期。 | `aliyun/ecs.go` |
+| **Aliyun ECS** | 阿里云的具体 Provider 实现，负责调用阿里云 SDK 执行实例生命周期、**多可用区+多规格 NoStock 重试**、可用区库存路由和价格查询。 | `aliyun/ecs.go` |
 | **Aliyun OSS** | 阿里云 OSS 客户端，负责 Agent 二进制分片上传和预签名 URL 生成。 | `aliyun/oss.go` |
 | **OSS Distribute** | Agent 二进制分发抽象层，OSSUploader 接口 + 预签名 URL 生成。 | `oss_distribute.go` |
 | **ResourceManager** | 实例级管理器，桥接 Provider API 与 PostgreSQL 数据库状态同步。 | `manager.go` |
@@ -84,6 +84,12 @@ stateDiagram-v2
     Error --> Terminating: 人工或 OrphanSweeper 清理
 ```
 
+**当前实现约束（已与代码同步）**
+
+- `WaitReady` 只表示云主机在 OS 层面可达，控制面此时只会回填实例 IP，并保持 `cloud_instances.status = WaitingReady`。
+- 只有当 Agent 成功调用 gRPC `Register` 后，服务端才会同时更新 `nodes` 与对应的 `cloud_instances`，把实例提升为 `Running` 并写入 `ready_at`。
+- 人工重启与 HeartbeatReaper 触发的重启都会先进入 `Rebooting`，待云主机重新 ready 后回到 `WaitingReady`，继续等待 Agent 重新注册，而不是直接视为恢复完成。
+
 ### 3.3 Agent 二进制分发机制
 
 云实例通过 Cloud-Init 脚本在启动时自动下载并部署 Agent。系统支持两种分发通道：
@@ -92,6 +98,12 @@ stateDiagram-v2
 |------|----------|----------|--------|
 | **OSS 预签名 URL（推荐）** | CloudAccount 配置了 `oss_bucket` + `oss_endpoint` | 内网 > 200MB/s | 预签名 URL，1 小时过期 |
 | **Server HTTP Fallback** | 未配置 OSS | 取决于 Server 带宽 | 无鉴权，依赖安全组 |
+
+**当前实现约束（已与代码同步）**
+
+- Cloud-Init 中注入给 Agent 的 `--server` / `--api` 地址必须是可路由地址。系统会优先使用 `ARGUS_PUBLIC_IP` 与 `ARGUS_PUBLIC_API`；未设置时会自动探测本机的出站地址，不再把 `0.0.0.0` 写入实例脚本。
+- 默认 Cloud-Init 模板与前端模板保持一致，Agent 启动参数使用 `--tags "cloud=true,auto_scaled=true,target_type=all"`；若配置了 PSK，则额外追加 `--psk`。
+- 若启用了 OSS 分发，一键配置在返回成功前会同步校验 `argus/agent/dddd-agent-linux-amd64` 是否已经可用；缺失时会尝试上传，仍不可用则直接报错，避免后续新实例反复下载 404。
 
 **OSS 分发完整流程：**
 
@@ -120,7 +132,8 @@ sequenceDiagram
 
 1. 在 **云凭证管理** 中创建凭证时填写 OSS Bucket 和 Endpoint
 2. 点击凭证行的 **"上传 Agent"** 按钮，将 `release/` 中的 Agent 二进制上传到 OSS
-3. 后续所有通过该凭证创建的云实例，Cloud-Init 将自动从 OSS 下载 Agent
+3. 也可以直接执行 **OneClickSetup**；若 OSS 已配置，服务端会先验证所需 Agent 制品已经可用，再继续创建默认伸缩策略
+4. 后续所有通过该凭证创建的云实例，Cloud-Init 将自动从 OSS 下载 Agent
 
 ### 3.4 Spot 竞价实例回收感知
 
@@ -177,20 +190,35 @@ sequenceDiagram
 
 ---
 
-## 4. API 设计 (14 个端点)
+## 4. API 设计 (23 个端点)
 
 云管控的 REST API 均在 `server/internal/api/handler_cloud.go` 中实现：
 
 | 领域 | 动作 | API 路径 | 备注 |
 |------|------|----------|------|
-| **凭证** | CRUD | `/cloud/accounts` | 存储加密，返回脱敏 |
-| **凭证** | Test | `/cloud/accounts/:id/test` | 测试云端连通性 |
-| **策略** | CRUD | `/cloud/policies` | - |
-| **策略** | Toggle | `/cloud/policies/:id/toggle` | 动态启停伸缩策略 |
-| **实例** | List | `/cloud/instances` | 实例列表查询 |
-| **实例** | Create | `/cloud/instances` | 人工手动弹容 |
-| **实例** | Delete | `/cloud/instances/:id` | 人工强制缩容 |
-| **大屏** | Dashboard | `/cloud/dashboard` | 活跃账号数、实例统计与最新事件 |
+| **凭证** | List | `GET /cloud/accounts` | 返回脱敏 AK |
+| **凭证** | Create | `POST /cloud/accounts` | AES-256-GCM 加密存储 |
+| **凭证** | Update | `PUT /cloud/accounts/:id` | 更新凭证配置（区域、镜像、安全组等） |
+| **凭证** | Delete | `DELETE /cloud/accounts/:id` | 仅当无活跃实例且无绑定伸缩策略时允许删除 |
+| **凭证** | Test | `POST /cloud/accounts/:id/test` | 测试云端连通性 |
+| **凭证** | OSS Upload | `POST /cloud/accounts/:id/oss/upload` | 上传 `release/` 中的 Agent 二进制到 OSS |
+| **凭证** | OSS Test | `POST /cloud/accounts/:id/oss/test` | 测试 OSS 连通性 |
+| **凭证** | Discover | `GET /cloud/accounts/:id/discover` | 自动探测云资源（ECS 规格、镜像、安全组、交换机） |
+| **凭证** | AutoConfigure | `POST /cloud/accounts/:id/auto-configure` | 保存探测结果到凭证配置 |
+| **凭证** | OneClickSetup | `POST /cloud/accounts/:id/one-click-setup` | 一键配置：探测 + 自动创建网络/OSS + 校验 Agent 制品就绪 + 建策略 |
+| **凭证** | Permissions | `GET /cloud/accounts/:id/permissions` | AK/SK 权限检查（STS 身份 + RAM 策略比对） |
+| **凭证** | Price | `GET /cloud/accounts/:id/price` | 查询当前规格的实时价格（按量/竞价），支持 `instance_type`、`spot_strategy`、`region` 参数覆盖 |
+| **凭证** | InstanceTypes | `GET /cloud/accounts/:id/instance-types` | 查询指定地域下有库存的实例规格列表（含 CPU/内存/库存状态），支持 `region`、`spot_strategy` 参数覆盖 |
+| **策略** | List | `GET /cloud/policies` | - |
+| **策略** | Create | `POST /cloud/policies` | - |
+| **策略** | Update | `PUT /cloud/policies/:id` | - |
+| **策略** | Delete | `DELETE /cloud/policies/:id` | - |
+| **策略** | Toggle | `POST /cloud/policies/:id/toggle` | 动态启停伸缩策略 |
+| **实例** | List | `GET /cloud/instances` | 实例列表查询 |
+| **实例** | Create | `POST /cloud/instances` | 人工手动弹容（含可用区智能路由 + 实时价格预估 + 地域/规格可选覆盖） |
+| **实例** | Delete | `DELETE /cloud/instances/:id` | 人工强制缩容 |
+| **实例** | Reboot | `POST /cloud/instances/:id/reboot` | OS 级重启（保留机器）；重启后回到 `WaitingReady` 等待 Agent 重注册 |
+| **大屏** | Dashboard | `GET /cloud/dashboard` | 活跃账号数、实例统计与最新事件 |
 
 ---
 
@@ -206,10 +234,49 @@ sequenceDiagram
 - 采用 Provider 注册表模式（`init()` 自注册）打通包循环依赖。
 
 ✅ **Phase 8 (已完成)**
-- **前端对接**：Server-UI (`CloudManagement` 页面) 已全面对接 14 个后端 API，实现凭证管理、连通性测试、策略全量配置与仪表盘大屏的数据闭环。
+- **前端对接**：Server-UI (`CloudManagement` 页面) 已全面对接后端 API，实现凭证管理、连通性测试、策略全量配置与仪表盘大屏的数据闭环。
+- **一键配置**：实现自动探测云资源 → 自动创建安全组/VPC/交换机 → 自动创建 OSS Bucket → 自动上传 Agent 到 OSS → 自动创建伸缩策略的全自动流程。
+- **OSS 分发管理**：支持 Agent 二进制分片上传与 OSS 连通性测试，避免在云调度页面引入通用文件管理器。
 
-⏳ **Phase 9 (待实施)**
+✅ **Phase 9 (已完成)**
+- **权限检查与凭证诊断**：通过 STS `GetCallerIdentity` 识别 AK/SK 身份（Root / RAM 用户 / RAM 角色 / STS 临时凭证），结合 RAM `ListPoliciesForUser/Group/Role` 获取绑定策略，自动比对一键配置所需的 19 项 Action（ECS 8 + VPC 5 + OSS 6），前端提供可视化权限比对面板和一键复制最小权限策略 JSON。
+- **核心模块**：`server/internal/cloud/aliyun/permission.go`
+
+✅ **Phase 10 (已完成)**
+- **全链路打通优化**：
+  - Cloud-Init 模板同步：前端默认模板与后端 `DefaultCloudInitTemplate` 保持一致，使用 Go template 变量（`{{.DownloadURL}}` `{{.ServerAddr}}` 等）。
+  - 最经济方案默认预设：前后端统一为「经济型弹性扫描策略」—— `SpotAsPriceGo` 竞价（节省 70-90%）+ `min_instances=0`（零保底）+ `scale_down_threshold=0`（队列清空立即缩容）+ `instance_ttl_minutes=60`（1 小时强制回收）。
+  - 凭证管理增强：操作列新增「上传 Agent」「OSS 测试」按钮；展开行增加全链路就绪状态指示和 Agent 分发方式展示。
+  - Server 地址注入优化：`ARGUS_PUBLIC_IP` / `ARGUS_PUBLIC_API` 环境变量支持；未显式设置时自动探测可路由地址，避免把 `0.0.0.0` 注入到 Cloud-Init。
+
+### 5.1 2026-04-28 稳定性修订
+
+- **运行态收敛修正**：实例只有在 Agent gRPC `Register` 成功后才会从 `WaitingReady` 进入 `Running`；OS ready 仅回填 IP，不再提前报运行中。
+- **账号删除保护**：删除云账号前会校验该账号下是否仍存在活跃实例或绑定策略，防止回收链路失联后继续计费。
+- **重启恢复安全化**：人工重启改为显式传递非空 `context.Context`，避免恢复协程因 `ctx.Done()` 崩溃。
+- **OneClickSetup 就绪校验**：一键配置在返回成功前会同步校验 OSS 中的必需 Agent 制品，校验失败会中止流程并返回错误。
+- **Cloud-Init 启动参数修正**：默认模板与前端模板统一为 Agent 当前支持的参数集，云实例默认标签改为 `cloud=true,auto_scaled=true,target_type=all`。
+- **前端 Form 稳定性修复**：策略表单提取为 `useMemo` + `useRef` 架构——`useMemo` 隔离无关 state 更新导致的 Tabs re-render，`useRef` 持有 handler 最新引用避免 stale closure；`initialValues` 补全全部字段（含 `name`）作为 Form 重建兜底。
+
+### 5.2 2026-04-28 全链路审查修复
+
+- **[P0] reboot_count Migration 缺失修复**：`CloudInstance` GORM 模型中定义了 `RebootCount` 字段（梯度容错策略用于判定"先重启还是直接销毁"），但 `060_add_cloud_tables.sql` 遗漏了对应的 SQL 列。新增 `080_add_cloud_instance_reboot_count.sql` 补齐，修复生产 `apply` 模式下的 SQL 执行错误。
+- **[P1] 多租户 Register 修复**：gRPC `Register` 原先将 Node 的 `tenant_id` 硬编码为 `"default"`，导致非默认租户的云实例注册后 Node 记录与 CloudInstance 记录租户不匹配。修复后优先从 Agent 启动标签 `--tags tenant_id=xxx`（Cloud-Init 注入）提取，回退到关联 CloudInstance 记录的 `tenant_id`，最终兜底 `"default"`。
+- **可用区智能路由**：`CreateInstance` 前新增 `resolveCompatibleVSwitch` 预检步骤：调用 `DescribeAvailableResource` 查询实例规格在当前地域下哪些可用区有库存，若配置的 VSwitch 所在可用区不支持该规格，则自动在同 VPC 下查找或创建兼容可用区的 VSwitch。解决 `InvalidResourceType.NotSupported` 错误（如 `ecs.c6.large` 在 `cn-shanghai-k` 不存在）。
+- **实时价格查询**：新增 `GET /cloud/accounts/:id/price` API，调用 `DescribePrice` + `DescribeSpotPriceHistory` 返回单台小时价、竞价折扣率；前端弹容 Modal 选择凭证后自动查价，展示「单台小时价 + 总费用预估 + 竞价折扣」。
+
+### 5.3 2026-04-28 库存韧性与弹性选择增强
+
+- **[P0] NoStock 多维重试**：`CreateInstance` 重写为**多规格 × 多可用区**重试循环。当 `RunInstances` 返回 `OperationDenied.NoStock` 或 `InvalidResourceType.NotSupported` 时，自动切换到下一个可用区；穷尽后切换到同族更新代规格（如 c6→c7→c8y→c8i→c7a→c8a），直至找到有库存的组合或全部失败。新增 `getOrCreateVSwitchForZone` 按需解析/创建目标可用区的 VSwitch。
+- **[P0] 实例规格降级引擎**：新增 `generateFallbackTypes()` 函数，内置主流 6 大系列（c/g/r/e/t/s）的代际升级路径映射表，未知系列自动按代际号 +1/+2 尝试。`resolveCompatibleVSwitch` 升级为 `(vSwitchID, resolvedInstanceType, error)` 三元返回，降级后在日志中标注规格变更。
+- **[P1] 可用规格实时查询**：新增 `GET /cloud/accounts/:id/instance-types` API + `QueryAvailableInstanceTypes()` 方法，交叉比对 `DescribeAvailableResource`（库存状态）与 `DescribeInstanceTypes`（CPU/内存详情），返回 10 个主流系列中 2~16 核且有库存的规格列表（含 `WithStock` / `ClosedWithStock` 状态标记）。
+- **[P1] 弹容地域可选**：手动弹容 Modal 新增地域 Select 下拉框，选择凭证后自动加载全部可用地域列表；切换地域联动刷新可用规格和实时价格。创建请求支持 `region` 和 `instance_type` 参数覆盖，通过 `ScaleUpManual` 的 `regionOverride` / `instanceTypeOverride` 临时注入（不修改数据库凭证配置）。
+- **[P2] 库存过滤放宽**：`queryAvailableZones` 新增接受 `ClosedWithStock` 状态（限量库存但仍可购买），扩大可用区搜索范围。
+- **[P2] 价格/规格 API Region 覆盖**：`queryCloudPrice` 和 `listAvailableInstanceTypes` 均支持 `?region=xxx` 查询参数覆盖凭证默认地域，供前端跨地域比价/选规格。
+
+⏳ **Phase 11 (待实施)**
 - **多云扩展**：基于已有的 `CloudProvider` 抽象，横向补充 AWS EC2、腾讯云 CVM 等实现。
+- **EventBridge 集成**：打通云厂商事件总线，实现 Spot 回收的毫秒级推送通知。
 
 ---
 
@@ -226,8 +293,10 @@ sequenceDiagram
 - **演进**：引入**阶梯式缩容 (Cooldown)**，并结合云厂商计费周期的**踩点回收**（如：在按小时计费周期结束前 5 分钟再执行释放），最大化利用已购资源。
 
 ### 6.3 冷启动效率瓶颈
-- **局限**：当前强依赖 `Cloud-Init` 并在机器启动时通过公网动态 `curl` 下载 Agent 二进制文件。这种方式不仅受限于外部网络波动导致超时失败，在未来如果 Agent 引入复杂的环境依赖（如浏览器爬虫、特定 Python 运行库），启动耗时将不可接受。
-- **演进**：引入 **黄金镜像机制 (Golden Image / AMI)**。结合 HashiCorp Packer 在流水线中提前打包好包含 Agent 及全套依赖的系统镜像，实现云实例的秒级拉起。
+- **局限**：当前 Cloud-Init 通过 OSS 内网下载 Agent 二进制（约 100MB），正常耗时约 10-30 秒。但如果未配置 OSS 而走 Server HTTP Fallback，下载速度受限于公网带宽，首次启动可能需要数分钟。
+- **演进**：优化 Agent 二进制体积（UPX 压缩、按架构拆分），或利用 OSS 多地域同步实现就近下载。
+
+> **关于「黄金镜像」方案**：该方案（将 Agent 预烘焙到系统镜像中）已被评估后放弃。原因：Argus Agent 是单一 Go 二进制，体积约 100MB，通过 OSS 内网下载仅需数秒，预烘焙带来的秒级提升不值得承担镜像维护和版本同步的复杂度。当前架构使用**公共镜像 + OSS 分发**，兼容所有实例系列（含 `ecs.e` 经济型），无需自定义镜像。
 
 ### 6.4 Spot 实例回收感知的盲区
 - **局限**：系统完全依赖 Agent 侧定期轮询云主机底层的 Metadata 接口获取 5 分钟警告。在极端资源枯竭情况下，云厂商可能跳过警告直接强杀，导致 `EmergencyDump` 无法执行。

@@ -165,7 +165,7 @@ Argus 不仅强调后端的健壮，同样注重前端的人机交互体验与�
 - [ ] **RootTask 终态收敛逻辑**：强化从千万级 SubTask 中准确判定并修改父级 RootTask 完成状态的高效算法。
 
 ### 7.3 已落地但仍在演进的能力
-- [x] **云资源弹性调度与前端闭环**：已实现 AutoScaler 自动伸缩引擎，支持阿里云 ECS，前端 `CloudManagement` 页面已完成 14 个 REST API 数据流打通。
+- [x] **云资源弹性调度与前端闭环**：已实现 AutoScaler 自动伸缩引擎，支持阿里云 ECS，前端 `CloudManagement` 页面已完成云凭证、策略、实例、Agent OSS 分发、权限检查与一键配置等 21 个 REST API 数据流打通。
 - [x] **AI Copilot 与工具链**：已内置基于 LLM 的 AI 助手、POC 分析审查、流式 Tool Calling。
 
 ---
