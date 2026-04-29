@@ -1,8 +1,10 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { Alert, App, AutoComplete, Button, Form, Input, Space, Spin, Tag, Typography } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import { ReloadOutlined, RobotOutlined, SaveOutlined, CloudSyncOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { getAIConfig, saveAIConfig, listAIModels, testAIConnection } from '../services/api';
+import gsap from 'gsap';
+import NetworkCanvas from '../components/NetworkCanvas';
 
 const { Text } = Typography;
 
@@ -28,6 +30,21 @@ const AIConfig: React.FC = () => {
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState<{ success: boolean; response?: string; error?: string; elapsed_ms: number; base_url: string; model: string } | null>(null);
     const { message } = App.useApp();
+    const pageRef = useRef<HTMLDivElement>(null);
+
+    /* GSAP entrance */
+    useEffect(() => {
+        if (!pageRef.current) return;
+        const els = pageRef.current.querySelectorAll('.sys-animate-in');
+        if (els.length === 0) return;
+        const ctx = gsap.context(() => {
+            gsap.from(els, {
+                y: 24, opacity: 0, duration: 0.45,
+                stagger: 0.08, ease: 'power2.out', clearProps: 'transform,opacity',
+            });
+        }, pageRef);
+        return () => ctx.revert();
+    }, []);
 
     const fetchConfig = async () => {
         setLoading(true);
@@ -145,8 +162,9 @@ const AIConfig: React.FC = () => {
     }));
 
     return (
-        <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div ref={pageRef} style={{ position: 'relative', overflow: 'hidden' }}>
+            <NetworkCanvas color="#6366f1" count={25} speed={0.12} linkDist={90} />
+            <div className="sys-animate-in" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, position: 'relative', zIndex: 1 }}>
                 <Space>
                     <RobotOutlined style={{ color: '#6366f1' }} />
                     <Text strong>AI 模型配置</Text>
@@ -165,7 +183,7 @@ const AIConfig: React.FC = () => {
                 </Space>
             </div>
 
-            <ProCard className="glass-card" style={{ background: 'transparent', border: 'none', padding: 0 }}>
+            <ProCard className="glass-card sys-animate-in" style={{ background: 'transparent', border: 'none', padding: 0, position: 'relative', zIndex: 1 }}>
                 <Form form={form} layout="vertical" style={{ maxWidth: 760 }}>
                     <Form.Item
                         label="Base URL"

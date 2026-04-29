@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useRef, useEffect } from 'react';
 import { Typography, Tag, Space, Row, Col, List, Table, Divider } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import { SafetyOutlined, CrownOutlined, ToolOutlined, EyeOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import gsap from 'gsap';
+import NetworkCanvas from '../components/NetworkCanvas';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -87,9 +89,26 @@ const cardStyle = {
 };
 
 const RoleManagement: React.FC = () => {
+    const pageRef = useRef<HTMLDivElement>(null);
+
+    /* GSAP entrance */
+    useEffect(() => {
+        if (!pageRef.current) return;
+        const els = pageRef.current.querySelectorAll('.sys-animate-in');
+        if (els.length === 0) return;
+        const ctx = gsap.context(() => {
+            gsap.from(els, {
+                y: 24, opacity: 0, duration: 0.45,
+                stagger: 0.08, ease: 'power2.out', clearProps: 'transform,opacity',
+            });
+        }, pageRef);
+        return () => ctx.revert();
+    }, []);
+
     return (
-        <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <div ref={pageRef} style={{ position: 'relative', overflow: 'hidden' }}>
+            <NetworkCanvas color="#6366f1" count={25} speed={0.12} linkDist={90} />
+            <div className="sys-animate-in" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, position: 'relative', zIndex: 1 }}>
                 <Title level={4} style={{ margin: 0, color: '#1e293b', fontWeight: 600 }}>
                     <SafetyOutlined style={{ marginRight: 8, color: '#6366f1' }} />
                     角色权限管理
@@ -97,7 +116,7 @@ const RoleManagement: React.FC = () => {
                 <Tag color="blue">3 个角色</Tag>
             </div>
 
-            <Row gutter={[16, 16]}>
+            <Row gutter={[16, 16]} className="sys-animate-in" style={{ position: 'relative', zIndex: 1 }}>
                 {roles.map((role) => (
                     <Col xs={24} md={8} key={role.key}>
                         <ProCard style={{ ...cardStyle, height: '100%' }} bodyStyle={{ padding: 0 }}>

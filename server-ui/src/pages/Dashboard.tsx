@@ -123,7 +123,7 @@ const Dashboard: React.FC = () => {
                     duration: 0.5,
                     stagger: 0.08,
                     ease: 'power2.out',
-                    clearProps: 'all',
+                    clearProps: 'transform,opacity',
                 });
 
                 // CountUp for each stat value
@@ -155,7 +155,7 @@ const Dashboard: React.FC = () => {
                     stagger: 0.05,
                     ease: 'power2.out',
                     delay: 0.4,
-                    clearProps: 'all',
+                    clearProps: 'transform,opacity',
                 });
             }
 
@@ -169,7 +169,7 @@ const Dashboard: React.FC = () => {
                     stagger: 0.05,
                     ease: 'power2.out',
                     delay: 0.5,
-                    clearProps: 'all',
+                    clearProps: 'transform,opacity',
                 });
             }
 
@@ -183,7 +183,7 @@ const Dashboard: React.FC = () => {
                     stagger: 0.1,
                     ease: 'power2.out',
                     delay: 0.3,
-                    clearProps: 'all',
+                    clearProps: 'transform,opacity',
                 });
             }
         });

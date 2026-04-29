@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Typography, Tag, Space, Button, Spin, Tooltip, Popover, Badge, Empty, Progress, List, Row, Col, Divider, message, Popconfirm } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
@@ -18,6 +18,8 @@ import {
 import { getNodes, deleteNode, cleanOfflineNodes } from '../services/api';
 import { useAutoContext } from '../contexts/GlobalAIContext';
 import { canAccessRole } from '../utils/auth';
+import gsap from 'gsap';
+import NetworkCanvas from '../components/NetworkCanvas';
 
 const { Title, Text } = Typography;
 
@@ -25,6 +27,21 @@ const NodeManagement: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [nodes, setNodes] = useState<API.AgentNode[]>([]);
     const canManageNodes = canAccessRole('operator');
+    const cardsRef = useRef<HTMLDivElement>(null);
+
+    /* GSAP card entrance */
+    useEffect(() => {
+        if (!cardsRef.current || nodes.length === 0) return;
+        const cards = cardsRef.current.querySelectorAll('.node-card');
+        if (cards.length === 0) return;
+        const ctx = gsap.context(() => {
+            gsap.from(cards, {
+                y: 30, opacity: 0, duration: 0.45,
+                stagger: 0.06, ease: 'power2.out', clearProps: 'transform,opacity',
+            });
+        }, cardsRef);
+        return () => ctx.revert();
+    }, [nodes]);
 
     const fetchNodes = async () => {
         setLoading(true);
@@ -290,8 +307,9 @@ const NodeManagement: React.FC = () => {
     };
 
     return (
-        <div style={{ paddingBottom: 40 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <div style={{ paddingBottom: 40, position: 'relative', overflow: 'hidden' }}>
+            <NetworkCanvas color="#0ea5e9" count={35} speed={0.15} linkDist={100} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, position: 'relative', zIndex: 1 }}>
                 <div>
                     <Title level={3} style={{ margin: 0, color: '#1e293b', fontWeight: 600 }}>
                         <ClusterOutlined style={{ marginRight: 12, color: '#0ea5e9' }} />
@@ -336,9 +354,11 @@ const NodeManagement: React.FC = () => {
                     style={{ padding: '100px 0', background: 'rgba(255,255,255,0.4)', borderRadius: 16 }}
                 />
             ) : (
-                <Row gutter={[20, 20]}>
-                    {nodes.map(node => renderNodeCard(node))}
-                </Row>
+                <div ref={cardsRef} style={{ position: 'relative', zIndex: 1 }}>
+                    <Row gutter={[20, 20]}>
+                        {nodes.map(node => renderNodeCard(node))}
+                    </Row>
+                </div>
             )}
             
             <style>{`

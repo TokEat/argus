@@ -14,7 +14,7 @@ const PageTransition: React.FC<{ children: React.ReactNode }> = ({ children }) =
       y: 14,
       duration: 0.32,
       ease: 'power2.out',
-      clearProps: 'all',
+      clearProps: 'transform,opacity',
     });
 
     return () => { tween.kill(); };

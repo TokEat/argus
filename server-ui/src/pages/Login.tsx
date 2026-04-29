@@ -5,6 +5,7 @@ import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import gsap from 'gsap';
 import { login } from '../services/api';
 import loginIllustration from '../assets/login_illustration.png';
+import NetworkCanvas from '../components/NetworkCanvas';
 
 /* ─────────────── inline styles ─────────────── */
 const styles: Record<string, React.CSSProperties> = {
@@ -229,6 +230,9 @@ const Login: React.FC = () => {
         <div style={styles.root}>
             {/* ──────────── LEFT PANEL ──────────── */}
             <div ref={leftPanelRef} style={styles.leftPanel}>
+                {/* canvas particle network */}
+                <NetworkCanvas color="#a78bfa" count={40} speed={0.2} linkDist={120} />
+
                 {/* decorative blobs */}
                 <div className="login-blob" style={styles.blob1} />
                 <div className="login-blob" style={styles.blob2} />

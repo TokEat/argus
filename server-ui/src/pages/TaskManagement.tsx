@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Alert,
@@ -54,6 +54,8 @@ import { cancelTask, createTask, deleteTask, listTasks, listProjects, getTaskDet
 import { getTaskStatusMeta, isTaskCancellable, isTaskFailedLike, isTaskFinished, normalizeTaskStatus } from '../utils/taskStatus';
 import { canAccessRole } from '../utils/auth';
 import { useAutoContext } from '../contexts/GlobalAIContext';
+import gsap from 'gsap';
+import NetworkCanvas from '../components/NetworkCanvas';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -187,6 +189,21 @@ const TaskManagement: React.FC = () => {
     const [detailLoading, setDetailLoading] = useState(false);
     const [taskDetail, setTaskDetail] = useState<API.TaskDetailResponse | null>(null);
     const canManageTasks = canAccessRole('operator');
+    const pageRef = useRef<HTMLDivElement>(null);
+
+    /* GSAP entrance */
+    useEffect(() => {
+        if (!pageRef.current) return;
+        const els = pageRef.current.querySelectorAll('.task-animate-in');
+        if (els.length === 0) return;
+        const ctx = gsap.context(() => {
+            gsap.from(els, {
+                y: 24, opacity: 0, duration: 0.45,
+                stagger: 0.08, ease: 'power2.out', clearProps: 'transform,opacity',
+            });
+        }, pageRef);
+        return () => ctx.revert();
+    }, []);
 
     const fetchTasks = async () => {
         setLoading(true);
@@ -450,8 +467,9 @@ const TaskManagement: React.FC = () => {
     ];
 
     return (
-        <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <div ref={pageRef} style={{ position: 'relative', overflow: 'hidden' }}>
+            <NetworkCanvas color="#10b981" count={30} speed={0.15} linkDist={100} />
+            <div className="task-animate-in" style={{ position: 'relative', zIndex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                 <Title level={4} style={{ margin: 0, color: '#1e293b', fontWeight: 600 }}>
                     <RocketOutlined style={{ marginRight: 8, color: '#10b981' }} />
                     任务管理
@@ -468,7 +486,7 @@ const TaskManagement: React.FC = () => {
                 </Space>
             </div>
 
-            <ProCard className="glass-card" style={{ background: 'transparent', border: 'none' }}>
+            <ProCard className="glass-card task-animate-in" style={{ background: 'transparent', border: 'none', position: 'relative', zIndex: 1 }}>
                 {loading && tasks.length === 0 ? (
                     <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}>
                         <Spin size="large" />

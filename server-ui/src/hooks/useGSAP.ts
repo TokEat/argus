@@ -22,7 +22,7 @@ export function useStaggerIn<T extends HTMLElement = HTMLDivElement>(
         duration: 0.45,
         stagger: 0.06,
         ease: 'power2.out',
-        clearProps: 'all',
+        clearProps: 'transform,opacity',
       });
     }, ref);
 
@@ -80,7 +80,7 @@ export function useFadeIn<T extends HTMLElement = HTMLDivElement>(
         y: 16,
         duration: 0.4,
         ease: 'power2.out',
-        clearProps: 'all',
+        clearProps: 'transform,opacity',
       });
     }, ref);
 

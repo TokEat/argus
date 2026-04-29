@@ -19,6 +19,7 @@ import {
 } from '@ant-design/icons';
 import { getProfiles } from '../services/api';
 import dayjs from 'dayjs';
+import NetworkCanvas from '../components/NetworkCanvas';
 
 const { Title, Text } = Typography;
 
@@ -391,7 +392,7 @@ const ProfilesView: React.FC = () => {
                 duration: 0.4,
                 stagger: 0.05,
                 ease: 'power2.out',
-                clearProps: 'all',
+                clearProps: 'transform,opacity',
             });
         }, cardsRef);
 
@@ -425,8 +426,9 @@ const ProfilesView: React.FC = () => {
     const totalVulns = profiles.reduce((acc, p) => acc + (p.vulns?.length || 0), 0);
 
     return (
-        <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <div style={{ position: 'relative', overflow: 'hidden' }}>
+            <NetworkCanvas color="#8b5cf6" count={30} speed={0.15} linkDist={100} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, position: 'relative', zIndex: 1 }}>
                 <div>
                     <Title level={4} style={{ margin: 0, color: '#1e293b', fontWeight: 600 }}>
                         <ProfileOutlined style={{ marginRight: 8, color: '#8b5cf6' }} />
@@ -474,7 +476,7 @@ const ProfilesView: React.FC = () => {
                 </ProCard>
             ) : (
                 <>
-                    <div ref={cardsRef} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div ref={cardsRef} style={{ display: 'flex', flexDirection: 'column', gap: 12, position: 'relative', zIndex: 1 }}>
                         {profiles.map(p => (
                             <div key={p.host} className="host-card-item">
                                 <HostCard profile={p} />
