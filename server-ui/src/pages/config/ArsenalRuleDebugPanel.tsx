@@ -20,6 +20,7 @@ import { cancelDebugSession, connectWebSocket, debugFingerprint, getNodes } from
 const { Text } = Typography;
 
 const GENERAL_POC_PREFIX = 'General-Poc-';
+const SAFE_POC_ID_PATTERN = /^[A-Za-z0-9_.-]+$/;
 
 interface ArsenalRuleDebugPanelProps {
     fingerprints: API.FingerprintItem[];
@@ -132,8 +133,28 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
 
     const extractPocId = useCallback((yaml: string): string => {
         const m = yaml.match(/^id:\s*(.+)$/m);
-        return m ? m[1].trim() : '';
+        return m ? m[1].trim().replace(/^["']|["']$/g, '') : '';
     }, []);
+
+    const validateCustomPocMount = (values: DebugFormValues): string | null => {
+        const pocID = String(values.custom_wf_pocs || '').trim();
+        if (!String(values.custom_product || '').trim()) {
+            return '自定义 POC 需要填写产品名，用于挂载 Workflow';
+        }
+        if (!values.custom_wf_types || values.custom_wf_types.length === 0) {
+            return '自定义 POC 需要选择至少一个触发阶段';
+        }
+        if (!values.include_poc) {
+            return '自定义 POC 需要勾选执行 Workflow 关联 POC';
+        }
+        if (!pocID) {
+            return '自定义 POC 需要 YAML 中包含有效 id';
+        }
+        if (!SAFE_POC_ID_PATTERN.test(pocID)) {
+            return 'POC ID 只能包含字母、数字、下划线、点和短横线';
+        }
+        return null;
+    };
 
     const onlineDebugNodes = useMemo(
         () => nodes.filter((n) => n.Status === 'Alive' && supportsFingerprintDebug(n.Version)),
@@ -234,6 +255,13 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
         if (pocMode === 'custom' && !customPocContent.trim()) {
             message.error('自定义 POC 内容不能为空');
             return;
+        }
+        if (pocMode === 'custom') {
+            const mountError = validateCustomPocMount(values);
+            if (mountError) {
+                message.error(mountError);
+                return;
+            }
         }
         resetOutput();
         setRunning(true);
@@ -392,7 +420,7 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
                                     <Input type="hidden" />
                                 </Form.Item>
                                 <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>
-                                    POC ID 自动同步：<Tag size="small">{form.getFieldValue('custom_wf_pocs') || '-'}</Tag>
+                                    POC ID 自动同步：<Tag>{form.getFieldValue('custom_wf_pocs') || '-'}</Tag>
                                 </div>
                                 <div style={{ border: '1px solid #e2e8f0', borderRadius: 6, overflow: 'hidden' }}>
                                     <Editor
@@ -406,6 +434,8 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
                                             const id = extractPocId(content);
                                             if (id) {
                                                 form.setFieldValue('custom_wf_pocs', id);
+                                            } else {
+                                                form.setFieldValue('custom_wf_pocs', '');
                                             }
                                         }}
                                         options={{ minimap: { enabled: false }, fontSize: 13, scrollBeyondLastLine: false }}

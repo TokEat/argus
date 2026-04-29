@@ -268,43 +268,23 @@ func globalAIChat(c *gin.Context) {
 		{Role: "system", Content: profile.SystemPrompt},
 	}
 
-	// Inject contextual state if available
+	// Inject layered context into system messages
 	if pageContext != nil {
-		// Separate ambient context from page context for clearer LLM understanding
-		ambient, hasAmbient := pageContext["_ambient"]
-		pageOnly := make(map[string]interface{}, len(pageContext))
-		for k, v := range pageContext {
-			if k != "_ambient" {
-				pageOnly[k] = v
-			}
-		}
-		if len(pageOnly) > 0 {
-			ctxBytes, _ := json.MarshalIndent(pageOnly, "", "  ")
-			finalMessages = append(finalMessages, aipkg.ChatMessage{
-				Role:    "system",
-				Content: fmt.Sprintf("【内部上下文，用户当前不可见】用户当前的页面环境与数据状态如下：\n%s", string(ctxBytes)),
-			})
-		}
-		if hasAmbient {
-			if ambientMap, ok := ambient.(map[string]interface{}); ok && len(ambientMap) > 0 {
-				ambientBytes, _ := json.MarshalIndent(ambientMap, "", "  ")
-				finalMessages = append(finalMessages, aipkg.ChatMessage{
-					Role:    "system",
-					Content: fmt.Sprintf("【全局常驻上下文】以下是平台的实时运行状态，不依赖于用户当前所在页面：\n%s", string(ambientBytes)),
-				})
-			}
-		}
+		injectCopilotContext(&finalMessages, pageContext)
 	}
 
 	finalMessages = append(finalMessages, req.Messages...)
 
-	_, err := agent.QueryEngine(c.Request.Context(), cfg, finalMessages, profile.MaxTurns, func(event string, data interface{}) {
+	answer, err := agent.QueryEngine(c.Request.Context(), cfg, finalMessages, profile.MaxTurns, func(event string, data interface{}) {
 		sendSSE(event, data)
 	})
 
 	if err != nil {
 		sendSSE("error", gin.H{"message": err.Error()})
 	} else {
+		for _, action := range extractPendingActions(answer) {
+			sendSSE("pending_action", action)
+		}
 		sendSSE("result", gin.H{"summary": "Conversation ended."})
 	}
 }
@@ -313,6 +293,13 @@ func resolveCopilotModule(pageContext map[string]interface{}) string {
 	if pageContext == nil {
 		return "global"
 	}
+	// New layered format: check _focus.module first
+	if focus, ok := pageContext["_focus"].(map[string]interface{}); ok {
+		if module, ok := focus["module"].(string); ok && strings.TrimSpace(module) != "" {
+			return strings.TrimSpace(module)
+		}
+	}
+	// Legacy flat format: check module directly
 	if module, ok := pageContext["module"].(string); ok && strings.TrimSpace(module) != "" {
 		return strings.TrimSpace(module)
 	}
@@ -320,7 +307,30 @@ func resolveCopilotModule(pageContext map[string]interface{}) string {
 }
 
 func resolveCopilotProfile(module string) copilotProfile {
-	base := "你是 Argus 平台的全局安全智能助手 (Argus Copilot)。你需要基于当前页面上下文协助用户分析资产、任务、漏洞和规则配置。回答要克制、准确，涉及平台动作时先说明风险和前置条件，不要虚构已经执行的操作。全局常驻上下文中包含实时 Agent 节点数据，用户可能随时询问节点状态，请直接基于上下文回答。"
+	base := `你是 Argus 平台的全局安全智能助手 (Argus Copilot)。
+
+## 上下文结构
+你会收到以下分层上下文信息：
+- 【用户身份】：当前用户的角色、租户、活跃项目。基于此判断用户权限，不要建议超出其角色的操作。
+- 【页面焦点】：用户当前正在查看的页面模块和聚焦实体。据此调整回答的深度和侧重点。
+- 【页面数据】：用户当前页面的实时数据（如任务列表、漏洞详情、资产信息）。优先基于这些数据直接回答，避免让用户去页面上看。
+- 【全局态势】：平台实时运行状态（Agent 节点、队列深度、活跃扫描）。用户可能随时询问系统状态，请直接基于此回答。
+
+## 回答原则
+1. 克制、准确，不编造未出现在上下文中的数据
+2. 涉及平台动作（创建任务、修改规则、操作云资源）时先说明风险和前置条件
+3. 不要虚构已经执行的操作——AI 只能分析和建议，写操作只能输出待确认动作，由用户确认后平台执行
+4. 优先给出可执行的下一步建议，而非泛泛而谈
+5. 如果上下文中有用户正在查看的实体数据，直接引用具体字段回答，不要说"请查看页面"
+
+## 待确认动作协议
+当用户明确要求生成并保存低风险草稿时，可以在回答末尾附加一个独立的 ` + "```pending_action" + ` 代码块。模型不能直接执行动作，也不能声称已经保存。
+当前只允许两类动作：
+1. create_poc_draft：保存 POC 草稿，params 必须包含 file_name 和 content。
+2. upsert_workflow_draft：保存 Workflow 草稿，params 必须包含 product、type、pocs。
+动作 JSON 必须包含 action_type、title、summary、risk_level、params、preview、required_role、confirm_label。
+不要为删除、审核、发布、任务下发、云资源变更输出 pending_action。`
+
 	profile := copilotProfile{
 		SystemPrompt: base,
 		MaxTurns:     4,
@@ -331,32 +341,115 @@ func resolveCopilotProfile(module string) copilotProfile {
 	case "poc_list", "poc_inline":
 		profile.Tools = []string{"argus_docs", "sandbox_debug", "workflow_recommend", "node_capacity"}
 		profile.MaxTurns = 8
-		profile.SystemPrompt = base + " 用户当前正在处理 POC。优先关注 Nuclei YAML 结构、误报风险、无害验证和 Workflow 挂载关系。只有在上下文提供 agent_id、target_url 和完整 poc_content 时，才可以调用 RunSandboxDebug；修改 POC 后应建议或执行沙箱验证。如果用户要求生成、修复、重写或优化 POC，请输出完整的更新后 POC，并放在单独的 ```yaml 代码块中；不要声称已经保存，前端会让用户确认后应用到当前编辑器。"
+		profile.SystemPrompt = base + `
+
+## POC 编辑模式
+用户当前正在处理 POC 规则。优先关注：
+- Nuclei YAML 结构的正确性（id、info、requests 匹配器）
+- 误报风险和无害验证方式
+- Workflow 挂载关系（poc_name 是否已被 Workflow 引用）
+- severity 与实际危害的匹配度
+
+只有在上下文提供 agent_id、target_url 和完整 poc_content 时，才调用 RunSandboxDebug。
+修改 POC 后应建议或执行沙箱验证。
+如果用户要求生成、修复、重写或优化 POC，请输出完整的更新后 POC，放在单独的 ` + "```yaml" + ` 代码块中。
+如果用户明确要求保存为草稿，可以同时输出 create_poc_draft 的 pending_action；否则只给出可应用 YAML。
+不要声称已经保存——前端会让用户确认后应用到编辑器。`
+
 	case "task_results":
 		profile.Tools = []string{"task_insight", "vulnerability_explain", "node_capacity"}
-		profile.SystemPrompt = base + " 用户当前正在查看扫描结果。请重点解释漏洞证据、请求响应、影响范围、复现条件和处置建议；不要编造未出现在上下文中的报文。"
+		profile.SystemPrompt = base + `
+
+## 扫描结果分析模式
+用户当前正在查看扫描结果。请重点：
+- 解释漏洞证据：请求报文、响应报文、匹配条件
+- 评估影响范围：受影响资产数量、暴露面、严重度分布
+- 给出处置建议：修复优先级、复现条件、临时缓解措施
+- 如果上下文中包含具体漏洞详情（selected_vuln），直接引用其字段回答
+- 不要编造未出现在上下文中的报文内容`
+
 	case "task_list":
 		profile.Tools = []string{"task_insight", "node_capacity"}
-		profile.SystemPrompt = base + " 用户当前正在查看任务列表。请重点分析失败、超时、取消、重试和节点负载导致的问题，并给出可执行的排查顺序。"
+		profile.SystemPrompt = base + `
+
+## 任务管理模式
+用户当前正在查看任务列表。请重点：
+- 分析失败/超时/取消任务的原因
+- 识别节点负载导致的任务堆积
+- 给出可执行的排查顺序：先检查节点状态，再检查队列深度，最后检查任务配置
+- 如果上下文中有 viewing_task_detail，深入分析该任务的执行状况`
+
 	case "node_list":
 		profile.Tools = []string{"node_capacity"}
-		profile.SystemPrompt = base + " 用户当前正在查看 Agent 节点。请重点关注在线率、容量、运行中任务、版本兼容性和资源瓶颈。"
+		profile.SystemPrompt = base + `
+
+## 节点管理模式
+用户当前正在查看 Agent 节点。请重点关注：
+- 在线率和离线节点的原因分析
+- 容量利用：运行中任务数 vs 容量上限
+- 版本兼容性：是否有过旧版本需要升级
+- 资源瓶颈：CPU/内存使用率高的节点
+- 如果用户询问特定节点，使用 AnalyzeNodeCapacity 获取详细信息`
+
 	case "asset_list":
 		profile.Tools = []string{"asset_search", "dict_strategy", "vulnerability_explain", "node_capacity"}
-		profile.SystemPrompt = base + " 用户当前正在查看资产。请重点关注资产暴露面、指纹、开放端口、协议识别和下一步探测策略。"
+		profile.SystemPrompt = base + `
+
+## 资产分析模式
+用户当前正在查看资产。请重点关注：
+- 资产暴露面：开放端口、运行服务、Web 应用
+- 指纹识别结果：已识别的产品和版本
+- 关联漏洞：该资产上的已知漏洞
+- 下一步探测策略：建议追加的目录探测或 POC 验证`
+
 	case "workflow_list", "fingerprint_list":
 		profile.Tools = []string{"argus_docs", "workflow_recommend", "workflow_conflicts", "dict_strategy", "node_capacity"}
-		profile.SystemPrompt = base + " 用户当前正在维护弹药库配置。请帮助用户理清 Workflow、指纹、目录探测和 POC 之间的挂载关系，优先给出小步、可回滚的配置建议。"
+		profile.SystemPrompt = base + `
+
+## 弹药库配置模式
+用户当前正在维护 Workflow/指纹配置。请帮助：
+- 理清 Workflow、指纹、目录探测和 POC 之间的挂载关系
+- 检测配置冲突（同一产品重复挂载、无效 POC 引用）
+- 优先给出小步、可回滚的配置建议
+- 确保 product_name 在指纹和 Workflow 之间保持一致
+- 如果用户明确要求创建或更新 Workflow 草稿，可以输出 upsert_workflow_draft 的 pending_action`
+
 	case "dir_list", "dict_list":
 		profile.Tools = []string{"argus_docs", "dict_strategy", "node_capacity"}
-		profile.SystemPrompt = base + " 用户当前正在维护弹药库配置。请帮助用户理清 Workflow、指纹、目录探测和 POC 之间的挂载关系，优先给出小步、可回滚的配置建议。"
+		profile.SystemPrompt = base + `
+
+## 目录探测配置模式
+用户当前正在维护目录探测规则。请帮助：
+- 优化路径字典的覆盖度和精准度
+- 避免过于宽泛的路径导致大量无效请求
+- 结合已识别的指纹产品，建议关联的目录探测规则`
+
 	case "dashboard":
 		profile.Tools = []string{"task_insight", "node_capacity"}
-		profile.SystemPrompt = base + " 用户当前处于控制台总览。请从趋势、风险集中度、任务健康度和近期高危事件角度做归纳，不要替代具体页面的细粒度分析。"
+		profile.SystemPrompt = base + `
+
+## 控制台总览模式
+用户当前处于 Dashboard。请从以下角度归纳：
+- 趋势：近期任务完成率、漏洞发现趋势
+- 风险集中度：哪些项目/资产的高危漏洞最多
+- 任务健康度：失败率、超时率、队列积压情况
+- 近期高危事件：最近发现的 critical/high 漏洞
+- 不要替代具体页面的细粒度分析，给出概要和下一步建议即可`
+
+	case "arsenal_debug":
+		profile.Tools = []string{"argus_docs", "sandbox_debug", "node_capacity"}
+		profile.MaxTurns = 8
+		profile.SystemPrompt = base + `
+
+## 弹药库调试模式
+用户当前正在使用调试功能测试规则。请帮助：
+- 分析调试结果中的指纹命中和漏洞检测情况
+- 解释自定义规则的匹配逻辑
+- 建议规则优化方向`
 	}
 
 	if len(profile.Tools) == 0 {
-		profile.SystemPrompt += " 当前模块没有启用工具，请仅基于上下文和通用安全知识回答。"
+		profile.SystemPrompt += "\n\n当前模块没有启用工具，请仅基于上下文和通用安全知识回答。"
 	}
 	return profile
 }
@@ -386,10 +479,85 @@ func registerCopilotTools(agent *aipkg.Agent, toolNames []string, audit AIToolAu
 	}
 }
 
+// compactPageContext applies priority-aware compression to the page context.
+// It handles both the new layered format and the legacy flat format.
 func compactPageContext(input map[string]interface{}) map[string]interface{} {
 	if input == nil {
 		return nil
 	}
+
+	// Detect new layered format (has _identity or _focus keys)
+	_, hasIdentity := input["_identity"]
+	_, hasFocus := input["_focus"]
+	if hasIdentity || hasFocus {
+		return compactLayeredContext(input)
+	}
+
+	// Legacy flat format — use the old compaction logic
+	return compactLegacyContext(input)
+}
+
+// compactLayeredContext handles the new structured context format.
+// identity + focus + ambient are kept fully (small); data is smartly compressed.
+func compactLayeredContext(input map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{})
+
+	// identity: keep fully (small, ~200 bytes)
+	if v, ok := input["_identity"]; ok {
+		result["_identity"] = redactSensitive(v)
+	}
+
+	// focus: keep fully (small, ~300 bytes)
+	if v, ok := input["_focus"]; ok {
+		result["_focus"] = redactSensitive(v)
+	}
+
+	// data: smart truncation — this is where page-level data lives
+	if v, ok := input["data"].(map[string]interface{}); ok && len(v) > 0 {
+		result["data"] = compactDataLayer(v)
+	} else if v, ok := input["_data"].(map[string]interface{}); ok && len(v) > 0 {
+		result["_data"] = compactDataLayer(v)
+	}
+
+	// Also pass through any legacy flat keys (from useAutoContext) that aren't
+	// part of the layered structure — these come from pages that haven't migrated yet
+	for k, v := range input {
+		if k == "_identity" || k == "_focus" || k == "_ambient" || k == "data" || k == "_data" {
+			continue
+		}
+		result[k] = compactAIValue(v, 0)
+	}
+
+	// ambient: keep fully (already curated, ~1KB)
+	if v, ok := input["_ambient"]; ok {
+		result["_ambient"] = v
+	}
+
+	// Final size check
+	data, err := json.Marshal(result)
+	if err != nil {
+		return result
+	}
+	if len(data) > 16000 {
+		// If still too large, aggressively truncate data layer
+		if d, ok := result["data"].(map[string]interface{}); ok {
+			result["data"] = truncateMapValues(d, 500)
+		}
+		if d, ok := result["_data"].(map[string]interface{}); ok {
+			result["_data"] = truncateMapValues(d, 500)
+		}
+		// Re-check after truncation
+		data2, _ := json.Marshal(result)
+		if len(data2) > 16000 {
+			result["_truncated"] = true
+		}
+	}
+
+	return result
+}
+
+// compactLegacyContext handles the old flat page_context format.
+func compactLegacyContext(input map[string]interface{}) map[string]interface{} {
 	compact, ok := compactAIValue(input, 0).(map[string]interface{})
 	if !ok {
 		return nil
@@ -404,6 +572,131 @@ func compactPageContext(input map[string]interface{}) map[string]interface{} {
 	delete(compact, "request")
 	delete(compact, "response")
 	return compact
+}
+
+// compactDataLayer compresses the data layer by limiting array lengths and string sizes.
+func compactDataLayer(data map[string]interface{}) map[string]interface{} {
+	compact, ok := compactAIValue(data, 0).(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	return compact
+}
+
+// redactSensitive removes token/secret/password fields from context.
+func redactSensitive(value interface{}) interface{} {
+	return compactAIValue(value, 0)
+}
+
+// truncateMapValues truncates all string values in a map to maxLen characters.
+func truncateMapValues(m map[string]interface{}, maxLen int) map[string]interface{} {
+	result := make(map[string]interface{}, len(m))
+	for k, v := range m {
+		if s, ok := v.(string); ok && len(s) > maxLen {
+			result[k] = s[:maxLen] + "…[truncated]"
+		} else {
+			result[k] = v
+		}
+	}
+	return result
+}
+
+// injectCopilotContext builds structured system messages from the layered context.
+func injectCopilotContext(messages *[]aipkg.ChatMessage, pageContext map[string]interface{}) {
+	// Check for new layered format
+	_, hasIdentity := pageContext["_identity"]
+	_, hasFocus := pageContext["_focus"]
+
+	if hasIdentity || hasFocus {
+		// New layered format: inject each layer as a separate system message
+		// for clearer LLM comprehension
+
+		if identity, ok := pageContext["_identity"]; ok {
+			if identityMap, ok := identity.(map[string]interface{}); ok && len(identityMap) > 0 {
+				b, _ := json.MarshalIndent(identityMap, "", "  ")
+				*messages = append(*messages, aipkg.ChatMessage{
+					Role:    "system",
+					Content: fmt.Sprintf("【用户身份】当前用户信息：\n%s", string(b)),
+				})
+			}
+		}
+
+		if focus, ok := pageContext["_focus"]; ok {
+			if focusMap, ok := focus.(map[string]interface{}); ok && len(focusMap) > 0 {
+				b, _ := json.MarshalIndent(focusMap, "", "  ")
+				*messages = append(*messages, aipkg.ChatMessage{
+					Role:    "system",
+					Content: fmt.Sprintf("【页面焦点】用户当前正在查看的页面与实体：\n%s", string(b)),
+				})
+			}
+		}
+
+		// Inject data layer (page-level data from useAutoContext)
+		dataLayer := make(map[string]interface{})
+		for k, v := range pageContext {
+			if k == "_identity" || k == "_focus" || k == "_ambient" || k == "data" || k == "_data" {
+				continue
+			}
+			dataLayer[k] = v
+		}
+		// Also include explicit data/_data key
+		if d, ok := pageContext["data"]; ok {
+			if dMap, ok := d.(map[string]interface{}); ok {
+				for k, v := range dMap {
+					dataLayer[k] = v
+				}
+			}
+		}
+		if d, ok := pageContext["_data"]; ok {
+			if dMap, ok := d.(map[string]interface{}); ok {
+				for k, v := range dMap {
+					dataLayer[k] = v
+				}
+			}
+		}
+		if len(dataLayer) > 0 {
+			b, _ := json.MarshalIndent(dataLayer, "", "  ")
+			*messages = append(*messages, aipkg.ChatMessage{
+				Role:    "system",
+				Content: fmt.Sprintf("【页面数据】用户当前页面的实时数据状态：\n%s", string(b)),
+			})
+		}
+
+		if ambient, ok := pageContext["_ambient"]; ok {
+			if ambientMap, ok := ambient.(map[string]interface{}); ok && len(ambientMap) > 0 {
+				b, _ := json.MarshalIndent(ambientMap, "", "  ")
+				*messages = append(*messages, aipkg.ChatMessage{
+					Role:    "system",
+					Content: fmt.Sprintf("【全局态势】平台实时运行状态（每 30 秒更新）：\n%s", string(b)),
+				})
+			}
+		}
+	} else {
+		// Legacy flat format: inject as before
+		ambient, hasAmbient := pageContext["_ambient"]
+		pageOnly := make(map[string]interface{}, len(pageContext))
+		for k, v := range pageContext {
+			if k != "_ambient" {
+				pageOnly[k] = v
+			}
+		}
+		if len(pageOnly) > 0 {
+			ctxBytes, _ := json.MarshalIndent(pageOnly, "", "  ")
+			*messages = append(*messages, aipkg.ChatMessage{
+				Role:    "system",
+				Content: fmt.Sprintf("【内部上下文，用户当前不可见】用户当前的页面环境与数据状态如下：\n%s", string(ctxBytes)),
+			})
+		}
+		if hasAmbient {
+			if ambientMap, ok := ambient.(map[string]interface{}); ok && len(ambientMap) > 0 {
+				ambientBytes, _ := json.MarshalIndent(ambientMap, "", "  ")
+				*messages = append(*messages, aipkg.ChatMessage{
+					Role:    "system",
+					Content: fmt.Sprintf("【全局常驻上下文】以下是平台的实时运行状态，不依赖于用户当前所在页面：\n%s", string(ambientBytes)),
+				})
+			}
+		}
+	}
 }
 
 func compactAIValue(value interface{}, depth int) interface{} {

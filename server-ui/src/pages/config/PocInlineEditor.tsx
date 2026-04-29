@@ -129,7 +129,7 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
         }
     };
 
-    const saveDraftFromAI = async () => {
+    const saveDraftFromAI = async (contentOverride?: string) => {
         const finalName = (editingFileName || '').trim();
         if (!finalName) {
             throw '请输入文件名';
@@ -139,7 +139,11 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
         }
         setSaving(true);
         try {
-            await saveArsenal('poc', finalName, content);
+            const draftContent = typeof contentOverride === 'string' ? contentOverride : content;
+            await saveArsenal('poc', finalName, draftContent);
+            if (draftContent !== content) {
+                setContent(draftContent);
+            }
             message.success(isNew ? 'POC 已创建（草稿）' : 'POC 已保存（草稿）');
             onSaved?.(finalName);
         } finally {

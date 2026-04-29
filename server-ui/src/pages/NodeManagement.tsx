@@ -53,6 +53,17 @@ const NodeManagement: React.FC = () => {
             online: onlineCount,
             offline: offlineCount,
         },
+        agents: nodes.map(n => ({
+            agent_id: n.AgentID,
+            ip: n.IP,
+            status: n.Status,
+            version: n.Version,
+            os: n.OS,
+            capacity: n.Capacity,
+            running_tasks: n.RunningTasks,
+            cpu: Math.round(n.CPUUsage || 0),
+            mem: Math.round(n.MemUsage || 0),
+        })),
     });
 
     const handleCleanOffline = async () => {

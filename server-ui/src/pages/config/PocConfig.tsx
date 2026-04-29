@@ -171,7 +171,7 @@ http:
         fetchData();
     };
 
-    const saveDraftFromAI = async () => {
+    const saveDraftFromAI = async (contentOverride?: string) => {
         if (!canManageArsenals) {
             throw '当前角色无权保存 POC';
         }
@@ -183,7 +183,11 @@ http:
             throw '文件名已存在，请使用编辑器底部保存按钮确认覆盖';
         }
         const finalName = fileName;
-        await saveArsenal('poc', finalName, editorContent);
+        const draftContent = typeof contentOverride === 'string' ? contentOverride : editorContent;
+        await saveArsenal('poc', finalName, draftContent);
+        if (draftContent !== editorContent) {
+            setEditorContent(draftContent);
+        }
         msg.success(isNew ? (duplicateOf ? `POC ${finalName} 已覆盖（重置为草稿状态）` : 'POC 创建成功（草稿状态）') : 'POC 更新成功');
         fetchData();
     };

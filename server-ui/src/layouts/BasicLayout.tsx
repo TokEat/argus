@@ -34,7 +34,7 @@ const filterRoutesByRole = (routes: RouteConfig[], role: UserRole): RouteConfig[
 };
 
 const BasicLayout: React.FC = () => {
-    const { visible, pageContext, editableTarget, openGlobalAI, closeGlobalAI, setPageContext } = useGlobalAI();
+    const { visible, pageContext, copilotContext, editableTarget, openGlobalAI, closeGlobalAI, setPageContext, setIdentity } = useGlobalAI();
     const draggableRef = useRef<HTMLDivElement>(null);
     const dragPos = useRef({ x: 0, y: 0 });
     const [collapsed, setCollapsed] = useState(false);
@@ -100,6 +100,21 @@ const BasicLayout: React.FC = () => {
             console.error('Failed to fetch projects', err);
         });
     }, [navigate]);
+
+    // Inject identity context for Copilot
+    useEffect(() => {
+        const userId = localStorage.getItem('user_id') || '';
+        const username = localStorage.getItem('username') || '';
+        const projectName = projects.find(p => p.ID === selectedProject)?.Name || '';
+        setIdentity({
+            tenant_id: tenantId,
+            user_id: userId,
+            role,
+            username,
+            active_project_id: selectedProject,
+            active_project_name: projectName,
+        });
+    }, [tenantId, role, selectedProject, projects, setIdentity]);
 
     const handleProjectChange = (value: string) => {
         setSelectedProject(value);
@@ -525,6 +540,7 @@ const BasicLayout: React.FC = () => {
                         visible={visible}
                         onClose={closeGlobalAI}
                         pageContext={pageContext}
+                        copilotContext={copilotContext}
                         editableTarget={editableTarget}
                     />
                     <Draggable nodeRef={draggableRef} bounds="parent" defaultPosition={{ x: 0, y: 0 }}

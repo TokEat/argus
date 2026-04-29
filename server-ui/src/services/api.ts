@@ -230,6 +230,10 @@ export async function aiAnalyzeArsenal(data: API.AIAnalyzeRequest | string): Pro
     return request.post('/ai/arsenal/analyze', payload, { timeout: 90000 });
 }
 
+export async function confirmCopilotAction(action: API.CopilotPendingAction, pageContext?: unknown): Promise<API.CopilotActionResult> {
+    return request.post('/ai/actions/confirm', { action, page_context: pageContext || {} });
+}
+
 /** SSE streaming version of AI analysis — real-time token output */
 export function aiAnalyzeArsenalStream(
     data: API.AIAnalyzeRequest | string,

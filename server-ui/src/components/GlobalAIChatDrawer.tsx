@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Drawer, Input, Button, Spin, Tag, Typography, App } from 'antd';
 import { DeleteOutlined, RadarChartOutlined, RobotOutlined, SecurityScanOutlined, SendOutlined, StopOutlined } from '@ant-design/icons';
-import type { AIEditableTarget, PageContext } from '../contexts/GlobalAIContext';
+import type { AIEditableTarget, CopilotRequestContext, PageContext } from '../contexts/GlobalAIContext';
+import { confirmCopilotAction } from '../services/api';
 
 const { Text } = Typography;
 
@@ -10,6 +11,7 @@ interface ChatMessage {
     content: string;
     toolTrace?: ToolTrace;
     proposedEdit?: ProposedEdit;
+    pendingActions?: API.CopilotPendingAction[];
 }
 
 interface ToolTrace {
@@ -25,6 +27,7 @@ interface GlobalAIChatDrawerProps {
     visible: boolean;
     onClose: () => void;
     pageContext: PageContext;
+    copilotContext?: CopilotRequestContext;
     editableTarget?: AIEditableTarget;
 }
 
@@ -332,18 +335,24 @@ const extractPocEdit = (content: string, editableTarget?: AIEditableTarget): Pro
     return { type: 'poc', content: candidate.endsWith('\n') ? candidate : `${candidate}\n` };
 };
 
-const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClose, pageContext, editableTarget }) => {
+const stripPendingActionBlocks = (content: string) =>
+    content.replace(/```pending_action\s*\n[\s\S]*?"action_type"[\s\S]*?```/gi, '').trim();
+
+const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClose, pageContext, copilotContext, editableTarget }) => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [inputValue, setInputValue] = useState('');
     const [loading, setLoading] = useState(false);
     const [streamingContent, setStreamingContent] = useState('');
     const [expandedTools, setExpandedTools] = useState<Record<string, boolean>>({});
     const [appliedEdits, setAppliedEdits] = useState<Record<string, boolean>>({});
+    const [appliedEditContents, setAppliedEditContents] = useState<Record<string, string>>({});
     const [savingDraft, setSavingDraft] = useState(false);
+    const [executingActionKey, setExecutingActionKey] = useState<string>('');
+    const [completedActions, setCompletedActions] = useState<Record<string, string>>({});
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const abortRef = useRef<AbortController | null>(null);
     const lastSuggestedPromptRef = useRef<string>('');
-    const { message: msg } = App.useApp();
+    const { message: msg, modal } = App.useApp();
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -378,6 +387,9 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
         setStreamingContent('');
         setExpandedTools({});
         setAppliedEdits({});
+        setAppliedEditContents({});
+        setExecutingActionKey('');
+        setCompletedActions({});
         setInputValue('');
     };
 
@@ -397,6 +409,7 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
 
         const token = localStorage.getItem('token') || '';
         let assistantContent = '';
+        const pendingActions: API.CopilotPendingAction[] = [];
         const controller = new AbortController();
         abortRef.current = controller;
 
@@ -411,7 +424,7 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
                     messages: updatedMessages
                         .filter((item) => item.role !== 'tool')
                         .map(({ role, content }) => ({ role, content })),
-                    page_context: pageContext,
+                    page_context: copilotContext || pageContext,
                 }),
                 signal: controller.signal,
             });
@@ -481,6 +494,8 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
                             } else if (currentEvent === 'error') {
                                 failed = true;
                                 msg.error(`AI 错误: ${data.message}`);
+                            } else if (currentEvent === 'pending_action') {
+                                pendingActions.push(data as API.CopilotPendingAction);
                             }
                         } catch (e) {
                             console.error("Failed to parse SSE data", e);
@@ -492,10 +507,12 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
             setLoading(false);
             abortRef.current = null;
             if (!failed && assistantContent.trim()) {
+                const displayContent = stripPendingActionBlocks(assistantContent);
                 setMessages((prev) => [...prev, {
                     role: 'assistant',
-                    content: assistantContent,
+                    content: displayContent || (pendingActions.length > 0 ? '我准备好了一个待确认动作。' : assistantContent),
                     proposedEdit: extractPocEdit(assistantContent, editableTarget),
+                    pendingActions,
                 }]);
             }
             setStreamingContent('');
@@ -504,10 +521,12 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
             abortRef.current = null;
             if ((error as Error)?.name === 'AbortError') {
                 if (assistantContent.trim()) {
+                    const displayContent = stripPendingActionBlocks(assistantContent);
                     setMessages((prev) => [...prev, {
                         role: 'assistant',
-                        content: assistantContent,
+                        content: displayContent || (pendingActions.length > 0 ? '我准备好了一个待确认动作。' : assistantContent),
                         proposedEdit: extractPocEdit(assistantContent, editableTarget),
+                        pendingActions,
                     }]);
                 }
                 setStreamingContent('');
@@ -527,23 +546,63 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
         }
         editableTarget.applyContent(edit.content);
         setAppliedEdits((prev) => ({ ...prev, [editKey]: true }));
+        setAppliedEditContents((prev) => ({ ...prev, [editKey]: edit.content }));
         msg.success(`已应用到 ${editableTarget.label}`);
     };
 
-    const saveEditableDraft = async () => {
+    const saveEditableDraft = async (editKey: string) => {
         if (!editableTarget?.saveDraft) {
             msg.warning('当前编辑器不支持从 Copilot 保存');
             return;
         }
         setSavingDraft(true);
         try {
-            await editableTarget.saveDraft();
+            await editableTarget.saveDraft(appliedEditContents[editKey]);
             msg.success(`已保存 ${editableTarget.label} 草稿`);
         } catch (error: unknown) {
             msg.error(typeof error === 'string' ? error : '保存草稿失败');
         } finally {
             setSavingDraft(false);
         }
+    };
+
+    const riskColor = (risk?: string) => {
+        if (risk === 'high') return 'red';
+        if (risk === 'medium') return 'orange';
+        return 'green';
+    };
+
+    const executePendingAction = (actionKey: string, action: API.CopilotPendingAction) => {
+        if (completedActions[actionKey]) return;
+        modal.confirm({
+            title: action.title || '确认执行 Copilot 动作',
+            width: 620,
+            content: (
+                <div className="ai-action-confirm">
+                    <p>{action.summary || '该动作需要你确认后才会执行。'}</p>
+                    {action.preview && <pre>{action.preview}</pre>}
+                    <div className="ai-action-confirm-meta">
+                        <Tag color={riskColor(action.risk_level)}>风险：{action.risk_level || 'low'}</Tag>
+                        <Tag>权限：{action.required_role || 'operator'}</Tag>
+                    </div>
+                </div>
+            ),
+            okText: action.confirm_label || '确认执行',
+            cancelText: '取消',
+            onOk: async () => {
+                setExecutingActionKey(actionKey);
+                try {
+                    const result = await confirmCopilotAction(action, copilotContext || pageContext);
+                    setCompletedActions((prev) => ({ ...prev, [actionKey]: result.message || '已执行' }));
+                    msg.success(result.message || '动作已执行');
+                } catch (error: unknown) {
+                    msg.error(typeof error === 'string' ? error : '动作执行失败');
+                    throw error;
+                } finally {
+                    setExecutingActionKey('');
+                }
+            },
+        });
     };
 
     return (
@@ -862,6 +921,73 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
                     color: #64748b !important;
                     font-size: 12px !important;
                 }
+                .ai-pending-actions {
+                    margin-top: 12px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+                .ai-pending-action-card {
+                    border: 1px solid rgba(148, 163, 184, 0.34);
+                    background: rgba(248, 250, 252, 0.86);
+                    border-radius: 12px;
+                    padding: 10px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+                .ai-pending-action-head {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 10px;
+                }
+                .ai-pending-action-title {
+                    font-weight: 650;
+                    color: #0f172a;
+                    min-width: 0;
+                }
+                .ai-pending-action-summary {
+                    color: #475569 !important;
+                    font-size: 12px !important;
+                    line-height: 1.55 !important;
+                }
+                .ai-pending-action-preview {
+                    margin: 0;
+                    max-height: 130px;
+                    overflow: auto;
+                    white-space: pre-wrap;
+                    overflow-wrap: anywhere;
+                    border-radius: 8px;
+                    background: #0f172a;
+                    color: #dbeafe;
+                    padding: 8px;
+                    font-size: 12px;
+                    line-height: 1.45;
+                }
+                .ai-pending-action-foot {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 10px;
+                    flex-wrap: wrap;
+                }
+                .ai-action-confirm pre {
+                    max-height: 220px;
+                    overflow: auto;
+                    white-space: pre-wrap;
+                    overflow-wrap: anywhere;
+                    background: #0f172a;
+                    color: #dbeafe;
+                    border-radius: 8px;
+                    padding: 10px;
+                }
+                .ai-action-confirm-meta {
+                    display: flex;
+                    gap: 8px;
+                    flex-wrap: wrap;
+                    margin-top: 8px;
+                }
                 .ai-reset-button {
                     color: #64748b !important;
                     border-radius: 999px !important;
@@ -1175,7 +1301,7 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
                                             {editApplied && editableTarget.saveDraft && (
                                                 <Button
                                                     size="small"
-                                                    onClick={saveEditableDraft}
+                                                    onClick={() => saveEditableDraft(editKey)}
                                                     loading={savingDraft}
                                                 >
                                                     保存草稿
@@ -1184,6 +1310,41 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
                                             <Text className="ai-edit-action-note">
                                                 {editApplied ? '已写入当前编辑器；保存草稿仍由你确认触发。' : '仅写入当前编辑器，保存仍需手动确认。'}
                                             </Text>
+                                        </div>
+                                    )}
+                                    {item.role === 'assistant' && item.pendingActions && item.pendingActions.length > 0 && (
+                                        <div className="ai-pending-actions">
+                                            {item.pendingActions.map((action, actionIndex) => {
+                                                const actionKey = `${index}-${action.action_type}-${actionIndex}`;
+                                                const doneMessage = completedActions[actionKey];
+                                                return (
+                                                    <div className="ai-pending-action-card" key={actionKey}>
+                                                        <div className="ai-pending-action-head">
+                                                            <span className="ai-pending-action-title">{action.title || action.action_type}</span>
+                                                            <Tag color={riskColor(action.risk_level)}>{action.risk_level || 'low'}</Tag>
+                                                        </div>
+                                                        <Text className="ai-pending-action-summary">
+                                                            {action.summary || '该动作需要确认后执行。'}
+                                                        </Text>
+                                                        {action.preview && <pre className="ai-pending-action-preview">{action.preview}</pre>}
+                                                        <div className="ai-pending-action-foot">
+                                                            <Text className="ai-pending-action-summary">
+                                                                需要权限：{action.required_role || 'operator'}
+                                                            </Text>
+                                                            <Button
+                                                                size="small"
+                                                                type="primary"
+                                                                disabled={!!doneMessage}
+                                                                loading={executingActionKey === actionKey}
+                                                                onClick={() => executePendingAction(actionKey, action)}
+                                                            >
+                                                                {doneMessage ? '已执行' : action.confirm_label || '确认执行'}
+                                                            </Button>
+                                                        </div>
+                                                        {doneMessage && <Text className="ai-pending-action-summary">{doneMessage}</Text>}
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     )}
                                 </div>

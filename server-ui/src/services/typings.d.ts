@@ -233,6 +233,24 @@ declare namespace API {
     UpdatedAt: string;
   }
 
+  interface CopilotPendingAction {
+    action_type: string;
+    title: string;
+    summary: string;
+    risk_level: 'low' | 'medium' | 'high' | string;
+    params: Record<string, unknown>;
+    preview?: string;
+    required_role?: string;
+    confirm_label?: string;
+  }
+
+  interface CopilotActionResult {
+    status: string;
+    message: string;
+    action_type: string;
+    object?: Record<string, unknown>;
+  }
+
   interface DebugPocRequest {
     agent_id: string;
     poc_content: string;

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +21,8 @@ const (
 	defaultDebugTimeoutSec = 60
 	maxDebugTimeoutSec     = 300
 )
+
+var safeDebugPocIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 type debugRequest struct {
 	AgentID          string `json:"agent_id"`
@@ -176,6 +179,19 @@ func startAgentDebug(c *gin.Context, action string, requirePocContent bool) {
 	if err := validateDebugProxy(req.Proxy); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	if action == "start_fingerprint_debug" && strings.TrimSpace(req.CustomPocContent) != "" {
+		req.CustomWfProduct = strings.TrimSpace(req.CustomWfProduct)
+		req.CustomWfPocs = strings.TrimSpace(req.CustomWfPocs)
+		req.CustomWfTypes = strings.TrimSpace(req.CustomWfTypes)
+		if !req.IncludePoc || req.CustomWfProduct == "" || req.CustomWfPocs == "" || req.CustomWfTypes == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "custom_poc_content requires include_poc, custom_wf_product, custom_wf_types and custom_wf_pocs"})
+			return
+		}
+		if strings.Contains(req.CustomWfPocs, ",") || !safeDebugPocIDPattern.MatchString(req.CustomWfPocs) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "custom_wf_pocs must be a single safe POC id"})
+			return
+		}
 	}
 
 	tenantID := currentTenantID(c)

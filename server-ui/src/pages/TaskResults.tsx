@@ -62,6 +62,26 @@ const TaskResults: React.FC = () => {
             assets: assets.length,
             fingerprints: fingerprints.length,
         },
+        vulns_summary: vulns.slice(0, 10).map(v => ({
+            id: v.ID,
+            target: v.Target,
+            severity: v.Severity,
+            plugin: v.Plugin,
+        })),
+        assets_summary: assets.slice(0, 10).map(a => ({
+            id: a.ID,
+            target: a.Target,
+            protocol: a.Protocol,
+            port: a.Port,
+            title: a.Title,
+            service: a.Service,
+        })),
+        fingerprints_summary: fingerprints.slice(0, 10).map(f => ({
+            id: f.ID,
+            target: f.Target,
+            product_name: f.ProductName,
+            rule_name: f.RuleName,
+        })),
         viewing_vuln: drawerOpen ? selectedVuln : null,
     });
 

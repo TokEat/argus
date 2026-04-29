@@ -323,6 +323,7 @@ func InitRouter(port string) {
 		api.POST("/ai/arsenal/analyze", analyzeArsenalWithAI)
 		api.POST("/ai/arsenal/analyze/stream", analyzeArsenalStream)
 		api.POST("/ai/chat", globalAIChat)
+		api.POST("/ai/actions/confirm", confirmCopilotAction)
 
 		// Arsenal 弹药库热发车网关与审核墙
 		api.POST("/arsenals/ai/analyze", aiAnalyzeArsenal)

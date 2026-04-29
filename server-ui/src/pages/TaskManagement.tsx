@@ -222,6 +222,14 @@ const TaskManagement: React.FC = () => {
             running: tasks.filter(t => t.Status === 'RUNNING').length,
             failed: tasks.filter(t => t.Status === 'FAILED' || t.Status === 'ERROR').length,
         },
+        recent_tasks: tasks.slice(0, 8).map(t => ({
+            id: t.ID,
+            name: t.Name,
+            status: t.Status,
+            total_targets: t.TotalTargets,
+            completed_targets: t.CompletedTargets,
+            created_at: t.CreatedAt,
+        })),
         viewing_task_detail: detailOpen ? taskDetail : null,
     });
 

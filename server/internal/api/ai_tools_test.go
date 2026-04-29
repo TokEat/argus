@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,6 +30,8 @@ func setupAITestDB(t *testing.T) *gorm.DB {
 	}
 	if err := store.AutoMigrate(
 		&db.SystemConfig{},
+		&db.Arsenal{},
+		&db.RuleCatalogBootstrap{},
 		&db.Asset{},
 		&db.RootTask{},
 		&db.SubTask{},
@@ -48,6 +52,109 @@ func setupAITestDB(t *testing.T) *gorm.DB {
 		db.DB = old
 	})
 	return store
+}
+
+func TestExtractPendingActionsNormalizesAllowedSchemas(t *testing.T) {
+	actions := extractPendingActions("请确认：\n```pending_action\n{\"action_type\":\"create_poc_draft\",\"params\":{\"file_name\":\"demo.yaml\",\"content\":\"id: demo\\ninfo:\\n  name: demo\"}}\n```")
+	if len(actions) != 1 {
+		t.Fatalf("expected one pending action, got %+v", actions)
+	}
+	if actions[0].ConfirmLabel != "保存草稿" || actions[0].RequiredRole != "operator" {
+		t.Fatalf("expected normalized defaults, got %+v", actions[0])
+	}
+}
+
+func TestConfirmCopilotActionCreatesPOCDraftAndAudits(t *testing.T) {
+	store := setupAITestDB(t)
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/api/v1/ai/actions/confirm", func(c *gin.Context) {
+		c.Set("tenant", "default")
+		c.Set("user_id", "u1")
+		c.Set("role", "operator")
+		confirmCopilotAction(c)
+	})
+
+	payload := `{
+		"action":{
+			"action_type":"create_poc_draft",
+			"required_role":"operator",
+			"params":{
+				"file_name":"demo.yaml",
+				"content":"id: demo\ninfo:\n  name: Demo\n  severity: low\nhttp:\n  - method: GET\n    path:\n      - \"{{BaseURL}}/\"\n"
+			}
+		},
+		"page_context":{"module":"poc_inline"}
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ai/actions/confirm", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var arsenal db.Arsenal
+	if err := store.Where("tenant_id = ? AND type = ? AND file_name = ?", "default", "poc", "demo.yaml").First(&arsenal).Error; err != nil {
+		t.Fatalf("expected draft arsenal: %v", err)
+	}
+	if arsenal.State != "Draft" || !strings.Contains(arsenal.Content, "id: demo") {
+		t.Fatalf("unexpected arsenal %+v", arsenal)
+	}
+	var audit db.AIToolInvocation
+	if err := store.Where("tool_name = ?", "CopilotAction:create_poc_draft").First(&audit).Error; err != nil {
+		t.Fatalf("expected audit row: %v", err)
+	}
+	if strings.Contains(audit.ArgsSummary, "id: demo") || !strings.Contains(audit.ArgsSummary, "sha256") {
+		t.Fatalf("expected content hash in audit summary, got %s", audit.ArgsSummary)
+	}
+}
+
+func TestConfirmCopilotActionUpsertsWorkflowDraftWithoutPublishing(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Arsenal{
+		ID:       db.BuildTenantArsenalID("default", "workflow", "workflow.yaml"),
+		TenantID: "default",
+		Type:     "workflow",
+		FileName: "workflow.yaml",
+		Content:  "old-product:\n  type: [root]\n  pocs: [old-poc]\n",
+		Hash:     "old",
+		Version:  1,
+		State:    "Approved",
+	}).Error; err != nil {
+		t.Fatalf("seed workflow: %v", err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/api/v1/ai/actions/confirm", func(c *gin.Context) {
+		c.Set("tenant", "default")
+		c.Set("user_id", "u1")
+		c.Set("role", "operator")
+		confirmCopilotAction(c)
+	})
+	payload := `{
+		"action":{
+			"action_type":"upsert_workflow_draft",
+			"required_role":"operator",
+			"params":{"product":"nginx","type":["root","base"],"pocs":["nginx-poc"]}
+		},
+		"page_context":{"module":"workflow_list"}
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ai/actions/confirm", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var arsenal db.Arsenal
+	if err := store.Where("tenant_id = ? AND type = ? AND file_name = ?", "default", "workflow", "workflow.yaml").First(&arsenal).Error; err != nil {
+		t.Fatalf("expected workflow arsenal: %v", err)
+	}
+	if arsenal.State != "Draft" || !strings.Contains(arsenal.Content, "nginx:") || arsenal.PreviousHash != "old" {
+		t.Fatalf("unexpected workflow draft %+v", arsenal)
+	}
 }
 
 func TestCopilotBusinessToolsAreTenantScoped(t *testing.T) {
@@ -284,6 +391,78 @@ func TestGlobalAIChatNormalAndToolPaths(t *testing.T) {
 	body := postGlobalAIChat(t, `{"messages":[{"role":"user","content":"查资产"}],"page_context":{"module":"asset_list"}}`)
 	if !strings.Contains(body, "event: tool_start") || !strings.Contains(body, "SearchAssets") || !strings.Contains(body, "找到 example.com") {
 		t.Fatalf("expected tool path SSE, got %s", body)
+	}
+}
+
+func TestGlobalAIChatLayeredContextEnablesAssetToolsAndRedactsData(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Asset{TenantID: "default", Target: "layered.example", Protocol: "https", Port: 443, Status: "alive"}).Error; err != nil {
+		t.Fatalf("seed asset: %v", err)
+	}
+
+	var calls int32
+	var mu sync.Mutex
+	var requestBodies []string
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read llm request: %v", err)
+		}
+		mu.Lock()
+		requestBodies = append(requestBodies, string(body))
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		call := atomic.AddInt32(&calls, 1)
+		if call == 1 {
+			writeSSEData(t, w, map[string]interface{}{
+				"choices": []map[string]interface{}{{
+					"delta": map[string]interface{}{
+						"tool_calls": []map[string]interface{}{{
+							"index": 0,
+							"id":    "call-layered-asset",
+							"type":  "function",
+							"function": map[string]interface{}{
+								"name":      "SearchAssets",
+								"arguments": `{"query":"layered"}`,
+							},
+						}},
+					},
+				}},
+			})
+		} else {
+			writeSSEData(t, w, map[string]interface{}{
+				"choices": []map[string]interface{}{{"delta": map[string]interface{}{"content": "找到 layered.example 资产。"}}},
+			})
+		}
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer llm.Close()
+	if err := aipkg.SaveConfig(store, aipkg.Config{BaseURL: llm.URL, APIKey: "test", Model: "model"}); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	body := postGlobalAIChat(t, `{
+		"messages":[{"role":"user","content":"查当前资产"}],
+		"page_context":{
+			"_identity":{"tenant_id":"default","username":"operator"},
+			"_focus":{"module":"asset_list","route":"/assets"},
+			"data":{"authorization":"Bearer should-not-leak","assets_summary":[{"target":"layered.example"}]},
+			"_ambient":{"queue":{"total_depth":0}}
+		}
+	}`)
+	if !strings.Contains(body, "event: tool_start") || !strings.Contains(body, "SearchAssets") || !strings.Contains(body, "找到 layered.example") {
+		t.Fatalf("expected layered context to enable SearchAssets tool path, got %s", body)
+	}
+
+	mu.Lock()
+	joinedRequests := strings.Join(requestBodies, "\n")
+	mu.Unlock()
+	if !strings.Contains(joinedRequests, "SearchAssets") {
+		t.Fatalf("expected SearchAssets tool definition in LLM request, got %s", joinedRequests)
+	}
+	if strings.Contains(joinedRequests, "should-not-leak") || strings.Contains(joinedRequests, "Bearer should-not-leak") {
+		t.Fatalf("sensitive data authorization leaked to LLM request: %s", joinedRequests)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	aipkg "github.com/user/dddd-server/internal/ai"
 )
 
 func TestShouldAgentReloadRules(t *testing.T) {
@@ -124,6 +125,70 @@ func TestCopilotProfileAndContextCompaction(t *testing.T) {
 	}
 	if got, ok := compact["long_text"].(string); !ok || len(got) >= 7000 {
 		t.Fatalf("expected long text truncation")
+	}
+}
+
+func TestCopilotLayeredContextCompactionAndInjection(t *testing.T) {
+	pageContext := map[string]interface{}{
+		"_identity": map[string]interface{}{
+			"tenant_id": "t1",
+			"username":  "alice",
+			"api_key":   "should-not-leak",
+		},
+		"_focus": map[string]interface{}{
+			"module":         "task_results",
+			"route":          "/tasks/t1/results",
+			"entity_type":    "vuln",
+			"entity_summary": "high nuclei hit",
+		},
+		"data": map[string]interface{}{
+			"selected_vuln": map[string]interface{}{
+				"plugin":   "test-poc",
+				"response": strings.Repeat("x", 7000),
+			},
+			"authorization": "Bearer should-not-leak",
+		},
+		"_ambient": map[string]interface{}{
+			"queue": map[string]interface{}{"total_depth": 3},
+		},
+	}
+
+	compact := compactPageContext(pageContext)
+	if got := resolveCopilotModule(compact); got != "task_results" {
+		t.Fatalf("expected layered _focus module, got %q", got)
+	}
+	identity, ok := compact["_identity"].(map[string]interface{})
+	if !ok || identity["api_key"] != "[redacted]" {
+		t.Fatalf("expected identity secrets to be redacted, got %+v", compact["_identity"])
+	}
+	data, ok := compact["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected compacted data layer, got %+v", compact["data"])
+	}
+	if data["authorization"] != "[redacted]" {
+		t.Fatalf("expected data authorization to be redacted, got %+v", data["authorization"])
+	}
+	selected, ok := data["selected_vuln"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected selected_vuln map, got %+v", data["selected_vuln"])
+	}
+	if got, ok := selected["response"].(string); !ok || len(got) >= 7000 {
+		t.Fatalf("expected nested response truncation, got len=%d", len(got))
+	}
+
+	messages := []aipkg.ChatMessage{}
+	injectCopilotContext(&messages, compact)
+	if len(messages) != 4 {
+		t.Fatalf("expected identity/focus/data/ambient system messages, got %d", len(messages))
+	}
+	joined := messages[0].Content + messages[1].Content + messages[2].Content + messages[3].Content
+	for _, want := range []string{"【用户身份】", "【页面焦点】", "【页面数据】", "【全局态势】", "test-poc"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected injected context to contain %q, got %s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "should-not-leak") {
+		t.Fatalf("sensitive context leaked into injected messages: %s", joined)
 	}
 }
 

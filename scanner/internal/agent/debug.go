@@ -26,13 +26,13 @@ const defaultAgentDebugTimeout = 60 * time.Second
 
 // nucleiDebugResult represents the JSON structure of Nuclei debug output
 type nucleiDebugResult struct {
-	TemplateID      string   `json:"template-id"`
-	Matched         string   `json:"matched-at"`
-	Info            struct {
+	TemplateID string `json:"template-id"`
+	Matched    string `json:"matched-at"`
+	Info       struct {
 		Severity string `json:"severity"`
 	} `json:"info"`
 	ExtractedResults []string `json:"extracted-results"`
-	MatcherStatus   bool     `json:"matcher-status"`
+	MatcherStatus    bool     `json:"matcher-status"`
 }
 
 func (w *Worker) handleDebugCommand(cmd *pb.DebugCommand) {
@@ -331,6 +331,12 @@ func (w *Worker) runFingerprintDebugSession(
 
 	// --- 注入自定义 POC 内容 ---
 	if options.CustomPocContent != "" {
+		pocFile, err := safeDebugPocFileName(options.CustomWfPocs)
+		if err != nil {
+			sendComplete(err.Error())
+			return
+		}
+
 		tmpPocDir, err := os.MkdirTemp("", "argus-custom-poc-*")
 		if err != nil {
 			sendComplete(fmt.Sprintf("create custom poc temp dir: %v", err))
@@ -338,14 +344,12 @@ func (w *Worker) runFingerprintDebugSession(
 		}
 		defer os.RemoveAll(tmpPocDir)
 
-		pocName := strings.TrimSpace(options.CustomWfPocs)
-		pocFile := pocName
-		if !strings.HasSuffix(strings.ToLower(pocFile), ".yaml") &&
-			!strings.HasSuffix(strings.ToLower(pocFile), ".yml") {
-			pocFile += ".yaml"
+		templatePath := filepath.Clean(filepath.Join(tmpPocDir, pocFile))
+		relPath, err := filepath.Rel(tmpPocDir, templatePath)
+		if err != nil || relPath == "." || relPath == ".." || strings.HasPrefix(relPath, ".."+string(os.PathSeparator)) {
+			sendComplete("custom poc path escaped temp dir")
+			return
 		}
-
-		templatePath := filepath.Join(tmpPocDir, pocFile)
 		if err := os.WriteFile(templatePath, []byte(options.CustomPocContent), 0600); err != nil {
 			sendComplete(fmt.Sprintf("write custom poc: %v", err))
 			return
@@ -448,6 +452,27 @@ func (w *Worker) runFingerprintDebugSession(
 		return
 	}
 	sendComplete("")
+}
+
+func safeDebugPocFileName(pocName string) (string, error) {
+	pocName = strings.TrimSpace(pocName)
+	if pocName == "" {
+		return "", fmt.Errorf("custom poc id is required")
+	}
+	if filepath.IsAbs(pocName) || strings.ContainsAny(pocName, `/\`) || strings.Contains(pocName, ",") {
+		return "", fmt.Errorf("custom poc id must be a single safe filename")
+	}
+	for _, r := range pocName {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.' {
+			continue
+		}
+		return "", fmt.Errorf("custom poc id contains unsupported character %q", r)
+	}
+	if !strings.HasSuffix(strings.ToLower(pocName), ".yaml") &&
+		!strings.HasSuffix(strings.ToLower(pocName), ".yml") {
+		pocName += ".yaml"
+	}
+	return pocName, nil
 }
 
 func (w *Worker) sendOneShotDebugComplete(cmd *pb.DebugCommand, errMsg string) {
