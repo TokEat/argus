@@ -45,9 +45,10 @@ const Dashboard: React.FC = () => {
 
     const fetchData = useCallback(async () => {
         try {
+            const projectId = localStorage.getItem('active_project_id') || undefined;
             const [statsRes, tasksRes, nodesRes, queueRes] = await Promise.all([
-                getDashboardStats(),
-                listTasks(),
+                getDashboardStats(projectId),
+                listTasks(projectId),
                 getNodes(),
                 getQueueDepth().catch(() => null),
             ]);

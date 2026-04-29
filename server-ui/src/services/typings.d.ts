@@ -194,9 +194,19 @@ declare namespace API {
     CreatedAt: string;
   }
 
-  /** 融合画像 (GET /api/v1/profiles) */
+  /** 端口信息 */
+  interface PortInfo {
+    port: number;
+    protocol: string;
+    service: string;
+    title: string;
+    url: string;
+  }
+
+  /** 融合画像 (GET /api/v1/profiles) — 以主机为单位聚合 */
   interface Profile {
-    target: string;
+    host: string;
+    ports: PortInfo[];
     assets: Asset[];
     fingerprints: FingerprintHit[];
     vulns: Vulnerability[];

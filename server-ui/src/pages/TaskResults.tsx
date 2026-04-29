@@ -34,10 +34,11 @@ const TaskResults: React.FC = () => {
     const fetchData = async () => {
         setLoading(true);
         try {
+            const projectId = localStorage.getItem('active_project_id') || undefined;
             const [vulnRes, assetRes, fpRes] = await Promise.all([
-                getVulns(taskId),
-                getAssets(taskId),
-                getFingerprints(taskId),
+                getVulns(taskId, projectId),
+                getAssets(taskId, projectId),
+                getFingerprints(taskId, projectId),
             ]);
             setVulns(vulnRes || []);
             setAssets(assetRes || []);
@@ -66,7 +67,8 @@ const TaskResults: React.FC = () => {
 
     const handleExport = async () => {
         try {
-            const blob = await exportVulns();
+            const projectId = localStorage.getItem('active_project_id') || undefined;
+            const blob = await exportVulns(projectId);
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -112,13 +114,67 @@ const TaskResults: React.FC = () => {
         return map[normalized] || 0;
     };
 
+    // ── Target helpers ──
+    const extractHostFromTarget = (target: string): string => {
+        if (!target) return '-';
+        try {
+            if (target.includes('://')) {
+                const u = new URL(target);
+                return u.hostname;
+            }
+        } catch { /* ignore */ }
+        const parts = target.split(':');
+        return parts[0] || target;
+    };
+
+    const extractPortFromTarget = (target: string, port: number): number => {
+        if (port > 0) return port;
+        if (!target) return 0;
+        try {
+            if (target.includes('://')) {
+                const u = new URL(target);
+                if (u.port) return parseInt(u.port);
+                if (u.protocol === 'https:') return 443;
+                if (u.protocol === 'http:') return 80;
+            }
+        } catch { /* ignore */ }
+        const parts = target.split(':');
+        if (parts.length >= 2) {
+            const p = parseInt(parts[parts.length - 1]);
+            if (!isNaN(p) && p > 0 && p <= 65535) return p;
+        }
+        return 0;
+    };
+
+    const isJsonString = (s: string): boolean => {
+        if (!s) return false;
+        return (s.startsWith('{') && s.endsWith('}')) || (s.startsWith('[') && s.endsWith(']'));
+    };
+
+    const protocolColors: Record<string, string> = {
+        'Web': 'green', 'Nmap': 'purple', 'PortScan': 'blue',
+        'Protocol': 'geekblue', 'Domain': 'cyan', 'Domain-Bind': 'cyan',
+        'IPAlive': 'default',
+    };
+
     const vulnColumns: ColumnsType<API.Vulnerability> = [
         {
-            title: '目标',
-            dataIndex: 'Target',
-            key: 'target',
-            ellipsis: true,
-            render: (v: string) => <Text style={{ fontFamily: 'monospace', fontSize: 12 }}>{v}</Text>,
+            title: '主机',
+            key: 'host',
+            width: 160,
+            render: (_, record) => {
+                const host = extractHostFromTarget(record.Target);
+                return (
+                    <Text copyable={{ text: host }} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 500 }}>
+                        {host}
+                    </Text>
+                );
+            },
+            filters: (() => {
+                const hosts = [...new Set(vulns.map(v => extractHostFromTarget(v.Target)))];
+                return hosts.slice(0, 20).map(h => ({ text: h, value: h }));
+            })(),
+            onFilter: (value, record) => extractHostFromTarget(record.Target) === value,
         },
         {
             title: '插件',
@@ -178,59 +234,109 @@ const TaskResults: React.FC = () => {
         },
     ];
 
+
     const assetColumns: ColumnsType<API.Asset> = [
         {
-            title: '目标',
-            dataIndex: 'Target',
-            key: 'target',
-            ellipsis: true,
-            render: (v: string) => <Text style={{ fontFamily: 'monospace', fontSize: 12 }}>{v}</Text>,
-        },
-        {
-            title: '协议',
-            dataIndex: 'Protocol',
-            key: 'protocol',
-            width: 100,
-            render: (v: string) => <Tag color="blue">{v}</Tag>,
+            title: '主机',
+            key: 'host',
+            width: 160,
+            render: (_, record) => {
+                const host = extractHostFromTarget(record.Target);
+                return (
+                    <Text copyable={{ text: host }} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 500 }}>
+                        {host}
+                    </Text>
+                );
+            },
+            filters: (() => {
+                const hosts = [...new Set(assets.map(a => extractHostFromTarget(a.Target)))];
+                return hosts.slice(0, 20).map(h => ({ text: h, value: h }));
+            })(),
+            onFilter: (value, record) => extractHostFromTarget(record.Target) === value,
         },
         {
             title: '端口',
-            dataIndex: 'Port',
             key: 'port',
-            width: 80,
-            sorter: (a, b) => a.Port - b.Port,
+            width: 90,
+            render: (_, record) => {
+                const port = extractPortFromTarget(record.Target, record.Port);
+                return port > 0
+                    ? <Tag color="blue" style={{ margin: 0, fontFamily: 'monospace', fontWeight: 600 }}>{port}</Tag>
+                    : <Text type="secondary">-</Text>;
+            },
+            sorter: (a, b) => extractPortFromTarget(a.Target, a.Port) - extractPortFromTarget(b.Target, b.Port),
         },
         {
-            title: '标题',
-            dataIndex: 'Title',
-            key: 'title',
-            ellipsis: true,
+            title: '来源',
+            dataIndex: 'Protocol',
+            key: 'protocol',
+            width: 100,
+            render: (v: string) => <Tag color={protocolColors[v] || 'default'} style={{ margin: 0, fontSize: 11 }}>{v}</Tag>,
+            filters: [...new Set(assets.map(a => a.Protocol))].map(p => ({ text: p, value: p })),
+            onFilter: (value, record) => record.Protocol === value,
         },
         {
             title: '服务',
             dataIndex: 'Service',
             key: 'service',
             width: 120,
-            render: (v: string) => v ? <Tag>{v}</Tag> : <Text type="secondary">-</Text>,
+            render: (v: string) => v ? <Tag color="geekblue" style={{ margin: 0 }}>{v}</Tag> : <Text type="secondary">-</Text>,
+        },
+        {
+            title: '标题',
+            dataIndex: 'Title',
+            key: 'title',
+            ellipsis: { showTitle: false },
+            render: (v: string) => v
+                ? <Tooltip title={v}><Text style={{ fontSize: 12 }}>{v}</Text></Tooltip>
+                : <Text type="secondary">-</Text>,
         },
         {
             title: 'URL',
-            dataIndex: 'URL',
             key: 'url',
+            width: 180,
             ellipsis: true,
-            render: (v: string) => (
-                v ? (
-                    <Tooltip title={v}>
-                        <a href={v} target="_blank" rel="noopener" style={{ fontSize: 12 }}>{v?.slice(0, 60)}</a>
-                    </Tooltip>
-                ) : <Text type="secondary">-</Text>
-            ),
+            render: (_, record) => {
+                const url = record.URL;
+                if (!url) return <Text type="secondary">-</Text>;
+                // 如果是真实 URL（非 JSON）
+                if (url.startsWith('http://') || url.startsWith('https://')) {
+                    return (
+                        <Tooltip title={url}>
+                            <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, fontFamily: 'monospace' }}>
+                                <LinkOutlined style={{ marginRight: 4 }} />{url.replace(/^https?:\/\//, '').slice(0, 40)}
+                            </a>
+                        </Tooltip>
+                    );
+                }
+                // JSON evidence — show as popover
+                if (isJsonString(url)) {
+                    let preview = '';
+                    try {
+                        const parsed = JSON.parse(url);
+                        preview = parsed.ip || parsed.type || 'evidence';
+                    } catch {
+                        preview = 'data';
+                    }
+                    return (
+                        <Popover
+                            content={<pre style={{ maxWidth: 500, maxHeight: 300, overflow: 'auto', fontSize: 11, margin: 0 }}>{JSON.stringify(JSON.parse(url), null, 2)}</pre>}
+                            title="原始数据"
+                            trigger="hover"
+                        >
+                            <Tag color="default" style={{ cursor: 'pointer', fontSize: 10, margin: 0 }}>📋 {preview}</Tag>
+                        </Popover>
+                    );
+                }
+                return <Text style={{ fontSize: 12, color: '#64748b' }} ellipsis={{ tooltip: url }}>{url}</Text>;
+            },
         },
         {
             title: '发现时间',
             dataIndex: 'CreatedAt',
             key: 'created_at',
-            width: 170,
+            width: 160,
+            sorter: (a, b) => new Date(a.CreatedAt).getTime() - new Date(b.CreatedAt).getTime(),
             render: (v: string) => {
                 if (!v) return '-';
                 return <Text style={{ fontSize: 12, color: '#64748b' }}>{dayjs(v).format('YYYY-MM-DD HH:mm:ss')}</Text>;
@@ -240,11 +346,22 @@ const TaskResults: React.FC = () => {
 
     const fpColumns: ColumnsType<API.FingerprintHit> = [
         {
-            title: '目标',
-            dataIndex: 'Target',
-            key: 'target',
-            ellipsis: true,
-            render: (v: string) => <Text style={{ fontFamily: 'monospace', fontSize: 12 }}>{v}</Text>,
+            title: '主机',
+            key: 'host',
+            width: 160,
+            render: (_, record) => {
+                const host = extractHostFromTarget(record.Target);
+                return (
+                    <Text copyable={{ text: host }} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 500 }}>
+                        {host}
+                    </Text>
+                );
+            },
+            filters: (() => {
+                const hosts = [...new Set(fingerprints.map(f => extractHostFromTarget(f.Target)))];
+                return hosts.slice(0, 20).map(h => ({ text: h, value: h }));
+            })(),
+            onFilter: (value, record) => extractHostFromTarget(record.Target) === value,
         },
         {
             title: '产品名称',

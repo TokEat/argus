@@ -9,8 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -280,6 +283,9 @@ func InitRouter(port string) {
 		// 项目 CRUD
 		api.GET("/projects", getProjects)
 		api.POST("/projects", createProject)
+		api.PUT("/projects/:id", updateProject)
+		api.DELETE("/projects/:id", deleteProject)
+		api.GET("/projects/:id/stats", getProjectStats)
 
 		// 任务 CRUD
 		api.GET("/tasks", getTasks)
@@ -439,12 +445,34 @@ func InitRouter(port string) {
 
 func getStats(c *gin.Context) {
 	tenantID := currentTenantID(c)
+	projectID := c.Query("project_id")
 	var taskCount, nodeCount, assetCount, fpCount, vulnCount int64
-	db.DB.Model(&db.RootTask{}).Where("tenant_id = ?", tenantID).Count(&taskCount)
+
+	taskQ := db.DB.Model(&db.RootTask{}).Where("tenant_id = ?", tenantID)
+	if projectID != "" {
+		taskQ = taskQ.Where("project_id = ?", projectID)
+	}
+	taskQ.Count(&taskCount)
+
 	scopedNodeQuery(tenantID).Model(&db.Node{}).Count(&nodeCount)
-	db.DB.Model(&db.Asset{}).Where("tenant_id = ?", tenantID).Count(&assetCount)
-	db.DB.Model(&db.FingerprintHit{}).Where("tenant_id = ?", tenantID).Count(&fpCount)
-	db.DB.Model(&db.Vulnerability{}).Where("tenant_id = ?", tenantID).Count(&vulnCount)
+
+	assetQ := db.DB.Model(&db.Asset{}).Where("tenant_id = ?", tenantID)
+	if projectID != "" {
+		assetQ = assetQ.Where("project_id = ?", projectID)
+	}
+	assetQ.Count(&assetCount)
+
+	fpQ := db.DB.Model(&db.FingerprintHit{}).Where("tenant_id = ?", tenantID)
+	if projectID != "" {
+		fpQ = fpQ.Where("project_id = ?", projectID)
+	}
+	fpQ.Count(&fpCount)
+
+	vulnQ := db.DB.Model(&db.Vulnerability{}).Where("tenant_id = ?", tenantID)
+	if projectID != "" {
+		vulnQ = vulnQ.Where("project_id = ?", projectID)
+	}
+	vulnQ.Count(&vulnCount)
 
 	c.JSON(http.StatusOK, gin.H{
 		"tasks":        taskCount,
@@ -494,6 +522,94 @@ func createProject(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, project)
+}
+
+func updateProject(c *gin.Context) {
+	projectID := c.Param("id")
+	tenantID := c.GetString("tenant")
+
+	var req struct {
+		Name        *string `json:"name"`
+		Description *string `json:"description"`
+		Status      *string `json:"status"` // active, archived
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var project db.Project
+	if err := db.DB.Where("id = ? AND tenant_id = ?", projectID, tenantID).First(&project).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
+		return
+	}
+
+	updates := map[string]interface{}{}
+	if req.Name != nil {
+		updates["name"] = *req.Name
+	}
+	if req.Description != nil {
+		updates["description"] = *req.Description
+	}
+	if req.Status != nil {
+		allowed := map[string]bool{"active": true, "archived": true}
+		if !allowed[*req.Status] {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "status must be 'active' or 'archived'"})
+			return
+		}
+		updates["status"] = *req.Status
+	}
+
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no fields to update"})
+		return
+	}
+
+	db.DB.Model(&project).Updates(updates)
+	db.DB.Where("id = ? AND tenant_id = ?", projectID, tenantID).First(&project)
+	c.JSON(http.StatusOK, project)
+}
+
+func deleteProject(c *gin.Context) {
+	projectID := c.Param("id")
+	tenantID := c.GetString("tenant")
+
+	var project db.Project
+	if err := db.DB.Where("id = ? AND tenant_id = ?", projectID, tenantID).First(&project).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
+		return
+	}
+
+	// 软删除（GORM DeletedAt）
+	db.DB.Delete(&project)
+
+	c.JSON(http.StatusOK, gin.H{"status": "deleted", "message": "项目已软删除，可通过数据库恢复"})
+}
+
+func getProjectStats(c *gin.Context) {
+	projectID := c.Param("id")
+	tenantID := c.GetString("tenant")
+
+	var project db.Project
+	if err := db.DB.Where("id = ? AND tenant_id = ?", projectID, tenantID).First(&project).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
+		return
+	}
+
+	var taskCount, assetCount, fpCount, vulnCount int64
+	db.DB.Model(&db.RootTask{}).Where("project_id = ? AND tenant_id = ?", projectID, tenantID).Count(&taskCount)
+	db.DB.Model(&db.Asset{}).Where("project_id = ?", projectID).Count(&assetCount)
+	db.DB.Model(&db.FingerprintHit{}).Where("project_id = ?", projectID).Count(&fpCount)
+	db.DB.Model(&db.Vulnerability{}).Where("project_id = ?", projectID).Count(&vulnCount)
+
+	c.JSON(http.StatusOK, gin.H{
+		"project_id":   projectID,
+		"project_name": project.Name,
+		"tasks":        taskCount,
+		"assets":       assetCount,
+		"fingerprints": fpCount,
+		"vulns":        vulnCount,
+	})
 }
 
 func getTasks(c *gin.Context) {
@@ -984,17 +1100,55 @@ func deleteArsenal(c *gin.Context) {
 
 // ---------------- 融合画像数据源 --------------------
 
-type Profile struct {
-	Target       string              `json:"target"`
+// HostProfile 以主机(IP/域名)为单位聚合的画像
+type HostProfile struct {
+	Host         string              `json:"host"`
+	Ports        []PortInfo          `json:"ports"`
 	Assets       []db.Asset          `json:"assets"`
 	Fingerprints []db.FingerprintHit `json:"fingerprints"`
 	Vulns        []db.Vulnerability  `json:"vulns"`
 }
 
+type PortInfo struct {
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol"`
+	Service  string `json:"service"`
+	Title    string `json:"title"`
+	URL      string `json:"url"`
+}
+
+// extractHost 从 target 字符串中提取主机部分 (IP 或域名)
+// 支持格式: "1.2.3.4:80", "http://example.com:8080", "example.com"
+func extractHost(target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return target
+	}
+	// URL 格式
+	if strings.Contains(target, "://") {
+		if u, err := url.Parse(target); err == nil && u.Host != "" {
+			return u.Hostname()
+		}
+	}
+	// IP:Port 或 IP:Port:Extra 格式
+	if host, _, err := net.SplitHostPort(target); err == nil {
+		return host
+	}
+	// 可能是 IP:Port:Proto 三段式
+	parts := strings.Split(target, ":")
+	if len(parts) >= 2 {
+		if ip := net.ParseIP(parts[0]); ip != nil {
+			return parts[0]
+		}
+	}
+	return target
+}
+
 func getProfiles(c *gin.Context) {
 	tenantID := c.GetString("tenant")
+	projectID := c.Query("project_id")
 	page := 1
-	pageSize := 50
+	pageSize := 20
 	if p := c.Query("page"); p != "" {
 		if v, err := strconv.Atoi(p); err == nil && v > 0 {
 			page = v
@@ -1006,81 +1160,151 @@ func getProfiles(c *gin.Context) {
 		}
 	}
 
-	// 先分页获取去重的 target 列表
-	var targets []string
-	query := db.DB.Model(&db.Asset{}).Select("DISTINCT target")
+	// 步骤 1: 获取所有去重 target 值用于提取 host
+	var allTargets []string
+	tq := db.DB.Model(&db.Asset{}).Select("DISTINCT target")
 	if tenantID != "" {
-		query = query.Where("tenant_id = ?", tenantID)
+		tq = tq.Where("tenant_id = ?", tenantID)
+	}
+	if projectID != "" {
+		tq = tq.Where("project_id = ?", projectID)
 	}
 	if search := c.Query("search"); search != "" {
-		query = query.Where("target LIKE ?", "%"+search+"%")
+		tq = tq.Where("target LIKE ?", "%"+search+"%")
 	}
-	query.Order("target").Offset((page-1)*pageSize).Limit(pageSize).Pluck("target", &targets)
+	tq.Pluck("target", &allTargets)
 
-	if len(targets) == 0 {
-		c.JSON(http.StatusOK, gin.H{"data": []Profile{}, "page": page, "page_size": pageSize, "total": 0})
+	// 步骤 2: 在 Go 层按 host 聚合, 建立 host → targets 映射
+	hostTargetsMap := make(map[string][]string)
+	for _, t := range allTargets {
+		h := extractHost(t)
+		hostTargetsMap[h] = append(hostTargetsMap[h], t)
+	}
+
+	// 收集所有 host 并排序
+	allHosts := make([]string, 0, len(hostTargetsMap))
+	for h := range hostTargetsMap {
+		allHosts = append(allHosts, h)
+	}
+	sort.Strings(allHosts)
+
+	totalHosts := len(allHosts)
+
+	// 分页
+	start := (page - 1) * pageSize
+	if start >= totalHosts {
+		c.JSON(http.StatusOK, gin.H{"data": []HostProfile{}, "page": page, "page_size": pageSize, "total": totalHosts})
+		return
+	}
+	end := start + pageSize
+	if end > totalHosts {
+		end = totalHosts
+	}
+	pagedHosts := allHosts[start:end]
+
+	// 收集当前页所有 host 对应的 targets
+	var pagedTargets []string
+	for _, h := range pagedHosts {
+		pagedTargets = append(pagedTargets, hostTargetsMap[h]...)
+	}
+	if len(pagedTargets) == 0 {
+		c.JSON(http.StatusOK, gin.H{"data": []HostProfile{}, "page": page, "page_size": pageSize, "total": totalHosts})
 		return
 	}
 
-	// 批量查询这些 target 的关联数据（含租户隔离）
+	// 步骤 3: 批量查询关联数据（含租户隔离 + 项目隔离）
 	var assets []db.Asset
-	assocQ := db.DB.Where("target IN ?", targets)
+	assocQ := db.DB.Where("target IN ?", pagedTargets)
 	if tenantID != "" {
 		assocQ = assocQ.Where("tenant_id = ?", tenantID)
+	}
+	if projectID != "" {
+		assocQ = assocQ.Where("project_id = ?", projectID)
 	}
 	assocQ.Find(&assets)
 
 	var fps []db.FingerprintHit
-	fpQ := db.DB.Where("target IN ?", targets)
+	fpQ := db.DB.Where("target IN ?", pagedTargets)
 	if tenantID != "" {
 		fpQ = fpQ.Where("tenant_id = ?", tenantID)
+	}
+	if projectID != "" {
+		fpQ = fpQ.Where("project_id = ?", projectID)
 	}
 	fpQ.Find(&fps)
 
 	var vulns []db.Vulnerability
-	vulnQ := db.DB.Where("target IN ?", targets)
+	vulnQ := db.DB.Where("target IN ?", pagedTargets)
 	if tenantID != "" {
 		vulnQ = vulnQ.Where("tenant_id = ?", tenantID)
 	}
+	if projectID != "" {
+		vulnQ = vulnQ.Where("project_id = ?", projectID)
+	}
 	vulnQ.Find(&vulns)
 
-	pm := make(map[string]*Profile, len(targets))
-	for _, t := range targets {
-		pm[t] = &Profile{Target: t}
-	}
-	for _, a := range assets {
-		if p, ok := pm[a.Target]; ok {
-			p.Assets = append(p.Assets, a)
+	// 步骤 4: 按 host 聚合
+	profiles := make([]HostProfile, 0, len(pagedHosts))
+	for _, host := range pagedHosts {
+		hp := HostProfile{Host: host}
+		targets := hostTargetsMap[host]
+		targetSet := make(map[string]bool, len(targets))
+		for _, t := range targets {
+			targetSet[t] = true
 		}
-	}
-	for _, f := range fps {
-		if p, ok := pm[f.Target]; ok {
-			p.Fingerprints = append(p.Fingerprints, f)
+
+		// 聚合端口信息 (去重)
+		portSeen := make(map[string]bool)
+		for _, a := range assets {
+			if !targetSet[a.Target] {
+				continue
+			}
+			hp.Assets = append(hp.Assets, a)
+
+			// 从 Asset.Port 或 Target 字符串中提取端口号
+			resolvedPort := a.Port
+			if resolvedPort == 0 && a.Target != "" {
+				if u, err := url.Parse(a.Target); err == nil && u.Port() != "" {
+					if pv, e := strconv.Atoi(u.Port()); e == nil {
+						resolvedPort = pv
+					}
+				} else if _, portStr, err := net.SplitHostPort(a.Target); err == nil {
+					if pv, e := strconv.Atoi(portStr); e == nil {
+						resolvedPort = pv
+					}
+				}
+			}
+
+			portKey := fmt.Sprintf("%d:%s", resolvedPort, a.Protocol)
+			if !portSeen[portKey] {
+				portSeen[portKey] = true
+				hp.Ports = append(hp.Ports, PortInfo{
+					Port:     resolvedPort,
+					Protocol: a.Protocol,
+					Service:  a.Service,
+					Title:    a.Title,
+					URL:      a.URL,
+				})
+			}
 		}
-	}
-	for _, v := range vulns {
-		if p, ok := pm[v.Target]; ok {
-			p.Vulns = append(p.Vulns, v)
+
+		for _, f := range fps {
+			if targetSet[f.Target] {
+				hp.Fingerprints = append(hp.Fingerprints, f)
+			}
 		}
+		for _, v := range vulns {
+			if targetSet[v.Target] {
+				hp.Vulns = append(hp.Vulns, v)
+			}
+		}
+
+		// 端口排序
+		sort.Slice(hp.Ports, func(i, j int) bool { return hp.Ports[i].Port < hp.Ports[j].Port })
+		profiles = append(profiles, hp)
 	}
 
-	results := make([]Profile, 0, len(targets))
-	for _, t := range targets {
-		results = append(results, *pm[t])
-	}
-
-	// 统计总数（同步 search 过滤条件）
-	var total int64
-	countQ := db.DB.Model(&db.Asset{}).Select("COUNT(DISTINCT target)")
-	if tenantID != "" {
-		countQ = countQ.Where("tenant_id = ?", tenantID)
-	}
-	if search := c.Query("search"); search != "" {
-		countQ = countQ.Where("target LIKE ?", "%"+search+"%")
-	}
-	countQ.Count(&total)
-
-	c.JSON(http.StatusOK, gin.H{"data": results, "page": page, "page_size": pageSize, "total": total})
+	c.JSON(http.StatusOK, gin.H{"data": profiles, "page": page, "page_size": pageSize, "total": totalHosts})
 }
 
 func deleteTask(c *gin.Context) {
@@ -1106,15 +1330,19 @@ func exportVulns(c *gin.Context) {
 	writer := csv.NewWriter(c.Writer)
 	defer writer.Flush()
 
-	writer.Write([]string{"TenantID", "TaskID", "Target", "Plugin", "Severity", "DetectedAt"})
+	writer.Write([]string{"TenantID", "ProjectID", "TaskID", "Target", "Plugin", "Severity", "DetectedAt"})
 
 	var vulns []db.Vulnerability
 	tenantID := currentTenantID(c)
+	projectID := c.Query("project_id")
 	query := db.DB.Model(&db.Vulnerability{}).Where("tenant_id = ?", tenantID)
+	if projectID != "" {
+		query = query.Where("project_id = ?", projectID)
+	}
 	query.Find(&vulns)
 
 	for _, v := range vulns {
-		writer.Write([]string{v.TenantID, v.TaskID, v.Target, v.Plugin, v.Severity, v.CreatedAt.Format(time.RFC3339)})
+		writer.Write([]string{v.TenantID, v.ProjectID, v.TaskID, v.Target, v.Plugin, v.Severity, v.CreatedAt.Format(time.RFC3339)})
 	}
 }
 
@@ -1189,7 +1417,11 @@ func getAgentCommands(c *gin.Context) {
 func getVulns(c *gin.Context) {
 	var vulns []db.Vulnerability
 	tenantID := currentTenantID(c)
+	projectID := c.Query("project_id")
 	query := db.DB.Where("tenant_id = ?", tenantID).Order("created_at desc")
+	if projectID != "" {
+		query = query.Where("project_id = ?", projectID)
+	}
 	if taskID := c.Query("task_id"); taskID != "" {
 		if scopedTaskIDs := resolveScopedTaskIDs(tenantID, taskID); len(scopedTaskIDs) > 1 {
 			query = query.Where("task_id IN ?", scopedTaskIDs)
@@ -1204,7 +1436,11 @@ func getVulns(c *gin.Context) {
 func getAssets(c *gin.Context) {
 	var assets []db.Asset
 	tenantID := currentTenantID(c)
+	projectID := c.Query("project_id")
 	query := db.DB.Where("tenant_id = ?", tenantID).Order("created_at desc")
+	if projectID != "" {
+		query = query.Where("project_id = ?", projectID)
+	}
 	if taskID := c.Query("task_id"); taskID != "" {
 		if scopedTaskIDs := resolveScopedTaskIDs(tenantID, taskID); len(scopedTaskIDs) > 1 {
 			query = query.Where("task_id IN ?", scopedTaskIDs)
@@ -1219,7 +1455,11 @@ func getAssets(c *gin.Context) {
 func getFingerprints(c *gin.Context) {
 	var fps []db.FingerprintHit
 	tenantID := currentTenantID(c)
+	projectID := c.Query("project_id")
 	query := db.DB.Where("tenant_id = ?", tenantID).Order("created_at desc")
+	if projectID != "" {
+		query = query.Where("project_id = ?", projectID)
+	}
 	if taskID := c.Query("task_id"); taskID != "" {
 		if scopedTaskIDs := resolveScopedTaskIDs(tenantID, taskID); len(scopedTaskIDs) > 1 {
 			query = query.Where("task_id IN ?", scopedTaskIDs)
@@ -1987,39 +2227,42 @@ func BumpRuleVersion() string {
 
 func getVulnTrends(c *gin.Context) {
 	tenantID := currentTenantID(c)
+	projectID := c.Query("project_id")
 	days := 30
 	if d := c.Query("days"); d != "" {
 		if v, err := strconv.Atoi(d); err == nil && v > 0 {
 			days = v
 		}
 	}
-	c.JSON(http.StatusOK, db.GetVulnTrends(tenantID, days))
+	c.JSON(http.StatusOK, db.GetVulnTrends(tenantID, projectID, days))
 }
 
 func getSeverityDistribution(c *gin.Context) {
-	c.JSON(http.StatusOK, db.GetSeverityDistribution(currentTenantID(c)))
+	c.JSON(http.StatusOK, db.GetSeverityDistribution(currentTenantID(c), c.Query("project_id")))
 }
 
 func getTaskResultStats(c *gin.Context) {
 	tenantID := currentTenantID(c)
+	projectID := c.Query("project_id")
 	limit := 20
 	if l := c.Query("limit"); l != "" {
 		if v, err := strconv.Atoi(l); err == nil && v > 0 {
 			limit = v
 		}
 	}
-	c.JSON(http.StatusOK, db.GetTaskResultStats(tenantID, limit))
+	c.JSON(http.StatusOK, db.GetTaskResultStats(tenantID, projectID, limit))
 }
 
 func getRecentHighVulns(c *gin.Context) {
 	tenantID := currentTenantID(c)
+	projectID := c.Query("project_id")
 	limit := 10
 	if l := c.Query("limit"); l != "" {
 		if v, err := strconv.Atoi(l); err == nil && v > 0 {
 			limit = v
 		}
 	}
-	c.JSON(http.StatusOK, db.GetRecentHighVulns(tenantID, limit))
+	c.JSON(http.StatusOK, db.GetRecentHighVulns(tenantID, projectID, limit))
 }
 
 // ==================== Agent 遥测日志 ====================

@@ -3,7 +3,9 @@ package db
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -637,6 +639,10 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 		// 精细化字段提取
 		if v, ok := p["port"].(float64); ok {
 			port = int(v)
+		} else if v, ok := p["port"].(string); ok && v != "" {
+			if pv, err := strconv.Atoi(v); err == nil {
+				port = pv
+			}
 		}
 		if v, ok := p["service"].(string); ok {
 			service = v
@@ -715,10 +721,29 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 		// 归一化 target，确保三表关联一致性
 		target = normalizeTarget(target)
 
+		// 尝试从 target 中回填端口号（如果精细化提取未命中）
+		if port == 0 && strings.Contains(target, ":") {
+			if u, err := url.Parse(target); err == nil && u.Port() != "" {
+				if pv, err := strconv.Atoi(u.Port()); err == nil {
+					port = pv
+				}
+			} else if _, portStr, err := net.SplitHostPort(target); err == nil {
+				if pv, err := strconv.Atoi(portStr); err == nil {
+					port = pv
+				}
+			}
+		}
+
+		// 构建真实 URL (仅 Web 类型有意义)
+		actualURL := ""
+		if payloadType == "Web" || payloadType == "Domain-Bind" {
+			actualURL = target // target 已 normalize 为 scheme://host:port 格式
+		}
+
 		assetBuffer <- Asset{
 			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID, Target: target, Protocol: payloadType,
-			Port: port, URL: payloadJSON, Title: title, Service: service,
-			Tags: "[]", Status: "alive", CreatedAt: time.Now(), UpdatedAt: time.Now(),
+			Port: port, URL: actualURL, Title: title, Service: service,
+			Tags: payloadJSON, Status: "alive", CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
 	case "fingerprint", "web_fingerprint", "tech",
 		"Finger", "Active-Finger":

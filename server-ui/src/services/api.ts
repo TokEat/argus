@@ -61,8 +61,8 @@ export async function login(data: API.LoginRequest): Promise<API.LoginResponse> 
 // Dashboard API
 // ===========================
 
-export async function getDashboardStats(): Promise<API.DashboardStats> {
-    return request.get('/stats');
+export async function getDashboardStats(projectId?: string): Promise<API.DashboardStats> {
+    return request.get('/stats', { params: projectId ? { project_id: projectId } : {} });
 }
 
 // ===========================
@@ -75,6 +75,18 @@ export async function listProjects(): Promise<API.Project[]> {
 
 export async function createProject(data: { name: string; description?: string }): Promise<API.Project> {
     return request.post('/projects', data);
+}
+
+export async function updateProject(id: string, data: { name?: string; description?: string; status?: string }): Promise<API.Project> {
+    return request.put(`/projects/${id}`, data);
+}
+
+export async function deleteProject(id: string): Promise<API.MessageResponse> {
+    return request.delete(`/projects/${id}`);
+}
+
+export async function getProjectStats(id: string): Promise<{ project_id: string; project_name: string; tasks: number; assets: number; fingerprints: number; vulns: number }> {
+    return request.get(`/projects/${id}/stats`);
 }
 
 // ===========================
@@ -121,24 +133,39 @@ export async function getQueueDepth(): Promise<{
 // Results API
 // ===========================
 
-export async function getVulns(taskId?: string): Promise<API.Vulnerability[]> {
-    return request.get('/vulns', { params: taskId ? { task_id: taskId } : {} });
+export async function getVulns(taskId?: string, projectId?: string): Promise<API.Vulnerability[]> {
+    const params: Record<string, string> = {};
+    if (taskId) params.task_id = taskId;
+    if (projectId) params.project_id = projectId;
+    return request.get('/vulns', { params });
 }
 
-export async function getAssets(taskId?: string): Promise<API.Asset[]> {
-    return request.get('/assets', { params: taskId ? { task_id: taskId } : {} });
+export async function getAssets(taskId?: string, projectId?: string): Promise<API.Asset[]> {
+    const params: Record<string, string> = {};
+    if (taskId) params.task_id = taskId;
+    if (projectId) params.project_id = projectId;
+    return request.get('/assets', { params });
 }
 
-export async function getFingerprints(taskId?: string): Promise<API.FingerprintHit[]> {
-    return request.get('/fingerprints', { params: taskId ? { task_id: taskId } : {} });
+export async function getFingerprints(taskId?: string, projectId?: string): Promise<API.FingerprintHit[]> {
+    const params: Record<string, string> = {};
+    if (taskId) params.task_id = taskId;
+    if (projectId) params.project_id = projectId;
+    return request.get('/fingerprints', { params });
 }
 
-export async function getProfiles(page: number = 1, pageSize: number = 50, search: string = ''): Promise<API.PaginatedResponse<API.Profile>> {
-    return request.get('/profiles', { params: { page, page_size: pageSize, search } });
+export async function getProfiles(page: number = 1, pageSize: number = 50, search: string = '', projectId?: string): Promise<API.PaginatedResponse<API.Profile>> {
+    const params: Record<string, string | number> = { page, page_size: pageSize, search };
+    if (projectId) params.project_id = projectId;
+    return request.get('/profiles', { params });
 }
 
-export async function exportVulns(): Promise<Blob> {
-    const response = await axios.get('/api/v1/reports/export/vulns', {
+export async function exportVulns(projectId?: string): Promise<Blob> {
+    const params = new URLSearchParams();
+    if (projectId) params.set('project_id', projectId);
+    const queryString = params.toString();
+    const url = `/api/v1/reports/export/vulns${queryString ? `?${queryString}` : ''}`;
+    const response = await axios.get(url, {
         responseType: 'blob',
         headers: {
             Authorization: `Bearer ${localStorage.getItem('token')}`,
@@ -693,20 +720,26 @@ export async function deleteMcpKey(id: string): Promise<API.MessageResponse> {
 // Data Enhancement API
 // ===========================
 
-export async function getVulnTrends(days: number = 30): Promise<API.TrendPoint[]> {
-    return request.get('/stats/trends', { params: { days } });
+export async function getVulnTrends(days: number = 30, projectId?: string): Promise<API.TrendPoint[]> {
+    const params: Record<string, string | number> = { days };
+    if (projectId) params.project_id = projectId;
+    return request.get('/stats/trends', { params });
 }
 
-export async function getSeverityDistribution(): Promise<API.SeverityCount[]> {
-    return request.get('/stats/severity');
+export async function getSeverityDistribution(projectId?: string): Promise<API.SeverityCount[]> {
+    return request.get('/stats/severity', { params: projectId ? { project_id: projectId } : {} });
 }
 
-export async function getTaskResultStats(limit: number = 20): Promise<API.TaskStats[]> {
-    return request.get('/stats/task-results', { params: { limit } });
+export async function getTaskResultStats(limit: number = 20, projectId?: string): Promise<API.TaskStats[]> {
+    const params: Record<string, string | number> = { limit };
+    if (projectId) params.project_id = projectId;
+    return request.get('/stats/task-results', { params });
 }
 
-export async function getRecentHighVulns(limit: number = 10): Promise<API.Vulnerability[]> {
-    return request.get('/stats/recent-high-vulns', { params: { limit } });
+export async function getRecentHighVulns(limit: number = 10, projectId?: string): Promise<API.Vulnerability[]> {
+    const params: Record<string, string | number> = { limit };
+    if (projectId) params.project_id = projectId;
+    return request.get('/stats/recent-high-vulns', { params });
 }
 
 // ===========================
