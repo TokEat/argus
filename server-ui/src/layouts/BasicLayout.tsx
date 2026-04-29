@@ -55,6 +55,7 @@ const BasicLayout: React.FC = () => {
         else if (path.startsWith('/nodes')) module = 'node_list';
         else if (path.startsWith('/config/poc')) module = 'poc_list';
         else if (path.startsWith('/config/workflow')) module = 'workflow_list';
+        else if (path.startsWith('/config/debug')) module = 'arsenal_debug';
         else if (path.startsWith('/config/dir')) module = 'dir_list';
         else if (path.startsWith('/config/active-finger')) module = 'fingerprint_list';
         else if (path.startsWith('/arsenals/poc')) module = 'poc_list';
@@ -103,7 +104,7 @@ const BasicLayout: React.FC = () => {
     const handleProjectChange = (value: string) => {
         setSelectedProject(value);
         localStorage.setItem('active_project_id', value);
-        window.location.reload();
+        navigate('/dashboard');
     };
 
     const handleLogout = () => {

@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -21,11 +22,19 @@ const (
 )
 
 type debugRequest struct {
-	AgentID    string `json:"agent_id"`
-	PocContent string `json:"poc_content"`
-	TargetURL  string `json:"target_url"`
-	Proxy      string `json:"proxy"`
-	TimeoutSec int32  `json:"timeout_sec"`
+	AgentID          string `json:"agent_id"`
+	PocContent       string `json:"poc_content"`
+	TargetURL        string `json:"target_url"`
+	Proxy            string `json:"proxy"`
+	TimeoutSec       int32  `json:"timeout_sec"`
+	IncludeDir       bool   `json:"include_dir"`
+	IncludePoc       bool   `json:"include_poc"`
+	CustomProduct    string `json:"custom_product"`
+	CustomRule       string `json:"custom_rule"`
+	CustomWfProduct  string `json:"custom_wf_product"`
+	CustomWfTypes    string `json:"custom_wf_types"`
+	CustomWfPocs     string `json:"custom_wf_pocs"`
+	CustomPocContent string `json:"custom_poc_content"`
 }
 
 type debugSession struct {
@@ -35,6 +44,7 @@ type debugSession struct {
 	StartedAt  time.Time
 	Timeout    time.Duration
 	ResultChan chan map[string]interface{}
+	done       chan struct{}
 }
 
 type debugSessionManager struct {
@@ -60,9 +70,10 @@ func (m *debugSessionManager) start(tenantID, agentID string, timeout time.Durat
 		SessionID:  newDebugSessionID(),
 		TenantID:   tenantID,
 		AgentID:    agentID,
-		StartedAt:  time.Time{}, // handled below to ensure consistent timestamp
+		StartedAt:  time.Time{},
 		Timeout:    timeout,
 		ResultChan: resultChan,
+		done:       make(chan struct{}),
 	}
 	session.StartedAt = time.Now()
 	m.sessions[session.SessionID] = session
@@ -89,6 +100,7 @@ func (m *debugSessionManager) finish(sessionID string) {
 	if m.activeTenant[session.TenantID] == sessionID {
 		delete(m.activeTenant, session.TenantID)
 	}
+	close(session.done)
 }
 
 func newDebugSessionID() string {
@@ -100,11 +112,14 @@ func newDebugSessionID() string {
 }
 
 func debugPocGateway(c *gin.Context) {
-	if c.Param("type") != "debug" {
+	switch c.Param("type") {
+	case "debug":
+		debugPoc(c)
+	case "finger-debug":
+		debugFingerprint(c)
+	default:
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
-		return
 	}
-	debugPoc(c)
 }
 
 func cancelDebugSessionGateway(c *gin.Context) {
@@ -116,6 +131,14 @@ func cancelDebugSessionGateway(c *gin.Context) {
 }
 
 func debugPoc(c *gin.Context) {
+	startAgentDebug(c, "start_debug", true)
+}
+
+func debugFingerprint(c *gin.Context) {
+	startAgentDebug(c, "start_fingerprint_debug", false)
+}
+
+func startAgentDebug(c *gin.Context, action string, requirePocContent bool) {
 	if notifyHub == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent notify hub is not ready"})
 		return
@@ -138,8 +161,12 @@ func debugPoc(c *gin.Context) {
 		req.TimeoutSec = maxDebugTimeoutSec
 	}
 
-	if req.AgentID == "" || req.PocContent == "" || req.TargetURL == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id, poc_content and target_url are required"})
+	if req.AgentID == "" || req.TargetURL == "" || (requirePocContent && req.PocContent == "") {
+		if requirePocContent {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id, poc_content and target_url are required"})
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id and target_url are required"})
+		}
 		return
 	}
 	if err := validateDebugTargetURL(req.TargetURL); err != nil {
@@ -157,7 +184,11 @@ func debugPoc(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "agent is not alive in this tenant"})
 		return
 	}
-	if !isDebugCapableAgent(node.Version) {
+	if action == "start_fingerprint_debug" && !isFingerprintDebugCapableAgent(node.Version) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "agent does not support fingerprint debug; please upgrade agent to v2.3.0+"})
+		return
+	}
+	if action != "start_fingerprint_debug" && !isDebugCapableAgent(node.Version) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "agent does not support poc debug; please upgrade agent"})
 		return
 	}
@@ -172,11 +203,30 @@ func debugPoc(c *gin.Context) {
 		return
 	}
 
+	pocContent := req.PocContent
+	if action == "start_fingerprint_debug" {
+		payloadMap := gin.H{"include_dir": req.IncludeDir, "include_poc": req.IncludePoc}
+		if req.CustomProduct != "" && req.CustomRule != "" {
+			payloadMap["custom_product"] = req.CustomProduct
+			payloadMap["custom_rule"] = req.CustomRule
+		}
+		if req.CustomWfProduct != "" && req.CustomWfPocs != "" {
+			payloadMap["custom_wf_product"] = req.CustomWfProduct
+			payloadMap["custom_wf_types"] = req.CustomWfTypes
+			payloadMap["custom_wf_pocs"] = req.CustomWfPocs
+		}
+		if req.CustomPocContent != "" {
+			payloadMap["custom_poc_content"] = req.CustomPocContent
+		}
+		payload, _ := json.Marshal(payloadMap)
+		pocContent = string(payload)
+	}
+
 	cmd := &pb.DebugCommand{
-		Action:     "start_debug",
+		Action:     action,
 		SessionId:  session.SessionID,
 		TenantId:   tenantID,
-		PocContent: req.PocContent,
+		PocContent: pocContent,
 		TargetUrl:  req.TargetURL,
 		Proxy:      req.Proxy,
 		TimeoutSec: req.TimeoutSec,
@@ -265,7 +315,10 @@ func handleAgentDebugEvent(event *pb.DebugEvent) {
 	Hub.BroadcastToTenant(session.TenantID, payload)
 
 	if session.ResultChan != nil && (event.Type == "debug_result" || event.Type == "debug_complete") {
-		session.ResultChan <- payload
+		select {
+		case session.ResultChan <- payload:
+		default:
+		}
 	}
 
 	if event.Type == "debug_complete" {
@@ -274,8 +327,13 @@ func handleAgentDebugEvent(event *pb.DebugEvent) {
 }
 
 func expireDebugSession(session *debugSession) {
+	timer := time.NewTimer(session.Timeout + 15*time.Second)
+	defer timer.Stop()
+
 	select {
-	case <-time.After(session.Timeout + 15*time.Second):
+	case <-session.done:
+		return
+	case <-timer.C:
 		if _, ok := pocDebugSessions.get(session.SessionID); !ok {
 			return
 		}
@@ -290,7 +348,10 @@ func expireDebugSession(session *debugSession) {
 		}
 		Hub.BroadcastToTenant(session.TenantID, payload)
 		if session.ResultChan != nil {
-			session.ResultChan <- payload
+			select {
+			case session.ResultChan <- payload:
+			default:
+			}
 		}
 		pocDebugSessions.finish(session.SessionID)
 	}
@@ -325,6 +386,14 @@ func validateDebugProxy(raw string) error {
 }
 
 func isDebugCapableAgent(version string) bool {
+	return isAgentVersionAtLeast(version, 2, 2)
+}
+
+func isFingerprintDebugCapableAgent(version string) bool {
+	return isAgentVersionAtLeast(version, 2, 3)
+}
+
+func isAgentVersionAtLeast(version string, minMajor int, minMinor int) bool {
 	version = strings.TrimSpace(strings.TrimPrefix(strings.ToLower(version), "v"))
 	parts := strings.Split(version, ".")
 	if len(parts) < 2 {
@@ -335,7 +404,7 @@ func isDebugCapableAgent(version string) bool {
 	if err1 != nil || err2 != nil {
 		return strings.Contains(version, "debug")
 	}
-	return major > 2 || (major == 2 && minor >= 2)
+	return major > minMajor || (major == minMajor && minor >= minMinor)
 }
 
 type errString string

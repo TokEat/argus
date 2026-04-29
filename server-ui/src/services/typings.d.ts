@@ -241,6 +241,21 @@ declare namespace API {
     timeout_sec?: number;
   }
 
+  interface DebugFingerprintRequest {
+    agent_id: string;
+    target_url: string;
+    proxy?: string;
+    timeout_sec?: number;
+    include_dir?: boolean;
+    include_poc?: boolean;
+    custom_product?: string;
+    custom_rule?: string;
+    custom_wf_product?: string;
+    custom_wf_types?: string;
+    custom_wf_pocs?: string;
+    custom_poc_content?: string;
+  }
+
   interface DebugEvent {
     type: 'debug_log' | 'debug_result' | 'debug_complete';
     session_id: string;

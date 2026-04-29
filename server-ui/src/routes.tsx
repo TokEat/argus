@@ -32,6 +32,7 @@ import PocConfig from './pages/config/PocConfig';
 import ActiveFingerConfig from './pages/config/DirConfig';
 import DirProbeConfig from './pages/config/DirProbeConfig';
 import WorkflowConfig from './pages/config/WorkflowConfig';
+import DebugConfig from './pages/config/DebugConfig';
 import ClientBuild from './pages/ClientBuild';
 import UserManagement from './pages/UserManagement';
 import RoleManagement from './pages/RoleManagement';
@@ -149,6 +150,14 @@ export const menuRoutes: RouteConfig[] = [
                 element: <ConfigLayout><DirProbeConfig /></ConfigLayout>,
                 hideInMenu: true,
                 minRole: 'viewer',
+            },
+            {
+                path: '/config/debug',
+                name: '调试',
+                icon: <RobotOutlined />,
+                element: <ConfigLayout><DebugConfig /></ConfigLayout>,
+                hideInMenu: true,
+                minRole: 'operator',
             },
         ],
     },

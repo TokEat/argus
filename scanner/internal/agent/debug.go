@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,13 +13,27 @@ import (
 	"time"
 
 	"dddd/scanner/common"
+	"dddd/scanner/internal/engine"
 	"dddd/scanner/internal/vuln/nuclei"
+	"dddd/scanner/lib/ddfinger"
+	"dddd/scanner/structs"
 	"github.com/projectdiscovery/nuclei/v3/pkg/output"
 	pb "github.com/user/dddd-proto/go/scan"
 	"google.golang.org/grpc"
 )
 
 const defaultAgentDebugTimeout = 60 * time.Second
+
+// nucleiDebugResult represents the JSON structure of Nuclei debug output
+type nucleiDebugResult struct {
+	TemplateID      string   `json:"template-id"`
+	Matched         string   `json:"matched-at"`
+	Info            struct {
+		Severity string `json:"severity"`
+	} `json:"info"`
+	ExtractedResults []string `json:"extracted-results"`
+	MatcherStatus   bool     `json:"matcher-status"`
+}
 
 func (w *Worker) handleDebugCommand(cmd *pb.DebugCommand) {
 	if cmd == nil || strings.TrimSpace(cmd.SessionId) == "" {
@@ -27,6 +42,8 @@ func (w *Worker) handleDebugCommand(cmd *pb.DebugCommand) {
 
 	switch cmd.Action {
 	case "start_debug":
+		w.startDebugSession(cmd)
+	case "start_fingerprint_debug":
 		w.startDebugSession(cmd)
 	case "cancel_debug":
 		w.cancelDebugSession(cmd.SessionId)
@@ -120,8 +137,16 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 		if !completeSent.Load() {
 			sendComplete("")
 		}
-		_ = closeDebugStream(stream)
+		if err := closeDebugStream(stream); err != nil {
+			logDebugLocal("WARN", "failed to close debug stream: %v", err)
+		}
 	}()
+
+	if cmd.Action == "start_fingerprint_debug" {
+		send(&pb.DebugEvent{Type: "debug_log", Level: "INFO", Message: "agent accepted fingerprint debug session"})
+		w.runFingerprintDebugSession(ctx, cmd, timeout, send, sendComplete)
+		return
+	}
 
 	send(&pb.DebugEvent{Type: "debug_log", Level: "INFO", Message: "agent accepted poc debug session"})
 
@@ -192,6 +217,239 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 	}
 }
 
+type fingerprintDebugOptions struct {
+	IncludeDir       bool   `json:"include_dir"`
+	IncludePoc       bool   `json:"include_poc"`
+	CustomProduct    string `json:"custom_product"`
+	CustomRule       string `json:"custom_rule"`
+	CustomWfProduct  string `json:"custom_wf_product"`
+	CustomWfTypes    string `json:"custom_wf_types"`
+	CustomWfPocs     string `json:"custom_wf_pocs"`
+	CustomPocContent string `json:"custom_poc_content"`
+}
+
+func (w *Worker) runFingerprintDebugSession(
+	ctx context.Context,
+	cmd *pb.DebugCommand,
+	timeout time.Duration,
+	send func(*pb.DebugEvent),
+	sendComplete func(string),
+) {
+	options := fingerprintDebugOptions{}
+	_ = json.Unmarshal([]byte(cmd.PocContent), &options)
+
+	cfg := structs.DefaultConfig()
+	cfg.Targets = []string{cmd.TargetUrl}
+	cfg.HTTPProxy = cmd.Proxy
+	cfg.NoPoc = !options.IncludePoc
+	cfg.NoHostBind = true
+	cfg.NoDirSearch = !options.IncludeDir
+	cfg.SkipHostDiscovery = true
+	cfg.WebTimeout = int(timeout.Seconds())
+	if cfg.WebTimeout <= 0 || cfg.WebTimeout > int(defaultAgentDebugTimeout.Seconds()) {
+		cfg.WebTimeout = int(defaultAgentDebugTimeout.Seconds())
+	}
+	cfg.WebThreads = 8
+
+	sc, err := newScanContext(engine.Config(cfg))
+	if err != nil {
+		sendComplete(fmt.Sprintf("create scan context: %v", err))
+		return
+	}
+	originalCancel := sc.Cancel
+	defer sc.Close()
+	if originalCancel != nil {
+		defer originalCancel()
+	}
+	sc.TaskID = cmd.SessionId
+	sc.Ctx = ctx
+	sc.Cancel = func() {}
+
+	// --- 注入自定义指纹规则 ---
+	customProducts := make(map[string]bool)
+	if options.CustomProduct != "" && options.CustomRule != "" {
+		rule := strings.TrimSpace(options.CustomRule)
+		parsed := ddfinger.ParseRule(rule)
+		if len(parsed) > 0 {
+			engineRules := make([]engine.RuleData, 0, len(parsed))
+			for _, r := range parsed {
+				engineRules = append(engineRules, engine.RuleData(r))
+			}
+			sc.FingerprintDB = append(sc.FingerprintDB, engine.FingerPEntity{
+				ProductName: options.CustomProduct,
+				AllString:   rule,
+				Rule:        engineRules,
+			})
+			customProducts[options.CustomProduct] = true
+			send(&pb.DebugEvent{
+				Type:    "debug_log",
+				Level:   "INFO",
+				Message: fmt.Sprintf("injected custom fingerprint: %s → %s", options.CustomProduct, rule),
+			})
+		} else {
+			send(&pb.DebugEvent{
+				Type:    "debug_log",
+				Level:   "WARN",
+				Message: fmt.Sprintf("custom rule expression could not be parsed: %s", rule),
+			})
+		}
+	}
+
+	// --- 注入自定义 Workflow 规则 ---
+	if options.CustomWfProduct != "" && options.CustomWfPocs != "" {
+		var pocs []string
+		for _, p := range strings.Split(options.CustomWfPocs, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				pocs = append(pocs, p)
+			}
+		}
+		if len(pocs) > 0 {
+			types := strings.Split(options.CustomWfTypes, ",")
+			typeSet := make(map[string]bool)
+			for _, t := range types {
+				typeSet[strings.TrimSpace(strings.ToLower(t))] = true
+			}
+			wf := structs.WorkFlowEntity{
+				RootType:    typeSet["root"],
+				BaseType:    typeSet["base"],
+				DirType:     typeSet["dir"],
+				DirFallback: typeSet["dir-fallback"],
+				PocsName:    pocs,
+			}
+			if sc.WorkFlowDB == nil {
+				sc.WorkFlowDB = make(map[string]structs.WorkFlowEntity)
+			}
+			sc.WorkFlowDB[options.CustomWfProduct] = wf
+			send(&pb.DebugEvent{
+				Type:    "debug_log",
+				Level:   "INFO",
+				Message: fmt.Sprintf("injected custom workflow: %s → pocs=%v types=%v", options.CustomWfProduct, pocs, types),
+			})
+		}
+	}
+
+	// --- 注入自定义 POC 内容 ---
+	if options.CustomPocContent != "" {
+		tmpPocDir, err := os.MkdirTemp("", "argus-custom-poc-*")
+		if err != nil {
+			sendComplete(fmt.Sprintf("create custom poc temp dir: %v", err))
+			return
+		}
+		defer os.RemoveAll(tmpPocDir)
+
+		pocName := strings.TrimSpace(options.CustomWfPocs)
+		pocFile := pocName
+		if !strings.HasSuffix(strings.ToLower(pocFile), ".yaml") &&
+			!strings.HasSuffix(strings.ToLower(pocFile), ".yml") {
+			pocFile += ".yaml"
+		}
+
+		templatePath := filepath.Join(tmpPocDir, pocFile)
+		if err := os.WriteFile(templatePath, []byte(options.CustomPocContent), 0600); err != nil {
+			sendComplete(fmt.Sprintf("write custom poc: %v", err))
+			return
+		}
+
+		sc.Config.NucleiTemplate = tmpPocDir
+		send(&pb.DebugEvent{
+			Type:    "debug_log",
+			Level:   "INFO",
+			Message: fmt.Sprintf("injected custom POC: %s (%d bytes)", pocFile, len(options.CustomPocContent)),
+		})
+	}
+
+	sc.PhaseHook = func(phase engine.PhaseEvent) {
+		send(&pb.DebugEvent{
+			Type:    "debug_log",
+			Level:   "DEBUG",
+			Message: fmt.Sprintf("%s %s %s", phase.Phase, phase.Status, phase.Message),
+		})
+	}
+	sc.OutputHook = func(msg engine.OutputMessage) {
+		switch msg.Type {
+		case "Web":
+			send(&pb.DebugEvent{
+				Type:      "debug_log",
+				Level:     "INFO",
+				Message:   fmt.Sprintf("web probe %s status=%s title=%s", msg.URI, msg.Web.Status, msg.Web.Title),
+				MatchedAt: msg.URI,
+				Request:   fmt.Sprintf("status=%s\ntitle=%s", msg.Web.Status, msg.Web.Title),
+			})
+		case "Finger", "Active-Finger":
+			// 对自定义规则命中的 product 加 [custom] 前缀
+			tagged := make([]string, 0, len(msg.Finger))
+			for _, fp := range msg.Finger {
+				if customProducts[fp] {
+					tagged = append(tagged, "[custom]"+fp)
+				} else {
+					tagged = append(tagged, fp)
+				}
+			}
+			send(&pb.DebugEvent{
+				Type:       "debug_result",
+				Matched:    len(msg.Finger) > 0,
+				TemplateId: msg.Type,
+				MatchedAt:  msg.URI,
+				Extracted:  tagged,
+				Message:    msg.AdditionalMsg,
+			})
+		default:
+			if msg.Type == "Nuclei" && msg.Nuclei != "" {
+				// 解析 Nuclei JSON 结果
+				var nr nucleiDebugResult
+				if json.Unmarshal([]byte(msg.Nuclei), &nr) == nil {
+					send(&pb.DebugEvent{
+						Type:       "debug_result",
+						Matched:    nr.MatcherStatus,
+						TemplateId: "Nuclei:" + nr.TemplateID,
+						Severity:   nr.Info.Severity,
+						MatchedAt:  nr.Matched,
+						Extracted:  nr.ExtractedResults,
+					})
+				} else {
+					send(&pb.DebugEvent{
+						Type:    "debug_log",
+						Level:   "DEBUG",
+						Message: fmt.Sprintf("Nuclei %s", msg.Show),
+					})
+				}
+			} else if msg.GoPoc.PocName != "" {
+				send(&pb.DebugEvent{
+					Type:       "debug_result",
+					Matched:    true,
+					TemplateId: "GoPoc:" + msg.GoPoc.PocName,
+					Severity:   msg.GoPoc.Security,
+					MatchedAt:  msg.GoPoc.Target,
+					Message:    msg.GoPoc.Description,
+				})
+			} else if msg.Type != "" {
+				send(&pb.DebugEvent{
+					Type:    "debug_log",
+					Level:   "DEBUG",
+					Message: fmt.Sprintf("%s %s", msg.Type, msg.URI),
+				})
+			}
+		}
+	}
+
+	send(&pb.DebugEvent{
+		Type:    "debug_log",
+		Level:   "INFO",
+		Message: fmt.Sprintf("running fingerprint debug against %s (timeout=%s, dir=%v, poc=%v)", cmd.TargetUrl, timeout, options.IncludeDir, options.IncludePoc),
+	})
+
+	if err := runScanTask(sc); err != nil && ctx.Err() == nil {
+		sendComplete(fmt.Sprintf("fingerprint debug failed: %v", err))
+		return
+	}
+	if ctx.Err() != nil {
+		sendComplete(ctx.Err().Error())
+		return
+	}
+	sendComplete("")
+}
+
 func (w *Worker) sendOneShotDebugComplete(cmd *pb.DebugCommand, errMsg string) {
 	stream, err := w.client.StreamDebug(context.Background())
 	if err != nil {
@@ -206,7 +464,9 @@ func (w *Worker) sendOneShotDebugComplete(cmd *pb.DebugCommand, errMsg string) {
 		Timestamp: time.Now().UnixMilli(),
 		Error:     errMsg,
 	})
-	_ = closeDebugStream(stream)
+	if err := closeDebugStream(stream); err != nil {
+		logDebugLocal("WARN", "failed to close debug stream for rejection: %v", err)
+	}
 }
 
 func closeDebugStream(stream grpc.ClientStreamingClient[pb.DebugEvent, pb.Ack]) error {

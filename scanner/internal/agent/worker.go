@@ -46,6 +46,7 @@ type grpcTeeWriter struct {
 	queue    chan *pb.LogPayload
 	stopCh   chan struct{}
 	doneCh   chan struct{}
+	dropped  atomic.Uint64
 }
 
 func (w *grpcTeeWriter) Write(data []byte, level levels.Level) {
@@ -86,7 +87,7 @@ func (w *grpcTeeWriter) Write(data []byte, level levels.Level) {
 	select {
 	case w.queue <- payload:
 	default:
-		// 避免日志回传阻塞扫描主流程；队列满时丢弃本条远端日志。
+		w.dropped.Add(1)
 	}
 }
 
@@ -150,7 +151,7 @@ var (
 	runScanTask    = engine.RunTask
 )
 
-const agentVersion = "v2.2.0"
+const agentVersion = "v2.3.0"
 
 // Worker 是扫描节点的核心
 type Worker struct {
@@ -236,7 +237,7 @@ func (w *Worker) Start() error {
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                30 * time.Second, // 每 30 秒发送一次 keepalive ping
 			Timeout:             10 * time.Second, // 10 秒无响应判定连接死亡
-			PermitWithoutStream: true,              // 即使没有活跃 RPC 流也发送 ping
+			PermitWithoutStream: true,             // 即使没有活跃 RPC 流也发送 ping
 		}),
 	}
 	if w.psk != "" {

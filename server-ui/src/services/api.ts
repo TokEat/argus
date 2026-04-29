@@ -348,6 +348,10 @@ export async function debugPoc(data: API.DebugPocRequest): Promise<{ session_id:
     return request.post('/arsenals/debug', data);
 }
 
+export async function debugFingerprint(data: API.DebugFingerprintRequest): Promise<{ session_id: string; status: string }> {
+    return request.post('/arsenals/finger-debug', data);
+}
+
 export async function cancelDebugSession(sessionId: string): Promise<API.MessageResponse> {
     return request.post(`/arsenals/debug/${encodeURIComponent(sessionId)}/cancel`);
 }
