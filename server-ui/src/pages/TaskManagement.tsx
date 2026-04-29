@@ -52,6 +52,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { cancelTask, createTask, deleteTask, listTasks, listProjects, getTaskDetail } from '../services/api';
 import { getTaskStatusMeta, isTaskCancellable, isTaskFailedLike, isTaskFinished, normalizeTaskStatus } from '../utils/taskStatus';
+import { canAccessRole } from '../utils/auth';
 import { useAutoContext } from '../contexts/GlobalAIContext';
 
 const { Title, Text } = Typography;
@@ -185,6 +186,7 @@ const TaskManagement: React.FC = () => {
     const [detailOpen, setDetailOpen] = useState(false);
     const [detailLoading, setDetailLoading] = useState(false);
     const [taskDetail, setTaskDetail] = useState<API.TaskDetailResponse | null>(null);
+    const canManageTasks = canAccessRole('operator');
 
     const fetchTasks = async () => {
         setLoading(true);
@@ -224,6 +226,7 @@ const TaskManagement: React.FC = () => {
     });
 
     const handleCreate = async () => {
+        if (!canManageTasks) return;
         try {
             const values = await form.validateFields();
             setCreating(true);
@@ -267,6 +270,7 @@ const TaskManagement: React.FC = () => {
     };
 
     const handleDelete = async (taskId: string) => {
+        if (!canManageTasks) return;
         try {
             await deleteTask(taskId);
             message.success('任务已删除');
@@ -277,6 +281,7 @@ const TaskManagement: React.FC = () => {
     };
 
     const handleCancel = async (taskId: string) => {
+        if (!canManageTasks) return;
         try {
             await cancelTask(taskId);
             message.success('取消指令已下发');
@@ -417,18 +422,20 @@ const TaskManagement: React.FC = () => {
                         onClick={() => navigate(`/tasks/${record.ID}/results`)}>
                         结果
                     </Button>
-                    {isTaskCancellable(record.Status) && (
+                    {canManageTasks && isTaskCancellable(record.Status) && (
                         <Popconfirm title="确认取消此任务？" onConfirm={() => handleCancel(record.ID)}>
                             <Button type="text" size="small" danger icon={<StopOutlined />}>
                                 取消
                             </Button>
                         </Popconfirm>
                     )}
-                    <Popconfirm title="确认删除此任务？" onConfirm={() => handleDelete(record.ID)}>
-                        <Button type="text" size="small" danger icon={<DeleteOutlined />}>
-                            删除
-                        </Button>
-                    </Popconfirm>
+                    {canManageTasks && (
+                        <Popconfirm title="确认删除此任务？" onConfirm={() => handleDelete(record.ID)}>
+                            <Button type="text" size="small" danger icon={<DeleteOutlined />}>
+                                删除
+                            </Button>
+                        </Popconfirm>
+                    )}
                 </Space>
             ),
         },
@@ -445,9 +452,11 @@ const TaskManagement: React.FC = () => {
                     <Button icon={<ReloadOutlined />} onClick={fetchTasks} loading={loading}>
                         刷新
                     </Button>
-                    <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-                        创建任务
-                    </Button>
+                    {canManageTasks && (
+                        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+                            创建任务
+                        </Button>
+                    )}
                 </Space>
             </div>
 
@@ -462,9 +471,11 @@ const TaskManagement: React.FC = () => {
                         description="暂无扫描任务"
                         style={{ padding: '60px 0' }}
                     >
-                        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-                            创建第一个任务
-                        </Button>
+                        {canManageTasks && (
+                            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+                                创建第一个任务
+                            </Button>
+                        )}
                     </Empty>
                 ) : (
                     <Table
@@ -477,16 +488,17 @@ const TaskManagement: React.FC = () => {
                 )}
             </ProCard>
 
-            <Modal
-                title="创建扫描任务"
-                open={createOpen}
-                onCancel={() => setCreateOpen(false)}
-                onOk={handleCreate}
-                okText="创建"
-                confirmLoading={creating}
-                width={920}
-                destroyOnHidden
-            >
+            {canManageTasks && (
+                <Modal
+                    title="创建扫描任务"
+                    open={createOpen}
+                    onCancel={() => setCreateOpen(false)}
+                    onOk={handleCreate}
+                    okText="创建"
+                    confirmLoading={creating}
+                    width={920}
+                    destroyOnHidden
+                >
                 <Form 
                     form={form} 
                     layout="vertical" 
@@ -857,7 +869,8 @@ const TaskManagement: React.FC = () => {
                         ]}
                     />
                 </Form>
-            </Modal>
+                </Modal>
+            )}
 
             {/* 任务详情 Drawer */}
             <Drawer

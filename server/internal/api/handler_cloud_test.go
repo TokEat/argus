@@ -105,8 +105,10 @@ func setupCloudHandlerTestDB(t *testing.T) *gorm.DB {
 	}
 	if err := store.AutoMigrate(
 		&db.CloudAccount{},
+		&db.CloudAccountBinding{},
 		&db.CloudScalingPolicy{},
 		&db.CloudInstance{},
+		&db.User{},
 	); err != nil {
 		t.Fatalf("automigrate: %v", err)
 	}
@@ -119,11 +121,17 @@ func setupCloudHandlerTestDB(t *testing.T) *gorm.DB {
 }
 
 func newTenantContext(method, target string) (*gin.Context, *httptest.ResponseRecorder) {
+	return newTenantContextWithRole(method, target, "admin", "1")
+}
+
+func newTenantContextWithRole(method, target, role, userID string) (*gin.Context, *httptest.ResponseRecorder) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(method, target, nil)
 	ctx.Set("tenant", "default")
+	ctx.Set("role", role)
+	ctx.Set("user_id", userID)
 	return ctx, recorder
 }
 
@@ -224,6 +232,96 @@ func TestCreateCloudPolicyBindsSnakeCasePayload(t *testing.T) {
 		policy.SpotStrategy != "SpotAsPriceGo" ||
 		policy.UserDataTemplate != "cloud-init-template" {
 		t.Fatalf("policy was not bound from snake_case payload: %+v", policy)
+	}
+}
+
+func TestCloudAccountBindingsRestrictOperatorAccess(t *testing.T) {
+	store := setupCloudHandlerTestDB(t)
+	users := []db.User{
+		{ID: 1, TenantID: "default", Username: "admin", Role: "admin", Status: "active"},
+		{ID: 2, TenantID: "default", Username: "op-a", Role: "operator", Status: "active"},
+		{ID: 3, TenantID: "default", Username: "op-b", Role: "operator", Status: "active"},
+	}
+	for _, user := range users {
+		if err := store.Create(&user).Error; err != nil {
+			t.Fatalf("seed user: %v", err)
+		}
+	}
+	account := db.CloudAccount{ID: "ca-bound", TenantID: "default", OwnerUserID: "2", Name: "owned-by-a", Provider: "aliyun", Status: "active"}
+	if err := store.Create(&account).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	if err := store.Create(&db.CloudAccountBinding{TenantID: "default", CloudAccountID: account.ID, UserID: "2", AccessType: "owner"}).Error; err != nil {
+		t.Fatalf("seed owner binding: %v", err)
+	}
+
+	ctxA, recA := newTenantContextWithRole(http.MethodGet, "/cloud/accounts", "operator", "2")
+	listCloudAccounts(ctxA)
+	if recA.Code != http.StatusOK || !strings.Contains(recA.Body.String(), account.ID) {
+		t.Fatalf("owner should see account, code=%d body=%s", recA.Code, recA.Body.String())
+	}
+
+	ctxB, recB := newTenantContextWithRole(http.MethodGet, "/cloud/accounts", "operator", "3")
+	listCloudAccounts(ctxB)
+	if recB.Code != http.StatusOK || strings.Contains(recB.Body.String(), account.ID) {
+		t.Fatalf("unbound operator should not see account, code=%d body=%s", recB.Code, recB.Body.String())
+	}
+
+	body := `{"name":"policy","cloud_account_id":"ca-bound"}`
+	ctxBCreate, recBCreate := newTenantContextWithRole(http.MethodPost, "/cloud/policies", "operator", "3")
+	ctxBCreate.Request = httptest.NewRequest(http.MethodPost, "/cloud/policies", strings.NewReader(body))
+	ctxBCreate.Request.Header.Set("Content-Type", "application/json")
+	ctxBCreate.Set("tenant", "default")
+	ctxBCreate.Set("role", "operator")
+	ctxBCreate.Set("user_id", "3")
+	createCloudPolicy(ctxBCreate)
+	if recBCreate.Code != http.StatusNotFound {
+		t.Fatalf("unbound operator should not create policy with account, got %d (%s)", recBCreate.Code, recBCreate.Body.String())
+	}
+
+	ctxBind, recBind := newTenantContext(http.MethodPut, "/cloud/accounts/ca-bound/bindings")
+	ctxBind.Params = gin.Params{{Key: "id", Value: account.ID}}
+	ctxBind.Request = httptest.NewRequest(http.MethodPut, "/cloud/accounts/ca-bound/bindings", strings.NewReader(`{"user_ids":["2","3"]}`))
+	ctxBind.Request.Header.Set("Content-Type", "application/json")
+	ctxBind.Set("tenant", "default")
+	updateCloudAccountBindings(ctxBind)
+	if recBind.Code != http.StatusOK {
+		t.Fatalf("admin should bind users, got %d (%s)", recBind.Code, recBind.Body.String())
+	}
+
+	ctxB2, recB2 := newTenantContextWithRole(http.MethodGet, "/cloud/accounts", "operator", "3")
+	listCloudAccounts(ctxB2)
+	if recB2.Code != http.StatusOK || !strings.Contains(recB2.Body.String(), account.ID) {
+		t.Fatalf("bound operator should see account, code=%d body=%s", recB2.Code, recB2.Body.String())
+	}
+
+	ctxBUpdate, recBUpdate := newTenantContextWithRole(http.MethodPut, "/cloud/accounts/ca-bound", "operator", "3")
+	ctxBUpdate.Params = gin.Params{{Key: "id", Value: account.ID}}
+	ctxBUpdate.Request = httptest.NewRequest(http.MethodPut, "/cloud/accounts/ca-bound", strings.NewReader(`{"name":"nope"}`))
+	ctxBUpdate.Request.Header.Set("Content-Type", "application/json")
+	ctxBUpdate.Set("tenant", "default")
+	ctxBUpdate.Set("role", "operator")
+	ctxBUpdate.Set("user_id", "3")
+	updateCloudAccount(ctxBUpdate)
+	if recBUpdate.Code != http.StatusForbidden {
+		t.Fatalf("bound non-owner should not manage account, got %d (%s)", recBUpdate.Code, recBUpdate.Body.String())
+	}
+}
+
+func TestSanitizeReleaseFilenameRejectsUnsafeUploads(t *testing.T) {
+	badNames := []string{
+		"../../release/dddd-agent-linux-amd64",
+		"dddd-server-linux-amd64",
+		"notes.txt",
+		"nested/dddd-agent-linux-amd64",
+	}
+	for _, name := range badNames {
+		if _, err := sanitizeReleaseFilename(name); err == nil {
+			t.Fatalf("expected %q to be rejected", name)
+		}
+	}
+	if got, err := sanitizeReleaseFilename("dddd-agent-linux-amd64"); err != nil || got != "dddd-agent-linux-amd64" {
+		t.Fatalf("expected valid agent filename, got %q err=%v", got, err)
 	}
 }
 

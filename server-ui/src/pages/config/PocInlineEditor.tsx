@@ -5,6 +5,7 @@ import Editor from '@monaco-editor/react';
 import { saveArsenal, approveArsenal, listArsenals } from '../../services/api';
 import PocDebugPanel from './PocDebugPanel';
 import { useGlobalAI, useAutoContext } from '../../contexts/GlobalAIContext';
+import { canAccessRole } from '../../utils/auth';
 
 interface PocInlineEditorProps {
     open: boolean;
@@ -52,6 +53,8 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
     const [loading, setLoading] = useState<boolean>(false);
     const [saving, setSaving] = useState<boolean>(false);
     const [debugVisible, setDebugVisible] = useState<boolean>(false);
+    const canApproveArsenal = canAccessRole('admin');
+    const shouldAutoApprove = !!autoApprove && canApproveArsenal;
 
     // Dynamically inject the editor state into Global AI Context
     useAutoContext(open ? {
@@ -111,7 +114,7 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
         setSaving(true);
         try {
             await saveArsenal('poc', finalName, content);
-            if (autoApprove) {
+            if (shouldAutoApprove) {
                 await approveArsenal('poc', finalName);
                 message.success('已保存并审核（已触发 Agent 热重载）');
             } else {
@@ -182,7 +185,7 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
                         </Button>
                         <Button onClick={onClose}>取消</Button>
                         <Button type="primary" onClick={handleSave} loading={saving}>
-                            {autoApprove ? '保存并审核' : '保存（草稿）'}
+                            {shouldAutoApprove ? '保存并审核' : '保存（草稿）'}
                         </Button>
                     </Space>
                 </div>

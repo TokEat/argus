@@ -109,6 +109,16 @@ func VerifySchema(db *gorm.DB) error {
 			Indexes: []string{"idx_rule_catalog_bootstraps_status", "idx_rule_catalog_bootstraps_aggregate_hash"},
 		},
 		{
+			Table:   "cloud_accounts",
+			Columns: []string{"tenant_id", "owner_user_id", "name", "provider", "access_key_id", "access_key_secret", "oss_bucket", "oss_endpoint", "status"},
+			Indexes: []string{"idx_cloud_accounts_tenant", "idx_cloud_accounts_owner_user_id", "idx_cloud_accounts_status"},
+		},
+		{
+			Table:   "cloud_account_bindings",
+			Columns: []string{"tenant_id", "cloud_account_id", "user_id", "access_type"},
+			Indexes: []string{"idx_cloud_account_binding_unique", "idx_cloud_account_bindings_user_id"},
+		},
+		{
 			Table:   "fingerprint_rules",
 			Columns: []string{"artifact_id", "source_file", "product_name", "rule_expr", "enabled"},
 			Indexes: []string{"idx_fp_rule_unique", "idx_fingerprint_rules_enabled"},

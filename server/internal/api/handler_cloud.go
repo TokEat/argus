@@ -14,6 +14,8 @@ import (
 	"github.com/user/dddd-server/internal/cloud"
 	"github.com/user/dddd-server/internal/cloud/aliyun"
 	"github.com/user/dddd-server/internal/db"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ============================================================================
@@ -27,6 +29,153 @@ var cloudAutoScaler *cloud.AutoScaler
 
 const requiredAgentObjectKey = "argus/agent/dddd-agent-linux-amd64"
 
+func currentUserID(c *gin.Context) string {
+	return strings.TrimSpace(c.GetString("user_id"))
+}
+
+func currentUserRole(c *gin.Context) string {
+	role := strings.TrimSpace(c.GetString("role"))
+	if role == "" {
+		return "viewer"
+	}
+	return role
+}
+
+func currentUserIsAdmin(c *gin.Context) bool {
+	return currentUserRole(c) == "admin"
+}
+
+func accessibleCloudAccountSubquery(c *gin.Context) *gorm.DB {
+	tenantID := currentTenantID(c)
+	q := db.DB.Model(&db.CloudAccount{}).Select("id").Where("tenant_id = ?", tenantID)
+	if currentUserIsAdmin(c) {
+		return q
+	}
+	userID := currentUserID(c)
+	boundSubquery := db.DB.Model(&db.CloudAccountBinding{}).
+		Select("cloud_account_id").
+		Where("tenant_id = ? AND user_id = ?", tenantID, userID)
+	return q.Where("owner_user_id = ? OR id IN (?)", userID, boundSubquery)
+}
+
+func cloudAccountQuery(c *gin.Context) *gorm.DB {
+	return db.DB.Where("tenant_id = ? AND id IN (?)", currentTenantID(c), accessibleCloudAccountSubquery(c))
+}
+
+func loadCloudAccountForUse(c *gin.Context, accountID string, activeOnly bool) (db.CloudAccount, bool) {
+	var account db.CloudAccount
+	query := cloudAccountQuery(c).Where("id = ?", accountID)
+	if activeOnly {
+		query = query.Where("status = ?", "active")
+	}
+	if err := query.First(&account).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Cloud account not found or not accessible"})
+		return account, false
+	}
+	return account, true
+}
+
+func loadCloudAccountForManage(c *gin.Context, accountID string) (db.CloudAccount, bool) {
+	var account db.CloudAccount
+	if err := cloudAccountQuery(c).Where("id = ?", accountID).First(&account).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Cloud account not found or not accessible"})
+		return account, false
+	}
+	if !currentUserIsAdmin(c) && account.OwnerUserID != currentUserID(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only the account owner or tenant admin can manage this cloud account"})
+		return account, false
+	}
+	return account, true
+}
+
+func accountAccessLevel(c *gin.Context, account db.CloudAccount) string {
+	if currentUserIsAdmin(c) {
+		return "admin"
+	}
+	if account.OwnerUserID == currentUserID(c) {
+		return "owner"
+	}
+	return "bound"
+}
+
+func ensureCloudAccountBinding(tx *gorm.DB, tenantID, accountID, userID, accessType string) error {
+	userID = strings.TrimSpace(userID)
+	if strings.TrimSpace(userID) == "" {
+		return nil
+	}
+	binding := db.CloudAccountBinding{
+		TenantID:       tenantID,
+		CloudAccountID: accountID,
+		UserID:         userID,
+		AccessType:     accessType,
+	}
+	return tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "tenant_id"}, {Name: "cloud_account_id"}, {Name: "user_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"access_type", "updated_at"}),
+	}).Create(&binding).Error
+}
+
+func validateCloudAccountBindingUsers(tenantID string, userIDs []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(userIDs))
+	ids := make([]string, 0, len(userIDs))
+	for _, id := range userIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	var users []db.User
+	if err := db.DB.Where("tenant_id = ? AND status = ? AND role IN ? AND id IN ?", tenantID, "active", []string{"admin", "operator"}, ids).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	if len(users) != len(ids) {
+		return nil, fmt.Errorf("bindings can only target active admin/operator users in the same tenant")
+	}
+	return ids, nil
+}
+
+func replaceCloudAccountBindings(account db.CloudAccount, userIDs []string) error {
+	tenantID := account.TenantID
+	validIDs, err := validateCloudAccountBindingUsers(tenantID, userIDs)
+	if err != nil {
+		return err
+	}
+	if account.OwnerUserID != "" {
+		validIDs = append(validIDs, account.OwnerUserID)
+	}
+	seen := make(map[string]string, len(validIDs))
+	for _, id := range validIDs {
+		if strings.TrimSpace(id) == "" {
+			continue
+		}
+		seen[id] = "bound"
+	}
+	if account.OwnerUserID != "" {
+		seen[account.OwnerUserID] = "owner"
+	}
+
+	return db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("tenant_id = ? AND cloud_account_id = ?", tenantID, account.ID).Delete(&db.CloudAccountBinding{}).Error; err != nil {
+			return err
+		}
+		for userID, accessType := range seen {
+			if err := ensureCloudAccountBinding(tx, tenantID, account.ID, userID, accessType); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // SetAutoScaler 注入 AutoScaler 实例
 func SetAutoScaler(as *cloud.AutoScaler) {
 	cloudAutoScaler = as
@@ -37,23 +186,56 @@ func SetAutoScaler(as *cloud.AutoScaler) {
 func listCloudAccounts(c *gin.Context) {
 	tenantID := currentTenantID(c)
 	var accounts []db.CloudAccount
-	db.DB.Where("tenant_id = ?", tenantID).Order("created_at DESC").Find(&accounts)
+	cloudAccountQuery(c).Order("created_at DESC").Find(&accounts)
 
 	type AccountResp struct {
-		ID                   string `json:"id"`
-		Name                 string `json:"name"`
-		Provider             string `json:"provider"`
-		AccessKeyID          string `json:"access_key_id"`
-		Region               string `json:"region"`
-		DefaultImageID       string `json:"default_image_id"`
-		DefaultInstanceType  string `json:"default_instance_type"`
-		DefaultSecurityGroup string `json:"default_security_group"`
-		DefaultVSwitch       string `json:"default_v_switch"`
-		OSSBucket            string `json:"oss_bucket"`
-		OSSEndpoint          string `json:"oss_endpoint"`
-		Status               string `json:"status"`
-		CreatedAt            string `json:"created_at"`
-		UpdatedAt            string `json:"updated_at"`
+		ID                   string   `json:"id"`
+		TenantID             string   `json:"tenant_id"`
+		OwnerUserID          string   `json:"owner_user_id"`
+		OwnerUsername        string   `json:"owner_username"`
+		AccessLevel          string   `json:"access_level"`
+		Name                 string   `json:"name"`
+		Provider             string   `json:"provider"`
+		AccessKeyID          string   `json:"access_key_id"`
+		Region               string   `json:"region"`
+		DefaultImageID       string   `json:"default_image_id"`
+		DefaultInstanceType  string   `json:"default_instance_type"`
+		DefaultSecurityGroup string   `json:"default_security_group"`
+		DefaultVSwitch       string   `json:"default_v_switch"`
+		OSSBucket            string   `json:"oss_bucket"`
+		OSSEndpoint          string   `json:"oss_endpoint"`
+		Status               string   `json:"status"`
+		CreatedAt            string   `json:"created_at"`
+		UpdatedAt            string   `json:"updated_at"`
+		BoundUserIDs         []string `json:"bound_user_ids,omitempty"`
+	}
+
+	ownerIDs := make([]string, 0, len(accounts))
+	for _, account := range accounts {
+		if account.OwnerUserID != "" {
+			ownerIDs = append(ownerIDs, account.OwnerUserID)
+		}
+	}
+	ownerNames := map[string]string{}
+	if len(ownerIDs) > 0 {
+		var users []db.User
+		db.DB.Where("tenant_id = ? AND id IN ?", tenantID, ownerIDs).Find(&users)
+		for _, user := range users {
+			ownerNames[fmt.Sprintf("%d", user.ID)] = user.Username
+		}
+	}
+
+	boundUserIDsByAccount := map[string][]string{}
+	if currentUserIsAdmin(c) && len(accounts) > 0 {
+		accountIDs := make([]string, 0, len(accounts))
+		for _, account := range accounts {
+			accountIDs = append(accountIDs, account.ID)
+		}
+		var bindings []db.CloudAccountBinding
+		db.DB.Where("tenant_id = ? AND cloud_account_id IN ?", tenantID, accountIDs).Find(&bindings)
+		for _, binding := range bindings {
+			boundUserIDsByAccount[binding.CloudAccountID] = append(boundUserIDsByAccount[binding.CloudAccountID], binding.UserID)
+		}
 	}
 
 	resp := make([]AccountResp, 0, len(accounts))
@@ -62,6 +244,10 @@ func listCloudAccounts(c *gin.Context) {
 		akID, _ := cloud.DecryptSecret(a.AccessKeyID)
 		resp = append(resp, AccountResp{
 			ID:                   a.ID,
+			TenantID:             a.TenantID,
+			OwnerUserID:          a.OwnerUserID,
+			OwnerUsername:        ownerNames[a.OwnerUserID],
+			AccessLevel:          accountAccessLevel(c, a),
 			Name:                 a.Name,
 			Provider:             a.Provider,
 			AccessKeyID:          cloud.MaskSecret(akID),
@@ -75,6 +261,7 @@ func listCloudAccounts(c *gin.Context) {
 			Status:               a.Status,
 			CreatedAt:            a.CreatedAt.Format(time.RFC3339),
 			UpdatedAt:            a.UpdatedAt.Format(time.RFC3339),
+			BoundUserIDs:         boundUserIDsByAccount[a.ID],
 		})
 	}
 
@@ -83,17 +270,18 @@ func listCloudAccounts(c *gin.Context) {
 
 func createCloudAccount(c *gin.Context) {
 	var req struct {
-		Name                 string `json:"name" binding:"required"`
-		Provider             string `json:"provider" binding:"required"`
-		AccessKeyID          string `json:"access_key_id" binding:"required"`
-		AccessKeySecret      string `json:"access_key_secret" binding:"required"`
-		Region               string `json:"region"`
-		DefaultImageID       string `json:"default_image_id"`
-		DefaultInstanceType  string `json:"default_instance_type"`
-		DefaultSecurityGroup string `json:"default_security_group"`
-		DefaultVSwitch       string `json:"default_v_switch"`
-		OSSBucket            string `json:"oss_bucket"`
-		OSSEndpoint          string `json:"oss_endpoint"`
+		Name                 string   `json:"name" binding:"required"`
+		Provider             string   `json:"provider" binding:"required"`
+		AccessKeyID          string   `json:"access_key_id" binding:"required"`
+		AccessKeySecret      string   `json:"access_key_secret" binding:"required"`
+		Region               string   `json:"region"`
+		DefaultImageID       string   `json:"default_image_id"`
+		DefaultInstanceType  string   `json:"default_instance_type"`
+		DefaultSecurityGroup string   `json:"default_security_group"`
+		DefaultVSwitch       string   `json:"default_v_switch"`
+		OSSBucket            string   `json:"oss_bucket"`
+		OSSEndpoint          string   `json:"oss_endpoint"`
+		BoundUserIDs         []string `json:"bound_user_ids"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -115,6 +303,7 @@ func createCloudAccount(c *gin.Context) {
 	account := db.CloudAccount{
 		ID:                   fmt.Sprintf("ca-%d", time.Now().UnixNano()),
 		TenantID:             currentTenantID(c),
+		OwnerUserID:          currentUserID(c),
 		Name:                 req.Name,
 		Provider:             req.Provider,
 		AccessKeyID:          encAKID,
@@ -129,7 +318,37 @@ func createCloudAccount(c *gin.Context) {
 		Status:               "active",
 	}
 
-	if err := db.DB.Create(&account).Error; err != nil {
+	if account.OwnerUserID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing user identity"})
+		return
+	}
+
+	if currentUserIsAdmin(c) && len(req.BoundUserIDs) > 0 {
+		if _, err := validateCloudAccountBindingUsers(account.TenantID, req.BoundUserIDs); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&account).Error; err != nil {
+			return err
+		}
+		if err := ensureCloudAccountBinding(tx, account.TenantID, account.ID, account.OwnerUserID, "owner"); err != nil {
+			return err
+		}
+		if currentUserIsAdmin(c) {
+			for _, userID := range req.BoundUserIDs {
+				if userID == account.OwnerUserID {
+					continue
+				}
+				if err := ensureCloudAccountBinding(tx, account.TenantID, account.ID, userID, "bound"); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -139,7 +358,6 @@ func createCloudAccount(c *gin.Context) {
 
 func updateCloudAccount(c *gin.Context) {
 	id := c.Param("id")
-	tenantID := currentTenantID(c)
 
 	var req struct {
 		Name                 string `json:"name"`
@@ -156,6 +374,10 @@ func updateCloudAccount(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if _, ok := loadCloudAccountForManage(c, id); !ok {
 		return
 	}
 
@@ -201,7 +423,7 @@ func updateCloudAccount(c *gin.Context) {
 		return
 	}
 
-	if err := db.DB.Model(&db.CloudAccount{}).Where("id = ? AND tenant_id = ?", id, tenantID).Updates(updates).Error; err != nil {
+	if err := db.DB.Model(&db.CloudAccount{}).Where("id = ? AND tenant_id = ?", id, currentTenantID(c)).Updates(updates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -226,8 +448,8 @@ func deleteCloudAccount(c *gin.Context) {
 	tenantID := currentTenantID(c)
 
 	var account db.CloudAccount
-	if err := db.DB.Where("id = ? AND tenant_id = ?", id, tenantID).First(&account).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found"})
+	var ok bool
+	if account, ok = loadCloudAccountForManage(c, id); !ok {
 		return
 	}
 
@@ -253,7 +475,12 @@ func deleteCloudAccount(c *gin.Context) {
 		return
 	}
 
-	if err := db.DB.Where("id = ? AND tenant_id = ?", id, tenantID).Delete(&db.CloudAccount{}).Error; err != nil {
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("tenant_id = ? AND cloud_account_id = ?", tenantID, id).Delete(&db.CloudAccountBinding{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("id = ? AND tenant_id = ?", id, tenantID).Delete(&db.CloudAccount{}).Error
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -263,13 +490,64 @@ func deleteCloudAccount(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
+func getCloudAccountBindings(c *gin.Context) {
+	if !currentUserIsAdmin(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only tenant admin can manage cloud account bindings"})
+		return
+	}
+	account, ok := loadCloudAccountForUse(c, c.Param("id"), false)
+	if !ok {
+		return
+	}
+
+	var bindings []db.CloudAccountBinding
+	db.DB.Where("tenant_id = ? AND cloud_account_id = ?", account.TenantID, account.ID).
+		Order("created_at ASC").
+		Find(&bindings)
+
+	userIDs := make([]string, 0, len(bindings))
+	for _, binding := range bindings {
+		userIDs = append(userIDs, binding.UserID)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"cloud_account_id": account.ID,
+		"owner_user_id":    account.OwnerUserID,
+		"user_ids":         userIDs,
+		"bindings":         bindings,
+	})
+}
+
+func updateCloudAccountBindings(c *gin.Context) {
+	if !currentUserIsAdmin(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only tenant admin can manage cloud account bindings"})
+		return
+	}
+	account, ok := loadCloudAccountForUse(c, c.Param("id"), false)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		UserIDs []string `json:"user_ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := replaceCloudAccountBindings(account, req.UserIDs); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
 func testCloudAccount(c *gin.Context) {
 	id := c.Param("id")
-	tenantID := currentTenantID(c)
 
 	var account db.CloudAccount
-	if err := db.DB.Where("id = ? AND tenant_id = ?", id, tenantID).First(&account).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found"})
+	var ok bool
+	if account, ok = loadCloudAccountForUse(c, id, false); !ok {
 		return
 	}
 
@@ -307,7 +585,9 @@ func testCloudAccount(c *gin.Context) {
 func listCloudPolicies(c *gin.Context) {
 	tenantID := currentTenantID(c)
 	var policies []db.CloudScalingPolicy
-	db.DB.Where("tenant_id = ?", tenantID).Order("created_at DESC").Find(&policies)
+	db.DB.Where("tenant_id = ? AND cloud_account_id IN (?)", tenantID, accessibleCloudAccountSubquery(c)).
+		Order("created_at DESC").
+		Find(&policies)
 	c.JSON(http.StatusOK, policies)
 }
 
@@ -327,9 +607,7 @@ func createCloudPolicy(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cloud account is required"})
 		return
 	}
-	var account db.CloudAccount
-	if err := db.DB.Select("id").Where("id = ? AND tenant_id = ?", req.CloudAccountID, tenantID).First(&account).Error; err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Cloud account not found"})
+	if _, ok := loadCloudAccountForUse(c, req.CloudAccountID, false); !ok {
 		return
 	}
 
@@ -372,14 +650,14 @@ func updateCloudPolicy(c *gin.Context) {
 	delete(req, "created_at")
 	delete(req, "updated_at")
 	if accountID, ok := req["cloud_account_id"].(string); ok && strings.TrimSpace(accountID) != "" {
-		var account db.CloudAccount
-		if err := db.DB.Select("id").Where("id = ? AND tenant_id = ?", accountID, tenantID).First(&account).Error; err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Cloud account not found"})
+		if _, ok := loadCloudAccountForUse(c, accountID, false); !ok {
 			return
 		}
 	}
 
-	result := db.DB.Model(&db.CloudScalingPolicy{}).Where("id = ? AND tenant_id = ?", id, tenantID).Updates(req)
+	result := db.DB.Model(&db.CloudScalingPolicy{}).
+		Where("id = ? AND tenant_id = ? AND cloud_account_id IN (?)", id, tenantID, accessibleCloudAccountSubquery(c)).
+		Updates(req)
 	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
 		return
@@ -398,7 +676,7 @@ func deleteCloudPolicy(c *gin.Context) {
 
 	var activeInstances int64
 	db.DB.Model(&db.CloudInstance{}).
-		Where("policy_id = ? AND tenant_id = ? AND deleted_at IS NULL AND status NOT IN ?", id, tenantID, []string{db.CloudStatusTerminated, db.CloudStatusTerminating}).
+		Where("policy_id = ? AND tenant_id = ? AND cloud_account_id IN (?) AND deleted_at IS NULL AND status NOT IN ?", id, tenantID, accessibleCloudAccountSubquery(c), []string{db.CloudStatusTerminated, db.CloudStatusTerminating}).
 		Count(&activeInstances)
 	if activeInstances > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -407,7 +685,7 @@ func deleteCloudPolicy(c *gin.Context) {
 		return
 	}
 
-	result := db.DB.Where("id = ? AND tenant_id = ?", id, tenantID).Delete(&db.CloudScalingPolicy{})
+	result := db.DB.Where("id = ? AND tenant_id = ? AND cloud_account_id IN (?)", id, tenantID, accessibleCloudAccountSubquery(c)).Delete(&db.CloudScalingPolicy{})
 	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
 		return
@@ -424,7 +702,7 @@ func toggleCloudPolicy(c *gin.Context) {
 	tenantID := currentTenantID(c)
 
 	var policy db.CloudScalingPolicy
-	if err := db.DB.Where("id = ? AND tenant_id = ?", id, tenantID).First(&policy).Error; err != nil {
+	if err := db.DB.Where("id = ? AND tenant_id = ? AND cloud_account_id IN (?)", id, tenantID, accessibleCloudAccountSubquery(c)).First(&policy).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Policy not found"})
 		return
 	}
@@ -440,7 +718,9 @@ func toggleCloudPolicy(c *gin.Context) {
 func listCloudInstancesReal(c *gin.Context) {
 	tenantID := currentTenantID(c)
 	var instances []db.CloudInstance
-	db.DB.Where("tenant_id = ? AND deleted_at IS NULL", tenantID).Order("created_at DESC").Find(&instances)
+	db.DB.Where("tenant_id = ? AND cloud_account_id IN (?) AND deleted_at IS NULL", tenantID, accessibleCloudAccountSubquery(c)).
+		Order("created_at DESC").
+		Find(&instances)
 	c.JSON(http.StatusOK, instances)
 }
 
@@ -464,9 +744,8 @@ func createCloudInstanceManual(c *gin.Context) {
 
 	tenantID := currentTenantID(c)
 
-	var account db.CloudAccount
-	if err := db.DB.Where("id = ? AND tenant_id = ? AND status = ?", req.AccountID, tenantID, "active").First(&account).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Cloud account not found or disabled"})
+	account, ok := loadCloudAccountForUse(c, req.AccountID, true)
+	if !ok {
 		return
 	}
 
@@ -476,7 +755,7 @@ func createCloudInstanceManual(c *gin.Context) {
 	}
 
 	var policy db.CloudScalingPolicy
-	if err := db.DB.Where("cloud_account_id = ? AND tenant_id = ?", req.AccountID, tenantID).First(&policy).Error; err != nil {
+	if err := db.DB.Where("cloud_account_id = ? AND tenant_id = ? AND cloud_account_id IN (?)", req.AccountID, tenantID, accessibleCloudAccountSubquery(c)).First(&policy).Error; err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "该凭证尚未绑定 AutoScaler 策略。请先配置策略以获取 Cloud-Init 等参数。"})
 		return
 	}
@@ -495,7 +774,7 @@ func deleteCloudInstanceReal(c *gin.Context) {
 	tenantID := currentTenantID(c)
 
 	var inst db.CloudInstance
-	if err := db.DB.Where("id = ? AND tenant_id = ?", id, tenantID).First(&inst).Error; err != nil {
+	if err := db.DB.Where("id = ? AND tenant_id = ? AND cloud_account_id IN (?)", id, tenantID, accessibleCloudAccountSubquery(c)).First(&inst).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Instance not found"})
 		return
 	}
@@ -546,7 +825,7 @@ func rebootCloudInstance(c *gin.Context) {
 	tenantID := currentTenantID(c)
 
 	var inst db.CloudInstance
-	if err := db.DB.Where("id = ? AND tenant_id = ?", id, tenantID).First(&inst).Error; err != nil {
+	if err := db.DB.Where("id = ? AND tenant_id = ? AND cloud_account_id IN (?)", id, tenantID, accessibleCloudAccountSubquery(c)).First(&inst).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Instance not found"})
 		return
 	}
@@ -596,22 +875,22 @@ func cloudDashboard(c *gin.Context) {
 	tenantID := currentTenantID(c)
 
 	var totalAccounts int64
-	db.DB.Model(&db.CloudAccount{}).Where("tenant_id = ? AND status = ?", tenantID, "active").Count(&totalAccounts)
+	cloudAccountQuery(c).Model(&db.CloudAccount{}).Where("status = ?", "active").Count(&totalAccounts)
 
 	var enabledPolicies int64
-	db.DB.Model(&db.CloudScalingPolicy{}).Where("tenant_id = ? AND enabled = ?", tenantID, true).Count(&enabledPolicies)
+	db.DB.Model(&db.CloudScalingPolicy{}).Where("tenant_id = ? AND cloud_account_id IN (?) AND enabled = ?", tenantID, accessibleCloudAccountSubquery(c), true).Count(&enabledPolicies)
 
 	var runningInstances int64
-	db.DB.Model(&db.CloudInstance{}).Where("tenant_id = ? AND status IN ?", tenantID, []string{
+	db.DB.Model(&db.CloudInstance{}).Where("tenant_id = ? AND cloud_account_id IN (?) AND status IN ?", tenantID, accessibleCloudAccountSubquery(c), []string{
 		db.CloudStatusProvisioning, db.CloudStatusWaitingReady, db.CloudStatusRunning,
 	}).Count(&runningInstances)
 
 	var totalInstances int64
-	db.DB.Model(&db.CloudInstance{}).Where("tenant_id = ?", tenantID).Count(&totalInstances)
+	db.DB.Model(&db.CloudInstance{}).Where("tenant_id = ? AND cloud_account_id IN (?)", tenantID, accessibleCloudAccountSubquery(c)).Count(&totalInstances)
 
 	// 最近 10 条实例事件
 	var recentInstances []db.CloudInstance
-	db.DB.Where("tenant_id = ?", tenantID).Order("updated_at DESC").Limit(10).Find(&recentInstances)
+	db.DB.Where("tenant_id = ? AND cloud_account_id IN (?)", tenantID, accessibleCloudAccountSubquery(c)).Order("updated_at DESC").Limit(10).Find(&recentInstances)
 
 	c.JSON(http.StatusOK, gin.H{
 		"active_accounts":   totalAccounts,
@@ -626,6 +905,10 @@ func cloudDashboard(c *gin.Context) {
 
 // listReleaseFiles 列出服务器端 ./release 目录中的 Agent 二进制文件
 func listReleaseFiles(c *gin.Context) {
+	if _, ok := loadCloudAccountForUse(c, c.Param("id"), false); !ok {
+		return
+	}
+
 	releaseDir := "./release"
 
 	if _, err := os.Stat(releaseDir); os.IsNotExist(err) {
@@ -672,11 +955,10 @@ func listReleaseFiles(c *gin.Context) {
 // 支持可选的 files 参数来指定要上传的文件名列表
 func uploadAgentToOSS(c *gin.Context) {
 	accountID := c.Param("id")
-	tenantID := currentTenantID(c)
 
 	var account db.CloudAccount
-	if err := db.DB.Where("id = ? AND tenant_id = ?", accountID, tenantID).First(&account).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found"})
+	var ok bool
+	if account, ok = loadCloudAccountForUse(c, accountID, false); !ok {
 		return
 	}
 
@@ -820,11 +1102,10 @@ func sanitizeReleaseFilename(name string) (string, error) {
 // uploadLocalAgentToOSS 接收本地上传的文件，保存到 ./release 目录并推送到 OSS
 func uploadLocalAgentToOSS(c *gin.Context) {
 	accountID := c.Param("id")
-	tenantID := currentTenantID(c)
 
 	var account db.CloudAccount
-	if err := db.DB.Where("id = ? AND tenant_id = ?", accountID, tenantID).First(&account).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found"})
+	var ok bool
+	if account, ok = loadCloudAccountForUse(c, accountID, false); !ok {
 		return
 	}
 
@@ -860,7 +1141,14 @@ func uploadLocalAgentToOSS(c *gin.Context) {
 
 	var results []cloud.OSSUploadResult
 	for _, fileHeader := range uploadedFiles {
-		filename := filepath.Base(fileHeader.Filename) // 防止路径穿越
+		filename, safeErr := sanitizeReleaseFilename(fileHeader.Filename)
+		if safeErr != nil {
+			results = append(results, cloud.OSSUploadResult{
+				Filename: fileHeader.Filename,
+				Error:    safeErr.Error(),
+			})
+			continue
+		}
 		localPath := filepath.Join(releaseDir, filename)
 		objectKey := fmt.Sprintf("argus/agent/%s", filename)
 
@@ -903,11 +1191,10 @@ func uploadLocalAgentToOSS(c *gin.Context) {
 // listOSSFiles 列出 OSS 存储桶中 argus/agent/ 前缀下的所有文件
 func listOSSFiles(c *gin.Context) {
 	accountID := c.Param("id")
-	tenantID := currentTenantID(c)
 
 	var account db.CloudAccount
-	if err := db.DB.Where("id = ? AND tenant_id = ?", accountID, tenantID).First(&account).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found"})
+	var ok bool
+	if account, ok = loadCloudAccountForUse(c, accountID, false); !ok {
 		return
 	}
 
@@ -943,11 +1230,10 @@ func listOSSFiles(c *gin.Context) {
 // deleteOSSFile 从 OSS 存储桶中删除指定文件
 func deleteOSSFile(c *gin.Context) {
 	accountID := c.Param("id")
-	tenantID := currentTenantID(c)
 
 	var account db.CloudAccount
-	if err := db.DB.Where("id = ? AND tenant_id = ?", accountID, tenantID).First(&account).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found"})
+	var ok bool
+	if account, ok = loadCloudAccountForUse(c, accountID, false); !ok {
 		return
 	}
 
@@ -982,11 +1268,10 @@ func deleteOSSFile(c *gin.Context) {
 // testOSSConnection 测试指定账号的 OSS 连通性，返回详细检测报告
 func testOSSConnection(c *gin.Context) {
 	accountID := c.Param("id")
-	tenantID := currentTenantID(c)
 
 	var account db.CloudAccount
-	if err := db.DB.Where("id = ? AND tenant_id = ?", accountID, tenantID).First(&account).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found"})
+	var ok bool
+	if account, ok = loadCloudAccountForUse(c, accountID, false); !ok {
 		return
 	}
 
@@ -1059,11 +1344,10 @@ func testOSSConnection(c *gin.Context) {
 // listCloudRegions 通过 AK/SK 自动获取所有可用地域列表
 func listCloudRegions(c *gin.Context) {
 	accountID := c.Param("id")
-	tenantID := currentTenantID(c)
 
 	var account db.CloudAccount
-	if err := db.DB.Where("id = ? AND tenant_id = ?", accountID, tenantID).First(&account).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found"})
+	var ok bool
+	if account, ok = loadCloudAccountForUse(c, accountID, false); !ok {
 		return
 	}
 
@@ -1094,11 +1378,10 @@ func listCloudRegions(c *gin.Context) {
 // discoverCloudResources 通过 AK/SK 自动发现该地域下可用的云资源
 func discoverCloudResources(c *gin.Context) {
 	accountID := c.Param("id")
-	tenantID := currentTenantID(c)
 
 	var account db.CloudAccount
-	if err := db.DB.Where("id = ? AND tenant_id = ?", accountID, tenantID).First(&account).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found"})
+	var ok bool
+	if account, ok = loadCloudAccountForUse(c, accountID, false); !ok {
 		return
 	}
 
@@ -1130,7 +1413,6 @@ func discoverCloudResources(c *gin.Context) {
 // autoConfigureCloudAccount 将用户选择的发现结果写入 CloudAccount 配置
 func autoConfigureCloudAccount(c *gin.Context) {
 	accountID := c.Param("id")
-	tenantID := currentTenantID(c)
 
 	var req struct {
 		DefaultInstanceType  string `json:"default_instance_type"`
@@ -1140,6 +1422,9 @@ func autoConfigureCloudAccount(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if _, ok := loadCloudAccountForManage(c, accountID); !ok {
 		return
 	}
 
@@ -1162,7 +1447,7 @@ func autoConfigureCloudAccount(c *gin.Context) {
 		return
 	}
 
-	if err := db.DB.Model(&db.CloudAccount{}).Where("id = ? AND tenant_id = ?", accountID, tenantID).Updates(updates).Error; err != nil {
+	if err := db.DB.Model(&db.CloudAccount{}).Where("id = ? AND tenant_id = ?", accountID, currentTenantID(c)).Updates(updates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -1176,8 +1461,8 @@ func oneClickSetup(c *gin.Context) {
 	tenantID := currentTenantID(c)
 
 	var account db.CloudAccount
-	if err := db.DB.Where("id = ? AND tenant_id = ?", accountID, tenantID).First(&account).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found"})
+	var ok bool
+	if account, ok = loadCloudAccountForManage(c, accountID); !ok {
 		return
 	}
 
@@ -1461,11 +1746,10 @@ func ossObjectExists(uploader cloud.OSSUploader, objectKey string) (bool, error)
 // checkCloudPermissions 检查指定凭证的 AK/SK 拥有的所有权限
 func checkCloudPermissions(c *gin.Context) {
 	accountID := c.Param("id")
-	tenantID := currentTenantID(c)
 
 	var account db.CloudAccount
-	if err := db.DB.Where("id = ? AND tenant_id = ?", accountID, tenantID).First(&account).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found"})
+	var ok bool
+	if account, ok = loadCloudAccountForUse(c, accountID, false); !ok {
 		return
 	}
 
@@ -1504,8 +1788,8 @@ func queryCloudPrice(c *gin.Context) {
 	tenantID := currentTenantID(c)
 
 	var account db.CloudAccount
-	if err := db.DB.Where("id = ? AND tenant_id = ?", id, tenantID).First(&account).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "凭证不存在"})
+	var ok bool
+	if account, ok = loadCloudAccountForUse(c, id, false); !ok {
 		return
 	}
 
@@ -1583,8 +1867,8 @@ func listAvailableInstanceTypes(c *gin.Context) {
 	tenantID := currentTenantID(c)
 
 	var account db.CloudAccount
-	if err := db.DB.Where("id = ? AND tenant_id = ?", id, tenantID).First(&account).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "凭证不存在"})
+	var ok bool
+	if account, ok = loadCloudAccountForUse(c, id, false); !ok {
 		return
 	}
 

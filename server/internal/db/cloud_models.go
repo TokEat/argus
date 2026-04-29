@@ -19,6 +19,7 @@ import (
 type CloudAccount struct {
 	ID                   string    `gorm:"primaryKey" json:"id"`
 	TenantID             string    `gorm:"default:'default';index" json:"tenant_id"`
+	OwnerUserID          string    `gorm:"index" json:"owner_user_id"`           // 创建/归属用户 ID
 	Name                 string    `json:"name"`                                 // 凭证名称，如 "阿里云-华东2"
 	Provider             string    `gorm:"index" json:"provider"`                // aliyun, aws, tencent
 	AccessKeyID          string    `json:"access_key_id"`                        // AES-256-GCM 加密后的 AccessKey ID
@@ -35,23 +36,34 @@ type CloudAccount struct {
 	UpdatedAt            time.Time `json:"updated_at"`
 }
 
+// CloudAccountBinding 表示某个用户可使用某个云账号凭证。
+type CloudAccountBinding struct {
+	ID             uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID       string    `gorm:"default:'default';index:idx_cloud_account_binding_unique,unique;index" json:"tenant_id"`
+	CloudAccountID string    `gorm:"index:idx_cloud_account_binding_unique,unique;index" json:"cloud_account_id"`
+	UserID         string    `gorm:"index:idx_cloud_account_binding_unique,unique;index" json:"user_id"`
+	AccessType     string    `gorm:"default:'bound'" json:"access_type"` // owner, bound
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
 // CloudScalingPolicy 自动伸缩策略
 type CloudScalingPolicy struct {
 	ID                 string     `gorm:"primaryKey" json:"id"`
 	TenantID           string     `gorm:"default:'default';index" json:"tenant_id"`
-	CloudAccountID     string     `gorm:"index" json:"cloud_account_id"`           // 关联 CloudAccount
-	Name               string     `json:"name"`                                    // 策略名称
-	Enabled            bool       `gorm:"default:false;index" json:"enabled"`      // 是否启用
-	MinInstances       int        `gorm:"default:0" json:"min_instances"`          // 最小实例数
-	MaxInstances       int        `gorm:"default:5" json:"max_instances"`          // 最大实例数（硬上限，防止计费失控）
-	ScaleUpThreshold   int        `gorm:"default:50" json:"scale_up_threshold"`    // 队列积压超过此值时触发扩容
-	ScaleDownThreshold int        `gorm:"default:3" json:"scale_down_threshold"`   // 空闲节点数超过此值时触发缩容
-	CooldownSeconds    int        `gorm:"default:300" json:"cooldown_seconds"`     // 扩缩容冷却时间（秒），防止震荡
-	InstanceTTLMinutes int        `gorm:"default:120" json:"instance_ttl_minutes"` // 实例最大存活时间（分钟）
-	SpotStrategy       string     `gorm:"default:'SpotAsPriceGo'" json:"spot_strategy"`   // NoSpot / SpotAsPriceGo / SpotWithPriceLimit
-	MaxSpotPrice       float64    `json:"max_spot_price"`                          // 竞价最高价（SpotWithPriceLimit 时有效）
-	UserDataTemplate   string     `gorm:"type:text" json:"user_data_template"`     // Cloud-Init 模板（可使用 Go template 变量）
-	LastScaleAction    *time.Time `json:"last_scale_action"`                       // 最近一次伸缩操作时间（用于冷却期判定）
+	CloudAccountID     string     `gorm:"index" json:"cloud_account_id"`                // 关联 CloudAccount
+	Name               string     `json:"name"`                                         // 策略名称
+	Enabled            bool       `gorm:"default:false;index" json:"enabled"`           // 是否启用
+	MinInstances       int        `gorm:"default:0" json:"min_instances"`               // 最小实例数
+	MaxInstances       int        `gorm:"default:5" json:"max_instances"`               // 最大实例数（硬上限，防止计费失控）
+	ScaleUpThreshold   int        `gorm:"default:50" json:"scale_up_threshold"`         // 队列积压超过此值时触发扩容
+	ScaleDownThreshold int        `gorm:"default:3" json:"scale_down_threshold"`        // 空闲节点数超过此值时触发缩容
+	CooldownSeconds    int        `gorm:"default:300" json:"cooldown_seconds"`          // 扩缩容冷却时间（秒），防止震荡
+	InstanceTTLMinutes int        `gorm:"default:120" json:"instance_ttl_minutes"`      // 实例最大存活时间（分钟）
+	SpotStrategy       string     `gorm:"default:'SpotAsPriceGo'" json:"spot_strategy"` // NoSpot / SpotAsPriceGo / SpotWithPriceLimit
+	MaxSpotPrice       float64    `json:"max_spot_price"`                               // 竞价最高价（SpotWithPriceLimit 时有效）
+	UserDataTemplate   string     `gorm:"type:text" json:"user_data_template"`          // Cloud-Init 模板（可使用 Go template 变量）
+	LastScaleAction    *time.Time `json:"last_scale_action"`                            // 最近一次伸缩操作时间（用于冷却期判定）
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
 }

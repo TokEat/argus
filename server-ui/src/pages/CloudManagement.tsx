@@ -14,9 +14,11 @@ import {
     checkCloudPermissions, queryCloudPrice, listAvailableInstanceTypes,
     listCloudRegions, updateCloudAccountRegion,
     listReleaseFiles, uploadServerAgent, uploadLocalAgent,
-    listOSSFiles, deleteOSSFile
+    listOSSFiles, deleteOSSFile,
+    listUsers, getCloudAccountBindings, updateCloudAccountBindings
 } from '../services/api';
 import { useAutoContext } from '../contexts/GlobalAIContext';
+import { getTokenClaim } from '../utils/auth';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -152,10 +154,15 @@ const CloudManagement: React.FC = () => {
     const [instances, setInstances] = useState<API.CloudInstance[]>([]);
     const [accounts, setAccounts] = useState<API.CloudAccount[]>([]);
     const [policies, setPolicies] = useState<API.CloudScalingPolicy[]>([]);
+    const [tenantUsers, setTenantUsers] = useState<API.User[]>([]);
     const [dashboard, setDashboard] = useState<API.CloudDashboard | null>(null);
 
     const [instanceModalOpen, setInstanceModalOpen] = useState(false);
     const [akModalOpen, setAkModalOpen] = useState(false);
+    const [bindingModalOpen, setBindingModalOpen] = useState(false);
+    const [bindingAccount, setBindingAccount] = useState<API.CloudAccount | null>(null);
+    const [bindingUserIds, setBindingUserIds] = useState<string[]>([]);
+    const [bindingSaving, setBindingSaving] = useState(false);
     const [instanceForm] = Form.useForm();
     const [akForm] = Form.useForm();
     const [policyForm] = Form.useForm();
@@ -216,6 +223,13 @@ const CloudManagement: React.FC = () => {
     const [modalRegion, setModalRegion] = useState<string>('');
     const [modalRegions, setModalRegions] = useState<{region_id: string; local_name: string; endpoint: string}[]>([]);
     const [modalRegionsLoading, setModalRegionsLoading] = useState(false);
+    const currentRole = useMemo(() => getTokenClaim('role') || 'viewer', []);
+    const isAdmin = currentRole === 'admin';
+
+    const canManageAccount = useCallback((account?: API.CloudAccount | null) => {
+        if (!account) return false;
+        return account.access_level === 'admin' || account.access_level === 'owner';
+    }, []);
 
     // 统一刷新规格+价格（凭证或地域变化时调用）
     // 先加载规格列表 → 确定选中规格 → 再查该规格的价格
@@ -364,6 +378,19 @@ echo "[Argus] Agent registered as systemd service and started"
         }
     };
 
+    const fetchTenantUsers = async () => {
+        if (!isAdmin) return [];
+        try {
+            const result = await listUsers();
+            const usable = (result || []).filter(u => u.status === 'active' && ['admin', 'operator'].includes(u.role));
+            setTenantUsers(usable);
+            return usable;
+        } catch (error) {
+            console.error('Failed to fetch tenant users:', error);
+            return [];
+        }
+    };
+
     const fetchPolicies = async () => {
         try {
             const result = await listCloudPolicies();
@@ -431,6 +458,7 @@ echo "[Argus] Agent registered as systemd service and started"
         } else if (activeTab === 'credentials' || activeTab === 'agent-dist') {
             setLoading(true);
             fetchAccounts().finally(() => setLoading(false));
+            if (isAdmin && tenantUsers.length === 0) fetchTenantUsers();
         } else if (activeTab === 'policy') {
             fetchPolicies();
             if (accounts.length === 0) fetchAccounts();
@@ -536,6 +564,9 @@ echo "[Argus] Agent registered as systemd service and started"
     const handleAddAk = async () => {
         try {
             const values = await akForm.validateFields();
+            if (!isAdmin) {
+                delete values.bound_user_ids;
+            }
             await createCloudAccount(values);
             message.success('凭证已加密保存');
             setAkModalOpen(false);
@@ -544,6 +575,36 @@ echo "[Argus] Agent registered as systemd service and started"
         } catch (err) {
             const msg = extractErrorMsg(err);
             if (msg) message.error(msg);
+        }
+    };
+
+    const handleOpenBindings = async (account: API.CloudAccount) => {
+        setBindingAccount(account);
+        setBindingUserIds(account.bound_user_ids || []);
+        setBindingModalOpen(true);
+        const users = tenantUsers.length > 0 ? tenantUsers : await fetchTenantUsers();
+        try {
+            const bindings = await getCloudAccountBindings(account.id);
+            setBindingUserIds((bindings.user_ids || []).filter(id => users.some(u => String(u.id) === String(id))));
+        } catch (err) {
+            const msg = extractErrorMsg(err);
+            if (msg) message.error(msg);
+        }
+    };
+
+    const handleSaveBindings = async () => {
+        if (!bindingAccount) return;
+        setBindingSaving(true);
+        try {
+            await updateCloudAccountBindings(bindingAccount.id, bindingUserIds);
+            message.success('凭证绑定已更新');
+            setBindingModalOpen(false);
+            await fetchAccounts();
+        } catch (err) {
+            const msg = extractErrorMsg(err);
+            if (msg) message.error(msg);
+        } finally {
+            setBindingSaving(false);
         }
     };
 
@@ -712,6 +773,11 @@ echo "[Argus] Agent registered as systemd service and started"
     // 地域选择流程：当凭证未配置 Region 时，先弹出地域选择
     const ensureRegionThen = async (accountId: string, action: 'oneclick' | 'discover') => {
         const account = accounts.find(a => a.id === accountId);
+        if (!account) return;
+        if (!account.region && !canManageAccount(account)) {
+            message.warning('该凭证尚未配置地域，请联系凭证所有者或管理员先完成配置。');
+            return;
+        }
         if (account?.region) {
             // 已有 Region，直接执行
             if (action === 'oneclick') return doOneClickSetup(accountId);
@@ -1035,6 +1101,17 @@ echo "[Argus] Agent registered as systemd service and started"
             render: (p: string) => <Tag color="blue">{p.toUpperCase()}</Tag>
         },
         {
+            title: '归属', key: 'owner', width: 150,
+            render: (_: any, record: API.CloudAccount) => (
+                <Space direction="vertical" size={2}>
+                    <Text style={{ fontSize: 12 }}>{record.owner_username || record.owner_user_id || '-'}</Text>
+                    <Tag color={record.access_level === 'bound' ? 'cyan' : record.access_level === 'owner' ? 'green' : 'purple'} style={{ fontSize: 10, width: 'fit-content' }}>
+                        {record.access_level === 'bound' ? '被授权使用' : record.access_level === 'owner' ? '我的凭证' : '管理员可管'}
+                    </Tag>
+                </Space>
+            )
+        },
+        {
             title: '地域', dataIndex: 'region', key: 'region',
             render: (r: string) => r ? <Tag color="green">{r}</Tag> : <Tag color="orange">待选择</Tag>
         },
@@ -1051,22 +1128,33 @@ echo "[Argus] Agent registered as systemd service and started"
         },
         {
             title: '操作', key: 'action', width: 320,
-            render: (_: any, record: API.CloudAccount) => (
-                <Space wrap>
-                    <Button type="link" size="small" icon={<ThunderboltOutlined />}
-                        style={{ color: '#0ea5e9', fontWeight: 600 }}
-                        onClick={() => ensureRegionThen(record.id, 'oneclick')}>一键配置</Button>
-                    <Button type="link" size="small" icon={<SafetyCertificateOutlined />}
-                        style={{ color: '#8b5cf6' }}
-                        onClick={() => handleCheckPermissions(record.id)}>权限检查</Button>
-                    <Button type="link" size="small" icon={<SearchOutlined />} onClick={() => ensureRegionThen(record.id, 'discover')}>自动探测</Button>
-                    <Button type="link" size="small" icon={<PlayCircleOutlined />}
-                        onClick={() => handleTestAk(record.id)}>连通性</Button>
-                    <Popconfirm title="确认删除此凭证？" onConfirm={() => handleDeleteAk(record.id)}>
-                        <Button type="link" danger size="small">删除</Button>
-                    </Popconfirm>
-                </Space>
-            )
+            render: (_: any, record: API.CloudAccount) => {
+                const manageable = canManageAccount(record);
+                return (
+                    <Space wrap>
+                        <Tooltip title={manageable ? '' : '被授权凭证只能使用，不能修改基础配置'}>
+                            <Button type="link" size="small" icon={<ThunderboltOutlined />}
+                                disabled={!manageable}
+                                style={{ color: manageable ? '#0ea5e9' : undefined, fontWeight: 600 }}
+                                onClick={() => ensureRegionThen(record.id, 'oneclick')}>一键配置</Button>
+                        </Tooltip>
+                        <Button type="link" size="small" icon={<SafetyCertificateOutlined />}
+                            style={{ color: '#8b5cf6' }}
+                            onClick={() => handleCheckPermissions(record.id)}>权限检查</Button>
+                        <Button type="link" size="small" icon={<SearchOutlined />} onClick={() => ensureRegionThen(record.id, 'discover')}>自动探测</Button>
+                        <Button type="link" size="small" icon={<PlayCircleOutlined />}
+                            onClick={() => handleTestAk(record.id)}>连通性</Button>
+                        {isAdmin && (
+                            <Button type="link" size="small" icon={<UserOutlined />} onClick={() => handleOpenBindings(record)}>绑定用户</Button>
+                        )}
+                        {manageable && (
+                            <Popconfirm title="确认删除此凭证？" onConfirm={() => handleDeleteAk(record.id)}>
+                                <Button type="link" danger size="small">删除</Button>
+                            </Popconfirm>
+                        )}
+                    </Space>
+                );
+            }
         }
     ];
 
@@ -1095,6 +1183,11 @@ echo "[Argus] Agent registered as systemd service and started"
                     <Descriptions.Item label="交换机">{record.default_v_switch || <Text type="danger">未配置</Text>}</Descriptions.Item>
                     <Descriptions.Item label="OSS Bucket">{record.oss_bucket ? <Text style={{ color: '#10b981' }}>{record.oss_bucket}</Text> : <Text type="secondary">未配置</Text>}</Descriptions.Item>
                     <Descriptions.Item label="OSS Endpoint">{record.oss_endpoint ? <Text style={{ color: '#10b981' }}>{record.oss_endpoint}</Text> : <Text type="secondary">未配置</Text>}</Descriptions.Item>
+                    <Descriptions.Item label="绑定用户">
+                        {isAdmin && record.bound_user_ids?.length
+                            ? <Text>{record.bound_user_ids.length} 个用户</Text>
+                            : <Text type="secondary">{record.access_level === 'bound' ? '由管理员授权' : '仅自己可用'}</Text>}
+                    </Descriptions.Item>
                 </Descriptions>
             </div>
         );
@@ -1240,7 +1333,7 @@ echo "[Argus] Agent registered as systemd service and started"
                         </>
                     )}
                     {activeTab === 'credentials' && (
-                        <Button type="primary" icon={<PlusOutlined />} onClick={() => { akForm.resetFields(); setAkModalOpen(true); }}>添加凭证</Button>
+                        <Button type="primary" icon={<PlusOutlined />} onClick={() => { akForm.resetFields(); if (isAdmin && tenantUsers.length === 0) fetchTenantUsers(); setAkModalOpen(true); }}>添加凭证</Button>
                     )}
                 </Space>
             </div>
@@ -1802,7 +1895,50 @@ echo "[Argus] Agent registered as systemd service and started"
                             </Form.Item>
                         </Input.Group>
                     </Form.Item>
+                    {isAdmin && (
+                        <Form.Item name="bound_user_ids" label="同时绑定给用户" extra="凭证会自动绑定给创建者；这里可额外授权给当前租户的管理员或操作员。">
+                            <Select
+                                mode="multiple"
+                                placeholder="选择可使用此 AK/SK 的用户"
+                                options={tenantUsers.map(u => ({
+                                    value: String(u.id),
+                                    label: `${u.username} (${u.role})`,
+                                }))}
+                                onDropdownVisibleChange={(open) => {
+                                    if (open && tenantUsers.length === 0) fetchTenantUsers();
+                                }}
+                            />
+                        </Form.Item>
+                    )}
                 </Form>
+            </Modal>
+
+            <Modal
+                title={bindingAccount ? `绑定用户 - ${bindingAccount.name}` : '绑定用户'}
+                open={bindingModalOpen}
+                onOk={handleSaveBindings}
+                onCancel={() => setBindingModalOpen(false)}
+                confirmLoading={bindingSaving}
+                okText="保存绑定"
+                cancelText="取消"
+            >
+                <Alert
+                    message="绑定后的用户可以完整使用该 AK/SK 进行云资源与 OSS 操作；凭证基础配置仍只能由管理员或凭证所有者修改。"
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                />
+                <Select
+                    mode="multiple"
+                    style={{ width: '100%' }}
+                    value={bindingUserIds}
+                    onChange={setBindingUserIds}
+                    placeholder="选择可使用此 AK/SK 的用户"
+                    options={tenantUsers.map(u => ({
+                        value: String(u.id),
+                        label: `${u.username} (${u.role})`,
+                    }))}
+                />
             </Modal>
 
             {/* 资源自动探测弹窗 */}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
 import { Layout, Menu, Avatar, Dropdown, Space, Typography, ConfigProvider, theme, message, Select } from 'antd';
 import type { MenuProps } from 'antd';
@@ -14,6 +14,8 @@ import {
 import type { RouteConfig } from '../routes';
 import { menuRoutes } from '../routes';
 import { listProjects } from '../services/api';
+import { canAccessRole, getCurrentUserRole, roleLabel } from '../utils/auth';
+import type { UserRole } from '../utils/auth';
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -21,12 +23,23 @@ const { Text } = Typography;
 import { useGlobalAI } from '../contexts/GlobalAIContext';
 import GlobalAIChatDrawer from '../components/GlobalAIChatDrawer';
 
+const filterRoutesByRole = (routes: RouteConfig[], role: UserRole): RouteConfig[] => {
+    return routes.reduce<RouteConfig[]>((acc, route) => {
+        if (!canAccessRole(route.minRole, role)) return acc;
+        const children = route.children ? filterRoutesByRole(route.children, role) : undefined;
+        if (route.children && children?.length === 0) return acc;
+        acc.push(children ? { ...route, children } : route);
+        return acc;
+    }, []);
+};
+
 const BasicLayout: React.FC = () => {
     const { visible, pageContext, editableTarget, openGlobalAI, closeGlobalAI, setPageContext } = useGlobalAI();
     const draggableRef = useRef<HTMLDivElement>(null);
     const dragPos = useRef({ x: 0, y: 0 });
     const [collapsed, setCollapsed] = useState(false);
     const [tenantId, setTenantId] = useState('default');
+    const [role, setRole] = useState<UserRole>('viewer');
     const [projects, setProjects] = useState<API.Project[]>([]);
     const [selectedProject, setSelectedProject] = useState<string>('');
     const navigate = useNavigate();
@@ -64,6 +77,7 @@ const BasicLayout: React.FC = () => {
             navigate('/login');
             return;
         }
+        setRole(getCurrentUserRole());
         const tid = localStorage.getItem('tenant_id') || 'default';
         setTenantId(tid);
 
@@ -91,15 +105,25 @@ const BasicLayout: React.FC = () => {
     const handleLogout = () => {
         localStorage.removeItem('token');
         localStorage.removeItem('tenant_id');
+        localStorage.removeItem('active_project_id');
         message.success('已退出登录');
         navigate('/login');
     };
+
+    const filteredMenuRoutes = useMemo(() => filterRoutesByRole(menuRoutes, role), [role]);
+    const canUseAI = canAccessRole('operator', role);
 
     const userMenuItems: MenuProps['items'] = [
         {
             key: 'tenant',
             icon: <UserOutlined />,
             label: `租户: ${tenantId}`,
+            disabled: true,
+        },
+        {
+            key: 'role',
+            icon: <SecurityScanOutlined />,
+            label: `角色: ${roleLabel[role]}`,
             disabled: true,
         },
         { type: 'divider' },
@@ -128,16 +152,17 @@ const BasicLayout: React.FC = () => {
                     icon: route.icon,
                     label: <Link to={route.path}>{route.name}</Link>,
                 };
-            });
+            })
+            .filter(Boolean) as MenuProps['items'];
     };
 
     const getSelectedKeys = (): string[] => {
         const pathname = location.pathname;
-        if (pathname.startsWith('/config')) return ['/config/poc'];
-        const exactMatch = menuRoutes.find((r) => r.path === pathname);
+        if (pathname.startsWith('/config')) return ['/config/workflow'];
+        const exactMatch = filteredMenuRoutes.find((r) => r.path === pathname);
         if (exactMatch) return [pathname];
 
-        for (const route of menuRoutes) {
+        for (const route of filteredMenuRoutes) {
             if (route.children) {
                 const child = route.children.find((c) => pathname.startsWith(c.path));
                 if (child) return [child.path];
@@ -149,7 +174,7 @@ const BasicLayout: React.FC = () => {
 
     const getOpenKeys = (): string[] => {
         const pathname = location.pathname;
-        for (const route of menuRoutes) {
+        for (const route of filteredMenuRoutes) {
             if (route.children) {
                 const child = route.children.find((c) => pathname.startsWith(c.path));
                 if (child) return [route.path];
@@ -405,7 +430,7 @@ const BasicLayout: React.FC = () => {
                         mode="inline"
                         selectedKeys={getSelectedKeys()}
                         defaultOpenKeys={getOpenKeys()}
-                        items={getMenuItems(menuRoutes)}
+                        items={getMenuItems(filteredMenuRoutes)}
                         style={{
                             background: 'transparent',
                             borderRight: 0,
@@ -489,49 +514,53 @@ const BasicLayout: React.FC = () => {
                 </Layout>
             </Layout>
 
-            <GlobalAIChatDrawer
-                visible={visible}
-                onClose={closeGlobalAI}
-                pageContext={pageContext}
-                editableTarget={editableTarget}
-            />
-            <Draggable nodeRef={draggableRef} bounds="parent" defaultPosition={{ x: 0, y: 0 }}
-                onStart={(_, data) => {
-                    dragPos.current = { x: data.x, y: data.y };
-                    (window as any).isDraggingAI = false;
-                }}
-                onStop={(_, data) => {
-                    const dx = Math.abs(data.x - dragPos.current.x);
-                    const dy = Math.abs(data.y - dragPos.current.y);
-                    if (dx > 3 || dy > 3) {
-                        (window as any).isDraggingAI = true;
-                        setTimeout(() => {
+            {canUseAI && (
+                <>
+                    <GlobalAIChatDrawer
+                        visible={visible}
+                        onClose={closeGlobalAI}
+                        pageContext={pageContext}
+                        editableTarget={editableTarget}
+                    />
+                    <Draggable nodeRef={draggableRef} bounds="parent" defaultPosition={{ x: 0, y: 0 }}
+                        onStart={(_, data) => {
+                            dragPos.current = { x: data.x, y: data.y };
                             (window as any).isDraggingAI = false;
-                        }, 100);
-                    } else {
-                        (window as any).isDraggingAI = false;
-                    }
-                }}
-            >
-                <div ref={draggableRef} className="argus-ai-fab-shell">
-                    <button
-                        type="button"
-                        className="argus-ai-fab"
-                        onClick={() => {
-                            if (!(window as any).isDraggingAI) {
-                                openGlobalAI();
+                        }}
+                        onStop={(_, data) => {
+                            const dx = Math.abs(data.x - dragPos.current.x);
+                            const dy = Math.abs(data.y - dragPos.current.y);
+                            if (dx > 3 || dy > 3) {
+                                (window as any).isDraggingAI = true;
+                                setTimeout(() => {
+                                    (window as any).isDraggingAI = false;
+                                }, 100);
+                            } else {
+                                (window as any).isDraggingAI = false;
                             }
                         }}
-                        aria-label="唤起 Argus Copilot"
-                        title="按住拖动 / 点击唤起 Argus Copilot"
                     >
-                        <span className="argus-ai-fab-label">Copilot</span>
-                        <span className="argus-ai-fab-core">
-                            <SecurityScanOutlined className="argus-ai-fab-icon" />
-                        </span>
-                    </button>
-                </div>
-            </Draggable>
+                        <div ref={draggableRef} className="argus-ai-fab-shell">
+                            <button
+                                type="button"
+                                className="argus-ai-fab"
+                                onClick={() => {
+                                    if (!(window as any).isDraggingAI) {
+                                        openGlobalAI();
+                                    }
+                                }}
+                                aria-label="唤起 Argus Copilot"
+                                title="按住拖动 / 点击唤起 Argus Copilot"
+                            >
+                                <span className="argus-ai-fab-label">Copilot</span>
+                                <span className="argus-ai-fab-core">
+                                    <SecurityScanOutlined className="argus-ai-fab-icon" />
+                                </span>
+                            </button>
+                        </div>
+                    </Draggable>
+                </>
+            )}
         </ConfigProvider>
     );
 };

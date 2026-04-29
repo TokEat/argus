@@ -35,9 +35,10 @@
 
 数据模型存储在 `server/internal/db/cloud_models.go` 中，分为三层：
 
-1. **`CloudAccount` (云账号)**：存储不同云厂商的访问凭证 (AK/SK 加密存储)。
-2. **`CloudScalingPolicy` (伸缩策略)**：配置扩缩容阈值 (`scale_up_threshold`, `scale_down_threshold`)、最大最小实例数、竞价策略、TTL 以及基础模板（如镜像、安全组）。
-3. **`CloudInstance` (云实例)**：映射真实的云主机，维护其从 `Provisioning` 到 `Running` 再到 `Terminated` 的状态机，并与 `AgentID` 绑定。
+1. **`CloudAccount` (云账号)**：存储不同云厂商的访问凭证 (AK/SK 加密存储)，并记录凭证 owner。
+2. **`CloudAccountBinding` (凭证绑定)**：记录当前租户内哪些用户可使用某个 AK/SK。
+3. **`CloudScalingPolicy` (伸缩策略)**：配置扩缩容阈值 (`scale_up_threshold`, `scale_down_threshold`)、最大最小实例数、竞价策略、TTL 以及基础模板（如镜像、安全组）。
+4. **`CloudInstance` (云实例)**：映射真实的云主机，维护其从 `Provisioning` 到 `Running` 再到 `Terminated` 的状态机，并与 `AgentID` 绑定。
 
 ---
 
@@ -264,6 +265,7 @@ sequenceDiagram
 
 - **运行态收敛修正**：实例只有在 Agent gRPC `Register` 成功后才会从 `WaitingReady` 进入 `Running`；OS ready 仅回填 IP，不再提前报运行中。
 - **账号删除保护**：删除云账号前会校验该账号下是否仍存在活跃实例或绑定策略，防止回收链路失联后继续计费。
+- **账号用户绑定**：operator 可创建并使用自己的 AK/SK；admin 可把同一凭证绑定给多个同租户 admin/operator 用户。
 - **重启恢复安全化**：人工重启改为显式传递非空 `context.Context`，避免恢复协程因 `ctx.Done()` 崩溃。
 - **OneClickSetup 就绪校验**：一键配置在返回成功前会同步校验 OSS 中的必需 Agent 制品，校验失败会中止流程并返回错误。
 - **Cloud-Init 启动参数修正**：默认模板与前端模板统一为 Agent 当前支持的参数集，云实例默认标签改为 `cloud=true,auto_scaled=true,target_type=all`。

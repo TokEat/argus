@@ -20,6 +20,7 @@ import {
     getDirDict,
 } from '../../services/api';
 import { useAutoContext } from '../../contexts/GlobalAIContext';
+import { canAccessRole } from '../../utils/auth';
 
 interface EnrichedFingerprint extends API.FingerprintItem {
     _refWorkflow: boolean;
@@ -38,6 +39,7 @@ const DirConfig: React.FC = () => {
     const [currentProduct, setCurrentProduct] = useState<string>('');
     const [form] = Form.useForm();
     const { message } = App.useApp();
+    const canManageRules = canAccessRole('operator');
 
     const fetchData = async () => {
         setLoading(true);
@@ -100,6 +102,7 @@ const DirConfig: React.FC = () => {
     }, [enriched]);
 
     const handleCreate = () => {
+        if (!canManageRules) return;
         setIsNew(true);
         setCurrentProduct('');
         form.resetFields();
@@ -107,6 +110,7 @@ const DirConfig: React.FC = () => {
     };
 
     const handleEdit = (record: API.FingerprintItem) => {
+        if (!canManageRules) return;
         setIsNew(false);
         setCurrentProduct(record.product);
         form.setFieldsValue({
@@ -117,6 +121,7 @@ const DirConfig: React.FC = () => {
     };
 
     const handleSave = async () => {
+        if (!canManageRules) return;
         try {
             const values = await form.validateFields();
             if (isNew) {
@@ -145,6 +150,7 @@ const DirConfig: React.FC = () => {
     };
 
     const handleDelete = async (product: string) => {
+        if (!canManageRules) return;
         try {
             await deleteFingerprintDict(product);
             message.success('已删除');
@@ -216,12 +222,12 @@ const DirConfig: React.FC = () => {
                 </Space>
             ),
         },
-        {
+        ...(canManageRules ? [{
             title: '操作',
             key: 'actions',
             width: 140,
-            align: 'center',
-            render: (_, record) => (
+            align: 'center' as const,
+            render: (_: unknown, record: EnrichedFingerprint) => (
                 <Space size={4}>
                     <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
                     <Popconfirm title="确认删除该产品的指纹规则？" onConfirm={() => handleDelete(record.product)}>
@@ -229,7 +235,7 @@ const DirConfig: React.FC = () => {
                     </Popconfirm>
                 </Space>
             ),
-        },
+        }] : []),
     ];
 
     return (
@@ -256,7 +262,7 @@ const DirConfig: React.FC = () => {
                 </Space>
                 <Space>
                     <Tag>{filtered.length} / {enriched.length} 条</Tag>
-                    <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新增特征指纹</Button>
+                    {canManageRules && <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新增特征指纹</Button>}
                 </Space>
             </div>
 
@@ -275,14 +281,15 @@ const DirConfig: React.FC = () => {
                 )}
             </ProCard>
 
+            {canManageRules && (
             <Modal
-                title={isNew ? '添加指纹提取规则' : `编辑指纹特征 — ${currentProduct}`}
-                open={modalVisible}
-                onCancel={() => setModalVisible(false)}
-                onOk={handleSave}
-                width={700}
-                destroyOnClose
-            >
+                    title={isNew ? '添加指纹提取规则' : `编辑指纹特征 — ${currentProduct}`}
+                    open={modalVisible}
+                    onCancel={() => setModalVisible(false)}
+                    onOk={handleSave}
+                    width={700}
+                    destroyOnClose
+                >
                 <div style={{ padding: '16px 0 0 0' }}>
                     <Form form={form} layout="vertical">
                         <Form.Item 
@@ -309,7 +316,8 @@ const DirConfig: React.FC = () => {
                         </Form.Item>
                     </Form>
                 </div>
-            </Modal>
+                </Modal>
+            )}
         </>
     );
 };

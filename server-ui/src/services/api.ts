@@ -480,6 +480,14 @@ export async function updateCloudAccount(id: string, data: Partial<API.CreateClo
     return request.put(`/cloud/accounts/${id}`, data);
 }
 
+export async function getCloudAccountBindings(id: string): Promise<API.CloudAccountBindingsResponse> {
+    return request.get(`/cloud/accounts/${id}/bindings`);
+}
+
+export async function updateCloudAccountBindings(id: string, userIds: string[]): Promise<API.MessageResponse> {
+    return request.put(`/cloud/accounts/${id}/bindings`, { user_ids: userIds });
+}
+
 export async function deleteCloudAccount(id: string): Promise<API.MessageResponse> {
     return request.delete(`/cloud/accounts/${id}`);
 }

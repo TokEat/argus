@@ -18,6 +18,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { listArsenals, saveArsenal, deleteArsenal, approveArsenal, getWorkflowDict } from '../../services/api';
 import { useGlobalAI, useAutoContext } from '../../contexts/GlobalAIContext';
 import PocDebugPanel from './PocDebugPanel';
+import { canAccessRole } from '../../utils/auth';
 
 const { Text } = Typography;
 
@@ -35,6 +36,8 @@ const PocConfig: React.FC = () => {
     const [editorContent, setEditorContent] = useState('');
     const [newFileName, setNewFileName] = useState('');
     const [debugVisible, setDebugVisible] = useState(false);
+    const canManageArsenals = canAccessRole('operator');
+    const canApproveArsenals = canAccessRole('admin');
 
     useAutoContext(editorVisible ? {
         action: 'editing_poc_in_modal',
@@ -109,6 +112,7 @@ const PocConfig: React.FC = () => {
     }, [arsenals, usageMap]);
 
     const handleCreate = () => {
+        if (!canManageArsenals) return;
         setIsNew(true);
         setCurrentArsenal(null);
         setNewFileName('');
@@ -135,6 +139,7 @@ http:
     };
 
     const handleEdit = (record: API.Arsenal) => {
+        if (!canManageArsenals) return;
         setIsNew(false);
         setCurrentArsenal(record);
         setEditorContent(record.Content);
@@ -159,6 +164,7 @@ http:
         [isNew, newFileName, arsenals]);
 
     const doSave = async (fileName: string) => {
+        if (!canManageArsenals) return;
         await saveArsenal('poc', fileName, editorContent);
         msg.success(isNew ? (duplicateOf ? `POC ${fileName} 已覆盖（重置为草稿状态）` : 'POC 创建成功（草稿状态）') : 'POC 更新成功');
         setEditorVisible(false);
@@ -166,6 +172,9 @@ http:
     };
 
     const saveDraftFromAI = async () => {
+        if (!canManageArsenals) {
+            throw '当前角色无权保存 POC';
+        }
         const fileName = isNew ? newFileName.trim() : currentArsenal?.FileName || '';
         if (!fileName) {
             throw '请输入文件名';
@@ -193,6 +202,7 @@ http:
     }, [editorVisible, isNew, newFileName, currentArsenal?.FileName, editorContent, duplicateOf, registerEditableTarget]);
 
     const handleSave = async () => {
+        if (!canManageArsenals) return;
         try {
             const fileName = isNew ? newFileName.trim() : currentArsenal?.FileName || '';
             if (!fileName) {
@@ -229,6 +239,7 @@ http:
     };
 
     const handleDelete = async (fileName: string) => {
+        if (!canManageArsenals) return;
         try {
             await deleteArsenal('poc', fileName);
             msg.success('POC 已删除');
@@ -239,6 +250,7 @@ http:
     };
 
     const handleApprove = async (fileName: string) => {
+        if (!canApproveArsenals) return;
         try {
             await approveArsenal('poc', fileName);
             msg.success('POC 已审核通过，已触发全网 Agent 规则重载');
@@ -317,16 +329,16 @@ http:
             width: 170,
             render: (v: string) => <Text style={{ fontSize: 12, color: '#64748b' }}>{v}</Text>,
         },
-        {
+        ...(canManageArsenals ? [{
             title: '操作',
             key: 'actions',
             width: 250,
-            render: (_, record) => (
+            render: (_: unknown, record: API.Arsenal) => (
                 <Space size={4}>
                     <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
                         编辑
                     </Button>
-                    {record.State === 'Draft' && (
+                    {canApproveArsenals && record.State === 'Draft' && (
                         <Popconfirm title="确认审核通过？将触发全网 Agent 规则重载" onConfirm={() => handleApprove(record.FileName)}>
                             <Button type="link" size="small" style={{ color: '#10b981' }} icon={<CheckOutlined />}>
                                 审核
@@ -340,7 +352,7 @@ http:
                     </Popconfirm>
                 </Space>
             ),
-        },
+        }] : []),
     ];
 
     return (
@@ -367,9 +379,11 @@ http:
                 </Space>
                 <Space>
                     <Tag>{filtered.length} / {arsenals.length} 条</Tag>
-                    <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-                        新增 POC
-                    </Button>
+                    {canManageArsenals && (
+                        <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+                            新增 POC
+                        </Button>
+                    )}
                 </Space>
             </div>
 
@@ -388,16 +402,16 @@ http:
                 )}
             </ProCard>
 
-            {/* POC Editor Drawer */}
+            {canManageArsenals && (
             <Drawer
-                title={isNew ? '新建 POC' : `编辑 POC — ${currentArsenal?.FileName}`}
-                open={editorVisible}
-                onClose={() => setEditorVisible(false)}
-                width={debugVisible ? 1400 : 900}
-                style={{ transform: visible ? 'translateX(-400px)' : 'none', transition: 'transform 0.3s' }}
-                mask={!visible} // Remove mask if AI drawer is open so user can interact with both
-                maskClosable={false}
-                footer={
+                    title={isNew ? '新建 POC' : `编辑 POC — ${currentArsenal?.FileName}`}
+                    open={editorVisible}
+                    onClose={() => setEditorVisible(false)}
+                    width={debugVisible ? 1400 : 900}
+                    style={{ transform: visible ? 'translateX(-400px)' : 'none', transition: 'transform 0.3s' }}
+                    mask={!visible}
+                    maskClosable={false}
+                    footer={
                     <div style={{ textAlign: 'right' }}>
                         <Space>
                             <Button icon={<BugOutlined />} onClick={() => { setDebugVisible((v) => !v); }}>
@@ -415,9 +429,9 @@ http:
                             <Button type="primary" onClick={handleSave}>保存（草稿）</Button>
                         </Space>
                     </div>
-                }
-                destroyOnClose
-            >
+                    }
+                    destroyOnClose
+                >
                 <div style={{ display: 'flex', gap: 16, height: 'calc(100vh - 200px)', minHeight: 600 }}>
                     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 12 }}>
@@ -470,7 +484,8 @@ http:
                         <PocDebugPanel visible={debugVisible} pocContent={editorContent} onDiagnose={handleDiagnose} />
                     </div>
                 </div>
-            </Drawer>
+                </Drawer>
+            )}
         </>
     );
 };

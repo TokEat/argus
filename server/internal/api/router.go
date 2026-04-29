@@ -92,6 +92,30 @@ func currentTenantID(c *gin.Context) string {
 	return tenantID
 }
 
+func normalizeUserRole(role string) (string, bool) {
+	role = strings.TrimSpace(role)
+	if role == "" {
+		return "viewer", true
+	}
+	if _, ok := roleHierarchy[role]; !ok {
+		return "", false
+	}
+	return role, true
+}
+
+func normalizeUserStatus(status string) (string, bool) {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return "", true
+	}
+	switch status {
+	case "active", "disabled":
+		return status, true
+	default:
+		return "", false
+	}
+}
+
 func currentRuleVersionValue() string {
 	if version := strings.TrimSpace(GetCurrentRuleVersion()); version != "" {
 		return version
@@ -342,6 +366,8 @@ func InitRouter(port string) {
 		api.PUT("/cloud/accounts/:id", updateCloudAccount)
 		api.DELETE("/cloud/accounts/:id", deleteCloudAccount)
 		api.POST("/cloud/accounts/:id/test", testCloudAccount)
+		api.GET("/cloud/accounts/:id/bindings", getCloudAccountBindings)
+		api.PUT("/cloud/accounts/:id/bindings", updateCloudAccountBindings)
 		api.POST("/cloud/accounts/:id/oss/upload", uploadAgentToOSS)
 		api.POST("/cloud/accounts/:id/oss/upload-local", uploadLocalAgentToOSS)
 		api.POST("/cloud/accounts/:id/oss/test", testOSSConnection)
@@ -1488,8 +1514,10 @@ func createUser(c *gin.Context) {
 		return
 	}
 
-	if req.Role == "" {
-		req.Role = "viewer"
+	role, ok := normalizeUserRole(req.Role)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "role must be one of: admin, operator, viewer"})
+		return
 	}
 	tenantID := currentTenantID(c)
 	if req.TenantID != "" && req.TenantID != tenantID {
@@ -1508,7 +1536,7 @@ func createUser(c *gin.Context) {
 		TenantID:     req.TenantID,
 		Username:     req.Username,
 		PasswordHash: string(hash),
-		Role:         req.Role,
+		Role:         role,
 		Status:       "active",
 	}
 	if err := db.DB.Create(&user).Error; err != nil {
@@ -1534,10 +1562,20 @@ func updateUser(c *gin.Context) {
 
 	updates := map[string]interface{}{}
 	if req.Role != "" {
-		updates["role"] = req.Role
+		role, ok := normalizeUserRole(req.Role)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "role must be one of: admin, operator, viewer"})
+			return
+		}
+		updates["role"] = role
 	}
 	if req.Status != "" {
-		updates["status"] = req.Status
+		status, ok := normalizeUserStatus(req.Status)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "status must be one of: active, disabled"})
+			return
+		}
+		updates["status"] = status
 	}
 	if req.Password != "" {
 		hash, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)

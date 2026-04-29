@@ -22,6 +22,7 @@ import {
     listArsenals,
 } from '../../services/api';
 import WorkflowEditDrawer from './WorkflowEditDrawer';
+import { canAccessRole } from '../../utils/auth';
 
 interface EnrichedWorkflow extends API.WorkflowItem {
     _fingerprintBound: boolean;
@@ -44,6 +45,7 @@ const WorkflowConfig: React.FC = () => {
     const [ruleScope, setRuleScope] = useState<'specific' | 'general'>('specific');
     const [drawer, setDrawer] = useState<{ open: boolean; workflow?: API.WorkflowItem; isGeneralPoc?: boolean }>({ open: false });
     const { message } = App.useApp();
+    const canManageRules = canAccessRole('operator');
 
     const fetchData = async () => {
         setLoading(true);
@@ -125,10 +127,17 @@ const WorkflowConfig: React.FC = () => {
         total_pocs_in_db: pocFileCount
     });
 
-    const handleCreate = () => setDrawer({ open: true, workflow: undefined, isGeneralPoc: ruleScope === 'general' });
-    const handleEdit = (record: API.WorkflowItem) => setDrawer({ open: true, workflow: record, isGeneralPoc: isGeneralPoc(record.product) });
+    const handleCreate = () => {
+        if (!canManageRules) return;
+        setDrawer({ open: true, workflow: undefined, isGeneralPoc: ruleScope === 'general' });
+    };
+    const handleEdit = (record: API.WorkflowItem) => {
+        if (!canManageRules) return;
+        setDrawer({ open: true, workflow: record, isGeneralPoc: isGeneralPoc(record.product) });
+    };
 
     const handleDelete = async (product: string) => {
+        if (!canManageRules) return;
         try {
             await deleteWorkflowDict(product);
             message.success('Workflow 已删除');
@@ -236,12 +245,12 @@ const WorkflowConfig: React.FC = () => {
                 );
             },
         },
-        {
+        ...(canManageRules ? [{
             title: '操作',
             key: 'actions',
             width: 160,
-            align: 'center',
-            render: (_, record) => (
+            align: 'center' as const,
+            render: (_: unknown, record: EnrichedWorkflow) => (
                 <Space size={4}>
                     <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
                         编辑
@@ -251,7 +260,7 @@ const WorkflowConfig: React.FC = () => {
                     </Popconfirm>
                 </Space>
             ),
-        },
+        }] : []),
     ];
 
     return (
@@ -366,9 +375,11 @@ const WorkflowConfig: React.FC = () => {
                 </Space>
                 <Space>
                     <Tag>{filtered.length} / {enriched.length} 条</Tag>
-                    <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-                        {ruleScope === 'general' ? '新增通用探测规则' : '新增 Workflow'}
-                    </Button>
+                    {canManageRules && (
+                        <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+                            {ruleScope === 'general' ? '新增通用探测规则' : '新增 Workflow'}
+                        </Button>
+                    )}
                 </Space>
             </div>
 
@@ -387,16 +398,18 @@ const WorkflowConfig: React.FC = () => {
                 )}
             </ProCard>
 
-            <WorkflowEditDrawer
-                open={drawer.open}
-                workflow={drawer.workflow}
-                isGeneralPoc={drawer.isGeneralPoc}
-                onClose={() => setDrawer({ open: false })}
-                onSaved={() => {
-                    setDrawer({ open: false });
-                    fetchData();
-                }}
-            />
+            {canManageRules && (
+                <WorkflowEditDrawer
+                    open={drawer.open}
+                    workflow={drawer.workflow}
+                    isGeneralPoc={drawer.isGeneralPoc}
+                    onClose={() => setDrawer({ open: false })}
+                    onSaved={() => {
+                        setDrawer({ open: false });
+                        fetchData();
+                    }}
+                />
+            )}
         </>
     );
 };

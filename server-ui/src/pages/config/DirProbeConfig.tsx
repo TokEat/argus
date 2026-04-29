@@ -11,6 +11,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { getDirDict, addDirDict, updateDirDict, deleteDirDict, getFingerprintDict } from '../../services/api';
 import { useAutoContext } from '../../contexts/GlobalAIContext';
+import { canAccessRole } from '../../utils/auth';
 
 const DirProbeConfig: React.FC = () => {
     const [loading, setLoading] = useState(true);
@@ -23,6 +24,7 @@ const DirProbeConfig: React.FC = () => {
     const [fingerprintProducts, setFingerprintProducts] = useState<Set<string>>(new Set());
     const [form] = Form.useForm();
     const { message } = App.useApp();
+    const canManageRules = canAccessRole('operator');
 
     const fetchData = async () => {
         setLoading(true);
@@ -64,6 +66,7 @@ const DirProbeConfig: React.FC = () => {
     }, [searchKeyword, dictionaries]);
 
     const handleCreate = () => {
+        if (!canManageRules) return;
         setIsNew(true);
         setCurrentProduct('');
         form.resetFields();
@@ -71,6 +74,7 @@ const DirProbeConfig: React.FC = () => {
     };
 
     const handleEdit = (record: API.DirItem) => {
+        if (!canManageRules) return;
         setIsNew(false);
         setCurrentProduct(record.product);
         form.setFieldsValue({
@@ -81,6 +85,7 @@ const DirProbeConfig: React.FC = () => {
     };
 
     const handleSave = async () => {
+        if (!canManageRules) return;
         try {
             const values = await form.validateFields();
             if (isNew) {
@@ -109,6 +114,7 @@ const DirProbeConfig: React.FC = () => {
     };
 
     const handleDelete = async (product: string) => {
+        if (!canManageRules) return;
         try {
             await deleteDirDict(product);
             message.success('已删除');
@@ -149,12 +155,12 @@ const DirProbeConfig: React.FC = () => {
                 </Space>
             ),
         },
-        {
+        ...(canManageRules ? [{
             title: '操作',
             key: 'actions',
             width: 140,
-            align: 'center',
-            render: (_, record) => (
+            align: 'center' as const,
+            render: (_: unknown, record: API.DirItem) => (
                 <Space size={4}>
                     <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
                     <Popconfirm title="确认删除该产品的探测路径？" onConfirm={() => handleDelete(record.product)}>
@@ -162,7 +168,7 @@ const DirProbeConfig: React.FC = () => {
                     </Popconfirm>
                 </Space>
             ),
-        },
+        }] : []),
     ];
 
     return (
@@ -176,7 +182,7 @@ const DirProbeConfig: React.FC = () => {
                     style={{ width: 280 }}
                     allowClear
                 />
-                <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新增 Dir 规则</Button>
+                {canManageRules && <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新增 Dir 规则</Button>}
             </div>
 
             <ProCard className="glass-card" style={{ background: 'transparent', border: 'none', padding: 0 }}>
@@ -194,14 +200,15 @@ const DirProbeConfig: React.FC = () => {
                 )}
             </ProCard>
 
+            {canManageRules && (
             <Modal
-                title={isNew ? '添加 Dir 探测规则' : `编辑 Dir 规则 — ${currentProduct}`}
-                open={modalVisible}
-                onCancel={() => setModalVisible(false)}
-                onOk={handleSave}
-                width={700}
-                destroyOnClose
-            >
+                    title={isNew ? '添加 Dir 探测规则' : `编辑 Dir 规则 — ${currentProduct}`}
+                    open={modalVisible}
+                    onCancel={() => setModalVisible(false)}
+                    onOk={handleSave}
+                    width={700}
+                    destroyOnClose
+                >
                 <div style={{ padding: '16px 0 0 0' }}>
                     <Form form={form} layout="vertical">
                         <Form.Item
@@ -251,7 +258,8 @@ const DirProbeConfig: React.FC = () => {
                         </Form.Item>
                     </Form>
                 </div>
-            </Modal>
+                </Modal>
+            )}
         </>
     );
 };

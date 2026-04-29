@@ -104,7 +104,7 @@
 | 遥测日志黑匣子 | gRPC `StreamLogs` 服务端与查询接口已实现 | Agent 端没有日志上报发送器，前端也没有日志页面入口 |
 | Spot 回收处理 | `StartSpotTerminationListener` 已实现，Agent 在 `ARGUS_SPOT=1` 或 `cloud=...` 标签下会自动启用 | 云厂商直接强杀且无预警时仍依赖心跳回收兜底 |
 | Dashboard 数据增强 | 趋势、严重度、任务结果统计、高危漏洞接口已实现 | Dashboard 图表仍有部分前端静态推算，未完全消费真实统计接口 |
-| 角色权限系统 | RBAC 中间件已启用，用户角色字段可生效 | 角色管理页是静态说明页，没有角色 CRUD / 权限矩阵管理接口 |
+| 角色权限系统 | RBAC 中间件已启用，固定三档角色和接口权限矩阵已对齐前端说明；云 AK/SK 已支持 owner + 用户绑定，详见 `docs/tenant-rbac.md` | 暂无角色 CRUD / 自定义权限矩阵管理接口，项目级 `project_members` 尚未启用 |
 | Clean Architecture 迁移 | `core/usecase`、`adapters`、`bootstrap` 目录结构已搭好 | `/api/v2`、新 HTTP/gRPC adapter、仓储与 usecase 仍是 scaffold / `ErrNotImplemented` |
 
 ---
@@ -143,6 +143,7 @@
 
 - HTTP 基础前缀：`/api/v1`
 - HTTP 鉴权：JWT Bearer Token，`POST /api/v1/auth/login` 例外
+- 租户与 RBAC：JWT 中的 `tenant_id` 是数据隔离边界；`admin` / `operator` / `viewer` 权限矩阵见 [租户隔离与角色权限划分](tenant-rbac.md)
 - WebSocket：`GET /api/v1/ws`
 - gRPC 服务：`scan.AgentService`
 - 协议定义：`shared/proto/proto/scan/agent.proto`

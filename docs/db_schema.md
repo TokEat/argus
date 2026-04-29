@@ -551,6 +551,7 @@
 |------|------|------|-------------|
 | `id` | string | 凭证主键 | PK |
 | `tenant_id` | string | 租户隔离键 | Index, Default:`default` |
+| `owner_user_id` | string | 凭证所有者用户 ID | Index |
 | `name` | string | 凭证名称 | - |
 | `provider` | string | 云厂商标识 (aliyun/aws/tencent) | Index |
 | `access_key_id` | string | AES-256-GCM 加密的 AccessKey ID | - |
@@ -563,6 +564,17 @@
 | `status` | string | 凭证状态 (active/disabled) | Index, Default:`active` |
 | `oss_bucket` | string | OSS Bucket 名称（Agent 分发） | - |
 | `oss_endpoint` | string | OSS Endpoint | - |
+| `created_at` / `updated_at` | timestamp | 时间戳 | - |
+
+#### `cloud_account_bindings`
+
+| 字段 | 类型 | 说明 | 约束 / 索引 |
+|------|------|------|-------------|
+| `id` | uint | 绑定记录主键 | PK |
+| `tenant_id` | string | 租户隔离键 | Unique Index `idx_cloud_account_binding_unique` |
+| `cloud_account_id` | string | 关联 CloudAccount | Unique Index `idx_cloud_account_binding_unique` |
+| `user_id` | string | 可使用该 AK/SK 的用户 ID | Unique Index `idx_cloud_account_binding_unique` |
+| `access_type` | string | `owner` / `bound` | Default:`bound` |
 | `created_at` / `updated_at` | timestamp | 时间戳 | - |
 
 #### `cloud_scaling_policies`

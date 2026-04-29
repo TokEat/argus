@@ -369,8 +369,13 @@ declare namespace API {
   interface CloudAccount {
     id: string;
     tenant_id: string;
+    owner_user_id?: string;
+    owner_username?: string;
+    access_level?: 'admin' | 'owner' | 'bound' | string;
+    bound_user_ids?: string[];
     name: string;
     provider: string;
+    access_key_id?: string;
     region?: string;
     default_image_id?: string;
     default_instance_type?: string;
@@ -436,11 +441,29 @@ declare namespace API {
     provider: string;
     access_key_id: string;
     access_key_secret: string;
+    bound_user_ids?: string[];
     region?: string;
     default_image_id?: string;
     default_instance_type?: string;
     default_security_group?: string;
     default_v_switch?: string;
+    oss_bucket?: string;
+    oss_endpoint?: string;
+  }
+
+  interface CloudAccountBindingsResponse {
+    cloud_account_id: string;
+    owner_user_id: string;
+    user_ids: string[];
+    bindings: {
+      id: number;
+      tenant_id: string;
+      cloud_account_id: string;
+      user_id: string;
+      access_type: string;
+      created_at: string;
+      updated_at: string;
+    }[];
   }
 
   interface RegionInfo {

@@ -17,12 +17,14 @@ import {
 } from '@ant-design/icons';
 import { getNodes, deleteNode, cleanOfflineNodes } from '../services/api';
 import { useAutoContext } from '../contexts/GlobalAIContext';
+import { canAccessRole } from '../utils/auth';
 
 const { Title, Text } = Typography;
 
 const NodeManagement: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [nodes, setNodes] = useState<API.AgentNode[]>([]);
+    const canManageNodes = canAccessRole('operator');
 
     const fetchNodes = async () => {
         setLoading(true);
@@ -54,6 +56,7 @@ const NodeManagement: React.FC = () => {
     });
 
     const handleCleanOffline = async () => {
+        if (!canManageNodes) return;
         try {
             const res = await cleanOfflineNodes();
             message.success(`成功清理 ${res.count} 个离线节点`);
@@ -64,6 +67,7 @@ const NodeManagement: React.FC = () => {
     };
 
     const handleDeleteNode = async (agentId: string) => {
+        if (!canManageNodes) return;
         try {
             await deleteNode(agentId);
             message.success('删除成功');
@@ -188,7 +192,7 @@ const NodeManagement: React.FC = () => {
                                     </span>
                                 }
                             />
-                            {!isAlive && (
+                            {canManageNodes && !isAlive && (
                                 <Popconfirm
                                     title="删除节点"
                                     description="确定要删除该离线节点吗？"
@@ -291,7 +295,7 @@ const NodeManagement: React.FC = () => {
                     <Tag color="default" style={{ borderRadius: 20, padding: '4px 12px', border: 'none', background: 'rgba(148, 163, 184, 0.1)', color: '#64748b' }}>
                         <DisconnectOutlined /> 离线 {offlineCount}
                     </Tag>
-                    {offlineCount > 0 && (
+                    {canManageNodes && offlineCount > 0 && (
                         <Popconfirm
                             title="清理离线节点"
                             description="确定要清理所有离线的节点吗？"

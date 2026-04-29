@@ -35,6 +35,7 @@ func schemaModels() []interface{} {
 		&DirRule{},
 		// 云资源编排
 		&CloudAccount{},
+		&CloudAccountBinding{},
 		&CloudScalingPolicy{},
 		&CloudInstance{},
 	}

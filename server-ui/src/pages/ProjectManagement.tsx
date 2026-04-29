@@ -4,6 +4,7 @@ import { ProCard } from '@ant-design/pro-components';
 import { PlusOutlined, ProjectOutlined, ReloadOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { listProjects, createProject } from '../services/api';
+import { canAccessRole } from '../utils/auth';
 
 const { Title, Text } = Typography;
 
@@ -14,6 +15,7 @@ const ProjectManagement: React.FC = () => {
     const [creating, setCreating] = useState(false);
     const [form] = Form.useForm();
     const { message } = App.useApp();
+    const canManageProjects = canAccessRole('operator');
 
     const fetchProjects = async () => {
         setLoading(true);
@@ -32,6 +34,7 @@ const ProjectManagement: React.FC = () => {
     }, []);
 
     const handleCreate = async () => {
+        if (!canManageProjects) return;
         try {
             const values = await form.validateFields();
             setCreating(true);
@@ -105,9 +108,11 @@ const ProjectManagement: React.FC = () => {
                     <Button icon={<ReloadOutlined />} onClick={fetchProjects} loading={loading}>
                         刷新
                     </Button>
-                    <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-                        新建项目
-                    </Button>
+                    {canManageProjects && (
+                        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+                            新建项目
+                        </Button>
+                    )}
                 </Space>
             </div>
 
@@ -122,9 +127,11 @@ const ProjectManagement: React.FC = () => {
                         description="暂无项目"
                         style={{ padding: '60px 0' }}
                     >
-                        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-                            创建第一个项目
-                        </Button>
+                        {canManageProjects && (
+                            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+                                创建第一个项目
+                            </Button>
+                        )}
                     </Empty>
                 ) : (
                     <Table
@@ -137,23 +144,25 @@ const ProjectManagement: React.FC = () => {
                 )}
             </ProCard>
 
-            <Modal
-                title="新建项目"
-                open={createOpen}
-                onCancel={() => setCreateOpen(false)}
-                onOk={handleCreate}
-                okText="创建"
-                confirmLoading={creating}
-            >
-                <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
-                    <Form.Item label="项目名称" name="name" rules={[{ required: true, message: '请输入项目名称' }]}>
-                        <Input placeholder="例如：2026 护网行动 - 某某局" />
-                    </Form.Item>
-                    <Form.Item label="项目描述" name="description">
-                        <Input.TextArea rows={4} placeholder="项目的目标范围或备注说明" />
-                    </Form.Item>
-                </Form>
-            </Modal>
+            {canManageProjects && (
+                <Modal
+                    title="新建项目"
+                    open={createOpen}
+                    onCancel={() => setCreateOpen(false)}
+                    onOk={handleCreate}
+                    okText="创建"
+                    confirmLoading={creating}
+                >
+                    <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
+                        <Form.Item label="项目名称" name="name" rules={[{ required: true, message: '请输入项目名称' }]}>
+                            <Input placeholder="例如：2026 护网行动 - 某某局" />
+                        </Form.Item>
+                        <Form.Item label="项目描述" name="description">
+                            <Input.TextArea rows={4} placeholder="项目的目标范围或备注说明" />
+                        </Form.Item>
+                    </Form>
+                </Modal>
+            )}
         </div>
     );
 };

@@ -9,8 +9,11 @@ import (
 )
 
 // 角色权限矩阵
-// 格式: "domain:action" => 允许的最低角色
+// 格式: "METHOD:/path" => 允许的最低角色
 // 角色层级: admin > operator > viewer
+//
+// 租户隔离由 TenantMiddleware 注入 tenant_id 后在各 handler 查询中强制过滤。
+// 这里仅表达同一租户内的功能权限；未声明的新接口默认按 admin 处理。
 var roleHierarchy = map[string]int{
 	"admin":    3,
 	"operator": 2,
@@ -19,7 +22,7 @@ var roleHierarchy = map[string]int{
 
 // 权限映射：endpoint pattern => 最低角色
 var permissionRules = map[string]string{
-	// 读操作 — viewer 即可
+	// 只读查询：viewer 起可用，仅返回当前 tenant_id 范围内数据。
 	"GET:/projects":                "viewer",
 	"GET:/tasks":                   "viewer",
 	"GET:/tasks/*":                 "viewer",
@@ -38,40 +41,48 @@ var permissionRules = map[string]string{
 	"GET:/dictionaries/*":          "viewer",
 	"GET:/ws":                      "viewer",
 
-	// 操作类 — operator 以上
+	// 日常操作：operator 可创建项目、下发/调整任务、维护草稿规则与字典。
 	"GET:/queue/depth":                "operator",
-	"GET:/build/artifacts":            "operator",
 	"GET:/agents/*/logs":              "operator",
+	"POST:/projects":                  "operator",
 	"POST:/tasks":                     "operator",
 	"POST:/tasks/*/append":            "operator",
 	"POST:/tasks/*/cancel":            "operator",
 	"DELETE:/tasks/*":                 "operator",
+	"DELETE:/nodes/*":                 "operator",
+	"POST:/nodes/clean":               "operator",
 	"POST:/arsenals/*":                "operator",
 	"POST:/arsenals/ai/analyze":       "operator",
 	"DELETE:/arsenals/*":              "operator",
+	"POST:/dictionaries/*":            "operator",
+	"PUT:/dictionaries/*":             "operator",
+	"DELETE:/dictionaries/*":          "operator",
 	"POST:/ai/arsenal/analyze":        "operator",
 	"POST:/ai/arsenal/analyze/stream": "operator",
 	"POST:/ai/chat":                   "operator",
-	"POST:/build/client":              "operator",
+	"GET:/cloud/*":                    "operator",
+	"POST:/cloud/*":                   "operator",
+	"PUT:/cloud/*":                    "operator",
+	"DELETE:/cloud/*":                 "operator",
 
-	// 管理类 — admin only
-	"POST:/users":          "admin",
-	"PUT:/users/*":         "admin",
-	"DELETE:/users/*":      "admin",
-	"POST:/mcp/keys":       "admin",
-	"DELETE:/mcp/keys/*":   "admin",
-	"GET:/mcp/keys":        "admin",
-	"GET:/users":           "admin",
-	"GET:/cloud/*":         "admin",
-	"POST:/cloud/*":        "admin",
-	"PUT:/cloud/*":         "admin",
-	"DELETE:/cloud/*":      "admin",
-	"GET:/config/api-keys": "admin",
-	"PUT:/config/api-keys": "admin",
-	"GET:/ai/config":       "admin",
-	"PUT:/ai/config":       "admin",
-	"GET:/ai/models":       "admin",
-	"POST:/ai/test":        "admin",
+	// 管理动作：admin only。更具体的规则会覆盖上面的 operator 通配符。
+	"POST:/arsenals/*/*/approve":  "admin",
+	"POST:/arsenals/*/*/rollback": "admin",
+	"GET:/build/artifacts":        "admin",
+	"POST:/build/client":          "admin",
+	"GET:/users":                  "admin",
+	"POST:/users":                 "admin",
+	"PUT:/users/*":                "admin",
+	"DELETE:/users/*":             "admin",
+	"GET:/mcp/keys":               "admin",
+	"POST:/mcp/keys":              "admin",
+	"DELETE:/mcp/keys/*":          "admin",
+	"GET:/config/api-keys":        "admin",
+	"PUT:/config/api-keys":        "admin",
+	"GET:/ai/config":              "admin",
+	"PUT:/ai/config":              "admin",
+	"GET:/ai/models":              "admin",
+	"POST:/ai/test":               "admin",
 }
 
 // RBACMiddleware 基于角色的访问控制中间件

@@ -341,6 +341,7 @@ argus/
 | [贡献与协作指南](CONTRIBUTING.md) | 分支模型、命名规范、PR 与发布流程 |
 | [项目结构](docs/project-structure.md) | 目录结构与组件职责 |
 | [实现状态与接口清单](docs/implementation-status.md) | 当前实现程度、主要缺口、`/api/v1` / WebSocket / gRPC 主链路接口 |
+| [租户隔离与角色权限划分](docs/tenant-rbac.md) | 当前租户边界、三档角色和后端接口权限矩阵 |
 | [数据库设计总览](docs/db_schema.md) | 当前 schema、索引策略、项目隔离演进与规则库初始化机制 |
 | [分布式扫描架构](docs/distributed-scan-architecture.md) | 控制面 / 数据面架构、Agent-Pull 调度与 Agent 扫描流水线 |
 | [云资源动态调度](docs/cloud-resource-scheduling.md) | AutoScaler、云实例生命周期、Spot 回收与未来演进 |
