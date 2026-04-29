@@ -30,6 +30,8 @@ func setupAITestDB(t *testing.T) *gorm.DB {
 	}
 	if err := store.AutoMigrate(
 		&db.SystemConfig{},
+		&db.Project{},
+		&db.ProjectMember{},
 		&db.Arsenal{},
 		&db.RuleCatalogBootstrap{},
 		&db.Asset{},
@@ -154,6 +156,130 @@ func TestConfirmCopilotActionUpsertsWorkflowDraftWithoutPublishing(t *testing.T)
 	}
 	if arsenal.State != "Draft" || !strings.Contains(arsenal.Content, "nginx:") || arsenal.PreviousHash != "old" {
 		t.Fatalf("unexpected workflow draft %+v", arsenal)
+	}
+}
+
+func TestConfirmCopilotActionCreatesTaskDraftWithoutDispatch(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Project{ID: "proj-1", TenantID: "default", OwnerUserID: "u1", Name: "Default", Status: "active"}).Error; err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/api/v1/ai/actions/confirm", func(c *gin.Context) {
+		c.Set("tenant", "default")
+		c.Set("user_id", "u1")
+		c.Set("role", "operator")
+		confirmCopilotAction(c)
+	})
+	payload := `{
+		"action":{
+			"action_type":"create_task_draft",
+			"required_role":"operator",
+			"params":{"project_id":"proj-1","name":"AI draft","targets":["example.com"],"config":{},"priority":1}
+		},
+		"page_context":{"module":"task_list"}
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ai/actions/confirm", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var root db.RootTask
+	if err := store.Where("tenant_id = ? AND project_id = ? AND status = ?", "default", "proj-1", "Draft").First(&root).Error; err != nil {
+		t.Fatalf("expected draft task: %v", err)
+	}
+	var subtasks int64
+	store.Model(&db.SubTask{}).Where("root_task_id = ?", root.ID).Count(&subtasks)
+	if subtasks != 0 || root.TotalTargets != 1 {
+		t.Fatalf("expected draft without dispatch, root=%+v subtasks=%d", root, subtasks)
+	}
+}
+
+func TestConfirmCopilotActionUpsertsDirDraft(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Arsenal{
+		ID:       db.BuildTenantArsenalID("default", "dir", "dir.yaml"),
+		TenantID: "default",
+		Type:     "dir",
+		FileName: "dir.yaml",
+		Content:  "old-product:\n  - /old\n",
+		Hash:     "old",
+		Version:  1,
+		State:    "Approved",
+	}).Error; err != nil {
+		t.Fatalf("seed dir: %v", err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/api/v1/ai/actions/confirm", func(c *gin.Context) {
+		c.Set("tenant", "default")
+		c.Set("user_id", "u1")
+		c.Set("role", "operator")
+		confirmCopilotAction(c)
+	})
+	payload := `{
+		"action":{
+			"action_type":"upsert_dir_draft",
+			"required_role":"operator",
+			"params":{"product":"nginx","paths":["/admin","/login"]}
+		},
+		"page_context":{"module":"dir_list"}
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ai/actions/confirm", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var arsenal db.Arsenal
+	if err := store.Where("tenant_id = ? AND type = ? AND file_name = ?", "default", "dir", "dir.yaml").First(&arsenal).Error; err != nil {
+		t.Fatalf("expected dir arsenal: %v", err)
+	}
+	if arsenal.State != "Draft" || !strings.Contains(arsenal.Content, "nginx:") || arsenal.PreviousHash != "old" {
+		t.Fatalf("unexpected dir draft %+v", arsenal)
+	}
+}
+
+func TestListAIToolInvocationsIsScopedToOperatorUser(t *testing.T) {
+	store := setupAITestDB(t)
+	rows := []db.AIToolInvocation{
+		{TenantID: "default", UserID: "u1", Module: "poc_inline", ToolName: "CopilotAction:create_poc_draft", Status: "success", CreatedAt: time.Now()},
+		{TenantID: "default", UserID: "u2", Module: "poc_inline", ToolName: "CopilotAction:create_poc_draft", Status: "success", CreatedAt: time.Now()},
+	}
+	if err := store.Create(&rows).Error; err != nil {
+		t.Fatalf("seed audit rows: %v", err)
+	}
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/api/v1/ai/tool-invocations", func(c *gin.Context) {
+		c.Set("tenant", "default")
+		c.Set("user_id", "u1")
+		c.Set("role", "operator")
+		listAIToolInvocations(c)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/ai/tool-invocations?limit=10", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Total int `json:"total"`
+		Items []struct {
+			UserID string `json:"user_id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if body.Total != 1 || len(body.Items) != 1 || body.Items[0].UserID != "u1" {
+		t.Fatalf("expected operator to see own row only, got %+v", body)
 	}
 }
 

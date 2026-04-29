@@ -2,7 +2,7 @@
 
 > 分支：`feat/copilot-context-optimization`
 >
-> 更新时间：2026-04-29
+> 更新时间：2026-04-30
 
 本文用于同步当前 AI Copilot / POC AI 能力的实现状态、架构边界、收口风险和后续推进计划。当前阶段的重点不是重新定义愿景，而是把已经在分支中形成的能力梳理清楚，避免结构化 POC 审查和全局 Copilot 对话两条线互相覆盖。
 
@@ -14,9 +14,9 @@
 |------|-----:|------|
 | POC AI 结构化审查 | 82% | 静态检查、LLM 审查、缓存表、流式审查入口和兼容入口已恢复 |
 | AI 配置页 | 85% | 支持 Base URL、API Key 脱敏、模型列表、连接测试 |
-| 全局 Copilot 前端 | 95% | 分层 Context、悬浮入口、抽屉、Markdown、工具折叠、会话重置、POC 一键应用、保存草稿和 pending_action 确认 UI 已搭好 |
-| Agent / Tool Calling 后端 | 93% | Agent 循环、模块 Profile、工具白名单、沙箱调试、安全审计、P2 只读工具和 P3 草稿动作确认层已实现 |
-| 测试与文档 | 86% | AI/API 测试、P3 动作测试、前端构建、Agent 调试测试和 diff 空白检查已通过；仍需补更多浏览器手测 |
+| 全局 Copilot 前端 | 96% | 分层 Context、悬浮入口、抽屉、Markdown、工具折叠、会话重置、POC 一键应用、保存草稿和 pending_action 确认 UI 已搭好 |
+| Agent / Tool Calling 后端 | 97% | Agent 循环、模块 Profile、工具白名单、沙箱调试、安全审计、P2 只读工具、P3 草稿动作确认层、审计查询和 Prompt Registry 已实现 |
+| 测试与文档 | 92% | AI/API 测试、P3 动作测试、Prompt Registry 测试、前端构建、Agent 调试测试和 diff 空白检查已通过；浏览器验证仍作为人工验收项 |
 
 ### 1.1 已落地
 
@@ -28,12 +28,15 @@
 - Copilot 抽屉体验：已支持 Markdown 标题、列表、引用、代码块、链接渲染，工具调用会以可折叠记录展示，支持停止生成和会话重置。
 - 可控编辑体验：POC 编辑器会注册为 Copilot 可编辑目标；当 AI 输出完整 `yaml` 代码块时，聊天气泡会提供“应用到当前编辑器”按钮，应用后可继续由用户点击“保存草稿”，不会自动审核。
 - 模块化 Copilot Profile：后端会优先根据 `page_context._focus.module` 选择系统提示词和工具白名单，兼容旧的 `page_context.module`；POC、任务、资产、节点、结果、弹药库等模块按需启用工具。
+- Prompt Registry：参考 `_ref_claude_code` 将 Copilot base prompt、模块追加段、工具白名单、别名和最大轮次集中维护在 `server/internal/api/prompts/copilot_profiles.yaml`，Go 侧仅负责 embed 加载、解析和路由，不再把提示词正文硬编码在 handler 中。
 - 上下文安全处理：发送给 LLM 前会脱敏 `token`、`api_key`、`authorization`、`password`、`secret` 等字段，并裁剪超长字符串和大型数组。
 - 只读业务工具：已新增 `SearchAssets`、`GetTaskInsight`、`RecommendWorkflowRules`，分别支撑资产检索、任务洞察和 Workflow 挂载建议，不新增公开 HTTP 入口。
 - P2 平台理解工具：已新增 `ExplainVulnerability`、`AnalyzeNodeCapacity`、`SuggestDictionaryStrategy`、`DetectWorkflowConflicts`，分别支撑漏洞证据解释、节点容量分析、字典策略建议和 Workflow 配置风险检测。
 - 工具调用审计：已新增 `ai_tool_invocations` 内部审计表，记录 tenant、user、module、tool、参数摘要、耗时、状态和错误摘要；`poc_content` 只保存 hash 与长度。
 - 指纹/弹药库调试：已新增 Workflow 规则调试面板、`/arsenals/finger-debug` 调试入口和 Agent `start_fingerprint_debug` 流程；自定义 POC 调试已在前端、Server、Agent 三层校验挂载信息和安全文件名，避免无效挂载静默启动和临时文件路径逃逸。
 - 可控执行动作：已新增 `pending_action` 协议和 `/api/v1/ai/actions/confirm` 确认执行入口；模型只能提出待确认动作，前端展示摘要、风险、预览和权限，用户确认后后端按白名单执行并写入 `ai_tool_invocations` 审计。
+- 审计查询闭环：已新增 `/api/v1/ai/tool-invocations`，按租户、用户角色和筛选条件查询 Copilot 工具/动作审计；operator 默认只能看自己的记录，admin 可看同租户记录。
+- Prompt 展示闭环：已新增 `/api/v1/ai/copilot/prompts` 只读接口，返回当前 Prompt Registry 的 base prompt、默认 profile、模块 profile、工具白名单、最终 system prompt 和来源文件，便于配置页后续展示与审阅。
 
 ### 1.2 WIP
 
@@ -46,9 +49,9 @@
 
 - 还需要继续做浏览器级手动验证，确认 POC、资产、任务、Workflow 等页面打开 Copilot 时上下文和工具白名单符合预期。
 - 还需要继续用真实数据调优各业务工具的结果摘要，特别是任务、漏洞、资产和 Workflow 检测结果的字段裁剪。
-- `ai_tool_invocations` 当前仅作为内部审计沉淀，暂不暴露查询界面；后续如要展示，应先设计 RBAC 与筛选策略。
+- `ai_tool_invocations` 已提供受 RBAC 保护的查询 API；是否做可视化页面仍属于体验优化。
 - 前端仍可继续优化会话历史持久化、工具结果摘要的可读性和窄屏动效细节。
-- P3 当前只开放草稿类白名单动作：`create_poc_draft` 与 `upsert_workflow_draft`；扫描任务草稿、字典草稿和高风险动作仍待后续单独评审。
+- P3 当前只开放草稿类白名单动作：`create_poc_draft`、`upsert_workflow_draft`、`create_task_draft`、`upsert_dir_draft`；高风险动作仍待后续单独评审。
 
 ## 2. 架构现状
 
@@ -61,12 +64,15 @@ graph TD
         Layout --> Drawer["GlobalAIChatDrawer"]
         Pages["业务页面 / 编辑器"] -. useAutoContext .-> Provider
         Drawer --> ChatAPI["POST /api/v1/ai/chat"]
+        Drawer --> ActionAPI["POST /api/v1/ai/actions/confirm"]
         PocPanel["POC 审查入口"] --> ReviewAPI["POST /api/v1/ai/arsenal/analyze / stream"]
     end
 
     subgraph Backend["后端 Go"]
         ReviewAPI --> Analyzer["Analyzer: static checks + LLM + cache"]
         ChatAPI --> Router["Prompt Router by page_context._focus.module"]
+        PromptAPI["GET /api/v1/ai/copilot/prompts"] --> PromptRegistry["Embedded Prompt Registry YAML"]
+        PromptRegistry --> Router
         Router --> Agent["Agent QueryEngine"]
         Agent --> DocsTool["QueryArgusDocs"]
         Agent --> AssetTool["SearchAssets"]
@@ -78,10 +84,11 @@ graph TD
         Agent --> ConflictTool["DetectWorkflowConflicts"]
         Agent --> SandboxTool["RunSandboxDebug"]
         Analyzer --> ReviewStore["arsenal_ai_reviews"]
-        Agent --> ActionConfirm["/ai/actions/confirm"]
-        ActionConfirm --> DraftActions["POC / Workflow 草稿动作"]
+        ActionAPI --> ActionConfirm["/ai/actions/confirm"]
+        ActionConfirm --> DraftActions["POC / Workflow / Task / Dir 草稿动作"]
         Agent --> AuditStore["ai_tool_invocations"]
         ActionConfirm --> AuditStore
+        AuditAPI["/ai/tool-invocations"] --> AuditStore
     end
 
     SandboxTool --> NotifyHub["NotifyHub / Agent Debug Command"]
@@ -103,6 +110,7 @@ graph TD
   - `token`：`{ "content": "..." }`
   - `tool_start`：`{ "name": "...", "args": "..." }`
   - `tool_end`：`{ "name": "...", "result": "..." }`
+  - `pending_action`：`{ "action_type": "...", "title": "...", "params": {...} }`
   - `result`：结构化结果或会话结束摘要
   - `error`：`{ "message": "..." }`
 - 已修复 `GlobalAIContext.openGlobalAI` 上下文覆盖问题，传入局部 payload 时会与已有 route/module/page state 合并。
@@ -199,7 +207,7 @@ graph TD
 验收标准：
 
 - 每个新增工具都至少覆盖 tenant 隔离、结果裁剪或风险检测测试；后续真实数据调优时继续补空数据与异常路径。
-- `/api/v1/ai/chat` 的 SSE 契约不新增事件类型；前端继续兼容 `status`、`token`、`tool_start`、`tool_end`、`result`、`error`。
+- `/api/v1/ai/chat` 的 SSE 契约保持兼容；前端继续兼容 `status`、`token`、`tool_start`、`tool_end`、`pending_action`、`result`、`error`。
 - 文档同步记录每个工具的用途、启用模块和安全边界。
 - 不新增公开 AI HTTP API。
 
@@ -213,7 +221,7 @@ graph TD
 
 目标：把 Copilot 从“解释和建议”推进到“可控执行”，但所有写操作必须有人确认、有审计、有回滚或取消路径。
 
-当前状态：P3 首批草稿动作闭环已完成。模型仍不能直接调用业务写接口，只能在回答末尾输出 `pending_action`；前端解析后展示确认卡片，用户确认后调用 `/api/v1/ai/actions/confirm`，后端再按白名单执行。
+当前状态：P3 草稿类动作闭环已完成。模型仍不能直接调用业务写接口，只能在回答末尾输出 `pending_action`；前端解析后展示确认卡片，用户确认后调用 `/api/v1/ai/actions/confirm`，后端再按白名单执行。
 
 前置条件：
 
@@ -225,12 +233,12 @@ graph TD
 
 - 已完成 POC 编辑器的第一阶段可控编辑闭环：AI 根据当前 `poc_content` 生成完整 YAML，前端识别代码块后允许用户一键应用到当前 POC 编辑器；应用后用户可在 Copilot 内确认保存草稿，审核仍走原有按钮。
 - 已建立统一的动作确认模型：模型只能提出 `pending_action`，前端展示动作摘要、影响范围、参数和风险，用户确认后才调用后端确认入口。
-- 已接入首批低风险动作：`create_poc_draft` 保存 POC 草稿，`upsert_workflow_draft` 保存 Workflow 草稿；当前不直接删除、审批、发布、下发任务或修改云资源。
+- 已接入草稿类低风险动作：`create_poc_draft` 保存 POC 草稿，`upsert_workflow_draft` 保存 Workflow 草稿，`create_task_draft` 保存扫描任务草稿，`upsert_dir_draft` 保存 Dir 字典草稿；当前不直接删除、审批、发布、下发任务或修改云资源。
 - 所有执行类动作必须写入审计：记录用户、租户、模块、动作、参数摘要、执行结果、错误摘要；`content` 正文只记录 hash 与长度。
 - 为高风险动作增加二次确认和 RBAC：规则发布、任务下发、批量资产操作、云资源操作必须至少 operator/admin 权限，并保留人工确认门槛。
 - 已建立动作 schema：每类动作定义 `action_type`、`title`、`summary`、`risk_level`、`params`、`preview`、`required_role` 和 `confirm_label`。
 - 已建立动作执行层：确认后由后端按白名单执行，并把结果写回前端提示和审计表。
-- 已建立草稿优先策略：POC、Workflow 默认保存为草稿，用户再走原有业务流程发布、审核或执行；扫描任务草稿、字典草稿尚未开放。
+- 已建立草稿优先策略：POC、Workflow、扫描任务、Dir 字典默认保存为草稿，用户再走原有业务流程发布、审核或执行。
 
 当前动作白名单：
 
@@ -238,13 +246,15 @@ graph TD
 |-------------|----------|---------------|--------|----------|
 | `create_poc_draft` | low | operator | `file_name`, `content` | 写入 `arsenals(poc)`，状态固定为 `Draft`，审核仍走原有按钮 |
 | `upsert_workflow_draft` | medium | operator | `product`, `type`, `pocs` | 更新 `workflow.yaml` 草稿内容，状态固定为 `Draft`，发布/审核不由 Copilot 自动触发 |
+| `create_task_draft` | medium | operator | `project_id`, `name`, `targets`, `config`, `priority`, `timeout_sec` | 写入 `root_tasks`，状态固定为 `Draft`，不会拆分子任务或入队 |
+| `upsert_dir_draft` | low | operator | `product`, `paths` | 更新 `dir.yaml` 草稿内容，状态固定为 `Draft`，不会自动发布 |
 
 推荐开发顺序：
 
 1. 已完成 `pending_action` 协议和前端确认 UI。
 2. 已接入 POC 草稿和 Workflow 草稿两个最低风险场景，验证确认链路。
-3. 已复用 `ai_tool_invocations` 写入动作审计；审计查询和回放 UI 暂不开放。
-4. 后续再接任务草稿、字典草稿等可取消动作。
+3. 已复用 `ai_tool_invocations` 写入动作审计，并新增审计查询 API。
+4. 已接任务草稿、Dir 字典草稿等可取消动作。
 5. 最后评估高风险动作，但默认仍不开放删除、发布、审批、云资源变更。
 
 验收标准：
@@ -282,8 +292,8 @@ graph TD
 不应在当前合并窗口继续加入：
 
 - 新写操作工具。
-- 新公开 AI HTTP API（P3 确认入口 `/api/v1/ai/actions/confirm` 已作为白名单动作执行层落地，后续不再按页面扩散）。
-- 审计查询 UI。
+- 新公开 AI HTTP API（P3 确认入口 `/api/v1/ai/actions/confirm`、审计查询 `/api/v1/ai/tool-invocations`、Prompt Registry 展示 `/api/v1/ai/copilot/prompts` 已作为平台级闭环落地，后续不再按页面扩散）。
+- 审计查询 UI（当前先提供 RBAC 查询 API）。
 - 会话持久化数据库 schema。
 - 大规模样式重构或无关页面重构。
 
@@ -327,7 +337,7 @@ P3 首批动作必须是草稿类、可取消、低风险动作；发布、审�
 | 命令 | 当前结果 | 说明 |
 |------|----------|------|
 | `npm run build` (`server-ui`) | 通过 | 前端类型检查与生产构建已通过 |
-| `go test ./server/internal/ai ./server/internal/api` | 通过 | AI/Copilot API、P3 动作确认与路由测试已通过 |
+| `go test ./server/internal/ai ./server/internal/api` | 通过 | AI/Copilot API、P3 动作确认、Prompt Registry 与路由测试已通过 |
 | `go test ./scanner/internal/agent` | 通过 | Agent 调试相关测试已通过 |
 | `git diff --check` | 通过 | 当前工作区无 trailing whitespace |
 

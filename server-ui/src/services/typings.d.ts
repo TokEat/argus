@@ -251,6 +251,45 @@ declare namespace API {
     object?: Record<string, unknown>;
   }
 
+  interface CopilotPromptProfile {
+    module: string;
+    label: string;
+    description: string;
+    aliases?: string[];
+    max_turns: number;
+    tools: string[];
+    prompt: string;
+    system_prompt: string;
+  }
+
+  interface CopilotPromptRegistry {
+    version: number;
+    base_prompt: string;
+    default: CopilotPromptProfile;
+    profiles: CopilotPromptProfile[];
+    source: string;
+    reference: string;
+  }
+
+  interface AIToolInvocation {
+    id: number;
+    user_id: string;
+    module: string;
+    tool_name: string;
+    args_summary: string;
+    agent_id?: string;
+    target_url?: string;
+    duration_ms: number;
+    status: string;
+    error_summary?: string;
+    created_at: string;
+  }
+
+  interface AIToolInvocationList {
+    total: number;
+    items: AIToolInvocation[];
+  }
+
   interface DebugPocRequest {
     agent_id: string;
     poc_content: string;

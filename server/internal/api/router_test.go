@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -41,6 +43,7 @@ func TestAIPermissions(t *testing.T) {
 		{method: "POST", path: "/api/v1/ai/arsenal/analyze", want: "operator"},
 		{method: "POST", path: "/api/v1/ai/arsenal/analyze/stream", want: "operator"},
 		{method: "POST", path: "/api/v1/ai/chat", want: "operator"},
+		{method: "GET", path: "/api/v1/ai/copilot/prompts", want: "operator"},
 		{method: "GET", path: "/api/v1/ai/config", want: "admin"},
 		{method: "PUT", path: "/api/v1/ai/config", want: "admin"},
 		{method: "GET", path: "/api/v1/ai/models", want: "admin"},
@@ -109,6 +112,9 @@ func TestCopilotProfileAndContextCompaction(t *testing.T) {
 	if profile.MaxTurns <= 4 || len(profile.Tools) != 4 {
 		t.Fatalf("expected poc profile to enable 4 focused tools (incl node_capacity), got %+v", profile)
 	}
+	if !strings.Contains(profile.SystemPrompt, "POC 编辑模式") {
+		t.Fatalf("expected poc profile to load prompt section from registry, got %s", profile.SystemPrompt)
+	}
 
 	compact := compactPageContext(map[string]interface{}{
 		"module":    "poc_inline",
@@ -125,6 +131,40 @@ func TestCopilotProfileAndContextCompaction(t *testing.T) {
 	}
 	if got, ok := compact["long_text"].(string); !ok || len(got) >= 7000 {
 		t.Fatalf("expected long text truncation")
+	}
+}
+
+func TestCopilotPromptRegistryEndpoint(t *testing.T) {
+	registry, err := loadCopilotPromptRegistry()
+	if err != nil {
+		t.Fatalf("load copilot prompt registry: %v", err)
+	}
+	if registry.Version == 0 || registry.Base == "" {
+		t.Fatalf("expected embedded copilot prompt registry to include version and base prompt")
+	}
+	if registry.aliasByID["poc_inline"] != "poc_list" {
+		t.Fatalf("expected poc_inline alias to resolve to poc_list, got %q", registry.aliasByID["poc_inline"])
+	}
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/ai/copilot/prompts", nil)
+
+	getCopilotPromptProfiles(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var resp copilotPromptRegistryResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode copilot prompt registry response: %v", err)
+	}
+	if resp.Source != "server/internal/api/prompts/copilot_profiles.yaml" {
+		t.Fatalf("expected registry source to be exposed, got %q", resp.Source)
+	}
+	if len(resp.Profiles) == 0 || resp.Default.SystemPrompt == "" {
+		t.Fatalf("expected prompt registry response to include profiles and default prompt: %+v", resp)
 	}
 }
 

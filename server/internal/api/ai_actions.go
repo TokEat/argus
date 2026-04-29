@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,8 @@ import (
 const (
 	copilotActionCreatePocDraft    = "create_poc_draft"
 	copilotActionUpsertWorkflow    = "upsert_workflow_draft"
+	copilotActionCreateTaskDraft   = "create_task_draft"
+	copilotActionUpsertDirDraft    = "upsert_dir_draft"
 	maxCopilotDraftContentSizeByte = 512 * 1024
 )
 
@@ -90,6 +93,10 @@ func executeCopilotAction(c *gin.Context, actionType string, action CopilotPendi
 		return executeCreatePOCDraft(currentTenantID(c), action.Params)
 	case copilotActionUpsertWorkflow:
 		return executeUpsertWorkflowDraft(currentTenantID(c), action.Params)
+	case copilotActionCreateTaskDraft:
+		return executeCreateTaskDraft(c, action.Params)
+	case copilotActionUpsertDirDraft:
+		return executeUpsertDirDraft(currentTenantID(c), action.Params)
 	default:
 		return copilotActionResult{}, fmt.Errorf("unsupported copilot action_type %q", actionType)
 	}
@@ -153,6 +160,128 @@ func executeCreatePOCDraft(tenantID string, params map[string]interface{}) (copi
 	}, nil
 }
 
+func executeCreateTaskDraft(c *gin.Context, params map[string]interface{}) (copilotActionResult, error) {
+	projectID := strings.TrimSpace(stringParam(params, "project_id"))
+	if projectID == "" {
+		return copilotActionResult{}, fmt.Errorf("project_id is required")
+	}
+	var project db.Project
+	if err := scopedProjectsQuery(c).Where("id = ?", projectID).First(&project).Error; err != nil {
+		return copilotActionResult{}, fmt.Errorf("project access denied")
+	}
+	if project.Status != "active" {
+		return copilotActionResult{}, fmt.Errorf("project is not active")
+	}
+
+	configRaw, err := rawJSONParam(params, "config")
+	if err != nil {
+		return copilotActionResult{}, err
+	}
+	configJSON, targetMode, err := normalizeTaskConfigPayload(configRaw)
+	if err != nil {
+		return copilotActionResult{}, err
+	}
+	targetsRaw, err := rawJSONParam(params, "targets")
+	if err != nil {
+		return copilotActionResult{}, err
+	}
+	targets, targetSummary, err := parseAndValidateTargetsForMode(targetsRaw, targetMode)
+	if err != nil {
+		return copilotActionResult{}, err
+	}
+	if len(targets) == 0 {
+		return copilotActionResult{}, fmt.Errorf("targets is empty")
+	}
+	targetsJSON, err := json.Marshal(targets)
+	if err != nil {
+		return copilotActionResult{}, err
+	}
+
+	priority := intParam(params, "priority", 1)
+	if priority < 0 || priority > 2 {
+		return copilotActionResult{}, fmt.Errorf("priority must be 0, 1, or 2")
+	}
+	timeoutSec := intParam(params, "timeout_sec", 0)
+	if timeoutSec < 0 {
+		return copilotActionResult{}, fmt.Errorf("timeout_sec must be greater than or equal to 0")
+	}
+	name := strings.TrimSpace(stringParam(params, "name"))
+	if name == "" {
+		name = targets[0]
+	}
+
+	taskID := fmt.Sprintf("task-draft-%d", time.Now().UnixNano())
+	rootTask := db.RootTask{
+		ID:               taskID,
+		TenantID:         currentTenantID(c),
+		ProjectID:        projectID,
+		UserID:           currentUserID(c),
+		Name:             name,
+		Status:           "Draft",
+		OriginalTargets:  string(targetsJSON),
+		Config:           configJSON,
+		TotalChunks:      0,
+		CompletedChunks:  0,
+		TotalTargets:     len(targets),
+		CompletedTargets: 0,
+		Priority:         priority,
+		TimeoutSec:       timeoutSec,
+	}
+	if err := db.DB.Create(&rootTask).Error; err != nil {
+		return copilotActionResult{}, err
+	}
+	return copilotActionResult{
+		Status:     "saved",
+		Message:    "Task draft saved. It has not been dispatched; start it through the normal task flow after review.",
+		ActionType: copilotActionCreateTaskDraft,
+		Object: map[string]interface{}{
+			"type":           "task",
+			"task_id":        taskID,
+			"project_id":     projectID,
+			"state":          "Draft",
+			"target_summary": targetSummary,
+		},
+	}, nil
+}
+
+func executeUpsertDirDraft(tenantID string, params map[string]interface{}) (copilotActionResult, error) {
+	product := strings.TrimSpace(stringParam(params, "product"))
+	paths := stringSliceParam(params, "paths")
+	if product == "" {
+		return copilotActionResult{}, fmt.Errorf("product is required")
+	}
+	if len(paths) == 0 {
+		return copilotActionResult{}, fmt.Errorf("paths must contain at least one entry")
+	}
+	for _, p := range paths {
+		if err := validateDirPath(p); err != nil {
+			return copilotActionResult{}, err
+		}
+	}
+	data, arsenal, err := fetchAndParseDir(tenantID)
+	if err != nil {
+		return copilotActionResult{}, err
+	}
+	data[product] = paths
+	content, hash, err := saveDirDraft(data, arsenal)
+	if err != nil {
+		return copilotActionResult{}, err
+	}
+	return copilotActionResult{
+		Status:     "saved",
+		Message:    "Dir dictionary draft saved. Publishing still follows the existing rule review flow.",
+		ActionType: copilotActionUpsertDirDraft,
+		Object: map[string]interface{}{
+			"type":           "dir",
+			"file_name":      "dir.yaml",
+			"product":        product,
+			"state":          "Draft",
+			"hash":           hash,
+			"content_length": len(content),
+		},
+	}, nil
+}
+
 func executeUpsertWorkflowDraft(tenantID string, params map[string]interface{}) (copilotActionResult, error) {
 	product := strings.TrimSpace(stringParam(params, "product"))
 	if product == "" {
@@ -196,6 +325,25 @@ func executeUpsertWorkflowDraft(tenantID string, params map[string]interface{}) 
 			"content_length": len(content),
 		},
 	}, nil
+}
+
+func saveDirDraft(data map[string][]string, arsenal *db.Arsenal) (string, string, error) {
+	out, err := yaml.Marshal(data)
+	if err != nil {
+		return "", "", err
+	}
+	content := string(out)
+	hash := fmt.Sprintf("%x", md5.Sum(out))
+	arsenal.PreviousContent = arsenal.Content
+	arsenal.PreviousHash = arsenal.Hash
+	arsenal.Content = content
+	arsenal.Hash = hash
+	arsenal.State = "Draft"
+	arsenal.Version++
+	if err := db.DB.Save(arsenal).Error; err != nil {
+		return "", "", err
+	}
+	return content, hash, nil
 }
 
 func saveWorkflowDraft(data map[string]WorkflowEntry, arsenal *db.Arsenal) (string, string, error) {
@@ -268,6 +416,32 @@ func normalizePendingAction(action *CopilotPendingAction) bool {
 		if action.RiskLevel == "" {
 			action.RiskLevel = "medium"
 		}
+	case copilotActionCreateTaskDraft:
+		if action.Title == "" {
+			action.Title = "创建扫描任务草稿"
+		}
+		if action.RequiredRole == "" {
+			action.RequiredRole = "operator"
+		}
+		if action.ConfirmLabel == "" {
+			action.ConfirmLabel = "保存任务草稿"
+		}
+		if action.RiskLevel == "" {
+			action.RiskLevel = "medium"
+		}
+	case copilotActionUpsertDirDraft:
+		if action.Title == "" {
+			action.Title = "保存 Dir 字典草稿"
+		}
+		if action.RequiredRole == "" {
+			action.RequiredRole = "operator"
+		}
+		if action.ConfirmLabel == "" {
+			action.ConfirmLabel = "保存草稿"
+		}
+		if action.RiskLevel == "" {
+			action.RiskLevel = "low"
+		}
 	default:
 		return false
 	}
@@ -317,6 +491,41 @@ func stringSliceParam(params map[string]interface{}, key string) []string {
 	}
 }
 
+func rawJSONParam(params map[string]interface{}, key string) (json.RawMessage, error) {
+	if params == nil {
+		return []byte("{}"), nil
+	}
+	value, ok := params[key]
+	if !ok || value == nil {
+		if key == "config" {
+			return []byte("{}"), nil
+		}
+		return nil, fmt.Errorf("%s is required", key)
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func intParam(params map[string]interface{}, key string, fallback int) int {
+	if params == nil {
+		return fallback
+	}
+	switch value := params[key].(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	case string:
+		if parsed, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
 func validateDraftFileName(fileName string, requireYAML bool) error {
 	clean := strings.TrimSpace(fileName)
 	if clean == "" {
@@ -334,6 +543,23 @@ func validateDraftFileName(fileName string, requireYAML bool) error {
 	return nil
 }
 
+func validateDirPath(value string) error {
+	pathValue := strings.TrimSpace(value)
+	if pathValue == "" {
+		return fmt.Errorf("dir path must not be empty")
+	}
+	if len(pathValue) > 300 {
+		return fmt.Errorf("dir path is too long")
+	}
+	if strings.ContainsAny(pathValue, "\r\n\t") {
+		return fmt.Errorf("dir path must be a single path segment or URL path")
+	}
+	if strings.Contains(pathValue, "..") {
+		return fmt.Errorf("dir path must not contain traversal segments")
+	}
+	return nil
+}
+
 func allowedWorkflowTrigger(value string) bool {
 	switch value {
 	case "root", "base", "dir", "dir-fallback":
@@ -341,6 +567,69 @@ func allowedWorkflowTrigger(value string) bool {
 	default:
 		return false
 	}
+}
+
+func listAIToolInvocations(c *gin.Context) {
+	limit := clampQueryInt(c.Query("limit"), 50, 1, 200)
+	offset := clampQueryInt(c.Query("offset"), 0, 0, 10000)
+	query := db.DB.Model(&db.AIToolInvocation{}).Where("tenant_id = ?", currentTenantID(c))
+	if role := c.GetString("role"); role != "admin" {
+		query = query.Where("user_id = ?", c.GetString("user_id"))
+	}
+	if module := strings.TrimSpace(c.Query("module")); module != "" {
+		query = query.Where("module = ?", module)
+	}
+	if toolName := strings.TrimSpace(c.Query("tool_name")); toolName != "" {
+		query = query.Where("tool_name = ?", toolName)
+	}
+	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		query = query.Where("status = ?", status)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	var rows []db.AIToolInvocation
+	if err := query.Order("created_at desc").Limit(limit).Offset(offset).Find(&rows).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	items := make([]map[string]interface{}, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, map[string]interface{}{
+			"id":            row.ID,
+			"user_id":       row.UserID,
+			"module":        row.Module,
+			"tool_name":     row.ToolName,
+			"args_summary":  row.ArgsSummary,
+			"agent_id":      row.AgentID,
+			"target_url":    row.TargetURL,
+			"duration_ms":   row.DurationMS,
+			"status":        row.Status,
+			"error_summary": row.ErrorSummary,
+			"created_at":    row.CreatedAt,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"total": total, "items": items})
+}
+
+func clampQueryInt(raw string, fallback, min, max int) int {
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return fallback
+	}
+	if parsed < min {
+		return min
+	}
+	if parsed > max {
+		return max
+	}
+	return parsed
 }
 
 func summarizeCopilotAction(action CopilotPendingAction) string {

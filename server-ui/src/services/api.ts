@@ -234,6 +234,20 @@ export async function confirmCopilotAction(action: API.CopilotPendingAction, pag
     return request.post('/ai/actions/confirm', { action, page_context: pageContext || {} });
 }
 
+export async function getCopilotPromptProfiles(): Promise<API.CopilotPromptRegistry> {
+    return request.get('/ai/copilot/prompts');
+}
+
+export async function listAIToolInvocations(params?: {
+    limit?: number;
+    offset?: number;
+    module?: string;
+    tool_name?: string;
+    status?: string;
+}): Promise<API.AIToolInvocationList> {
+    return request.get('/ai/tool-invocations', { params });
+}
+
 /** SSE streaming version of AI analysis — real-time token output */
 export function aiAnalyzeArsenalStream(
     data: API.AIAnalyzeRequest | string,

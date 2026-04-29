@@ -64,6 +64,8 @@ var permissionRules = map[string]string{
 	"POST:/ai/arsenal/analyze/stream": "operator",
 	"POST:/ai/chat":                   "operator",
 	"POST:/ai/actions/confirm":        "operator",
+	"GET:/ai/copilot/prompts":         "operator",
+	"GET:/ai/tool-invocations":        "operator",
 	"GET:/cloud/*":                    "operator",
 	"POST:/cloud/*":                   "operator",
 	"PUT:/cloud/*":                    "operator",
