@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Form, Input, Button, App, ConfigProvider, theme } from 'antd';
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
+import gsap from 'gsap';
 import { login } from '../services/api';
 import loginIllustration from '../assets/login_illustration.png';
 
@@ -137,21 +138,72 @@ const dots = [
 /* ─────────────── Component ─────────────── */
 const Login: React.FC = () => {
     const [loading, setLoading] = useState(false);
-    const [floatY, setFloatY] = useState(0);
     const navigate = useNavigate();
     const { message } = App.useApp();
+    const leftPanelRef = useRef<HTMLDivElement>(null);
+    const rightPanelRef = useRef<HTMLDivElement>(null);
+    const illustrationRef = useRef<HTMLImageElement>(null);
 
-    /* floating animation */
+    /* GSAP animations */
     useEffect(() => {
-        let frame: number;
-        const start = performance.now();
-        const animate = (now: number) => {
-            const t = (now - start) / 1000;
-            setFloatY(Math.sin(t * (Math.PI / 2)) * 10);
-            frame = requestAnimationFrame(animate);
-        };
-        frame = requestAnimationFrame(animate);
-        return () => cancelAnimationFrame(frame);
+        const ctx = gsap.context(() => {
+            // 1. 插画浮动
+            if (illustrationRef.current) {
+                gsap.to(illustrationRef.current, {
+                    y: -12,
+                    duration: 2.5,
+                    ease: 'sine.inOut',
+                    yoyo: true,
+                    repeat: -1,
+                });
+            }
+
+            // 2. 光斑漂移
+            const blobs = leftPanelRef.current?.querySelectorAll('.login-blob');
+            blobs?.forEach((blob, i) => {
+                gsap.to(blob, {
+                    x: `+=${(i % 2 === 0 ? 1 : -1) * 30}`,
+                    y: `+=${(i % 2 === 0 ? -1 : 1) * 25}`,
+                    duration: 4 + i * 1.2,
+                    ease: 'sine.inOut',
+                    yoyo: true,
+                    repeat: -1,
+                });
+            });
+
+            // 3. 右侧表单入场
+            if (rightPanelRef.current) {
+                const items = rightPanelRef.current.querySelectorAll('.login-form-item');
+                gsap.from(items, {
+                    y: 28,
+                    opacity: 0,
+                    duration: 0.5,
+                    stagger: 0.1,
+                    ease: 'power2.out',
+                    delay: 0.2,
+                });
+            }
+
+            // 4. 左侧标题入场
+            if (leftPanelRef.current) {
+                gsap.from(leftPanelRef.current.querySelector('.login-title-text'), {
+                    y: -20,
+                    opacity: 0,
+                    duration: 0.6,
+                    ease: 'power2.out',
+                    delay: 0.1,
+                });
+                gsap.from(leftPanelRef.current.querySelector('.login-tagline'), {
+                    y: 16,
+                    opacity: 0,
+                    duration: 0.5,
+                    ease: 'power2.out',
+                    delay: 0.35,
+                });
+            }
+        });
+
+        return () => ctx.revert();
     }, []);
 
     const onFinish = async (values: { tenant_id: string; password: string }) => {
@@ -176,11 +228,11 @@ const Login: React.FC = () => {
     return (
         <div style={styles.root}>
             {/* ──────────── LEFT PANEL ──────────── */}
-            <div style={styles.leftPanel}>
+            <div ref={leftPanelRef} style={styles.leftPanel}>
                 {/* decorative blobs */}
-                <div style={styles.blob1} />
-                <div style={styles.blob2} />
-                <div style={styles.blob3} />
+                <div className="login-blob" style={styles.blob1} />
+                <div className="login-blob" style={styles.blob2} />
+                <div className="login-blob" style={styles.blob3} />
 
                 {/* twinkling dots */}
                 {dots.map((d, i) => (
@@ -200,13 +252,14 @@ const Login: React.FC = () => {
 
                 {/* illustration */}
                 <div style={styles.illustrationWrap}>
-                    <div style={styles.illustrationTitle}>ARGUS</div>
+                    <div className="login-title-text" style={styles.illustrationTitle}>ARGUS</div>
                     <img
+                        ref={illustrationRef}
                         src={loginIllustration}
                         alt="Argus Illustration"
-                        style={{ ...styles.illustrationImg, transform: `translateY(${floatY}px)` }}
+                        style={styles.illustrationImg}
                     />
-                    <div style={styles.illustrationTagline}>分布式漏洞扫描与资产管理平台</div>
+                    <div className="login-tagline" style={styles.illustrationTagline}>分布式漏洞扫描与资产管理平台</div>
                 </div>
 
                 {/* diagonal cut */}
@@ -214,7 +267,7 @@ const Login: React.FC = () => {
             </div>
 
             {/* ──────────── RIGHT PANEL ──────────── */}
-            <div style={styles.rightPanel}>
+            <div ref={rightPanelRef} style={styles.rightPanel}>
                 <ConfigProvider
                     theme={{
                         algorithm: theme.defaultAlgorithm,
@@ -235,7 +288,7 @@ const Login: React.FC = () => {
                     }}
                 >
                     <div style={styles.loginBox}>
-                        <div style={styles.header}>
+                        <div className="login-form-item" style={styles.header}>
                             <div style={styles.headerTitle}>控制台登录</div>
                             <div style={styles.headerSub}>输入租户 ID 和密码进入控制面板</div>
                         </div>
@@ -243,7 +296,7 @@ const Login: React.FC = () => {
                         <Form name="login" onFinish={onFinish} autoComplete="off" size="large"
                               initialValues={{ tenant_id: 'default', password: '' }}>
                             {/* 租户 ID */}
-                            <Form.Item name="tenant_id" rules={[{ required: true, message: '请输入租户 ID' }]}>
+                            <Form.Item className="login-form-item" name="tenant_id" rules={[{ required: true, message: '请输入租户 ID' }]}>
                                 <Input
                                     prefix={<UserOutlined style={{ color: '#6B4FCC' }} />}
                                     placeholder="租户 ID"
@@ -253,7 +306,7 @@ const Login: React.FC = () => {
                             </Form.Item>
 
                             {/* 密码 */}
-                            <Form.Item name="password" rules={[{ required: true, message: '请输入密码' }]}>
+                            <Form.Item className="login-form-item" name="password" rules={[{ required: true, message: '请输入密码' }]}>
                                 <Input.Password
                                     prefix={<LockOutlined style={{ color: '#6B4FCC' }} />}
                                     placeholder="密码"
@@ -263,7 +316,7 @@ const Login: React.FC = () => {
                             </Form.Item>
 
                             {/* 提交 */}
-                            <Form.Item style={{ marginBottom: 0 }}>
+                            <Form.Item className="login-form-item" style={{ marginBottom: 0 }}>
                                 <Button
                                     type="primary"
                                     htmlType="submit"
@@ -285,7 +338,7 @@ const Login: React.FC = () => {
                             </Form.Item>
                         </Form>
 
-                        <div style={styles.footer}>© 2026 Argus. All rights reserved.</div>
+                        <div className="login-form-item" style={styles.footer}>© 2026 Argus. All rights reserved.</div>
                     </div>
                 </ConfigProvider>
             </div>

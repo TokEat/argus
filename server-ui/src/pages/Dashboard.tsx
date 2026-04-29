@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Row, Col, Typography, List, Tag, Space, Spin, Badge, Tooltip, Table, Empty } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
@@ -18,6 +18,8 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import ReactECharts from 'echarts-for-react';
+import gsap from 'gsap';
+import DispatchCanvas from '../components/DispatchCanvas';
 import { getDashboardStats, listTasks, getNodes, connectWebSocket, getQueueDepth } from '../services/api';
 import { getTaskStatusMeta, normalizeTaskStatus } from '../utils/taskStatus';
 import { useAutoContext } from '../contexts/GlobalAIContext';
@@ -101,6 +103,94 @@ const Dashboard: React.FC = () => {
         };
     }, [fetchData]);
 
+    // GSAP refs
+    const statCardsRef = useRef<HTMLDivElement>(null);
+    const nodeSectionRef = useRef<HTMLDivElement>(null);
+    const taskSectionRef = useRef<HTMLDivElement>(null);
+    const chartSectionRef = useRef<HTMLDivElement>(null);
+
+    // GSAP entrance animations
+    useEffect(() => {
+        if (loading) return;
+
+        const ctx = gsap.context(() => {
+            // Stat cards stagger entrance + countUp
+            if (statCardsRef.current) {
+                const cards = statCardsRef.current.querySelectorAll('.stat-card-item');
+                gsap.from(cards, {
+                    y: 30,
+                    opacity: 0,
+                    duration: 0.5,
+                    stagger: 0.08,
+                    ease: 'power2.out',
+                    clearProps: 'all',
+                });
+
+                // CountUp for each stat value
+                cards.forEach((card) => {
+                    const valEl = card.querySelector('.stat-value-num');
+                    if (!valEl) return;
+                    const target = Number(valEl.textContent) || 0;
+                    if (target === 0) return;
+                    const obj = { val: 0 };
+                    gsap.to(obj, {
+                        val: target,
+                        duration: 1,
+                        ease: 'power2.out',
+                        delay: 0.3,
+                        onUpdate: () => {
+                            valEl.textContent = String(Math.round(obj.val));
+                        },
+                    });
+                });
+            }
+
+            // Node list stagger from left
+            if (nodeSectionRef.current) {
+                const items = nodeSectionRef.current.querySelectorAll('.ant-list-item');
+                gsap.from(items, {
+                    x: -20,
+                    opacity: 0,
+                    duration: 0.4,
+                    stagger: 0.05,
+                    ease: 'power2.out',
+                    delay: 0.4,
+                    clearProps: 'all',
+                });
+            }
+
+            // Task list stagger from right
+            if (taskSectionRef.current) {
+                const items = taskSectionRef.current.querySelectorAll('.ant-list-item');
+                gsap.from(items, {
+                    x: 20,
+                    opacity: 0,
+                    duration: 0.4,
+                    stagger: 0.05,
+                    ease: 'power2.out',
+                    delay: 0.5,
+                    clearProps: 'all',
+                });
+            }
+
+            // Chart cards entrance
+            if (chartSectionRef.current) {
+                const cards = chartSectionRef.current.querySelectorAll('.glass-card');
+                gsap.from(cards, {
+                    scale: 0.92,
+                    opacity: 0,
+                    duration: 0.5,
+                    stagger: 0.1,
+                    ease: 'power2.out',
+                    delay: 0.3,
+                    clearProps: 'all',
+                });
+            }
+        });
+
+        return () => ctx.revert();
+    }, [loading, stats, nodes, recentTasks]);
+
     const getStatusTag = (status: string) => {
         const { color, text } = getTaskStatusMeta(status);
         return <Tag color={color}>{text}</Tag>;
@@ -140,179 +230,6 @@ const Dashboard: React.FC = () => {
             </div>
         );
     }
-
-    const DispatchVisualizer: React.FC<{
-        nodes: API.AgentNode[];
-        wsMessages: { time: string; type: string; data: string }[];
-        queueDepth: QueueDepthInfo | null;
-    }> = ({ nodes, wsMessages, queueDepth }) => {
-        const [animations, setAnimations] = useState<{ id: string; agentIndex: number; taskId: string }[]>([]);
-        
-        const activeNodes = nodes.filter(n => n.Status === 'Alive');
-    
-        useEffect(() => {
-            const latestMsg = wsMessages[0];
-            if (latestMsg && latestMsg.type === 'task_claimed') {
-                try {
-                    const data = JSON.parse(latestMsg.data);
-                    if (data.agent_id) {
-                        const agentIndex = activeNodes.findIndex(n => n.AgentID === data.agent_id);
-                        if (agentIndex !== -1) {
-                            const animId = Math.random().toString(36).substring(7);
-                            setAnimations(prev => [...prev, { id: animId, agentIndex, taskId: data.task_id }]);
-                            setTimeout(() => {
-                                setAnimations(prev => prev.filter(a => a.id !== animId));
-                            }, 800);
-                        }
-                    }
-                } catch {}
-            }
-        }, [wsMessages, activeNodes]);
-    
-        const sumValues = (items?: Record<string, number>) =>
-            Object.values(items || {}).reduce((acc, v) => acc + v, 0);
-        const queueMode = queueDepth?.mode || 'unknown';
-        const queueTitle = queueMode === 'rabbitmq'
-            ? 'RabbitMQ 队列'
-            : queueMode === 'memory'
-                ? '内存队列'
-                : '任务队列';
-        const totalQueued = sumValues(queueDepth?.depth);
-        const totalPending = sumValues(queueDepth?.pending);
-        const urgentReady = queueDepth?.depth?.['dddd.tasks.urgent'] || 0;
-        const normalReady = queueDepth?.depth?.['dddd.tasks.normal'] || 0;
-        const lowReady = queueDepth?.depth?.['dddd.tasks.low'] || 0;
-        const urgentPending = queueDepth?.pending?.['dddd.tasks.urgent'] || 0;
-        const normalPending = queueDepth?.pending?.['dddd.tasks.normal'] || 0;
-        const lowPending = queueDepth?.pending?.['dddd.tasks.low'] || 0;
-
-        const queueTooltip = (
-            <div>
-                <div><strong>模式:</strong> {queueMode}</div>
-                <div><strong>可领取批次:</strong> {queueDepth?.ready_batches ?? totalQueued}</div>
-                <div><strong>处理中批次:</strong> {queueDepth?.pending_batches ?? totalPending}</div>
-                {(queueDepth?.ready_targets !== undefined) && (
-                    <>
-                        <div><strong>可领取目标:</strong> {queueDepth.ready_targets}</div>
-                        <div><strong>处理中目标:</strong> {queueDepth.pending_targets}</div>
-                    </>
-                )}
-                {queueMode === 'rabbitmq' ? (
-                    <>
-                        <div><strong>Urgent 紧急:</strong> {urgentReady} / pending {urgentPending}</div>
-                        <div><strong>Normal 普通:</strong> {normalReady} / pending {normalPending}</div>
-                        <div><strong>Low 低级:</strong> {lowReady} / pending {lowPending}</div>
-                    </>
-                ) : (
-                    <div><strong>Memory:</strong> {queueDepth?.depth?.memory || 0}</div>
-                )}
-            </div>
-        );
-    
-        return (
-            <div style={{ display: 'flex', alignItems: 'stretch', height: 280 }}>
-                {/* Queue Block */}
-                <div style={{ width: 120, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Tooltip title={queueTooltip} placement="right">
-                        <div className="glass-card" style={{ padding: 20, textAlign: 'center', borderRadius: 12, border: '1px solid #e2e8f0', background: '#f8fafc', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', cursor: 'pointer' }}>
-                            <DatabaseOutlined style={{ fontSize: 32, color: '#ef4444' }} />
-                            <div style={{ marginTop: 8, fontWeight: 'bold' }}>{queueTitle}</div>
-                            <Tag color="error" style={{ marginTop: 8 }}>{totalQueued as React.ReactNode} 积压</Tag>
-                            <Tag color="processing" style={{ marginTop: 4 }}>{totalPending as React.ReactNode} 处理中</Tag>
-                        </div>
-                    </Tooltip>
-                </div>
-    
-                {/* Animation Flow Area */}
-                <div style={{ flex: 1, position: 'relative', overflow: 'hidden', borderTop: '1px dashed #e2e8f0', borderBottom: '1px dashed #e2e8f0', margin: '0 20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <div style={{ color: '#94a3b8', fontSize: 12, letterSpacing: 2, opacity: 0.5 }}>TASK FLOW</div>
-                    {animations.map(anim => {
-                        const topPercent = activeNodes.length > 1 
-                            ? (anim.agentIndex / (activeNodes.length - 1)) * 80 + 10 
-                            : 50;
-                        return (
-                            <div key={anim.id} style={{
-                                position: 'absolute',
-                                left: 0,
-                                top: '50%',
-                                width: 90,
-                                padding: '4px 8px',
-                                background: 'linear-gradient(90deg, #10b981, #0ea5e9)',
-                                color: '#fff',
-                                fontSize: 10,
-                                borderRadius: 12,
-                                whiteSpace: 'nowrap',
-                                boxShadow: '0 0 10px rgba(16, 185, 129, 0.5)',
-                                transition: 'all 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
-                                transform: 'translate(0, -50%)',
-                            }}
-                            ref={el => {
-                                if (el) {
-                                    setTimeout(() => {
-                                        el.style.left = 'calc(100% - 100px)';
-                                        el.style.top = `${topPercent}%`;
-                                    }, 10);
-                                }
-                            }}
-                            >
-                                <RocketOutlined /> {anim.taskId.slice(0,6)}
-                            </div>
-                        );
-                    })}
-                </div>
-    
-                {/* Agents Block */}
-                <div style={{ width: 220, display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto', paddingRight: 10 }}>
-                    {activeNodes.length > 0 ? activeNodes.map(node => {
-                        let taskIds: string[] = [];
-                        try {
-                            const runningIdsRaw = node.RunningTaskIDs || node.RunningTaskIds || '[]';
-                            taskIds = JSON.parse(runningIdsRaw);
-                        } catch {}
-    
-                        const tooltip = (
-                            <div style={{ maxWidth: 200 }}>
-                                <div>运行中: {node.RunningTasks}/{node.Capacity}</div>
-                                {taskIds.map((id: string) => <div key={id} style={{ fontSize: 10, color: '#94a3b8' }}>{id}</div>)}
-                            </div>
-                        );
-    
-                        return (
-                            <Tooltip title={tooltip} placement="left" key={node.AgentID}>
-                                <div style={{ 
-                                    padding: 10, 
-                                    borderRadius: 8, 
-                                    border: '1px solid #e2e8f0', 
-                                    background: '#fff',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: 10,
-                                    boxShadow: '0 1px 3px 0 rgb(0 0 0 / 0.1)',
-                                    cursor: 'pointer',
-                                    transition: 'all 0.2s'
-                                }}
-                                onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.02)'}
-                                onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
-                                >
-                                    <Badge status="processing" color={taskIds.length > 0 ? '#10b981' : '#94a3b8'} />
-                                    <div style={{ flex: 1, minWidth: 0 }}>
-                                        <div style={{ fontWeight: 500, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                            {node.AgentID}
-                                        </div>
-                                    </div>
-                                    <Tag color={taskIds.length > 0 ? "processing" : "default"} style={{ margin: 0 }}>
-                                        {node.RunningTasks}
-                                    </Tag>
-                                </div>
-                            </Tooltip>
-                        );
-                    }) : (
-                        <div style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center', marginTop: 50 }}>无可用节点</div>
-                    )}
-                </div>
-            </div>
-        );
-    };
 
     const statCards = [
         {
@@ -392,30 +309,32 @@ const Dashboard: React.FC = () => {
             </div>
 
             {/* Stat Cards - 5 columns */}
-            <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
-                {statCards.map((card, i) => (
-                    <Col key={i} xs={12} sm={8} md={6} lg={4} xl={4}>
-                        <ProCard hoverable className="glass-card" bodyStyle={{ padding: 18 }} style={{ height: '100%', background: 'transparent', border: 'none' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <div>
-                                    <Text style={{ color: '#64748b', fontSize: 12 }}>{card.title}</Text>
-                                    <div style={{ fontSize: 26, fontWeight: 700, color: card.color, marginTop: 2 }}>
-                                        {card.value}
+            <div ref={statCardsRef}>
+                <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
+                    {statCards.map((card, i) => (
+                        <Col key={i} xs={12} sm={8} md={6} lg={4} xl={4}>
+                            <ProCard hoverable className="glass-card stat-card-item" bodyStyle={{ padding: 18 }} style={{ height: '100%', background: 'transparent', border: 'none' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <div>
+                                        <Text style={{ color: '#64748b', fontSize: 12 }}>{card.title}</Text>
+                                        <div className="stat-value-num" style={{ fontSize: 26, fontWeight: 700, color: card.color, marginTop: 2 }}>
+                                            {card.value}
+                                        </div>
+                                    </div>
+                                    <div style={{
+                                        width: 44, height: 44, borderRadius: 10,
+                                        background: card.iconBg,
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        fontSize: 20, color: '#fff',
+                                    }}>
+                                        {card.icon}
                                     </div>
                                 </div>
-                                <div style={{
-                                    width: 44, height: 44, borderRadius: 10,
-                                    background: card.iconBg,
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    fontSize: 20, color: '#fff',
-                                }}>
-                                    {card.icon}
-                                </div>
-                            </div>
-                        </ProCard>
-                    </Col>
-                ))}
-            </Row>
+                            </ProCard>
+                        </Col>
+                    ))}
+                </Row>
+            </div>
 
             {/* Node Status + Recent Tasks */}
             <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
@@ -439,6 +358,7 @@ const Dashboard: React.FC = () => {
                     </ProCard>
                 </Col>
                 <Col xs={24} lg={8}>
+                    <div ref={nodeSectionRef}>
                     <ProCard
                         title={
                             <Space>
@@ -476,8 +396,10 @@ const Dashboard: React.FC = () => {
                             <div style={{ textAlign: 'center', padding: '50px 0', color: '#94a3b8' }}>暂无节点</div>
                         )}
                     </ProCard>
+                    </div>
                 </Col>
                 <Col xs={24} lg={8}>
+                    <div ref={taskSectionRef}>
                     <ProCard
                         title={
                             <Space>
@@ -524,10 +446,12 @@ const Dashboard: React.FC = () => {
                             <div style={{ textAlign: 'center', padding: '50px 0', color: '#94a3b8' }}>暂无任务</div>
                         )}
                     </ProCard>
+                    </div>
                 </Col>
             </Row>
 
             {/* Agent Workload Dashboard */}
+            <div ref={chartSectionRef}>
             <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
                 <Col span={24}>
                     <ProCard
@@ -543,7 +467,7 @@ const Dashboard: React.FC = () => {
                         bodyStyle={{ padding: '16px', height: 280 }}
                     >
                         {onlineCount > 0 ? (
-                            <DispatchVisualizer nodes={nodes} wsMessages={wsMessages} queueDepth={queueDepth} />
+                            <DispatchCanvas nodes={nodes} wsMessages={wsMessages} queueDepth={queueDepth} />
                         ) : (
                             <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
                                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无在线计算节点，无法展示调度流" />
@@ -585,6 +509,7 @@ const Dashboard: React.FC = () => {
                     </ProCard>
                 </Col>
             </Row>
+            </div>
         </div>
     );
 };

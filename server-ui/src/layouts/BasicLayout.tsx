@@ -22,6 +22,7 @@ const { Text } = Typography;
 
 import { useGlobalAI } from '../contexts/GlobalAIContext';
 import GlobalAIChatDrawer from '../components/GlobalAIChatDrawer';
+import PageTransition from '../components/PageTransition';
 
 const filterRoutesByRole = (routes: RouteConfig[], role: UserRole): RouteConfig[] => {
     return routes.reduce<RouteConfig[]>((acc, route) => {
@@ -527,9 +528,9 @@ const BasicLayout: React.FC = () => {
                             minHeight: 280,
                         }}
                     >
-                        <div className="page-container">
+                        <PageTransition>
                             <Outlet />
-                        </div>
+                        </PageTransition>
                     </Content>
                 </Layout>
             </Layout>

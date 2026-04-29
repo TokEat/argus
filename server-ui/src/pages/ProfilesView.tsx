@@ -1,6 +1,7 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { Typography, Tag, Space, Spin, Input, Empty, Tooltip, Pagination, Popover, Badge } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
+import gsap from 'gsap';
 import {
     ProfileOutlined,
     SearchOutlined,
@@ -375,6 +376,27 @@ const ProfilesView: React.FC = () => {
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(20);
     const [searchKeyword, setSearchKeyword] = useState('');
+    const cardsRef = useRef<HTMLDivElement>(null);
+
+    // GSAP stagger entrance for host cards
+    useEffect(() => {
+        if (loading || !cardsRef.current) return;
+        const cards = cardsRef.current.querySelectorAll('.host-card-item');
+        if (cards.length === 0) return;
+
+        const ctx = gsap.context(() => {
+            gsap.from(cards, {
+                y: 20,
+                opacity: 0,
+                duration: 0.4,
+                stagger: 0.05,
+                ease: 'power2.out',
+                clearProps: 'all',
+            });
+        }, cardsRef);
+
+        return () => ctx.revert();
+    }, [loading, profiles]);
 
     useEffect(() => {
         const timer = setTimeout(() => {
@@ -452,9 +474,11 @@ const ProfilesView: React.FC = () => {
                 </ProCard>
             ) : (
                 <>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div ref={cardsRef} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                         {profiles.map(p => (
-                            <HostCard key={p.host} profile={p} />
+                            <div key={p.host} className="host-card-item">
+                                <HostCard profile={p} />
+                            </div>
                         ))}
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 20 }}>
