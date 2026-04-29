@@ -27,6 +27,7 @@ var DebugEventHook func(event *pb.DebugEvent)
 type Project struct {
 	ID            string `gorm:"primaryKey"`
 	TenantID      string `gorm:"default:'default';index"`
+	OwnerUserID   string `gorm:"index"`
 	Name          string `gorm:"index"`
 	Description   string `gorm:"type:text"`
 	Tags          string `gorm:"type:jsonb"`
@@ -41,10 +42,12 @@ type Project struct {
 }
 
 type ProjectMember struct {
+	TenantID  string `gorm:"default:'default';index"`
 	ProjectID string `gorm:"primaryKey"`
 	UserID    string `gorm:"primaryKey"`
 	Role      string `gorm:"default:'operator'"`
 	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type CronTask struct {

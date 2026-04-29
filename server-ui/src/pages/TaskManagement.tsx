@@ -203,7 +203,7 @@ const TaskManagement: React.FC = () => {
     const fetchProjects = async () => {
         try {
             const result = await listProjects();
-            setProjects(result || []);
+            setProjects((result || []).filter((p) => p.Status !== 'archived'));
         } catch (error) {
             console.error('Failed to fetch projects:', error);
         }

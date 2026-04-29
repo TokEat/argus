@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
+    owner_user_id TEXT,
     name TEXT,
     description TEXT,
     tags JSONB,
@@ -15,10 +16,12 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 
 CREATE TABLE IF NOT EXISTS project_members (
+    tenant_id TEXT NOT NULL DEFAULT 'default',
     project_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'operator',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (project_id, user_id)
 );
 
@@ -304,6 +307,9 @@ CREATE TABLE IF NOT EXISTS dir_rules (
 );
 
 ALTER TABLE root_tasks ADD COLUMN IF NOT EXISTS project_id TEXT;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_user_id TEXT;
+ALTER TABLE project_members ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE project_members ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 ALTER TABLE root_tasks ADD COLUMN IF NOT EXISTS cron_task_id TEXT;
 ALTER TABLE root_tasks ADD COLUMN IF NOT EXISTS total_targets INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE root_tasks ADD COLUMN IF NOT EXISTS completed_targets INTEGER NOT NULL DEFAULT 0;

@@ -62,6 +62,8 @@ func TestTenantRolePermissionMatrix(t *testing.T) {
 		{method: "GET", path: "/api/v1/tasks/task-1", want: "viewer"},
 		{method: "GET", path: "/api/v1/reports/export/vulns", want: "viewer"},
 		{method: "POST", path: "/api/v1/projects", want: "operator"},
+		{method: "GET", path: "/api/v1/projects/proj-1/members", want: "admin"},
+		{method: "PUT", path: "/api/v1/projects/proj-1/members", want: "admin"},
 		{method: "POST", path: "/api/v1/tasks", want: "operator"},
 		{method: "POST", path: "/api/v1/tasks/task-1/cancel", want: "operator"},
 		{method: "DELETE", path: "/api/v1/nodes/agent-1", want: "operator"},

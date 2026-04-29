@@ -73,7 +73,7 @@ export async function listProjects(): Promise<API.Project[]> {
     return request.get('/projects');
 }
 
-export async function createProject(data: { name: string; description?: string }): Promise<API.Project> {
+export async function createProject(data: { name: string; description?: string; member_user_ids?: string[] }): Promise<API.Project> {
     return request.post('/projects', data);
 }
 
@@ -87,6 +87,14 @@ export async function deleteProject(id: string): Promise<API.MessageResponse> {
 
 export async function getProjectStats(id: string): Promise<{ project_id: string; project_name: string; tasks: number; assets: number; fingerprints: number; vulns: number }> {
     return request.get(`/projects/${id}/stats`);
+}
+
+export async function getProjectMembers(id: string): Promise<{ project_id: string; user_ids: string[] }> {
+    return request.get(`/projects/${id}/members`);
+}
+
+export async function updateProjectMembers(id: string, userIds: string[]): Promise<API.MessageResponse> {
+    return request.put(`/projects/${id}/members`, { user_ids: userIds });
 }
 
 // ===========================

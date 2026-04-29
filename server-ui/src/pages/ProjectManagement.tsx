@@ -1,18 +1,28 @@
 import React, { useEffect, useState } from 'react';
-import { App, Button, Form, Input, Modal, Space, Table, Tag, Typography, Spin, Empty, Popconfirm, Statistic, Tooltip } from 'antd';
+import { App, Button, Form, Input, Modal, Space, Table, Tag, Typography, Spin, Empty, Statistic, Tooltip, Select } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     PlusOutlined, ProjectOutlined, ReloadOutlined,
     DeleteOutlined, InboxOutlined, UndoOutlined,
     ExclamationCircleOutlined, BugOutlined, ScanOutlined,
     ApiOutlined, RocketOutlined, WarningOutlined,
+    TeamOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { listProjects, createProject, updateProject, deleteProject, getProjectStats } from '../services/api';
-import { canAccessRole } from '../utils/auth';
+import {
+    listProjects,
+    createProject,
+    updateProject,
+    deleteProject,
+    getProjectStats,
+    listUsers,
+    getProjectMembers,
+    updateProjectMembers,
+} from '../services/api';
+import { canAccessRole, getCurrentUserRole } from '../utils/auth';
 import dayjs from 'dayjs';
 
-const { Title, Text, Paragraph } = Typography;
+const { Title, Text } = Typography;
 
 interface ProjectStats {
     project_id: string;
@@ -29,8 +39,11 @@ const ProjectManagement: React.FC = () => {
     const [createOpen, setCreateOpen] = useState(false);
     const [creating, setCreating] = useState(false);
     const [form] = Form.useForm();
-    const { message, modal } = App.useApp();
-    const canManageProjects = canAccessRole('operator');
+    const { message } = App.useApp();
+    const currentRole = getCurrentUserRole();
+    const isAdmin = currentRole === 'admin';
+    const canCreateProjects = canAccessRole('operator');
+    const canManageProject = (project: API.Project) => isAdmin || project.access_level === 'owner';
 
     // Delete confirmation state
     const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -39,6 +52,11 @@ const ProjectManagement: React.FC = () => {
     const [loadingStats, setLoadingStats] = useState(false);
     const [deleteConfirmText, setDeleteConfirmText] = useState('');
     const [deleting, setDeleting] = useState(false);
+    const [tenantUsers, setTenantUsers] = useState<API.User[]>([]);
+    const [memberModalOpen, setMemberModalOpen] = useState(false);
+    const [memberProject, setMemberProject] = useState<API.Project | null>(null);
+    const [memberUserIds, setMemberUserIds] = useState<string[]>([]);
+    const [memberSaving, setMemberSaving] = useState(false);
 
     const fetchProjects = async () => {
         setLoading(true);
@@ -54,10 +72,24 @@ const ProjectManagement: React.FC = () => {
 
     useEffect(() => {
         fetchProjects();
+        if (isAdmin) fetchTenantUsers();
     }, []);
 
+    const fetchTenantUsers = async () => {
+        if (!isAdmin) return [];
+        try {
+            const users = await listUsers();
+            const operators = (users || []).filter((u) => u.status === 'active' && u.role === 'operator');
+            setTenantUsers(operators);
+            return operators;
+        } catch (error) {
+            console.error('Failed to fetch tenant users:', error);
+            return [];
+        }
+    };
+
     const handleCreate = async () => {
-        if (!canManageProjects) return;
+        if (!canCreateProjects) return;
         try {
             const values = await form.validateFields();
             setCreating(true);
@@ -65,6 +97,7 @@ const ProjectManagement: React.FC = () => {
             await createProject({
                 name: values.name,
                 description: values.description,
+                member_user_ids: isAdmin ? values.member_user_ids : undefined,
             });
 
             message.success('项目创建成功');
@@ -84,6 +117,7 @@ const ProjectManagement: React.FC = () => {
 
     // ── Archive / Restore ──
     const handleToggleArchive = async (project: API.Project) => {
+        if (!canManageProject(project)) return;
         const newStatus = project.Status === 'archived' ? 'active' : 'archived';
         const actionLabel = newStatus === 'archived' ? '归档' : '恢复';
         try {
@@ -104,6 +138,7 @@ const ProjectManagement: React.FC = () => {
 
     // ── Delete with impact assessment ──
     const openDeleteModal = async (project: API.Project) => {
+        if (!canManageProject(project)) return;
         setDeleteTarget(project);
         setDeleteConfirmText('');
         setDeleteStats(null);
@@ -123,6 +158,7 @@ const ProjectManagement: React.FC = () => {
 
     const handleDelete = async () => {
         if (!deleteTarget) return;
+        if (!canManageProject(deleteTarget)) return;
         setDeleting(true);
         try {
             await deleteProject(deleteTarget.ID);
@@ -139,6 +175,36 @@ const ProjectManagement: React.FC = () => {
             message.error('删除失败');
         } finally {
             setDeleting(false);
+        }
+    };
+
+    const handleOpenMembers = async (project: API.Project) => {
+        if (!isAdmin) return;
+        setMemberProject(project);
+        setMemberUserIds(project.member_user_ids || []);
+        setMemberModalOpen(true);
+        if (tenantUsers.length === 0) fetchTenantUsers();
+        try {
+            const res = await getProjectMembers(project.ID);
+            setMemberUserIds((res.user_ids || []).map(String));
+        } catch (error) {
+            message.error(typeof error === 'string' ? error : '加载项目成员失败');
+        }
+    };
+
+    const handleSaveMembers = async () => {
+        if (!memberProject) return;
+        setMemberSaving(true);
+        try {
+            await updateProjectMembers(memberProject.ID, memberUserIds);
+            message.success('项目分发已更新');
+            setMemberModalOpen(false);
+            setMemberProject(null);
+            fetchProjects();
+        } catch (error) {
+            message.error(typeof error === 'string' ? error : '保存项目成员失败');
+        } finally {
+            setMemberSaving(false);
         }
     };
 
@@ -172,6 +238,22 @@ const ProjectManagement: React.FC = () => {
             render: (desc: string) => <Text style={{ color: '#64748b' }}>{desc || '-'}</Text>,
         },
         {
+            title: '归属',
+            key: 'owner',
+            width: 150,
+            render: (_: unknown, record: API.Project) => (
+                <Space direction="vertical" size={2}>
+                    <Text style={{ fontSize: 12 }}>{record.owner_username || record.OwnerUserID || '-'}</Text>
+                    <Tag
+                        color={record.access_level === 'member' ? 'cyan' : record.access_level === 'owner' ? 'green' : 'purple'}
+                        style={{ margin: 0, width: 'fit-content' }}
+                    >
+                        {record.access_level === 'member' ? '被分发' : record.access_level === 'owner' ? '我的项目' : '管理员可管'}
+                    </Tag>
+                </Space>
+            ),
+        },
+        {
             title: '状态',
             dataIndex: 'Status',
             key: 'status',
@@ -197,38 +279,53 @@ const ProjectManagement: React.FC = () => {
             width: 170,
             render: (val: string) => <Text style={{ fontSize: 12, color: '#64748b' }}>{dayjs(val).format('YYYY-MM-DD HH:mm:ss')}</Text>,
         },
-        ...(canManageProjects ? [{
+        ...(canCreateProjects ? [{
             title: '操作',
             key: 'actions',
-            width: 160,
-            render: (_: unknown, record: API.Project) => (
-                <Space size={4}>
-                    {record.Status === 'active' ? (
-                        <Tooltip title="归档项目">
-                            <Button
-                                type="text" size="small"
-                                icon={<InboxOutlined style={{ color: '#f59e0b' }} />}
-                                onClick={() => handleToggleArchive(record)}
-                            />
-                        </Tooltip>
-                    ) : (
-                        <Tooltip title="恢复项目">
-                            <Button
-                                type="text" size="small"
-                                icon={<UndoOutlined style={{ color: '#10b981' }} />}
-                                onClick={() => handleToggleArchive(record)}
-                            />
-                        </Tooltip>
-                    )}
-                    <Tooltip title="删除项目">
-                        <Button
-                            type="text" size="small" danger
-                            icon={<DeleteOutlined />}
-                            onClick={() => openDeleteModal(record)}
-                        />
-                    </Tooltip>
-                </Space>
-            ),
+            width: 210,
+            render: (_: unknown, record: API.Project) => {
+                const manageable = canManageProject(record);
+                return (
+                    <Space size={4}>
+                        {manageable && (record.Status === 'active' ? (
+                            <Tooltip title="归档项目">
+                                <Button
+                                    type="text" size="small"
+                                    icon={<InboxOutlined style={{ color: '#f59e0b' }} />}
+                                    onClick={() => handleToggleArchive(record)}
+                                />
+                            </Tooltip>
+                        ) : (
+                            <Tooltip title="恢复项目">
+                                <Button
+                                    type="text" size="small"
+                                    icon={<UndoOutlined style={{ color: '#10b981' }} />}
+                                    onClick={() => handleToggleArchive(record)}
+                                />
+                            </Tooltip>
+                        ))}
+                        {isAdmin && (
+                            <Tooltip title="项目分发">
+                                <Button
+                                    type="text" size="small"
+                                    icon={<TeamOutlined style={{ color: '#0ea5e9' }} />}
+                                    onClick={() => handleOpenMembers(record)}
+                                />
+                            </Tooltip>
+                        )}
+                        {manageable && (
+                            <Tooltip title="删除项目">
+                                <Button
+                                    type="text" size="small" danger
+                                    icon={<DeleteOutlined />}
+                                    onClick={() => openDeleteModal(record)}
+                                />
+                            </Tooltip>
+                        )}
+                        {!manageable && !isAdmin && <Text type="secondary" style={{ fontSize: 12 }}>仅参与</Text>}
+                    </Space>
+                );
+            },
         } as ColumnsType<API.Project>[number]] : []),
     ];
 
@@ -243,7 +340,7 @@ const ProjectManagement: React.FC = () => {
                     <Button icon={<ReloadOutlined />} onClick={fetchProjects} loading={loading}>
                         刷新
                     </Button>
-                    {canManageProjects && (
+                    {canCreateProjects && (
                         <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
                             新建项目
                         </Button>
@@ -262,7 +359,7 @@ const ProjectManagement: React.FC = () => {
                         description="暂无项目"
                         style={{ padding: '60px 0' }}
                     >
-                        {canManageProjects && (
+                        {canCreateProjects && (
                             <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
                                 创建第一个项目
                             </Button>
@@ -281,7 +378,7 @@ const ProjectManagement: React.FC = () => {
             </ProCard>
 
             {/* ── 新建项目 Modal ── */}
-            {canManageProjects && (
+            {canCreateProjects && (
                 <Modal
                     title="新建项目"
                     open={createOpen}
@@ -297,7 +394,36 @@ const ProjectManagement: React.FC = () => {
                         <Form.Item label="项目描述" name="description">
                             <Input.TextArea rows={4} placeholder="项目的目标范围或备注说明" />
                         </Form.Item>
+                        {isAdmin && (
+                            <Form.Item name="member_user_ids" label="分发给操作员">
+                                <Select
+                                    mode="multiple"
+                                    placeholder="选择可参与该项目的 operator"
+                                    options={tenantUsers.map((u) => ({ label: u.username, value: String(u.id) }))}
+                                />
+                            </Form.Item>
+                        )}
                     </Form>
+                </Modal>
+            )}
+
+            {isAdmin && (
+                <Modal
+                    title={`项目分发${memberProject ? ` - ${memberProject.Name}` : ''}`}
+                    open={memberModalOpen}
+                    onCancel={() => setMemberModalOpen(false)}
+                    onOk={handleSaveMembers}
+                    okText="保存"
+                    confirmLoading={memberSaving}
+                >
+                    <Select
+                        mode="multiple"
+                        style={{ width: '100%', marginTop: 12 }}
+                        placeholder="选择可参与该项目的 operator"
+                        value={memberUserIds}
+                        onChange={setMemberUserIds}
+                        options={tenantUsers.map((u) => ({ label: u.username, value: String(u.id) }))}
+                    />
                 </Modal>
             )}
 

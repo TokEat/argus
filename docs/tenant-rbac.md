@@ -17,9 +17,9 @@
 
 | 角色 | 层级 | 定位 |
 | --- | --- | --- |
-| `admin` | 3 | 当前租户管理员，负责用户、系统配置、AK/SK 跨用户绑定和规则发布 |
-| `operator` | 2 | 日常操作员，负责项目、扫描任务、节点运维、规则草稿维护和已授权云资源使用 |
-| `viewer` | 1 | 观察者，只读查看当前租户数据和导出报表 |
+| `admin` | 3 | 当前租户管理员，负责用户、系统配置、项目分发、AK/SK 跨用户绑定和规则发布 |
+| `operator` | 2 | 日常操作员，负责自己创建或被分发项目内的扫描任务、节点运维、规则草稿维护和已授权云资源使用 |
+| `viewer` | 1 | 观察者，只读查看被授权项目数据和导出报表 |
 
 高层级自动包含低层级能力。例如 `admin` 包含 `operator` 和 `viewer` 的全部权限。
 
@@ -28,9 +28,11 @@
 | 功能域 | viewer | operator | admin |
 | --- | --- | --- | --- |
 | 租户隔离 | 仅本租户 | 仅本租户 | 仅本租户 |
-| 仪表盘、项目、任务、任务结果 | 查看 | 查看 + 任务操作 | 全部 |
-| 项目创建 | - | 允许 | 允许 |
-| 任务下发、追加、取消、删除 | - | 允许 | 允许 |
+| 仪表盘、项目、任务、任务结果 | 查看被授权项目 | 查看/操作自己创建或被分发项目 | 全租户项目 |
+| 项目创建 | - | 允许，默认归属自己 | 允许，可创建后分发给 operator |
+| 项目归档、删除 | - | 仅自己创建的项目 | 全租户项目 |
+| 项目分发 | - | - | 可绑定当前租户 active operator 到指定项目 |
+| 任务下发、追加、取消、删除 | - | 仅可访问项目内允许 | 全租户项目内允许 |
 | 节点状态 | 查看 | 查看 + 删除节点记录 + 清理离线节点 | 全部 |
 | 队列深度、Agent 日志 | - | 查看 | 查看 |
 | 弹药库规则 | 查看 | 创建、编辑、删除草稿规则 | 维护 + 审批 + 回滚 |
@@ -59,6 +61,7 @@
 ### operator 起可访问
 
 - `POST /projects`
+- `PUT /projects/:id`、`DELETE /projects/:id`：operator 仅限自己创建的项目
 - `POST /tasks`、`POST /tasks/:id/append`、`POST /tasks/:id/cancel`、`DELETE /tasks/:id`
 - `GET /queue/depth`
 - `GET /agents/:id/logs`
@@ -79,8 +82,8 @@
 - `POST /arsenals/:type/:filename/approve`
 - `POST /arsenals/:type/:filename/rollback`
 - `GET /cloud/accounts/:id/bindings`、`PUT /cloud/accounts/:id/bindings`
+- `GET /projects/:id/members`、`PUT /projects/:id/members`
 
 ## 暂未覆盖
 
-- 项目级成员表 `project_members` 已存在模型和表结构，但当前接口权限仍以租户级 `users.role` 为准，尚未启用项目级授权。
 - 尚未提供可自定义的 `roles`、`permissions`、`role_bindings` 管理表；当前角色是固定三档。

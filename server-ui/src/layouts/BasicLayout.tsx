@@ -83,13 +83,17 @@ const BasicLayout: React.FC = () => {
 
         listProjects().then(res => {
             const list = res || [];
-            setProjects(list);
+            const activeProjects = list.filter(p => p.Status !== 'archived');
+            setProjects(activeProjects);
             const savedProj = localStorage.getItem('active_project_id');
-            if (savedProj && list.some(p => p.ID === savedProj)) {
+            if (savedProj && activeProjects.some(p => p.ID === savedProj)) {
                 setSelectedProject(savedProj);
-            } else if (list.length > 0) {
-                setSelectedProject(list[0].ID);
-                localStorage.setItem('active_project_id', list[0].ID);
+            } else if (activeProjects.length > 0) {
+                setSelectedProject(activeProjects[0].ID);
+                localStorage.setItem('active_project_id', activeProjects[0].ID);
+            } else {
+                setSelectedProject('');
+                localStorage.removeItem('active_project_id');
             }
         }).catch(err => {
             console.error('Failed to fetch projects', err);

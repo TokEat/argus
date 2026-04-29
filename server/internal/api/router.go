@@ -286,6 +286,8 @@ func InitRouter(port string) {
 		api.PUT("/projects/:id", updateProject)
 		api.DELETE("/projects/:id", deleteProject)
 		api.GET("/projects/:id/stats", getProjectStats)
+		api.GET("/projects/:id/members", getProjectMembers)
+		api.PUT("/projects/:id/members", updateProjectMembers)
 
 		// 任务 CRUD
 		api.GET("/tasks", getTasks)
@@ -445,33 +447,24 @@ func InitRouter(port string) {
 
 func getStats(c *gin.Context) {
 	tenantID := currentTenantID(c)
-	projectID := c.Query("project_id")
 	var taskCount, nodeCount, assetCount, fpCount, vulnCount int64
 
 	taskQ := db.DB.Model(&db.RootTask{}).Where("tenant_id = ?", tenantID)
-	if projectID != "" {
-		taskQ = taskQ.Where("project_id = ?", projectID)
-	}
+	taskQ, _ = applyProjectScope(c, taskQ, "project_id")
 	taskQ.Count(&taskCount)
 
 	scopedNodeQuery(tenantID).Model(&db.Node{}).Count(&nodeCount)
 
 	assetQ := db.DB.Model(&db.Asset{}).Where("tenant_id = ?", tenantID)
-	if projectID != "" {
-		assetQ = assetQ.Where("project_id = ?", projectID)
-	}
+	assetQ, _ = applyProjectScope(c, assetQ, "project_id")
 	assetQ.Count(&assetCount)
 
 	fpQ := db.DB.Model(&db.FingerprintHit{}).Where("tenant_id = ?", tenantID)
-	if projectID != "" {
-		fpQ = fpQ.Where("project_id = ?", projectID)
-	}
+	fpQ, _ = applyProjectScope(c, fpQ, "project_id")
 	fpQ.Count(&fpCount)
 
 	vulnQ := db.DB.Model(&db.Vulnerability{}).Where("tenant_id = ?", tenantID)
-	if projectID != "" {
-		vulnQ = vulnQ.Where("project_id = ?", projectID)
-	}
+	vulnQ, _ = applyProjectScope(c, vulnQ, "project_id")
 	vulnQ.Count(&vulnCount)
 
 	c.JSON(http.StatusOK, gin.H{
@@ -485,15 +478,15 @@ func getStats(c *gin.Context) {
 
 func getProjects(c *gin.Context) {
 	var projects []db.Project
-	tenantID := c.GetString("tenant")
-	db.DB.Where("tenant_id = ?", tenantID).Order("created_at desc").Find(&projects)
-	c.JSON(http.StatusOK, projects)
+	scopedProjectsQuery(c).Order("created_at desc").Find(&projects)
+	c.JSON(http.StatusOK, buildProjectResponses(c, projects))
 }
 
 func createProject(c *gin.Context) {
 	var req struct {
-		Name        string `json:"name" binding:"required"`
-		Description string `json:"description"`
+		Name          string   `json:"name" binding:"required"`
+		Description   string   `json:"description"`
+		MemberUserIDs []string `json:"member_user_ids"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -501,9 +494,11 @@ func createProject(c *gin.Context) {
 	}
 
 	tenantID := c.GetString("tenant")
+	ownerUserID := currentUserID(c)
 	project := db.Project{
 		ID:            fmt.Sprintf("proj-%d", time.Now().UnixNano()),
 		TenantID:      tenantID,
+		OwnerUserID:   ownerUserID,
 		Name:          req.Name,
 		Description:   req.Description,
 		Tags:          "[]",
@@ -516,17 +511,39 @@ func createProject(c *gin.Context) {
 		UpdatedAt:     time.Now(),
 	}
 
-	if err := db.DB.Create(&project).Error; err != nil {
+	memberUserIDs := []string{}
+	if currentUserIsAdmin(c) && len(req.MemberUserIDs) > 0 {
+		var err error
+		memberUserIDs, err = validateAssignableProjectUsers(tenantID, req.MemberUserIDs)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "member_user_ids must be active operators in current tenant"})
+			return
+		}
+	}
+
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&project).Error; err != nil {
+			return err
+		}
+		if err := upsertProjectMember(tx, tenantID, project.ID, ownerUserID, "owner"); err != nil {
+			return err
+		}
+		for _, userID := range memberUserIDs {
+			if err := upsertProjectMember(tx, tenantID, project.ID, userID, "operator"); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, project)
+	c.JSON(http.StatusOK, buildProjectResponses(c, []db.Project{project})[0])
 }
 
 func updateProject(c *gin.Context) {
 	projectID := c.Param("id")
-	tenantID := c.GetString("tenant")
 
 	var req struct {
 		Name        *string `json:"name"`
@@ -538,9 +555,8 @@ func updateProject(c *gin.Context) {
 		return
 	}
 
-	var project db.Project
-	if err := db.DB.Where("id = ? AND tenant_id = ?", projectID, tenantID).First(&project).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
+	project, ok := requireProjectManage(c, projectID)
+	if !ok {
 		return
 	}
 
@@ -566,17 +582,15 @@ func updateProject(c *gin.Context) {
 	}
 
 	db.DB.Model(&project).Updates(updates)
-	db.DB.Where("id = ? AND tenant_id = ?", projectID, tenantID).First(&project)
-	c.JSON(http.StatusOK, project)
+	scopedProjectsQuery(c).Where("id = ?", projectID).First(&project)
+	c.JSON(http.StatusOK, buildProjectResponses(c, []db.Project{project})[0])
 }
 
 func deleteProject(c *gin.Context) {
 	projectID := c.Param("id")
-	tenantID := c.GetString("tenant")
 
-	var project db.Project
-	if err := db.DB.Where("id = ? AND tenant_id = ?", projectID, tenantID).First(&project).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
+	project, ok := requireProjectManage(c, projectID)
+	if !ok {
 		return
 	}
 
@@ -590,9 +604,8 @@ func getProjectStats(c *gin.Context) {
 	projectID := c.Param("id")
 	tenantID := c.GetString("tenant")
 
-	var project db.Project
-	if err := db.DB.Where("id = ? AND tenant_id = ?", projectID, tenantID).First(&project).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
+	project, ok := requireProjectAccess(c, projectID)
+	if !ok {
 		return
 	}
 
@@ -612,13 +625,128 @@ func getProjectStats(c *gin.Context) {
 	})
 }
 
+type projectResponse struct {
+	db.Project
+	OwnerUsername string   `json:"owner_username"`
+	AccessLevel   string   `json:"access_level"`
+	MemberUserIDs []string `json:"member_user_ids,omitempty"`
+}
+
+func buildProjectResponses(c *gin.Context, projects []db.Project) []projectResponse {
+	resp := make([]projectResponse, 0, len(projects))
+	if len(projects) == 0 {
+		return resp
+	}
+
+	ownerIDs := make([]string, 0, len(projects))
+	ownerSeen := map[string]struct{}{}
+	projectIDs := make([]string, 0, len(projects))
+	for _, p := range projects {
+		projectIDs = append(projectIDs, p.ID)
+		if p.OwnerUserID != "" {
+			if _, ok := ownerSeen[p.OwnerUserID]; !ok {
+				ownerSeen[p.OwnerUserID] = struct{}{}
+				ownerIDs = append(ownerIDs, p.OwnerUserID)
+			}
+		}
+	}
+
+	ownerNames := map[string]string{}
+	if len(ownerIDs) > 0 {
+		var users []db.User
+		db.DB.Select("id", "username").Where("tenant_id = ? AND id IN ?", currentTenantID(c), ownerIDs).Find(&users)
+		for _, u := range users {
+			ownerNames[strconv.FormatUint(uint64(u.ID), 10)] = u.Username
+		}
+	}
+
+	memberMap := map[string][]string{}
+	if currentUserIsAdmin(c) {
+		var members []db.ProjectMember
+		db.DB.Where("tenant_id = ? AND project_id IN ? AND role = ?", currentTenantID(c), projectIDs, "operator").Find(&members)
+		for _, m := range members {
+			memberMap[m.ProjectID] = append(memberMap[m.ProjectID], m.UserID)
+		}
+	}
+
+	userID := currentUserID(c)
+	for _, p := range projects {
+		accessLevel := "member"
+		if currentUserIsAdmin(c) {
+			accessLevel = "admin"
+		} else if p.OwnerUserID == userID {
+			accessLevel = "owner"
+		}
+		resp = append(resp, projectResponse{
+			Project:       p,
+			OwnerUsername: ownerNames[p.OwnerUserID],
+			AccessLevel:   accessLevel,
+			MemberUserIDs: memberMap[p.ID],
+		})
+	}
+	return resp
+}
+
+func getProjectMembers(c *gin.Context) {
+	projectID := c.Param("id")
+	if _, ok := requireProjectAccess(c, projectID); !ok {
+		return
+	}
+	var members []db.ProjectMember
+	db.DB.Where("tenant_id = ? AND project_id = ? AND role = ?", currentTenantID(c), projectID, "operator").Find(&members)
+	userIDs := make([]string, 0, len(members))
+	for _, m := range members {
+		userIDs = append(userIDs, m.UserID)
+	}
+	c.JSON(http.StatusOK, gin.H{"project_id": projectID, "user_ids": userIDs})
+}
+
+func updateProjectMembers(c *gin.Context) {
+	projectID := c.Param("id")
+	project, ok := requireProjectAccess(c, projectID)
+	if !ok {
+		return
+	}
+	var req struct {
+		UserIDs []string `json:"user_ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	userIDs, err := validateAssignableProjectUsers(currentTenantID(c), req.UserIDs)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_ids must be active operators in current tenant"})
+		return
+	}
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("tenant_id = ? AND project_id = ? AND role = ?", currentTenantID(c), projectID, "operator").Delete(&db.ProjectMember{}).Error; err != nil {
+			return err
+		}
+		if err := upsertProjectMember(tx, currentTenantID(c), projectID, project.OwnerUserID, "owner"); err != nil {
+			return err
+		}
+		for _, userID := range userIDs {
+			if userID == project.OwnerUserID {
+				continue
+			}
+			if err := upsertProjectMember(tx, currentTenantID(c), projectID, userID, "operator"); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"project_id": projectID, "user_ids": userIDs})
+}
+
 func getTasks(c *gin.Context) {
 	var tasks []db.RootTask
 	tenantID := c.GetString("tenant")
 	query := db.DB.Where("tenant_id = ?", tenantID)
-	if projectID := c.Query("project_id"); projectID != "" {
-		query = query.Where("project_id = ?", projectID)
-	}
+	query, _ = applyProjectScope(c, query, "project_id")
 	query.Order("created_at desc").Limit(50).Find(&tasks)
 
 	// 增强返回：包含目标维度进度
@@ -641,6 +769,10 @@ func getTaskDetail(c *gin.Context) {
 	var rootTask db.RootTask
 	if err := db.DB.Where("id = ? AND tenant_id = ?", taskID, tenantID).First(&rootTask).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+		return
+	}
+	if !canAccessProject(c, rootTask.ProjectID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "project not accessible"})
 		return
 	}
 
@@ -831,6 +963,14 @@ func createTask(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "project_id is required"})
 		return
 	}
+	project, ok := requireProjectAccess(c, req.ProjectID)
+	if !ok {
+		return
+	}
+	if project.Status != "active" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "project is not active"})
+		return
+	}
 
 	if req.Priority < 0 || req.Priority > 2 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "priority must be 0 (urgent), 1 (normal), or 2 (low)"})
@@ -923,6 +1063,7 @@ func createTask(c *gin.Context) {
 		ID:               rootTaskID,
 		TenantID:         tenantID,
 		ProjectID:        req.ProjectID,
+		UserID:           currentUserID(c),
 		Name:             name,
 		Status:           "Queued",
 		OriginalTargets:  string(targetsJSON),
@@ -1146,7 +1287,6 @@ func extractHost(target string) string {
 
 func getProfiles(c *gin.Context) {
 	tenantID := c.GetString("tenant")
-	projectID := c.Query("project_id")
 	page := 1
 	pageSize := 20
 	if p := c.Query("page"); p != "" {
@@ -1166,9 +1306,7 @@ func getProfiles(c *gin.Context) {
 	if tenantID != "" {
 		tq = tq.Where("tenant_id = ?", tenantID)
 	}
-	if projectID != "" {
-		tq = tq.Where("project_id = ?", projectID)
-	}
+	tq, _ = applyProjectScope(c, tq, "project_id")
 	if search := c.Query("search"); search != "" {
 		tq = tq.Where("target LIKE ?", "%"+search+"%")
 	}
@@ -1218,9 +1356,7 @@ func getProfiles(c *gin.Context) {
 	if tenantID != "" {
 		assocQ = assocQ.Where("tenant_id = ?", tenantID)
 	}
-	if projectID != "" {
-		assocQ = assocQ.Where("project_id = ?", projectID)
-	}
+	assocQ, _ = applyProjectScope(c, assocQ, "project_id")
 	assocQ.Find(&assets)
 
 	var fps []db.FingerprintHit
@@ -1228,9 +1364,7 @@ func getProfiles(c *gin.Context) {
 	if tenantID != "" {
 		fpQ = fpQ.Where("tenant_id = ?", tenantID)
 	}
-	if projectID != "" {
-		fpQ = fpQ.Where("project_id = ?", projectID)
-	}
+	fpQ, _ = applyProjectScope(c, fpQ, "project_id")
 	fpQ.Find(&fps)
 
 	var vulns []db.Vulnerability
@@ -1238,9 +1372,7 @@ func getProfiles(c *gin.Context) {
 	if tenantID != "" {
 		vulnQ = vulnQ.Where("tenant_id = ?", tenantID)
 	}
-	if projectID != "" {
-		vulnQ = vulnQ.Where("project_id = ?", projectID)
-	}
+	vulnQ, _ = applyProjectScope(c, vulnQ, "project_id")
 	vulnQ.Find(&vulns)
 
 	// 步骤 4: 按 host 聚合
@@ -1310,6 +1442,15 @@ func getProfiles(c *gin.Context) {
 func deleteTask(c *gin.Context) {
 	id := c.Param("id")
 	tenantID := currentTenantID(c)
+	var rootTask db.RootTask
+	if err := db.DB.Select("id", "project_id").Where("id = ? AND tenant_id = ?", id, tenantID).First(&rootTask).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+		return
+	}
+	if !canAccessProject(c, rootTask.ProjectID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "project not accessible"})
+		return
+	}
 	db.DB.Delete(&db.RootTask{}, "id = ? AND tenant_id = ?", id, tenantID)
 	db.DB.Delete(&db.SubTask{}, "root_task_id = ? AND tenant_id = ?", id, tenantID)
 
@@ -1334,11 +1475,8 @@ func exportVulns(c *gin.Context) {
 
 	var vulns []db.Vulnerability
 	tenantID := currentTenantID(c)
-	projectID := c.Query("project_id")
 	query := db.DB.Model(&db.Vulnerability{}).Where("tenant_id = ?", tenantID)
-	if projectID != "" {
-		query = query.Where("project_id = ?", projectID)
-	}
+	query, _ = applyProjectScope(c, query, "project_id")
 	query.Find(&vulns)
 
 	for _, v := range vulns {
@@ -1349,6 +1487,15 @@ func exportVulns(c *gin.Context) {
 func cancelTask(c *gin.Context) {
 	id := c.Param("id")
 	tenantID := currentTenantID(c)
+	var rootTask db.RootTask
+	if err := db.DB.Select("id", "project_id").Where("id = ? AND tenant_id = ?", id, tenantID).First(&rootTask).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+		return
+	}
+	if !canAccessProject(c, rootTask.ProjectID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "project not accessible"})
+		return
+	}
 	cancelledWithoutClaim := int64(0)
 	cancelPendingRunning := int64(0)
 
@@ -1417,16 +1564,15 @@ func getAgentCommands(c *gin.Context) {
 func getVulns(c *gin.Context) {
 	var vulns []db.Vulnerability
 	tenantID := currentTenantID(c)
-	projectID := c.Query("project_id")
 	query := db.DB.Where("tenant_id = ?", tenantID).Order("created_at desc")
-	if projectID != "" {
-		query = query.Where("project_id = ?", projectID)
-	}
+	query, _ = applyProjectScope(c, query, "project_id")
 	if taskID := c.Query("task_id"); taskID != "" {
-		if scopedTaskIDs := resolveScopedTaskIDs(tenantID, taskID); len(scopedTaskIDs) > 1 {
+		if scopedTaskIDs := resolveAccessibleTaskIDs(c, taskID); len(scopedTaskIDs) > 1 {
 			query = query.Where("task_id IN ?", scopedTaskIDs)
 		} else if len(scopedTaskIDs) == 1 {
 			query = query.Where("task_id = ?", scopedTaskIDs[0])
+		} else {
+			query = query.Where("1 = 0")
 		}
 	}
 	query.Limit(500).Find(&vulns)
@@ -1436,16 +1582,15 @@ func getVulns(c *gin.Context) {
 func getAssets(c *gin.Context) {
 	var assets []db.Asset
 	tenantID := currentTenantID(c)
-	projectID := c.Query("project_id")
 	query := db.DB.Where("tenant_id = ?", tenantID).Order("created_at desc")
-	if projectID != "" {
-		query = query.Where("project_id = ?", projectID)
-	}
+	query, _ = applyProjectScope(c, query, "project_id")
 	if taskID := c.Query("task_id"); taskID != "" {
-		if scopedTaskIDs := resolveScopedTaskIDs(tenantID, taskID); len(scopedTaskIDs) > 1 {
+		if scopedTaskIDs := resolveAccessibleTaskIDs(c, taskID); len(scopedTaskIDs) > 1 {
 			query = query.Where("task_id IN ?", scopedTaskIDs)
 		} else if len(scopedTaskIDs) == 1 {
 			query = query.Where("task_id = ?", scopedTaskIDs[0])
+		} else {
+			query = query.Where("1 = 0")
 		}
 	}
 	query.Limit(500).Find(&assets)
@@ -1455,16 +1600,15 @@ func getAssets(c *gin.Context) {
 func getFingerprints(c *gin.Context) {
 	var fps []db.FingerprintHit
 	tenantID := currentTenantID(c)
-	projectID := c.Query("project_id")
 	query := db.DB.Where("tenant_id = ?", tenantID).Order("created_at desc")
-	if projectID != "" {
-		query = query.Where("project_id = ?", projectID)
-	}
+	query, _ = applyProjectScope(c, query, "project_id")
 	if taskID := c.Query("task_id"); taskID != "" {
-		if scopedTaskIDs := resolveScopedTaskIDs(tenantID, taskID); len(scopedTaskIDs) > 1 {
+		if scopedTaskIDs := resolveAccessibleTaskIDs(c, taskID); len(scopedTaskIDs) > 1 {
 			query = query.Where("task_id IN ?", scopedTaskIDs)
 		} else if len(scopedTaskIDs) == 1 {
 			query = query.Where("task_id = ?", scopedTaskIDs[0])
+		} else {
+			query = query.Where("1 = 0")
 		}
 	}
 	query.Limit(500).Find(&fps)
@@ -2227,7 +2371,11 @@ func BumpRuleVersion() string {
 
 func getVulnTrends(c *gin.Context) {
 	tenantID := currentTenantID(c)
-	projectID := c.Query("project_id")
+	projectID, ok := statsProjectID(c)
+	if !ok {
+		c.JSON(http.StatusOK, []db.TrendPoint{})
+		return
+	}
 	days := 30
 	if d := c.Query("days"); d != "" {
 		if v, err := strconv.Atoi(d); err == nil && v > 0 {
@@ -2238,12 +2386,21 @@ func getVulnTrends(c *gin.Context) {
 }
 
 func getSeverityDistribution(c *gin.Context) {
-	c.JSON(http.StatusOK, db.GetSeverityDistribution(currentTenantID(c), c.Query("project_id")))
+	projectID, ok := statsProjectID(c)
+	if !ok {
+		c.JSON(http.StatusOK, []db.SeverityCount{})
+		return
+	}
+	c.JSON(http.StatusOK, db.GetSeverityDistribution(currentTenantID(c), projectID))
 }
 
 func getTaskResultStats(c *gin.Context) {
 	tenantID := currentTenantID(c)
-	projectID := c.Query("project_id")
+	projectID, ok := statsProjectID(c)
+	if !ok {
+		c.JSON(http.StatusOK, []db.TaskStats{})
+		return
+	}
 	limit := 20
 	if l := c.Query("limit"); l != "" {
 		if v, err := strconv.Atoi(l); err == nil && v > 0 {
@@ -2255,7 +2412,11 @@ func getTaskResultStats(c *gin.Context) {
 
 func getRecentHighVulns(c *gin.Context) {
 	tenantID := currentTenantID(c)
-	projectID := c.Query("project_id")
+	projectID, ok := statsProjectID(c)
+	if !ok {
+		c.JSON(http.StatusOK, []db.Vulnerability{})
+		return
+	}
 	limit := 10
 	if l := c.Query("limit"); l != "" {
 		if v, err := strconv.Atoi(l); err == nil && v > 0 {
@@ -2354,6 +2515,10 @@ func appendTargets(c *gin.Context) {
 	var rootTask db.RootTask
 	if err := db.DB.Where("id = ? AND tenant_id = ?", rootTaskID, currentTenantID(c)).First(&rootTask).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+		return
+	}
+	if !canAccessProject(c, rootTask.ProjectID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "project not accessible"})
 		return
 	}
 

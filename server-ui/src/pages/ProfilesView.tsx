@@ -9,7 +9,6 @@ import {
     ScanOutlined,
     CloudServerOutlined,
     LinkOutlined,
-    LockOutlined,
     ApiOutlined,
     SafetyCertificateOutlined,
     ExclamationCircleOutlined,

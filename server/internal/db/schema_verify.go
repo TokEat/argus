@@ -21,12 +21,12 @@ func VerifySchema(db *gorm.DB) error {
 		},
 		{
 			Table:   "projects",
-			Columns: []string{"tenant_id", "name", "status", "deleted_at"},
-			Indexes: []string{"idx_projects_tenant_id", "idx_projects_status", "idx_projects_deleted_at"},
+			Columns: []string{"tenant_id", "owner_user_id", "name", "status", "deleted_at"},
+			Indexes: []string{"idx_projects_tenant_id", "idx_projects_owner_user_id", "idx_projects_status", "idx_projects_deleted_at"},
 		},
 		{
 			Table:   "project_members",
-			Columns: []string{"project_id", "user_id", "role"},
+			Columns: []string{"tenant_id", "project_id", "user_id", "role"},
 		},
 		{
 			Table:   "cron_tasks",

@@ -39,9 +39,13 @@ declare namespace API {
   interface Project {
     ID: string;
     TenantID: string;
+    OwnerUserID?: string;
     Name: string;
     Description: string;
     Status: string;
+    owner_username?: string;
+    access_level?: 'admin' | 'owner' | 'member';
+    member_user_ids?: string[];
     CreatedAt: string;
   }
 
