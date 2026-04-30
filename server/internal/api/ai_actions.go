@@ -454,7 +454,11 @@ func roleAtLeast(role, required string) bool {
 	}
 	userLevel := roleHierarchy[role]
 	requiredLevel := roleHierarchy[required]
-	return requiredLevel > 0 && userLevel >= requiredLevel
+	// If required role is not in hierarchy, default to "operator"
+	if requiredLevel == 0 {
+		requiredLevel = roleHierarchy["operator"]
+	}
+	return userLevel >= requiredLevel
 }
 
 func stringParam(params map[string]interface{}, key string) string {
