@@ -335,6 +335,18 @@ const extractPocEdit = (content: string, editableTarget?: AIEditableTarget): Pro
     return { type: 'poc', content: candidate.endsWith('\n') ? candidate : `${candidate}\n` };
 };
 
+const extractExpEdit = (content: string, editableTarget?: AIEditableTarget): ProposedEdit | undefined => {
+    if (editableTarget?.type !== 'exp') return undefined;
+    const fence = /```(?:ya?ml|yaml)\s*\n([\s\S]*?)```/i.exec(content);
+    const candidate = (fence?.[1] || '').trim();
+    if (!candidate) return undefined;
+    // Validate EXP structure: must have kind: argus-exp/v1 or id + info + policy
+    if (!/^kind:\s*argus-exp\/v1/m.test(candidate) && (!/^id:\s*.+/m.test(candidate) || !/\ninfo:\s*/m.test(candidate) || !/\npolicy:\s*/m.test(candidate))) {
+        return undefined;
+    }
+    return { type: 'exp', content: candidate.endsWith('\n') ? candidate : `${candidate}\n` };
+};
+
 const stripPendingActionBlocks = (content: string) =>
     content.replace(/```pending_action\s*\n[\s\S]*?"action_type"[\s\S]*?```/gi, '').trim();
 
@@ -508,10 +520,11 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
             abortRef.current = null;
             if (!failed && assistantContent.trim()) {
                 const displayContent = stripPendingActionBlocks(assistantContent);
+                const proposedEdit = extractPocEdit(assistantContent, editableTarget) || extractExpEdit(assistantContent, editableTarget);
                 setMessages((prev) => [...prev, {
                     role: 'assistant',
                     content: displayContent || (pendingActions.length > 0 ? '我准备好了一个待确认动作。' : assistantContent),
-                    proposedEdit: extractPocEdit(assistantContent, editableTarget),
+                    proposedEdit,
                     pendingActions,
                 }]);
             }
@@ -522,10 +535,11 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
             if ((error as Error)?.name === 'AbortError') {
                 if (assistantContent.trim()) {
                     const displayContent = stripPendingActionBlocks(assistantContent);
+                    const proposedEdit = extractPocEdit(assistantContent, editableTarget) || extractExpEdit(assistantContent, editableTarget);
                     setMessages((prev) => [...prev, {
                         role: 'assistant',
                         content: displayContent || (pendingActions.length > 0 ? '我准备好了一个待确认动作。' : assistantContent),
-                        proposedEdit: extractPocEdit(assistantContent, editableTarget),
+                        proposedEdit,
                         pendingActions,
                     }]);
                 }
