@@ -839,6 +839,7 @@ export async function createExploitRun(data: {
     target: string;
     project_id?: string;
     params?: Record<string, unknown>;
+    risk_confirmed?: boolean;
 }): Promise<API.ExploitRun> {
     return request.post('/exploit-runs', data);
 }

@@ -499,6 +499,7 @@ CleanupExploit(ExploitCleanupReq) returns (ExploitCleanupResp)
 涉及文件：
 - `server/internal/db/rule_catalog.go` — 模型、解析、物化
 - `server/internal/db/migrations/100_add_exploit_rules.sql` — 建表
+- `server/internal/db/migrations/120_add_exploit_rule_metadata_columns.sql` — 补齐 `description` / `dry_run_supported` 迁移字段
 - `server/internal/api/handler_exploits.go` — 校验、CRUD、候选推荐
 - `server/internal/api/router.go` — 路由注册
 - `server/internal/api/middleware_rbac.go` — RBAC 规则
@@ -738,3 +739,4 @@ Pending → Running → Succeeded
 | 2026-04-30 | Phase 1 | 规则库闭环：ExploitRule 模型、migration、YAML 解析物化、CRUD API、EXP 包校验（基础/严格）、候选推荐、RBAC、前端 EXP 验证库页签（列表/筛选/新增/编辑/详情）、seed DB 导出、单元测试 |
 | 2026-04-30 | Phase 2 | dry-run 预览：参数 schema 校验、脚本静态扫描（20+ 禁用符号）、dry-run 端点（scripts/steps 两种模式预览）、前端预览面板（目标输入/动态参数表单/风险/副作用/脚本预览） |
 | 2026-04-30 | Phase 3 | Server 侧执行生命周期：ExploitRun 模型、exploit_runs 建表、创建执行（并发限制+参数校验）、列表/详情/取消/清理 API、ExploitResultHook 回调、前端执行确认面板（风险确认+副作用声明） |
+| 2026-04-30 | Review Hardening | 修复 EXP 审核/废弃/删除只改索引不改原始 Arsenal 的生命周期问题；修复 `runtime.entry` 校验字段；补充脚本调用能力与声明能力一致性检查；执行创建默认受 `EXP_ENABLED` 保护，并增加风险确认、租户级并发、项目归属和 target 级并发边界；AutoScaler 对账/缩容/TTL 回收按实例地域选择 provider |

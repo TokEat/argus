@@ -1217,7 +1217,7 @@ func saveArsenal(c *gin.Context) {
 		return
 	}
 	resp := gin.H{"status": "saved", "hash": hash, "state": "Draft", "version": version}
-	if approvedChanged {
+	if approvedChanged && typ != "exp" {
 		resp["rule_version"] = BumpRuleVersion()
 	}
 	c.JSON(http.StatusOK, resp)
@@ -1250,6 +1250,11 @@ func approveArsenal(c *gin.Context) {
 		return
 	}
 
+	if typ == "exp" {
+		c.JSON(http.StatusOK, gin.H{"status": "approved"})
+		return
+	}
+
 	// 触发版本号递增
 	newVersion := BumpRuleVersion()
 	log.Printf("[Arsenal Hub] Rules approved by Tenant %s. Rule version bumped to %s. Global Reload Triggered!", tenantID, newVersion)
@@ -1275,7 +1280,7 @@ func deleteArsenal(c *gin.Context) {
 		return
 	}
 	resp := gin.H{"status": "deleted"}
-	if strings.EqualFold(arsenal.State, "Approved") {
+	if strings.EqualFold(arsenal.State, "Approved") && typ != "exp" {
 		resp["rule_version"] = BumpRuleVersion()
 	}
 	c.JSON(http.StatusOK, resp)

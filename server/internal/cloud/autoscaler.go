@@ -268,14 +268,13 @@ func (as *AutoScaler) scaleDown(ctx context.Context, policy *db.CloudScalingPoli
 		return
 	}
 
-	manager, err := as.getOrCreateManager(&account)
-	if err != nil {
-		log.Printf("[AutoScaler] Failed to get manager: %v", err)
-		return
-	}
-
 	for _, inst := range toTerminate {
 		go func(instance db.CloudInstance) {
+			manager, err := as.getOrCreateManagerForRegion(&account, instance.Region)
+			if err != nil {
+				log.Printf("[AutoScaler] Failed to get manager for instance %s region %s: %v", instance.ID, instance.Region, err)
+				return
+			}
 			if err := manager.TerminateInstance(ctx, &instance); err != nil {
 				log.Printf("[AutoScaler] Failed to terminate instance %s: %v", instance.ID, err)
 			}
@@ -293,6 +292,19 @@ func managerCacheKey(account *db.CloudAccount) string {
 
 func managerCachePrefix(accountID string) string {
 	return accountID + ":"
+}
+
+func accountWithRegion(account *db.CloudAccount, region string) db.CloudAccount {
+	copy := *account
+	if region = strings.TrimSpace(region); region != "" {
+		copy.Region = region
+	}
+	return copy
+}
+
+func (as *AutoScaler) getOrCreateManagerForRegion(account *db.CloudAccount, region string) (*ResourceManager, error) {
+	scopedAccount := accountWithRegion(account, region)
+	return as.getOrCreateManager(&scopedAccount)
 }
 
 // getOrCreateManager 获取或创建某个云账号与地域对应的 ResourceManager
@@ -371,19 +383,28 @@ func (as *AutoScaler) reconcile(ctx context.Context) {
 		return
 	}
 
-	// 按 account 分组
-	byAccount := make(map[string][]db.CloudInstance)
-	for _, inst := range instances {
-		byAccount[inst.CloudAccountID] = append(byAccount[inst.CloudAccountID], inst)
+	type accountRegionKey struct {
+		accountID string
+		region    string
 	}
 
-	for accountID, insts := range byAccount {
+	// 按 account + region 分组，避免跨地域实例用账号默认地域对账。
+	byAccountRegion := make(map[accountRegionKey][]db.CloudInstance)
+	for _, inst := range instances {
+		key := accountRegionKey{
+			accountID: inst.CloudAccountID,
+			region:    strings.TrimSpace(inst.Region),
+		}
+		byAccountRegion[key] = append(byAccountRegion[key], inst)
+	}
+
+	for key, insts := range byAccountRegion {
 		var account db.CloudAccount
-		if err := as.db.First(&account, "id = ?", accountID).Error; err != nil {
+		if err := as.db.First(&account, "id = ?", key.accountID).Error; err != nil {
 			continue
 		}
 
-		manager, err := as.getOrCreateManager(&account)
+		manager, err := as.getOrCreateManagerForRegion(&account, key.region)
 		if err != nil {
 			continue
 		}
@@ -391,7 +412,7 @@ func (as *AutoScaler) reconcile(ctx context.Context) {
 		// 查询云端实例列表
 		cloudInstances, err := manager.provider.ListInstances(map[string]string{"argus:managed": "true"})
 		if err != nil {
-			log.Printf("[Reconciler] Failed to list instances for account %s: %v", accountID, err)
+			log.Printf("[Reconciler] Failed to list instances for account %s region %s: %v", key.accountID, accountWithRegion(&account, key.region).Region, err)
 			continue
 		}
 
@@ -468,11 +489,6 @@ func (as *AutoScaler) sweepOrphans(ctx context.Context) {
 			continue
 		}
 
-		manager, err := as.getOrCreateManager(&account)
-		if err != nil {
-			continue
-		}
-
 		for _, inst := range expired {
 			if as.shouldDeferTTLTermination(&inst, hardCutoff) {
 				log.Printf("[OrphanSweeper] Instance %s exceeded TTL (%v) but agent %s still has running tasks; deferring up to %v grace",
@@ -482,6 +498,11 @@ func (as *AutoScaler) sweepOrphans(ctx context.Context) {
 
 			log.Printf("[OrphanSweeper] Instance %s exceeded TTL (%v), terminating...", inst.ID, ttl)
 			go func(instance db.CloudInstance) {
+				manager, err := as.getOrCreateManagerForRegion(&account, instance.Region)
+				if err != nil {
+					log.Printf("[OrphanSweeper] Failed to get manager for instance %s region %s: %v", instance.ID, instance.Region, err)
+					return
+				}
 				if err := manager.TerminateInstance(ctx, &instance); err != nil {
 					log.Printf("[OrphanSweeper] Failed to terminate instance %s: %v", instance.ID, err)
 				}
