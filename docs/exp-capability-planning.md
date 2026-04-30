@@ -554,11 +554,23 @@ CleanupExploit(ExploitCleanupReq) returns (ExploitCleanupResp)
 - Agent 通过 StreamDebug 回传执行结果
 - Server 侧 ExploitResultHook 实现状态流转和证据入库
 
-### Phase 4：清理与审计闭环 🔲 待开始
+### Phase 4：清理与审计闭环 ✅ 已完成
 
-- 支持 cleanup 自动执行和手动重试。
-- 支持执行证据和清理证据入库。
-- 漏洞详情页展示 EXP 验证状态。
+- [x] `ExploitResultEvent` / `HandleExploitResult` — Agent 结果处理，自动状态流转（Succeeded/Failed/CleanupRequired）。
+- [x] `HandleExploitCleanupResult` — 清理结果处理（CleanupSucceeded/CleanupFailed）。
+- [x] `AutoDispatchCleanup` — 定时任务自动派发 CleanupRequired 的清理任务（集成到 timeout daemon）。
+- [x] `BroadcastExploitRunEvent` — EXP 状态变更 WebSocket 广播。
+- [x] 前端执行历史面板 — 操作列"历史"按钮，Drawer 展示执行记录列表（状态/目标/操作人/cleanup/时间/错误）。
+- [x] 手动清理 API `POST /api/v1/exploit-runs/:id/cleanup`。
+
+涉及文件：
+- `server/internal/db/exploit_lifecycle.go` — 结果处理、清理派发、WebSocket 广播、状态统计
+- `server/internal/api/router.go` — ExploitResultHook 注册、AutoDispatchCleanup 集成
+- `server-ui/src/pages/config/ExploitConfig.tsx` — 执行历史面板
+
+待完成：
+- Agent 侧 cleanup 命令派发（当前标记 TODO，等 Agent 引擎就绪）
+- 漏洞详情页 EXP 验证状态展示（需在 TaskResults.tsx 中集成）
 
 ### Phase 5：高风险能力 🔲 待开始
 
@@ -739,4 +751,5 @@ Pending → Running → Succeeded
 | 2026-04-30 | Phase 1 | 规则库闭环：ExploitRule 模型、migration、YAML 解析物化、CRUD API、EXP 包校验（基础/严格）、候选推荐、RBAC、前端 EXP 验证库页签（列表/筛选/新增/编辑/详情）、seed DB 导出、单元测试 |
 | 2026-04-30 | Phase 2 | dry-run 预览：参数 schema 校验、脚本静态扫描（20+ 禁用符号）、dry-run 端点（scripts/steps 两种模式预览）、前端预览面板（目标输入/动态参数表单/风险/副作用/脚本预览） |
 | 2026-04-30 | Phase 3 | Server 侧执行生命周期：ExploitRun 模型、exploit_runs 建表、创建执行（并发限制+参数校验）、列表/详情/取消/清理 API、ExploitResultHook 回调、前端执行确认面板（风险确认+副作用声明） |
+| 2026-04-30 | Phase 4 | 清理与审计闭环：ExploitResultEvent 结果处理（自动状态流转）、HandleExploitCleanupResult 清理结果、AutoDispatchCleanup 定时派发、WebSocket 状态广播、前端执行历史面板 |
 | 2026-04-30 | Review Hardening | 修复 EXP 审核/废弃/删除只改索引不改原始 Arsenal 的生命周期问题；修复 `runtime.entry` 校验字段；补充脚本调用能力与声明能力一致性检查；执行创建默认受 `EXP_ENABLED` 保护，并增加风险确认、租户级并发、项目归属和 target 级并发边界；AutoScaler 对账/缩容/TTL 回收按实例地域选择 provider |

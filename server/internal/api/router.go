@@ -85,6 +85,11 @@ func validateAgentPSK(c *gin.Context) bool {
 func SetNotifyHub(hub *grpcpkg.NotifyHub) {
 	notifyHub = hub
 	db.DebugEventHook = handleAgentDebugEvent
+	db.ExploitResultHook = func(event interface{}) {
+		if e, ok := event.(db.ExploitResultEvent); ok {
+			db.HandleExploitResult(e)
+		}
+	}
 }
 
 func currentTenantID(c *gin.Context) string {
@@ -2227,6 +2232,7 @@ func StartTaskTimeoutDaemon(ctx context.Context, q *scheduler.TaskQueue) {
 		case <-ticker.C:
 			recoverDispatchingTasks(q)
 			handleTimeoutTasks(q)
+			db.AutoDispatchCleanup()
 		}
 	}
 }
