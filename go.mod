@@ -216,6 +216,7 @@ require (
 	github.com/zmap/rc2 v0.0.0-20190804163417-abaa70531248 // indirect
 	github.com/zmap/zcrypto v0.0.0-20231106212110-94c8f62efae4 // indirect
 	github.com/zmap/zgrab2 v0.1.8-0.20230806160807-97ba87c0e706 // indirect
+	go.starlark.net v0.0.0-20260326113308-fadfc96def35 // indirect
 	go.uber.org/zap v1.25.0 // indirect
 	goftp.io/server/v2 v2.0.1 // indirect
 	golang.org/x/arch v0.3.0 // indirect

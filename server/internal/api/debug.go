@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -305,6 +306,13 @@ func handleAgentDebugEvent(event *pb.DebugEvent) {
 	if event == nil {
 		return
 	}
+
+	// Handle EXP results separately
+	if event.Type == "exp_result" {
+		handleExploitResult(event)
+		return
+	}
+
 	session, ok := pocDebugSessions.get(event.SessionId)
 	if !ok || session.AgentID != event.AgentId || session.TenantID != event.TenantId {
 		return
@@ -426,3 +434,48 @@ func isAgentVersionAtLeast(version string, minMajor int, minMinor int) bool {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+// handleExploitResult processes EXP execution results from Agent.
+func handleExploitResult(event *pb.DebugEvent) {
+	if event.Message == "" {
+		return
+	}
+
+	var payload struct {
+		RunID       uint                   `json:"run_id"`
+		Status      string                 `json:"status"`
+		ErrorMsg    string                 `json:"error_message"`
+		Evidence    map[string]interface{} `json:"evidence"`
+		SideEffects []string               `json:"side_effects"`
+		DurationMs  int64                  `json:"duration_ms"`
+	}
+
+	if err := json.Unmarshal([]byte(event.Message), &payload); err != nil {
+		log.Printf("[EXP] failed to parse result: %v", err)
+		return
+	}
+
+	// Resolve run ID from session ID
+	runID := payload.RunID
+	if runID == 0 {
+		if id, err := strconv.ParseUint(event.SessionId, 10, 64); err == nil {
+			runID = uint(id)
+		}
+	}
+	if runID == 0 {
+		log.Printf("[EXP] invalid run ID in session %s", event.SessionId)
+		return
+	}
+
+	exploitEvent := db.ExploitResultEvent{
+		RunID:       runID,
+		Status:      payload.Status,
+		ErrorMsg:    payload.ErrorMsg,
+		Evidence:    payload.Evidence,
+		SideEffects: payload.SideEffects,
+		DurationMs:  payload.DurationMs,
+	}
+
+	db.HandleExploitResult(exploitEvent)
+	log.Printf("[EXP] result processed: run=%d status=%s", runID, payload.Status)
+}

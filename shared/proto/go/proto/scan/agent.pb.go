@@ -547,13 +547,14 @@ func (x *TaskNotify) GetDebugCommand() *DebugCommand {
 // DebugCommand Server→Agent 的临时 POC 调试命令。
 type DebugCommand struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Action        string                 `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"` // "start_debug" | "cancel_debug"
+	Action        string                 `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"` // "start_debug" | "cancel_debug" | "start_exp" | "cleanup_exp"
 	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	TenantId      string                 `protobuf:"bytes,3,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
 	PocContent    string                 `protobuf:"bytes,4,opt,name=poc_content,json=pocContent,proto3" json:"poc_content,omitempty"`
 	TargetUrl     string                 `protobuf:"bytes,5,opt,name=target_url,json=targetUrl,proto3" json:"target_url,omitempty"`
 	Proxy         string                 `protobuf:"bytes,6,opt,name=proxy,proto3" json:"proxy,omitempty"`
 	TimeoutSec    int32                  `protobuf:"varint,7,opt,name=timeout_sec,json=timeoutSec,proto3" json:"timeout_sec,omitempty"`
+	Params        string                 `protobuf:"bytes,8,opt,name=params,proto3" json:"params,omitempty"` // JSON-encoded params for EXP execution
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -635,6 +636,13 @@ func (x *DebugCommand) GetTimeoutSec() int32 {
 		return x.TimeoutSec
 	}
 	return 0
+}
+
+func (x *DebugCommand) GetParams() string {
+	if x != nil {
+		return x.Params
+	}
+	return ""
 }
 
 // ClaimTaskReq Agent 主动认领任务的请求
@@ -1237,7 +1245,7 @@ const file_proto_scan_agent_proto_rawDesc = "" +
 	"\bpriority\x18\x02 \x01(\x05R\bpriority\x12\x1f\n" +
 	"\vnotify_type\x18\x03 \x01(\tR\n" +
 	"notifyType\x127\n" +
-	"\rdebug_command\x18\x04 \x01(\v2\x12.scan.DebugCommandR\fdebugCommand\"\xd9\x01\n" +
+	"\rdebug_command\x18\x04 \x01(\v2\x12.scan.DebugCommandR\fdebugCommand\"\xf1\x01\n" +
 	"\fDebugCommand\x12\x16\n" +
 	"\x06action\x18\x01 \x01(\tR\x06action\x12\x1d\n" +
 	"\n" +
@@ -1249,7 +1257,8 @@ const file_proto_scan_agent_proto_rawDesc = "" +
 	"target_url\x18\x05 \x01(\tR\ttargetUrl\x12\x14\n" +
 	"\x05proxy\x18\x06 \x01(\tR\x05proxy\x12\x1f\n" +
 	"\vtimeout_sec\x18\a \x01(\x05R\n" +
-	"timeoutSec\"\xb3\x01\n" +
+	"timeoutSec\x12\x16\n" +
+	"\x06params\x18\b \x01(\tR\x06params\"\xb3\x01\n" +
 	"\fClaimTaskReq\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1d\n" +
 	"\n" +

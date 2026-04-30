@@ -548,11 +548,16 @@ CleanupExploit(ExploitCleanupReq) returns (ExploitCleanupResp)
 - `server-ui/src/services/api.ts` — exploit-runs API 函数
 - `server-ui/src/services/typings.d.ts` — ExploitRun 类型
 
-待完成（Agent 侧）：
-- Agent Starlark 引擎嵌入（声明式 steps 编译 + Starlark 脚本沙箱执行）
-- Agent 通过 gRPC ClaimTask 认领 EXP 任务
-- Agent 通过 StreamDebug 回传执行结果
-- Server 侧 ExploitResultHook 实现状态流转和证据入库
+Agent 侧（双模式引擎）：
+- [x] `scanner/internal/exploit/types.go` — 统一模板类型（Nuclei + Starlark 双模式）
+- [x] `scanner/internal/exploit/engine.go` — 统一执行入口（按 `runtime.engine` 分发）
+- [x] `scanner/internal/exploit/nuclei_executor.go` — Nuclei 模式执行器（HTTP 请求 + matchers/extractors + 参数模板渲染 + 代理支持）
+- [x] `scanner/internal/exploit/starlark_engine.go` — Starlark 高级引擎（`go.starlark.net` 嵌入）
+- [x] `scanner/internal/exploit/starlark_api.go` — Starlark 宿主 API（http.request/tcp.connect/evidence.add/cleanup.defer/result.success+failure/extract.regex+json）
+- [x] `scanner/internal/agent/debug.go` — `start_exp` / `cleanup_exp` 命令处理，通过 StreamDebug 回传结果
+- [x] `shared/proto/proto/scan/agent.proto` — DebugCommand 新增 `params` 字段
+- [x] Server 侧 EXP 下发（`createExploitRun` → `DebugCommand{action:"start_exp"}` → `notifyHub.SendDebugCommand`）
+- [x] Server 侧结果接收（`handleAgentDebugEvent` → `handleExploitResult` → `db.HandleExploitResult`）
 
 ### Phase 4：清理与审计闭环 ✅ 已完成
 
@@ -752,4 +757,5 @@ Pending → Running → Succeeded
 | 2026-04-30 | Phase 2 | dry-run 预览：参数 schema 校验、脚本静态扫描（20+ 禁用符号）、dry-run 端点（scripts/steps 两种模式预览）、前端预览面板（目标输入/动态参数表单/风险/副作用/脚本预览） |
 | 2026-04-30 | Phase 3 | Server 侧执行生命周期：ExploitRun 模型、exploit_runs 建表、创建执行（并发限制+参数校验）、列表/详情/取消/清理 API、ExploitResultHook 回调、前端执行确认面板（风险确认+副作用声明） |
 | 2026-04-30 | Phase 4 | 清理与审计闭环：ExploitResultEvent 结果处理（自动状态流转）、HandleExploitCleanupResult 清理结果、AutoDispatchCleanup 定时派发、WebSocket 状态广播、前端执行历史面板 |
+| 2026-04-30 | Phase 3 Agent | Agent 侧 EXP 引擎：双模式（Nuclei 基础 + Starlark 高级）、Nuclei 执行器（HTTP/matchers/extractors/代理）、Starlark 宿主 API（6 大模块）、统一执行入口、Agent 命令处理集成、Server 侧 EXP 下发 + 结果接收、proto 新增 params 字段 |
 | 2026-04-30 | Review Hardening | 修复 EXP 审核/废弃/删除只改索引不改原始 Arsenal 的生命周期问题；修复 `runtime.entry` 校验字段；补充脚本调用能力与声明能力一致性检查；执行创建默认受 `EXP_ENABLED` 保护，并增加风险确认、租户级并发、项目归属和 target 级并发边界；AutoScaler 对账/缩容/TTL 回收按实例地域选择 provider |

@@ -102,13 +102,14 @@ message TaskNotify {
 
 // DebugCommand Server→Agent 的临时 POC 调试命令。
 message DebugCommand {
-  string action = 1;       // "start_debug" | "cancel_debug"
+  string action = 1;       // "start_debug" | "cancel_debug" | "start_exp" | "cleanup_exp"
   string session_id = 2;
   string tenant_id = 3;
   string poc_content = 4;
   string target_url = 5;
   string proxy = 6;
   int32 timeout_sec = 7;
+  string params = 8;       // JSON-encoded params for EXP execution
 }
 
 // -------------------- ClaimTask 认领消息 --------------------

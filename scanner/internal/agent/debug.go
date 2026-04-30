@@ -14,6 +14,7 @@ import (
 
 	"dddd/scanner/common"
 	"dddd/scanner/internal/engine"
+	"dddd/scanner/internal/exploit"
 	"dddd/scanner/internal/vuln/nuclei"
 	"dddd/scanner/lib/ddfinger"
 	"dddd/scanner/structs"
@@ -47,6 +48,10 @@ func (w *Worker) handleDebugCommand(cmd *pb.DebugCommand) {
 		w.startDebugSession(cmd)
 	case "cancel_debug":
 		w.cancelDebugSession(cmd.SessionId)
+	case "start_exp":
+		w.handleExploitCommand(cmd)
+	case "cleanup_exp":
+		w.handleExploitCleanup(cmd)
 	default:
 		logDebugLocal("WARN", "unknown debug command action: %s", cmd.Action)
 	}
@@ -555,4 +560,124 @@ func mergePacketPairs(packets map[int]output.RequestResponsePair) (string, strin
 	}
 
 	return strings.Join(traceParts, "\n\n"), ""
+}
+
+// ============================================================================
+// EXP 执行
+// ============================================================================
+
+func (w *Worker) handleExploitCommand(cmd *pb.DebugCommand) {
+	if cmd == nil || strings.TrimSpace(cmd.PocContent) == "" {
+		w.sendExploitResult(cmd, "Failed", nil, "empty EXP content")
+		return
+	}
+
+	go func() {
+		timeout := time.Duration(cmd.TimeoutSec) * time.Second
+		if timeout <= 0 {
+			timeout = defaultAgentDebugTimeout
+		}
+
+		eng := exploit.NewEngine(timeout, cmd.Proxy)
+		tmpl, err := exploit.ParseTemplate([]byte(cmd.PocContent))
+		if err != nil {
+			w.sendExploitResult(cmd, "Failed", nil, fmt.Sprintf("parse error: %v", err))
+			return
+		}
+
+		// Parse params from JSON if provided
+		var params map[string]interface{}
+		if cmd.Params != "" {
+			json.Unmarshal([]byte(cmd.Params), &params)
+		}
+		if params == nil {
+			params = make(map[string]interface{})
+		}
+
+		logDebugLocal("INFO", "[EXP] executing %s against %s (engine=%s)", tmpl.ID, cmd.TargetUrl, tmpl.Runtime.Engine)
+
+		result, err := eng.Run(tmpl, cmd.TargetUrl, params)
+		if err != nil {
+			w.sendExploitResult(cmd, "Failed", nil, fmt.Sprintf("execution error: %v", err))
+			return
+		}
+
+		w.sendExploitResult(cmd, result.Status, result, result.ErrorMsg)
+
+		// Auto-cleanup if required
+		if result.Status == "Succeeded" && (tmpl.Policy.CleanupRequired || tmpl.Info.CleanupRequired) {
+			logDebugLocal("INFO", "[EXP] running cleanup for %s", tmpl.ID)
+			if err := eng.Cleanup(tmpl, cmd.TargetUrl, params); err != nil {
+				logDebugLocal("WARN", "[EXP] cleanup failed for %s: %v", tmpl.ID, err)
+			}
+		}
+	}()
+}
+
+func (w *Worker) handleExploitCleanup(cmd *pb.DebugCommand) {
+	if cmd == nil || strings.TrimSpace(cmd.PocContent) == "" {
+		w.sendExploitResult(cmd, "CleanupFailed", nil, "empty EXP content for cleanup")
+		return
+	}
+
+	go func() {
+		timeout := time.Duration(cmd.TimeoutSec) * time.Second
+		if timeout <= 0 {
+			timeout = defaultAgentDebugTimeout
+		}
+
+		eng := exploit.NewEngine(timeout, cmd.Proxy)
+		tmpl, err := exploit.ParseTemplate([]byte(cmd.PocContent))
+		if err != nil {
+			w.sendExploitResult(cmd, "CleanupFailed", nil, fmt.Sprintf("parse error: %v", err))
+			return
+		}
+
+		var params map[string]interface{}
+		if cmd.Params != "" {
+			json.Unmarshal([]byte(cmd.Params), &params)
+		}
+
+		if err := eng.Cleanup(tmpl, cmd.TargetUrl, params); err != nil {
+			w.sendExploitResult(cmd, "CleanupFailed", nil, fmt.Sprintf("cleanup error: %v", err))
+			return
+		}
+		w.sendExploitResult(cmd, "CleanupSucceeded", nil, "")
+	}()
+}
+
+func (w *Worker) sendExploitResult(cmd *pb.DebugCommand, status string, result *exploit.Result, errMsg string) {
+	payload := map[string]interface{}{
+		"run_id": cmd.SessionId,
+		"status": status,
+	}
+	if result != nil {
+		payload["evidence"] = result.Evidence
+		payload["side_effects"] = result.SideEffects
+		payload["duration_ms"] = result.DurationMs
+	}
+	if errMsg != "" {
+		payload["error_message"] = errMsg
+	}
+
+	payloadJSON, _ := json.Marshal(payload)
+
+	stream, err := w.client.StreamDebug(context.Background())
+	if err != nil {
+		logDebugLocal("ERROR", "[EXP] failed to open debug stream: %v", err)
+		return
+	}
+	defer stream.CloseSend()
+
+	event := &pb.DebugEvent{
+		AgentId:   w.agentID,
+		SessionId: cmd.SessionId,
+		Type:      "exp_result",
+		Message:   string(payloadJSON),
+		Matched:   status == "Succeeded",
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	stream.Send(event)
+	logDebugLocal("INFO", "[EXP] result sent: status=%s session=%s", status, cmd.SessionId)
 }
