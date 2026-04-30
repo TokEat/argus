@@ -76,6 +76,7 @@ func TestTenantRolePermissionMatrix(t *testing.T) {
 		{method: "POST", path: "/api/v1/arsenals/poc/demo.yaml", want: "operator"},
 		{method: "POST", path: "/api/v1/arsenals/poc/demo.yaml/approve", want: "admin"},
 		{method: "POST", path: "/api/v1/arsenals/poc/demo.yaml/rollback", want: "admin"},
+		{method: "GET", path: "/api/v1/arsenals/seed-db", want: "admin"},
 		{method: "GET", path: "/api/v1/users", want: "admin"},
 		{method: "GET", path: "/api/v1/cloud/accounts", want: "operator"},
 		{method: "POST", path: "/api/v1/cloud/accounts/ca-1/oss/upload", want: "operator"},

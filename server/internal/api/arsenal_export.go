@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
@@ -240,6 +241,85 @@ func buildArsenalSQLiteDB(tenantID string) (filePath string, hash string, err er
 	return tmpPath, fileHash, nil
 }
 
+// buildArsenalSeedSQLiteDB 从 PostgreSQL 的 arsenals 原始表导出安装/迁移用 seed DB。
+// 文件结构与 server/scripts/build_seed_db.go 生成的 deploy/arsenal_seed.db 一致，
+// 可直接通过 dddd-server --seed-from-db 导入。
+func buildArsenalSeedSQLiteDB(tenantID string) (filePath string, hash string, count int, err error) {
+	tmpFile, err := os.CreateTemp("", "arsenal-seed-export-*.db")
+	if err != nil {
+		return "", "", 0, fmt.Errorf("创建临时文件失败: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	tmpFile.Close()
+
+	sdb, err := gorm.Open(sqlite.Open(tmpPath), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		os.Remove(tmpPath)
+		return "", "", 0, fmt.Errorf("打开临时 SQLite 失败: %w", err)
+	}
+
+	if err := sdb.AutoMigrate(&db.Arsenal{}); err != nil {
+		closeSQLite(sdb)
+		os.Remove(tmpPath)
+		return "", "", 0, fmt.Errorf("SQLite AutoMigrate 失败: %w", err)
+	}
+
+	var arsenals []db.Arsenal
+	exportTypes := append([]string{}, db.ArsenalTypeAliases("finger")...)
+	exportTypes = append(exportTypes, db.ArsenalTypeAliases("workflow")...)
+	exportTypes = append(exportTypes, db.ArsenalTypeAliases("dir")...)
+	exportTypes = append(exportTypes, db.ArsenalTypeAliases("poc")...)
+	if err := db.DB.
+		Where("tenant_id = ? AND type IN ?", tenantID, exportTypes).
+		Order("type, file_name").
+		Find(&arsenals).Error; err != nil {
+		closeSQLite(sdb)
+		os.Remove(tmpPath)
+		return "", "", 0, fmt.Errorf("读取弹药库失败: %w", err)
+	}
+
+	for i := range arsenals {
+		arsenals[i].Type = db.CanonicalArsenalType(arsenals[i].Type)
+		if arsenals[i].ID == "" {
+			arsenals[i].ID = db.BuildTenantArsenalID(arsenals[i].TenantID, arsenals[i].Type, arsenals[i].FileName)
+		}
+	}
+
+	if len(arsenals) > 0 {
+		if err := sdb.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"tenant_id", "type", "file_name", "content", "hash", "previous_hash", "previous_content", "version", "state", "created_at", "updated_at"}),
+		}).CreateInBatches(arsenals, 200).Error; err != nil {
+			closeSQLite(sdb)
+			os.Remove(tmpPath)
+			return "", "", 0, fmt.Errorf("写入 seed DB 失败: %w", err)
+		}
+	}
+
+	closeSQLite(sdb)
+
+	fileData, err := os.ReadFile(tmpPath)
+	if err != nil {
+		os.Remove(tmpPath)
+		return "", "", 0, fmt.Errorf("读取生成的 DB 文件失败: %w", err)
+	}
+	fileHash := fmt.Sprintf("%x", md5.Sum(fileData))
+
+	log.Printf("[ArsenalSeedExport] SQLite seed DB 构建完成: count=%d, size=%d bytes, hash=%s",
+		len(arsenals), len(fileData), fileHash[:8])
+
+	return tmpPath, fileHash, len(arsenals), nil
+}
+
+func closeSQLite(database *gorm.DB) {
+	sqlDB, _ := database.DB()
+	if sqlDB != nil {
+		sqlDB.Close()
+	}
+}
+
 // ====================================================================
 // HTTP 处理函数
 // ====================================================================
@@ -258,6 +338,25 @@ func getArsenalDB(c *gin.Context) {
 
 	c.Header("X-Arsenal-Hash", hash)
 	c.Header("Content-Disposition", "attachment; filename=arsenal.db")
+	c.File(tmpPath)
+}
+
+// exportArsenalSeedDB 下载安装/迁移用的 arsenal_seed.db。
+// GET /api/v1/arsenals/seed-db
+func exportArsenalSeedDB(c *gin.Context) {
+	tenantID := currentTenantID(c)
+	tmpPath, hash, count, err := buildArsenalSeedSQLiteDB(tenantID)
+	if err != nil {
+		log.Printf("[ArsenalSeedExport] 构建失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer os.Remove(tmpPath)
+
+	filename := fmt.Sprintf("arsenal_seed_%s_%s.db", tenantID, time.Now().Format("20060102_150405"))
+	c.Header("X-Arsenal-Seed-Hash", hash)
+	c.Header("X-Arsenal-Seed-Count", fmt.Sprintf("%d", count))
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
 	c.File(tmpPath)
 }
 

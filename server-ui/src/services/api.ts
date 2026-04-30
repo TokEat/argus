@@ -182,6 +182,16 @@ export async function exportVulns(projectId?: string): Promise<Blob> {
     return response.data;
 }
 
+export async function exportArsenalSeedDB(): Promise<Blob> {
+    const response = await axios.get('/api/v1/arsenals/seed-db', {
+        responseType: 'blob',
+        headers: {
+            Authorization: `Bearer ${localStorage.getItem('token')}`,
+        },
+    });
+    return response.data;
+}
+
 // ===========================
 // Node API
 // ===========================

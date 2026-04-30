@@ -1,6 +1,6 @@
 # Argus AI Copilot 当前进度与后续计划
 
-> 分支：`feat/copilot-context-optimization`
+> 分支：`main`
 >
 > 更新时间：2026-04-30
 
@@ -13,10 +13,10 @@
 | 模块 | 进度 | 状态 |
 |------|-----:|------|
 | POC AI 结构化审查 | 82% | 静态检查、LLM 审查、缓存表、流式审查入口和兼容入口已恢复 |
-| AI 配置页 | 85% | 支持 Base URL、API Key 脱敏、模型列表、连接测试 |
-| 全局 Copilot 前端 | 96% | 分层 Context、悬浮入口、抽屉、Markdown、工具折叠、会话重置、POC 一键应用、保存草稿和 pending_action 确认 UI 已搭好 |
+| AI 配置页 | 92% | 支持 Base URL、API Key 脱敏、模型列表、连接测试；已扩展为 Copilot Prompt 与审计管理入口 |
+| 全局 Copilot 前端 | 97% | 分层 Context、悬浮入口、抽屉、Markdown、工具折叠、会话重置、POC 一键应用、保存草稿、pending_action 确认 UI 和管理页入口已搭好 |
 | Agent / Tool Calling 后端 | 97% | Agent 循环、模块 Profile、工具白名单、沙箱调试、安全审计、P2 只读工具、P3 草稿动作确认层、审计查询和 Prompt Registry 已实现 |
-| 测试与文档 | 92% | AI/API 测试、P3 动作测试、Prompt Registry 测试、前端构建、Agent 调试测试和 diff 空白检查已通过；浏览器验证仍作为人工验收项 |
+| 测试与文档 | 94% | AI/API 测试、P3 动作测试、Prompt Registry 测试、前端构建、Agent 调试测试和 diff 空白检查已通过；浏览器验证仍作为人工验收项 |
 
 ### 1.1 已落地
 
@@ -37,6 +37,7 @@
 - 可控执行动作：已新增 `pending_action` 协议和 `/api/v1/ai/actions/confirm` 确认执行入口；模型只能提出待确认动作，前端展示摘要、风险、预览和权限，用户确认后后端按白名单执行并写入 `ai_tool_invocations` 审计。
 - 审计查询闭环：已新增 `/api/v1/ai/tool-invocations`，按租户、用户角色和筛选条件查询 Copilot 工具/动作审计；operator 默认只能看自己的记录，admin 可看同租户记录。
 - Prompt 展示闭环：已新增 `/api/v1/ai/copilot/prompts` 只读接口，返回当前 Prompt Registry 的 base prompt、默认 profile、模块 profile、工具白名单、最终 system prompt 和来源文件，便于配置页后续展示与审阅。
+- Copilot 管理页闭环：`/ai-config` 已向 operator 开放 Copilot 管理入口，admin 保留模型连接配置能力；operator 可查看 Prompt Registry 和自己的工具/动作审计，admin 可查看同租户审计。
 
 ### 1.2 WIP
 
@@ -49,8 +50,7 @@
 
 - 还需要继续做浏览器级手动验证，确认 POC、资产、任务、Workflow 等页面打开 Copilot 时上下文和工具白名单符合预期。
 - 还需要继续用真实数据调优各业务工具的结果摘要，特别是任务、漏洞、资产和 Workflow 检测结果的字段裁剪。
-- `ai_tool_invocations` 已提供受 RBAC 保护的查询 API；是否做可视化页面仍属于体验优化。
-- 前端仍可继续优化会话历史持久化、工具结果摘要的可读性和窄屏动效细节。
+- 前端仍可继续优化会话历史持久化、工具结果摘要的可读性、窄屏动效细节和真实页面手测记录。
 - P3 当前只开放草稿类白名单动作：`create_poc_draft`、`upsert_workflow_draft`、`create_task_draft`、`upsert_dir_draft`；高风险动作仍待后续单独评审。
 
 ## 2. 架构现状
@@ -65,13 +65,15 @@ graph TD
         Pages["业务页面 / 编辑器"] -. useAutoContext .-> Provider
         Drawer --> ChatAPI["POST /api/v1/ai/chat"]
         Drawer --> ActionAPI["POST /api/v1/ai/actions/confirm"]
+        AIConfigPage["AI 配置 / Copilot 管理"] --> PromptAPI["GET /api/v1/ai/copilot/prompts"]
+        AIConfigPage --> AuditAPI["GET /api/v1/ai/tool-invocations"]
         PocPanel["POC 审查入口"] --> ReviewAPI["POST /api/v1/ai/arsenal/analyze / stream"]
     end
 
     subgraph Backend["后端 Go"]
         ReviewAPI --> Analyzer["Analyzer: static checks + LLM + cache"]
         ChatAPI --> Router["Prompt Router by page_context._focus.module"]
-        PromptAPI["GET /api/v1/ai/copilot/prompts"] --> PromptRegistry["Embedded Prompt Registry YAML"]
+        PromptAPI --> PromptRegistry["Embedded Prompt Registry YAML"]
         PromptRegistry --> Router
         Router --> Agent["Agent QueryEngine"]
         Agent --> DocsTool["QueryArgusDocs"]
@@ -88,7 +90,7 @@ graph TD
         ActionConfirm --> DraftActions["POC / Workflow / Task / Dir 草稿动作"]
         Agent --> AuditStore["ai_tool_invocations"]
         ActionConfirm --> AuditStore
-        AuditAPI["/ai/tool-invocations"] --> AuditStore
+        AuditAPI --> AuditStore
     end
 
     SandboxTool --> NotifyHub["NotifyHub / Agent Debug Command"]
@@ -139,7 +141,7 @@ graph TD
 范围边界：
 
 - 只处理全局 Copilot、POC AI 审查、AI 配置、弹药库调试和当前已接入页面的稳定性。
-- 不新增写操作工具，不实现 `pending_action`，不开放审计查询 UI。
+- 不新增高风险写操作工具；审计与 Prompt 展示已作为 operator+ 管理入口落地，后续只做小幅体验优化。
 - 所有修复必须继续维持 `_identity/_focus/data/_ambient` 分层协议。
 
 交付项：
@@ -170,7 +172,7 @@ graph TD
 
 退出条件：
 
-- 当前分支可以作为稳定基线合并。
+- `main` 可以作为稳定基线继续迭代。
 - 已知问题只剩非阻断体验优化，并已记录到后续 P1/P2/P3 任务。
 - 回归测试能覆盖上下文协议、工具白名单和敏感数据脱敏。
 
@@ -280,20 +282,21 @@ graph TD
 
 ## 5. 合并、发布与回归节奏
 
-### 5.1 当前分支合并路径
+### 5.1 当前主线状态
 
-`feat/copilot-context-optimization` 的目标是作为 Copilot Context 稳定基线合并，合并前只接受以下类型改动：
+Copilot Context、P2 只读工具、P3 草稿动作、Prompt Registry、审计查询和 Copilot 管理入口已合入 `main`。后续继续以短生命周期任务分支推进，不在主线直接堆叠实验性能力。
 
-- 构建、测试、lint、diff 空白问题修复。
-- 上下文协议、敏感字段脱敏、工具白名单、SSE 契约相关回归测试。
+当前主线允许继续进入的小步改动：
+
 - 浏览器手测发现的阻断级问题修复。
-- 文档同步和明确的非功能性注释。
+- 工具摘要、错误提示、上下文类型收紧等 P1/P2 稳定性改动。
+- Prompt Registry 内容调优和文档同步。
+- 审计与 Prompt 展示页的小幅体验优化。
 
-不应在当前合并窗口继续加入：
+仍不应直接进入主线的改动：
 
-- 新写操作工具。
-- 新公开 AI HTTP API（P3 确认入口 `/api/v1/ai/actions/confirm`、审计查询 `/api/v1/ai/tool-invocations`、Prompt Registry 展示 `/api/v1/ai/copilot/prompts` 已作为平台级闭环落地，后续不再按页面扩散）。
-- 审计查询 UI（当前先提供 RBAC 查询 API）。
+- 新高风险写操作工具。
+- 按页面扩散的新公开 AI HTTP API。
 - 会话持久化数据库 schema。
 - 大规模样式重构或无关页面重构。
 
@@ -336,7 +339,7 @@ P3 首批动作必须是草稿类、可取消、低风险动作；发布、审�
 
 | 命令 | 当前结果 | 说明 |
 |------|----------|------|
-| `npm run build` (`server-ui`) | 通过 | 前端类型检查与生产构建已通过 |
+| `npm run build` (`server-ui`) | 通过 | 前端类型检查与生产构建已通过，覆盖 Copilot 管理 Tabs |
 | `go test ./server/internal/ai ./server/internal/api` | 通过 | AI/Copilot API、P3 动作确认、Prompt Registry 与路由测试已通过 |
 | `go test ./scanner/internal/agent` | 通过 | Agent 调试相关测试已通过 |
 | `git diff --check` | 通过 | 当前工作区无 trailing whitespace |
@@ -346,10 +349,10 @@ P3 首批动作必须是草稿类、可取消、低风险动作；发布、审�
 - `go test ./server/internal/ai ./server/internal/api ./scanner/internal/agent` 通过。
 - `npm run build`（`server-ui`）通过。
 - `git diff --check` 无 trailing whitespace。
-- 手动验证 `/api/v1/ai/config`、`/api/v1/ai/arsenal/analyze/stream`、`/api/v1/ai/chat` 三条主路径。
+- 手动验证 `/api/v1/ai/config`、`/api/v1/ai/arsenal/analyze/stream`、`/api/v1/ai/chat`、`/api/v1/ai/copilot/prompts`、`/api/v1/ai/tool-invocations` 五条主路径。
 
 ## 7. 明确假设
 
-- 默认以当前分支 `feat/copilot-context-optimization` 和当前工作区内容为准。
+- 默认以当前 `main` 分支和当前工作区内容为准。
 - POC AI 结构化审查不会被全局 Copilot 取代，两者并行：前者负责审核闭环，后者负责交互式辅助。
 - 后续开发优先在现有接口和模块 Profile 内扩展能力；接口清单、数据库 schema 文档可在审计表和工具能力稳定后单独补齐。

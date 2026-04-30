@@ -66,7 +66,7 @@ AutoScaler 作为一个守护协程，每 30 秒执行一次全局评估：
      - `reboot_count >= 2`：已经重启过 2 次仍然无法恢复，说明可能是底层硬件故障或镜像损坏，直接调用 `TerminateInstance` 销毁机器。
    - 10 分钟无心跳的 `Offline` 节点将从数据库中彻底删除。
 2. **Reconciler (实例对账 - 5min)**：查询数据库中标记为 `Running` 的实例，向云厂商拉取真实列表；若云端已不存在，则修正数据库状态为 `Terminated`。
-3. **OrphanSweeper (孤儿回收 - 10min)**：扫描存活时间超过策略设定的 `instance_ttl_minutes` 的实例，强制进行销毁，防止异常实例无限计费。
+3. **OrphanSweeper (孤儿回收 - 10min)**：扫描存活时间超过策略设定的 `instance_ttl_minutes` 的实例。若实例仍有运行中任务，会先延后回收；超过 `instance_ttl_minutes + 30min` 宽限期仍未空闲才强制销毁，防止异常实例无限计费。
 
 > **设计意图**：三重机制形成梯度防御——HeartbeatReaper 以**先重启、再销毁**的柔性策略提供分钟级响应，避免因短暂的进程崩溃就浪费一台已预热的机器；Reconciler 覆盖**云端状态偏差**的修复；OrphanSweeper 是最终的**兜底安全网**。
 
@@ -257,7 +257,7 @@ sequenceDiagram
 ✅ **Phase 10 (已完成)**
 - **全链路打通优化**：
   - Cloud-Init 模板同步：前端默认模板与后端 `DefaultCloudInitTemplate` 保持一致，使用 Go template 变量（`{{.DownloadURL}}` `{{.ServerAddr}}` 等）。
-  - 最经济方案默认预设：前后端统一为「经济型弹性扫描策略」—— `SpotAsPriceGo` 竞价（节省 70-90%）+ `min_instances=0`（零保底）+ `scale_down_threshold=0`（队列清空立即缩容）+ `instance_ttl_minutes=60`（1 小时强制回收）。
+  - 最经济方案默认预设：前后端统一为「经济型弹性扫描策略」—— `SpotAsPriceGo` 竞价（节省 70-90%）+ `min_instances=0`（零保底）+ `scale_down_threshold=0`（队列清空立即缩容）+ `instance_ttl_minutes=60`（1 小时进入回收窗口，忙碌实例最多再宽限 30 分钟）。
   - 凭证管理增强：操作列新增「上传 Agent」「OSS 测试」按钮；展开行增加全链路就绪状态指示和 Agent 分发方式展示。
   - Server 地址注入优化：`ARGUS_PUBLIC_IP` / `ARGUS_PUBLIC_API` 环境变量支持；未显式设置时自动探测可路由地址，避免把 `0.0.0.0` 注入到 Cloud-Init。
 

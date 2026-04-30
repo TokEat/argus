@@ -3,6 +3,7 @@ package cloud
 import (
 	"context"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,6 +12,8 @@ import (
 	"github.com/user/dddd-server/internal/scheduler"
 	"gorm.io/gorm"
 )
+
+const ttlActiveTaskGracePeriod = 30 * time.Minute
 
 // ============================================================================
 // AutoScaler — 自动伸缩引擎
@@ -27,7 +30,7 @@ import (
 type AutoScaler struct {
 	db       *gorm.DB
 	queue    *scheduler.TaskQueue
-	managers map[string]*ResourceManager // accountID → manager
+	managers map[string]*ResourceManager // accountID:region → manager
 	mu       sync.RWMutex
 	psk      string // Agent PSK，传入 Cloud-Init
 	apiURL   string // Server HTTP API 地址
@@ -284,10 +287,20 @@ func (as *AutoScaler) scaleDown(ctx context.Context, policy *db.CloudScalingPoli
 	as.db.Model(policy).Update("last_scale_action", &now)
 }
 
-// getOrCreateManager 获取或创建某个云账号对应的 ResourceManager
+func managerCacheKey(account *db.CloudAccount) string {
+	return account.ID + ":" + account.Region
+}
+
+func managerCachePrefix(accountID string) string {
+	return accountID + ":"
+}
+
+// getOrCreateManager 获取或创建某个云账号与地域对应的 ResourceManager
 func (as *AutoScaler) getOrCreateManager(account *db.CloudAccount) (*ResourceManager, error) {
+	cacheKey := managerCacheKey(account)
+
 	as.mu.RLock()
-	if m, ok := as.managers[account.ID]; ok {
+	if m, ok := as.managers[cacheKey]; ok {
 		as.mu.RUnlock()
 		return m, nil
 	}
@@ -297,7 +310,7 @@ func (as *AutoScaler) getOrCreateManager(account *db.CloudAccount) (*ResourceMan
 	defer as.mu.Unlock()
 
 	// 双检
-	if m, ok := as.managers[account.ID]; ok {
+	if m, ok := as.managers[cacheKey]; ok {
 		return m, nil
 	}
 
@@ -308,16 +321,21 @@ func (as *AutoScaler) getOrCreateManager(account *db.CloudAccount) (*ResourceMan
 
 	manager := NewResourceManager(provider)
 	manager.SetDB(as.db)
-	as.managers[account.ID] = manager
+	as.managers[cacheKey] = manager
 	return manager, nil
 }
 
-// InvalidateManager 清除指定云账号的缓存 Manager。
+// InvalidateManager 清除指定云账号的所有地域缓存 Manager。
 // 当用户更新了 AK/SK 凭证时，必须调用此方法以确保后续操作使用新凭证。
 func (as *AutoScaler) InvalidateManager(accountID string) {
 	as.mu.Lock()
 	defer as.mu.Unlock()
-	delete(as.managers, accountID)
+	prefix := managerCachePrefix(accountID)
+	for key := range as.managers {
+		if strings.HasPrefix(key, prefix) {
+			delete(as.managers, key)
+		}
+	}
 	log.Printf("[AutoScaler] Manager cache invalidated for account %s", accountID)
 }
 
@@ -342,7 +360,11 @@ func (as *AutoScaler) StartReconciler(ctx context.Context, interval time.Duratio
 func (as *AutoScaler) reconcile(ctx context.Context) {
 	var instances []db.CloudInstance
 	as.db.Where("status IN ?", []string{
-		db.CloudStatusProvisioning, db.CloudStatusRunning, db.CloudStatusWaitingReady, db.CloudStatusRebooting,
+		db.CloudStatusProvisioning,
+		db.CloudStatusRunning,
+		db.CloudStatusWaitingReady,
+		db.CloudStatusRebooting,
+		db.CloudStatusTerminating,
 	}).Find(&instances)
 
 	if len(instances) == 0 {
@@ -414,17 +436,26 @@ func (as *AutoScaler) StartOrphanSweeper(ctx context.Context, interval time.Dura
 // sweepOrphans 回收超过策略 TTL 的实例
 func (as *AutoScaler) sweepOrphans(ctx context.Context) {
 	var policies []db.CloudScalingPolicy
-	as.db.Where("enabled = ?", true).Find(&policies)
+	as.db.Find(&policies)
 
+	now := time.Now()
 	for _, policy := range policies {
 		ttl := time.Duration(policy.InstanceTTLMinutes) * time.Minute
-		cutoff := time.Now().Add(-ttl)
+		cutoff := now.Add(-ttl)
+		hardCutoff := now.Add(-(ttl + ttlActiveTaskGracePeriod))
 
 		var expired []db.CloudInstance
 		as.db.Where(
 			"policy_id = ? AND status IN ? AND created_at < ?",
 			policy.ID,
-			[]string{db.CloudStatusRunning, db.CloudStatusWaitingReady, db.CloudStatusError},
+			[]string{
+				db.CloudStatusProvisioning,
+				db.CloudStatusWaitingReady,
+				db.CloudStatusRunning,
+				db.CloudStatusRebooting,
+				db.CloudStatusTerminating,
+				db.CloudStatusError,
+			},
 			cutoff,
 		).Find(&expired)
 
@@ -443,6 +474,12 @@ func (as *AutoScaler) sweepOrphans(ctx context.Context) {
 		}
 
 		for _, inst := range expired {
+			if as.shouldDeferTTLTermination(&inst, hardCutoff) {
+				log.Printf("[OrphanSweeper] Instance %s exceeded TTL (%v) but agent %s still has running tasks; deferring up to %v grace",
+					inst.ID, ttl, inst.AgentID, ttlActiveTaskGracePeriod)
+				continue
+			}
+
 			log.Printf("[OrphanSweeper] Instance %s exceeded TTL (%v), terminating...", inst.ID, ttl)
 			go func(instance db.CloudInstance) {
 				if err := manager.TerminateInstance(ctx, &instance); err != nil {
@@ -451,4 +488,21 @@ func (as *AutoScaler) sweepOrphans(ctx context.Context) {
 			}(inst)
 		}
 	}
+}
+
+func (as *AutoScaler) shouldDeferTTLTermination(inst *db.CloudInstance, hardCutoff time.Time) bool {
+	if inst.Status != db.CloudStatusRunning || inst.AgentID == "" {
+		return false
+	}
+	if !inst.CreatedAt.After(hardCutoff) {
+		return false
+	}
+
+	var node db.Node
+	if err := as.db.Select("running_tasks").
+		Where("agent_id = ? AND status = ?", inst.AgentID, "Alive").
+		First(&node).Error; err != nil {
+		return false
+	}
+	return node.RunningTasks > 0
 }

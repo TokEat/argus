@@ -688,7 +688,7 @@ echo "[Argus] Agent registered as systemd service and started"
                             {values.min_instances ?? 0} ~ {values.max_instances ?? 5} 台
                         </Descriptions.Item>
                         <Descriptions.Item label="扩容阈值">
-                            队列堆积 ≥ {values.scale_up_threshold ?? 50} 任务时触发
+                            队列堆积 &gt; {values.scale_up_threshold ?? 50} 任务时触发
                         </Descriptions.Item>
                         <Descriptions.Item label="缩容阈值">
                             队列堆积 ≤ {values.scale_down_threshold ?? 0} 任务时缩容
@@ -1287,7 +1287,7 @@ echo "[Argus] Agent registered as systemd service and started"
                             </Form.Item>
                         </Col>
                         <Col span={12}>
-                            <Form.Item name="instance_ttl_minutes" label="TTL 强制回收 (分钟)" extra="实例最大存活时间，超时由后台强杀">
+                            <Form.Item name="instance_ttl_minutes" label="TTL 回收 (分钟)" extra="到期优先等待任务空闲，超过 30 分钟宽限仍未空闲才强制释放">
                                 <InputNumber min={10} style={{ width: '100%' }} />
                             </Form.Item>
                         </Col>
@@ -1838,7 +1838,7 @@ echo "[Argus] Agent registered as systemd service and started"
                                             {linkedPolicy && (
                                                 <div style={{ marginTop: 10, padding: '6px 12px', background: '#eff6ff', borderRadius: 6, fontSize: 12, color: '#3b82f6' }}>
                                                     <CheckCircleOutlined style={{ marginRight: 4 }} />
-                                                    实例将在 {linkedPolicy.instance_ttl_minutes} 分钟后自动释放（策略: {linkedPolicy.name}）
+                                                    实例将在 {linkedPolicy.instance_ttl_minutes} 分钟后进入回收窗口，忙碌时最多宽限 30 分钟（策略: {linkedPolicy.name}）
                                                 </div>
                                             )}
 

@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "implementation-status.md",
+                "file": "ai_copilot_architecture.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "implementation-status"
+              "title": "ai_copilot_architecture"
             }
           }
         ]
@@ -94,7 +94,7 @@
             "state": {
               "type": "backlink",
               "state": {
-                "file": "implementation-status.md",
+                "file": "ai_copilot_architecture.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -104,7 +104,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "implementation-status 的反向链接列表"
+              "title": "ai_copilot_architecture 的反向链接列表"
             }
           },
           {
@@ -113,12 +113,12 @@
             "state": {
               "type": "outgoing-link",
               "state": {
-                "file": "implementation-status.md",
+                "file": "ai_copilot_architecture.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "implementation-status 的出链列表"
+              "title": "ai_copilot_architecture 的出链列表"
             }
           },
           {
@@ -156,13 +156,13 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "implementation-status.md",
+                "file": "ai_copilot_architecture.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "implementation-status 的大纲"
+              "title": "ai_copilot_architecture 的大纲"
             }
           }
         ]
@@ -185,6 +185,14 @@
   },
   "active": "b4b667da51d5d7bd",
   "lastOpenFiles": [
+    "exp-capability-planning.md",
+    "argus-technical-whitepaper.md",
+    "cloud-resource-scheduling.md",
+    "db_schema.md",
+    "ai_copilot_architecture.md",
+    "distributed-scan-architecture.md",
+    "implementation-status.md",
+    "project-structure.md",
     "tenant-rbac.md",
     "whitepaper-plan.md",
     "rule-catalog-init.md",
@@ -192,15 +200,8 @@
     "interface-implementations.md",
     "agent_scan_flow.md",
     "agent-pull-architecture.md",
-    "project-structure.md",
-    "argus-technical-whitepaper.md",
-    "implementation-status.md",
-    "cloud-resource-scheduling.md",
-    "distributed-scan-architecture.md",
-    "db_schema.md",
     "development-guide.md",
     "deployment-guide.md",
-    "未命名.canvas",
-    "ai_copilot_architecture.md"
+    "未命名.canvas"
   ]
 }

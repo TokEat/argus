@@ -355,6 +355,9 @@ func InitRouter(port string) {
 		// 规则清单（增量同步用）
 		api.GET("/arsenals/manifest", getArsenalManifest)
 
+		// Arsenal 安装/迁移 DB 导出（admin 用）
+		api.GET("/arsenals/seed-db", exportArsenalSeedDB)
+
 		// Arsenal DB 整体同步（Agent 用）
 		api.GET("/arsenals/db", getArsenalDB)
 		api.GET("/arsenals/db/hash", getArsenalDBHash)

@@ -74,6 +74,7 @@ var permissionRules = map[string]string{
 	// 管理动作：admin only。更具体的规则会覆盖上面的 operator 通配符。
 	"POST:/arsenals/*/*/approve":  "admin",
 	"POST:/arsenals/*/*/rollback": "admin",
+	"GET:/arsenals/seed-db":       "admin",
 	"GET:/build/artifacts":        "admin",
 	"POST:/build/client":          "admin",
 	"GET:/users":                  "admin",

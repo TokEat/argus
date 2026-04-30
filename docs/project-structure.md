@@ -53,5 +53,6 @@
 - [数据库设计总览](db_schema.md)
 - [分布式扫描架构](distributed-scan-architecture.md)
 - [云资源动态调度](cloud-resource-scheduling.md)
+- [EXP 能力规划](exp-capability-planning.md)
 - [AI Copilot 架构](ai_copilot_architecture.md)
 - [技术白皮书](argus-technical-whitepaper.md)

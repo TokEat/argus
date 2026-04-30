@@ -1,16 +1,18 @@
 import React, { useRef, useEffect } from 'react';
-import { Tabs } from 'antd';
+import { App, Button, Tabs } from 'antd';
 import {
     BugOutlined,
     ScanOutlined,
     ApartmentOutlined,
     FolderOpenOutlined,
     ExperimentOutlined,
+    DownloadOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { canAccessRole } from '../../utils/auth';
 import gsap from 'gsap';
 import NetworkCanvas from '../../components/NetworkCanvas';
+import { exportArsenalSeedDB } from '../../services/api';
 
 
 
@@ -22,6 +24,27 @@ const ConfigLayout: React.FC<ConfigLayoutProps> = ({ children }) => {
     const navigate = useNavigate();
     const location = useLocation();
     const pageRef = useRef<HTMLDivElement>(null);
+    const { message } = App.useApp();
+    const canExportSeedDB = canAccessRole('admin');
+
+    const handleExportSeedDB = async () => {
+        if (!canExportSeedDB) return;
+        try {
+            const blob = await exportArsenalSeedDB();
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+            link.href = url;
+            link.download = `arsenal_seed_${ts}.db`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.URL.revokeObjectURL(url);
+            message.success('弹药库安装 DB 已导出');
+        } catch (err: unknown) {
+            message.error(typeof err === 'string' ? err : '导出失败');
+        }
+    };
 
     /* GSAP entrance */
     useEffect(() => {
@@ -71,6 +94,11 @@ const ConfigLayout: React.FC<ConfigLayoutProps> = ({ children }) => {
                     style={{ marginBottom: 0 }}
                     tabBarStyle={{ marginBottom: 0 }}
                 />
+                {canExportSeedDB && (
+                    <Button icon={<DownloadOutlined />} onClick={handleExportSeedDB}>
+                        导出安装 DB
+                    </Button>
+                )}
             </div>
             <div className="config-animate-in" style={{ position: 'relative', zIndex: 1 }}>
                 {children}

@@ -179,7 +179,7 @@ export const menuRoutes: RouteConfig[] = [
         path: '/system',
         name: '系统管理',
         icon: <SettingOutlined />,
-        minRole: 'admin',
+        minRole: 'operator',
         children: [
             {
                 path: '/users',
@@ -208,7 +208,7 @@ export const menuRoutes: RouteConfig[] = [
                 name: 'AI 配置',
                 icon: <RobotOutlined />,
                 element: <AIConfig />,
-                minRole: 'admin',
+                minRole: 'operator',
             },
         ],
     },
