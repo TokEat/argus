@@ -23,6 +23,7 @@ const (
 	copilotActionUpsertWorkflow    = "upsert_workflow_draft"
 	copilotActionCreateTaskDraft   = "create_task_draft"
 	copilotActionUpsertDirDraft    = "upsert_dir_draft"
+	copilotActionCreateExpDraft    = "create_exp_draft"
 	maxCopilotDraftContentSizeByte = 512 * 1024
 )
 
@@ -97,6 +98,8 @@ func executeCopilotAction(c *gin.Context, actionType string, action CopilotPendi
 		return executeCreateTaskDraft(c, action.Params)
 	case copilotActionUpsertDirDraft:
 		return executeUpsertDirDraft(currentTenantID(c), action.Params)
+	case copilotActionCreateExpDraft:
+		return executeCreateExpDraft(currentTenantID(c), action.Params)
 	default:
 		return copilotActionResult{}, fmt.Errorf("unsupported copilot action_type %q", actionType)
 	}
@@ -282,6 +285,64 @@ func executeUpsertDirDraft(tenantID string, params map[string]interface{}) (copi
 	}, nil
 }
 
+func executeCreateExpDraft(tenantID string, params map[string]interface{}) (copilotActionResult, error) {
+	fileName := strings.TrimSpace(stringParam(params, "file_name"))
+	content := stringParam(params, "content")
+	if fileName == "" || content == "" {
+		return copilotActionResult{}, fmt.Errorf("file_name and content are required")
+	}
+	if err := validateDraftFileName(fileName, true); err != nil {
+		return copilotActionResult{}, err
+	}
+	if len(content) > maxCopilotDraftContentSizeByte {
+		return copilotActionResult{}, fmt.Errorf("content is too large")
+	}
+	if err := yaml.Unmarshal([]byte(content), &struct{}{}); err != nil {
+		return copilotActionResult{}, fmt.Errorf("content is not valid YAML: %w", err)
+	}
+
+	hash := fmt.Sprintf("%x", md5.Sum([]byte(content)))
+	var existing db.Arsenal
+	previousHash := ""
+	previousContent := ""
+	version := 1
+	if err := db.DB.Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, "exp", fileName).First(&existing).Error; err == nil {
+		previousHash = existing.Hash
+		previousContent = existing.Content
+		version = existing.Version + 1
+	}
+	arsenal := db.Arsenal{
+		ID:              db.BuildTenantArsenalID(tenantID, "exp", fileName),
+		TenantID:        tenantID,
+		Type:            "exp",
+		FileName:        fileName,
+		Content:         content,
+		Hash:            hash,
+		PreviousHash:    previousHash,
+		PreviousContent: previousContent,
+		Version:         version,
+		State:           "Draft",
+	}
+	if err := db.DB.Save(&arsenal).Error; err != nil {
+		return copilotActionResult{}, err
+	}
+	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+		return copilotActionResult{}, err
+	}
+	return copilotActionResult{
+		Status:     "saved",
+		Message:    "EXP draft saved. Approval still requires the existing arsenal review flow.",
+		ActionType: copilotActionCreateExpDraft,
+		Object: map[string]interface{}{
+			"type":      "exp",
+			"file_name": fileName,
+			"state":     "Draft",
+			"hash":      hash,
+			"version":   version,
+		},
+	}, nil
+}
+
 func executeUpsertWorkflowDraft(tenantID string, params map[string]interface{}) (copilotActionResult, error) {
 	product := strings.TrimSpace(stringParam(params, "product"))
 	if product == "" {
@@ -441,6 +502,19 @@ func normalizePendingAction(action *CopilotPendingAction) bool {
 		}
 		if action.RiskLevel == "" {
 			action.RiskLevel = "low"
+		}
+	case copilotActionCreateExpDraft:
+		if action.Title == "" {
+			action.Title = "保存 EXP 草稿"
+		}
+		if action.RequiredRole == "" {
+			action.RequiredRole = "operator"
+		}
+		if action.ConfirmLabel == "" {
+			action.ConfirmLabel = "保存草稿"
+		}
+		if action.RiskLevel == "" {
+			action.RiskLevel = "medium"
 		}
 	default:
 		return false
