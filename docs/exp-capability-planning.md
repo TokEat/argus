@@ -482,45 +482,91 @@ CleanupExploit(ExploitCleanupReq) returns (ExploitCleanupResp)
 
 ## 6. 实施阶段
 
-### Phase 1：规则库与数据模型
+### Phase 1：规则库与数据模型 ✅ 已完成
 
-- 新增 `exp` 原始规则类型。
-- 新增 `exploit_rules` 物化表。
-- 新增 EXP 列表、创建、编辑、审核 API。
-- 新增前端弹药库 `EXP 验证库` 页签。
-- `/arsenals/seed-db` 导出包含 `exp`。
-- `SeedArsenalFromSQLite` 导入后物化 EXP。
-- 只做规则管理，不执行。
+- [x] `CanonicalArsenalType` / `ArsenalTypeAliases` 支持 `exp` / `exploit` 别名。
+- [x] `ExploitRule` 模型 + `exploit_rules` 建表 migration（含 `description`、`dry_run_supported` 字段）。
+- [x] `materializeExploitRule` / `parseExploitMeta` YAML 解析物化链路。
+- [x] EXP 列表 API `GET /api/v1/exploits`（筛选：risk_level / product / cve / 关键词）。
+- [x] EXP CRUD API：approve / deprecate / delete。
+- [x] EXP 包校验 `validateExpPackage`（基础/严格两级），集成到 `saveArsenal` / `approveArsenal`。
+- [x] 漏洞/资产 → EXP 候选推荐 `GET /api/v1/vulns/:id/exploit-candidates` / `GET /api/v1/assets/:id/exploit-candidates`。
+- [x] RBAC 权限规则覆盖全部 EXP 端点。
+- [x] 前端弹药库 `EXP 验证库` 页签（列表/筛选/新增/编辑/详情面板）。
+- [x] `/arsenals/seed-db` 导出包含 `exp`，`SeedArsenalFromSQLite` 导入后物化 EXP。
+- [x] 单元测试 `TestCanonicalArsenalTypeEXP` / `TestMaterializeExploitRule`。
 
-### Phase 2：单目标 dry-run
+涉及文件：
+- `server/internal/db/rule_catalog.go` — 模型、解析、物化
+- `server/internal/db/migrations/100_add_exploit_rules.sql` — 建表
+- `server/internal/api/handler_exploits.go` — 校验、CRUD、候选推荐
+- `server/internal/api/router.go` — 路由注册
+- `server/internal/api/middleware_rbac.go` — RBAC 规则
+- `server-ui/src/pages/config/ExploitConfig.tsx` — 前端页签
+- `server-ui/src/pages/config/ConfigLayout.tsx` — Tab 集成
+- `server-ui/src/routes.tsx` — 路由
+- `server-ui/src/services/api.ts` — API 函数
+- `server-ui/src/services/typings.d.ts` — 类型定义
 
-- 实现参数 schema 校验。
-- 实现 dry-run 预览。
-- 展示将执行的步骤、副作用和 cleanup。
-- 实现脚本静态校验和 capability 校验。
-- 不下发 Agent。
+### Phase 2：单目标 dry-run ✅ 已完成
 
-### Phase 3：单目标受控执行
+- [x] 参数 schema 校验 `validateExpParams`（必填检查、类型匹配：string / int / bool）。
+- [x] 脚本静态扫描 `scanScriptForForbiddenSymbols`（20+ 禁用符号：import / exec / eval / os / subprocess 等）。
+- [x] dry-run 端点 `POST /api/v1/exploits/:id/dry-run`（解析 EXP YAML 返回执行计划预览）。
+- [x] 支持 scripts 模式（返回 script_preview / cleanup_preview）和 steps 模式（返回 steps / cleanup）。
+- [x] 前端 dry-run 面板（目标输入、动态参数表单、预览结果：风险/副作用/capabilities/脚本预览）。
+- [x] RBAC `POST:/exploits/*/dry-run` → operator。
 
-- Agent 支持声明式 steps 与 Starlark 脚本执行。
-- Server 新增 `exploit_runs`。
-- 支持 low / medium EXP 单目标执行。
-- 支持 timeout、取消、状态回传。
+涉及文件：
+- `server/internal/api/handler_exploits.go` — validateExpParams / dryRunExploit / 脚本扫描
+- `server/internal/api/router.go` — dry-run 路由
+- `server-ui/src/pages/config/ExploitConfig.tsx` — 预览按钮和 Drawer
+- `server-ui/src/services/api.ts` — dryRunExploit 函数
+- `server-ui/src/services/typings.d.ts` — DryRunResponse 类型
 
-### Phase 4：清理与审计闭环
+### Phase 3：单目标受控执行（Server 侧）✅ 已完成
+
+- [x] `ExploitRun` 模型 + AutoMigrate 注册。
+- [x] `exploit_runs` / `exploit_artifacts` 建表 migration（`110_add_exploit_runs.sql`）。
+- [x] 创建执行 `POST /api/v1/exploit-runs`（参数校验 + 全局并发限制 + 目标级并发保护）。
+- [x] 执行列表 `GET /api/v1/exploit-runs`（支持 exploit_id / status / target 筛选）。
+- [x] 执行详情 `GET /api/v1/exploit-runs/:id`。
+- [x] 取消执行 `POST /api/v1/exploit-runs/:id/cancel`（仅 Pending / Running）。
+- [x] 手动清理 `POST /api/v1/exploit-runs/:id/cleanup`（仅 Succeeded / CleanupFailed）。
+- [x] `ExploitResultHook` 回调，供 gRPC StreamDebug 接收 Agent 执行结果。
+- [x] 前端执行确认面板（目标输入、参数表单、风险确认、副作用声明）。
+- [x] RBAC 全套 exploit-runs 端点权限。
+
+涉及文件：
+- `server/internal/db/db.go` — ExploitRun 模型 + ExploitResultHook
+- `server/internal/db/schema_runtime.go` — AutoMigrate 注册
+- `server/internal/db/migrations/110_add_exploit_runs.sql` — 建表
+- `server/internal/api/handler_exploits.go` — exploit-runs CRUD
+- `server/internal/api/router.go` — 路由注册
+- `server-ui/src/pages/config/ExploitConfig.tsx` — 执行确认面板
+- `server-ui/src/services/api.ts` — exploit-runs API 函数
+- `server-ui/src/services/typings.d.ts` — ExploitRun 类型
+
+待完成（Agent 侧）：
+- Agent Starlark 引擎嵌入（声明式 steps 编译 + Starlark 脚本沙箱执行）
+- Agent 通过 gRPC ClaimTask 认领 EXP 任务
+- Agent 通过 StreamDebug 回传执行结果
+- Server 侧 ExploitResultHook 实现状态流转和证据入库
+
+### Phase 4：清理与审计闭环 🔲 待开始
 
 - 支持 cleanup 自动执行和手动重试。
 - 支持执行证据和清理证据入库。
 - 漏洞详情页展示 EXP 验证状态。
 
-### Phase 5：高风险能力
+### Phase 5：高风险能力 🔲 待开始
 
 - 引入 high 风险二次确认。
 - 引入 admin 授权流。
 - 引入全局开关和租户级开关。
 - 评估是否开放有限批量复验。
 
-### Phase 6：隔离执行扩展
+### Phase 6：隔离执行扩展 🔲 待开始
 
 - 评估 WASM / 容器 / 独立 worker。
 - 支持更复杂协议和脚本能力。
@@ -684,3 +730,11 @@ Pending → Running → Succeeded
 - `CleanupRunning` — 正在清理
 - `CleanupFailed` — 清理失败
 - `Cancelled` — 操作人取消
+
+## 10. 变更记录
+
+| 日期 | 阶段 | 内容 |
+|------|------|------|
+| 2026-04-30 | Phase 1 | 规则库闭环：ExploitRule 模型、migration、YAML 解析物化、CRUD API、EXP 包校验（基础/严格）、候选推荐、RBAC、前端 EXP 验证库页签（列表/筛选/新增/编辑/详情）、seed DB 导出、单元测试 |
+| 2026-04-30 | Phase 2 | dry-run 预览：参数 schema 校验、脚本静态扫描（20+ 禁用符号）、dry-run 端点（scripts/steps 两种模式预览）、前端预览面板（目标输入/动态参数表单/风险/副作用/脚本预览） |
+| 2026-04-30 | Phase 3 | Server 侧执行生命周期：ExploitRun 模型、exploit_runs 建表、创建执行（并发限制+参数校验）、列表/详情/取消/清理 API、ExploitResultHook 回调、前端执行确认面板（风险确认+副作用声明） |
