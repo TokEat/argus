@@ -313,6 +313,13 @@ func InitRouter(port string) {
 		api.GET("/vulns/:id/exploit-candidates", getExploitCandidatesForVuln)
 		api.GET("/assets/:id/exploit-candidates", getExploitCandidatesForAsset)
 
+		// EXP 执行管理
+		api.POST("/exploit-runs", createExploitRun)
+		api.GET("/exploit-runs", listExploitRuns)
+		api.GET("/exploit-runs/:id", getExploitRun)
+		api.POST("/exploit-runs/:id/cancel", cancelExploitRun)
+		api.POST("/exploit-runs/:id/cleanup", cleanupExploitRun)
+
 		// 战报输出引擎
 		api.GET("/reports/export/vulns", exportVulns)
 

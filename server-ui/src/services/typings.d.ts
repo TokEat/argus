@@ -672,6 +672,27 @@ declare namespace API {
     params_errors: string[];
   }
 
+  interface ExploitRun {
+    id: number;
+    tenant_id: string;
+    project_id: string;
+    asset_id: string;
+    target: string;
+    exploit_id: string;
+    operator_id: string;
+    risk_level: string;
+    status: string;
+    started_at: string;
+    finished_at: string;
+    evidence: string;
+    side_effects: string;
+    cleanup_status: string;
+    cleanup_evidence: string;
+    error_message: string;
+    created_at: string;
+    updated_at: string;
+  }
+
   interface ExploitRule {
     id: number;
     tenant_id: string;

@@ -323,6 +323,33 @@ type AgentLog struct {
 	CreatedAt time.Time
 }
 
+// ExploitRun records one EXP execution against a single target.
+type ExploitRun struct {
+	ID              uint        `gorm:"primaryKey;autoIncrement"`
+	TenantID        string      `gorm:"default:'default';index"`
+	ProjectID       string      `gorm:"index"`
+	AssetID         string      `gorm:"index"`
+	Target          string      `gorm:"index;not null"`
+	ExploitID       string      `gorm:"index;not null"`
+	LinkedPocID     string      `gorm:"index"`
+	OperatorID      string      `gorm:"index;not null"`
+	RiskLevel       string      `gorm:"index;default:'medium'"`
+	Status          string      `gorm:"index;default:'Pending'"`
+	ParamsDigest    string      `gorm:"index"`
+	StartedAt       *time.Time
+	FinishedAt      *time.Time
+	Evidence        string      `gorm:"type:jsonb"`
+	SideEffects     string      `gorm:"type:jsonb"`
+	CleanupStatus   string      `gorm:"index"`
+	CleanupEvidence string      `gorm:"type:jsonb"`
+	ErrorMessage    string      `gorm:"type:text"`
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+// ExploitResultHook is called by gRPC StreamDebug when EXP results arrive.
+var ExploitResultHook func(event interface{})
+
 func UpdateNodeHeartbeat(agentID string) error {
 	return DB.Model(&Node{}).Where("agent_id = ?", agentID).
 		Update("last_beat", time.Now().UnixMilli()).Error

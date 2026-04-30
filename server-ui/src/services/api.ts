@@ -830,4 +830,37 @@ export async function dryRunExploit(id: number, target: string, params?: Record<
     return request.post(`/exploits/${id}/dry-run`, { target, params: params || {} });
 }
 
+// ===========================
+// EXP Run API
+// ===========================
+
+export async function createExploitRun(data: {
+    exploit_id: number;
+    target: string;
+    project_id?: string;
+    params?: Record<string, unknown>;
+}): Promise<API.ExploitRun> {
+    return request.post('/exploit-runs', data);
+}
+
+export async function listExploitRuns(params?: {
+    exploit_id?: string;
+    status?: string;
+    target?: string;
+}): Promise<API.ExploitRun[]> {
+    return request.get('/exploit-runs', { params });
+}
+
+export async function getExploitRun(id: number): Promise<API.ExploitRun> {
+    return request.get(`/exploit-runs/${id}`);
+}
+
+export async function cancelExploitRun(id: number): Promise<API.MessageResponse> {
+    return request.post(`/exploit-runs/${id}/cancel`);
+}
+
+export async function cleanupExploitRun(id: number): Promise<API.MessageResponse> {
+    return request.post(`/exploit-runs/${id}/cleanup`);
+}
+
 export default request;
