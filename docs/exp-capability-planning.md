@@ -546,3 +546,141 @@ CleanupExploit(ExploitCleanupReq) returns (ExploitCleanupResp)
 5. 有副作用的 EXP 优先支持 cleanup。
 6. 证据最小化，敏感信息默认脱敏。
 7. 高危能力通过全局开关、角色权限和二次确认共同约束。
+
+## 9. 补充设计
+
+### 9.1 执行层数据表 Schema
+
+`exploit_runs` 记录每次 EXP 执行的完整审计链：
+
+```sql
+CREATE TABLE IF NOT EXISTS exploit_runs (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    project_id TEXT,
+    asset_id TEXT,
+    target TEXT NOT NULL,
+    exploit_id TEXT NOT NULL,
+    linked_poc_id TEXT,
+    operator_id TEXT NOT NULL,
+    risk_level TEXT NOT NULL DEFAULT 'medium',
+    status TEXT NOT NULL DEFAULT 'Pending',
+    params_digest TEXT,
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    evidence JSONB,
+    side_effects JSONB,
+    cleanup_status TEXT,
+    cleanup_evidence JSONB,
+    error_message TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+`exploit_artifacts` 存储大型证据附件，设置保留周期：
+
+```sql
+CREATE TABLE IF NOT EXISTS exploit_artifacts (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    run_id BIGINT NOT NULL,
+    artifact_type TEXT NOT NULL,
+    file_name TEXT,
+    content BYTEA,
+    content_hash TEXT,
+    size_bytes BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+### 9.2 EXP 包校验集成点
+
+校验分三级，嵌入现有弹药库管理流程：
+
+| 阶段 | 时机 | 校验内容 |
+|------|------|----------|
+| 基础校验 | `saveArsenal` (type=exp) | YAML schema 合法、kind 版本受支持、id/risk_level/capabilities 必填、cleanup_required=true 时必须有 cleanup 入口 |
+| 严格校验 | `approveArsenal` (type=exp) | 基础校验全部通过 + capability 值在允许列表内 + linked_pocs 指向存在的 POC 时检查健康状态 + 脚本入口函数存在 + 脚本静态扫描无禁用符号 |
+| 运行前校验 | 执行前 | 严格校验全部通过 + 参数通过 params_schema 校验 + 风险确认已完成 + 高危/破坏性 EXP 经 admin 二次确认 |
+
+校验失败的 EXP 在 `exploit_rules` 物化时标记为 `state=Invalid`，并记录错误摘要到 `RuleCatalogBootstrap.LastError`。
+
+### 9.3 漏洞/资产 → EXP 候选推荐匹配逻辑
+
+候选推荐基于三个维度匹配，返回按风险等级排序的结果：
+
+| 匹配维度 | 逻辑 | 优先级 |
+|----------|------|--------|
+| CVE 匹配 | `exploit_rules.cve = vuln.cve` | 最高 |
+| 产品匹配 | `exploit_rules.target_product IN (资产指纹产品列表)` | 高 |
+| POC 关联 | `exploit_rules.linked_pocs @> [已命中的 POC 规则名]` | 中 |
+
+API 端点：
+- `GET /api/v1/vulns/:id/exploit-candidates` — 基于漏洞 plugin 匹配 EXP target_product
+- `GET /api/v1/assets/:id/exploit-candidates` — 基于资产指纹产品和关联漏洞 plugin 匹配
+
+### 9.4 EXP 执行限流策略
+
+| 层级 | 策略 | 实现 |
+|------|------|------|
+| 全局 | `EXP_MAX_CONCURRENCY` 限制同一租户同时运行的 EXP 数量 | Server 侧 `exploit_runs` 计数 |
+| 单规则 | `policy.max_concurrency` 限制同一 EXP 同时运行数 | Server 侧 `exploit_runs WHERE exploit_id = ? AND status = 'Running'` 计数 |
+| 目标级 | 同一目标同一时间只能有一个 EXP 运行 | Server 侧 `exploit_runs WHERE target = ? AND status = 'Running'` 计数 |
+
+限流超限时返回 `429 Too Many Requests`，不排队。原因：EXP 是人工触发的单次操作，排队会混淆操作意图。
+
+### 9.5 Agent 侧 EXP 规则同步策略
+
+EXP 规则**不**进入 Agent 的常规扫描规则同步（`agentSyncArsenalTypes()` 不包含 `exp`）。
+
+同步方式：
+- **预同步**：Agent 通过 `/arsenals/exp/db` 独立端点拉取 EXP 规则 DB，与常规 `/arsenals/db` 分离
+- **按需拉取**：Server 下发 EXP 执行指令时附带完整 EXP 包内容，Agent 无需预存
+- **隔离存储**：Agent 侧 EXP 规则存入独立的 `exp_rules` 表或独立 DB 文件，扫描引擎不加载
+
+建议 Phase 3 实现按需拉取，Phase 5+ 评估是否需要预同步。
+
+### 9.6 EXP 执行结果通知
+
+EXP 执行状态变更通过现有 WebSocket 广播机制推送到前端：
+
+- `exploit_run.created` — 执行已创建
+- `exploit_run.started` — Agent 开始执行
+- `exploit_run.completed` — 执行完成（成功/失败）
+- `exploit_run.cleanup_started` — 开始清理
+- `exploit_run.cleanup_completed` — 清理完成/失败
+
+复用 `Hub.BroadcastToTenant(tenantID, event, payload)` 机制，前端通过现有 WebSocket 连接监听。
+
+### 9.7 测试策略
+
+| 层级 | 测试内容 | 时机 |
+|------|----------|------|
+| 单元测试 | YAML 解析（parseExploitMeta）、字段校验、capability 校验、物化链路 | 每次提交 |
+| API 测试 | CRUD + 权限校验（viewer/operator/admin 角色覆盖） | 每次提交 |
+| 集成测试 | EXP 包保存 → 物化 → 列表查询 → 审核 → 候选推荐完整链路 | 每次提交 |
+| 执行 mock 测试 | 声明式 steps 编译、Starlark 脚本沙箱执行、超时/取消、cleanup 生命周期 | Phase 3+ |
+| 安全测试 | 禁用符号检测、capability 越权检测、脚本沙箱逃逸检测 | Phase 3+ |
+
+### 9.8 状态机完整定义
+
+EXP 执行状态流转：
+
+```
+Pending → Running → Succeeded
+                  → Failed
+                  → CleanupRequired → CleanupRunning → Succeeded
+                                                     → CleanupFailed
+                  → Cancelled
+```
+
+`exploit_runs.status` 枚举值：
+- `Pending` — 已创建，等待 Agent 领取
+- `Running` — Agent 正在执行
+- `Succeeded` — 验证成功
+- `Failed` — 验证失败或超时
+- `CleanupRequired` — 需要清理
+- `CleanupRunning` — 正在清理
+- `CleanupFailed` — 清理失败
+- `Cancelled` — 操作人取消

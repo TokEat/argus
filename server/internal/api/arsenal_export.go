@@ -79,6 +79,14 @@ type agentDirProbe struct {
 
 func (agentDirProbe) TableName() string { return "dir_probes" }
 
+func agentSyncArsenalTypes() []string {
+	types := append([]string{}, db.ArsenalTypeAliases("finger")...)
+	types = append(types, db.ArsenalTypeAliases("workflow")...)
+	types = append(types, db.ArsenalTypeAliases("dir")...)
+	types = append(types, db.ArsenalTypeAliases("poc")...)
+	return types
+}
+
 // ====================================================================
 // 构建 SQLite DB 文件
 // ====================================================================
@@ -267,10 +275,8 @@ func buildArsenalSeedSQLiteDB(tenantID string) (filePath string, hash string, co
 	}
 
 	var arsenals []db.Arsenal
-	exportTypes := append([]string{}, db.ArsenalTypeAliases("finger")...)
-	exportTypes = append(exportTypes, db.ArsenalTypeAliases("workflow")...)
-	exportTypes = append(exportTypes, db.ArsenalTypeAliases("dir")...)
-	exportTypes = append(exportTypes, db.ArsenalTypeAliases("poc")...)
+	exportTypes := agentSyncArsenalTypes()
+	exportTypes = append(exportTypes, db.ArsenalTypeAliases("exp")...)
 	if err := db.DB.
 		Where("tenant_id = ? AND type IN ?", tenantID, exportTypes).
 		Order("type, file_name").
@@ -368,7 +374,7 @@ func getArsenalDBHash(c *gin.Context) {
 	var arsenals []db.Arsenal
 	tenantID := currentTenantID(c)
 	db.DB.Select("tenant_id, type, file_name, hash, state, version").
-		Where("tenant_id = ? AND state = ?", tenantID, "Approved").
+		Where("tenant_id = ? AND state = ? AND type IN ?", tenantID, "Approved", agentSyncArsenalTypes()).
 		Order("tenant_id, type, file_name").
 		Find(&arsenals)
 

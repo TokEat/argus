@@ -646,4 +646,58 @@ declare namespace API {
     Timestamp: number;
     CreatedAt: string;
   }
+
+  // ======================== EXP 规则 ========================
+
+  interface DryRunResponse {
+    exploit_id: string;
+    target: string;
+    risk_level: string;
+    requires_auth: boolean;
+    side_effects: string[];
+    cleanup_supported: boolean;
+    cleanup_required: boolean;
+    timeout_sec: number;
+    capabilities: string[];
+    execution_plan: {
+      mode: string;
+      engine?: string;
+      entry?: string;
+      script_preview?: string;
+      cleanup_preview?: string;
+      steps?: unknown[];
+      cleanup?: unknown[];
+    };
+    params_valid: boolean;
+    params_errors: string[];
+  }
+
+  interface ExploitRule {
+    id: number;
+    tenant_id: string;
+    artifact_id: string;
+    source_file: string;
+    rule_id: string;
+    name: string;
+    description: string;
+    target_product: string;
+    cve: string;
+    risk_level: string;
+    requires_auth: boolean;
+    side_effects: string[];
+    cleanup_supported: boolean;
+    cleanup_required: boolean;
+    dry_run_supported: boolean;
+    capabilities: string[];
+    linked_pocs: string[];
+    params_schema: Record<string, unknown>;
+    timeout_sec: number;
+    runtime_engine: string;
+    content_hash: string;
+    version: number;
+    state: string;
+    enabled: boolean;
+    created_at: string;
+    updated_at: string;
+  }
 }

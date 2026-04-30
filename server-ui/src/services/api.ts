@@ -800,4 +800,34 @@ export async function rollbackArsenal(type: string, filename: string): Promise<A
     return request.post(`/arsenals/${type}/${filename}/rollback`);
 }
 
+// ===========================
+// EXP Rule API
+// ===========================
+
+export async function listExploitRules(params?: {
+    all?: string;
+    risk_level?: string;
+    product?: string;
+    cve?: string;
+    q?: string;
+}): Promise<API.ExploitRule[]> {
+    return request.get('/exploits', { params });
+}
+
+export async function approveExploitRule(id: number): Promise<API.MessageResponse> {
+    return request.post(`/exploits/${id}/approve`);
+}
+
+export async function deprecateExploitRule(id: number): Promise<API.MessageResponse> {
+    return request.post(`/exploits/${id}/deprecate`);
+}
+
+export async function deleteExploitRule(id: number): Promise<API.MessageResponse> {
+    return request.delete(`/exploits/${id}`);
+}
+
+export async function dryRunExploit(id: number, target: string, params?: Record<string, unknown>): Promise<API.DryRunResponse> {
+    return request.post(`/exploits/${id}/dry-run`, { target, params: params || {} });
+}
+
 export default request;

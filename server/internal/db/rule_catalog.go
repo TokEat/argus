@@ -2,6 +2,7 @@ package db
 
 import (
 	"crypto/md5"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -18,7 +19,7 @@ import (
 
 const (
 	RuleCatalogBootstrapKey    = "rule_catalog_v1"
-	RuleCatalogSchemaVersion   = 1
+	RuleCatalogSchemaVersion   = 2
 	RuleCatalogStatusReady     = "ready"
 	RuleCatalogStatusPartial   = "partial"
 	RuleCatalogStatusEmpty     = "empty"
@@ -38,6 +39,7 @@ type RuleCatalogBootstrap struct {
 	WorkflowCount    int
 	DirProbeCount    int
 	PocCount         int
+	ExploitCount     int
 	LastError        string `gorm:"type:text"`
 	LastSeededAt     *time.Time
 	CreatedAt        time.Time
@@ -115,6 +117,37 @@ type DirRule struct {
 	UpdatedAt   time.Time
 }
 
+// ExploitRule stores searchable metadata for one EXP package. The raw YAML and
+// script content stays in arsenals so migration and rollback use one truth source.
+type ExploitRule struct {
+	ID               uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID         string `gorm:"default:'default';index;uniqueIndex:idx_exploit_rule_unique"`
+	ArtifactID       string `gorm:"index"`
+	SourceFile       string `gorm:"index"`
+	RuleID           string `gorm:"index;not null;uniqueIndex:idx_exploit_rule_unique"`
+	Name             string `gorm:"index;not null"`
+	Description      string `gorm:"type:text"`
+	TargetProduct    string `gorm:"index"`
+	CVE              string `gorm:"index"`
+	RiskLevel        string `gorm:"index;default:'medium'"`
+	RequiresAuth     bool   `gorm:"default:false;index"`
+	SideEffects      string `gorm:"type:text"`
+	CleanupSupported bool   `gorm:"default:false;index"`
+	CleanupRequired  bool   `gorm:"default:false;index"`
+	DryRunSupported  bool   `gorm:"default:false;index"`
+	Capabilities     string `gorm:"type:jsonb"`
+	LinkedPocs       string `gorm:"type:jsonb"`
+	ParamsSchema     string `gorm:"type:jsonb"`
+	TimeoutSec       int
+	RuntimeEngine     string `gorm:"index"`
+	ContentHash       string `gorm:"index"`
+	Version          int    `gorm:"default:1"`
+	State            string `gorm:"index"`
+	Enabled          bool   `gorm:"default:true;index"`
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
 func CanonicalArsenalType(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "finger", "fingerprint":
@@ -125,6 +158,8 @@ func CanonicalArsenalType(raw string) string {
 		return "dir"
 	case "poc":
 		return "poc"
+	case "exp", "exploit":
+		return "exp"
 	case "apiconfig":
 		return "apiconfig"
 	default:
@@ -142,6 +177,8 @@ func ArsenalTypeAliases(raw string) []string {
 		return []string{"workflow"}
 	case "poc":
 		return []string{"poc"}
+	case "exp":
+		return []string{"exp", "exploit"}
 	case "apiconfig":
 		return []string{"apiconfig"}
 	default:
@@ -223,6 +260,7 @@ func SyncRuleCatalogFromArsenal() error {
 		WorkflowCount:    len(materialized.workflows),
 		DirProbeCount:    len(materialized.dirs),
 		PocCount:         len(materialized.pocs),
+		ExploitCount:     len(materialized.exploits),
 		LastError:        summarizeRuleCatalogErrors(materialized.errors),
 		LastSeededAt:     &now,
 	}
@@ -240,6 +278,9 @@ func SyncRuleCatalogFromArsenal() error {
 		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&PocRule{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&ExploitRule{}).Error; err != nil {
+			return err
+		}
 
 		if err := createInBatches(tx, materialized.fingerprints); err != nil {
 			return err
@@ -253,6 +294,9 @@ func SyncRuleCatalogFromArsenal() error {
 		if err := createInBatches(tx, materialized.pocs); err != nil {
 			return err
 		}
+		if err := createInBatches(tx, materialized.exploits); err != nil {
+			return err
+		}
 
 		return tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "key"}},
@@ -264,10 +308,11 @@ func SyncRuleCatalogFromArsenal() error {
 	}
 
 	log.Printf(
-		"[RuleCatalog] bootstrap=%s arsenals=%d pocs=%d fingerprints=%d workflows=%d dirs=%d errors=%d",
+		"[RuleCatalog] bootstrap=%s arsenals=%d pocs=%d exploits=%d fingerprints=%d workflows=%d dirs=%d errors=%d",
 		status,
 		len(arsenals),
 		len(materialized.pocs),
+		len(materialized.exploits),
 		len(materialized.fingerprints),
 		len(materialized.workflows),
 		len(materialized.dirs),
@@ -283,6 +328,7 @@ func normalizeLegacyArsenalTypes() error {
 	legacyMappings := map[string]string{
 		"fingerprint": "finger",
 		"dirprobe":    "dir",
+		"exploit":     "exp",
 	}
 
 	return DB.Transaction(func(tx *gorm.DB) error {
@@ -340,6 +386,7 @@ type materializedRuleCatalog struct {
 	workflows    []WorkflowRule
 	dirs         []DirRule
 	pocs         []PocRule
+	exploits     []ExploitRule
 	errors       []string
 }
 
@@ -371,6 +418,13 @@ func materializeRuleCatalog(arsenals []Arsenal) materializedRuleCatalog {
 			out.dirs = append(out.dirs, rows...)
 		case "poc":
 			out.pocs = append(out.pocs, materializePocRule(arsenal))
+		case "exp":
+			rule, err := materializeExploitRule(arsenal)
+			if err != nil {
+				out.errors = append(out.errors, err.Error())
+				continue
+			}
+			out.exploits = append(out.exploits, rule)
 		}
 	}
 
@@ -501,12 +555,139 @@ func materializePocRule(arsenal Arsenal) PocRule {
 	}
 }
 
+func materializeExploitRule(arsenal Arsenal) (ExploitRule, error) {
+	meta, err := parseExploitMeta([]byte(arsenal.Content))
+	if err != nil {
+		return ExploitRule{}, fmt.Errorf("exp yaml parse failed for %s: %w", arsenal.FileName, err)
+	}
+	if meta.RuleID == "" {
+		ext := filepath.Ext(arsenal.FileName)
+		meta.RuleID = strings.TrimSuffix(arsenal.FileName, ext)
+	}
+	if meta.Name == "" {
+		meta.Name = meta.RuleID
+	}
+	if meta.RiskLevel == "" {
+		meta.RiskLevel = "medium"
+	}
+	if meta.TimeoutSec <= 0 {
+		meta.TimeoutSec = 60
+	}
+
+	return ExploitRule{
+		TenantID:         arsenal.TenantID,
+		ArtifactID:       arsenal.ID,
+		SourceFile:       arsenal.FileName,
+		RuleID:           meta.RuleID,
+		Name:             meta.Name,
+		Description:      meta.Description,
+		TargetProduct:    meta.TargetProduct,
+		CVE:              meta.CVE,
+		RiskLevel:        meta.RiskLevel,
+		RequiresAuth:     meta.RequiresAuth,
+		SideEffects:      strings.Join(meta.SideEffects, "\n"),
+		CleanupSupported: meta.CleanupSupported,
+		CleanupRequired:  meta.CleanupRequired,
+		DryRunSupported:  meta.DryRunSupported,
+		Capabilities:     marshalJSONText(meta.Capabilities),
+		LinkedPocs:       marshalJSONText(meta.LinkedPocs),
+		ParamsSchema:     marshalJSONText(meta.ParamsSchema),
+		TimeoutSec:       meta.TimeoutSec,
+		RuntimeEngine:     meta.RuntimeEngine,
+		ContentHash:       arsenal.Hash,
+		Version:           arsenal.Version,
+		State:             arsenal.State,
+		Enabled:           arsenal.State == "Approved",
+	}, nil
+}
+
 type pocMeta struct {
 	id          string
 	severity    string
 	tags        string
 	author      string
 	description string
+}
+
+type exploitMeta struct {
+	RuleID           string
+	Name             string
+	Description      string
+	TargetProduct    string
+	CVE              string
+	RiskLevel        string
+	RequiresAuth     bool
+	SideEffects      []string
+	CleanupSupported bool
+	CleanupRequired  bool
+	DryRunSupported  bool
+	Capabilities     []string
+	LinkedPocs       []string
+	ParamsSchema     map[string]interface{}
+	TimeoutSec       int
+	RuntimeEngine     string
+}
+
+func parseExploitMeta(content []byte) (exploitMeta, error) {
+	type expYAML struct {
+		Kind string `yaml:"kind"`
+		ID   string `yaml:"id"`
+		Info struct {
+			Name          string   `yaml:"name"`
+			Description   string   `yaml:"description"`
+			RiskLevel     string   `yaml:"risk_level"`
+			TargetProduct string   `yaml:"target_product"`
+			CVE           string   `yaml:"cve"`
+			LinkedPocs    []string `yaml:"linked_pocs"`
+			SideEffects   []string `yaml:"side_effects"`
+		} `yaml:"info"`
+		Policy struct {
+			RequiresAuth     bool     `yaml:"requires_auth"`
+			CleanupSupported bool     `yaml:"cleanup_supported"`
+			CleanupRequired  bool     `yaml:"cleanup_required"`
+			DryRunSupported  bool     `yaml:"dry_run_supported"`
+			TimeoutSec       int      `yaml:"timeout_sec"`
+			Capabilities     []string `yaml:"capabilities"`
+			SideEffects      []string `yaml:"side_effects"`
+		} `yaml:"policy"`
+		Params  map[string]interface{} `yaml:"params"`
+		Runtime struct {
+			Engine string `yaml:"engine"`
+		} `yaml:"runtime"`
+	}
+
+	var raw expYAML
+	if err := yaml.Unmarshal(content, &raw); err != nil {
+		return exploitMeta{}, err
+	}
+
+	sideEffects := raw.Policy.SideEffects
+	if len(sideEffects) == 0 {
+		sideEffects = raw.Info.SideEffects
+	}
+	riskLevel := strings.ToLower(strings.TrimSpace(raw.Info.RiskLevel))
+	if riskLevel == "" {
+		riskLevel = "medium"
+	}
+
+	return exploitMeta{
+		RuleID:           strings.TrimSpace(raw.ID),
+		Name:             strings.TrimSpace(raw.Info.Name),
+		Description:      strings.TrimSpace(raw.Info.Description),
+		TargetProduct:    strings.TrimSpace(raw.Info.TargetProduct),
+		CVE:              strings.TrimSpace(raw.Info.CVE),
+		RiskLevel:        riskLevel,
+		RequiresAuth:     raw.Policy.RequiresAuth,
+		SideEffects:      normalizeStringSlice(sideEffects),
+		CleanupSupported: raw.Policy.CleanupSupported,
+		CleanupRequired:  raw.Policy.CleanupRequired,
+		DryRunSupported:  raw.Policy.DryRunSupported,
+		Capabilities:     normalizeStringSlice(raw.Policy.Capabilities),
+		LinkedPocs:       normalizeStringSlice(raw.Info.LinkedPocs),
+		ParamsSchema:     raw.Params,
+		TimeoutSec:       raw.Policy.TimeoutSec,
+		RuntimeEngine:     strings.TrimSpace(raw.Runtime.Engine),
+	}, nil
 }
 
 func parsePocMeta(content []byte) pocMeta {
@@ -531,6 +712,28 @@ func parsePocMeta(content []byte) pocMeta {
 		}
 	}
 	return meta
+}
+
+func normalizeStringSlice(items []string) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func marshalJSONText(v interface{}) string {
+	if v == nil {
+		return "[]"
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return "null"
+	}
+	return string(data)
 }
 
 func buildArsenalAggregateHash(arsenals []Arsenal) string {

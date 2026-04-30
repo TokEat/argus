@@ -18,6 +18,7 @@ import {
     ProfileOutlined,
     ProjectOutlined,
     RobotOutlined,
+    ThunderboltOutlined,
 } from '@ant-design/icons';
 import BasicLayout from './layouts/BasicLayout';
 import Dashboard from './pages/Dashboard';
@@ -32,6 +33,7 @@ import PocConfig from './pages/config/PocConfig';
 import ActiveFingerConfig from './pages/config/DirConfig';
 import DirProbeConfig from './pages/config/DirProbeConfig';
 import WorkflowConfig from './pages/config/WorkflowConfig';
+import ExploitConfig from './pages/config/ExploitConfig';
 import DebugConfig from './pages/config/DebugConfig';
 import ClientBuild from './pages/ClientBuild';
 import UserManagement from './pages/UserManagement';
@@ -148,6 +150,14 @@ export const menuRoutes: RouteConfig[] = [
                 name: 'Dir 探测规则',
                 icon: <ScanOutlined />,
                 element: <ConfigLayout><DirProbeConfig /></ConfigLayout>,
+                hideInMenu: true,
+                minRole: 'viewer',
+            },
+            {
+                path: '/config/exploit',
+                name: 'EXP 验证库',
+                icon: <ThunderboltOutlined />,
+                element: <ConfigLayout><ExploitConfig /></ConfigLayout>,
                 hideInMenu: true,
                 minRole: 'viewer',
             },

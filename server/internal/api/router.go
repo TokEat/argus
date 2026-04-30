@@ -305,6 +305,13 @@ func InitRouter(port string) {
 		api.GET("/assets", getAssets)
 		api.GET("/fingerprints", getFingerprints)
 		api.GET("/profiles", getProfiles)
+		api.GET("/exploits", listExploitRules)
+		api.POST("/exploits/:id/approve", approveExploitRule)
+		api.POST("/exploits/:id/deprecate", deprecateExploitRule)
+		api.POST("/exploits/:id/dry-run", dryRunExploit)
+		api.DELETE("/exploits/:id", deleteExploitRule)
+		api.GET("/vulns/:id/exploit-candidates", getExploitCandidatesForVuln)
+		api.GET("/assets/:id/exploit-candidates", getExploitCandidatesForAsset)
 
 		// 战报输出引擎
 		api.GET("/reports/export/vulns", exportVulns)
@@ -1159,6 +1166,14 @@ func saveArsenal(c *gin.Context) {
 		return
 	}
 
+	// EXP 包基础校验
+	if typ == "exp" {
+		if err := validateExpPackage(req.Content, false); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("EXP validation failed: %v", err)})
+			return
+		}
+	}
+
 	hash := fmt.Sprintf("%x", md5.Sum([]byte(req.Content)))
 
 	// 查找已有记录以保存 PreviousHash/PreviousContent 和递增 Version
@@ -1205,6 +1220,20 @@ func approveArsenal(c *gin.Context) {
 	typ := db.CanonicalArsenalType(c.Param("type"))
 	fn := c.Param("filename")
 	tenantID := currentTenantID(c)
+
+	// EXP 包严格校验
+	if typ == "exp" {
+		var existing db.Arsenal
+		if err := db.DB.Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).First(&existing).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
+			return
+		}
+		if err := validateExpPackage(existing.Content, true); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("EXP validation failed: %v", err)})
+			return
+		}
+	}
+
 	if err := db.DB.Model(&db.Arsenal{}).Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).Update("state", "Approved").Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1831,7 +1860,7 @@ func getArsenalManifest(c *gin.Context) {
 	var arsenals []db.Arsenal
 	tenantID := currentTenantID(c)
 	db.DB.Select("type, file_name, hash, state, updated_at").
-		Where("tenant_id = ? AND state = ?", tenantID, "Approved").
+		Where("tenant_id = ? AND state = ? AND type IN ?", tenantID, "Approved", agentSyncArsenalTypes()).
 		Find(&arsenals)
 
 	type ManifestItem struct {

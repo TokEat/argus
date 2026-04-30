@@ -98,6 +98,30 @@ func main() {
 		})
 	}
 
+	// 5. exps/ 目录（受控利用验证包，默认只随 seed DB 迁移，不进入 POC 自动扫描）
+	expDir := filepath.Join(configBaseDir, "exps")
+	if stat, err := os.Stat(expDir); err == nil && stat.IsDir() {
+		filepath.Walk(expDir, func(path string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return nil
+			}
+			if info.IsDir() || !strings.HasSuffix(info.Name(), ".yaml") {
+				return nil
+			}
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				errs = append(errs, fmt.Errorf("read exp file failed at %s: %w", path, readErr))
+				return nil
+			}
+			if err := writeToDB(sdb, "exp", info.Name(), string(data)); err != nil {
+				errs = append(errs, err)
+				return nil
+			}
+			total++
+			return nil
+		})
+	}
+
 	if len(errs) > 0 {
 		log.Printf("⚠️ 编译过程中遇到 %d 个错误，第一个错误: %v", len(errs), errs[0])
 	}
