@@ -347,8 +347,18 @@ type ExploitRun struct {
 	UpdatedAt       time.Time
 }
 
-// ExploitResultHook is called by gRPC StreamDebug when EXP results arrive.
-var ExploitResultHook func(event interface{})
+// ExploitArtifact stores large evidence attachments for EXP runs.
+type ExploitArtifact struct {
+	ID           uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID     string `gorm:"default:'default';index"`
+	RunID        uint   `gorm:"index;not null"`
+	ArtifactType string `gorm:"index;not null"`
+	FileName     string
+	Content      []byte `gorm:"type:bytea"`
+	ContentHash  string `gorm:"index"`
+	SizeBytes    int64
+	CreatedAt    time.Time
+}
 
 func UpdateNodeHeartbeat(agentID string) error {
 	return DB.Model(&Node{}).Where("agent_id = ?", agentID).

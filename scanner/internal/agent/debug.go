@@ -609,6 +609,9 @@ func (w *Worker) handleExploitCommand(cmd *pb.DebugCommand) {
 			logDebugLocal("INFO", "[EXP] running cleanup for %s", tmpl.ID)
 			if err := eng.Cleanup(tmpl, cmd.TargetUrl, params); err != nil {
 				logDebugLocal("WARN", "[EXP] cleanup failed for %s: %v", tmpl.ID, err)
+				w.sendExploitResult(cmd, "CleanupFailed", nil, fmt.Sprintf("cleanup error: %v", err))
+			} else {
+				w.sendExploitResult(cmd, "CleanupSucceeded", nil, "")
 			}
 		}
 	}()

@@ -864,4 +864,8 @@ export async function cleanupExploitRun(id: number): Promise<API.MessageResponse
     return request.post(`/exploit-runs/${id}/cleanup`);
 }
 
+export async function getExploitCandidatesForVuln(vulnId: number): Promise<API.ExploitRule[]> {
+    return request.get(`/vulns/${vulnId}/exploit-candidates`);
+}
+
 export default request;

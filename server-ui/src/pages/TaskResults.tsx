@@ -11,10 +11,11 @@ import {
     SendOutlined,
     CloudDownloadOutlined,
     LinkOutlined,
+    ThunderboltOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useNavigate, useParams } from 'react-router-dom';
-import { getVulns, getAssets, getFingerprints, exportVulns } from '../services/api';
+import { getVulns, getAssets, getFingerprints, exportVulns, getExploitCandidatesForVuln } from '../services/api';
 import { useAutoContext } from '../contexts/GlobalAIContext';
 import dayjs from 'dayjs';
 
@@ -29,6 +30,8 @@ const TaskResults: React.FC = () => {
     const [activeTab, setActiveTab] = useState('vulns');
     const [selectedVuln, setSelectedVuln] = useState<API.Vulnerability | null>(null);
     const [drawerOpen, setDrawerOpen] = useState(false);
+    const [exploitCandidates, setExploitCandidates] = useState<API.ExploitRule[]>([]);
+    const [candidatesLoading, setCandidatesLoading] = useState(false);
     const navigate = useNavigate();
 
     const fetchData = async () => {
@@ -105,6 +108,14 @@ const TaskResults: React.FC = () => {
     const handleVulnClick = (record: API.Vulnerability) => {
         setSelectedVuln(record);
         setDrawerOpen(true);
+        setExploitCandidates([]);
+        if (record.ID) {
+            setCandidatesLoading(true);
+            getExploitCandidatesForVuln(record.ID)
+                .then(data => setExploitCandidates(data || []))
+                .catch(() => setExploitCandidates([]))
+                .finally(() => setCandidatesLoading(false));
+        }
     };
 
     const parseReferences = (ref: string): string[] => {
@@ -687,6 +698,82 @@ const TaskResults: React.FC = () => {
                                 </pre>
                             </>
                         )}
+
+                        {/* EXP 验证候选 */}
+                        {candidatesLoading ? (
+                            <>
+                                <Divider orientation="left" style={{ fontSize: 13 }}>
+                                    <ThunderboltOutlined /> EXP 验证候选
+                                </Divider>
+                                <Spin size="small" />
+                            </>
+                        ) : exploitCandidates.length > 0 ? (
+                            <>
+                                <Divider orientation="left" style={{ fontSize: 13 }}>
+                                    <ThunderboltOutlined /> EXP 验证候选（{exploitCandidates.length}）
+                                </Divider>
+                                <Table
+                                    size="small"
+                                    rowKey="id"
+                                    pagination={false}
+                                    dataSource={exploitCandidates}
+                                    columns={[
+                                        {
+                                            title: '名称',
+                                            dataIndex: 'name',
+                                            key: 'name',
+                                            render: (v: string) => <Text strong style={{ fontSize: 12 }}>{v}</Text>,
+                                        },
+                                        {
+                                            title: '风险',
+                                            dataIndex: 'risk_level',
+                                            key: 'risk_level',
+                                            width: 80,
+                                            render: (v: string) => {
+                                                const colors: Record<string, string> = { low: 'green', medium: 'blue', high: 'orange', destructive: 'red' };
+                                                return <Tag color={colors[v] || 'default'}>{v}</Tag>;
+                                            },
+                                        },
+                                        {
+                                            title: '引擎',
+                                            dataIndex: 'runtime_engine',
+                                            key: 'runtime_engine',
+                                            width: 80,
+                                            render: (v: string) => <Tag>{v || 'nuclei'}</Tag>,
+                                        },
+                                        {
+                                            title: 'Cleanup',
+                                            key: 'cleanup',
+                                            width: 80,
+                                            render: (_: unknown, r: API.ExploitRule) => (
+                                                r.cleanup_supported
+                                                    ? <Tag color="green">支持</Tag>
+                                                    : <Tag color="default">无</Tag>
+                                            ),
+                                        },
+                                        {
+                                            title: '操作',
+                                            key: 'action',
+                                            width: 80,
+                                            render: (_: unknown, r: API.ExploitRule) => (
+                                                <Button
+                                                    type="link"
+                                                    size="small"
+                                                    icon={<ThunderboltOutlined />}
+                                                    style={{ color: '#10b981', padding: 0 }}
+                                                    onClick={() => {
+                                                        setDrawerOpen(false);
+                                                        navigate(`/config/exploit?auto_run=${r.id}&target=${encodeURIComponent(selectedVuln?.Target || '')}`);
+                                                    }}
+                                                >
+                                                    运行
+                                                </Button>
+                                            ),
+                                        },
+                                    ]}
+                                />
+                            </>
+                        ) : null}
                     </div>
                 )}
             </Drawer>

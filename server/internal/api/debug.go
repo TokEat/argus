@@ -476,6 +476,11 @@ func handleExploitResult(event *pb.DebugEvent) {
 		DurationMs:  payload.DurationMs,
 	}
 
-	db.HandleExploitResult(exploitEvent)
+	// Route cleanup results to the dedicated cleanup handler
+	if payload.Status == "CleanupSucceeded" || payload.Status == "CleanupFailed" {
+		db.HandleExploitCleanupResult(exploitEvent)
+	} else {
+		db.HandleExploitResult(exploitEvent)
+	}
 	log.Printf("[EXP] result processed: run=%d status=%s", runID, payload.Status)
 }

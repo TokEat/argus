@@ -48,3 +48,5 @@ test-env
 # ai 参考
 
 _ref_claude_code
+# Obsidian
+.obsidian/

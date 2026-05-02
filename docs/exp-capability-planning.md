@@ -82,6 +82,8 @@ EXP 规则元数据建议包含：
 - `side_effects`：副作用声明，例如写文件、创建账号、触发回连、修改配置。
 - `cleanup_supported`：是否提供清理步骤。
 - `cleanup_required`：是否强制清理。
+- `dry_run_supported`：是否支持 dry-run 预览。
+- `insecure_tls`：是否跳过 TLS 证书验证（适用于自签名证书的内网目标）。
 - `capabilities`：能力声明，例如 `http_write`、`command_echo`、`file_probe`。
 - `params_schema`：执行参数 schema。
 - `timeout_sec`：执行超时。
@@ -120,6 +122,7 @@ policy:
   cleanup_supported: true
   cleanup_required: true
   dry_run_supported: true
+  insecure_tls: false
   timeout_sec: 60
   max_concurrency: 1
   capabilities:
@@ -534,12 +537,11 @@ CleanupExploit(ExploitCleanupReq) returns (ExploitCleanupResp)
 - [x] 执行详情 `GET /api/v1/exploit-runs/:id`。
 - [x] 取消执行 `POST /api/v1/exploit-runs/:id/cancel`（仅 Pending / Running）。
 - [x] 手动清理 `POST /api/v1/exploit-runs/:id/cleanup`（仅 Succeeded / CleanupFailed）。
-- [x] `ExploitResultHook` 回调，供 gRPC StreamDebug 接收 Agent 执行结果。
 - [x] 前端执行确认面板（目标输入、参数表单、风险确认、副作用声明）。
 - [x] RBAC 全套 exploit-runs 端点权限。
 
 涉及文件：
-- `server/internal/db/db.go` — ExploitRun 模型 + ExploitResultHook
+- `server/internal/db/db.go` — ExploitRun 模型 + ExploitArtifact 模型
 - `server/internal/db/schema_runtime.go` — AutoMigrate 注册
 - `server/internal/db/migrations/110_add_exploit_runs.sql` — 建表
 - `server/internal/api/handler_exploits.go` — exploit-runs CRUD
@@ -563,19 +565,28 @@ Agent 侧（双模式引擎）：
 
 - [x] `ExploitResultEvent` / `HandleExploitResult` — Agent 结果处理，自动状态流转（Succeeded/Failed/CleanupRequired）。
 - [x] `HandleExploitCleanupResult` — 清理结果处理（CleanupSucceeded/CleanupFailed）。
-- [x] `AutoDispatchCleanup` — 定时任务自动派发 CleanupRequired 的清理任务（集成到 timeout daemon）。
+- [x] `AutoDispatchCleanup` — 定时任务自动派发 CleanupRequired 的清理任务（集成到 timeout daemon），通过 `ExploitCleanupDispatchHook` 实际下发 `cleanup_exp` 命令到 Agent。
+- [x] 手动清理 `cleanupExploitRun` — 实际派发 `cleanup_exp` 命令到 Agent（`dispatchExploitCleanup`）。
+- [x] Agent 侧 cleanup 结果回传 — `handleExploitCommand` 中 auto-cleanup 完成后通过 `sendExploitResult` 回传成功/失败。
 - [x] `BroadcastExploitRunEvent` — EXP 状态变更 WebSocket 广播。
+- [x] `ExploitArtifact` 模型 + `exploit_artifacts` AutoMigrate — 大型证据附件（>4KB）自动提取存储，原位保留 `[artifact:id]` 引用。
+- [x] `GET /api/v1/exploit-artifacts/:id` — 证据附件下载端点。
+- [x] `saveExploitArtifacts` — `HandleExploitResult` 中自动将大证据写入 `exploit_artifacts` 表。
 - [x] 前端执行历史面板 — 操作列"历史"按钮，Drawer 展示执行记录列表（状态/目标/操作人/cleanup/时间/错误）。
-- [x] 手动清理 API `POST /api/v1/exploit-runs/:id/cleanup`。
+- [x] 漏洞详情页 EXP 候选推荐集成 — `TaskResults.tsx` 漏洞 Drawer 底部展示 EXP 验证候选表格（名称/风险/引擎/cleanup/操作）。
+- [x] 漏洞详情页 EXP 执行入口 — 候选表格"运行"按钮导航到 `/config/exploit?auto_run=<id>&target=<target>`，`ExploitConfig` 自动打开执行面板。
+- [x] EXP 执行结果回写漏洞 — `markVulnsExploited` 在 EXP 成功时将匹配的 `open` 漏洞更新为 `exploit_verified`（按 `ExploitRule.TargetProduct` ↔ `Vulnerability.Plugin` + `Target` 匹配）。
 
 涉及文件：
-- `server/internal/db/exploit_lifecycle.go` — 结果处理、清理派发、WebSocket 广播、状态统计
-- `server/internal/api/router.go` — ExploitResultHook 注册、AutoDispatchCleanup 集成
-- `server-ui/src/pages/config/ExploitConfig.tsx` — 执行历史面板
-
-待完成：
-- Agent 侧 cleanup 命令派发（当前标记 TODO，等 Agent 引擎就绪）
-- 漏洞详情页 EXP 验证状态展示（需在 TaskResults.tsx 中集成）
+- `server/internal/db/exploit_lifecycle.go` — 结果处理、清理派发（含 Hook）、WebSocket 广播、状态统计、`saveExploitArtifacts`、`markVulnsExploited`
+- `server/internal/db/db.go` — ExploitRun 模型、ExploitArtifact 模型
+- `server/internal/db/schema_runtime.go` — AutoMigrate 注册（含 ExploitArtifact）
+- `server/internal/api/handler_exploits.go` — `dispatchExploitCleanup`、`getExploitArtifact`
+- `server/internal/api/router.go` — `ExploitCleanupDispatchHook` 注册、artifact 路由
+- `server/internal/api/middleware_rbac.go` — `GET:/exploit-artifacts/*` → viewer
+- `server-ui/src/pages/config/ExploitConfig.tsx` — 执行历史面板、`useSearchParams` 自动打开执行面板
+- `server-ui/src/pages/TaskResults.tsx` — EXP 候选推荐表格 + "运行"按钮
+- `server-ui/src/services/api.ts` — `getExploitCandidatesForVuln` 函数
 
 ### Phase 5：高风险能力 🔲 待开始
 
@@ -709,23 +720,23 @@ EXP 规则**不**进入 Agent 的常规扫描规则同步（`agentSyncArsenalTyp
 
 EXP 执行状态变更通过现有 WebSocket 广播机制推送到前端：
 
-- `exploit_run.created` — 执行已创建
-- `exploit_run.started` — Agent 开始执行
-- `exploit_run.completed` — 执行完成（成功/失败）
-- `exploit_run.cleanup_started` — 开始清理
-- `exploit_run.cleanup_completed` — 清理完成/失败
+- `exploit_run.status` — 执行状态变更（Pending / Running / Succeeded / Failed / CleanupRequired / CleanupRunning / CleanupFailed / Cancelled）
+
+执行成功后的副作用：
+
+- 自动调用 `markVulnsExploited` 将匹配的漏洞状态从 `open` 更新为 `exploit_verified`（匹配条件：同租户 + 同目标 + `ExploitRule.TargetProduct` = `Vulnerability.Plugin`）
 
 复用 `Hub.BroadcastToTenant(tenantID, event, payload)` 机制，前端通过现有 WebSocket 连接监听。
 
 ### 9.7 测试策略
 
-| 层级 | 测试内容 | 时机 |
-|------|----------|------|
-| 单元测试 | YAML 解析（parseExploitMeta）、字段校验、capability 校验、物化链路 | 每次提交 |
-| API 测试 | CRUD + 权限校验（viewer/operator/admin 角色覆盖） | 每次提交 |
-| 集成测试 | EXP 包保存 → 物化 → 列表查询 → 审核 → 候选推荐完整链路 | 每次提交 |
-| 执行 mock 测试 | 声明式 steps 编译、Starlark 脚本沙箱执行、超时/取消、cleanup 生命周期 | Phase 3+ |
-| 安全测试 | 禁用符号检测、capability 越权检测、脚本沙箱逃逸检测 | Phase 3+ |
+| 层级 | 测试内容 | 时机 | 状态 |
+|------|----------|------|------|
+| 单元测试 | YAML 解析（parseExploitMeta）、字段校验、capability 校验、物化链路 | 每次提交 | ✅ 19 个测试（`rule_catalog_test.go` 2 个 + `handler_exploits_test.go` 17 个） |
+| API 测试 | CRUD + 权限校验（viewer/operator/admin 角色覆盖） | 每次提交 | 🔲 待补充 |
+| 集成测试 | EXP 包保存 → 物化 → 列表查询 → 审核 → 候选推荐完整链路 | 每次提交 | 🔲 待补充 |
+| 执行 mock 测试 | 声明式 steps 编译、Starlark 脚本沙箱执行、超时/取消、cleanup 生命周期 | Phase 3+ | 🔲 待补充 |
+| 安全测试 | 禁用符号检测、capability 越权检测、脚本沙箱逃逸检测 | Phase 3+ | 🔲 待补充 |
 
 ### 9.8 状态机完整定义
 
@@ -759,3 +770,5 @@ Pending → Running → Succeeded
 | 2026-04-30 | Phase 4 | 清理与审计闭环：ExploitResultEvent 结果处理（自动状态流转）、HandleExploitCleanupResult 清理结果、AutoDispatchCleanup 定时派发、WebSocket 状态广播、前端执行历史面板 |
 | 2026-04-30 | Phase 3 Agent | Agent 侧 EXP 引擎：双模式（Nuclei 基础 + Starlark 高级）、Nuclei 执行器（HTTP/matchers/extractors/代理）、Starlark 宿主 API（6 大模块）、统一执行入口、Agent 命令处理集成、Server 侧 EXP 下发 + 结果接收、proto 新增 params 字段 |
 | 2026-04-30 | Review Hardening | 修复 EXP 审核/废弃/删除只改索引不改原始 Arsenal 的生命周期问题；修复 `runtime.entry` 校验字段；补充脚本调用能力与声明能力一致性检查；执行创建默认受 `EXP_ENABLED` 保护，并增加风险确认、租户级并发、项目归属和 target 级并发边界；AutoScaler 对账/缩容/TTL 回收按实例地域选择 provider |
+| 2026-05-02 | Code Hardening | P0 修复：cleanup 命令实际派发（`ExploitCleanupDispatchHook` + `dispatchExploitCleanup`）；P1 修复：Agent 侧 auto-cleanup 结果回传 Server、Starlark 引擎添加 `MaxExecSteps` 超时保护；P2 修复：移除 `ExploitResultHook` 死代码、TLS 验证改为 `ExploitPolicy.InsecureTLS` 可配置；P3 修复：`scanScriptCapabilities` 改用 regexp 匹配、补充 17 个单元测试 |
+| 2026-05-02 | Phase 4 补全 | `ExploitArtifact` 模型 + AutoMigrate + `saveExploitArtifacts`（>4KB 证据自动提取）+ `GET /exploit-artifacts/:id` 端点；漏洞详情页 EXP 候选推荐集成（`TaskResults.tsx` 表格 + "运行"按钮）；`ExploitConfig` 支持 `?auto_run` 查询参数自动打开执行面板；`markVulnsExploited` EXP 成功后回写漏洞状态为 `exploit_verified` |

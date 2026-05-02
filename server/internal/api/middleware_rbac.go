@@ -43,6 +43,7 @@ var permissionRules = map[string]string{
 	"POST:/exploits/*/deprecate":   "admin",
 	"POST:/exploits/*/dry-run":     "operator",
 	"DELETE:/exploits/*":           "admin",
+	"GET:/exploit-artifacts/*":     "viewer",
 	"GET:/stats":                   "viewer",
 	"GET:/stats/trends":            "viewer",
 	"GET:/stats/severity":          "viewer",

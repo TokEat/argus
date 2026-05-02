@@ -85,10 +85,8 @@ func validateAgentPSK(c *gin.Context) bool {
 func SetNotifyHub(hub *grpcpkg.NotifyHub) {
 	notifyHub = hub
 	db.DebugEventHook = handleAgentDebugEvent
-	db.ExploitResultHook = func(event interface{}) {
-		if e, ok := event.(db.ExploitResultEvent); ok {
-			db.HandleExploitResult(e)
-		}
+	db.ExploitCleanupDispatchHook = func(run db.ExploitRun) error {
+		return dispatchExploitCleanup(run, run.TenantID)
 	}
 }
 
@@ -324,6 +322,7 @@ func InitRouter(port string) {
 		api.GET("/exploit-runs/:id", getExploitRun)
 		api.POST("/exploit-runs/:id/cancel", cancelExploitRun)
 		api.POST("/exploit-runs/:id/cleanup", cleanupExploitRun)
+		api.GET("/exploit-artifacts/:id", getExploitArtifact)
 
 		// 战报输出引擎
 		api.GET("/reports/export/vulns", exportVulns)

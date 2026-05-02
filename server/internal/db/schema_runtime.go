@@ -35,6 +35,7 @@ func schemaModels() []interface{} {
 		&DirRule{},
 		&ExploitRule{},
 		&ExploitRun{},
+		&ExploitArtifact{},
 		// 云资源编排
 		&CloudAccount{},
 		&CloudAccountBinding{},
