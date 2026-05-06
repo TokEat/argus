@@ -32,7 +32,7 @@ interface GlobalAIChatDrawerProps {
 }
 
 interface ProposedEdit {
-    type: 'poc';
+    type: 'poc' | 'exp';
     content: string;
 }
 

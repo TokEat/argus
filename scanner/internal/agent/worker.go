@@ -182,6 +182,8 @@ type Worker struct {
 	debugMu      sync.Mutex
 	debugCancel  context.CancelFunc
 	debugSession string
+	expMu        sync.Mutex
+	expCancels   map[string]context.CancelFunc
 }
 
 func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[string]string) *Worker {
@@ -200,6 +202,7 @@ func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[stri
 		tags:         tags,
 		stopCh:       make(chan struct{}),
 		reconnectCh:  make(chan struct{}, 1),
+		expCancels:   make(map[string]context.CancelFunc),
 	}
 }
 

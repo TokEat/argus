@@ -763,7 +763,9 @@ const TaskResults: React.FC = () => {
                                                     style={{ color: '#10b981', padding: 0 }}
                                                     onClick={() => {
                                                         setDrawerOpen(false);
-                                                        navigate(`/config/exploit?auto_run=${r.id}&target=${encodeURIComponent(selectedVuln?.Target || '')}`);
+                                                        const projectId = localStorage.getItem('active_project_id') || '';
+                                                        const projectParam = projectId ? `&project_id=${encodeURIComponent(projectId)}` : '';
+                                                        navigate(`/config/exploit?auto_run=${r.id}&target=${encodeURIComponent(selectedVuln?.Target || '')}${projectParam}`);
                                                     }}
                                                 >
                                                     运行

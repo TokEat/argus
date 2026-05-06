@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	aipkg "github.com/user/dddd-server/internal/ai"
+	"github.com/user/dddd-server/internal/db"
 )
 
 func TestShouldAgentReloadRules(t *testing.T) {
@@ -91,6 +92,61 @@ func TestTenantRolePermissionMatrix(t *testing.T) {
 		if got := matchPermission(tt.method, tt.path); got != tt.want {
 			t.Fatalf("%s %s expected %s, got %s", tt.method, tt.path, tt.want, got)
 		}
+	}
+}
+
+func TestRBACRequiresUserEXPAuthorization(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.User{
+		ID:            1,
+		TenantID:      "tenant-a",
+		Username:      "authorized",
+		Role:          "operator",
+		Status:        "active",
+		ExpAuthorized: true,
+	}).Error; err != nil {
+		t.Fatalf("create authorized user: %v", err)
+	}
+	if err := store.Create(&db.User{
+		ID:            2,
+		TenantID:      "tenant-a",
+		Username:      "plain",
+		Role:          "operator",
+		Status:        "active",
+		ExpAuthorized: false,
+	}).Error; err != nil {
+		t.Fatalf("create plain user: %v", err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	for _, tt := range []struct {
+		name   string
+		userID string
+		want   int
+	}{
+		{name: "authorized user can view exp", userID: "1", want: http.StatusOK},
+		{name: "unauthorized user is blocked", userID: "2", want: http.StatusForbidden},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gin.New()
+			r.Use(func(c *gin.Context) {
+				c.Set("tenant", "tenant-a")
+				c.Set("role", "operator")
+				c.Set("user_id", tt.userID)
+				c.Next()
+			})
+			r.Use(RBACMiddleware())
+			r.GET("/api/v1/exploits", func(c *gin.Context) {
+				c.JSON(http.StatusOK, gin.H{"status": "ok"})
+			})
+
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/exploits", nil)
+			r.ServeHTTP(w, req)
+			if w.Code != tt.want {
+				t.Fatalf("expected status %d, got %d body=%s", tt.want, w.Code, w.Body.String())
+			}
+		})
 	}
 }
 

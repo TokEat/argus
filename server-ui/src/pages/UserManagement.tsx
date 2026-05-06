@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Typography, Table, Tag, Space, Button, Spin, Empty, Modal, Form, Input, Select, message, Popconfirm } from 'antd';
+import { Typography, Table, Tag, Space, Button, Spin, Empty, Modal, Form, Input, Select, Switch, message, Popconfirm } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import { TeamOutlined, ReloadOutlined, PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
@@ -59,7 +59,7 @@ const UserManagement: React.FC = () => {
 
     const handleEdit = (user: API.User) => {
         setEditingUser(user);
-        form.setFieldsValue({ username: user.username, role: user.role, status: user.status });
+        form.setFieldsValue({ username: user.username, role: user.role, status: user.status, exp_authorized: user.exp_authorized });
         setModalOpen(true);
     };
 
@@ -81,6 +81,7 @@ const UserManagement: React.FC = () => {
                     role: values.role,
                     status: values.status,
                     password: values.password || undefined,
+                    exp_authorized: !!values.exp_authorized,
                 });
                 message.success('用户已更新');
             } else {
@@ -88,6 +89,7 @@ const UserManagement: React.FC = () => {
                     username: values.username,
                     password: values.password,
                     role: values.role || 'viewer',
+                    exp_authorized: !!values.exp_authorized,
                 });
                 message.success('用户已创建');
             }
@@ -127,6 +129,19 @@ const UserManagement: React.FC = () => {
                     {s === 'active' ? '正常' : '禁用'}
                 </Tag>
             ),
+        },
+        {
+            title: 'EXP 授权', dataIndex: 'exp_authorized', key: 'exp_authorized', width: 110,
+            render: (enabled: boolean) => (
+                <Tag color={enabled ? '#2563eb' : '#94a3b8'} style={{ borderRadius: 20, fontSize: 11 }}>
+                    {enabled ? '已授权' : '未授权'}
+                </Tag>
+            ),
+            filters: [
+                { text: '已授权', value: 'true' },
+                { text: '未授权', value: 'false' },
+            ],
+            onFilter: (value, record) => String(record.exp_authorized) === value,
         },
         {
             title: '租户', dataIndex: 'tenant_id', key: 'tenant_id', width: 100,
@@ -196,6 +211,9 @@ const UserManagement: React.FC = () => {
                             { value: 'operator', label: '操作员 - 任务与规则管理' },
                             { value: 'viewer', label: '观察者 - 只读查看' },
                         ]} />
+                    </Form.Item>
+                    <Form.Item name="exp_authorized" label="EXP 授权" valuePropName="checked" initialValue={false}>
+                        <Switch checkedChildren="已授权" unCheckedChildren="未授权" />
                     </Form.Item>
                     {editingUser && (
                         <Form.Item name="status" label="状态">

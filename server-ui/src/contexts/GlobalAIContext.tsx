@@ -83,10 +83,10 @@ export interface PageContext {
     [key: string]: unknown;
 }
 
-/** Editable target for POC/Workflow inline editing */
+/** Editable target for rule/config inline editing */
 export interface AIEditableTarget {
     id: string;
-    type: 'poc' | 'workflow' | 'fingerprint' | 'dir' | 'text';
+    type: 'poc' | 'exp' | 'workflow' | 'fingerprint' | 'dir' | 'text';
     label: string;
     getContent: () => string;
     applyContent: (content: string) => void;

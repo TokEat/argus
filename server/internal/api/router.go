@@ -236,6 +236,11 @@ func TenantMiddleware() gin.HandlerFunc {
 			if uid, ok := claims["user_id"].(string); ok {
 				c.Set("user_id", uid)
 			}
+			if expAuthorized, ok := claims["exp_authorized"].(bool); ok {
+				c.Set("exp_authorized", expAuthorized)
+			} else {
+				c.Set("exp_authorized", false)
+			}
 		} else {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid claims map"})
 			return
@@ -1830,10 +1835,15 @@ func authLogin(c *gin.Context) {
 	}
 	roleClaim := "admin"
 	userIDClaim := "dev:" + loginUsername
+	expAuthorizedClaim := false
 	if err := db.DB.Where("username = ?", loginUsername).First(&user).Error; err == nil {
 		// 数据库有此用户，校验密码
 		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Wrong password"})
+			return
+		}
+		if user.Status != "active" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "User is disabled"})
 			return
 		}
 		tenantClaim = user.TenantID
@@ -1842,6 +1852,7 @@ func authLogin(c *gin.Context) {
 			roleClaim = "viewer"
 		}
 		userIDClaim = fmt.Sprintf("%d", user.ID)
+		expAuthorizedClaim = user.ExpAuthorized
 	} else if errors.Is(err, gorm.ErrRecordNotFound) {
 		if !developmentMode || req.Password != "8888" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Wrong password"})
@@ -1856,10 +1867,11 @@ func authLogin(c *gin.Context) {
 
 	// 颁发 Token（包含角色信息）
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"tenant_id": tenantClaim,
-		"role":      roleClaim,
-		"user_id":   userIDClaim,
-		"exp":       time.Now().Add(time.Hour * 72).Unix(),
+		"tenant_id":      tenantClaim,
+		"role":           roleClaim,
+		"user_id":        userIDClaim,
+		"exp_authorized": expAuthorizedClaim,
+		"exp":            time.Now().Add(time.Hour * 72).Unix(),
 	})
 	tokenString, err := token.SignedString(currentJWTSecret())
 	if err != nil {
@@ -1912,25 +1924,27 @@ func listUsers(c *gin.Context) {
 	db.DB.Where("tenant_id = ?", tenantID).Order("created_at DESC").Find(&users)
 
 	type UserResp struct {
-		ID        uint   `json:"id"`
-		TenantID  string `json:"tenant_id"`
-		Username  string `json:"username"`
-		Role      string `json:"role"`
-		Status    string `json:"status"`
-		CreatedAt string `json:"created_at"`
-		UpdatedAt string `json:"updated_at"`
+		ID            uint   `json:"id"`
+		TenantID      string `json:"tenant_id"`
+		Username      string `json:"username"`
+		Role          string `json:"role"`
+		Status        string `json:"status"`
+		ExpAuthorized bool   `json:"exp_authorized"`
+		CreatedAt     string `json:"created_at"`
+		UpdatedAt     string `json:"updated_at"`
 	}
 
 	resp := make([]UserResp, 0, len(users))
 	for _, u := range users {
 		resp = append(resp, UserResp{
-			ID:        u.ID,
-			TenantID:  u.TenantID,
-			Username:  u.Username,
-			Role:      u.Role,
-			Status:    u.Status,
-			CreatedAt: u.CreatedAt.Format(time.RFC3339),
-			UpdatedAt: u.UpdatedAt.Format(time.RFC3339),
+			ID:            u.ID,
+			TenantID:      u.TenantID,
+			Username:      u.Username,
+			Role:          u.Role,
+			Status:        u.Status,
+			ExpAuthorized: u.ExpAuthorized,
+			CreatedAt:     u.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:     u.UpdatedAt.Format(time.RFC3339),
 		})
 	}
 
@@ -1939,10 +1953,11 @@ func listUsers(c *gin.Context) {
 
 func createUser(c *gin.Context) {
 	var req struct {
-		Username string `json:"username" binding:"required"`
-		Password string `json:"password" binding:"required"`
-		Role     string `json:"role"`
-		TenantID string `json:"tenant_id"`
+		Username      string `json:"username" binding:"required"`
+		Password      string `json:"password" binding:"required"`
+		Role          string `json:"role"`
+		TenantID      string `json:"tenant_id"`
+		ExpAuthorized bool   `json:"exp_authorized"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -1968,11 +1983,12 @@ func createUser(c *gin.Context) {
 	}
 
 	user := db.User{
-		TenantID:     req.TenantID,
-		Username:     req.Username,
-		PasswordHash: string(hash),
-		Role:         role,
-		Status:       "active",
+		TenantID:      req.TenantID,
+		Username:      req.Username,
+		PasswordHash:  string(hash),
+		Role:          role,
+		Status:        "active",
+		ExpAuthorized: req.ExpAuthorized,
 	}
 	if err := db.DB.Create(&user).Error; err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "Username already exists"})
@@ -1986,9 +2002,10 @@ func updateUser(c *gin.Context) {
 	id := c.Param("id")
 	tenantID := currentTenantID(c)
 	var req struct {
-		Role     string `json:"role"`
-		Status   string `json:"status"`
-		Password string `json:"password"`
+		Role          string `json:"role"`
+		Status        string `json:"status"`
+		Password      string `json:"password"`
+		ExpAuthorized *bool  `json:"exp_authorized"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -2015,6 +2032,9 @@ func updateUser(c *gin.Context) {
 	if req.Password != "" {
 		hash, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 		updates["password_hash"] = string(hash)
+	}
+	if req.ExpAuthorized != nil {
+		updates["exp_authorized"] = *req.ExpAuthorized
 	}
 
 	if len(updates) == 0 {

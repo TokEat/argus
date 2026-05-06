@@ -433,6 +433,7 @@ declare namespace API {
     username: string;
     role: string;       // admin, operator, viewer
     status: string;     // active, disabled
+    exp_authorized: boolean;
     created_at: string;
     updated_at: string;
   }
@@ -442,12 +443,14 @@ declare namespace API {
     password: string;
     role?: string;
     tenant_id?: string;
+    exp_authorized?: boolean;
   }
 
   interface UpdateUserRequest {
     role?: string;
     status?: string;
     password?: string;
+    exp_authorized?: boolean;
   }
 
   // ======================== Cloud Resource Scheduling ========================
@@ -680,13 +683,14 @@ declare namespace API {
     target: string;
     exploit_id: string;
     operator_id: string;
+    agent_id: string;
     risk_level: string;
-    status: string;
+    status: 'Pending' | 'Running' | 'CancelPending' | 'Cancelled' | 'CleanupRequired' | 'CleanupFailed' | 'Succeeded' | 'Failed';
     started_at: string;
     finished_at: string;
     evidence: string;
     side_effects: string;
-    cleanup_status: string;
+    cleanup_status: '' | 'Pending' | 'CleanupRunning' | 'CleanupSucceeded' | 'CleanupFailed' | 'NotRequired';
     cleanup_evidence: string;
     error_message: string;
     created_at: string;

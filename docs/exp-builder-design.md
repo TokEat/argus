@@ -6,6 +6,19 @@ Form + Live YAML + Code Escape Hatch —— 可视化表单构建 + AI 辅助 + 
 
 降低 EXP 编写门槛，让用户专注于「验证什么」而非「YAML 怎么写」。
 
+当前实现状态（2026-05-06）：
+
+- ✅ Phase 1 首版已落地在 `server-ui/src/pages/config/ExploitConfig.tsx`：HTTP/Nuclei EXP 默认进入 Builder 表单，支持基础信息、策略、参数、HTTP 请求、Matcher、Extractor、Cleanup。
+- ✅ 表单修改实时生成标准 EXP YAML，保存仍复用 `arsenals(type=exp)`、物化、审核、执行、cleanup 既有链路。
+- ✅ YAML 模式保留为高级逃生口；AI 回填后会按 `runtime.engine` 自动回到 Builder 或 YAML。
+- ✅ Phase 2/3 首版已落地：高级步骤支持 HTTP、TCP、条件、循环、证据、代码块；添加高级步骤后自动导出为 Starlark。
+- ✅ Code Escape Hatch 已集成：可将表单转换为 Starlark 代码，可直接维护 `run/cleanup` 代码，并提供 AI 步骤填充、AI cleanup 建议、AI 全文生成入口。
+- ✅ YAML 编辑器接入 EXP schema 诊断配置和 Starlark API 补全提示。
+- ✅ Builder 体验已收敛：常用字段默认展示，高级元数据折叠；生成 YAML 会省略空 CVE、空产品、空列表和 false policy 字段，减少维护噪音。
+- ✅ Starlark Builder 不再只面向 TCP：支持认证流、多步 HTTP、TCP+HTTP、变量提取、条件、循环、证据、cleanup 注册、显式返回和自定义代码，并提供场景模板一键填充。
+- ⚠️ 声明式 TCP 仍不进入后端 steps 执行器，Builder 通过 Starlark `tcp.connect` 导出 TCP EXP。
+- ⚠️ 当前高级流程为轻量线性管线；可视化分支树、拖拽排序、注释无损保留、复杂代码反解析属于后续优化。
+
 | 目标 | 衡量标准 |
 |------|----------|
 | 新手 5 分钟内写出第一个 EXP | 从零到保存草稿的时间 |
@@ -93,7 +106,7 @@ Form + Live YAML + Code Escape Hatch —— 可视化表单构建 + AI 辅助 + 
 | Step 类型 | 表单字段 | 覆盖场景 |
 |-----------|----------|----------|
 | **ConditionStep** | left, op, right, trueBranch, falseBranch | 条件分支 |
-| **TcpStep** | host, port, readPattern, timeout | TCP 探测 |
+| **TcpStep** | host, port, readPattern, timeout | TCP 探测（当前导出为 Starlark `tcp.connect`，不导出声明式 TCP） |
 | **LoopStep** | type (retry/iterate/until), maxCount, interval, body | 重试/遍历 |
 
 ### 4.3 Phase 3 — 代码降级
@@ -112,14 +125,14 @@ Form + Live YAML + Code Escape Hatch —— 可视化表单构建 + AI 辅助 + 
 
 ```
 所有步骤都是 HttpStep/MatcherStep/ExtractStep  → engine: nuclei
-任何步骤包含 ConditionStep/LoopStep/CodeStep  → engine: starlark
+任何步骤包含 TcpStep/ConditionStep/LoopStep/CodeStep  → engine: starlark
 ```
 
 ### 5.2 Capabilities 推导
 
 ```
 HttpStep          → http.request
-TcpStep           → tcp.connect
+TcpStep           → tcp.connect（通过 Starlark 支持）
 ExtractStep       → extract.match
 EvidenceStep      → evidence.write
 Cleanup 步骤存在  → cleanup.defer
@@ -360,7 +373,7 @@ interface EditorHistory {
 
 1. 基本信息（info/policy/params）→ 总是能解析
 2. Nuclei http/steps → 映射为 HttpStep/MatcherStep/ExtractStep
-3. Starlark scripts → 映射为 CodeStep（整段代码块，不拆分）
+3. Starlark scripts → 映射为 CodeStep（整段代码块，不拆分）；TCP 能力保持为 Starlark 模式
 4. 复杂 Starlark（多函数/条件/循环）→ 保持 CodeStep，不尝试拆解
 
 不能完全映射的 YAML 保持 YAML 模式编辑，表单显示只读摘要。
@@ -468,7 +481,8 @@ Builder 在保存前检查：
 | 组合 | 拦截方式 |
 |------|----------|
 | risk_level=destructive + 无 cleanup | 阻止保存，提示必须提供清理步骤 |
-| risk_level=high + operator 角色 | 提示需要 admin 授权 |
+| 未获得 EXP 授权的用户 | 阻止访问 Builder 的保存、干跑和执行入口 |
+| risk_level=high/destructive + 已授权 operator/admin | 执行前提示风险确认 |
 | insecure_tls=true + 外网目标 | 警告「跳过 TLS 验证仅建议用于内网自签名目标」 |
 | 未声明的 capability 被代码块使用 | 阻止保存，提示需要声明 |
 | cleanup_required=true 但无 cleanup 步骤 | 阻止保存 |
@@ -565,40 +579,40 @@ Builder 在保存前检查：
 
 ### Phase 1：表单基础 + HTTP 步骤（2 周）
 
-- 基本信息表单（ID / 名称 / 风险 / 产品 / CVE / 描述）
-- 参数定义表单（name / type / required / description）
-- HttpStep 表单（method / path / headers / body）
-- MatcherStep 表单（status / contains）
-- ExtractStep 表单（json path / regex）
-- EvidenceStep 表单（key / source）
-- Cleanup HttpStep 表单
-- 自动推导 engine / capabilities / cleanup_required
-- Live YAML 只读预览
-- 表单 ↔ YAML 双向同步
-- 保存草稿 / 提交审核
+- ✅ 基本信息表单（ID / 名称 / 风险 / 产品 / CVE / 描述）
+- ✅ 参数定义表单（name / type / required / description）
+- ✅ HttpStep 表单（method / path / headers / body）
+- ✅ MatcherStep 表单（status / word / regex）
+- ✅ ExtractStep 表单（json path / regex）
+- ✅ Cleanup HttpStep 表单
+- ✅ 自动推导 engine / capabilities / cleanup_required
+- ✅ Live YAML：通过 Builder / YAML 分段切换查看和编辑同一份内容
+- ✅ 保存草稿：复用现有 Arsenal 保存入口
+- ✅ EvidenceStep：Starlark Builder 中提供独立证据写入步骤
+- ⚠️ YAML → 表单为轻量解析，只保证 Builder 生成的 HTTP EXP 和常见手写 HTTP EXP 能稳定回填
 
 交付物：用户可通过表单创建简单 HTTP 验证 EXP，无需手写 YAML。
 
 ### Phase 2：进阶步骤 + AI 辅助（2 周）
 
-- ConditionStep 表单（条件分支）
-- TcpStep 表单
-- LoopStep 表单（重试）
-- YAML → 表单反向解析
-- AI 填充单步（Ctrl+K）
-- AI 生成清理步骤建议
-- Monaco YAML schema 实时校验
+- ✅ ConditionStep 表单（Starlark 条件表达式）
+- ✅ TcpStep 表单（导出为 Starlark `tcp.connect`）
+- ✅ LoopStep 表单（循环/重试代码块）
+- ✅ YAML → 表单反向解析（支持基础字段、HTTP/Nuclei、Starlark `scripts.run/cleanup` 回填）
+- ✅ AI 填充单步（通过当前 YAML 上下文生成完整可应用 YAML）
+- ✅ AI 生成清理步骤建议
+- ✅ Monaco YAML schema 实时校验配置
 
 交付物：支持带条件分支的复杂 EXP，AI 辅助减少重复劳动。
 
 ### Phase 3：Code Escape Hatch + AI 全文生成（2 周）
 
-- CodeStep 类型（Starlark 代码块）
-- 表单 → 代码单向转换
-- 代码 → 表单尝试解析
-- AI 全文生成 → 导入 Builder
-- 代码块内 API 自动补全
-- AI 代码片段编辑（选中 + Ctrl+K）
+- ✅ CodeStep 类型（Starlark 代码块）
+- ✅ 表单 → 代码单向转换
+- ✅ 代码 → 表单尝试解析（完整 `def run/cleanup` 保留在 Code Escape Hatch）
+- ✅ AI 全文生成 → 导入 Builder
+- ✅ 代码块内 API 自动补全提示（Monaco YAML 补全 `http.request/tcp.connect/extract/result` 等）
+- ✅ AI 代码片段编辑入口（复用当前 EXP 编辑目标）
 
 交付物：任意复杂度的 EXP 都能在 Builder 中完成。
 
@@ -636,7 +650,7 @@ Builder 在保存前检查：
 └──────────────────────────────────────────────────────────┘
 ```
 
-Builder 只是 YAML 的可视化编辑层，不改变后端任何逻辑。生成的 YAML 与手写 YAML 结构完全一致，复用全部现有校验/物化/执行/清理链路。
+Builder 只是 YAML 的可视化编辑层，不改变后端任何逻辑。生成的 YAML 与手写 YAML 结构完全一致，复用全部现有校验/物化/执行/清理链路。当前实现直接挂载在 EXP 验证库的新增/编辑 Drawer 内，降低入口复杂度，不额外引入独立 Builder 页面。
 
 ## 17. 技术选型
 
@@ -658,3 +672,11 @@ Builder 只是 YAML 的可视化编辑层，不改变后端任何逻辑。生成
 | 自动推导 capabilities 不准确 | 校验失败或权限过大 | 推导结果展示给用户确认，允许手动调整 |
 | AI 生成步骤质量不稳定 | 生成无效 YAML | 生成后自动校验，不合格则提示用户修改 |
 | 步骤类型过多导致表单复杂 | 反而比 YAML 更难用 | Phase 1 只做 4 种步骤，覆盖 90% 场景 |
+
+## 19. 变更记录
+
+| 日期 | 阶段 | 内容 |
+|------|------|------|
+| 2026-05-06 | Builder Phase 1 | EXP 验证库新增 HTTP Builder：表单化维护基础信息、策略、参数、HTTP 请求、Matcher、Extractor、Cleanup；实时生成 YAML；Starlark/TCP 保持 YAML 模式；AI 回填按 engine 自动选择编辑模式 |
+| 2026-05-06 | Builder Phase 2/3 | Builder 增加高级线性步骤（HTTP/TCP/条件/循环/证据/代码）、Starlark 自动导出、Code Escape Hatch、表单转代码、Starlark 脚本回填、AI 步骤/cleanup/全文生成入口、YAML schema 与 API 补全 |
+| 2026-05-06 | Builder UX Simplification | Nuclei/Starlark Builder 默认隐藏低频元数据，生成 YAML 省略空字段；Starlark Builder 增加认证流、TCP+HTTP、多步提取、自定义代码场景模板，并补齐 extract/cleanup/result 步骤类型 |

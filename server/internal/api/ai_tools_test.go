@@ -45,6 +45,9 @@ func setupAITestDB(t *testing.T) *gorm.DB {
 		&db.WorkflowRule{},
 		&db.DirRule{},
 		&db.ExploitRule{},
+		&db.ExploitRun{},
+		&db.ExploitArtifact{},
+		&db.User{},
 		&db.AIToolInvocation{},
 	); err != nil {
 		t.Fatalf("automigrate: %v", err)

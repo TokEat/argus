@@ -52,6 +52,8 @@ func (w *Worker) handleDebugCommand(cmd *pb.DebugCommand) {
 		w.handleExploitCommand(cmd)
 	case "cleanup_exp":
 		w.handleExploitCleanup(cmd)
+	case "cancel_exp":
+		w.cancelExploitSession(cmd.SessionId)
 	default:
 		logDebugLocal("WARN", "unknown debug command action: %s", cmd.Action)
 	}
@@ -577,6 +579,16 @@ func (w *Worker) handleExploitCommand(cmd *pb.DebugCommand) {
 		if timeout <= 0 {
 			timeout = defaultAgentDebugTimeout
 		}
+		ctx, cancel := context.WithCancel(context.Background())
+		if !w.registerExploitSession(cmd.SessionId, cancel) {
+			cancel()
+			w.sendExploitResult(cmd, "Failed", nil, "agent already has a running EXP session with this id")
+			return
+		}
+		defer func() {
+			w.finishExploitSession(cmd.SessionId)
+			cancel()
+		}()
 
 		eng := exploit.NewEngine(timeout, cmd.Proxy)
 		tmpl, err := exploit.ParseTemplate([]byte(cmd.PocContent))
@@ -596,24 +608,17 @@ func (w *Worker) handleExploitCommand(cmd *pb.DebugCommand) {
 
 		logDebugLocal("INFO", "[EXP] executing %s against %s (engine=%s)", tmpl.ID, cmd.TargetUrl, tmpl.Runtime.Engine)
 
-		result, err := eng.Run(tmpl, cmd.TargetUrl, params)
+		result, err := eng.RunContext(ctx, tmpl, cmd.TargetUrl, params)
 		if err != nil {
 			w.sendExploitResult(cmd, "Failed", nil, fmt.Sprintf("execution error: %v", err))
 			return
 		}
+		if ctx.Err() != nil {
+			w.sendExploitResult(cmd, "Cancelled", nil, ctx.Err().Error())
+			return
+		}
 
 		w.sendExploitResult(cmd, result.Status, result, result.ErrorMsg)
-
-		// Auto-cleanup if required
-		if result.Status == "Succeeded" && (tmpl.Policy.CleanupRequired || tmpl.Info.CleanupRequired) {
-			logDebugLocal("INFO", "[EXP] running cleanup for %s", tmpl.ID)
-			if err := eng.Cleanup(tmpl, cmd.TargetUrl, params); err != nil {
-				logDebugLocal("WARN", "[EXP] cleanup failed for %s: %v", tmpl.ID, err)
-				w.sendExploitResult(cmd, "CleanupFailed", nil, fmt.Sprintf("cleanup error: %v", err))
-			} else {
-				w.sendExploitResult(cmd, "CleanupSucceeded", nil, "")
-			}
-		}
 	}()
 }
 
@@ -628,6 +633,16 @@ func (w *Worker) handleExploitCleanup(cmd *pb.DebugCommand) {
 		if timeout <= 0 {
 			timeout = defaultAgentDebugTimeout
 		}
+		ctx, cancel := context.WithCancel(context.Background())
+		if !w.registerExploitSession(cmd.SessionId, cancel) {
+			cancel()
+			w.sendExploitResult(cmd, "CleanupFailed", nil, "agent already has a running EXP session with this id")
+			return
+		}
+		defer func() {
+			w.finishExploitSession(cmd.SessionId)
+			cancel()
+		}()
 
 		eng := exploit.NewEngine(timeout, cmd.Proxy)
 		tmpl, err := exploit.ParseTemplate([]byte(cmd.PocContent))
@@ -641,12 +656,44 @@ func (w *Worker) handleExploitCleanup(cmd *pb.DebugCommand) {
 			json.Unmarshal([]byte(cmd.Params), &params)
 		}
 
-		if err := eng.Cleanup(tmpl, cmd.TargetUrl, params); err != nil {
+		if err := eng.CleanupContext(ctx, tmpl, cmd.TargetUrl, params); err != nil {
 			w.sendExploitResult(cmd, "CleanupFailed", nil, fmt.Sprintf("cleanup error: %v", err))
+			return
+		}
+		if ctx.Err() != nil {
+			w.sendExploitResult(cmd, "Cancelled", nil, ctx.Err().Error())
 			return
 		}
 		w.sendExploitResult(cmd, "CleanupSucceeded", nil, "")
 	}()
+}
+
+func (w *Worker) registerExploitSession(sessionID string, cancel context.CancelFunc) bool {
+	w.expMu.Lock()
+	defer w.expMu.Unlock()
+	if w.expCancels == nil {
+		w.expCancels = make(map[string]context.CancelFunc)
+	}
+	if _, exists := w.expCancels[sessionID]; exists {
+		return false
+	}
+	w.expCancels[sessionID] = cancel
+	return true
+}
+
+func (w *Worker) finishExploitSession(sessionID string) {
+	w.expMu.Lock()
+	defer w.expMu.Unlock()
+	delete(w.expCancels, sessionID)
+}
+
+func (w *Worker) cancelExploitSession(sessionID string) {
+	w.expMu.Lock()
+	cancel := w.expCancels[sessionID]
+	w.expMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (w *Worker) sendExploitResult(cmd *pb.DebugCommand, status string, result *exploit.Result, errMsg string) {

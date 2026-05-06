@@ -126,14 +126,15 @@ type Node struct {
 
 // User 用户模型 - 多租户用户管理
 type User struct {
-	ID           uint   `gorm:"primaryKey;autoIncrement"`
-	TenantID     string `gorm:"default:'default';index"`
-	Username     string `gorm:"uniqueIndex"`
-	PasswordHash string
-	Role         string `gorm:"default:'viewer'"` // admin, operator, viewer
-	Status       string `gorm:"default:'active'"` // active, disabled
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID            uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID      string `gorm:"default:'default';index"`
+	Username      string `gorm:"uniqueIndex"`
+	PasswordHash  string
+	Role          string `gorm:"default:'viewer'"` // admin, operator, viewer
+	Status        string `gorm:"default:'active'"` // active, disabled
+	ExpAuthorized bool   `gorm:"default:false"`    // 是否允许使用 EXP 功能
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // SystemConfig 系统配置键值存储
@@ -325,26 +326,28 @@ type AgentLog struct {
 
 // ExploitRun records one EXP execution against a single target.
 type ExploitRun struct {
-	ID              uint        `gorm:"primaryKey;autoIncrement"`
-	TenantID        string      `gorm:"default:'default';index"`
-	ProjectID       string      `gorm:"index"`
-	AssetID         string      `gorm:"index"`
-	Target          string      `gorm:"index;not null"`
-	ExploitID       string      `gorm:"index;not null"`
-	LinkedPocID     string      `gorm:"index"`
-	OperatorID      string      `gorm:"index;not null"`
-	RiskLevel       string      `gorm:"index;default:'medium'"`
-	Status          string      `gorm:"index;default:'Pending'"`
-	ParamsDigest    string      `gorm:"index"`
-	StartedAt       *time.Time
-	FinishedAt      *time.Time
-	Evidence        string      `gorm:"type:jsonb"`
-	SideEffects     string      `gorm:"type:jsonb"`
-	CleanupStatus   string      `gorm:"index"`
-	CleanupEvidence string      `gorm:"type:jsonb"`
-	ErrorMessage    string      `gorm:"type:text"`
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID               uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID         string `gorm:"default:'default';index"`
+	ProjectID        string `gorm:"index"`
+	AssetID          string `gorm:"index"`
+	Target           string `gorm:"index;not null"`
+	ExploitID        string `gorm:"index;not null"`
+	LinkedPocID      string `gorm:"index"`
+	OperatorID       string `gorm:"index;not null"`
+	AgentID          string `gorm:"index"`
+	RiskLevel        string `gorm:"index;default:'medium'"`
+	Status           string `gorm:"index;default:'Pending'"`
+	ParamsDigest     string `gorm:"index"`
+	ParamsCiphertext string `gorm:"type:text"`
+	StartedAt        *time.Time
+	FinishedAt       *time.Time
+	Evidence         string `gorm:"type:jsonb"`
+	SideEffects      string `gorm:"type:jsonb"`
+	CleanupStatus    string `gorm:"index"`
+	CleanupEvidence  string `gorm:"type:jsonb"`
+	ErrorMessage     string `gorm:"type:text"`
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // ExploitArtifact stores large evidence attachments for EXP runs.

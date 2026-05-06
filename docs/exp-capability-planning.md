@@ -23,7 +23,7 @@ EXP 与 POC 是两套独立资产：
 | 核心目标 | 检测漏洞是否疑似存在 | 受控复现和证明影响 |
 | 默认执行 | 可自动批量检测 | 默认只能人工触发 |
 | 副作用 | 默认只读或低影响 | 可能产生副作用，必须声明 |
-| 审批要求 | 草稿 / 审核 | 更严格的风险审批 |
+| 授权要求 | 草稿 / 审核 | 用户级 EXP 授权 + 风险确认 |
 | 执行记录 | 扫描结果 | 独立 EXP 执行审计 |
 | POC 关系 | 不依赖 EXP | 可选关联一个或多个 POC |
 
@@ -209,7 +209,7 @@ scripts:
 - 直接访问内网非目标地址。
 - 动态下载并执行代码。
 
-如后续确实需要文件写入、命令回显、凭据验证等高风险 capability，必须拆成单独能力开关，并要求 admin 审核、二次确认、强审计和 cleanup。
+如后续确实需要文件写入、命令回显、凭据验证等高风险 capability，必须拆成单独 capability、明确风险确认、强审计和 cleanup；是否可使用由用户级 EXP 授权统一控制。
 
 ### 2.4 EXP 包校验
 
@@ -267,11 +267,12 @@ cleanup:
 声明式 steps 初期只支持：
 
 - HTTP 请求。
-- TCP 探测。
 - 参数模板渲染。
 - matcher / extractor。
 - cleanup 步骤。
 - 证据字段提取。
+
+TCP 探测当前通过 Starlark `tcp.connect` 支持；声明式 `tcp` / `steps.type=tcp` 暂不开放，保存和执行前校验会明确拒绝。
 
 ### 2.6 执行入口
 
@@ -289,34 +290,32 @@ EXP 执行入口应保持人工、单目标优先：
 EXP 默认关闭，需要显式启用：
 
 - `EXP_ENABLED=false`：全局 EXP 开关。
-- `EXP_ALLOW_HIGH_RISK=false`：是否允许高风险 EXP。
-- `EXP_ALLOW_DESTRUCTIVE=false`：是否允许破坏性 EXP。
+- `users.exp_authorized=false`：用户级 EXP 授权，未授权用户无法访问 EXP 规则、执行、审计和证据端点。
 - `EXP_REQUIRE_APPROVED_RULE=true`：只允许运行已审核 EXP。
 - `EXP_MAX_CONCURRENCY=1`：默认单 Agent 串行或低并发。
 
 执行前必须校验：
 
 - 当前用户角色满足要求。
+- 当前用户已获得 EXP 授权。
 - 目标属于当前租户和项目授权范围。
 - EXP 已审核且启用。
 - 参数通过 schema 校验。
 - 风险确认已完成。
-- 高危或破坏性 EXP 经过 admin 二次确认。
 
 ### 2.8 权限模型
 
 建议权限分层：
 
-| 操作 | viewer | operator | admin |
-|------|--------|----------|-------|
-| 查看 EXP 规则 | 是 | 是 | 是 |
-| 创建 EXP 草稿 | 否 | 是 | 是 |
-| 编辑 EXP 草稿 | 否 | 是 | 是 |
-| 审核 EXP | 否 | 否 | 是 |
-| 运行 low / medium EXP | 否 | 是 | 是 |
-| 运行 high EXP | 否 | 需 admin 授权 | 是 |
-| 运行 destructive EXP | 否 | 否 | 需全局开关 + 二次确认 |
-| 查看执行审计 | 项目内只读 | 项目内 | 全租户 |
+| 操作 | 未授权用户 | 已授权 viewer | 已授权 operator | 已授权 admin |
+|------|------------|---------------|-----------------|-------------|
+| 查看 EXP 规则 | 否 | 是 | 是 | 是 |
+| 创建 EXP 草稿 | 否 | 否 | 是 | 是 |
+| 编辑 EXP 草稿 | 否 | 否 | 是 | 是 |
+| 审核 EXP | 否 | 否 | 否 | 是 |
+| 运行 low / medium EXP | 否 | 否 | 是 | 是 |
+| 运行 high / destructive EXP | 否 | 否 | 需风险确认 | 需风险确认 |
+| 查看执行审计 | 否 | 项目内只读 | 项目内 | 全租户 |
 
 ### 2.9 审计与证据
 
@@ -382,8 +381,8 @@ stateDiagram-v2
     Draft --> Approved: Admin 审核
     Approved --> Deprecated: 标记废弃
     Approved --> Runnable: 选择目标与参数
-    Runnable --> PendingApproval: 高风险二次确认
-    PendingApproval --> Queued: 确认执行
+    Runnable --> RiskConfirmation: 高风险/破坏性确认
+    RiskConfirmation --> Queued: 确认执行
     Runnable --> Queued: 低/中风险直接确认
     Queued --> Running: Agent 领取
     Running --> CleanupRequired: 有副作用且需清理
@@ -535,7 +534,7 @@ CleanupExploit(ExploitCleanupReq) returns (ExploitCleanupResp)
 - [x] 创建执行 `POST /api/v1/exploit-runs`（参数校验 + 全局并发限制 + 目标级并发保护）。
 - [x] 执行列表 `GET /api/v1/exploit-runs`（支持 exploit_id / status / target 筛选）。
 - [x] 执行详情 `GET /api/v1/exploit-runs/:id`。
-- [x] 取消执行 `POST /api/v1/exploit-runs/:id/cancel`（仅 Pending / Running）。
+- [x] 取消执行 `POST /api/v1/exploit-runs/:id/cancel`（Pending 直接取消；Running 下发 `cancel_exp` 后进入 `CancelPending`）。
 - [x] 手动清理 `POST /api/v1/exploit-runs/:id/cleanup`（仅 Succeeded / CleanupFailed）。
 - [x] 前端执行确认面板（目标输入、参数表单、风险确认、副作用声明）。
 - [x] RBAC 全套 exploit-runs 端点权限。
@@ -567,7 +566,7 @@ Agent 侧（双模式引擎）：
 - [x] `HandleExploitCleanupResult` — 清理结果处理（CleanupSucceeded/CleanupFailed）。
 - [x] `AutoDispatchCleanup` — 定时任务自动派发 CleanupRequired 的清理任务（集成到 timeout daemon），通过 `ExploitCleanupDispatchHook` 实际下发 `cleanup_exp` 命令到 Agent。
 - [x] 手动清理 `cleanupExploitRun` — 实际派发 `cleanup_exp` 命令到 Agent（`dispatchExploitCleanup`）。
-- [x] Agent 侧 cleanup 结果回传 — `handleExploitCommand` 中 auto-cleanup 完成后通过 `sendExploitResult` 回传成功/失败。
+- [x] Agent 侧 cleanup 结果回传 — `cleanup_exp` 独立执行后通过 `sendExploitResult` 回传成功/失败；cleanup 由 Server 统一派发。
 - [x] `BroadcastExploitRunEvent` — EXP 状态变更 WebSocket 广播。
 - [x] `ExploitArtifact` 模型 + `exploit_artifacts` AutoMigrate — 大型证据附件（>4KB）自动提取存储，原位保留 `[artifact:id]` 引用。
 - [x] `GET /api/v1/exploit-artifacts/:id` — 证据附件下载端点。
@@ -588,11 +587,12 @@ Agent 侧（双模式引擎）：
 - `server-ui/src/pages/TaskResults.tsx` — EXP 候选推荐表格 + "运行"按钮
 - `server-ui/src/services/api.ts` — `getExploitCandidatesForVuln` 函数
 
-### Phase 5：高风险能力 🔲 待开始
+### Phase 5：用户级 EXP 授权与高风险能力 ✅ 已完成核心闭环
 
-- 引入 high 风险二次确认。
-- 引入 admin 授权流。
-- 引入全局开关和租户级开关。
+- 引入 high / destructive 风险确认。
+- 引入用户级 `exp_authorized` 授权，未授权用户不允许访问 EXP 功能。
+- 保留全局开关作为部署级熔断。
+- 运行时 capability guard、target/outbound guard、Server 统一 cleanup、真实 cancel 已接入执行链路。
 - 评估是否开放有限批量复验。
 
 ### Phase 6：隔离执行扩展 🔲 待开始
@@ -620,7 +620,7 @@ Agent 侧（双模式引擎）：
 4. EXP 优先单目标、低并发、可取消。
 5. 有副作用的 EXP 优先支持 cleanup。
 6. 证据最小化，敏感信息默认脱敏。
-7. 高危能力通过全局开关、角色权限和二次确认共同约束。
+7. 高危能力通过用户级 EXP 授权、角色权限、风险确认和审计共同约束。
 
 ## 9. 补充设计
 
@@ -677,7 +677,7 @@ CREATE TABLE IF NOT EXISTS exploit_artifacts (
 |------|------|----------|
 | 基础校验 | `saveArsenal` (type=exp) | YAML schema 合法、kind 版本受支持、id/risk_level/capabilities 必填、cleanup_required=true 时必须有 cleanup 入口 |
 | 严格校验 | `approveArsenal` (type=exp) | 基础校验全部通过 + capability 值在允许列表内 + linked_pocs 指向存在的 POC 时检查健康状态 + 脚本入口函数存在 + 脚本静态扫描无禁用符号 |
-| 运行前校验 | 执行前 | 严格校验全部通过 + 参数通过 params_schema 校验 + 风险确认已完成 + 高危/破坏性 EXP 经 admin 二次确认 |
+| 运行前校验 | 执行前 | 严格校验全部通过 + 用户具备 EXP 授权 + 参数通过 params_schema 校验 + 风险确认已完成 |
 
 校验失败的 EXP 在 `exploit_rules` 物化时标记为 `state=Invalid`，并记录错误摘要到 `RuleCatalogBootstrap.LastError`。
 
@@ -735,7 +735,7 @@ EXP 执行状态变更通过现有 WebSocket 广播机制推送到前端：
 | 单元测试 | YAML 解析（parseExploitMeta）、字段校验、capability 校验、物化链路 | 每次提交 | ✅ 19 个测试（`rule_catalog_test.go` 2 个 + `handler_exploits_test.go` 17 个） |
 | API 测试 | CRUD + 权限校验（viewer/operator/admin 角色覆盖） | 每次提交 | 🔲 待补充 |
 | 集成测试 | EXP 包保存 → 物化 → 列表查询 → 审核 → 候选推荐完整链路 | 每次提交 | 🔲 待补充 |
-| 执行 mock 测试 | 声明式 steps 编译、Starlark 脚本沙箱执行、超时/取消、cleanup 生命周期 | Phase 3+ | 🔲 待补充 |
+| 执行 mock 测试 | 声明式 steps 编译、Starlark 脚本沙箱执行、超时/取消、cleanup 生命周期 | Phase 3+ | ✅ 已补充 steps-http、runtime capability、outbound guard、cleanup params、cancel |
 | 安全测试 | 禁用符号检测、capability 越权检测、脚本沙箱逃逸检测 | Phase 3+ | 🔲 待补充 |
 
 ### 9.8 状态机完整定义
@@ -747,7 +747,7 @@ Pending → Running → Succeeded
                   → Failed
                   → CleanupRequired → CleanupRunning → Succeeded
                                                      → CleanupFailed
-                  → Cancelled
+Pending/Running → CancelPending → Cancelled
 ```
 
 `exploit_runs.status` 枚举值：
@@ -758,6 +758,7 @@ Pending → Running → Succeeded
 - `CleanupRequired` — 需要清理
 - `CleanupRunning` — 正在清理
 - `CleanupFailed` — 清理失败
+- `CancelPending` — 已向 Agent 下发取消指令，等待执行侧确认
 - `Cancelled` — 操作人取消
 
 ## 10. 变更记录
@@ -772,3 +773,7 @@ Pending → Running → Succeeded
 | 2026-04-30 | Review Hardening | 修复 EXP 审核/废弃/删除只改索引不改原始 Arsenal 的生命周期问题；修复 `runtime.entry` 校验字段；补充脚本调用能力与声明能力一致性检查；执行创建默认受 `EXP_ENABLED` 保护，并增加风险确认、租户级并发、项目归属和 target 级并发边界；AutoScaler 对账/缩容/TTL 回收按实例地域选择 provider |
 | 2026-05-02 | Code Hardening | P0 修复：cleanup 命令实际派发（`ExploitCleanupDispatchHook` + `dispatchExploitCleanup`）；P1 修复：Agent 侧 auto-cleanup 结果回传 Server、Starlark 引擎添加 `MaxExecSteps` 超时保护；P2 修复：移除 `ExploitResultHook` 死代码、TLS 验证改为 `ExploitPolicy.InsecureTLS` 可配置；P3 修复：`scanScriptCapabilities` 改用 regexp 匹配、补充 17 个单元测试 |
 | 2026-05-02 | Phase 4 补全 | `ExploitArtifact` 模型 + AutoMigrate + `saveExploitArtifacts`（>4KB 证据自动提取）+ `GET /exploit-artifacts/:id` 端点；漏洞详情页 EXP 候选推荐集成（`TaskResults.tsx` 表格 + "运行"按钮）；`ExploitConfig` 支持 `?auto_run` 查询参数自动打开执行面板；`markVulnsExploited` EXP 成功后回写漏洞状态为 `exploit_verified` |
+| 2026-05-06 | Execution Foundation | 补齐用户级 EXP 授权；支持声明式 `steps.type=http`；明确拒绝声明式 TCP；Agent 运行时按 `policy.capabilities` 限制 Starlark/Nuclei/cleanup；HTTP/TCP outbound guard 限制目标 host；Server 统一 cleanup 编排并加密保存执行 params；Running EXP 支持 `cancel_exp` 真实取消并进入 `CancelPending` |
+| 2026-05-06 | Builder Phase 1 | 前端 EXP 验证库新增 HTTP Builder：表单化维护基础信息、策略、参数、HTTP 请求、Matcher、Extractor、Cleanup；实时生成标准 EXP YAML 并复用现有保存/审核/执行链路；Starlark/TCP 保持 YAML 入口 |
+| 2026-05-06 | Builder Phase 2/3 | Builder 支持高级线性流程和 Code Escape Hatch：HTTP/TCP/条件/循环/证据/代码步骤统一导出 Starlark，支持表单转代码、Starlark 脚本回填、AI 步骤/cleanup/全文生成入口、YAML schema 与 API 补全 |
+| 2026-05-06 | Builder UX Simplification | 降低 Nuclei/Starlark Builder 维护心智：默认隐藏低频字段，生成 YAML 省略空字段和 false policy；Starlark Builder 扩展为通用多步场景（认证流、TCP+HTTP、多步提取、自定义代码），补齐 extract/cleanup/result 步骤 |

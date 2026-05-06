@@ -3,9 +3,11 @@ package api
 import (
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/user/dddd-server/internal/db"
 )
 
 // 角色权限矩阵
@@ -143,9 +145,49 @@ func RBACMiddleware() gin.HandlerFunc {
 			})
 			return
 		}
+		if isExploitEndpoint(c.Request.URL.Path) && !currentUserHasEXPAuthorization(c) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "EXP access requires user-level authorization",
+			})
+			return
+		}
 
 		c.Next()
 	}
+}
+
+func isExploitEndpoint(path string) bool {
+	cleanPath := strings.TrimPrefix(path, "/api/v1")
+	return cleanPath == "/exploits" ||
+		strings.HasPrefix(cleanPath, "/exploits/") ||
+		cleanPath == "/exploit-runs" ||
+		strings.HasPrefix(cleanPath, "/exploit-runs/") ||
+		strings.HasPrefix(cleanPath, "/exploit-artifacts/")
+}
+
+func currentUserHasEXPAuthorization(c *gin.Context) bool {
+	claimAuthorized := false
+	if authorized, ok := c.Get("exp_authorized"); ok {
+		claimAuthorized, _ = authorized.(bool)
+	}
+	userID := currentUserID(c)
+	if userID == "" {
+		return claimAuthorized
+	}
+	id, err := strconv.ParseUint(userID, 10, 64)
+	if err != nil {
+		return claimAuthorized
+	}
+	if db.DB == nil {
+		return claimAuthorized
+	}
+	var user db.User
+	if err := db.DB.Select("id", "exp_authorized").
+		Where("id = ? AND tenant_id = ? AND status = ?", id, currentTenantID(c), "active").
+		First(&user).Error; err != nil {
+		return false
+	}
+	return user.ExpAuthorized
 }
 
 // matchPermission 匹配请求路径到所需权限
