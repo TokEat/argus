@@ -4,7 +4,7 @@ import { Form, Input, Button, App, ConfigProvider, theme } from 'antd';
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import gsap from 'gsap';
 import { login } from '../services/api';
-import loginIllustration from '../assets/login_illustration.png';
+import argusLogoMark from '../assets/brand/argus-logo-mark.svg';
 import NetworkCanvas from '../components/NetworkCanvas';
 
 /* ─────────────── inline styles ─────────────── */
@@ -19,7 +19,7 @@ const styles: Record<string, React.CSSProperties> = {
     /* ── Left panel ── */
     leftPanel: {
         flex: '0 0 58%',
-        background: 'linear-gradient(135deg, #2D1B69 0%, #4A2DB5 35%, #6B4FCC 60%, #8B6FE8 80%, #B06AE8 100%)',
+        background: '#030507',
         position: 'relative',
         overflow: 'hidden',
         display: 'flex',
@@ -35,61 +35,69 @@ const styles: Record<string, React.CSSProperties> = {
         transform: 'skewX(-6deg)',
         zIndex: 10,
     },
-    blob1: {
+    gridOverlay: {
         position: 'absolute',
-        width: 400, height: 400,
-        background: '#FF6BCB',
-        borderRadius: '50%',
-        filter: 'blur(70px)',
-        opacity: 0.3,
-        top: -120, left: -100,
+        inset: 0,
+        backgroundImage: 'linear-gradient(rgba(244,247,250,0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(244,247,250,0.045) 1px, transparent 1px)',
+        backgroundSize: '72px 72px',
+        maskImage: 'linear-gradient(90deg, rgba(0,0,0,0.95), rgba(0,0,0,0.68) 58%, transparent)',
         pointerEvents: 'none',
     },
-    blob2: {
-        position: 'absolute',
-        width: 300, height: 300,
-        background: '#4FC3F7',
-        borderRadius: '50%',
-        filter: 'blur(60px)',
-        opacity: 0.3,
-        bottom: -80, right: -60,
-        pointerEvents: 'none',
-    },
-    blob3: {
-        position: 'absolute',
-        width: 220, height: 220,
-        background: '#7C4DFF',
-        borderRadius: '50%',
-        filter: 'blur(60px)',
-        opacity: 0.3,
-        bottom: 100, left: 40,
-        pointerEvents: 'none',
-    },
-    illustrationWrap: {
+    motionWrap: {
         position: 'relative',
         zIndex: 5,
-        textAlign: 'center',
-        padding: '0 40px',
+        width: 'min(780px, 82%)',
+        aspectRatio: '1.36 / 1',
+        display: 'grid',
+        placeItems: 'center',
+    },
+    motionStage: {
+        position: 'absolute',
+        inset: 0,
+        display: 'grid',
+        placeItems: 'center',
+    },
+    logoFrame: {
+        position: 'absolute',
+        width: 320,
+        height: 320,
+        border: '9px solid #F4F7FA',
+        borderRadius: 38,
+        background: 'rgba(10, 15, 23, 0.76)',
+        display: 'grid',
+        placeItems: 'center',
+        boxShadow: '0 34px 88px rgba(0, 0, 0, 0.36)',
+        overflow: 'hidden',
+    },
+    logoMark: {
+        width: 220,
+        height: 220,
+        position: 'relative',
+        zIndex: 3,
+        filter: 'drop-shadow(0 18px 36px rgba(0, 0, 0, 0.55))',
     },
     illustrationTitle: {
-        color: '#fff',
-        fontSize: 30,
-        fontWeight: 700,
-        letterSpacing: 6,
-        marginBottom: 12,
-        textShadow: '0 2px 10px rgba(0,0,0,0.4)',
-    },
-    illustrationImg: {
-        width: 460,
-        maxWidth: '80%',
-        filter: 'drop-shadow(0 20px 60px rgba(0,0,0,0.45))',
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        color: '#F4F7FA',
+        fontSize: 58,
+        fontWeight: 800,
+        letterSpacing: 14,
+        textAlign: 'center',
     },
     illustrationTagline: {
-        color: 'rgba(255,255,255,0.85)',
-        fontSize: 14,
-        marginTop: 16,
-        letterSpacing: 1,
-        textShadow: '0 1px 4px rgba(0,0,0,0.3)',
+        position: 'absolute',
+        top: 4,
+        left: 0,
+        right: 0,
+        color: '#8A95A5',
+        fontSize: 15,
+        fontWeight: 600,
+        letterSpacing: 5,
+        textAlign: 'center',
+        textTransform: 'uppercase',
     },
 
     /* ── Right panel ── */
@@ -107,6 +115,20 @@ const styles: Record<string, React.CSSProperties> = {
     },
     header: {
         marginBottom: 32,
+    },
+    brandHeader: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        marginBottom: 28,
+    },
+    brandIcon: {
+        width: 46,
+        height: 46,
+        borderRadius: 10,
+        background: '#030507',
+        padding: 8,
+        boxShadow: '0 12px 26px rgba(3, 5, 7, 0.16)',
     },
     headerTitle: {
         fontSize: 22,
@@ -143,36 +165,55 @@ const Login: React.FC = () => {
     const { message } = App.useApp();
     const leftPanelRef = useRef<HTMLDivElement>(null);
     const rightPanelRef = useRef<HTMLDivElement>(null);
-    const illustrationRef = useRef<HTMLImageElement>(null);
+    const motionHeroRef = useRef<HTMLDivElement>(null);
 
     /* GSAP animations */
     useEffect(() => {
         const ctx = gsap.context(() => {
-            // 1. 插画浮动
-            if (illustrationRef.current) {
-                gsap.to(illustrationRef.current, {
-                    y: -12,
-                    duration: 2.5,
+            const hero = motionHeroRef.current;
+            if (hero) {
+                gsap.from(hero.querySelectorAll('.argus-motion-in'), {
+                    y: 26,
+                    opacity: 0,
+                    duration: 0.65,
+                    stagger: 0.08,
+                    ease: 'power3.out',
+                });
+                gsap.to(hero.querySelector('.argus-logo-mark'), {
+                    y: -10,
+                    scale: 1.025,
+                    duration: 3.2,
                     ease: 'sine.inOut',
                     yoyo: true,
                     repeat: -1,
+                });
+                gsap.to(hero.querySelector('.argus-scan-line'), {
+                    y: 242,
+                    opacity: 0.88,
+                    duration: 2.7,
+                    ease: 'sine.inOut',
+                    yoyo: true,
+                    repeat: -1,
+                });
+                gsap.to(hero.querySelectorAll('.argus-signal-ring'), {
+                    rotate: 360,
+                    duration: 10,
+                    ease: 'none',
+                    repeat: -1,
+                    stagger: 0.6,
+                });
+                gsap.to(hero.querySelectorAll('.argus-rail'), {
+                    x: 26,
+                    opacity: 0.42,
+                    duration: 2.4,
+                    ease: 'sine.inOut',
+                    yoyo: true,
+                    repeat: -1,
+                    stagger: 0.35,
                 });
             }
 
-            // 2. 光斑漂移
-            const blobs = leftPanelRef.current?.querySelectorAll('.login-blob');
-            blobs?.forEach((blob, i) => {
-                gsap.to(blob, {
-                    x: `+=${(i % 2 === 0 ? 1 : -1) * 30}`,
-                    y: `+=${(i % 2 === 0 ? -1 : 1) * 25}`,
-                    duration: 4 + i * 1.2,
-                    ease: 'sine.inOut',
-                    yoyo: true,
-                    repeat: -1,
-                });
-            });
-
-            // 3. 右侧表单入场
+            // 右侧表单入场
             if (rightPanelRef.current) {
                 const items = rightPanelRef.current.querySelectorAll('.login-form-item');
                 gsap.from(items, {
@@ -185,23 +226,6 @@ const Login: React.FC = () => {
                 });
             }
 
-            // 4. 左侧标题入场
-            if (leftPanelRef.current) {
-                gsap.from(leftPanelRef.current.querySelector('.login-title-text'), {
-                    y: -20,
-                    opacity: 0,
-                    duration: 0.6,
-                    ease: 'power2.out',
-                    delay: 0.1,
-                });
-                gsap.from(leftPanelRef.current.querySelector('.login-tagline'), {
-                    y: 16,
-                    opacity: 0,
-                    duration: 0.5,
-                    ease: 'power2.out',
-                    delay: 0.35,
-                });
-            }
         });
 
         return () => ctx.revert();
@@ -229,16 +253,12 @@ const Login: React.FC = () => {
     return (
         <div style={styles.root}>
             {/* ──────────── LEFT PANEL ──────────── */}
-            <div ref={leftPanelRef} style={styles.leftPanel}>
+            <div ref={leftPanelRef} className="login-left-panel" style={styles.leftPanel}>
                 {/* canvas particle network */}
-                <NetworkCanvas color="#a78bfa" count={40} speed={0.2} linkDist={120} />
+                <NetworkCanvas color="#f4f7fa" count={42} speed={0.16} linkDist={125} style={{ opacity: 0.34 }} />
+                <div style={styles.gridOverlay} />
 
-                {/* decorative blobs */}
-                <div className="login-blob" style={styles.blob1} />
-                <div className="login-blob" style={styles.blob2} />
-                <div className="login-blob" style={styles.blob3} />
-
-                {/* twinkling dots */}
+                {/* telemetry points */}
                 {dots.map((d, i) => (
                     <div
                         key={i}
@@ -246,7 +266,7 @@ const Login: React.FC = () => {
                             position: 'absolute',
                             width: d.s, height: d.s,
                             borderRadius: '50%',
-                            background: 'rgba(255,255,255,0.7)',
+                            background: 'rgba(244,247,250,0.72)',
                             top: d.top, left: d.left,
                             animation: `twinkle 3s ${d.delay}s ease-in-out infinite`,
                             pointerEvents: 'none',
@@ -254,16 +274,21 @@ const Login: React.FC = () => {
                     />
                 ))}
 
-                {/* illustration */}
-                <div style={styles.illustrationWrap}>
-                    <div className="login-title-text" style={styles.illustrationTitle}>ARGUS</div>
-                    <img
-                        ref={illustrationRef}
-                        src={loginIllustration}
-                        alt="Argus Illustration"
-                        style={styles.illustrationImg}
-                    />
-                    <div className="login-tagline" style={styles.illustrationTagline}>分布式漏洞扫描与资产管理平台</div>
+                {/* HyperFrames-inspired motion hero */}
+                <div ref={motionHeroRef} style={styles.motionWrap}>
+                    <div style={styles.motionStage}>
+                        <div className="argus-motion-in login-tagline" style={styles.illustrationTagline}>Security Automation Platform</div>
+                        <div className="argus-motion-in argus-rail argus-rail-a" />
+                        <div className="argus-motion-in argus-rail argus-rail-b" />
+                        <div className="argus-motion-in argus-signal-ring argus-signal-left" />
+                        <div className="argus-motion-in argus-signal-ring argus-signal-right" />
+                        <div className="argus-motion-in" style={styles.logoFrame}>
+                            <div className="argus-frame-grid" />
+                            <div className="argus-scan-line" />
+                            <img className="argus-logo-mark" src={argusLogoMark} alt="Argus A" style={styles.logoMark} />
+                        </div>
+                        <div className="argus-motion-in login-title-text" style={styles.illustrationTitle}>ARGUS</div>
+                    </div>
                 </div>
 
                 {/* diagonal cut */}
@@ -276,7 +301,7 @@ const Login: React.FC = () => {
                     theme={{
                         algorithm: theme.defaultAlgorithm,
                         token: {
-                            colorPrimary: '#6B4FCC',
+                            colorPrimary: '#030507',
                             colorBgContainer: '#ffffff',
                             colorText: '#1a1a2e',
                             colorTextPlaceholder: '#bbbcc8',
@@ -292,9 +317,12 @@ const Login: React.FC = () => {
                     }}
                 >
                     <div style={styles.loginBox}>
-                        <div className="login-form-item" style={styles.header}>
-                            <div style={styles.headerTitle}>控制台登录</div>
-                            <div style={styles.headerSub}>输入租户 ID 和密码进入控制面板</div>
+                        <div className="login-form-item" style={styles.brandHeader}>
+                            <img src={argusLogoMark} alt="Argus" style={styles.brandIcon} />
+                            <div>
+                                <div style={styles.headerTitle}>ARGUS 控制台</div>
+                                <div style={styles.headerSub}>输入租户 ID 和密码进入控制面板</div>
+                            </div>
                         </div>
 
                         <Form name="login" onFinish={onFinish} autoComplete="off" size="large"
@@ -302,7 +330,7 @@ const Login: React.FC = () => {
                             {/* 租户 ID */}
                             <Form.Item className="login-form-item" name="tenant_id" rules={[{ required: true, message: '请输入租户 ID' }]}>
                                 <Input
-                                    prefix={<UserOutlined style={{ color: '#6B4FCC' }} />}
+                                    prefix={<UserOutlined style={{ color: '#030507' }} />}
                                     placeholder="租户 ID"
                                     disabled={loading}
                                     style={{ borderRadius: 10, height: 46 }}
@@ -312,7 +340,7 @@ const Login: React.FC = () => {
                             {/* 密码 */}
                             <Form.Item className="login-form-item" name="password" rules={[{ required: true, message: '请输入密码' }]}>
                                 <Input.Password
-                                    prefix={<LockOutlined style={{ color: '#6B4FCC' }} />}
+                                    prefix={<LockOutlined style={{ color: '#030507' }} />}
                                     placeholder="密码"
                                     disabled={loading}
                                     style={{ borderRadius: 10, height: 46 }}
@@ -332,9 +360,9 @@ const Login: React.FC = () => {
                                         fontWeight: 600,
                                         letterSpacing: 6,
                                         borderRadius: 10,
-                                        background: 'linear-gradient(135deg, #5B3FBC, #7B5EEA)',
+                                        background: '#030507',
                                         border: 'none',
-                                        boxShadow: '0 6px 20px rgba(91,63,188,0.4)',
+                                        boxShadow: '0 10px 24px rgba(3,5,7,0.24)',
                                     }}
                                 >
                                     {loading ? '登录中…' : '登 录'}
@@ -353,15 +381,71 @@ const Login: React.FC = () => {
                     0%, 100% { opacity: 0.3; transform: scale(1); }
                     50%       { opacity: 1;   transform: scale(1.5); }
                 }
+                .argus-frame-grid {
+                    position: absolute;
+                    inset: 22px;
+                    border: 1px solid rgba(244,247,250,0.16);
+                    background-image:
+                        linear-gradient(rgba(244,247,250,0.06) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(244,247,250,0.06) 1px, transparent 1px);
+                    background-size: 34px 34px;
+                    pointer-events: none;
+                }
+                .argus-scan-line {
+                    position: absolute;
+                    left: 28px;
+                    right: 28px;
+                    top: 36px;
+                    height: 2px;
+                    background: #38D5FF;
+                    opacity: 0.32;
+                    box-shadow: 0 0 18px rgba(56,213,255,0.86);
+                    z-index: 4;
+                }
+                .argus-rail {
+                    position: absolute;
+                    height: 3px;
+                    background: #F4F7FA;
+                    opacity: 0.84;
+                    pointer-events: none;
+                }
+                .argus-rail-a {
+                    width: 230px;
+                    top: 88px;
+                    left: 16px;
+                }
+                .argus-rail-b {
+                    width: 320px;
+                    right: 0;
+                    bottom: 88px;
+                }
+                .argus-signal-ring {
+                    position: absolute;
+                    width: 132px;
+                    height: 132px;
+                    border: 2px solid rgba(56,213,255,0.48);
+                    opacity: 0.48;
+                    pointer-events: none;
+                }
+                .argus-signal-left {
+                    left: 64px;
+                    bottom: 54px;
+                    transform: rotate(18deg);
+                }
+                .argus-signal-right {
+                    right: 58px;
+                    top: 42px;
+                    transform: rotate(-16deg);
+                }
                 .ant-input-affix-wrapper:focus-within,
                 .ant-input-affix-wrapper-focused {
-                    border-color: #6B4FCC !important;
-                    box-shadow: 0 0 0 2px rgba(107,79,204,0.15) !important;
+                    border-color: #030507 !important;
+                    box-shadow: 0 0 0 2px rgba(3,5,7,0.12) !important;
                 }
                 .ant-btn-primary:hover {
                     opacity: 0.9;
                     transform: translateY(-1px);
-                    box-shadow: 0 10px 28px rgba(91,63,188,0.5) !important;
+                    box-shadow: 0 14px 30px rgba(3,5,7,0.28) !important;
                 }
                 @media (max-width: 768px) {
                     .login-left-panel { display: none !important; }

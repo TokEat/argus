@@ -1,98 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Argus Cloud AI" width="32" height="32" viewBox="0 0 256 256">
-  <defs>
-    <radialGradient id="bg" cx="33%" cy="18%" r="88%">
-      <stop offset="0" stop-color="#155e75"/>
-      <stop offset="0.45" stop-color="#0f172a"/>
-      <stop offset="1" stop-color="#020617"/>
-    </radialGradient>
-    <linearGradient id="shield" x1="50" y1="24" x2="206" y2="232" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#67e8f9"/>
-      <stop offset="0.44" stop-color="#0ea5e9"/>
-      <stop offset="1" stop-color="#1d4ed8"/>
-    </linearGradient>
-    <linearGradient id="cloud" x1="64" y1="51" x2="193" y2="102" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#f0f9ff"/>
-      <stop offset="0.55" stop-color="#a5f3fc"/>
-      <stop offset="1" stop-color="#60a5fa"/>
-    </linearGradient>
-    <linearGradient id="eye" x1="77" y1="102" x2="179" y2="153" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#e0f2fe"/>
-      <stop offset="0.52" stop-color="#67e8f9"/>
-      <stop offset="1" stop-color="#22d3ee"/>
-    </linearGradient>
-    <linearGradient id="ai" x1="102" y1="95" x2="158" y2="149" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="0.5" stop-color="#a5f3fc"/>
-      <stop offset="1" stop-color="#8b5cf6"/>
-    </linearGradient>
-    <filter id="glow" x="-32" y="-32" width="320" height="320" color-interpolation-filters="sRGB">
-      <feGaussianBlur stdDeviation="5" result="blur"/>
-      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.08 0 0 0 0 0.63 0 0 0 0 1 0 0 0 0.55 0" result="blue"/>
-      <feMerge>
-        <feMergeNode in="blue"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-  </defs>
-
-  <rect width="256" height="256" rx="56" fill="url(#bg)"/>
-  <path fill="#38bdf8" fill-opacity="0.12" d="M28 68c36-33 88-46 143-31 26 7 45 20 56 36v116c-25 28-62 46-101 46-61 0-111-39-128-94V68Z"/>
-
-  <g fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.42">
-    <path d="M34 151h28l20-20h26" stroke="#67e8f9" stroke-width="2.3"/>
-    <path d="M222 151h-28l-20-20h-26" stroke="#67e8f9" stroke-width="2.3"/>
-    <path d="M50 183h30l24-22" stroke="#22d3ee" stroke-width="2"/>
-    <path d="M206 183h-30l-24-22" stroke="#22d3ee" stroke-width="2"/>
-    <path d="M128 202v-36" stroke="#a5f3fc" stroke-width="2"/>
-  </g>
-  <g fill="#a5f3fc" opacity="0.88">
-    <circle cx="34" cy="151" r="3.5"/>
-    <circle cx="82" cy="131" r="3"/>
-    <circle cx="222" cy="151" r="3.5"/>
-    <circle cx="174" cy="131" r="3"/>
-    <circle cx="50" cy="183" r="3.2"/>
-    <circle cx="206" cy="183" r="3.2"/>
-    <circle cx="128" cy="202" r="3.2"/>
-  </g>
-
-  <path fill="url(#shield)" d="M128 18 214 50v67c0 57-34 98-86 119-52-21-86-62-86-119V50l86-32Z"/>
-  <path fill="#e0f2fe" fill-opacity="0.13" d="M128 34 199 60v56c0 46-27 80-71 98-44-18-71-52-71-98V60l71-26Z"/>
-
-  <g filter="url(#glow)">
-    <path fill="url(#cloud)" fill-opacity="0.22" stroke="url(#cloud)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" d="M82 84h86c12 0 21-8 21-19 0-10-8-18-19-18-5 0-9 1-13 4-7-13-20-21-35-21-18 0-33 12-38 28-12 1-21 9-21 20 0 3 1 5 2 6h17Z"/>
-    <path fill="none" stroke="#e0f2fe" stroke-width="2.2" stroke-linecap="round" stroke-opacity="0.42" d="M92 82v25M128 80v20M164 82v25"/>
-
-    <circle cx="128" cy="126" r="56" fill="#082f49" fill-opacity="0.38" stroke="#e0f2fe" stroke-opacity="0.68" stroke-width="4.5"/>
-    <circle cx="128" cy="126" r="39" fill="none" stroke="#bae6fd" stroke-opacity="0.52" stroke-width="3"/>
-
-    <ellipse cx="128" cy="126" rx="50" ry="27" fill="#061525" fill-opacity="0.6" stroke="url(#eye)" stroke-width="4.2"/>
-    <ellipse cx="128" cy="126" rx="28" ry="15" fill="#082f49" fill-opacity="0.78" stroke="#67e8f9" stroke-opacity="0.56" stroke-width="2.5"/>
-    <circle cx="128" cy="126" r="11" fill="#020617" stroke="url(#ai)" stroke-width="3.5"/>
-    <circle cx="132" cy="122" r="3.3" fill="#f0f9ff"/>
-
-    <path fill="none" stroke="#f8fafc" stroke-width="7.3" stroke-linecap="round" stroke-linejoin="round" d="M111 137 124 109l13 28"/>
-    <path fill="none" stroke="#f8fafc" stroke-width="6.2" stroke-linecap="round" d="M117 127h14"/>
-
-    <g fill="none" stroke="#a5f3fc" stroke-width="2" stroke-linecap="round" stroke-opacity="0.68">
-      <path d="M104 106 119 97 136 103 152 94"/>
-      <path d="M103 148 120 157 138 151 154 160"/>
-      <path d="M119 97v12"/>
-      <path d="M136 103l1 13"/>
-      <path d="M120 157v-12"/>
-      <path d="M138 151v-12"/>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Argus A app icon</title>
+  <desc id="desc">A black rounded-square app icon with a white angular Argus A mark.</desc>
+  <rect x="70" y="70" width="884" height="884" rx="92" fill="#030507"/>
+  <rect x="70" y="70" width="884" height="884" rx="92" stroke="#F4F7FA" stroke-width="28"/>
+  <g transform="translate(132 118) scale(.74)">
+    <g fill="#F4F7FA">
+      <polygon points="196 844 266 844 470 314 400 314"/>
+      <polygon points="298 844 420 844 548 486 498 344"/>
+      <polygon points="466 154 594 154 860 844 714 844 536 360"/>
+      <polygon points="388 594 654 594 696 706 348 706"/>
     </g>
   </g>
-
-  <g fill="#e0f2fe" opacity="0.92">
-    <circle cx="104" cy="106" r="3"/>
-    <circle cx="119" cy="97" r="3"/>
-    <circle cx="136" cy="103" r="3"/>
-    <circle cx="152" cy="94" r="3"/>
-    <circle cx="103" cy="148" r="3"/>
-    <circle cx="120" cy="157" r="3"/>
-    <circle cx="138" cy="151" r="3"/>
-    <circle cx="154" cy="160" r="3"/>
-  </g>
-
-  <path fill="#020617" fill-opacity="0.22" d="M76 198c14 15 31 27 52 36 21-9 38-21 52-36-16 8-33 12-52 12s-36-4-52-12Z"/>
 </svg>

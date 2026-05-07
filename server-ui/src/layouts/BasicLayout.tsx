@@ -16,6 +16,7 @@ import { menuRoutes } from '../routes';
 import { listProjects } from '../services/api';
 import { canAccessRole, getCurrentUserRole, roleLabel } from '../utils/auth';
 import type { UserRole } from '../utils/auth';
+import argusLogoIcon from '../assets/brand/argus-logo-icon.svg';
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -431,6 +432,17 @@ const BasicLayout: React.FC = () => {
                             background: '#ffffff',
                         }}
                     >
+                        <img
+                            src={argusLogoIcon}
+                            alt="Argus"
+                            style={{
+                                width: collapsed ? 36 : 34,
+                                height: collapsed ? 36 : 34,
+                                borderRadius: 9,
+                                flex: '0 0 auto',
+                                display: 'block',
+                            }}
+                        />
                         {!collapsed && (
                             <Text
                                 strong
@@ -439,7 +451,7 @@ const BasicLayout: React.FC = () => {
                                     color: '#0f172a',
                                     whiteSpace: 'nowrap',
                                     fontWeight: 600,
-                                    letterSpacing: '-0.3px',
+                                    marginLeft: 12,
                                 }}
                             >
                                 Argus
