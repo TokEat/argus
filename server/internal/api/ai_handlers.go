@@ -453,6 +453,30 @@ func truncateMapValues(m map[string]interface{}, maxLen int) map[string]interfac
 	return result
 }
 
+func isBuilderPatchProtocolContext(data map[string]interface{}) bool {
+	if data == nil {
+		return false
+	}
+	if v, ok := data["builder_patch_protocol"]; ok {
+		switch typed := v.(type) {
+		case bool:
+			if typed {
+				return true
+			}
+		case string:
+			if strings.EqualFold(typed, "true") || strings.EqualFold(typed, "yes") {
+				return true
+			}
+		}
+	}
+	if nested, ok := data["builder_context"].(map[string]interface{}); ok && len(nested) > 0 {
+		if _, hasContract := data["builder_patch_contract"]; hasContract {
+			return true
+		}
+	}
+	return false
+}
+
 // injectCopilotContext builds structured system messages from the layered context.
 func injectCopilotContext(messages *[]aipkg.ChatMessage, pageContext map[string]interface{}) {
 	// Check for new layered format
@@ -506,6 +530,12 @@ func injectCopilotContext(messages *[]aipkg.ChatMessage, pageContext map[string]
 				}
 			}
 		}
+		if isBuilderPatchProtocolContext(dataLayer) {
+			*messages = append(*messages, aipkg.ChatMessage{
+				Role:    "system",
+				Content: "【EXP Builder 专用约束】你是 EXP Builder 的辅助整理助手，不是最终 EXP 作者。你的主要任务是根据用户提供的 raw HTTP 请求包、响应片段和判断线索，整理参数、请求、matcher/extractor 和 cleanup 草稿。优先只输出一个 fenced JSON builder_patch，由前端合并后生成 YAML；不要编造 CVE、产品事实、漏洞原理或响应内容；不要设置执行目标、用户授权、agent_id、project_id、risk_confirmed 等执行字段；不要切换页面上下文声明的 Builder 模式。若缺少成功判断或参数化依据，先说明需要用户补充什么，再给最小可用补丁。",
+			})
+		}
 		if len(dataLayer) > 0 {
 			b, _ := json.MarshalIndent(dataLayer, "", "  ")
 			*messages = append(*messages, aipkg.ChatMessage{
@@ -533,6 +563,12 @@ func injectCopilotContext(messages *[]aipkg.ChatMessage, pageContext map[string]
 			}
 		}
 		if len(pageOnly) > 0 {
+			if isBuilderPatchProtocolContext(pageOnly) {
+				*messages = append(*messages, aipkg.ChatMessage{
+					Role:    "system",
+					Content: "【EXP Builder 专用约束】你是 EXP Builder 的辅助整理助手，不是最终 EXP 作者。优先根据用户提供的请求包和判断线索输出 fenced JSON builder_patch；不要编造事实，不要设置执行/授权字段，不要切换 Builder 模式。缺少依据时先说明需要用户补充什么。",
+				})
+			}
 			ctxBytes, _ := json.MarshalIndent(pageOnly, "", "  ")
 			*messages = append(*messages, aipkg.ChatMessage{
 				Role:    "system",

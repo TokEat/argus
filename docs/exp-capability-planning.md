@@ -2,6 +2,14 @@
 
 本文档规划 Argus 后续 EXP（Exploit / 受控利用验证）能力。EXP 将作为弹药库管理中的独立规则类型统一治理、统一迁移、统一审核，但不复用 POC 的规则表或执行链路；POC 只作为可选关联，用于提供漏洞命中上下文、推荐候选 EXP 和验证证据闭环。
 
+当前实现补充（2026-05-07）：
+
+- EXP Builder 已调整为“AI 上下文收集器”：只收集基础信息、漏洞触发/利用流程、成功证据、关键 HTTP 请求包、参数化提示和 cleanup/副作用说明。
+- Builder 不再维护完整 HTTP 步骤、matcher、extractor、cleanup 或 Starlark 代码；复杂执行逻辑统一由 AI 生成 YAML，并由 YAML 编辑器承接审核和保存。
+- AI prompt 必须包含当前系统的 Argus EXP v1 设计约束，明确不要输出原生 Nuclei `requests/raw/dsl/variables/payloads/attack/unsafe` 等字段。
+- `runtime.engine` 由 AI 根据利用复杂度选择：声明式 HTTP 场景使用 `nuclei`，登录/Token/条件分支/循环等待/TCP/复杂编码/二次验证/复杂 cleanup 使用 `starlark`。
+- 顶层 `builder:` 块是前端上下文存档，只用于重新编辑和再次生成 prompt，不参与 Agent 执行。
+
 ## 1. 定位与边界
 
 ### 1.1 目标
@@ -84,7 +92,7 @@ EXP 规则元数据建议包含：
 - `cleanup_required`：是否强制清理。
 - `dry_run_supported`：是否支持 dry-run 预览。
 - `insecure_tls`：是否跳过 TLS 证书验证（适用于自签名证书的内网目标）。
-- `capabilities`：能力声明，例如 `http_write`、`command_echo`、`file_probe`。
+- `capabilities`：能力声明，例如 `http.request`、`tcp.connect`、`evidence.write`、`extract.match`、`cleanup.defer`、`result.write`。
 - `params_schema`：执行参数 schema。
 - `timeout_sec`：执行超时。
 - `state`：`Draft / Approved / Deprecated`。
@@ -129,8 +137,29 @@ policy:
     - http.request
     - evidence.write
     - cleanup.defer
+    - result.write
   side_effects:
     - creates temporary proof marker
+
+builder:
+  version: 1
+  vulnerability_overview: |
+    ExampleProduct controlled proof verification.
+  exploit_flow: |
+    1. Send a controlled proof marker to the target.
+    2. Treat only an explicit success response as proof.
+  verification_plan: |
+    Status 200 alone is not sufficient; record only the minimal proof status.
+  raw_request: |
+    POST /proof HTTP/1.1
+    Content-Type: application/json
+
+    {"marker": "{{marker}}"}
+  parameter_hints: |
+    marker: Operator-provided proof marker.
+  needs_cleanup: true
+  cleanup_instruction: |
+    Delete the temporary proof marker after verification.
 
 params:
   marker:
@@ -148,8 +177,9 @@ scripts:
     def run(ctx):
         resp = http.request(
             method = "POST",
-            url = ctx.target.url,
-            body = {"marker": ctx.params.marker},
+            url = ctx.target.url + "/proof",
+            headers = {"Content-Type": "application/json"},
+            body = '{"marker": "%s"}' % ctx.params.marker,
         )
         if resp.status_code == 200:
             evidence.add("proof_status", "accepted")
@@ -161,13 +191,26 @@ scripts:
     def cleanup(ctx):
         resp = http.request(
             method = "DELETE",
-            url = ctx.target.url,
-            body = {"marker": ctx.params.marker},
+            url = ctx.target.url + "/proof/" + ctx.params.marker,
         )
         if resp.status_code in [200, 404]:
             return result.success("cleanup complete")
         return result.failure("cleanup failed")
 ```
+
+其中 `builder:` 是前端上下文存档，用于再次编辑时回填 Builder 或发送给 Copilot；后端物化和 Agent 执行不依赖该块，不能把它当成执行 DSL。
+
+#### 2.2.1 AI 生成 YAML 合同
+
+EXP Builder 发送给 Copilot 的 prompt 必须包含当前系统设计，而不是只要求“生成 Nuclei”。AI 生成内容需遵守：
+
+- 顶层允许字段：`kind`、`id`、`info`、`builder`、`policy`、`params`、`runtime`、`http`、`steps`、`cleanup`、`scripts`。
+- `kind` 必须是 `argus-exp/v1`。
+- `info.risk_level` 只能是 `low / medium / high / destructive`。
+- `policy.capabilities` 只能声明 `http.request`、`tcp.connect`、`evidence.write`、`extract.match`、`cleanup.defer`、`result.write`。
+- Nuclei 模式使用 Argus 自定义的顶层 `http` / `steps`，不是原生 Nuclei 模板结构。
+- Starlark 模式必须提供 `scripts`，通过宿主对象 `http`、`tcp`、`evidence`、`extract`、`cleanup`、`result` 完成受控执行。
+- 需要第二个验证请求、内存马验证、文件上传后探测、登录态传递或 cleanup 时，AI 应优先选择能准确表达流程的结构，不得把流程压扁成宽泛 `200` matcher。
 
 脚本语言建议优先选择 **Starlark**：
 
@@ -227,12 +270,14 @@ scripts:
 - 脚本静态扫描不包含禁用符号。
 - 参数 schema 可渲染为前端表单。
 
-### 2.5 兼容声明式 steps
+### 2.5 兼容声明式 HTTP
 
-除受控脚本模式外，保留更低门槛的声明式 `steps` 模式。简单 EXP 可以不写脚本，只通过 YAML 描述固定请求、匹配、提取和清理动作：
+除受控脚本模式外，保留更低门槛的声明式 HTTP 模式。当前 YAML 支持两种声明式入口：推荐使用顶层 `http` 数组；`steps.type=http` 作为兼容入口继续支持。简单 EXP 可以不写脚本，只通过 YAML 描述固定请求、匹配、提取和清理动作：
 
 ```yaml
+kind: argus-exp/v1
 id: exp-example-safe-proof
+
 info:
   name: Example Safe Proof
   risk_level: medium
@@ -242,29 +287,43 @@ info:
     - writes temporary proof marker
   cleanup_supported: true
 
+policy:
+  cleanup_supported: true
+  cleanup_required: true
+  dry_run_supported: true
+  timeout_sec: 60
+  capabilities:
+    - http.request
+    - cleanup.defer
+
 params:
   marker:
     type: string
     required: true
 
-steps:
-  - type: http
-    method: POST
-    path: /example
+runtime:
+  engine: nuclei
+
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/example"
     body: "{{marker}}"
     matchers:
       - type: status
-        status: [200]
+        status:
+          - 200
 
 cleanup:
   - type: http
     method: DELETE
-    path: /example/{{marker}}
+    path:
+      - "{{BaseURL}}/example/{{marker}}"
 ```
 
-声明式 steps 可编译成同一套受控执行计划。这样简单 EXP 不需要脚本，复杂 EXP 使用脚本，两者共享同一个安全闸门、审计和 cleanup 生命周期。
+声明式 `http` / `steps` 可编译成同一套受控执行计划。这样简单 EXP 不需要脚本，复杂 EXP 使用脚本，两者共享同一个安全闸门、审计和 cleanup 生命周期。
 
-声明式 steps 初期只支持：
+声明式 HTTP 初期只支持：
 
 - HTTP 请求。
 - 参数模板渲染。
@@ -272,7 +331,7 @@ cleanup:
 - cleanup 步骤。
 - 证据字段提取。
 
-TCP 探测当前通过 Starlark `tcp.connect` 支持；声明式 `tcp` / `steps.type=tcp` 暂不开放，保存和执行前校验会明确拒绝。
+TCP 探测当前通过 Starlark `tcp.connect` 支持；声明式 `tcp` / `steps.type=tcp` 暂不开放，保存和执行前校验会明确拒绝。AI 生成 YAML 时也不能输出原生 Nuclei `requests/raw/dsl/matchers-condition/variables/payloads/attack/unsafe` 等字段。
 
 ### 2.6 执行入口
 
@@ -777,3 +836,9 @@ Pending/Running → CancelPending → Cancelled
 | 2026-05-06 | Builder Phase 1 | 前端 EXP 验证库新增 HTTP Builder：表单化维护基础信息、策略、参数、HTTP 请求、Matcher、Extractor、Cleanup；实时生成标准 EXP YAML 并复用现有保存/审核/执行链路；Starlark/TCP 保持 YAML 入口 |
 | 2026-05-06 | Builder Phase 2/3 | Builder 支持高级线性流程和 Code Escape Hatch：HTTP/TCP/条件/循环/证据/代码步骤统一导出 Starlark，支持表单转代码、Starlark 脚本回填、AI 步骤/cleanup/全文生成入口、YAML schema 与 API 补全 |
 | 2026-05-06 | Builder UX Simplification | 降低 Nuclei/Starlark Builder 维护心智：默认隐藏低频字段，生成 YAML 省略空字段和 false policy；Starlark Builder 扩展为通用多步场景（认证流、TCP+HTTP、多步提取、自定义代码），补齐 extract/cleanup/result 步骤 |
+| 2026-05-06 | Builder Request Package | Builder 闭环请求包、占位符和参数：支持多参数 schema、raw HTTP 请求包解析/生成、Path/Headers/Body/Cleanup 占位符插入、从请求包 `{{placeholder}}` 自动发现参数，并支持 Starlark 多步变量占位符串联 |
+| 2026-05-06 | AI Builder Patch | 历史实现：Builder AI 闭环改为结构化补丁；Copilot 响应 `builder_patch` 后由前端摘要确认、合并 Builder 状态并统一生成标准 EXP YAML；该链路已在 2026-05-07 从 EXP 页面移除 |
+| 2026-05-06 | Builder Mode/Product UX | 历史实现：Builder 按 Nuclei/Starlark 分离展示逻辑区域；目标产品改为 EXP/Fingerprint/Workflow/Dir 已入库候选搜索输入，优先复用已有产品名 |
+| 2026-05-06 | AI Assist Input | 历史实现：Builder AI 入口改为前置表单收集 raw request、响应片段、成功判断、参数化提示和 cleanup 意图；后续被 AI 上下文收集器替代 |
+| 2026-05-06 | EXP Debug Module | 增加 `scanner/cmd/exp-debug` 本地调试 CLI，补充 Builder 风格 Nuclei POST cleanup 与 Starlark 登录流 cleanup fixture，用真实 httptest 服务验证 EXP YAML、参数、matcher/extractor 和 cleanup |
+| 2026-05-07 | Builder AI Context | Builder 从复杂执行表单调整为 AI 上下文收集器；前端保存顶层 `builder:` 存档块；Copilot prompt 内嵌 Argus EXP v1 schema、能力白名单、Nuclei/Starlark 选择规则和受控 API；EXP 页面移除 `builder_patch` 链路，由 AI 直接输出 fenced YAML 并应用到 YAML 编辑器 |

@@ -830,6 +830,10 @@ export async function dryRunExploit(id: number, target: string, params?: Record<
     return request.post(`/exploits/${id}/dry-run`, { target, params: params || {} });
 }
 
+export async function debugExploit(id: number, data: API.ExploitDebugRequest): Promise<{ session_id: string; status: string }> {
+    return request.post(`/exploits/${id}/debug`, data);
+}
+
 // ===========================
 // EXP Run API
 // ===========================

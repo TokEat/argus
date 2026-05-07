@@ -317,6 +317,7 @@ func InitRouter(port string) {
 		api.POST("/exploits/:id/approve", approveExploitRule)
 		api.POST("/exploits/:id/deprecate", deprecateExploitRule)
 		api.POST("/exploits/:id/dry-run", dryRunExploit)
+		api.POST("/exploits/:id/debug", debugExploit)
 		api.DELETE("/exploits/:id", deleteExploitRule)
 		api.GET("/vulns/:id/exploit-candidates", getExploitCandidatesForVuln)
 		api.GET("/assets/:id/exploit-candidates", getExploitCandidatesForAsset)
