@@ -262,11 +262,20 @@ declare namespace API {
     system_prompt: string;
   }
 
+  interface CopilotActionSpec {
+    action_type: string;
+    risk_level: string;
+    required_role: string;
+    params: string[];
+    description: string;
+  }
+
   interface CopilotPromptRegistry {
     version: number;
     base_prompt: string;
     default: CopilotPromptProfile;
     profiles: CopilotPromptProfile[];
+    actions?: CopilotActionSpec[];
     source: string;
     reference: string;
   }
@@ -684,6 +693,17 @@ declare namespace API {
     action?: 'run' | 'cleanup';
   }
 
+  interface HTTPTraceEntry {
+    step?: string;
+    method: string;
+    url: string;
+    request: string;
+    response: string;
+    status_code?: number;
+    duration_ms: number;
+    error?: string;
+  }
+
   interface ExploitDebugPayload {
     run_id?: string;
     status: string;
@@ -691,6 +711,7 @@ declare namespace API {
     side_effects?: string[];
     duration_ms?: number;
     error_message?: string;
+    http_trace?: HTTPTraceEntry[];
   }
 
   interface ExploitRun {

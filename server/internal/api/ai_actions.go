@@ -514,7 +514,7 @@ func normalizePendingAction(action *CopilotPendingAction) bool {
 			action.ConfirmLabel = "保存草稿"
 		}
 		if action.RiskLevel == "" {
-			action.RiskLevel = "medium"
+			action.RiskLevel = "low"
 		}
 	default:
 		return false

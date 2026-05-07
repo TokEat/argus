@@ -56,6 +56,7 @@ const BasicLayout: React.FC = () => {
         else if (path.startsWith('/tasks')) module = 'task_list';
         else if (path.startsWith('/nodes')) module = 'node_list';
         else if (path.startsWith('/config/poc')) module = 'poc_list';
+        else if (path.startsWith('/config/exploit')) module = 'exp_list';
         else if (path.startsWith('/config/workflow')) module = 'workflow_list';
         else if (path.startsWith('/config/debug')) module = 'arsenal_debug';
         else if (path.startsWith('/config/dir')) module = 'dir_list';

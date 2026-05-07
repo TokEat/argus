@@ -447,6 +447,58 @@ const AIConfig: React.FC = () => {
                     },
                 ]}
             />
+
+            {promptRegistry?.actions?.length ? (
+                <div style={{ marginTop: 24 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+                        <Space>
+                            <Text strong>待确认动作白名单</Text>
+                            <Tag color="green">{promptRegistry.actions.length} 个动作</Tag>
+                        </Space>
+                        <Text type="secondary">所有动作都需要用户确认、RBAC 校验和审计记录。</Text>
+                    </div>
+                    <Table
+                        rowKey="action_type"
+                        size="small"
+                        pagination={false}
+                        dataSource={promptRegistry.actions}
+                        columns={[
+                            {
+                                title: '动作',
+                                dataIndex: 'action_type',
+                                width: 220,
+                                render: (value: string) => <Text code>{value}</Text>,
+                            },
+                            {
+                                title: '风险',
+                                dataIndex: 'risk_level',
+                                width: 90,
+                                render: (value: string) => <Tag color={value === 'medium' ? 'orange' : value === 'high' ? 'red' : 'green'}>{value || '-'}</Tag>,
+                            },
+                            {
+                                title: '权限',
+                                dataIndex: 'required_role',
+                                width: 100,
+                                render: (value: string) => <Tag>{value || '-'}</Tag>,
+                            },
+                            {
+                                title: '参数',
+                                dataIndex: 'params',
+                                render: (params: string[]) => (
+                                    <Space wrap>
+                                        {(params || []).map((param) => <Tag key={param}>{param}</Tag>)}
+                                    </Space>
+                                ),
+                            },
+                            {
+                                title: '语义',
+                                dataIndex: 'description',
+                                render: (value: string) => value || '-',
+                            },
+                        ]}
+                    />
+                </div>
+            ) : null}
         </ProCard>
     );
 

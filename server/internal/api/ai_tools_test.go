@@ -68,6 +68,11 @@ func TestExtractPendingActionsNormalizesAllowedSchemas(t *testing.T) {
 	if actions[0].ConfirmLabel != "保存草稿" || actions[0].RequiredRole != "operator" {
 		t.Fatalf("expected normalized defaults, got %+v", actions[0])
 	}
+
+	expActions := extractPendingActions("```pending_action\n{\"action_type\":\"create_exp_draft\",\"params\":{\"file_name\":\"exp-demo.yaml\",\"content\":\"kind: argus-exp/v1\\nid: exp-demo\"}}\n```")
+	if len(expActions) != 1 || expActions[0].RiskLevel != "low" || expActions[0].ConfirmLabel != "保存草稿" {
+		t.Fatalf("expected create_exp_draft to normalize as low-risk draft action, got %+v", expActions)
+	}
 }
 
 func TestConfirmCopilotActionCreatesPOCDraftAndAudits(t *testing.T) {
@@ -113,6 +118,62 @@ func TestConfirmCopilotActionCreatesPOCDraftAndAudits(t *testing.T) {
 	}
 	if strings.Contains(audit.ArgsSummary, "id: demo") || !strings.Contains(audit.ArgsSummary, "sha256") {
 		t.Fatalf("expected content hash in audit summary, got %s", audit.ArgsSummary)
+	}
+}
+
+func TestConfirmCopilotActionCreatesExpDraftAndAudits(t *testing.T) {
+	store := setupAITestDB(t)
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/api/v1/ai/actions/confirm", func(c *gin.Context) {
+		c.Set("tenant", "default")
+		c.Set("user_id", "u1")
+		c.Set("role", "operator")
+		confirmCopilotAction(c)
+	})
+
+	payload := `{
+		"action":{
+			"action_type":"create_exp_draft",
+			"required_role":"operator",
+			"params":{
+				"file_name":"exp-demo.yaml",
+				"content":"kind: argus-exp/v1\nid: exp-demo\ninfo:\n  name: Demo EXP\n  risk_level: low\npolicy:\n  dry_run_supported: true\n  capabilities:\n    - http.request\nruntime:\n  engine: nuclei\nhttp:\n  - method: GET\n    path:\n      - \"{{BaseURL}}/\"\n    matchers:\n      - type: status\n        status:\n          - 200\n"
+			}
+		},
+		"page_context":{"_focus":{"module":"exp_builder","route":"/config/exploit"}}
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ai/actions/confirm", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var arsenal db.Arsenal
+	if err := store.Where("tenant_id = ? AND type = ? AND file_name = ?", "default", "exp", "exp-demo.yaml").First(&arsenal).Error; err != nil {
+		t.Fatalf("expected draft exp arsenal: %v", err)
+	}
+	if arsenal.State != "Draft" || !strings.Contains(arsenal.Content, "kind: argus-exp/v1") {
+		t.Fatalf("unexpected exp arsenal %+v", arsenal)
+	}
+	var rule db.ExploitRule
+	if err := store.Where("tenant_id = ? AND source_file = ?", "default", "exp-demo.yaml").First(&rule).Error; err != nil {
+		t.Fatalf("expected materialized exp rule: %v", err)
+	}
+	if rule.State != "Draft" {
+		t.Fatalf("expected materialized exp rule to remain draft, got %+v", rule)
+	}
+	var audit db.AIToolInvocation
+	if err := store.Where("tool_name = ?", "CopilotAction:create_exp_draft").First(&audit).Error; err != nil {
+		t.Fatalf("expected exp action audit row: %v", err)
+	}
+	if audit.Module != "exp_builder" {
+		t.Fatalf("expected exp_builder module audit, got %+v", audit)
+	}
+	if strings.Contains(audit.ArgsSummary, "argus-exp/v1") || !strings.Contains(audit.ArgsSummary, "sha256") {
+		t.Fatalf("expected content hash in exp audit summary, got %s", audit.ArgsSummary)
 	}
 }
 

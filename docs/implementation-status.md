@@ -55,7 +55,7 @@
 | 任务取消中断 | `context.Cancel` 注入扫描上下文 | `scanner/internal/agent/worker.go` |
 | 并发框架 | Worker Pool 与引擎并发上限协同控制 | `scanner/internal/agent/worker.go` |
 | 增量规则同步框架 | 本地 Manifest / Hash 比对、差异下载、全量降级同步 | `scanner/internal/agent/worker.go` |
-| POC 调试拦截 | 拦截 Nuclei/GoPoc 调试请求响应，构建交织 Execution Trace | `scanner/internal/agent/debug.go` `scanner/lib/nuclei/pkg/tmplexec/exec.go` |
+| POC / EXP 调试拦截 | POC 拦截 Nuclei/GoPoc 调试请求响应；EXP Starlark 调试回传每次 `http.request` 的请求包、响应包和耗时 | `scanner/internal/agent/debug.go` `scanner/internal/exploit/starlark_api.go` `scanner/lib/nuclei/pkg/tmplexec/exec.go` |
 | Spot 回收监听 | 云厂商竞价实例中断检测、紧急数据回传 | `scanner/internal/agent/signal.go` |
 
 ### 扫描引擎
@@ -85,8 +85,8 @@
 | POC / Workflow / Dir 配置页 | 可视化 CRUD 可用，已接入在线调试与 AI 辅助增强 |
 | UserManagement | 可用 |
 | McpConfig | 可用 |
-| AI Copilot | 全局 Drawer 交互，支持表格/多行引用/代码块渲染 |
-| AI Config | 大模型渠道、参数配置及连通性测试 |
+| AI Copilot | 全局 Drawer 交互，支持表格/多行引用/代码块渲染、POC/EXP YAML 一键应用、草稿动作确认 |
+| AI Config | 大模型渠道、参数配置、连通性测试、Copilot Prompt/动作白名单/审计管理 |
 
 ---
 
@@ -159,7 +159,7 @@
 | Arsenal 与规则 | `/arsenals/:type`、`/arsenals/manifest`、审批/回滚/删除接口 | 原始规则 CRUD、审批、回滚、Manifest 与 `rule_version` |
 | 字典 | `/dictionaries/workflow`、`/dictionaries/fingerprint` | Workflow / Fingerprint 结构化 CRUD，并回写 Arsenal |
 | 用户与系统配置 | `/users`、`/mcp/keys`、`/ai/config`、`/ai/models`、`/ai/test` | 用户管理、MCP Key、AI 配置与模型连通性测试 |
-| AI Copilot | `POST /ai/chat`、`POST /ai/arsenal/analyze`、`POST /ai/arsenal/analyze/stream` | 全局 Copilot SSE、POC AI 审查同步/流式入口 |
+| AI Copilot | `POST /ai/chat`、`POST /ai/actions/confirm`、`GET /ai/copilot/prompts`、`GET /ai/tool-invocations`、`POST /ai/arsenal/analyze`、`POST /ai/arsenal/analyze/stream` | 全局 Copilot SSE、草稿动作确认、Prompt/动作白名单展示、工具审计、POC AI 审查同步/流式入口 |
 | 云资源编排 | `/cloud/accounts*`、`/cloud/policies*`、`/cloud/instances*`、`/cloud/dashboard` | 云凭证、策略、实例生命周期、OSS、一键配置、仪表盘 |
 | 构建 | `GET /build/artifacts`、`POST /build/client` | 产物列表可用；构建触发仍只返回 `accepted` |
 

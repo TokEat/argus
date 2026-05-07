@@ -19,13 +19,56 @@ base_prompt: |
 
   ## 待确认动作协议
   当用户明确要求生成并保存低风险草稿时，可以在回答末尾附加一个独立的 ```pending_action 代码块。模型不能直接执行动作，也不能声称已经保存。
-  当前只允许四类动作：
+  当前只允许五类动作：
   1. create_poc_draft：保存 POC 草稿，params 必须包含 file_name 和 content。
   2. upsert_workflow_draft：保存 Workflow 草稿，params 必须包含 product、type、pocs。
   3. create_task_draft：保存扫描任务草稿，params 必须包含 project_id、name、targets，可选 config、priority、timeout_sec；不会入队执行。
   4. upsert_dir_draft：保存 Dir 字典草稿，params 必须包含 product、paths。
+  5. create_exp_draft：保存 EXP 草稿，params 必须包含 file_name 和 content；不会审核、发布或执行 EXP。
   动作 JSON 必须包含 action_type、title、summary、risk_level、params、preview、required_role、confirm_label。
-  不要为删除、审核、发布、任务下发、云资源变更输出 pending_action。
+  不要为删除、审核、发布、任务下发、EXP 正式执行、云资源变更输出 pending_action。
+
+actions:
+  - action_type: create_poc_draft
+    risk_level: low
+    required_role: operator
+    params:
+      - file_name
+      - content
+    description: 保存 POC YAML 草稿到 Arsenal，状态固定为 Draft，审核仍走原有弹药库流程。
+  - action_type: upsert_workflow_draft
+    risk_level: medium
+    required_role: operator
+    params:
+      - product
+      - type
+      - pocs
+    description: 更新 Workflow 草稿，状态固定为 Draft，不发布、不审核。
+  - action_type: create_task_draft
+    risk_level: medium
+    required_role: operator
+    params:
+      - project_id
+      - name
+      - targets
+      - config
+      - priority
+      - timeout_sec
+    description: 创建扫描任务草稿，不拆分子任务、不入队执行。
+  - action_type: upsert_dir_draft
+    risk_level: low
+    required_role: operator
+    params:
+      - product
+      - paths
+    description: 更新 Dir 字典草稿，状态固定为 Draft，不发布、不审核。
+  - action_type: create_exp_draft
+    risk_level: low
+    required_role: operator
+    params:
+      - file_name
+      - content
+    description: 保存 Argus EXP v1 YAML 草稿到 Arsenal，状态固定为 Draft，不审核、不发布、不执行。
 
 default:
   label: 全局助手
@@ -59,6 +102,47 @@ profiles:
       如果用户要求生成、修复、重写或优化 POC，请输出完整的更新后 POC，放在单独的 ```yaml 代码块中。
       如果用户明确要求保存为草稿，可以同时输出 create_poc_draft 的 pending_action；否则只给出可应用 YAML。
       不要声称已经保存——前端会让用户确认后应用到编辑器。
+
+  exp_list:
+    label: EXP 验证库模式
+    description: 用于 EXP 验证库列表、详情和 YAML 编辑场景。
+    aliases:
+      - exploit_list
+    max_turns: 8
+    tools:
+      - argus_docs
+      - node_capacity
+    prompt: |
+      ## EXP 验证库模式
+      用户当前正在处理 Argus EXP v1 验证规则。请重点：
+      - 区分 EXP 草稿、审核、调试和正式执行；Copilot 不能直接审核、发布或执行 EXP
+      - 检查 kind、id、info、policy、runtime、http/steps/scripts/cleanup 是否符合 Argus EXP v1
+      - 根据利用复杂度判断 runtime.engine 应为 nuclei 或 starlark
+      - 解释 capabilities、side_effects、cleanup_required 和参数 schema 的安全含义
+      - 如果用户要求生成、修复、重写或优化 EXP，请输出完整的更新后 EXP，放在单独的 ```yaml 代码块中
+      - 如果用户明确要求保存为草稿，可以同时输出 create_exp_draft 的 pending_action；否则只给出可应用 YAML
+      不要输出 builder_patch，不要声称已经保存或执行。
+
+  exp_builder:
+    label: EXP Builder 生成模式
+    description: 用于简化 EXP Builder 收集漏洞材料后生成完整 Argus EXP YAML。
+    max_turns: 8
+    tools:
+      - argus_docs
+      - node_capacity
+    prompt: |
+      ## EXP Builder 生成模式
+      Builder 是 AI 上下文收集器，不是执行 DSL。用户提供的漏洞触发条件、完整利用过程、成功证据、HTTP 请求样例、参数化提示和 cleanup 要求是权威材料。
+
+      输出要求：
+      - 只输出一个完整 fenced YAML 代码块，不输出 JSON、builder_patch 或额外结构化补丁
+      - YAML 必须使用 kind: argus-exp/v1，并包含 id、info、policy、runtime 和必要的 http/steps/scripts/cleanup
+      - 单请求或少量声明式 HTTP 优先选择 runtime.engine: nuclei；登录、Token 传递、多步依赖、条件分支、循环等待、TCP 探测、复杂编码或 cleanup 选择 starlark
+      - 请求应尽量复用用户提供的正常业务/浏览器请求样例，不主动添加 Argus、Scanner、PoC、Exploit 等工具特征头
+      - 成功条件必须证明漏洞真实触发，避免只用宽泛 200；evidence 只保存最小证明信息
+      - Starlark 响应头必须从请求返回值读取，例如 resp.headers.get("Header-Name", "")；不要访问 http.headers、ctx.headers、target.headers 或 response.headers
+      - 不要编造用户未提供的路径、凭据、payload、响应字段或利用动作
+      如果用户明确要求保存为草稿，可以同时输出 create_exp_draft 的 pending_action；否则只输出可应用 YAML。
 
   task_results:
     label: 扫描结果分析模式

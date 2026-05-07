@@ -12,6 +12,8 @@ Builder as AI Context Collector —— 简化 Builder 收集漏洞理解材料�
 - ✅ Builder 不再展示或维护参数表格、请求包解析、Matcher/Extractor、Nuclei Cleanup、Starlark 高级流程、Code Escape Hatch、Capabilities 手工选择等复杂执行表单。
 - ✅ AI 入口统一为一处 `AI 生成 YAML`，点击后直接打开 Copilot，输入框强制替换为最新 Builder 内容生成的完整任务 prompt。
 - ✅ AI 不再输出 `builder_patch`；EXP 页面不再注册 `applyBuilderPatch/summarizeBuilderPatch`。Copilot 返回 fenced YAML 后走已有“应用到 EXP”能力。
+- ✅ Copilot Prompt Registry 已补齐 `exp_builder` / `exp_list` profile；`AI 生成 YAML` 使用 `/config/exploit` + `exp_builder` 上下文，保证后端选择 EXP Builder 专用系统提示词。
+- ✅ `create_exp_draft` 已纳入 Copilot 低风险草稿动作白名单；保存仍必须由用户在 Copilot 确认卡片中二次确认，且不会审核、发布或执行 EXP。
 - ✅ prompt 内嵌 Argus EXP v1 设计约束，明确顶层 schema、Nuclei/Starlark 模式边界、capabilities、params、http/matcher/extractor/cleanup 字段和 Starlark 可用 API，避免 AI 按原生 Nuclei 或臆造字段写 YAML。
 - ✅ Builder 内容保存为 YAML 顶层 `builder:` 存档块，重新编辑时优先从 `builder:` 回填；`info.description` 只保存漏洞概要。
 - ✅ YAML 编辑器保留为最终内容审核和手工修改入口；保存草稿仍以 YAML 内容为唯一执行来源。
@@ -303,7 +305,7 @@ def run(ctx):
     return result.failure(msg="not matched")
 ```
 
-当前响应对象只承诺 `status_code/body/headers/success`，未声明的 `body_encoding`、`base64_decode`、`requests`、`socket` 等能力不能生成。
+当前响应对象只承诺 `status_code/body/headers/success`；响应头必须从本次请求返回值 `resp.headers` 读取，不要生成 `http.headers`、`ctx.headers`、`target.headers` 或 `response.headers`。未声明的 `body_encoding`、`base64_decode`、`requests`、`socket` 等能力不能生成。
 
 应用后，前端更新 `editorContent`，并尽量从 YAML 的 `info` 和顶层 `builder:` 块回填简化 Builder。保存草稿仍以 `editorContent` 为唯一执行来源。
 
@@ -540,6 +542,7 @@ AI 生成的内容必须经人工审核。prompt 会明确禁止 AI 在未得到
 | 日期 | 阶段 | 内容 |
 |------|------|------|
 | 2026-05-07 | Builder as AI Context Collector | Builder 简化为漏洞理解材料收集器；删除复杂执行表单展示；AI 直接生成完整 Argus EXP YAML；EXP 页面停止使用 `builder_patch`；保存时用顶层 `builder:` 存档上下文；运行时由 AI 在 `nuclei` 与 `starlark` 间选择 |
+| 2026-05-07 | Starlark Debug Trace | Starlark EXP 调试结果新增 `http_trace`，前端调试抽屉可展开查看每次 `http.request` 的请求包、响应包、状态码和耗时 |
 | 2026-05-06 | Builder Phase 1 | 历史实现：HTTP Builder 表单化维护基础信息、参数、请求、Matcher、Extractor、Cleanup，并实时生成 YAML |
 | 2026-05-06 | Builder Phase 2/3 | 历史实现：高级线性步骤、Starlark 自动导出、Code Escape Hatch、AI 步骤/cleanup/全文生成入口 |
 | 2026-05-06 | AI Builder Patch | 历史实现：AI 输出 `builder_patch`，前端合并 Builder 状态后再统一生成 YAML；该链路已从 EXP 页面移除 |

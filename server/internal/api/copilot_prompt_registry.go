@@ -18,6 +18,7 @@ var copilotPromptRegistryYAML []byte
 type copilotPromptRegistry struct {
 	Version   int                          `json:"version" yaml:"version"`
 	Base      string                       `json:"base_prompt" yaml:"base_prompt"`
+	Actions   []copilotActionSpec          `json:"actions,omitempty" yaml:"actions"`
 	Default   copilotPromptSpec            `json:"default" yaml:"default"`
 	Profiles  map[string]copilotPromptSpec `json:"profiles" yaml:"profiles"`
 	aliasByID map[string]string
@@ -43,11 +44,20 @@ type copilotPromptProfileView struct {
 	SystemPrompt string   `json:"system_prompt"`
 }
 
+type copilotActionSpec struct {
+	ActionType   string   `json:"action_type" yaml:"action_type"`
+	RiskLevel    string   `json:"risk_level" yaml:"risk_level"`
+	RequiredRole string   `json:"required_role" yaml:"required_role"`
+	Params       []string `json:"params" yaml:"params"`
+	Description  string   `json:"description" yaml:"description"`
+}
+
 type copilotPromptRegistryResponse struct {
 	Version   int                        `json:"version"`
 	Base      string                     `json:"base_prompt"`
 	Default   copilotPromptProfileView   `json:"default"`
 	Profiles  []copilotPromptProfileView `json:"profiles"`
+	Actions   []copilotActionSpec        `json:"actions,omitempty"`
 	Source    string                     `json:"source"`
 	Reference string                     `json:"reference"`
 }
@@ -75,6 +85,7 @@ func loadCopilotPromptRegistry() (copilotPromptRegistry, error) {
 		if registry.Profiles == nil {
 			registry.Profiles = map[string]copilotPromptSpec{}
 		}
+		registry.Actions = normalizeCopilotActionSpecs(registry.Actions)
 		registry.aliasByID = make(map[string]string)
 		for module, spec := range registry.Profiles {
 			for _, alias := range spec.Aliases {
@@ -87,6 +98,28 @@ func loadCopilotPromptRegistry() (copilotPromptRegistry, error) {
 		copilotRegistry = registry
 	})
 	return copilotRegistry, copilotRegistryErr
+}
+
+func normalizeCopilotActionSpecs(actions []copilotActionSpec) []copilotActionSpec {
+	out := make([]copilotActionSpec, 0, len(actions))
+	for _, action := range actions {
+		action.ActionType = strings.TrimSpace(action.ActionType)
+		if action.ActionType == "" {
+			continue
+		}
+		action.RiskLevel = strings.TrimSpace(action.RiskLevel)
+		action.RequiredRole = strings.TrimSpace(action.RequiredRole)
+		action.Description = strings.TrimSpace(action.Description)
+		params := make([]string, 0, len(action.Params))
+		for _, param := range action.Params {
+			if param = strings.TrimSpace(param); param != "" {
+				params = append(params, param)
+			}
+		}
+		action.Params = params
+		out = append(out, action)
+	}
+	return out
 }
 
 func resolveCopilotProfile(module string) copilotProfile {
@@ -201,6 +234,7 @@ func (r copilotPromptRegistry) toResponse() copilotPromptRegistryResponse {
 			SystemPrompt: r.renderSystemPrompt(defaultSpec),
 		},
 		Profiles:  profiles,
+		Actions:   append([]copilotActionSpec(nil), r.Actions...),
 		Source:    "server/internal/api/prompts/copilot_profiles.yaml",
 		Reference: "_ref_claude_code/claude-code-main/src/constants/prompts.ts",
 	}

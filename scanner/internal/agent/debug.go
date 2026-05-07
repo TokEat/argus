@@ -710,6 +710,9 @@ func (w *Worker) sendExploitResult(cmd *pb.DebugCommand, status string, result *
 		payload["evidence"] = result.Evidence
 		payload["side_effects"] = result.SideEffects
 		payload["duration_ms"] = result.DurationMs
+		if len(result.HTTPTrace) > 0 {
+			payload["http_trace"] = result.HTTPTrace
+		}
 	}
 	if errMsg != "" {
 		payload["error_message"] = errMsg

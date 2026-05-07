@@ -44,7 +44,9 @@ func TestAIPermissions(t *testing.T) {
 		{method: "POST", path: "/api/v1/ai/arsenal/analyze", want: "operator"},
 		{method: "POST", path: "/api/v1/ai/arsenal/analyze/stream", want: "operator"},
 		{method: "POST", path: "/api/v1/ai/chat", want: "operator"},
+		{method: "POST", path: "/api/v1/ai/actions/confirm", want: "operator"},
 		{method: "GET", path: "/api/v1/ai/copilot/prompts", want: "operator"},
+		{method: "GET", path: "/api/v1/ai/tool-invocations", want: "operator"},
 		{method: "GET", path: "/api/v1/ai/config", want: "admin"},
 		{method: "PUT", path: "/api/v1/ai/config", want: "admin"},
 		{method: "GET", path: "/api/v1/ai/models", want: "admin"},
@@ -176,6 +178,13 @@ func TestCopilotProfileAndContextCompaction(t *testing.T) {
 	if !strings.Contains(profile.SystemPrompt, "POC 编辑模式") {
 		t.Fatalf("expected poc profile to load prompt section from registry, got %s", profile.SystemPrompt)
 	}
+	expBuilderProfile := resolveCopilotProfile("exp_builder")
+	if expBuilderProfile.MaxTurns <= 4 {
+		t.Fatalf("expected exp_builder profile to allow extended turns, got %+v", expBuilderProfile)
+	}
+	if !strings.Contains(expBuilderProfile.SystemPrompt, "EXP Builder 生成模式") || !strings.Contains(expBuilderProfile.SystemPrompt, "不输出 JSON、builder_patch") {
+		t.Fatalf("expected exp_builder prompt to enforce complete YAML output and no builder_patch, got %s", expBuilderProfile.SystemPrompt)
+	}
 
 	compact := compactPageContext(map[string]interface{}{
 		"module":    "poc_inline",
@@ -226,6 +235,26 @@ func TestCopilotPromptRegistryEndpoint(t *testing.T) {
 	}
 	if len(resp.Profiles) == 0 || resp.Default.SystemPrompt == "" {
 		t.Fatalf("expected prompt registry response to include profiles and default prompt: %+v", resp)
+	}
+	foundExpBuilder := false
+	for _, profile := range resp.Profiles {
+		if profile.Module == "exp_builder" {
+			foundExpBuilder = true
+			break
+		}
+	}
+	if !foundExpBuilder {
+		t.Fatalf("expected prompt registry response to include exp_builder profile: %+v", resp.Profiles)
+	}
+	foundExpAction := false
+	for _, action := range resp.Actions {
+		if action.ActionType == "create_exp_draft" {
+			foundExpAction = action.RiskLevel == "low" && action.RequiredRole == "operator" && len(action.Params) == 2
+			break
+		}
+	}
+	if !foundExpAction {
+		t.Fatalf("expected prompt registry response to include create_exp_draft action, got %+v", resp.Actions)
 	}
 }
 
@@ -295,7 +324,7 @@ func TestCopilotLayeredContextCompactionAndInjection(t *testing.T) {
 
 func TestCopilotProfileNodeCapacityGlobal(t *testing.T) {
 	// node_capacity should be available in ALL profiles
-	modules := []string{"global", "poc_list", "poc_inline", "task_list", "task_results", "node_list", "asset_list", "workflow_list", "fingerprint_list", "dir_list", "dict_list", "dashboard", "unknown_module"}
+	modules := []string{"global", "poc_list", "poc_inline", "exp_list", "exploit_list", "exp_builder", "task_list", "task_results", "node_list", "asset_list", "workflow_list", "fingerprint_list", "dir_list", "dict_list", "dashboard", "unknown_module"}
 	for _, mod := range modules {
 		profile := resolveCopilotProfile(mod)
 		found := false
