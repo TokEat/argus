@@ -48,9 +48,14 @@ func (w *Worker) handleDebugCommand(cmd *pb.DebugCommand) {
 		w.startDebugSession(cmd)
 	case "cancel_debug":
 		w.cancelDebugSession(cmd.SessionId)
+		w.cancelExploitSession(cmd.SessionId)
 	case "start_exp":
 		w.handleExploitCommand(cmd)
 	case "cleanup_exp":
+		w.handleExploitCleanup(cmd)
+	case "start_exp_debug":
+		w.handleExploitCommand(cmd)
+	case "cleanup_exp_debug":
 		w.handleExploitCleanup(cmd)
 	case "cancel_exp":
 		w.cancelExploitSession(cmd.SessionId)
@@ -711,6 +716,10 @@ func (w *Worker) sendExploitResult(cmd *pb.DebugCommand, status string, result *
 	}
 
 	payloadJSON, _ := json.Marshal(payload)
+	if cmd.Action == "start_exp_debug" || cmd.Action == "cleanup_exp_debug" {
+		w.sendExploitDebugEvent(cmd, status, result, errMsg, string(payloadJSON))
+		return
+	}
 
 	stream, err := w.client.StreamDebug(context.Background())
 	if err != nil {
@@ -730,4 +739,55 @@ func (w *Worker) sendExploitResult(cmd *pb.DebugCommand, status string, result *
 
 	stream.Send(event)
 	logDebugLocal("INFO", "[EXP] result sent: status=%s session=%s", status, cmd.SessionId)
+}
+
+func (w *Worker) sendExploitDebugEvent(cmd *pb.DebugCommand, status string, result *exploit.Result, errMsg string, payloadJSON string) {
+	stream, err := w.client.StreamDebug(context.Background())
+	if err != nil {
+		logDebugLocal("ERROR", "[EXP-DEBUG] failed to open debug stream: %v", err)
+		return
+	}
+	defer stream.CloseSend()
+
+	durationMs := int64(0)
+	extracted := make([]string, 0)
+	if result != nil {
+		durationMs = result.DurationMs
+		for key, value := range result.Evidence {
+			extracted = append(extracted, fmt.Sprintf("%s=%v", key, value))
+		}
+		sort.Strings(extracted)
+	}
+
+	matched := status == "Succeeded" || status == "CleanupSucceeded"
+	now := time.Now().UnixMilli()
+	_ = stream.Send(&pb.DebugEvent{
+		AgentId:    w.agentID,
+		TenantId:   cmd.TenantId,
+		SessionId:  cmd.SessionId,
+		Type:       "debug_result",
+		Timestamp:  now,
+		Level:      "INFO",
+		Message:    payloadJSON,
+		Matched:    matched,
+		TemplateId: "EXP",
+		Severity:   status,
+		MatchedAt:  cmd.TargetUrl,
+		Extracted:  extracted,
+		DurationMs: durationMs,
+		Error:      errMsg,
+	})
+	_ = stream.Send(&pb.DebugEvent{
+		AgentId:    w.agentID,
+		TenantId:   cmd.TenantId,
+		SessionId:  cmd.SessionId,
+		Type:       "debug_complete",
+		Timestamp:  time.Now().UnixMilli(),
+		Level:      "INFO",
+		Message:    "EXP debug completed",
+		Matched:    matched,
+		DurationMs: durationMs,
+		Error:      errMsg,
+	})
+	logDebugLocal("INFO", "[EXP-DEBUG] result sent: status=%s session=%s", status, cmd.SessionId)
 }

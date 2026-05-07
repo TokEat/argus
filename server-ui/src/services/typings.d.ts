@@ -675,6 +675,24 @@ declare namespace API {
     params_errors: string[];
   }
 
+  interface ExploitDebugRequest {
+    agent_id: string;
+    target_url: string;
+    params?: Record<string, unknown>;
+    proxy?: string;
+    timeout_sec?: number;
+    action?: 'run' | 'cleanup';
+  }
+
+  interface ExploitDebugPayload {
+    run_id?: string;
+    status: string;
+    evidence?: Record<string, unknown>;
+    side_effects?: string[];
+    duration_ms?: number;
+    error_message?: string;
+  }
+
   interface ExploitRun {
     id: number;
     tenant_id: string;

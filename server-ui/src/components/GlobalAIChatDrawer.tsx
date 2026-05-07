@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Drawer, Input, Button, Spin, Tag, Typography, App } from 'antd';
 import { DeleteOutlined, RadarChartOutlined, RobotOutlined, SecurityScanOutlined, SendOutlined, StopOutlined } from '@ant-design/icons';
-import type { AIEditableTarget, CopilotRequestContext, PageContext } from '../contexts/GlobalAIContext';
+import type { AIBuilderPatchEdit, AIEditableTarget, CopilotRequestContext, PageContext } from '../contexts/GlobalAIContext';
 import { confirmCopilotAction } from '../services/api';
 
 const { Text } = Typography;
@@ -31,10 +31,18 @@ interface GlobalAIChatDrawerProps {
     editableTarget?: AIEditableTarget;
 }
 
-interface ProposedEdit {
+interface ProposedContentEdit {
     type: 'poc' | 'exp';
     content: string;
 }
+
+interface ProposedBuilderPatchEdit {
+    type: 'builder_patch';
+    content: string;
+    builderPatch: AIBuilderPatchEdit;
+}
+
+type ProposedEdit = ProposedContentEdit | ProposedBuilderPatchEdit;
 
 const safeHref = (href: string) => {
     const trimmed = href.trim();
@@ -347,6 +355,50 @@ const extractExpEdit = (content: string, editableTarget?: AIEditableTarget): Pro
     return { type: 'exp', content: candidate.endsWith('\n') ? candidate : `${candidate}\n` };
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> => (
+    typeof value === 'object' && value !== null && !Array.isArray(value)
+);
+
+const normalizeBuilderPatch = (value: unknown): AIBuilderPatchEdit | undefined => {
+    if (!isRecord(value) || value.type !== 'builder_patch' || !isRecord(value.patch)) return undefined;
+    const mode = value.mode === 'nuclei' || value.mode === 'starlark' ? value.mode : undefined;
+    return {
+        type: 'builder_patch',
+        mode,
+        reason: typeof value.reason === 'string' ? value.reason : undefined,
+        patch: value.patch,
+    };
+};
+
+const extractBuilderPatchEdit = (content: string, editableTarget?: AIEditableTarget): ProposedEdit | undefined => {
+    if (editableTarget?.type !== 'exp' || !editableTarget.applyBuilderPatch) return undefined;
+    const candidates: string[] = [];
+    const fencePattern = /```(?:json|builder_patch)\s*\n([\s\S]*?)```/gi;
+    let match: RegExpExecArray | null;
+    while ((match = fencePattern.exec(content)) !== null) {
+        candidates.push(match[1].trim());
+    }
+    const trimmed = content.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+        candidates.push(trimmed);
+    }
+    for (const candidate of candidates) {
+        try {
+            const normalized = normalizeBuilderPatch(JSON.parse(candidate));
+            if (normalized) {
+                return {
+                    type: 'builder_patch',
+                    content: JSON.stringify(normalized, null, 2),
+                    builderPatch: normalized,
+                };
+            }
+        } catch {
+            // Keep looking for another JSON block.
+        }
+    }
+    return undefined;
+};
+
 const stripPendingActionBlocks = (content: string) =>
     content.replace(/```pending_action\s*\n[\s\S]*?"action_type"[\s\S]*?```/gi, '').trim();
 
@@ -377,10 +429,13 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
     useEffect(() => {
         if (!visible || loading) return;
         const suggested = typeof pageContext?.suggested_prompt === 'string' ? pageContext.suggested_prompt.trim() : '';
-        if (!suggested || suggested === lastSuggestedPromptRef.current) return;
-        lastSuggestedPromptRef.current = suggested;
-        setInputValue((prev) => prev.trim() ? prev : suggested);
-    }, [visible, loading, pageContext?.suggested_prompt]);
+        const promptNonce = pageContext?.suggested_prompt_nonce;
+        const suggestedKey = `${String(promptNonce || '')}:${suggested}`;
+        const forceReplace = pageContext?.suggested_prompt_replace === true;
+        if (!suggested || (!forceReplace && suggestedKey === lastSuggestedPromptRef.current)) return;
+        lastSuggestedPromptRef.current = suggestedKey;
+        setInputValue((prev) => (forceReplace || !prev.trim() ? suggested : prev));
+    }, [visible, loading, pageContext?.suggested_prompt, pageContext?.suggested_prompt_nonce, pageContext?.suggested_prompt_replace]);
 
     const stopStreaming = () => {
         abortRef.current?.abort();
@@ -520,7 +575,7 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
             abortRef.current = null;
             if (!failed && assistantContent.trim()) {
                 const displayContent = stripPendingActionBlocks(assistantContent);
-                const proposedEdit = extractPocEdit(assistantContent, editableTarget) || extractExpEdit(assistantContent, editableTarget);
+                const proposedEdit = extractBuilderPatchEdit(assistantContent, editableTarget) || extractPocEdit(assistantContent, editableTarget) || extractExpEdit(assistantContent, editableTarget);
                 setMessages((prev) => [...prev, {
                     role: 'assistant',
                     content: displayContent || (pendingActions.length > 0 ? '我准备好了一个待确认动作。' : assistantContent),
@@ -535,7 +590,7 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
             if ((error as Error)?.name === 'AbortError') {
                 if (assistantContent.trim()) {
                     const displayContent = stripPendingActionBlocks(assistantContent);
-                    const proposedEdit = extractPocEdit(assistantContent, editableTarget) || extractExpEdit(assistantContent, editableTarget);
+                    const proposedEdit = extractBuilderPatchEdit(assistantContent, editableTarget) || extractPocEdit(assistantContent, editableTarget) || extractExpEdit(assistantContent, editableTarget);
                     setMessages((prev) => [...prev, {
                         role: 'assistant',
                         content: displayContent || (pendingActions.length > 0 ? '我准备好了一个待确认动作。' : assistantContent),
@@ -554,8 +609,44 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
     };
 
     const applyProposedEdit = (editKey: string, edit: ProposedEdit) => {
+        if (edit.type === 'builder_patch') {
+            if (!editableTarget?.applyBuilderPatch) {
+                msg.warning('当前 Builder 不支持应用结构化补丁');
+                return;
+            }
+            const summary = editableTarget.summarizeBuilderPatch?.(edit.builderPatch) || [];
+            modal.confirm({
+                title: '应用 AI Builder Patch',
+                width: 620,
+                content: (
+                    <div>
+                        {edit.builderPatch.reason && <p>{edit.builderPatch.reason}</p>}
+                        {summary.length > 0 ? (
+                            <ul>
+                                {summary.map((item, index) => <li key={index}>{item}</li>)}
+                            </ul>
+                        ) : (
+                            <p>AI 将更新当前 EXP Builder 状态，并由 Builder 重新生成 YAML。</p>
+                        )}
+                    </div>
+                ),
+                okText: '应用到 Builder',
+                cancelText: '取消',
+                onOk: () => {
+                    editableTarget.applyBuilderPatch?.(edit.builderPatch);
+                    setAppliedEdits((prev) => ({ ...prev, [editKey]: true }));
+                    msg.success(`已应用到 ${editableTarget.label} Builder`);
+                },
+            });
+            return;
+        }
         if (!editableTarget || editableTarget.type !== edit.type) {
             msg.warning('当前没有可应用的编辑器');
+            return;
+        }
+        const validation = editableTarget.canApplyContent?.(edit.content);
+        if (validation && !validation.ok) {
+            msg.warning(validation.reason || '当前编辑器不允许应用该内容');
             return;
         }
         editableTarget.applyContent(edit.content);
@@ -1297,11 +1388,38 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
                         }
                         const editKey = `${index}-${item.proposedEdit?.type || 'none'}`;
                         const editApplied = !!appliedEdits[editKey];
+                        const patchSummary = item.proposedEdit?.type === 'builder_patch'
+                            ? editableTarget?.summarizeBuilderPatch?.(item.proposedEdit.builderPatch) || []
+                            : [];
                         return (
                             <div key={index} className={`ai-message-row ${item.role}`}>
                                 <div className={`ai-message-bubble ${item.role}`}>
                                     {item.role === 'assistant' ? <MarkdownMessage content={item.content} /> : item.content}
-                                    {item.role === 'assistant' && item.proposedEdit && editableTarget?.type === item.proposedEdit.type && (
+                                    {item.role === 'assistant' && item.proposedEdit?.type === 'builder_patch' && editableTarget?.applyBuilderPatch && (
+                                        <div className="ai-edit-action">
+                                            {patchSummary.length > 0 && (
+                                                <div style={{ width: '100%' }}>
+                                                    <Text className="ai-edit-action-note">Patch 摘要</Text>
+                                                    <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                                                        {patchSummary.map((summaryItem, summaryIndex) => <li key={summaryIndex}>{summaryItem}</li>)}
+                                                    </ul>
+                                                </div>
+                                            )}
+                                            <Button
+                                                size="small"
+                                                type="primary"
+                                                icon={<RobotOutlined />}
+                                                disabled={editApplied}
+                                                onClick={() => applyProposedEdit(editKey, item.proposedEdit!)}
+                                            >
+                                                {editApplied ? '已应用' : '应用到 Builder'}
+                                            </Button>
+                                            <Text className="ai-edit-action-note">
+                                                {editApplied ? '已写入 Builder，并重新生成 YAML；保存草稿仍由你确认触发。' : '应用前会再次确认摘要，AI 不会直接保存草稿。'}
+                                            </Text>
+                                        </div>
+                                    )}
+                                    {item.role === 'assistant' && item.proposedEdit?.type !== 'builder_patch' && item.proposedEdit && editableTarget?.type === item.proposedEdit.type && (
                                         <div className="ai-edit-action">
                                             <Button
                                                 size="small"
