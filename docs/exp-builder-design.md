@@ -269,6 +269,7 @@ prompt 由以下几部分组成：
 3. 用户填写的漏洞理解材料：漏洞与触发条件、完整利用过程、成功证据与判定、关键 HTTP 请求包样例、参数化提示、安全边界和 cleanup 要求。
 4. 当前 YAML 草稿：仅作为参考，不作为权威来源；默认模板中的 `/api/proof`、`marker`、`HTTP EXP` 不能覆盖用户填写内容。
 5. Argus EXP v1 设计约束：顶层字段、`runtime.engine` 选择、Nuclei/Starlark 字段边界、capability 白名单、Starlark 宿主 API、cleanup 和 evidence 约束。
+6. 请求保真要求：HTTP 请求应尽量复用用户提供的正常业务/浏览器请求样例，不主动添加 `Argus`、`Scanner`、`PoC`、`Exploit` 等工具特征头或特征 User-Agent。
 
 ### 7.3 输出与应用
 
@@ -280,10 +281,29 @@ id: exp-product-vuln-verify
 info:
   name: 产品漏洞验证 EXP
 runtime:
-  engine: nuclei
+  engine: nuclei # 或 starlark，由利用复杂度决定
 ```
 
 EXP 页面不再注册 `applyBuilderPatch/summarizeBuilderPatch`，也不再接受 EXP 专属 `builder_patch`。全局 Copilot 仍可保留 `builder_patch` 类型能力给未来其他页面使用，但 EXP 编辑只走已有 fenced YAML 提取和“应用到 EXP”能力。
+
+Starlark 场景下，prompt 必须提供可照抄的脚本模板和 API 合同，避免模型臆造不存在的方法：
+
+```python
+def run(ctx):
+    resp = http.request(
+        method="GET",
+        url=target.url + "/path",
+        headers={"User-Agent": "..."},
+        body="optional text",
+    )
+    proof = resp.headers.get("Access-Control-Allow-Origin", "")
+    if resp.status_code == 200 and proof != "":
+        evidence.add(key="access_control_allow_origin", value=proof)
+        return result.success(msg="verified")
+    return result.failure(msg="not matched")
+```
+
+当前响应对象只承诺 `status_code/body/headers/success`，未声明的 `body_encoding`、`base64_decode`、`requests`、`socket` 等能力不能生成。
 
 应用后，前端更新 `editorContent`，并尽量从 YAML 的 `info` 和顶层 `builder:` 块回填简化 Builder。保存草稿仍以 `editorContent` 为唯一执行来源。
 
@@ -313,9 +333,9 @@ Builder 中的规则 ID、名称、文件名是给 AI 的初始线索，不是�
 
 | 方向 | 当前策略 |
 |------|----------|
-| Builder → YAML | 保存时同步基础信息和顶层 `builder:` 上下文存档块 |
-| YAML → Builder | 编辑已有 EXP 时只回填 `info` 基础字段和 `builder:` 中的漏洞材料 |
-| AI YAML → 编辑器 | Copilot fenced YAML 应用后直接替换 `editorContent` |
+| Builder → YAML | 切换到 YAML 或保存时，使用 YAML parser 更新基础信息和顶层 `builder:` 上下文存档块，保留 `policy/params/runtime/http/steps/scripts/cleanup` 等执行字段 |
+| YAML → Builder | 编辑已有 EXP 时只回填 `id/info` 基础字段和 `builder:` 中的漏洞材料 |
+| AI YAML → 编辑器 | Copilot fenced YAML 通过结构化校验后替换 `editorContent`，并切换到 YAML 标签页审核 |
 | 复杂执行逻辑回填 | 不尝试把 `http/steps/scripts/cleanup` 反解析成 Builder 表单 |
 
 这意味着 YAML 编辑器是最终审核入口。Builder 负责保存“AI 需要理解漏洞”的材料，复杂执行逻辑由 AI 生成并由 YAML 编辑器承接。
@@ -344,10 +364,16 @@ builder:
 
 保存草稿时：
 
-1. 若当前在 Builder 标签页，先把基础字段和 Builder 材料同步到 YAML。
+1. 若当前在 Builder 标签页，先把基础字段和 Builder 材料同步到 YAML；如果 YAML 无法解析，则提示修复，不静默覆盖。
 2. 再以同步后的 `editorContent` 调用 Arsenal 保存接口。
 3. 若当前在 YAML 标签页，则保存用户正在查看和编辑的 YAML 内容。
 4. 保存成功后，后续编辑从 YAML 中的 `info` 和 `builder:` 回填 Builder。
+
+### 8.3 AI YAML 应用前校验
+
+前端应用 Copilot fenced YAML 前会做轻量结构校验：`kind`、`id`、`info.risk_level`、`policy.capabilities`、`runtime.engine` 必填；engine 只能是 `nuclei` 或 `starlark`；capability 必须在当前白名单内；Nuclei 必须有 `http` 或 `steps` 且不能使用声明式 TCP；Starlark 必须有入口脚本；`cleanup_required=true` 时必须提供 `cleanup` 或 `scripts.cleanup`。
+
+该校验只保证 YAML 与当前执行模型兼容，不替代人工审核和后端严格校验。
 
 ## 9. 当前前端数据模型
 

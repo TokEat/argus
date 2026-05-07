@@ -211,6 +211,8 @@ EXP Builder 发送给 Copilot 的 prompt 必须包含当前系统设计，而不
 - Nuclei 模式使用 Argus 自定义的顶层 `http` / `steps`，不是原生 Nuclei 模板结构。
 - Starlark 模式必须提供 `scripts`，通过宿主对象 `http`、`tcp`、`evidence`、`extract`、`cleanup`、`result` 完成受控执行。
 - 需要第二个验证请求、内存马验证、文件上传后探测、登录态传递或 cleanup 时，AI 应优先选择能准确表达流程的结构，不得把流程压扁成宽泛 `200` matcher。
+- HTTP 请求应尽量复用用户提供的正常业务/浏览器请求样例，不主动添加 `Argus`、`Scanner`、`PoC`、`Exploit` 等工具特征头或特征 User-Agent。
+- 前端应用 AI fenced YAML 前会先做结构化校验；校验失败时不写入编辑器，要求用户让 AI 修正。
 
 脚本语言建议优先选择 **Starlark**：
 
@@ -243,6 +245,25 @@ EXP Builder 发送给 Copilot 的 prompt 必须包含当前系统设计，而不
 | `cleanup.defer` | `cleanup.defer("cleanup")` | 注册清理步骤 |
 | `result.write` | `result.success(...)` / `result.failure(...)` | 返回执行结果 |
 
+AI prompt 中必须给出 Starlark 可执行模板和精确 API 签名，避免模型臆造不存在的 API：
+
+```python
+def run(ctx):
+    resp = http.request(
+        method="GET",
+        url=target.url + "/path",
+        headers={"User-Agent": "..."},
+        body="optional text",
+    )
+    proof = resp.headers.get("Access-Control-Allow-Origin", "")
+    if resp.status_code == 200 and proof != "":
+        evidence.add(key="access_control_allow_origin", value=proof)
+        return result.success(msg="verified")
+    return result.failure(msg="not matched")
+```
+
+当前响应对象字段为 `resp.status_code`、`resp.body`、`resp.headers`、`resp.success`。Starlark 不支持任意导入，不应生成 `body_encoding`、`base64_decode`、`requests`、`socket` 等未声明能力或函数。
+
 默认禁止：
 
 - 任意文件读写。
@@ -269,6 +290,8 @@ EXP Builder 发送给 Copilot 的 prompt 必须包含当前系统设计，而不
 - 脚本入口函数存在。
 - 脚本静态扫描不包含禁用符号。
 - 参数 schema 可渲染为前端表单。
+
+前端 AI 应用阶段也执行一层快速兼容校验：`kind/id/info.risk_level/policy.capabilities/runtime.engine` 必填，capability 必须在白名单内，`runtime.engine` 只能是 `nuclei` 或 `starlark`；Nuclei 需要 `http` 或 `steps` 且拒绝声明式 TCP；Starlark 需要入口脚本；`cleanup_required=true` 时需要 `cleanup` 或 `scripts.cleanup`。该层用于防止明显不兼容的 AI 输出进入编辑器，后端保存、审核、执行前校验仍是最终安全边界。
 
 ### 2.5 兼容声明式 HTTP
 
