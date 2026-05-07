@@ -1,10 +1,17 @@
 <p align="center">
+  <img src="server-ui/src/assets/brand/argus-logo-icon.svg" width="112" alt="Argus logo">
   <h1 align="center">Argus</h1>
   <p align="center">
-    <b>分布式攻击面管理与漏洞巡航平台</b>
+    <b>分布式攻击面管理、漏洞巡航与 AI 辅助运营平台</b>
+  </p>
+  <p align="center">
+    <a href="server-ui/src/assets/brand/argus-logo-animation.mp4">
+      <img src="server-ui/src/assets/brand/argus-logo-animation.gif" width="720" alt="Argus logo animation">
+    </a>
   </p>
   <p align="center">
     <a href="#快速开始">快速开始</a> •
+    <a href="#能力地图">能力地图</a> •
     <a href="#架构概览">架构</a> •
     <a href="#部署模式">部署</a> •
     <a href="#文档">文档</a> •
@@ -16,9 +23,18 @@
 
 ## 简介
 
-**Argus** 是一个企业级分布式攻击面管理 (ASM) 与漏洞巡航平台，由 [dddd](https://github.com/SleepingBag945/dddd) 项目演进而来。
+**Argus** 是一个企业级分布式攻击面管理 (ASM)、漏洞巡航、规则治理、EXP 验证与 AI Copilot 辅助运营平台，由 [dddd](https://github.com/SleepingBag945/dddd) 项目演进而来。
 
-项目形成了清晰的 **控制面 (Control Plane)** 与 **数据面 (Data Plane)** 架构分层，同时保留了开箱即用的单机 CLI 模式，既可作为一线工具快速使用，也可横向扩展为多节点分布式巡航集群。
+项目形成了清晰的 **控制面 (Control Plane)** 与 **数据面 (Data Plane)** 架构分层，同时保留开箱即用的单机 CLI 模式。它既能作为一线安全测试工具快速使用，也能横向扩展为多节点分布式巡航集群，并通过 Web Console、云资源调度和 AI Copilot 承接持续化运营。
+
+当前主线已覆盖：
+
+- 单机 CLI、Server 控制面、Agent 数据面、Web Console 四类入口
+- POC / Fingerprint / Workflow / Dir / EXP 弹药库治理
+- 多租户、RBAC、项目分发、节点管理、任务编排和实时结果回传
+- AI Copilot、Prompt Registry、工具/动作白名单、低风险草稿动作确认与审计
+- EXP Builder、Nuclei/Starlark 双模式执行、调试请求/响应 Trace、cleanup 与取消链路
+- 阿里云 ECS / OSS 动态 Agent 分发、AutoScaler、Spot 回收和云实例对账
 
 ## 特性
 
