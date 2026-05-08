@@ -137,6 +137,31 @@ type User struct {
 	UpdatedAt     time.Time
 }
 
+// CustomRole 租户级自定义角色。
+// BaseRole 决定后端实际权限基线；Permissions 保存前端展示/审计用的权限矩阵快照。
+type CustomRole struct {
+	ID          uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID    string `gorm:"default:'default';index:idx_custom_roles_tenant_name,unique"`
+	Name        string `gorm:"index:idx_custom_roles_tenant_name,unique"`
+	Label       string
+	Description string `gorm:"type:text"`
+	BaseRole    string `gorm:"default:'viewer';index"`
+	Permissions string `gorm:"type:jsonb"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+// TenantQuota 定义租户任务额度。
+// 0 表示不限制，便于无配置租户保持历史兼容。
+type TenantQuota struct {
+	TenantID           string `gorm:"primaryKey;default:'default'"`
+	MaxConcurrentTasks int    `gorm:"default:0"`
+	MaxRunningSubTasks int    `gorm:"default:0"`
+	DailyTaskLimit     int    `gorm:"default:0"`
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
 // SystemConfig 系统配置键值存储
 type SystemConfig struct {
 	Key       string `gorm:"primaryKey"`
@@ -324,6 +349,48 @@ type AgentLog struct {
 	CreatedAt time.Time
 }
 
+// BuildJob records one server-side client/agent binary build request.
+type BuildJob struct {
+	ID         uint       `gorm:"primaryKey;autoIncrement" json:"id"`
+	Platform   string     `gorm:"index" json:"platform"`
+	Arch       string     `gorm:"index" json:"arch"`
+	Pack       bool       `json:"pack"`
+	Status     string     `gorm:"index" json:"status"` // queued, running, success, failed, canceled
+	Artifact   string     `json:"artifact"`
+	LogTail    string     `gorm:"type:text" json:"log_tail"`
+	LogText    string     `gorm:"type:text" json:"-"`
+	Error      string     `gorm:"type:text" json:"error"`
+	StartedAt  *time.Time `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+// ExploitAudit records governance actions against EXP rules.
+type ExploitAudit struct {
+	ID            uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID      string `gorm:"default:'default';index"`
+	ExploitRuleID uint   `gorm:"index"`
+	RuleID        string `gorm:"index"`
+	Action        string `gorm:"index"`
+	Reason        string `gorm:"type:text"`
+	OperatorID    string `gorm:"index"`
+	Metadata      string `gorm:"type:jsonb"`
+	CreatedAt     time.Time
+}
+
+// ExploitRiskWaiver records a time-bound waiver for high-risk EXP execution.
+type ExploitRiskWaiver struct {
+	ID        uint       `gorm:"primaryKey;autoIncrement"`
+	TenantID  string     `gorm:"default:'default';index;uniqueIndex:idx_exploit_risk_waiver_rule"`
+	RuleID    string     `gorm:"index;uniqueIndex:idx_exploit_risk_waiver_rule"`
+	Reason    string     `gorm:"type:text"`
+	CreatedBy string     `gorm:"index"`
+	ExpiresAt *time.Time `gorm:"index"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 // ExploitRun records one EXP execution against a single target.
 type ExploitRun struct {
 	ID               uint   `gorm:"primaryKey;autoIncrement"`
@@ -337,6 +404,7 @@ type ExploitRun struct {
 	AgentID          string `gorm:"index"`
 	RiskLevel        string `gorm:"index;default:'medium'"`
 	Status           string `gorm:"index;default:'Pending'"`
+	CredentialRef    string `gorm:"index"`
 	ParamsDigest     string `gorm:"index"`
 	ParamsCiphertext string `gorm:"type:text"`
 	StartedAt        *time.Time

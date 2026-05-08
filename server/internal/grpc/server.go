@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -190,10 +191,12 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterReq) (*pb.Registe
 		}
 	}
 
+	token := generateSessionToken()
 	db.DB.Save(&db.Node{
 		TenantID:     tenantID,
 		AgentID:      req.AgentId,
 		Status:       "Alive",
+		Token:        token,
 		Version:      req.Version,
 		Tags:         tagsJSON,
 		Capacity:     int(req.Capacity),
@@ -203,8 +206,6 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterReq) (*pb.Registe
 		Arch:         req.Arch,
 	})
 
-	token := generateSessionToken()
-	db.DB.Model(&db.Node{}).Where("agent_id = ?", req.AgentId).Update("token", token)
 	now := time.Now()
 	db.DB.Model(&db.CloudInstance{}).
 		Where("agent_id = ? AND status IN ?", req.AgentId, []string{
@@ -322,7 +323,7 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 
 		// DB 状态机校验：只允许 Pending / Recovered 任务进入执行态。
 		var sub db.SubTask
-		if err := db.DB.Select("id", "status", "root_task_id").Where("id = ?", task.TaskId).First(&sub).Error; err != nil {
+		if err := db.DB.Select("id", "tenant_id", "status", "root_task_id").Where("id = ?", task.TaskId).First(&sub).Error; err != nil {
 			// 队列里有脏消息（DB 不存在），直接 ACK 丢弃避免死循环。
 			if s.ackTaskHook != nil && msgID != "" {
 				_ = s.ackTaskHook(msgID)
@@ -369,6 +370,22 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 			if s.returnTaskHook != nil {
 				_ = s.returnTaskHook(task, msgID)
 			}
+			continue
+		}
+
+		if err := db.CheckTenantSubTaskClaimQuota(db.DB, sub.TenantID); err != nil {
+			var quotaErr *db.TenantQuotaError
+			if errors.As(err, &quotaErr) {
+				if s.returnTaskHook != nil {
+					_ = s.returnTaskHook(task, msgID)
+				}
+				log.Printf("[ClaimTask] Tenant quota blocked task %s for Agent %s: %s", task.TaskId, req.AgentId, quotaErr.Message)
+				return &pb.Task{}, nil
+			}
+			if s.returnTaskHook != nil {
+				_ = s.returnTaskHook(task, msgID)
+			}
+			log.Printf("[ClaimTask] Tenant quota check failed for task %s: %v", task.TaskId, err)
 			continue
 		}
 
@@ -628,6 +645,7 @@ func (s *Server) EmergencyDump(ctx context.Context, req *pb.EmergencyReq) (*pb.A
 	db.DB.Model(&db.Node{}).Where("agent_id = ?", agentID).Updates(map[string]interface{}{
 		"status":        "Offline",
 		"running_tasks": 0,
+		"token":         "",
 	})
 
 	// 2. 回收该 Agent 所有 Running 任务，退回队列重新调度

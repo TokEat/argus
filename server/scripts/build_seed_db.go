@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -49,7 +50,7 @@ func main() {
 
 	// 1. finger.yaml
 	if data, err := os.ReadFile(filepath.Join(configBaseDir, "finger.yaml")); err == nil {
-		if err := writeToDB(sdb, "finger", "finger.yaml", string(data)); err != nil {
+		if err := writeToDB(sdb, "finger", "finger.yaml", sanitizeSeedContent("finger.yaml", data)); err != nil {
 			errs = append(errs, err)
 		} else {
 			total++
@@ -58,7 +59,7 @@ func main() {
 
 	// 2. workflow.yaml
 	if data, err := os.ReadFile(filepath.Join(configBaseDir, "workflow.yaml")); err == nil {
-		if err := writeToDB(sdb, "workflow", "workflow.yaml", string(data)); err != nil {
+		if err := writeToDB(sdb, "workflow", "workflow.yaml", sanitizeSeedContent("workflow.yaml", data)); err != nil {
 			errs = append(errs, err)
 		} else {
 			total++
@@ -67,7 +68,7 @@ func main() {
 
 	// 3. dir.yaml
 	if data, err := os.ReadFile(filepath.Join(configBaseDir, "dir.yaml")); err == nil {
-		if err := writeToDB(sdb, "dir", "dir.yaml", string(data)); err != nil {
+		if err := writeToDB(sdb, "dir", "dir.yaml", sanitizeSeedContent("dir.yaml", data)); err != nil {
 			errs = append(errs, err)
 		} else {
 			total++
@@ -89,7 +90,7 @@ func main() {
 				errs = append(errs, fmt.Errorf("read poc file failed at %s: %w", path, readErr))
 				return nil
 			}
-			if err := writeToDB(sdb, "poc", info.Name(), string(data)); err != nil {
+			if err := writeToDB(sdb, "poc", info.Name(), sanitizeSeedContent(path, data)); err != nil {
 				errs = append(errs, err)
 				return nil
 			}
@@ -113,7 +114,7 @@ func main() {
 				errs = append(errs, fmt.Errorf("read exp file failed at %s: %w", path, readErr))
 				return nil
 			}
-			if err := writeToDB(sdb, "exp", info.Name(), string(data)); err != nil {
+			if err := writeToDB(sdb, "exp", info.Name(), sanitizeSeedContent(path, data)); err != nil {
 				errs = append(errs, err)
 				return nil
 			}
@@ -136,6 +137,10 @@ func main() {
 }
 
 func writeToDB(sdb *gorm.DB, typ, fileName, content string) error {
+	if !utf8.ValidString(content) || strings.ContainsRune(content, '\x00') {
+		content = strings.ToValidUTF8(content, "")
+		content = strings.ReplaceAll(content, "\x00", "")
+	}
 	typ = db.CanonicalArsenalType(typ)
 	hash := fmt.Sprintf("%x", md5.Sum([]byte(content)))
 	arsenal := db.Arsenal{
@@ -157,4 +162,14 @@ func writeToDB(sdb *gorm.DB, typ, fileName, content string) error {
 		return fmt.Errorf("seed %s/%s failed: %w", typ, fileName, err)
 	}
 	return nil
+}
+
+func sanitizeSeedContent(label string, data []byte) string {
+	text := string(data)
+	if utf8.Valid(data) && !strings.ContainsRune(text, '\x00') {
+		return string(data)
+	}
+	log.Printf("⚠️  规则文件 %s 包含 PostgreSQL text 不支持的字符，已在 seed DB 中清理。", label)
+	text = strings.ToValidUTF8(text, "")
+	return strings.ReplaceAll(text, "\x00", "")
 }

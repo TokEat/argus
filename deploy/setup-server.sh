@@ -26,6 +26,8 @@
 # ==============================================================================
 
 set -euo pipefail
+export LANG="${LANG:-C.UTF-8}"
+export LC_ALL="${LC_ALL:-C.UTF-8}"
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -283,7 +285,11 @@ echo -e "${GREEN}[✔] 数据库迁移完成${NC}"
 echo -e "${YELLOW}[4.5/6] 导入安全规则资产库 (从预编译 DB 中恢复)...${NC}"
 
 if [[ -f "${SCRIPT_DIR}/arsenal_seed.db" ]]; then
-    "$INSTALL_DIR/bin/dddd-server" --db "$DB_DSN" --seed-from-db "${SCRIPT_DIR}/arsenal_seed.db"
+    if ! "$INSTALL_DIR/bin/dddd-server" --db "$DB_DSN" --seed-from-db "${SCRIPT_DIR}/arsenal_seed.db"; then
+        echo -e "${RED}[!] 规则资产导入失败${NC}"
+        echo -e "    请确认部署包由最新代码重新生成，或删除损坏的 deploy/arsenal_seed.db 后重新打包。"
+        exit 1
+    fi
     echo -e "${GREEN}[✔] 规则资产导入完成${NC}"
 else
     echo -e "${YELLOW}[!] 未找到预编译的 arsenal_seed.db，跳过规则导入${NC}"

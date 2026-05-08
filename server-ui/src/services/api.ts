@@ -109,6 +109,10 @@ export async function createTask(data: API.CreateTaskRequest): Promise<{ status:
     return request.post('/tasks', data);
 }
 
+export async function previewTaskSelector(data: API.TaskSelectorPreviewRequest): Promise<API.TaskSelectorPreview> {
+    return request.post('/tasks/preview-selector', data);
+}
+
 export async function deleteTask(taskId: string): Promise<API.MessageResponse> {
     return request.delete(`/tasks/${taskId}`);
 }
@@ -166,6 +170,17 @@ export async function getProfiles(page: number = 1, pageSize: number = 50, searc
     const params: Record<string, string | number> = { page, page_size: pageSize, search };
     if (projectId) params.project_id = projectId;
     return request.get('/profiles', { params });
+}
+
+export async function listPocRules(params?: {
+    all?: string;
+    severity?: string;
+    product?: string;
+    cve?: string;
+    compatibility_status?: string;
+    q?: string;
+}): Promise<API.PocRuleMetadata[]> {
+    return request.get('/poc-rules', { params });
 }
 
 export async function exportVulns(projectId?: string): Promise<Blob> {
@@ -530,6 +545,30 @@ export async function deleteUserApi(id: number): Promise<API.MessageResponse> {
     return request.delete(`/users/${id}`);
 }
 
+export async function listRoles(): Promise<API.RoleListResponse> {
+    return request.get('/roles');
+}
+
+export async function createRoleApi(data: API.RoleRequest): Promise<API.RoleDefinition> {
+    return request.post('/roles', data);
+}
+
+export async function updateRoleApi(name: string, data: API.RoleRequest): Promise<API.RoleDefinition> {
+    return request.put(`/roles/${encodeURIComponent(name)}`, data);
+}
+
+export async function deleteRoleApi(name: string): Promise<API.MessageResponse> {
+    return request.delete(`/roles/${encodeURIComponent(name)}`);
+}
+
+export async function getTenantQuota(tenantId: string = 'current'): Promise<API.TenantQuota> {
+    return request.get(`/tenants/${encodeURIComponent(tenantId)}/quotas`);
+}
+
+export async function updateTenantQuota(tenantId: string = 'current', data: API.TenantQuotaRequest): Promise<API.TenantQuota> {
+    return request.put(`/tenants/${encodeURIComponent(tenantId)}/quotas`, data);
+}
+
 // ===========================
 // Cloud Resource API
 // ===========================
@@ -740,6 +779,26 @@ export async function triggerBuild(data: API.BuildRequest): Promise<API.MessageR
     return request.post('/build/client', data);
 }
 
+export async function listBuildJobs(limit: number = 20): Promise<API.BuildJob[]> {
+    return request.get('/build/jobs', { params: { limit } });
+}
+
+export async function getBuildJob(id: number): Promise<API.BuildJob> {
+    return request.get(`/build/jobs/${id}`);
+}
+
+export async function getBuildJobLogs(id: number): Promise<string> {
+    return request.get(`/build/jobs/${id}/logs`);
+}
+
+export async function cancelBuildJob(id: number): Promise<API.MessageResponse> {
+    return request.post(`/build/jobs/${id}/cancel`);
+}
+
+export async function retryBuildJob(id: number): Promise<API.MessageResponse> {
+    return request.post(`/build/jobs/${id}/retry`);
+}
+
 // ===========================
 // MCP Key API
 // ===========================
@@ -786,10 +845,41 @@ export async function getRecentHighVulns(limit: number = 10, projectId?: string)
 // Agent Log API
 // ===========================
 
-export async function getAgentLogs(agentId: string, limit: number = 100, level?: string): Promise<API.AgentLog[]> {
-    const params: Record<string, string | number> = { limit };
-    if (level) params.level = level;
+export async function getAgentLogs(agentId: string, options?: {
+    limit?: number;
+    level?: string;
+    q?: string;
+    since?: number;
+    until?: number;
+}): Promise<API.AgentLog[]> {
+    const params: Record<string, string | number> = { limit: options?.limit ?? 100 };
+    if (options?.level) params.level = options.level;
+    if (options?.q) params.q = options.q;
+    if (options?.since) params.since = options.since;
+    if (options?.until) params.until = options.until;
     return request.get(`/agents/${agentId}/logs`, { params });
+}
+
+export async function getAgentLogSummary(options?: {
+    agent_id?: string;
+    limit?: number;
+    since?: number;
+    until?: number;
+}): Promise<API.AgentLogSummary> {
+    const params: Record<string, string | number> = {};
+    if (options?.agent_id) params.agent_id = options.agent_id;
+    if (options?.limit) params.limit = options.limit;
+    if (options?.since) params.since = options.since;
+    if (options?.until) params.until = options.until;
+    return request.get('/agent-logs/summary', { params });
+}
+
+export async function getAgentLogRetention(): Promise<API.AgentLogRetention> {
+    return request.get('/agent-logs/retention');
+}
+
+export async function updateAgentLogRetention(retention_days: number): Promise<API.AgentLogRetention> {
+    return request.put('/agent-logs/retention', { retention_days });
 }
 
 // ===========================
@@ -822,6 +912,30 @@ export async function deprecateExploitRule(id: number): Promise<API.MessageRespo
     return request.post(`/exploits/${id}/deprecate`);
 }
 
+export async function batchApproveExploitRules(ids: number[], reason?: string): Promise<API.ExploitBatchReviewResponse> {
+    return request.post('/exploits/batch/approve', { ids, reason });
+}
+
+export async function batchDeprecateExploitRules(ids: number[], reason?: string): Promise<API.ExploitBatchReviewResponse> {
+    return request.post('/exploits/batch/deprecate', { ids, reason });
+}
+
+export async function listExploitAudits(params?: { rule_id?: string; action?: string; limit?: number }): Promise<API.ExploitAudit[]> {
+    return request.get('/exploits/audits', { params });
+}
+
+export async function getExploitRiskWaiver(id: number): Promise<API.ExploitRiskWaiver> {
+    return request.get(`/exploits/${id}/risk-waiver`);
+}
+
+export async function setExploitRiskWaiver(id: number, data: { reason: string; expires_at?: string }): Promise<API.ExploitRiskWaiver> {
+    return request.post(`/exploits/${id}/risk-waiver`, data);
+}
+
+export async function deleteExploitRiskWaiver(id: number): Promise<API.MessageResponse> {
+    return request.delete(`/exploits/${id}/risk-waiver`);
+}
+
 export async function deleteExploitRule(id: number): Promise<API.MessageResponse> {
     return request.delete(`/exploits/${id}`);
 }
@@ -842,6 +956,7 @@ export async function createExploitRun(data: {
     exploit_id: number;
     target: string;
     project_id?: string;
+    credential_ref?: string;
     params?: Record<string, unknown>;
     risk_confirmed?: boolean;
 }): Promise<API.ExploitRun> {

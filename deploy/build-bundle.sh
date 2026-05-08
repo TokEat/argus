@@ -90,6 +90,9 @@ cd "${ROOT_DIR}"
 ./server/build_seed_db
 if [[ -f "${ROOT_DIR}/deploy/arsenal_seed.db" ]]; then
     cp "${ROOT_DIR}/deploy/arsenal_seed.db" "${BUNDLE_DIR}/deploy/"
+else
+    echo -e "${RED}[!] 规则资产库生成失败: ${ROOT_DIR}/deploy/arsenal_seed.db 不存在${NC}"
+    exit 1
 fi
 
 # 拷贝数据库初始化脚本

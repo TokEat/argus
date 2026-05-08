@@ -1,7 +1,8 @@
-.PHONY: cli agent server legacy all clean docker infra-up infra-down infra-logs db-init db-migrate db-verify setup-local smoke-local
+.PHONY: cli agent server legacy all clean docker infra-up infra-down infra-logs db-init db-migrate db-verify setup-local smoke-local test coverage frontend-smoke cloud-smoke lint ci
 
 COMPOSE_FILE := server/deploy/docker-compose.yml
 DOCKER_COMPOSE := docker compose -f $(COMPOSE_FILE)
+COVERAGE_DIR ?= /tmp/argus-coverage
 DB_HOST ?= 127.0.0.1
 POSTGRES_PORT ?= 5432
 DB_PORT ?= $(POSTGRES_PORT)
@@ -57,5 +58,29 @@ setup-local:
 
 smoke-local:
 	bash test/setup-local-smoke.sh
+
+test:
+	go test ./...
+	cd server && go test ./...
+	npm --prefix server-ui run test -- --run
+
+coverage:
+	mkdir -p $(COVERAGE_DIR)
+	go test -coverprofile=$(COVERAGE_DIR)/root.out ./...
+	cd server && go test -coverprofile=$(COVERAGE_DIR)/server.out ./...
+	go tool cover -func=$(COVERAGE_DIR)/root.out | tail -n 1
+	cd server && go tool cover -func=$(COVERAGE_DIR)/server.out | tail -n 1
+
+frontend-smoke:
+	npm --prefix server-ui run test:smoke
+
+cloud-smoke:
+	cd server && go test ./internal/api -run TestCloudProviderMockSmoke -count=1
+
+lint:
+	npm --prefix server-ui run lint
+
+ci: lint test coverage frontend-smoke cloud-smoke
+	npm --prefix server-ui run build
 
 docker: setup-local

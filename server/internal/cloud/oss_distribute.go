@@ -24,6 +24,7 @@ type OSSFileInfo struct {
 // OSSUploader OSS 操作抽象接口
 type OSSUploader interface {
 	UploadFile(localPath, objectKey string) error
+	DownloadFile(objectKey, localPath string) error
 	GeneratePresignedURL(objectKey string, expiry time.Duration) (string, error)
 	UploadAgentBinaries(releaseDir string) ([]OSSUploadResult, error)
 	TestConnection() error

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
 	"crypto/subtle"
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,6 +26,7 @@ import (
 	"github.com/user/dddd-server/internal/db"
 	grpcpkg "github.com/user/dddd-server/internal/grpc"
 	"github.com/user/dddd-server/internal/scheduler"
+	"github.com/user/dddd-server/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -32,10 +35,18 @@ var taskQueue *scheduler.TaskQueue
 var notifyHub *grpcpkg.NotifyHub
 var agentPSK string
 var developmentMode bool
+var buildMu sync.Mutex
+var buildCancelMu sync.Mutex
+var buildCancels = map[uint]context.CancelFunc{}
+var buildJobRunner = runBuildJob
+var errBuildAlreadyQueued = errors.New("another build job is already queued or running")
+var objectStorageRoot = "./data/objects"
 
 const (
 	subTaskStatusDispatching = "Dispatching"
 	cancelPendingSettleGrace = 45 * time.Second
+	agentLogRetentionKey     = "agent_logs_retention_days"
+	defaultAgentLogRetention = 14
 )
 
 func SetTaskQueue(queue *scheduler.TaskQueue) {
@@ -81,6 +92,50 @@ func validateAgentPSK(c *gin.Context) bool {
 	return subtle.ConstantTimeCompare([]byte(token), []byte(agentPSK)) == 1
 }
 
+func hasBearerAuth(c *gin.Context) bool {
+	authHeader := c.GetHeader("Authorization")
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		return true
+	}
+	return strings.TrimSpace(c.Query("token")) != ""
+}
+
+func validateAgentSession(c *gin.Context) bool {
+	agentID := strings.TrimSpace(c.GetHeader("x-agent-id"))
+	token := strings.TrimSpace(c.GetHeader("x-agent-token"))
+	if agentID == "" || token == "" {
+		return false
+	}
+	if strings.HasPrefix(c.Request.URL.Path, "/api/v1/agents/") && strings.HasSuffix(c.Request.URL.Path, "/commands") {
+		pathAgentID := strings.TrimPrefix(c.Request.URL.Path, "/api/v1/agents/")
+		pathAgentID = strings.TrimSuffix(pathAgentID, "/commands")
+		if pathAgentID != agentID {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "agent id mismatch"})
+			return false
+		}
+	}
+
+	var node db.Node
+	if err := db.DB.Select("agent_id", "tenant_id", "token", "status").Where("agent_id = ?", agentID).First(&node).Error; err != nil {
+		return false
+	}
+	if node.Status != "Alive" {
+		return false
+	}
+	if strings.TrimSpace(node.Token) == "" || subtle.ConstantTimeCompare([]byte(token), []byte(node.Token)) != 1 {
+		return false
+	}
+	tenantID := strings.TrimSpace(node.TenantID)
+	if tenantID == "" {
+		tenantID = "default"
+	}
+	c.Set("tenant", tenantID)
+	c.Set("role", "admin")
+	c.Set("agent_id", agentID)
+	c.Set("agent_internal", true)
+	return true
+}
+
 // SetNotifyHub 注入 gRPC NotifyHub 引用，用于 createTask 后广播通知 Agent
 func SetNotifyHub(hub *grpcpkg.NotifyHub) {
 	notifyHub = hub
@@ -107,6 +162,26 @@ func normalizeUserRole(role string) (string, bool) {
 		return "", false
 	}
 	return role, true
+}
+
+func normalizeUserRoleForTenant(tenantID, role string) (string, bool) {
+	role = strings.TrimSpace(role)
+	if role == "" {
+		return "viewer", true
+	}
+	if _, ok := roleHierarchy[role]; ok {
+		return role, true
+	}
+	if db.DB == nil {
+		return "", false
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		tenantID = "default"
+	}
+	var count int64
+	db.DB.Model(&db.CustomRole{}).Where("tenant_id = ? AND name = ?", tenantID, role).Count(&count)
+	return role, count > 0
 }
 
 func normalizeUserStatus(status string) (string, bool) {
@@ -186,15 +261,15 @@ func TenantMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Agent 内部 API：使用 PSK 鉴权（无需 JWT）。
-		if isAgentInternalEndpoint(c) {
-			if !validateAgentPSK(c) {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing agent pre-shared key"})
+		// Agent 内部 API：Agent 使用 Register 返回的 session token；普通用户仍可用 JWT 访问。
+		if isAgentInternalEndpoint(c) && !hasBearerAuth(c) {
+			if !validateAgentSession(c) {
+				if c.IsAborted() {
+					return
+				}
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or missing agent session token"})
 				return
 			}
-			// 注入默认身份，兼容 RBAC 逻辑。
-			c.Set("tenant", "default")
-			c.Set("role", "admin")
 			c.Next()
 			return
 		}
@@ -300,6 +375,7 @@ func InitRouter(port string) {
 		// 任务 CRUD
 		api.GET("/tasks", getTasks)
 		api.GET("/tasks/:id", getTaskDetail)
+		api.POST("/tasks/preview-selector", previewTaskSelector)
 		api.POST("/tasks", createTask)
 		api.DELETE("/tasks/:id", deleteTask)
 		api.POST("/tasks/:id/cancel", cancelTask)
@@ -313,7 +389,15 @@ func InitRouter(port string) {
 		api.GET("/assets", getAssets)
 		api.GET("/fingerprints", getFingerprints)
 		api.GET("/profiles", getProfiles)
+		api.GET("/poc-rules", listPocRules)
 		api.GET("/exploits", listExploitRules)
+		api.GET("/exploits/audits", listExploitAudits)
+		api.POST("/exploits/batch/approve", batchApproveExploitRules)
+		api.POST("/exploits/batch/deprecate", batchDeprecateExploitRules)
+		api.GET("/exploits/:id/risk-waiver", getExploitRiskWaiver)
+		api.POST("/exploits/:id/risk-waiver", upsertExploitRiskWaiver)
+		api.PUT("/exploits/:id/risk-waiver", upsertExploitRiskWaiver)
+		api.DELETE("/exploits/:id/risk-waiver", deleteExploitRiskWaiver)
 		api.POST("/exploits/:id/approve", approveExploitRule)
 		api.POST("/exploits/:id/deprecate", deprecateExploitRule)
 		api.POST("/exploits/:id/dry-run", dryRunExploit)
@@ -397,6 +481,14 @@ func InitRouter(port string) {
 		api.PUT("/users/:id", updateUser)
 		api.DELETE("/users/:id", deleteUser)
 
+		// 角色与权限矩阵
+		api.GET("/roles", listRoles)
+		api.POST("/roles", createRole)
+		api.PUT("/roles/:name", updateRole)
+		api.DELETE("/roles/:name", deleteRole)
+		api.GET("/tenants/:id/quotas", getTenantQuota)
+		api.PUT("/tenants/:id/quotas", updateTenantQuota)
+
 		// ====== 云资源编排 ======
 		// 云账号凭证管理
 		api.GET("/cloud/accounts", listCloudAccounts)
@@ -435,6 +527,11 @@ func InitRouter(port string) {
 
 		// 客户端构建
 		api.GET("/build/artifacts", listBuildArtifacts)
+		api.GET("/build/jobs", listBuildJobs)
+		api.GET("/build/jobs/:id", getBuildJob)
+		api.GET("/build/jobs/:id/logs", getBuildJobLogs)
+		api.POST("/build/jobs/:id/cancel", cancelBuildJob)
+		api.POST("/build/jobs/:id/retry", retryBuildJob)
 		api.POST("/build/client", triggerBuild)
 
 		// MCP / API Key 管理
@@ -449,6 +546,9 @@ func InitRouter(port string) {
 		api.GET("/stats/recent-high-vulns", getRecentHighVulns)
 
 		// Agent 遥测日志
+		api.GET("/agent-logs/summary", getAgentLogSummary)
+		api.GET("/agent-logs/retention", getAgentLogRetention)
+		api.PUT("/agent-logs/retention", updateAgentLogRetention)
 		api.GET("/agents/:id/logs", getAgentLogs)
 
 		// 规则回滚
@@ -790,6 +890,78 @@ func getTasks(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+type taskReasonStat struct {
+	Status      string `json:"status"`
+	Reason      string `json:"reason"`
+	Count       int    `json:"count"`
+	TargetCount int    `json:"target_count"`
+}
+
+func subTaskTargetCount(st db.SubTask) int {
+	var targets []string
+	if json.Unmarshal([]byte(st.ChunkTargets), &targets) == nil {
+		return len(targets)
+	}
+	return 0
+}
+
+func buildTaskReasonStats(subTasks []db.SubTask) []taskReasonStat {
+	type acc struct {
+		status      string
+		reason      string
+		count       int
+		targetCount int
+	}
+	statsByKey := make(map[string]*acc)
+	order := make([]string, 0)
+	add := func(status, reason string, targetCount int) {
+		if reason == "" {
+			return
+		}
+		key := status + "\x00" + reason
+		if _, ok := statsByKey[key]; !ok {
+			statsByKey[key] = &acc{status: status, reason: reason}
+			order = append(order, key)
+		}
+		statsByKey[key].count++
+		statsByKey[key].targetCount += targetCount
+	}
+
+	for _, st := range subTasks {
+		targetCount := subTaskTargetCount(st)
+		switch db.NormalizeSubTaskStatus(st.Status) {
+		case "FAILED":
+			add(st.Status, "批次失败或重试耗尽", targetCount)
+		case "TIMEOUT":
+			if st.TimeoutSec > 0 {
+				add(st.Status, fmt.Sprintf("超过 %d 秒未完成或重试耗尽", st.TimeoutSec), targetCount)
+			} else {
+				add(st.Status, "批次超时或重试耗尽", targetCount)
+			}
+		case "CANCELLED":
+			add(st.Status, "用户取消后已终止", targetCount)
+		case "CANCELPENDING":
+			add(st.Status, "取消请求已下发，等待 Agent 确认", targetCount)
+		case "PENDING", "DISPATCHING", "RECOVERED":
+			if strings.TrimSpace(st.AgentID) == "" {
+				add(st.Status, "等待可匹配节点认领", targetCount)
+			}
+		}
+	}
+
+	stats := make([]taskReasonStat, 0, len(order))
+	for _, key := range order {
+		item := statsByKey[key]
+		stats = append(stats, taskReasonStat{
+			Status:      item.status,
+			Reason:      item.reason,
+			Count:       item.count,
+			TargetCount: item.targetCount,
+		})
+	}
+	return stats
+}
+
 // getTaskDetail 返回单个任务的详细信息，包括子任务列表和结果统计
 func getTaskDetail(c *gin.Context) {
 	taskID := c.Param("id")
@@ -832,11 +1004,7 @@ func getTaskDetail(c *gin.Context) {
 	}
 	subSummaries := make([]SubTaskSummary, 0, len(subTasks))
 	for _, st := range subTasks {
-		var targets []string
-		targetCount := 0
-		if json.Unmarshal([]byte(st.ChunkTargets), &targets) == nil {
-			targetCount = len(targets)
-		}
+		targetCount := subTaskTargetCount(st)
 		subSummaries = append(subSummaries, SubTaskSummary{
 			ID:          st.ID,
 			Status:      st.Status,
@@ -908,6 +1076,7 @@ func getTaskDetail(c *gin.Context) {
 		},
 		"sub_tasks":           subSummaries,
 		"status_distribution": statusDistribution,
+		"reason_stats":        buildTaskReasonStats(subTasks),
 		"result_stats": gin.H{
 			"assets":       assetCount,
 			"fingerprints": fpCount,
@@ -975,14 +1144,316 @@ func broadcastDispatchedTasks(pushedByPriority map[int]int) {
 	}
 }
 
+func parseAgentSelector(raw json.RawMessage) (map[string]string, error) {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "" || strings.TrimSpace(string(raw)) == "null" {
+		return nil, nil
+	}
+	var values map[string]interface{}
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil, fmt.Errorf("agent_selector must be a flat object of string values")
+	}
+	selector := make(map[string]string, len(values))
+	for key, val := range values {
+		k := strings.TrimSpace(key)
+		if k == "" {
+			return nil, fmt.Errorf("agent_selector contains empty key")
+		}
+		s, ok := val.(string)
+		if !ok {
+			return nil, fmt.Errorf("agent_selector.%s must be a string", k)
+		}
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return nil, fmt.Errorf("agent_selector.%s must not be empty", k)
+		}
+		selector[k] = s
+	}
+	return selector, nil
+}
+
+func mergeAgentSelector(baseJSON string, extra map[string]string) string {
+	merged := make(map[string]string)
+	if strings.TrimSpace(baseJSON) != "" {
+		_ = json.Unmarshal([]byte(baseJSON), &merged)
+	}
+	for key, val := range extra {
+		merged[key] = val
+	}
+	if len(merged) == 0 {
+		return "{}"
+	}
+	data, err := json.Marshal(merged)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
+}
+
+func parseSelectorJSONString(raw string) map[string]string {
+	selector := make(map[string]string)
+	if strings.TrimSpace(raw) == "" || strings.TrimSpace(raw) == "{}" {
+		return selector
+	}
+	_ = json.Unmarshal([]byte(raw), &selector)
+	return selector
+}
+
+func nodeMatchesSelector(selector map[string]string, nodeTags string) (bool, string) {
+	if len(selector) == 0 {
+		return true, ""
+	}
+	if strings.TrimSpace(nodeTags) == "" {
+		return true, ""
+	}
+	var tagMap map[string]string
+	if err := json.Unmarshal([]byte(nodeTags), &tagMap); err != nil {
+		return false, "节点标签不是合法 JSON"
+	}
+	if len(tagMap) == 0 {
+		return true, ""
+	}
+	for key, val := range selector {
+		nodeVal, ok := tagMap[key]
+		if !ok {
+			return false, fmt.Sprintf("缺少标签 %s=%s", key, val)
+		}
+		if nodeVal == val {
+			continue
+		}
+		n := strings.ToLower(strings.TrimSpace(nodeVal))
+		if n == "all" || n == "any" || n == "*" {
+			continue
+		}
+		return false, fmt.Sprintf("标签 %s=%s 不匹配 %s", key, nodeVal, val)
+	}
+	return true, ""
+}
+
+type selectorPreviewNode struct {
+	AgentID        string `json:"agent_id"`
+	Status         string `json:"status"`
+	Capacity       int    `json:"capacity"`
+	RunningTasks   int    `json:"running_tasks"`
+	AvailableSlots int    `json:"available_slots"`
+	Matched        bool   `json:"matched"`
+	Reason         string `json:"reason,omitempty"`
+}
+
+type selectorPreviewGroup struct {
+	TargetType     string                `json:"target_type"`
+	TargetCount    int                   `json:"target_count"`
+	BatchCount     int                   `json:"batch_count"`
+	Selector       map[string]string     `json:"selector"`
+	MatchedNodes   int                   `json:"matched_nodes"`
+	AvailableSlots int                   `json:"available_slots"`
+	Reasons        []string              `json:"reasons"`
+	Nodes          []selectorPreviewNode `json:"nodes"`
+}
+
+func buildSelectorPreviewGroups(batches []targetBatchGroup, userSelector map[string]string, nodes []db.Node) ([]selectorPreviewGroup, []map[string]string, int, int, []string) {
+	type groupAccumulator struct {
+		targetType string
+		selector   map[string]string
+		targets    int
+		batches    int
+	}
+	groupsByKey := make(map[string]*groupAccumulator)
+	groupOrder := make([]string, 0)
+	effectiveSelectors := make([]map[string]string, 0)
+	seenSelectors := make(map[string]struct{})
+
+	for _, batch := range batches {
+		selectorJSON := mergeAgentSelector(batch.SelectorJSON, userSelector)
+		selector := parseSelectorJSONString(selectorJSON)
+		key := batch.TargetType + "\x00" + selectorJSON
+		if _, ok := groupsByKey[key]; !ok {
+			groupsByKey[key] = &groupAccumulator{targetType: batch.TargetType, selector: selector}
+			groupOrder = append(groupOrder, key)
+		}
+		groupsByKey[key].targets += len(batch.Targets)
+		groupsByKey[key].batches++
+
+		if _, ok := seenSelectors[selectorJSON]; !ok {
+			seenSelectors[selectorJSON] = struct{}{}
+			effectiveSelectors = append(effectiveSelectors, selector)
+		}
+	}
+	if len(groupOrder) == 0 {
+		selector := make(map[string]string)
+		for key, val := range userSelector {
+			selector[key] = val
+		}
+		groupsByKey["unknown\x00{}"] = &groupAccumulator{targetType: "unknown", selector: selector}
+		groupOrder = append(groupOrder, "unknown\x00{}")
+		effectiveSelectors = append(effectiveSelectors, selector)
+	}
+
+	overallMatched := make(map[string]int)
+	overallReasons := make(map[string]struct{})
+	addOverallReason := func(reason string) {
+		if strings.TrimSpace(reason) != "" {
+			overallReasons[reason] = struct{}{}
+		}
+	}
+
+	groups := make([]selectorPreviewGroup, 0, len(groupOrder))
+	for _, key := range groupOrder {
+		acc := groupsByKey[key]
+		reasonSet := make(map[string]struct{})
+		addReason := func(reason string) {
+			if strings.TrimSpace(reason) != "" {
+				reasonSet[reason] = struct{}{}
+			}
+		}
+		group := selectorPreviewGroup{
+			TargetType:  acc.targetType,
+			TargetCount: acc.targets,
+			BatchCount:  acc.batches,
+			Selector:    acc.selector,
+			Nodes:       make([]selectorPreviewNode, 0, len(nodes)),
+		}
+
+		offlineNodes := 0
+		mismatchedNodes := 0
+		capacityExhausted := 0
+		for _, node := range nodes {
+			availableSlots := node.Capacity - node.RunningTasks
+			if availableSlots < 0 {
+				availableSlots = 0
+			}
+			nodePreview := selectorPreviewNode{
+				AgentID:        node.AgentID,
+				Status:         node.Status,
+				Capacity:       node.Capacity,
+				RunningTasks:   node.RunningTasks,
+				AvailableSlots: availableSlots,
+			}
+			if node.Status != "Alive" {
+				offlineNodes++
+				nodePreview.Reason = "节点离线"
+				group.Nodes = append(group.Nodes, nodePreview)
+				continue
+			}
+			matched, reason := nodeMatchesSelector(acc.selector, node.Tags)
+			if !matched {
+				mismatchedNodes++
+				if reason == "" {
+					reason = "不满足 selector"
+				}
+				nodePreview.Reason = reason
+				group.Nodes = append(group.Nodes, nodePreview)
+				continue
+			}
+			nodePreview.Matched = true
+			if availableSlots == 0 {
+				capacityExhausted++
+				nodePreview.Reason = "容量已满"
+			}
+			group.MatchedNodes++
+			group.AvailableSlots += availableSlots
+			overallMatched[node.AgentID] = availableSlots
+			group.Nodes = append(group.Nodes, nodePreview)
+		}
+
+		if offlineNodes > 0 {
+			addReason(fmt.Sprintf("%d 个节点离线", offlineNodes))
+		}
+		if mismatchedNodes > 0 {
+			addReason(fmt.Sprintf("%d 个在线节点不满足 selector", mismatchedNodes))
+		}
+		if group.MatchedNodes > 0 && group.AvailableSlots == 0 && capacityExhausted > 0 {
+			addReason("匹配节点当前没有空闲槽位")
+		}
+		if group.MatchedNodes == 0 {
+			addReason("没有在线节点满足 selector")
+		}
+		group.Reasons = sortedReasonSet(reasonSet)
+		for _, reason := range group.Reasons {
+			addOverallReason(fmt.Sprintf("%s: %s", group.TargetType, reason))
+		}
+		groups = append(groups, group)
+	}
+
+	overallMatchedNodes := len(overallMatched)
+	overallAvailableSlots := 0
+	for _, slots := range overallMatched {
+		overallAvailableSlots += slots
+	}
+	reasons := sortedReasonSet(overallReasons)
+	if overallMatchedNodes == 0 {
+		reasons = append(reasons, "没有在线节点满足最终 selector")
+	}
+	return groups, effectiveSelectors, overallMatchedNodes, overallAvailableSlots, reasons
+}
+
+func sortedReasonSet(reasonSet map[string]struct{}) []string {
+	reasons := make([]string, 0, len(reasonSet))
+	for reason := range reasonSet {
+		reasons = append(reasons, reason)
+	}
+	sort.Strings(reasons)
+	return reasons
+}
+
+func previewTaskSelector(c *gin.Context) {
+	var req struct {
+		ProjectID     string          `json:"project_id"`
+		Targets       json.RawMessage `json:"targets"`
+		Config        json.RawMessage `json:"config"`
+		AgentSelector json.RawMessage `json:"agent_selector"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.ProjectID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "project_id is required"})
+		return
+	}
+	if _, ok := requireProjectAccess(c, req.ProjectID); !ok {
+		return
+	}
+	userSelector, err := parseAgentSelector(req.AgentSelector)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	_, targetMode, err := normalizeTaskConfigPayload(req.Config)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	targets, targetSummary, err := parseAndValidateTargetsForMode(req.Targets, targetMode)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	batches := groupAndBatchTargets(targets, targetMode)
+
+	tenantID := currentTenantID(c)
+	var nodes []db.Node
+	scopedNodeQuery(tenantID).Find(&nodes)
+	groups, effectiveSelectors, matchedNodes, availableSlots, reasons := buildSelectorPreviewGroups(batches, userSelector, nodes)
+
+	c.JSON(http.StatusOK, gin.H{
+		"matched_nodes":       matchedNodes,
+		"available_slots":     availableSlots,
+		"reasons":             reasons,
+		"effective_selectors": effectiveSelectors,
+		"groups":              groups,
+		"target_summary":      targetSummary,
+	})
+}
+
 func createTask(c *gin.Context) {
 	var req struct {
-		ProjectID  string          `json:"project_id"`
-		Name       string          `json:"name"`
-		Targets    json.RawMessage `json:"targets"`
-		Config     json.RawMessage `json:"config"`
-		Priority   int             `json:"priority"`
-		TimeoutSec int             `json:"timeout_sec"`
+		ProjectID     string          `json:"project_id"`
+		Name          string          `json:"name"`
+		Targets       json.RawMessage `json:"targets"`
+		Config        json.RawMessage `json:"config"`
+		Priority      int             `json:"priority"`
+		TimeoutSec    int             `json:"timeout_sec"`
+		AgentSelector json.RawMessage `json:"agent_selector"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -1008,6 +1479,11 @@ func createTask(c *gin.Context) {
 	}
 	if req.TimeoutSec < 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "timeout_sec must be greater than or equal to 0"})
+		return
+	}
+	userSelector, err := parseAgentSelector(req.AgentSelector)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -1080,7 +1556,7 @@ func createTask(c *gin.Context) {
 			Priority:      req.Priority,
 			TimeoutSec:    req.TimeoutSec,
 			MaxRetry:      3,
-			AgentSelector: batch.SelectorJSON,
+			AgentSelector: mergeAgentSelector(batch.SelectorJSON, userSelector),
 		})
 
 		profile.BatchesByType[batch.TargetType]++
@@ -1108,6 +1584,9 @@ func createTask(c *gin.Context) {
 
 	// 2. Transaction for Root and SubTasks
 	err = db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := db.CheckTenantTaskCreationQuota(tx, tenantID, time.Now()); err != nil {
+			return err
+		}
 		if err := tx.Create(&rootTask).Error; err != nil {
 			return err
 		}
@@ -1120,6 +1599,9 @@ func createTask(c *gin.Context) {
 	})
 
 	if err != nil {
+		if writeTenantQuotaError(c, err) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -1522,22 +2004,56 @@ func deleteTask(c *gin.Context) {
 // ---------------- 战报引擎 --------------------
 
 func exportVulns(c *gin.Context) {
-	c.Writer.Header().Set("Content-Type", "text/csv")
-	c.Writer.Header().Set("Content-Disposition", "attachment;filename=vulnerabilities.csv")
-
-	writer := csv.NewWriter(c.Writer)
-	defer writer.Flush()
-
-	writer.Write([]string{"TenantID", "ProjectID", "TaskID", "Target", "Plugin", "Severity", "DetectedAt"})
-
 	var vulns []db.Vulnerability
 	tenantID := currentTenantID(c)
 	query := db.DB.Model(&db.Vulnerability{}).Where("tenant_id = ?", tenantID)
 	query, _ = applyProjectScope(c, query, "project_id")
 	query.Find(&vulns)
 
+	var buf bytes.Buffer
+	writer := csv.NewWriter(&buf)
+	_ = writer.Write([]string{"TenantID", "ProjectID", "TaskID", "Target", "Plugin", "Severity", "DetectedAt"})
 	for _, v := range vulns {
-		writer.Write([]string{v.TenantID, v.ProjectID, v.TaskID, v.Target, v.Plugin, v.Severity, v.CreatedAt.Format(time.RFC3339)})
+		_ = writer.Write([]string{v.TenantID, v.ProjectID, v.TaskID, v.Target, v.Plugin, v.Severity, v.CreatedAt.Format(time.RFC3339)})
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	recordReportExport(c, tenantID, buf.Bytes())
+
+	c.Writer.Header().Set("Content-Type", "text/csv")
+	c.Writer.Header().Set("Content-Disposition", "attachment;filename=vulnerabilities.csv")
+	c.Data(http.StatusOK, "text/csv", buf.Bytes())
+}
+
+func recordReportExport(c *gin.Context, tenantID string, content []byte) {
+	store, err := storage.NewLocalStore(objectStorageRoot)
+	if err != nil {
+		log.Printf("[Report] storage unavailable: %v", err)
+		return
+	}
+	now := time.Now().UTC()
+	key := fmt.Sprintf("reports/%s/vulnerabilities-%s.csv", tenantID, now.Format("20060102T150405Z"))
+	obj, err := store.Put(c.Request.Context(), key, bytes.NewReader(content))
+	if err != nil {
+		log.Printf("[Report] failed to persist export %s: %v", key, err)
+		return
+	}
+	report := db.Report{
+		ID:        fmt.Sprintf("%s:%d", tenantID, now.UnixNano()),
+		ProjectID: strings.TrimSpace(c.Query("project_id")),
+		Name:      "vulnerabilities.csv",
+		Type:      "vulnerabilities",
+		Format:    "csv",
+		FileURL:   "local://" + obj.Key,
+		Status:    "ready",
+		CreatedBy: currentUserID(c),
+		CreatedAt: now,
+	}
+	if err := db.DB.Create(&report).Error; err != nil {
+		log.Printf("[Report] failed to record export metadata %s: %v", report.ID, err)
 	}
 }
 
@@ -1870,6 +2386,7 @@ func authLogin(c *gin.Context) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"tenant_id":      tenantClaim,
 		"role":           roleClaim,
+		"role_base":      baseRoleForToken(tenantClaim, roleClaim),
 		"user_id":        userIDClaim,
 		"exp_authorized": expAuthorizedClaim,
 		"exp":            time.Now().Add(time.Hour * 72).Unix(),
@@ -1965,12 +2482,12 @@ func createUser(c *gin.Context) {
 		return
 	}
 
-	role, ok := normalizeUserRole(req.Role)
+	tenantID := currentTenantID(c)
+	role, ok := normalizeUserRoleForTenant(tenantID, req.Role)
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "role must be one of: admin, operator, viewer"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "role must be a built-in role or an existing custom role"})
 		return
 	}
-	tenantID := currentTenantID(c)
 	if req.TenantID != "" && req.TenantID != tenantID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "cannot create user for another tenant"})
 		return
@@ -2015,9 +2532,9 @@ func updateUser(c *gin.Context) {
 
 	updates := map[string]interface{}{}
 	if req.Role != "" {
-		role, ok := normalizeUserRole(req.Role)
+		role, ok := normalizeUserRoleForTenant(tenantID, req.Role)
 		if !ok {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "role must be one of: admin, operator, viewer"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "role must be a built-in role or an existing custom role"})
 			return
 		}
 		updates["role"] = role
@@ -2085,31 +2602,29 @@ func listBuildArtifacts(c *gin.Context) {
 		ModTime  string `json:"mod_time"`
 	}
 
-	releaseDir := "./release"
 	artifacts := make([]Artifact, 0)
-
-	entries, err := os.ReadDir(releaseDir)
+	store, err := storage.NewLocalStore("./release")
 	if err != nil {
 		c.JSON(http.StatusOK, artifacts)
 		return
 	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
+	objects, err := store.List(c.Request.Context(), "")
+	if err != nil {
+		c.JSON(http.StatusOK, artifacts)
+		return
+	}
+	for _, obj := range objects {
+		if strings.Contains(obj.Key, "/") {
 			continue
 		}
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		name := entry.Name()
+		name := obj.Key
 		platform, arch := parseBinaryName(name)
 		artifacts = append(artifacts, Artifact{
 			Name:     name,
-			Size:     info.Size(),
+			Size:     obj.Size,
 			Platform: platform,
 			Arch:     arch,
-			ModTime:  info.ModTime().Format(time.RFC3339),
+			ModTime:  obj.ModTime.Format(time.RFC3339),
 		})
 	}
 
@@ -2135,6 +2650,129 @@ func parseBinaryName(name string) (platform, arch string) {
 	return
 }
 
+func listBuildJobs(c *gin.Context) {
+	limit := 20
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	var jobs []db.BuildJob
+	db.DB.Select("id", "platform", "arch", "pack", "status", "artifact", "log_tail", "error", "started_at", "finished_at", "created_at", "updated_at").
+		Order("created_at DESC").Limit(limit).Find(&jobs)
+	c.JSON(http.StatusOK, jobs)
+}
+
+func getBuildJob(c *gin.Context) {
+	var job db.BuildJob
+	if err := db.DB.Select("id", "platform", "arch", "pack", "status", "artifact", "log_tail", "error", "started_at", "finished_at", "created_at", "updated_at").
+		First(&job, "id = ?", c.Param("id")).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Build job not found"})
+		return
+	}
+	c.JSON(http.StatusOK, job)
+}
+
+func getBuildJobLogs(c *gin.Context) {
+	var job db.BuildJob
+	if err := db.DB.Select("id", "log_tail", "log_text").First(&job, "id = ?", c.Param("id")).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Build job not found"})
+		return
+	}
+	logText := job.LogText
+	if logText == "" {
+		logText = job.LogTail
+	}
+	c.String(http.StatusOK, logText)
+}
+
+func cancelBuildJob(c *gin.Context) {
+	jobID, err := parseBuildJobID(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid build job id"})
+		return
+	}
+
+	buildMu.Lock()
+	defer buildMu.Unlock()
+
+	var job db.BuildJob
+	if err := db.DB.Select("id", "status").First(&job, "id = ?", jobID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Build job not found"})
+		return
+	}
+	if job.Status != "queued" && job.Status != "running" {
+		c.JSON(http.StatusConflict, gin.H{"error": "build job is already finished"})
+		return
+	}
+
+	cancelRegisteredBuild(jobID)
+	finishedAt := time.Now()
+	result := db.DB.Model(&db.BuildJob{}).
+		Where("id = ? AND status IN ?", jobID, []string{"queued", "running"}).
+		Updates(map[string]interface{}{
+			"status":      "canceled",
+			"error":       "build canceled by user",
+			"finished_at": &finishedAt,
+		})
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
+		return
+	}
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "build job is already finished"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "canceled", "job_id": jobID})
+}
+
+func retryBuildJob(c *gin.Context) {
+	jobID, err := parseBuildJobID(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid build job id"})
+		return
+	}
+
+	var oldJob db.BuildJob
+	if err := db.DB.Select("id", "platform", "arch", "pack", "status").First(&oldJob, "id = ?", jobID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Build job not found"})
+		return
+	}
+	if oldJob.Status == "queued" || oldJob.Status == "running" {
+		c.JSON(http.StatusConflict, gin.H{"error": "build job is still active"})
+		return
+	}
+	if !isSupportedBuildTarget(oldJob.Platform, oldJob.Arch) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported build target"})
+		return
+	}
+
+	if _, err := os.Stat("./build.sh"); os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "build.sh not found in project root"})
+		return
+	}
+	job, err := createBuildJobIfIdle(oldJob.Platform, oldJob.Arch, oldJob.Pack)
+	if errors.Is(err, errBuildAlreadyQueued) {
+		c.JSON(http.StatusConflict, gin.H{"error": "another build job is already queued or running"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	go buildJobRunner(job.ID)
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"status":      "queued",
+		"message":     fmt.Sprintf("Build job retried: %s/%s (pack=%v)", oldJob.Platform, oldJob.Arch, oldJob.Pack),
+		"job_id":      job.ID,
+		"retry_of_id": oldJob.ID,
+	})
+}
+
 func triggerBuild(c *gin.Context) {
 	var req struct {
 		Platform string `json:"platform"` // linux, darwin, windows
@@ -2152,6 +2790,10 @@ func triggerBuild(c *gin.Context) {
 	if req.Arch == "" {
 		req.Arch = "amd64"
 	}
+	if !isSupportedBuildTarget(req.Platform, req.Arch) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported build target"})
+		return
+	}
 
 	// 检查 build.sh 是否存在
 	buildScript := "./build.sh"
@@ -2160,12 +2802,177 @@ func triggerBuild(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"status":   "accepted",
-		"message":  fmt.Sprintf("Build request queued: %s/%s (pack=%v). Run './build.sh' manually or wait for CI pipeline.", req.Platform, req.Arch, req.Pack),
+	job, err := createBuildJobIfIdle(req.Platform, req.Arch, req.Pack)
+	if errors.Is(err, errBuildAlreadyQueued) {
+		c.JSON(http.StatusConflict, gin.H{"error": "another build job is already queued or running"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	go buildJobRunner(job.ID)
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"status":   "queued",
+		"message":  fmt.Sprintf("Build job queued: %s/%s (pack=%v)", req.Platform, req.Arch, req.Pack),
+		"job_id":   job.ID,
 		"platform": req.Platform,
 		"arch":     req.Arch,
 	})
+}
+
+func createBuildJobIfIdle(platform, arch string, pack bool) (db.BuildJob, error) {
+	buildMu.Lock()
+	defer buildMu.Unlock()
+
+	var running int64
+	if err := db.DB.Model(&db.BuildJob{}).Where("status IN ?", []string{"queued", "running"}).Count(&running).Error; err != nil {
+		return db.BuildJob{}, err
+	}
+	if running > 0 {
+		return db.BuildJob{}, errBuildAlreadyQueued
+	}
+
+	job := db.BuildJob{
+		Platform: platform,
+		Arch:     arch,
+		Pack:     pack,
+		Status:   "queued",
+	}
+	if err := db.DB.Create(&job).Error; err != nil {
+		return db.BuildJob{}, err
+	}
+	return job, nil
+}
+
+func parseBuildJobID(raw string) (uint, error) {
+	id, err := strconv.ParseUint(strings.TrimSpace(raw), 10, 64)
+	if err != nil || id == 0 {
+		return 0, errors.New("invalid build job id")
+	}
+	return uint(id), nil
+}
+
+func registerBuildCancel(jobID uint, cancel context.CancelFunc) {
+	buildCancelMu.Lock()
+	defer buildCancelMu.Unlock()
+	buildCancels[jobID] = cancel
+}
+
+func unregisterBuildCancel(jobID uint) {
+	buildCancelMu.Lock()
+	defer buildCancelMu.Unlock()
+	delete(buildCancels, jobID)
+}
+
+func cancelRegisteredBuild(jobID uint) {
+	buildCancelMu.Lock()
+	cancel := buildCancels[jobID]
+	buildCancelMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func isSupportedBuildTarget(platform, arch string) bool {
+	switch platform {
+	case "linux", "darwin":
+		return arch == "amd64" || arch == "arm64"
+	case "windows":
+		return arch == "amd64" || arch == "386"
+	default:
+		return false
+	}
+}
+
+func runBuildJob(jobID uint) {
+	var job db.BuildJob
+	if err := db.DB.First(&job, jobID).Error; err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	registerBuildCancel(jobID, cancel)
+	defer func() {
+		cancel()
+		unregisterBuildCancel(jobID)
+	}()
+
+	startedAt := time.Now()
+	result := db.DB.Model(&db.BuildJob{}).Where("id = ? AND status = ?", jobID, "queued").Updates(map[string]interface{}{
+		"status":     "running",
+		"started_at": &startedAt,
+		"log_tail":   "",
+		"log_text":   "",
+		"error":      "",
+	})
+	if result.Error != nil || result.RowsAffected == 0 {
+		return
+	}
+
+	args := []string{"--component", "dddd-agent", "--target", fmt.Sprintf("%s/%s", job.Platform, job.Arch)}
+	if job.Pack {
+		args = append([]string{"--pack"}, args...)
+	}
+
+	cmd := exec.CommandContext(ctx, "./build.sh", args...)
+	cmd.Dir = "."
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	err := cmd.Run()
+	logText := output.String()
+	logTail := truncateBuildLog(logText, 20000)
+	finishedAt := time.Now()
+	updates := map[string]interface{}{
+		"finished_at": &finishedAt,
+		"log_tail":    logTail,
+		"log_text":    logText,
+	}
+	if err != nil {
+		status := "failed"
+		errMsg := err.Error()
+		if ctx.Err() == context.DeadlineExceeded {
+			errMsg = "build timed out after 30 minutes"
+		} else if ctx.Err() == context.Canceled {
+			status = "canceled"
+			errMsg = "build canceled by user"
+		}
+		updates["status"] = status
+		updates["error"] = errMsg
+		db.DB.Model(&db.BuildJob{}).Where("id = ? AND status = ?", jobID, "running").Updates(updates)
+		return
+	}
+
+	artifact := expectedBuildArtifact(job.Platform, job.Arch)
+	store, storeErr := storage.NewLocalStore("./release")
+	if storeErr != nil {
+		updates["status"] = "failed"
+		updates["error"] = fmt.Sprintf("build artifact storage is unavailable: %v", storeErr)
+	} else if _, ok, statErr := store.Exists(context.Background(), artifact); statErr != nil || !ok {
+		updates["status"] = "failed"
+		updates["error"] = "build completed but expected artifact was not found"
+	} else {
+		updates["status"] = "success"
+		updates["artifact"] = artifact
+		updates["error"] = ""
+	}
+	db.DB.Model(&db.BuildJob{}).Where("id = ? AND status = ?", jobID, "running").Updates(updates)
+}
+
+func expectedBuildArtifact(platform, arch string) string {
+	name := fmt.Sprintf("dddd-agent-%s-%s", platform, arch)
+	if platform == "windows" {
+		name += ".exe"
+	}
+	return name
+}
+
+func truncateBuildLog(logText string, maxLen int) string {
+	if len(logText) <= maxLen {
+		return logText
+	}
+	return logText[len(logText)-maxLen:]
 }
 
 // ==================== MCP / API Key 管理 ====================
@@ -2501,6 +3308,165 @@ func getRecentHighVulns(c *gin.Context) {
 
 // ==================== Agent 遥测日志 ====================
 
+type agentLogLevelCount struct {
+	Level string `json:"level"`
+	Count int64  `json:"count"`
+}
+
+func getAgentLogRetentionDays() int {
+	var cfg db.SystemConfig
+	if err := db.DB.Where("key = ?", agentLogRetentionKey).First(&cfg).Error; err == nil {
+		if days, parseErr := strconv.Atoi(strings.TrimSpace(cfg.Value)); parseErr == nil && days > 0 {
+			if days > 365 {
+				return 365
+			}
+			return days
+		}
+	}
+	return defaultAgentLogRetention
+}
+
+func saveAgentLogRetentionDays(days int) error {
+	if days <= 0 || days > 365 {
+		return fmt.Errorf("retention_days must be between 1 and 365")
+	}
+	cfg := db.SystemConfig{
+		Key:       agentLogRetentionKey,
+		Value:     strconv.Itoa(days),
+		UpdatedAt: time.Now(),
+	}
+	return db.DB.Save(&cfg).Error
+}
+
+func cleanupAgentLogsOnce(days int) (int64, error) {
+	if days <= 0 {
+		days = getAgentLogRetentionDays()
+	}
+	cutoff := time.Now().AddDate(0, 0, -days)
+	cutoffMs := cutoff.UnixMilli()
+	res := db.DB.Where("created_at < ? OR (timestamp > 0 AND timestamp < ?)", cutoff, cutoffMs).Delete(&db.AgentLog{})
+	return res.RowsAffected, res.Error
+}
+
+func StartAgentLogRetentionDaemon(ctx context.Context) {
+	if deleted, err := cleanupAgentLogsOnce(0); err != nil {
+		log.Printf("[AgentLogRetention] cleanup failed: %v", err)
+	} else if deleted > 0 {
+		log.Printf("[AgentLogRetention] cleaned %d expired logs", deleted)
+	}
+
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if deleted, err := cleanupAgentLogsOnce(0); err != nil {
+				log.Printf("[AgentLogRetention] cleanup failed: %v", err)
+			} else if deleted > 0 {
+				log.Printf("[AgentLogRetention] cleaned %d expired logs", deleted)
+			}
+		}
+	}
+}
+
+func tenantAgentIDs(tenantID string) []string {
+	var agentIDs []string
+	scopedNodeQuery(tenantID).Model(&db.Node{}).Pluck("agent_id", &agentIDs)
+	return agentIDs
+}
+
+func getAgentLogSummary(c *gin.Context) {
+	tenantID := currentTenantID(c)
+	agentIDs := tenantAgentIDs(tenantID)
+	if len(agentIDs) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"level_counts":   []agentLogLevelCount{},
+			"recent_errors":  []db.AgentLog{},
+			"retention_days": getAgentLogRetentionDays(),
+		})
+		return
+	}
+
+	query := db.DB.Model(&db.AgentLog{}).Where("agent_id IN ?", agentIDs)
+	if agentID := strings.TrimSpace(c.Query("agent_id")); agentID != "" {
+		query = query.Where("agent_id = ?", agentID)
+	}
+	var since, until int64
+	if raw := strings.TrimSpace(c.Query("since")); raw != "" {
+		if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v > 0 {
+			since = v
+		}
+	}
+	if raw := strings.TrimSpace(c.Query("until")); raw != "" {
+		if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v > 0 {
+			until = v
+		}
+	}
+	if since > 0 {
+		query = query.Where("timestamp >= ?", since)
+	}
+	if until > 0 {
+		query = query.Where("timestamp <= ?", until)
+	}
+
+	var counts []agentLogLevelCount
+	query.Select("level, count(*) as count").Group("level").Order("count DESC").Scan(&counts)
+
+	limit := 20
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	var recentErrors []db.AgentLog
+	errQuery := db.DB.Where("agent_id IN ? AND level IN ?", agentIDs, []string{"ERROR", "WARN"})
+	if agentID := strings.TrimSpace(c.Query("agent_id")); agentID != "" {
+		errQuery = errQuery.Where("agent_id = ?", agentID)
+	}
+	if since > 0 {
+		errQuery = errQuery.Where("timestamp >= ?", since)
+	}
+	if until > 0 {
+		errQuery = errQuery.Where("timestamp <= ?", until)
+	}
+	errQuery.Order("timestamp DESC").Limit(limit).Find(&recentErrors)
+
+	c.JSON(http.StatusOK, gin.H{
+		"level_counts":   counts,
+		"recent_errors":  recentErrors,
+		"retention_days": getAgentLogRetentionDays(),
+	})
+}
+
+func getAgentLogRetention(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"retention_days": getAgentLogRetentionDays()})
+}
+
+func updateAgentLogRetention(c *gin.Context) {
+	var req struct {
+		RetentionDays int `json:"retention_days"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := saveAgentLogRetentionDays(req.RetentionDays); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	deleted, err := cleanupAgentLogsOnce(req.RetentionDays)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"retention_days": req.RetentionDays, "deleted": deleted})
+}
+
 func getAgentLogs(c *gin.Context) {
 	agentID := c.Param("id")
 	tenantID := currentTenantID(c)
@@ -2510,7 +3476,22 @@ func getAgentLogs(c *gin.Context) {
 			limit = v
 		}
 	}
-	level := c.Query("level") // 可选过滤: INFO, WARN, ERROR
+	if limit > 1000 {
+		limit = 1000
+	}
+	level := strings.TrimSpace(c.Query("level")) // 可选过滤: INFO, WARN, ERROR
+	keyword := strings.TrimSpace(c.Query("q"))
+	var since, until int64
+	if raw := strings.TrimSpace(c.Query("since")); raw != "" {
+		if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v > 0 {
+			since = v
+		}
+	}
+	if raw := strings.TrimSpace(c.Query("until")); raw != "" {
+		if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v > 0 {
+			until = v
+		}
+	}
 
 	var node db.Node
 	if err := scopedNodeQuery(tenantID).Select("id").Where("agent_id = ?", agentID).First(&node).Error; err != nil {
@@ -2522,6 +3503,15 @@ func getAgentLogs(c *gin.Context) {
 	query := db.DB.Where("agent_id = ?", agentID)
 	if level != "" {
 		query = query.Where("level = ?", level)
+	}
+	if keyword != "" {
+		query = query.Where("LOWER(message) LIKE LOWER(?)", "%"+keyword+"%")
+	}
+	if since > 0 {
+		query = query.Where("timestamp >= ?", since)
+	}
+	if until > 0 {
+		query = query.Where("timestamp <= ?", until)
 	}
 	query.Order("timestamp DESC").Limit(limit).Find(&logs)
 	c.JSON(http.StatusOK, logs)

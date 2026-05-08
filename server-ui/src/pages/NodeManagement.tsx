@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Typography, Tag, Space, Button, Spin, Tooltip, Popover, Badge, Empty, Progress, List, Row, Col, Divider, message, Popconfirm } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
@@ -23,10 +24,28 @@ import NetworkCanvas from '../components/NetworkCanvas';
 
 const { Title, Text } = Typography;
 
+function parseNodeTags(tags?: string): Record<string, string> {
+    if (!tags) return {};
+    try {
+        const parsed = JSON.parse(tags);
+        if (parsed && !Array.isArray(parsed) && typeof parsed === 'object') {
+            return Object.fromEntries(
+                Object.entries(parsed as Record<string, unknown>)
+                    .filter(([, value]) => typeof value === 'string')
+                    .map(([key, value]) => [key, String(value)])
+            );
+        }
+    } catch {
+        return {};
+    }
+    return {};
+}
+
 const NodeManagement: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [nodes, setNodes] = useState<API.AgentNode[]>([]);
     const canManageNodes = canAccessRole('operator');
+    const navigate = useNavigate();
     const cardsRef = useRef<HTMLDivElement>(null);
 
     /* GSAP card entrance */
@@ -120,11 +139,12 @@ const NodeManagement: React.FC = () => {
     };
 
     const renderTags = (tagsStr: string) => {
-        if (!tagsStr) return <Text type="secondary" style={{ fontSize: 12 }}>无标签</Text>;
+        const tags = parseNodeTags(tagsStr);
+        if (Object.keys(tags).length === 0) return <Text type="secondary" style={{ fontSize: 12 }}>无标签</Text>;
         const colors = ['blue', 'cyan', 'geekblue', 'purple'];
-        return tagsStr.split(',').map((t, i) => (
-            <Tag key={i} color={colors[i % colors.length]} style={{ fontSize: 11, borderRadius: 10, border: 'none' }}>
-                {t.trim()}
+        return Object.entries(tags).map(([key, value], i) => (
+            <Tag key={key} color={colors[i % colors.length]} style={{ fontSize: 11, borderRadius: 10, border: 'none' }}>
+                {key}={value}
             </Tag>
         ));
     };
@@ -133,6 +153,7 @@ const NodeManagement: React.FC = () => {
         const isAlive = record.Status === 'Alive';
         const running = record.RunningTasks || 0;
         const capacity = record.Capacity || 10;
+        const freeSlots = Math.max(capacity - running, 0);
         const percent = Math.min(100, Math.round((running / capacity) * 100));
         
         let color = '#10b981'; // Green
@@ -291,6 +312,12 @@ const NodeManagement: React.FC = () => {
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
                             <Text type="secondary">规则版本: <Text strong>{record.RuleVersion || '未知'}</Text></Text>
                             <Text type="secondary">引擎: <Text strong>{record.Version || '-'}</Text></Text>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                            <Text type="secondary">空闲槽位: <Text strong>{freeSlots}</Text></Text>
+                            <Button type="link" size="small" onClick={() => navigate(`/agent-logs?agent_id=${encodeURIComponent(record.AgentID)}`)}>
+                                查看日志
+                            </Button>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
                             <Tooltip title={formatLastBeat(record.LastBeat)}>

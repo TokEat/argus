@@ -3,7 +3,7 @@ import { Typography, Table, Tag, Space, Button, Spin, Empty, Modal, Form, Input,
 import { ProCard } from '@ant-design/pro-components';
 import { TeamOutlined, ReloadOutlined, PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { listUsers, createUserApi, updateUserApi, deleteUserApi } from '../services/api';
+import { listUsers, createUserApi, updateUserApi, deleteUserApi, listRoles } from '../services/api';
 import gsap from 'gsap';
 import NetworkCanvas from '../components/NetworkCanvas';
 
@@ -18,6 +18,7 @@ const roleColors: Record<string, string> = {
 const UserManagement: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [users, setUsers] = useState<API.User[]>([]);
+    const [roles, setRoles] = useState<API.RoleDefinition[]>([]);
     const [modalOpen, setModalOpen] = useState(false);
     const [editingUser, setEditingUser] = useState<API.User | null>(null);
     const [form] = Form.useForm();
@@ -49,7 +50,16 @@ const UserManagement: React.FC = () => {
         }
     };
 
-    useEffect(() => { fetchUsers(); }, []);
+    const fetchRoles = async () => {
+        try {
+            const result = await listRoles();
+            setRoles(result.roles || []);
+        } catch (error) {
+            console.error('Failed to fetch roles:', error);
+        }
+    };
+
+    useEffect(() => { fetchUsers(); fetchRoles(); }, []);
 
     const handleCreate = () => {
         setEditingUser(null);
@@ -100,6 +110,19 @@ const UserManagement: React.FC = () => {
         }
     };
 
+    const roleOptions = (roles.length > 0 ? roles : [
+        { name: 'admin', label: '管理员', base_role: 'admin' },
+        { name: 'operator', label: '操作员', base_role: 'operator' },
+        { name: 'viewer', label: '观察者', base_role: 'viewer' },
+    ] as API.RoleDefinition[]).map((role) => ({
+        value: role.name,
+        label: `${role.label || role.name} - ${role.name}`,
+        baseRole: role.base_role,
+    }));
+
+    const roleLabelMap = Object.fromEntries(roleOptions.map((role) => [role.value, role.label.split(' - ')[0]]));
+    const roleBaseMap = Object.fromEntries(roleOptions.map((role) => [role.value, role.baseRole]));
+
     const columns: ColumnsType<API.User> = [
         {
             title: 'ID', dataIndex: 'id', key: 'id', width: 60,
@@ -111,15 +134,11 @@ const UserManagement: React.FC = () => {
         {
             title: '角色', dataIndex: 'role', key: 'role', width: 120,
             render: (role: string) => (
-                <Tag color={roleColors[role] || '#94a3b8'} style={{ borderRadius: 20, fontSize: 11 }}>
-                    {role === 'admin' ? '管理员' : role === 'operator' ? '操作员' : '观察者'}
+                <Tag color={roleColors[roleBaseMap[role] || role] || '#94a3b8'} style={{ borderRadius: 20, fontSize: 11 }}>
+                    {roleLabelMap[role] || role}
                 </Tag>
             ),
-            filters: [
-                { text: '管理员', value: 'admin' },
-                { text: '操作员', value: 'operator' },
-                { text: '观察者', value: 'viewer' },
-            ],
+            filters: roleOptions.map((role) => ({ text: role.label, value: role.value })),
             onFilter: (value, record) => record.role === value,
         },
         {
@@ -206,11 +225,7 @@ const UserManagement: React.FC = () => {
                         <Input.Password placeholder="请输入密码" />
                     </Form.Item>
                     <Form.Item name="role" label="角色" initialValue="viewer">
-                        <Select options={[
-                            { value: 'admin', label: '管理员 - 完全控制' },
-                            { value: 'operator', label: '操作员 - 任务与规则管理' },
-                            { value: 'viewer', label: '观察者 - 只读查看' },
-                        ]} />
+                        <Select options={roleOptions.map((role) => ({ value: role.value, label: role.label }))} />
                     </Form.Item>
                     <Form.Item name="exp_authorized" label="EXP 授权" valuePropName="checked" initialValue={false}>
                         <Switch checkedChildren="已授权" unCheckedChildren="未授权" />

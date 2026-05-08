@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server-ui/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: server-ui
+
+      - name: Go tests
+        run: go test ./...
+
+      - name: Server Go tests
+        run: go test ./...
+        working-directory: server
+
+      - name: Go coverage
+        run: |
+          mkdir -p /tmp/argus-coverage
+          go test -coverprofile=/tmp/argus-coverage/root.out ./...
+          cd server
+          go test -coverprofile=/tmp/argus-coverage/server.out ./...
+          cd ..
+          go tool cover -func=/tmp/argus-coverage/root.out | tail -n 1
+          go tool cover -func=/tmp/argus-coverage/server.out | tail -n 1
+
+      - name: Cloud provider mock smoke
+        run: go test ./internal/api -run TestCloudProviderMockSmoke -count=1
+        working-directory: server
+
+      - name: Frontend lint
+        run: npm run lint
+        working-directory: server-ui
+
+      - name: Frontend tests
+        run: npm run test -- --run
+        working-directory: server-ui
+
+      - name: Frontend smoke
+        run: npm run test:smoke
+        working-directory: server-ui
+
+      - name: Frontend build
+        run: npm run build
+        working-directory: server-ui

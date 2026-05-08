@@ -33,6 +33,16 @@ func SeedArsenalFromSQLite(dbPath string) error {
 		return nil
 	}
 
+	sanitizedCount := 0
+	for i := range arsenals {
+		if sanitizeArsenalTextFields(&arsenals[i]) {
+			sanitizedCount++
+		}
+	}
+	if sanitizedCount > 0 {
+		log.Printf("[Seed] Normalized PostgreSQL text in %d rule records before import.", sanitizedCount)
+	}
+
 	log.Printf("[Seed] Found %d records, starting Upsert...", len(arsenals))
 
 	if err := DB.Clauses(clause.OnConflict{
@@ -55,5 +65,3 @@ func SeedArsenalFromSQLite(dbPath string) error {
 
 	return nil
 }
-
-

@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -56,6 +58,10 @@ type fakeOSSUploader struct {
 }
 
 func (o *fakeOSSUploader) UploadFile(localPath, objectKey string) error {
+	return nil
+}
+
+func (o *fakeOSSUploader) DownloadFile(objectKey, localPath string) error {
 	return nil
 }
 
@@ -305,6 +311,91 @@ func TestCloudAccountBindingsRestrictOperatorAccess(t *testing.T) {
 	updateCloudAccount(ctxBUpdate)
 	if recBUpdate.Code != http.StatusForbidden {
 		t.Fatalf("bound non-owner should not manage account, got %d (%s)", recBUpdate.Code, recBUpdate.Body.String())
+	}
+}
+
+func TestCloudProviderMockSmoke(t *testing.T) {
+	ensureCloudHandlerTestFactories()
+	fakeProviderDiscovery = map[string]interface{}{
+		"security_groups": []map[string]string{{"id": "sg-smoke", "name": "default"}},
+		"v_switches":      []map[string]string{{"id": "vsw-smoke", "name": "default"}},
+		"images":          []map[string]string{{"id": "img-smoke", "name": "ubuntu-22"}},
+		"instance_types":  []map[string]interface{}{{"id": "ecs.c6.large", "cpu": 2, "memory_gb": 4.0, "family": "ecs.c6"}},
+	}
+	fakeUploader = &fakeOSSUploader{uploadErr: errors.New("oss unavailable")}
+	t.Chdir(t.TempDir())
+	if err := os.MkdirAll("release", 0o755); err != nil {
+		t.Fatalf("create release dir: %v", err)
+	}
+	if err := os.WriteFile("release/dddd-agent-linux-amd64", []byte("agent"), 0o644); err != nil {
+		t.Fatalf("seed release artifact: %v", err)
+	}
+
+	store := setupCloudHandlerTestDB(t)
+	akID, err := cloud.EncryptSecret("ak")
+	if err != nil {
+		t.Fatalf("encrypt ak: %v", err)
+	}
+	akSecret, err := cloud.EncryptSecret("sk")
+	if err != nil {
+		t.Fatalf("encrypt sk: %v", err)
+	}
+	account := db.CloudAccount{
+		ID:              "ca-smoke",
+		TenantID:        "default",
+		Name:            "fake smoke",
+		Provider:        "fake-review",
+		AccessKeyID:     akID,
+		AccessKeySecret: akSecret,
+		Region:          "cn-test",
+		OSSBucket:       "bucket",
+		OSSEndpoint:     "endpoint",
+		Status:          "active",
+	}
+	if err := store.Create(&account).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+
+	ctx, recorder := newTenantContext(http.MethodPost, "/cloud/accounts/"+account.ID+"/test")
+	ctx.Params = gin.Params{{Key: "id", Value: account.ID}}
+	testCloudAccount(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("credential/provider smoke should pass, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+
+	ctx, recorder = newTenantContext(http.MethodPost, "/cloud/policies")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/cloud/policies", strings.NewReader(`{
+		"name":"smoke-policy",
+		"cloud_account_id":"ca-smoke",
+		"min_instances":0,
+		"max_instances":2,
+		"enabled":true
+	}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	createCloudPolicy(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("policy smoke should create policy, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var policy db.CloudScalingPolicy
+	if err := store.Where("cloud_account_id = ?", account.ID).First(&policy).Error; err != nil {
+		t.Fatalf("expected policy to be persisted: %v", err)
+	}
+
+	ctx, recorder = newTenantContext(http.MethodPost, "/cloud/policies/"+policy.ID+"/toggle")
+	ctx.Params = gin.Params{{Key: "id", Value: policy.ID}}
+	toggleCloudPolicy(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("policy toggle smoke should pass, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+
+	ctx, recorder = newTenantContext(http.MethodPost, "/cloud/accounts/"+account.ID+"/oss/upload")
+	ctx.Params = gin.Params{{Key: "id", Value: account.ID}}
+	uploadAgentToOSS(ctx)
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("OSS failure smoke should surface upload failure, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "oss unavailable") {
+		t.Fatalf("expected OSS failure reason, got %s", recorder.Body.String())
 	}
 }
 

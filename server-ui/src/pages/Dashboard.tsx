@@ -20,11 +20,39 @@ import type { ColumnsType } from 'antd/es/table';
 import ReactECharts from 'echarts-for-react';
 import gsap from 'gsap';
 import DispatchCanvas from '../components/DispatchCanvas';
-import { getDashboardStats, listTasks, getNodes, connectWebSocket, getQueueDepth } from '../services/api';
+import {
+    getDashboardStats,
+    listTasks,
+    getNodes,
+    connectWebSocket,
+    getQueueDepth,
+    getVulnTrends,
+    getSeverityDistribution,
+    getTaskResultStats,
+    getRecentHighVulns,
+} from '../services/api';
 import { getTaskStatusMeta, normalizeTaskStatus } from '../utils/taskStatus';
 import { useAutoContext } from '../contexts/GlobalAIContext';
 
 const { Text, Title } = Typography;
+
+const severityMeta: Record<string, { label: string; color: string; order: number }> = {
+    critical: { label: '严重', color: '#ef4444', order: 1 },
+    high: { label: '高危', color: '#f97316', order: 2 },
+    medium: { label: '中危', color: '#f59e0b', order: 3 },
+    low: { label: '低危', color: '#10b981', order: 4 },
+    info: { label: '信息', color: '#64748b', order: 5 },
+    unknown: { label: '未知', color: '#94a3b8', order: 6 },
+};
+
+const normalizeSeverity = (value?: string) => (value || 'unknown').trim().toLowerCase() || 'unknown';
+
+const severityLabel = (value?: string) => {
+    const key = normalizeSeverity(value);
+    return severityMeta[key]?.label || value || '未知';
+};
+
+const severityColor = (value?: string) => severityMeta[normalizeSeverity(value)]?.color || '#94a3b8';
 
 type QueueDepthInfo = {
     depth: Record<string, number>;
@@ -42,22 +70,34 @@ const Dashboard: React.FC = () => {
     const [recentTasks, setRecentTasks] = useState<API.RootTask[]>([]);
     const [nodes, setNodes] = useState<API.AgentNode[]>([]);
     const [queueDepth, setQueueDepth] = useState<QueueDepthInfo | null>(null);
+    const [vulnTrends, setVulnTrends] = useState<API.TrendPoint[]>([]);
+    const [severityDist, setSeverityDist] = useState<API.SeverityCount[]>([]);
+    const [taskResultStats, setTaskResultStats] = useState<API.TaskStats[]>([]);
+    const [recentHighVulns, setRecentHighVulns] = useState<API.Vulnerability[]>([]);
     const [wsConnected, setWsConnected] = useState(false);
     const [wsMessages, setWsMessages] = useState<{ time: string; type: string; data: string }[]>([]);
 
     const fetchData = useCallback(async () => {
         try {
             const projectId = localStorage.getItem('active_project_id') || undefined;
-            const [statsRes, tasksRes, nodesRes, queueRes] = await Promise.all([
+            const [statsRes, tasksRes, nodesRes, queueRes, trendRes, severityRes, taskResultRes, highVulnRes] = await Promise.all([
                 getDashboardStats(projectId),
                 listTasks(projectId),
                 getNodes(),
                 getQueueDepth().catch(() => null),
+                getVulnTrends(14, projectId).catch(() => []),
+                getSeverityDistribution(projectId).catch(() => []),
+                getTaskResultStats(8, projectId).catch(() => []),
+                getRecentHighVulns(6, projectId).catch(() => []),
             ]);
             setStats(statsRes);
             setRecentTasks((tasksRes || []).slice(0, 8));
             setNodes(nodesRes || []);
             if (queueRes) setQueueDepth(queueRes);
+            setVulnTrends(trendRes || []);
+            setSeverityDist(severityRes || []);
+            setTaskResultStats(taskResultRes || []);
+            setRecentHighVulns(highVulnRes || []);
         } catch (error) {
             console.error('Failed to fetch dashboard data:', error);
         } finally {
@@ -77,7 +117,10 @@ const Dashboard: React.FC = () => {
         nodes: {
             total: nodes.length,
             online: nodes.filter(n => n.Status === 'Alive').length
-        }
+        },
+        vulnerability_trends: vulnTrends,
+        severity_distribution: severityDist,
+        high_vulnerabilities: recentHighVulns.length,
     });
 
     // WebSocket
@@ -85,6 +128,9 @@ const Dashboard: React.FC = () => {
         const ws = connectWebSocket(
             (data: unknown) => {
                 const msg = data as Record<string, unknown>;
+                if (msg.type === 'heartbeat') {
+                    return;
+                }
                 setWsMessages((prev) => [
                     {
                         time: new Date().toLocaleTimeString('zh-CN'),
@@ -96,7 +142,12 @@ const Dashboard: React.FC = () => {
                 // Auto-refresh stats when we receive a WS message
                 fetchData();
             },
-            (connected) => setWsConnected(connected),
+            (connected) => {
+                setWsConnected(connected);
+                if (connected) {
+                    fetchData();
+                }
+            },
         );
         return () => {
             ws.close();
@@ -264,28 +315,84 @@ const Dashboard: React.FC = () => {
         { title: '数据', dataIndex: 'data', key: 'data', ellipsis: true, render: (v) => <Text style={{ fontSize: 11, fontFamily: 'monospace', color: '#64748b' }}>{v}</Text> },
     ];
 
+    const severityData = [...severityDist]
+        .sort((a, b) => (severityMeta[normalizeSeverity(a.severity)]?.order || 99) - (severityMeta[normalizeSeverity(b.severity)]?.order || 99))
+        .map((item) => ({
+            value: item.count,
+            name: severityLabel(item.severity),
+            itemStyle: { color: severityColor(item.severity) },
+        }));
+
     const vulnPieOptions = {
         tooltip: { trigger: 'item' },
+        legend: { bottom: 0, left: 'center', itemWidth: 10, itemHeight: 10, textStyle: { color: '#64748b', fontSize: 11 } },
         series: [
             {
-                name: '漏洞分布',
+                name: '漏洞等级',
                 type: 'pie',
                 radius: ['40%', '70%'],
+                center: ['50%', '45%'],
                 avoidLabelOverlap: false,
                 itemStyle: { borderRadius: 10, borderColor: '#fff', borderWidth: 2 },
                 label: { show: false, position: 'center' },
                 emphasis: { label: { show: true, fontSize: '18', fontWeight: 'bold' } },
                 labelLine: { show: false },
-                data: [
-                    { value: Math.floor((stats?.vulns || 0) * 0.1), name: '严重', itemStyle: { color: '#ef4444' } },
-                    { value: Math.floor((stats?.vulns || 0) * 0.2), name: '高危', itemStyle: { color: '#f97316' } },
-                    { value: Math.floor((stats?.vulns || 0) * 0.4), name: '中危', itemStyle: { color: '#f59e0b' } },
-                    { value: Math.floor((stats?.vulns || 0) * 0.3), name: '低危', itemStyle: { color: '#10b981' } },
-                ]
+                data: severityData,
             }
         ]
     };
 
+    const trendOptions = {
+        tooltip: { trigger: 'axis' },
+        grid: { left: 36, right: 18, top: 24, bottom: 36 },
+        xAxis: {
+            type: 'category',
+            data: vulnTrends.map((item) => item.date),
+            axisLabel: { color: '#64748b', fontSize: 11 },
+            axisLine: { lineStyle: { color: '#e2e8f0' } },
+        },
+        yAxis: {
+            type: 'value',
+            minInterval: 1,
+            axisLabel: { color: '#64748b', fontSize: 11 },
+            splitLine: { lineStyle: { color: '#edf2f7' } },
+        },
+        series: [
+            {
+                name: '新增漏洞',
+                type: 'line',
+                smooth: true,
+                symbolSize: 7,
+                lineStyle: { width: 3, color: '#ef4444' },
+                itemStyle: { color: '#ef4444' },
+                areaStyle: { color: 'rgba(239, 68, 68, 0.12)' },
+                data: vulnTrends.map((item) => item.count),
+            },
+        ],
+    };
+
+    const taskResultOptions = {
+        tooltip: { trigger: 'axis' },
+        legend: { top: 0, right: 0, itemWidth: 10, itemHeight: 10, textStyle: { color: '#64748b', fontSize: 11 } },
+        grid: { left: 36, right: 18, top: 36, bottom: 48 },
+        xAxis: {
+            type: 'category',
+            data: taskResultStats.map((item) => item.task_name || item.task_id),
+            axisLabel: { color: '#64748b', fontSize: 10, interval: 0, overflow: 'truncate', width: 76 },
+            axisLine: { lineStyle: { color: '#e2e8f0' } },
+        },
+        yAxis: {
+            type: 'value',
+            minInterval: 1,
+            axisLabel: { color: '#64748b', fontSize: 11 },
+            splitLine: { lineStyle: { color: '#edf2f7' } },
+        },
+        series: [
+            { name: '资产', type: 'bar', stack: 'total', itemStyle: { color: '#0ea5e9', borderRadius: [4, 4, 0, 0] }, data: taskResultStats.map((item) => item.asset_count) },
+            { name: '指纹', type: 'bar', stack: 'total', itemStyle: { color: '#f59e0b', borderRadius: [4, 4, 0, 0] }, data: taskResultStats.map((item) => item.fp_count) },
+            { name: '漏洞', type: 'bar', stack: 'total', itemStyle: { color: '#ef4444', borderRadius: [4, 4, 0, 0] }, data: taskResultStats.map((item) => item.vuln_count) },
+        ],
+    };
 
     return (
         <div>
@@ -350,7 +457,7 @@ const Dashboard: React.FC = () => {
                         style={{ height: '100%', background: 'transparent', border: 'none' }}
                         bodyStyle={{ padding: '0 16px', height: 340, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                     >
-                        {(stats?.vulns || 0) > 0 ? (
+                        {severityData.length > 0 ? (
                             <ReactECharts option={vulnPieOptions} style={{ height: '100%', width: '100%' }} />
                         ) : (
                             <div style={{ textAlign: 'center', color: '#94a3b8' }}>暂无漏洞数据</div>
@@ -452,6 +559,92 @@ const Dashboard: React.FC = () => {
 
             {/* Agent Workload Dashboard */}
             <div ref={chartSectionRef}>
+            <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
+                <Col xs={24} lg={12}>
+                    <ProCard
+                        title={
+                            <Space>
+                                <BarChartOutlined style={{ color: '#ef4444' }} />
+                                <Text strong style={{ color: '#1e293b', fontSize: 15 }}>漏洞趋势</Text>
+                                <Tag color="red">14 天</Tag>
+                            </Space>
+                        }
+                        className="glass-card"
+                        style={{ background: 'transparent', border: 'none' }}
+                        bodyStyle={{ padding: '12px 16px', height: 300 }}
+                    >
+                        {vulnTrends.length > 0 ? (
+                            <ReactECharts option={trendOptions} style={{ height: '100%', width: '100%' }} />
+                        ) : (
+                            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无趋势数据" style={{ paddingTop: 60 }} />
+                        )}
+                    </ProCard>
+                </Col>
+                <Col xs={24} lg={12}>
+                    <ProCard
+                        title={
+                            <Space>
+                                <ScanOutlined style={{ color: '#0ea5e9' }} />
+                                <Text strong style={{ color: '#1e293b', fontSize: 15 }}>任务结果分布</Text>
+                            </Space>
+                        }
+                        className="glass-card"
+                        style={{ background: 'transparent', border: 'none' }}
+                        bodyStyle={{ padding: '12px 16px', height: 300 }}
+                    >
+                        {taskResultStats.length > 0 ? (
+                            <ReactECharts option={taskResultOptions} style={{ height: '100%', width: '100%' }} />
+                        ) : (
+                            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无任务结果数据" style={{ paddingTop: 60 }} />
+                        )}
+                    </ProCard>
+                </Col>
+            </Row>
+
+            <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
+                <Col span={24}>
+                    <ProCard
+                        title={
+                            <Space>
+                                <ExclamationCircleOutlined style={{ color: '#f97316' }} />
+                                <Text strong style={{ color: '#1e293b', fontSize: 15 }}>最近高危漏洞</Text>
+                                <Tag color="orange">{recentHighVulns.length} 条</Tag>
+                            </Space>
+                        }
+                        className="glass-card"
+                        style={{ background: 'transparent', border: 'none' }}
+                        bodyStyle={{ padding: '4px 16px' }}
+                    >
+                        {recentHighVulns.length > 0 ? (
+                            <List
+                                dataSource={recentHighVulns}
+                                renderItem={(vuln) => (
+                                    <List.Item style={{ padding: '10px 0', borderBottom: '1px solid rgba(241, 245, 249, 0.5)' }}>
+                                        <List.Item.Meta
+                                            avatar={<BugOutlined style={{ color: severityColor(vuln.Severity), fontSize: 18 }} />}
+                                            title={
+                                                <Space wrap>
+                                                    <Text style={{ fontWeight: 500 }}>{vuln.Plugin || vuln.Target}</Text>
+                                                    <Tag color={severityColor(vuln.Severity)}>{severityLabel(vuln.Severity)}</Tag>
+                                                    <Text code style={{ fontSize: 11 }}>{vuln.Target}</Text>
+                                                </Space>
+                                            }
+                                            description={
+                                                <Text style={{ color: '#64748b', fontSize: 12 }}>
+                                                    {vuln.Description || vuln.CreatedAt || '-'}
+                                                </Text>
+                                            }
+                                        />
+                                    </List.Item>
+                                )}
+                            />
+                        ) : (
+                            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无高危漏洞" />
+                        )}
+                    </ProCard>
+                </Col>
+            </Row>
+
             <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
                 <Col span={24}>
                     <ProCard

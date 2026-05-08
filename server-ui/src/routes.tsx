@@ -19,6 +19,7 @@ import {
     ProjectOutlined,
     RobotOutlined,
     ThunderboltOutlined,
+    FileTextOutlined,
 } from '@ant-design/icons';
 import BasicLayout from './layouts/BasicLayout';
 import Dashboard from './pages/Dashboard';
@@ -38,6 +39,7 @@ import DebugConfig from './pages/config/DebugConfig';
 import ClientBuild from './pages/ClientBuild';
 import UserManagement from './pages/UserManagement';
 import RoleManagement from './pages/RoleManagement';
+import AgentLogs from './pages/AgentLogs';
 
 import ApiKeysConfig from './pages/ApiKeysConfig';
 import AIConfig from './pages/AIConfig';
@@ -77,6 +79,13 @@ export const menuRoutes: RouteConfig[] = [
         name: '节点管理',
         icon: <ClusterOutlined />,
         element: <NodeManagement />,
+        minRole: 'viewer',
+    },
+    {
+        path: '/agent-logs',
+        name: 'Agent 日志',
+        icon: <FileTextOutlined />,
+        element: <AgentLogs />,
         minRole: 'viewer',
     },
     {
