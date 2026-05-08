@@ -292,7 +292,9 @@ if [[ -f "${SCRIPT_DIR}/arsenal_seed.db" ]]; then
     fi
     echo -e "${GREEN}[✔] 规则资产导入完成${NC}"
 else
-    echo -e "${YELLOW}[!] 未找到预编译的 arsenal_seed.db，跳过规则导入${NC}"
+    echo -e "${RED}[!] 未找到必需规则资产库: ${SCRIPT_DIR}/arsenal_seed.db${NC}"
+    echo -e "    请使用 ./deploy/build-bundle.sh v0.1.0 重新生成完整发布包。"
+    exit 1
 fi
 
 # 部署前端静态资源

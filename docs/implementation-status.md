@@ -140,10 +140,10 @@
 
 | 编号 | 类别 | 发布前状态 | 发布口径 |
 |------|------|------------|----------|
-| REL-01 | 发布制品流水线 | 本地 `make ci`、GitHub Actions、BuildJob 队列和 `/release/*` 下载已可用；仍缺正式版本号、制品签名和 CI 上传 release artifact | 发布前至少产出 server / agent / server-ui 构建包，并在发布说明中标注未签名或补齐签名 |
-| REL-02 | 部署配置与密钥基线 | JWT、Agent session、RBAC、租户配额、云凭证加密已接入；仍需要整理生产 `.env`/配置模板、默认密码禁用说明和必填密钥清单 | 发布包必须附最小生产配置模板，明确 `JWT_SECRET`、数据库、RabbitMQ、Agent PSK、AI Key、云 AK/SK 的配置要求 |
+| REL-01 | 发布制品流水线 | 本地 `make ci`、GitHub Actions、BuildJob 队列和 `/release/*` 下载已可用；`deploy/build-bundle.sh` 默认版本已固定为 `v0.1.0` 并校验发行包必需文件；仍缺制品签名和 CI 上传 release artifact | 发布前至少产出 server / agent / server-ui 构建包，并在发布说明中标注未签名或补齐签名 |
+| REL-02 | 部署配置与密钥基线 | JWT、Agent session、RBAC、租户配额、云凭证加密已接入；已新增 `deploy/production.env.example` 和默认密码/开发密钥禁用说明 | 发布包必须附最小生产配置模板，明确 `JWT_SECRET`、数据库、RabbitMQ、Agent PSK、AI Key、云 AK/SK 的配置要求 |
 | REL-03 | 云资源与 OSS 发布验证 | Cloud Provider mock、OSSStore、本地对象存储、Agent 制品上传链路已有测试；真实云账号端到端弹容、回收、OSS fallback 仍需发布前 smoke | 发布前用测试云账号跑一次一键配置、制品上传、弹容、回收；若未跑真实云 smoke，需在发布说明中标注为 beta 能力 |
-| REL-04 | 文档与运维入口 | README、实现状态、租户/RBAC 文档已存在；仍需补发布版快速部署、升级/回滚、常见故障和安全边界说明 | 发布前 README 指向部署文档、运维文档和风险声明；避免把内部路线图当成用户使用说明 |
+| REL-04 | 文档与运维入口 | README 已指向生产部署指南和 `docs/release-checklist.md`；仍需发布说明、升级/回滚和常见故障 | 发布前 README 指向部署文档、运维文档和风险声明；避免把内部路线图当成用户使用说明 |
 
 ### 已从缺口列表移除
 
@@ -165,8 +165,8 @@
 
 | 顺序 | 任务 | 交付内容 | 验收标准 |
 |------|------|----------|----------|
-| 1 | 发布构建与制品整理 | 确定版本号；生成 server / agent / server-ui 制品；确认 `/release/*` 中 Agent 产物可下载 | `make ci` 通过；制品列表完整；发布说明包含版本号和构建来源 |
-| 2 | 生产配置模板 | 提供最小 `.env` / 配置样例；标注必填密钥、默认密码禁用、数据库/RabbitMQ/AI/云账号配置 | 新环境按模板能启动 server、server-ui 和至少 1 个 Agent |
+| 1 | 发布构建与制品整理 | 版本号固定为 `v0.1.0`；生成 server / agent / server-ui 制品；确认 `/release/*` 中 Agent 产物可下载 | `make ci` 通过；制品列表完整；发布说明包含版本号和构建来源 |
+| 2 | 生产配置模板 | 已提供 `deploy/production.env.example`；标注必填密钥、默认密码禁用、数据库/RabbitMQ/AI/云账号配置 | 新环境按模板能启动 server、server-ui 和至少 1 个 Agent |
 | 3 | 真实环境 smoke | 使用测试租户跑登录、节点注册、任务创建、规则同步、漏洞导出、Agent 日志、BuildJob、EXP dry-run；云能力跑一键配置和 OSS 上传 | smoke 清单全部记录通过；未验证项明确标为 beta 或可选 |
 | 4 | 发布文档收口 | README 指向快速部署、租户/RBAC、安全边界、常见故障；`implementation-status.md` 只保留内部状态 | 用户能按 README 完成安装、登录、接入 Agent、创建首个任务 |
 
