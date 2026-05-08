@@ -193,8 +193,11 @@ func customRoleAllowsRequest(tenantID, role, method, path string) bool {
 		return true
 	}
 	permissions, hasCustom := customRolePermissions(tenantID, role)
-	if !hasCustom || len(permissions) == 0 {
-		return true
+	if !hasCustom {
+		return false
+	}
+	if len(permissions) == 0 {
+		return false
 	}
 	cleanPath := strings.TrimPrefix(path, "/api/v1")
 	for _, ruleKey := range permissions {
