@@ -185,6 +185,10 @@ type TenantQuota struct {
 	UpdatedAt          time.Time
 }
 
+func (TenantQuota) TableName() string {
+	return "tenant_quotas"
+}
+
 // SystemConfig 系统配置键值存储
 type SystemConfig struct {
 	Key       string `gorm:"primaryKey"`

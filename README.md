@@ -232,6 +232,18 @@ sudo ./deploy/setup-server.sh --public-ip <ip>
 
 生产环境必须按 `deploy/production.env.example` 显式设置数据库、RabbitMQ、`ARGUS_AGENT_PSK`、`ARGUS_JWT_SECRET`、`ARGUS_ENCRYPT_KEY`、管理员账号、AI Key 和云 AK/SK。默认密码或开发密钥只允许本地开发使用。
 
+#### 生产升级
+
+已安装环境不要通过卸载重装升级。生成新版发布包并上传到服务器后，在新版解压目录执行：
+
+```bash
+tar -xzf argus-release-v0.1.1-linux-amd64.tar.gz
+cd argus-release-v0.1.1
+sudo ./deploy/upgrade-server.sh
+```
+
+升级脚本会复用现有 `argus-server.service` 的安装目录和数据库连接，先创建 `backups/upgrade-<时间>` 备份，再替换二进制、Agent 分发文件和前端资源，执行数据库迁移与规则资产同步，最后重启服务。不要删除旧安装目录下的 `data/`，PostgreSQL 和 RabbitMQ 的持久化数据都在那里。
+
 安装完成后登录控制台，按页面提示接入 Agent，然后创建第一个扫描任务。CloudManagement、OSS 自动弹容和真实云回收若未通过真实云账号 smoke，在 `v0.1.0` 中按 beta 能力发布。
 
 #### 开发模式

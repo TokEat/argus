@@ -13,8 +13,8 @@ type schemaTableSpec struct {
 	Indexes []string
 }
 
-func VerifySchema(db *gorm.DB) error {
-	specs := []schemaTableSpec{
+func schemaTableSpecs() []schemaTableSpec {
+	return []schemaTableSpec{
 		{
 			Table:   "schema_migrations",
 			Columns: []string{"version", "name", "checksum", "applied_at"},
@@ -57,6 +57,15 @@ func VerifySchema(db *gorm.DB) error {
 			Table:   "ws_event_logs",
 			Columns: []string{"tenant_id", "project_id", "event_type", "payload", "occurred_at"},
 			Indexes: []string{"idx_ws_event_logs_tenant_id", "idx_ws_event_logs_project_id", "idx_ws_event_logs_occurred_at"},
+		},
+		{
+			Table:   "users",
+			Columns: []string{"tenant_id", "username", "password_hash", "role", "status", "exp_authorized", "created_at", "updated_at"},
+			Indexes: []string{"idx_users_username"},
+		},
+		{
+			Table:   "system_configs",
+			Columns: []string{"key", "value", "updated_at"},
 		},
 		{
 			Table:   "domains",
@@ -148,6 +157,11 @@ func VerifySchema(db *gorm.DB) error {
 			Indexes: []string{"idx_exploit_runs_tenant_id", "idx_exploit_runs_project_id", "idx_exploit_runs_exploit_id", "idx_exploit_runs_status", "idx_exploit_runs_credential_ref"},
 		},
 		{
+			Table:   "exploit_artifacts",
+			Columns: []string{"tenant_id", "run_id", "artifact_type", "file_name", "content", "content_hash", "size_bytes", "created_at"},
+			Indexes: []string{"idx_exploit_artifacts_tenant_id", "idx_exploit_artifacts_run_id", "idx_exploit_artifacts_type"},
+		},
+		{
 			Table:   "notification_rules",
 			Columns: []string{"project_id", "event", "channel", "config", "status"},
 			Indexes: []string{"idx_notification_rules_project_id", "idx_notification_rules_event"},
@@ -178,6 +192,16 @@ func VerifySchema(db *gorm.DB) error {
 			Indexes: []string{"idx_cloud_account_binding_unique", "idx_cloud_account_bindings_user_id"},
 		},
 		{
+			Table:   "cloud_scaling_policies",
+			Columns: []string{"tenant_id", "cloud_account_id", "name", "enabled", "min_instances", "max_instances", "scale_up_threshold", "scale_down_threshold", "cooldown_seconds", "instance_ttl_minutes", "spot_strategy", "max_spot_price", "user_data_template", "last_scale_action"},
+			Indexes: []string{"idx_cloud_policies_tenant", "idx_cloud_policies_account", "idx_cloud_policies_enabled"},
+		},
+		{
+			Table:   "cloud_instances",
+			Columns: []string{"tenant_id", "cloud_account_id", "policy_id", "provider_instance_id", "agent_id", "ip", "region", "status", "spot", "reboot_count", "error_message", "launched_at", "ready_at", "terminated_at", "deleted_at"},
+			Indexes: []string{"idx_cloud_instances_tenant", "idx_cloud_instances_account", "idx_cloud_instances_policy", "idx_cloud_instances_agent", "idx_cloud_instances_provider_id", "idx_cloud_instances_status", "idx_cloud_instances_deleted"},
+		},
+		{
 			Table:   "fingerprint_rules",
 			Columns: []string{"artifact_id", "source_file", "product_name", "rule_expr", "enabled"},
 			Indexes: []string{"idx_fp_rule_unique", "idx_fingerprint_rules_enabled"},
@@ -197,8 +221,16 @@ func VerifySchema(db *gorm.DB) error {
 			Columns: []string{"artifact_id", "source_file", "path", "product_name", "enabled"},
 			Indexes: []string{"idx_dir_rule_unique", "idx_dir_rules_enabled"},
 		},
+		{
+			Table:   "exploit_rules",
+			Columns: []string{"artifact_id", "source_file", "rule_id", "name", "description", "target_product", "cve", "risk_level", "requires_auth", "side_effects", "cleanup_supported", "cleanup_required", "dry_run_supported", "capabilities", "linked_pocs", "params_schema", "timeout_sec", "runtime_engine", "enabled"},
+			Indexes: []string{"idx_exploit_rule_unique", "idx_exploit_rules_enabled", "idx_exploit_rules_runtime_engine"},
+		},
 	}
+}
 
+func VerifySchema(db *gorm.DB) error {
+	specs := schemaTableSpecs()
 	var missing []string
 	for _, spec := range specs {
 		ok, err := hasTable(db, spec.Table)

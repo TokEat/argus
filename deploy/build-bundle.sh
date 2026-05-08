@@ -81,6 +81,7 @@ fi
 # 拷贝部署脚本和配置
 echo "  -> 拷贝环境部署脚本和 Docker 编排文件..."
 cp "${SCRIPT_DIR}/setup-server.sh" "${BUNDLE_DIR}/deploy/"
+cp "${SCRIPT_DIR}/upgrade-server.sh" "${BUNDLE_DIR}/deploy/"
 cp "${SCRIPT_DIR}/uninstall-server.sh" "${BUNDLE_DIR}/deploy/"
 cp "${SCRIPT_DIR}/docker-compose.yml" "${BUNDLE_DIR}/deploy/"
 cp "${SCRIPT_DIR}/production.env.example" "${BUNDLE_DIR}/deploy/"
@@ -109,6 +110,7 @@ required_paths=(
     "server-ui/dist"
     "deploy/docker-compose.yml"
     "deploy/setup-server.sh"
+    "deploy/upgrade-server.sh"
     "deploy/uninstall-server.sh"
     "deploy/production.env.example"
     "deploy/arsenal_seed.db"

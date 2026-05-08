@@ -1,0 +1,329 @@
+#!/bin/bash
+# ==============================================================================
+# Argus Server 原地升级脚本
+#
+# 在已安装的生产环境上运行新版发布包中的本脚本，可在不卸载、不删除数据的
+# 前提下替换服务端/Agent/前端资源，执行数据库迁移并重启服务。
+#
+# 用法：
+#   tar -xzf argus-release-vX.Y.Z-linux-amd64.tar.gz
+#   cd argus-release-vX.Y.Z
+#   sudo ./deploy/upgrade-server.sh
+#
+# 可选参数：
+#   --install-dir <dir>   指定旧安装目录；默认从 argus-server.service 读取
+#   --db <dsn>            指定数据库 DSN；默认从 systemd ExecStart 读取
+#   --skip-backup         跳过 pg_dump 备份（不推荐）
+#   -y, --yes             非交互确认
+# ==============================================================================
+
+set -euo pipefail
+export LANG="${LANG:-C.UTF-8}"
+export LC_ALL="${LC_ALL:-C.UTF-8}"
+
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+SERVICE_NAME="${ARGUS_SERVICE_NAME:-argus-server}"
+SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+INSTALL_DIR="${INSTALL_DIR:-}"
+DB_DSN="${ARGUS_DB_DSN:-}"
+SKIP_BACKUP=false
+ASSUME_YES=false
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+usage() {
+    sed -n '2,28s/^# \{0,1\}//p' "$0"
+}
+
+die() {
+    echo -e "${RED}[!] $*${NC}" >&2
+    exit 1
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --install-dir) INSTALL_DIR="$2"; shift 2 ;;
+        --db) DB_DSN="$2"; shift 2 ;;
+        --skip-backup) SKIP_BACKUP=true; shift ;;
+        -y|--yes) ASSUME_YES=true; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) die "未知参数: $1" ;;
+    esac
+done
+
+if [[ "${EUID}" -ne 0 ]]; then
+    die "请使用 sudo 运行升级脚本"
+fi
+
+if [[ ! -f "$SERVICE_FILE" && -z "$INSTALL_DIR" ]]; then
+    die "未找到 ${SERVICE_FILE}，请确认已安装 Argus，或用 --install-dir 指定旧安装目录"
+fi
+
+service_execstart() {
+    [[ -f "$SERVICE_FILE" ]] || return 0
+    awk '
+        /^ExecStart=/ {
+            line=$0
+            sub(/^ExecStart=/, "", line)
+            while (line ~ /\\[[:space:]]*$/ && getline nextLine) {
+                sub(/\\[[:space:]]*$/, "", line)
+                sub(/^[[:space:]]+/, "", nextLine)
+                line = line " " nextLine
+            }
+            print line
+            exit
+        }
+    ' "$SERVICE_FILE"
+}
+
+service_workdir() {
+    [[ -f "$SERVICE_FILE" ]] || return 0
+    awk -F= '/^WorkingDirectory=/{print $2; exit}' "$SERVICE_FILE"
+}
+
+extract_quoted_arg() {
+    local flag="$1"
+    local command_line="$2"
+    printf '%s\n' "$command_line" | sed -nE "s/.*(^|[[:space:]])${flag}[[:space:]]+\"([^\"]*)\".*/\2/p" | head -n 1
+}
+
+extract_plain_arg() {
+    local flag="$1"
+    local command_line="$2"
+    printf '%s\n' "$command_line" | sed -nE "s/.*(^|[[:space:]])${flag}[[:space:]]+\"?([^\"[:space:]]+)\"?.*/\2/p" | head -n 1
+}
+
+find_first_file() {
+    local candidate
+    for candidate in "$@"; do
+        if [[ -f "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+SERVICE_CMD="$(service_execstart || true)"
+if [[ -z "$INSTALL_DIR" ]]; then
+    INSTALL_DIR="$(service_workdir || true)"
+fi
+INSTALL_DIR="${INSTALL_DIR:-/opt/argus}"
+
+if [[ -z "$DB_DSN" && -n "$SERVICE_CMD" ]]; then
+    DB_DSN="$(extract_quoted_arg "-db" "$SERVICE_CMD" || true)"
+fi
+DB_DSN="${DB_DSN:-host=127.0.0.1 user=postgres password=root dbname=dddd port=5432 sslmode=disable}"
+
+API_ADDR="$(extract_quoted_arg "-api" "$SERVICE_CMD" || true)"
+GRPC_PORT="$(extract_plain_arg "-grpc" "$SERVICE_CMD" || true)"
+API_ADDR="${API_ADDR:-:8085}"
+GRPC_PORT="${GRPC_PORT:-50051}"
+
+dsn_field() {
+    local key="$1"
+    printf '%s\n' "$DB_DSN" | tr ' ' '\n' | awk -F= -v key="$key" '$1 == key {print substr($0, length(key)+2); exit}'
+}
+
+POSTGRES_USER="${POSTGRES_USER:-$(dsn_field user)}"
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(dsn_field password)}"
+POSTGRES_DB="${POSTGRES_DB:-$(dsn_field dbname)}"
+POSTGRES_PORT="${POSTGRES_PORT:-$(dsn_field port)}"
+POSTGRES_USER="${POSTGRES_USER:-postgres}"
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-root}"
+POSTGRES_DB="${POSTGRES_DB:-dddd}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+
+shopt -s nullglob
+server_candidates=(
+    "${ROOT_DIR}/bin/dddd-server-linux-amd64"
+    "${ROOT_DIR}/bin/dddd-server"
+    "${ROOT_DIR}/release/dddd-server-linux-amd64"
+    "${ROOT_DIR}/dddd-server-linux-amd64"
+    "${ROOT_DIR}"/argus-release-*/bin/dddd-server-linux-amd64
+)
+agent_candidates=(
+    "${ROOT_DIR}/bin/dddd-agent-linux-amd64"
+    "${ROOT_DIR}/release/dddd-agent-linux-amd64"
+    "${ROOT_DIR}/dddd-agent-linux-amd64"
+    "${ROOT_DIR}"/argus-release-*/bin/dddd-agent-linux-amd64
+)
+frontend_candidates=(
+    "${ROOT_DIR}/server-ui/dist"
+    "${ROOT_DIR}"/argus-release-*/server-ui/dist
+)
+shopt -u nullglob
+
+SERVER_BIN="$(find_first_file "${server_candidates[@]}")" || die "新版发布包中找不到 dddd-server 二进制"
+AGENT_BIN="$(find_first_file "${agent_candidates[@]}" || true)"
+FRONTEND_SRC=""
+for candidate in "${frontend_candidates[@]}"; do
+    if [[ -d "$candidate" && "$(ls -A "$candidate" 2>/dev/null)" ]]; then
+        FRONTEND_SRC="$candidate"
+        break
+    fi
+done
+
+echo -e "${BLUE}================================================${NC}"
+echo -e "${BLUE}       Argus Server 原地升级                    ${NC}"
+echo -e "${BLUE}================================================${NC}"
+echo -e "  旧安装目录: ${GREEN}${INSTALL_DIR}${NC}"
+echo -e "  新 Server:  ${GREEN}${SERVER_BIN}${NC}"
+echo -e "  数据库:     ${GREEN}${POSTGRES_USER}:****@127.0.0.1:${POSTGRES_PORT}/${POSTGRES_DB}${NC}"
+echo -e "  API/gRPC:   ${GREEN}${API_ADDR} / ${GRPC_PORT}${NC}"
+echo -e "${BLUE}================================================${NC}"
+
+if [[ "$ASSUME_YES" == "false" ]]; then
+    read -r -p "确认执行原地升级？升级会重启 argus-server，但不会删除数据库数据。(输入 yes): " confirm
+    [[ "$confirm" == "yes" ]] || die "已取消升级"
+fi
+
+mkdir -p "$INSTALL_DIR"/{bin,release,server-ui,deploy,logs,backups}
+BACKUP_DIR="${INSTALL_DIR}/backups/upgrade-$(date +%Y%m%d%H%M%S)"
+mkdir -p "$BACKUP_DIR"
+
+rollback_ready=false
+rollback_on_error() {
+    local exit_code=$?
+    if [[ "$rollback_ready" == "true" ]]; then
+        echo -e "${RED}[!] 升级失败，正在尝试恢复旧二进制并重启服务...${NC}" >&2
+        if [[ -f "${BACKUP_DIR}/dddd-server" ]]; then
+            install -m 0755 "${BACKUP_DIR}/dddd-server" "${INSTALL_DIR}/bin/dddd-server" || true
+        fi
+        systemctl start "$SERVICE_NAME" 2>/dev/null || true
+        echo -e "${YELLOW}    备份目录: ${BACKUP_DIR}${NC}" >&2
+    fi
+    exit "$exit_code"
+}
+trap rollback_on_error ERR
+
+echo -e "${YELLOW}[1/6] 检查并启动基础设施...${NC}"
+if command -v docker &>/dev/null; then
+    if docker ps -a --format '{{.Names}}' | grep -qx "argus-postgres"; then
+        docker start argus-postgres >/dev/null 2>&1 || true
+    elif [[ -f "${SCRIPT_DIR}/docker-compose.yml" ]]; then
+        export INSTALL_DIR POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_PORT
+        docker compose -f "${SCRIPT_DIR}/docker-compose.yml" up -d postgres
+    else
+        die "找不到 argus-postgres 容器，也找不到 docker-compose.yml"
+    fi
+
+    echo -ne "  等待 PostgreSQL 就绪..."
+    postgres_ready=false
+    for _ in $(seq 1 30); do
+        if docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" argus-postgres pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" &>/dev/null; then
+            echo -e " ${GREEN}OK${NC}"
+            postgres_ready=true
+            break
+        fi
+        echo -n "."
+        sleep 2
+    done
+    [[ "$postgres_ready" == "true" ]] || die "PostgreSQL 未在预期时间内就绪"
+else
+    echo -e "${YELLOW}  [!] 未找到 docker，跳过基础设施检查${NC}"
+fi
+
+echo -e "${YELLOW}[2/6] 创建升级备份...${NC}"
+if [[ -f "${INSTALL_DIR}/bin/dddd-server" ]]; then
+    cp -a "${INSTALL_DIR}/bin/dddd-server" "${BACKUP_DIR}/dddd-server"
+fi
+if [[ -f "${INSTALL_DIR}/release/dddd-agent-linux-amd64" ]]; then
+    cp -a "${INSTALL_DIR}/release/dddd-agent-linux-amd64" "${BACKUP_DIR}/dddd-agent-linux-amd64"
+fi
+if [[ -d "${INSTALL_DIR}/server-ui/dist" ]]; then
+    cp -a "${INSTALL_DIR}/server-ui/dist" "${BACKUP_DIR}/server-ui-dist"
+fi
+if [[ -f "$SERVICE_FILE" ]]; then
+    cp -a "$SERVICE_FILE" "${BACKUP_DIR}/argus-server.service"
+fi
+
+if [[ "$SKIP_BACKUP" == "false" ]]; then
+    if command -v docker &>/dev/null && docker ps --format '{{.Names}}' | grep -qx "argus-postgres"; then
+        dump_name="/tmp/argus-upgrade-$(date +%Y%m%d%H%M%S).dump"
+        docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" argus-postgres \
+            pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc -f "$dump_name"
+        docker cp "argus-postgres:${dump_name}" "${BACKUP_DIR}/postgres.dump"
+        docker exec argus-postgres rm -f "$dump_name" >/dev/null 2>&1 || true
+        echo -e "  数据库备份: ${GREEN}${BACKUP_DIR}/postgres.dump${NC}"
+    else
+        echo -e "${YELLOW}  [!] 未找到运行中的 argus-postgres 容器，跳过 pg_dump 备份${NC}"
+    fi
+else
+    echo -e "${YELLOW}  [!] 已按参数跳过数据库备份${NC}"
+fi
+rollback_ready=true
+
+echo -e "${YELLOW}[3/6] 停止应用服务...${NC}"
+systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+
+echo -e "${YELLOW}[4/6] 替换应用文件...${NC}"
+install -m 0755 "$SERVER_BIN" "${INSTALL_DIR}/bin/dddd-server"
+echo -e "  Server: ${GREEN}${SERVER_BIN} -> ${INSTALL_DIR}/bin/dddd-server${NC}"
+
+if [[ -n "$AGENT_BIN" ]]; then
+    install -m 0755 "$AGENT_BIN" "${INSTALL_DIR}/release/dddd-agent-linux-amd64"
+    echo -e "  Agent:  ${GREEN}${AGENT_BIN} -> ${INSTALL_DIR}/release/dddd-agent-linux-amd64${NC}"
+fi
+
+if [[ -n "$FRONTEND_SRC" ]]; then
+    rm -rf "${INSTALL_DIR}/server-ui/dist.new"
+    mkdir -p "${INSTALL_DIR}/server-ui/dist.new"
+    cp -a "${FRONTEND_SRC}/." "${INSTALL_DIR}/server-ui/dist.new/"
+    rm -rf "${INSTALL_DIR}/server-ui/dist"
+    mv "${INSTALL_DIR}/server-ui/dist.new" "${INSTALL_DIR}/server-ui/dist"
+    echo -e "  Frontend: ${GREEN}${FRONTEND_SRC} -> ${INSTALL_DIR}/server-ui/dist${NC}"
+fi
+
+if [[ -f "${SCRIPT_DIR}/docker-compose.yml" ]]; then
+    cp -a "${SCRIPT_DIR}/docker-compose.yml" "${INSTALL_DIR}/deploy/docker-compose.yml"
+fi
+if [[ -f "${SCRIPT_DIR}/setup-server.sh" ]]; then
+    cp -a "${SCRIPT_DIR}/setup-server.sh" "${INSTALL_DIR}/deploy/setup-server.sh"
+fi
+if [[ -f "${SCRIPT_DIR}/upgrade-server.sh" ]]; then
+    cp -a "${SCRIPT_DIR}/upgrade-server.sh" "${INSTALL_DIR}/deploy/upgrade-server.sh"
+fi
+if [[ -f "${SCRIPT_DIR}/uninstall-server.sh" ]]; then
+    cp -a "${SCRIPT_DIR}/uninstall-server.sh" "${INSTALL_DIR}/deploy/uninstall-server.sh"
+fi
+if [[ -d "${SCRIPT_DIR}/postgres" ]]; then
+    mkdir -p "${INSTALL_DIR}/deploy/postgres"
+    cp -a "${SCRIPT_DIR}/postgres/." "${INSTALL_DIR}/deploy/postgres/"
+fi
+
+echo -e "${YELLOW}[5/6] 执行数据库迁移与规则同步...${NC}"
+"${INSTALL_DIR}/bin/dddd-server" --db "$DB_DSN" --migrate-only --db-migration-mode apply --config-dir "${INSTALL_DIR}/config"
+
+if [[ -f "${SCRIPT_DIR}/arsenal_seed.db" ]]; then
+    "${INSTALL_DIR}/bin/dddd-server" --db "$DB_DSN" --seed-from-db "${SCRIPT_DIR}/arsenal_seed.db"
+else
+    echo -e "${YELLOW}  [!] 未找到 deploy/arsenal_seed.db，跳过规则资产同步${NC}"
+fi
+
+echo -e "${YELLOW}[6/6] 重启应用服务并检查状态...${NC}"
+systemctl daemon-reload
+systemctl start "$SERVICE_NAME"
+sleep 3
+
+if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+    die "服务启动失败，请查看 ${INSTALL_DIR}/logs/server.log"
+fi
+
+rollback_ready=false
+trap - ERR
+
+echo ""
+echo -e "${BLUE}================================================${NC}"
+echo -e "${GREEN}  ✅ Argus Server 原地升级完成${NC}"
+echo -e "${BLUE}================================================${NC}"
+echo -e "  备份目录: ${GREEN}${BACKUP_DIR}${NC}"
+echo -e "  查看日志: ${YELLOW}tail -f ${INSTALL_DIR}/logs/server.log${NC}"
+echo -e "  服务状态: ${YELLOW}systemctl status ${SERVICE_NAME}${NC}"
+echo ""

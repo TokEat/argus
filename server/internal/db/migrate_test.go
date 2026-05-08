@@ -1,6 +1,9 @@
 package db
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseMigrationMode(t *testing.T) {
 	tests := []struct {
@@ -68,5 +71,36 @@ ALTER TABLE foo ADD COLUMN name TEXT;
 	stmts := splitSQLStatements(sql)
 	if len(stmts) != 2 {
 		t.Fatalf("expected 2 statements, got %d", len(stmts))
+	}
+}
+
+func TestTenantQuotaCompatMigrationPresent(t *testing.T) {
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations returned error: %v", err)
+	}
+
+	found220 := false
+	found230 := false
+	for _, migration := range migrations {
+		switch migration.Version {
+		case "220":
+			found220 = true
+			if !strings.Contains(migration.SQL, "CREATE TABLE IF NOT EXISTS tenant_quotas") {
+				t.Fatalf("tenant quota compat migration must ensure tenant_quotas exists")
+			}
+			if !strings.Contains(migration.SQL, "CREATE VIEW public.tenant_quota") {
+				t.Fatalf("tenant quota compat migration must provide the singular compatibility view")
+			}
+		case "230":
+			found230 = true
+			if !strings.Contains(migration.SQL, "ALTER TABLE public.tenant_quota RENAME TO") {
+				t.Fatalf("tenant quota canonical migration must move legacy singular tables away")
+			}
+		}
+	}
+
+	if !found220 || !found230 {
+		t.Fatalf("expected tenant quota compatibility migrations 220 and 230, got 220=%v 230=%v", found220, found230)
 	}
 }
