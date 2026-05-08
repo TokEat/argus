@@ -43,6 +43,7 @@ server/build_seed_db
 
 # 测试
 test/
+!server-ui/src/test/
 test-env
 
 # ai 参考
