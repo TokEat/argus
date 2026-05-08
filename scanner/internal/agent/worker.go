@@ -159,6 +159,7 @@ type Worker struct {
 	serverAddr   string
 	apiURL       string
 	psk          string // 预共享密钥，空则不发送鉴权信息
+	sessionToken string
 	client       pb.AgentServiceClient
 	conn         *grpc.ClientConn
 	wg           sync.WaitGroup
@@ -211,14 +212,15 @@ func (w *Worker) SetPSK(psk string) {
 	w.psk = psk
 }
 
-// apiGet 统一执行 Agent -> Server 的内部 HTTP GET，并附加 PSK 头。
+// apiGet 统一执行 Agent -> Server 的内部 HTTP GET，并附加注册会话头。
 func (w *Worker) apiGet(url string) (*http.Response, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	if w.psk != "" {
-		req.Header.Set("x-agent-psk", w.psk)
+	if w.sessionToken != "" {
+		req.Header.Set("x-agent-id", w.agentID)
+		req.Header.Set("x-agent-token", w.sessionToken)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
@@ -257,7 +259,7 @@ func (w *Worker) Start() error {
 
 	// 1. 注册
 	effectiveWorkers := w.effectiveWorkerCount()
-	_, err = w.client.Register(context.Background(), &pb.RegisterReq{
+	resp, err := w.client.Register(context.Background(), &pb.RegisterReq{
 		AgentId:  w.agentID,
 		Version:  agentVersion,
 		Tags:     w.tags,
@@ -267,6 +269,10 @@ func (w *Worker) Start() error {
 	})
 	if err != nil {
 		return err
+	}
+	w.sessionToken = strings.TrimSpace(resp.GetToken())
+	if w.sessionToken == "" {
+		return fmt.Errorf("server returned empty agent session token")
 	}
 	log.Printf("Agent %s successfully registered to %s", w.agentID, w.serverAddr)
 

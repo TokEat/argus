@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
@@ -24,6 +26,7 @@ const (
 	RuleCatalogStatusPartial   = "partial"
 	RuleCatalogStatusEmpty     = "empty"
 	maxRuleCatalogErrorMessage = 4000
+	maxPocDescriptionRunes     = 500
 )
 
 // RuleCatalogBootstrap tracks whether the structured rule catalog has been
@@ -67,21 +70,25 @@ type FingerprintRule struct {
 // PocRule stores normalized metadata for one POC template while keeping the
 // raw template text in arsenals for distribution to agents.
 type PocRule struct {
-	ID          uint   `gorm:"primaryKey;autoIncrement"`
-	TenantID    string `gorm:"default:'default';index;uniqueIndex:idx_poc_rule_unique"`
-	ArtifactID  string `gorm:"index"`
-	SourceFile  string `gorm:"index;uniqueIndex:idx_poc_rule_unique"`
-	Name        string `gorm:"index;not null"`
-	ContentHash string `gorm:"index"`
-	Severity    string `gorm:"index;default:'info'"`
-	Tags        string `gorm:"type:text"`
-	Author      string
-	Description string `gorm:"type:text"`
-	Version     int    `gorm:"default:1"`
-	State       string `gorm:"index"`
-	Enabled     bool   `gorm:"default:true;index"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID                  uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID            string `gorm:"default:'default';index;uniqueIndex:idx_poc_rule_unique"`
+	ArtifactID          string `gorm:"index"`
+	SourceFile          string `gorm:"index;uniqueIndex:idx_poc_rule_unique"`
+	Name                string `gorm:"index;not null"`
+	TargetProduct       string `gorm:"index"`
+	CVE                 string `gorm:"index"`
+	CompatibilityStatus string `gorm:"index;default:'unknown'"`
+	SourceVersion       string
+	ContentHash         string `gorm:"index"`
+	Severity            string `gorm:"index;default:'info'"`
+	Tags                string `gorm:"type:text"`
+	Author              string
+	Description         string `gorm:"type:text"`
+	Version             int    `gorm:"default:1"`
+	State               string `gorm:"index"`
+	Enabled             bool   `gorm:"default:true;index"`
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // WorkflowRule stores one product -> poc -> match_type mapping per row.
@@ -139,8 +146,8 @@ type ExploitRule struct {
 	LinkedPocs       string `gorm:"type:jsonb"`
 	ParamsSchema     string `gorm:"type:jsonb"`
 	TimeoutSec       int
-	RuntimeEngine     string `gorm:"index"`
-	ContentHash       string `gorm:"index"`
+	RuntimeEngine    string `gorm:"index"`
+	ContentHash      string `gorm:"index"`
 	Version          int    `gorm:"default:1"`
 	State            string `gorm:"index"`
 	Enabled          bool   `gorm:"default:true;index"`
@@ -217,8 +224,6 @@ func FindTenantArsenalByTypeAndFile(tenantID, typ, fileName string) (*Arsenal, e
 func FindArsenalByTypeAndFile(typ, fileName string) (*Arsenal, error) {
 	return FindTenantArsenalByTypeAndFile("default", typ, fileName)
 }
-
-
 
 func SyncRuleCatalogFromArsenal() error {
 	var arsenals []Arsenal
@@ -394,6 +399,7 @@ func materializeRuleCatalog(arsenals []Arsenal) materializedRuleCatalog {
 	var out materializedRuleCatalog
 
 	for _, arsenal := range arsenals {
+		sanitizeArsenalTextFields(&arsenal)
 		switch CanonicalArsenalType(arsenal.Type) {
 		case "finger":
 			rows, err := materializeFingerprintRules(arsenal)
@@ -433,7 +439,7 @@ func materializeRuleCatalog(arsenals []Arsenal) materializedRuleCatalog {
 
 func materializeFingerprintRules(arsenal Arsenal) ([]FingerprintRule, error) {
 	var raw map[string][]string
-	if err := yaml.Unmarshal([]byte(arsenal.Content), &raw); err != nil {
+	if err := yaml.Unmarshal([]byte(sanitizePostgresText(arsenal.Content)), &raw); err != nil {
 		return nil, fmt.Errorf("finger yaml parse failed for %s: %w", arsenal.FileName, err)
 	}
 
@@ -468,7 +474,7 @@ func materializeWorkflowRules(arsenal Arsenal) ([]WorkflowRule, error) {
 	}
 
 	var raw map[string]workflowEntry
-	if err := yaml.Unmarshal([]byte(arsenal.Content), &raw); err != nil {
+	if err := yaml.Unmarshal([]byte(sanitizePostgresText(arsenal.Content)), &raw); err != nil {
 		return nil, fmt.Errorf("workflow yaml parse failed for %s: %w", arsenal.FileName, err)
 	}
 
@@ -504,7 +510,7 @@ func materializeWorkflowRules(arsenal Arsenal) ([]WorkflowRule, error) {
 
 func materializeDirRules(arsenal Arsenal) ([]DirRule, error) {
 	var raw map[string][]string
-	if err := yaml.Unmarshal([]byte(arsenal.Content), &raw); err != nil {
+	if err := yaml.Unmarshal([]byte(sanitizePostgresText(arsenal.Content)), &raw); err != nil {
 		return nil, fmt.Errorf("dir yaml parse failed for %s: %w", arsenal.FileName, err)
 	}
 
@@ -540,18 +546,22 @@ func materializePocRule(arsenal Arsenal) PocRule {
 	}
 
 	return PocRule{
-		TenantID:    arsenal.TenantID,
-		ArtifactID:  arsenal.ID,
-		SourceFile:  arsenal.FileName,
-		Name:        name,
-		ContentHash: arsenal.Hash,
-		Severity:    meta.severity,
-		Tags:        meta.tags,
-		Author:      meta.author,
-		Description: meta.description,
-		Version:     arsenal.Version,
-		State:       arsenal.State,
-		Enabled:     arsenal.State == "Approved",
+		TenantID:            arsenal.TenantID,
+		ArtifactID:          arsenal.ID,
+		SourceFile:          arsenal.FileName,
+		Name:                name,
+		TargetProduct:       meta.targetProduct,
+		CVE:                 meta.cve,
+		CompatibilityStatus: meta.compatibilityStatus,
+		SourceVersion:       meta.sourceVersion,
+		ContentHash:         arsenal.Hash,
+		Severity:            meta.severity,
+		Tags:                meta.tags,
+		Author:              meta.author,
+		Description:         meta.description,
+		Version:             arsenal.Version,
+		State:               arsenal.State,
+		Enabled:             arsenal.State == "Approved",
 	}
 }
 
@@ -593,20 +603,24 @@ func materializeExploitRule(arsenal Arsenal) (ExploitRule, error) {
 		LinkedPocs:       marshalJSONText(meta.LinkedPocs),
 		ParamsSchema:     marshalJSONText(meta.ParamsSchema),
 		TimeoutSec:       meta.TimeoutSec,
-		RuntimeEngine:     meta.RuntimeEngine,
-		ContentHash:       arsenal.Hash,
-		Version:           arsenal.Version,
-		State:             arsenal.State,
-		Enabled:           arsenal.State == "Approved",
+		RuntimeEngine:    meta.RuntimeEngine,
+		ContentHash:      arsenal.Hash,
+		Version:          arsenal.Version,
+		State:            arsenal.State,
+		Enabled:          arsenal.State == "Approved",
 	}, nil
 }
 
 type pocMeta struct {
-	id          string
-	severity    string
-	tags        string
-	author      string
-	description string
+	id                  string
+	severity            string
+	tags                string
+	author              string
+	description         string
+	targetProduct       string
+	cve                 string
+	compatibilityStatus string
+	sourceVersion       string
 }
 
 type exploitMeta struct {
@@ -625,10 +639,12 @@ type exploitMeta struct {
 	LinkedPocs       []string
 	ParamsSchema     map[string]interface{}
 	TimeoutSec       int
-	RuntimeEngine     string
+	RuntimeEngine    string
 }
 
 func parseExploitMeta(content []byte) (exploitMeta, error) {
+	content = sanitizePostgresTextBytes(content)
+
 	type expYAML struct {
 		Kind string `yaml:"kind"`
 		ID   string `yaml:"id"`
@@ -686,38 +702,129 @@ func parseExploitMeta(content []byte) (exploitMeta, error) {
 		LinkedPocs:       normalizeStringSlice(raw.Info.LinkedPocs),
 		ParamsSchema:     raw.Params,
 		TimeoutSec:       raw.Policy.TimeoutSec,
-		RuntimeEngine:     strings.TrimSpace(raw.Runtime.Engine),
+		RuntimeEngine:    strings.TrimSpace(raw.Runtime.Engine),
 	}, nil
 }
 
 func parsePocMeta(content []byte) pocMeta {
-	meta := pocMeta{severity: "info"}
-	for _, line := range strings.Split(string(content), "\n") {
+	text := sanitizePostgresText(string(content))
+	content = []byte(text)
+	meta := pocMeta{severity: "info", compatibilityStatus: "unknown"}
+	type nucleiYAML struct {
+		ID   string `yaml:"id"`
+		Info struct {
+			Name           string      `yaml:"name"`
+			Severity       string      `yaml:"severity"`
+			Author         interface{} `yaml:"author"`
+			Tags           interface{} `yaml:"tags"`
+			Description    string      `yaml:"description"`
+			Classification struct {
+				CVEID interface{} `yaml:"cve-id"`
+			} `yaml:"classification"`
+			Metadata map[string]interface{} `yaml:"metadata"`
+		} `yaml:"info"`
+	}
+	var parsed nucleiYAML
+	if err := yaml.Unmarshal(content, &parsed); err == nil {
+		meta.id = strings.TrimSpace(parsed.ID)
+		meta.severity = strings.ToLower(strings.TrimSpace(parsed.Info.Severity))
+		meta.tags = stringifyPocMetaValue(parsed.Info.Tags)
+		meta.author = stringifyPocMetaValue(parsed.Info.Author)
+		meta.description = truncatePocDescription(parsed.Info.Description)
+		meta.cve = normalizePocCVE(stringifyPocMetaValue(parsed.Info.Classification.CVEID))
+		meta.targetProduct = strings.TrimSpace(firstPocMetadataValue(parsed.Info.Metadata, "product", "vendor", "fofa-query", "shodan-query"))
+		meta.sourceVersion = strings.TrimSpace(firstPocMetadataValue(parsed.Info.Metadata, "version", "source_version", "template-version"))
+		if meta.id != "" || strings.TrimSpace(parsed.Info.Name) != "" {
+			meta.compatibilityStatus = "indexed"
+		}
+	}
+	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(line, "id:"):
-			meta.id = strings.TrimSpace(strings.TrimPrefix(line, "id:"))
-		case strings.HasPrefix(line, "severity:"):
-			meta.severity = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, "severity:")))
-		case strings.HasPrefix(line, "tags:"):
-			meta.tags = strings.TrimSpace(strings.TrimPrefix(line, "tags:"))
-		case strings.HasPrefix(line, "author:"):
-			meta.author = strings.TrimSpace(strings.TrimPrefix(line, "author:"))
-		case strings.HasPrefix(line, "description:"):
-			desc := strings.TrimSpace(strings.TrimPrefix(line, "description:"))
-			if len(desc) > 500 {
-				desc = desc[:500]
+			if meta.id == "" {
+				meta.id = strings.TrimSpace(strings.TrimPrefix(line, "id:"))
 			}
-			meta.description = desc
+		case strings.HasPrefix(line, "severity:"):
+			if meta.severity == "" || meta.severity == "info" {
+				meta.severity = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, "severity:")))
+			}
+		case strings.HasPrefix(line, "tags:"):
+			if meta.tags == "" {
+				meta.tags = strings.TrimSpace(strings.TrimPrefix(line, "tags:"))
+			}
+		case strings.HasPrefix(line, "author:"):
+			if meta.author == "" {
+				meta.author = strings.TrimSpace(strings.TrimPrefix(line, "author:"))
+			}
+		case strings.HasPrefix(line, "description:"):
+			if meta.description == "" {
+				meta.description = truncatePocDescription(strings.TrimSpace(strings.TrimPrefix(line, "description:")))
+			}
+		case strings.HasPrefix(line, "cve-id:"):
+			if meta.cve == "" {
+				meta.cve = normalizePocCVE(strings.TrimSpace(strings.TrimPrefix(line, "cve-id:")))
+			}
 		}
 	}
+	if meta.severity == "" {
+		meta.severity = "info"
+	}
 	return meta
+}
+
+func stringifyPocMetaValue(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(sanitizePostgresText(v))
+	case []interface{}:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			if s := stringifyPocMetaValue(item); s != "" {
+				parts = append(parts, s)
+			}
+		}
+		return strings.Join(parts, ",")
+	case []string:
+		return sanitizePostgresText(strings.Join(v, ","))
+	default:
+		return strings.TrimSpace(sanitizePostgresText(fmt.Sprint(v)))
+	}
+}
+
+func firstPocMetadataValue(metadata map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if metadata == nil {
+			return ""
+		}
+		for actualKey, value := range metadata {
+			if strings.EqualFold(actualKey, key) {
+				return stringifyPocMetaValue(value)
+			}
+		}
+	}
+	return ""
+}
+
+func normalizePocCVE(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.EqualFold(value, "nil") || strings.EqualFold(value, "<nil>") {
+		return ""
+	}
+	return strings.ToUpper(value)
+}
+
+func truncatePocDescription(desc string) string {
+	return truncateUTF8Runes(strings.TrimSpace(desc), maxPocDescriptionRunes)
 }
 
 func normalizeStringSlice(items []string) []string {
 	out := make([]string, 0, len(items))
 	for _, item := range items {
-		item = strings.TrimSpace(item)
+		item = strings.TrimSpace(sanitizePostgresText(item))
 		if item != "" {
 			out = append(out, item)
 		}
@@ -761,15 +868,135 @@ func summarizeRuleCatalogErrors(items []string) string {
 		return ""
 	}
 	message := strings.Join(items, " | ")
-	if len(message) > maxRuleCatalogErrorMessage {
-		return message[:maxRuleCatalogErrorMessage]
-	}
-	return message
+	return truncateUTF8Runes(message, maxRuleCatalogErrorMessage)
 }
 
 func createInBatches[T any](tx *gorm.DB, items []T) error {
 	if len(items) == 0 {
 		return nil
 	}
+	sanitizedCount := 0
+	for i := range items {
+		if sanitizeStringFieldsForPostgres(&items[i]) {
+			sanitizedCount++
+		}
+	}
+	if sanitizedCount > 0 {
+		log.Printf("[RuleCatalog] Sanitized PostgreSQL text fields in %d materialized rows before insert.", sanitizedCount)
+	}
 	return tx.CreateInBatches(items, 500).Error
+}
+
+func sanitizePostgresTextBytes(content []byte) []byte {
+	if utf8.Valid(content) {
+		text := string(content)
+		if !strings.ContainsRune(text, '\x00') {
+			return content
+		}
+	}
+	return []byte(sanitizePostgresText(string(content)))
+}
+
+func sanitizePostgresText(value string) string {
+	if utf8.ValidString(value) && !strings.ContainsRune(value, '\x00') {
+		return value
+	}
+	value = strings.ToValidUTF8(value, "")
+	return strings.ReplaceAll(value, "\x00", "")
+}
+
+func truncateUTF8Runes(value string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	value = sanitizePostgresText(value)
+	if utf8.RuneCountInString(value) <= maxRunes {
+		return value
+	}
+	runes := []rune(value)
+	return string(runes[:maxRunes])
+}
+
+func hashString(value string) string {
+	return fmt.Sprintf("%x", md5.Sum([]byte(value)))
+}
+
+func sanitizeArsenalTextFields(arsenal *Arsenal) bool {
+	if arsenal == nil {
+		return false
+	}
+
+	changed := false
+	sanitizeField := func(field *string) {
+		cleaned := sanitizePostgresText(*field)
+		if cleaned != *field {
+			*field = cleaned
+			changed = true
+		}
+	}
+
+	originalContent := arsenal.Content
+	originalPreviousContent := arsenal.PreviousContent
+
+	sanitizeField(&arsenal.ID)
+	sanitizeField(&arsenal.TenantID)
+	sanitizeField(&arsenal.Type)
+	sanitizeField(&arsenal.FileName)
+	sanitizeField(&arsenal.Content)
+	sanitizeField(&arsenal.Hash)
+	sanitizeField(&arsenal.PreviousHash)
+	sanitizeField(&arsenal.PreviousContent)
+	sanitizeField(&arsenal.State)
+
+	if arsenal.Content != originalContent {
+		arsenal.Hash = hashString(arsenal.Content)
+	}
+	if arsenal.PreviousContent != originalPreviousContent && arsenal.PreviousContent != "" {
+		arsenal.PreviousHash = hashString(arsenal.PreviousContent)
+	}
+
+	return changed
+}
+
+func sanitizeStringFieldsForPostgres(item any) bool {
+	value := reflect.ValueOf(item)
+	if value.Kind() != reflect.Pointer || value.IsNil() {
+		return false
+	}
+	return sanitizeReflectValueForPostgres(value.Elem())
+}
+
+func sanitizeReflectValueForPostgres(value reflect.Value) bool {
+	if !value.IsValid() {
+		return false
+	}
+
+	changed := false
+	switch value.Kind() {
+	case reflect.Pointer:
+		if !value.IsNil() {
+			changed = sanitizeReflectValueForPostgres(value.Elem()) || changed
+		}
+	case reflect.Struct:
+		for i := 0; i < value.NumField(); i++ {
+			field := value.Field(i)
+			if field.CanSet() {
+				changed = sanitizeReflectValueForPostgres(field) || changed
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < value.Len(); i++ {
+			changed = sanitizeReflectValueForPostgres(value.Index(i)) || changed
+		}
+	case reflect.String:
+		if !value.CanSet() {
+			return changed
+		}
+		cleaned := sanitizePostgresText(value.String())
+		if cleaned != value.String() {
+			value.SetString(cleaned)
+			changed = true
+		}
+	}
+	return changed
 }

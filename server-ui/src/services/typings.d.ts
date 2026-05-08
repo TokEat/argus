@@ -44,9 +44,15 @@ declare namespace API {
     Description: string;
     Status: string;
     owner_username?: string;
-    access_level?: 'admin' | 'owner' | 'member';
+    access_level?: 'admin' | 'owner' | 'operator' | 'viewer' | 'member';
     member_user_ids?: string[];
+    members?: ProjectMember[];
     CreatedAt: string;
+  }
+
+  interface ProjectMember {
+    user_id: string;
+    role: 'viewer' | 'operator' | 'owner';
   }
 
   // ======================== Task ========================
@@ -80,6 +86,55 @@ declare namespace API {
     config?: Record<string, unknown> | string; // JSON 对象或 JSON 字符串
     priority?: number;
     timeout_sec?: number;
+    agent_selector?: Record<string, string>;
+    agent_selector_rules?: AgentSelectorRules;
+  }
+
+  /** 调度选择器预览 (POST /api/v1/tasks/preview-selector) */
+  interface TaskSelectorPreviewRequest {
+    project_id: string;
+    targets: string | string[];
+    config?: Record<string, unknown> | string;
+    agent_selector?: Record<string, string>;
+    agent_selector_rules?: AgentSelectorRules;
+  }
+
+  interface AgentSelectorRules {
+    match?: Record<string, string | string[]>;
+    not_match?: Record<string, string | string[]>;
+  }
+
+  interface TaskSelectorPreview {
+    matched_nodes: number;
+    available_slots: number;
+    reasons: string[];
+    effective_selectors: Record<string, string>[];
+    groups?: TaskSelectorPreviewGroup[];
+    target_summary?: Record<string, unknown>;
+  }
+
+  interface TaskSelectorPreviewGroup {
+    target_type: string;
+    target_count: number;
+    batch_count: number;
+    selector: Record<string, string>;
+    selector_rules?: AgentSelectorRules;
+    matched_nodes: number;
+    available_slots: number;
+    immediate_batches?: number;
+    waiting_batches?: number;
+    reasons: string[];
+    nodes: TaskSelectorPreviewNode[];
+  }
+
+  interface TaskSelectorPreviewNode {
+    agent_id: string;
+    status: string;
+    capacity: number;
+    running_tasks: number;
+    available_slots: number;
+    matched: boolean;
+    reason?: string;
   }
 
   /** 子任务摘要 (GET /api/v1/tasks/:id) */
@@ -116,6 +171,12 @@ declare namespace API {
     };
     sub_tasks: SubTaskSummary[];
     status_distribution: Record<string, number>;
+    reason_stats: {
+      status: string;
+      reason: string;
+      count: number;
+      target_count: number;
+    }[];
     result_stats: {
       assets: number;
       fingerprints: number;
@@ -132,6 +193,9 @@ declare namespace API {
     IP: string;
     Status: string;        // Alive, Offline
     Token: string;
+    TokenExpiresAt?: string;
+    TokenRevokedAt?: string;
+    LastTokenRotatedAt?: string;
     Tags: string;          // JSON: 节点标签
     Version: string;       // Agent 版本
     Capacity: number;      // 并发容量
@@ -432,6 +496,7 @@ declare namespace API {
     message?: string;
     status?: string;
     error?: string;
+    job_id?: number;
   }
 
   // ======================== User Management ========================
@@ -460,6 +525,76 @@ declare namespace API {
     status?: string;
     password?: string;
     exp_authorized?: boolean;
+  }
+
+  interface RoleDefinition {
+    id?: number;
+    name: string;
+    label: string;
+    description: string;
+    base_role: 'viewer' | 'operator' | 'admin' | string;
+    permissions: string[];
+    builtin: boolean;
+    created_at?: string;
+    updated_at?: string;
+  }
+
+  interface RoleListResponse {
+    roles: RoleDefinition[];
+    matrix: Record<string, string[]>;
+    base_roles: string[];
+  }
+
+  interface RoleRequest {
+    name?: string;
+    label?: string;
+    description?: string;
+    base_role: 'viewer' | 'operator' | 'admin' | string;
+    permissions?: string[];
+  }
+
+  interface TenantQuotaUsage {
+    active_tasks: number;
+    running_subtasks: number;
+    tasks_today: number;
+  }
+
+  interface TenantQuota {
+    tenant_id: string;
+    max_concurrent_tasks: number;
+    max_running_sub_tasks: number;
+    daily_task_limit: number;
+    usage: TenantQuotaUsage;
+    created_at?: string;
+    updated_at?: string;
+  }
+
+  interface TenantQuotaRequest {
+    max_concurrent_tasks: number;
+    max_running_sub_tasks: number;
+    daily_task_limit: number;
+  }
+
+  interface PocRuleMetadata {
+    id: number;
+    tenant_id: string;
+    artifact_id: string;
+    source_file: string;
+    name: string;
+    target_product: string;
+    cve: string;
+    compatibility_status: string;
+    source_version: string;
+    content_hash: string;
+    severity: string;
+    tags: string;
+    author: string;
+    description: string;
+    version: number;
+    state: string;
+    enabled: boolean;
+    created_at: string;
+    updated_at: string;
   }
 
   // ======================== Cloud Resource Scheduling ========================
@@ -603,6 +738,24 @@ declare namespace API {
     platform: string;
     arch: string;
     pack?: boolean;
+    components?: string[];
+  }
+
+  interface BuildJob {
+    id: number;
+    platform: string;
+    arch: string;
+    pack: boolean;
+    components?: string[];
+    status: 'queued' | 'running' | 'success' | 'failed' | 'canceled';
+    artifact?: string;
+    artifacts?: string[];
+    log_tail?: string;
+    error?: string;
+    started_at?: string;
+    finished_at?: string;
+    created_at: string;
+    updated_at: string;
   }
 
   // ======================== MCP Keys ========================
@@ -657,6 +810,54 @@ declare namespace API {
     Message: string;
     Timestamp: number;
     CreatedAt: string;
+  }
+
+  interface AgentLogSummary {
+    level_counts: {
+      level: string;
+      count: number;
+    }[];
+    recent_errors: AgentLog[];
+    retention_days: number;
+  }
+
+  interface AgentLogRetention {
+    retention_days: number;
+    deleted?: number;
+  }
+
+  interface AgentLogAlertRule {
+    id: number;
+    tenant_id: string;
+    name: string;
+    agent_id?: string;
+    level?: string;
+    keyword?: string;
+    enabled: boolean;
+    created_at: string;
+    updated_at: string;
+  }
+
+  interface AgentLogAlertEvent {
+    id: number;
+    tenant_id: string;
+    rule_id: number;
+    agent_id: string;
+    level: string;
+    message: string;
+    log_id: number;
+    created_at: string;
+  }
+
+  interface AgentLogArchive {
+    id: number;
+    tenant_id: string;
+    day: string;
+    storage_key: string;
+    log_count: number;
+    status: string;
+    error?: string;
+    created_at: string;
   }
 
   // ======================== EXP 规则 ========================
@@ -725,6 +926,7 @@ declare namespace API {
     agent_id: string;
     risk_level: string;
     status: 'Pending' | 'Running' | 'CancelPending' | 'Cancelled' | 'CleanupRequired' | 'CleanupFailed' | 'Succeeded' | 'Failed';
+    credential_ref: string;
     started_at: string;
     finished_at: string;
     evidence: string;
@@ -732,6 +934,18 @@ declare namespace API {
     cleanup_status: '' | 'Pending' | 'CleanupRunning' | 'CleanupSucceeded' | 'CleanupFailed' | 'NotRequired';
     cleanup_evidence: string;
     error_message: string;
+    created_at: string;
+    updated_at: string;
+  }
+
+  interface ExploitRiskWaiver {
+    id: number;
+    tenant_id: string;
+    rule_id: string;
+    reason: string;
+    created_by: string;
+    expires_at: string;
+    active: boolean;
     created_at: string;
     updated_at: string;
   }
@@ -761,7 +975,32 @@ declare namespace API {
     version: number;
     state: string;
     enabled: boolean;
+    risk_waiver?: ExploitRiskWaiver;
     created_at: string;
     updated_at: string;
+  }
+
+  interface ExploitBatchReviewResult {
+    id: number;
+    status: string;
+    error?: string;
+  }
+
+  interface ExploitBatchReviewResponse {
+    status: string;
+    changed: number;
+    results: ExploitBatchReviewResult[];
+  }
+
+  interface ExploitAudit {
+    id: number;
+    tenant_id: string;
+    exploit_rule_id: number;
+    rule_id: string;
+    action: string;
+    reason: string;
+    operator_id: string;
+    metadata: string;
+    created_at: string;
   }
 }

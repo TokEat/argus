@@ -3,15 +3,17 @@
 # Argus 生产环境打包脚本
 #
 # 该脚本用于将 Argus 项目打包为一键部署的产物 (tar.gz)
+# 默认版本: v0.1.0
 # 产物包含：
 # 1. 预编译的 server 和 agent 二进制文件
-# 2. docker-compose.yml 和必要的数据库初始化脚本
-# 3. 生产环境的 setup-server.sh 部署脚本
+# 2. server-ui/dist 前端静态资源
+# 3. docker-compose.yml、生产配置模板和部署/卸载脚本
+# 4. 必需规则资产库 deploy/arsenal_seed.db
 #
 # 用法: 
 #   ./deploy/build-bundle.sh [版本号]
 # 示例:
-#   ./deploy/build-bundle.sh v1.0.0
+#   ./deploy/build-bundle.sh v0.1.0
 # ==============================================================================
 
 set -euo pipefail
@@ -25,7 +27,7 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-VERSION=${1:-"latest"}
+VERSION=${1:-"v0.1.0"}
 BUNDLE_NAME="argus-release-${VERSION}"
 BUNDLE_DIR="${ROOT_DIR}/${BUNDLE_NAME}"
 ARCHIVE_NAME="${BUNDLE_NAME}-linux-amd64.tar.gz"
@@ -52,7 +54,7 @@ fi
 # 1.5 编译前端控制台
 echo -e "${YELLOW}[1.5/3] 编译前端页面...${NC}"
 cd "${ROOT_DIR}/server-ui"
-npm install
+npm ci
 npm run build
 cd "${ROOT_DIR}"
 
@@ -81,6 +83,7 @@ echo "  -> 拷贝环境部署脚本和 Docker 编排文件..."
 cp "${SCRIPT_DIR}/setup-server.sh" "${BUNDLE_DIR}/deploy/"
 cp "${SCRIPT_DIR}/uninstall-server.sh" "${BUNDLE_DIR}/deploy/"
 cp "${SCRIPT_DIR}/docker-compose.yml" "${BUNDLE_DIR}/deploy/"
+cp "${SCRIPT_DIR}/production.env.example" "${BUNDLE_DIR}/deploy/"
 
 # 生成并拷贝预编译的规则数据库
 echo "  -> 编译规则资产库为单文件 DB..."
@@ -90,12 +93,33 @@ cd "${ROOT_DIR}"
 ./server/build_seed_db
 if [[ -f "${ROOT_DIR}/deploy/arsenal_seed.db" ]]; then
     cp "${ROOT_DIR}/deploy/arsenal_seed.db" "${BUNDLE_DIR}/deploy/"
+else
+    echo -e "${RED}[!] 规则资产库生成失败: ${ROOT_DIR}/deploy/arsenal_seed.db 不存在${NC}"
+    exit 1
 fi
 
 # 拷贝数据库初始化脚本
 if [[ -d "${ROOT_DIR}/server/deploy/postgres" ]]; then
     cp -r "${ROOT_DIR}/server/deploy/postgres/"* "${BUNDLE_DIR}/deploy/postgres/" 2>/dev/null || true
 fi
+
+required_paths=(
+    "bin/dddd-server-linux-amd64"
+    "bin/dddd-agent-linux-amd64"
+    "server-ui/dist"
+    "deploy/docker-compose.yml"
+    "deploy/setup-server.sh"
+    "deploy/uninstall-server.sh"
+    "deploy/production.env.example"
+    "deploy/arsenal_seed.db"
+)
+
+for required_path in "${required_paths[@]}"; do
+    if [[ ! -e "${BUNDLE_DIR}/${required_path}" ]]; then
+        echo -e "${RED}[!] 发行包缺少必需文件: ${required_path}${NC}"
+        exit 1
+    fi
+done
 
 # 3. 压缩打包
 echo -e "${YELLOW}[3/3] 生成发行包...${NC}"

@@ -94,11 +94,25 @@ func requireProjectManage(c *gin.Context, projectID string) (db.Project, bool) {
 	if !ok {
 		return project, false
 	}
-	if currentUserIsAdmin(c) || project.OwnerUserID == currentUserID(c) {
+	if currentUserIsAdmin(c) || project.OwnerUserID == currentUserID(c) || projectMemberRole(c, projectID) == "owner" {
 		return project, true
 	}
 	c.JSON(http.StatusForbidden, gin.H{"error": "project can only be managed by admin or owner"})
 	return project, false
+}
+
+func projectMemberRole(c *gin.Context, projectID string) string {
+	userID := currentUserID(c)
+	if userID == "" || strings.TrimSpace(projectID) == "" {
+		return ""
+	}
+	var member db.ProjectMember
+	if err := db.DB.Select("role").
+		Where("tenant_id = ? AND project_id = ? AND user_id = ?", currentTenantID(c), projectID, userID).
+		First(&member).Error; err != nil {
+		return ""
+	}
+	return strings.TrimSpace(member.Role)
 }
 
 func resolveAccessibleTaskIDs(c *gin.Context, taskID string) []string {
@@ -171,7 +185,7 @@ func validateAssignableProjectUsers(tenantID string, userIDs []string) ([]string
 		return []string{}, nil
 	}
 	var users []db.User
-	if err := db.DB.Where("tenant_id = ? AND status = ? AND role = ? AND id IN ?", tenantID, "active", "operator", ids).Find(&users).Error; err != nil {
+	if err := db.DB.Where("tenant_id = ? AND status = ? AND id IN ?", tenantID, "active", ids).Find(&users).Error; err != nil {
 		return nil, err
 	}
 	if len(users) != len(ids) {

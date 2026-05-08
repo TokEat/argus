@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Alert,
@@ -50,7 +50,7 @@ import {
     WifiOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { cancelTask, createTask, deleteTask, listTasks, listProjects, getTaskDetail } from '../services/api';
+import { cancelTask, connectWebSocket, createTask, deleteTask, listTasks, listProjects, getTaskDetail, getNodes, previewTaskSelector } from '../services/api';
 import { getTaskStatusMeta, isTaskCancellable, isTaskFailedLike, isTaskFinished, normalizeTaskStatus } from '../utils/taskStatus';
 import { canAccessRole } from '../utils/auth';
 import { useAutoContext } from '../contexts/GlobalAIContext';
@@ -78,10 +78,24 @@ const sourceModeHints: Record<TaskSourceMode, string> = {
     quake: '每行一个 Quake 查询语句，需使用 field:value 形式，例如 service:http。',
 };
 
+const targetTypeLabels: Record<string, string> = {
+    url: 'URL',
+    domain: '域名',
+    domain_port: '域名端口',
+    ip: 'IP',
+    cidr: 'CIDR',
+    ip_range: 'IP 段',
+    ip_port: 'IP 端口',
+    osint: '空间搜索',
+    unknown: '未知',
+};
+
 const createInitialValues = {
     source_mode: 'direct' as TaskSourceMode,
     priority: 1,
     timeout_sec: 3600,
+    agent_selector_pairs: [],
+    agent_selector_rules_json: '',
     PortScanType: 'tcp',
     TCPPortScanThreads: 1000,
     SYNPortScanThreads: 10000,
@@ -102,6 +116,41 @@ function compactObject(input: Record<string, unknown>) {
     return Object.fromEntries(
         Object.entries(input).filter(([, value]) => value !== undefined && value !== null && value !== '')
     );
+}
+
+function parseNodeTags(tags?: string): Record<string, string> {
+    if (!tags) return {};
+    try {
+        const parsed = JSON.parse(tags);
+        if (parsed && !Array.isArray(parsed) && typeof parsed === 'object') {
+            return Object.fromEntries(
+                Object.entries(parsed as Record<string, unknown>)
+                    .filter(([, value]) => typeof value === 'string')
+                    .map(([key, value]) => [key, String(value)])
+            );
+        }
+    } catch {
+        return {};
+    }
+    return {};
+}
+
+function selectorFromPairs(pairs?: { key?: string; value?: string }[]): Record<string, string> | undefined {
+    const selector: Record<string, string> = {};
+    (pairs || []).forEach((pair) => {
+        const key = pair?.key?.trim();
+        const value = pair?.value?.trim();
+        if (key && value) {
+            selector[key] = value;
+        }
+    });
+    return Object.keys(selector).length > 0 ? selector : undefined;
+}
+
+function selectorRulesFromJSON(raw?: string): API.AgentSelectorRules | undefined {
+    const trimmed = raw?.trim();
+    if (!trimmed) return undefined;
+    return JSON.parse(trimmed) as API.AgentSelectorRules;
 }
 
 function parseAdvancedConfig(raw?: string) {
@@ -183,11 +232,17 @@ const TaskManagement: React.FC = () => {
     const { message } = App.useApp();
     const navigate = useNavigate();
     const sourceMode = (Form.useWatch('source_mode', form) as TaskSourceMode | undefined) || 'direct';
+    const watchedProjectId = Form.useWatch('project_id', form) as string | undefined;
+    const watchedTargets = Form.useWatch('targets', form) as string | undefined;
+    const selectorPairs = Form.useWatch('agent_selector_pairs', form) as { key?: string; value?: string }[] | undefined;
     const globalProjectId = localStorage.getItem('active_project_id') || '';
     const [projects, setProjects] = useState<API.Project[]>([]);
+    const [nodes, setNodes] = useState<API.AgentNode[]>([]);
     const [detailOpen, setDetailOpen] = useState(false);
     const [detailLoading, setDetailLoading] = useState(false);
     const [taskDetail, setTaskDetail] = useState<API.TaskDetailResponse | null>(null);
+    const [selectorPreview, setSelectorPreview] = useState<API.TaskSelectorPreview | null>(null);
+    const [selectorPreviewLoading, setSelectorPreviewLoading] = useState(false);
     const canManageTasks = canAccessRole('operator');
     const pageRef = useRef<HTMLDivElement>(null);
 
@@ -226,11 +281,30 @@ const TaskManagement: React.FC = () => {
         }
     };
 
+    const fetchNodes = async () => {
+        try {
+            const result = await getNodes();
+            setNodes(result || []);
+        } catch (error) {
+            console.error('Failed to fetch nodes:', error);
+        }
+    };
+
     useEffect(() => {
         fetchTasks();
         fetchProjects();
+        fetchNodes();
         const timer = setInterval(fetchTasks, 10000);
-        return () => clearInterval(timer);
+        const ws = connectWebSocket(() => undefined, undefined, {
+            onReconnect: () => {
+                fetchTasks();
+                fetchNodes();
+            },
+        });
+        return () => {
+            clearInterval(timer);
+            ws.close();
+        };
     }, []);
 
     useAutoContext({
@@ -276,6 +350,8 @@ const TaskManagement: React.FC = () => {
                 config: configObj,
                 priority: values.priority ?? 1,
                 timeout_sec: values.timeout_sec ?? 3600,
+                agent_selector: selectorFromPairs(values.agent_selector_pairs),
+                agent_selector_rules: selectorRulesFromJSON(values.agent_selector_rules_json),
             });
 
             message.success('任务创建成功');
@@ -293,6 +369,62 @@ const TaskManagement: React.FC = () => {
             setCreating(false);
         }
     };
+
+    const currentSelector = useMemo(() => selectorFromPairs(selectorPairs), [selectorPairs]);
+    const tagOptions = Array.from(new Set(nodes.flatMap((node) => Object.keys(parseNodeTags(node.Tags))))).sort();
+    const tagValueOptions = (key?: string) => Array.from(new Set(
+        nodes.map((node) => parseNodeTags(node.Tags)[key || '']).filter(Boolean)
+    )).sort();
+    const matchedNodes = currentSelector
+        ? nodes.filter((node) => {
+            if (node.Status !== 'Alive') return false;
+            const tags = parseNodeTags(node.Tags);
+            return Object.entries(currentSelector).every(([key, value]) => {
+                const nodeValue = tags[key];
+                return nodeValue === value || nodeValue === 'all' || nodeValue === 'any' || nodeValue === '*';
+            });
+        })
+        : nodes.filter((node) => node.Status === 'Alive');
+    const matchedCapacity = matchedNodes.reduce(
+        (sum, node) => sum + Math.max((node.Capacity || 0) - (node.RunningTasks || 0), 0),
+        0
+    );
+    const previewMatchedNodes = selectorPreview?.matched_nodes ?? matchedNodes.length;
+    const previewCapacity = selectorPreview?.available_slots ?? matchedCapacity;
+    const previewReasons = selectorPreview?.reasons || [];
+    const previewGroups = selectorPreview?.groups || [];
+
+    useEffect(() => {
+        if (!createOpen) {
+            setSelectorPreview(null);
+            return;
+        }
+        const projectId = watchedProjectId || globalProjectId;
+        if (!projectId || !watchedTargets?.trim()) {
+            setSelectorPreview(null);
+            return;
+        }
+        const timer = window.setTimeout(async () => {
+            setSelectorPreviewLoading(true);
+            try {
+                const values = form.getFieldsValue(true);
+                const result = await previewTaskSelector({
+                    project_id: projectId,
+                    targets: watchedTargets,
+                    config: buildTaskConfig(values),
+                    agent_selector: currentSelector,
+                    agent_selector_rules: selectorRulesFromJSON(values.agent_selector_rules_json),
+                });
+                setSelectorPreview(result);
+            } catch (error) {
+                console.warn('Failed to preview task selector:', error);
+                setSelectorPreview(null);
+            } finally {
+                setSelectorPreviewLoading(false);
+            }
+        }, 300);
+        return () => window.clearTimeout(timer);
+    }, [createOpen, watchedProjectId, watchedTargets, sourceMode, currentSelector, form, globalProjectId]);
 
     const handleDelete = async (taskId: string) => {
         if (!canManageTasks) return;
@@ -599,6 +731,97 @@ const TaskManagement: React.FC = () => {
                             </Form.Item>
                         </Col>
                     </Row>
+                    <Divider orientation="left">调度选择</Divider>
+                    <Alert
+                        type={previewMatchedNodes > 0 ? 'success' : 'warning'}
+                        showIcon
+                        icon={selectorPreviewLoading ? <Spin size="small" /> : undefined}
+                        style={{ marginBottom: 12 }}
+                        message={`匹配在线节点 ${previewMatchedNodes} 个，可用槽位 ${previewCapacity} 个`}
+                        description={previewReasons.length > 0 ? previewReasons.slice(0, 3).join('；') : undefined}
+                    />
+                    {previewGroups.length > 0 && (
+                        <Space direction="vertical" size={6} style={{ width: '100%', marginBottom: 12 }}>
+                            {previewGroups.map((group, index) => (
+                                <div key={`${group.target_type}-${index}`} style={{
+                                    border: '1px solid #e2e8f0',
+                                    borderRadius: 6,
+                                    padding: '8px 10px',
+                                    background: '#f8fafc',
+                                }}>
+                                    <Space wrap size={6}>
+                                        <Tag color={group.matched_nodes > 0 ? 'blue' : 'orange'}>
+                                            {targetTypeLabels[group.target_type] || group.target_type}
+                                        </Tag>
+                                        <Text style={{ fontSize: 12 }}>{group.target_count} 目标 / {group.batch_count} 批次</Text>
+                                        <Text style={{ fontSize: 12 }}>匹配 {group.matched_nodes} 节点</Text>
+                                        <Text style={{ fontSize: 12 }}>空闲 {group.available_slots} 槽</Text>
+                                        {typeof group.immediate_batches === 'number' && (
+                                            <Text style={{ fontSize: 12 }}>立即 {group.immediate_batches} / 等待 {group.waiting_batches || 0} 批</Text>
+                                        )}
+                                        {Object.entries(group.selector || {}).map(([key, value]) => (
+                                            <Tag key={key} style={{ fontSize: 11 }}>{key}={value}</Tag>
+                                        ))}
+                                    </Space>
+                                    {group.reasons?.length > 0 && (
+                                        <div style={{ marginTop: 4 }}>
+                                            <Text type="secondary" style={{ fontSize: 12 }}>
+                                                {group.reasons.join('；')}
+                                            </Text>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </Space>
+                    )}
+                    <Form.List name="agent_selector_pairs">
+                        {(fields, { add, remove }) => (
+                            <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                                {fields.map((field) => (
+                                    <Row key={field.key} gutter={8} align="middle">
+                                        <Col span={9}>
+                                            <Form.Item {...field} name={[field.name, 'key']} noStyle>
+                                                <Select
+                                                    showSearch
+                                                    placeholder="标签键"
+                                                    options={tagOptions.map((key) => ({ label: key, value: key }))}
+                                                />
+                                            </Form.Item>
+                                        </Col>
+                                        <Col span={11}>
+                                            <Form.Item shouldUpdate noStyle>
+                                                {() => {
+                                                    const key = form.getFieldValue(['agent_selector_pairs', field.name, 'key']);
+                                                    return (
+                                                        <Form.Item {...field} name={[field.name, 'value']} noStyle>
+                                                            <Select
+                                                                showSearch
+                                                                placeholder="标签值"
+                                                                options={tagValueOptions(key).map((value) => ({ label: value, value }))}
+                                                            />
+                                                        </Form.Item>
+                                                    );
+                                                }}
+                                            </Form.Item>
+                                        </Col>
+                                        <Col span={4}>
+                                            <Button danger onClick={() => remove(field.name)}>删除</Button>
+                                        </Col>
+                                    </Row>
+                                ))}
+                                <Button onClick={() => add()} block>
+                                    添加标签条件
+                                </Button>
+                            </Space>
+                        )}
+                    </Form.List>
+                    <Form.Item
+                        label="高级选择器规则"
+                        name="agent_selector_rules_json"
+                        extra='可选 JSON，例如 {"match":{"region":["cn-hangzhou","cn-shanghai"]},"not_match":{"cloud":"test"}}'
+                    >
+                        <Input.TextArea rows={3} placeholder='{"match":{},"not_match":{}}' />
+                    </Form.Item>
 
                     <Divider orientation="left">扫描配置</Divider>
                     <Collapse
@@ -1091,6 +1314,34 @@ const TaskManagement: React.FC = () => {
                                             <Badge key={status} count={count} color={color === 'processing' ? '#1677ff' : undefined} overflowCount={9999}>
                                                 <Tag color={color} style={{ marginRight: 0 }}>{text}</Tag>
                                             </Badge>
+                                        );
+                                    })}
+                                </Space>
+                            </>
+                        )}
+
+                        {/* 任务原因统计 */}
+                        {taskDetail.reason_stats?.length > 0 && (
+                            <>
+                                <Divider orientation="left" style={{ fontSize: 13 }}>
+                                    调度与终态原因
+                                </Divider>
+                                <Space direction="vertical" size={6} style={{ width: '100%', marginBottom: 12 }}>
+                                    {taskDetail.reason_stats.map((item, index) => {
+                                        const { color, text } = getTaskStatusMeta(item.status);
+                                        return (
+                                            <Alert
+                                                key={`${item.status}-${index}`}
+                                                type={item.status.toLowerCase().includes('fail') || item.status.toLowerCase().includes('timeout') ? 'warning' : 'info'}
+                                                showIcon
+                                                message={
+                                                    <Space wrap>
+                                                        <Tag color={color}>{text}</Tag>
+                                                        <Text>{item.reason}</Text>
+                                                        <Text type="secondary">{item.count} 批次 / {item.target_count} 目标</Text>
+                                                    </Space>
+                                                }
+                                            />
                                         );
                                     })}
                                 </Space>

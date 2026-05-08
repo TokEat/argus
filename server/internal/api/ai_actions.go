@@ -85,7 +85,7 @@ func executeCopilotAction(c *gin.Context, actionType string, action CopilotPendi
 	if requiredRole == "" {
 		requiredRole = "operator"
 	}
-	if !roleAtLeast(c.GetString("role"), requiredRole) {
+	if !roleAtLeast(currentTenantID(c), c.GetString("role"), requiredRole) {
 		return copilotActionResult{}, fmt.Errorf("insufficient permissions: required role %s", requiredRole)
 	}
 
@@ -522,11 +522,11 @@ func normalizePendingAction(action *CopilotPendingAction) bool {
 	return true
 }
 
-func roleAtLeast(role, required string) bool {
+func roleAtLeast(tenantID, role, required string) bool {
 	if role == "" {
 		role = "viewer"
 	}
-	userLevel := roleHierarchy[role]
+	userLevel := roleLevelForTenant(tenantID, role)
 	requiredLevel := roleHierarchy[required]
 	// If required role is not in hierarchy, default to "operator"
 	if requiredLevel == 0 {

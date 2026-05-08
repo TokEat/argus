@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server-ui/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: server-ui
+
+      - name: Go tests
+        run: go test ./...
+
+      - name: Server Go tests
+        run: go test ./...
+        working-directory: server
+
+      - name: Go coverage
+        run: |
+          mkdir -p /tmp/argus-coverage
+          go test -coverprofile=/tmp/argus-coverage/root.out ./...
+          cd server
+          go test -coverprofile=/tmp/argus-coverage/server.out ./...
+          cd ..
+          go tool cover -func=/tmp/argus-coverage/root.out | tail -n 1
+          go tool cover -func=/tmp/argus-coverage/server.out | tail -n 1
+
+      - name: Cloud provider mock smoke
+        run: go test ./internal/api -run TestCloudProviderMockSmoke -count=1
+        working-directory: server
+
+      - name: Frontend lint
+        run: npm run lint
+        working-directory: server-ui
+
+      - name: Frontend tests
+        run: npm run test -- --run
+        working-directory: server-ui
+
+      - name: Frontend smoke
+        run: npm run test:smoke
+        working-directory: server-ui
+
+      - name: Frontend build
+        run: npm run build
+        working-directory: server-ui
+
+  release-artifacts:
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server-ui/package-lock.json
+
+      - name: Build v0.1.0 bundle
+        run: ./deploy/build-bundle.sh v0.1.0
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: argus-v0.1.0-linux-amd64
+          path: deploy/argus-release-v0.1.0-linux-amd64.tar.gz
+
+      - name: Upload component artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: argus-components-v0.1.0
+          path: |
+            release/dddd-server-linux-amd64
+            release/dddd-agent-linux-amd64
+            server-ui/dist/**

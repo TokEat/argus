@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Typography, Table, Tag, Space, Button, Spin, Empty, Modal, Form, Select, Switch, message, Row, Col } from 'antd';
+import { Typography, Table, Tag, Space, Button, Spin, Empty, Modal, Form, Select, Switch, message, Row, Col, Alert } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     BuildOutlined, ReloadOutlined, ThunderboltOutlined,
     AppleOutlined, WindowsOutlined, CloudOutlined, DownloadOutlined,
+    StopOutlined, RedoOutlined, FileTextOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { listBuildArtifacts, triggerBuild } from '../services/api';
+import { cancelBuildJob, connectWebSocket, getBuildJobLogs, listBuildArtifacts, listBuildJobs, retryBuildJob, triggerBuild } from '../services/api';
 
 const { Title, Text } = Typography;
 
@@ -29,15 +30,22 @@ const formatSize = (bytes: number) => {
 const ClientBuild: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [artifacts, setArtifacts] = useState<API.BuildArtifact[]>([]);
+    const [jobs, setJobs] = useState<API.BuildJob[]>([]);
     const [buildModalOpen, setBuildModalOpen] = useState(false);
     const [building, setBuilding] = useState(false);
+    const [jobActionLoading, setJobActionLoading] = useState<Record<number, string>>({});
+    const [logModalOpen, setLogModalOpen] = useState(false);
+    const [logLoading, setLogLoading] = useState(false);
+    const [selectedJob, setSelectedJob] = useState<API.BuildJob | null>(null);
+    const [jobLog, setJobLog] = useState('');
     const [form] = Form.useForm();
 
     const fetchArtifacts = async () => {
         setLoading(true);
         try {
-            const result = await listBuildArtifacts();
+            const [result, jobResult] = await Promise.all([listBuildArtifacts(), listBuildJobs(20)]);
             setArtifacts(result || []);
+            setJobs(jobResult || []);
         } catch (error) {
             console.error('Failed to fetch artifacts:', error);
         } finally {
@@ -45,16 +53,72 @@ const ClientBuild: React.FC = () => {
         }
     };
 
-    useEffect(() => { fetchArtifacts(); }, []);
+    const withJobAction = async (job: API.BuildJob, action: string, runner: () => Promise<API.MessageResponse>) => {
+        setJobActionLoading((prev) => ({ ...prev, [job.id]: action }));
+        try {
+            const res = await runner();
+            message.success(res?.message || '操作已提交');
+            fetchArtifacts();
+        } catch (err) {
+            if (typeof err === 'string') message.error(err);
+        } finally {
+            setJobActionLoading((prev) => {
+                const next = { ...prev };
+                delete next[job.id];
+                return next;
+            });
+        }
+    };
+
+    const handleCancelJob = (job: API.BuildJob) => {
+        Modal.confirm({
+            title: '取消构建任务',
+            content: `确认取消 ${job.platform}/${job.arch} 构建吗？`,
+            okText: '取消构建',
+            okButtonProps: { danger: true },
+            cancelText: '关闭',
+            onOk: () => withJobAction(job, 'cancel', () => cancelBuildJob(job.id)),
+        });
+    };
+
+    const handleRetryJob = (job: API.BuildJob) => {
+        withJobAction(job, 'retry', () => retryBuildJob(job.id));
+    };
+
+    const handleViewLog = async (job: API.BuildJob) => {
+        setSelectedJob(job);
+        setLogModalOpen(true);
+        setLogLoading(true);
+        setJobLog('');
+        try {
+            const logText = await getBuildJobLogs(job.id);
+            setJobLog(logText || '');
+        } catch (err) {
+            setJobLog('');
+            if (typeof err === 'string') message.error(err);
+        } finally {
+            setLogLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchArtifacts();
+        const timer = setInterval(fetchArtifacts, 5000);
+        const ws = connectWebSocket(() => undefined, undefined, { onReconnect: fetchArtifacts });
+        return () => {
+            clearInterval(timer);
+            ws.close();
+        };
+    }, []);
 
     const handleBuild = async () => {
         try {
             const values = await form.validateFields();
             setBuilding(true);
-            const res = await triggerBuild({ platform: values.platform, arch: values.arch, pack: values.pack });
+            const res = await triggerBuild({ platform: values.platform, arch: values.arch, pack: values.pack, components: values.components });
             message.success(res?.message || '构建请求已提交');
             setBuildModalOpen(false);
-            setTimeout(fetchArtifacts, 2000);
+            fetchArtifacts();
         } catch (err) {
             if (typeof err === 'string') message.error(err);
         } finally {
@@ -95,6 +159,86 @@ const ClientBuild: React.FC = () => {
                 <Button type="link" size="small" icon={<DownloadOutlined />}
                     href={`/release/${record.name}`} target="_blank">下载</Button>
             ),
+        },
+    ];
+
+    const jobColumns: ColumnsType<API.BuildJob> = [
+        {
+            title: '构建目标',
+            key: 'target',
+            render: (_, record) => (
+                <Space direction="vertical" size={2}>
+                    <Text code>{record.platform}/{record.arch}</Text>
+                    <Space wrap size={4}>{(record.components || ['dddd-agent']).map((item) => <Tag key={item}>{item}</Tag>)}</Space>
+                </Space>
+            ),
+        },
+        {
+            title: '状态',
+            dataIndex: 'status',
+            width: 110,
+            render: (status: API.BuildJob['status']) => {
+                const color = status === 'success' ? 'success' : status === 'failed' ? 'error' : status === 'running' ? 'processing' : status === 'canceled' ? 'warning' : 'default';
+                return <Tag color={color}>{status}</Tag>;
+            },
+        },
+        {
+            title: '产物',
+            dataIndex: 'artifact',
+            render: (_artifact: string, record) => {
+                const files = record.artifacts?.length ? record.artifacts : (record.artifact ? [record.artifact] : []);
+                return files.length ? (
+                    <Space direction="vertical" size={2}>
+                        {files.map((artifact) => (
+                            <Button key={artifact} type="link" href={`/release/${artifact}`} target="_blank">{artifact}</Button>
+                        ))}
+                    </Space>
+                ) : '-';
+            },
+        },
+        {
+            title: '日志尾部',
+            dataIndex: 'log_tail',
+            ellipsis: true,
+            render: (logTail: string, record) => (
+                <Text type={record.error ? 'danger' : 'secondary'} style={{ fontSize: 12 }}>
+                    {record.error || logTail?.split('\n').filter(Boolean).slice(-1)[0] || '-'}
+                </Text>
+            ),
+        },
+        {
+            title: '操作',
+            key: 'actions',
+            width: 210,
+            render: (_, record) => {
+                const active = record.status === 'queued' || record.status === 'running';
+                const terminal = !active;
+                return (
+                    <Space size={4}>
+                        <Button type="link" size="small" icon={<FileTextOutlined />} onClick={() => handleViewLog(record)}>
+                            日志
+                        </Button>
+                        {active && (
+                            <Button danger type="link" size="small" icon={<StopOutlined />}
+                                loading={jobActionLoading[record.id] === 'cancel'} onClick={() => handleCancelJob(record)}>
+                                取消
+                            </Button>
+                        )}
+                        {terminal && (
+                            <Button type="link" size="small" icon={<RedoOutlined />}
+                                loading={jobActionLoading[record.id] === 'retry'} onClick={() => handleRetryJob(record)}>
+                                重试
+                            </Button>
+                        )}
+                    </Space>
+                );
+            },
+        },
+        {
+            title: '创建时间',
+            dataIndex: 'created_at',
+            width: 180,
+            render: (value: string) => <Text style={{ fontSize: 12 }}>{value ? new Date(value).toLocaleString('zh-CN') : '-'}</Text>,
         },
     ];
 
@@ -140,6 +284,13 @@ const ClientBuild: React.FC = () => {
                 )}
             </ProCard>
 
+            <ProCard title="构建任务" className="glass-card" style={{ ...cardStyle, marginTop: 16 }}>
+                {jobs.some((job) => job.status === 'queued' || job.status === 'running') && (
+                    <Alert type="info" showIcon style={{ marginBottom: 12 }} message="构建进行中，页面会自动刷新状态" />
+                )}
+                <Table columns={jobColumns} dataSource={jobs} rowKey="id" pagination={false} size="small" />
+            </ProCard>
+
             <Modal title="触发客户端构建" open={buildModalOpen} onOk={handleBuild}
                 onCancel={() => setBuildModalOpen(false)} okText="开始构建" cancelText="取消"
                 confirmLoading={building}>
@@ -163,10 +314,41 @@ const ClientBuild: React.FC = () => {
                             </Form.Item>
                         </Col>
                     </Row>
+                    <Form.Item name="components" label="构建组件" initialValue={['dddd-agent']} rules={[{ required: true }]}>
+                        <Select
+                            mode="multiple"
+                            options={[
+                                { value: 'dddd-agent', label: 'Agent' },
+                                { value: 'dddd-server', label: 'Server' },
+                                { value: 'dddd', label: 'CLI' },
+                                { value: 'server-ui', label: 'Server UI' },
+                            ]}
+                        />
+                    </Form.Item>
                     <Form.Item name="pack" label="UPX 压缩" valuePropName="checked">
                         <Switch checkedChildren="开启" unCheckedChildren="关闭" />
                     </Form.Item>
                 </Form>
+            </Modal>
+
+            <Modal title={selectedJob ? `构建日志 #${selectedJob.id}` : '构建日志'} open={logModalOpen}
+                onCancel={() => setLogModalOpen(false)} footer={null} width={880}>
+                <Spin spinning={logLoading}>
+                    <pre style={{
+                        minHeight: 260,
+                        maxHeight: 520,
+                        overflow: 'auto',
+                        margin: 0,
+                        padding: 16,
+                        background: '#0f172a',
+                        color: '#e2e8f0',
+                        borderRadius: 6,
+                        fontSize: 12,
+                        lineHeight: 1.6,
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word',
+                    }}>{jobLog || '暂无日志'}</pre>
+                </Spin>
             </Modal>
         </div>
     );

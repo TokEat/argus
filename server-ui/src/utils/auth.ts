@@ -37,7 +37,11 @@ export const getTokenClaim = (key: string): string => {
     return typeof value === 'string' ? value : '';
 };
 
-export const getCurrentUserRole = (): UserRole => normalizeRole(getTokenClaim('role'));
+export const getCurrentUserRole = (): UserRole => {
+    const role = normalizeRole(getTokenClaim('role'));
+    if (role !== 'viewer' || getTokenClaim('role') === 'viewer') return role;
+    return normalizeRole(getTokenClaim('role_base'));
+};
 
 export const canAccessRole = (minRole: UserRole = 'viewer', role: string | UserRole = getCurrentUserRole()): boolean => {
     return roleLevel[normalizeRole(role)] >= roleLevel[minRole];

@@ -312,9 +312,12 @@ func main() {
 			db.DB.Where("status = ? AND last_beat < ?", "Alive", cutoff).Find(&deadNodes)
 			for _, n := range deadNodes {
 				log.Printf("[Heartbeat] Agent %s marked as offline.", n.AgentID)
+				now := time.Now()
 				db.DB.Model(&n).Updates(map[string]interface{}{
-					"status":        "Offline",
-					"running_tasks": 0,
+					"status":           "Offline",
+					"running_tasks":    0,
+					"token":            "",
+					"token_revoked_at": &now,
 				})
 
 				// 回收该节点持有的 Running 任务：退回队列重新调度
@@ -412,6 +415,7 @@ func main() {
 
 	// 超时 + 重试守护协程
 	go api.StartTaskTimeoutDaemon(context.Background(), queue)
+	go api.StartAgentLogRetentionDaemon(context.Background())
 
 	// 初始化规则版本号（如果尚未设置）
 	if api.GetCurrentRuleVersion() == "" {

@@ -63,6 +63,14 @@ func (o *OSSClient) UploadFile(localPath, objectKey string) error {
 	return o.bucket.PutObjectFromFile(objectKey, localPath)
 }
 
+// DownloadFile 下载 OSS 对象到本地文件。
+func (o *OSSClient) DownloadFile(objectKey, localPath string) error {
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+		return err
+	}
+	return o.bucket.GetObjectToFile(objectKey, localPath)
+}
+
 // GeneratePresignedURL 生成带签名的临时下载 URL
 func (o *OSSClient) GeneratePresignedURL(objectKey string, expiry time.Duration) (string, error) {
 	url, err := o.bucket.SignURL(objectKey, oss.HTTPGet, int64(expiry.Seconds()))

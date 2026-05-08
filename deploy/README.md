@@ -11,27 +11,28 @@
 在项目根目录下执行以下命令：
 
 ```bash
-./deploy/build-bundle.sh [版本号]
+./deploy/build-bundle.sh v0.1.0
 ```
-*(版本号为可选参数，如 `v1.0.0`，默认不传则为 `latest`)*
+*(版本号为可选参数，默认不传即为 `v0.1.0`)*
 
 **构建脚本将自动执行：**
 1. 构建最新版本的后端 `dddd-server` 与节点守护进程 `dddd-agent`（Linux amd64）。
 2. 构建最新版本的前端控制台（基于 Node + Vite，生成 `server-ui/dist`）。
 3. 预编译数千个散乱的 YAML 漏洞模板，生成紧凑的单文件本地库 `arsenal_seed.db`。
-4. 将所有必要文件打包为 `argus-release-[版本号]-linux-amd64.tar.gz`。
+4. 附带 `production.env.example`、部署/卸载脚本和 Docker 编排文件。
+5. 将所有必要文件打包为 `argus-release-[版本号]-linux-amd64.tar.gz`。
 
 ---
 
 ## 🚀 二、快速部署 (运维/服务器侧)
 
 ### 1. 准备环境
-获取生成的 `argus-release-latest-linux-amd64.tar.gz`，通过 `scp` 或 `sftp` 上传至目标云服务器（如 `/root` 或 `/home/user` 目录）。
+获取生成的 `argus-release-v0.1.0-linux-amd64.tar.gz`，通过 `scp` 或 `sftp` 上传至目标云服务器（如 `/root` 或 `/home/user` 目录）。
 
 ### 2. 解压安装包
 ```bash
-tar -xzf argus-release-latest-linux-amd64.tar.gz
-cd argus-release-latest
+tar -xzf argus-release-v0.1.0-linux-amd64.tar.gz
+cd argus-release-v0.1.0
 ```
 
 ### 3. 一键安装
@@ -47,7 +48,7 @@ sudo ./deploy/setup-server.sh
 1. 检查并安装 `Docker` 和 `docker-compose-plugin`。
 2. 使用 `docker-compose.yml` 启动内置的 PostgreSQL 14 和 RabbitMQ 3。
 3. 等待数据库启动并执行结构表迁移。
-4. 从 `arsenal_seed.db` 导入所有核心规则资产。
+4. 从 `arsenal_seed.db` 导入所有核心规则资产；该文件是必需部署资产，导入失败会终止安装。
 5. 将 `dddd-server` 注册为系统级守护进程 (`systemd`)。
 
 #### 可选：自定义安装参数
@@ -61,6 +62,8 @@ sudo ./deploy/setup-server.sh \
   --jwt-secret "my-jwt-login-secret-key" \
   --encrypt-key "base64-32-byte-secret-key"
 ```
+
+发布包内的 `deploy/production.env.example` 提供了数据库、RabbitMQ、HTTP/gRPC 端口、Agent PSK、JWT Secret、加密密钥、管理员账号、AI Key 与云 AK/SK 的最小生产模板。生产环境必须显式设置强密钥和管理员密码，开发默认值不得直接用于公网部署。
 
 ---
 
@@ -84,6 +87,8 @@ sudo ./deploy/setup-server.sh \
 
 ### Agent 节点接入
 当您在其它机器上启动扫描子节点时，需将分配给您的 `Agent PSK` 配置在目标机器节点中，节点即可通过上述的 gRPC 或 API 端口主动连接母体。
+
+CloudManagement、OSS 自动弹容和真实云资源回收在未完成真实云账号 smoke 前按 beta 能力发布。发布前验收步骤见 [发布检查清单](../docs/release-checklist.md)。
 
 ---
 

@@ -18,7 +18,7 @@ import {
     listUsers, getCloudAccountBindings, updateCloudAccountBindings
 } from '../services/api';
 import { useAutoContext } from '../contexts/GlobalAIContext';
-import { getTokenClaim } from '../utils/auth';
+import { canAccessRole, getCurrentUserRole } from '../utils/auth';
 import gsap from 'gsap';
 import NetworkCanvas from '../components/NetworkCanvas';
 
@@ -225,8 +225,8 @@ const CloudManagement: React.FC = () => {
     const [modalRegion, setModalRegion] = useState<string>('');
     const [modalRegions, setModalRegions] = useState<{region_id: string; local_name: string; endpoint: string}[]>([]);
     const [modalRegionsLoading, setModalRegionsLoading] = useState(false);
-    const currentRole = useMemo(() => getTokenClaim('role') || 'viewer', []);
-    const isAdmin = currentRole === 'admin';
+    const currentRole = useMemo(() => getCurrentUserRole(), []);
+    const isAdmin = canAccessRole('admin', currentRole);
 
     const canManageAccount = useCallback((account?: API.CloudAccount | null) => {
         if (!account) return false;
