@@ -1,10 +1,22 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Alert, Button, DatePicker, Empty, Form, Input, InputNumber, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { Alert, Button, DatePicker, Empty, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { FileTextOutlined, DownloadOutlined, ReloadOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
-import { getAgentLogRetention, getAgentLogSummary, getAgentLogs, getNodes, updateAgentLogRetention } from '../services/api';
+import {
+    archiveAgentLogs,
+    connectWebSocket,
+    createAgentLogAlertRule,
+    deleteAgentLogAlertRule,
+    getAgentLogRetention,
+    getAgentLogSummary,
+    getAgentLogs,
+    getNodes,
+    listAgentLogAlertRules,
+    listAgentLogAlerts,
+    updateAgentLogRetention,
+} from '../services/api';
 
 const { Title, Text } = Typography;
 const { RangePicker } = DatePicker;
@@ -60,9 +72,13 @@ const AgentLogs: React.FC = () => {
     const [nodes, setNodes] = useState<API.AgentNode[]>([]);
     const [logs, setLogs] = useState<API.AgentLog[]>([]);
     const [summary, setSummary] = useState<API.AgentLogSummary | null>(null);
+    const [alertRules, setAlertRules] = useState<API.AgentLogAlertRule[]>([]);
+    const [alertEvents, setAlertEvents] = useState<API.AgentLogAlertEvent[]>([]);
     const [retentionDays, setRetentionDays] = useState<number>(14);
     const [retentionSaving, setRetentionSaving] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [alertModalOpen, setAlertModalOpen] = useState(false);
+    const [alertForm] = Form.useForm();
 
     const selectedAgentID = Form.useWatch('agent_id', form);
 
@@ -83,6 +99,15 @@ const AgentLogs: React.FC = () => {
     const fetchRetention = async () => {
         const result = await getAgentLogRetention();
         setRetentionDays(result.retention_days || 14);
+    };
+
+    const fetchAlerts = async () => {
+        const [rules, events] = await Promise.all([
+            listAgentLogAlertRules(),
+            listAgentLogAlerts({ agent_id: form.getFieldValue('agent_id'), limit: 20 }),
+        ]);
+        setAlertRules(rules || []);
+        setAlertEvents(events || []);
     };
 
     const fetchSummary = async (values = form.getFieldsValue()) => {
@@ -115,6 +140,7 @@ const AgentLogs: React.FC = () => {
             });
             setLogs(result || []);
             await fetchSummary(values);
+            await fetchAlerts();
         } catch (error) {
             message.error(typeof error === 'string' ? error : '加载 Agent 日志失败');
         } finally {
@@ -125,6 +151,18 @@ const AgentLogs: React.FC = () => {
     useEffect(() => {
         fetchNodes().catch(() => message.error('加载节点失败'));
         fetchRetention().catch(() => undefined);
+        fetchAlerts().catch(() => undefined);
+        const ws = connectWebSocket(() => undefined, undefined, {
+            onReconnect: () => {
+                fetchNodes().catch(() => undefined);
+                fetchRetention().catch(() => undefined);
+                fetchAlerts().catch(() => undefined);
+                if (form.getFieldValue('agent_id')) {
+                    fetchLogs().catch(() => undefined);
+                }
+            },
+        });
+        return () => ws.close();
     }, []);
 
     useEffect(() => {
@@ -144,6 +182,24 @@ const AgentLogs: React.FC = () => {
             message.error(typeof error === 'string' ? error : '保存日志保留策略失败');
         } finally {
             setRetentionSaving(false);
+        }
+    };
+
+    const handleCreateAlertRule = async () => {
+        const values = await alertForm.validateFields();
+        await createAgentLogAlertRule(values);
+        message.success('告警规则已创建');
+        setAlertModalOpen(false);
+        alertForm.resetFields();
+        fetchAlerts();
+    };
+
+    const handleArchiveLogs = async () => {
+        try {
+            const result = await archiveAgentLogs();
+            message.success(`归档完成：${result.log_count} 条日志 -> ${result.storage_key || '-'}`);
+        } catch (error) {
+            message.error(typeof error === 'string' ? error : '归档失败');
         }
     };
 
@@ -197,6 +253,8 @@ const AgentLogs: React.FC = () => {
                     <InputNumber min={1} max={365} value={retentionDays} onChange={(value) => setRetentionDays(value || 14)} style={{ width: 86 }} />
                     <Text type="secondary">天</Text>
                     <Button onClick={handleSaveRetention} loading={retentionSaving}>保存策略</Button>
+                    <Button onClick={() => setAlertModalOpen(true)}>告警规则</Button>
+                    <Button onClick={handleArchiveLogs}>归档昨日</Button>
                     <Button icon={<DownloadOutlined />} onClick={downloadLogs} disabled={logs.length === 0}>
                         导出
                     </Button>
@@ -269,6 +327,29 @@ const AgentLogs: React.FC = () => {
                 </Space>
             )}
 
+            {(alertRules.length > 0 || alertEvents.length > 0) && (
+                <Space direction="vertical" size={8} style={{ width: '100%', marginBottom: 16 }}>
+                    <Space wrap>
+                        {alertRules.map((rule) => (
+                            <Tag key={rule.id} closable onClose={(e) => {
+                                e.preventDefault();
+                                deleteAgentLogAlertRule(rule.id).then(fetchAlerts);
+                            }}>
+                                {rule.name}: {rule.level || '*'} {rule.keyword || ''}
+                            </Tag>
+                        ))}
+                    </Space>
+                    {alertEvents.length > 0 && (
+                        <Alert
+                            type="error"
+                            showIcon
+                            message={`命中告警 ${alertEvents.length} 条`}
+                            description={alertEvents.slice(0, 3).map((event) => `[${event.level}] ${event.agent_id}: ${event.message}`).join('；')}
+                        />
+                    )}
+                </Space>
+            )}
+
             {nodes.length === 0 ? (
                 <Empty description="暂无 Agent 节点" />
             ) : (
@@ -281,6 +362,23 @@ const AgentLogs: React.FC = () => {
                     scroll={{ y: 560 }}
                 />
             )}
+
+            <Modal title="新增日志告警规则" open={alertModalOpen} onOk={handleCreateAlertRule} onCancel={() => setAlertModalOpen(false)}>
+                <Form form={alertForm} layout="vertical" initialValues={{ enabled: true }}>
+                    <Form.Item name="name" label="名称" rules={[{ required: true }]}>
+                        <Input />
+                    </Form.Item>
+                    <Form.Item name="agent_id" label="Agent">
+                        <Select allowClear options={nodes.map((node) => ({ label: node.AgentID, value: node.AgentID }))} />
+                    </Form.Item>
+                    <Form.Item name="level" label="级别">
+                        <Select allowClear options={['ERROR', 'WARN', 'INFO', 'DEBUG'].map((level) => ({ label: level, value: level }))} />
+                    </Form.Item>
+                    <Form.Item name="keyword" label="关键词">
+                        <Input />
+                    </Form.Item>
+                </Form>
+            </Modal>
         </div>
     );
 };

@@ -8,12 +8,12 @@
 - 请求上下文：`TenantMiddleware` 校验 JWT，并把 `tenant_id` 和 `role` 注入 Gin Context。
 - 数据边界：业务查询、更新、删除都必须带 `tenant_id = 当前租户` 条件；默认租户为 `default`。
 - 用户管理：管理员只能创建、修改、删除当前租户用户，不能通过请求体创建其他租户用户。
-- Agent 内部接口：Agent 同步命令和规则清单使用 PSK 鉴权，不代表普通用户跨租户访问能力。
+- Agent 内部接口：Agent 同步命令和规则清单使用 `x-agent-id` + `x-agent-token` session 鉴权，按注册节点绑定真实租户；PSK 仅用于 gRPC/bootstrap 引导。
 - 默认兜底：RBAC 权限表未声明的新接口默认要求 `admin`，避免新增接口误开放。
 
 ## 角色层级
 
-角色采用固定三档层级：
+内置角色采用三档层级；租户可在此基础上创建自定义角色，并通过 `permissions` 列表限制可访问接口：
 
 | 角色 | 层级 | 定位 |
 | --- | --- | --- |
@@ -31,7 +31,7 @@
 | 仪表盘、项目、任务、任务结果 | 查看被授权项目 | 查看/操作自己创建或被分发项目 | 全租户项目 |
 | 项目创建 | - | 允许，默认归属自己 | 允许，可创建后分发给 operator |
 | 项目归档、删除 | - | 仅自己创建的项目 | 全租户项目 |
-| 项目分发 | - | - | 可绑定当前租户 active operator 到指定项目 |
+| 项目分发 | - | 项目 owner 可维护成员 | 可绑定当前租户 active 用户到指定项目 |
 | 任务下发、追加、取消、删除 | - | 仅可访问项目内允许 | 全租户项目内允许 |
 | 节点状态 | 查看 | 查看 + 删除节点记录 + 清理离线节点 | 全部 |
 | 队列深度、Agent 日志 | - | 查看 | 查看 |
@@ -39,7 +39,8 @@
 | 字典配置 | 查看 | 创建、编辑、删除 | 创建、编辑、删除 |
 | 漏洞报表 | 导出 | 导出 | 导出 |
 | AI 分析、调试、全局问答 | - | 允许 | 允许 |
-| 用户与角色管理 | - | - | 允许 |
+| 用户列表 | - | 查看 active 用户用于项目成员选择 | 允许管理用户 |
+| 角色管理 | - | - | 允许创建自定义角色和权限矩阵 |
 | MCP Key、API Key、AI 配置 | - | - | 允许 |
 | 云账号、伸缩策略、云实例、OSS 分发 | - | 使用自己创建或被绑定的 AK/SK | 全租户 AK/SK 管理 + 用户绑定 |
 | 客户端构建 | - | - | 允许 |
@@ -65,6 +66,8 @@
 - `POST /tasks`、`POST /tasks/:id/append`、`POST /tasks/:id/cancel`、`DELETE /tasks/:id`
 - `GET /queue/depth`
 - `GET /agents/:id/logs`
+- `GET /users`：用于项目成员选择
+- `GET /projects/:id/members`、`PUT /projects/:id/members`：仍需项目 owner 或 admin 通过业务校验
 - `DELETE /nodes/:id`、`POST /nodes/clean`
 - `POST /arsenals/*`、`DELETE /arsenals/*`
 - `POST /dictionaries/*`、`PUT /dictionaries/*`、`DELETE /dictionaries/*`
@@ -74,16 +77,23 @@
 
 ### admin only
 
-- `GET /users`、`POST /users`、`PUT /users/:id`、`DELETE /users/:id`
+- `POST /users`、`PUT /users/:id`、`DELETE /users/:id`
+- `GET /roles`、`POST /roles`、`PUT /roles/:name`、`DELETE /roles/:name`
 - `GET /mcp/keys`、`POST /mcp/keys`、`DELETE /mcp/keys/:id`
 - `GET /config/api-keys`、`PUT /config/api-keys`
 - `GET /ai/config`、`PUT /ai/config`、`GET /ai/models`、`POST /ai/test`
-- `GET /build/artifacts`、`POST /build/client`
+- `GET /build/artifacts`、`POST /build/client`、`POST /build/jobs/:id/cancel`、`POST /build/jobs/:id/retry`
+- `POST /nodes/:id/revoke-token`
 - `POST /arsenals/:type/:filename/approve`
 - `POST /arsenals/:type/:filename/rollback`
 - `GET /cloud/accounts/:id/bindings`、`PUT /cloud/accounts/:id/bindings`
-- `GET /projects/:id/members`、`PUT /projects/:id/members`
 
-## 暂未覆盖
+## 项目成员角色
 
-- 尚未提供可自定义的 `roles`、`permissions`、`role_bindings` 管理表；当前角色是固定三档。
+项目成员支持 `viewer`、`operator`、`owner` 三档。旧版 `{ "user_ids": [...] }` 请求仍兼容为 `operator` 成员；新版推荐使用 `{ "members": [{ "user_id": "1", "role": "viewer" }] }`。
+
+## 当前边界
+
+- 自定义角色是租户级授权，不替代项目成员的项目级访问控制。
+- 项目成员的 `owner` 可维护项目成员；`viewer/operator` 只能访问或操作自己被授权的项目范围。
+- 未在 RBAC 权限表中声明的新接口默认要求 `admin`。

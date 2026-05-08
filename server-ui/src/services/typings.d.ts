@@ -44,9 +44,15 @@ declare namespace API {
     Description: string;
     Status: string;
     owner_username?: string;
-    access_level?: 'admin' | 'owner' | 'member';
+    access_level?: 'admin' | 'owner' | 'operator' | 'viewer' | 'member';
     member_user_ids?: string[];
+    members?: ProjectMember[];
     CreatedAt: string;
+  }
+
+  interface ProjectMember {
+    user_id: string;
+    role: 'viewer' | 'operator' | 'owner';
   }
 
   // ======================== Task ========================
@@ -81,6 +87,7 @@ declare namespace API {
     priority?: number;
     timeout_sec?: number;
     agent_selector?: Record<string, string>;
+    agent_selector_rules?: AgentSelectorRules;
   }
 
   /** 调度选择器预览 (POST /api/v1/tasks/preview-selector) */
@@ -89,6 +96,12 @@ declare namespace API {
     targets: string | string[];
     config?: Record<string, unknown> | string;
     agent_selector?: Record<string, string>;
+    agent_selector_rules?: AgentSelectorRules;
+  }
+
+  interface AgentSelectorRules {
+    match?: Record<string, string | string[]>;
+    not_match?: Record<string, string | string[]>;
   }
 
   interface TaskSelectorPreview {
@@ -105,8 +118,11 @@ declare namespace API {
     target_count: number;
     batch_count: number;
     selector: Record<string, string>;
+    selector_rules?: AgentSelectorRules;
     matched_nodes: number;
     available_slots: number;
+    immediate_batches?: number;
+    waiting_batches?: number;
     reasons: string[];
     nodes: TaskSelectorPreviewNode[];
   }
@@ -177,6 +193,9 @@ declare namespace API {
     IP: string;
     Status: string;        // Alive, Offline
     Token: string;
+    TokenExpiresAt?: string;
+    TokenRevokedAt?: string;
+    LastTokenRotatedAt?: string;
     Tags: string;          // JSON: 节点标签
     Version: string;       // Agent 版本
     Capacity: number;      // 并发容量
@@ -719,6 +738,7 @@ declare namespace API {
     platform: string;
     arch: string;
     pack?: boolean;
+    components?: string[];
   }
 
   interface BuildJob {
@@ -726,8 +746,10 @@ declare namespace API {
     platform: string;
     arch: string;
     pack: boolean;
+    components?: string[];
     status: 'queued' | 'running' | 'success' | 'failed' | 'canceled';
     artifact?: string;
+    artifacts?: string[];
     log_tail?: string;
     error?: string;
     started_at?: string;
@@ -802,6 +824,40 @@ declare namespace API {
   interface AgentLogRetention {
     retention_days: number;
     deleted?: number;
+  }
+
+  interface AgentLogAlertRule {
+    id: number;
+    tenant_id: string;
+    name: string;
+    agent_id?: string;
+    level?: string;
+    keyword?: string;
+    enabled: boolean;
+    created_at: string;
+    updated_at: string;
+  }
+
+  interface AgentLogAlertEvent {
+    id: number;
+    tenant_id: string;
+    rule_id: number;
+    agent_id: string;
+    level: string;
+    message: string;
+    log_id: number;
+    created_at: string;
+  }
+
+  interface AgentLogArchive {
+    id: number;
+    tenant_id: string;
+    day: string;
+    storage_key: string;
+    log_count: number;
+    status: string;
+    error?: string;
+    created_at: string;
   }
 
   // ======================== EXP 规则 ========================

@@ -19,6 +19,10 @@ import (
 	"github.com/user/dddd-server/internal/scheduler"
 )
 
+func ptrTime(v time.Time) *time.Time {
+	return &v
+}
+
 func TestShouldAgentReloadRules(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -76,8 +80,8 @@ func TestTenantRolePermissionMatrix(t *testing.T) {
 		{method: "GET", path: "/api/v1/tasks/task-1", want: "viewer"},
 		{method: "GET", path: "/api/v1/reports/export/vulns", want: "viewer"},
 		{method: "POST", path: "/api/v1/projects", want: "operator"},
-		{method: "GET", path: "/api/v1/projects/proj-1/members", want: "admin"},
-		{method: "PUT", path: "/api/v1/projects/proj-1/members", want: "admin"},
+		{method: "GET", path: "/api/v1/projects/proj-1/members", want: "operator"},
+		{method: "PUT", path: "/api/v1/projects/proj-1/members", want: "operator"},
 		{method: "POST", path: "/api/v1/tasks", want: "operator"},
 		{method: "POST", path: "/api/v1/tasks/preview-selector", want: "operator"},
 		{method: "POST", path: "/api/v1/tasks/task-1/cancel", want: "operator"},
@@ -93,7 +97,7 @@ func TestTenantRolePermissionMatrix(t *testing.T) {
 		{method: "POST", path: "/api/v1/exploits/12/approve", want: "admin"},
 		{method: "POST", path: "/api/v1/exploits/12/risk-waiver", want: "admin"},
 		{method: "POST", path: "/api/v1/exploit-runs", want: "operator"},
-		{method: "GET", path: "/api/v1/users", want: "admin"},
+		{method: "GET", path: "/api/v1/users", want: "operator"},
 		{method: "GET", path: "/api/v1/roles", want: "admin"},
 		{method: "POST", path: "/api/v1/roles", want: "admin"},
 		{method: "PUT", path: "/api/v1/roles/security-reviewer", want: "admin"},
@@ -369,10 +373,11 @@ func TestNormalizeUserRoleAndStatus(t *testing.T) {
 func TestValidateAgentSessionBindsTenantAndRejectsMismatch(t *testing.T) {
 	store := setupAITestDB(t)
 	if err := store.Create(&db.Node{
-		TenantID: "tenant-a",
-		AgentID:  "agent-a",
-		Token:    "session-token",
-		Status:   "Alive",
+		TenantID:       "tenant-a",
+		AgentID:        "agent-a",
+		Token:          "session-token",
+		Status:         "Alive",
+		TokenExpiresAt: ptrTime(time.Now().Add(time.Hour)),
 	}).Error; err != nil {
 		t.Fatalf("create node: %v", err)
 	}
@@ -417,6 +422,39 @@ func TestValidateAgentSessionBindsTenantAndRejectsMismatch(t *testing.T) {
 	c.Request.Header.Set("x-agent-token", "session-token")
 	if validateAgentSession(c) {
 		t.Fatalf("expected offline agent session to be rejected")
+	}
+
+	if err := store.Model(&db.Node{}).Where("agent_id = ?", "agent-a").Updates(map[string]interface{}{
+		"status":           "Alive",
+		"token":            "expired-token",
+		"token_expires_at": time.Now().Add(-time.Minute),
+		"token_revoked_at": nil,
+	}).Error; err != nil {
+		t.Fatalf("expire token: %v", err)
+	}
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/agents/agent-a/commands", nil)
+	c.Request.Header.Set("x-agent-id", "agent-a")
+	c.Request.Header.Set("x-agent-token", "expired-token")
+	if ok := validateAgentSession(c); ok {
+		t.Fatalf("expected expired agent session to be rejected")
+	}
+
+	if err := store.Model(&db.Node{}).Where("agent_id = ?", "agent-a").Updates(map[string]interface{}{
+		"token":            "revoked-token",
+		"token_expires_at": time.Now().Add(time.Hour),
+		"token_revoked_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("revoke token: %v", err)
+	}
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/agents/agent-a/commands", nil)
+	c.Request.Header.Set("x-agent-id", "agent-a")
+	c.Request.Header.Set("x-agent-token", "revoked-token")
+	if ok := validateAgentSession(c); ok {
+		t.Fatalf("expected revoked agent session to be rejected")
 	}
 }
 
@@ -496,6 +534,52 @@ func TestPreviewTaskSelectorUsesEffectiveTargetType(t *testing.T) {
 	if len(resp.Groups) != 1 || resp.Groups[0].TargetType != "url" || resp.Groups[0].MatchedNodes != 1 || resp.Groups[0].AvailableSlots != 2 {
 		t.Fatalf("expected grouped url preview with one node and two slots, got %+v", resp.Groups)
 	}
+
+	if err := store.Create(&db.Node{
+		TenantID: "tenant-a",
+		AgentID:  "agent-region",
+		Status:   "Alive",
+		Tags:     `{"cloud":"aliyun","target_type":"url","region":"cn-hangzhou"}`,
+		Capacity: 1,
+	}).Error; err != nil {
+		t.Fatalf("create rules matching node: %v", err)
+	}
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Set("tenant", "tenant-a")
+	c.Set("role", "admin")
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/tasks/preview-selector", strings.NewReader(`{
+		"project_id":"project-1",
+		"targets":"https://example.com",
+		"config":{},
+		"agent_selector":{"cloud":"aliyun"},
+		"agent_selector_rules":{"match":{"region":["cn-hangzhou","cn-shanghai"]},"not_match":{"cloud":"tencent"}}
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	previewTaskSelector(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected rules preview status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	resp = struct {
+		MatchedNodes   int                 `json:"matched_nodes"`
+		AvailableSlots int                 `json:"available_slots"`
+		Selectors      []map[string]string `json:"effective_selectors"`
+		Groups         []struct {
+			TargetType     string            `json:"target_type"`
+			TargetCount    int               `json:"target_count"`
+			MatchedNodes   int               `json:"matched_nodes"`
+			AvailableSlots int               `json:"available_slots"`
+			Selector       map[string]string `json:"selector"`
+			Reasons        []string          `json:"reasons"`
+		} `json:"groups"`
+	}{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode rules preview response: %v", err)
+	}
+	if resp.MatchedNodes != 1 || resp.AvailableSlots != 1 {
+		t.Fatalf("expected selector rules to narrow matching nodes to one free slot, got %+v", resp)
+	}
 }
 
 func TestTaskDetailIncludesReasonStats(t *testing.T) {
@@ -560,6 +644,17 @@ func TestBuildJobHelpers(t *testing.T) {
 	}
 	if got := truncateBuildLog("abcdef", 3); got != "def" {
 		t.Fatalf("unexpected truncated log: %s", got)
+	}
+	components, err := normalizeBuildComponents([]string{"server-ui", "dddd-server", "dddd-server"})
+	if err != nil {
+		t.Fatalf("normalize components: %v", err)
+	}
+	if strings.Join(components, ",") != "server-ui,dddd-server" {
+		t.Fatalf("unexpected normalized components: %+v", components)
+	}
+	artifacts := expectedBuildArtifacts([]string{"dddd-agent", "server-ui"}, "linux", "amd64")
+	if strings.Join(artifacts, ",") != "dddd-agent-linux-amd64,server-ui-dist.tar.gz" {
+		t.Fatalf("unexpected multi-component artifacts: %+v", artifacts)
 	}
 }
 

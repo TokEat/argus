@@ -93,8 +93,11 @@ export async function getProjectMembers(id: string): Promise<{ project_id: strin
     return request.get(`/projects/${id}/members`);
 }
 
-export async function updateProjectMembers(id: string, userIds: string[]): Promise<API.MessageResponse> {
-    return request.put(`/projects/${id}/members`, { user_ids: userIds });
+export async function updateProjectMembers(id: string, userIdsOrMembers: string[] | API.ProjectMember[]): Promise<API.MessageResponse> {
+    if (userIdsOrMembers.length > 0 && typeof userIdsOrMembers[0] === 'object') {
+        return request.put(`/projects/${id}/members`, { members: userIdsOrMembers });
+    }
+    return request.put(`/projects/${id}/members`, { user_ids: userIdsOrMembers as string[] });
 }
 
 // ===========================
@@ -217,6 +220,10 @@ export async function getNodes(): Promise<API.AgentNode[]> {
 
 export async function deleteNode(agentId: string): Promise<API.MessageResponse> {
     return request.delete(`/nodes/${encodeURIComponent(agentId)}`);
+}
+
+export async function revokeNodeToken(agentId: string): Promise<API.MessageResponse> {
+    return request.post(`/nodes/${encodeURIComponent(agentId)}/revoke-token`);
 }
 
 export async function cleanOfflineNodes(): Promise<{ status: string; count: number }> {
@@ -470,26 +477,38 @@ export async function saveApiKeysConfig(data: API.ApiKeyEntry[]): Promise<API.Me
 export function connectWebSocket(
     onMessage: (data: unknown) => void,
     onStatusChange?: (connected: boolean) => void,
+    options?: { onReconnect?: () => void },
 ): WebSocket {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const token = localStorage.getItem('token');
-    const url = `${protocol}//${window.location.host}/api/v1/ws?token=${token}`;
 
     let reconnectDelay = 2000;
     const maxDelay = 30000;
     let destroyed = false;
+    let lastEventId = 0;
+    let openedOnce = false;
 
     function connect(): WebSocket {
+        const params = new URLSearchParams();
+        if (token) params.set('token', token);
+        if (lastEventId > 0) params.set('last_event_id', String(lastEventId));
+        const url = `${protocol}//${window.location.host}/api/v1/ws?${params.toString()}`;
         const ws = new WebSocket(url);
 
         ws.onopen = () => {
+            const reconnecting = openedOnce;
+            openedOnce = true;
             reconnectDelay = 2000; // 连接成功后重置退避
             onStatusChange?.(true);
+            if (reconnecting) options?.onReconnect?.();
         };
 
         ws.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
+                if (typeof data?.id === 'number') {
+                    lastEventId = Math.max(lastEventId, data.id);
+                }
                 onMessage(data);
             } catch {
                 // ignore malformed messages
@@ -880,6 +899,26 @@ export async function getAgentLogRetention(): Promise<API.AgentLogRetention> {
 
 export async function updateAgentLogRetention(retention_days: number): Promise<API.AgentLogRetention> {
     return request.put('/agent-logs/retention', { retention_days });
+}
+
+export async function listAgentLogAlertRules(): Promise<API.AgentLogAlertRule[]> {
+    return request.get('/agent-logs/alert-rules');
+}
+
+export async function createAgentLogAlertRule(data: Partial<API.AgentLogAlertRule>): Promise<API.AgentLogAlertRule> {
+    return request.post('/agent-logs/alert-rules', data);
+}
+
+export async function deleteAgentLogAlertRule(id: number): Promise<API.MessageResponse> {
+    return request.delete(`/agent-logs/alert-rules/${id}`);
+}
+
+export async function listAgentLogAlerts(params?: { agent_id?: string; limit?: number }): Promise<API.AgentLogAlertEvent[]> {
+    return request.get('/agent-logs/alerts', { params });
+}
+
+export async function archiveAgentLogs(day?: string): Promise<API.AgentLogArchive> {
+    return request.post('/agent-logs/archive', undefined, { params: day ? { day } : {} });
 }
 
 // ===========================

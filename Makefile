@@ -1,4 +1,4 @@
-.PHONY: cli agent server legacy all clean docker infra-up infra-down infra-logs db-init db-migrate db-verify setup-local smoke-local test coverage frontend-smoke cloud-smoke lint ci
+.PHONY: cli agent server legacy all clean docker infra-up infra-down infra-logs db-init db-migrate db-verify setup-local smoke-local test coverage frontend-smoke cloud-smoke release-artifacts lint ci
 
 COMPOSE_FILE := server/deploy/docker-compose.yml
 DOCKER_COMPOSE := docker compose -f $(COMPOSE_FILE)
@@ -76,6 +76,9 @@ frontend-smoke:
 
 cloud-smoke:
 	cd server && go test ./internal/api -run TestCloudProviderMockSmoke -count=1
+
+release-artifacts:
+	./deploy/build-bundle.sh v0.1.0
 
 lint:
 	npm --prefix server-ui run lint

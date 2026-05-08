@@ -73,6 +73,7 @@ const ProjectManagement: React.FC = () => {
     const [memberModalOpen, setMemberModalOpen] = useState(false);
     const [memberProject, setMemberProject] = useState<API.Project | null>(null);
     const [memberUserIds, setMemberUserIds] = useState<string[]>([]);
+    const [memberKeys, setMemberKeys] = useState<string[]>([]);
     const [memberSaving, setMemberSaving] = useState(false);
 
     const fetchProjects = async () => {
@@ -93,12 +94,11 @@ const ProjectManagement: React.FC = () => {
     }, []);
 
     const fetchTenantUsers = async () => {
-        if (!isAdmin) return [];
         try {
             const users = await listUsers();
-            const operators = (users || []).filter((u) => u.status === 'active' && u.role === 'operator');
-            setTenantUsers(operators);
-            return operators;
+            const activeUsers = (users || []).filter((u) => u.status === 'active');
+            setTenantUsers(activeUsers);
+            return activeUsers;
         } catch (error) {
             console.error('Failed to fetch tenant users:', error);
             return [];
@@ -196,14 +196,18 @@ const ProjectManagement: React.FC = () => {
     };
 
     const handleOpenMembers = async (project: API.Project) => {
-        if (!isAdmin) return;
+        if (!canManageProject(project)) return;
         setMemberProject(project);
         setMemberUserIds(project.member_user_ids || []);
+        setMemberKeys((project.members || []).filter((m) => m.role !== 'owner').map((m) => `${m.user_id}:${m.role}`));
         setMemberModalOpen(true);
         if (tenantUsers.length === 0) fetchTenantUsers();
         try {
             const res = await getProjectMembers(project.ID);
             setMemberUserIds((res.user_ids || []).map(String));
+            setMemberKeys(((res as { members?: API.ProjectMember[] }).members || [])
+                .filter((m) => m.role !== 'owner')
+                .map((m) => `${m.user_id}:${m.role}`));
         } catch (error) {
             message.error(typeof error === 'string' ? error : '加载项目成员失败');
         }
@@ -213,7 +217,11 @@ const ProjectManagement: React.FC = () => {
         if (!memberProject) return;
         setMemberSaving(true);
         try {
-            await updateProjectMembers(memberProject.ID, memberUserIds);
+            const members = memberKeys.map((key) => {
+                const [user_id, role] = key.split(':') as [string, API.ProjectMember['role']];
+                return { user_id, role };
+            });
+            await updateProjectMembers(memberProject.ID, members.length > 0 ? members : memberUserIds);
             message.success('项目分发已更新');
             setMemberModalOpen(false);
             setMemberProject(null);
@@ -413,10 +421,10 @@ const ProjectManagement: React.FC = () => {
                             <Input.TextArea rows={4} placeholder="项目的目标范围或备注说明" />
                         </Form.Item>
                         {isAdmin && (
-                            <Form.Item name="member_user_ids" label="分发给操作员">
+                        <Form.Item name="member_user_ids" label="分发给操作员">
                                 <Select
                                     mode="multiple"
-                                    placeholder="选择可参与该项目的 operator"
+                                    placeholder="选择可参与该项目的用户"
                                     options={tenantUsers.map((u) => ({ label: u.username, value: String(u.id) }))}
                                 />
                             </Form.Item>
@@ -425,7 +433,7 @@ const ProjectManagement: React.FC = () => {
                 </Modal>
             )}
 
-            {isAdmin && (
+            {(isAdmin || memberProject?.access_level === 'owner') && (
                 <Modal
                     title={`项目分发${memberProject ? ` - ${memberProject.Name}` : ''}`}
                     open={memberModalOpen}
@@ -437,10 +445,14 @@ const ProjectManagement: React.FC = () => {
                     <Select
                         mode="multiple"
                         style={{ width: '100%', marginTop: 12 }}
-                        placeholder="选择可参与该项目的 operator"
-                        value={memberUserIds}
-                        onChange={setMemberUserIds}
-                        options={tenantUsers.map((u) => ({ label: u.username, value: String(u.id) }))}
+                        placeholder="选择项目成员及权限"
+                        value={memberKeys}
+                        onChange={setMemberKeys}
+                        options={tenantUsers.flatMap((u) => [
+                            { label: `${u.username} - viewer`, value: `${u.id}:viewer` },
+                            { label: `${u.username} - operator`, value: `${u.id}:operator` },
+                            { label: `${u.username} - owner`, value: `${u.id}:owner` },
+                        ])}
                     />
                 </Modal>
             )}

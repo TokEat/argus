@@ -43,6 +43,7 @@ vi.mock('../services/api', () => ({
         reasons: [],
         effective_selectors: [{ cloud: 'aliyun', target_type: 'all' }],
     }),
+    connectWebSocket: vi.fn(() => ({ close: vi.fn() })),
     deleteTask: vi.fn(),
     cancelTask: vi.fn(),
     getTaskDetail: vi.fn(),

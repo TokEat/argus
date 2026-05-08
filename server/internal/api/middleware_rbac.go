@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"sort"
 	"strconv"
@@ -65,38 +66,45 @@ var permissionRules = map[string]string{
 	"GET:/ws":                        "viewer",
 
 	// 日常操作：operator 可创建项目、下发/调整任务、维护草稿规则与字典。
-	"GET:/queue/depth":                "operator",
-	"GET:/agents/*/logs":              "operator",
-	"POST:/projects":                  "operator",
-	"PUT:/projects/*":                 "operator",
-	"DELETE:/projects/*":              "operator",
-	"GET:/projects/*/stats":           "operator",
-	"POST:/tasks":                     "operator",
-	"POST:/tasks/preview-selector":    "operator",
-	"POST:/tasks/*/append":            "operator",
-	"POST:/tasks/*/cancel":            "operator",
-	"DELETE:/tasks/*":                 "operator",
-	"DELETE:/nodes/*":                 "operator",
-	"POST:/nodes/clean":               "operator",
-	"POST:/arsenals/*":                "operator",
-	"POST:/arsenals/ai/analyze":       "operator",
-	"DELETE:/arsenals/*":              "operator",
-	"POST:/dictionaries/*":            "operator",
-	"PUT:/dictionaries/*":             "operator",
-	"DELETE:/dictionaries/*":          "operator",
-	"POST:/ai/arsenal/analyze":        "operator",
-	"POST:/ai/arsenal/analyze/stream": "operator",
-	"POST:/ai/chat":                   "operator",
-	"POST:/ai/actions/confirm":        "operator",
-	"GET:/ai/copilot/prompts":         "operator",
-	"GET:/ai/tool-invocations":        "operator",
-	"GET:/agent-logs/summary":         "operator",
-	"GET:/agent-logs/retention":       "operator",
-	"PUT:/agent-logs/retention":       "admin",
-	"GET:/cloud/*":                    "operator",
-	"POST:/cloud/*":                   "operator",
-	"PUT:/cloud/*":                    "operator",
-	"DELETE:/cloud/*":                 "operator",
+	"GET:/queue/depth":                 "operator",
+	"GET:/agents/*/logs":               "operator",
+	"POST:/projects":                   "operator",
+	"PUT:/projects/*":                  "operator",
+	"DELETE:/projects/*":               "operator",
+	"GET:/projects/*/stats":            "operator",
+	"POST:/tasks":                      "operator",
+	"POST:/tasks/preview-selector":     "operator",
+	"POST:/tasks/*/append":             "operator",
+	"POST:/tasks/*/cancel":             "operator",
+	"DELETE:/tasks/*":                  "operator",
+	"DELETE:/nodes/*":                  "operator",
+	"POST:/nodes/*/revoke-token":       "admin",
+	"POST:/nodes/clean":                "operator",
+	"POST:/arsenals/*":                 "operator",
+	"POST:/arsenals/ai/analyze":        "operator",
+	"DELETE:/arsenals/*":               "operator",
+	"POST:/dictionaries/*":             "operator",
+	"PUT:/dictionaries/*":              "operator",
+	"DELETE:/dictionaries/*":           "operator",
+	"POST:/ai/arsenal/analyze":         "operator",
+	"POST:/ai/arsenal/analyze/stream":  "operator",
+	"POST:/ai/chat":                    "operator",
+	"POST:/ai/actions/confirm":         "operator",
+	"GET:/ai/copilot/prompts":          "operator",
+	"GET:/ai/tool-invocations":         "operator",
+	"GET:/agent-logs/summary":          "operator",
+	"GET:/agent-logs/retention":        "operator",
+	"PUT:/agent-logs/retention":        "admin",
+	"GET:/agent-logs/alerts":           "operator",
+	"GET:/agent-logs/alert-rules":      "operator",
+	"POST:/agent-logs/alert-rules":     "admin",
+	"DELETE:/agent-logs/alert-rules/*": "admin",
+	"POST:/agent-logs/archive":         "admin",
+	"GET:/cloud/*":                     "operator",
+	"POST:/cloud/*":                    "operator",
+	"PUT:/cloud/*":                     "operator",
+	"DELETE:/cloud/*":                  "operator",
+	"GET:/users":                       "operator",
 
 	// 管理动作：admin only。更具体的规则会覆盖上面的 operator 通配符。
 	"POST:/arsenals/*/*/approve":  "admin",
@@ -108,7 +116,6 @@ var permissionRules = map[string]string{
 	"POST:/build/client":          "admin",
 	"POST:/build/jobs/*/cancel":   "admin",
 	"POST:/build/jobs/*/retry":    "admin",
-	"GET:/users":                  "admin",
 	"POST:/users":                 "admin",
 	"PUT:/users/*":                "admin",
 	"DELETE:/users/*":             "admin",
@@ -118,8 +125,8 @@ var permissionRules = map[string]string{
 	"DELETE:/roles/*":             "admin",
 	"GET:/tenants/*/quotas":       "admin",
 	"PUT:/tenants/*/quotas":       "admin",
-	"GET:/projects/*/members":     "admin",
-	"PUT:/projects/*/members":     "admin",
+	"GET:/projects/*/members":     "operator",
+	"PUT:/projects/*/members":     "operator",
 	"GET:/mcp/keys":               "admin",
 	"POST:/mcp/keys":              "admin",
 	"DELETE:/mcp/keys/*":          "admin",
@@ -164,6 +171,12 @@ func RBACMiddleware() gin.HandlerFunc {
 			})
 			return
 		}
+		if !customRoleAllowsRequest(currentTenantID(c), roleStr, c.Request.Method, c.Request.URL.Path) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "Insufficient permissions for custom role",
+			})
+			return
+		}
 		if isExploitEndpoint(c.Request.URL.Path) && !currentUserHasEXPAuthorization(c) {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 				"error": "EXP access requires user-level authorization",
@@ -173,6 +186,43 @@ func RBACMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func customRoleAllowsRequest(tenantID, role, method, path string) bool {
+	if _, builtin := roleHierarchy[strings.TrimSpace(role)]; builtin {
+		return true
+	}
+	permissions, hasCustom := customRolePermissions(tenantID, role)
+	if !hasCustom || len(permissions) == 0 {
+		return true
+	}
+	cleanPath := strings.TrimPrefix(path, "/api/v1")
+	for _, ruleKey := range permissions {
+		parts := strings.SplitN(ruleKey, ":", 2)
+		if len(parts) != 2 || parts[0] != method {
+			continue
+		}
+		if wildcardPathMatch(parts[1], cleanPath) {
+			return true
+		}
+	}
+	return false
+}
+
+func customRolePermissions(tenantID, role string) ([]string, bool) {
+	if db.DB == nil {
+		return nil, false
+	}
+	var custom db.CustomRole
+	err := db.DB.Select("permissions").
+		Where("tenant_id = ? AND name = ?", fallbackTenantID(tenantID), strings.TrimSpace(role)).
+		First(&custom).Error
+	if err != nil {
+		return nil, false
+	}
+	var permissions []string
+	_ = json.Unmarshal([]byte(custom.Permissions), &permissions)
+	return permissions, true
 }
 
 func roleLevelForTenant(tenantID, role string) int {
@@ -195,9 +245,7 @@ func customRoleBaseRole(tenantID, role string) string {
 		return ""
 	}
 	tenantID = strings.TrimSpace(tenantID)
-	if tenantID == "" {
-		tenantID = "default"
-	}
+	tenantID = fallbackTenantID(tenantID)
 	var custom db.CustomRole
 	err := db.DB.Select("base_role").
 		Where("tenant_id = ? AND name = ?", tenantID, strings.TrimSpace(role)).
@@ -206,6 +254,14 @@ func customRoleBaseRole(tenantID, role string) string {
 		return ""
 	}
 	return strings.TrimSpace(custom.BaseRole)
+}
+
+func fallbackTenantID(tenantID string) string {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return "default"
+	}
+	return tenantID
 }
 
 func isExploitEndpoint(path string) bool {

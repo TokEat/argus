@@ -50,7 +50,7 @@ import {
     WifiOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { cancelTask, createTask, deleteTask, listTasks, listProjects, getTaskDetail, getNodes, previewTaskSelector } from '../services/api';
+import { cancelTask, connectWebSocket, createTask, deleteTask, listTasks, listProjects, getTaskDetail, getNodes, previewTaskSelector } from '../services/api';
 import { getTaskStatusMeta, isTaskCancellable, isTaskFailedLike, isTaskFinished, normalizeTaskStatus } from '../utils/taskStatus';
 import { canAccessRole } from '../utils/auth';
 import { useAutoContext } from '../contexts/GlobalAIContext';
@@ -95,6 +95,7 @@ const createInitialValues = {
     priority: 1,
     timeout_sec: 3600,
     agent_selector_pairs: [],
+    agent_selector_rules_json: '',
     PortScanType: 'tcp',
     TCPPortScanThreads: 1000,
     SYNPortScanThreads: 10000,
@@ -144,6 +145,12 @@ function selectorFromPairs(pairs?: { key?: string; value?: string }[]): Record<s
         }
     });
     return Object.keys(selector).length > 0 ? selector : undefined;
+}
+
+function selectorRulesFromJSON(raw?: string): API.AgentSelectorRules | undefined {
+    const trimmed = raw?.trim();
+    if (!trimmed) return undefined;
+    return JSON.parse(trimmed) as API.AgentSelectorRules;
 }
 
 function parseAdvancedConfig(raw?: string) {
@@ -288,7 +295,16 @@ const TaskManagement: React.FC = () => {
         fetchProjects();
         fetchNodes();
         const timer = setInterval(fetchTasks, 10000);
-        return () => clearInterval(timer);
+        const ws = connectWebSocket(() => undefined, undefined, {
+            onReconnect: () => {
+                fetchTasks();
+                fetchNodes();
+            },
+        });
+        return () => {
+            clearInterval(timer);
+            ws.close();
+        };
     }, []);
 
     useAutoContext({
@@ -335,6 +351,7 @@ const TaskManagement: React.FC = () => {
                 priority: values.priority ?? 1,
                 timeout_sec: values.timeout_sec ?? 3600,
                 agent_selector: selectorFromPairs(values.agent_selector_pairs),
+                agent_selector_rules: selectorRulesFromJSON(values.agent_selector_rules_json),
             });
 
             message.success('任务创建成功');
@@ -396,6 +413,7 @@ const TaskManagement: React.FC = () => {
                     targets: watchedTargets,
                     config: buildTaskConfig(values),
                     agent_selector: currentSelector,
+                    agent_selector_rules: selectorRulesFromJSON(values.agent_selector_rules_json),
                 });
                 setSelectorPreview(result);
             } catch (error) {
@@ -738,6 +756,9 @@ const TaskManagement: React.FC = () => {
                                         <Text style={{ fontSize: 12 }}>{group.target_count} 目标 / {group.batch_count} 批次</Text>
                                         <Text style={{ fontSize: 12 }}>匹配 {group.matched_nodes} 节点</Text>
                                         <Text style={{ fontSize: 12 }}>空闲 {group.available_slots} 槽</Text>
+                                        {typeof group.immediate_batches === 'number' && (
+                                            <Text style={{ fontSize: 12 }}>立即 {group.immediate_batches} / 等待 {group.waiting_batches || 0} 批</Text>
+                                        )}
                                         {Object.entries(group.selector || {}).map(([key, value]) => (
                                             <Tag key={key} style={{ fontSize: 11 }}>{key}={value}</Tag>
                                         ))}
@@ -794,6 +815,13 @@ const TaskManagement: React.FC = () => {
                             </Space>
                         )}
                     </Form.List>
+                    <Form.Item
+                        label="高级选择器规则"
+                        name="agent_selector_rules_json"
+                        extra='可选 JSON，例如 {"match":{"region":["cn-hangzhou","cn-shanghai"]},"not_match":{"cloud":"test"}}'
+                    >
+                        <Input.TextArea rows={3} placeholder='{"match":{},"not_match":{}}' />
+                    </Form.Item>
 
                     <Divider orientation="left">扫描配置</Divider>
                     <Collapse

@@ -47,6 +47,7 @@ const (
 	cancelPendingSettleGrace = 45 * time.Second
 	agentLogRetentionKey     = "agent_logs_retention_days"
 	defaultAgentLogRetention = 14
+	agentSessionTTL          = 7 * 24 * time.Hour
 )
 
 func SetTaskQueue(queue *scheduler.TaskQueue) {
@@ -116,10 +117,13 @@ func validateAgentSession(c *gin.Context) bool {
 	}
 
 	var node db.Node
-	if err := db.DB.Select("agent_id", "tenant_id", "token", "status").Where("agent_id = ?", agentID).First(&node).Error; err != nil {
+	if err := db.DB.Select("agent_id", "tenant_id", "token", "status", "token_expires_at", "token_revoked_at").Where("agent_id = ?", agentID).First(&node).Error; err != nil {
 		return false
 	}
 	if node.Status != "Alive" {
+		return false
+	}
+	if node.TokenRevokedAt != nil || (node.TokenExpiresAt != nil && time.Now().After(*node.TokenExpiresAt)) {
 		return false
 	}
 	if strings.TrimSpace(node.Token) == "" || subtle.ConstantTimeCompare([]byte(token), []byte(node.Token)) != 1 {
@@ -420,6 +424,7 @@ func InitRouter(port string) {
 		// Agent 节点
 		api.GET("/nodes", getNodes)
 		api.DELETE("/nodes/:id", deleteNode)
+		api.POST("/nodes/:id/revoke-token", revokeNodeToken)
 		api.POST("/nodes/clean", cleanOfflineNodes)
 		api.GET("/agents/:id/commands", getAgentCommands)
 
@@ -549,6 +554,11 @@ func InitRouter(port string) {
 		api.GET("/agent-logs/summary", getAgentLogSummary)
 		api.GET("/agent-logs/retention", getAgentLogRetention)
 		api.PUT("/agent-logs/retention", updateAgentLogRetention)
+		api.GET("/agent-logs/alerts", listAgentLogAlertEvents)
+		api.GET("/agent-logs/alert-rules", listAgentLogAlertRules)
+		api.POST("/agent-logs/alert-rules", createAgentLogAlertRule)
+		api.DELETE("/agent-logs/alert-rules/:id", deleteAgentLogAlertRule)
+		api.POST("/agent-logs/archive", archiveAgentLogs)
 		api.GET("/agents/:id/logs", getAgentLogs)
 
 		// 规则回滚
@@ -646,7 +656,7 @@ func createProject(c *gin.Context) {
 		var err error
 		memberUserIDs, err = validateAssignableProjectUsers(tenantID, req.MemberUserIDs)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "member_user_ids must be active operators in current tenant"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "member_user_ids must be active users in current tenant"})
 			return
 		}
 	}
@@ -757,9 +767,15 @@ func getProjectStats(c *gin.Context) {
 
 type projectResponse struct {
 	db.Project
-	OwnerUsername string   `json:"owner_username"`
-	AccessLevel   string   `json:"access_level"`
-	MemberUserIDs []string `json:"member_user_ids,omitempty"`
+	OwnerUsername string                 `json:"owner_username"`
+	AccessLevel   string                 `json:"access_level"`
+	MemberUserIDs []string               `json:"member_user_ids,omitempty"`
+	Members       []projectMemberPayload `json:"members,omitempty"`
+}
+
+type projectMemberPayload struct {
+	UserID string `json:"user_id"`
+	Role   string `json:"role"`
 }
 
 func buildProjectResponses(c *gin.Context, projects []db.Project) []projectResponse {
@@ -791,11 +807,15 @@ func buildProjectResponses(c *gin.Context, projects []db.Project) []projectRespo
 	}
 
 	memberMap := map[string][]string{}
+	memberDetailMap := map[string][]projectMemberPayload{}
 	if currentUserIsAdmin(c) {
 		var members []db.ProjectMember
-		db.DB.Where("tenant_id = ? AND project_id IN ? AND role = ?", currentTenantID(c), projectIDs, "operator").Find(&members)
+		db.DB.Where("tenant_id = ? AND project_id IN ?", currentTenantID(c), projectIDs).Find(&members)
 		for _, m := range members {
-			memberMap[m.ProjectID] = append(memberMap[m.ProjectID], m.UserID)
+			if m.Role != "owner" {
+				memberMap[m.ProjectID] = append(memberMap[m.ProjectID], m.UserID)
+			}
+			memberDetailMap[m.ProjectID] = append(memberDetailMap[m.ProjectID], projectMemberPayload{UserID: m.UserID, Role: fallbackProjectMemberRole(m.Role)})
 		}
 	}
 
@@ -806,15 +826,27 @@ func buildProjectResponses(c *gin.Context, projects []db.Project) []projectRespo
 			accessLevel = "admin"
 		} else if p.OwnerUserID == userID {
 			accessLevel = "owner"
+		} else if role := projectMemberRole(c, p.ID); role != "" {
+			accessLevel = role
 		}
 		resp = append(resp, projectResponse{
 			Project:       p,
 			OwnerUsername: ownerNames[p.OwnerUserID],
 			AccessLevel:   accessLevel,
 			MemberUserIDs: memberMap[p.ID],
+			Members:       memberDetailMap[p.ID],
 		})
 	}
 	return resp
+}
+
+func fallbackProjectMemberRole(role string) string {
+	switch strings.TrimSpace(role) {
+	case "viewer", "operator", "owner":
+		return strings.TrimSpace(role)
+	default:
+		return "operator"
+	}
 }
 
 func getProjectMembers(c *gin.Context) {
@@ -823,44 +855,67 @@ func getProjectMembers(c *gin.Context) {
 		return
 	}
 	var members []db.ProjectMember
-	db.DB.Where("tenant_id = ? AND project_id = ? AND role = ?", currentTenantID(c), projectID, "operator").Find(&members)
+	db.DB.Where("tenant_id = ? AND project_id = ?", currentTenantID(c), projectID).Find(&members)
 	userIDs := make([]string, 0, len(members))
+	memberPayloads := make([]projectMemberPayload, 0, len(members))
 	for _, m := range members {
-		userIDs = append(userIDs, m.UserID)
+		if m.Role != "owner" {
+			userIDs = append(userIDs, m.UserID)
+		}
+		memberPayloads = append(memberPayloads, projectMemberPayload{UserID: m.UserID, Role: fallbackProjectMemberRole(m.Role)})
 	}
-	c.JSON(http.StatusOK, gin.H{"project_id": projectID, "user_ids": userIDs})
+	c.JSON(http.StatusOK, gin.H{"project_id": projectID, "user_ids": userIDs, "members": memberPayloads})
 }
 
 func updateProjectMembers(c *gin.Context) {
 	projectID := c.Param("id")
-	project, ok := requireProjectAccess(c, projectID)
+	project, ok := requireProjectManage(c, projectID)
 	if !ok {
 		return
 	}
 	var req struct {
-		UserIDs []string `json:"user_ids"`
+		UserIDs []string               `json:"user_ids"`
+		Members []projectMemberPayload `json:"members"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	userIDs, err := validateAssignableProjectUsers(currentTenantID(c), req.UserIDs)
+	if len(req.Members) == 0 {
+		for _, userID := range req.UserIDs {
+			req.Members = append(req.Members, projectMemberPayload{UserID: userID, Role: "operator"})
+		}
+	}
+	userIDs := make([]string, 0, len(req.Members))
+	for _, member := range req.Members {
+		userIDs = append(userIDs, member.UserID)
+	}
+	userIDs, err := validateAssignableProjectUsers(currentTenantID(c), userIDs)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_ids must be active operators in current tenant"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "members must reference active users in current tenant"})
 		return
 	}
+	allowedUsers := map[string]struct{}{}
+	for _, userID := range userIDs {
+		allowedUsers[userID] = struct{}{}
+	}
+	validMembers := make([]projectMemberPayload, 0, len(req.Members))
+	for _, member := range req.Members {
+		if _, ok := allowedUsers[member.UserID]; !ok || member.UserID == project.OwnerUserID {
+			continue
+		}
+		role := fallbackProjectMemberRole(member.Role)
+		validMembers = append(validMembers, projectMemberPayload{UserID: member.UserID, Role: role})
+	}
 	if err := db.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("tenant_id = ? AND project_id = ? AND role = ?", currentTenantID(c), projectID, "operator").Delete(&db.ProjectMember{}).Error; err != nil {
+		if err := tx.Where("tenant_id = ? AND project_id = ?", currentTenantID(c), projectID).Delete(&db.ProjectMember{}).Error; err != nil {
 			return err
 		}
 		if err := upsertProjectMember(tx, currentTenantID(c), projectID, project.OwnerUserID, "owner"); err != nil {
 			return err
 		}
-		for _, userID := range userIDs {
-			if userID == project.OwnerUserID {
-				continue
-			}
-			if err := upsertProjectMember(tx, currentTenantID(c), projectID, userID, "operator"); err != nil {
+		for _, member := range validMembers {
+			if err := upsertProjectMember(tx, currentTenantID(c), projectID, member.UserID, member.Role); err != nil {
 				return err
 			}
 		}
@@ -869,7 +924,7 @@ func updateProjectMembers(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"project_id": projectID, "user_ids": userIDs})
+	c.JSON(http.StatusOK, gin.H{"project_id": projectID, "user_ids": userIDs, "members": validMembers})
 }
 
 func getTasks(c *gin.Context) {
@@ -1171,6 +1226,10 @@ func parseAgentSelector(raw json.RawMessage) (map[string]string, error) {
 	return selector, nil
 }
 
+func parseAgentSelectorRules(raw json.RawMessage) (db.AgentSelectorRules, error) {
+	return db.ParseSelectorRulesBytes(raw)
+}
+
 func mergeAgentSelector(baseJSON string, extra map[string]string) string {
 	merged := make(map[string]string)
 	if strings.TrimSpace(baseJSON) != "" {
@@ -1198,35 +1257,15 @@ func parseSelectorJSONString(raw string) map[string]string {
 	return selector
 }
 
+func effectiveSelectorRules(baseJSON string, userSelector map[string]string, userRules db.AgentSelectorRules) (map[string]string, db.AgentSelectorRules, string) {
+	selectorJSON := mergeAgentSelector(baseJSON, userSelector)
+	legacy := parseSelectorJSONString(selectorJSON)
+	rules := db.MergeSelectorRules(legacy, userRules)
+	return legacy, rules, db.SelectorRulesToJSON(rules)
+}
+
 func nodeMatchesSelector(selector map[string]string, nodeTags string) (bool, string) {
-	if len(selector) == 0 {
-		return true, ""
-	}
-	if strings.TrimSpace(nodeTags) == "" {
-		return true, ""
-	}
-	var tagMap map[string]string
-	if err := json.Unmarshal([]byte(nodeTags), &tagMap); err != nil {
-		return false, "节点标签不是合法 JSON"
-	}
-	if len(tagMap) == 0 {
-		return true, ""
-	}
-	for key, val := range selector {
-		nodeVal, ok := tagMap[key]
-		if !ok {
-			return false, fmt.Sprintf("缺少标签 %s=%s", key, val)
-		}
-		if nodeVal == val {
-			continue
-		}
-		n := strings.ToLower(strings.TrimSpace(nodeVal))
-		if n == "all" || n == "any" || n == "*" {
-			continue
-		}
-		return false, fmt.Sprintf("标签 %s=%s 不匹配 %s", key, nodeVal, val)
-	}
-	return true, ""
+	return db.NodeMatchesSelectorRules(selector, db.AgentSelectorRules{}, nodeTags)
 }
 
 type selectorPreviewNode struct {
@@ -1240,20 +1279,24 @@ type selectorPreviewNode struct {
 }
 
 type selectorPreviewGroup struct {
-	TargetType     string                `json:"target_type"`
-	TargetCount    int                   `json:"target_count"`
-	BatchCount     int                   `json:"batch_count"`
-	Selector       map[string]string     `json:"selector"`
-	MatchedNodes   int                   `json:"matched_nodes"`
-	AvailableSlots int                   `json:"available_slots"`
-	Reasons        []string              `json:"reasons"`
-	Nodes          []selectorPreviewNode `json:"nodes"`
+	TargetType       string                `json:"target_type"`
+	TargetCount      int                   `json:"target_count"`
+	BatchCount       int                   `json:"batch_count"`
+	Selector         map[string]string     `json:"selector"`
+	SelectorRules    db.AgentSelectorRules `json:"selector_rules"`
+	MatchedNodes     int                   `json:"matched_nodes"`
+	AvailableSlots   int                   `json:"available_slots"`
+	ImmediateBatches int                   `json:"immediate_batches"`
+	WaitingBatches   int                   `json:"waiting_batches"`
+	Reasons          []string              `json:"reasons"`
+	Nodes            []selectorPreviewNode `json:"nodes"`
 }
 
-func buildSelectorPreviewGroups(batches []targetBatchGroup, userSelector map[string]string, nodes []db.Node) ([]selectorPreviewGroup, []map[string]string, int, int, []string) {
+func buildSelectorPreviewGroups(batches []targetBatchGroup, userSelector map[string]string, userRules db.AgentSelectorRules, nodes []db.Node) ([]selectorPreviewGroup, []map[string]string, int, int, []string) {
 	type groupAccumulator struct {
 		targetType string
 		selector   map[string]string
+		rules      db.AgentSelectorRules
 		targets    int
 		batches    int
 	}
@@ -1263,18 +1306,17 @@ func buildSelectorPreviewGroups(batches []targetBatchGroup, userSelector map[str
 	seenSelectors := make(map[string]struct{})
 
 	for _, batch := range batches {
-		selectorJSON := mergeAgentSelector(batch.SelectorJSON, userSelector)
-		selector := parseSelectorJSONString(selectorJSON)
-		key := batch.TargetType + "\x00" + selectorJSON
+		selector, rules, rulesJSON := effectiveSelectorRules(batch.SelectorJSON, userSelector, userRules)
+		key := batch.TargetType + "\x00" + rulesJSON
 		if _, ok := groupsByKey[key]; !ok {
-			groupsByKey[key] = &groupAccumulator{targetType: batch.TargetType, selector: selector}
+			groupsByKey[key] = &groupAccumulator{targetType: batch.TargetType, selector: selector, rules: rules}
 			groupOrder = append(groupOrder, key)
 		}
 		groupsByKey[key].targets += len(batch.Targets)
 		groupsByKey[key].batches++
 
-		if _, ok := seenSelectors[selectorJSON]; !ok {
-			seenSelectors[selectorJSON] = struct{}{}
+		if _, ok := seenSelectors[rulesJSON]; !ok {
+			seenSelectors[rulesJSON] = struct{}{}
 			effectiveSelectors = append(effectiveSelectors, selector)
 		}
 	}
@@ -1283,7 +1325,8 @@ func buildSelectorPreviewGroups(batches []targetBatchGroup, userSelector map[str
 		for key, val := range userSelector {
 			selector[key] = val
 		}
-		groupsByKey["unknown\x00{}"] = &groupAccumulator{targetType: "unknown", selector: selector}
+		rules := db.MergeSelectorRules(selector, userRules)
+		groupsByKey["unknown\x00{}"] = &groupAccumulator{targetType: "unknown", selector: selector, rules: rules}
 		groupOrder = append(groupOrder, "unknown\x00{}")
 		effectiveSelectors = append(effectiveSelectors, selector)
 	}
@@ -1306,11 +1349,12 @@ func buildSelectorPreviewGroups(batches []targetBatchGroup, userSelector map[str
 			}
 		}
 		group := selectorPreviewGroup{
-			TargetType:  acc.targetType,
-			TargetCount: acc.targets,
-			BatchCount:  acc.batches,
-			Selector:    acc.selector,
-			Nodes:       make([]selectorPreviewNode, 0, len(nodes)),
+			TargetType:    acc.targetType,
+			TargetCount:   acc.targets,
+			BatchCount:    acc.batches,
+			Selector:      acc.selector,
+			SelectorRules: acc.rules,
+			Nodes:         make([]selectorPreviewNode, 0, len(nodes)),
 		}
 
 		offlineNodes := 0
@@ -1334,7 +1378,7 @@ func buildSelectorPreviewGroups(batches []targetBatchGroup, userSelector map[str
 				group.Nodes = append(group.Nodes, nodePreview)
 				continue
 			}
-			matched, reason := nodeMatchesSelector(acc.selector, node.Tags)
+			matched, reason := db.NodeMatchesSelectorRules(acc.selector, acc.rules, node.Tags)
 			if !matched {
 				mismatchedNodes++
 				if reason == "" {
@@ -1353,6 +1397,17 @@ func buildSelectorPreviewGroups(batches []targetBatchGroup, userSelector map[str
 			group.AvailableSlots += availableSlots
 			overallMatched[node.AgentID] = availableSlots
 			group.Nodes = append(group.Nodes, nodePreview)
+		}
+		if group.AvailableSlots >= group.BatchCount {
+			group.ImmediateBatches = group.BatchCount
+		} else {
+			group.ImmediateBatches = group.AvailableSlots
+		}
+		if group.BatchCount > group.ImmediateBatches {
+			group.WaitingBatches = group.BatchCount - group.ImmediateBatches
+			if group.ImmediateBatches > 0 {
+				addReason(fmt.Sprintf("%d 个批次需要等待容量释放", group.WaitingBatches))
+			}
 		}
 
 		if offlineNodes > 0 {
@@ -1397,10 +1452,11 @@ func sortedReasonSet(reasonSet map[string]struct{}) []string {
 
 func previewTaskSelector(c *gin.Context) {
 	var req struct {
-		ProjectID     string          `json:"project_id"`
-		Targets       json.RawMessage `json:"targets"`
-		Config        json.RawMessage `json:"config"`
-		AgentSelector json.RawMessage `json:"agent_selector"`
+		ProjectID          string          `json:"project_id"`
+		Targets            json.RawMessage `json:"targets"`
+		Config             json.RawMessage `json:"config"`
+		AgentSelector      json.RawMessage `json:"agent_selector"`
+		AgentSelectorRules json.RawMessage `json:"agent_selector_rules"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -1414,6 +1470,11 @@ func previewTaskSelector(c *gin.Context) {
 		return
 	}
 	userSelector, err := parseAgentSelector(req.AgentSelector)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	userRules, err := parseAgentSelectorRules(req.AgentSelectorRules)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1433,7 +1494,7 @@ func previewTaskSelector(c *gin.Context) {
 	tenantID := currentTenantID(c)
 	var nodes []db.Node
 	scopedNodeQuery(tenantID).Find(&nodes)
-	groups, effectiveSelectors, matchedNodes, availableSlots, reasons := buildSelectorPreviewGroups(batches, userSelector, nodes)
+	groups, effectiveSelectors, matchedNodes, availableSlots, reasons := buildSelectorPreviewGroups(batches, userSelector, userRules, nodes)
 
 	c.JSON(http.StatusOK, gin.H{
 		"matched_nodes":       matchedNodes,
@@ -1447,13 +1508,14 @@ func previewTaskSelector(c *gin.Context) {
 
 func createTask(c *gin.Context) {
 	var req struct {
-		ProjectID     string          `json:"project_id"`
-		Name          string          `json:"name"`
-		Targets       json.RawMessage `json:"targets"`
-		Config        json.RawMessage `json:"config"`
-		Priority      int             `json:"priority"`
-		TimeoutSec    int             `json:"timeout_sec"`
-		AgentSelector json.RawMessage `json:"agent_selector"`
+		ProjectID          string          `json:"project_id"`
+		Name               string          `json:"name"`
+		Targets            json.RawMessage `json:"targets"`
+		Config             json.RawMessage `json:"config"`
+		Priority           int             `json:"priority"`
+		TimeoutSec         int             `json:"timeout_sec"`
+		AgentSelector      json.RawMessage `json:"agent_selector"`
+		AgentSelectorRules json.RawMessage `json:"agent_selector_rules"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -1482,6 +1544,11 @@ func createTask(c *gin.Context) {
 		return
 	}
 	userSelector, err := parseAgentSelector(req.AgentSelector)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	userRules, err := parseAgentSelectorRules(req.AgentSelectorRules)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1545,18 +1612,20 @@ func createTask(c *gin.Context) {
 	for idx, batch := range batches {
 		chunkJSON, _ := json.Marshal(batch.Targets)
 
+		_, _, rulesJSON := effectiveSelectorRules(batch.SelectorJSON, userSelector, userRules)
 		subTasks = append(subTasks, db.SubTask{
-			ID:            fmt.Sprintf("%s-batch-%d-%s", rootTaskID, idx, batch.TargetType),
-			TenantID:      tenantID,
-			ProjectID:     req.ProjectID,
-			RootTaskID:    rootTaskID,
-			ChunkTargets:  string(chunkJSON),
-			Status:        subTaskStatusDispatching,
-			Config:        configJSON,
-			Priority:      req.Priority,
-			TimeoutSec:    req.TimeoutSec,
-			MaxRetry:      3,
-			AgentSelector: mergeAgentSelector(batch.SelectorJSON, userSelector),
+			ID:                 fmt.Sprintf("%s-batch-%d-%s", rootTaskID, idx, batch.TargetType),
+			TenantID:           tenantID,
+			ProjectID:          req.ProjectID,
+			RootTaskID:         rootTaskID,
+			ChunkTargets:       string(chunkJSON),
+			Status:             subTaskStatusDispatching,
+			Config:             configJSON,
+			Priority:           req.Priority,
+			TimeoutSec:         req.TimeoutSec,
+			MaxRetry:           3,
+			AgentSelector:      mergeAgentSelector(batch.SelectorJSON, userSelector),
+			AgentSelectorRules: rulesJSON,
 		})
 
 		profile.BatchesByType[batch.TargetType]++
@@ -2250,6 +2319,34 @@ func deleteNode(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }
 
+func revokeNodeToken(c *gin.Context) {
+	agentID := c.Param("id")
+	tenantID := currentTenantID(c)
+	now := time.Now()
+	res := scopedNodeQuery(tenantID).Where("agent_id = ?", agentID).Updates(map[string]interface{}{
+		"token":            "",
+		"token_revoked_at": &now,
+		"status":           "Offline",
+	})
+	if res.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": res.Error.Error()})
+		return
+	}
+	if res.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Node not found"})
+		return
+	}
+	_ = db.DB.Create(&db.AgentSessionAudit{
+		TenantID:   tenantID,
+		AgentID:    agentID,
+		Action:     "revoke",
+		Reason:     "admin revoked agent session token",
+		OperatorID: currentUserID(c),
+		CreatedAt:  now,
+	}).Error
+	c.JSON(http.StatusOK, gin.H{"status": "revoked", "agent_id": agentID, "token_revoked_at": now})
+}
+
 func cleanOfflineNodes(c *gin.Context) {
 	tenantID := currentTenantID(c)
 
@@ -2661,19 +2758,37 @@ func listBuildJobs(c *gin.Context) {
 		limit = 100
 	}
 	var jobs []db.BuildJob
-	db.DB.Select("id", "platform", "arch", "pack", "status", "artifact", "log_tail", "error", "started_at", "finished_at", "created_at", "updated_at").
+	db.DB.Select("id", "platform", "arch", "components", "pack", "status", "artifact", "artifacts", "log_tail", "error", "started_at", "finished_at", "created_at", "updated_at").
 		Order("created_at DESC").Limit(limit).Find(&jobs)
-	c.JSON(http.StatusOK, jobs)
+	c.JSON(http.StatusOK, buildJobResponses(jobs))
 }
 
 func getBuildJob(c *gin.Context) {
 	var job db.BuildJob
-	if err := db.DB.Select("id", "platform", "arch", "pack", "status", "artifact", "log_tail", "error", "started_at", "finished_at", "created_at", "updated_at").
+	if err := db.DB.Select("id", "platform", "arch", "components", "pack", "status", "artifact", "artifacts", "log_tail", "error", "started_at", "finished_at", "created_at", "updated_at").
 		First(&job, "id = ?", c.Param("id")).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Build job not found"})
 		return
 	}
-	c.JSON(http.StatusOK, job)
+	c.JSON(http.StatusOK, buildJobResponse(job))
+}
+
+func buildJobResponses(jobs []db.BuildJob) []gin.H {
+	out := make([]gin.H, 0, len(jobs))
+	for _, job := range jobs {
+		out = append(out, buildJobResponse(job))
+	}
+	return out
+}
+
+func buildJobResponse(job db.BuildJob) gin.H {
+	return gin.H{
+		"id": job.ID, "platform": job.Platform, "arch": job.Arch, "pack": job.Pack,
+		"components": buildComponentsFromJSON(job.Components),
+		"status":     job.Status, "artifact": job.Artifact, "artifacts": buildArtifactsFromJSON(job.Artifacts, job.Artifact),
+		"log_tail": job.LogTail, "error": job.Error, "started_at": job.StartedAt, "finished_at": job.FinishedAt,
+		"created_at": job.CreatedAt, "updated_at": job.UpdatedAt,
+	}
 }
 
 func getBuildJobLogs(c *gin.Context) {
@@ -2754,7 +2869,7 @@ func retryBuildJob(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "build.sh not found in project root"})
 		return
 	}
-	job, err := createBuildJobIfIdle(oldJob.Platform, oldJob.Arch, oldJob.Pack)
+	job, err := createBuildJobIfIdle(oldJob.Platform, oldJob.Arch, oldJob.Pack, buildComponentsFromJSON(oldJob.Components))
 	if errors.Is(err, errBuildAlreadyQueued) {
 		c.JSON(http.StatusConflict, gin.H{"error": "another build job is already queued or running"})
 		return
@@ -2775,9 +2890,10 @@ func retryBuildJob(c *gin.Context) {
 
 func triggerBuild(c *gin.Context) {
 	var req struct {
-		Platform string `json:"platform"` // linux, darwin, windows
-		Arch     string `json:"arch"`     // amd64, arm64
-		Pack     bool   `json:"pack"`     // 是否 UPX 压缩
+		Platform   string   `json:"platform"` // linux, darwin, windows
+		Arch       string   `json:"arch"`     // amd64, arm64
+		Pack       bool     `json:"pack"`     // 是否 UPX 压缩
+		Components []string `json:"components"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -2795,6 +2911,12 @@ func triggerBuild(c *gin.Context) {
 		return
 	}
 
+	components, err := normalizeBuildComponents(req.Components)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	// 检查 build.sh 是否存在
 	buildScript := "./build.sh"
 	if _, err := os.Stat(buildScript); os.IsNotExist(err) {
@@ -2802,7 +2924,7 @@ func triggerBuild(c *gin.Context) {
 		return
 	}
 
-	job, err := createBuildJobIfIdle(req.Platform, req.Arch, req.Pack)
+	job, err := createBuildJobIfIdle(req.Platform, req.Arch, req.Pack, components)
 	if errors.Is(err, errBuildAlreadyQueued) {
 		c.JSON(http.StatusConflict, gin.H{"error": "another build job is already queued or running"})
 		return
@@ -2814,15 +2936,16 @@ func triggerBuild(c *gin.Context) {
 	go buildJobRunner(job.ID)
 
 	c.JSON(http.StatusAccepted, gin.H{
-		"status":   "queued",
-		"message":  fmt.Sprintf("Build job queued: %s/%s (pack=%v)", req.Platform, req.Arch, req.Pack),
-		"job_id":   job.ID,
-		"platform": req.Platform,
-		"arch":     req.Arch,
+		"status":     "queued",
+		"message":    fmt.Sprintf("Build job queued: %s/%s (pack=%v)", req.Platform, req.Arch, req.Pack),
+		"job_id":     job.ID,
+		"platform":   req.Platform,
+		"arch":       req.Arch,
+		"components": components,
 	})
 }
 
-func createBuildJobIfIdle(platform, arch string, pack bool) (db.BuildJob, error) {
+func createBuildJobIfIdle(platform, arch string, pack bool, componentSets ...[]string) (db.BuildJob, error) {
 	buildMu.Lock()
 	defer buildMu.Unlock()
 
@@ -2834,11 +2957,21 @@ func createBuildJobIfIdle(platform, arch string, pack bool) (db.BuildJob, error)
 		return db.BuildJob{}, errBuildAlreadyQueued
 	}
 
+	components := []string(nil)
+	if len(componentSets) > 0 {
+		components = componentSets[0]
+	}
+	components, err := normalizeBuildComponents(components)
+	if err != nil {
+		return db.BuildJob{}, err
+	}
+	componentJSON, _ := json.Marshal(components)
 	job := db.BuildJob{
-		Platform: platform,
-		Arch:     arch,
-		Pack:     pack,
-		Status:   "queued",
+		Platform:   platform,
+		Arch:       arch,
+		Components: string(componentJSON),
+		Pack:       pack,
+		Status:     "queued",
 	}
 	if err := db.DB.Create(&job).Error; err != nil {
 		return db.BuildJob{}, err
@@ -2886,6 +3019,69 @@ func isSupportedBuildTarget(platform, arch string) bool {
 	}
 }
 
+func normalizeBuildComponents(raw []string) ([]string, error) {
+	if len(raw) == 0 {
+		return []string{"dddd-agent"}, nil
+	}
+	allowed := map[string]bool{"dddd": true, "dddd-agent": true, "dddd-server": true, "server-ui": true}
+	seen := map[string]struct{}{}
+	components := make([]string, 0, len(raw))
+	for _, item := range raw {
+		component := strings.TrimSpace(item)
+		if component == "" {
+			continue
+		}
+		if !allowed[component] {
+			return nil, fmt.Errorf("unsupported build component: %s", component)
+		}
+		if _, ok := seen[component]; ok {
+			continue
+		}
+		seen[component] = struct{}{}
+		components = append(components, component)
+	}
+	if len(components) == 0 {
+		return []string{"dddd-agent"}, nil
+	}
+	return components, nil
+}
+
+func buildComponentsFromJSON(raw string) []string {
+	var components []string
+	if strings.TrimSpace(raw) != "" {
+		_ = json.Unmarshal([]byte(raw), &components)
+	}
+	components, _ = normalizeBuildComponents(components)
+	return components
+}
+
+func buildArtifactsFromJSON(raw, fallback string) []string {
+	var artifacts []string
+	if strings.TrimSpace(raw) != "" {
+		_ = json.Unmarshal([]byte(raw), &artifacts)
+	}
+	if len(artifacts) == 0 && strings.TrimSpace(fallback) != "" {
+		artifacts = []string{fallback}
+	}
+	return artifacts
+}
+
+func expectedBuildArtifacts(components []string, platform, arch string) []string {
+	artifacts := make([]string, 0, len(components))
+	for _, component := range components {
+		if component == "server-ui" {
+			artifacts = append(artifacts, "server-ui-dist.tar.gz")
+			continue
+		}
+		name := fmt.Sprintf("%s-%s-%s", component, platform, arch)
+		if platform == "windows" {
+			name += ".exe"
+		}
+		artifacts = append(artifacts, name)
+	}
+	return artifacts
+}
+
 func runBuildJob(jobID uint) {
 	var job db.BuildJob
 	if err := db.DB.First(&job, jobID).Error; err != nil {
@@ -2910,17 +3106,44 @@ func runBuildJob(jobID uint) {
 		return
 	}
 
-	args := []string{"--component", "dddd-agent", "--target", fmt.Sprintf("%s/%s", job.Platform, job.Arch)}
-	if job.Pack {
-		args = append([]string{"--pack"}, args...)
-	}
-
-	cmd := exec.CommandContext(ctx, "./build.sh", args...)
-	cmd.Dir = "."
 	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	err := cmd.Run()
+	components := buildComponentsFromJSON(job.Components)
+	nativeComponents := make([]string, 0, len(components))
+	hasServerUI := false
+	for _, component := range components {
+		if component == "server-ui" {
+			hasServerUI = true
+		} else {
+			nativeComponents = append(nativeComponents, component)
+		}
+	}
+	var err error
+	if len(nativeComponents) > 0 {
+		args := []string{"--component", strings.Join(nativeComponents, ","), "--target", fmt.Sprintf("%s/%s", job.Platform, job.Arch)}
+		if job.Pack {
+			args = append([]string{"--pack"}, args...)
+		}
+		cmd := exec.CommandContext(ctx, "./build.sh", args...)
+		cmd.Dir = "."
+		cmd.Stdout = &output
+		cmd.Stderr = &output
+		err = cmd.Run()
+	}
+	if err == nil && hasServerUI {
+		npm := exec.CommandContext(ctx, "npm", "--prefix", "server-ui", "run", "build")
+		npm.Dir = "."
+		npm.Stdout = &output
+		npm.Stderr = &output
+		err = npm.Run()
+		if err == nil {
+			_ = os.MkdirAll("./release", 0755)
+			tarCmd := exec.CommandContext(ctx, "tar", "-czf", "release/server-ui-dist.tar.gz", "-C", "server-ui", "dist")
+			tarCmd.Dir = "."
+			tarCmd.Stdout = &output
+			tarCmd.Stderr = &output
+			err = tarCmd.Run()
+		}
+	}
 	logText := output.String()
 	logTail := truncateBuildLog(logText, 20000)
 	finishedAt := time.Now()
@@ -2944,17 +3167,28 @@ func runBuildJob(jobID uint) {
 		return
 	}
 
-	artifact := expectedBuildArtifact(job.Platform, job.Arch)
+	artifacts := expectedBuildArtifacts(components, job.Platform, job.Arch)
 	store, storeErr := storage.NewLocalStore("./release")
 	if storeErr != nil {
 		updates["status"] = "failed"
 		updates["error"] = fmt.Sprintf("build artifact storage is unavailable: %v", storeErr)
-	} else if _, ok, statErr := store.Exists(context.Background(), artifact); statErr != nil || !ok {
-		updates["status"] = "failed"
-		updates["error"] = "build completed but expected artifact was not found"
 	} else {
+		missing := make([]string, 0)
+		for _, artifact := range artifacts {
+			if _, ok, statErr := store.Exists(context.Background(), artifact); statErr != nil || !ok {
+				missing = append(missing, artifact)
+			}
+		}
+		if len(missing) > 0 {
+			updates["status"] = "failed"
+			updates["error"] = "build completed but expected artifacts were not found: " + strings.Join(missing, ", ")
+			db.DB.Model(&db.BuildJob{}).Where("id = ? AND status = ?", jobID, "running").Updates(updates)
+			return
+		}
+		artifactJSON, _ := json.Marshal(artifacts)
 		updates["status"] = "success"
-		updates["artifact"] = artifact
+		updates["artifact"] = artifacts[0]
+		updates["artifacts"] = string(artifactJSON)
 		updates["error"] = ""
 	}
 	db.DB.Model(&db.BuildJob{}).Where("id = ? AND status = ?", jobID, "running").Updates(updates)
@@ -3515,6 +3749,140 @@ func getAgentLogs(c *gin.Context) {
 	}
 	query.Order("timestamp DESC").Limit(limit).Find(&logs)
 	c.JSON(http.StatusOK, logs)
+}
+
+func listAgentLogAlertRules(c *gin.Context) {
+	var rules []db.AgentLogAlertRule
+	db.DB.Where("tenant_id = ?", currentTenantID(c)).Order("created_at DESC").Find(&rules)
+	c.JSON(http.StatusOK, rules)
+}
+
+func createAgentLogAlertRule(c *gin.Context) {
+	var req struct {
+		Name    string `json:"name"`
+		AgentID string `json:"agent_id"`
+		Level   string `json:"level"`
+		Keyword string `json:"keyword"`
+		Enabled *bool  `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+		return
+	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	rule := db.AgentLogAlertRule{
+		TenantID:  currentTenantID(c),
+		Name:      name,
+		AgentID:   strings.TrimSpace(req.AgentID),
+		Level:     strings.ToUpper(strings.TrimSpace(req.Level)),
+		Keyword:   strings.TrimSpace(req.Keyword),
+		Enabled:   enabled,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if rule.Level == "" && rule.Keyword == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "level or keyword is required"})
+		return
+	}
+	if err := db.DB.Create(&rule).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, rule)
+}
+
+func deleteAgentLogAlertRule(c *gin.Context) {
+	res := db.DB.Where("tenant_id = ? AND id = ?", currentTenantID(c), c.Param("id")).Delete(&db.AgentLogAlertRule{})
+	if res.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": res.Error.Error()})
+		return
+	}
+	if res.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "alert rule not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
+}
+
+func listAgentLogAlertEvents(c *gin.Context) {
+	limit := 100
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	var events []db.AgentLogAlertEvent
+	query := db.DB.Where("tenant_id = ?", currentTenantID(c))
+	if agentID := strings.TrimSpace(c.Query("agent_id")); agentID != "" {
+		query = query.Where("agent_id = ?", agentID)
+	}
+	query.Order("created_at DESC").Limit(limit).Find(&events)
+	c.JSON(http.StatusOK, events)
+}
+
+func archiveAgentLogs(c *gin.Context) {
+	day := strings.TrimSpace(c.Query("day"))
+	if day == "" {
+		day = time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	}
+	start, err := time.Parse("2006-01-02", day)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "day must use YYYY-MM-DD"})
+		return
+	}
+	end := start.AddDate(0, 0, 1)
+	agentIDs := tenantAgentIDs(currentTenantID(c))
+	if len(agentIDs) == 0 {
+		c.JSON(http.StatusOK, gin.H{"day": day, "log_count": 0, "status": "empty"})
+		return
+	}
+	var logs []db.AgentLog
+	if err := db.DB.Where("agent_id IN ? AND created_at >= ? AND created_at < ?", agentIDs, start, end).
+		Order("timestamp ASC").Find(&logs).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	for _, item := range logs {
+		_ = enc.Encode(item)
+	}
+	key := fmt.Sprintf("agent-logs/%s/%s.ndjson", currentTenantID(c), day)
+	store, err := storage.NewLocalStore(objectStorageRoot)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	obj, err := store.Put(c.Request.Context(), key, &buf)
+	archive := db.AgentLogArchive{
+		TenantID:   currentTenantID(c),
+		Day:        day,
+		StorageKey: key,
+		LogCount:   len(logs),
+		Status:     "success",
+		CreatedAt:  time.Now(),
+	}
+	if err != nil {
+		archive.Status = "failed"
+		archive.Error = err.Error()
+		_ = db.DB.Create(&archive).Error
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	archive.StorageKey = obj.Key
+	_ = db.DB.Create(&archive).Error
+	c.JSON(http.StatusOK, archive)
 }
 
 // ==================== 规则回滚 ====================

@@ -14,9 +14,10 @@ import {
     DashboardOutlined,
     HddOutlined,
     DeleteOutlined,
+    StopOutlined,
     ClearOutlined
 } from '@ant-design/icons';
-import { getNodes, deleteNode, cleanOfflineNodes } from '../services/api';
+import { cleanOfflineNodes, connectWebSocket, deleteNode, getNodes, revokeNodeToken } from '../services/api';
 import { useAutoContext } from '../contexts/GlobalAIContext';
 import { canAccessRole } from '../utils/auth';
 import gsap from 'gsap';
@@ -77,7 +78,11 @@ const NodeManagement: React.FC = () => {
     useEffect(() => {
         fetchNodes();
         const timer = setInterval(fetchNodes, 10000);
-        return () => clearInterval(timer);
+        const ws = connectWebSocket(() => undefined, undefined, { onReconnect: fetchNodes });
+        return () => {
+            clearInterval(timer);
+            ws.close();
+        };
     }, []);
 
     const onlineCount = nodes.filter(n => n.Status === 'Alive').length;
@@ -121,6 +126,17 @@ const NodeManagement: React.FC = () => {
             fetchNodes();
         } catch (e: any) {
             message.error(e || '删除失败');
+        }
+    };
+
+    const handleRevokeToken = async (agentId: string) => {
+        if (!canAccessRole('admin')) return;
+        try {
+            await revokeNodeToken(agentId);
+            message.success('Agent session 已吊销');
+            fetchNodes();
+        } catch (e: any) {
+            message.error(e || '吊销失败');
         }
     };
 
@@ -250,6 +266,17 @@ const NodeManagement: React.FC = () => {
                                     cancelText="取消"
                                 >
                                     <Button type="text" danger icon={<DeleteOutlined />} size="small" />
+                                </Popconfirm>
+                            )}
+                            {canAccessRole('admin') && isAlive && (
+                                <Popconfirm
+                                    title="吊销 Agent Token"
+                                    description="吊销后该 Agent 会被置为离线，需要重新注册获取新 token。"
+                                    onConfirm={() => handleRevokeToken(record.AgentID)}
+                                    okText="吊销"
+                                    cancelText="取消"
+                                >
+                                    <Button type="text" danger icon={<StopOutlined />} size="small" />
                                 </Popconfirm>
                             )}
                         </Space>

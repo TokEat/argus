@@ -7,7 +7,7 @@ import {
     StopOutlined, RedoOutlined, FileTextOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { cancelBuildJob, getBuildJobLogs, listBuildArtifacts, listBuildJobs, retryBuildJob, triggerBuild } from '../services/api';
+import { cancelBuildJob, connectWebSocket, getBuildJobLogs, listBuildArtifacts, listBuildJobs, retryBuildJob, triggerBuild } from '../services/api';
 
 const { Title, Text } = Typography;
 
@@ -104,14 +104,18 @@ const ClientBuild: React.FC = () => {
     useEffect(() => {
         fetchArtifacts();
         const timer = setInterval(fetchArtifacts, 5000);
-        return () => clearInterval(timer);
+        const ws = connectWebSocket(() => undefined, undefined, { onReconnect: fetchArtifacts });
+        return () => {
+            clearInterval(timer);
+            ws.close();
+        };
     }, []);
 
     const handleBuild = async () => {
         try {
             const values = await form.validateFields();
             setBuilding(true);
-            const res = await triggerBuild({ platform: values.platform, arch: values.arch, pack: values.pack });
+            const res = await triggerBuild({ platform: values.platform, arch: values.arch, pack: values.pack, components: values.components });
             message.success(res?.message || '构建请求已提交');
             setBuildModalOpen(false);
             fetchArtifacts();
@@ -162,7 +166,12 @@ const ClientBuild: React.FC = () => {
         {
             title: '构建目标',
             key: 'target',
-            render: (_, record) => <Text code>{record.platform}/{record.arch}</Text>,
+            render: (_, record) => (
+                <Space direction="vertical" size={2}>
+                    <Text code>{record.platform}/{record.arch}</Text>
+                    <Space wrap size={4}>{(record.components || ['dddd-agent']).map((item) => <Tag key={item}>{item}</Tag>)}</Space>
+                </Space>
+            ),
         },
         {
             title: '状态',
@@ -176,7 +185,16 @@ const ClientBuild: React.FC = () => {
         {
             title: '产物',
             dataIndex: 'artifact',
-            render: (artifact: string) => artifact ? <Button type="link" href={`/release/${artifact}`} target="_blank">{artifact}</Button> : '-',
+            render: (_artifact: string, record) => {
+                const files = record.artifacts?.length ? record.artifacts : (record.artifact ? [record.artifact] : []);
+                return files.length ? (
+                    <Space direction="vertical" size={2}>
+                        {files.map((artifact) => (
+                            <Button key={artifact} type="link" href={`/release/${artifact}`} target="_blank">{artifact}</Button>
+                        ))}
+                    </Space>
+                ) : '-';
+            },
         },
         {
             title: '日志尾部',
@@ -296,6 +314,17 @@ const ClientBuild: React.FC = () => {
                             </Form.Item>
                         </Col>
                     </Row>
+                    <Form.Item name="components" label="构建组件" initialValue={['dddd-agent']} rules={[{ required: true }]}>
+                        <Select
+                            mode="multiple"
+                            options={[
+                                { value: 'dddd-agent', label: 'Agent' },
+                                { value: 'dddd-server', label: 'Server' },
+                                { value: 'dddd', label: 'CLI' },
+                                { value: 'server-ui', label: 'Server UI' },
+                            ]}
+                        />
+                    </Form.Item>
                     <Form.Item name="pack" label="UPX 压缩" valuePropName="checked">
                         <Switch checkedChildren="开启" unCheckedChildren="关闭" />
                     </Form.Item>

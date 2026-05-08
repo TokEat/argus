@@ -152,18 +152,19 @@ func SplitFailedSubTask(sub *SubTask) ([]SubTask, bool) {
 	// 新建兄弟 SubTask 承载第二半目标
 	siblingID := fmt.Sprintf("%s-split-%d", sub.ID, time.Now().UnixMilli()%10000)
 	sibling := SubTask{
-		ID:            siblingID,
-		TenantID:      sub.TenantID,
-		ProjectID:     sub.ProjectID,
-		RootTaskID:    sub.RootTaskID,
-		ChunkTargets:  string(secondJSON),
-		Status:        "Dispatching",
-		Config:        sub.Config,
-		Priority:      sub.Priority,
-		AgentSelector: sub.AgentSelector,
-		TimeoutSec:    sub.TimeoutSec,
-		RetryCount:    sub.RetryCount + 1,
-		MaxRetry:      sub.MaxRetry,
+		ID:                 siblingID,
+		TenantID:           sub.TenantID,
+		ProjectID:          sub.ProjectID,
+		RootTaskID:         sub.RootTaskID,
+		ChunkTargets:       string(secondJSON),
+		Status:             "Dispatching",
+		Config:             sub.Config,
+		Priority:           sub.Priority,
+		AgentSelector:      sub.AgentSelector,
+		AgentSelectorRules: sub.AgentSelectorRules,
+		TimeoutSec:         sub.TimeoutSec,
+		RetryCount:         sub.RetryCount + 1,
+		MaxRetry:           sub.MaxRetry,
 	}
 
 	if err := DB.Create(&sibling).Error; err != nil {

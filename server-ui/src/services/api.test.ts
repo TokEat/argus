@@ -42,4 +42,18 @@ describe('connectWebSocket', () => {
         expect(onMessage).toHaveBeenCalledTimes(1);
         expect(onMessage).toHaveBeenCalledWith({ type: 'heartbeat' });
     });
+
+    it('reconnects with the last received event id', () => {
+        vi.useFakeTimers();
+        localStorage.setItem('token', 'jwt-token');
+        const onMessage = vi.fn();
+
+        connectWebSocket(onMessage, undefined, { onReconnect: vi.fn() });
+        MockWebSocket.instances[0].onmessage?.({ data: '{"id":42,"type":"task"}' } as MessageEvent);
+        MockWebSocket.instances[0].onclose?.();
+        vi.advanceTimersByTime(3000);
+
+        expect(MockWebSocket.instances[1].url).toContain('last_event_id=42');
+        vi.useRealTimers();
+    });
 });

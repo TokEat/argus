@@ -71,6 +71,11 @@ vi.mock('../services/api', () => ({
     getAgentLogSummary: vi.fn().mockResolvedValue({ level_counts: [], recent_errors: [], retention_days: 14 }),
     getAgentLogRetention: vi.fn().mockResolvedValue({ retention_days: 14 }),
     updateAgentLogRetention: vi.fn().mockResolvedValue({ retention_days: 14, deleted: 0 }),
+    listAgentLogAlertRules: vi.fn().mockResolvedValue([]),
+    listAgentLogAlerts: vi.fn().mockResolvedValue([]),
+    createAgentLogAlertRule: vi.fn().mockResolvedValue({}),
+    deleteAgentLogAlertRule: vi.fn().mockResolvedValue({}),
+    archiveAgentLogs: vi.fn().mockResolvedValue({}),
 }));
 
 const renderPage = (page: React.ReactElement) => render(

@@ -40,13 +40,23 @@ func VerifySchema(db *gorm.DB) error {
 		},
 		{
 			Table:   "sub_tasks",
-			Columns: []string{"project_id", "agent_selector", "timeout_sec", "retry_count", "max_retry"},
+			Columns: []string{"project_id", "agent_selector", "agent_selector_rules", "timeout_sec", "retry_count", "max_retry"},
 			Indexes: []string{"idx_sub_tasks_project_id", "idx_sub_tasks_root_task_id", "idx_sub_tasks_status"},
 		},
 		{
 			Table:   "nodes",
-			Columns: []string{"tenant_id", "running_task_ids", "os", "arch", "cpu_usage", "mem_usage"},
+			Columns: []string{"tenant_id", "running_task_ids", "os", "arch", "cpu_usage", "mem_usage", "token_expires_at", "token_revoked_at", "last_token_rotated_at"},
 			Indexes: []string{"idx_nodes_tenant_id"},
+		},
+		{
+			Table:   "agent_session_audits",
+			Columns: []string{"tenant_id", "agent_id", "action", "reason", "operator_id", "created_at"},
+			Indexes: []string{"idx_agent_session_audits_tenant_id", "idx_agent_session_audits_agent_id", "idx_agent_session_audits_action", "idx_agent_session_audits_operator_id"},
+		},
+		{
+			Table:   "ws_event_logs",
+			Columns: []string{"tenant_id", "project_id", "event_type", "payload", "occurred_at"},
+			Indexes: []string{"idx_ws_event_logs_tenant_id", "idx_ws_event_logs_project_id", "idx_ws_event_logs_occurred_at"},
 		},
 		{
 			Table:   "domains",
@@ -98,8 +108,28 @@ func VerifySchema(db *gorm.DB) error {
 			Columns: []string{"tenant_id", "max_concurrent_tasks", "max_running_sub_tasks", "daily_task_limit", "created_at", "updated_at"},
 		},
 		{
+			Table:   "agent_logs",
+			Columns: []string{"agent_id", "level", "message", "timestamp", "created_at"},
+			Indexes: []string{"idx_agent_logs_agent_id", "idx_agent_logs_timestamp"},
+		},
+		{
+			Table:   "agent_log_alert_rules",
+			Columns: []string{"tenant_id", "name", "agent_id", "level", "keyword", "enabled", "created_at", "updated_at"},
+			Indexes: []string{"idx_agent_log_alert_rules_tenant_id", "idx_agent_log_alert_rules_name", "idx_agent_log_alert_rules_agent_id", "idx_agent_log_alert_rules_level"},
+		},
+		{
+			Table:   "agent_log_alert_events",
+			Columns: []string{"tenant_id", "rule_id", "agent_id", "level", "message", "log_id", "created_at"},
+			Indexes: []string{"idx_agent_log_alert_events_tenant_id", "idx_agent_log_alert_events_rule_id", "idx_agent_log_alert_events_agent_id", "idx_agent_log_alert_events_level", "idx_agent_log_alert_events_log_id"},
+		},
+		{
+			Table:   "agent_log_archives",
+			Columns: []string{"tenant_id", "day", "storage_key", "log_count", "status", "error", "created_at"},
+			Indexes: []string{"idx_agent_log_archives_tenant_id", "idx_agent_log_archives_day", "idx_agent_log_archives_status"},
+		},
+		{
 			Table:   "build_jobs",
-			Columns: []string{"platform", "arch", "pack", "status", "artifact", "log_tail", "log_text", "error", "started_at", "finished_at"},
+			Columns: []string{"platform", "arch", "components", "pack", "status", "artifact", "artifacts", "log_tail", "log_text", "error", "started_at", "finished_at"},
 			Indexes: []string{"idx_build_jobs_platform", "idx_build_jobs_arch", "idx_build_jobs_status"},
 		},
 		{

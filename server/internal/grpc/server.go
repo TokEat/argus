@@ -22,6 +22,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+const agentSessionTTL = 7 * 24 * time.Hour
+
 // Server 封装了对 Agent 通信的 gRPC 服务端
 type Server struct {
 	pb.UnimplementedAgentServiceServer
@@ -192,21 +194,32 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterReq) (*pb.Registe
 	}
 
 	token := generateSessionToken()
-	db.DB.Save(&db.Node{
-		TenantID:     tenantID,
-		AgentID:      req.AgentId,
-		Status:       "Alive",
-		Token:        token,
-		Version:      req.Version,
-		Tags:         tagsJSON,
-		Capacity:     int(req.Capacity),
-		RunningTasks: 0,
-		LastBeat:     time.Now().UnixMilli(),
-		OS:           req.Os,
-		Arch:         req.Arch,
-	})
-
 	now := time.Now()
+	expiresAt := now.Add(agentSessionTTL)
+	db.DB.Save(&db.Node{
+		TenantID:           tenantID,
+		AgentID:            req.AgentId,
+		Status:             "Alive",
+		Token:              token,
+		TokenExpiresAt:     &expiresAt,
+		TokenRevokedAt:     nil,
+		LastTokenRotatedAt: &now,
+		Version:            req.Version,
+		Tags:               tagsJSON,
+		Capacity:           int(req.Capacity),
+		RunningTasks:       0,
+		LastBeat:           now.UnixMilli(),
+		OS:                 req.Os,
+		Arch:               req.Arch,
+	})
+	_ = db.DB.Create(&db.AgentSessionAudit{
+		TenantID:  tenantID,
+		AgentID:   req.AgentId,
+		Action:    "register_rotate",
+		Reason:    "agent register issued new session token",
+		CreatedAt: now,
+	}).Error
+
 	db.DB.Model(&db.CloudInstance{}).
 		Where("agent_id = ? AND status IN ?", req.AgentId, []string{
 			db.CloudStatusProvisioning,
@@ -454,6 +467,18 @@ func (s *Server) FetchTask(ctx context.Context, req *pb.FetchTaskReq) (*pb.Task,
 // ============================================================================
 
 func (s *Server) Heartbeat(ctx context.Context, req *pb.HeartbeatReq) (*pb.HeartbeatResp, error) {
+	var sessionNode db.Node
+	if err := db.DB.Select("agent_id", "token_expires_at", "token_revoked_at").Where("agent_id = ?", req.AgentId).First(&sessionNode).Error; err == nil {
+		if sessionNode.TokenRevokedAt != nil || (sessionNode.TokenExpiresAt != nil && time.Now().After(*sessionNode.TokenExpiresAt)) {
+			return &pb.HeartbeatResp{
+				Ack:             true,
+				ShouldTerminate: true,
+				ShouldSyncRules: false,
+				TasksAvailable:  0,
+			}, nil
+		}
+	}
+
 	taskIDsJSON := "[]"
 	if len(req.RunningTaskIds) > 0 {
 		b, _ := json.Marshal(req.RunningTaskIds)
@@ -720,14 +745,46 @@ func (s *Server) StreamLogs(stream pb.AgentService_StreamLogsServer) error {
 			return err
 		}
 
-		db.DB.Create(&db.AgentLog{
+		logItem := db.AgentLog{
 			AgentID:   payload.AgentId,
 			Level:     payload.Level,
 			Message:   payload.Message,
 			Timestamp: payload.Timestamp,
-		})
+		}
+		db.DB.Create(&logItem)
+		createAgentLogAlerts(logItem)
 
 		log.Printf("[Telemetry][Agent %s][%s] %s", payload.AgentId, payload.Level, payload.Message)
+	}
+}
+
+func createAgentLogAlerts(logItem db.AgentLog) {
+	var node db.Node
+	tenantID := "default"
+	if err := db.DB.Select("tenant_id").Where("agent_id = ?", logItem.AgentID).First(&node).Error; err == nil && strings.TrimSpace(node.TenantID) != "" {
+		tenantID = node.TenantID
+	}
+	var rules []db.AgentLogAlertRule
+	db.DB.Where("tenant_id = ? AND enabled = ?", tenantID, true).Find(&rules)
+	for _, rule := range rules {
+		if rule.AgentID != "" && rule.AgentID != logItem.AgentID {
+			continue
+		}
+		if rule.Level != "" && !strings.EqualFold(rule.Level, logItem.Level) {
+			continue
+		}
+		if rule.Keyword != "" && !strings.Contains(strings.ToLower(logItem.Message), strings.ToLower(rule.Keyword)) {
+			continue
+		}
+		_ = db.DB.Create(&db.AgentLogAlertEvent{
+			TenantID:  tenantID,
+			RuleID:    rule.ID,
+			AgentID:   logItem.AgentID,
+			Level:     logItem.Level,
+			Message:   logItem.Message,
+			LogID:     logItem.ID,
+			CreatedAt: time.Now(),
+		}).Error
 	}
 }
 
@@ -759,52 +816,18 @@ func (s *Server) StreamDebug(stream pb.AgentService_StreamDebugServer) error {
 
 func (s *Server) matchAgentSelector(taskID string, nodeTags string) bool {
 	var sub db.SubTask
-	if db.DB.Select("agent_selector").Where("id = ?", taskID).First(&sub).Error != nil {
+	if db.DB.Select("agent_selector", "agent_selector_rules").Where("id = ?", taskID).First(&sub).Error != nil {
 		return true
 	}
 
 	selector := strings.TrimSpace(sub.AgentSelector)
-	if selector == "" || selector == "{}" {
-		return true
-	}
-
 	var selectorMap map[string]string
-	if err := json.Unmarshal([]byte(selector), &selectorMap); err != nil {
-		return true
+	if selector != "" && selector != "{}" {
+		_ = json.Unmarshal([]byte(selector), &selectorMap)
 	}
-
-	var tagMap map[string]string
-	if err := json.Unmarshal([]byte(nodeTags), &tagMap); err != nil {
-		return len(selectorMap) == 0
-	}
-	// 兼容单机/开发模式：Agent 无标签时视为“通用节点”，允许领取全部任务。
-	if len(tagMap) == 0 {
-		return true
-	}
-
-	for key, val := range selectorMap {
-		nodeVal, ok := tagMap[key]
-		if !ok {
-			// 支持通配能力标签，例如 target_type=all|any|*
-			if key == "target_type" {
-				if wildcard, okw := tagMap["target_type"]; okw {
-					w := strings.ToLower(strings.TrimSpace(wildcard))
-					if w == "all" || w == "any" || w == "*" {
-						continue
-					}
-				}
-			}
-			return false
-		}
-		if nodeVal != val {
-			n := strings.ToLower(strings.TrimSpace(nodeVal))
-			if n == "all" || n == "any" || n == "*" {
-				continue
-			}
-			return false
-		}
-	}
-	return true
+	rules := db.ParseSelectorRulesJSON(sub.AgentSelectorRules)
+	matched, _ := db.NodeMatchesSelectorRules(selectorMap, rules, nodeTags)
+	return matched
 }
 
 func (s *Server) getQueueDepth() int32 {

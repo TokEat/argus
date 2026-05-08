@@ -24,13 +24,13 @@
 
 | 计划项 | 当前判定 | 已接入的主链路 | 仍需跟进 |
 |--------|----------|----------------|----------|
-| Agent 内部 HTTP session 鉴权 | ✅ 已闭环 | Agent 保存 `RegisterResp.token`，内部 HTTP 统一携带 `x-agent-id` + `x-agent-token`；Server 按 `nodes.agent_id + token` 注入真实 `tenant_id`，并校验 `/agents/:id/commands` 路径 ID；Agent 重注册会轮换 session token，离线/紧急下线会清理 token，内部 HTTP 只接受 Alive 节点 | 长期可补 token 过期时间和审计 |
+| Agent 内部 HTTP session 鉴权 | ✅ 已闭环 | Agent 保存 `RegisterResp.token`，内部 HTTP 统一携带 `x-agent-id` + `x-agent-token`；Server 按 `nodes.agent_id + token` 注入真实 `tenant_id`，并校验 `/agents/:id/commands` 路径 ID；Agent 重注册会轮换 session token，离线/紧急下线会清理 token，内部 HTTP 只接受 Alive 节点；session 已支持过期时间、吊销时间、轮换审计和管理员主动吊销 | 长期可补更细粒度的 token 风险策略 |
 | Agent 规则同步租户隔离 | ✅ 已闭环 | `/arsenals/db*` 与 `/arsenals/manifest` 可由 Agent session 进入，按 Agent 所属租户导出规则；普通 JWT 访问仍走 JWT/RBAC | 规则包增量传输与长期制品存储 |
-| 显式调度控制 | ✅ 已闭环 | `CreateTaskRequest.agent_selector` 已支持扁平字符串 map，Server 写入每个 SubTask；`POST /tasks/preview-selector` 复用服务端最终 selector 规则，并按目标类型返回匹配节点、空闲槽位和不可匹配原因；前端任务创建页展示分组调度解释 | 后续可支持表达式、反选和跨批次容量预测 |
-| Agent 遥测日志 | ✅ 已闭环 | Agent gologger TeeWriter 通过 gRPC `StreamLogs` 上报；`GET /agents/:id/logs` 支持 `level/limit/q/since/until`；`/agent-logs/summary` 提供级别聚合和 ERROR/WARN 摘要；保留天数配置与定时清理已接入；前端 AgentLogs 支持筛选持久化与导出 | 长期归档、告警联动 |
-| 客户端构建链路 | ✅ 已闭环 | `POST /build/client` 原子化创建 BuildJob 并后台执行 `build.sh`；`GET /build/jobs*` 和 `/release/*` 可查看状态与下载产物；BuildJob 支持取消、重试和完整日志读取 | 多组件构建、CI 制品发布 |
-| Dashboard 实时化与数据化 | ✅ v1 闭环 | WebSocket envelope 包含 `type/event/version/occurred_at/data`，服务端 heartbeat，前端断线重连后刷新 Dashboard；趋势、严重度、任务结果、高危漏洞均接入后端统计接口 | 持久事件日志 replay、更多页面 backfill |
-| 工程质量门禁 | ✅ 基础闭环 | 顶层 `Makefile` 提供 `test/lint/ci/coverage/frontend-smoke/cloud-smoke`；server-ui 接入 Vitest + Testing Library；GitHub Actions 覆盖根模块 Go test、`server` 子模块 Go test、Go 覆盖率输出、Cloud Provider mock smoke、前端 lint/test/smoke/build | 后续补覆盖率阈值、真实浏览器 E2E 和 UI 截图回归 |
+| 显式调度控制 | ✅ 已闭环 | `CreateTaskRequest.agent_selector` 已支持扁平字符串 map，新增 `agent_selector_rules.match/not_match` 支持等值、多值和反选；Server 写入每个 SubTask；`POST /tasks/preview-selector` 与 Agent 认领共用匹配器，并按目标类型返回匹配节点、空闲槽位、预计立即领取批次数、等待批次数和不可匹配原因；前端任务创建页展示分组调度解释 | 后续可支持更复杂表达式 |
+| Agent 遥测日志 | ✅ 已闭环 | Agent gologger TeeWriter 通过 gRPC `StreamLogs` 上报；`GET /agents/:id/logs` 支持 `level/limit/q/since/until`；`/agent-logs/summary` 提供级别聚合和 ERROR/WARN 摘要；保留天数配置与定时清理已接入；前端 AgentLogs 支持筛选持久化、导出、告警规则、告警事件和按天归档 | 长期可补归档清理和告警通知渠道 |
+| 客户端构建链路 | ✅ 已闭环 | `POST /build/client` 原子化创建 BuildJob 并后台执行 `build.sh`；`GET /build/jobs*` 和 `/release/*` 可查看状态与下载产物；BuildJob 支持取消、重试、完整日志读取、多组件构建和多产物展示；GitHub Actions 上传 v0.1.0 bundle 与组件制品 | 后续可补制品签名 |
+| Dashboard 实时化与数据化 | ✅ v1 闭环 | WebSocket envelope 包含 `id/type/event/version/project_id/occurred_at/data`，服务端 heartbeat 和短期 replay 日志；重连支持 `last_event_id/since` 回放并按租户/项目权限过滤；前端 Dashboard、任务列表、节点列表、AgentLogs、ClientBuild 在重连后主动刷新 | 后续可补更长周期事件保留策略 |
+| 工程质量门禁 | ✅ 基础闭环 | 顶层 `Makefile` 提供 `test/lint/ci/coverage/frontend-smoke/cloud-smoke`；server-ui 接入 Vitest + Testing Library；GitHub Actions 覆盖根模块 Go test、`server` 子模块 Go test、Go 覆盖率输出、Cloud Provider mock smoke、前端 lint/test/smoke/build | 后续补覆盖率阈值和 UI 截图回归 |
 
 ---
 
@@ -58,7 +58,7 @@
 | 统计接口 | 首页五维统计 + 趋势 / 严重度 / 任务结果统计 / 最近高危漏洞 | `server/internal/api/router.go` `server/internal/db/stats.go` |
 | WebSocket Hub | 结果批量写入与 EXP 执行状态的服务端广播 | `server/internal/api/ws.go` |
 | 报表导出 | 漏洞 CSV 导出 | `server/internal/api/router.go` |
-| 系统管理 | 用户 CRUD、MCP Key CRUD、构建产物列表、Agent 日志查询 | `server/internal/api/router.go` |
+| 系统管理 | 用户 CRUD、MCP Key CRUD、构建产物列表、Agent 日志查询、Agent 日志告警与归档 | `server/internal/api/router.go` |
 | AI Copilot | 全局 AI 助手、多轮对话、流式输出、在线/离线 Agent 上下文感知 | `server/internal/ai/` `server/internal/api/ai_handlers.go` |
 | AI 工具链 (Tool Calling) | Nuclei 文档检索、知识库查询、POC / EXP 分析审查、执行诊断、节点容量分析 | `server/internal/ai/tools_builtins.go` `server/internal/api/ai_tools.go` |
 | 云资源编排 | AutoScaler 自动伸缩引擎、阿里云 ECS Provider、实例对账与孤儿回收、AES-256-GCM 凭证加密 | `server/internal/cloud/` |
@@ -103,7 +103,7 @@
 | ProfilesView | 融合画像查询可用 |
 | POC / Finger / Workflow / Dir / EXP 配置页 | 可视化 CRUD 可用，已接入在线调试、AI 辅助增强与 EXP Builder |
 | UserManagement | 可用 |
-| ProjectManagement | 项目 owner / operator 成员分配已接入 |
+| ProjectManagement | 项目 viewer / operator / owner 成员分配已接入 |
 | CloudManagement | 云凭证、策略、实例、OSS 制品上传、权限检查和价格/规格选择已接入真实 API |
 | ClientBuild | 构建产物、BuildJob 队列、状态和 `/release/*` 下载入口可用 |
 | AgentLogs | Agent 日志筛选、查看与导出可用 |
@@ -116,21 +116,22 @@
 
 ## 四、部分实现 / 链路未闭环 (⚠️)
 
-| 模块 | 当前现状 | 主要缺口 |
-|------|----------|----------|
-| Agent 控制链路 | gRPC 仍使用 PSK 引导，Agent 已保存 `Register` session token；内部 HTTP 使用 `x-agent-id` + `x-agent-token` 绑定真实租户；重注册 token 轮换、离线 token 清理和 Alive 状态校验已接入 | 长期可补 token 过期时间、审计和主动吊销接口 |
-| WebSocket 实时看板 | 服务端支持 Header/query token，Hub 按租户广播，事件 envelope 已包含 `type/event/version/occurred_at/data`，并定期发送 heartbeat；Dashboard 重连后主动刷新 | 暂不支持持久事件日志 replay，细粒度事件权限仍可继续增强 |
-| 优先级 / 标签 / 容量调度 | 多优先级队列、节点标签匹配、SubTask `agent_selector`、Agent 注册容量与 `capacity_update` 都已存在；任务创建 API / UI 已暴露显式 `agent_selector`，并通过后端预览接口对齐隐式 `target_type` 合并规则；预览结果已按目标类型解释匹配节点、容量和原因 | selector 目前是扁平字符串等值匹配，后续可支持表达式、反选和跨批次容量预测 |
-| 任务状态机 | `DONE` / `FAILED` / `CANCELLED` / `TIMEOUT` 的 RootTask 聚合已收口；存在活跃子任务时保持 `Running` / `PartialDone`，无活跃子任务时按 `Timeout > Failed > Cancelled > FINISHED` 收敛 | 后续可继续补充失败原因统计和前端展示 |
-| 云资源编排 | AutoScaler 自动伸缩引擎已接入 `main.go`、阿里云 ECS Provider 已注册、Cloud-Init 地址注入/实例状态收敛/OSS 制品就绪校验已打通、NoStock 多可用区+多规格自动重试+规格降级引擎已实现 | 多云 Provider 扩展与端到端生命周期集成测试仍不足 |
-| CloudManagement 页面 | 后端已提供完整的凭证/策略/实例 CRUD、仪表盘 API、实时价格查询、可用规格列表；前端已接入真实 API 数据流并支持策略下发 | 策略执行异常态、云实例真实生命周期、OSS fallback 和权限检查缺少自动化端到端覆盖 |
-| ClientBuild 页面 | 可列出 `release/` 目录产物，`/release/*` 已挂为静态下载入口；`POST /build/client` 会原子化创建 BuildJob 并后台执行 `build.sh`；前端可查看构建队列、取消运行中任务、重试终态任务并查看完整日志 | 目前只构建 `dddd-agent`；缺少多组件构建和 CI 制品发布 |
-| 遥测日志黑匣子 | Agent gologger TeeWriter 已通过 gRPC `StreamLogs` 写入 `agent_logs`；前端 Agent 日志页支持 level/关键字/时间/limit 筛选、筛选条件持久化、导出、级别聚合与错误摘要；Server 已接入保留天数配置和定时清理 | 仍缺告警联动和长期归档 |
-| Spot 回收处理 | `StartSpotTerminationListener` 已实现，Agent 在 `ARGUS_SPOT=1` 或 `cloud=...` 标签下会自动启用 | 云厂商直接强杀且无预警时仍依赖心跳回收兜底 |
-| Dashboard 数据增强 | 趋势、严重度、任务结果统计、高危漏洞接口已实现；Dashboard 已消费真实统计接口；WebSocket heartbeat 与重连刷新已接入 | 后续可继续补更多页面 backfill 和持久事件 replay |
-| 角色与租户治理 | RBAC 中间件已启用，内置三档角色保持兼容；新增租户级自定义角色表、`/roles` CRUD、权限矩阵返回和 RoleManagement 可视化管理；自定义角色通过 `base_role` 映射到 admin/operator/viewer 权限基线；已新增租户任务配额，创建任务校验活跃任务/每日任务数，Agent 认领校验运行中批次数；云 AK/SK 已支持 owner + 用户绑定；项目 `owner/operator` 成员访问控制已接入，详见 `docs/tenant-rbac.md` | 自定义角色目前继承基线角色，尚未支持逐接口差异化授权；项目成员只有 owner/operator 两档，缺少 viewer 等更细粒度项目权限 |
-| Clean Architecture 迁移 | `core/usecase`、`adapters`、`bootstrap` 目录结构已搭好 | `/api/v2`、新 HTTP/gRPC adapter、仓储与 usecase 仍是 scaffold / `ErrNotImplemented` |
-| 工程质量门禁 | 已新增 GitHub Actions、顶层 `test/lint/ci/coverage/frontend-smoke/cloud-smoke` 聚合目标、Vitest + Testing Library 基础前端测试，workflow 已覆盖独立 `server` Go module、Go 覆盖率输出和云资源 mock smoke | 仍缺覆盖率阈值、真实浏览器 E2E 和 UI 截图回归 |
+当前无发布阻塞型“部分实现”条目。上一版列在本节的用户链路已收口到主流程：
+
+| 原模块 | 闭环结果 |
+|--------|----------|
+| Agent 控制链路 | session token 已支持过期、吊销、轮换审计和管理员主动吊销；内部 HTTP 与 Agent 认领链路拒绝过期/吊销 token |
+| WebSocket 实时看板 | envelope 增加事件 ID，短期 replay 日志已落库；重连支持 `last_event_id/since` 回放并按租户/项目权限过滤 |
+| 优先级 / 标签 / 容量调度 | `agent_selector_rules` 已支持等值、多值和反选；预览接口与实际认领共用匹配器，并返回容量与等待批次解释 |
+| 任务状态机 | 任务详情返回失败、超时、取消、待认领等原因聚合，前端可展示原因分布 |
+| CloudManagement / 云资源编排 | mock smoke 覆盖凭证、规格/价格、NoStock 降级、弹容、回收、OSS 失败等发布前自动化路径；真实云账号验证仍按 beta 边界记录 |
+| ClientBuild 页面 | 支持多组件构建、多产物下载、取消、重试、完整日志和 CI release artifact 上传 |
+| 遥测日志黑匣子 | 支持筛选、导出、保留策略、告警规则、告警事件和按天 NDJSON 归档 |
+| Dashboard 数据增强 | Dashboard、任务列表、节点列表、AgentLogs、ClientBuild 均接入 WebSocket 重连后的 REST backfill |
+| 角色与租户治理 | 自定义角色 permissions 已作为运行时授权依据；项目成员支持 viewer/operator/owner；租户任务配额覆盖任务创建和 Agent 认领 |
+| 工程质量门禁 | GitHub Actions、顶层 Makefile、Go/Vitest/前端 smoke/Cloud mock smoke/发布制品上传已接入 |
+
+Clean Architecture 迁移不再作为用户功能链路验收项，降级到长期架构演进；当前 `/api/v1` 主链路保持兼容，不为清状态强行暴露 `/api/v2`。
 
 ---
 
@@ -140,7 +141,7 @@
 
 | 编号 | 类别 | 发布前状态 | 发布口径 |
 |------|------|------------|----------|
-| REL-01 | 发布制品流水线 | 本地 `make ci`、GitHub Actions、BuildJob 队列和 `/release/*` 下载已可用；`deploy/build-bundle.sh` 默认版本已固定为 `v0.1.0` 并校验发行包必需文件；仍缺制品签名和 CI 上传 release artifact | 发布前至少产出 server / agent / server-ui 构建包，并在发布说明中标注未签名或补齐签名 |
+| REL-01 | 发布制品流水线 | 本地 `make ci`、GitHub Actions、BuildJob 队列和 `/release/*` 下载已可用；`deploy/build-bundle.sh` 默认版本已固定为 `v0.1.0` 并校验发行包必需文件；CI 已上传 v0.1.0 bundle 与组件制品 | 发布前至少产出 server / agent / server-ui 构建包，并在发布说明中标注未签名，后续补齐签名 |
 | REL-02 | 部署配置与密钥基线 | JWT、Agent session、RBAC、租户配额、云凭证加密已接入；已新增 `deploy/production.env.example` 和默认密码/开发密钥禁用说明 | 发布包必须附最小生产配置模板，明确 `JWT_SECRET`、数据库、RabbitMQ、Agent PSK、AI Key、云 AK/SK 的配置要求 |
 | REL-03 | 云资源与 OSS 发布验证 | Cloud Provider mock、OSSStore、本地对象存储、Agent 制品上传链路已有测试；真实云账号端到端弹容、回收、OSS fallback 仍需发布前 smoke | 发布前用测试云账号跑一次一键配置、制品上传、弹容、回收；若未跑真实云 smoke，需在发布说明中标注为 beta 能力 |
 | REL-04 | 文档与运维入口 | README 已指向生产部署指南和 `docs/release-checklist.md`；仍需发布说明、升级/回滚和常见故障 | 发布前 README 指向部署文档、运维文档和风险声明；避免把内部路线图当成用户使用说明 |
@@ -181,8 +182,8 @@
 - HTTP 基础前缀：`/api/v1`
 - HTTP 鉴权：JWT Bearer Token，`POST /api/v1/auth/login` 例外
 - 租户与 RBAC：JWT 中的 `tenant_id` 是数据隔离边界；`role` 可为内置角色或租户级自定义角色，`role_base` 表示自定义角色继承的内置权限基线；`admin` / `operator` / `viewer` 权限矩阵见 [租户隔离与角色权限划分](tenant-rbac.md)
-- Agent 内部 HTTP：`/agents/:id/commands`、`/arsenals/db*` 使用 `x-agent-id` + `x-agent-token`；token 来源为 gRPC `RegisterResp.token`
-- WebSocket：`GET /api/v1/ws`，支持 `Authorization: Bearer <JWT>` 或 `?token=<JWT>`
+- Agent 内部 HTTP：`/agents/:id/commands`、`/arsenals/db*` 使用 `x-agent-id` + `x-agent-token`；token 来源为 gRPC `RegisterResp.token`，支持过期、吊销和轮换审计
+- WebSocket：`GET /api/v1/ws`，支持 `Authorization: Bearer <JWT>` 或 `?token=<JWT>`；重连可带 `last_event_id` 或 `since`
 - gRPC 服务：`scan.AgentService`
 - 协议定义：`shared/proto/proto/scan/agent.proto`
 
@@ -191,17 +192,17 @@
 | 模块 | 代表接口 | 当前实现 |
 |------|----------|----------|
 | 认证与会话 | `POST /auth/login` | 数据库用户优先，兼容开发密码，成功后签发 JWT |
-| 任务与队列 | `GET/POST/DELETE /tasks`、`POST /tasks/preview-selector`、`POST /tasks/:id/cancel`、`POST /tasks/:id/append`、`GET /queue/depth` | RootTask / SubTask 创建、调度选择器预览、取消、追加、队列深度查询；创建任务支持 `agent_selector` |
-| 项目与成员 | `/projects*`、`GET/PUT /projects/:id/members` | 项目 CRUD、owner/operator 成员维护、任务与结果访问校验 |
+| 任务与队列 | `GET/POST/DELETE /tasks`、`POST /tasks/preview-selector`、`POST /tasks/:id/cancel`、`POST /tasks/:id/append`、`GET /queue/depth` | RootTask / SubTask 创建、调度选择器预览、取消、追加、队列深度查询；创建任务支持 `agent_selector` 与 `agent_selector_rules` |
+| 项目与成员 | `/projects*`、`GET/PUT /projects/:id/members` | 项目 CRUD、viewer/operator/owner 成员维护、任务与结果访问校验；旧 `user_ids` 请求兼容为 operator |
 | 统计、结果与画像 | `/stats*`、`/vulns`、`/assets`、`/fingerprints`、`/profiles`、`/reports/export/vulns` | 统计聚合、结果查询、画像聚合、漏洞 CSV 导出 |
-| 节点与 Agent 指令 | `GET /nodes`、`GET /agents/:id/commands`、`GET /agents/:id/logs` | 节点列表、Agent session 绑定命令轮询、Agent 日志筛选查询 |
+| 节点与 Agent 指令 | `GET /nodes`、`POST /nodes/:id/revoke-token`、`GET /agents/:id/commands`、`GET /agents/:id/logs` | 节点列表、Agent session 主动吊销、Agent session 绑定命令轮询、Agent 日志筛选查询 |
 | Arsenal 与规则 | `/arsenals/:type`、`/arsenals/manifest`、`/arsenals/db*`、审批/回滚/删除接口 | 原始规则 CRUD、审批、回滚、Manifest、`rule_version`、Agent SQLite DB 同步 |
 | EXP 验证与执行 | `/exploits*`、`/exploits/:id/risk-waiver`、`/exploits/batch/*`、`/exploits/audits`、`/exploit-runs*`、`/exploit-artifacts/*` | EXP 规则列表、单条/批量审核与废弃、风险豁免、审计查询、删除、dry-run、Agent 调试、正式执行、凭据引用记录、取消、cleanup、制品查询 |
 | 字典 | `/dictionaries/workflow`、`/dictionaries/fingerprint` | Workflow / Fingerprint 结构化 CRUD，并回写 Arsenal |
-| 用户、角色、租户与系统配置 | `/users`、`/roles`、`/tenants/:id/quotas`、`/mcp/keys`、`/ai/config`、`/ai/models`、`/ai/test` | 用户管理、自定义角色 CRUD、权限矩阵返回、租户任务配额管理、MCP Key、AI 配置与模型连通性测试 |
+| 用户、角色、租户与系统配置 | `/users`、`/roles`、`/tenants/:id/quotas`、`/mcp/keys`、`/agent-logs/alert-rules`、`/agent-logs/alerts`、`/agent-logs/archive`、`/ai/config`、`/ai/models`、`/ai/test` | 用户管理、自定义角色 CRUD、权限矩阵返回、租户任务配额管理、MCP Key、Agent 日志告警/归档、AI 配置与模型连通性测试 |
 | AI Copilot / POC 元数据 | `GET /poc-rules`、`POST /ai/chat`、`POST /ai/actions/confirm`、`GET /ai/copilot/prompts`、`GET /ai/tool-invocations`、`POST /ai/arsenal/analyze`、`POST /ai/arsenal/analyze/stream` | POC 元数据检索、全局 Copilot SSE、草稿动作确认、Prompt/动作白名单展示、工具审计、POC AI 审查同步/流式入口 |
 | 云资源编排 | `/cloud/accounts*`、`/cloud/policies*`、`/cloud/instances*`、`/cloud/dashboard` | 云凭证、策略、实例生命周期、OSS、一键配置、仪表盘 |
-| 构建 | `GET /build/artifacts`、`GET /build/jobs*`、`GET /build/jobs/:id/logs`、`POST /build/jobs/:id/cancel`、`POST /build/jobs/:id/retry`、`POST /build/client`、`GET /release/*` | 产物列表、BuildJob 状态/完整日志、取消/重试、后台执行 `build.sh` 与静态下载可用 |
+| 构建 | `GET /build/artifacts`、`GET /build/jobs*`、`GET /build/jobs/:id/logs`、`POST /build/jobs/:id/cancel`、`POST /build/jobs/:id/retry`、`POST /build/client`、`GET /release/*` | 产物列表、BuildJob 状态/完整日志、取消/重试、多组件后台执行 `build.sh`、多产物下载与静态下载可用 |
 
 ### 本轮验收命令
 

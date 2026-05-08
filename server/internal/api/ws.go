@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/user/dddd-server/internal/db"
 )
 
 var (
@@ -57,6 +59,11 @@ func (h *WebSocketHub) Start() {
 
 func (h *WebSocketHub) writeEnvelope(env wsEnvelope) {
 	msg := normalizeWSMessage(env.msg)
+	if env.tenant != "" && msg["type"] != "heartbeat" && msg["id"] == nil {
+		if id := persistWSEvent(env.tenant, msg); id > 0 {
+			msg["id"] = id
+		}
+	}
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
 	for client, tenant := range h.clients {
@@ -70,6 +77,34 @@ func (h *WebSocketHub) writeEnvelope(env wsEnvelope) {
 			delete(h.clients, client)
 		}
 	}
+}
+
+func persistWSEvent(tenantID string, msg map[string]interface{}) uint {
+	payload, err := json.Marshal(msg)
+	if err != nil || db.DB == nil {
+		return 0
+	}
+	projectID := strings.TrimSpace(toWSString(msg["project_id"]))
+	if projectID == "" {
+		if data, ok := msg["data"].(map[string]interface{}); ok {
+			projectID = strings.TrimSpace(toWSString(data["project_id"]))
+		}
+	}
+	event := db.WSEventLog{
+		TenantID:   tenantID,
+		ProjectID:  projectID,
+		EventType:  strings.TrimSpace(toWSString(msg["event"])),
+		Payload:    string(payload),
+		OccurredAt: time.Now(),
+	}
+	if event.EventType == "" {
+		event.EventType = strings.TrimSpace(toWSString(msg["type"]))
+	}
+	if err := db.DB.Create(&event).Error; err != nil {
+		log.Printf("WS event persist error: %v", err)
+		return 0
+	}
+	return event.ID
 }
 
 func normalizeWSMessage(msg interface{}) map[string]interface{} {
@@ -152,6 +187,7 @@ func HandleWS(c *gin.Context) {
 		return
 	}
 
+	replayWSEvents(c, ws)
 	Hub.mutex.Lock()
 	Hub.clients[ws] = currentTenantID(c)
 	Hub.mutex.Unlock()
@@ -164,6 +200,51 @@ func HandleWS(c *gin.Context) {
 			Hub.mutex.Unlock()
 			ws.Close()
 			break
+		}
+	}
+}
+
+func replayWSEvents(c *gin.Context, ws *websocket.Conn) {
+	if db.DB == nil {
+		return
+	}
+	tenantID := currentTenantID(c)
+	query := db.DB.Where("tenant_id = ?", tenantID)
+	if raw := strings.TrimSpace(c.Query("last_event_id")); raw != "" {
+		if id, err := strconv.ParseUint(raw, 10, 64); err == nil && id > 0 {
+			query = query.Where("id > ?", id)
+		}
+	} else if raw := strings.TrimSpace(c.Query("since")); raw != "" {
+		if ts, err := time.Parse(time.RFC3339, raw); err == nil {
+			query = query.Where("occurred_at >= ?", ts)
+		} else if ts, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+			query = query.Where("occurred_at >= ?", ts)
+		}
+	} else {
+		return
+	}
+	if !currentUserIsAdmin(c) {
+		ids := accessibleProjectIDs(c)
+		if len(ids) == 0 {
+			query = query.Where("project_id = '' OR project_id IS NULL")
+		} else {
+			query = query.Where("project_id = '' OR project_id IS NULL OR project_id IN ?", ids)
+		}
+	}
+	var events []db.WSEventLog
+	if err := query.Order("id ASC").Limit(200).Find(&events).Error; err != nil {
+		log.Printf("WS replay query error: %v", err)
+		return
+	}
+	for _, event := range events {
+		msg := map[string]interface{}{}
+		if err := json.Unmarshal([]byte(event.Payload), &msg); err != nil {
+			continue
+		}
+		msg["id"] = event.ID
+		if err := ws.WriteJSON(msg); err != nil {
+			log.Printf("WS replay write error: %v", err)
+			return
 		}
 	}
 }
