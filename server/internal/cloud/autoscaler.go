@@ -15,6 +15,15 @@ import (
 
 const ttlActiveTaskGracePeriod = 30 * time.Minute
 
+type scaleUpReason string
+
+const (
+	scaleUpReasonNone        scaleUpReason = ""
+	scaleUpReasonMinCapacity scaleUpReason = "min_capacity"
+	scaleUpReasonColdStart   scaleUpReason = "cold_start"
+	scaleUpReasonThreshold   scaleUpReason = "threshold"
+)
+
 // ============================================================================
 // AutoScaler — 自动伸缩引擎
 //
@@ -59,6 +68,7 @@ func (as *AutoScaler) Start(ctx context.Context) {
 	defer ticker.Stop()
 
 	log.Println("[AutoScaler] Started, evaluation interval: 30s")
+	as.evaluate(ctx)
 
 	for {
 		select {
@@ -98,12 +108,15 @@ func (as *AutoScaler) queryPendingTargetsByTenant() map[string]int64 {
 		Cnt      int64
 	}
 	var rows []row
-	as.db.Raw(`
+	if err := as.db.Raw(`
 		SELECT tenant_id, COALESCE(SUM(jsonb_array_length(chunk_targets::jsonb)), 0) AS cnt
 		FROM sub_tasks
 		WHERE status IN ('Pending', 'Dispatching', 'Recovered')
 		GROUP BY tenant_id
-	`).Scan(&rows)
+	`).Scan(&rows).Error; err != nil {
+		log.Printf("[AutoScaler] Failed to query pending targets: %v", err)
+		return map[string]int64{}
+	}
 
 	result := make(map[string]int64, len(rows))
 	for _, r := range rows {
@@ -114,42 +127,105 @@ func (as *AutoScaler) queryPendingTargetsByTenant() map[string]int64 {
 
 // evaluatePolicy 对单个策略执行伸缩判定
 func (as *AutoScaler) evaluatePolicy(ctx context.Context, policy *db.CloudScalingPolicy, queueDepth int64) {
-	// 检查冷却期
-	if policy.LastScaleAction != nil {
-		cooldown := time.Duration(policy.CooldownSeconds) * time.Second
-		if time.Since(*policy.LastScaleAction) < cooldown {
-			return // 仍在冷却期
-		}
-	}
-
 	// 查询当前该策略下运行中的云实例数
-	var runningInstances int64
+	var activeInstances int64
 	as.db.Model(&db.CloudInstance{}).
 		Where("policy_id = ? AND status IN ?", policy.ID, []string{
 			db.CloudStatusProvisioning,
 			db.CloudStatusWaitingReady,
 			db.CloudStatusRunning,
-		}).Count(&runningInstances)
+		}).Count(&activeInstances)
+
+	var inFlightInstances int64
+	as.db.Model(&db.CloudInstance{}).
+		Where("policy_id = ? AND status IN ?", policy.ID, []string{
+			db.CloudStatusProvisioning,
+			db.CloudStatusWaitingReady,
+			db.CloudStatusRebooting,
+		}).Count(&inFlightInstances)
+
+	var aliveAgents int64
+	as.db.Model(&db.Node{}).
+		Where("tenant_id = ? AND status = ?", policy.TenantID, "Alive").
+		Count(&aliveAgents)
 
 	// Scale Up 判定
-	if queueDepth > int64(policy.ScaleUpThreshold) && runningInstances < int64(policy.MaxInstances) {
-		needed := as.calculateScaleUpCount(queueDepth, int64(policy.ScaleUpThreshold), runningInstances, int64(policy.MaxInstances))
-		if needed > 0 {
-			log.Printf("[AutoScaler] Scale UP: policy=%s queue=%d threshold=%d running=%d max=%d → launching %d instances",
-				policy.Name, queueDepth, policy.ScaleUpThreshold, runningInstances, policy.MaxInstances, needed)
-			as.scaleUp(ctx, policy, int(needed), "", "")
+	if needed, reason := calculateScaleUpDecision(policy, queueDepth, activeInstances, inFlightInstances, aliveAgents); needed > 0 {
+		if policyInCooldown(policy) && !scaleUpReasonBypassesCooldown(reason) {
+			return
 		}
+		log.Printf("[AutoScaler] Scale UP: policy=%s reason=%s queue=%d threshold=%d active_instances=%d alive_agents=%d max=%d → launching %d instances",
+			policy.Name, reason, queueDepth, policy.ScaleUpThreshold, activeInstances, aliveAgents, policy.MaxInstances, needed)
+		as.scaleUp(ctx, policy, int(needed), "", "")
+		return
+	}
+
+	if policyInCooldown(policy) {
 		return
 	}
 
 	// Scale Down 判定
-	if queueDepth <= int64(policy.ScaleDownThreshold) && runningInstances > int64(policy.MinInstances) {
-		as.scaleDown(ctx, policy, runningInstances)
+	if queueDepth <= int64(policy.ScaleDownThreshold) && activeInstances > int64(policy.MinInstances) {
+		as.scaleDown(ctx, policy, activeInstances)
 	}
 }
 
+func policyInCooldown(policy *db.CloudScalingPolicy) bool {
+	if policy.LastScaleAction == nil || policy.CooldownSeconds <= 0 {
+		return false
+	}
+	return time.Since(*policy.LastScaleAction) < time.Duration(policy.CooldownSeconds)*time.Second
+}
+
+func scaleUpReasonBypassesCooldown(reason scaleUpReason) bool {
+	return reason == scaleUpReasonColdStart || reason == scaleUpReasonMinCapacity
+}
+
+func calculateScaleUpDecision(policy *db.CloudScalingPolicy, queueDepth, activeInstances, inFlightInstances, aliveAgents int64) (int64, scaleUpReason) {
+	maxInstances := int64(policy.MaxInstances)
+	if maxInstances <= 0 {
+		return 0, scaleUpReasonNone
+	}
+	available := maxInstances - activeInstances
+	if available <= 0 {
+		return 0, scaleUpReasonNone
+	}
+
+	minInstances := int64(policy.MinInstances)
+	if minInstances < 0 {
+		minInstances = 0
+	}
+	if activeInstances < minInstances {
+		needed := minInstances - activeInstances
+		if needed > available {
+			needed = available
+		}
+		return needed, scaleUpReasonMinCapacity
+	}
+
+	// Cold start: with zero live agents, even a small queue cannot drain.
+	// Do not wait for ScaleUpThreshold or cooldown unless another instance is
+	// already provisioning or waiting for agent registration.
+	if queueDepth > 0 && aliveAgents == 0 && inFlightInstances == 0 {
+		return 1, scaleUpReasonColdStart
+	}
+
+	threshold := int64(policy.ScaleUpThreshold)
+	if threshold < 0 {
+		threshold = 0
+	}
+	if queueDepth > threshold {
+		needed := calculateScaleUpCount(queueDepth, threshold, activeInstances, maxInstances)
+		if needed > 0 {
+			return needed, scaleUpReasonThreshold
+		}
+	}
+
+	return 0, scaleUpReasonNone
+}
+
 // calculateScaleUpCount 计算需要扩容的实例数
-func (as *AutoScaler) calculateScaleUpCount(queueDepth, threshold, running, maxInst int64) int64 {
+func calculateScaleUpCount(queueDepth, threshold, running, maxInst int64) int64 {
 	// 每台实例预期消化 256 个目标（与 SubTask 切分粒度一致）
 	const targetsPerInstance = 256
 	excess := queueDepth - threshold
