@@ -6,7 +6,7 @@
 >
 > 当前接口清单已经合并到本文末尾，避免实现状态与接口状态分散维护。
 >
-> 最后同步：2026-05-08。本次同步以“安全闭环、质量门禁、显式调度、Agent 日志、客户端构建、Dashboard 实时化”为闭环范围。
+> 最后同步：2026-05-08。本次同步以当前工作树代码为准；只把已经接入 `/api/v1`、Agent 运行链路或 CI/Makefile 的能力标为已实现。
 
 ---
 
@@ -24,12 +24,12 @@
 
 | 计划项 | 当前判定 | 已接入的主链路 | 仍需跟进 |
 |--------|----------|----------------|----------|
-| Agent 内部 HTTP session 鉴权 | ✅ 已闭环 | Agent 保存 `RegisterResp.token`，内部 HTTP 统一携带 `x-agent-id` + `x-agent-token`；Server 按 `nodes.agent_id + token` 注入真实 `tenant_id`，并校验 `/agents/:id/commands` 路径 ID；Agent 重注册会轮换 session token，离线/紧急下线会清理 token，内部 HTTP 只接受 Alive 节点；session 已支持过期时间、吊销时间、轮换审计和管理员主动吊销 | 长期可补更细粒度的 token 风险策略 |
+| Agent 内部 HTTP session 鉴权 | ✅ 已闭环 | Agent 保存 `RegisterResp.token`，内部 HTTP 统一携带 `x-agent-id` + `x-agent-token`；Server 按 `nodes.agent_id + token` 注入真实 `tenant_id`，并校验 `/agents/:id/commands` 路径 ID；Agent 重注册会轮换 session token，离线/紧急下线会清理 token，内部 HTTP 只接受 Alive 节点；session 已支持过期时间、吊销时间、轮换审计和管理员主动吊销 | gRPC `ClaimTask` 仍通过现有 gRPC/bootstrap 体系和节点状态控制，没有把 session token 作为每个 RPC 的入参 |
 | Agent 规则同步租户隔离 | ✅ 已闭环 | `/arsenals/db*` 与 `/arsenals/manifest` 可由 Agent session 进入，按 Agent 所属租户导出规则；普通 JWT 访问仍走 JWT/RBAC | 规则包增量传输与长期制品存储 |
 | 显式调度控制 | ✅ 已闭环 | `CreateTaskRequest.agent_selector` 已支持扁平字符串 map，新增 `agent_selector_rules.match/not_match` 支持等值、多值和反选；Server 写入每个 SubTask；`POST /tasks/preview-selector` 与 Agent 认领共用匹配器，并按目标类型返回匹配节点、空闲槽位、预计立即领取批次数、等待批次数和不可匹配原因；前端任务创建页展示分组调度解释 | 后续可支持更复杂表达式 |
-| Agent 遥测日志 | ✅ 已闭环 | Agent gologger TeeWriter 通过 gRPC `StreamLogs` 上报；`GET /agents/:id/logs` 支持 `level/limit/q/since/until`；`/agent-logs/summary` 提供级别聚合和 ERROR/WARN 摘要；保留天数配置与定时清理已接入；前端 AgentLogs 支持筛选持久化、导出、告警规则、告警事件和按天归档 | 长期可补归档清理和告警通知渠道 |
-| 客户端构建链路 | ✅ 已闭环 | `POST /build/client` 原子化创建 BuildJob 并后台执行 `build.sh`；`GET /build/jobs*` 和 `/release/*` 可查看状态与下载产物；BuildJob 支持取消、重试、完整日志读取、多组件构建和多产物展示；GitHub Actions 上传 v0.1.0 bundle 与组件制品 | 后续可补制品签名 |
-| Dashboard 实时化与数据化 | ✅ v1 闭环 | WebSocket envelope 包含 `id/type/event/version/project_id/occurred_at/data`，服务端 heartbeat 和短期 replay 日志；重连支持 `last_event_id/since` 回放并按租户/项目权限过滤；前端 Dashboard、任务列表、节点列表、AgentLogs、ClientBuild 在重连后主动刷新 | 后续可补更长周期事件保留策略 |
+| Agent 遥测日志 | ✅ 已闭环 | Agent gologger TeeWriter 通过 gRPC `StreamLogs` 上报；`GET /agents/:id/logs` 支持 `level/limit/q/since/until`；`/agent-logs/summary` 提供级别聚合和 ERROR/WARN 摘要；保留天数配置与定时清理已接入；前端 AgentLogs 支持筛选持久化、导出、告警规则、告警事件和按天归档 | 归档当前写入本地对象存储根目录；长期可补 OSS 归档、归档清理和告警通知渠道 |
+| 客户端构建链路 | ✅ 已闭环 | `POST /build/client` 原子化创建 BuildJob 并后台执行 `build.sh`；`GET /build/jobs*` 和 `/release/*` 可查看状态与下载产物；BuildJob 支持取消、重试、完整日志读取、多组件构建和多产物展示；GitHub Actions workflow 已配置 v0.1.0 bundle 与组件制品上传 | 后续可补制品签名；真实发布仍需等待 Actions 实际跑出 artifact |
+| Dashboard 实时化与数据化 | ✅ v1 闭环 | WebSocket envelope 包含 `id/type/event/version/project_id/occurred_at/data`，服务端 heartbeat 和 replay 日志表；重连支持 `last_event_id/since` 回放并按租户/项目权限过滤；前端 Dashboard、任务列表、节点列表、AgentLogs、ClientBuild 在重连后主动刷新 | replay 日志目前没有保留期清理策略，后续可补更长周期事件保留与清理 |
 | 工程质量门禁 | ✅ 基础闭环 | 顶层 `Makefile` 提供 `test/lint/ci/coverage/frontend-smoke/cloud-smoke`；server-ui 接入 Vitest + Testing Library；GitHub Actions 覆盖根模块 Go test、`server` 子模块 Go test、Go 覆盖率输出、Cloud Provider mock smoke、前端 lint/test/smoke/build | 后续补覆盖率阈值和 UI 截图回归 |
 
 ---
@@ -116,19 +116,19 @@
 
 ## 四、部分实现 / 链路未闭环 (⚠️)
 
-当前无发布阻塞型“部分实现”条目。上一版列在本节的用户链路已收口到主流程：
+当前无发布阻塞型“部分实现”条目。为避免误解，下面按代码实际状态同时列出闭环结果和仍然存在的边界：
 
 | 原模块 | 闭环结果 |
 |--------|----------|
-| Agent 控制链路 | session token 已支持过期、吊销、轮换审计和管理员主动吊销；内部 HTTP 与 Agent 认领链路拒绝过期/吊销 token |
-| WebSocket 实时看板 | envelope 增加事件 ID，短期 replay 日志已落库；重连支持 `last_event_id/since` 回放并按租户/项目权限过滤 |
+| Agent 控制链路 | session token 已支持过期、吊销、轮换审计和管理员主动吊销；内部 HTTP 拒绝过期/吊销 token；Heartbeat 发现过期/吊销会要求 Agent 终止；`ClaimTask` 未增加独立 token 入参，仍依赖 gRPC/bootstrap 鉴权、节点 Alive 状态和调度匹配 |
+| WebSocket 实时看板 | envelope 增加事件 ID，replay 日志已落库；重连支持 `last_event_id/since` 回放并按租户/项目权限过滤；当前没有 replay 日志 TTL 清理 |
 | 优先级 / 标签 / 容量调度 | `agent_selector_rules` 已支持等值、多值和反选；预览接口与实际认领共用匹配器，并返回容量与等待批次解释 |
 | 任务状态机 | 任务详情返回失败、超时、取消、待认领等原因聚合，前端可展示原因分布 |
-| CloudManagement / 云资源编排 | mock smoke 覆盖凭证、规格/价格、NoStock 降级、弹容、回收、OSS 失败等发布前自动化路径；真实云账号验证仍按 beta 边界记录 |
-| ClientBuild 页面 | 支持多组件构建、多产物下载、取消、重试、完整日志和 CI release artifact 上传 |
-| 遥测日志黑匣子 | 支持筛选、导出、保留策略、告警规则、告警事件和按天 NDJSON 归档 |
+| CloudManagement / 云资源编排 | 当前 mock smoke 覆盖凭证测试、策略创建/切换和 OSS 上传失败；另有 Agent 制品缺失、部分失败和成功路径测试；NoStock 降级、真实弹容/回收仍主要依赖现有实现和真实云 smoke，不宣称已完整自动化覆盖 |
+| ClientBuild 页面 | 支持多组件构建、多产物下载、取消、重试和完整日志；GitHub Actions 已配置 release artifact 上传，但 artifact 是否产出以实际 Actions 运行结果为准 |
+| 遥测日志黑匣子 | 支持筛选、导出、保留策略、告警规则、告警事件和按天 NDJSON 归档；归档目前使用本地对象存储根目录 |
 | Dashboard 数据增强 | Dashboard、任务列表、节点列表、AgentLogs、ClientBuild 均接入 WebSocket 重连后的 REST backfill |
-| 角色与租户治理 | 自定义角色 permissions 已作为运行时授权依据；项目成员支持 viewer/operator/owner；租户任务配额覆盖任务创建和 Agent 认领 |
+| 角色与租户治理 | 自定义角色 permissions 已作为运行时授权依据，但只能在 base_role 已允许的范围内收窄权限，不能越权提升；项目成员支持 viewer/operator/owner；租户任务配额覆盖任务创建和 Agent 认领 |
 | 工程质量门禁 | GitHub Actions、顶层 Makefile、Go/Vitest/前端 smoke/Cloud mock smoke/发布制品上传已接入 |
 
 Clean Architecture 迁移不再作为用户功能链路验收项，降级到长期架构演进；当前 `/api/v1` 主链路保持兼容，不为清状态强行暴露 `/api/v2`。
@@ -141,7 +141,7 @@ Clean Architecture 迁移不再作为用户功能链路验收项，降级到长�
 
 | 编号 | 类别 | 发布前状态 | 发布口径 |
 |------|------|------------|----------|
-| REL-01 | 发布制品流水线 | 本地 `make ci`、GitHub Actions、BuildJob 队列和 `/release/*` 下载已可用；`deploy/build-bundle.sh` 默认版本已固定为 `v0.1.0` 并校验发行包必需文件；CI 已上传 v0.1.0 bundle 与组件制品 | 发布前至少产出 server / agent / server-ui 构建包，并在发布说明中标注未签名，后续补齐签名 |
+| REL-01 | 发布制品流水线 | 本地 `make ci`、GitHub Actions、BuildJob 队列和 `/release/*` 下载已可用；`deploy/build-bundle.sh` 默认版本已固定为 `v0.1.0` 并校验发行包必需文件；CI workflow 已配置上传 v0.1.0 bundle 与组件制品 | 发布前需要确认 Actions 实际产出 artifact；发布说明中标注未签名，后续补齐签名 |
 | REL-02 | 部署配置与密钥基线 | JWT、Agent session、RBAC、租户配额、云凭证加密已接入；已新增 `deploy/production.env.example` 和默认密码/开发密钥禁用说明 | 发布包必须附最小生产配置模板，明确 `JWT_SECRET`、数据库、RabbitMQ、Agent PSK、AI Key、云 AK/SK 的配置要求 |
 | REL-03 | 云资源与 OSS 发布验证 | Cloud Provider mock、OSSStore、本地对象存储、Agent 制品上传链路已有测试；真实云账号端到端弹容、回收、OSS fallback 仍需发布前 smoke | 发布前用测试云账号跑一次一键配置、制品上传、弹容、回收；若未跑真实云 smoke，需在发布说明中标注为 beta 能力 |
 | REL-04 | 文档与运维入口 | README 已指向生产部署指南和 `docs/release-checklist.md`；仍需发布说明、升级/回滚和常见故障 | 发布前 README 指向部署文档、运维文档和风险声明；避免把内部路线图当成用户使用说明 |
@@ -152,10 +152,10 @@ Clean Architecture 迁移不再作为用户功能链路验收项，降级到长�
 |--------|--------|----------|
 | GAP-02 | 调度解释与任务状态可观测 | 已有后端预览接口、目标类型分组、容量和不可匹配原因展示，后续表达式/反选属于增强 |
 | GAP-03 | Dashboard 真实数据消费 | 已接入真实趋势、严重度、任务结果、高危漏洞统计和重连刷新 |
-| GAP-04 | Agent session 生命周期 | 已支持 token 轮换、离线清理和 Alive 校验，过期时间/主动吊销属于长期安全增强 |
-| GAP-05 | 日志治理 | 已支持筛选、导出、聚合、保留天数和清理，告警/长期归档属于运维增强 |
-| GAP-07 | 自定义角色与权限后台 | 已支持自定义角色 CRUD、权限基线、用户分配和前端管理，逐接口差异化授权不阻塞首版发布 |
-| GAP-08 | 租户治理 | 已支持租户任务配额、创建任务校验和 Agent 认领校验，按项目/用户细分属于后续治理 |
+| GAP-04 | Agent session 生命周期 | 已支持 token 轮换、过期、主动吊销、离线清理和 Alive 校验；gRPC `ClaimTask` 未增加逐 RPC session token |
+| GAP-05 | 日志治理 | 已支持筛选、导出、聚合、保留天数、清理、告警规则、告警事件和本地 NDJSON 归档；OSS 归档和告警通知属于后续增强 |
+| GAP-07 | 自定义角色与权限后台 | 已支持自定义角色 CRUD、权限基线、用户分配和前端管理；permissions 可在 base_role 内收窄接口权限 |
+| GAP-08 | 租户治理 | 已支持租户任务配额、创建任务校验和 Agent 认领校验；按项目/用户细分属于后续治理 |
 | GAP-09 | GoPoc / EXP 高级治理 | 已支持 POC 元数据检索、EXP 批量审核、风险豁免、凭据引用和审计记录，凭据内容安全注入属于后续高级能力 |
 | GAP-10 | 对象存储层 | 已有 Storage 接口、LocalStore、OSSStore、构建制品校验和漏洞 CSV 报告落库，规则包迁移不阻塞首版发布 |
 | GAP-11 | Clean Architecture 落地 | 当前 `/api/v1` 主链路可用；Clean Architecture 迁移是长期维护事项，不作为发布阻塞 |
@@ -182,8 +182,8 @@ Clean Architecture 迁移不再作为用户功能链路验收项，降级到长�
 - HTTP 基础前缀：`/api/v1`
 - HTTP 鉴权：JWT Bearer Token，`POST /api/v1/auth/login` 例外
 - 租户与 RBAC：JWT 中的 `tenant_id` 是数据隔离边界；`role` 可为内置角色或租户级自定义角色，`role_base` 表示自定义角色继承的内置权限基线；`admin` / `operator` / `viewer` 权限矩阵见 [租户隔离与角色权限划分](tenant-rbac.md)
-- Agent 内部 HTTP：`/agents/:id/commands`、`/arsenals/db*` 使用 `x-agent-id` + `x-agent-token`；token 来源为 gRPC `RegisterResp.token`，支持过期、吊销和轮换审计
-- WebSocket：`GET /api/v1/ws`，支持 `Authorization: Bearer <JWT>` 或 `?token=<JWT>`；重连可带 `last_event_id` 或 `since`
+- Agent 内部 HTTP：`/agents/:id/commands`、`/arsenals/db*` 使用 `x-agent-id` + `x-agent-token`；token 来源为 gRPC `RegisterResp.token`，支持过期、吊销和轮换审计；gRPC 任务领取没有单独携带该 token
+- WebSocket：`GET /api/v1/ws`，支持 `Authorization: Bearer <JWT>` 或 `?token=<JWT>`；重连可带 `last_event_id` 或 `since` 回放已落库事件
 - gRPC 服务：`scan.AgentService`
 - 协议定义：`shared/proto/proto/scan/agent.proto`
 
@@ -206,29 +206,29 @@ Clean Architecture 迁移不再作为用户功能链路验收项，降级到长�
 
 ### 本轮验收命令
 
-以下命令用于验证本文档描述的基础闭环。需要注意：当前 GitHub Actions 还需单独补上 `server` 子模块 Go test；本地 `make test` 已覆盖该子模块。
+以下命令用于验证本文档描述的基础闭环。
 
 | 命令 | 覆盖范围 |
 |------|----------|
 | `make test` | 根模块 Go test、`server` 子模块 Go test、server-ui Vitest |
 | `make lint` | server-ui ESLint |
-| `make ci` | lint + test + server-ui build |
+| `make ci` | lint + test + coverage + frontend-smoke + cloud-smoke + server-ui build |
 | `npm --prefix server-ui run build` | 前端生产构建 |
 
 ### WebSocket
 
 | 路径 | 当前实现 |
 |------|----------|
-| `GET /ws` | 支持 Header / query token 建连并加入租户广播 Hub，事件 envelope 包含 `type/event/version/occurred_at/data`，当前主要用于扫描结果、EXP 状态和 heartbeat；暂不支持持久 replay |
+| `GET /ws` | 支持 Header / query token 建连并加入租户广播 Hub，事件 envelope 包含 `id/type/event/version/project_id/occurred_at/data`；支持 `last_event_id/since` replay；当前没有 replay 日志保留期清理 |
 
 ### gRPC
 
 | RPC | 当前实现 |
 |-----|----------|
-| `Register` | 节点注册，写入/更新 `nodes`，记录容量、标签、OS/Arch、租户并返回节点会话 token；Agent 使用该 token 调用内部 HTTP |
-| `Heartbeat` | 更新节点存活时间、运行任务数、运行任务列表与规则版本，并判断是否需要同步规则 |
+| `Register` | 节点注册，写入/更新 `nodes`，记录容量、标签、OS/Arch、租户并返回节点会话 token；重注册会轮换 token；Agent 使用该 token 调用内部 HTTP |
+| `Heartbeat` | 更新节点存活时间、运行任务数、运行任务列表与规则版本，并判断是否需要同步规则；发现 token 过期/吊销时返回终止信号 |
 | `Subscribe` | Agent 长连接等待任务通知和控制信号，并接收 `capacity_update` 更新空闲槽位 |
-| `ClaimTask` | Agent 主动认领任务，支持 RabbitMQ 原子领取、标签匹配、容量回写和终态消息丢弃 |
+| `ClaimTask` | Agent 主动认领任务，支持 RabbitMQ 原子领取、标签匹配、容量回写和终态消息丢弃；不单独校验内部 HTTP session token |
 | `FetchTask` | 兼容旧 Agent 的轮询接口，内部委托领取逻辑 |
 | `StreamResult` | 接收 Agent 流式结果并异步写入结果缓冲池 |
 | `TaskComplete` | 更新子任务状态、ACK 队列、递减节点运行数，并刷新 RootTask 聚合状态 |
@@ -240,8 +240,8 @@ Clean Architecture 迁移不再作为用户功能链路验收项，降级到长�
 | 项 | 当前现状 | 缺口 |
 |----|----------|------|
 | 后端测试 | `server` / `scanner` 内有 Go 单测，顶层 `make test` 已聚合 Go + 前端测试 | 缺少覆盖率阈值和更完整的本地 smoke 数据集 |
-| 前端测试 | `server-ui` 已接入 Vitest + Testing Library，覆盖 API service、Login、TaskManagement 基础场景 | 缺少 E2E 测试和 UI 回归截图 |
-| CI/CD | 已新增 GitHub Actions，PR/主分支运行根模块 Go test、`server` 子模块 Go test、前端 lint/test/build | 缺少发布流水线和制品签名/上传 |
+| 前端测试 | `server-ui` 已接入 Vitest + Testing Library，覆盖 API service、Login、TaskManagement 基础场景和轻量 smoke | 缺少 UI 回归截图 |
+| CI/CD | 已新增 GitHub Actions，PR/主分支运行根模块 Go test、`server` 子模块 Go test、前端 lint/test/smoke/build、Cloud mock smoke；另配置 release artifact 上传 job | 缺少制品签名；artifact 需以实际 Actions 运行结果验收 |
 
 ### 维护约定
 
