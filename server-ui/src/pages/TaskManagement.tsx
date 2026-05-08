@@ -150,7 +150,16 @@ function selectorFromPairs(pairs?: { key?: string; value?: string }[]): Record<s
 function selectorRulesFromJSON(raw?: string): API.AgentSelectorRules | undefined {
     const trimmed = raw?.trim();
     if (!trimmed) return undefined;
-    return JSON.parse(trimmed) as API.AgentSelectorRules;
+    try {
+        const parsed = JSON.parse(trimmed);
+        if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+            throw new Error('selector_rules 必须是 JSON 对象');
+        }
+        return parsed as API.AgentSelectorRules;
+    } catch (e) {
+        message.error('agent_selector_rules JSON 格式不正确');
+        throw e;
+    }
 }
 
 function parseAdvancedConfig(raw?: string) {

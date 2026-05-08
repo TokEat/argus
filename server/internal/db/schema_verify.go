@@ -51,7 +51,7 @@ func VerifySchema(db *gorm.DB) error {
 		{
 			Table:   "agent_session_audits",
 			Columns: []string{"tenant_id", "agent_id", "action", "reason", "operator_id", "created_at"},
-			Indexes: []string{"idx_agent_session_audits_tenant_id", "idx_agent_session_audits_agent_id", "idx_agent_session_audits_action", "idx_agent_session_audits_operator_id"},
+			Indexes: []string{"idx_agent_session_audits_tenant_id", "idx_agent_session_audits_agent_id", "idx_agent_session_audits_action", "idx_agent_session_audits_operator_id", "idx_agent_session_audits_created_at"},
 		},
 		{
 			Table:   "ws_event_logs",
@@ -120,7 +120,7 @@ func VerifySchema(db *gorm.DB) error {
 		{
 			Table:   "agent_log_alert_events",
 			Columns: []string{"tenant_id", "rule_id", "agent_id", "level", "message", "log_id", "created_at"},
-			Indexes: []string{"idx_agent_log_alert_events_tenant_id", "idx_agent_log_alert_events_rule_id", "idx_agent_log_alert_events_agent_id", "idx_agent_log_alert_events_level", "idx_agent_log_alert_events_log_id"},
+			Indexes: []string{"idx_agent_log_alert_events_tenant_id", "idx_agent_log_alert_events_rule_id", "idx_agent_log_alert_events_agent_id", "idx_agent_log_alert_events_level", "idx_agent_log_alert_events_log_id", "idx_agent_log_alert_events_created_at"},
 		},
 		{
 			Table:   "agent_log_archives",

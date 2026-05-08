@@ -17,6 +17,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_audits_tenant_id ON agent_session_a
 CREATE INDEX IF NOT EXISTS idx_agent_session_audits_agent_id ON agent_session_audits (agent_id);
 CREATE INDEX IF NOT EXISTS idx_agent_session_audits_action ON agent_session_audits (action);
 CREATE INDEX IF NOT EXISTS idx_agent_session_audits_operator_id ON agent_session_audits (operator_id);
+CREATE INDEX IF NOT EXISTS idx_agent_session_audits_created_at ON agent_session_audits (created_at);
 
 ALTER TABLE sub_tasks ADD COLUMN IF NOT EXISTS agent_selector_rules TEXT;
 
@@ -63,6 +64,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_log_alert_events_rule_id ON agent_log_alert
 CREATE INDEX IF NOT EXISTS idx_agent_log_alert_events_agent_id ON agent_log_alert_events (agent_id);
 CREATE INDEX IF NOT EXISTS idx_agent_log_alert_events_level ON agent_log_alert_events (level);
 CREATE INDEX IF NOT EXISTS idx_agent_log_alert_events_log_id ON agent_log_alert_events (log_id);
+CREATE INDEX IF NOT EXISTS idx_agent_log_alert_events_created_at ON agent_log_alert_events (created_at);
 
 CREATE TABLE IF NOT EXISTS agent_log_archives (
     id BIGSERIAL PRIMARY KEY,

@@ -148,7 +148,7 @@ const Dashboard: React.FC = () => {
                     fetchData();
                 }
             },
-            { onReconnect: fetchData },
+            {},
         );
         return () => {
             ws.close();

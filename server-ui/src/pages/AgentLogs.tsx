@@ -186,12 +186,16 @@ const AgentLogs: React.FC = () => {
     };
 
     const handleCreateAlertRule = async () => {
-        const values = await alertForm.validateFields();
-        await createAgentLogAlertRule(values);
-        message.success('告警规则已创建');
-        setAlertModalOpen(false);
-        alertForm.resetFields();
-        fetchAlerts();
+        try {
+            const values = await alertForm.validateFields();
+            await createAgentLogAlertRule(values);
+            message.success('告警规则已创建');
+            setAlertModalOpen(false);
+            alertForm.resetFields();
+            fetchAlerts();
+        } catch (error) {
+            message.error(typeof error === 'string' ? error : '创建告警规则失败');
+        }
     };
 
     const handleArchiveLogs = async () => {
@@ -333,7 +337,7 @@ const AgentLogs: React.FC = () => {
                         {alertRules.map((rule) => (
                             <Tag key={rule.id} closable onClose={(e) => {
                                 e.preventDefault();
-                                deleteAgentLogAlertRule(rule.id).then(fetchAlerts);
+                                deleteAgentLogAlertRule(rule.id).then(fetchAlerts).catch(() => message.error('删除告警规则失败'));
                             }}>
                                 {rule.name}: {rule.level || '*'} {rule.keyword || ''}
                             </Tag>
