@@ -4,7 +4,7 @@
 >
 > 更新时间：2026-05-07
 
-本文用于同步当前 AI Copilot / POC AI / EXP Builder 能力的实现状态、架构边界、收口风险和后续推进计划。当前阶段的重点不是重新定义愿景，而是把已经在分支中形成的能力梳理清楚，避免结构化 POC 审查、EXP YAML 生成和全局 Copilot 对话几条线互相覆盖。
+本文用于同步当前 AI Copilot / POC AI / EXP Builder 能力的实现状态、架构边界、收口风险和后续推进计划。当前阶段的重点不是重新定义愿景，而是把已经在分支中形成的能力梳理清楚，避免结构化 POC 审查、Python EXP 生成和全局 Copilot 对话几条线互相覆盖。
 
 > 关联文档：[implementation-status.md](implementation-status.md)
 
@@ -26,7 +26,7 @@
 - 全局上下文注入：`GlobalAIContext` / `useAutoContext` 已升级为分层上下文，前端发送 `_identity`、`_focus`、`data`、`_ambient`，页面旧上下文字段会合并进 `data`。
 - 全局入口与抽屉：`BasicLayout` 已增加可拖拽悬浮按钮，`GlobalAIChatDrawer` 已支持打开、输入、SSE 读取、工具状态展示和流式取消。
 - Copilot 抽屉体验：已支持 Markdown 标题、列表、引用、代码块、链接渲染，工具调用会以可折叠记录展示，支持停止生成和会话重置。
-- 可控编辑体验：POC 与 EXP 编辑器会注册为 Copilot 可编辑目标；当 AI 输出完整 `yaml` 代码块时，聊天气泡会提供“应用到当前编辑器”按钮，应用后可继续由用户点击“保存草稿”，不会自动审核、发布或执行。
+- 可控编辑体验：POC 与 EXP 编辑器会注册为 Copilot 可编辑目标；POC 仍应用 fenced `yaml`，EXP 只应用 fenced `python`。应用后可继续由用户点击“保存草稿”，不会自动审核、发布或执行。
 - 模块化 Copilot Profile：后端会优先根据 `page_context._focus.module` 选择系统提示词和工具白名单，兼容旧的 `page_context.module`；POC、EXP Builder、任务、资产、节点、结果、弹药库等模块按需启用工具。
 - Prompt Registry：参考 `_ref_claude_code` 将 Copilot base prompt、模块追加段、工具白名单、别名和最大轮次集中维护在 `server/internal/api/prompts/copilot_profiles.yaml`，Go 侧仅负责 embed 加载、解析和路由，不再把提示词正文硬编码在 handler 中。
 - 上下文安全处理：发送给 LLM 前会脱敏 `token`、`api_key`、`authorization`、`password`、`secret` 等字段，并裁剪超长字符串和大型数组。

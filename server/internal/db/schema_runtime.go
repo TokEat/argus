@@ -46,6 +46,7 @@ func schemaModels() []interface{} {
 		&ExploitRiskWaiver{},
 		&ExploitRun{},
 		&ExploitArtifact{},
+		&AgentPyenvJob{},
 		// 云资源编排
 		&CloudAccount{},
 		&CloudAccountBinding{},

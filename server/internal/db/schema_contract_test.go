@@ -49,6 +49,7 @@ func TestSchemaModelTableNames(t *testing.T) {
 		"ExploitRiskWaiver":    "exploit_risk_waivers",
 		"ExploitRun":           "exploit_runs",
 		"ExploitArtifact":      "exploit_artifacts",
+		"AgentPyenvJob":        "agent_pyenv_jobs",
 		"CloudAccount":         "cloud_accounts",
 		"CloudAccountBinding":  "cloud_account_bindings",
 		"CloudScalingPolicy":   "cloud_scaling_policies",

@@ -307,6 +307,10 @@ func handleAgentDebugEvent(event *pb.DebugEvent) {
 		return
 	}
 
+	if handlePyenvDebugEvent(event) {
+		return
+	}
+
 	// Handle EXP results separately
 	if event.Type == "exp_result" {
 		handleExploitResult(event)

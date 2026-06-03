@@ -20,6 +20,7 @@ import (
 	"dddd/scanner/structs"
 	"github.com/projectdiscovery/nuclei/v3/pkg/output"
 	pb "github.com/user/dddd-proto/go/scan"
+	"github.com/user/dddd-proto/pyexp"
 	"google.golang.org/grpc"
 )
 
@@ -59,6 +60,8 @@ func (w *Worker) handleDebugCommand(cmd *pb.DebugCommand) {
 		w.handleExploitCleanup(cmd)
 	case "cancel_exp":
 		w.cancelExploitSession(cmd.SessionId)
+	case "install_pyexp_requirements":
+		w.handlePyexpRequirementInstall(cmd)
 	default:
 		logDebugLocal("WARN", "unknown debug command action: %s", cmd.Action)
 	}
@@ -602,16 +605,18 @@ func (w *Worker) handleExploitCommand(cmd *pb.DebugCommand) {
 			return
 		}
 
-		// Parse params from JSON if provided
 		var params map[string]interface{}
 		if cmd.Params != "" {
-			json.Unmarshal([]byte(cmd.Params), &params)
+			if err := json.Unmarshal([]byte(cmd.Params), &params); err != nil {
+				w.sendExploitResult(cmd, "Failed", nil, fmt.Sprintf("parse params JSON: %v", err))
+				return
+			}
 		}
 		if params == nil {
 			params = make(map[string]interface{})
 		}
 
-		logDebugLocal("INFO", "[EXP] executing %s against %s (engine=%s)", tmpl.ID, cmd.TargetUrl, tmpl.Runtime.Engine)
+		logDebugLocal("INFO", "[EXP] executing %s against %s (engine=%s)", tmpl.ID, cmd.TargetUrl, tmpl.RuntimeEngine)
 
 		result, err := eng.RunContext(ctx, tmpl, cmd.TargetUrl, params)
 		if err != nil {
@@ -658,7 +663,10 @@ func (w *Worker) handleExploitCleanup(cmd *pb.DebugCommand) {
 
 		var params map[string]interface{}
 		if cmd.Params != "" {
-			json.Unmarshal([]byte(cmd.Params), &params)
+			if err := json.Unmarshal([]byte(cmd.Params), &params); err != nil {
+				w.sendExploitResult(cmd, "CleanupFailed", nil, fmt.Sprintf("parse params JSON: %v", err))
+				return
+			}
 		}
 
 		if err := eng.CleanupContext(ctx, tmpl, cmd.TargetUrl, params); err != nil {
@@ -670,6 +678,52 @@ func (w *Worker) handleExploitCleanup(cmd *pb.DebugCommand) {
 			return
 		}
 		w.sendExploitResult(cmd, "CleanupSucceeded", nil, "")
+	}()
+}
+
+type pyexpInstallParams struct {
+	JobID            string   `json:"job_id"`
+	Requirements     []string `json:"requirements"`
+	RequirementsHash string   `json:"requirements_hash"`
+	TimeoutSec       int      `json:"timeout_sec"`
+}
+
+func (w *Worker) handlePyexpRequirementInstall(cmd *pb.DebugCommand) {
+	if cmd == nil {
+		return
+	}
+	go func() {
+		var params pyexpInstallParams
+		if err := json.Unmarshal([]byte(cmd.Params), &params); err != nil {
+			w.sendPyenvEvent(cmd, "pyenv_result", "ERROR", "", "Failed", fmt.Sprintf("parse params JSON: %v", err))
+			return
+		}
+		if strings.TrimSpace(params.JobID) == "" {
+			params.JobID = cmd.SessionId
+		}
+		if strings.TrimSpace(params.JobID) == "" {
+			w.sendPyenvEvent(cmd, "pyenv_result", "ERROR", "", "Failed", "job_id is required")
+			return
+		}
+		if params.RequirementsHash != "" && pyexp.RequirementsHash(params.Requirements) != params.RequirementsHash {
+			w.sendPyenvEvent(cmd, "pyenv_result", "ERROR", "", "Failed", "requirements_hash does not match requirements")
+			return
+		}
+		cmd.SessionId = params.JobID
+		timeout := time.Duration(params.TimeoutSec) * time.Second
+		if timeout <= 0 {
+			timeout = 5 * time.Minute
+		}
+
+		w.sendPyenvEvent(cmd, "pyenv_log", "INFO", "accepted Python EXP dependency install job", "", "")
+		err := exploit.InstallRequirements(context.Background(), params.Requirements, timeout, func(level, message string) {
+			w.sendPyenvEvent(cmd, "pyenv_log", level, message, "", "")
+		})
+		if err != nil {
+			w.sendPyenvEvent(cmd, "pyenv_result", "ERROR", "Python EXP dependency install failed", "Failed", err.Error())
+			return
+		}
+		w.sendPyenvEvent(cmd, "pyenv_result", "INFO", "Python EXP dependency install succeeded", "Succeeded", "")
 	}()
 }
 
@@ -742,6 +796,27 @@ func (w *Worker) sendExploitResult(cmd *pb.DebugCommand, status string, result *
 
 	stream.Send(event)
 	logDebugLocal("INFO", "[EXP] result sent: status=%s session=%s", status, cmd.SessionId)
+}
+
+func (w *Worker) sendPyenvEvent(cmd *pb.DebugCommand, eventType, level, message, status, errMsg string) {
+	stream, err := w.client.StreamDebug(context.Background())
+	if err != nil {
+		logDebugLocal("ERROR", "[PYENV] failed to open debug stream: %v", err)
+		return
+	}
+	defer stream.CloseSend()
+	event := &pb.DebugEvent{
+		AgentId:   w.agentID,
+		TenantId:  cmd.TenantId,
+		SessionId: cmd.SessionId,
+		Type:      eventType,
+		Level:     strings.ToUpper(level),
+		Message:   message,
+		Severity:  status,
+		Error:     errMsg,
+		Timestamp: time.Now().UnixMilli(),
+	}
+	_ = stream.Send(event)
 }
 
 func (w *Worker) sendExploitDebugEvent(cmd *pb.DebugCommand, status string, result *exploit.Result, errMsg string, payloadJSON string) {

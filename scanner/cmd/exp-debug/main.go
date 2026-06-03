@@ -21,7 +21,7 @@ type debugOutput struct {
 }
 
 func main() {
-	filePath := flag.String("file", "", "EXP YAML file path")
+	filePath := flag.String("file", "", "Python EXP .py file path")
 	target := flag.String("target", "", "Target URL, for example http://127.0.0.1:8080")
 	paramsJSON := flag.String("params", "{}", "EXP params as JSON object")
 	timeoutSec := flag.Int("timeout", 60, "Timeout in seconds")

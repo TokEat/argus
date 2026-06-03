@@ -987,6 +987,18 @@ export async function debugExploit(id: number, data: API.ExploitDebugRequest): P
     return request.post(`/exploits/${id}/debug`, data);
 }
 
+export async function getAgentPyenv(agentId: string): Promise<API.AgentPyenv> {
+    return request.get(`/agents/${agentId}/pyenv`);
+}
+
+export async function installAgentPyenvRequirements(agentId: string, exploitRuleId: number): Promise<API.AgentPyenvJob | API.AgentPyenvNoopResponse> {
+    return request.post(`/agents/${agentId}/pyenv/install`, { exploit_rule_id: exploitRuleId });
+}
+
+export async function getAgentPyenvJob(agentId: string, jobId: string): Promise<API.AgentPyenvJob> {
+    return request.get(`/agents/${agentId}/pyenv/jobs/${jobId}`);
+}
+
 // ===========================
 // EXP Run API
 // ===========================

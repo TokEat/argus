@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/user/dddd-proto/pyexp"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -124,7 +125,7 @@ type DirRule struct {
 	UpdatedAt   time.Time
 }
 
-// ExploitRule stores searchable metadata for one EXP package. The raw YAML and
+// ExploitRule stores searchable metadata for one Python EXP package. The raw
 // script content stays in arsenals so migration and rollback use one truth source.
 type ExploitRule struct {
 	ID               uint   `gorm:"primaryKey;autoIncrement"`
@@ -145,6 +146,9 @@ type ExploitRule struct {
 	Capabilities     string `gorm:"type:jsonb"`
 	LinkedPocs       string `gorm:"type:jsonb"`
 	ParamsSchema     string `gorm:"type:jsonb"`
+	Requirements     string `gorm:"type:jsonb"`
+	RequirementsHash string `gorm:"index"`
+	SandboxProfile   string `gorm:"index;default:'local-python'"`
 	TimeoutSec       int
 	RuntimeEngine    string `gorm:"index"`
 	ContentHash      string `gorm:"index"`
@@ -568,7 +572,7 @@ func materializePocRule(arsenal Arsenal) PocRule {
 func materializeExploitRule(arsenal Arsenal) (ExploitRule, error) {
 	meta, err := parseExploitMeta([]byte(arsenal.Content))
 	if err != nil {
-		return ExploitRule{}, fmt.Errorf("exp yaml parse failed for %s: %w", arsenal.FileName, err)
+		return ExploitRule{}, fmt.Errorf("exp python parse failed for %s: %w", arsenal.FileName, err)
 	}
 	if meta.RuleID == "" {
 		ext := filepath.Ext(arsenal.FileName)
@@ -602,6 +606,9 @@ func materializeExploitRule(arsenal Arsenal) (ExploitRule, error) {
 		Capabilities:     marshalJSONText(meta.Capabilities),
 		LinkedPocs:       marshalJSONText(meta.LinkedPocs),
 		ParamsSchema:     marshalJSONText(meta.ParamsSchema),
+		Requirements:     marshalJSONText(meta.Requirements),
+		RequirementsHash: meta.RequirementsHash,
+		SandboxProfile:   meta.SandboxProfile,
 		TimeoutSec:       meta.TimeoutSec,
 		RuntimeEngine:    meta.RuntimeEngine,
 		ContentHash:      arsenal.Hash,
@@ -638,71 +645,39 @@ type exploitMeta struct {
 	Capabilities     []string
 	LinkedPocs       []string
 	ParamsSchema     map[string]interface{}
+	Requirements     []string
+	RequirementsHash string
+	SandboxProfile   string
 	TimeoutSec       int
 	RuntimeEngine    string
 }
 
 func parseExploitMeta(content []byte) (exploitMeta, error) {
 	content = sanitizePostgresTextBytes(content)
-
-	type expYAML struct {
-		Kind string `yaml:"kind"`
-		ID   string `yaml:"id"`
-		Info struct {
-			Name          string   `yaml:"name"`
-			Description   string   `yaml:"description"`
-			RiskLevel     string   `yaml:"risk_level"`
-			TargetProduct string   `yaml:"target_product"`
-			CVE           string   `yaml:"cve"`
-			LinkedPocs    []string `yaml:"linked_pocs"`
-			SideEffects   []string `yaml:"side_effects"`
-		} `yaml:"info"`
-		Policy struct {
-			RequiresAuth     bool     `yaml:"requires_auth"`
-			CleanupSupported bool     `yaml:"cleanup_supported"`
-			CleanupRequired  bool     `yaml:"cleanup_required"`
-			DryRunSupported  bool     `yaml:"dry_run_supported"`
-			TimeoutSec       int      `yaml:"timeout_sec"`
-			Capabilities     []string `yaml:"capabilities"`
-			SideEffects      []string `yaml:"side_effects"`
-		} `yaml:"policy"`
-		Params  map[string]interface{} `yaml:"params"`
-		Runtime struct {
-			Engine string `yaml:"engine"`
-		} `yaml:"runtime"`
-	}
-
-	var raw expYAML
-	if err := yaml.Unmarshal(content, &raw); err != nil {
+	raw, err := pyexp.ParseTemplate(content)
+	if err != nil {
 		return exploitMeta{}, err
 	}
-
-	sideEffects := raw.Policy.SideEffects
-	if len(sideEffects) == 0 {
-		sideEffects = raw.Info.SideEffects
-	}
-	riskLevel := strings.ToLower(strings.TrimSpace(raw.Info.RiskLevel))
-	if riskLevel == "" {
-		riskLevel = "medium"
-	}
-
 	return exploitMeta{
 		RuleID:           strings.TrimSpace(raw.ID),
-		Name:             strings.TrimSpace(raw.Info.Name),
-		Description:      strings.TrimSpace(raw.Info.Description),
-		TargetProduct:    strings.TrimSpace(raw.Info.TargetProduct),
-		CVE:              strings.TrimSpace(raw.Info.CVE),
-		RiskLevel:        riskLevel,
+		Name:             strings.TrimSpace(raw.Name),
+		Description:      strings.TrimSpace(raw.Description),
+		TargetProduct:    strings.TrimSpace(raw.TargetProduct),
+		CVE:              strings.TrimSpace(raw.CVE),
+		RiskLevel:        raw.RiskLevel,
 		RequiresAuth:     raw.Policy.RequiresAuth,
-		SideEffects:      normalizeStringSlice(sideEffects),
+		SideEffects:      normalizeStringSlice(raw.Policy.SideEffects),
 		CleanupSupported: raw.Policy.CleanupSupported,
 		CleanupRequired:  raw.Policy.CleanupRequired,
 		DryRunSupported:  raw.Policy.DryRunSupported,
 		Capabilities:     normalizeStringSlice(raw.Policy.Capabilities),
-		LinkedPocs:       normalizeStringSlice(raw.Info.LinkedPocs),
-		ParamsSchema:     raw.Params,
+		LinkedPocs:       normalizeStringSlice(raw.LinkedPocs),
+		ParamsSchema:     pyexp.ParamSchema(raw.Params),
+		Requirements:     normalizeStringSlice(raw.Requirements),
+		RequirementsHash: raw.RequirementsHash,
+		SandboxProfile:   "local-python",
 		TimeoutSec:       raw.Policy.TimeoutSec,
-		RuntimeEngine:    strings.TrimSpace(raw.Runtime.Engine),
+		RuntimeEngine:    pyexp.RuntimeEngine,
 	}, nil
 }
 

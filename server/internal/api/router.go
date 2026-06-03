@@ -427,6 +427,9 @@ func InitRouter(port string) {
 		api.POST("/nodes/:id/revoke-token", revokeNodeToken)
 		api.POST("/nodes/clean", cleanOfflineNodes)
 		api.GET("/agents/:id/commands", getAgentCommands)
+		api.GET("/agents/:id/pyenv", getAgentPyenv)
+		api.POST("/agents/:id/pyenv/install", installAgentPyenvRequirements)
+		api.GET("/agents/:id/pyenv/jobs/:job_id", getAgentPyenvJob)
 
 		// Server-side AI analysis and configuration
 		api.GET("/ai/config", getAIConfig)
@@ -1736,6 +1739,10 @@ func saveArsenal(c *gin.Context) {
 
 	// EXP 包基础校验
 	if typ == "exp" {
+		if !strings.HasSuffix(strings.ToLower(fn), ".py") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "EXP filename must end with .py"})
+			return
+		}
 		if err := validateExpPackage(req.Content, false); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("EXP validation failed: %v", err)})
 			return

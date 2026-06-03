@@ -97,6 +97,9 @@ func TestTenantRolePermissionMatrix(t *testing.T) {
 		{method: "POST", path: "/api/v1/exploits/12/approve", want: "admin"},
 		{method: "POST", path: "/api/v1/exploits/12/risk-waiver", want: "admin"},
 		{method: "POST", path: "/api/v1/exploit-runs", want: "operator"},
+		{method: "GET", path: "/api/v1/agents/agent-1/pyenv", want: "operator"},
+		{method: "POST", path: "/api/v1/agents/agent-1/pyenv/install", want: "admin"},
+		{method: "GET", path: "/api/v1/agents/agent-1/pyenv/jobs/job-1", want: "operator"},
 		{method: "GET", path: "/api/v1/users", want: "operator"},
 		{method: "GET", path: "/api/v1/roles", want: "admin"},
 		{method: "POST", path: "/api/v1/roles", want: "admin"},
@@ -867,8 +870,8 @@ func TestCopilotProfileAndContextCompaction(t *testing.T) {
 	if expBuilderProfile.MaxTurns <= 4 {
 		t.Fatalf("expected exp_builder profile to allow extended turns, got %+v", expBuilderProfile)
 	}
-	if !strings.Contains(expBuilderProfile.SystemPrompt, "EXP Builder 生成模式") || !strings.Contains(expBuilderProfile.SystemPrompt, "不输出 JSON、builder_patch") {
-		t.Fatalf("expected exp_builder prompt to enforce complete YAML output and no builder_patch, got %s", expBuilderProfile.SystemPrompt)
+	if !strings.Contains(expBuilderProfile.SystemPrompt, "EXP Python 生成模式") || !strings.Contains(expBuilderProfile.SystemPrompt, "fenced python") || !strings.Contains(expBuilderProfile.SystemPrompt, "ARGUS_EXP") {
+		t.Fatalf("expected exp_builder prompt to enforce complete Python output, got %s", expBuilderProfile.SystemPrompt)
 	}
 
 	compact := compactPageContext(map[string]interface{}{

@@ -18,34 +18,39 @@ func TestCanonicalArsenalTypeEXP(t *testing.T) {
 
 func TestMaterializeExploitRule(t *testing.T) {
 	arsenal := Arsenal{
-		ID:       "exp_demo.yaml",
+		ID:       "exp_demo.py",
 		TenantID: "default",
 		Type:     "exp",
-		FileName: "demo.yaml",
-		Content: `kind: argus-exp/v1
-id: exp-demo
-info:
-  name: Demo EXP
-  risk_level: high
-  target_product: DemoProduct
-  cve: CVE-2026-0001
-  linked_pocs:
-    - demo-poc.yaml
-policy:
-  requires_auth: true
-  cleanup_supported: true
-  cleanup_required: true
-  timeout_sec: 90
-  capabilities:
-    - http.request
-    - evidence.write
-  side_effects:
-    - creates proof marker
-params:
-  marker:
-    type: string
-runtime:
-  engine: starlark
+		FileName: "demo.py",
+		Content: `ARGUS_EXP = {
+    "id": "exp-demo",
+    "name": "Demo EXP",
+    "description": "Demo description",
+    "risk_level": "high",
+    "target_product": "DemoProduct",
+    "cve": "CVE-2026-0001",
+    "linked_pocs": ["demo-poc.yaml"],
+    "policy": {
+        "requires_auth": True,
+        "cleanup_supported": True,
+        "cleanup_required": True,
+        "timeout_sec": 90,
+        "capabilities": ["http.request", "evidence.write", "result.write"],
+        "side_effects": ["creates proof marker"],
+    },
+    "params": {
+        "marker": {"type": "string", "required": True}
+    },
+    "requirements": ["beautifulsoup4==4.12.3 --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+}
+
+def run(ctx):
+    resp = ctx.http.request(method="GET", path="/")
+    ctx.evidence.add("status_code", resp.status_code)
+    return ctx.result.success("ok")
+
+def cleanup(ctx):
+    return ctx.result.success("cleanup complete")
 `,
 		Hash:    "hash",
 		Version: 2,
@@ -62,14 +67,32 @@ runtime:
 	if rule.RiskLevel != "high" || !rule.RequiresAuth || !rule.CleanupRequired || !rule.CleanupSupported {
 		t.Fatalf("unexpected risk/policy fields: %#v", rule)
 	}
-	if rule.Capabilities != `["http.request","evidence.write"]` {
+	if rule.Capabilities != `["http.request","evidence.write","result.write"]` {
 		t.Fatalf("Capabilities = %q", rule.Capabilities)
 	}
 	if rule.LinkedPocs != `["demo-poc.yaml"]` {
 		t.Fatalf("LinkedPocs = %q", rule.LinkedPocs)
 	}
-	if rule.TimeoutSec != 90 || rule.RuntimeEngine != "starlark" || !rule.Enabled {
+	if rule.TimeoutSec != 90 || rule.RuntimeEngine != "python" || !rule.Enabled {
 		t.Fatalf("unexpected runtime fields: %#v", rule)
+	}
+	if rule.Requirements != `["beautifulsoup4==4.12.3 --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]` || rule.RequirementsHash == "" || rule.SandboxProfile != "local-python" {
+		t.Fatalf("unexpected python runtime metadata: %#v", rule)
+	}
+}
+
+func TestMaterializeRuleCatalogRejectsLegacyYAMLExploit(t *testing.T) {
+	out := materializeRuleCatalog([]Arsenal{{
+		ID:       "legacy_exp.yaml",
+		TenantID: "default",
+		Type:     "exp",
+		FileName: "legacy.yaml",
+		Content:  "kind: argus-exp/v1\nid: legacy-exp\n",
+		Hash:     "hash",
+		State:    "Approved",
+	}})
+	if len(out.exploits) != 0 || len(out.errors) != 1 || !strings.Contains(out.errors[0], "YAML EXP packages are no longer supported") {
+		t.Fatalf("legacy YAML EXP should be rejected without executable rule, got %#v", out)
 	}
 }
 

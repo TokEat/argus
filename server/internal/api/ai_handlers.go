@@ -453,26 +453,16 @@ func truncateMapValues(m map[string]interface{}, maxLen int) map[string]interfac
 	return result
 }
 
-func isBuilderPatchProtocolContext(data map[string]interface{}) bool {
+func isExpPythonGenerationContext(data map[string]interface{}) bool {
 	if data == nil {
 		return false
 	}
-	if v, ok := data["builder_patch_protocol"]; ok {
-		switch typed := v.(type) {
-		case bool:
-			if typed {
-				return true
-			}
-		case string:
-			if strings.EqualFold(typed, "true") || strings.EqualFold(typed, "yes") {
-				return true
-			}
-		}
+	if strings.EqualFold(strings.TrimSpace(stringParam(data, "module")), "exp_builder") ||
+		strings.EqualFold(strings.TrimSpace(stringParam(data, "action")), "generate_exp_python") {
+		return true
 	}
 	if nested, ok := data["builder_context"].(map[string]interface{}); ok && len(nested) > 0 {
-		if _, hasContract := data["builder_patch_contract"]; hasContract {
-			return true
-		}
+		return strings.EqualFold(strings.TrimSpace(stringParam(nested, "action")), "generate_exp_python")
 	}
 	return false
 }
@@ -530,10 +520,10 @@ func injectCopilotContext(messages *[]aipkg.ChatMessage, pageContext map[string]
 				}
 			}
 		}
-		if isBuilderPatchProtocolContext(dataLayer) {
+		if isExpPythonGenerationContext(dataLayer) {
 			*messages = append(*messages, aipkg.ChatMessage{
 				Role:    "system",
-				Content: "【EXP Builder 专用约束】你是 EXP Builder 的辅助整理助手，不是最终 EXP 作者。你的主要任务是根据用户提供的 raw HTTP 请求包、响应片段和判断线索，整理参数、请求、matcher/extractor 和 cleanup 草稿。优先只输出一个 fenced JSON builder_patch，由前端合并后生成 YAML；不要编造 CVE、产品事实、漏洞原理或响应内容；不要设置执行目标、用户授权、agent_id、project_id、risk_confirmed 等执行字段；不要切换页面上下文声明的 Builder 模式。若缺少成功判断或参数化依据，先说明需要用户补充什么，再给最小可用补丁。",
+				Content: "【EXP Python 专用约束】你是 EXP Python 草稿助手。请根据 raw HTTP 请求包、响应片段、判断线索和 cleanup 要求输出完整 fenced python EXP；采用 CLI-first 标准脚本结构：文件头 CLI 用法说明、import argparse、ARGUS_EXP、build_arg_parser()、run(ctx)、cleanup(ctx)、main() 和 if __name__ == \"__main__\"；argparse.add_argument 是参数主合同，让脚本本地可通过 -h/--help 查看参数，ARGUS_EXP.params 默认可为空，仅用于 pattern/sensitive/min/max/enum/example 等额外校验/展示；flag 使用 kebab-case 时参数名使用 snake_case；run(ctx) 可通过 ctx.params.<name> 读取平台参数，也可以按普通 Python 脚本方式使用 urllib、requests、socket、subprocess、os、ctypes 和已声明依赖；ctx.http/ctx.tcp 仅是兼容便利方法，优先使用原生 Python API；不要设置执行目标、用户授权、agent_id、project_id、risk_confirmed 等执行字段。若缺少成功判断或参数化依据，先说明需要用户补充什么，再给最小可用 Python。",
 			})
 		}
 		if len(dataLayer) > 0 {
@@ -563,10 +553,10 @@ func injectCopilotContext(messages *[]aipkg.ChatMessage, pageContext map[string]
 			}
 		}
 		if len(pageOnly) > 0 {
-			if isBuilderPatchProtocolContext(pageOnly) {
+			if isExpPythonGenerationContext(pageOnly) {
 				*messages = append(*messages, aipkg.ChatMessage{
 					Role:    "system",
-					Content: "【EXP Builder 专用约束】你是 EXP Builder 的辅助整理助手，不是最终 EXP 作者。优先根据用户提供的请求包和判断线索输出 fenced JSON builder_patch；不要编造事实，不要设置执行/授权字段，不要切换 Builder 模式。缺少依据时先说明需要用户补充什么。",
+					Content: "【EXP Python 专用约束】优先根据用户提供的请求包和判断线索输出 fenced python；采用 CLI-first 标准脚本结构：文件头 CLI 用法说明、import argparse、ARGUS_EXP、build_arg_parser()、run(ctx)、cleanup(ctx)、main() 和 if __name__ == \"__main__\"；以 argparse.add_argument 作为参数主合同，ARGUS_EXP.params 默认可为空；不要编造事实，不要设置执行/授权字段。缺少依据时先说明需要用户补充什么。",
 				})
 			}
 			ctxBytes, _ := json.MarshalIndent(pageOnly, "", "  ")

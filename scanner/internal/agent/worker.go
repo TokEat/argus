@@ -24,6 +24,7 @@ import (
 	"github.com/shirou/gopsutil/v3/mem"
 
 	"dddd/scanner/internal/engine"
+	"dddd/scanner/internal/exploit"
 	"dddd/scanner/structs"
 	pb "github.com/user/dddd-proto/go/scan"
 
@@ -193,6 +194,27 @@ func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[stri
 	}
 	if tags == nil {
 		tags = make(map[string]string)
+	}
+	pyenv := exploit.PythonRuntimeStatus()
+	if pyenv.PythonPath != "" {
+		tags["python_exp"] = "true"
+		tags["pyexp_python"] = pyenv.PythonPath
+		if pyenv.PythonVersion != "" {
+			tags["pyexp_python_version"] = pyenv.PythonVersion
+		}
+		if pyenv.PipAvailable {
+			tags["pyexp_pip"] = "true"
+		} else {
+			tags["pyexp_pip"] = "false"
+		}
+		if pyenv.InstallReady {
+			tags["pyexp_install"] = "true"
+		} else {
+			tags["pyexp_install"] = "false"
+		}
+	} else if _, exists := tags["python_exp"]; !exists {
+		tags["python_exp"] = "false"
+		tags["pyexp_install"] = "false"
 	}
 	return &Worker{
 		agentID:      agentID,

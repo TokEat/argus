@@ -162,6 +162,11 @@ func schemaTableSpecs() []schemaTableSpec {
 			Indexes: []string{"idx_exploit_artifacts_tenant_id", "idx_exploit_artifacts_run_id", "idx_exploit_artifacts_type"},
 		},
 		{
+			Table:   "agent_pyenv_jobs",
+			Columns: []string{"tenant_id", "agent_id", "operator_id", "exploit_rule_id", "requirements", "requirements_hash", "status", "logs", "error", "started_at", "finished_at"},
+			Indexes: []string{"idx_agent_pyenv_jobs_tenant_id", "idx_agent_pyenv_jobs_agent_id", "idx_agent_pyenv_jobs_operator_id", "idx_agent_pyenv_jobs_exploit_rule_id", "idx_agent_pyenv_jobs_requirements_hash", "idx_agent_pyenv_jobs_status"},
+		},
+		{
 			Table:   "notification_rules",
 			Columns: []string{"project_id", "event", "channel", "config", "status"},
 			Indexes: []string{"idx_notification_rules_project_id", "idx_notification_rules_event"},
@@ -223,8 +228,8 @@ func schemaTableSpecs() []schemaTableSpec {
 		},
 		{
 			Table:   "exploit_rules",
-			Columns: []string{"artifact_id", "source_file", "rule_id", "name", "description", "target_product", "cve", "risk_level", "requires_auth", "side_effects", "cleanup_supported", "cleanup_required", "dry_run_supported", "capabilities", "linked_pocs", "params_schema", "timeout_sec", "runtime_engine", "enabled"},
-			Indexes: []string{"idx_exploit_rule_unique", "idx_exploit_rules_enabled", "idx_exploit_rules_runtime_engine"},
+			Columns: []string{"artifact_id", "source_file", "rule_id", "name", "description", "target_product", "cve", "risk_level", "requires_auth", "side_effects", "cleanup_supported", "cleanup_required", "dry_run_supported", "capabilities", "linked_pocs", "params_schema", "requirements", "requirements_hash", "sandbox_profile", "timeout_sec", "runtime_engine", "enabled"},
+			Indexes: []string{"idx_exploit_rule_unique", "idx_exploit_rules_enabled", "idx_exploit_rules_runtime_engine", "idx_exploit_rules_requirements_hash", "idx_exploit_rules_sandbox_profile"},
 		},
 	}
 }

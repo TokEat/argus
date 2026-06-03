@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/user/dddd-proto/pyexp"
 	"github.com/user/dddd-server/internal/db"
 	"gopkg.in/yaml.v3"
 )
@@ -291,14 +292,17 @@ func executeCreateExpDraft(tenantID string, params map[string]interface{}) (copi
 	if fileName == "" || content == "" {
 		return copilotActionResult{}, fmt.Errorf("file_name and content are required")
 	}
-	if err := validateDraftFileName(fileName, true); err != nil {
+	if err := validateDraftFileName(fileName, false); err != nil {
 		return copilotActionResult{}, err
+	}
+	if !strings.HasSuffix(strings.ToLower(fileName), ".py") {
+		return copilotActionResult{}, fmt.Errorf("EXP file name must end with .py")
 	}
 	if len(content) > maxCopilotDraftContentSizeByte {
 		return copilotActionResult{}, fmt.Errorf("content is too large")
 	}
-	if err := yaml.Unmarshal([]byte(content), &struct{}{}); err != nil {
-		return copilotActionResult{}, fmt.Errorf("content is not valid YAML: %w", err)
+	if err := pyexp.Validate([]byte(content), false); err != nil {
+		return copilotActionResult{}, fmt.Errorf("content is not a valid Python EXP: %w", err)
 	}
 
 	hash := fmt.Sprintf("%x", md5.Sum([]byte(content)))

@@ -68,6 +68,9 @@ var permissionRules = map[string]string{
 	// 日常操作：operator 可创建项目、下发/调整任务、维护草稿规则与字典。
 	"GET:/queue/depth":                 "operator",
 	"GET:/agents/*/logs":               "operator",
+	"GET:/agents/*/pyenv":              "operator",
+	"GET:/agents/*/pyenv/jobs/*":       "operator",
+	"POST:/agents/*/pyenv/install":     "admin",
 	"POST:/projects":                   "operator",
 	"PUT:/projects/*":                  "operator",
 	"DELETE:/projects/*":               "operator",
@@ -352,10 +355,12 @@ func wildcardPathMatch(pattern string, path string) bool {
 	}
 	if strings.HasSuffix(pattern, "/*") {
 		base := strings.TrimSuffix(pattern, "/*")
-		if path == base {
-			return true
+		if !strings.Contains(base, "*") {
+			if path == base {
+				return true
+			}
+			return strings.HasPrefix(path, base+"/")
 		}
-		return strings.HasPrefix(path, base+"/")
 	}
 
 	patternParts := strings.Split(strings.Trim(pattern, "/"), "/")

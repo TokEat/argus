@@ -880,9 +880,13 @@ declare namespace API {
       cleanup_preview?: string;
       steps?: unknown[];
       cleanup?: unknown[];
+      requirements?: string[];
+      requirements_hash?: string;
+      sandbox_profile?: string;
     };
     params_valid: boolean;
     params_errors: string[];
+    normalized_params?: Record<string, unknown>;
   }
 
   interface ExploitDebugRequest {
@@ -969,6 +973,9 @@ declare namespace API {
     capabilities: string[];
     linked_pocs: string[];
     params_schema: Record<string, unknown>;
+    requirements: string[];
+    requirements_hash: string;
+    sandbox_profile: string;
     timeout_sec: number;
     runtime_engine: string;
     content_hash: string;
@@ -978,6 +985,41 @@ declare namespace API {
     risk_waiver?: ExploitRiskWaiver;
     created_at: string;
     updated_at: string;
+  }
+
+  interface AgentPyenvJob {
+    id: string;
+    tenant_id: string;
+    agent_id: string;
+    operator_id: string;
+    exploit_rule_id: number;
+    requirements: string[];
+    requirements_hash: string;
+    status: string;
+    logs: string;
+    error: string;
+    started_at?: string;
+    finished_at?: string;
+    created_at: string;
+    updated_at: string;
+  }
+
+  interface AgentPyenv {
+    agent_id: string;
+    status: string;
+    python_path: string;
+    python_version: string;
+    pip_available: boolean;
+    install_available: boolean;
+    last_job?: AgentPyenvJob;
+    tags: Record<string, string>;
+  }
+
+  interface AgentPyenvNoopResponse {
+    status: 'no_op';
+    message: string;
+    agent_id: string;
+    exploit_rule_id: number;
   }
 
   interface ExploitBatchReviewResult {

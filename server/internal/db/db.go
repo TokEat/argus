@@ -494,6 +494,24 @@ type ExploitArtifact struct {
 	CreatedAt    time.Time
 }
 
+// AgentPyenvJob records controlled Python EXP dependency installation jobs.
+type AgentPyenvJob struct {
+	ID               string `gorm:"primaryKey"`
+	TenantID         string `gorm:"default:'default';index"`
+	AgentID          string `gorm:"index;not null"`
+	OperatorID       string `gorm:"index"`
+	ExploitRuleID    uint   `gorm:"index"`
+	Requirements     string `gorm:"type:jsonb"`
+	RequirementsHash string `gorm:"index"`
+	Status           string `gorm:"index"`
+	Logs             string `gorm:"type:text"`
+	Error            string `gorm:"type:text"`
+	StartedAt        *time.Time
+	FinishedAt       *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
 func UpdateNodeHeartbeat(agentID string) error {
 	return DB.Model(&Node{}).Where("agent_id = ?", agentID).
 		Update("last_beat", time.Now().UnixMilli()).Error

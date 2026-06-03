@@ -83,13 +83,6 @@ export interface PageContext {
     [key: string]: unknown;
 }
 
-export interface AIBuilderPatchEdit {
-    type: 'builder_patch';
-    mode?: 'nuclei' | 'starlark';
-    reason?: string;
-    patch: Record<string, unknown>;
-}
-
 /** Editable target for rule/config inline editing */
 export interface AIEditableTarget {
     id: string;
@@ -98,8 +91,6 @@ export interface AIEditableTarget {
     getContent: () => string;
     applyContent: (content: string) => void;
     canApplyContent?: (content: string) => { ok: boolean; reason?: string };
-    applyBuilderPatch?: (edit: AIBuilderPatchEdit) => void;
-    summarizeBuilderPatch?: (edit: AIBuilderPatchEdit) => string[];
     saveDraft?: (contentOverride?: string) => Promise<void>;
 }
 
