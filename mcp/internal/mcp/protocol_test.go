@@ -338,7 +338,7 @@ func TestPyexpDebugResolvesCurrentExploitIDThroughNativeList(t *testing.T) {
 		t.Fatalf("CallTool(argus_rule_debug): %v", err)
 	}
 	text := result.Content[0].(*sdkmcp.TextContent).Text
-	if !strings.Contains(text, `"session_id": "debug-1"`) || !strings.Contains(text, `"exploit_rule_id": 42`) {
+	if !strings.Contains(text, `"session_id": "debug-1"`) || strings.Contains(text, `"exploit_rule_id"`) {
 		t.Fatalf("unexpected pyexp debug result: %s", text)
 	}
 	want := []string{"GET /api/v1/exploits", "POST /api/v1/exploits/42/debug"}
@@ -353,7 +353,7 @@ func TestPyexpSourceDryRunUsesSourceEndpointWithoutResolve(t *testing.T) {
 		seen = append(seen, r.Method+" "+r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/api/v1/mcp/tools/pyexp/dry-run":
+		case "/api/v1/exploits/source/dry-run":
 			var body map[string]interface{}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode dry-run body: %v", err)
@@ -388,7 +388,7 @@ func TestPyexpSourceDryRunUsesSourceEndpointWithoutResolve(t *testing.T) {
 	if !strings.Contains(text, `"source_level": true`) || !strings.Contains(text, `"params_valid": true`) {
 		t.Fatalf("unexpected source dry-run result: %s", text)
 	}
-	want := []string{"POST /api/v1/mcp/tools/pyexp/dry-run"}
+	want := []string{"POST /api/v1/exploits/source/dry-run"}
 	if strings.Join(seen, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("unexpected source dry-run routes:\n got %v\nwant %v", seen, want)
 	}
@@ -400,7 +400,7 @@ func TestPyexpSourceDebugUsesMCPDebugEndpointWithoutResolve(t *testing.T) {
 		seen = append(seen, r.Method+" "+r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/api/v1/mcp/tools/pyexp/debug":
+		case "/api/v1/exploits/source/debug":
 			var body map[string]interface{}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode debug body: %v", err)
@@ -435,7 +435,7 @@ func TestPyexpSourceDebugUsesMCPDebugEndpointWithoutResolve(t *testing.T) {
 	if !strings.Contains(text, `"source_level": true`) || !strings.Contains(text, `"Succeeded"`) {
 		t.Fatalf("unexpected source debug result: %s", text)
 	}
-	want := []string{"POST /api/v1/mcp/tools/pyexp/debug"}
+	want := []string{"POST /api/v1/exploits/source/debug"}
 	if strings.Join(seen, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("unexpected source debug routes:\n got %v\nwant %v", seen, want)
 	}

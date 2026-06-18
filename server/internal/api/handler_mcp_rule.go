@@ -42,6 +42,9 @@ type mcpRuleDebugRequest struct {
 	PocContent      string                 `json:"poc_content"`
 	Source          string                 `json:"source"`
 	ExploitRuleID   uint                   `json:"exploit_rule_id"`
+	ArtifactID      string                 `json:"artifact_id"`
+	StableRuleID    string                 `json:"rule_id"`
+	FileName        string                 `json:"file_name"`
 	Params          map[string]interface{} `json:"params"`
 	Action          string                 `json:"action"`
 }
@@ -66,6 +69,8 @@ type mcpRuleApplyRequest struct {
 	Hash          string `json:"hash"`
 	Version       int    `json:"version"`
 	ExploitRuleID uint   `json:"exploit_rule_id"`
+	ArtifactID    string `json:"artifact_id"`
+	StableRuleID  string `json:"rule_id"`
 	AgentID       string `json:"agent_id"`
 }
 
@@ -137,20 +142,40 @@ func mcpRuleDebug(c *gin.Context) {
 			source = strings.TrimSpace(req.PocContent)
 		}
 		if action == "dry_run" && source != "" {
-			body, _ := json.Marshal(mcpDebugExploitRequest{
+			body, _ := json.Marshal(sourceExploitDryRunRequest{
+				Source: source,
+				Target: req.TargetURL,
+				Params: req.Params,
+			})
+			resetJSONBody(c, body)
+			dryRunSourceExploit(c)
+			return
+		}
+		if source != "" {
+			body, _ := json.Marshal(sourceExploitDebugRequest{
 				AgentID:    req.AgentID,
 				TargetURL:  req.TargetURL,
 				Source:     source,
 				Params:     req.Params,
+				Proxy:      req.Proxy,
 				TimeoutSec: req.TimeoutSec,
 				Action:     req.Action,
 			})
 			resetJSONBody(c, body)
-			mcpPyexpDebug(c)
+			debugSourceExploit(c)
 			return
 		}
+		ruleID := req.ExploitRuleID
+		if ruleID == 0 {
+			resolved, err := resolveMCPExploitRuleID(currentTenantID(c), req.ArtifactID, req.StableRuleID, req.FileName)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			ruleID = resolved
+		}
 		body, _ := json.Marshal(mcpDebugExploitRequest{
-			ExploitRuleID: req.ExploitRuleID,
+			ExploitRuleID: ruleID,
 			AgentID:       req.AgentID,
 			TargetURL:     req.TargetURL,
 			Source:        source,
@@ -220,17 +245,53 @@ func mcpRuleApply(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "install_requirements only supports pyexp"})
 			return
 		}
-		if strings.TrimSpace(req.AgentID) == "" || req.ExploitRuleID == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id and exploit_rule_id are required"})
+		if strings.TrimSpace(req.AgentID) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id is required"})
 			return
 		}
-		body, _ := json.Marshal(agentPyenvInstallRequest{ExploitRuleID: req.ExploitRuleID})
+		ruleID := req.ExploitRuleID
+		if ruleID == 0 {
+			resolved, err := resolveMCPExploitRuleID(tenantID, req.ArtifactID, req.StableRuleID, req.FileName)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			ruleID = resolved
+		}
+		if ruleID == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "stable pyexp reference is required"})
+			return
+		}
+		body, _ := json.Marshal(agentPyenvInstallRequest{ExploitRuleID: ruleID})
 		resetJSONBody(c, body)
 		c.Params = append(c.Params, gin.Param{Key: "id", Value: strings.TrimSpace(req.AgentID)})
 		installAgentPyenvRequirements(c)
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "action must be publish or install_requirements"})
 	}
+}
+
+func resolveMCPExploitRuleID(tenantID, artifactID, ruleID, fileName string) (uint, error) {
+	artifactID = strings.TrimSpace(artifactID)
+	ruleID = strings.TrimSpace(ruleID)
+	fileName = strings.TrimSpace(fileName)
+	if artifactID == "" && ruleID == "" && fileName == "" {
+		return 0, fmt.Errorf("artifact_id, rule_id or file_name is required for pyexp")
+	}
+	query := db.DB.Where("tenant_id = ?", tenantID)
+	switch {
+	case artifactID != "":
+		query = query.Where("artifact_id = ?", artifactID)
+	case ruleID != "":
+		query = query.Where("rule_id = ?", ruleID)
+	default:
+		query = query.Where("source_file = ?", fileName)
+	}
+	var rule db.ExploitRule
+	if err := query.First(&rule).Error; err != nil {
+		return 0, fmt.Errorf("EXP rule not found for stable reference")
+	}
+	return rule.ID, nil
 }
 
 func saveMCPFingerprintDraft(tenantID string, req mcpRuleSaveRequest) (gin.H, error) {
@@ -406,12 +467,17 @@ func mcpRulePublish(c *gin.Context, tenantID string, req mcpRuleApplyRequest) {
 }
 
 func mcpPublishPyexp(c *gin.Context, tenantID string, req mcpRuleApplyRequest) {
-	if req.ExploitRuleID == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "exploit_rule_id is required for pyexp publish"})
-		return
+	ruleID := req.ExploitRuleID
+	if ruleID == 0 {
+		resolved, err := resolveMCPExploitRuleID(tenantID, req.ArtifactID, req.StableRuleID, req.FileName)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		ruleID = resolved
 	}
 	var rule db.ExploitRule
-	if err := db.DB.Where("id = ? AND tenant_id = ?", req.ExploitRuleID, tenantID).First(&rule).Error; err != nil {
+	if err := db.DB.Where("id = ? AND tenant_id = ?", ruleID, tenantID).First(&rule).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Exploit rule not found"})
 		return
 	}
@@ -423,18 +489,19 @@ func mcpPublishPyexp(c *gin.Context, tenantID string, req mcpRuleApplyRequest) {
 	if !mcpDraftGuardMatches(c, arsenal, req.Hash, req.Version) {
 		return
 	}
-	updated, _, err := updateExploitRuleReviewState(tenantID, fmt.Sprint(req.ExploitRuleID), "Approved", true)
+	updated, _, err := updateExploitRuleReviewState(tenantID, fmt.Sprint(ruleID), "Approved", true)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"status":          "approved",
-		"rule_type":       "pyexp",
-		"exploit_rule_id": updated.ID,
-		"file_name":       updated.SourceFile,
-		"state":           updated.State,
-		"mcp_guidance":    mcpPublishGuidance("pyexp"),
+		"status":       "approved",
+		"rule_type":    "pyexp",
+		"artifact_id":  updated.ArtifactID,
+		"rule_id":      updated.RuleID,
+		"file_name":    updated.SourceFile,
+		"state":        updated.State,
+		"mcp_guidance": mcpPublishGuidance("pyexp"),
 	})
 }
 

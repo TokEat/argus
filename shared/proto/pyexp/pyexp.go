@@ -16,8 +16,6 @@ import (
 const RuntimeEngine = "python"
 
 var AllowedCapabilities = map[string]bool{
-	"http.request":   true,
-	"tcp.connect":    true,
 	"evidence.write": true,
 	"cleanup.defer":  true,
 	"result.write":   true,
@@ -93,9 +91,6 @@ type Template struct {
 
 func ParseTemplate(content []byte) (*Template, error) {
 	source := string(content)
-	if strings.Contains(source, "kind: argus-exp/") {
-		return nil, fmt.Errorf("YAML EXP packages are no longer supported; use a Python .py EXP")
-	}
 	literal, err := extractArgusExpLiteral(source)
 	if err != nil {
 		return nil, err
@@ -133,9 +128,10 @@ func ParseTemplate(content []byte) (*Template, error) {
 		tmpl.RiskLevel = "medium"
 	}
 	tmpl.RequirementsHash = RequirementsHash(tmpl.Requirements)
-	tmpl.HasRun = hasTopLevelFunction(source, "run")
-	tmpl.HasCleanup = hasTopLevelFunction(source, "cleanup")
-	tmpl.HasMain = hasTopLevelFunctionAnyArgs(source, "main")
+	functions := scanTopLevelFunctions(source)
+	tmpl.HasRun = functions.hasRun
+	tmpl.HasCleanup = functions.hasCleanup
+	tmpl.HasMain = functions.hasMain
 	return tmpl, nil
 }
 
@@ -185,6 +181,9 @@ func Validate(content []byte, strict bool) error {
 	}
 	if !tmpl.HasRun && !tmpl.HasMain {
 		return fmt.Errorf("Python EXP must define run(ctx) or main()")
+	}
+	if hasAsyncTopLevelFunction(string(content), "run") {
+		return fmt.Errorf("async run(ctx) is not supported; define a synchronous run(ctx) wrapper")
 	}
 	if tmpl.Policy.CleanupRequired && !tmpl.HasCleanup {
 		return fmt.Errorf("cleanup_required=true but cleanup(ctx) is not defined")
@@ -1217,14 +1216,89 @@ func interfaceSliceField(root map[string]interface{}, key string) []interface{} 
 	return append([]interface{}(nil), raw...)
 }
 
-func hasTopLevelFunction(source, name string) bool {
-	pattern := regexp.MustCompile(`(?m)^def\s+` + regexp.QuoteMeta(name) + `\s*\(\s*ctx\s*\)\s*:`)
-	return pattern.FindStringIndex(source) != nil
+type topLevelFunctions struct {
+	hasRun     bool
+	hasCleanup bool
+	hasMain    bool
 }
 
-func hasTopLevelFunctionAnyArgs(source, name string) bool {
-	pattern := regexp.MustCompile(`(?m)^def\s+` + regexp.QuoteMeta(name) + `\s*\([^)]*\)\s*:`)
-	return pattern.FindStringIndex(source) != nil
+func scanTopLevelFunctions(source string) topLevelFunctions {
+	var out topLevelFunctions
+	for _, line := range strings.Split(source, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if line != strings.TrimLeft(line, " \t") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "async def ") {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "def ") {
+			continue
+		}
+		name, args, ok := parseDefLine(trimmed)
+		if !ok {
+			continue
+		}
+		switch name {
+		case "run":
+			if firstArgName(args) == "ctx" {
+				out.hasRun = true
+			}
+		case "cleanup":
+			if firstArgName(args) == "ctx" {
+				out.hasCleanup = true
+			}
+		case "main":
+			out.hasMain = true
+		}
+	}
+	return out
+}
+
+func hasAsyncTopLevelFunction(source, name string) bool {
+	for _, line := range strings.Split(source, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if line != strings.TrimLeft(line, " \t") {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "async def ") {
+			continue
+		}
+		fn, args, ok := parseDefLine(strings.TrimPrefix(trimmed, "async "))
+		if ok && fn == name && firstArgName(args) == "ctx" {
+			return true
+		}
+	}
+	return false
+}
+
+func parseDefLine(line string) (string, string, bool) {
+	line = strings.TrimPrefix(line, "def ")
+	open := strings.Index(line, "(")
+	close := strings.LastIndex(line, ")")
+	if open <= 0 || close < open {
+		return "", "", false
+	}
+	name := strings.TrimSpace(line[:open])
+	after := strings.TrimSpace(line[close+1:])
+	if !strings.HasPrefix(after, ":") && !strings.HasPrefix(after, "->") {
+		return "", "", false
+	}
+	return name, line[open+1 : close], true
+}
+
+func firstArgName(args string) string {
+	first := strings.TrimSpace(strings.Split(args, ",")[0])
+	if first == "" {
+		return ""
+	}
+	if idx := strings.Index(first, ":"); idx >= 0 {
+		first = first[:idx]
+	}
+	if idx := strings.Index(first, "="); idx >= 0 {
+		first = first[:idx]
+	}
+	return strings.TrimSpace(first)
 }
 
 func truncate(value string, limit int) string {

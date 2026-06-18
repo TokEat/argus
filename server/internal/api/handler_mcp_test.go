@@ -21,7 +21,7 @@ const testMCPPythonExpContent = `ARGUS_EXP = {
     "name": "MCP Demo",
     "risk_level": "medium",
     "policy": {
-        "capabilities": ["http.request", "result.write"],
+        "capabilities": ["result.write"],
         "dry_run_supported": True,
         "timeout_sec": 30,
     },
@@ -32,16 +32,17 @@ const testMCPPythonExpContent = `ARGUS_EXP = {
 }
 
 def run(ctx):
-    return ctx.result.success("ok", marker=ctx.params.get("marker"))
+    ctx.evidence.add("marker", ctx.params.marker)
+    return ctx.result.success("ok")
 `
 
-func TestMCPPyexpValidateSourceReturnsMetadata(t *testing.T) {
+func TestSourcePyexpValidateReturnsMetadata(t *testing.T) {
 	setupAITestDB(t)
-	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/mcp/tools/pyexp/validate", "operator", "9")
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/pyexp/validate", strings.NewReader(`{"source":`+strconvQuote(testMCPPythonExpContent)+`}`))
+	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/exploits/source/validate", "operator", "9")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/exploits/source/validate", strings.NewReader(`{"source":`+strconvQuote(testMCPPythonExpContent)+`}`))
 	ctx.Request.Header.Set("Content-Type", "application/json")
 
-	mcpPyexpValidate(ctx)
+	validateSourceExploit(ctx)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
@@ -55,14 +56,14 @@ func TestMCPPyexpValidateSourceReturnsMetadata(t *testing.T) {
 	}
 }
 
-func TestMCPPyexpDryRunSourceNormalizesParams(t *testing.T) {
+func TestSourcePyexpDryRunNormalizesParams(t *testing.T) {
 	setupAITestDB(t)
 	body := `{"source":` + strconvQuote(testMCPPythonExpContent) + `,"target":"https://example.com","params":{}}`
-	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/mcp/tools/pyexp/dry-run", "operator", "9")
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/pyexp/dry-run", strings.NewReader(body))
+	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/exploits/source/dry-run", "operator", "9")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/exploits/source/dry-run", strings.NewReader(body))
 	ctx.Request.Header.Set("Content-Type", "application/json")
 
-	mcpPyexpDryRun(ctx)
+	dryRunSourceExploit(ctx)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
@@ -157,14 +158,14 @@ func TestMCPRuleDebugPyexpSourceDispatchesWithoutSavedRule(t *testing.T) {
 	}
 }
 
-func TestMCPPyexpSaveDraftReturnsRuleIDAndRequirementsHash(t *testing.T) {
+func TestMCPRuleSavePyexpReturnsStableRefsAndRequirementsHash(t *testing.T) {
 	store := setupAITestDB(t)
-	body := `{"file_name":"mcp-demo.py","content":` + strconvQuote(testMCPPythonExpContent) + `}`
-	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/mcp/tools/pyexp/save-draft", "operator", "9")
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/pyexp/save-draft", strings.NewReader(body))
+	body := `{"rule_type":"pyexp","file_name":"mcp-demo.py","content":` + strconvQuote(testMCPPythonExpContent) + `}`
+	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/mcp/tools/rule/save", "operator", "9")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/rule/save", strings.NewReader(body))
 	ctx.Request.Header.Set("Content-Type", "application/json")
 
-	mcpPyexpSaveDraft(ctx)
+	mcpRuleSave(ctx)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
@@ -176,8 +177,8 @@ func TestMCPPyexpSaveDraftReturnsRuleIDAndRequirementsHash(t *testing.T) {
 	if resp["artifact_id"] != db.BuildTenantArsenalID("default", "exp", "mcp-demo.py") || resp["requirements_hash"] != "" {
 		t.Fatalf("unexpected save response: %#v", resp)
 	}
-	if _, ok := resp["exploit_rule_id"].(float64); !ok {
-		t.Fatalf("expected exploit_rule_id in response, got %#v", resp)
+	if _, ok := resp["exploit_rule_id"]; ok {
+		t.Fatalf("response must not expose exploit_rule_id: %#v", resp)
 	}
 	var rule db.ExploitRule
 	if err := store.Where("tenant_id = ? AND rule_id = ?", "default", "exp-mcp-demo").First(&rule).Error; err != nil {

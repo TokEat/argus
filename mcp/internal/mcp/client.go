@@ -83,7 +83,7 @@ func (c *Client) argusRuleDebug(ctx context.Context, args map[string]interface{}
 				"params": args["params"],
 			}
 			var out map[string]interface{}
-			if err := c.do(ctx, http.MethodPost, "/api/v1/mcp/tools/pyexp/dry-run", body, &out); err != nil {
+			if err := c.do(ctx, http.MethodPost, "/api/v1/exploits/source/dry-run", body, &out); err != nil {
 				return nil, err
 			}
 			out["rule_type"] = "pyexp"
@@ -104,7 +104,7 @@ func (c *Client) argusRuleDebug(ctx context.Context, args map[string]interface{}
 		body["source"] = source
 		body["rule_type"] = "pyexp"
 		var out map[string]interface{}
-		if err := c.do(ctx, http.MethodPost, "/api/v1/mcp/tools/pyexp/debug", body, &out); err != nil {
+		if err := c.do(ctx, http.MethodPost, "/api/v1/exploits/source/debug", body, &out); err != nil {
 			return nil, err
 		}
 		out["rule_type"] = "pyexp"
@@ -130,9 +130,7 @@ func (c *Client) argusRuleDebug(ctx context.Context, args map[string]interface{}
 		return nil, err
 	}
 	out["rule_type"] = "pyexp"
-	out["legacy_ref"] = map[string]interface{}{"exploit_rule_id": ruleID}
-	out["exploit_rule_id"] = ruleID
-	return withStableRef(out, ruleType, stringArg(args, "file_name")), nil
+	return stripLegacyExploitRef(withStableRef(out, ruleType, stringArg(args, "file_name"))), nil
 }
 
 func (c *Client) argusContext(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -731,7 +729,34 @@ func (c *Client) argusRuleSave(ctx context.Context, args map[string]interface{})
 	if err := c.do(ctx, http.MethodPost, "/api/v1/arsenals/"+url.PathEscape(ruleType)+"/"+url.PathEscape(fileName), map[string]interface{}{"content": content}, &out); err != nil {
 		return nil, err
 	}
+	if ruleType == "exp" {
+		c.enrichSavedPyexp(ctx, out, fileName)
+	}
 	return withStableRef(out, ruleType, fileName), nil
+}
+
+func (c *Client) enrichSavedPyexp(ctx context.Context, out map[string]interface{}, fileName string) {
+	var rules []map[string]interface{}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/exploits?all=1", nil, &rules); err != nil {
+		return
+	}
+	for _, rule := range rules {
+		if mapString(rule, "source_file", "SourceFile", "file_name", "FileName") != fileName {
+			continue
+		}
+		for _, key := range []string{"artifact_id", "rule_id", "requirements_hash", "requirements", "state"} {
+			if value := mapAny(rule, key); value != nil {
+				out[key] = value
+			}
+		}
+		if value := mapAny(rule, "content_hash"); value != nil {
+			out["hash"] = value
+		}
+		if value := mapAny(rule, "version"); value != nil {
+			out["version"] = value
+		}
+		return
+	}
 }
 
 func (c *Client) composeFingerprintArtifact(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -1070,7 +1095,14 @@ func (c *Client) argusRuleApply(ctx context.Context, args map[string]interface{}
 		if err != nil {
 			return nil, err
 		}
-		return c.postTool(ctx, "/api/v1/agents/"+url.PathEscape(agentID)+"/pyenv/install", map[string]interface{}{"exploit_rule_id": ruleID})
+		out, err := c.postTool(ctx, "/api/v1/agents/"+url.PathEscape(agentID)+"/pyenv/install", map[string]interface{}{"exploit_rule_id": ruleID})
+		if err != nil {
+			return nil, err
+		}
+		if mapped, ok := out.(map[string]interface{}); ok {
+			return stripLegacyExploitRef(mapped), nil
+		}
+		return out, nil
 	default:
 		return nil, fmt.Errorf("unsupported argus_rule_apply action %q", action)
 	}
@@ -1090,8 +1122,7 @@ func (c *Client) argusRulePublish(ctx context.Context, ruleType string, args map
 			return nil, err
 		}
 		out["rule_type"] = "pyexp"
-		out["legacy_ref"] = map[string]interface{}{"exploit_rule_id": ruleID}
-		return withStableRef(out, ruleType, stringArg(args, "file_name")), nil
+		return stripLegacyExploitRef(withStableRef(out, ruleType, stringArg(args, "file_name"))), nil
 	}
 	fileName := stringArg(args, "file_name")
 	if fileName == "" {
@@ -1388,6 +1419,15 @@ func mapString(values map[string]interface{}, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func mapAny(values map[string]interface{}, keys ...string) interface{} {
+	for _, key := range keys {
+		if value, ok := values[key]; ok && value != nil {
+			return value
+		}
+	}
+	return nil
 }
 
 func mapInt(values map[string]interface{}, keys ...string) (int, bool) {
@@ -1742,5 +1782,14 @@ func withStableRef(out map[string]interface{}, ruleType, fileName string) map[st
 		}
 	}
 	out["stable_ref"] = stable
+	return out
+}
+
+func stripLegacyExploitRef(out map[string]interface{}) map[string]interface{} {
+	if out == nil {
+		return out
+	}
+	delete(out, "exploit_rule_id")
+	delete(out, "legacy_ref")
 	return out
 }

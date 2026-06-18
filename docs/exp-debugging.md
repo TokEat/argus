@@ -78,6 +78,7 @@ Content-Type: application/json
 - 调试入口要求登录态、租户隔离和在线 Agent。
 - 调试目标必须是 HTTP/HTTPS URL，不能是空目标或非法 URL。
 - Agent 必须声明 `python_exp=true`，且版本支持 EXP 调试。
-- Python EXP 使用 Agent 当前 Python 原生执行；`ctx.http`/`ctx.tcp` 仅为兼容便利方法，不作为出站能力管控边界。
+- Python EXP 使用 Agent 当前 Python 原生执行；网络、加解密、文件和系统调用使用原生 Python 或已声明依赖。
+- `ctx` 只提供 `params`、`target`、`result`、`evidence`、`cleanup`；请求/响应调试信息由脚本主动写入 `ctx.evidence` 摘要。
 - Python EXP 仍受 timeout、requirements 预检和审核校验约束。
 - 正式执行仍受 Server 的 EXP 授权、风险确认、Agent 能力和并发限制控制。

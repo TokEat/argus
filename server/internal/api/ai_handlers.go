@@ -523,7 +523,7 @@ func injectCopilotContext(messages *[]aipkg.ChatMessage, pageContext map[string]
 		if isExpPythonGenerationContext(dataLayer) {
 			*messages = append(*messages, aipkg.ChatMessage{
 				Role:    "system",
-				Content: "【EXP Python 专用约束】你是 EXP Python 草稿助手。请根据 raw HTTP 请求包、响应片段、判断线索和 cleanup 要求输出完整 fenced python EXP；采用 CLI-first 标准脚本结构：文件头 CLI 用法说明、import argparse、ARGUS_EXP、build_arg_parser()、run(ctx)、cleanup(ctx)、main() 和 if __name__ == \"__main__\"；argparse.add_argument 是参数主合同，让脚本本地可通过 -h/--help 查看参数，ARGUS_EXP.params 默认可为空，仅用于 pattern/sensitive/min/max/enum/example 等额外校验/展示；flag 使用 kebab-case 时参数名使用 snake_case；run(ctx) 可通过 ctx.params.<name> 读取平台参数，也可以按普通 Python 脚本方式使用 urllib、requests、socket、subprocess、os、ctypes 和已声明依赖；ctx.http/ctx.tcp 仅是兼容便利方法，优先使用原生 Python API；不要设置执行目标、用户授权、agent_id、project_id、risk_confirmed 等执行字段。若缺少成功判断或参数化依据，先说明需要用户补充什么，再给最小可用 Python。",
+				Content: "【EXP Python 专用约束】你是 EXP Python 草稿助手。请根据 raw HTTP 请求包、响应片段、判断线索和 cleanup 要求输出完整 fenced python EXP；采用 CLI-first 标准脚本结构：文件头 CLI 用法说明、import argparse、ARGUS_EXP、build_arg_parser()、run(ctx)、cleanup(ctx)、main() 和 if __name__ == \"__main__\"；argparse.add_argument 是参数主合同，让脚本本地可通过 -h/--help 查看参数，ARGUS_EXP.params 默认可为空，仅用于 pattern/sensitive/min/max/enum/example 等额外校验/展示；flag 使用 kebab-case 时参数名使用 snake_case；run(ctx) 可通过 ctx.params.<name> 读取平台参数，也可以按普通 Python 脚本方式使用 urllib、requests、socket、subprocess、os、ctypes 和已声明依赖；ctx 不提供 HTTP/TCP helper 属性；请求、响应、状态码、matcher、关键错误等调试信息需要脚本主动通过 ctx.evidence.add 写入摘要并注意脱敏；不要设置执行目标、用户授权、agent_id、project_id、risk_confirmed 等执行字段。若缺少成功判断或参数化依据，先说明需要用户补充什么，再给最小可用 Python。",
 			})
 		}
 		if len(dataLayer) > 0 {

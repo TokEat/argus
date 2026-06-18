@@ -987,6 +987,18 @@ export async function debugExploit(id: number, data: API.ExploitDebugRequest): P
     return request.post(`/exploits/${id}/debug`, data);
 }
 
+export async function validateSourceExploit(source: string): Promise<API.SourceExploitValidateResponse> {
+    return request.post('/exploits/source/validate', { source });
+}
+
+export async function dryRunSourceExploit(source: string, target: string, params?: Record<string, unknown>): Promise<API.DryRunResponse> {
+    return request.post('/exploits/source/dry-run', { source, target, params: params || {} });
+}
+
+export async function debugSourceExploit(data: API.SourceExploitDebugRequest): Promise<API.SourceExploitDebugResponse> {
+    return request.post('/exploits/source/debug', data);
+}
+
 export async function getAgentPyenv(agentId: string): Promise<API.AgentPyenv> {
     return request.get(`/agents/${agentId}/pyenv`);
 }

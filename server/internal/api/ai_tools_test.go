@@ -82,15 +82,15 @@ const testPythonExpContent = `ARGUS_EXP = {
     "policy": {
         "dry_run_supported": True,
         "timeout_sec": 30,
-        "capabilities": ["http.request", "evidence.write", "result.write"],
+        "capabilities": ["evidence.write", "result.write"],
     },
     "params": {},
     "requirements": [],
 }
 
 def run(ctx):
-    resp = ctx.http.request(method="GET", path="/")
-    ctx.evidence.add("status_code", resp.status_code)
+    ctx.evidence.add("request", "GET /")
+    ctx.evidence.add("status_code", 200)
     return ctx.result.success("verified")
 `
 

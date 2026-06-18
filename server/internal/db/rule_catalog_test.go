@@ -35,7 +35,7 @@ func TestMaterializeExploitRule(t *testing.T) {
         "cleanup_supported": True,
         "cleanup_required": True,
         "timeout_sec": 90,
-        "capabilities": ["http.request", "evidence.write", "result.write"],
+        "capabilities": ["evidence.write", "result.write"],
         "side_effects": ["creates proof marker"],
     },
     "params": {
@@ -45,8 +45,8 @@ func TestMaterializeExploitRule(t *testing.T) {
 }
 
 def run(ctx):
-    resp = ctx.http.request(method="GET", path="/")
-    ctx.evidence.add("status_code", resp.status_code)
+    ctx.evidence.add("request", "GET /")
+    ctx.evidence.add("status_code", 200)
     return ctx.result.success("ok")
 
 def cleanup(ctx):
@@ -67,7 +67,7 @@ def cleanup(ctx):
 	if rule.RiskLevel != "high" || !rule.RequiresAuth || !rule.CleanupRequired || !rule.CleanupSupported {
 		t.Fatalf("unexpected risk/policy fields: %#v", rule)
 	}
-	if rule.Capabilities != `["http.request","evidence.write","result.write"]` {
+	if rule.Capabilities != `["evidence.write","result.write"]` {
 		t.Fatalf("Capabilities = %q", rule.Capabilities)
 	}
 	if rule.LinkedPocs != `["demo-poc.yaml"]` {
@@ -81,7 +81,7 @@ def cleanup(ctx):
 	}
 }
 
-func TestMaterializeRuleCatalogRejectsLegacyYAMLExploit(t *testing.T) {
+func TestMaterializeRuleCatalogRejectsInvalidPythonExploit(t *testing.T) {
 	out := materializeRuleCatalog([]Arsenal{{
 		ID:       "legacy_exp.yaml",
 		TenantID: "default",
@@ -91,8 +91,8 @@ func TestMaterializeRuleCatalogRejectsLegacyYAMLExploit(t *testing.T) {
 		Hash:     "hash",
 		State:    "Approved",
 	}})
-	if len(out.exploits) != 0 || len(out.errors) != 1 || !strings.Contains(out.errors[0], "YAML EXP packages are no longer supported") {
-		t.Fatalf("legacy YAML EXP should be rejected without executable rule, got %#v", out)
+	if len(out.exploits) != 0 || len(out.errors) != 1 || !strings.Contains(out.errors[0], "ARGUS_EXP dict literal is required") {
+		t.Fatalf("invalid Python EXP should be rejected without executable rule, got %#v", out)
 	}
 }
 

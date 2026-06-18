@@ -69,16 +69,6 @@ func mcpResourceByURI(uri string) (mcpResourceDoc, bool) {
 	return mcpResourceDoc{}, false
 }
 
-type mcpPyexpSourceRequest struct {
-	Source string `json:"source"`
-}
-
-type mcpPyexpDryRunRequest struct {
-	Source string                 `json:"source"`
-	Target string                 `json:"target"`
-	Params map[string]interface{} `json:"params"`
-}
-
 type mcpSaveDraftRequest struct {
 	FileName string `json:"file_name"`
 	Content  string `json:"content"`
@@ -173,97 +163,6 @@ func writeMCPResource(c *gin.Context, uri string) {
 	c.JSON(http.StatusOK, mcpResourceResponse{URI: resource.URI, MIMEType: resource.MIMEType, Text: resource.Text})
 }
 
-func mcpPyexpValidate(c *gin.Context) {
-	var req mcpPyexpSourceRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
-		return
-	}
-	tmpl, err := parseMCPPyexpSource(req.Source, false)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"valid": false, "error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"valid":             true,
-		"id":                tmpl.ID,
-		"name":              tmpl.Name,
-		"risk_level":        tmpl.RiskLevel,
-		"params_schema":     pyexp.ParamSchema(tmpl.Params),
-		"requirements":      tmpl.Requirements,
-		"requirements_hash": tmpl.RequirementsHash,
-		"has_run":           tmpl.HasRun,
-		"has_main":          tmpl.HasMain,
-		"has_cleanup":       tmpl.HasCleanup,
-		"policy":            tmpl.Policy,
-	})
-}
-
-func mcpPyexpDryRun(c *gin.Context) {
-	var req mcpPyexpDryRunRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
-		return
-	}
-	req.Target = strings.TrimSpace(req.Target)
-	if req.Target == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "target is required"})
-		return
-	}
-	tmpl, err := parseMCPPyexpSource(req.Source, false)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	paramsSchema := pyexp.ParamSchema(tmpl.Params)
-	normalizedParams, paramErrors := normalizeExpParamsForTarget(paramsSchema, req.Params, req.Target)
-	paramsValid := len(paramErrors) == 0
-	executionPlan := map[string]interface{}{
-		"mode":              "python",
-		"engine":            pyexp.RuntimeEngine,
-		"entry":             "run(ctx)",
-		"cleanup_entry":     "cleanup(ctx)",
-		"cleanup_defined":   tmpl.HasCleanup,
-		"requirements":      tmpl.Requirements,
-		"requirements_hash": tmpl.RequirementsHash,
-		"sandbox_profile":   "local-python",
-	}
-	c.JSON(http.StatusOK, dryRunExploitResponse{
-		ExploitID:        tmpl.ID,
-		Target:           req.Target,
-		RiskLevel:        tmpl.RiskLevel,
-		RequiresAuth:     tmpl.Policy.RequiresAuth,
-		SideEffects:      tmpl.Policy.SideEffects,
-		CleanupSupported: tmpl.Policy.CleanupSupported,
-		CleanupRequired:  tmpl.Policy.CleanupRequired,
-		TimeoutSec:       tmpl.Policy.TimeoutSec,
-		Capabilities:     tmpl.Policy.Capabilities,
-		ExecutionPlan:    executionPlan,
-		ParamsValid:      paramsValid,
-		ParamsErrors:     paramErrors,
-		NormalizedParams: normalizedParams,
-	})
-}
-
-func mcpPyexpSaveDraft(c *gin.Context) {
-	var req mcpSaveDraftRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
-		return
-	}
-	result, err := executeCreateExpDraft(currentTenantID(c), map[string]interface{}{"file_name": req.FileName, "content": req.Content})
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	resp, err := mcpSavedExpDraftResponse(currentTenantID(c), req.FileName, result)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, resp)
-}
-
 func mcpPOCSaveDraft(c *gin.Context) {
 	var req mcpSaveDraftRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -299,7 +198,7 @@ func mcpPyexpDebug(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "target_url is required"})
 			return
 		}
-		tmpl, err := parseMCPPyexpSource(source, false)
+		tmpl, err := parsePyexpSource(source, false)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -336,7 +235,7 @@ func mcpPyexpDebug(c *gin.Context) {
 	sourceLevel := source != ""
 	var ruleID string
 	if sourceLevel {
-		tmpl, err := parseMCPPyexpSource(source, false)
+		tmpl, err := parsePyexpSource(source, false)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("EXP validation failed: %v", err)})
 			return
@@ -542,7 +441,7 @@ func mcpAgentPythonRun(c *gin.Context) {
 	c.JSON(http.StatusOK, waited)
 }
 
-func parseMCPPyexpSource(source string, strict bool) (*pyexp.Template, error) {
+func parsePyexpSource(source string, strict bool) (*pyexp.Template, error) {
 	source = strings.TrimSpace(source)
 	if source == "" {
 		return nil, fmt.Errorf("source is required")
@@ -578,7 +477,6 @@ func mcpSavedExpDraftResponse(tenantID, fileName string, result copilotActionRes
 		"status":            result.Status,
 		"message":           result.Message,
 		"artifact_id":       arsenal.ID,
-		"exploit_rule_id":   rule.ID,
 		"rule_id":           rule.RuleID,
 		"file_name":         arsenal.FileName,
 		"state":             arsenal.State,
@@ -1002,10 +900,13 @@ Execution boundaries:
 - Approval, publication, official runs, and risk waivers remain in the normal Argus UI/API flow.
 
 Migration guidance:
-- Prefer native Python for exploit logic. ctx.http, ctx.tcp, ctx.evidence and ctx.result are convenience APIs, not mandatory wrappers.
+- Use native Python for network, crypto, filesystem and process logic. There are no HTTP/TCP helper attributes on ctx.
 - Keep argparse usable so "python exp.py --help" remains meaningful during local migration.
+- Treat argparse.add_argument as the primary parameter contract; ARGUS_EXP.params is only for extra validation/display hints.
+- In run(ctx), use ctx.params, ctx.target, ctx.evidence, ctx.result and ctx.cleanup for Argus integration.
+- Record request/response proof explicitly with ctx.evidence.add, keeping each evidence item concise and redacted.
 - Use argus_rule_save with rule_type=pyexp to create a Draft database artifact, then argus_rule_apply action=install_requirements after the Draft exists.
-- Prefer stable_ref fields artifact_id, rule_id, file_name, hash and version. exploit_rule_id is a legacy catalog row id and may change after catalog sync.
+- Prefer stable_ref fields artifact_id, rule_id, file_name, hash and version.
 - Use argus_rule_debug with stable_ref, agent_id, target_url and params to validate behavior before publishing.
 `
 
@@ -1045,7 +946,7 @@ Argus intentionally exposes four aggregate tools:
 
 Reference model:
 - stable_ref.artifact_id, rule_id, file_name, hash and version are the preferred references.
-- exploit_rule_id is a legacy derived catalog row id; MCP may resolve it internally but clients should not treat it as stable.
+- MCP hides derived catalog row ids; clients should use stable_ref fields.
 
 Recommended loop:
 read resources -> debug -> save Draft artifact -> publish with stable_ref hash/version -> verify workflow_links.
@@ -1192,26 +1093,108 @@ Cleanup guidance:
 For test_only work, cleanup is situational. Remove temporary rules when the goal was only to prove the MCP flow. Do not delete rules that passed validation and should remain reusable.
 `
 
-const pyexpTemplateText = `ARGUS_EXP = {
+const pyexpTemplateText = `"""
+Argus Python EXP minimal CLI-first template.
+
+Local usage:
+  python3 exp_example.py -h
+  python3 exp_example.py --target http://127.0.0.1:8080 --path / --expect-status 200 --contains Welcome
+"""
+
+import argparse
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+
+ARGUS_EXP = {
     "id": "exp-example",
     "name": "Example Python EXP",
-    "description": "Minimal Argus Python EXP template.",
-    "risk_level": "medium",
+    "description": "Minimal native Python EXP template.",
+    "risk_level": "low",
+    "target_product": "ExampleProduct",
+    "cve": "",
+    "linked_pocs": [],
     "policy": {
-        "capabilities": ["http.request", "result.write"],
+        "requires_auth": False,
+        "cleanup_supported": True,
+        "cleanup_required": False,
         "dry_run_supported": True,
         "timeout_sec": 60,
+        "capabilities": ["evidence.write", "result.write"],
+        "side_effects": [],
     },
     "params": {},
     "requirements": [],
 }
 
+
+def build_arg_parser():
+    parser = argparse.ArgumentParser(description=ARGUS_EXP["description"])
+    parser.add_argument("--target", required=True, help="Target base URL")
+    parser.add_argument("--path", default="/", help="HTTP path to request")
+    parser.add_argument("--expect-status", type=int, default=200, help="Expected HTTP status")
+    parser.add_argument("--contains", default="", help="Optional response body text matcher")
+    return parser
+
+
+def _join_url(target, path):
+    path = path or "/"
+    if not path.startswith("/"):
+        path = "/" + path
+    return urllib.parse.urljoin(target.rstrip("/") + "/", path.lstrip("/"))
+
+
+def _request(args):
+    req = urllib.request.Request(_join_url(args.target, args.path), headers={"Accept": "*/*"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = resp.read().decode("utf-8", "replace")
+            return resp.status, body
+    except urllib.error.HTTPError as err:
+        body = err.read().decode("utf-8", "replace")
+        return err.code, body
+
+
 def run(ctx):
-    resp = ctx.http.request(method="GET", path="/")
-    ctx.evidence.add("status_code", resp.status_code)
-    if resp.status_code < 500:
-        return ctx.result.success("target responded")
-    return ctx.result.fail("target did not match")
+    args = argparse.Namespace(
+        target=getattr(ctx.params, "target", "") or ctx.target.url,
+        path=ctx.params.path,
+        expect_status=int(ctx.params.expect_status),
+        contains=ctx.params.contains,
+    )
+    status, body = _request(args)
+    ctx.evidence.add("request", f"GET {args.path}")
+    ctx.evidence.add("status_code", status)
+    ctx.evidence.add("response_snippet", body[:2048])
+    if status != args.expect_status:
+        return ctx.result.failure(f"unexpected status: {status}")
+    if args.contains and args.contains not in body:
+        return ctx.result.failure("response text matcher not found")
+    return ctx.result.success("verified")
+
+
+def cleanup(ctx):
+    return ctx.result.success("cleanup complete")
+
+
+def main():
+    args = build_arg_parser().parse_args()
+    status, body = _request(args)
+    print(f"status_code={status}")
+    if status != args.expect_status:
+        print(f"unexpected status: {status}", file=sys.stderr)
+        return 1
+    if args.contains and args.contains not in body:
+        print("response text matcher not found", file=sys.stderr)
+        return 1
+    print("verified")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 `
 
 const pocTemplateText = `id: argus-example-poc
