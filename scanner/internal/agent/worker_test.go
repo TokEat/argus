@@ -6,6 +6,7 @@ import (
 	"io"
 	"sync"
 	"testing"
+	"time"
 
 	"dddd/scanner/internal/engine"
 	pb "github.com/user/dddd-proto/go/scan"
@@ -203,9 +204,45 @@ func TestToDDOutOutputMessageKeepsShowMsg(t *testing.T) {
 	}
 }
 
+func TestWorkerPythonScratchpadRunStreamsCompletion(t *testing.T) {
+	stream := &fakeDebugStream{sent: make(chan *pb.DebugEvent, 4)}
+	client := &fakeAgentClient{debugStream: stream}
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 4, nil)
+	worker.client = client
+
+	worker.handleDebugCommand(&pb.DebugCommand{
+		Action:     "python_scratchpad_run",
+		SessionId:  "scratch-1",
+		TenantId:   "default",
+		TimeoutSec: 5,
+		Params:     `{"command":"python_version","timeout_sec":5}`,
+	})
+
+	seenComplete := false
+	deadline := time.After(5 * time.Second)
+	for !seenComplete {
+		select {
+		case event := <-stream.sent:
+			if event.SessionId != "scratch-1" || event.TenantId != "default" {
+				t.Fatalf("unexpected event scope: %#v", event)
+			}
+			if event.Type == "debug_complete" {
+				seenComplete = true
+				if !event.Matched || event.Error != "" {
+					t.Fatalf("unexpected completion event: %#v", event)
+				}
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for python scratchpad completion")
+		}
+	}
+}
+
 type fakeAgentClient struct {
 	stream            grpc.ClientStreamingClient[pb.ScanResult, pb.Ack]
 	streamErr         error
+	debugStream       grpc.ClientStreamingClient[pb.DebugEvent, pb.Ack]
+	debugErr          error
 	taskCompleteReqs  []*pb.TaskCompleteReq
 	taskCompleteReqsM sync.Mutex
 	taskCompleteErrs  []error
@@ -265,7 +302,10 @@ func (c *fakeAgentClient) StreamLogs(ctx context.Context, opts ...grpc.CallOptio
 }
 
 func (c *fakeAgentClient) StreamDebug(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[pb.DebugEvent, pb.Ack], error) {
-	return nil, nil
+	if c.debugErr != nil {
+		return nil, c.debugErr
+	}
+	return c.debugStream, nil
 }
 
 type fakeResultStream struct {
@@ -319,6 +359,56 @@ func (s *fakeResultStream) RecvMsg(m any) error {
 		}
 		ack.Success = resp.Success
 		ack.Message = resp.Message
+		return nil
+	}
+	return io.EOF
+}
+
+type fakeDebugStream struct {
+	sendErr error
+	sent    chan *pb.DebugEvent
+}
+
+func (s *fakeDebugStream) Send(event *pb.DebugEvent) error {
+	if s.sendErr != nil {
+		return s.sendErr
+	}
+	if s.sent != nil {
+		s.sent <- event
+	}
+	return nil
+}
+
+func (s *fakeDebugStream) CloseAndRecv() (*pb.Ack, error) {
+	return &pb.Ack{Success: true}, nil
+}
+
+func (s *fakeDebugStream) Header() (metadata.MD, error) {
+	return nil, nil
+}
+
+func (s *fakeDebugStream) Trailer() metadata.MD {
+	return nil
+}
+
+func (s *fakeDebugStream) CloseSend() error {
+	return nil
+}
+
+func (s *fakeDebugStream) Context() context.Context {
+	return context.Background()
+}
+
+func (s *fakeDebugStream) SendMsg(m any) error {
+	if event, ok := m.(*pb.DebugEvent); ok {
+		return s.Send(event)
+	}
+	return nil
+}
+
+func (s *fakeDebugStream) RecvMsg(m any) error {
+	if ack, ok := m.(*pb.Ack); ok {
+		ack.Success = true
 		return nil
 	}
 	return io.EOF

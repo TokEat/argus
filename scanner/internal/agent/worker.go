@@ -39,15 +39,16 @@ import (
 
 // grpcTeeWriter 实现 gologger Writer 接口，将日志同时写入本地终端和 gRPC StreamLogs。
 type grpcTeeWriter struct {
-	original gologgerWriter.Writer
-	stream   pb.AgentService_StreamLogsClient
-	agentID  string
-	mu       sync.Mutex
-	closed   bool
-	queue    chan *pb.LogPayload
-	stopCh   chan struct{}
-	doneCh   chan struct{}
-	dropped  atomic.Uint64
+	original  gologgerWriter.Writer
+	stream    pb.AgentService_StreamLogsClient
+	agentID   string
+	mu        sync.Mutex
+	closed    bool
+	debugSink func(level, message string)
+	queue     chan *pb.LogPayload
+	stopCh    chan struct{}
+	doneCh    chan struct{}
+	dropped   atomic.Uint64
 }
 
 func (w *grpcTeeWriter) Write(data []byte, level levels.Level) {
@@ -58,8 +59,8 @@ func (w *grpcTeeWriter) Write(data []byte, level levels.Level) {
 
 	// 2. 尝试通过 gRPC 回传（非阻塞，忽略发送失败）
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	if w.closed || w.stream == nil {
+		w.mu.Unlock()
 		return
 	}
 
@@ -75,8 +76,12 @@ func (w *grpcTeeWriter) Write(data []byte, level levels.Level) {
 
 	msg := strings.TrimSpace(string(data))
 	if msg == "" {
+		w.mu.Unlock()
 		return
 	}
+
+	var debugSink func(level, message string)
+	debugSink = w.debugSink
 
 	payload := &pb.LogPayload{
 		AgentId:   w.agentID,
@@ -90,6 +95,23 @@ func (w *grpcTeeWriter) Write(data []byte, level levels.Level) {
 	default:
 		w.dropped.Add(1)
 	}
+	w.mu.Unlock()
+
+	if debugSink != nil {
+		debugSink(levelStr, msg)
+	}
+}
+
+func (w *grpcTeeWriter) SetDebugSink(sink func(level, message string)) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.debugSink = sink
+}
+
+func (w *grpcTeeWriter) ClearDebugSink() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.debugSink = nil
 }
 
 func (w *grpcTeeWriter) runSender() {
