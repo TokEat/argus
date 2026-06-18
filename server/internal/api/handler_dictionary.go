@@ -58,6 +58,14 @@ func saveWorkflow(data map[string]WorkflowEntry, arsenal *db.Arsenal) error {
 	contentStr := string(out)
 	hash := fmt.Sprintf("%x", md5.Sum(out))
 
+	candidate := *arsenal
+	candidate.Content = contentStr
+	candidate.Hash = hash
+	candidate.Version++
+	if err := db.ValidateRuleCatalogCandidate(candidate); err != nil {
+		return err
+	}
+
 	arsenal.Content = contentStr
 	arsenal.Hash = hash
 	arsenal.Version++
@@ -75,7 +83,7 @@ func getWorkflowDict(c *gin.Context) {
 		return
 	}
 
-	var results []WorkflowItem
+	results := make([]WorkflowItem, 0, len(data))
 	for k, v := range data {
 		results = append(results, WorkflowItem{
 			Product: k,
@@ -116,7 +124,7 @@ func addWorkflowDict(c *gin.Context) {
 	}
 
 	if err := saveWorkflow(data, arsenal); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save to database"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -160,7 +168,7 @@ func updateWorkflowDict(c *gin.Context) {
 	}
 
 	if err := saveWorkflow(data, arsenal); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save to database"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -184,7 +192,7 @@ func deleteWorkflowDict(c *gin.Context) {
 	delete(data, product)
 
 	if err := saveWorkflow(data, arsenal); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save to database"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -223,8 +231,18 @@ func saveFingerprint(data map[string][]string, arsenal *db.Arsenal) error {
 	}
 
 	contentStr := string(out)
+	hash := fmt.Sprintf("%x", md5.Sum(out))
+
+	candidate := *arsenal
+	candidate.Content = contentStr
+	candidate.Hash = hash
+	candidate.Version++
+	if err := db.ValidateRuleCatalogCandidate(candidate); err != nil {
+		return err
+	}
+
 	arsenal.Content = contentStr
-	arsenal.Hash = fmt.Sprintf("%x", md5.Sum(out))
+	arsenal.Hash = hash
 	arsenal.Version++
 
 	if err := db.DB.Save(arsenal).Error; err != nil {
@@ -241,7 +259,7 @@ func getFingerprintDict(c *gin.Context) {
 		return
 	}
 
-	var results []FingerprintItem
+	results := make([]FingerprintItem, 0, len(data))
 	for k, v := range data {
 		results = append(results, FingerprintItem{
 			Product: k,
@@ -276,7 +294,7 @@ func addFingerprintDict(c *gin.Context) {
 
 	data[req.Product] = req.Rules
 	if err := saveFingerprint(data, arsenal); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save to database"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "added", "product": req.Product})
@@ -313,7 +331,7 @@ func updateFingerprintDict(c *gin.Context) {
 
 	data[product] = req.Rules
 	if err := saveFingerprint(data, arsenal); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save to database"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "updated", "product": product})
@@ -334,7 +352,7 @@ func deleteFingerprintDict(c *gin.Context) {
 
 	delete(data, product)
 	if err := saveFingerprint(data, arsenal); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save to database"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "deleted", "product": product})

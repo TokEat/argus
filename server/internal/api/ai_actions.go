@@ -408,6 +408,9 @@ func saveDirDraft(data map[string][]string, arsenal *db.Arsenal) (string, string
 	if err := db.DB.Save(arsenal).Error; err != nil {
 		return "", "", err
 	}
+	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+		return "", "", err
+	}
 	return content, hash, nil
 }
 
@@ -425,6 +428,9 @@ func saveWorkflowDraft(data map[string]WorkflowEntry, arsenal *db.Arsenal) (stri
 	arsenal.State = "Draft"
 	arsenal.Version++
 	if err := db.DB.Save(arsenal).Error; err != nil {
+		return "", "", err
+	}
+	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
 		return "", "", err
 	}
 	return content, hash, nil
