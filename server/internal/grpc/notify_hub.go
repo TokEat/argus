@@ -56,11 +56,16 @@ func (h *NotifyHub) Register(agentID string, stream pb.AgentService_SubscribeSer
 	log.Printf("[NotifyHub] Agent %s subscribed (free_slots=%d)", agentID, freeSlots)
 }
 
-// Unregister 移除 Agent 连接（断开时调用）
-func (h *NotifyHub) Unregister(agentID string) {
+// Unregister 移除 Agent 连接（断开时调用）。如果 Agent 已经建立了更新的
+// Subscribe 流，旧流退出时不能删除新连接。
+func (h *NotifyHub) Unregister(agentID string, stream pb.AgentService_SubscribeServer) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	if conn, ok := h.agents[agentID]; !ok || conn.stream != stream {
+		log.Printf("[NotifyHub] Ignored stale unsubscribe for Agent %s", agentID)
+		return
+	}
 	delete(h.agents, agentID)
 	log.Printf("[NotifyHub] Agent %s unsubscribed", agentID)
 }
