@@ -25,6 +25,7 @@ import (
 )
 
 const defaultAgentDebugTimeout = 60 * time.Second
+const defaultDebugFingerprintProduct = "DebugFingerprint"
 
 // nucleiDebugResult represents the JSON structure of Nuclei debug output
 type nucleiDebugResult struct {
@@ -248,6 +249,7 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 type fingerprintDebugOptions struct {
 	IncludeDir       bool   `json:"include_dir"`
 	IncludePoc       bool   `json:"include_poc"`
+	CustomOnly       bool   `json:"custom_only"`
 	CustomProduct    string `json:"custom_product"`
 	CustomRule       string `json:"custom_rule"`
 	CustomWfProduct  string `json:"custom_wf_product"`
@@ -295,7 +297,14 @@ func (w *Worker) runFingerprintDebugSession(
 
 	// --- 注入自定义指纹规则 ---
 	customProducts := make(map[string]bool)
-	if options.CustomProduct != "" && options.CustomRule != "" {
+	if options.CustomOnly {
+		sc.FingerprintDB = nil
+	}
+	if options.CustomRule != "" {
+		productName := strings.TrimSpace(options.CustomProduct)
+		if productName == "" {
+			productName = defaultDebugFingerprintProduct
+		}
 		rule := strings.TrimSpace(options.CustomRule)
 		parsed := ddfinger.ParseRule(rule)
 		if len(parsed) > 0 {
@@ -304,15 +313,15 @@ func (w *Worker) runFingerprintDebugSession(
 				engineRules = append(engineRules, engine.RuleData(r))
 			}
 			sc.FingerprintDB = append(sc.FingerprintDB, engine.FingerPEntity{
-				ProductName: options.CustomProduct,
+				ProductName: productName,
 				AllString:   rule,
 				Rule:        engineRules,
 			})
-			customProducts[options.CustomProduct] = true
+			customProducts[productName] = true
 			send(&pb.DebugEvent{
 				Type:    "debug_log",
 				Level:   "INFO",
-				Message: fmt.Sprintf("injected custom fingerprint: %s → %s", options.CustomProduct, rule),
+				Message: fmt.Sprintf("injected custom fingerprint: %s → %s", productName, rule),
 			})
 		} else {
 			send(&pb.DebugEvent{
@@ -321,6 +330,10 @@ func (w *Worker) runFingerprintDebugSession(
 				Message: fmt.Sprintf("custom rule expression could not be parsed: %s", rule),
 			})
 		}
+	}
+	if options.CustomOnly && len(customProducts) == 0 {
+		sendComplete("custom_only fingerprint debug requires a valid custom fingerprint rule")
+		return
 	}
 
 	// --- 注入自定义 Workflow 规则 ---
@@ -468,7 +481,7 @@ func (w *Worker) runFingerprintDebugSession(
 	send(&pb.DebugEvent{
 		Type:    "debug_log",
 		Level:   "INFO",
-		Message: fmt.Sprintf("running fingerprint debug against %s (timeout=%s, dir=%v, poc=%v)", cmd.TargetUrl, timeout, options.IncludeDir, options.IncludePoc),
+		Message: fmt.Sprintf("running fingerprint debug against %s (timeout=%s, dir=%v, poc=%v, custom_only=%v)", cmd.TargetUrl, timeout, options.IncludeDir, options.IncludePoc, options.CustomOnly),
 	})
 
 	if err := runScanTask(sc); err != nil && ctx.Err() == nil {

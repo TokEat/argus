@@ -378,6 +378,7 @@ declare namespace API {
     timeout_sec?: number;
     include_dir?: boolean;
     include_poc?: boolean;
+    custom_only?: boolean;
     custom_product?: string;
     custom_rule?: string;
     custom_wf_product?: string;

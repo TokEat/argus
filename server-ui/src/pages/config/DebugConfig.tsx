@@ -69,7 +69,15 @@ const DebugConfig: React.FC = () => {
                 </Row>
             </ProCard>
 
-            <div style={{ maxWidth: 980 }}>
+            <div style={{ maxWidth: 980, display: 'grid', gap: 16 }}>
+                <ArsenalRuleDebugPanel
+                    fingerprints={fingerprints}
+                    workflows={workflows}
+                    dirs={dirs}
+                    pocFiles={pocFiles}
+                    title="Finger 规则调试"
+                    debugMode="finger"
+                />
                 <ArsenalRuleDebugPanel
                     fingerprints={fingerprints}
                     workflows={workflows}

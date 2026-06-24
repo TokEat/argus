@@ -29,6 +29,7 @@ interface ArsenalRuleDebugPanelProps {
     pocFiles?: Set<string>;
     focusProduct?: string;
     title?: string;
+    debugMode?: 'workflow' | 'finger';
 }
 
 interface DebugFormValues {
@@ -118,9 +119,11 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
     pocFiles,
     focusProduct,
     title = 'Workflow 规则调试',
+    debugMode = 'workflow',
 }) => {
     const { message } = App.useApp();
     const [form] = Form.useForm<DebugFormValues>();
+    const selectedProduct = Form.useWatch('custom_product', form);
     const [nodes, setNodes] = useState<API.AgentNode[]>([]);
     const [loadingNodes, setLoadingNodes] = useState(false);
     const [running, setRunning] = useState(false);
@@ -160,6 +163,18 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
         () => nodes.filter((n) => n.Status === 'Alive' && supportsFingerprintDebug(n.Version)),
         [nodes],
     );
+    const isFingerOnly = debugMode === 'finger';
+
+    const fingerprintProductOptions = useMemo(
+        () => Array.from(new Set(fingerprints.map((fp) => fp.product).filter(Boolean)))
+            .map((product) => ({ label: product, value: product })),
+        [fingerprints],
+    );
+
+    const selectedProductRules = useMemo(
+        () => fingerprints.find((fp) => fp.product === selectedProduct)?.rules || [],
+        [fingerprints, selectedProduct],
+    );
 
     const fetchNodes = async () => {
         setLoadingNodes(true);
@@ -179,6 +194,34 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
 
     const wsRef = useRef<{ close: () => void } | null>(null);
     const activeSessionRef = useRef('');
+    const pendingDebugEventsRef = useRef<Map<string, API.DebugEvent[]>>(new Map());
+
+    const appendDebugEvent = useCallback((event: API.DebugEvent) => {
+        if (event.type === 'debug_log') {
+            setLogs((prev) => [...prev, event]);
+        } else if (event.type === 'debug_result') {
+            setResults((prev) => [...prev, event]);
+        } else if (event.type === 'debug_complete') {
+            setComplete(event);
+            setRunning(false);
+        }
+    }, []);
+
+    const bufferDebugEvent = useCallback((event: API.DebugEvent) => {
+        const pending = pendingDebugEventsRef.current.get(event.session_id) || [];
+        pending.push(event);
+        if (pending.length > 100) {
+            pending.shift();
+        }
+        pendingDebugEventsRef.current.set(event.session_id, pending);
+
+        if (pendingDebugEventsRef.current.size > 20) {
+            const oldest = pendingDebugEventsRef.current.keys().next().value;
+            if (oldest) {
+                pendingDebugEventsRef.current.delete(oldest);
+            }
+        }
+    }, []);
 
     useEffect(() => {
         fetchNodes();
@@ -187,23 +230,18 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
             const event = data as API.DebugEvent;
             if (!event || !event.type || !event.session_id) return;
             const active = activeSessionRef.current;
-            if (!active || active !== event.session_id) return;
-            if (event.type === 'debug_log') {
-                setLogs((prev) => [...prev, event]);
-            } else if (event.type === 'debug_result') {
-                setResults((prev) => [...prev, event]);
-            } else if (event.type === 'debug_complete') {
-                setComplete(event);
-                setRunning(false);
+            if (active === event.session_id) {
+                appendDebugEvent(event);
+                return;
             }
+            bufferDebugEvent(event);
         });
         wsRef.current = ws;
         return () => {
             ws.close();
             wsRef.current = null;
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [appendDebugEvent, bufferDebugEvent]);
 
     // 指纹命中的产品名（去掉 [custom] 前缀）
     const products = useMemo(() => {
@@ -248,10 +286,24 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
         setLogs([]);
         setResults([]);
         setComplete(null);
+        pendingDebugEventsRef.current.clear();
     };
 
     const startDebug = async () => {
-        const values = await form.validateFields();
+        let values: DebugFormValues;
+        try {
+            values = await form.validateFields();
+        } catch {
+            return;
+        }
+        if (!String(values.custom_rule || '').trim()) {
+            message.error('请填写一条指纹规则');
+            return;
+        }
+        if (!isFingerOnly && !String(values.custom_product || '').trim()) {
+            message.error('Workflow 规则调试需要先指定一个指纹 Product');
+            return;
+        }
         if (pocMode === 'custom' && !customPocContent.trim()) {
             message.error('自定义 POC 内容不能为空');
             return;
@@ -271,19 +323,22 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
                 target_url: values.target_url,
                 proxy: values.proxy || undefined,
                 timeout_sec: values.timeout_sec || 60,
-                include_dir: values.include_dir || false,
-                include_poc: values.include_poc || false,
+                include_dir: isFingerOnly ? false : values.include_dir || false,
+                include_poc: isFingerOnly ? false : values.include_poc || false,
             };
-            if (values.custom_product && values.custom_rule) {
-                payload.custom_product = values.custom_product;
+            payload.custom_only = true;
+            if (values.custom_rule) {
                 payload.custom_rule = values.custom_rule;
             }
-            if (values.custom_product && values.custom_wf_pocs) {
+            if (values.custom_product) {
+                payload.custom_product = values.custom_product;
+            }
+            if (!isFingerOnly && values.custom_product && values.custom_wf_pocs) {
                 payload.custom_wf_product = values.custom_product;
                 payload.custom_wf_types = values.custom_wf_types?.join(',') || undefined;
                 payload.custom_wf_pocs = values.custom_wf_pocs;
             }
-            if (pocMode === 'custom' && customPocContent.trim()) {
+            if (!isFingerOnly && pocMode === 'custom' && customPocContent.trim()) {
                 payload.custom_poc_content = customPocContent.trim();
             }
             const res = await debugFingerprint(payload);
@@ -294,8 +349,11 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
                 session_id: res.session_id,
                 timestamp: Date.now(),
                 level: 'INFO',
-                message: 'workflow debug session started',
+                message: isFingerOnly ? 'finger debug session started' : 'workflow debug session started',
             }]);
+            const pending = pendingDebugEventsRef.current.get(res.session_id) || [];
+            pendingDebugEventsRef.current.delete(res.session_id);
+            pending.forEach(appendDebugEvent);
         } catch (err) {
             setRunning(false);
             message.error(typeof err === 'string' ? err : '启动调试失败');
@@ -354,105 +412,159 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
                     </Form.Item>
                 </Space.Compact>
 
-                {/* ── 自定义 Workflow 规则 = 产品名 + 指纹 + 触发阶段 + POC ── */}
-                <div style={customRuleBoxStyle}>
-                    <div style={customRuleLabelStyle}>
-                        <ApartmentOutlined />自定义 Workflow 规则（可选）
-                    </div>
-
-                    <Form.Item name="custom_product" label="产品名" style={{ marginBottom: 8 }}
-                        tooltip="统一标识：指纹命中后以此名称关联 Workflow 和 POC"
-                    >
-                        <Input placeholder="如 Nacos、SpringBoot" />
-                    </Form.Item>
-
-                    <Form.Item name="custom_rule" label="① 指纹规则" style={{ marginBottom: 8 }}
-                        tooltip="产品识别表达式，支持 body/header/title/cert/server/status 等关键字"
-                    >
-                        <Input placeholder='如 body="nacos" && title="Nacos"' style={{ fontFamily: 'monospace' }} />
-                    </Form.Item>
-
-                    <Form.Item name="custom_wf_types" label="② 触发阶段" style={{ marginBottom: 8 }}
-                        tooltip="指纹命中后，在哪些 Pipeline 阶段触发 POC 执行"
-                    >
-                        <Checkbox.Group
-                            options={[
-                                { label: 'Root', value: 'root' },
-                                { label: 'Base', value: 'base' },
-                                { label: 'Dir', value: 'dir' },
-                                { label: 'Dir-Fallback', value: 'dir-fallback' },
-                            ]}
-                        />
-                    </Form.Item>
-
-                    <div style={{ marginBottom: 8 }}>
-                        <div style={{ ...customRuleLabelStyle, marginBottom: 6 }}>
-                            <CodeOutlined />③ 关联 POC
+                {isFingerOnly ? (
+                    <div style={customRuleBoxStyle}>
+                        <div style={customRuleLabelStyle}>
+                            <ScanOutlined />单指纹规则
                         </div>
-                        <Radio.Group
-                            size="small"
-                            optionType="button"
-                            value={pocMode}
-                            onChange={(e) => {
-                                const mode = e.target.value;
-                                setPocMode(mode);
-                                if (mode === 'custom' && !customPocContent) {
-                                    const tpl = DEFAULT_CUSTOM_POC;
-                                    setCustomPocContent(tpl);
-                                    form.setFieldValue('custom_wf_pocs', extractPocId(tpl));
-                                }
-                            }}
-                            style={{ marginBottom: 8 }}
+                        <Form.Item
+                            name="custom_rule"
+                            label="指纹规则"
+                            rules={[{ required: true, message: '请输入一条指纹规则' }]}
+                            tooltip="仅执行这一条表达式，不会加载全量指纹库"
                         >
-                            <Radio.Button value="select">选择已有</Radio.Button>
-                            <Radio.Button value="custom">自定义编辑</Radio.Button>
-                        </Radio.Group>
-
-                        {pocMode === 'select' ? (
-                            <Form.Item name="custom_wf_pocs" noStyle
-                                tooltip="指纹命中后要执行的 POC 模板名，多个用逗号分隔"
-                            >
-                                <Input placeholder="如 nacos-auth-bypass,nacos-default-login" style={{ fontFamily: 'monospace' }} />
-                            </Form.Item>
-                        ) : (
-                            <div>
-                                <Form.Item name="custom_wf_pocs" noStyle>
-                                    <Input type="hidden" />
-                                </Form.Item>
-                                <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>
-                                    POC ID 自动同步：<Tag>{form.getFieldValue('custom_wf_pocs') || '-'}</Tag>
-                                </div>
-                                <div style={{ border: '1px solid #e2e8f0', borderRadius: 6, overflow: 'hidden' }}>
-                                    <Editor
-                                        height="260px"
-                                        language="yaml"
-                                        theme="vs-dark"
-                                        value={customPocContent}
-                                        onChange={(v) => {
-                                            const content = v || '';
-                                            setCustomPocContent(content);
-                                            const id = extractPocId(content);
-                                            if (id) {
-                                                form.setFieldValue('custom_wf_pocs', id);
-                                            } else {
-                                                form.setFieldValue('custom_wf_pocs', '');
-                                            }
-                                        }}
-                                        options={{ minimap: { enabled: false }, fontSize: 13, scrollBeyondLastLine: false }}
-                                    />
-                                </div>
-                            </div>
-                        )}
+                            <Input
+                                data-testid="finger-debug-rule"
+                                placeholder={selectedProductRules[0] || '如 body="nacos" && title="Nacos"'}
+                                style={{ fontFamily: 'monospace' }}
+                                list="finger-debug-rule-options"
+                            />
+                        </Form.Item>
+                        <Form.Item
+                            name="custom_product"
+                            label="Product（可选）"
+                            style={{ marginBottom: 8 }}
+                            tooltip="仅用于结果标记；不填也会执行规则调试"
+                        >
+                            <Select
+                                allowClear
+                                showSearch
+                                placeholder="可选择已有 Product 自动带出规则"
+                                options={fingerprintProductOptions}
+                                onChange={(product) => {
+                                    const firstRule = fingerprints.find((fp) => fp.product === product)?.rules?.[0];
+                                    if (firstRule) {
+                                        form.setFieldValue('custom_rule', firstRule);
+                                    }
+                                }}
+                            />
+                        </Form.Item>
+                        <datalist id="finger-debug-rule-options">
+                            {selectedProductRules.map((rule) => <option key={rule} value={rule} />)}
+                        </datalist>
                     </div>
-                </div>
+                ) : (
+                    <div style={customRuleBoxStyle}>
+                        <div style={customRuleLabelStyle}>
+                            <ApartmentOutlined />指定 Finger / Workflow 规则
+                        </div>
+
+                        <Form.Item
+                            name="custom_product"
+                            label="指定指纹 Product"
+                            rules={[{ required: true, message: '请输入指纹 Product' }]}
+                            style={{ marginBottom: 8 }}
+                            tooltip="只执行该 Product 的这一条指纹，命中后再关联同名 Workflow 和 POC"
+                        >
+                            <Input data-testid="workflow-fingerprint-product" placeholder="如 Nacos、SpringBoot" />
+                        </Form.Item>
+
+                        <Form.Item
+                            name="custom_rule"
+                            label="指定指纹规则"
+                            rules={[{ required: true, message: '请输入一条指纹规则' }]}
+                            style={{ marginBottom: 8 }}
+                            tooltip="仅执行这一条表达式，不会加载全量指纹库"
+                        >
+                            <Input data-testid="workflow-fingerprint-rule" placeholder='如 body="nacos" && title="Nacos"' style={{ fontFamily: 'monospace' }} />
+                        </Form.Item>
+
+                        <Form.Item name="custom_wf_types" label="② 触发阶段" style={{ marginBottom: 8 }}
+                            tooltip="指纹命中后，在哪些 Pipeline 阶段触发 POC 执行"
+                        >
+                            <Checkbox.Group
+                                options={[
+                                    { label: 'Root', value: 'root' },
+                                    { label: 'Base', value: 'base' },
+                                    { label: 'Dir', value: 'dir' },
+                                    { label: 'Dir-Fallback', value: 'dir-fallback' },
+                                ]}
+                            />
+                        </Form.Item>
+
+                        <div style={{ marginBottom: 8 }}>
+                            <div style={{ ...customRuleLabelStyle, marginBottom: 6 }}>
+                                <CodeOutlined />③ 关联 POC
+                            </div>
+                            <Radio.Group
+                                size="small"
+                                optionType="button"
+                                value={pocMode}
+                                onChange={(e) => {
+                                    const mode = e.target.value;
+                                    setPocMode(mode);
+                                    if (mode === 'custom' && !customPocContent) {
+                                        const tpl = DEFAULT_CUSTOM_POC;
+                                        setCustomPocContent(tpl);
+                                        form.setFieldValue('custom_wf_pocs', extractPocId(tpl));
+                                    }
+                                }}
+                                style={{ marginBottom: 8 }}
+                            >
+                                <Radio.Button value="select">选择已有</Radio.Button>
+                                <Radio.Button value="custom">自定义编辑</Radio.Button>
+                            </Radio.Group>
+
+                            {pocMode === 'select' ? (
+                                <Form.Item name="custom_wf_pocs" noStyle
+                                    tooltip="指纹命中后要执行的 POC 模板名，多个用逗号分隔"
+                                >
+                                    <Input placeholder="如 nacos-auth-bypass,nacos-default-login" style={{ fontFamily: 'monospace' }} />
+                                </Form.Item>
+                            ) : (
+                                <div>
+                                    <Form.Item name="custom_wf_pocs" noStyle>
+                                        <Input type="hidden" />
+                                    </Form.Item>
+                                    <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>
+                                        POC ID 自动同步：<Tag>{form.getFieldValue('custom_wf_pocs') || '-'}</Tag>
+                                    </div>
+                                    <div style={{ border: '1px solid #e2e8f0', borderRadius: 6, overflow: 'hidden' }}>
+                                        <Editor
+                                            height="260px"
+                                            language="yaml"
+                                            theme="vs-dark"
+                                            value={customPocContent}
+                                            onChange={(v) => {
+                                                const content = v || '';
+                                                setCustomPocContent(content);
+                                                const id = extractPocId(content);
+                                                if (id) {
+                                                    form.setFieldValue('custom_wf_pocs', id);
+                                                } else {
+                                                    form.setFieldValue('custom_wf_pocs', '');
+                                                }
+                                            }}
+                                            options={{ minimap: { enabled: false }, fontSize: 13, scrollBeyondLastLine: false }}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
 
                 {/* ── 调试选项 ── */}
-                <Form.Item name="include_dir" valuePropName="checked" style={{ marginBottom: 4 }}>
-                    <Checkbox>同时运行 Dir 主动指纹探测</Checkbox>
-                </Form.Item>
-                <Form.Item name="include_poc" valuePropName="checked">
-                    <Checkbox>执行 Workflow 关联 POC（漏洞检测）</Checkbox>
-                </Form.Item>
+                {!isFingerOnly && (
+                    <>
+                        <Form.Item name="include_dir" valuePropName="checked" style={{ marginBottom: 4 }}>
+                            <Checkbox>同时运行 Dir 主动指纹探测</Checkbox>
+                        </Form.Item>
+                        <Form.Item name="include_poc" valuePropName="checked">
+                            <Checkbox>执行 Workflow 关联 POC（漏洞检测）</Checkbox>
+                        </Form.Item>
+                    </>
+                )}
 
                 <Space wrap>
                     <Button type="primary" icon={<PlayCircleOutlined />} onClick={startDebug} loading={running}>
@@ -478,9 +590,13 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
             <div style={{ marginTop: 14 }}>
                 <Space wrap style={{ width: '100%', justifyContent: 'space-between' }}>
                     <Statistic title="命中指纹" value={products.length} prefix={<ScanOutlined />} />
-                    <Statistic title="Workflow" value={workflowHits.length + generalHits.length} prefix={<ApartmentOutlined />} />
-                    <Statistic title="漏洞命中" value={vulnResults.length} valueStyle={{ color: vulnResults.length ? '#ef4444' : undefined }} prefix={<ThunderboltOutlined />} />
-                    <Statistic title="POC 缺失" value={missingPocs.length} valueStyle={{ color: missingPocs.length ? '#ef4444' : '#10b981' }} prefix={<BugOutlined />} />
+                    {!isFingerOnly && (
+                        <>
+                            <Statistic title="Workflow" value={workflowHits.length + generalHits.length} prefix={<ApartmentOutlined />} />
+                            <Statistic title="漏洞命中" value={vulnResults.length} valueStyle={{ color: vulnResults.length ? '#ef4444' : undefined }} prefix={<ThunderboltOutlined />} />
+                            <Statistic title="POC 缺失" value={missingPocs.length} valueStyle={{ color: missingPocs.length ? '#ef4444' : '#10b981' }} prefix={<BugOutlined />} />
+                        </>
+                    )}
                 </Space>
             </div>
 
@@ -524,7 +640,7 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
                 </div>
 
                 {/* 2️⃣ 漏洞检测 */}
-                {vulnResults.length > 0 && (
+                {!isFingerOnly && vulnResults.length > 0 && (
                     <div style={{ ...sectionStyle, borderColor: '#fecaca', background: '#fffbfb' }}>
                         <div style={sectionTitleStyle}><ThunderboltOutlined style={{ color: '#ef4444' }} />漏洞检测</div>
                         <Space direction="vertical" size={8} style={{ width: '100%' }}>
@@ -551,40 +667,42 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
                 )}
 
                 {/* 3️⃣ Workflow / POC 联动 */}
-                <div style={sectionStyle}>
-                    <div style={sectionTitleStyle}><ApartmentOutlined />Workflow / POC 联动</div>
-                    {workflowHits.length === 0 && generalHits.length === 0 ? (
-                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无可触发 Workflow" />
-                    ) : (
-                        <Space direction="vertical" style={{ width: '100%' }}>
-                            {[...workflowHits, ...generalHits].map((wf) => (
-                                <div key={wf.product}>
-                                    <Space wrap>
-                                        <Tag color={wf.product.startsWith(GENERAL_POC_PREFIX) ? 'orange' : 'blue'}>
-                                            {wf.product.startsWith(GENERAL_POC_PREFIX) ? wf.product.replace(GENERAL_POC_PREFIX, '') : wf.product}
-                                        </Tag>
-                                        {(wf.type || []).map((t) => <Tag key={t}>{t}</Tag>)}
-                                    </Space>
-                                    <div style={{ marginTop: 6 }}>
+                {!isFingerOnly && (
+                    <div style={sectionStyle}>
+                        <div style={sectionTitleStyle}><ApartmentOutlined />Workflow / POC 联动</div>
+                        {workflowHits.length === 0 && generalHits.length === 0 ? (
+                            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无可触发 Workflow" />
+                        ) : (
+                            <Space direction="vertical" style={{ width: '100%' }}>
+                                {[...workflowHits, ...generalHits].map((wf) => (
+                                    <div key={wf.product}>
                                         <Space wrap>
-                                            {(wf.pocs || []).map((poc) => {
-                                                const missing = !pocExists(pocFiles, poc);
-                                                return (
-                                                    <Tooltip key={poc} title={missing ? '弹药库中未找到该 POC' : 'POC 已存在'}>
-                                                        <Tag color={missing ? 'red' : 'purple'} icon={missing ? <WarningOutlined /> : <BugOutlined />}>{poc}</Tag>
-                                                    </Tooltip>
-                                                );
-                                            })}
+                                            <Tag color={wf.product.startsWith(GENERAL_POC_PREFIX) ? 'orange' : 'blue'}>
+                                                {wf.product.startsWith(GENERAL_POC_PREFIX) ? wf.product.replace(GENERAL_POC_PREFIX, '') : wf.product}
+                                            </Tag>
+                                            {(wf.type || []).map((t) => <Tag key={t}>{t}</Tag>)}
                                         </Space>
+                                        <div style={{ marginTop: 6 }}>
+                                            <Space wrap>
+                                                {(wf.pocs || []).map((poc) => {
+                                                    const missing = !pocExists(pocFiles, poc);
+                                                    return (
+                                                        <Tooltip key={poc} title={missing ? '弹药库中未找到该 POC' : 'POC 已存在'}>
+                                                            <Tag color={missing ? 'red' : 'purple'} icon={missing ? <WarningOutlined /> : <BugOutlined />}>{poc}</Tag>
+                                                        </Tooltip>
+                                                    );
+                                                })}
+                                            </Space>
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
-                        </Space>
-                    )}
-                </div>
+                                ))}
+                            </Space>
+                        )}
+                    </div>
+                )}
 
                 {/* 4️⃣ Dir 联动 */}
-                {dirs.length > 0 && (
+                {!isFingerOnly && dirs.length > 0 && (
                     <div style={sectionStyle}>
                         <div style={sectionTitleStyle}><FileSearchOutlined />Dir 联动</div>
                         {dirHits.length === 0 ? (

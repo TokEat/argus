@@ -728,9 +728,13 @@ func mcpRuleDebugFingerprint(c *gin.Context, req mcpRuleDebugRequest) {
 
 	timeoutSec := normalizeMCPSyncTimeout(req.TimeoutSec)
 	payload := gin.H{"include_dir": req.IncludeDir, "include_poc": req.IncludePoc}
-	if strings.TrimSpace(req.ProductName) != "" && strings.TrimSpace(req.Rule) != "" {
-		payload["custom_product"] = strings.TrimSpace(req.ProductName)
-		payload["custom_rule"] = strings.TrimSpace(req.Rule)
+	customRule := strings.TrimSpace(req.Rule)
+	if customRule != "" {
+		payload["custom_only"] = true
+		if customProduct := strings.TrimSpace(req.ProductName); customProduct != "" {
+			payload["custom_product"] = customProduct
+		}
+		payload["custom_rule"] = customRule
 	}
 	workflowProduct := strings.TrimSpace(req.WorkflowProduct)
 	workflowPocs := cleanStringSlice(req.WorkflowPocs)

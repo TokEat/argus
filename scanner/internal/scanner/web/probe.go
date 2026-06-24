@@ -304,7 +304,12 @@ func (rt *Runtime) upsertResponse(resp runner.Result) (string, bool) {
 		if urlEntry.WebPaths == nil {
 			urlEntry.WebPaths = make(map[string]structs.UrlPathEntity)
 		}
-		if _, pathOK := urlEntry.WebPaths[path]; pathOK {
+		if existingPath, pathOK := urlEntry.WebPaths[path]; pathOK {
+			if shouldReplaceWebPath(existingPath, pathEntity) {
+				urlEntry.WebPaths[path] = pathEntity
+				rt.URLMap[rootURL] = urlEntry
+				return rootURL, true
+			}
 			return rootURL, false
 		}
 		urlEntry.WebPaths[path] = pathEntity
@@ -319,6 +324,22 @@ func (rt *Runtime) upsertResponse(resp runner.Result) (string, bool) {
 		Cert:     getTLSString(resp),
 	}
 	return rootURL, true
+}
+
+func shouldReplaceWebPath(existing, next structs.UrlPathEntity) bool {
+	if next.Hash == "" && next.StatusCode == 0 && next.ContentLength == 0 {
+		return false
+	}
+	if existing.Hash == "" && next.Hash != "" {
+		return true
+	}
+	if existing.StatusCode == 0 && next.StatusCode != 0 {
+		return true
+	}
+	if existing.ContentLength == 0 && next.ContentLength > 0 {
+		return true
+	}
+	return existing.StatusCode >= 300 && existing.StatusCode < 400 && next.StatusCode >= 200 && next.StatusCode < 300
 }
 
 func (rt *Runtime) isNewHostBind(resp runner.Result) bool {

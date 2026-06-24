@@ -33,6 +33,7 @@ type debugRequest struct {
 	TimeoutSec       int32  `json:"timeout_sec"`
 	IncludeDir       bool   `json:"include_dir"`
 	IncludePoc       bool   `json:"include_poc"`
+	CustomOnly       bool   `json:"custom_only"`
 	CustomProduct    string `json:"custom_product"`
 	CustomRule       string `json:"custom_rule"`
 	CustomWfProduct  string `json:"custom_wf_product"`
@@ -194,6 +195,10 @@ func startAgentDebug(c *gin.Context, action string, requirePocContent bool) {
 			return
 		}
 	}
+	if action == "start_fingerprint_debug" && req.CustomOnly && strings.TrimSpace(req.CustomRule) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "custom_only fingerprint debug requires custom_rule"})
+		return
+	}
 
 	tenantID := currentTenantID(c)
 	var node db.Node
@@ -223,8 +228,13 @@ func startAgentDebug(c *gin.Context, action string, requirePocContent bool) {
 	pocContent := req.PocContent
 	if action == "start_fingerprint_debug" {
 		payloadMap := gin.H{"include_dir": req.IncludeDir, "include_poc": req.IncludePoc}
-		if req.CustomProduct != "" && req.CustomRule != "" {
+		if req.CustomOnly {
+			payloadMap["custom_only"] = true
+		}
+		if req.CustomProduct != "" {
 			payloadMap["custom_product"] = req.CustomProduct
+		}
+		if req.CustomRule != "" {
 			payloadMap["custom_rule"] = req.CustomRule
 		}
 		if req.CustomWfProduct != "" && req.CustomWfPocs != "" {

@@ -521,6 +521,9 @@ func TestMCPRuleDebugFingerprintDispatchesPayloadAndCollectsResult(t *testing.T)
 	if payload["custom_product"] != "ArgusMCP" || payload["custom_wf_pocs"] != "argus-mcp-poc" {
 		t.Fatalf("unexpected fingerprint payload: %#v", payload)
 	}
+	if payload["custom_only"] != true || payload["custom_rule"] != `body="ArgusMCPFingerprint"` {
+		t.Fatalf("expected custom-only fingerprint payload: %#v", payload)
+	}
 	handleAgentDebugEvent(&pb.DebugEvent{AgentId: "agent-1", TenantId: "default", SessionId: cmd.SessionId, Type: "debug_result", TemplateId: "Finger", Matched: true, Extracted: []string{"[custom]ArgusMCP"}})
 	handleAgentDebugEvent(&pb.DebugEvent{AgentId: "agent-1", TenantId: "default", SessionId: cmd.SessionId, Type: "debug_complete", Matched: true})
 	select {
@@ -533,6 +536,71 @@ func TestMCPRuleDebugFingerprintDispatchesPayloadAndCollectsResult(t *testing.T)
 	}
 	if !strings.Contains(recorder.Body.String(), `"ArgusMCP"`) {
 		t.Fatalf("expected matched product in response: %s", recorder.Body.String())
+	}
+}
+
+func TestMCPRuleDebugFingerprintRuleOnlyDispatchesCustomOnly(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Node{TenantID: "default", AgentID: "agent-1", Status: "Alive", Version: "v2.3.0"}).Error; err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+	oldHub := notifyHub
+	hub := grpcpkg.NewNotifyHub()
+	stream := &fakeSubscribeStream{}
+	notifyHub = hub
+	oldWSHub := Hub
+	Hub = &WebSocketHub{clients: make(map[*websocket.Conn]string), broadcast: make(chan wsEnvelope, 16)}
+	t.Cleanup(func() {
+		notifyHub = oldHub
+		Hub = oldWSHub
+	})
+	hub.Register("agent-1", stream, 1, nil)
+
+	body := `{"rule_type":"fingerprint","agent_id":"agent-1","target_url":"http://target.local","rule":"body=\"ArgusMCPFingerprint\"","timeout_sec":1}`
+	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/mcp/tools/rule/debug", "operator", "9")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/rule/debug", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	done := make(chan struct{})
+	go func() {
+		mcpRuleDebug(ctx)
+		close(done)
+	}()
+	var cmd *pb.DebugCommand
+	deadline := time.After(2 * time.Second)
+	for cmd == nil {
+		select {
+		case <-deadline:
+			t.Fatalf("debug command was not dispatched")
+		default:
+			if len(stream.sent) > 0 {
+				cmd = stream.sent[0].DebugCommand
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(cmd.PocContent), &payload); err != nil {
+		t.Fatalf("decode fingerprint debug payload: %v", err)
+	}
+	if payload["custom_only"] != true || payload["custom_rule"] != `body="ArgusMCPFingerprint"` {
+		t.Fatalf("expected rule-only custom payload: %#v", payload)
+	}
+	if _, ok := payload["custom_product"]; ok {
+		t.Fatalf("rule-only debug should not require custom_product: %#v", payload)
+	}
+	handleAgentDebugEvent(&pb.DebugEvent{AgentId: "agent-1", TenantId: "default", SessionId: cmd.SessionId, Type: "debug_result", TemplateId: "Finger", Matched: true, Extracted: []string{"[custom]DebugFingerprint"}})
+	handleAgentDebugEvent(&pb.DebugEvent{AgentId: "agent-1", TenantId: "default", SessionId: cmd.SessionId, Type: "debug_complete", Matched: true})
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("mcpRuleDebug did not return after debug_complete")
+	}
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"DebugFingerprint"`) {
+		t.Fatalf("expected debug fingerprint in response: %s", recorder.Body.String())
 	}
 }
 

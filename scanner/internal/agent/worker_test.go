@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -185,6 +186,120 @@ func TestShouldMirrorAgentOutput(t *testing.T) {
 		if got := shouldMirrorAgentOutput(messageType); got != expected {
 			t.Fatalf("unexpected mirror decision for %s: got %v want %v", messageType, got, expected)
 		}
+	}
+}
+
+func TestFingerprintDebugCustomOnlyUsesSingleCustomRule(t *testing.T) {
+	origNewScanContext := newScanContext
+	origRunScanTask := runScanTask
+	defer func() {
+		newScanContext = origNewScanContext
+		runScanTask = origRunScanTask
+	}()
+
+	var scannedProducts []string
+	newScanContext = func(cfg engine.Config) (*engine.ScanContext, error) {
+		ctx, cancel := context.WithCancel(context.Background())
+		return &engine.ScanContext{
+			Config: cfg,
+			Ctx:    ctx,
+			Cancel: cancel,
+			FingerprintDB: []engine.FingerPEntity{
+				{ProductName: "ExistingOne"},
+				{ProductName: "ExistingTwo"},
+			},
+		}, nil
+	}
+	runScanTask = func(ctx *engine.ScanContext) error {
+		for _, fp := range ctx.FingerprintDB {
+			scannedProducts = append(scannedProducts, fp.ProductName)
+		}
+		return nil
+	}
+
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	completed := false
+
+	worker.runFingerprintDebugSession(
+		context.Background(),
+		&pb.DebugCommand{
+			Action:     "start_fingerprint_debug",
+			SessionId:  "debug-finger-1",
+			TenantId:   "default",
+			TargetUrl:  "https://target.local/",
+			TimeoutSec: 5,
+			PocContent: `{"custom_only":true,"custom_product":"OnlyOne","custom_rule":"body=\"only-one\""}`,
+		},
+		5*time.Second,
+		func(*pb.DebugEvent) {},
+		func(string) { completed = true },
+	)
+
+	if !completed {
+		t.Fatalf("expected debug session to complete")
+	}
+	if !slices.Equal(scannedProducts, []string{"OnlyOne"}) {
+		t.Fatalf("expected only custom fingerprint to be scanned, got %#v", scannedProducts)
+	}
+}
+
+func TestFingerprintDebugCustomOnlyAllowsRuleWithoutProduct(t *testing.T) {
+	origNewScanContext := newScanContext
+	origRunScanTask := runScanTask
+	defer func() {
+		newScanContext = origNewScanContext
+		runScanTask = origRunScanTask
+	}()
+
+	var scannedProducts []string
+	newScanContext = func(cfg engine.Config) (*engine.ScanContext, error) {
+		ctx, cancel := context.WithCancel(context.Background())
+		return &engine.ScanContext{
+			Config: cfg,
+			Ctx:    ctx,
+			Cancel: cancel,
+			FingerprintDB: []engine.FingerPEntity{
+				{ProductName: "ExistingOne"},
+			},
+		}, nil
+	}
+	runScanTask = func(ctx *engine.ScanContext) error {
+		for _, fp := range ctx.FingerprintDB {
+			scannedProducts = append(scannedProducts, fp.ProductName)
+		}
+		return nil
+	}
+
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	completed := false
+	var completeErr string
+
+	worker.runFingerprintDebugSession(
+		context.Background(),
+		&pb.DebugCommand{
+			Action:     "start_fingerprint_debug",
+			SessionId:  "debug-finger-rule-only",
+			TenantId:   "default",
+			TargetUrl:  "https://target.local/",
+			TimeoutSec: 5,
+			PocContent: `{"custom_only":true,"custom_rule":"body=\"only-one\""}`,
+		},
+		5*time.Second,
+		func(*pb.DebugEvent) {},
+		func(errMsg string) {
+			completed = true
+			completeErr = errMsg
+		},
+	)
+
+	if !completed {
+		t.Fatalf("expected debug session to complete")
+	}
+	if completeErr != "" {
+		t.Fatalf("expected rule-only debug to complete without error, got %q", completeErr)
+	}
+	if !slices.Equal(scannedProducts, []string{"DebugFingerprint"}) {
+		t.Fatalf("expected synthetic debug fingerprint to be scanned, got %#v", scannedProducts)
 	}
 }
 

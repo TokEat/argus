@@ -43,6 +43,39 @@ func TestURLCallbackStoresWebPath(t *testing.T) {
 	}
 }
 
+func TestURLCallbackReplacesPlaceholderWebPath(t *testing.T) {
+	urlMap := map[string]structs.URLEntity{
+		"https://example.com": {
+			IP:       "1.1.1.1",
+			Port:     443,
+			WebPaths: map[string]structs.UrlPathEntity{"/": {}},
+		},
+	}
+	lock := &sync.Mutex{}
+	rt := NewRuntime(urlMap, lock, nil, nil, nil, nil, nil, nil, map[string][]string{}, &sync.Mutex{}, nil)
+
+	rt.URLCallback(runner.Result{
+		URL:           "https://example.com/",
+		FinalURL:      "https://example.com/portal",
+		Scheme:        "https",
+		Host:          "example.com",
+		Port:          "443",
+		Path:          "/",
+		StatusCode:    200,
+		ContentType:   "text/html",
+		ContentLength: 2862,
+		Hashes: map[string]interface{}{
+			"body_md5":   "body-real",
+			"header_md5": "header-real",
+		},
+	})
+
+	pathEntry := urlMap["https://example.com"].WebPaths["/"]
+	if pathEntry.Hash != "body-real" || pathEntry.HeaderHashString != "header-real" || pathEntry.StatusCode != 200 {
+		t.Fatalf("placeholder path was not replaced: %#v", pathEntry)
+	}
+}
+
 func TestDirBruteCallbackRecordsDirFallback(t *testing.T) {
 	urlMap := map[string]structs.URLEntity{
 		"http://example.com": {
