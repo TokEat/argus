@@ -316,7 +316,7 @@ func TestMCPResourceEndpointsReturnSelfDescribingDocs(t *testing.T) {
 		{name: "quickstart", handler: mcpArgusMCPQuickstart, wantURI: "argus://argus-mcp/quickstart", want: []string{"argus_rule_debug", "argus_rule_save", "argus_rule_apply"}},
 		{name: "fingerprint spec", handler: mcpFingerprintSpec, wantURI: "argus://fingerprint/spec", want: []string{"body=", "product_name"}},
 		{name: "poc spec", handler: mcpPOCSpec, wantURI: "argus://poc/spec", want: []string{"id:", "requests:", "matchers:"}},
-		{name: "workflow spec", handler: mcpWorkflowSpec, wantURI: "argus://workflow/spec", want: []string{"root", "workflow_pocs"}},
+		{name: "workflow spec", handler: mcpWorkflowSpec, wantURI: "argus://workflow/spec", want: []string{"root", "workflow_pocs", "General-Poc-*", "general POC workflow"}},
 		{name: "full chain example", handler: mcpFullChainExample, wantURI: "argus://examples/fingerprint-poc-workflow", want: []string{"fingerprint", "workflow_links", "test_only"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

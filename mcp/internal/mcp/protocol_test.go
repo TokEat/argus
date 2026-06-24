@@ -55,7 +55,7 @@ func TestSDKServerListsOnlyAggregateTools(t *testing.T) {
 		}
 	}
 	data, _ := json.Marshal(result.Tools)
-	for _, wantText := range []string{"intent", "test_only", "workflow_links", "stable_ref", "argus_product_search", "rule_get", "rule_list", "drafts", "range_start", "range_end", "product_search for fuzzy"} {
+	for _, wantText := range []string{"intent", "test_only", "workflow_links", "stable_ref", "argus_product_search", "rule_get", "rule_list", "drafts", "relationship_stats", "relationship_list", "unlinked_fingerprints", "missing_poc_refs", "range_start", "range_end", "product_search for fuzzy", "General-Poc-*"} {
 		if !strings.Contains(string(data), wantText) {
 			t.Fatalf("tool schema/description missing %q: %s", wantText, data)
 		}
@@ -556,6 +556,91 @@ func TestWorkflowContextUsesNativeRESTEndpoints(t *testing.T) {
 	}
 	if strings.Join(seen, "\n") != strings.Join(wantRoutes, "\n") {
 		t.Fatalf("unexpected workflow context routes:\n got %v\nwant %v", seen, wantRoutes)
+	}
+}
+
+func TestRelationshipStatsAndListUseNativeRESTEndpoints(t *testing.T) {
+	seen := make([]string, 0, 8)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.Path+"?"+r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/dictionaries/fingerprint":
+			_, _ = w.Write([]byte(`[
+				{"product":"LinkedProduct","rules":["body=\"linked\"","title=\"linked\""]},
+				{"product":"UnlinkedProduct","rules":["body=\"unlinked\""]}
+			]`))
+		case "/api/v1/dictionaries/workflow":
+			_, _ = w.Write([]byte(`[
+				{"product":"LinkedProduct","type":["root"],"pocs":["linked-poc"]},
+				{"product":"MissingFingerProduct","type":["root"],"pocs":["missing-poc"]},
+				{"product":"General-Poc-Shiro","type":["root"],"pocs":["general-poc"]}
+			]`))
+		case "/api/v1/poc-rules":
+			_, _ = w.Write([]byte(`[
+				{"name":"linked-poc","source_file":"linked-poc.yaml","state":"Approved","enabled":true},
+				{"name":"general-poc","source_file":"general-poc.yaml","state":"Approved","enabled":true}
+			]`))
+		case "/api/v1/exploits":
+			_, _ = w.Write([]byte(`[{"rule_id":"exp-linked","target_product":"LinkedProduct"}]`))
+		default:
+			t.Fatalf("unexpected route %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer ts.Close()
+
+	session, cleanup := connectTestSession(t, NewServer(NewClient(ts.URL, "test-token")))
+	defer cleanup()
+
+	result, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{
+		Name:      "argus_context",
+		Arguments: map[string]any{"action": "relationship_stats", "limit": 5},
+	})
+	if err != nil {
+		t.Fatalf("CallTool relationship_stats: %v", err)
+	}
+	var stats map[string]interface{}
+	if err := json.Unmarshal([]byte(result.Content[0].(*sdkmcp.TextContent).Text), &stats); err != nil {
+		t.Fatalf("decode relationship_stats: %v", err)
+	}
+	totals := stats["totals"].(map[string]interface{})
+	if totals["fingerprint_products"].(float64) != 2 ||
+		totals["fingerprint_with_workflow"].(float64) != 1 ||
+		totals["fingerprint_without_workflow"].(float64) != 1 ||
+		totals["workflow_without_fingerprint"].(float64) != 1 ||
+		totals["general_poc_workflows"].(float64) != 1 ||
+		totals["workflow_missing_poc_references"].(float64) != 1 {
+		t.Fatalf("unexpected relationship totals: %#v", totals)
+	}
+
+	result, err = session.CallTool(context.Background(), &sdkmcp.CallToolParams{
+		Name:      "argus_context",
+		Arguments: map[string]any{"action": "relationship_list", "view": "unlinked_fingerprints", "range_start": 1, "range_end": 10},
+	})
+	if err != nil {
+		t.Fatalf("CallTool relationship_list: %v", err)
+	}
+	var list map[string]interface{}
+	if err := json.Unmarshal([]byte(result.Content[0].(*sdkmcp.TextContent).Text), &list); err != nil {
+		t.Fatalf("decode relationship_list: %v", err)
+	}
+	items := list["items"].([]interface{})
+	if list["total"].(float64) != 1 || items[0].(map[string]interface{})["product_name"] != "UnlinkedProduct" {
+		t.Fatalf("unexpected relationship list: %#v", list)
+	}
+
+	wantRoutes := []string{
+		"GET /api/v1/dictionaries/fingerprint?",
+		"GET /api/v1/dictionaries/workflow?",
+		"GET /api/v1/poc-rules?all=1",
+		"GET /api/v1/exploits?all=1",
+		"GET /api/v1/dictionaries/fingerprint?",
+		"GET /api/v1/dictionaries/workflow?",
+		"GET /api/v1/poc-rules?all=1",
+		"GET /api/v1/exploits?all=1",
+	}
+	if strings.Join(seen, "\n") != strings.Join(wantRoutes, "\n") {
+		t.Fatalf("unexpected relationship routes:\n got %v\nwant %v", seen, wantRoutes)
 	}
 }
 

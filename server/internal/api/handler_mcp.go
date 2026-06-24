@@ -1014,6 +1014,12 @@ Workflow rules connect detected fingerprint products to POC files.
 
 Workflow source is stored as the database artifact workflow.yaml. WorkflowRule catalog rows are derived from that artifact; missing or deleted POC references should be treated as conflicts before publication or deletion.
 
+Workflow product names have two meanings:
+- Product-bound workflow: the name is a real fingerprint product name. The workflow is expected to run after that product is identified.
+- General POC workflow: names with the reserved prefix General-Poc- are not real fingerprint products and must not be treated as product aliases. They are used for POC groups whose YAML performs its own product or condition matching. They do not require a same-name fingerprint, and governance tools should not report missing fingerprint support for them.
+
+General POC workflows should stay narrow and low-risk. POCs placed there should have strict matchers, concise request scope, and clear evidence. High-risk or intrusive checks should remain product-bound or require explicit operator intent.
+
 Supported match types:
 - root
 - base
@@ -1029,7 +1035,7 @@ ProductName:
 
 MCP save shape:
 - rule_type: workflow
-- product_name: must match fingerprint product_name
+- product_name: a fingerprint product name, or a reserved General-Poc-* name for a general POC workflow
 - workflow_types: array of supported match types
 - workflow_pocs: array of POC file names
 

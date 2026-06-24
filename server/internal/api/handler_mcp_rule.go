@@ -579,6 +579,7 @@ func mcpContextQuickstart(c *gin.Context) {
 			"Use argus_rule_save to create Draft artifacts and capture hash/version.",
 			"Use argus_rule_apply action=publish as admin with hash/version guard.",
 			"Use argus_context action=workflow_links to verify fingerprint -> POC workflow_links.",
+			"Treat General-Poc-* workflow names as reserved general POC groups, not real fingerprint products or aliases.",
 		},
 		"minimum_tools": []string{"argus_context", "argus_rule_debug", "argus_rule_save", "argus_rule_apply"},
 		"next_steps":    []string{"debug", "save", "publish", "workflow_links"},
