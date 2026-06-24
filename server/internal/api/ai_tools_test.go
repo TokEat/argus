@@ -82,15 +82,15 @@ const testPythonExpContent = `ARGUS_EXP = {
     "policy": {
         "dry_run_supported": True,
         "timeout_sec": 30,
-        "capabilities": ["http.request", "evidence.write", "result.write"],
+        "capabilities": ["evidence.write", "result.write"],
     },
     "params": {},
     "requirements": [],
 }
 
 def run(ctx):
-    resp = ctx.http.request(method="GET", path="/")
-    ctx.evidence.add("status_code", resp.status_code)
+    ctx.evidence.add("request", "GET /")
+    ctx.evidence.add("status_code", 200)
     return ctx.result.success("verified")
 `
 
@@ -534,6 +534,7 @@ func TestDetectWorkflowConflicts(t *testing.T) {
 		{TenantID: "default", ProductName: "ghost", PocName: "missing-poc", MatchType: "product", Enabled: true},
 		{TenantID: "default", ProductName: "nginx", PocName: "disabled-poc", MatchType: "product", Enabled: true},
 		{TenantID: "default", ProductName: "nginx", PocName: "disabled-poc", MatchType: "finger", Enabled: true},
+		{TenantID: "default", ProductName: "General-Poc-HTTP", PocName: "disabled-poc", MatchType: "root", Enabled: true},
 	}
 	if err := store.Create(&rules).Error; err != nil {
 		t.Fatalf("seed workflows: %v", err)
@@ -546,6 +547,11 @@ func TestDetectWorkflowConflicts(t *testing.T) {
 	conflicts := result.(map[string]interface{})["conflicts"].([]map[string]interface{})
 	if len(conflicts) < 3 {
 		t.Fatalf("expected workflow conflicts, got %+v", conflicts)
+	}
+	for _, conflict := range conflicts {
+		if conflict["product_name"] == "General-Poc-HTTP" && conflict["type"] == "missing_fingerprint" {
+			t.Fatalf("general POC workflow should not require a same-name fingerprint: %+v", conflicts)
+		}
 	}
 }
 

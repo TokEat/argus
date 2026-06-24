@@ -1,4 +1,4 @@
-.PHONY: cli agent server legacy all clean docker infra-up infra-down infra-logs db-init db-migrate db-verify setup-local smoke-local test coverage frontend-smoke cloud-smoke release-artifacts lint ci
+.PHONY: cli agent server mcp legacy all clean docker infra-up infra-down infra-logs db-init db-migrate db-verify setup-local smoke-local test coverage frontend-smoke cloud-smoke release-artifacts lint ci
 
 COMPOSE_FILE := server/deploy/docker-compose.yml
 DOCKER_COMPOSE := docker compose -f $(COMPOSE_FILE)
@@ -24,12 +24,16 @@ agent:
 server:
 	go build -o bin/dddd-server ./server/cmd/dddd-server
 
+# argus-mcp 独立 MCP 代理
+mcp:
+	cd mcp && go build -o ../bin/argus-mcp ./cmd/argus-mcp
+
 # 向后兼容：根目录编译
 legacy:
 	go build -o bin/dddd ./scanner/cmd/cli
 
 # 全部编译
-all: cli agent server
+all: cli agent server mcp
 
 # 清理
 clean:

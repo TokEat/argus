@@ -259,7 +259,8 @@ func (s *Server) Subscribe(stream pb.AgentService_SubscribeServer) error {
 
 	// 注册到 NotifyHub
 	s.Hub.Register(agentID, stream, firstMsg.FreeSlots, nil)
-	defer s.Hub.Unregister(agentID)
+	defer s.Hub.Unregister(agentID, stream)
+	s.markSubscribedAgentAlive(agentID, firstMsg.FreeSlots)
 
 	log.Printf("[Subscribe] Agent %s stream established (free_slots=%d)", agentID, firstMsg.FreeSlots)
 
@@ -292,6 +293,33 @@ func (s *Server) Subscribe(stream pb.AgentService_SubscribeServer) error {
 		case "ping":
 			// keep-alive，无需处理
 		}
+	}
+}
+
+func (s *Server) markSubscribedAgentAlive(agentID string, freeSlots int32) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return
+	}
+	now := time.Now().UnixMilli()
+	updates := map[string]interface{}{
+		"status":    "Alive",
+		"last_beat": now,
+	}
+	res := db.DB.Model(&db.Node{}).Where("agent_id = ?", agentID).Updates(updates)
+	if res.Error != nil {
+		log.Printf("[Subscribe] Failed to mark Agent %s alive: %v", agentID, res.Error)
+		return
+	}
+	if res.RowsAffected == 0 {
+		db.DB.Save(&db.Node{
+			TenantID: "default",
+			AgentID:  agentID,
+			Status:   "Alive",
+			Capacity: int(freeSlots),
+			LastBeat: now,
+		})
+		log.Printf("[Subscribe] Re-created node record for Agent %s from subscribe stream", agentID)
 	}
 }
 

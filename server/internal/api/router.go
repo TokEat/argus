@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -396,6 +397,9 @@ func InitRouter(port string) {
 		api.GET("/poc-rules", listPocRules)
 		api.GET("/exploits", listExploitRules)
 		api.GET("/exploits/audits", listExploitAudits)
+		api.POST("/exploits/source/validate", validateSourceExploit)
+		api.POST("/exploits/source/dry-run", dryRunSourceExploit)
+		api.POST("/exploits/source/debug", debugSourceExploit)
 		api.POST("/exploits/batch/approve", batchApproveExploitRules)
 		api.POST("/exploits/batch/deprecate", batchDeprecateExploitRules)
 		api.GET("/exploits/:id/risk-waiver", getExploitRiskWaiver)
@@ -430,6 +434,26 @@ func InitRouter(port string) {
 		api.GET("/agents/:id/pyenv", getAgentPyenv)
 		api.POST("/agents/:id/pyenv/install", installAgentPyenvRequirements)
 		api.GET("/agents/:id/pyenv/jobs/:job_id", getAgentPyenvJob)
+
+		// MCP support APIs for Codex/agent rule authoring loops.
+		api.GET("/mcp/resources/argus-mcp/quickstart", mcpArgusMCPQuickstart)
+		api.GET("/mcp/resources/argus-mcp/tool-guide", mcpArgusMCPToolGuide)
+		api.GET("/mcp/resources/fingerprint/spec", mcpFingerprintSpec)
+		api.GET("/mcp/resources/fingerprint/template", mcpFingerprintTemplate)
+		api.GET("/mcp/resources/poc/spec", mcpPOCSpec)
+		api.GET("/mcp/resources/pyexp/spec", mcpPyexpSpec)
+		api.GET("/mcp/resources/pyexp/template", mcpPyexpTemplate)
+		api.GET("/mcp/resources/poc/template", mcpPOCTemplate)
+		api.GET("/mcp/resources/workflow/spec", mcpWorkflowSpec)
+		api.GET("/mcp/resources/workflow/template", mcpWorkflowTemplate)
+		api.GET("/mcp/resources/examples/fingerprint-poc-workflow", mcpFullChainExample)
+		api.POST("/mcp/tools/poc/debug", mcpPOCDebug)
+		api.POST("/mcp/tools/poc/save-draft", mcpPOCSaveDraft)
+		api.POST("/mcp/tools/agent/python-run", mcpAgentPythonRun)
+		api.POST("/mcp/tools/rule/context", mcpRuleContext)
+		api.POST("/mcp/tools/rule/debug", mcpRuleDebug)
+		api.POST("/mcp/tools/rule/save", mcpRuleSave)
+		api.POST("/mcp/tools/rule/apply", mcpRuleApply)
 
 		// Server-side AI analysis and configuration
 		api.GET("/ai/config", getAIConfig)
@@ -1839,6 +1863,15 @@ func deleteArsenal(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
 		return
 	}
+	if typ == "poc" {
+		if refs := workflowReferencesForPOC(tenantID, fn); len(refs) > 0 {
+			c.JSON(http.StatusConflict, gin.H{
+				"error":      "POC is referenced by workflow rules",
+				"references": refs,
+			})
+			return
+		}
+	}
 	if err := db.DB.Delete(&db.Arsenal{}, "tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1852,6 +1885,44 @@ func deleteArsenal(c *gin.Context) {
 		resp["rule_version"] = BumpRuleVersion()
 	}
 	c.JSON(http.StatusOK, resp)
+}
+
+func workflowReferencesForPOC(tenantID, fileName string) []gin.H {
+	names := map[string]bool{}
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			names[value] = true
+		}
+	}
+	add(fileName)
+	add(strings.TrimSuffix(fileName, filepath.Ext(fileName)))
+	var poc db.PocRule
+	if err := db.DB.Where("tenant_id = ? AND source_file = ?", tenantID, fileName).First(&poc).Error; err == nil {
+		add(poc.Name)
+		add(poc.SourceFile)
+	}
+	list := make([]string, 0, len(names))
+	for name := range names {
+		list = append(list, name)
+	}
+	sort.Strings(list)
+	var workflows []db.WorkflowRule
+	if err := db.DB.Where("tenant_id = ? AND poc_name IN ?", tenantID, list).Order("product_name, poc_name, match_type").Find(&workflows).Error; err != nil {
+		return nil
+	}
+	refs := make([]gin.H, 0, len(workflows))
+	for _, wf := range workflows {
+		refs = append(refs, gin.H{
+			"product_name": wf.ProductName,
+			"poc_name":     wf.PocName,
+			"match_type":   wf.MatchType,
+			"source_file":  wf.SourceFile,
+			"state":        wf.State,
+			"enabled":      wf.Enabled,
+		})
+	}
+	return refs
 }
 
 // ---------------- 融合画像数据源 --------------------

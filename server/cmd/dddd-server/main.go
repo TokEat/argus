@@ -84,6 +84,22 @@ func buildCloudAdvertiseAddrs(grpcPort int, apiAddr, publicIP, publicAPI string,
 	return grpcAddr, apiURL, nil
 }
 
+func agentOfflineUpdates() map[string]interface{} {
+	// Liveness loss is not an authentication decision. Keep the session token so
+	// a still-running agent can recover after server restarts or transient stalls.
+	return map[string]interface{}{
+		"status":        "Offline",
+		"running_tasks": 0,
+	}
+}
+
+func shouldMarkAgentOffline(hub *grpc.NotifyHub, agentID string) bool {
+	if hub == nil {
+		return true
+	}
+	return !hub.IsAgentOnline(agentID)
+}
+
 func main() {
 	var (
 		dbDSN           string
@@ -311,14 +327,12 @@ func main() {
 			cutoff := time.Now().UnixMilli() - 60000
 			db.DB.Where("status = ? AND last_beat < ?", "Alive", cutoff).Find(&deadNodes)
 			for _, n := range deadNodes {
+				if !shouldMarkAgentOffline(srv.Hub, n.AgentID) {
+					log.Printf("[Heartbeat] Agent %s heartbeat is stale but subscribe stream is active; keeping Alive.", n.AgentID)
+					continue
+				}
 				log.Printf("[Heartbeat] Agent %s marked as offline.", n.AgentID)
-				now := time.Now()
-				db.DB.Model(&n).Updates(map[string]interface{}{
-					"status":           "Offline",
-					"running_tasks":    0,
-					"token":            "",
-					"token_revoked_at": &now,
-				})
+				db.DB.Model(&n).Updates(agentOfflineUpdates())
 
 				// 回收该节点持有的 Running 任务：退回队列重新调度
 				var orphanTasks []db.SubTask

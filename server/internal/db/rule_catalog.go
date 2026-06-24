@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -28,6 +29,11 @@ const (
 	RuleCatalogStatusEmpty     = "empty"
 	maxRuleCatalogErrorMessage = 4000
 	maxPocDescriptionRunes     = 500
+)
+
+var (
+	ruleCatalogSyncMu            sync.Mutex
+	ruleCatalogSyncAfterLoadHook func()
 )
 
 // RuleCatalogBootstrap tracks whether the structured rule catalog has been
@@ -230,9 +236,18 @@ func FindArsenalByTypeAndFile(typ, fileName string) (*Arsenal, error) {
 }
 
 func SyncRuleCatalogFromArsenal() error {
+	ruleCatalogSyncMu.Lock()
+	defer ruleCatalogSyncMu.Unlock()
+	return syncRuleCatalogFromArsenalLocked()
+}
+
+func syncRuleCatalogFromArsenalLocked() error {
 	var arsenals []Arsenal
 	if err := DB.Order("tenant_id, type, file_name").Find(&arsenals).Error; err != nil {
 		return err
+	}
+	if ruleCatalogSyncAfterLoadHook != nil {
+		ruleCatalogSyncAfterLoadHook()
 	}
 
 	aggregateHash := buildArsenalAggregateHash(arsenals)
@@ -306,6 +321,9 @@ func SyncRuleCatalogFromArsenal() error {
 		if err := createInBatches(tx, materialized.exploits); err != nil {
 			return err
 		}
+		if err := disableNonApprovedCatalogRows(tx); err != nil {
+			return err
+		}
 
 		return tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "key"}},
@@ -327,6 +345,35 @@ func SyncRuleCatalogFromArsenal() error {
 		len(materialized.dirs),
 		len(materialized.errors),
 	)
+	if len(materialized.errors) > 0 {
+		return fmt.Errorf("rule catalog materialized with %d errors: %s", len(materialized.errors), summarizeRuleCatalogErrors(materialized.errors))
+	}
+	return nil
+}
+
+// ValidateRuleCatalogCandidate verifies that replacing or adding one arsenal
+// row would still allow the derived rule catalog to materialize. It does not
+// write to the database.
+func ValidateRuleCatalogCandidate(candidate Arsenal) error {
+	ruleCatalogSyncMu.Lock()
+	defer ruleCatalogSyncMu.Unlock()
+
+	var arsenals []Arsenal
+	if err := DB.Order("tenant_id, type, file_name").Find(&arsenals).Error; err != nil {
+		return err
+	}
+	replaced := false
+	for i := range arsenals {
+		if arsenals[i].ID == candidate.ID && arsenals[i].TenantID == candidate.TenantID {
+			arsenals[i] = candidate
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		arsenals = append(arsenals, candidate)
+	}
+	materialized := materializeRuleCatalog(arsenals)
 	if len(materialized.errors) > 0 {
 		return fmt.Errorf("rule catalog materialized with %d errors: %s", len(materialized.errors), summarizeRuleCatalogErrors(materialized.errors))
 	}
@@ -860,6 +907,15 @@ func createInBatches[T any](tx *gorm.DB, items []T) error {
 		log.Printf("[RuleCatalog] Sanitized PostgreSQL text fields in %d materialized rows before insert.", sanitizedCount)
 	}
 	return tx.CreateInBatches(items, 500).Error
+}
+
+func disableNonApprovedCatalogRows(tx *gorm.DB) error {
+	for _, model := range []interface{}{&FingerprintRule{}, &WorkflowRule{}, &DirRule{}, &PocRule{}, &ExploitRule{}} {
+		if err := tx.Model(model).Where("state <> ?", "Approved").Update("enabled", false).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func sanitizePostgresTextBytes(content []byte) []byte {

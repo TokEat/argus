@@ -34,19 +34,17 @@ EXP 用于授权范围内的受控利用验证，和 POC 扫描链路分离：
 - `scanner/internal/exploit`：Python-only EXP engine、Python runner、兼容 ctx SDK 和 HTTP trace。
 - `scanner/cmd/exp-debug`：本地 Python EXP 调试 CLI。
 
-Agent 通过本地 Python 子进程执行 EXP。运行时会写入临时工作目录，注入 `argus_sdk.py`、`runner.py`、`context.json` 和 EXP 脚本。脚本可以直接使用原生 Python 标准库、系统 API 和已声明依赖；`ctx.http`、`ctx.tcp`、`ctx.evidence`、`ctx.result` 仅作为兼容便利方法和结构化回传入口。
+Agent 通过本地 Python 子进程执行 EXP。运行时会写入临时工作目录，注入 `argus_sdk.py`、`runner.py`、`context.json` 和 EXP 脚本。脚本可以直接使用原生 Python 标准库、系统 API 和已声明依赖；`ctx` 只保留 `params`、`target`、`evidence`、`result`、`cleanup` 作为结构化回传入口。
 
 ## Capability 展示元数据
 
-`policy.capabilities` 保留给 UI 展示、审核讨论和历史兼容，常见取值包括：
+`policy.capabilities` 保留给 UI 展示和审核讨论，常见取值包括：
 
-- `http.request`
-- `tcp.connect`
 - `evidence.write`
 - `cleanup.defer`
 - `result.write`
 
-执行器不再根据该字段拦截 `ctx` 调用，也不再限制原生 Python 网络或系统调用。运行时仍保留 timeout guard：按 EXP policy 或调用方 timeout 截断。
+执行器不再根据该字段拦截能力，也不限制原生 Python 网络或系统调用。运行时仍保留 timeout guard：按 EXP policy 或调用方 timeout 截断。
 
 ## Server 管理链路
 

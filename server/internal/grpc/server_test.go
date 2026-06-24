@@ -3,12 +3,14 @@ package grpc
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
 	"github.com/glebarez/sqlite"
 	pb "github.com/user/dddd-proto/go/scan"
 	"github.com/user/dddd-server/internal/db"
+	"google.golang.org/grpc/metadata"
 	"gorm.io/gorm"
 )
 
@@ -130,3 +132,63 @@ func TestRegisterPromotesWaitingCloudInstanceToRunning(t *testing.T) {
 		t.Fatalf("expected node to store rotated token and latest version, got %+v", node)
 	}
 }
+
+func TestSubscribeMarksExistingOfflineNodeAlive(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	if err := store.Create(&db.Node{
+		TenantID: "default",
+		AgentID:  "agent-subscribe",
+		Status:   "Offline",
+		Capacity: 1,
+		LastBeat: 1,
+		Tags:     `{"target_type":"all"}`,
+		Version:  "v2.3.0",
+	}).Error; err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+
+	server := NewServer(50051)
+	stream := &subscribeTestStream{
+		recv: []*pb.AgentSignal{{AgentId: "agent-subscribe", FreeSlots: 3, SignalType: "ready"}},
+	}
+	if err := server.Subscribe(stream); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	var node db.Node
+	if err := store.First(&node, "agent_id = ?", "agent-subscribe").Error; err != nil {
+		t.Fatalf("load node: %v", err)
+	}
+	if node.Status != "Alive" || node.LastBeat <= 1 || node.Capacity != 1 {
+		t.Fatalf("expected subscribe to revive node, got %+v", node)
+	}
+	if node.Tags != `{"target_type":"all"}` || node.Version != "v2.3.0" {
+		t.Fatalf("subscribe should preserve existing node metadata, got %+v", node)
+	}
+}
+
+type subscribeTestStream struct {
+	recv []*pb.AgentSignal
+	sent []*pb.TaskNotify
+}
+
+func (s *subscribeTestStream) Recv() (*pb.AgentSignal, error) {
+	if len(s.recv) == 0 {
+		return nil, io.EOF
+	}
+	msg := s.recv[0]
+	s.recv = s.recv[1:]
+	return msg, nil
+}
+
+func (s *subscribeTestStream) Send(msg *pb.TaskNotify) error {
+	s.sent = append(s.sent, msg)
+	return nil
+}
+
+func (s *subscribeTestStream) SetHeader(metadata.MD) error  { return nil }
+func (s *subscribeTestStream) SendHeader(metadata.MD) error { return nil }
+func (s *subscribeTestStream) SetTrailer(metadata.MD)       {}
+func (s *subscribeTestStream) Context() context.Context     { return context.Background() }
+func (s *subscribeTestStream) SendMsg(interface{}) error    { return nil }
+func (s *subscribeTestStream) RecvMsg(interface{}) error    { return io.EOF }

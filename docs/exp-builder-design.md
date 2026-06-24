@@ -18,8 +18,6 @@ Builder 的职责是帮助用户把漏洞理解材料整理给 AI Copilot，并�
 
 `policy.capabilities` 仅作为 UI 展示和审核辅助元数据，不作为运行时能力管控边界。常见展示值包括：
 
-- `http.request`
-- `tcp.connect`
 - `evidence.write`
 - `cleanup.defer`
 - `result.write`
@@ -39,7 +37,7 @@ AI 输出不再接受 EXP YAML，也不再接受 EXP 专属结构化补丁。
 - 新增 EXP 文件名必须是 `.py`。
 - 编辑器语言固定为 Python。
 - `canApplyContent` 只接受带 `ARGUS_EXP` 且定义 `run(ctx)` 或 `main()` 的 Python 内容。
-- 若内容包含 `kind: argus-exp/`，前端直接拒绝并提示不再接受 YAML。
+- YAML 或其他非 Python 内容不做专门语义识别，会按缺少 `ARGUS_EXP` 或入口函数的普通 Python EXP 校验失败处理。
 
 ## 后端边界
 

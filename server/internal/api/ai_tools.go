@@ -15,6 +15,19 @@ import (
 	"github.com/user/dddd-server/internal/db"
 )
 
+const generalPOCWorkflowPrefix = "General-Poc-"
+
+func isGeneralPOCWorkflowProduct(product string) bool {
+	return strings.HasPrefix(strings.TrimSpace(product), generalPOCWorkflowPrefix)
+}
+
+func workflowKind(product string) string {
+	if isGeneralPOCWorkflowProduct(product) {
+		return "general_poc"
+	}
+	return "product_bound"
+}
+
 type AIToolAuditContext struct {
 	TenantID string
 	UserID   string
@@ -492,11 +505,12 @@ func summarizeWorkflowRules(rules []db.WorkflowRule) []map[string]interface{} {
 	out := make([]map[string]interface{}, 0, len(rules))
 	for _, rule := range rules {
 		out = append(out, map[string]interface{}{
-			"product_name": rule.ProductName,
-			"poc_name":     rule.PocName,
-			"match_type":   rule.MatchType,
-			"source_file":  rule.SourceFile,
-			"state":        rule.State,
+			"product_name":  rule.ProductName,
+			"poc_name":      rule.PocName,
+			"match_type":    rule.MatchType,
+			"source_file":   rule.SourceFile,
+			"state":         rule.State,
+			"workflow_kind": workflowKind(rule.ProductName),
 		})
 	}
 	return out
@@ -1114,7 +1128,7 @@ func detectWorkflowConflicts(workflows []db.WorkflowRule, pocState map[string]po
 		} else if !state.Enabled {
 			add("disabled_poc", "high", "Workflow 引用了已禁用的 POC。", rule)
 		}
-		if !fingerprintProducts[product] {
+		if !isGeneralPOCWorkflowProduct(rule.ProductName) && !fingerprintProducts[product] {
 			add("missing_fingerprint", "medium", "Workflow 产品缺少启用的 FingerprintRule 支撑，可能无法稳定命中。", rule)
 		}
 		if len(conflicts) >= limit {

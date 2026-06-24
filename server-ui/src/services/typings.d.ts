@@ -898,17 +898,6 @@ declare namespace API {
     action?: 'run' | 'cleanup';
   }
 
-  interface HTTPTraceEntry {
-    step?: string;
-    method: string;
-    url: string;
-    request: string;
-    response: string;
-    status_code?: number;
-    duration_ms: number;
-    error?: string;
-  }
-
   interface ExploitDebugPayload {
     run_id?: string;
     status: string;
@@ -916,7 +905,41 @@ declare namespace API {
     side_effects?: string[];
     duration_ms?: number;
     error_message?: string;
-    http_trace?: HTTPTraceEntry[];
+  }
+
+  interface SourceExploitValidateResponse {
+    valid: boolean;
+    error?: string;
+    id?: string;
+    rule_id?: string;
+    name?: string;
+    description?: string;
+    target_product?: string;
+    cve?: string;
+    linked_pocs?: string[];
+    risk_level?: string;
+    params_schema?: Record<string, unknown>;
+    requirements?: string[];
+    requirements_hash?: string;
+    has_run?: boolean;
+    has_main?: boolean;
+    has_cleanup?: boolean;
+    policy?: Record<string, unknown>;
+  }
+
+  interface SourceExploitDebugRequest extends ExploitDebugRequest {
+    source: string;
+    action?: 'run';
+  }
+
+  interface SourceExploitDebugResponse {
+    status: string;
+    matched?: boolean;
+    error?: string;
+    execution_result?: ExploitDebugPayload;
+    logs?: Record<string, unknown>[];
+    result?: Record<string, unknown>;
+    complete?: Record<string, unknown>;
   }
 
   interface ExploitRun {

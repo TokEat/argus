@@ -342,7 +342,7 @@ func handleAgentDebugEvent(event *pb.DebugEvent) {
 	}
 	Hub.BroadcastToTenant(session.TenantID, payload)
 
-	if session.ResultChan != nil && (event.Type == "debug_result" || event.Type == "debug_complete") {
+	if session.ResultChan != nil && (event.Type == "debug_log" || event.Type == "debug_result" || event.Type == "debug_complete") {
 		select {
 		case session.ResultChan <- payload:
 		default:

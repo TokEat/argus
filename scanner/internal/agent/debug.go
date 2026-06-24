@@ -62,6 +62,8 @@ func (w *Worker) handleDebugCommand(cmd *pb.DebugCommand) {
 		w.cancelExploitSession(cmd.SessionId)
 	case "install_pyexp_requirements":
 		w.handlePyexpRequirementInstall(cmd)
+	case "python_scratchpad_run":
+		w.handlePythonScratchpadRun(cmd)
 	default:
 		logDebugLocal("WARN", "unknown debug command action: %s", cmd.Action)
 	}
@@ -196,6 +198,17 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 
 	targetAndPocs := map[string][]string{
 		cmd.TargetUrl: []string{templateName},
+	}
+
+	if w.logTee != nil {
+		w.logTee.SetDebugSink(func(level, message string) {
+			send(&pb.DebugEvent{
+				Type:    "debug_log",
+				Level:   level,
+				Message: message,
+			})
+		})
+		defer w.logTee.ClearDebugSink()
 	}
 
 	// CallDebug 启用 MatcherStatus=true，Nuclei 对未命中模板也会触发回调
@@ -727,6 +740,32 @@ func (w *Worker) handlePyexpRequirementInstall(cmd *pb.DebugCommand) {
 	}()
 }
 
+func (w *Worker) handlePythonScratchpadRun(cmd *pb.DebugCommand) {
+	if cmd == nil {
+		return
+	}
+	go func() {
+		var req exploit.PythonScratchpadRequest
+		if err := json.Unmarshal([]byte(cmd.Params), &req); err != nil {
+			w.sendPythonScratchpadResult(cmd, "Failed", nil, fmt.Sprintf("parse params JSON: %v", err))
+			return
+		}
+		if req.TimeoutSec <= 0 {
+			req.TimeoutSec = int(cmd.TimeoutSec)
+		}
+		result, err := exploit.RunPythonScratchpad(context.Background(), req)
+		if err != nil {
+			w.sendPythonScratchpadResult(cmd, "Failed", nil, err.Error())
+			return
+		}
+		status := "Succeeded"
+		if result.ExitCode != 0 || result.TimedOut {
+			status = "Failed"
+		}
+		w.sendPythonScratchpadResult(cmd, status, &result, "")
+	}()
+}
+
 func (w *Worker) registerExploitSession(sessionID string, cancel context.CancelFunc) bool {
 	w.expMu.Lock()
 	defer w.expMu.Unlock()
@@ -764,9 +803,6 @@ func (w *Worker) sendExploitResult(cmd *pb.DebugCommand, status string, result *
 		payload["evidence"] = result.Evidence
 		payload["side_effects"] = result.SideEffects
 		payload["duration_ms"] = result.DurationMs
-		if len(result.HTTPTrace) > 0 {
-			payload["http_trace"] = result.HTTPTrace
-		}
 	}
 	if errMsg != "" {
 		payload["error_message"] = errMsg
@@ -868,4 +904,60 @@ func (w *Worker) sendExploitDebugEvent(cmd *pb.DebugCommand, status string, resu
 		Error:      errMsg,
 	})
 	logDebugLocal("INFO", "[EXP-DEBUG] result sent: status=%s session=%s", status, cmd.SessionId)
+}
+
+func (w *Worker) sendPythonScratchpadResult(cmd *pb.DebugCommand, status string, result *exploit.PythonScratchpadResult, errMsg string) {
+	stream, err := w.client.StreamDebug(context.Background())
+	if err != nil {
+		logDebugLocal("ERROR", "[PY-SCRATCH] failed to open debug stream: %v", err)
+		return
+	}
+	defer stream.CloseSend()
+
+	payload := map[string]interface{}{
+		"status": status,
+	}
+	durationMs := int64(0)
+	if result != nil {
+		payload["command"] = result.Command
+		payload["python_path"] = result.PythonPath
+		payload["stdout"] = result.Stdout
+		payload["stderr"] = result.Stderr
+		payload["exit_code"] = result.ExitCode
+		payload["timed_out"] = result.TimedOut
+		payload["duration_ms"] = result.DurationMs
+		durationMs = result.DurationMs
+	}
+	if errMsg != "" {
+		payload["error_message"] = errMsg
+	}
+	payloadJSON, _ := json.Marshal(payload)
+	matched := status == "Succeeded"
+	now := time.Now().UnixMilli()
+	_ = stream.Send(&pb.DebugEvent{
+		AgentId:    w.agentID,
+		TenantId:   cmd.TenantId,
+		SessionId:  cmd.SessionId,
+		Type:       "debug_result",
+		Timestamp:  now,
+		Level:      "INFO",
+		Message:    string(payloadJSON),
+		Matched:    matched,
+		TemplateId: "python_scratchpad",
+		Severity:   status,
+		DurationMs: durationMs,
+		Error:      errMsg,
+	})
+	_ = stream.Send(&pb.DebugEvent{
+		AgentId:    w.agentID,
+		TenantId:   cmd.TenantId,
+		SessionId:  cmd.SessionId,
+		Type:       "debug_complete",
+		Timestamp:  time.Now().UnixMilli(),
+		Level:      "INFO",
+		Message:    "Python scratchpad completed",
+		Matched:    matched,
+		DurationMs: durationMs,
+		Error:      errMsg,
+	})
 }
