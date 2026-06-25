@@ -373,7 +373,9 @@ argus/
 
 | 文档 | 说明 |
 |------|------|
-| [贡献与协作指南](CONTRIBUTING.md) | 分支模型、命名规范、PR 与发布流程 |
+| [贡献与协作指南](CONTRIBUTING.md) | Issue 闭环、分支模型、验证矩阵、PR 阻断条件、发布与 Hotfix 流程 |
+| [AI/Codex 代理指令](AGENTS.md) | Codex/AI 协作硬约束、Definition of Done 和验证要求 |
+| [安全策略](SECURITY.md) | 漏洞报告方式、支持版本、安全范围和安全港原则 |
 | [生产部署指南](deploy/README.md) | v0.1.0 发行包构建、服务器安装、Agent 接入和卸载流程 |
 | [发布检查清单](docs/release-checklist.md) | `make ci`、打包、解包、部署 smoke 和 beta 边界验收 |
 | [项目结构](docs/project-structure.md) | 目录结构与组件职责 |
@@ -394,10 +396,12 @@ argus/
 
 - `main` 作为唯一稳定主线
 - 所有开发从 `feat/*`、`fix/*`、`refactor/*` 等短生命周期分支发起
+- 非平凡改动先建 Issue，并在 PR 中关联闭环
+- PR 必须记录验证结果、风险、回滚方式和安全检查
 - 仅在需要版本冻结时创建 `release/*`
 - 线上紧急修复使用 `hotfix/*`
 
-详细规则见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+详细规则见 [CONTRIBUTING.md](CONTRIBUTING.md)。使用 Codex 或其他 AI 代理协作时，还必须遵守 [AGENTS.md](AGENTS.md)。
 
 ---
 

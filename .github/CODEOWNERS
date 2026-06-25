@@ -1,0 +1,33 @@
+# CODEOWNERS for Argus.
+#
+# 当前维护者：@P0lar1ght
+# 后续如果拆分维护团队，可以将具体路径 owner 替换为真实 GitHub team。
+#
+# GitHub 会使用 .github/CODEOWNERS、根目录 CODEOWNERS、docs/CODEOWNERS 中第一个匹配文件。
+# 若启用 branch protection 的 "Require review from Code Owners"，相关路径必须由 owner 批准。
+
+# Default
+* @P0lar1ght
+
+# Backend and control plane
+/server/ @P0lar1ght
+/scanner/ @P0lar1ght
+/shared/ @P0lar1ght
+/mcp/ @P0lar1ght
+
+# Frontend
+/server-ui/ @P0lar1ght
+
+# Deployment, database, and release
+/deploy/ @P0lar1ght
+/server/deploy/ @P0lar1ght
+/server/internal/db/migrations/ @P0lar1ght
+/.github/workflows/ @P0lar1ght
+
+# Security-sensitive docs and governance
+/AGENTS.md @P0lar1ght
+/CONTRIBUTING.md @P0lar1ght
+/SECURITY.md @P0lar1ght
+/.github/ISSUE_TEMPLATE/ @P0lar1ght
+/.github/PULL_REQUEST_TEMPLATE.md @P0lar1ght
+/.github/CODEOWNERS @P0lar1ght

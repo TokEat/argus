@@ -1,0 +1,55 @@
+name: Security-sensitive change
+description: 权限、审计、AI、规则执行、云资源、数据库或部署相关高风险改动
+title: "[security] "
+labels: ["security-sensitive", "needs-review"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: 目标
+      description: 本改动要解决什么问题？
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 影响范围
+      description: 涉及哪些模块、接口、权限、对象、Agent、规则、云资源或存储对象？
+    validations:
+      required: true
+  - type: checkboxes
+    id: risk
+    attributes:
+      label: 风险类型
+      options:
+        - label: 认证 / 登录 / JWT / PSK
+        - label: RBAC / 租户隔离 / 对象级授权
+        - label: 审计日志 / 风险确认
+        - label: AI Copilot 工具调用
+        - label: POC / EXP / Workflow / 规则发布
+        - label: Agent 注册 / 任务领取 / 执行链路
+        - label: 云资源 / OSS / 部署脚本
+        - label: 数据库 schema / migration
+        - label: 文件读写 / 日志导出 / 报告导出
+        - label: 命令执行 / 网络访问 / 外部服务调用
+  - type: textarea
+    id: safety
+    attributes:
+      label: 安全边界
+      description: 如何保持最小权限、人工确认、审计、超时、失败处理和回滚？
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: 逐条列出完成条件。
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: 预期验证方式
+      description: 需要执行哪些测试、构建、手动验证或安全检查？
+    validations:
+      required: true

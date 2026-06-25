@@ -1,0 +1,40 @@
+name: Docs change
+description: 文档、示例、流程或说明更新
+title: "[docs] "
+labels: ["documentation"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: 文档目标
+      description: 本次文档更新要解决什么问题？
+    validations:
+      required: true
+  - type: textarea
+    id: audience
+    attributes:
+      label: 目标读者
+      description: 面向用户、开发者、维护者、部署人员还是安全审核者？
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 文档范围
+      description: 涉及哪些文档、命令、截图、链接或示例？
+    validations:
+      required: true
+  - type: textarea
+    id: sync
+    attributes:
+      label: 需要同步检查的内容
+      description: 例如 README 索引、命令是否存在、配置名是否正确、链接是否可点击。
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: 逐条列出完成条件。
+    validations:
+      required: true
