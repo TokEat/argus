@@ -16,15 +16,13 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
-    getWorkflowDict,
+    getWorkflowDictPage,
     deleteWorkflowDict,
-    getFingerprintDict,
-    listArsenals,
 } from '../../services/api';
 import WorkflowEditDrawer from './WorkflowEditDrawer';
 import { canAccessRole } from '../../utils/auth';
 
-interface EnrichedWorkflow extends API.WorkflowItem {
+interface EnrichedWorkflow extends API.WorkflowSummary {
     _fingerprintBound: boolean;
     _missingPocs: string[];
 }
@@ -36,10 +34,10 @@ import { useAutoContext } from '../../contexts/GlobalAIContext';
 
 const WorkflowConfig: React.FC = () => {
     const [loading, setLoading] = useState(true);
-    const [dictionaries, setDictionaries] = useState<API.WorkflowItem[]>([]);
-    const [fingerprintProducts, setFingerprintProducts] = useState<Set<string>>(new Set());
-    const [pocFiles, setPocFiles] = useState<Set<string>>(new Set());
-    const [pocFileCount, setPocFileCount] = useState<number>(0);
+    const [dictionaries, setDictionaries] = useState<API.WorkflowSummary[]>([]);
+    const [total, setTotal] = useState(0);
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(15);
     const [searchKeyword, setSearchKeyword] = useState('');
     const [healthFilter, setHealthFilter] = useState<'all' | 'fp_missing' | 'poc_missing' | 'healthy'>('all');
     const [ruleScope, setRuleScope] = useState<'specific' | 'general'>('specific');
@@ -50,21 +48,15 @@ const WorkflowConfig: React.FC = () => {
     const fetchData = async () => {
         setLoading(true);
         try {
-            const [wfs, fps, pocs] = await Promise.all([
-                getWorkflowDict(),
-                getFingerprintDict(),
-                listArsenals('poc', true, true),
-            ]);
-            setDictionaries(wfs || []);
-            setFingerprintProducts(new Set((fps || []).map((f) => f.product)));
-            // workflow 中引用 POC 时可能不带 .yaml 后缀，这里入库时同时存入原名与去后缀名。
-            const pocSet = new Set<string>();
-            (pocs || []).forEach((p) => {
-                pocSet.add(p.FileName);
-                pocSet.add(p.FileName.replace(/\.(ya?ml)$/i, ''));
+            const res = await getWorkflowDictPage({
+                page,
+                page_size: pageSize,
+                q: searchKeyword || undefined,
+                scope: ruleScope,
+                health: healthFilter,
             });
-            setPocFiles(pocSet);
-            setPocFileCount((pocs || []).length);
+            setDictionaries(res.items || []);
+            setTotal(res.total || 0);
         } catch {
             message.error('加载 Workflow 弹药库失败');
         } finally {
@@ -74,57 +66,32 @@ const WorkflowConfig: React.FC = () => {
 
     useEffect(() => {
         fetchData();
-    }, []);
+    }, [page, pageSize, searchKeyword, healthFilter, ruleScope]);
 
     const enriched: EnrichedWorkflow[] = useMemo(
         () =>
             dictionaries.map((d) => ({
                 ...d,
-                _fingerprintBound: fingerprintProducts.has(d.product),
-                _missingPocs: (d.pocs || []).filter((p) => !pocFiles.has(p)),
+                _fingerprintBound: d.fingerprint_bound,
+                _missingPocs: d.missing_pocs || [],
             })),
-        [dictionaries, fingerprintProducts, pocFiles],
+        [dictionaries],
     );
 
-    const filtered = useMemo(() => {
-        let arr = enriched;
-        // 按分区过滤
-        if (ruleScope === 'general') {
-            arr = arr.filter((d) => isGeneralPoc(d.product));
-        } else {
-            arr = arr.filter((d) => !isGeneralPoc(d.product));
-        }
-        if (healthFilter === 'fp_missing') arr = arr.filter((d) => !d._fingerprintBound);
-        else if (healthFilter === 'poc_missing') arr = arr.filter((d) => d._missingPocs.length > 0);
-        else if (healthFilter === 'healthy') arr = arr.filter((d) => d._fingerprintBound && d._missingPocs.length === 0);
-        if (!searchKeyword) return arr;
-        const lower = searchKeyword.toLowerCase();
-        return arr.filter(
-            (d) =>
-                d.product.toLowerCase().includes(lower) ||
-                d.pocs?.some((p) => p.toLowerCase().includes(lower)) ||
-                d.type?.some((t) => t.toLowerCase().includes(lower)),
-        );
-    }, [enriched, searchKeyword, healthFilter, ruleScope]);
-
-    const generalCount = useMemo(() => enriched.filter((e) => isGeneralPoc(e.product)).length, [enriched]);
-    const specificCount = useMemo(() => enriched.filter((e) => !isGeneralPoc(e.product)).length, [enriched]);
+    const filtered = enriched;
 
     const stats = useMemo(() => {
-        const scoped = ruleScope === 'general'
-            ? enriched.filter((e) => isGeneralPoc(e.product))
-            : enriched.filter((e) => !isGeneralPoc(e.product));
+        const scoped = enriched;
         const total = scoped.length;
         const fpMissing = scoped.filter((e) => !e._fingerprintBound).length;
         const pocMissing = scoped.filter((e) => e._missingPocs.length > 0).length;
         const totalPocs = scoped.reduce((sum, e) => sum + (e.pocs?.length || 0), 0);
         return { total, fpMissing, pocMissing, totalPocs };
-    }, [enriched, ruleScope]);
+    }, [enriched]);
 
     useAutoContext({
         workflow_scope: ruleScope,
-        workflow_stats: stats,
-        total_pocs_in_db: pocFileCount
+        workflow_stats: { ...stats, total_matching: total },
     });
 
     const handleCreate = () => {
@@ -141,6 +108,7 @@ const WorkflowConfig: React.FC = () => {
         try {
             await deleteWorkflowDict(product);
             message.success('Workflow 已删除');
+            setPage(1);
             fetchData();
         } catch (err: unknown) {
             message.error(typeof err === 'string' ? err : '删除失败');
@@ -153,7 +121,6 @@ const WorkflowConfig: React.FC = () => {
             dataIndex: 'product',
             key: 'product',
             width: 260,
-            sorter: (a, b) => a.product.localeCompare(b.product),
             render: (text: string) => {
                 const isGP = isGeneralPoc(text);
                 const displayName = isGP ? text.replace(GENERAL_POC_PREFIX, '') : text;
@@ -201,11 +168,6 @@ const WorkflowConfig: React.FC = () => {
             key: 'fingerprint',
             width: 110,
             align: 'center' as const,
-            filters: [
-                { text: '已配置', value: 'ok' },
-                { text: '缺失', value: 'missing' },
-            ],
-            onFilter: (value: unknown, record: EnrichedWorkflow) => (value === 'ok' ? record._fingerprintBound : !record._fingerprintBound),
             render: (_: unknown, record: EnrichedWorkflow) =>
                 record._fingerprintBound ? (
                     <Tag icon={<CheckCircleOutlined />} color="green">已配置</Tag>
@@ -269,10 +231,10 @@ const WorkflowConfig: React.FC = () => {
             <div style={{ marginBottom: 16 }}>
                 <Segmented
                     value={ruleScope}
-                    onChange={(v) => { setRuleScope(v as 'specific' | 'general'); setHealthFilter('all'); setSearchKeyword(''); }}
+                    onChange={(v) => { setRuleScope(v as 'specific' | 'general'); setHealthFilter('all'); setSearchKeyword(''); setPage(1); }}
                     options={[
-                        { label: <Space><AimOutlined />指纹关联 ({specificCount})</Space>, value: 'specific' },
-                        { label: <Space><GlobalOutlined />通用探测 ({generalCount})</Space>, value: 'general' },
+                        { label: <Space><AimOutlined />指纹关联</Space>, value: 'specific' },
+                        { label: <Space><GlobalOutlined />通用探测</Space>, value: 'general' },
                     ]}
                     size="large"
                     style={{ fontWeight: 500 }}
@@ -334,21 +296,13 @@ const WorkflowConfig: React.FC = () => {
                     {ruleScope !== 'general' && (
                         <Col flex="1">
                             <Statistic
-                                title="指纹库总条数"
-                                value={fingerprintProducts.size}
+                                title="当前页指纹规则"
+                                value={enriched.reduce((sum, e) => sum + (e.fingerprint_rule_count || 0), 0)}
                                 valueStyle={{ color: '#06b6d4' }}
                                 prefix={<ScanOutlined style={{ color: '#06b6d4' }} />}
                             />
                         </Col>
                     )}
-                    <Col flex="1">
-                        <Statistic
-                            title="POC 库总条数"
-                            value={pocFileCount}
-                            valueStyle={{ color: '#3b82f6' }}
-                            prefix={<BugOutlined style={{ color: '#3b82f6' }} />}
-                        />
-                    </Col>
                 </Row>
             </ProCard>
 
@@ -358,23 +312,23 @@ const WorkflowConfig: React.FC = () => {
                         placeholder="搜索 product / type / POC 文件名"
                         prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
                         value={searchKeyword}
-                        onChange={(e) => setSearchKeyword(e.target.value)}
+                        onChange={(e) => { setSearchKeyword(e.target.value); setPage(1); }}
                         style={{ width: 320 }}
                         allowClear
                     />
                     {ruleScope !== 'general' && <Segmented
                         value={healthFilter}
-                        onChange={(v) => setHealthFilter(v as typeof healthFilter)}
+                        onChange={(v) => { setHealthFilter(v as typeof healthFilter); setPage(1); }}
                         options={[
-                            { label: `全部 (${specificCount})`, value: 'all' },
-                            { label: `指纹缺失 (${stats.fpMissing})`, value: 'fp_missing' },
-                            { label: `POC 缺失 (${stats.pocMissing})`, value: 'poc_missing' },
-                            { label: `健康 (${enriched.length - enriched.filter((e) => !e._fingerprintBound || e._missingPocs.length > 0).length})`, value: 'healthy' },
+                            { label: '全部', value: 'all' },
+                            { label: '指纹缺失', value: 'fp_missing' },
+                            { label: 'POC 缺失', value: 'poc_missing' },
+                            { label: '健康', value: 'healthy' },
                         ]}
                     />}
                 </Space>
                 <Space>
-                    <Tag>{filtered.length} / {enriched.length} 条</Tag>
+                    <Tag>当前页 {filtered.length} / 匹配 {total} 条</Tag>
                     {canManageRules && (
                         <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
                             {ruleScope === 'general' ? '新增通用探测规则' : '新增 Workflow'}
@@ -392,7 +346,17 @@ const WorkflowConfig: React.FC = () => {
                         dataSource={filtered}
                         rowKey="product"
                         loading={loading}
-                        pagination={{ pageSize: 15, showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }}
+                        pagination={{
+                            current: page,
+                            pageSize,
+                            total,
+                            showSizeChanger: true,
+                            showTotal: (t) => `共 ${t} 条`,
+                            onChange: (nextPage, nextPageSize) => {
+                                setPage(nextPage);
+                                setPageSize(nextPageSize);
+                            },
+                        }}
                         size="middle"
                     />
                 )}

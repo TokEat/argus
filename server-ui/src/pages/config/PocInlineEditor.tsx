@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Drawer, Button, Space, Input, App } from 'antd';
 import { BugOutlined, RobotOutlined } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
-import { saveArsenal, approveArsenal, listArsenals } from '../../services/api';
+import { saveArsenal, approveArsenal, getArsenal } from '../../services/api';
 import PocDebugPanel from './PocDebugPanel';
 import { useGlobalAI, useAutoContext } from '../../contexts/GlobalAIContext';
 import { canAccessRole } from '../../utils/auth';
@@ -88,9 +88,17 @@ const PocInlineEditor: React.FC<PocInlineEditorProps> = ({
         (async () => {
             setLoading(true);
             try {
-                const all = await listArsenals('poc', true, false);
                 const lookups = [fileName, `${fileName}.yaml`, `${fileName}.yml`];
-                const found = all?.find((a) => lookups.includes(a.FileName));
+                let found: API.Arsenal | undefined;
+                for (const candidate of lookups) {
+                    if (!candidate) continue;
+                    try {
+                        found = await getArsenal('poc', candidate);
+                        break;
+                    } catch {
+                        // Try the next filename form.
+                    }
+                }
                 setContent(found?.Content || '');
                 setEditingFileName(found?.FileName || (fileName as string));
                 setDebugVisible(false);

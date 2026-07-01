@@ -23,7 +23,7 @@ import (
 
 const (
 	RuleCatalogBootstrapKey    = "rule_catalog_v1"
-	RuleCatalogSchemaVersion   = 2
+	RuleCatalogSchemaVersion   = 3
 	RuleCatalogStatusReady     = "ready"
 	RuleCatalogStatusPartial   = "partial"
 	RuleCatalogStatusEmpty     = "empty"
@@ -113,6 +113,27 @@ type WorkflowRule struct {
 	Enabled     bool   `gorm:"default:true;index"`
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+// WorkflowProductSummary stores one product-level relationship summary for the
+// arsenal governance UI. It is derived from workflow_rules, fingerprint_rules,
+// and poc_rules and can be rebuilt from arsenals at any time.
+type WorkflowProductSummary struct {
+	TenantID             string `gorm:"primaryKey;default:'default';index"`
+	ProductName          string `gorm:"primaryKey;index"`
+	IsGeneralPoc         bool   `gorm:"default:false;index"`
+	MatchTypes           string `gorm:"type:jsonb"`
+	PocNames             string `gorm:"type:jsonb"`
+	PocCount             int
+	MissingPocNames      string `gorm:"type:jsonb"`
+	MissingPocCount      int    `gorm:"index"`
+	FingerprintBound     bool   `gorm:"default:false;index"`
+	FingerprintRuleCount int
+	State                string `gorm:"index"`
+	Enabled              bool   `gorm:"default:false;index"`
+	ContentHash          string `gorm:"index"`
+	Version              int    `gorm:"default:1"`
+	UpdatedAt            time.Time
 }
 
 // DirRule stores one active directory probe path per product.
@@ -322,6 +343,9 @@ func syncRuleCatalogFromArsenalLocked() error {
 			return err
 		}
 		if err := disableNonApprovedCatalogRows(tx); err != nil {
+			return err
+		}
+		if err := refreshWorkflowProductSummaries(tx, materialized.fingerprints, materialized.workflows, materialized.pocs); err != nil {
 			return err
 		}
 
@@ -916,6 +940,151 @@ func disableNonApprovedCatalogRows(tx *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+func refreshWorkflowProductSummaries(tx *gorm.DB, fingerprints []FingerprintRule, workflows []WorkflowRule, pocs []PocRule) error {
+	if !tx.Migrator().HasTable(&WorkflowProductSummary{}) {
+		if err := tx.AutoMigrate(&WorkflowProductSummary{}); err != nil {
+			return err
+		}
+	}
+
+	tenantSet := make(map[string]struct{})
+	for _, row := range workflows {
+		tenantSet[row.TenantID] = struct{}{}
+	}
+	for _, row := range fingerprints {
+		tenantSet[row.TenantID] = struct{}{}
+	}
+	for _, row := range pocs {
+		tenantSet[row.TenantID] = struct{}{}
+	}
+	if len(tenantSet) == 0 {
+		return tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&WorkflowProductSummary{}).Error
+	}
+
+	fingerprintCounts := make(map[string]map[string]int)
+	for _, row := range fingerprints {
+		if !row.Enabled {
+			continue
+		}
+		if _, ok := fingerprintCounts[row.TenantID]; !ok {
+			fingerprintCounts[row.TenantID] = make(map[string]int)
+		}
+		fingerprintCounts[row.TenantID][row.ProductName]++
+	}
+
+	pocNames := make(map[string]map[string]struct{})
+	for _, row := range pocs {
+		if !row.Enabled {
+			continue
+		}
+		if _, ok := pocNames[row.TenantID]; !ok {
+			pocNames[row.TenantID] = make(map[string]struct{})
+		}
+		pocNames[row.TenantID][row.SourceFile] = struct{}{}
+		pocNames[row.TenantID][strings.TrimSuffix(row.SourceFile, filepath.Ext(row.SourceFile))] = struct{}{}
+		if row.Name != "" {
+			pocNames[row.TenantID][row.Name] = struct{}{}
+		}
+	}
+
+	type summaryBuilder struct {
+		tenantID    string
+		productName string
+		matchTypes  map[string]struct{}
+		pocs        map[string]struct{}
+		missingPocs map[string]struct{}
+		enabled     bool
+		state       string
+		contentHash string
+		version     int
+		updatedAt   time.Time
+	}
+	builders := make(map[string]*summaryBuilder)
+	for _, row := range workflows {
+		key := row.TenantID + "\x00" + row.ProductName
+		b := builders[key]
+		if b == nil {
+			b = &summaryBuilder{
+				tenantID:    row.TenantID,
+				productName: row.ProductName,
+				matchTypes:  make(map[string]struct{}),
+				pocs:        make(map[string]struct{}),
+				missingPocs: make(map[string]struct{}),
+				state:       row.State,
+				contentHash: row.ContentHash,
+				version:     row.Version,
+				updatedAt:   row.UpdatedAt,
+			}
+			builders[key] = b
+		}
+		if row.Enabled {
+			b.enabled = true
+		}
+		if row.State == "Approved" {
+			b.state = row.State
+		}
+		if row.Version > b.version {
+			b.version = row.Version
+		}
+		if row.UpdatedAt.After(b.updatedAt) {
+			b.updatedAt = row.UpdatedAt
+		}
+		if row.MatchType != "" {
+			b.matchTypes[row.MatchType] = struct{}{}
+		}
+		if row.PocName != "" {
+			b.pocs[row.PocName] = struct{}{}
+			if _, ok := pocNames[row.TenantID][row.PocName]; !ok {
+				b.missingPocs[row.PocName] = struct{}{}
+			}
+		}
+	}
+
+	summaries := make([]WorkflowProductSummary, 0, len(builders))
+	for _, b := range builders {
+		matchTypes := sortedKeys(b.matchTypes)
+		pocsForProduct := sortedKeys(b.pocs)
+		missing := sortedKeys(b.missingPocs)
+		fpCount := fingerprintCounts[b.tenantID][b.productName]
+		if b.updatedAt.IsZero() {
+			b.updatedAt = time.Now()
+		}
+		summaries = append(summaries, WorkflowProductSummary{
+			TenantID:             b.tenantID,
+			ProductName:          b.productName,
+			IsGeneralPoc:         strings.HasPrefix(b.productName, "General-Poc-"),
+			MatchTypes:           marshalJSONText(matchTypes),
+			PocNames:             marshalJSONText(pocsForProduct),
+			PocCount:             len(pocsForProduct),
+			MissingPocNames:      marshalJSONText(missing),
+			MissingPocCount:      len(missing),
+			FingerprintBound:     fpCount > 0,
+			FingerprintRuleCount: fpCount,
+			State:                b.state,
+			Enabled:              b.enabled,
+			ContentHash:          b.contentHash,
+			Version:              b.version,
+			UpdatedAt:            b.updatedAt,
+		})
+	}
+
+	for tenantID := range tenantSet {
+		if err := tx.Where("tenant_id = ?", tenantID).Delete(&WorkflowProductSummary{}).Error; err != nil {
+			return err
+		}
+	}
+	return createInBatches(tx, summaries)
+}
+
+func sortedKeys(values map[string]struct{}) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func sanitizePostgresTextBytes(content []byte) []byte {

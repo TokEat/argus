@@ -348,6 +348,7 @@ func InitRouter(port string) {
 		}
 		c.Next()
 	})
+	r.Use(gzipMiddleware())
 
 	// 启动 WebSocket 广播中心
 	go Hub.Start()
@@ -471,6 +472,7 @@ func InitRouter(port string) {
 		api.POST("/arsenals/ai/analyze", aiAnalyzeArsenal)
 		api.POST("/arsenals/:type", debugPocGateway)
 		api.GET("/arsenals/:type", getArsenals)
+		api.GET("/arsenals/:type/:filename", getArsenal)
 		api.POST("/arsenals/:type/:filename", saveArsenal)
 		api.POST("/arsenals/:type/:filename/cancel", cancelDebugSessionGateway)
 		api.POST("/arsenals/:type/:filename/approve", approveArsenal)
@@ -1744,8 +1746,43 @@ func getArsenals(c *gin.Context) {
 		query = query.Omit("Content")
 	}
 
-	query.Find(&arsenals)
+	if q := strings.TrimSpace(c.Query("q")); q != "" {
+		like := "%" + strings.ToLower(q) + "%"
+		query = query.Where("LOWER(file_name) LIKE ? OR LOWER(state) LIKE ? OR LOWER(hash) LIKE ?", like, like, like)
+	}
+
+	if c.Query("page") != "" || c.Query("page_size") != "" || c.Query("lite") == "1" || strings.TrimSpace(c.Query("q")) != "" {
+		page, pageSize := parsePagination(c, 50, 200)
+		var total int64
+		if err := query.Model(&db.Arsenal{}).Count(&total).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if err := query.Order("updated_at DESC, file_name ASC, id ASC").Limit(pageSize).Offset((page - 1) * pageSize).Find(&arsenals).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, pagedResponse(arsenals, total, page, pageSize, currentRuleVersion()))
+		return
+	}
+
+	if err := query.Find(&arsenals).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, arsenals)
+}
+
+func getArsenal(c *gin.Context) {
+	typ := db.CanonicalArsenalType(c.Param("type"))
+	fn := c.Param("filename")
+	tenantID := currentTenantID(c)
+	arsenal, err := db.FindTenantArsenalByTypeAndFile(tenantID, typ, fn)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
+		return
+	}
+	c.JSON(http.StatusOK, arsenal)
 }
 
 func saveArsenal(c *gin.Context) {

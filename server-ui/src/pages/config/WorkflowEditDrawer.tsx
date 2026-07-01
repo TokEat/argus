@@ -31,8 +31,8 @@ import {
 import {
     addWorkflowDict,
     updateWorkflowDict,
-    listArsenals,
-    getFingerprintDict,
+    listArsenalsPage,
+    getFingerprintDictPage,
     deleteArsenal,
     addFingerprintDict,
     updateFingerprintDict,
@@ -87,17 +87,17 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
     const loadRefData = async () => {
         try {
             const [pocs, fps] = await Promise.all([
-                listArsenals('poc', true, true),
-                getFingerprintDict(),
+                listArsenalsPage('poc', { all: '1', lite: '1', page: 1, page_size: 200 }),
+                getFingerprintDictPage({ all: '1', page: 1, page_size: 200 }),
             ]);
             // 下拉选项使用不带 .yaml 后缀的名称（与 workflow.yaml 内存储习惯一致）。
             const opts: { label: string; value: string }[] = [];
-            (pocs || []).forEach((p) => {
+            (pocs.items || []).forEach((p) => {
                 const stripped = p.FileName.replace(/\.(ya?ml)$/i, '');
                 opts.push({ label: p.FileName, value: stripped });
             });
             setPocOptions(opts);
-            setFingerprintProducts(new Set((fps || []).map((f) => f.product)));
+            setFingerprintProducts(new Set((fps.items || []).map((f) => f.product)));
         } catch {
             message.error('加载关联弹药库失败');
         }
@@ -155,8 +155,8 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
                 let oldFpRules: string[] = [];
                 if (oldFpExists) {
                     try {
-                        const all = await getFingerprintDict();
-                        oldFpRules = all?.find((f) => f.product === oldName)?.rules || [];
+                        const found = await getFingerprintDictPage({ all: '1', include_rules: '1', q: oldName, page: 1, page_size: 20 });
+                        oldFpRules = found.items?.find((f) => f.product === oldName)?.rules || [];
                     } catch { /* ignore */ }
                 }
                 const proceed = await new Promise<'cancel' | 'rename_only' | 'rename_with_fp'>((resolve) => {

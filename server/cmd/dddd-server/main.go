@@ -174,6 +174,13 @@ func main() {
 		log.Fatalf("Failed to verify database schema: %v", err)
 	}
 
+	if migrationMode != db.MigrationModeVerify {
+		log.Println("Synchronizing rule catalog indexes...")
+		if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+			log.Fatalf("Failed to synchronize rule catalog: %v", err)
+		}
+	}
+
 	if migrateOnly {
 		log.Println("Database migrations and schema verification completed successfully.")
 		return

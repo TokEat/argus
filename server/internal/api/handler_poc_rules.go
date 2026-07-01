@@ -58,6 +58,26 @@ func listPocRules(c *gin.Context) {
 		)
 	}
 
+	if c.Query("page") != "" || c.Query("page_size") != "" || c.Query("lite") == "1" {
+		page, pageSize := parsePagination(c, 50, 200)
+		var total int64
+		if err := query.Count(&total).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		var rules []db.PocRule
+		if err := query.Order("updated_at DESC, id DESC").Limit(pageSize).Offset((page - 1) * pageSize).Find(&rules).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		resp := make([]pocRuleResponse, 0, len(rules))
+		for _, rule := range rules {
+			resp = append(resp, pocRuleToResponse(rule))
+		}
+		c.JSON(http.StatusOK, pagedResponse(resp, total, page, pageSize, currentRuleVersion()))
+		return
+	}
+
 	var rules []db.PocRule
 	if err := query.Order("updated_at DESC, id DESC").Find(&rules).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

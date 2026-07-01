@@ -186,6 +186,20 @@ export async function listPocRules(params?: {
     return request.get('/poc-rules', { params });
 }
 
+export async function listPocRulesPage(params?: {
+    all?: string;
+    severity?: string;
+    product?: string;
+    cve?: string;
+    compatibility_status?: string;
+    q?: string;
+    lite?: string;
+    page?: number;
+    page_size?: number;
+}): Promise<API.PagedResponse<API.PocRuleMetadata>> {
+    return request.get('/poc-rules', { params: { lite: '1', ...(params || {}) } });
+}
+
 export async function exportVulns(projectId?: string): Promise<Blob> {
     const params = new URLSearchParams();
     if (projectId) params.set('project_id', projectId);
@@ -243,6 +257,20 @@ export async function listArsenals(type: string, all: boolean = true, lite: bool
     if (all) params.all = '1';
     if (lite) params.lite = '1';
     return request.get(`/arsenals/${type}`, { params });
+}
+
+export async function listArsenalsPage(type: string, params?: {
+    all?: string;
+    lite?: string;
+    q?: string;
+    page?: number;
+    page_size?: number;
+}): Promise<API.PagedResponse<API.Arsenal>> {
+    return request.get(`/arsenals/${type}`, { params: { all: '1', lite: '1', ...(params || {}) } });
+}
+
+export async function getArsenal(type: string, filename: string): Promise<API.Arsenal> {
+    return request.get(`/arsenals/${type}/${encodeURIComponent(filename)}`);
 }
 
 export async function saveArsenal(type: string, filename: string, content: string): Promise<{ status: string; hash: string; state: string }> {
@@ -414,6 +442,17 @@ export async function getWorkflowDict(): Promise<API.WorkflowItem[]> {
     return request.get('/dictionaries/workflow');
 }
 
+export async function getWorkflowDictPage(params?: {
+    lite?: string;
+    page?: number;
+    page_size?: number;
+    q?: string;
+    scope?: 'specific' | 'general' | 'all';
+    health?: 'fp_missing' | 'poc_missing' | 'healthy' | 'all';
+}): Promise<API.PagedResponse<API.WorkflowSummary>> {
+    return request.get('/dictionaries/workflow', { params: { lite: '1', ...(params || {}) } });
+}
+
 export async function addWorkflowDict(data: API.WorkflowItem): Promise<API.MessageResponse> {
     return request.post('/dictionaries/workflow', data);
 }
@@ -428,6 +467,17 @@ export async function deleteWorkflowDict(product: string): Promise<API.MessageRe
 
 export async function getFingerprintDict(): Promise<API.FingerprintItem[]> {
     return request.get('/dictionaries/fingerprint');
+}
+
+export async function getFingerprintDictPage(params?: {
+    lite?: string;
+    all?: string;
+    include_rules?: string;
+    page?: number;
+    page_size?: number;
+    q?: string;
+}): Promise<API.PagedResponse<API.FingerprintSummary>> {
+    return request.get('/dictionaries/fingerprint', { params: { lite: '1', ...(params || {}) } });
 }
 
 export async function addFingerprintDict(data: API.FingerprintItem): Promise<API.MessageResponse> {

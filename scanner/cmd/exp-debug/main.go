@@ -63,7 +63,7 @@ func main() {
 		return
 	}
 	out.TemplateID = tmpl.ID
-	out.Engine = tmpl.Runtime.Engine
+	out.Engine = tmpl.RuntimeEngine
 
 	params := map[string]interface{}{}
 	if err := json.Unmarshal([]byte(*paramsJSON), &params); err != nil {

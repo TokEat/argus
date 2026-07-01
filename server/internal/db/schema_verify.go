@@ -95,7 +95,7 @@ func schemaTableSpecs() []schemaTableSpec {
 		{
 			Table:   "arsenals",
 			Columns: []string{"previous_hash", "previous_content", "state"},
-			Indexes: []string{"idx_arsenals_type", "idx_arsenals_state"},
+			Indexes: []string{"idx_arsenals_type", "idx_arsenals_state", "idx_arsenals_tenant_type_file", "idx_arsenals_tenant_type_state_updated"},
 		},
 		{
 			Table:   "arsenal_ai_reviews",
@@ -209,17 +209,22 @@ func schemaTableSpecs() []schemaTableSpec {
 		{
 			Table:   "fingerprint_rules",
 			Columns: []string{"artifact_id", "source_file", "product_name", "rule_expr", "enabled"},
-			Indexes: []string{"idx_fp_rule_unique", "idx_fingerprint_rules_enabled"},
+			Indexes: []string{"idx_fp_rule_unique", "idx_fingerprint_rules_enabled", "idx_fingerprint_rules_tenant_enabled_product", "idx_fingerprint_rules_tenant_state_product", "idx_fingerprint_rules_product_trgm"},
 		},
 		{
 			Table:   "poc_rules",
 			Columns: []string{"artifact_id", "source_file", "name", "target_product", "cve", "compatibility_status", "source_version", "severity", "enabled"},
-			Indexes: []string{"idx_poc_rule_unique", "idx_poc_rules_enabled", "idx_poc_rules_target_product", "idx_poc_rules_cve", "idx_poc_rules_compatibility_status"},
+			Indexes: []string{"idx_poc_rule_unique", "idx_poc_rules_enabled", "idx_poc_rules_target_product", "idx_poc_rules_cve", "idx_poc_rules_compatibility_status", "idx_poc_rules_tenant_enabled_updated", "idx_poc_rules_name_trgm", "idx_poc_rules_source_file_trgm"},
 		},
 		{
 			Table:   "workflow_rules",
 			Columns: []string{"artifact_id", "source_file", "product_name", "poc_name", "match_type", "enabled"},
-			Indexes: []string{"idx_workflow_rule_unique", "idx_workflow_rules_enabled"},
+			Indexes: []string{"idx_workflow_rule_unique", "idx_workflow_rules_enabled", "idx_workflow_rules_tenant_enabled_product", "idx_workflow_rules_tenant_poc", "idx_workflow_rules_product_trgm", "idx_workflow_rules_poc_trgm"},
+		},
+		{
+			Table:   "workflow_product_summaries",
+			Columns: []string{"tenant_id", "product_name", "is_general_poc", "match_types", "poc_names", "poc_count", "missing_poc_names", "missing_poc_count", "fingerprint_bound", "fingerprint_rule_count", "state", "enabled", "content_hash", "version", "updated_at"},
+			Indexes: []string{"workflow_product_summaries_pkey", "idx_workflow_product_summaries_tenant_general", "idx_workflow_product_summaries_tenant_health", "idx_workflow_product_summaries_product_trgm"},
 		},
 		{
 			Table:   "dir_rules",
@@ -229,7 +234,7 @@ func schemaTableSpecs() []schemaTableSpec {
 		{
 			Table:   "exploit_rules",
 			Columns: []string{"artifact_id", "source_file", "rule_id", "name", "description", "target_product", "cve", "risk_level", "requires_auth", "side_effects", "cleanup_supported", "cleanup_required", "dry_run_supported", "capabilities", "linked_pocs", "params_schema", "requirements", "requirements_hash", "sandbox_profile", "timeout_sec", "runtime_engine", "enabled"},
-			Indexes: []string{"idx_exploit_rule_unique", "idx_exploit_rules_enabled", "idx_exploit_rules_runtime_engine", "idx_exploit_rules_requirements_hash", "idx_exploit_rules_sandbox_profile"},
+			Indexes: []string{"idx_exploit_rule_unique", "idx_exploit_rules_enabled", "idx_exploit_rules_runtime_engine", "idx_exploit_rules_requirements_hash", "idx_exploit_rules_sandbox_profile", "idx_exploit_rules_tenant_enabled_updated", "idx_exploit_rules_rule_id_trgm", "idx_exploit_rules_name_trgm"},
 		},
 	}
 }

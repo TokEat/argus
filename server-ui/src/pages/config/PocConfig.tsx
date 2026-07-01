@@ -15,7 +15,7 @@ import {
 } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import type { ColumnsType } from 'antd/es/table';
-import { listArsenals, saveArsenal, deleteArsenal, approveArsenal, getWorkflowDict } from '../../services/api';
+import { listPocRulesPage, getWorkflowDictPage, getArsenal, saveArsenal, deleteArsenal, approveArsenal } from '../../services/api';
 import { useGlobalAI, useAutoContext } from '../../contexts/GlobalAIContext';
 import PocDebugPanel from './PocDebugPanel';
 import { canAccessRole } from '../../utils/auth';
@@ -25,7 +25,10 @@ const { Text } = Typography;
 const PocConfig: React.FC = () => {
     const { visible, openGlobalAI, registerEditableTarget } = useGlobalAI();
     const [loading, setLoading] = useState(true);
-    const [arsenals, setArsenals] = useState<API.Arsenal[]>([]);
+    const [pocRules, setPocRules] = useState<API.PocRuleMetadata[]>([]);
+    const [total, setTotal] = useState(0);
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(15);
     /** key: 不带后缀的 POC 名，value: 引用它的 workflow product 列表 */
     const [usageMap, setUsageMap] = useState<Map<string, string[]>>(new Map());
     const [usageFilter, setUsageFilter] = useState<'all' | 'in_workflow' | 'not_in_workflow'>('all');
@@ -64,10 +67,11 @@ const PocConfig: React.FC = () => {
         setLoading(true);
         try {
             const [pocs, wfs] = await Promise.all([
-                listArsenals('poc'),
-                getWorkflowDict().catch(() => [] as API.WorkflowItem[]),
+                listPocRulesPage({ all: '1', page, page_size: pageSize, q: searchKeyword || undefined }),
+                fetchWorkflowUsageSummaries(),
             ]);
-            setArsenals(pocs || []);
+            setPocRules(pocs.items || []);
+            setTotal(pocs.total || 0);
             // 构造引用反向索引：POC 名（去后缀后） -> workflow product 列表
             const map = new Map<string, string[]>();
             (wfs || []).forEach((wf) => {
@@ -87,7 +91,19 @@ const PocConfig: React.FC = () => {
 
     useEffect(() => {
         fetchData();
-    }, []);
+    }, [page, pageSize, searchKeyword]);
+
+    const fetchWorkflowUsageSummaries = async (): Promise<API.WorkflowSummary[]> => {
+        const all: API.WorkflowSummary[] = [];
+        let nextPage = 1;
+        for (;;) {
+            const res = await getWorkflowDictPage({ scope: 'all', page: nextPage, page_size: 200 }).catch(() => null);
+            if (!res) return all;
+            all.push(...(res.items || []));
+            if (!res.has_more) return all;
+            nextPage += 1;
+        }
+    };
 
     /** 返回该 POC 被哪些 workflow 引用（同时考虑带/不带后缀） */
     const getUsage = (fileName: string): string[] => {
@@ -96,20 +112,18 @@ const PocConfig: React.FC = () => {
     };
 
     const filtered = useMemo(() => {
-        let arr = arsenals;
-        if (usageFilter === 'in_workflow') arr = arr.filter((a) => getUsage(a.FileName).length > 0);
-        else if (usageFilter === 'not_in_workflow') arr = arr.filter((a) => getUsage(a.FileName).length === 0);
-        if (!searchKeyword) return arr;
-        const lower = searchKeyword.toLowerCase();
-        return arr.filter((a) => a.FileName.toLowerCase().includes(lower));
+        let arr = pocRules;
+        if (usageFilter === 'in_workflow') arr = arr.filter((a) => getUsage(a.source_file).length > 0);
+        else if (usageFilter === 'not_in_workflow') arr = arr.filter((a) => getUsage(a.source_file).length === 0);
+        return arr;
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [arsenals, searchKeyword, usageFilter, usageMap]);
+    }, [pocRules, usageFilter, usageMap]);
 
     const usageStats = useMemo(() => {
-        const inWf = arsenals.filter((a) => getUsage(a.FileName).length > 0).length;
-        return { inWf, notInWf: arsenals.length - inWf };
+        const inWf = pocRules.filter((a) => getUsage(a.source_file).length > 0).length;
+        return { inWf, notInWf: pocRules.length - inWf };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [arsenals, usageMap]);
+    }, [pocRules, usageMap]);
 
     const handleCreate = () => {
         if (!canManageArsenals) return;
@@ -138,30 +152,50 @@ http:
         setEditorVisible(true);
     };
 
-    const handleEdit = (record: API.Arsenal) => {
+    const handleEdit = async (record: API.PocRuleMetadata) => {
         if (!canManageArsenals) return;
         setIsNew(false);
-        setCurrentArsenal(record);
-        setEditorContent(record.Content);
+        setCurrentArsenal(null);
+        setEditorContent('');
         setDebugVisible(false);
         setEditorVisible(true);
+        try {
+            const arsenal = await getArsenal('poc', record.source_file);
+            setCurrentArsenal(arsenal);
+            setEditorContent(arsenal.Content || '');
+        } catch {
+            setCurrentArsenal({
+                ID: record.artifact_id,
+                TenantID: record.tenant_id,
+                Type: 'poc',
+                FileName: record.source_file,
+                Content: '',
+                Hash: record.content_hash,
+                PreviousHash: '',
+                Version: record.version,
+                State: record.state,
+                CreatedAt: record.created_at,
+                UpdatedAt: record.updated_at,
+            });
+            msg.error('加载 POC 内容失败');
+        }
     };
 
     /** 校验新建文件名是否与现有 POC 重名（兼容带不带 .yaml 后缀两种写法） */
-    const checkDuplicate = (raw: string): API.Arsenal | null => {
+    const checkDuplicate = (raw: string): API.PocRuleMetadata | null => {
         const name = raw.trim();
         if (!name) return null;
         const withExt = /\.ya?ml$/i.test(name) ? name : `${name}.yaml`;
         const stripped = name.replace(/\.ya?ml$/i, '');
-        return arsenals.find((a) => {
-            const aStripped = a.FileName.replace(/\.ya?ml$/i, '');
-            return a.FileName === name || a.FileName === withExt || aStripped === stripped;
+        return pocRules.find((a) => {
+            const aStripped = a.source_file.replace(/\.ya?ml$/i, '');
+            return a.source_file === name || a.source_file === withExt || aStripped === stripped;
         }) || null;
     };
 
     const duplicateOf = useMemo(() => (isNew ? checkDuplicate(newFileName) : null),
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [isNew, newFileName, arsenals]);
+        [isNew, newFileName, pocRules]);
 
     const doSave = async (fileName: string) => {
         if (!canManageArsenals) return;
@@ -219,10 +253,10 @@ http:
                     icon: <WarningOutlined style={{ color: '#faad14' }} />,
                     content: (
                         <div>
-                            <p>弹药库中已存在 <Text code>{duplicateOf.FileName}</Text>（当前状态：{duplicateOf.State}）。</p>
+                            <p>弹药库中已存在 <Text code>{duplicateOf.source_file}</Text>（当前状态：{duplicateOf.state}）。</p>
                             <p>继续保存将<strong>覆盖其内容</strong>，并把状态<strong>强制重置为草稿</strong>，需要重新审核才能生效。</p>
-                            {getUsage(duplicateOf.FileName).length > 0 && (
-                                <p style={{ color: '#ef4444' }}>⚠ 该 POC 当前被 {getUsage(duplicateOf.FileName).length} 个 Workflow 引用，覆盖后所有引用都会立即失效（直到重新审核）。</p>
+                            {getUsage(duplicateOf.source_file).length > 0 && (
+                                <p style={{ color: '#ef4444' }}>⚠ 该 POC 当前被 {getUsage(duplicateOf.source_file).length} 个 Workflow 引用，覆盖后所有引用都会立即失效（直到重新审核）。</p>
                             )}
                         </div>
                     ),
@@ -230,7 +264,7 @@ http:
                     okButtonProps: { danger: true },
                     cancelText: '取消',
                     onOk: async () => {
-                        try { await doSave(duplicateOf.FileName); }
+                        try { await doSave(duplicateOf.source_file); }
                         catch (e: unknown) { msg.error(typeof e === 'string' ? e : '保存失败'); }
                     },
                 });
@@ -271,10 +305,10 @@ http:
         return <Tag color="orange">草稿</Tag>;
     };
 
-    const columns: ColumnsType<API.Arsenal> = [
+    const columns: ColumnsType<API.PocRuleMetadata> = [
         {
             title: '文件名',
-            dataIndex: 'FileName',
+            dataIndex: 'source_file',
             key: 'filename',
             ellipsis: true,
             render: (name: string) => (
@@ -286,7 +320,7 @@ http:
         },
         {
             title: '状态',
-            dataIndex: 'State',
+            dataIndex: 'state',
             key: 'state',
             width: 100,
             render: (state: string) => getStateTag(state),
@@ -294,7 +328,7 @@ http:
                 { text: '已审核', value: 'Approved' },
                 { text: '草稿', value: 'Draft' },
             ],
-            onFilter: (value, record) => record.State === value,
+            onFilter: (value, record) => record.state === value,
         },
         {
             title: (
@@ -305,7 +339,7 @@ http:
             key: 'usage',
             width: 200,
             render: (_, record) => {
-                const used = getUsage(record.FileName);
+                const used = getUsage(record.source_file);
                 if (used.length === 0) {
                     return <Tag icon={<DisconnectOutlined />} color="default">不在 Workflow</Tag>;
                 }
@@ -320,7 +354,7 @@ http:
         },
         {
             title: 'Hash',
-            dataIndex: 'Hash',
+            dataIndex: 'content_hash',
             key: 'hash',
             width: 140,
             ellipsis: true,
@@ -328,7 +362,7 @@ http:
         },
         {
             title: '更新时间',
-            dataIndex: 'UpdatedAt',
+            dataIndex: 'updated_at',
             key: 'updated_at',
             width: 170,
             render: (v: string) => <Text style={{ fontSize: 12, color: '#64748b' }}>{v}</Text>,
@@ -337,19 +371,19 @@ http:
             title: '操作',
             key: 'actions',
             width: 250,
-            render: (_: unknown, record: API.Arsenal) => (
+            render: (_: unknown, record: API.PocRuleMetadata) => (
                 <Space size={4}>
                     <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
                         编辑
                     </Button>
-                    {canApproveArsenals && record.State === 'Draft' && (
-                        <Popconfirm title="确认审核通过？将触发全网 Agent 规则重载" onConfirm={() => handleApprove(record.FileName)}>
+                    {canApproveArsenals && record.state === 'Draft' && (
+                        <Popconfirm title="确认审核通过？将触发全网 Agent 规则重载" onConfirm={() => handleApprove(record.source_file)}>
                             <Button type="link" size="small" style={{ color: '#10b981' }} icon={<CheckOutlined />}>
                                 审核
                             </Button>
                         </Popconfirm>
                     )}
-                    <Popconfirm title={`确认删除 ${record.FileName}？`} onConfirm={() => handleDelete(record.FileName)}>
+                    <Popconfirm title={`确认删除 ${record.source_file}？`} onConfirm={() => handleDelete(record.source_file)}>
                         <Button type="link" danger size="small" icon={<DeleteOutlined />}>
                             删除
                         </Button>
@@ -367,7 +401,7 @@ http:
                         placeholder="搜索 POC..."
                         prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
                         value={searchKeyword}
-                        onChange={(e) => setSearchKeyword(e.target.value)}
+                        onChange={(e) => { setSearchKeyword(e.target.value); setPage(1); }}
                         style={{ width: 260 }}
                         allowClear
                     />
@@ -375,14 +409,14 @@ http:
                         value={usageFilter}
                         onChange={(v) => setUsageFilter(v as typeof usageFilter)}
                         options={[
-                            { label: `全部 (${arsenals.length})`, value: 'all' },
+                            { label: `全部 (${pocRules.length})`, value: 'all' },
                             { label: `在 Workflow 中 (${usageStats.inWf})`, value: 'in_workflow' },
                             { label: `不在 Workflow 中 (${usageStats.notInWf})`, value: 'not_in_workflow' },
                         ]}
                     />
                 </Space>
                 <Space>
-                    <Tag>{filtered.length} / {arsenals.length} 条</Tag>
+                    <Tag>当前页 {filtered.length} / 匹配 {total} 条</Tag>
                     {canManageArsenals && (
                         <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
                             新增 POC
@@ -398,9 +432,19 @@ http:
                     <Table
                         columns={columns}
                         dataSource={filtered}
-                        rowKey="ID"
+                        rowKey="id"
                         loading={loading}
-                        pagination={{ pageSize: 15, showTotal: (t) => `共 ${t} 条` }}
+                        pagination={{
+                            current: page,
+                            pageSize,
+                            total,
+                            showSizeChanger: true,
+                            showTotal: (t) => `共 ${t} 条`,
+                            onChange: (nextPage, nextPageSize) => {
+                                setPage(nextPage);
+                                setPageSize(nextPageSize);
+                            },
+                        }}
                         size="middle"
                     />
                 )}
@@ -467,8 +511,8 @@ http:
                                 />
                                 {duplicateOf && (
                                     <div style={{ marginTop: 6, fontSize: 12, color: '#d97706' }}>
-                                        <WarningOutlined /> 已存在 <Text code>{duplicateOf.FileName}</Text>（{duplicateOf.State}），保存将覆盖并重置为草稿
-                                        {getUsage(duplicateOf.FileName).length > 0 && <span style={{ color: '#ef4444' }}>，且会让 {getUsage(duplicateOf.FileName).length} 个 Workflow 引用立即失效</span>}
+                                        <WarningOutlined /> 已存在 <Text code>{duplicateOf.source_file}</Text>（{duplicateOf.state}），保存将覆盖并重置为草稿
+                                        {getUsage(duplicateOf.source_file).length > 0 && <span style={{ color: '#ef4444' }}>，且会让 {getUsage(duplicateOf.source_file).length} 个 Workflow 引用立即失效</span>}
                                     </div>
                                 )}
                             </div>

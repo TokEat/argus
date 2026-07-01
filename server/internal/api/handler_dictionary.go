@@ -2,13 +2,16 @@ package api
 
 import (
 	"crypto/md5"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/user/dddd-server/internal/db"
 	"gopkg.in/yaml.v3"
+	"gorm.io/gorm"
 )
 
 type WorkflowEntry struct {
@@ -77,6 +80,11 @@ func saveWorkflow(data map[string]WorkflowEntry, arsenal *db.Arsenal) error {
 }
 
 func getWorkflowDict(c *gin.Context) {
+	if c.Query("lite") == "1" || c.Query("page") != "" || c.Query("page_size") != "" {
+		listWorkflowSummaries(c)
+		return
+	}
+
 	data, _, err := fetchAndParseWorkflow(currentTenantID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -93,6 +101,87 @@ func getWorkflowDict(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, results)
+}
+
+type workflowSummaryResponse struct {
+	Product              string   `json:"product"`
+	Type                 []string `json:"type"`
+	Pocs                 []string `json:"pocs"`
+	PocCount             int      `json:"poc_count"`
+	MissingPocs          []string `json:"missing_pocs"`
+	MissingPocCount      int      `json:"missing_poc_count"`
+	FingerprintBound     bool     `json:"fingerprint_bound"`
+	FingerprintRuleCount int      `json:"fingerprint_rule_count"`
+	IsGeneralPoc         bool     `json:"is_general_poc"`
+	State                string   `json:"state"`
+	Enabled              bool     `json:"enabled"`
+	ContentHash          string   `json:"content_hash"`
+	Version              int      `json:"version"`
+	UpdatedAt            string   `json:"updated_at"`
+}
+
+func listWorkflowSummaries(c *gin.Context) {
+	tenantID := currentTenantID(c)
+	page, pageSize := parsePagination(c, 50, 200)
+	query := db.DB.Model(&db.WorkflowProductSummary{}).Where("tenant_id = ?", tenantID)
+
+	switch strings.ToLower(strings.TrimSpace(c.Query("scope"))) {
+	case "general":
+		query = query.Where("is_general_poc = ?", true)
+	case "specific":
+		query = query.Where("is_general_poc = ?", false)
+	}
+
+	switch strings.ToLower(strings.TrimSpace(c.Query("health"))) {
+	case "fp_missing":
+		query = query.Where("is_general_poc = ? AND fingerprint_bound = ?", false, false)
+	case "poc_missing":
+		query = query.Where("missing_poc_count > 0")
+	case "healthy":
+		query = query.Where("missing_poc_count = 0 AND (is_general_poc = true OR fingerprint_bound = true)")
+	}
+
+	if q := strings.TrimSpace(c.Query("q")); q != "" {
+		like := "%" + strings.ToLower(q) + "%"
+		query = query.Where("LOWER(product_name) LIKE ? OR LOWER(CAST(poc_names AS TEXT)) LIKE ? OR LOWER(CAST(match_types AS TEXT)) LIKE ?", like, like, like)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	var rows []db.WorkflowProductSummary
+	if err := query.Order("product_name ASC").Limit(pageSize).Offset((page - 1) * pageSize).Find(&rows).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	items := make([]workflowSummaryResponse, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, workflowSummaryToResponse(row))
+	}
+	c.JSON(http.StatusOK, pagedResponse(items, total, page, pageSize, currentRuleVersion()))
+}
+
+func workflowSummaryToResponse(row db.WorkflowProductSummary) workflowSummaryResponse {
+	return workflowSummaryResponse{
+		Product:              row.ProductName,
+		Type:                 jsonStringSlice(row.MatchTypes),
+		Pocs:                 jsonStringSlice(row.PocNames),
+		PocCount:             row.PocCount,
+		MissingPocs:          jsonStringSlice(row.MissingPocNames),
+		MissingPocCount:      row.MissingPocCount,
+		FingerprintBound:     row.FingerprintBound,
+		FingerprintRuleCount: row.FingerprintRuleCount,
+		IsGeneralPoc:         row.IsGeneralPoc,
+		State:                row.State,
+		Enabled:              row.Enabled,
+		ContentHash:          row.ContentHash,
+		Version:              row.Version,
+		UpdatedAt:            formatPocRuleTime(row.UpdatedAt),
+	}
 }
 
 func addWorkflowDict(c *gin.Context) {
@@ -253,6 +342,11 @@ func saveFingerprint(data map[string][]string, arsenal *db.Arsenal) error {
 }
 
 func getFingerprintDict(c *gin.Context) {
+	if c.Query("lite") == "1" || c.Query("page") != "" || c.Query("page_size") != "" {
+		listFingerprintSummaries(c)
+		return
+	}
+
 	data, _, err := fetchAndParseFingerprint(currentTenantID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -267,6 +361,84 @@ func getFingerprintDict(c *gin.Context) {
 		})
 	}
 	c.JSON(http.StatusOK, results)
+}
+
+type fingerprintSummaryResponse struct {
+	Product   string   `json:"product"`
+	Rules     []string `json:"rules,omitempty"`
+	RuleCount int      `json:"rule_count"`
+	State     string   `json:"state"`
+	Enabled   bool     `json:"enabled"`
+	Version   int      `json:"version"`
+	UpdatedAt string   `json:"updated_at"`
+}
+
+func listFingerprintSummaries(c *gin.Context) {
+	tenantID := currentTenantID(c)
+	page, pageSize := parsePagination(c, 50, 200)
+	includeRules := c.Query("include_rules") == "1"
+
+	query := db.DB.Model(&db.FingerprintRule{}).Where("tenant_id = ?", tenantID)
+	if c.Query("all") != "1" {
+		query = query.Where("enabled = ?", true)
+	}
+	if q := strings.TrimSpace(c.Query("q")); q != "" {
+		query = query.Where("LOWER(product_name) LIKE ?", "%"+strings.ToLower(q)+"%")
+	}
+
+	type groupedFingerprint struct {
+		ProductName string
+		RuleCount   int
+		State       string
+		Enabled     bool
+		Version     int
+		UpdatedAt   time.Time
+	}
+	grouped := db.DB.Table("(?) as fp", query.Select("product_name, rule_expr, state, enabled, version, updated_at")).
+		Select("product_name, COUNT(*) AS rule_count, MAX(state) AS state, BOOL_OR(enabled) AS enabled, MAX(version) AS version, MAX(updated_at) AS updated_at").
+		Group("product_name")
+
+	var total int64
+	if err := db.DB.Table("(?) as grouped", grouped).Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	var rows []groupedFingerprint
+	if err := grouped.Order("product_name ASC").Limit(pageSize).Offset((page - 1) * pageSize).Scan(&rows).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	items := make([]fingerprintSummaryResponse, 0, len(rows))
+	for _, row := range rows {
+		item := fingerprintSummaryResponse{
+			Product:   row.ProductName,
+			RuleCount: row.RuleCount,
+			State:     row.State,
+			Enabled:   row.Enabled,
+			Version:   row.Version,
+			UpdatedAt: formatPocRuleTime(row.UpdatedAt),
+		}
+		if includeRules {
+			var rules []string
+			_ = query.Session(&gorm.Session{}).Where("product_name = ?", row.ProductName).Order("rule_expr ASC").Pluck("rule_expr", &rules).Error
+			item.Rules = rules
+		}
+		items = append(items, item)
+	}
+	c.JSON(http.StatusOK, pagedResponse(items, total, page, pageSize, currentRuleVersion()))
+}
+
+func jsonStringSlice(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return []string{}
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return []string{}
+	}
+	return out
 }
 
 func addFingerprintDict(c *gin.Context) {

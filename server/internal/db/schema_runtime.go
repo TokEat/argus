@@ -40,6 +40,7 @@ func schemaModels() []interface{} {
 		&FingerprintRule{},
 		&PocRule{},
 		&WorkflowRule{},
+		&WorkflowProductSummary{},
 		&DirRule{},
 		&ExploitRule{},
 		&ExploitAudit{},

@@ -297,6 +297,16 @@ declare namespace API {
     UpdatedAt: string;
   }
 
+  interface PagedResponse<T> {
+    items: T[];
+    total: number;
+    page: number;
+    page_size: number;
+    has_more: boolean;
+    rule_version?: string;
+    generated_at?: string;
+  }
+
   interface CopilotPendingAction {
     action_type: string;
     title: string;
@@ -467,9 +477,33 @@ declare namespace API {
     pocs: string[];
   }
 
+  interface WorkflowSummary extends WorkflowItem {
+    poc_count: number;
+    missing_pocs: string[];
+    missing_poc_count: number;
+    fingerprint_bound: boolean;
+    fingerprint_rule_count: number;
+    is_general_poc: boolean;
+    state: string;
+    enabled: boolean;
+    content_hash: string;
+    version: number;
+    updated_at: string;
+  }
+
   interface FingerprintItem {
     product: string;
     rules: string[];
+  }
+
+  interface FingerprintSummary {
+    product: string;
+    rules?: string[];
+    rule_count: number;
+    state: string;
+    enabled: boolean;
+    version: number;
+    updated_at: string;
   }
 
   interface DirItem {
