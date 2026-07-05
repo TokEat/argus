@@ -244,6 +244,18 @@ func FixProtocol(oldProtocol string) string {
 	if oldProtocol == "socks-proxy" {
 		return "socks5"
 	}
+	if oldProtocol == "apachemq" {
+		return "activemq"
+	}
+	if oldProtocol == "textui" {
+		return "dubbo"
+	}
+	if oldProtocol == "cassandra-native" {
+		return "cassandra"
+	}
+	if oldProtocol == "java-rmi" {
+		return "rmi"
+	}
 	if len(oldProtocol) > 4 {
 		if oldProtocol[:4] == "ssl/" {
 			return oldProtocol[4:] + "-ssl"

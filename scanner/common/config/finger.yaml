@@ -15112,6 +15112,7 @@ NETGEAR-JR6100:
   - 'body="金电网安安全隔离与信息交换系统" && body="jdwa/sysconf/oem"'
 RocketMQ:
   - title="RocketMQ"
+  - banner="RocketMQ"||banner="rocketmq"
 HP-DL380-G7:
   - 'banner="DL380-G7" || cert="DL380-G7"'
 ZyXEL-GS2210:
@@ -18079,3 +18080,90 @@ wdCP 云主机面板:
 
 龙软科技接口服务(西部):
 - body="接口正常2024"
+
+鸿运主动安全监控云平台:
+  - body="./open/webApi.html"
+
+ActiveMQ-OpenWire:
+  - protocol="activemq"||banner="ActiveMQ"
+
+Dubbo-Provider:
+  - protocol="dubbo"||banner="dubbo>"
+
+MQTT-Broker:
+  - protocol="mqtt"||port="1883"
+
+DNP3:
+  - protocol="dnp3"||banner="\x05\x64"
+
+S7-PLC:
+  - protocol="s7comm"||banner="Siemens S7"
+
+EtherNet-IP:
+  - protocol="enip"||banner="EtherNet-IP"
+
+ATG:
+  - protocol="atg"||banner="ATG"
+
+MELSEC-Q:
+  - protocol="melsec"||banner="MELSEC-Q"
+
+Omron-FINS:
+  - protocol="fins"||banner="Omron FINS"
+
+Red-Lion-Crimson:
+  - protocol="crimson"||banner="Red Lion Crimson"
+
+IEC-60870-5-104:
+  - protocol="iec104"||banner="IEC-60870-5-104"
+
+Zookeeper:
+  - protocol="zookeeper"||banner="zookeeper.version"
+
+ClickHouse-Native:
+  - protocol="clickhouse"||port="9000"&&banner="ClickHouse"
+
+CQL-Cassandra:
+  - protocol="cassandra"||banner="cassandra"
+
+HsqlDb:
+  - protocol="hsqldb"||banner="HSQLDB"
+
+LDAP-Server:
+  - protocol="ldap"||port="389"
+
+RMI-Registry:
+  - protocol="rmi"||banner="java-rmi"||port="1099"
+
+SVN-Server:
+  - protocol="svn"||banner="svnserve"
+
+Nacos-Raft:
+  - port="7848"&&banner="raft"
+
+MSMQ:
+  - port="1801"&&banner="MSMQ"
+
+SAP-NetWeaver-P4:
+  - port="50000"&&banner="NI_PING"
+
+Modbus:
+  - protocol="modbus"||banner="Modbus"
+
+PCWorx:
+  - protocol="pcworx"||banner="PCWorx"
+
+ProConOS:
+  - protocol="proconos"||banner="ProConOS"
+
+Codesys:
+  - protocol="codesys"||banner="Codesys"
+
+RabbitMQ-AMQP:
+  - protocol="amqp"||banner="RabbitMQ"||banner="AMQP"
+
+EPMD:
+  - protocol="epmd"||banner="epmd"
+
+Weblogic-T3:
+  - banner="t3 "||banner="HELO:"&&banner=".0.0.0"

@@ -94,7 +94,7 @@ Lucee-Default-Page:
     - CVE-2021-21307
     - lucee-stack-trace
     - lucee-xss
-Parallels H-Sphere:
+Parallels-H-Sphere:
   type:
     - root
   pocs:
@@ -735,12 +735,6 @@ ShardingSphere ElasticJob:
     - root
   pocs:
     - kingsoft-vgm-lfi
-AudioCodes:
-  type:
-    - root
-  pocs:
-    - CVE-2018-10093
-    - audiocodes-default-login
 FRP-Web:
   type:
     - root
@@ -949,11 +943,6 @@ ToolJet:
     - root
   pocs:
     - tooljet-default-login
-Symmetricom-SyncServer:
-  type:
-    - root
-  pocs:
-    - CVE-2022-40022
 ACTi-视频监控:
   type:
     - root
@@ -1090,11 +1079,6 @@ Emqx:
     - root
   pocs:
     - emqx-default-login
-Yaws:
-  type:
-    - root
-  pocs:
-    - CVE-2017-10974
 GitList:
   type:
     - root
@@ -2265,7 +2249,7 @@ Shibboleth-Identity-Provider:
     - root
   pocs:
     - CVE-2022-24129
-锐捷网络-EWEB网管系统:
+Ruijie-EWEB网管系统:
   type:
     - root
   pocs:
@@ -3149,7 +3133,7 @@ HORDE- Mail System:
     - CVE-2009-0932
     - horde-login-panel
     - horde-webmail-login
-Netsweeper:
+Netsweeper- product:
   type:
     - root
   pocs:
@@ -5004,12 +4988,6 @@ Zarafa-WebApp:
     - root
   pocs:
     - CVE-2019-7219
-CISCO-UCM:
-  type:
-    - root
-  pocs:
-    - CVE-2011-3315
-    - CVE-2013-5528
 Maian-Cart:
   type:
     - root
@@ -5103,13 +5081,6 @@ ShopXO电商系统:
     - root
   pocs:
     - CNVD-2021-15822
-weiphp:
-  type:
-    - root
-  pocs:
-    - CNVD-2020-68596
-    - CVE-2020-20300
-    - weiphp-panel
 Zyxel:
   type:
     - root
@@ -6407,7 +6378,6 @@ EHR系统:
     - dir-fallback
   pocs:
     - tongweb-ejb-rce-payload
-    - TongWeb-Rce
 springboot-heapdump:
   type:
     - root
@@ -6541,7 +6511,6 @@ vmware-SpringBoot-Framework:
     - root
   pocs:
     - tongweb-ejb-rce-payload
-    - tongweb-ejb-rce
 
 圣博润堡垒机:
   type:

