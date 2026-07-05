@@ -42,7 +42,7 @@ func MysqlConn(info *structs.HostInfo, user string, pass string) (flag bool, err
 	flag = false
 	Host, Port, Username, Password := info.Host, info.Ports, user, pass
 	dataSourceName := fmt.Sprintf("%v:%v@tcp(%v:%v)/mysql?charset=utf8&timeout=%v", Username, Password, Host, Port, time.Duration(6)*time.Second)
-	gologger.AuditTimeLogger("[Go] [MYSQL-Brute] start try %s", dataSourceName)
+	gologger.AuditTimeLogger("[Go] [MYSQL-Brute] start try %s:%s %s/%s", Host, Port, Username, maskPassword(Password))
 	db, err := sql.Open("mysql", dataSourceName)
 	if err == nil {
 		db.SetConnMaxLifetime(time.Duration(6) * time.Second)
@@ -91,9 +91,12 @@ func MysqlConn(info *structs.HostInfo, user string, pass string) (flag bool, err
 					msg += "     " + dbname + "\n"
 				}
 			}
+			if tables := dbTableListStr(db, "mysql"); tables != "" {
+				msg += "\nTables(sample): " + tables + "\n"
+			}
 			gologger.AuditLogger("[Go] [MYSQL-Brute] %s Result:\n%s", showData, msg)
 
-			info.Emit(ddout.OutputMessage{
+			emitOutput(info, ddout.OutputMessage{
 				Type:     "GoPoc",
 				IP:       "",
 				IPs:      nil,

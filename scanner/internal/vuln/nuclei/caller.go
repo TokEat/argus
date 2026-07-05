@@ -18,6 +18,7 @@ func Call(targetAndPocsName map[string][]string,
 	addResult func(result output.ResultEvent),
 	pocNameForSearch string,
 	noInteractsh bool,
+	wafBypassHeaders bool,
 	embedPocs embed.FS,
 	nucleiTemplate string,
 	excludeTags []string,
@@ -27,7 +28,7 @@ func Call(targetAndPocsName map[string][]string,
 	defer callMu.Unlock()
 
 	return callnuclei.CallNuclei(targetAndPocsName, httpProxy, addResult,
-		pocNameForSearch, noInteractsh, embedPocs, nucleiTemplate,
+		pocNameForSearch, noInteractsh, wafBypassHeaders, embedPocs, nucleiTemplate,
 		excludeTags, severities)
 }
 
@@ -38,6 +39,7 @@ func CallDebug(targetAndPocsName map[string][]string,
 	addResult func(result output.ResultEvent),
 	pocNameForSearch string,
 	noInteractsh bool,
+	wafBypassHeaders bool,
 	embedPocs embed.FS,
 	nucleiTemplate string,
 	excludeTags []string,
@@ -47,7 +49,6 @@ func CallDebug(targetAndPocsName map[string][]string,
 	defer callMu.Unlock()
 
 	return callnuclei.CallNucleiDebug(targetAndPocsName, httpProxy, addResult,
-		pocNameForSearch, noInteractsh, embedPocs, nucleiTemplate,
+		pocNameForSearch, noInteractsh, wafBypassHeaders, embedPocs, nucleiTemplate,
 		excludeTags, severities)
 }
-

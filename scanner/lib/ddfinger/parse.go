@@ -178,10 +178,14 @@ func getRuleData(rule string) structs.RuleData {
 	key := rule[start : pos-ti]
 
 	end := pos + 2
-	for i := pos + 2; i < len(rule)-1; i++ {
-		if rule[i] != 92 && rule[i+1] == 34 {
-			end = i + 2
-			break
+	if pos+2 < len(rule) && rule[pos+2] == 34 {
+		end = pos + 3
+	} else {
+		for i := pos + 2; i < len(rule)-1; i++ {
+			if rule[i] != 92 && rule[i+1] == 34 {
+				end = i + 2
+				break
+			}
 		}
 	}
 	value := rule[pos+2 : end-1]
@@ -260,7 +264,6 @@ func dataCheckInt(op int16, dataSource int, dataRule int) bool {
 	}
 	return false
 }
-
 
 func SingleCheck(finger structs.FingerPEntity, Protocol string, headerString string, body string,
 	Server string, Title string, Cert string, Port int, Path string, Hash string, IconHash string, StatusCode int,

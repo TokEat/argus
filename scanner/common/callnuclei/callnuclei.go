@@ -34,6 +34,7 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 	callBack func(result output.ResultEvent),
 	nameForSearch string,
 	NoInteractsh bool,
+	wafBypassHeaders bool,
 	fs embed.FS,
 	np string,
 	excludeTags []string,
@@ -60,7 +61,7 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 		return []output.ResultEvent{}
 	}
 
-	readConfig(options, TargetAndPocsName, proxy, nameForSearch, NoInteractsh, np, excludeTags)
+	readConfig(options, TargetAndPocsName, proxy, nameForSearch, NoInteractsh, wafBypassHeaders, np, excludeTags)
 	// configPath, _ := flagSet.GetConfigFilePath()
 
 	if options.ListDslSignatures {
@@ -135,6 +136,7 @@ func CallNucleiDebug(TargetAndPocsName map[string][]string,
 	callBack func(result output.ResultEvent),
 	nameForSearch string,
 	NoInteractsh bool,
+	wafBypassHeaders bool,
 	fs embed.FS,
 	np string,
 	excludeTags []string,
@@ -154,7 +156,7 @@ func CallNucleiDebug(TargetAndPocsName map[string][]string,
 		return []output.ResultEvent{}
 	}
 
-	readConfig(options, TargetAndPocsName, proxy, nameForSearch, NoInteractsh, np, excludeTags)
+	readConfig(options, TargetAndPocsName, proxy, nameForSearch, NoInteractsh, wafBypassHeaders, np, excludeTags)
 
 	// Enable MatcherStatus so WriteFailure fires for non-matching templates,
 	// giving us request/response data even when the POC doesn't match.
@@ -202,6 +204,7 @@ func readConfig(options *types.Options,
 	proxy string,
 	nameForSearch string,
 	NoInteractsh bool,
+	wafBypassHeaders bool,
 	np string,
 	excludeTags []string) {
 
@@ -438,7 +441,11 @@ func readConfig(options *types.Options,
 	options.ReportingConfig = ""
 
 	// 指定header、cookie，以header:value的方式（cli，文件）
-	options.CustomHeaders = nil
+	if wafBypassHeaders {
+		options.CustomHeaders = defaultWAFBypassHeaders()
+	} else {
+		options.CustomHeaders = nil
+	}
 
 	// 通过key=value指定var值
 	options.Vars = goflags.RuntimeMap{}
@@ -665,6 +672,17 @@ func readConfig(options *types.Options,
 	gologger.DefaultLogger.SetTimestamp(options.Timestamp, levels.LevelDebug)
 
 	cleanupOldResumeFiles()
+}
+
+func defaultWAFBypassHeaders() []string {
+	return []string{
+		"X-Forwarded-For: 127.0.0.1",
+		"X-Real-IP: 127.0.0.1",
+		"X-Originating-IP: 127.0.0.1",
+		"Client-IP: 127.0.0.1",
+		"X-Client-IP: 127.0.0.1",
+		"X-Remote-IP: 127.0.0.1",
+	}
 }
 
 // cleanupOldResumeFiles cleans up resume files older than 10 days.

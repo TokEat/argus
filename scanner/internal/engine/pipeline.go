@@ -17,21 +17,16 @@ import (
 	"dddd/scanner/internal/scanner/web"
 	"dddd/scanner/internal/uncover"
 	gopoc "dddd/scanner/internal/vuln/gopoc"
-	"dddd/scanner/internal/vuln/mapper"
-	"dddd/scanner/internal/vuln/nuclei"
 	"dddd/scanner/structs"
 	"dddd/scanner/utils"
 	"embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/logrusorgru/aurora"
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/httpx"
-	nucleiOutput "github.com/projectdiscovery/nuclei/v3/pkg/output"
 )
 
 // Pipeline 扫描流水线编排器。
@@ -280,24 +275,8 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	// 模糊搜索 Poc
 	if cfg.PocNameForSearch != "" {
 		gologger.AuditTimeLogger("模糊搜索Poc: %v", cfg.PocNameForSearch)
-		TargetAndPocsName := make(map[string][]string)
-		for _, url := range aliveURLs {
-			TargetAndPocsName[url] = []string{}
-		}
-		if enableLocalReports {
-			output.InitReportName()
-		}
-		addResult, _ := buildNucleiResultHandler(ctx, enableLocalReports)
-		nuclei.Call(TargetAndPocsName,
-			cfg.HTTPProxy,
-			addResult,
-			cfg.PocNameForSearch,
-			cfg.NoInteractsh,
-			currentPipelineEmbedPocs(ctx), cfg.NucleiTemplate, strings.Split(cfg.ExcludeTags, ","),
-			strings.Split(cfg.Severities, ","))
-		if enableLocalReports {
-			output.GenerateHTMLReportFooter()
-			output.GenerateAssetReport(cfg.OutputFile)
+		if _, err := runPocSearch(ctx, &cfg, aliveURLs, enableLocalReports); err != nil {
+			return err
 		}
 		if err := checkPipelineCancelled(ctx); err != nil {
 			return err
@@ -369,26 +348,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		output.InitReportName()
 	}
 
-	var nucleiResults []nucleiOutput.ResultEvent
-	TargetAndPocsName, count := mapper.GetPocs(resultMap, currentPipelineWorkflowDB(ctx), cfg.DisableGeneralPoc)
-	gologger.Info().Msgf("[Pipeline] Nuclei 映射结果: targets=%d pocs=%d template_path=%s", len(TargetAndPocsName), count, cfg.NucleiTemplate)
-	for target, pocs := range TargetAndPocsName {
-		gologger.Info().Msgf("[Pipeline]   %s → %v", target, pocs)
-	}
-	if count > 0 {
-		emitPhase(ctx, PhaseNuclei, "start", fmt.Sprintf("%d pocs", count))
-		addResult, collector := buildNucleiResultHandler(ctx, enableLocalReports)
-		nucleiResults = nuclei.Call(TargetAndPocsName,
-			cfg.HTTPProxy,
-			addResult,
-			"", cfg.NoInteractsh, currentPipelineEmbedPocs(ctx),
-			cfg.NucleiTemplate, strings.Split(cfg.ExcludeTags, ","),
-			strings.Split(cfg.Severities, ","))
-		// 合并：nuclei.Call 返回的结果（CLI 模式） + 回调收集的结果（Agent 模式）
-		if collected := collector.snapshot(); len(collected) > 0 {
-			nucleiResults = append(nucleiResults, collected...)
-		}
-		emitPhase(ctx, PhaseNuclei, "end", "")
+	nucleiResults, err := runNucleiPhase(ctx, &cfg, resultMap, enableLocalReports, emit)
+	if err != nil {
+		return err
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
@@ -536,55 +498,6 @@ func currentUncoverConfig(ctx *ScanContext) uncover.Config {
 		OnlyIPPort:                 cfg.OnlyIPPort,
 		AllowCDNAssets:             cfg.AllowCDNAssets,
 	}
-}
-
-// nucleiResultCollector 在 Nuclei 回调中同步收集结果副本。
-// Agent 模式下 OutputHook 会把结果推给 gRPC，但 GoPoc 引擎需要
-// 本地拿到这些结果来触发联动任务（如 Shiro-Key-Crack）。
-type nucleiResultCollector struct {
-	mu      sync.Mutex
-	results []nucleiOutput.ResultEvent
-}
-
-func (c *nucleiResultCollector) add(result nucleiOutput.ResultEvent) {
-	c.mu.Lock()
-	c.results = append(c.results, result)
-	c.mu.Unlock()
-}
-
-func (c *nucleiResultCollector) snapshot() []nucleiOutput.ResultEvent {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]nucleiOutput.ResultEvent(nil), c.results...)
-}
-
-func buildNucleiResultHandler(ctx *ScanContext, enableLocalReports bool) (func(result nucleiOutput.ResultEvent), *nucleiResultCollector) {
-	collector := &nucleiResultCollector{}
-
-	if enableLocalReports || ctx == nil || ctx.OutputHook == nil {
-		return func(result nucleiOutput.ResultEvent) {
-			output.AddResultByResultEvent(result)
-			collector.add(result)
-		}, collector
-	}
-
-	return func(result nucleiOutput.ResultEvent) {
-		payload, err := json.Marshal(result)
-		if err != nil {
-			return
-		}
-		show := fmt.Sprintf("[%s] [%s] %v",
-			result.TemplateID,
-			result.Info.SeverityHolder.Severity.String(),
-			result.Matched,
-		)
-		ctx.OutputHook(OutputMessage{
-			Type:   "Nuclei",
-			Nuclei: string(payload),
-			Show:   show,
-		})
-		collector.add(result)
-	}, collector
 }
 
 func newPipelineUncoverState(ctx *ScanContext) (*uncover.State, func()) {

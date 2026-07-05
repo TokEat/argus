@@ -1,0 +1,23 @@
+id: etcd-unauth
+
+info:
+  name: etcd-unauth
+  author: test
+  severity: high
+  description: 尝试获取高权限key
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/v2/keys"
+    
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "modifiedIndex"
+          - "key"
+        condition: and

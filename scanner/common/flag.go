@@ -59,6 +59,8 @@ dddd.version: %s
 
 var TargetString string
 var PortString string
+var disableWAFBypassHeaders bool
+var disableWAFSkipOnManyFingerprints bool
 
 //go:embed config/dir.yaml
 var EmbedDirDBData string
@@ -707,6 +709,9 @@ func Flag() {
 		flagSet.IntVarP(&structs.GlobalConfig.GoPocThreads, "golang-poc-threads", "gpt", 50, "GoPoc运行线程"),
 		flagSet.BoolVarP(&structs.GlobalConfig.GolangPoc, "golang-poc", "gp", false, "开启弱口令/Golang Poc探测"),
 		flagSet.BoolVarP(&structs.GlobalConfig.DisableGeneralPoc, "disable-general-poc", "dgp", false, "禁用无视指纹的漏洞映射"),
+		flagSet.BoolVar(&structs.GlobalConfig.WAFBypassHeaders, "waf-bypass-headers", true, "启用WAF绕过请求头，默认开启"),
+		flagSet.BoolVar(&disableWAFBypassHeaders, "no-waf-bypass-headers", false, "关闭默认WAF绕过请求头"),
+		flagSet.BoolVar(&disableWAFSkipOnManyFingerprints, "no-waf-skip-many-fingerprints", false, "关闭多指纹目标跳过POC映射，默认开启"),
 		flagSet.StringVarP(&structs.GlobalConfig.ExcludeTags, "exclude-tags", "et", "", "通过tags排除模版 | 多个tags请用,连接"),
 		flagSet.StringVarP(&structs.GlobalConfig.Severities, "severity", "s", "", "只允许指定严重程度的模板运行 | 多参数用,连接 | 允许的值: "+strings.ReplaceAll(severity.GetSupportedSeverities().String(), " ", "")),
 	)
@@ -735,6 +740,12 @@ func Flag() {
 	)
 
 	_ = flagSet.Parse()
+	if disableWAFBypassHeaders {
+		structs.GlobalConfig.WAFBypassHeaders = false
+	}
+	if disableWAFSkipOnManyFingerprints {
+		structs.GlobalConfig.WAFSkipOnManyFingerprints = false
+	}
 
 	prepare()
 	flagAudit()
@@ -781,6 +792,8 @@ func flagAudit() {
 	gologger.AuditLogger("PocNameForSearch: %v", structs.GlobalConfig.PocNameForSearch)
 	gologger.AuditLogger("NoPoc: %v", structs.GlobalConfig.NoPoc)
 	gologger.AuditLogger("NoInteractsh: %v", structs.GlobalConfig.NoInteractsh)
+	gologger.AuditLogger("WAFBypassHeaders: %v", structs.GlobalConfig.WAFBypassHeaders)
+	gologger.AuditLogger("WAFSkipOnManyFingerprints: %v", structs.GlobalConfig.WAFSkipOnManyFingerprints)
 	gologger.AuditLogger("Audit: %v", gologger.Audit)
 	gologger.AuditLogger("AuditLogFileName: %v", gologger.AuditLogFileName)
 	gologger.AuditLogger("GetBannerTimeout: %v", structs.GlobalConfig.GetBannerTimeout)
@@ -794,4 +807,4 @@ func flagAudit() {
 
 }
 
-var PortTOP100 = "21,22,23,25,53,69,80,81,88,110,111,135,137,139,143,161,179,389,443,445,465,500,514,548,554,587,636,873,993,995,1025,1080,1099,1194,1433,1521,1723,1900,2049,2082,2083,2121,2181,2222,2375,2601,3000,3128,3306,3389,3690,4443,4848,5000,5432,5555,5601,5632,5800,5900,5901,5984,5985,6000,6379,7001,7002,7080,8000,8001,8008,8009,8080,8081,8088,8089,8090,8161,8443,8848,8888,9000,9001,9043,9090,9091,9200,9300,9418,10000,11211,27017,27018,50000,50070"
+var PortTOP100 = "21,22,23,25,53,69,80,81,88,110,111,135,137,139,143,161,179,389,443,445,465,500,514,548,554,587,636,873,993,995,1025,1080,1099,1194,1433,1521,1723,1900,2049,2082,2083,2121,2181,2222,2375,2601,3000,3128,3306,3389,3690,4443,4848,5000,5236,5432,5555,5601,5632,5800,5900,5901,5984,5985,6000,6379,7001,7002,7080,8000,8001,8008,8009,8080,8081,8088,8089,8090,8161,8443,8848,8888,9000,9001,9043,9090,9091,9200,9300,9418,10000,11211,27017,27018,50000,50070,54321"

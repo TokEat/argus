@@ -3,12 +3,14 @@ module dddd
 go 1.25.4
 
 require (
+	gitee.com/chunanyong/dm v1.8.23
 	github.com/denisenkom/go-mssqldb v0.12.3
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/hirochachacha/go-smb2 v1.1.0
 	github.com/jlaffaye/ftp v0.2.0
 	github.com/lib/pq v1.10.9
+	github.com/mitchellh/go-vnc v0.0.0-20150629162542-723ed9867aed
 	github.com/projectdiscovery/dnsx v1.1.6
 	github.com/projectdiscovery/gologger v1.1.12
 	github.com/satori/go.uuid v1.2.0
@@ -216,7 +218,6 @@ require (
 	github.com/zmap/rc2 v0.0.0-20190804163417-abaa70531248 // indirect
 	github.com/zmap/zcrypto v0.0.0-20231106212110-94c8f62efae4 // indirect
 	github.com/zmap/zgrab2 v0.1.8-0.20230806160807-97ba87c0e706 // indirect
-	go.starlark.net v0.0.0-20260326113308-fadfc96def35 // indirect
 	go.uber.org/zap v1.25.0 // indirect
 	goftp.io/server/v2 v2.0.1 // indirect
 	golang.org/x/arch v0.3.0 // indirect

@@ -1,0 +1,22 @@
+id: tongweb-console-detect
+
+info:
+  name: 东方通 TongWeb 控制台暴露
+  author: dddd
+  severity: medium
+  description: |
+    东方通 TongWeb 应用服务器管理控制台暴露在 /console/ 路径。
+    管理控制台在公网暴露易导致弱口令爆破、未授权访问等安全风险。
+    本模板仅做存在性确认。
+  tags: tongweb,console,exposure
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/console/"
+
+    matchers-condition: and
+    matchers:
+      - type: dsl
+        dsl:
+          - 'status_code == 200 && contains(body, "<title>TongWeb</title>")'

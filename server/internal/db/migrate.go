@@ -142,7 +142,7 @@ func loadMigrations() ([]migrationFile, error) {
 			return nil, err
 		}
 
-		path := filepath.Join("migrations", entry.Name())
+		path := "migrations/" + entry.Name()
 		content, err := migrationFS.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("read migration %s failed: %w", entry.Name(), err)
@@ -229,7 +229,7 @@ func splitSQLStatements(sql string) []string {
 	var stmts []string
 	var current strings.Builder
 	inSingleQuote := false
-	dollarTag := ""     // active dollar-quote tag (e.g. "$$" or "$func$")
+	dollarTag := "" // active dollar-quote tag (e.g. "$$" or "$func$")
 	inDollarQuote := false
 
 	runes := []rune(sql)

@@ -10,6 +10,9 @@ password
 qwerty
 1q2w3e4r
 1qaz2wsx
+1qaz@WSX
+!QAZ2wsx
+!QAZ@WSX
 qazwsx
 123qwe
 123qaz

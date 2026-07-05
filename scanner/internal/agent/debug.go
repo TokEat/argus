@@ -238,7 +238,7 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 			Response:   respData,
 			Extracted:  result.ExtractedResults,
 		})
-	}, "", true, common.EmbedNucleiPocs, tmpDir, nil, nil)
+	}, "", true, true, common.EmbedNucleiPocs, tmpDir, nil, nil)
 
 	close(done)
 	if !completeSent.Load() {

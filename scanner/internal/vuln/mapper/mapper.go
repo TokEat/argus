@@ -11,8 +11,10 @@ import (
 	"github.com/projectdiscovery/gologger"
 )
 
+const wafFingerprintSkipThreshold = 10
+
 // GetPocs 根据指纹匹配工作流，返回目标→PoC名称映射。
-func GetPocs(resultMap map[string][]string, workFlowDB map[string]structs.WorkFlowEntity, disableGeneralPoc bool) (map[string][]string, int) {
+func GetPocs(resultMap map[string][]string, workFlowDB map[string]structs.WorkFlowEntity, disableGeneralPoc bool, wafSkipOnManyFingerprints bool) (map[string][]string, int) {
 	gologger.AuditTimeLogger("根据指纹选择Poc")
 
 	result := make(map[string][]string)
@@ -28,6 +30,10 @@ func GetPocs(resultMap map[string][]string, workFlowDB map[string]structs.WorkFl
 	}
 
 	for target, fingerprints := range resultMap {
+		if wafSkipOnManyFingerprints && len(fingerprints) > wafFingerprintSkipThreshold {
+			gologger.AuditTimeLogger("[WAF] %s 指纹过多(%d) → 疑似蜜罐/WAF，跳过POC扫描", target, len(fingerprints))
+			continue
+		}
 		gologger.AuditLogger("%s", target+":")
 		for _, finger := range fingerprints {
 			workflowEntity, ok := workFlowDB[finger]

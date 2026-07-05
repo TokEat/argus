@@ -76,6 +76,8 @@ type Config struct {
 	DirSearchYaml              string
 	GolangPoc                  bool
 	DisableGeneralPoc          bool
+	WAFBypassHeaders           bool
+	WAFSkipOnManyFingerprints  bool
 	NucleiTemplate             string
 	ExcludeTags                string
 	Severities                 string

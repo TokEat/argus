@@ -16235,3 +16235,1847 @@ springboot-heapdump:
   - 'body="/ParentsFunction/GetBGValidateCodeL"'
 东方通:
   - 'header="TongWeb Server" || banner="Server: TongWeb Server"'
+1039soft-JiaXiao:
+- body="/handler/validatecode.ashx?id="
+
+17mail:
+- body="//易企邮正式版发布"
+
+1caitong:
+- body="/custom/groupnewslist.aspx?groupid="
+
+21grid:
+- body="技术支持：网格（福建）智能科技有限公司"
+
+263-Enterprise-Mailbox:
+- body="net263.wm.custom_login.homepage_init"
+- body="/custom_login/js/net263_wm_util.js"
+
+263-HRM:
+- body="net263.hrm.custom_login.homepage_init<p align=\"center\">请使用263em登陆!</p>"
+
+263-Meeting:
+- body="<frame src=\"/jsp/conference/meetinglist.jsp\" name=\"mainframe\"/>" && body="263电话会议"
+
+30san-Email:
+- body="30san.all rights reserved.</div>"
+
+315soft-FileSystem:
+- body=">多可电子档案管理系统</div"
+
+35Mail:
+- body="switchingserverpopup" && body="images/mail/35pushmail.app.png" && body="class=\"user_define_img_btn6\"
+  href=\"http://help.mail.35.com/mailman/81.html"
+
+35企业邮箱系统:
+- icon_hash="1676919780"
+
+3dusoft-eSalerSalesSystem:
+- body="青岛叁度信息技术有限公司"
+
+53BK数字报刊系统:
+- body="/Comja/"
+
+5iKQ:
+- body="content=\"我爱考勤云平台"
+- body="我爱考勤云平台</span>"
+
+5k-CRM:
+- body="/public/js/5kcrm.js"
+
+78 OA:
+- body="password" && body="/resource/javascript/system/runtime.min.js"
+
+8cms:
+- body="http://www.itf4.cn" && body="liangjing.org" && body="/tpl/templets"
+
+ADT-IAM:
+- body="content=\"tpn,vpn,内网安全,内网控制,主机防护\""
+
+AJ-Report:
+- title="AJ-Report"
+
+AMH 云主机面板:
+- icon_hash="1822002133"
+
+AMPLESKY-Company's-product:
+- body="var fullmessage = \"天地阳光通信科技（北京）有限公司"
+
+AVCON-系统管理平台:
+- title="AVCON-系统管理平台"
+
+AWS OA(待审):
+- body="apps/_bpm.portal/js/client.login.js"
+
+AceNet 驰崴防火墙:
+- body="Technology" && body="login_commit.php"
+
+Acooly Boss(华东):
+- body="acooly.admin.js"
+
+AfterLogicWebMail系统:
+- icon_hash="-194791768"
+
+Aisino-Telecom:
+- body="<font class=\"bottomfont\">航天信息股份有限公司 电信行业版"
+
+Alcatel_Lucent-Enterprise-gateway:
+- body="欢迎登陆alcatel-lucent企业网关<p></p>请输入用户名和密码，3次出错将被锁定<p>" && body="alcatel-lucent"
+
+Aliyun-RDS:
+- body="class=\"legend\">rds管理系统</div>"
+
+AnyReport报表(北京):
+- body="/anyrt/js"
+
+Apereo-CAS(学校类):
+- body="/cas/file/ico/webFavicon.ico"
+
+BaiShiJia-CMS:
+- body="/resource/images/cms.ico"
+
+Baiding-OA:
+- body="onload=\"javascript:form1.txtusername.focus"
+
+BangYong-PM2:
+- body="pm2项目管理系统bs版增强工具.zip" || body="accid=1001"
+
+BeeS-CMS:
+- body="powerd by beescms"
+- body="/default/images/search_btn.gif"
+
+Bicesoft-Super-Custom-Survey-Voting-System:
+- body="href=\"images/bicesoft.css\"" && body="佰思超强自定义问卷调查系统(bicesoft.com"
+
+Bonobo Git Server:
+- icon_hash="-219625874"
+
+BuildingEasyTM:
+- body="/PortalLTE/Images/favicon.ico"
+
+CAS 单点登录:
+- body="Central Authentication Service" && body="cas/login"
+
+CRMEB开源商城:
+- icon_hash="-847565074"
+
+Campuswit:
+- body="campuswit"
+
+Cisco SSLVPN:
+- body="/+CSCOE+/logon.html"
+
+Citrix 虚拟桌面:
+- icon_hash="-1272756243"
+
+Crhms-Medical-Insurance-Review-System:
+- body="url, \"中公网医疗信息管理系统\", option"
+
+Crow-Force-portal-CMS:
+- body="中企动力提供技术支持"
+
+Dahua Storm (IP Camera):
+- icon_hash="2019488876"
+
+Dalart(西部):
+- title="Datart"||body="this.webpack.Jsonpdatart"
+
+DiAn-Diagnostics:
+- body="浙江迪安诊断技术股份有限公司" && body="/resources/pages/img/logo.svg"
+
+Dify:
+- (body="https://marketplace.dify.ai/api/v1" && body="Dify") || title="Dify"
+
+Docker-Registry:
+- header="X-Docker-Registry-Version"||body="repositories"
+- header="Docker-Distribution-Api" || banner="Docker-Distribution-Api"
+
+Docker-api:
+- (port="2375" || port="2376") || (body="docker" && body="ApiVersion") || (body="Command"
+  && body="ImageID")
+
+Dpanel(华东):
+- icon_hash="18602826" || icon_hash="393547605"||title="DPanel - Docker 管理面板"
+
+Dreamer CMS:
+- header="dreamer-"
+- icon_hash="-748565678"
+
+E-Smart关务管理系统:
+- body="/Content/images/login/darkblue/aeologo.png"||body="E-Smart关务管理系统"
+
+E-Tiller:
+- body="北京勤云" && body="reader/view_abstract.aspx"
+
+EAM资产管理(华东):
+- body="/Content/fonts-open-sans.css"
+
+EDOC2文档云(深圳):
+- icon_hash="796306754"||body="/CustomCcc/MenuCss" || body="/api/currentuser/changelanguage" || body="/scripts/org/plugins/tooltip/simpletooltip.css"
+
+ENESYS:
+- body="dwr/interface/WebContextUtil.js"
+
+EOVA(RCE):
+- icon_hash="-1699356011"
+
+EWOmail邮件系统(北北京):
+- app="EwoMail-邮件系统"
+
+Edoc2(rce):
+- body="500内部服务器错误!"
+
+Electronic-evidence-management-system:
+- body="媒体数据管理系统" && body="深圳警翼数码科技有限公司"
+
+Elib 图书馆集群管理系统:
+- icon_hash="478149598"
+
+EnjoySCM 供应链管理系统:
+- body="供应商网上服务厅"
+
+Everlab-Catalog:
+- body="Everlab-Catalog"
+
+FE业务协作平台:
+- icon_hash="-391577146"
+
+GROWATT 系统:
+- body="v3/js/odm/odm.js" && body="login"
+
+H3C iMC智能管理中心(西部):
+- (header="iam.Flash.RENDERMAP.TOKEN" && header="/imc")||title="H3C IMC"||body="iMC来宾接入自主管理系统"||body="/imc/javax.faces.resource/"||body="/selfservice/javax.faces.resource/"||body="/imc/login.jsf"
+
+H3C-安全产品管理平台(路由器):
+- body="/wnm/ssl/web/frame/login.html"
+
+H3C/安博通/任子行/OEM系列安全产品:
+- body="webui/js/jquerylib/jquery-1.7.2.min.js"
+
+IBOS酷办公OA系统:
+- body="IBOS" && body="loginsubmit"
+
+IP_Guard Web服务(华东):
+- body="IP-guard"
+
+IP网络广播服务平台:
+- body="/static/css/app.00c2ff9b4629c8653b3422497164c4fe.css"
+- icon_hash="-568806419"
+
+ITC-CMS:
+- body="/mt_res_v3/js/common/common.js" && body="<title>CMS"
+
+InsightHR(北京):
+- title="insight-HR"||body="ciic.js"
+
+JEPaaS:
+- body="/static/ux/editor/ueditor1_4_3/ueditor.JEconfig.js" || body="/static/ux/babel-polyfill/polyfill.min.js"
+  || body="/saas/saasYhAction!sendRandom.action"
+
+JEPaaS低代码平台(北京):
+- body="/static/ux/babel-polyfill/polyfill.min.js"
+
+JEPaas云平台(西部):
+- title="JEPaaS云平台"||body="/static/ux/tool/resources/css/e-all.css"
+
+JSP:
+- path=".jsp"
+- header="jsp" || header="Servlet" || header="JBoss" || header="JSESSIONID" || banner="jsp"
+  || banner="Servlet" || banner="JBoss" || banner="JSESSIONID"
+
+JetLinks物联网基础平台(北北京):
+- title="Jetlinks"
+
+Jfinal:
+- body="/pub/verify"
+
+JieLink+智能终端操作平台:
+- body="JieLink<sup>+</sup>"
+- body="JieLink+智能终端操作平台"
+
+J博士投资管理系统(北北京):
+- body="re sorry but jbs" || title="J博士投管系统"
+
+KVM_创梦云计算管理系统:
+- body="<title>KVM_创梦云计算管理系统</title>"
+
+Learun-agile development framework system platform:
+- body="content=\"力软敏捷开发框架，是一个Web可视化开发平台"
+
+Let me-CRM(任我行CRM):
+- body="/Resources/imgs/defaultannex/loginpictures/" || title=="欢迎使用任我行CRM" || body="/Handlers/IdentifyingCode.ashx"
+
+Letta平台AI代理框架:
+- title="Letta" || body="Letta Platform" || header="X-Letta-Version"
+
+LiveBOS(深圳):
+- body="Power by LiveBOS"
+
+M2O融媒体系统(北北京):
+- title="M2O融合媒体综合运营平台"
+
+MOC融媒体:
+- title="索贝融媒体"||body="/Sc-TaskMonitoring/"||body="UserIndex/favicon.ico"||title="融媒办公生产平台"||body="/etc/nginx/conf.d/_config.js"
+
+MapGIS Server Manager:
+- icon_hash="-252149748"
+
+MobileIron(Log4j):
+- 'title="MobileIron User Portal: Sign In"'
+
+NUUO 摄像头:
+- body="Network Video Recorder Login"
+
+NVS3000综合视频监控平台:
+- body="NVS3000综合" && body="login" && body="视频监控"
+
+Nnetgear路由器:
+- body="NETGEAR"
+
+O2OA协同办公(北北京):
+- app="兰德网络-O2OA"||body="/o2_core/o2.min.js"
+
+OpsManage(华东):
+- title="OpsManage"
+
+Oracle-JAVA:
+- 'header="Set-Cookie: JSESSIONID" || banner="Set-Cookie: JSESSIONID" || body="<h2>Struts
+  Problem Report</h2>" || body="There is no Action mapped for namespace" || body="No
+  result defined for action and result input" || header="X-Powered-By: Servlet" ||
+  banner="X-Powered-By: Servlet" || (header="JBoss" && header="X-Powered-By" && header!="Router")
+  || (banner="JBoss" && banner="X-Powered-By" && banner!="Router") || body="index.jsp"
+  || (header!="360 web server" && header!="Docker" && header="jsp" && header="X-Powered-By")
+  || (banner!="360 web server" && banner!="Docker" && banner="jsp" && banner="X-Powered-By")'
+
+Oracle-PeopleSoft(西部):
+- header="caompus-temp-PORTAL-PSJSESSIONID"||body="URL=../psp/SHCOCP1D/?cmd=login"||body="<title>Oracle
+  PeopleSoft"||body="PeopleSoft</span>"
+
+PB-CMS:
+- body="Powered by <a href=\"https://www.puboot.com\""
+
+PIMCenter(北京):
+- title="PIMCenter"||body="/ezViewer/src/comjs/eZCommon.js"
+
+Panabit-SMB上网行为管理(华东):
+- body="login/userverify.cgi"
+
+Pear-Admin-Boot:
+- body="明 湖 区 最 具 影 响 力 的 设 计 规 范 之 一"
+
+Pkpmbs建设工程质量监督系统:
+- body="/Content/Theme/Standard/"
+
+RegentApi_v2.0:
+- body="RegentApi_v2.0"
+
+SCCS系统:
+- icon_hash="908040328"
+
+SDCMS神盾内容管理系统:
+- body="sdcms" && body="login"
+
+SPON IP网络对讲广播系统:
+- body="spon_base64.js" && body="login"
+
+SmartBI(北北京):
+- body="smartbiVersion" || body="smartbi.gcf.gcfutil" || body="css/bof_merge.css.jsp"
+  || icon_hash="-1266146019"
+
+SmartBI(西部):
+- body="smartbiVersion" || body="smartbi.gcf.gcfutil" || body="css/bof_merge.css.jsp"
+  || icon_hash="-1266146019"
+
+SmartPiEMS智慧能源物联网管控平台:
+- icon_hash="-1535619494"
+
+SmartX超融合(西部):
+- icon="6cd621a08e5c7e8f4e6e3d913e9e7aa1"||body="babel-regenerator-runtime.js"||title="SmartX
+  Account Center"||title="SmartX 用户中心"||title="SMTX Web"
+
+Solar 网络管理系统:
+- icon_hash="-1871496583"
+
+Tduck填鸭表单(华东):
+- icon_hash="-824005476"
+
+Teleport 堡垒机:
+- body="Teleport" && body="teleport.js" && body="login-account"
+
+Teleport堡垒机(北北京):
+- body="/static/js/teleport.js"
+
+ThinkiveCMS(华东):
+- title="ThinkiveCMS" || body="/admin/styles/cms.css"
+
+Tornal接口文档管理平台(西部):
+- title="Torna"||icon_hash="707763823"
+
+Truecms(华东):
+- body="TrueCMS/js"
+
+UCML应用框架平台系统:
+- body="8A36E83E"
+
+UcSTAR在线客服:
+- title="UcSTAR管理控制台"
+
+V2 Conference 视频会议系统:
+- body="window.location.href=\"/Conf/index.jsp\""
+
+VA 虚拟应用管理平台:
+- body="Res/Images/logo_va.png" && body="panel_login"
+
+WIFISKY-7层流控路由器:
+- body="WIFISKY" && body="adminusr" && body="深圳市领空技术"
+
+WPS-KSOPS:
+- body="no route find for\/"
+
+WSO2API Manager:
+- body="WSO2 API Manager"
+
+WVP视频平台(西部):
+- body="WVP适配平台"||body="国标28181"||(body="jessibuca.js"&&body="EasyWasmPlayer.js"&&body="ZLMRTCClient.js"&&body="config.js")
+
+Webone-WTS劳动力管理套件(华南):
+- title="Webone-WTS劳动力管理套件"
+
+Winmail邮件系统(北北京):
+- body="index_winmail_new.gif"
+
+WiseGrid慧敏应用交付网关:
+- icon_hash="910523681"
+
+any800客服系统:
+- body="any800/echatManager.do"
+
+avcon 网络视频会议系统:
+- title="avcon 网络视频会议系统"
+
+bamboocloud-BIM:
+- body="bim 开发配置与运维控制台"
+
+beyeon-IOT:
+- body="版权所有:郑州蓝视科技有限公司"
+
+bjca:
+- body="<li><a href=\"/install/certapp_bd.exe\">下载证书应用环境</a></li>"
+
+cmstuan:
+- body="开源团主机管理系统"
+
+dm:
+- protocol="dm" || port="5236"
+
+e-cology 运维管理平台:
+- icon_hash="-384583337"
+
+epoint政务服务系统:
+- body="epoint-web-zwdt"
+
+etcd:
+- body="modifiedIndex" && body="key"
+
+e慧签(华东):
+- body="e慧签"
+
+e签宝(深圳):
+- body="/main-login-web"
+
+iDS联网数字标牌管理系统:
+- title="iDS联网数字标牌管理系统"
+
+iDste融合系统支撑平台:
+- title="iDste融合系统支撑平台"
+
+jQuery:
+- body="jquery"
+
+java110智慧小区管理系统(西部):
+- body="vcFramework.js"&&body="/pages/property/propertyIndex"
+
+jxstar软件云开发平台(北京):
+- body="public/core/JxUtil.js"||body="jxstar"
+
+kingbase:
+- protocol="kingbase" || port="54321"
+
+kisso组件(华南):
+- icon_hash="-478006860"
+
+likeadmin:
+- icon_hash=="281852410"
+
+lilishop商城(北京):
+- title="lilishop"||body="re sorry but lilishop"
+
+magic-api(华南):
+- body="magic-loading-container" && body="By magic-api"
+
+mall-seller商家管理系统(华南):
+- body="/seller/system/verifyCode"
+
+noVNC 远程访问:
+- body="noVNC" && body="<span>no</span>" && body="host"
+
+office-365(待审):
+- body="请输入furl参数"
+
+onair媒体云(北京):
+- icon_hash="472788810"||body="mc_title"
+
+slack-instance:
+- icon_hash="99395752"
+
+viewstate:
+- body="__VIEWSTATE"
+
+vmware-SpringBoot-Framework:
+- body="\"status\":404,\"error\":\"Not Found\"" && body="timestamp"
+- server="SpringBoot"
+- body="Whitelabel Error Page"
+- status="500" && body="\"status\":999"
+- icon_hash="116323821"
+
+wdCP 云主机面板:
+- icon_hash="1786752597"
+
+一采通:
+- body="office/login"&&body="Supplier/ForeSupplier/GetLoginInfo"
+
+一采通2:
+- body="Comm/GetScript.aspx"
+
+万鹏CMS(华东):
+- body="js/zmkm.js"
+
+三一谦成车辆管理系统(北京):
+- title="欢迎光临..."||body="gps-web"
+
+上海汇尼信息科技有限公司营业厅收费系统:
+- title="营业收费综合管理平台"
+
+上海鹏达计算机系统开发有限公司学分制系统:
+- icon_hash="-1632820573"
+
+世纪信通:
+- body="theme/BlueCharm/" || body="广东世纪信通网络科技有限公司"
+
+东华医疗协同办公系统:
+- body="extcomponent/security/login.jsp" && body="login_dhc"
+- body="东华医疗协同办公系统" || body="/skin/charmBlue/css/dialog.css"
+
+东宝DHG数字人才系统(北北京):
+- icon_hash="-1800218022"
+
+东宝软件-DHG数字化人才治理系统(深圳):
+- title="DHG系统登录" && body="\/init\/runUpdata"
+
+东方通-Console:
+- path="/console/" && status="200" && title=="TongWeb"
+
+东方通-EJB:
+- path="/ejbserver/ejb" && status="200" && body==""
+
+东胜物流软件:
+- body="js/dhtmlxcombo_whp.js" && body="login.aspx"
+- body="TruckMng/Content/Images/dsico.ico"
+
+东营金石软件:
+- body="aspNetHidden" && body="loginselect" && body="txtLoginName"
+
+东软HCM系统(华东):
+- body="<form name=\"LoginForm\" method=\"post\" action=\"/login.sso\">"
+
+中亦安图 EVO-ITSM/EVO-CMDB(西部):
+- icon_hash="127203913"||body="js/bpmConfig.js"
+
+中农信达三资云平台:
+- body="技术支持：北京中农信达信息技术有限公司"
+
+中成科信综合管理平台:
+- icon_hash="1632964065"
+
+中腾OA:
+- body="systemAction" && body="zt_webframe" && body="login"
+
+中远麒麟 iAudit堡垒机(北京):
+- icon_hash="1146214679"||cert.subject="Baolei"
+
+中远麒麟堡垒机:
+- body="admin.php" && body="controller=admin_index&action=login"
+
+久其报表:
+- body="/config/os.config.js"&&body="/static/stage/polyfill.min.js"
+
+久其报表(.NET):
+- icon_hash="-387779747"
+
+乐维ITSM(待审):
+- title="IT服务管理系统"&&body="checkisLogin"
+
+九思OA(北京):
+- body="/jsoa/"
+
+二级域名分发系统:
+- icon_hash="-2055778861"
+
+云信通短信运营管理平台:
+- body="短信" && body="Simpla" && body="chklogin.aspx"
+
+云安宝-云匣子(华南):
+- body="/static/oem_image/company_logo.png" || body="{3F367B74-92D9-4C5E-AB93-234F8A91D5E6}"
+
+云端客服管理系统:
+- body="云端客服管理平台登录"
+
+产业基金和项目管理系统（苏州梓川）(深圳):
+- body="\<meta name=\"description\" content=\"PEPM\"\>"
+
+京师心智心理健康测评系统:
+- body="JS/ligerComboBox/ligerTree.js"
+
+人人开源:
+- icon_hash=="172965670"||body="/renren-admin"
+
+亿信报表i@report(华东):
+- body="/esmain/pagedesigner/css" && body="esmain/portal/js/"
+
+仁享全面预算(华东):
+- icon_hash="-1814391539"
+
+企业信使短信平台:
+- body="code.aspx"&&body="chklogin.aspx"
+
+企业信息化管理平台(华东):
+- icon_hash="-42214331"
+
+企业数字化平台:
+- body="/images/hm.png"&&body="unitname"
+
+企安云(待审):
+- body="/ehswork/"
+
+企慧通网络培训考试系统(华南):
+- body="/CheTong/CheckUser.aspx?user"
+
+众信至诚新筛业务系统(西部):
+- title="新筛业务系统" ||body="众信妇幼信息系统,成都众信软件"
+
+众和工程项目管理软件(深圳):
+- body="杭州筑龙信息技术股份有限公司"
+
+众齐微信管理系统:
+- body="众齐微信管理系统"
+
+优云自动化运维系统(华南):
+- body="uyun-base"
+
+优云自动化运维系统(深圳):
+- body="uyun-base"
+
+优维科技-EasyOPS自动化运维系统(华南):
+- icon_hash="2092431588"
+
+会宝软件-一月妈咪:
+- body="一月妈咪"
+
+伯俊软件-BOS商业数字化平台(深圳):
+- body="/html/nds/images/portal.ico"||body="BOS_WATER_ENABLE"||body="/html/nds/js/"
+
+信安世纪NetAuth 统一身份管理系统(西部):
+- body="InfosecNetAuthSSOCNGAgent.min.js"||body="/ssoserver/ignore/get/validateCode/getvalidateImgCode.do"||body="/image/login/xalogo.png"||body="/js/login/jigsaw.js"
+
+信源企业电子化采购系统(西部):
+- body="/r/cms/www/red/images/logo.png"
+
+信锐物联平台:
+- icon_hash="147973611"
+
+儒松科技维保保服务管理平台:
+- title="维保保"||body="plugins/wbb/RSA.js"||body="static/common/js/wbb-list-common.js"
+
+入学入园招生管理系统:
+- body="Content/Manager/iconfont/iconfont.css" && body="/ParentsFunction/GetBGValidateCodeL"
+
+全息AI弱电网络综合运维平台:
+- body="全息AI" && body="g_is_hk" && body="login"
+
+冠唐科技-设备云维保管理系统(西部):
+- title="设备云维保"&&body="冠唐科技"
+
+冰峰网络 iceflow:
+- body="Web 配置中心" && body="/images/splash.jpg"
+
+凤凰卫士电子文档安全管理系统:
+- body="/resource/images/luck.gif"
+
+凤凰科技医院协同办公管理系统:
+- body="/secur/loginImg/loginImg.png"
+
+力合科技:
+- body="/UILib/md5/md5.js"
+
+力和科技:
+- body="/UILib/md5/md5.js"
+
+力软4:
+- (web.body="/Content/Images/favicon.ico"&&web.body="/Home/AccordionIndex")||web.body="/Content/Styles/learunui-framework.css"
+
+力软6:
+- body="/Content/styles/learun-login.css"
+
+力软7:
+- (body="__RequestVerificationToken" && body="ErrorBrowser")||body="Content/images/Login/defaultbg.png"
+
+劳勤:
+- icon_hash="1110197594"||body="劳动力管理软件平台"
+
+劳勤WTS系统(深圳):
+- body="/Login\/DoBusiness"
+
+勤云期刊(西部):
+- body="reader/login.aspx"||body="template/js/checkform.js"
+
+勤杰DHR(西部):
+- body="勤杰DHR"||body="勤杰eHR"
+
+化视私云CDN直播加速服务器:
+- body="img/dl.gif" && body="华视美达" && body="login.php"
+
+北京云数工场数据科技有限公司OMS系统:
+- body="/Content/shieldLogin.css"
+
+北京朗新天霁人力资源系统:
+- icon_hash="1143915194"
+
+北京润尼尔网络科技有限公司:
+- body="<a href=\"http://www.rainier.net.cn/\">北京润尼尔网络科技有限公司"
+
+北京清科锐华软件有限公司:
+- body="/Styles/Images/login_bg.png"&&body="/Log/In"&&body="sendSmsLoginVerifyCodeWaitSeconds"
+
+北京银通先达信息技术有限公司:
+- body="AjaxAshx/LoginOut.ashx"
+
+北京龙软科技股份有限公司:
+- body="/Scripts/Bus/login.js"
+
+北信源防病毒系统(华东):
+- body="北信源防病毒系统"||body="static/js/cfg/cfg_login.js"
+
+北大方正-全媒体采编系统(北京):
+- body="/newsedit/css/login_1.css"
+
+北大方正-方正翔宇(北京):
+- body="e5style/login1.css"
+
+医药公司登录系统:
+- body="ResourceScripts/zh-cn-Login.aspx.js"
+
+医院一站式后勤管理系统:
+- body="frameworkModuleJob"
+
+千丁(深圳):
+- body="qd-app"
+
+华三cas云计算平台(西部):
+- title="H3C CAS"||title="H3C CAS云计算管理"||title="CAS CVM服务器虚拟化"||body="/em_cas/index.js"||body="css/casicTheme.css"
+
+华三堡垒机(西部):
+- icon_hash="-309103085" || body="shtermApp"
+
+华三超融合(北京):
+- icon_hash=="-179290705"
+
+华三超融合UIS(北北京):
+- body="checkEntryServlet"||body="uis/spring_check" || header="Path=/uis;"
+
+华为AR Web管理平台:
+- body="Huawei" && body="simple/style/default/image/login.png" && body="simple/view/ossn.html"
+
+华为云桌面:
+- body="Desktop@FusionAccess" && body="/webui/"
+
+华信永道住房公积金系统:
+- body="技术支持：华信永道"
+
+华域Reporter:
+- body="reporter" && body="action.php" && body="login"
+
+华炎魔方低代码平台(华东):
+- title="Steedos"
+
+华锐捷HIC车载监控平台(北京):
+- body="/Watchman/static/"
+
+协众oa:
+- body="powered by 协众oa" || body="admin@cnoa.cn" || body="powered by cnoa.cn"
+
+协达OA:
+- icon_hash="-1850889691"
+
+南京品德在线医学考试系统:
+- body="考试系统" && body="login.aspx" && body="品德"
+
+南京品德在线医学考试系统(0day):
+- body="考试系统" && body="login.aspx" && body="品德"
+
+南京科唯信过程控制有限公司:
+- icon_hash="-10712167"
+
+南方数码交易一体化系统:
+- body="/SouthUIContent/themes/easydropdown.css"
+
+博华网龙信息安全一体机:
+- title="博华网龙信息安全一体机"
+
+博采CMS:
+- body="STATIC_URL"&&body="UPLOAD_URL"
+
+即会通企业版(LiveUC)|视频会议:
+- icon_hash="-637931821"
+
+厦门快普:
+- body="jKPM6" && body="WebResource.axd"
+
+友加畅捷U+财会通:
+- icon_hash="2049187099"
+
+友夸数字-光伏业务管理系统(北京):
+- body="/chunk-libs.Version."
+
+友财财务管理信息系统:
+- body="ScriptsExt/json2/jquery.json2.js"
+
+同舟云低代码(北京):
+- icon_hash=="634517327"
+
+同鑫T9eHR信息化管理系统:
+- body="T9eHR-iconfont" && body="Authentication/Login"
+
+向日葵-SunLogin:
+- body="{\"success\":false,\"msg\":\"Verification failure\"}"
+
+启迪国信 UEM管理平台:
+- body="#commonTip" && body="css/icomoon" && body="wwLogin"
+
+和信创天云桌面系统:
+- body="和信下一代云桌面VENGD"
+
+和欣控制(Hysine) Webtalk 系统:
+- body="_webtalk/_cur/loginA.php" && body="WEBTALK"
+
+品德科技医学在线考试系统:
+- body="考试系统" && body="login.aspx" && body="品德"
+
+唯德科创 IPEasy 知易通:
+- title="_IPEasy知易通"
+
+喔趣考勤系统(华东):
+- icon_hash="-1615140769"
+
+嘉扬EHR(待审):
+- body="Skin/Css/logincss.css"||body="Skin/Images/Logo/kylogo.ico"||(body="Styles/Images/Login/login_bgemp.png"||body="Styles/Css/kyLogin.css")
+
+嘉扬ehr(西部):
+- body="Scripts/GetReqToken.aspx"||body="Styles/Images/Login/login_bgemp.png"||body="Styles/Css/kyLogin.css"
+
+图创图书馆集群管理系统:
+- body="interlib/common/" && body="self.location.href"
+
+圣博润堡垒机:
+- body="/trust/version/sxf/trust/"
+
+圣博润堡垒机(北北京):
+- body="/trust/version/common/trust/"
+
+填鸭表单问卷系统Pro(西部):
+- body="tduck-pro文档"||body="tduck后台管理框架"
+
+多媒体信息发布系统:
+- header="HowFor Web"
+
+大为innojet知识产权管理平台:
+- (body="findPwd.html" && body="/common/getcheckcode")||(body="CheckCodeHandler.ashx"&&body="images/login/logo.png")
+
+大为知识产权协同创新管理系统:
+- body="CheckCodeHandler.ashx"&&body="findPwd1.html"
+
+大华-智能物联综合管理平台:
+- body="static/qwebchannel.js"||body="*客户端会小于800*"||body="/static/fontshd/font-hd.css"||icon_hash="-1935899595"
+
+大华DSS-车载监控系统(北京):
+- body="login_forceChangePass.action"
+
+大华ICC智能物联综合管理平台:
+- body="static/qwebchannel.js"||body="*客户端会小于800*"||body="/static/fontshd/font-hd.css"||icon_hash="-1935899595"
+
+大华智慧园区综合管理平台:
+- body="/WPMS/asset/"
+- body="/WPMS/asset/lib/html5shiv.js"||body="/WPMS/asset/lib/normalize.css"||body="DSS-help
+  download"
+
+大连玉帏软件-玉帏CRWeb在线平台(华南):
+- body="/SysModule/UserInfo/CheckLogin"
+
+天智智慧医院综合质量监管平台:
+- icon_hash="1986460035"
+
+天玥堡垒机(北北京):
+- body="天玥网络安全审计系统" || body="css/fw/full.css" || body="client/Site-downloadRunTimeDetector"
+  || header="bhsid"
+
+天玥运维安全网关:
+- body="css/fw/full.css" && body="js/p/login.js"
+
+天空卫士DLP(华东):
+- title="SkyGuard统一内容安全管理平台" && body="SecGator"
+
+天融信AC(华东):
+- title="Login @ Reporter"&&body="/images/reporter.ico"
+
+天融信TopAPP负载均衡系统:
+- body="TopAPP负载均衡系统"
+
+天融信VPN设备:
+- header="topsecsvportalname"
+
+天融信堡垒机(西部):
+- icon_hash="2133565847" || body="/iam/ac.do" || body="/config/settings/getFiles?flag=2&lang="
+
+天融信运维审计系统:
+- header="iam" && server="Apache-Coyote/"
+
+天迈科技网络视频监控系统:
+- body="jsessionid" && body="天迈科技" && body="网络视频监控系统"
+
+天锐绿盾审批系统:
+- body="天锐绿盾审批系统"
+
+天问物业云(华东):
+- body="天问物业云"
+
+奇安信自动化渗透测试系统:
+- icon_hash="-747580443"
+
+奇秦srm(西部):
+- body="奇秦SRM"
+
+契约锁(北京):
+- body="/qysoss/assets/js"
+
+契约锁(北北京):
+- body="/qysoss/assets/js"
+
+奥博克ERP系统(华南):
+- body="js/abacus-base.js"
+
+奥威亚教育视频云平台:
+- body="/CSS/NewtonTheme/assets/app.css"
+
+奥联通讯管理平台:
+- icon_hash="-1356973161"
+
+威富通支付平台(深圳):
+- body="/cms/sys/user/updatePwdNotLogin"
+
+威讯云桌面(北北京):
+- icon_hash="1004790138"||body="mainfrm/common/css/mobilelogin"||(body="src=\"/loginConfig_"
+  && body="/mainfrm/common/css")
+
+字节数联云桌面系统:
+- icon_hash="-1142582922"
+
+孚盟云 CRM:
+- icon_hash="1533124028"
+
+学位论文管理系统:
+- body="simpsearch.action?ffieldname"
+
+宁盾一体化安全认证平台:
+- body="am/ndkey.ico" && body="zhLanguagePng"
+
+安天智甲终端防御系统(西部):
+- title="安天智甲终端防御系统"
+
+安恒数据大脑API网关:
+- body="mssp-fe" && body="/static/imgs/logo.png"
+
+安科瑞ECEMS(西部):
+- body="../config/configECEMS.js" || body="dual_ipCfg/dual_ipCfg.js"
+
+安科瑞电气系统(西部):
+- body="../config/configECEMS.js" || body="dual_ipCfg/dual_ipCfg.js"
+
+宏景HCM管理系统:
+- body="人力与人才信息管理系统"|| body="宏景" || body="hj-hy-all-one-logo" || body="/general/sys/hjaxmanage.js"
+
+宏景eHR人力资源信息管理系统:
+- body="人力资源信息管理系统" && body="hrlogon"
+- icon_hash="947874108"
+
+宏脉医美行业管理系统:
+- icon_hash="-1866896609"
+
+宝蓝德-Spark-BesEJB:
+- path="/__bes/__ejb" && status="200" && body==""
+
+宝蓝德-Spark-EJB:
+- path="/BesEJB/spark" && status="500" && body="Spark expects a POST"
+
+富勒仓储管理系统WMS(北北京):
+- title="WMS系统登录主页" || body="上海富勒信息科技有限公司"
+
+富勒仓储管理系统WMS(华南):
+- body="/logincenter/img/domestic//favicon.ico"
+
+富士行云系列平台(华南):
+- icon_hash="16185514"
+
+富通天下外贸ERP:
+- title="用户登录_富通天下外贸ERP"
+
+小鱼易连云视讯管理平台:
+- body="font_1957344_lqkodjqdbl.css"
+- body="static_source/localcdn/webrtc/web/favicon.ico"
+
+小黄豆CRM:
+- body="xhdcrm" && body="JS/XHD.js" && body="login.check.xhd"
+
+尖峰合讯-elearning(北京):
+- body="vendor/guard/rsa/rsaClient.js"
+
+尖峰合讯在线培训管理系统(北京):
+- header="/lms/app/login/"
+
+山石网科云数据库审计与防护系统:
+- body="#!/dbSummary" && body="/lib/colResizable/"
+
+帆软报表(北北京):
+- app="帆软-FineReport"
+
+帆软数据决策系统:
+- body=">数据决策系统" && body="ReportServer?op"
+
+帕拉迪堡垒机(深圳):
+- app="PLDSEC-Core4A-UTM"||body="/Public/sheme/default/images"
+
+常工电子ISIMS收费系统:
+- body="常工电子ISIMS收费系统"
+
+广州美络信息科技有限公司-综合办公平台:
+- title=="综合办公系统"&&body="oa-login-content"
+
+广州高勤-基盘系统(华南):
+- body="glaf-base.js"
+
+广联达 Glodon:
+- body="/ConsoleCommon/Content/weebox.css"
+
+广联达(广讯通):
+- body="gtp.standard" && body="JS/gxtAutoLogin.js"
+
+庞培考试系统(华东):
+- body=”Manager2/ashx/loginHandler.ashx”
+
+康通电子云广播系统:
+- body="static/download/JSET99Setup.exe"
+
+引迈信息JNPF快速开发平台系统(西部):
+- (body="/_app.config.js" && body="/print-lock.css" && body="/iconfont.css") || icon_hash="1408381442"
+
+强智教务管理系统:
+- title=="登录" && body="湖南强智科技发展有限公司"
+
+彩讯邮Richmail(西部):
+- title="Richmail邮件系统" || body="/static/js/richmail.config.js" || body="/static/assets/images/login/login_scan.png"
+
+得牛仓储管理系统WMS(西部):
+- body="WMS.application"
+
+微三云管理系统:
+- body="WSY_logo" && body="管理系统 MANAGEMENT SYSTEM"
+
+微信公众号小说漫画系统:
+- body="/Public/home/mhjs/jquery.js"
+
+微信后台管理平台(华南):
+- body="D1B5CC2FE46C4CC983C073BCA897935608D926CD32992B5900" && body="resources/fc/images/icon/favicon.ico"
+
+微宏 OA:
+- body="wh/servlet/MainServer"
+
+德云思信息科技系统(华南):
+- body="/images/company/towngas/favicon.ico"
+
+快云服务器小助手:
+- title="快云服务器小助手" || title="快云服务器助手-登录"
+
+思福迪堡垒机(北北京):
+- cert="logbase" || cert="BHOST" || title="Logbase运维安全管理系统" || body="/manage/images/hide-password.png"
+  || body="BHTunnelDaemon.exe" || body="/bhost/login_link" || body="/bh/style/login.css"
+
+思维跳跃科技智能考试系统(华南):
+- body="/student/components/ueditor/"
+
+思迪数据池管理平台:
+- body="Ajax/Login" && body="思迪" && body="canvas"
+
+惠商+管理系统:
+- title="惠商+管理系统"
+
+惠当家MVC系统:
+- body="惠当家"
+
+惠林信息安全系统(华东):
+- body="images/zh-CN/winisms.gif"
+
+意畅网盘:
+- body="/statics/scripts/handlebars.min"
+
+慧星自来水营业管理信息系统:
+- icon_hash="1704826498"
+
+慧林ICP/iP备案系统:
+- icon_hash="-556918553"
+
+慧林信息安全管理系统:
+- body="用户管理登录" && body="images/zh-CN/login_03.gif" && body="login"
+
+慧林信息安全管理系统(蓝军):
+- body="module=admin_rndcode&mdkey=rndcode"
+- body="winisp.gif" && body="pcheck.js"
+
+慧点OA(西部):
+- (body="first-loading-wrp"&&body="loading-msg")||body="一秒后才显示，避免网速正常时的闪动"||body="sorry
+  but 协同办公平台 8.0"||body="sorry but 协同办公平台 9.0"
+
+慧点科技 OA 协同办公系统:
+- body="/dojo/smartdot/css/dojo_smartdot.css"
+
+成都冠唐科技有限公司:
+- body="LoginOwn.css"
+
+房地产管理系统:
+- body="IDWebSoft"
+
+扁鹊飞救-区域协同急救与质控平台(西部):
+- body="IVTUserName"||icon_hash="-757866684"||icon_hash="-1206146847"
+
+护卫神·主机大师:
+- icon_hash="1188645141"
+
+拓尔思IDS(深圳):
+- icon_hash="-2093951254"||body="ids/admin/do_login.jsp"||header="trsidsssosessionid"
+
+挂号系统(insert sql):
+- body="res/img/ht_box_back.gif"
+- body="/res/img/ht_box_top.gif"
+- body="/res/img/ht_box_bottom.gif"
+- body="dom_loaded.load(init);"
+
+指挥调度平台:
+- icon_hash="-1971504131"
+
+捷报云:
+- icon_hash="626246972"
+
+数字化智慧校园:
+- body="Content/images/Login/defaultbg.png"
+
+数字城管:
+- body="/eUrbanMIS/library/urban/bootstrap.js"
+
+新中太-智能工地系统(北京):
+- icon_hash=="588710312"||title="智能建造管理平台"
+
+新为软件-SmartLearning系统(深圳):
+- body="framework/desktop/loginagent.aspx"||body="/bos/desktop/validcode.aspx"
+
+新华三交换机(华东):
+- body="webui/js/jquerylib/jquery-1.7.2.min.js"
+
+新开普掌上校园服务管理平台:
+- title="掌上校园服务管理平台"
+
+新开普智慧校园:
+- body="sd-login/skins/images/default/default_logo.jpg"
+
+新开普智慧校园(华东):
+- body= "sd-login/skins/images/default/default_logo.jpg"
+
+新炬运维管理系统:
+- icon_hash="2126778538"
+
+方正翔宇:
+- body="e5style/login1.css" && body="e5workspace/security/captcha.do"
+
+方正翔宇(西部):
+- title="方正翔宇"||body="/e5style/login1.css"
+
+方正翔宇-工作平台:
+- title="方正翔宇-工作平台登录"
+
+方配在线考试系统(FPExam):
+- body="exam/logo/favicon.ico" && body="fangpage"
+
+日志易:
+- body="auth/passwordReset" && body="yw-login-"
+
+日志易(华南):
+- body="/app/siem/subPage"
+
+时代光华-极光数智化学习平台(西部):
+- body="/login/login.securityCode.do"||body="/login/login.toFindPassWord.do"
+
+时空智友:
+- body="login.jsp?login" && body="登录"
+
+昆明东讯科技有限公司:
+- body="/admin/_SYSTEM/Styles/LoadingEffect.css"
+
+明源云(老版本):
+- body="value=\"明源售楼管理系统V5.0\"" || body="<img id=\"erp\" src=\"/_imgs/login/zs_erp.png"
+
+明源云MIP集成平台:
+- icon_hash="-834208471"
+
+明致OA:
+- icon_hash="1591287747"
+
+易捷OA:
+- body="/images/logon/yij.png"
+
+易普拉格(西部):
+- body="userAction_login.action"
+
+易瑞授权访问系统:
+- title="易瑞授权访问系统"
+
+易舸OA(华东):
+- body="浙江易舸软件有限公司"
+
+易软天创 易软天创-禅道项目管理系统(深圳):
+- app="易软天创-禅道系统"
+
+普元EOS框架(深圳):
+- body="\/default\/coframe\/auth\/login\/login.jsp"||body="common\/scripts\/eos-web.js.gzip"
+
+景云网络防病毒系统:
+- body="styles/images/logo.png" && body="login_form" && body="防病毒"
+
+晶奇科技救助管理系统:
+- icon_hash="-1185226132"
+
+智易时代-超低排放管控一体化平台(西部):
+- body="/main/img/yanjing2.png"
+
+智能表综合管理系统:
+- body="js/jsCore.js" && body="Ajax_Code/Login.ashx" && body="login.css"
+
+智跃HR人力资源管理系统:
+- body="images/ZY.LOGO.64.png"
+
+智齿客服系统(西部):
+- body="8abc47d589af6c5e062a2a368a4baff6"||body="scripts/zc/echarts"
+
+朗拓健康医院管理系统:
+- body="static/mq/yaoxun_pbm_im.js" && body="js/app."
+
+朗新ehr(西部):
+- body="朗新天霁"||title="sTalent系统"
+
+朗新天霁人力资源管理系统:
+- body="hrsoft.com.cn" && body="chkLogindiv" && body="CustStyle"
+
+机动车环保检测监管系统站:
+- body="机动车环保检测监管系统站端登录平台"
+
+杭州乐湾-智慧养老:
+- title="智慧养老管理系统"
+
+杭州爱讯科技有限公司-颐养通智慧养老运营平台:
+- icon_hash="-1250181728"||body="颐养通"&&(title="颐养通"||title="运营"||title="系统")
+
+极通 EWEBS 应用虚拟化:
+- body="NewSoft" && body="xajax05/xajax_js/xajax_core.js"
+
+正方SSO(华东):
+- body="im/system/browser.zf"
+
+正方教务管理系统(JAVA版)(华东):
+- body="xtgl/login_slogin.html" && body="zftal"
+
+正方教学管理信息服务平台:
+- body="正方软件股份有限公司" && title="教学管理信息服务平台"
+
+正方数字化校园平台:
+- (title="正方数字化校园信息门户"||title="数字化校园信息门户"||title="统一身份认证中心") && body="正方"
+- body="zfca/login" && body="login_bg"
+
+正方移动信息服务管理平台(华东):
+- body="zftal-mobile"
+
+正方移动平台:
+- body="/zftal-mobile"
+
+正方统一身份认证:
+- body="/im/system/browser.zf"
+
+水务集团:
+- icon_hash="-1264162610"
+
+永中DCS:
+- body="<title>永中文档在线预览DCS</title>" && body="www.yozodcs.com"
+
+永中在线编辑软件系统:
+- body="Web Office" && body="img/eio.png"
+
+永洪BI(北北京):
+- icon_hash="398162124" || body="/bi/viewer?proc=" || body="/bi/?proc=2"||body="var
+  YH_CONFIG"||body="yh-body fill overflow"||body="background:url(404.jpg)no-repeat;"
+
+永洪BI(西部):
+- icon_hash="398162124" || body="/bi/viewer?proc=" || body="/bi/?proc=2"||body="var
+  YH_CONFIG"||body="yh-body fill overflow"||body="background:url(404.jpg)no-repeat;"
+
+汉塔上网行为管理(西部):
+- body="Antasys"
+
+汉得 Hap-core 系统框架(华东):
+- body="/lib/rsa/jsencrypt.min.js" && body="hand"
+
+汉德SRM(北京):
+- body="handPlayMovieId"||body="/component/handPlayMovie/handPlayMovie.css"
+
+江苏敏捷科技DGS数据防泄漏(西部):
+- title="敏捷数据安全卫士系统"
+
+河南省风速科技统一认证平台:
+- body="/cas/themes/zbvc/js/jquery.min.js"
+
+泽元统一用户验证系统ZAS(西部):
+- body="zving"&&body="zas"
+
+泽元网站内容管理系统ZCMS(西部):
+- header="zcms" || icon_hash="-1832083333" || body="zcms_skin" || body="_zcms_stat"
+  || body="ZCMS内容管理系统"
+
+派拉身份认证IAM(西部):
+- 'icon_hash="-1760645692" || header="X-Powered-By: para-node"'
+
+派拉零信任(西部):
+- body="派拉零信任" || title="派拉零信任"
+
+流量通 流量平台:
+- icon_hash="325583172"
+
+浙大恩特(西部):
+- body="欢迎使用恩特软件"
+
+浙江和仁科技股份有限公司-MFUS_VS:
+- body="/Common/LogIn"&&body="Chrome4.0_XP.exe"
+
+浙江飞灵资产管理系统(华东):
+- body="浙江飞灵软件有限公司"
+
+浩联智能-数字工地监管(北京):
+- icon_hash=="588710312"
+
+浪潮:
+- body="/cwbase/web/Login.aspx"
+- body="/cwbase/weblogin/Login.aspx"
+- body="/cwbase/web/gsprtf/"
+
+浪潮-inBuilder社区版(西部):
+- title="企业管理软件"&&body="<span>生于云</span>"||(body="cssWaveWrapper"&&body="window.location.href=")||(body="window.isRTFLogin"&&body="/platform/runtimes/sys/web/")||body="platform/runtimes/sys/web/assets/img/Inspurld.png"
+
+浪潮服务器IPMI管理口:
+- body="img/inspur_logo.png" && body="Management System"
+
+海康威视 流媒体管理服务器:
+- body="流媒体管理服务器" && body="MSHTML"
+
+海康威视综合安防平台:
+- body="dist/jquery.js" && body="home/locationIndex.action"
+
+海康威视联网网关:
+- body="独立运行(无平台)" && body="login_form"
+
+海纳CMS-HituxCMS:
+- body="Powered By HituxCMS" && body="ServiceCenter.js"
+
+海翔D8药业云平台:
+- title="登录海翔"
+
+润乾报表(西部):
+- body="/reportCenterServlet?action"||body="raqsoft"||body="润乾报表"
+
+润申信息企业标准化管理系统:
+- body="润申信息" && body="企业标准化管理系统" && body="loginForm"
+
+深圳市中兴新云-财务共享系统:
+- body="ww * dpr"
+
+深圳市赛为安全技术服务有限公司:
+- body="安全眼"&&body="android"
+
+深圳锐明行驶记录仪:
+- body="登录您的MDVR"
+
+渔之蓝SSO(华东):
+- body="siteFiles/login/css/loginBox.css"
+
+滕华软件-融资租赁业务系统:
+- body="AppMain/Logon/logon.css"
+
+满客宝(华东):
+- body="智慧食堂后台管理系统"
+
+满客宝(深圳):
+- body="智慧食堂后台管理系统"
+
+瀚维RIM房地产管理软件(西部):
+- body="hlogin.action"
+
+灵当CRM(华南):
+- body="crmcommon/js/jquery/jquery-1.10.1.min.js" || body="crm/index.php" || body="ldcrm.base.js"
+  || icon_hash="436310201" || body="include/js/ldAjax.js"
+
+炎黄盈动AWS PaaS(深圳):
+- body="showProcessTitle" &&body="rememberUserNameField"
+
+熵基科技_E-ZKEco Pro时间&安全精细化管理平台(西部):
+- body="/iclock/imanager"
+
+熵基科技_ZKTime熵基智能考勤管理系统(西部):
+- product="ZKTECO-考勤管理系统"
+
+爱信诺开票服务器:
+- body="aisino.kps.console"
+
+爱讯-颐养通智慧养老平台(北北京):
+- icon_hash="-77779116"||body="/manage/loginImage.do?m=isCountrySecret"
+
+玛格泰克期刊采编系统(西部):
+- body="/user/addCollectArticle.do"||body="/article/NumbersStatistics.do"||body="/article/showNewArticle.do"||body="/js/manu/lrtk.css"
+
+理想科技自动化运维(深圳):
+- body="login_bodybg"&&body="loginsdf"
+
+瑞斯康达智能网关(西部):
+- body="/images/raisecom/back.gif" && title=="Web user login"
+
+瑞星ESM防病毒系统(北京):
+- body="/esm/css/login.css" || body="/esm/css/base.css" || icon_hash="42875293" ||
+  icon_hash="-1771718327"
+
+用友-UFIDA-NC:
+- body="nc.sfbase.applet.NCApplet.class"
+
+用友-畅捷通OEM:
+- body="GNRemote.dll" && body="Web_sc/login.gn"
+
+用友BIP 数据应用服务:
+- icon_hash="1183274548"
+
+用友U8Cloud(北京):
+- app="用友-U8-Cloud"||title="U8C"
+
+用友U9:
+- body="logo-u9.png"
+
+用友bip:
+- body="iuap-apcom-workbench/"
+
+用友时空:
+- body="时空智友企业信息管理"
+
+用友移动系统管理(深圳):
+- body="/login/home" && body="img/login.png" && body="/html/index.jsp"
+
+电信网关配置管理系统:
+- body="<TITLE>系统登录" && body="login.php" && body="img/login_bg3.png" && body="login_form"360.cn"
+
+电子申请客户端管理系统(EAC):
+- body="script/css/gwssi.css"
+
+畅捷教育财税云平台:
+- body="/exam_portal/bootstrap3/js"
+
+畅捷通-TPlus(华东):
+- app="畅捷通-TPlus"
+
+百傲瑞达:
+- icon_hash="-1169502834"
+
+百旺税控服务器管理系统(深圳):
+- body="sys/yzm.do" || body="removeCzydmSession.do"
+
+皕杰报表(西部):
+- body="BijetSoft"
+
+知客CRM(华东):
+- title="知客CRM"||body="/DXR.axd?r=1_110-aK_Ek"
+
+碉堡堡垒机(华东):
+- body="fort/pages"
+
+神策分析(西部):
+- body="./sbp/static/favicon.ico"
+
+福洽umail(西部):
+- body="/staticvue/img/u.png"
+
+禾匠点企来客服系统:
+- body="const _scriptUrl" && body="login_logo"
+
+科传CRM:
+- body="ttconfig.json"
+
+科大奥锐-仿真实验平台:
+- icon_hash=="1489717761"||body="/Scripts/APP/GlobleJS.js"
+
+科德电子智慧水务平台:
+- body="山东科德电子有限公司" && body="J_LoginSub"
+
+科脉·蛙笑在线商业管理软件:
+- body="科脉" && body="Login.aspx" && body="Kemai"
+
+科荣 AIO 运营管理系统:
+- body="style1/css/ListRange.css" && body="主账套" && body="login.jsp"
+
+科远智慧SyncPlant智慧管控系统:
+- body="/ERPLogin/App_Themes/XP_Blue/swiper.min.css"
+
+科远热网系统(深圳):
+- body="/ERPLogin/App_Themes/XP_Blue/login.css"
+
+秦川燃气综合管理系统:
+- body="系统登录" && body="res/icon/key.png" && body="login"
+
+移动云&绿盟日志审计系统-log4j:
+- body="/pisces/login/"
+
+税控服务器管理系统:
+- body="sys/login.do" && body="resources/css/login_yzm.css"
+
+章管家(华南):
+- title="章管家登录"||body="/web/qrcode/polling.htm?xxx_number="||body="/resources/images/icon/logo/ChapterStewards_icon_new
+  copy.png"
+
+章管家(西部):
+- title="章管家登录"||body="/web/qrcode/polling.htm?xxx_number="||body="/resources/images/icon/logo/ChapterStewards_icon_new
+  copy.png"
+
+竹云统一身份认证IAM(西部):
+- body="/idp/images/loading.png"
+
+管家婆全渠道业务同步中心:
+- title="管家婆全渠道业务同步中心"
+
+索贝:
+- title="融媒办公生产平台"||body="sobey2_06.png"||header="Sobey"||title="索贝"||body="/Sc-TaskMonitoring/"||body="UserIndex/favicon.ico"
+
+紫光电子档案系统(西部):
+- body="紫光电子档案系统"||body="www.unissoft.com"
+
+红帆OA(西部):
+- body="config/pc-app-config.js"
+
+红帆ioffice-10:
+- icon_hash="-437823900"
+
+红海eHR人力资源管理系统(深圳):
+- icon_hash="3279470843" || body="/RedseaPlatform/" || header="RedseaPlatform"
+
+纳比云NBS(北京):
+- body="/static/blockly/base/blockly_compressed.js"
+
+维信科技-内容管理系统(华南):
+- body="/cms/js/managerLogin.js"
+
+维尔晶科技SRM平台:
+- body="Zhilink"
+
+绿径GPCM系统(深圳):
+- body="src=\"\/Scripts\/gpcmEncrypt.js"
+
+绿盟OSM、SASH堡垒机(深圳):
+- app="NSFOCUS-堡垒机"
+
+绿盟堡垒机(华南):
+- body="/needUsbkey.php"||body="/login_logo_sas_h_zh_CN.png"
+
+网动统一通信平台(Active UC):
+- title="网动统一通信平台(Active UC)"
+
+网康科技·互联网控制网关:
+- title="网康科技·互联网控制网关"
+
+网御星云安全网关:
+- body="网御星云" && body="安全系统"
+
+网心云设备:
+- body="网心云设备"
+
+网达立信-易采SRM系统(西部):
+- body="/yicai-base/" || body="supplierCompleteInfoController.do" || body="config/application-all.js"
+  || header="YICAIBASESESSION" || icon_hash="109671666"
+
+网防G01:
+- icon_hash="-968234332"
+
+美特CRM:
+- body="/common/scripts/basic.js" && body="www.metacrm.com.cn"
+
+群晖 NAS:
+- body="Synology" && body="webman/"
+
+群杰印章物联网平台(西部):
+- title="印章物联网平台" || body="monitor/js/webVideoCtrl.js"
+
+联亦统一身份认证(西部):
+- body="/password/passwordFound"||icon_hash="772658742"||body="shiro-cas?loginService"||body="windows.mobileSafePassWord"||body="window.mobileSafeAppeal"||body="window.mobileSafeProblem"||body="window.isEnableAssistant"||body="lyuapServer"||body="为符合网关定制的cas请求"
+
+联奕统一身份认证平台:
+- icon_hash="772658742"
+- body="/assets/js/gohome.js"
+- body="/password/passwordFound" ||body="shiro-cas?loginService"||body="window.mobileSafePassWord"||body="window.mobileSafeAppeal"||body="window.mobileSafeProblem"
+
+联想网盘:
+- body="#fileManagerTitle"||body="seajs.use(["
+
+联想网盘(华东):
+- body="SDK/UserManager"
+
+联软准入:
+- body="网络准入" && body="leagsoft" && body="redirect"
+
+联软准入(深圳):
+- body="UniSSOView"
+
+联达动力医院综合办公管理系统:
+- body="login.aspx?Method=AJAX&UserName=" || body="Login_Return_XML.aspx"
+
+腾讯云堡垒机:
+- body="/iam-web/authc/modules/login/css/drag.css"
+
+致梦科技-管家婆物联通:
+- body="HtmlPages/Vue/vue.js" && body="GetLoginValidate"
+
+致远 Analytics Cloud 分析云(北京):
+- icon_hash="410106848"||title="AnalyticsCloud分析云"||body="/newportal/static/js/"||icon_hash="888607769"
+
+芯盾时代IAM(北北京):
+- body=">{{authName}}</p"||body="iconfont {{iconCssCode}}"
+
+蓝鲸(蓝军):
+- body="login/static/css/bk.min.css"
+
+蓬阳-医联体远程会诊平台系统(西部):
+- icon_hash="1943128568"||body="医联体远程会诊平台系统"
+
+虚拟仿真实验室系统:
+- body="virexp/s"
+
+蜂网企业流控云路由器:
+- body="ifw8" && body="企业级流控云路由器" && body="login"
+
+蝉知cms:
+- title="cms系统，首选蝉知cms" || body="chanzhi.js"
+
+行云堡垒v7.3 (行云管家)(北北京):
+- (body="/common/prejob.js" && body="/common/bowser.min.js") || (icon_hash="197960696")
+
+行云管家堡垒机(华南):
+- icon_hash="197960696"
+
+西可慧通物联综合管理平台(西部):
+- body="/report/SQLParam"
+
+西软云XMS(深圳):
+- title="西软云XMS"
+
+观远BI(北北京):
+- body="/static/vendor/handson/handsontable.full.min.css"
+
+观远BI(深圳):
+- body="/static/vendor/handson/handsontable.full.min.css"
+
+誉龙视音频综合管理平台:
+- body="PView 视音频管理平台"
+
+软虹OA(北京):
+- body="sy/login/css/resources/logo.png"||icon_hash="-1048691468"
+
+软虹oa(深圳):
+- body="sy/login/css/resources/logo.png"
+
+达实智能-AIoT智能物联网管控平台(华南):
+- title="AIOT平台"
+
+迅投ERDS(华东):
+- body="/manager/static/manager/system/css/login.css"||body="b5a1302320c6e9855de0e60226121ff1"||body="client_login_params"
+
+迈普多业务融合网关:
+- icon_hash="-1234665500"
+
+远略CMS(华东):
+- body="/jeaf/"
+
+远秋医学在线考试系统:
+- title="医学在线考试系统" && body="远秋"
+
+远秋医学培训报名系统v1.0:
+- title="远秋医学培训报名系统v1.0"
+
+迪康Defender电子文档安全管理系统:
+- body="downloads/client4win_cn.zip"
+
+迪浪云OA:
+- icon_hash="-179985729"
+
+通天星:
+- body="/808gps/"
+
+道一信息-七巧低代码开发平台(深圳):
+- body="/uniauth/sysauthweb/login.html"
+
+酆泽商业管理系统:
+- body="酆泽商业管理系统"
+
+酒店智慧营销IPTV系统:
+- body="IPTV" && body="xsiptvp"
+
+重庆佰鼎-佰鼎OA:
+- body="default.aspx" && body="Style/Style.css" && body="Skin2017" && body="TxtUserPwd"
+
+金万维异速联:
+- body="GNRemote.dll?GNFunction="
+
+金和OA(北京):
+- app="金和网络-金和OA"
+
+金山EDR(西部):
+- body="金山终端安全系统V9.0"
+
+金山TimeOn云杀毒:
+- body="<title>TimeOn" && body="iepngfix/iepngfix_tilebg.js"
+
+金山终端安全管理系统:
+- body="iepngfix/iepngfix_tilebg.js" && body="mysqlStat"
+
+金慧BuildingEasyTM:
+- body="/PortalLTE/Images/favicon.ico"
+
+金睛云华高级威胁检测系统:
+- icon_hash="1747722638"
+
+金航网上阅卷系统:
+- body="金航" && body="jsyj" && body="衡水金航"
+
+金蝶OA:
+- body="/scripts/admin.js" && body="clientlanguage"
+
+金蝶云星空BBC系统:
+- body="全渠道营销平台"
+
+金蝶云星空K3Cloud(北北京):
+- body="kd.ui.login.css"
+
+金融决策系统:
+- icon_hash="2121571311"
+
+金证云原生平台(华南):
+- body="micro_apps.js"
+
+金龙卡-智能控水管理系统(华南):
+- body="/Login/GetOperator/"
+
+铭飞 MCMS:
+- body="ms.js" && body="ms.http.js" && body="plugins"
+
+银达云-智慧综合管理平台:
+- body="福州银达云创信息科技有限公司所有"
+
+银达汇智智慧综合管理平台:
+- body="福州银达云创信息科技有限公司" && body="miniui/crypto/CodeManage.js"
+- icon_hash="1170487960"
+
+锐捷 SSLVPN:
+- body="SSLVPN" && body="rjweb" && body="login"
+
+锐捷交换机-睿易:
+- body="cgi-bin/luci" && body="#f47f3e"
+
+锐特CHAINWORK WMS仓储管理系统(深圳):
+- body="USER_OR_PASSWORD_ERROR"&&body="authCode.shtml"
+
+长沙大力OA(华东):
+- icon_hash="-897128099"
+
+长沙杰一综合信息管理系统:
+- body="ligerUI/skins/Aqua/css/ligerui-all.css"&&body="MSClass.js"&&body="ligerui.min.js"
+
+闪捷堡垒机(西部):
+- body="/fort/login/checkSingle.action"
+
+阳光云视-onair媒体云(北北京):
+- body="mc__title"
+
+阿姆瑞特智能DNS:
+- body="DNS_" && body="main.php?mod=member"
+
+雄伟API:
+- body="Welcome to Sovell!"&&title="Home Page"
+
+雄伟餐厅-api:
+- body="Welcome to Sovell"
+
+青年软件OA:
+- body="/Content/qrlib/ligerUI/skins/"
+
+青纺联物联查询平台:
+- body="青纺联物联查询平台" || body="Themes/default/login.css"
+
+顺景ERP管理系统:
+- body="/api/DBRecord/getDBRecords"
+
+风后临床营养管理系统(西部):
+- body="登录页面-临床营养管理系统"
+
+风讯网站管理系统(西部):
+- body="Foosun Content Manage system"
+
+飞思网巡 IT运维系统:
+- icon_hash="1622043013"
+
+飞驰互联-跨文件交换系统(QAX OEM 西部):
+- body="UserNameAndPasswordMessage"
+
+餐厅数字化综合管理平台（雄伟科技）(北京):
+- title="餐厅数字化综合管理平台"||body="/uc/account/ForgetPassword"||icon_hash="-1243862827"
+
+驰骋BPM低代码开发平台:
+- body="/WF/AppClassic/HomeT.htm"
+
+驰骋工作流引擎.net版(华东):
+- icon_hash="-1564380241" || body="正在登录流程&表单引擎设计器,请稍候"
+
+魔方网表(华东):
+- body="/magicflu/"
+
+鸿翼网盘(深圳/edoc2):
+- body="/api/currentuser/changelanguage"||body="CustomCcc/MenuCss"
+
+鼎太智慧融媒云平台:
+- body="鼎太智慧融媒云平台"
+
+齐治堡垒机(北北京):
+- body="/resources/sysManager"||body="shterm/login"||body="/css/qz.css"||body="shtermApp"
+
+龙软科技接口服务(西部):
+- body="接口正常2024"

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"dddd/scanner/ddout"
 	"dddd/scanner/structs"
 	"dddd/scanner/utils"
 	"encoding/base64"
@@ -32,8 +33,12 @@ var PluginList = map[string]interface{}{
 	"Shiro-Key-Crack":     ShiroKeyCheck,
 	"ADB-Scan":            ADBScan,
 	"Telnet-Bypass":       TelnetBypassScan,
+	"ViewState-Key-Crack": ViewStateKeyCheck,
+	"VNC-Scan":            VncScan,
+	"Rsync-Scan":          RsyncScan,
+	"DM-Scan":             DmScan,
+	"Kingbase-Scan":       KingbaseScan,
 }
-
 
 func InitDictionaries() {
 	initDic()
@@ -229,6 +234,14 @@ func writeResult(info *structs.HostInfo, result structs.GoPocsResultType) {
 	if info != nil && info.WriteResult != nil {
 		info.WriteResult(result)
 	}
+}
+
+func emitOutput(info *structs.HostInfo, msg ddout.OutputMessage) {
+	if info != nil && info.Emit != nil {
+		info.Emit(msg)
+		return
+	}
+	ddout.FormatOutput(msg)
 }
 
 func readDict(name string) string {

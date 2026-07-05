@@ -1,0 +1,22 @@
+id: Docker-Registry-unauth
+
+info:
+  name: Docker-Registry-unauth
+  author: test
+  severity: high
+  description: 下载源码
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/v2/_catalog"
+    
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "repositories"
+        condition: and

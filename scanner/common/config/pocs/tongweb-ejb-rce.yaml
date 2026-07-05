@@ -1,0 +1,23 @@
+id: tongweb-ejb-rce
+
+info:
+  name: 东方通 TongWeb EJB 反序列化漏洞
+  author: dddd
+  severity: critical
+  description: |
+    东方通 TongWeb 应用服务器存在 EJB 反序列化漏洞。当 /ejbserver/ejb 路径
+    返回 200 且响应体为空时，可判定为 TongWeb EJB 服务暴露面，攻击者可
+    构造 EJB 调用请求触发服务端反序列化，进而执行任意命令。
+    本模板仅做存在性确认。
+  tags: tongweb,ejb,deserialization,rce
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/ejbserver/ejb"
+
+    matchers-condition: and
+    matchers:
+      - type: dsl
+        dsl:
+          - 'status_code == 200 && len(body) == 0'

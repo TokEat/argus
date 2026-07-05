@@ -8,6 +8,7 @@ import (
 	"fmt"
 	_ "github.com/lib/pq"
 	"github.com/projectdiscovery/gologger"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -48,8 +49,8 @@ func PostgresScan(info *structs.HostInfo) (tmperr error) {
 func PostgresConn(info *structs.HostInfo, user string, pass string) (flag bool, err error) {
 	flag = false
 	Host, Port, Username, Password := info.Host, info.Ports, user, pass
-	dataSourceName := fmt.Sprintf("postgres://%v:%v@%v:%v/%v?sslmode=%v", Username, Password, Host, Port, "postgres", "disable")
-	gologger.AuditTimeLogger("[Go] [PostgreSQL-Brute] start try %s", dataSourceName)
+	dataSourceName := fmt.Sprintf("postgres://%v:%v@%v:%v/%v?sslmode=%v", url.QueryEscape(Username), url.QueryEscape(Password), Host, Port, "postgres", "disable")
+	gologger.AuditTimeLogger("[Go] [PostgreSQL-Brute] start try %s:%s %s/%s", Host, Port, Username, maskPassword(Password))
 	db, err := sql.Open("postgres", dataSourceName)
 	if err == nil {
 		db.SetConnMaxLifetime(time.Duration(5) * time.Second)
@@ -60,8 +61,12 @@ func PostgresConn(info *structs.HostInfo, user string, pass string) (flag bool, 
 			// gologger.Silent().Msg("[GoPoc] " + result)
 
 			showData := fmt.Sprintf("Host: %v:%v\nUsername: %v\nPassword: %v\n", Host, Port, Username, Password)
+			msg := ""
+			if tables := dbTableListStr(db, "postgres"); tables != "" {
+				msg = "Tables(sample): " + tables + "\n"
+			}
 
-			info.Emit(ddout.OutputMessage{
+			emitOutput(info, ddout.OutputMessage{
 				Type:     "GoPoc",
 				IP:       "",
 				IPs:      nil,
@@ -74,6 +79,7 @@ func PostgresConn(info *structs.HostInfo, user string, pass string) (flag bool, 
 					Security:    "CRITICAL",
 					Target:      Host + ":" + Port,
 					InfoLeft:    showData,
+					InfoRight:   msg,
 					Description: "PostgreSQL弱口令",
 					ShowMsg:     result},
 				AdditionalMsg: "",
@@ -84,6 +90,7 @@ func PostgresConn(info *structs.HostInfo, user string, pass string) (flag bool, 
 				Security:    "CRITICAL",
 				Target:      Host + ":" + Port,
 				InfoLeft:    showData,
+				InfoRight:   msg,
 				Description: "PostgreSQL弱口令",
 			})
 

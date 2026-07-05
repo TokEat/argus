@@ -33,6 +33,19 @@ func ExtractTitle(r *Response) (title string) {
 
 	title = html.UnescapeString(trimTitleTags(title))
 
+	if strings.ContainsRune(title, '�') {
+		if decoded, err := Decodegbk([]byte(r.Raw)); err == nil {
+			for _, match := range reTitle.FindAllString(string(decoded), -1) {
+				gbkTitle := html.UnescapeString(trimTitleTags(match))
+				gbkTitle = strings.TrimSpace(strings.Trim(gbkTitle, cutset))
+				if gbkTitle != "" && !strings.ContainsRune(gbkTitle, '�') {
+					title = gbkTitle
+				}
+				break
+			}
+		}
+	}
+
 	// remove unwanted chars
 	title = strings.TrimSpace(strings.Trim(title, cutset))
 	title = stringsutil.ReplaceAll(title, "\n", "\r")

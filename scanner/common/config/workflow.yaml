@@ -6412,3 +6412,206 @@ springboot-heapdump:
     - root
   pocs:
     - Actuator-heapdump
+Docker-Registry:
+  type:
+    - root
+    - dir
+  pocs:
+    - Docker-Registry-unauth
+
+Docker-api:
+  type:
+    - root
+    - dir
+  pocs:
+   - Docker-api-unauth
+
+Everlab-Catalog:
+  type:
+    - root
+  pocs:
+    - Everlab-Catalog-UploadApi-upload
+
+General-Poc-Log4j2:
+  type:
+    - base
+    - root
+  pocs:
+    - CVE-2021-44228
+    - CVE-2021-45046
+
+Next.js:
+  type:
+    - root
+  pocs:
+    - CVE-2017-16877
+    - CVE-2018-6184
+    - CVE-2020-5284
+    - nextjs-redirect
+
+SCCS系统:
+  type:
+    - root
+  pocs:
+    - SCCS-upload
+
+apereo-CAS:
+  type:
+    - root
+  pocs:
+    - apereo-cas-4-1-rce
+
+etcd:
+  type:
+    - root
+    - dir
+  pocs:
+   - etcd-unauth
+
+viewstate:
+  type:
+    - root
+  pocs:
+    - viewstate-rce
+vmware-SpringBoot-Framework:
+  type:
+    - root
+    - dir
+  pocs:
+    - springboot-env-all-check
+    - swagger-api
+    - CVE-2016-4977
+    - CVE-2018-1271
+    - CVE-2018-1273
+    - CVE-2019-3799
+    - CVE-2020-5405
+    - CVE-2020-5410
+    - CVE-2020-5412
+    - CVE-2022-22963
+    - CVE-2021-21234
+    - CVE-2021-22053
+    - CVE-2021-31602
+    - CVE-2022-22947
+    - CVE-2022-22965
+    - exposed-alps-spring
+    - jolokia-info-disclosure
+    - jolokia-list
+    - jolokia-mbean-search
+    - jolokia-unauthenticated-lfi
+    - spring-eureka
+    - springboot-auditevents
+    - springboot-autoconfig
+    - springboot-beans
+    - springboot-caches
+    - springboot-conditions
+    - springboot-configprops
+    - springboot-dump
+    - springboot-env
+    - springboot-features
+    - springboot-flyway
+    - springboot-gateway
+    - springboot-health
+    - springboot-heapdump
+    - springboot-httptrace
+    - springboot-info
+    - springboot-jolokia
+    - springboot-liquidbase
+    - springboot-logfile
+    - springboot-loggerconfig
+    - springboot-loggers
+    - springboot-mappings
+    - springboot-metrics
+    - springboot-scheduledtasks
+    - springboot-status
+    - springboot-threaddump
+    - springboot-trace
+    - springboot-actuators-jolokia-xxe
+    - springboot-h2-db-rce
+    - springboot-log4j-rce
+
+东方通-Console:
+  type:
+    - root
+  pocs:
+    - tongweb-console-detect
+
+东方通-EJB:
+  type:
+    - root
+  pocs:
+    - tongweb-ejb-rce
+
+圣博润堡垒机:
+  type:
+    - root
+  pocs:
+    - Shengborun-oem-version
+
+大华-智能物联综合管理平台:
+  type:
+    - root
+  pocs:
+    - Dahua_ICC_version_leak
+    - dahua-icc-readpic-fileread
+    - dahua-icc-default-login
+    - Dahua_ICC_personInfo
+    - Dahua_ICC_env
+    - Dahua_ICC_GetClassValue_RCE
+    - Dahua_ICC_SSRF
+    - dahua-icc-evo-runs-rce
+
+天融信运维审计系统:
+  type:
+    - root
+  pocs:
+    - Tianrongxin-filedownload
+
+宝蓝德-Spark-BesEJB:
+  type:
+    - root
+  pocs:
+    - bes-spark-besejb-rce
+
+宝蓝德-Spark-EJB:
+  type:
+    - root
+  pocs:
+    - bes-spark-ejb-rce
+
+意畅网盘:
+  type:
+    - root
+  pocs:
+    - yichang-solr-rce
+
+房地产管理系统:
+  type:
+    - root
+  pocs:
+    - IDWebSoft-sql
+
+用友A++:
+  type:
+    - root
+  pocs:
+    - yonyou-a-plus-rectifyAuditGaDoubt-rce
+
+用友U9:
+  type:
+    - root
+  pocs:
+    - yongyou_u9_viewstate
+
+绿盟-SAS堡垒机:
+  type:
+    - root
+  pocs:
+    - lvmeng-chgplay-rce
+    - lvmeng-sas-auditItems-sql
+
+金航网上阅卷系统:
+  type:
+    - root
+  pocs:
+    - jinghang-upload
+    - jinghang-druid

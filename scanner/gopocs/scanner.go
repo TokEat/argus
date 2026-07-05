@@ -10,8 +10,14 @@ import (
 	"sync"
 
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
 )
+
+// NucleiResult keeps the GoPoc package independent from nuclei output types.
+type NucleiResult struct {
+	TemplateID string
+	Matched    string
+	URL        string
+}
 
 type scanTask struct {
 	Name string
@@ -78,7 +84,7 @@ func (d *dispatcher) snapshotResults() []structs.GoPocsResultType {
 	return append([]structs.GoPocsResultType(nil), d.results...)
 }
 
-func GoPocsDispatcher(nucleiResults []output.ResultEvent) {
+func GoPocsDispatcher(nucleiResults []NucleiResult) {
 	structs.GoPocsResults = Dispatch(
 		structs.GlobalIPPortMap,
 		structs.GlobalConfig.GoPocThreads,
@@ -89,7 +95,7 @@ func GoPocsDispatcher(nucleiResults []output.ResultEvent) {
 	)
 }
 
-func Dispatch(ipPortMap map[string]string, goPocThreads int, password string, passwordFile string, nucleiResults []output.ResultEvent, emit func(structs.OutputMessage)) []structs.GoPocsResultType {
+func Dispatch(ipPortMap map[string]string, goPocThreads int, password string, passwordFile string, nucleiResults []NucleiResult, emit func(structs.OutputMessage)) []structs.GoPocsResultType {
 	if len(ipPortMap) == 0 && len(nucleiResults) == 0 {
 		return nil
 	}
@@ -134,6 +140,21 @@ func Dispatch(ipPortMap map[string]string, goPocThreads int, password string, pa
 					PasswordFile: passwordFile,
 				},
 				ch, &wg)
+		}
+		if result.TemplateID == "yongyou_u9_viewstate" || result.TemplateID == "viewstate-rce" {
+			targetURL := result.Matched
+			if targetURL == "" {
+				targetURL = result.URL
+			}
+			if targetURL != "" {
+				dispatcher.addScan("ViewState-Key-Crack",
+					structs.HostInfo{
+						Url:          targetURL,
+						Password:     password,
+						PasswordFile: passwordFile,
+					},
+					ch, &wg)
+			}
 		}
 	}
 
@@ -218,6 +239,18 @@ func buildScanPlan(ipPortMap map[string]string, password string, passwordFile st
 		}
 		if protocol == "adb" || port == "5555" {
 			tasks = append(tasks, scanTask{Name: "ADB-Scan", Info: info})
+		}
+		if protocol == "vnc" || port == "5900" || port == "5901" {
+			tasks = append(tasks, scanTask{Name: "VNC-Scan", Info: info})
+		}
+		if protocol == "rsync" || port == "873" {
+			tasks = append(tasks, scanTask{Name: "Rsync-Scan", Info: info})
+		}
+		if protocol == "dm" || port == "5236" {
+			tasks = append(tasks, scanTask{Name: "DM-Scan", Info: info})
+		}
+		if protocol == "kingbase" || port == "54321" {
+			tasks = append(tasks, scanTask{Name: "Kingbase-Scan", Info: info})
 		}
 	}
 	return tasks
