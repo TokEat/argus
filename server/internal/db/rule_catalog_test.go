@@ -204,6 +204,118 @@ func TestMaterializePocRuleSanitizesNullEscapes(t *testing.T) {
 	}
 }
 
+func TestMaterializeFingerprintRulesSupportsJSONSingleRecord(t *testing.T) {
+	rows, err := materializeFingerprintRules(Arsenal{
+		ID:       "finger_json",
+		TenantID: "default",
+		Type:     "finger",
+		FileName: "finger.json",
+		Content:  `{"product":"JSONProduct","rule":"body=\"json-product\"","category":"service","tags":["json"]}`,
+		Hash:     "hash-json",
+		Version:  2,
+		State:    "Approved",
+	})
+	if err != nil {
+		t.Fatalf("materializeFingerprintRules returned error: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected one fingerprint rule, got %d", len(rows))
+	}
+	if rows[0].ProductName != "JSONProduct" || rows[0].RuleExpr != `body="json-product"` || rows[0].Category != "service" || !rows[0].Enabled {
+		t.Fatalf("unexpected JSON fingerprint row: %#v", rows[0])
+	}
+}
+
+func TestMaterializeFingerprintRulesSupportsYAMLStringValue(t *testing.T) {
+	rows, err := materializeFingerprintRules(Arsenal{
+		ID:       "finger_string",
+		TenantID: "default",
+		Type:     "finger",
+		FileName: "finger.yaml",
+		Content:  "StringProduct: body=\"string-product\"\n",
+		Hash:     "hash-string",
+		Version:  1,
+		State:    "Approved",
+	})
+	if err != nil {
+		t.Fatalf("materializeFingerprintRules returned error: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected one fingerprint rule, got %d", len(rows))
+	}
+	if rows[0].ProductName != "StringProduct" || rows[0].RuleExpr != `body="string-product"` {
+		t.Fatalf("unexpected YAML string fingerprint row: %#v", rows[0])
+	}
+}
+
+func TestMaterializeWorkflowAndDirRulesSupportJSONSingleRecord(t *testing.T) {
+	workflowRows, err := materializeWorkflowRules(Arsenal{
+		ID:       "workflow_json",
+		TenantID: "default",
+		Type:     "workflow",
+		FileName: "workflow.json",
+		Content:  `{"product":"JSONWorkflow","poc":"json-poc.yaml","match_type":"root"}`,
+		Hash:     "hash-workflow",
+		Version:  3,
+		State:    "Approved",
+	})
+	if err != nil {
+		t.Fatalf("materializeWorkflowRules returned error: %v", err)
+	}
+	if len(workflowRows) != 1 || workflowRows[0].ProductName != "JSONWorkflow" || workflowRows[0].PocName != "json-poc.yaml" || workflowRows[0].MatchType != "root" {
+		t.Fatalf("unexpected JSON workflow rows: %#v", workflowRows)
+	}
+
+	dirRows, err := materializeDirRules(Arsenal{
+		ID:       "dir_json",
+		TenantID: "default",
+		Type:     "dir",
+		FileName: "dir.json",
+		Content:  `{"product":"JSONDir","path":"/admin"}`,
+		Hash:     "hash-dir",
+		Version:  3,
+		State:    "Approved",
+	})
+	if err != nil {
+		t.Fatalf("materializeDirRules returned error: %v", err)
+	}
+	if len(dirRows) != 1 || dirRows[0].ProductName != "JSONDir" || dirRows[0].Path != "/admin" {
+		t.Fatalf("unexpected JSON dir rows: %#v", dirRows)
+	}
+}
+
+func TestCreateInBatchesIgnoresDuplicateRows(t *testing.T) {
+	store := setupRuleCatalogSyncTestDB(t)
+	rows := []FingerprintRule{
+		{
+			TenantID:    "default",
+			ProductName: "DuplicateProduct",
+			RuleExpr:    `body="dup"`,
+			Category:    "web",
+			State:       "Approved",
+			Enabled:     true,
+		},
+		{
+			TenantID:    "default",
+			ProductName: "DuplicateProduct",
+			RuleExpr:    `body="dup"`,
+			Category:    "web",
+			State:       "Approved",
+			Enabled:     true,
+		},
+	}
+	if err := createInBatches(store, rows); err != nil {
+		t.Fatalf("createInBatches returned error for duplicate rows: %v", err)
+	}
+	var count int64
+	if err := store.Model(&FingerprintRule{}).Where("tenant_id = ? AND product_name = ?", "default", "DuplicateProduct").Count(&count).Error; err != nil {
+		t.Fatalf("count duplicate rows: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected one duplicate row to be inserted, got %d", count)
+	}
+}
+
 func TestSanitizeArsenalTextFieldsRehashesContent(t *testing.T) {
 	arsenal := Arsenal{
 		ID:       "poc_invalid.yaml",

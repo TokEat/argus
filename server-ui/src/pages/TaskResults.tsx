@@ -226,8 +226,14 @@ const TaskResults: React.FC = () => {
         }
     };
 
+    const normalizeSeverity = (severity?: string) => {
+        if (!severity) return 'Unknown';
+        const normalized = severity.charAt(0).toUpperCase() + severity.slice(1).toLowerCase();
+        return ['Critical', 'High', 'Medium', 'Low', 'Info'].includes(normalized) ? normalized : 'Unknown';
+    };
+
     const getSeverityColor = (severity: string) => {
-        const normalized = severity ? severity.charAt(0).toUpperCase() + severity.slice(1).toLowerCase() : 'Unknown';
+        const normalized = normalizeSeverity(severity);
         const map: Record<string, string> = {
             Critical: '#ef4444', High: '#f97316', Medium: '#f59e0b',
             Low: '#3b82f6', Info: '#14b8a6', Unknown: '#94a3b8',
@@ -236,7 +242,7 @@ const TaskResults: React.FC = () => {
     };
 
     const getSeverityWeight = (severity: string) => {
-        const normalized = severity ? severity.charAt(0).toUpperCase() + severity.slice(1).toLowerCase() : 'Unknown';
+        const normalized = normalizeSeverity(severity);
         const map: Record<string, number> = {
             Critical: 5, High: 4, Medium: 3, Low: 2, Info: 1, Unknown: 0,
         };
@@ -318,13 +324,12 @@ const TaskResults: React.FC = () => {
             key: 'severity',
             width: 100,
             render: (v: string) => {
-                const normalized = v ? v.charAt(0).toUpperCase() + v.slice(1).toLowerCase() : 'Unknown';
+                const normalized = normalizeSeverity(v);
                 return <Tag color={getSeverityColor(normalized)}>{normalized}</Tag>;
             },
             filters: ['Critical', 'High', 'Medium', 'Low', 'Info', 'Unknown'].map(s => ({ text: s, value: s })),
             onFilter: (value, record) => {
-                const normalized = record.Severity ? record.Severity.charAt(0).toUpperCase() + record.Severity.slice(1).toLowerCase() : 'Unknown';
-                return normalized === value;
+                return normalizeSeverity(record.Severity) === value;
             },
             sorter: (a, b) => getSeverityWeight(b.Severity) - getSeverityWeight(a.Severity),
             defaultSortOrder: 'ascend',
@@ -560,7 +565,8 @@ const TaskResults: React.FC = () => {
 
     // Severity statistics
     const severityStats = vulns.reduce((acc, v) => {
-        acc[v.Severity] = (acc[v.Severity] || 0) + 1;
+        const severity = normalizeSeverity(v.Severity);
+        acc[severity] = (acc[severity] || 0) + 1;
         return acc;
     }, {} as Record<string, number>);
 
@@ -581,10 +587,9 @@ const TaskResults: React.FC = () => {
                 <Space>
                     {/* Severity breakdown */}
                     {Object.entries(severityStats).map(([severity, count]) => {
-                        const normalized = severity ? severity.charAt(0).toUpperCase() + severity.slice(1).toLowerCase() : 'Unknown';
                         return (
-                            <Tag key={severity} color={getSeverityColor(normalized)}>
-                                当前页 {normalized}: {count}
+                            <Tag key={severity} color={getSeverityColor(severity)}>
+                                当前页 {severity}: {count}
                             </Tag>
                         );
                     })}
@@ -694,7 +699,7 @@ const TaskResults: React.FC = () => {
                     <Space>
                         <BugOutlined style={{ color: getSeverityColor(selectedVuln?.Severity || '') }} />
                         <span>漏洞详情</span>
-                        {selectedVuln && <Tag color={getSeverityColor(selectedVuln.Severity)}>{selectedVuln.Severity}</Tag>}
+                        {selectedVuln && <Tag color={getSeverityColor(selectedVuln.Severity)}>{normalizeSeverity(selectedVuln.Severity)}</Tag>}
                     </Space>
                 }
                 open={drawerOpen}
@@ -712,8 +717,8 @@ const TaskResults: React.FC = () => {
                                 <Text copyable style={{ fontFamily: 'monospace' }}>{selectedVuln.Target}</Text>
                             </Descriptions.Item>
                             <Descriptions.Item label="危害等级">
-                                <Tag color={getSeverityColor(selectedVuln.Severity ? selectedVuln.Severity.charAt(0).toUpperCase() + selectedVuln.Severity.slice(1).toLowerCase() : 'Unknown')}>
-                                    {selectedVuln.Severity ? selectedVuln.Severity.charAt(0).toUpperCase() + selectedVuln.Severity.slice(1).toLowerCase() : 'Unknown'}
+                                <Tag color={getSeverityColor(selectedVuln.Severity)}>
+                                    {normalizeSeverity(selectedVuln.Severity)}
                                 </Tag>
                             </Descriptions.Item>
                             {selectedVuln.MatchedAt && (

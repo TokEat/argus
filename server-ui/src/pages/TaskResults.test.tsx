@@ -82,4 +82,40 @@ describe('TaskResults', () => {
             });
         });
     });
+
+    it('normalizes severity keys before counting current page stats', async () => {
+        apiMocks.getVulns.mockResolvedValue(paged([
+            {
+                ID: 1,
+                TenantID: 'default',
+                TaskID: 'task-1',
+                Target: 'https://target-1.example',
+                Plugin: 'poc-info-lower',
+                Severity: 'info',
+                CreatedAt: '2026-07-05T00:00:00Z',
+            },
+            {
+                ID: 2,
+                TenantID: 'default',
+                TaskID: 'task-1',
+                Target: 'https://target-2.example',
+                Plugin: 'poc-info-title',
+                Severity: 'Info',
+                CreatedAt: '2026-07-05T00:00:00Z',
+            },
+        ], 2, 1));
+
+        render(
+            <MemoryRouter initialEntries={['/tasks/task-1/results']}>
+                <App>
+                    <Routes>
+                        <Route path="/tasks/:taskId/results" element={<TaskResults />} />
+                    </Routes>
+                </App>
+            </MemoryRouter>,
+        );
+
+        expect(await screen.findByText('当前页 Info: 2')).toBeInTheDocument();
+        expect(screen.queryAllByText('当前页 Info: 1')).toHaveLength(0);
+    });
 });

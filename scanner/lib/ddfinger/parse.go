@@ -150,16 +150,21 @@ func getRuleData(rule string) structs.RuleData {
 		return structs.RuleData{}
 	}
 	pos := strings.Index(rule, "=\"")
+	if pos == 0 {
+		return structs.RuleData{}
+	}
+
 	op := 0
-	if rule[pos-1] == 33 {
+	switch rule[pos-1] {
+	case 33:
 		op = 1
-	} else if rule[pos-1] == 61 {
+	case 61:
 		op = 2
-	} else if rule[pos-1] == 62 {
+	case 62:
 		op = 3
-	} else if rule[pos-1] == 60 {
+	case 60:
 		op = 4
-	} else if rule[pos-1] == 126 {
+	case 126:
 		op = 5
 	}
 
@@ -177,6 +182,10 @@ func getRuleData(rule string) structs.RuleData {
 	}
 	key := rule[start : pos-ti]
 
+	if pos+2 >= len(rule) {
+		return structs.RuleData{}
+	}
+
 	end := pos + 2
 	if pos+2 < len(rule) && rule[pos+2] == 34 {
 		end = pos + 3
@@ -187,6 +196,12 @@ func getRuleData(rule string) structs.RuleData {
 				break
 			}
 		}
+	}
+	if end-1 < pos+2 {
+		end = len(rule)
+	}
+	if pos+2 >= end {
+		return structs.RuleData{}
 	}
 	value := rule[pos+2 : end-1]
 	all := rule[start:end]

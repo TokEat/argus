@@ -521,13 +521,41 @@ func materializeRuleCatalog(arsenals []Arsenal) materializedRuleCatalog {
 }
 
 func materializeFingerprintRules(arsenal Arsenal) ([]FingerprintRule, error) {
-	var raw map[string][]string
-	if err := yaml.Unmarshal([]byte(sanitizePostgresText(arsenal.Content)), &raw); err != nil {
+	content := sanitizePostgresText(arsenal.Content)
+
+	var single struct {
+		Category string      `json:"category"`
+		Product  string      `json:"product"`
+		Rule     string      `json:"rule"`
+		Tags     interface{} `json:"tags"`
+	}
+	if err := json.Unmarshal([]byte(content), &single); err == nil && strings.TrimSpace(single.Product) != "" && strings.TrimSpace(single.Rule) != "" {
+		category := strings.TrimSpace(single.Category)
+		if category == "" {
+			category = "web"
+		}
+		return []FingerprintRule{{
+			TenantID:    arsenal.TenantID,
+			ArtifactID:  arsenal.ID,
+			SourceFile:  arsenal.FileName,
+			ProductName: strings.TrimSpace(single.Product),
+			RuleExpr:    strings.TrimSpace(single.Rule),
+			Category:    category,
+			ContentHash: arsenal.Hash,
+			Version:     arsenal.Version,
+			State:       arsenal.State,
+			Enabled:     arsenal.State == "Approved",
+		}}, nil
+	}
+
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal([]byte(content), &raw); err != nil {
 		return nil, fmt.Errorf("finger yaml parse failed for %s: %w", arsenal.FileName, err)
 	}
 
 	rows := make([]FingerprintRule, 0)
-	for productName, rules := range raw {
+	for productName, value := range raw {
+		rules := toStringSlice(value)
 		for _, ruleExpr := range rules {
 			ruleExpr = strings.TrimSpace(ruleExpr)
 			if ruleExpr == "" {
@@ -551,13 +579,39 @@ func materializeFingerprintRules(arsenal Arsenal) ([]FingerprintRule, error) {
 }
 
 func materializeWorkflowRules(arsenal Arsenal) ([]WorkflowRule, error) {
+	content := sanitizePostgresText(arsenal.Content)
+
+	var single struct {
+		MatchType string `json:"match_type"`
+		Poc       string `json:"poc"`
+		Product   string `json:"product"`
+	}
+	if err := json.Unmarshal([]byte(content), &single); err == nil && strings.TrimSpace(single.Product) != "" && strings.TrimSpace(single.Poc) != "" {
+		matchType := strings.ToLower(strings.TrimSpace(single.MatchType))
+		if matchType == "" {
+			matchType = "root"
+		}
+		return []WorkflowRule{{
+			TenantID:    arsenal.TenantID,
+			ArtifactID:  arsenal.ID,
+			SourceFile:  arsenal.FileName,
+			ProductName: strings.TrimSpace(single.Product),
+			PocName:     strings.TrimSpace(single.Poc),
+			MatchType:   matchType,
+			ContentHash: arsenal.Hash,
+			Version:     arsenal.Version,
+			State:       arsenal.State,
+			Enabled:     arsenal.State == "Approved",
+		}}, nil
+	}
+
 	type workflowEntry struct {
 		Type []string `yaml:"type"`
 		Pocs []string `yaml:"pocs"`
 	}
 
 	var raw map[string]workflowEntry
-	if err := yaml.Unmarshal([]byte(sanitizePostgresText(arsenal.Content)), &raw); err != nil {
+	if err := yaml.Unmarshal([]byte(content), &raw); err != nil {
 		return nil, fmt.Errorf("workflow yaml parse failed for %s: %w", arsenal.FileName, err)
 	}
 
@@ -592,13 +646,34 @@ func materializeWorkflowRules(arsenal Arsenal) ([]WorkflowRule, error) {
 }
 
 func materializeDirRules(arsenal Arsenal) ([]DirRule, error) {
-	var raw map[string][]string
-	if err := yaml.Unmarshal([]byte(sanitizePostgresText(arsenal.Content)), &raw); err != nil {
+	content := sanitizePostgresText(arsenal.Content)
+
+	var single struct {
+		Path    string `json:"path"`
+		Product string `json:"product"`
+	}
+	if err := json.Unmarshal([]byte(content), &single); err == nil && strings.TrimSpace(single.Product) != "" && strings.TrimSpace(single.Path) != "" {
+		return []DirRule{{
+			TenantID:    arsenal.TenantID,
+			ArtifactID:  arsenal.ID,
+			SourceFile:  arsenal.FileName,
+			Path:        strings.TrimSpace(single.Path),
+			ProductName: strings.TrimSpace(single.Product),
+			ContentHash: arsenal.Hash,
+			Version:     arsenal.Version,
+			State:       arsenal.State,
+			Enabled:     arsenal.State == "Approved",
+		}}, nil
+	}
+
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal([]byte(content), &raw); err != nil {
 		return nil, fmt.Errorf("dir yaml parse failed for %s: %w", arsenal.FileName, err)
 	}
 
 	rows := make([]DirRule, 0)
-	for productName, paths := range raw {
+	for productName, value := range raw {
+		paths := toStringSlice(value)
 		for _, probePath := range paths {
 			probePath = strings.TrimSpace(probePath)
 			if probePath == "" {
@@ -875,6 +950,28 @@ func truncatePocDescription(desc string) string {
 	return truncateUTF8Runes(strings.TrimSpace(desc), maxPocDescriptionRunes)
 }
 
+func toStringSlice(value interface{}) []string {
+	switch v := value.(type) {
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []string:
+		return v
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return nil
+		}
+		return []string{v}
+	default:
+		return nil
+	}
+}
+
 func normalizeStringSlice(items []string) []string {
 	out := make([]string, 0, len(items))
 	for _, item := range items {
@@ -938,7 +1035,7 @@ func createInBatches[T any](tx *gorm.DB, items []T) error {
 	if sanitizedCount > 0 {
 		log.Printf("[RuleCatalog] Sanitized PostgreSQL text fields in %d materialized rows before insert.", sanitizedCount)
 	}
-	return tx.CreateInBatches(items, 500).Error
+	return tx.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(items, 500).Error
 }
 
 func disableNonApprovedCatalogRows(tx *gorm.DB) error {

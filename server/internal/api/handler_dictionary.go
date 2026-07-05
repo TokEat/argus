@@ -378,9 +378,42 @@ func getFingerprintDict(c *gin.Context) {
 		return
 	}
 
-	data, _, err := fetchAndParseFingerprint(currentTenantID(c))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	tenantID := currentTenantID(c)
+	data, _, parseErr := fetchAndParseFingerprint(tenantID)
+	if parseErr != nil {
+		data = make(map[string][]string)
+	}
+
+	var structuredRules []db.FingerprintRule
+	if err := db.DB.Where("tenant_id = ? AND enabled = ?", tenantID, true).
+		Order("product_name ASC, rule_expr ASC").
+		Find(&structuredRules).Error; err != nil {
+		if len(data) == 0 {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	} else {
+		for _, row := range structuredRules {
+			productName := strings.TrimSpace(row.ProductName)
+			ruleExpr := strings.TrimSpace(row.RuleExpr)
+			if productName == "" || ruleExpr == "" {
+				continue
+			}
+			existing := data[productName]
+			duplicate := false
+			for _, rule := range existing {
+				if strings.TrimSpace(rule) == ruleExpr {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate {
+				data[productName] = append(existing, ruleExpr)
+			}
+		}
+	}
+	if parseErr != nil && len(data) == 0 {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": parseErr.Error()})
 		return
 	}
 

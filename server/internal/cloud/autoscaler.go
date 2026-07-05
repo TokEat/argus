@@ -247,8 +247,49 @@ func (as *AutoScaler) ScaleUpManual(ctx context.Context, policy *db.CloudScaling
 	as.scaleUp(ctx, policy, count, instanceTypeOverride, regionOverride)
 }
 
+func (as *AutoScaler) capScaleUpCountByActiveInstances(policy *db.CloudScalingPolicy, count int) int {
+	if count <= 0 {
+		return 0
+	}
+	if policy.MaxInstances <= 0 {
+		return count
+	}
+
+	var currentActive int64
+	err := as.db.Model(&db.CloudInstance{}).
+		Where("policy_id = ? AND status IN ?", policy.ID, []string{
+			db.CloudStatusProvisioning,
+			db.CloudStatusWaitingReady,
+			db.CloudStatusRunning,
+		}).
+		Count(&currentActive).Error
+	if err != nil {
+		log.Printf("[AutoScaler] Scale UP aborted: failed to refresh active instances for policy=%s: %v", policy.Name, err)
+		return 0
+	}
+
+	allowed := int64(policy.MaxInstances) - currentActive
+	if allowed <= 0 {
+		return 0
+	}
+	if int64(count) > allowed {
+		return int(allowed)
+	}
+	return count
+}
+
 // scaleUp 执行扩容操作
 func (as *AutoScaler) scaleUp(ctx context.Context, policy *db.CloudScalingPolicy, count int, instanceTypeOverride, regionOverride string) {
+	originalCount := count
+	count = as.capScaleUpCountByActiveInstances(policy, count)
+	if count <= 0 {
+		log.Printf("[AutoScaler] Scale UP aborted: policy=%s requested=%d max=%d active instances already at limit", policy.Name, originalCount, policy.MaxInstances)
+		return
+	}
+	if count != originalCount {
+		log.Printf("[AutoScaler] Scale UP capped: policy=%s requested=%d allowed=%d max=%d", policy.Name, originalCount, count, policy.MaxInstances)
+	}
+
 	// 加载云账号凭证
 	var account db.CloudAccount
 	if err := as.db.First(&account, "id = ? AND status = ?", policy.CloudAccountID, "active").Error; err != nil {

@@ -2,6 +2,25 @@ package ddfinger
 
 import "testing"
 
+func TestParseRuleMalformedExpressionsDoNotPanic(t *testing.T) {
+	cases := []string{
+		`="dangling-key"`,
+		`body="unterminated`,
+		`body="`,
+		`body="value" && = "bad"`,
+	}
+	for _, rule := range cases {
+		t.Run(rule, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("ParseRule panicked for %q: %v", rule, r)
+				}
+			}()
+			_ = ParseRule(rule)
+		})
+	}
+}
+
 func TestParseRuleEmptyStringValue(t *testing.T) {
 	rules := ParseRule(`path="/__bes/__ejb" && status="200" && body==""`)
 	if len(rules) != 3 {

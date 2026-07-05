@@ -50,6 +50,45 @@ func TestDictionaryListEmptyReturnsArray(t *testing.T) {
 	}
 }
 
+func TestFingerprintDictMergesMaterializedRules(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Arsenal{
+		ID:       db.BuildTenantArsenalID("default", "finger", "finger.yaml"),
+		TenantID: "default",
+		Type:     "finger",
+		FileName: "finger.yaml",
+		Content:  "{}\n",
+		Hash:     "empty-finger",
+		State:    "Approved",
+	}).Error; err != nil {
+		t.Fatalf("seed fingerprint arsenal: %v", err)
+	}
+	if err := store.Create(&db.FingerprintRule{
+		TenantID:    "default",
+		ProductName: "StructuredProduct",
+		RuleExpr:    `body="structured"`,
+		Category:    "web",
+		State:       "Approved",
+		Enabled:     true,
+	}).Error; err != nil {
+		t.Fatalf("seed structured fingerprint rule: %v", err)
+	}
+
+	ctx, recorder := newTenantContextWithRole(http.MethodGet, "/dictionaries/fingerprint", "operator", "9")
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/dictionaries/fingerprint", nil)
+	getFingerprintDict(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("fingerprint dict response = %d %q, want 200", recorder.Code, recorder.Body.String())
+	}
+	var resp []FingerprintItem
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode fingerprint response: %v", err)
+	}
+	if len(resp) != 1 || resp[0].Product != "StructuredProduct" || len(resp[0].Rules) != 1 || resp[0].Rules[0] != `body="structured"` {
+		t.Fatalf("expected materialized fingerprint rule in full dictionary, got %+v", resp)
+	}
+}
+
 func TestWorkflowDictLiteUsesSummaryPagination(t *testing.T) {
 	store := setupAITestDB(t)
 	if err := store.AutoMigrate(&db.WorkflowProductSummary{}); err != nil {

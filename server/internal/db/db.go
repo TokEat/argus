@@ -779,6 +779,23 @@ func extractFingerprintProductNames(payloadType, plugin string, payload map[stri
 	return result
 }
 
+func normalizeSeverity(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "critical":
+		return "Critical"
+	case "high":
+		return "High"
+	case "medium":
+		return "Medium"
+	case "low":
+		return "Low"
+	case "info", "informational":
+		return "Info"
+	default:
+		return "Unknown"
+	}
+}
+
 func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 	// 优先从 LRU 缓存查找任务归属
 	projectID := "default_project"
@@ -1058,6 +1075,7 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 
 		// 归一化 target，确保三表关联一致性
 		target = normalizeTarget(target)
+		severity = normalizeSeverity(severity)
 
 		vulnBuffer2 <- Vulnerability{
 			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID, Target: target, Plugin: plugin,
