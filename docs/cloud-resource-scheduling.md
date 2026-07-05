@@ -159,7 +159,7 @@ sequenceDiagram
     participant Cloud as Cloud Provider (Aliyun ECS)
     participant Instance as Spot Instance (Cloud-Init)
     participant Agent as Argus Agent
-    
+
     loop 每 30 秒评估
         Server->>RMQ: 检查全局队列深度 (Queue Depth)
         alt 深度 > 扩容阈值 (Scale Up)
@@ -172,7 +172,7 @@ sequenceDiagram
             Server->>Cloud: Terminate 销毁空闲实例
         end
     end
-    
+
     loop 任务分发 (Agent-Pull)
         Agent->>Server: gRPC ClaimTask (基于自身并发容量)
         Server->>RMQ: 拉取 SubTask
@@ -181,7 +181,7 @@ sequenceDiagram
         Agent->>Agent: 执行扫描/漏洞验证
         Agent->>RMQ: 任务完成，发送 ACK
     end
-    
+
     opt 竞价实例被强行回收
         Cloud->>Instance: HTTP 元数据接口下发 5 分钟回收警告
         Instance->>Agent: 触发 SpotTerminationListener

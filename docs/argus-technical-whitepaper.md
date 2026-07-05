@@ -51,7 +51,7 @@ graph TD
         F[gRPC Server] <--> C
         F <-->|数据回写| D
     end
-    
+
     subgraph 数据面 Data Plane
         E -->|由 Server 认领并分发| G[Scanner Agent 节点]
         E -->|由 Server 认领并分发| H[Scanner Agent 节点]
