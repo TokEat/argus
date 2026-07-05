@@ -53,4 +53,32 @@ describe('AgentLogs', () => {
         await waitFor(() => expect(apiMocks.getAgentLogSummary).toHaveBeenCalled());
         expect(screen.getByText('Agent 日志')).toBeInTheDocument();
     });
+
+    it('prefers agent_id from URL over cached filters', async () => {
+        localStorage.setItem('argus_agent_log_filters', JSON.stringify({
+            agent_id: 'agent-old',
+            limit: 100,
+        }));
+        apiMocks.getNodes.mockResolvedValue([
+            { AgentID: 'agent-old', Status: 'Alive' },
+            { AgentID: 'agent-new', Status: 'Alive' },
+        ]);
+        apiMocks.getAgentLogs.mockResolvedValue([
+            { ID: 1, AgentID: 'agent-new', Level: 'INFO', Message: 'fresh log', Timestamp: Date.now() },
+        ]);
+
+        render(
+            <MemoryRouter initialEntries={['/agent-logs?agent_id=agent-new']}>
+                <App>
+                    <AgentLogs />
+                </App>
+            </MemoryRouter>,
+        );
+
+        await waitFor(() => expect(apiMocks.getAgentLogs).toHaveBeenCalledWith(
+            'agent-new',
+            expect.objectContaining({ limit: 100 }),
+        ));
+        expect(await screen.findByText('fresh log')).toBeInTheDocument();
+    });
 });

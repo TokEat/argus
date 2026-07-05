@@ -89,13 +89,21 @@ const AgentLogs: React.FC = () => {
     const [alertForm] = Form.useForm();
 
     const selectedAgentID = Form.useWatch('agent_id', form);
+    const queryAgentID = searchParams.get('agent_id') || undefined;
+    const initialFilters = useMemo(() => {
+        const filters = loadInitialFilters();
+        if (queryAgentID) {
+            return { ...filters, agent_id: queryAgentID };
+        }
+        return filters;
+    }, [queryAgentID]);
 
 	const fetchNodes = async () => {
 		const result = await getNodes();
 		const normalized = asArray(result);
 		setNodes(normalized);
-		const initialAgent = searchParams.get('agent_id') || normalized[0]?.AgentID;
-		if (initialAgent && !form.getFieldValue('agent_id')) {
+		const initialAgent = queryAgentID || normalized[0]?.AgentID;
+		if (initialAgent && (queryAgentID || !form.getFieldValue('agent_id'))) {
 			form.setFieldValue('agent_id', initialAgent);
 		}
     };
@@ -281,7 +289,7 @@ const AgentLogs: React.FC = () => {
             <Form
                 form={form}
                 layout="inline"
-                initialValues={loadInitialFilters()}
+                initialValues={initialFilters}
                 style={{ marginBottom: 16, gap: 8 }}
                 onValuesChange={(changed) => {
                     persistFilters(form.getFieldsValue());
