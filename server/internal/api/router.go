@@ -2332,8 +2332,11 @@ func getVulns(c *gin.Context) {
 			query = query.Where("1 = 0")
 		}
 	}
-	query.Limit(500).Find(&vulns)
-	c.JSON(http.StatusOK, vulns)
+	page, pageSize, total, ok := paginateResultQuery(c, query, &db.Vulnerability{}, &vulns)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, pagedResponse(vulns, total, page, pageSize, ""))
 }
 
 func getAssets(c *gin.Context) {
@@ -2350,8 +2353,11 @@ func getAssets(c *gin.Context) {
 			query = query.Where("1 = 0")
 		}
 	}
-	query.Limit(500).Find(&assets)
-	c.JSON(http.StatusOK, assets)
+	page, pageSize, total, ok := paginateResultQuery(c, query, &db.Asset{}, &assets)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, pagedResponse(assets, total, page, pageSize, ""))
 }
 
 func getFingerprints(c *gin.Context) {
@@ -2368,8 +2374,25 @@ func getFingerprints(c *gin.Context) {
 			query = query.Where("1 = 0")
 		}
 	}
-	query.Limit(500).Find(&fps)
-	c.JSON(http.StatusOK, fps)
+	page, pageSize, total, ok := paginateResultQuery(c, query, &db.FingerprintHit{}, &fps)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, pagedResponse(fps, total, page, pageSize, ""))
+}
+
+func paginateResultQuery(c *gin.Context, query *gorm.DB, model interface{}, dest interface{}) (int, int, int64, bool) {
+	page, pageSize := parsePagination(c, 20, 200)
+	var total int64
+	if err := query.Session(&gorm.Session{}).Model(model).Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return page, pageSize, 0, false
+	}
+	if err := query.Session(&gorm.Session{}).Limit(pageSize).Offset((page - 1) * pageSize).Find(dest).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return page, pageSize, total, false
+	}
+	return page, pageSize, total, true
 }
 
 type NodeResponse struct {
@@ -2382,7 +2405,7 @@ func getNodes(c *gin.Context) {
 	var nodes []db.Node
 	scopedNodeQuery(tenantID).Find(&nodes)
 
-	var resp []NodeResponse
+	resp := make([]NodeResponse, 0, len(nodes))
 	for _, n := range nodes {
 		nr := NodeResponse{
 			Node:               n,
@@ -3760,7 +3783,7 @@ func getAgentLogSummary(c *gin.Context) {
 		query = query.Where("timestamp <= ?", until)
 	}
 
-	var counts []agentLogLevelCount
+	counts := make([]agentLogLevelCount, 0)
 	query.Select("level, count(*) as count").Group("level").Order("count DESC").Scan(&counts)
 
 	limit := 20
@@ -3772,7 +3795,7 @@ func getAgentLogSummary(c *gin.Context) {
 	if limit > 100 {
 		limit = 100
 	}
-	var recentErrors []db.AgentLog
+	recentErrors := make([]db.AgentLog, 0)
 	errQuery := db.DB.Where("agent_id IN ? AND level IN ?", agentIDs, []string{"ERROR", "WARN"})
 	if agentID := strings.TrimSpace(c.Query("agent_id")); agentID != "" {
 		errQuery = errQuery.Where("agent_id = ?", agentID)
@@ -3843,12 +3866,12 @@ func getAgentLogs(c *gin.Context) {
 	}
 
 	var node db.Node
-	if err := scopedNodeQuery(tenantID).Select("id").Where("agent_id = ?", agentID).First(&node).Error; err != nil {
+	if err := scopedNodeQuery(tenantID).Where("agent_id = ?", agentID).First(&node).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Agent not found"})
 		return
 	}
 
-	var logs []db.AgentLog
+	logs := make([]db.AgentLog, 0)
 	query := db.DB.Where("agent_id = ?", agentID)
 	if level != "" {
 		query = query.Where("level = ?", level)
@@ -3867,7 +3890,7 @@ func getAgentLogs(c *gin.Context) {
 }
 
 func listAgentLogAlertRules(c *gin.Context) {
-	var rules []db.AgentLogAlertRule
+	rules := make([]db.AgentLogAlertRule, 0)
 	db.DB.Where("tenant_id = ?", currentTenantID(c)).Order("created_at DESC").Find(&rules)
 	c.JSON(http.StatusOK, rules)
 }
@@ -3937,7 +3960,7 @@ func listAgentLogAlertEvents(c *gin.Context) {
 	if limit > 500 {
 		limit = 500
 	}
-	var events []db.AgentLogAlertEvent
+	events := make([]db.AgentLogAlertEvent, 0)
 	query := db.DB.Where("tenant_id = ?", currentTenantID(c))
 	if agentID := strings.TrimSpace(c.Query("agent_id")); agentID != "" {
 		query = query.Where("agent_id = ?", agentID)

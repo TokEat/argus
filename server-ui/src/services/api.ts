@@ -148,25 +148,48 @@ export async function getQueueDepth(): Promise<{
 // Results API
 // ===========================
 
-export async function getVulns(taskId?: string, projectId?: string): Promise<API.Vulnerability[]> {
-    const params: Record<string, string> = {};
-    if (taskId) params.task_id = taskId;
+type ResultPageParams = {
+    taskId?: string;
+    projectId?: string;
+    page?: number;
+    pageSize?: number;
+};
+
+const pagedItems = <T,>(value: API.PagedResponse<T> | T[]): T[] => Array.isArray(value) ? value : value.items || [];
+
+const buildResultParams = (first?: string | ResultPageParams, projectId?: string): Record<string, string | number> => {
+    const params: Record<string, string | number> = {};
+    if (typeof first === 'object' && first !== null) {
+        if (first.taskId) params.task_id = first.taskId;
+        if (first.projectId) params.project_id = first.projectId;
+        if (first.page) params.page = first.page;
+        if (first.pageSize) params.page_size = first.pageSize;
+        return params;
+    }
+    if (first) params.task_id = first;
     if (projectId) params.project_id = projectId;
-    return request.get('/vulns', { params });
+    return params;
+};
+
+export async function getVulns(params?: ResultPageParams): Promise<API.PagedResponse<API.Vulnerability>>;
+export async function getVulns(taskId?: string, projectId?: string): Promise<API.Vulnerability[]>;
+export async function getVulns(first?: string | ResultPageParams, projectId?: string): Promise<API.PagedResponse<API.Vulnerability> | API.Vulnerability[]> {
+    const result = await request.get('/vulns', { params: buildResultParams(first, projectId) }) as API.PagedResponse<API.Vulnerability> | API.Vulnerability[];
+    return typeof first === 'object' && first !== null ? result : pagedItems(result);
 }
 
-export async function getAssets(taskId?: string, projectId?: string): Promise<API.Asset[]> {
-    const params: Record<string, string> = {};
-    if (taskId) params.task_id = taskId;
-    if (projectId) params.project_id = projectId;
-    return request.get('/assets', { params });
+export async function getAssets(params?: ResultPageParams): Promise<API.PagedResponse<API.Asset>>;
+export async function getAssets(taskId?: string, projectId?: string): Promise<API.Asset[]>;
+export async function getAssets(first?: string | ResultPageParams, projectId?: string): Promise<API.PagedResponse<API.Asset> | API.Asset[]> {
+    const result = await request.get('/assets', { params: buildResultParams(first, projectId) }) as API.PagedResponse<API.Asset> | API.Asset[];
+    return typeof first === 'object' && first !== null ? result : pagedItems(result);
 }
 
-export async function getFingerprints(taskId?: string, projectId?: string): Promise<API.FingerprintHit[]> {
-    const params: Record<string, string> = {};
-    if (taskId) params.task_id = taskId;
-    if (projectId) params.project_id = projectId;
-    return request.get('/fingerprints', { params });
+export async function getFingerprints(params?: ResultPageParams): Promise<API.PagedResponse<API.FingerprintHit>>;
+export async function getFingerprints(taskId?: string, projectId?: string): Promise<API.FingerprintHit[]>;
+export async function getFingerprints(first?: string | ResultPageParams, projectId?: string): Promise<API.PagedResponse<API.FingerprintHit> | API.FingerprintHit[]> {
+    const result = await request.get('/fingerprints', { params: buildResultParams(first, projectId) }) as API.PagedResponse<API.FingerprintHit> | API.FingerprintHit[];
+    return typeof first === 'object' && first !== null ? result : pagedItems(result);
 }
 
 export async function getProfiles(page: number = 1, pageSize: number = 50, search: string = '', projectId?: string): Promise<API.PaginatedResponse<API.Profile>> {

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Typography, Table, Tag, Tabs, Space, Spin, Button, Tooltip, Empty, Drawer, Descriptions, Divider, Popover } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
@@ -20,13 +20,36 @@ import { useAutoContext } from '../contexts/GlobalAIContext';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
+const DEFAULT_RESULT_PAGE_SIZE = 20;
+
+type ResultPageState = {
+    current: number;
+    pageSize: number;
+    total: number;
+};
+
+type ResultTabKey = 'vulns' | 'assets' | 'fingerprints';
+
+const initialPageState: ResultPageState = {
+    current: 1,
+    pageSize: DEFAULT_RESULT_PAGE_SIZE,
+    total: 0,
+};
 
 const TaskResults: React.FC = () => {
     const { taskId } = useParams<{ taskId: string }>();
     const [loading, setLoading] = useState(true);
+    const [tabLoading, setTabLoading] = useState<Record<ResultTabKey, boolean>>({
+        vulns: false,
+        assets: false,
+        fingerprints: false,
+    });
     const [vulns, setVulns] = useState<API.Vulnerability[]>([]);
     const [assets, setAssets] = useState<API.Asset[]>([]);
     const [fingerprints, setFingerprints] = useState<API.FingerprintHit[]>([]);
+    const [vulnPagination, setVulnPagination] = useState<ResultPageState>(initialPageState);
+    const [assetPagination, setAssetPagination] = useState<ResultPageState>(initialPageState);
+    const [fingerprintPagination, setFingerprintPagination] = useState<ResultPageState>(initialPageState);
     const [activeTab, setActiveTab] = useState('vulns');
     const [selectedVuln, setSelectedVuln] = useState<API.Vulnerability | null>(null);
     const [drawerOpen, setDrawerOpen] = useState(false);
@@ -34,36 +57,111 @@ const TaskResults: React.FC = () => {
     const [candidatesLoading, setCandidatesLoading] = useState(false);
     const navigate = useNavigate();
 
-    const fetchData = async () => {
-        setLoading(true);
+    const setTabBusy = useCallback((key: ResultTabKey, value: boolean) => {
+        setTabLoading((cur) => ({ ...cur, [key]: value }));
+    }, []);
+
+    const fetchVulnsPage = useCallback(async (page: number, pageSize: number) => {
+        setTabBusy('vulns', true);
         try {
             const projectId = localStorage.getItem('active_project_id') || undefined;
-            const [vulnRes, assetRes, fpRes] = await Promise.all([
-                getVulns(taskId, projectId),
-                getAssets(taskId, projectId),
-                getFingerprints(taskId, projectId),
-            ]);
-            setVulns(vulnRes || []);
-            setAssets(assetRes || []);
-            setFingerprints(fpRes || []);
+            const res = await getVulns({ taskId, projectId, page, pageSize });
+            setVulns(res.items || []);
+            setVulnPagination({
+                current: res.page || page,
+                pageSize: res.page_size || pageSize,
+                total: res.total || 0,
+            });
         } catch (error) {
-            console.error('Failed to fetch results:', error);
+            console.error('Failed to fetch vulnerabilities:', error);
+            setVulns([]);
+        } finally {
+            setTabBusy('vulns', false);
+        }
+    }, [setTabBusy, taskId]);
+
+    const fetchAssetsPage = useCallback(async (page: number, pageSize: number) => {
+        setTabBusy('assets', true);
+        try {
+            const projectId = localStorage.getItem('active_project_id') || undefined;
+            const res = await getAssets({ taskId, projectId, page, pageSize });
+            setAssets(res.items || []);
+            setAssetPagination({
+                current: res.page || page,
+                pageSize: res.page_size || pageSize,
+                total: res.total || 0,
+            });
+        } catch (error) {
+            console.error('Failed to fetch assets:', error);
+            setAssets([]);
+        } finally {
+            setTabBusy('assets', false);
+        }
+    }, [setTabBusy, taskId]);
+
+    const fetchFingerprintsPage = useCallback(async (page: number, pageSize: number) => {
+        setTabBusy('fingerprints', true);
+        try {
+            const projectId = localStorage.getItem('active_project_id') || undefined;
+            const res = await getFingerprints({ taskId, projectId, page, pageSize });
+            setFingerprints(res.items || []);
+            setFingerprintPagination({
+                current: res.page || page,
+                pageSize: res.page_size || pageSize,
+                total: res.total || 0,
+            });
+        } catch (error) {
+            console.error('Failed to fetch fingerprints:', error);
+            setFingerprints([]);
+        } finally {
+            setTabBusy('fingerprints', false);
+        }
+    }, [setTabBusy, taskId]);
+
+    const fetchFirstPages = useCallback(async () => {
+        setLoading(true);
+        try {
+            await Promise.all([
+                fetchVulnsPage(1, DEFAULT_RESULT_PAGE_SIZE),
+                fetchAssetsPage(1, DEFAULT_RESULT_PAGE_SIZE),
+                fetchFingerprintsPage(1, DEFAULT_RESULT_PAGE_SIZE),
+            ]);
         } finally {
             setLoading(false);
         }
-    };
+    }, [fetchAssetsPage, fetchFingerprintsPage, fetchVulnsPage]);
+
+    const fetchCurrentPages = useCallback(async () => {
+        setLoading(true);
+        try {
+            await Promise.all([
+                fetchVulnsPage(vulnPagination.current, vulnPagination.pageSize),
+                fetchAssetsPage(assetPagination.current, assetPagination.pageSize),
+                fetchFingerprintsPage(fingerprintPagination.current, fingerprintPagination.pageSize),
+            ]);
+        } finally {
+            setLoading(false);
+        }
+    }, [
+        assetPagination,
+        fetchAssetsPage,
+        fetchFingerprintsPage,
+        fetchVulnsPage,
+        fingerprintPagination,
+        vulnPagination,
+    ]);
 
     useEffect(() => {
-        fetchData();
-    }, [taskId]);
+        fetchFirstPages();
+    }, [fetchFirstPages]);
 
     useAutoContext({
         task_id: taskId,
         active_tab: activeTab,
         stats: {
-            vulns: vulns.length,
-            assets: assets.length,
-            fingerprints: fingerprints.length,
+            vulns: vulnPagination.total,
+            assets: assetPagination.total,
+            fingerprints: fingerprintPagination.total,
         },
         vulns_summary: vulns.slice(0, 10).map(v => ({
             id: v.ID,
@@ -486,13 +584,13 @@ const TaskResults: React.FC = () => {
                         const normalized = severity ? severity.charAt(0).toUpperCase() + severity.slice(1).toLowerCase() : 'Unknown';
                         return (
                             <Tag key={severity} color={getSeverityColor(normalized)}>
-                                {normalized}: {count}
+                                当前页 {normalized}: {count}
                             </Tag>
                         );
                     })}
-                    <Tag color="blue"><GlobalOutlined /> 资产 {assets.length}</Tag>
-                    <Tag color="cyan"><ScanOutlined /> 指纹 {fingerprints.length}</Tag>
-                    <Button icon={<ReloadOutlined />} onClick={fetchData} loading={loading}>刷新</Button>
+                    <Tag color="blue"><GlobalOutlined /> 资产 {assetPagination.total}</Tag>
+                    <Tag color="cyan"><ScanOutlined /> 指纹 {fingerprintPagination.total}</Tag>
+                    <Button icon={<ReloadOutlined />} onClick={fetchCurrentPages} loading={loading}>刷新</Button>
                     <Button icon={<DownloadOutlined />} onClick={handleExport}>导出 CSV</Button>
                 </Space>
             </div>
@@ -502,7 +600,7 @@ const TaskResults: React.FC = () => {
                     <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}>
                         <Spin size="large" />
                     </div>
-                ) : vulns.length === 0 && assets.length === 0 && fingerprints.length === 0 ? (
+                ) : vulnPagination.total === 0 && assetPagination.total === 0 && fingerprintPagination.total === 0 ? (
                     <Empty description="暂无扫描结果" style={{ padding: '60px 0' }} />
                 ) : (
                     <Tabs
@@ -511,14 +609,23 @@ const TaskResults: React.FC = () => {
                         items={[
                             {
                                 key: 'vulns',
-                                label: <span><BugOutlined /> 漏洞 ({vulns.length})</span>,
+                                label: <span><BugOutlined /> 漏洞 ({vulnPagination.total})</span>,
                                 children: (
                                     <Table
                                         bordered
                                         columns={vulnColumns}
                                         dataSource={vulns}
                                         rowKey="ID"
-                                        pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
+                                        loading={tabLoading.vulns}
+                                        pagination={{
+                                            current: vulnPagination.current,
+                                            pageSize: vulnPagination.pageSize,
+                                            total: vulnPagination.total,
+                                            showSizeChanger: true,
+                                            pageSizeOptions: ['10', '20', '50', '100', '200'],
+                                            showTotal: (t) => `共 ${t} 条`,
+                                            onChange: (page, pageSize) => fetchVulnsPage(page, pageSize),
+                                        }}
                                         size="middle"
                                         onRow={(record) => ({
                                             onClick: () => handleVulnClick(record),
@@ -530,14 +637,23 @@ const TaskResults: React.FC = () => {
                             },
                             {
                                 key: 'assets',
-                                label: <span><GlobalOutlined /> 资产 ({assets.length})</span>,
+                                label: <span><GlobalOutlined /> 资产 ({assetPagination.total})</span>,
                                 children: (
                                     <Table
                                         bordered
                                         columns={assetColumns}
                                         dataSource={assets}
                                         rowKey="ID"
-                                        pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
+                                        loading={tabLoading.assets}
+                                        pagination={{
+                                            current: assetPagination.current,
+                                            pageSize: assetPagination.pageSize,
+                                            total: assetPagination.total,
+                                            showSizeChanger: true,
+                                            pageSizeOptions: ['10', '20', '50', '100', '200'],
+                                            showTotal: (t) => `共 ${t} 条`,
+                                            onChange: (page, pageSize) => fetchAssetsPage(page, pageSize),
+                                        }}
                                         size="middle"
                                         rowClassName={(_, index) => index % 2 === 1 ? 'table-row-light' : 'table-row-dark'}
                                     />
@@ -545,14 +661,23 @@ const TaskResults: React.FC = () => {
                             },
                             {
                                 key: 'fingerprints',
-                                label: <span><ScanOutlined /> 指纹 ({fingerprints.length})</span>,
+                                label: <span><ScanOutlined /> 指纹 ({fingerprintPagination.total})</span>,
                                 children: (
                                     <Table
                                         bordered
                                         columns={fpColumns}
                                         dataSource={fingerprints}
                                         rowKey="ID"
-                                        pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
+                                        loading={tabLoading.fingerprints}
+                                        pagination={{
+                                            current: fingerprintPagination.current,
+                                            pageSize: fingerprintPagination.pageSize,
+                                            total: fingerprintPagination.total,
+                                            showSizeChanger: true,
+                                            pageSizeOptions: ['10', '20', '50', '100', '200'],
+                                            showTotal: (t) => `共 ${t} 条`,
+                                            onChange: (page, pageSize) => fetchFingerprintsPage(page, pageSize),
+                                        }}
                                         size="middle"
                                         rowClassName={(_, index) => index % 2 === 1 ? 'table-row-light' : 'table-row-dark'}
                                     />

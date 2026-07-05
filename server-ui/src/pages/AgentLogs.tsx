@@ -30,6 +30,14 @@ const levelColors: Record<string, string> = {
 
 const filterStorageKey = 'argus_agent_log_filters';
 
+const asArray = <T,>(value: T[] | null | undefined): T[] => Array.isArray(value) ? value : [];
+
+const normalizeSummary = (value: API.AgentLogSummary | null | undefined): API.AgentLogSummary => ({
+    level_counts: asArray(value?.level_counts),
+    recent_errors: asArray(value?.recent_errors),
+    retention_days: value?.retention_days || 14,
+});
+
 const loadInitialFilters = () => {
     try {
         const raw = localStorage.getItem(filterStorageKey);
@@ -82,13 +90,14 @@ const AgentLogs: React.FC = () => {
 
     const selectedAgentID = Form.useWatch('agent_id', form);
 
-    const fetchNodes = async () => {
-        const result = await getNodes();
-        setNodes(result || []);
-        const initialAgent = searchParams.get('agent_id') || result?.[0]?.AgentID;
-        if (initialAgent && !form.getFieldValue('agent_id')) {
-            form.setFieldValue('agent_id', initialAgent);
-        }
+	const fetchNodes = async () => {
+		const result = await getNodes();
+		const normalized = asArray(result);
+		setNodes(normalized);
+		const initialAgent = searchParams.get('agent_id') || normalized[0]?.AgentID;
+		if (initialAgent && !form.getFieldValue('agent_id')) {
+			form.setFieldValue('agent_id', initialAgent);
+		}
     };
 
     const rangeToQuery = (range: dayjs.Dayjs[] = []) => ({
@@ -101,25 +110,26 @@ const AgentLogs: React.FC = () => {
         setRetentionDays(result.retention_days || 14);
     };
 
-    const fetchAlerts = async () => {
-        const [rules, events] = await Promise.all([
-            listAgentLogAlertRules(),
-            listAgentLogAlerts({ agent_id: form.getFieldValue('agent_id'), limit: 20 }),
-        ]);
-        setAlertRules(rules || []);
-        setAlertEvents(events || []);
-    };
+	const fetchAlerts = async () => {
+		const [rules, events] = await Promise.all([
+			listAgentLogAlertRules(),
+			listAgentLogAlerts({ agent_id: form.getFieldValue('agent_id'), limit: 20 }),
+		]);
+		setAlertRules(asArray(rules));
+		setAlertEvents(asArray(events));
+	};
 
     const fetchSummary = async (values = form.getFieldsValue()) => {
         const range = values.range || [];
-        const result = await getAgentLogSummary({
-            agent_id: values.agent_id,
-            limit: 10,
-            ...rangeToQuery(range),
-        });
-        setSummary(result);
-        setRetentionDays(result.retention_days || retentionDays);
-    };
+		const result = await getAgentLogSummary({
+			agent_id: values.agent_id,
+			limit: 10,
+			...rangeToQuery(range),
+		});
+		const normalized = normalizeSummary(result);
+		setSummary(normalized);
+		setRetentionDays(normalized.retention_days || retentionDays);
+	};
 
     const fetchLogs = async () => {
         const values = form.getFieldsValue();
@@ -138,7 +148,7 @@ const AgentLogs: React.FC = () => {
                 q: values.q,
                 ...rangeToQuery(range),
             });
-            setLogs(result || []);
+			setLogs(asArray(result));
             await fetchSummary(values);
             await fetchAlerts();
         } catch (error) {

@@ -868,6 +868,198 @@ func TestAgentLogSummaryAndRetentionCleanup(t *testing.T) {
 	}
 }
 
+func TestGetAgentLogsUsesAgentIDPrimaryKeyAndTenantScope(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.AutoMigrate(&db.AgentLog{}); err != nil {
+		t.Fatalf("migrate agent logs: %v", err)
+	}
+	if err := store.Create(&db.Node{TenantID: "default", AgentID: "agent-1", Status: "Alive"}).Error; err != nil {
+		t.Fatalf("seed default node: %v", err)
+	}
+	if err := store.Create(&db.Node{TenantID: "other", AgentID: "agent-2", Status: "Alive"}).Error; err != nil {
+		t.Fatalf("seed other tenant node: %v", err)
+	}
+	nowMs := time.Now().UnixMilli()
+	if err := store.Create(&[]db.AgentLog{
+		{AgentID: "agent-1", Level: "INFO", Message: "default tenant log", Timestamp: nowMs, CreatedAt: time.Now()},
+		{AgentID: "agent-2", Level: "INFO", Message: "other tenant log", Timestamp: nowMs, CreatedAt: time.Now()},
+	}).Error; err != nil {
+		t.Fatalf("seed logs: %v", err)
+	}
+
+	ctx, recorder := newTenantContext(http.MethodGet, "/agents/agent-1/logs?limit=10")
+	ctx.Params = gin.Params{{Key: "id", Value: "agent-1"}}
+	getAgentLogs(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected logs response, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var logs []db.AgentLog
+	if err := json.Unmarshal(recorder.Body.Bytes(), &logs); err != nil {
+		t.Fatalf("decode logs: %v", err)
+	}
+	if len(logs) != 1 || logs[0].AgentID != "agent-1" || logs[0].Message != "default tenant log" {
+		t.Fatalf("expected default tenant agent log, got %+v", logs)
+	}
+
+	ctx, recorder = newTenantContext(http.MethodGet, "/agents/missing/logs")
+	ctx.Params = gin.Params{{Key: "id", Value: "missing"}}
+	getAgentLogs(ctx)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected missing agent 404, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+
+	ctx, recorder = newTenantContext(http.MethodGet, "/agents/agent-2/logs")
+	ctx.Params = gin.Params{{Key: "id", Value: "agent-2"}}
+	getAgentLogs(ctx)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected cross-tenant agent 404, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestAgentLogSummaryReturnsEmptyArraysForNodeWithoutLogs(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.AutoMigrate(&db.AgentLog{}); err != nil {
+		t.Fatalf("migrate agent logs: %v", err)
+	}
+	if err := store.Create(&db.Node{TenantID: "default", AgentID: "agent-empty", Status: "Alive"}).Error; err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+
+	ctx, recorder := newTenantContext(http.MethodGet, "/agent-logs/summary?agent_id=agent-empty")
+	getAgentLogSummary(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected summary response, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	if strings.Contains(body, `"level_counts":null`) || strings.Contains(body, `"recent_errors":null`) {
+		t.Fatalf("expected empty arrays instead of null arrays, got %s", body)
+	}
+	var resp struct {
+		LevelCounts []agentLogLevelCount `json:"level_counts"`
+		RecentErrs  []db.AgentLog        `json:"recent_errors"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if len(resp.LevelCounts) != 0 || len(resp.RecentErrs) != 0 {
+		t.Fatalf("expected empty summary arrays, got %+v", resp)
+	}
+}
+
+func TestResultEndpointsPaginateAndRespectTaskProjectTenantScope(t *testing.T) {
+	store := setupAITestDB(t)
+	now := time.Now()
+	if err := store.Create(&[]db.Project{
+		{ID: "project-1", TenantID: "default", Name: "Project 1", Status: "active"},
+		{ID: "project-2", TenantID: "default", Name: "Project 2", Status: "active"},
+		{ID: "project-other", TenantID: "other", Name: "Other", Status: "active"},
+	}).Error; err != nil {
+		t.Fatalf("seed projects: %v", err)
+	}
+	if err := store.Create(&db.RootTask{ID: "root-1", TenantID: "default", ProjectID: "project-1", Name: "root", Status: "Running"}).Error; err != nil {
+		t.Fatalf("seed root task: %v", err)
+	}
+	if err := store.Create(&db.SubTask{ID: "sub-1", TenantID: "default", ProjectID: "project-1", RootTaskID: "root-1", Status: "Done"}).Error; err != nil {
+		t.Fatalf("seed sub task: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		createdAt := now.Add(time.Duration(i) * time.Minute)
+		if err := store.Create(&db.Vulnerability{
+			TenantID: "default", ProjectID: "project-1", TaskID: "sub-1", RootTaskID: "root-1",
+			Target: "https://target-" + strconv.Itoa(i) + ".example", Plugin: "poc-" + strconv.Itoa(i),
+			Severity: "high", CreatedAt: createdAt, UpdatedAt: createdAt,
+		}).Error; err != nil {
+			t.Fatalf("seed vuln %d: %v", i, err)
+		}
+		if err := store.Create(&db.Asset{
+			TenantID: "default", ProjectID: "project-1", TaskID: "sub-1", RootTaskID: "root-1",
+			Target: "10.0.0." + strconv.Itoa(i+1), Protocol: "Web", Port: 80 + i,
+			CreatedAt: createdAt, UpdatedAt: createdAt,
+		}).Error; err != nil {
+			t.Fatalf("seed asset %d: %v", i, err)
+		}
+		if err := store.Create(&db.FingerprintHit{
+			TenantID: "default", ProjectID: "project-1", TaskID: "sub-1", RootTaskID: "root-1",
+			Target: "https://fp-" + strconv.Itoa(i) + ".example", ProductName: "product-" + strconv.Itoa(i),
+			RuleName: "rule-" + strconv.Itoa(i), CreatedAt: createdAt, UpdatedAt: createdAt,
+		}).Error; err != nil {
+			t.Fatalf("seed fingerprint %d: %v", i, err)
+		}
+	}
+	if err := store.Create(&db.Vulnerability{
+		TenantID: "default", ProjectID: "project-2", TaskID: "other-default",
+		Target: "https://project-2.example", Plugin: "poc-project-2", CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed other project vuln: %v", err)
+	}
+	if err := store.Create(&db.Vulnerability{
+		TenantID: "other", ProjectID: "project-other", TaskID: "other-tenant",
+		Target: "https://other-tenant.example", Plugin: "poc-other", CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed other tenant vuln: %v", err)
+	}
+
+	ctx, recorder := newTenantContext(http.MethodGet, "/vulns?project_id=project-1&task_id=root-1&page=2&page_size=2")
+	getVulns(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected paged vulns, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var vulnResp struct {
+		Items    []db.Vulnerability `json:"items"`
+		Total    int64              `json:"total"`
+		Page     int                `json:"page"`
+		PageSize int                `json:"page_size"`
+		HasMore  bool               `json:"has_more"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &vulnResp); err != nil {
+		t.Fatalf("decode vuln response: %v", err)
+	}
+	if vulnResp.Total != 3 || vulnResp.Page != 2 || vulnResp.PageSize != 2 || vulnResp.HasMore || len(vulnResp.Items) != 1 {
+		t.Fatalf("unexpected vuln pagination: %+v", vulnResp)
+	}
+	if vulnResp.Items[0].ProjectID != "project-1" || vulnResp.Items[0].TaskID != "sub-1" || vulnResp.Items[0].TenantID != "default" {
+		t.Fatalf("unexpected scoped vuln item: %+v", vulnResp.Items[0])
+	}
+
+	ctx, recorder = newTenantContext(http.MethodGet, "/assets?project_id=project-1&task_id=root-1&page=1&page_size=2")
+	getAssets(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected paged assets, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var assetResp struct {
+		Items    []db.Asset `json:"items"`
+		Total    int64      `json:"total"`
+		Page     int        `json:"page"`
+		PageSize int        `json:"page_size"`
+		HasMore  bool       `json:"has_more"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &assetResp); err != nil {
+		t.Fatalf("decode asset response: %v", err)
+	}
+	if assetResp.Total != 3 || assetResp.Page != 1 || assetResp.PageSize != 2 || !assetResp.HasMore || len(assetResp.Items) != 2 {
+		t.Fatalf("unexpected asset pagination: %+v", assetResp)
+	}
+
+	ctx, recorder = newTenantContext(http.MethodGet, "/fingerprints?project_id=project-1&task_id=root-1&page=1&page_size=2000")
+	getFingerprints(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected paged fingerprints, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var fpResp struct {
+		Items    []db.FingerprintHit `json:"items"`
+		Total    int64               `json:"total"`
+		Page     int                 `json:"page"`
+		PageSize int                 `json:"page_size"`
+		HasMore  bool                `json:"has_more"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &fpResp); err != nil {
+		t.Fatalf("decode fingerprint response: %v", err)
+	}
+	if fpResp.Total != 3 || fpResp.Page != 1 || fpResp.PageSize != 200 || fpResp.HasMore || len(fpResp.Items) != 3 {
+		t.Fatalf("unexpected fingerprint pagination: %+v", fpResp)
+	}
+}
+
 func TestCopilotProfileAndContextCompaction(t *testing.T) {
 	profile := resolveCopilotProfile("poc_inline")
 	if profile.MaxTurns <= 4 || len(profile.Tools) != 4 {
