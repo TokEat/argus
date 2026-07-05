@@ -158,6 +158,66 @@ func TestWorkerExecuteTaskFailsOnInvalidTaskConfig(t *testing.T) {
 	}
 }
 
+func TestWorkerExecuteTaskForcesRuleFilesOnlyConfig(t *testing.T) {
+	prepareUsableAgentConfig(t)
+
+	origNewScanContext := newScanContext
+	origRunScanTask := runScanTask
+	defer func() {
+		newScanContext = origNewScanContext
+		runScanTask = origRunScanTask
+	}()
+
+	var captured engine.Config
+	newScanContext = func(cfg engine.Config) (*engine.ScanContext, error) {
+		captured = cfg
+		ctx, cancel := context.WithCancel(context.Background())
+		return &engine.ScanContext{
+			Config: cfg,
+			Ctx:    ctx,
+			Cancel: cancel,
+		}, nil
+	}
+	runScanTask = func(ctx *engine.ScanContext) error {
+		return nil
+	}
+
+	client := &fakeAgentClient{
+		stream: &fakeResultStream{},
+	}
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	worker.client = client
+	worker.executeTask(&pb.Task{
+		TaskId:  "task-rule-files",
+		Targets: []string{"127.0.0.1"},
+		Config: []byte(`{
+			"FingerConfigFilePath": "data/arsenal.db",
+			"WorkflowYamlPath": "data/arsenal.db",
+			"DirSearchYaml": "data/arsenal.db",
+			"NucleiTemplate": "data/arsenal.db"
+		}`),
+	})
+
+	if !captured.RuleFilesOnly {
+		t.Fatalf("expected agent task to force RuleFilesOnly")
+	}
+	if captured.FingerConfigFilePath != filepath.Join("config", "finger.yaml") {
+		t.Fatalf("unexpected finger file path: %q", captured.FingerConfigFilePath)
+	}
+	if captured.WorkflowYamlPath != filepath.Join("config", "workflow.yaml") {
+		t.Fatalf("unexpected workflow file path: %q", captured.WorkflowYamlPath)
+	}
+	if captured.DirSearchYaml != filepath.Join("config", "dir.yaml") {
+		t.Fatalf("unexpected dir file path: %q", captured.DirSearchYaml)
+	}
+	if captured.NucleiTemplate != filepath.Join("config", "pocs") {
+		t.Fatalf("unexpected nuclei template path: %q", captured.NucleiTemplate)
+	}
+	if len(client.taskCompleteReqs) != 1 || client.taskCompleteReqs[0].Status != "DONE" {
+		t.Fatalf("expected task completion DONE, got %#v", client.taskCompleteReqs)
+	}
+}
+
 func TestReportTaskCompletionRetriesTransientFailures(t *testing.T) {
 	client := &fakeAgentClient{
 		stream:           &fakeResultStream{},
