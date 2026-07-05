@@ -6406,6 +6406,7 @@ EHR系统:
     - root
     - dir-fallback
   pocs:
+    - tongweb-ejb-rce-payload
     - TongWeb-Rce
 springboot-heapdump:
   type:
@@ -6539,6 +6540,7 @@ vmware-SpringBoot-Framework:
   type:
     - root
   pocs:
+    - tongweb-ejb-rce-payload
     - tongweb-ejb-rce
 
 圣博润堡垒机:
