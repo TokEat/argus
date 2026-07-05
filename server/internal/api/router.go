@@ -997,9 +997,19 @@ func updateProjectMembers(c *gin.Context) {
 func getTasks(c *gin.Context) {
 	var tasks []db.RootTask
 	tenantID := c.GetString("tenant")
+	page, pageSize := parsePagination(c, 20, 100)
 	query := db.DB.Where("tenant_id = ?", tenantID)
 	query, _ = applyProjectScope(c, query, "project_id")
-	query.Order("created_at desc").Limit(50).Find(&tasks)
+
+	var total int64
+	if err := query.Model(&db.RootTask{}).Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := query.Order("created_at desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&tasks).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
 	// 增强返回：包含目标维度进度
 	type TaskResponse struct {
@@ -1009,7 +1019,7 @@ func getTasks(c *gin.Context) {
 	for _, t := range tasks {
 		resp = append(resp, TaskResponse{RootTask: t})
 	}
-	c.JSON(http.StatusOK, resp)
+	c.JSON(http.StatusOK, pagedResponse(resp, total, page, pageSize, ""))
 }
 
 type taskReasonStat struct {

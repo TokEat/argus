@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"gorm.io/gorm"
 )
 
 const agentSessionTTL = 7 * 24 * time.Hour
@@ -41,6 +42,13 @@ type Server struct {
 	requeueTaskHook   func(task *pb.Task) error                      // 重新入队（用于重试/拆分）
 	queueDepthHook    func() int32                                   // 获取队列深度
 	onTaskClaimedHook func(agentID, taskID string)                   // UI 广播 Hook
+}
+
+func heartbeatRunningTasksExpr(reported int) interface{} {
+	if db.DB != nil && db.DB.Dialector != nil && db.DB.Dialector.Name() == "sqlite" {
+		return gorm.Expr("MAX(running_tasks, ?)", reported)
+	}
+	return gorm.Expr("GREATEST(running_tasks, ?)", reported)
 }
 
 var (
@@ -514,12 +522,14 @@ func (s *Server) Heartbeat(ctx context.Context, req *pb.HeartbeatReq) (*pb.Heart
 	}
 
 	updates := map[string]interface{}{
-		"status":           "Alive",
-		"last_beat":        time.Now().UnixMilli(),
-		"running_tasks":    int(req.RunningTasks),
-		"running_task_ids": taskIDsJSON,
-		"cpu_usage":        req.CpuUsage,
-		"mem_usage":        req.MemUsage,
+		"status":        "Alive",
+		"last_beat":     time.Now().UnixMilli(),
+		"running_tasks": heartbeatRunningTasksExpr(int(req.RunningTasks)),
+		"cpu_usage":     req.CpuUsage,
+		"mem_usage":     req.MemUsage,
+	}
+	if len(req.RunningTaskIds) > 0 {
+		updates["running_task_ids"] = taskIDsJSON
 	}
 	if req.RuleVersion != "" {
 		updates["rule_version"] = req.RuleVersion

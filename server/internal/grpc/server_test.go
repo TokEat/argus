@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -130,6 +131,60 @@ func TestRegisterPromotesWaitingCloudInstanceToRunning(t *testing.T) {
 	}
 	if node.Token != secondResp.Token || node.Version != "1.0.1" {
 		t.Fatalf("expected node to store rotated token and latest version, got %+v", node)
+	}
+}
+
+func TestHeartbeatDoesNotOverwriteServerConfirmedRunningTasks(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	if err := store.Create(&db.Node{
+		TenantID:       "default",
+		AgentID:        "agent-heartbeat",
+		Status:         "Alive",
+		RunningTasks:   3,
+		RunningTaskIDs: `["server-confirmed"]`,
+		LastBeat:       1,
+	}).Error; err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+
+	server := NewServer(50051)
+	if _, err := server.Heartbeat(context.Background(), &pb.HeartbeatReq{
+		AgentId:      "agent-heartbeat",
+		RunningTasks: 0,
+	}); err != nil {
+		t.Fatalf("heartbeat with empty running task report: %v", err)
+	}
+
+	var node db.Node
+	if err := store.First(&node, "agent_id = ?", "agent-heartbeat").Error; err != nil {
+		t.Fatalf("load node: %v", err)
+	}
+	if node.RunningTasks != 3 {
+		t.Fatalf("expected server-confirmed running task count to be preserved, got %d", node.RunningTasks)
+	}
+	if node.RunningTaskIDs != `["server-confirmed"]` {
+		t.Fatalf("expected empty heartbeat to preserve task ids, got %s", node.RunningTaskIDs)
+	}
+
+	if _, err := server.Heartbeat(context.Background(), &pb.HeartbeatReq{
+		AgentId:        "agent-heartbeat",
+		RunningTasks:   4,
+		RunningTaskIds: []string{"agent-task-1", "agent-task-2"},
+	}); err != nil {
+		t.Fatalf("heartbeat with running task ids: %v", err)
+	}
+	if err := store.First(&node, "agent_id = ?", "agent-heartbeat").Error; err != nil {
+		t.Fatalf("reload node: %v", err)
+	}
+	if node.RunningTasks != 4 {
+		t.Fatalf("expected heartbeat to raise running task count, got %d", node.RunningTasks)
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(node.RunningTaskIDs), &ids); err != nil {
+		t.Fatalf("decode running task ids: %v", err)
+	}
+	if len(ids) != 2 || ids[0] != "agent-task-1" || ids[1] != "agent-task-2" {
+		t.Fatalf("expected non-empty heartbeat to refresh task ids, got %v", ids)
 	}
 }
 

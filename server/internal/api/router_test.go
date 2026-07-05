@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -126,6 +127,60 @@ func TestGetArsenalsLiteClearsLargeFieldsWithoutForcingPagination(t *testing.T) 
 	}
 	if paged.Total != 1 || len(paged.Items) != 1 || paged.Items[0].Content != "" || paged.Items[0].PreviousContent != "" {
 		t.Fatalf("expected paged lite response to clear large fields, got %+v", paged)
+	}
+}
+
+func TestGetTasksReturnsPagedResponse(t *testing.T) {
+	store := setupAITestDB(t)
+	project := db.Project{ID: "project-1", TenantID: "default", OwnerUserID: "1", Name: "默认项目", Status: "active"}
+	if err := store.Create(&project).Error; err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	base := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	for i := 1; i <= 5; i++ {
+		task := db.RootTask{
+			ID:        fmt.Sprintf("task-%d", i),
+			TenantID:  "default",
+			ProjectID: project.ID,
+			Name:      fmt.Sprintf("Task %d", i),
+			Status:    "Queued",
+			CreatedAt: base.Add(time.Duration(i) * time.Minute),
+		}
+		if err := store.Create(&task).Error; err != nil {
+			t.Fatalf("seed task %d: %v", i, err)
+		}
+	}
+	if err := store.Create(&db.RootTask{
+		ID:        "other-tenant-task",
+		TenantID:  "tenant-b",
+		ProjectID: project.ID,
+		Name:      "Other tenant",
+		Status:    "Queued",
+		CreatedAt: base.Add(10 * time.Minute),
+	}).Error; err != nil {
+		t.Fatalf("seed other tenant task: %v", err)
+	}
+
+	ctx, recorder := newTenantContext(http.MethodGet, "/tasks?project_id=project-1&page=2&page_size=2")
+	getTasks(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected paged tasks response, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var resp struct {
+		Items    []db.RootTask `json:"items"`
+		Total    int64         `json:"total"`
+		Page     int           `json:"page"`
+		PageSize int           `json:"page_size"`
+		HasMore  bool          `json:"has_more"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode tasks response: %v; body=%s", err, recorder.Body.String())
+	}
+	if resp.Total != 5 || resp.Page != 2 || resp.PageSize != 2 || !resp.HasMore {
+		t.Fatalf("unexpected pagination metadata: %+v", resp)
+	}
+	if len(resp.Items) != 2 || resp.Items[0].ID != "task-3" || resp.Items[1].ID != "task-2" {
+		t.Fatalf("unexpected page items: %+v", resp.Items)
 	}
 }
 

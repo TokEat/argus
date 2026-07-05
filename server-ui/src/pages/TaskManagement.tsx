@@ -242,6 +242,8 @@ const TaskManagement: React.FC = () => {
     const globalProjectId = localStorage.getItem('active_project_id') || '';
     const [projects, setProjects] = useState<API.Project[]>([]);
     const [nodes, setNodes] = useState<API.AgentNode[]>([]);
+    const [taskPagination, setTaskPagination] = useState({ current: 1, pageSize: 20, total: 0 });
+    const taskPaginationRef = useRef({ current: 1, pageSize: 20, total: 0 });
     const [detailOpen, setDetailOpen] = useState(false);
     const [detailLoading, setDetailLoading] = useState(false);
     const [taskDetail, setTaskDetail] = useState<API.TaskDetailResponse | null>(null);
@@ -264,11 +266,25 @@ const TaskManagement: React.FC = () => {
         return () => ctx.revert();
     }, []);
 
-    const fetchTasks = async () => {
+    const fetchTasks = async (
+        page = taskPaginationRef.current.current,
+        pageSize = taskPaginationRef.current.pageSize,
+    ) => {
         setLoading(true);
         try {
-            const result = await listTasks(globalProjectId);
-            setTasks(result || []);
+            const result = await listTasks({
+                projectId: globalProjectId || undefined,
+                page,
+                pageSize,
+            });
+            setTasks(result.items || []);
+            const nextPagination = {
+                current: result.page || page,
+                pageSize: result.page_size || pageSize,
+                total: result.total || 0,
+            };
+            taskPaginationRef.current = nextPagination;
+            setTaskPagination(nextPagination);
         } catch (error) {
             console.error('Failed to fetch tasks:', error);
         } finally {
@@ -313,7 +329,7 @@ const TaskManagement: React.FC = () => {
 
     useAutoContext({
         task_stats: {
-            total: tasks.length,
+            total: taskPagination.total,
             running: tasks.filter(t => t.Status === 'RUNNING').length,
             failed: tasks.filter(t => t.Status === 'FAILED' || t.Status === 'ERROR').length,
         },
@@ -362,7 +378,7 @@ const TaskManagement: React.FC = () => {
             setCreateOpen(false);
             form.resetFields();
             form.setFieldsValue(createInitialValues);
-            fetchTasks();
+            fetchTasks(1, taskPaginationRef.current.pageSize);
         } catch (error: unknown) {
             if (typeof error === 'string') {
                 message.error(error);
@@ -611,7 +627,7 @@ const TaskManagement: React.FC = () => {
                     任务管理
                 </Title>
                 <Space>
-                    <Button icon={<ReloadOutlined />} onClick={fetchTasks} loading={loading}>
+                    <Button icon={<ReloadOutlined />} onClick={() => fetchTasks()} loading={loading}>
                         刷新
                     </Button>
                     {canManageTasks && (
@@ -644,7 +660,17 @@ const TaskManagement: React.FC = () => {
                         columns={columns}
                         dataSource={tasks}
                         rowKey="ID"
-                        pagination={{ pageSize: 15, showSizeChanger: true, showTotal: (total) => `共 ${total} 个任务` }}
+                        pagination={{
+                            current: taskPagination.current,
+                            pageSize: taskPagination.pageSize,
+                            total: taskPagination.total,
+                            showSizeChanger: true,
+                            pageSizeOptions: [10, 20, 50, 100],
+                            showTotal: (total) => `共 ${total} 个任务`,
+                        }}
+                        onChange={(pagination) => {
+                            fetchTasks(pagination.current || 1, pagination.pageSize || taskPaginationRef.current.pageSize);
+                        }}
                         size="middle"
                     />
                 )}

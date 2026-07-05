@@ -100,12 +100,35 @@ export async function updateProjectMembers(id: string, userIdsOrMembers: string[
     return request.put(`/projects/${id}/members`, { user_ids: userIdsOrMembers as string[] });
 }
 
+const pagedItems = <T,>(value: API.PagedResponse<T> | T[]): T[] => Array.isArray(value) ? value : value.items || [];
+
 // ===========================
 // Task API
 // ===========================
 
-export async function listTasks(projectId?: string): Promise<API.RootTask[]> {
-    return request.get('/tasks', { params: projectId ? { project_id: projectId } : {} });
+type TaskPageParams = {
+    projectId?: string;
+    page?: number;
+    pageSize?: number;
+};
+
+const buildTaskParams = (first?: string | TaskPageParams): Record<string, string | number> => {
+    const params: Record<string, string | number> = {};
+    if (typeof first === 'object' && first !== null) {
+        if (first.projectId) params.project_id = first.projectId;
+        if (first.page) params.page = first.page;
+        if (first.pageSize) params.page_size = first.pageSize;
+        return params;
+    }
+    if (first) params.project_id = first;
+    return params;
+};
+
+export async function listTasks(projectId?: string): Promise<API.RootTask[]>;
+export async function listTasks(params: TaskPageParams): Promise<API.PagedResponse<API.RootTask>>;
+export async function listTasks(first?: string | TaskPageParams): Promise<API.PagedResponse<API.RootTask> | API.RootTask[]> {
+    const result = await request.get('/tasks', { params: buildTaskParams(first) }) as API.PagedResponse<API.RootTask> | API.RootTask[];
+    return typeof first === 'object' && first !== null ? result : pagedItems(result);
 }
 
 export async function createTask(data: API.CreateTaskRequest): Promise<{ status: string; task_id: string }> {
@@ -154,8 +177,6 @@ type ResultPageParams = {
     page?: number;
     pageSize?: number;
 };
-
-const pagedItems = <T,>(value: API.PagedResponse<T> | T[]): T[] => Array.isArray(value) ? value : value.items || [];
 
 const buildResultParams = (first?: string | ResultPageParams, projectId?: string): Record<string, string | number> => {
     const params: Record<string, string | number> = {};
