@@ -21,6 +21,7 @@ import PocDebugPanel from './PocDebugPanel';
 import { canAccessRole } from '../../utils/auth';
 
 const { Text } = Typography;
+const WORKFLOW_USAGE_PAGE_SIZE = 100;
 
 const PocConfig: React.FC = () => {
     const { visible, openGlobalAI, registerEditableTarget } = useGlobalAI();
@@ -97,7 +98,7 @@ const PocConfig: React.FC = () => {
         const all: API.WorkflowSummary[] = [];
         let nextPage = 1;
         for (;;) {
-            const res = await getWorkflowDictPage({ scope: 'all', page: nextPage, page_size: 200 }).catch(() => null);
+            const res = await getWorkflowDictPage({ scope: 'all', page: nextPage, page_size: WORKFLOW_USAGE_PAGE_SIZE }).catch(() => null);
             if (!res) return all;
             all.push(...(res.items || []));
             if (!res.has_more) return all;
@@ -193,12 +194,31 @@ http:
         }) || null;
     };
 
+    const findDuplicatePoc = async (raw: string): Promise<API.PocRuleMetadata | null> => {
+        const local = checkDuplicate(raw);
+        if (local) return local;
+        const name = raw.trim();
+        if (!name) return null;
+        const withExt = /\.ya?ml$/i.test(name) ? name : `${name}.yaml`;
+        const stripped = name.replace(/\.ya?ml$/i, '');
+        const res = await listPocRulesPage({ all: '1', page: 1, page_size: 20, q: stripped });
+        return (res.items || []).find((item) => {
+            const itemStripped = item.source_file.replace(/\.ya?ml$/i, '');
+            return item.source_file === name || item.source_file === withExt || itemStripped === stripped;
+        }) || null;
+    };
+
     const duplicateOf = useMemo(() => (isNew ? checkDuplicate(newFileName) : null),
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [isNew, newFileName, pocRules]);
 
     const doSave = async (fileName: string) => {
         if (!canManageArsenals) return;
+        const remoteDuplicate = isNew ? await findDuplicatePoc(fileName) : null;
+        if (isNew && remoteDuplicate && !duplicateOf) {
+            msg.error(`POC ${remoteDuplicate.source_file} 已存在，请搜索后进入编辑确认覆盖`);
+            return;
+        }
         await saveArsenal('poc', fileName, editorContent);
         msg.success(isNew ? (duplicateOf ? `POC ${fileName} 已覆盖（重置为草稿状态）` : 'POC 创建成功（草稿状态）') : 'POC 更新成功');
         setEditorVisible(false);
@@ -215,6 +235,10 @@ http:
         }
         if (isNew && duplicateOf) {
             throw '文件名已存在，请使用编辑器底部保存按钮确认覆盖';
+        }
+        const remoteDuplicate = isNew ? await findDuplicatePoc(fileName) : null;
+        if (isNew && remoteDuplicate) {
+            throw `POC ${remoteDuplicate.source_file} 已存在，请搜索后进入编辑确认覆盖`;
         }
         const finalName = fileName;
         const draftContent = typeof contentOverride === 'string' ? contentOverride : editorContent;

@@ -16,6 +16,7 @@ import {
     Badge,
     AutoComplete,
     Alert,
+    Spin,
 } from 'antd';
 import {
     PlusOutlined,
@@ -61,6 +62,29 @@ interface WorkflowEditDrawerProps {
  * 无需在多个 Tab 之间跳转。
  */
 const GENERAL_POC_PREFIX = 'General-Poc-';
+const CANDIDATE_PAGE_SIZE = 50;
+
+const uniqueStrings = (values: string[]) => Array.from(new Set(values.filter(Boolean)));
+
+const pocOptionFromArsenal = (poc: API.Arsenal) => {
+    const stripped = poc.FileName.replace(/\.(ya?ml)$/i, '');
+    return { label: poc.FileName, value: stripped };
+};
+
+const mergePocOptions = (
+    current: { label: string; value: string }[],
+    incoming: { label: string; value: string }[],
+) => {
+    const seen = new Set(current.map((item) => item.value));
+    const merged = [...current];
+    incoming.forEach((item) => {
+        if (!seen.has(item.value)) {
+            seen.add(item.value);
+            merged.push(item);
+        }
+    });
+    return merged;
+};
 
 const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
     open,
@@ -73,7 +97,16 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
     const { message, modal } = App.useApp();
     const [form] = Form.useForm();
     const [pocOptions, setPocOptions] = useState<{ label: string; value: string }[]>([]);
+    const [pocSearch, setPocSearch] = useState('');
+    const [pocPage, setPocPage] = useState(1);
+    const [pocHasMore, setPocHasMore] = useState(false);
+    const [pocLoading, setPocLoading] = useState(false);
     const [fingerprintProducts, setFingerprintProducts] = useState<Set<string>>(new Set());
+    const [fingerprintOptions, setFingerprintOptions] = useState<string[]>([]);
+    const [fingerprintSearch, setFingerprintSearch] = useState('');
+    const [fingerprintPage, setFingerprintPage] = useState(1);
+    const [fingerprintHasMore, setFingerprintHasMore] = useState(false);
+    const [fingerprintLoading, setFingerprintLoading] = useState(false);
     const [pocEditor, setPocEditor] = useState<{ open: boolean; fileName?: string; suggested?: string }>({ open: false });
     const [fpEditor, setFpEditor] = useState<{ open: boolean; product?: string; isNew?: boolean }>({ open: false });
     const [saving, setSaving] = useState(false);
@@ -84,20 +117,86 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
     const [pocsState, setPocsState] = useState<string[]>([]);
     const [watchedProduct, setWatchedProduct] = useState<string>('');
 
-    const loadRefData = async () => {
+    const loadPocOptions = async (search = pocSearch, nextPage = 1, append = false) => {
+        setPocLoading(true);
         try {
-            const [pocs, fps] = await Promise.all([
-                listArsenalsPage('poc', { all: '1', lite: '1', page: 1, page_size: 200 }),
-                getFingerprintDictPage({ all: '1', page: 1, page_size: 200 }),
-            ]);
-            // 下拉选项使用不带 .yaml 后缀的名称（与 workflow.yaml 内存储习惯一致）。
-            const opts: { label: string; value: string }[] = [];
-            (pocs.items || []).forEach((p) => {
-                const stripped = p.FileName.replace(/\.(ya?ml)$/i, '');
-                opts.push({ label: p.FileName, value: stripped });
+            const res = await listArsenalsPage('poc', {
+                all: '1',
+                lite: '1',
+                q: search || undefined,
+                page: nextPage,
+                page_size: CANDIDATE_PAGE_SIZE,
             });
-            setPocOptions(opts);
-            setFingerprintProducts(new Set((fps.items || []).map((f) => f.product)));
+            const nextOptions = (res.items || []).map(pocOptionFromArsenal);
+            setPocOptions((current) => (append ? mergePocOptions(current, nextOptions) : nextOptions));
+            setPocPage(res.page || nextPage);
+            setPocHasMore(!!res.has_more);
+        } catch {
+            message.error('加载 POC 候选失败');
+        } finally {
+            setPocLoading(false);
+        }
+    };
+
+    const hydrateSelectedPocOptions = async (names: string[]) => {
+        const candidates = uniqueStrings(names).filter(Boolean);
+        if (candidates.length === 0) return;
+        const results = await Promise.allSettled(
+            candidates.map((name) =>
+                listArsenalsPage('poc', {
+                    all: '1',
+                    lite: '1',
+                    q: name,
+                    page: 1,
+                    page_size: 20,
+                }),
+            ),
+        );
+        const exactOptions: { label: string; value: string }[] = [];
+        results.forEach((result, index) => {
+            if (result.status !== 'fulfilled') return;
+            const target = candidates[index].replace(/\.(ya?ml)$/i, '');
+            const match = (result.value.items || []).find((item) => {
+                const stripped = item.FileName.replace(/\.(ya?ml)$/i, '');
+                return item.FileName === candidates[index] || stripped === target;
+            });
+            if (match) exactOptions.push(pocOptionFromArsenal(match));
+        });
+        if (exactOptions.length > 0) {
+            setPocOptions((current) => mergePocOptions(current, exactOptions));
+        }
+    };
+
+    const loadFingerprintOptions = async (search = fingerprintSearch, nextPage = 1, append = false) => {
+        setFingerprintLoading(true);
+        try {
+            const res = await getFingerprintDictPage({
+                all: '1',
+                q: search || undefined,
+                page: nextPage,
+                page_size: CANDIDATE_PAGE_SIZE,
+            });
+            const products = uniqueStrings((res.items || []).map((f) => f.product));
+            setFingerprintOptions((current) => (append ? uniqueStrings([...current, ...products]) : products));
+            setFingerprintProducts((current) => new Set([...Array.from(current), ...products]));
+            setFingerprintPage(res.page || nextPage);
+            setFingerprintHasMore(!!res.has_more);
+        } catch {
+            message.error('加载指纹候选失败');
+        } finally {
+            setFingerprintLoading(false);
+        }
+    };
+
+    const loadRefData = async (selectedPocs: string[] = []) => {
+        try {
+            setPocSearch('');
+            setFingerprintSearch('');
+            await Promise.all([
+                loadPocOptions('', 1, false),
+                loadFingerprintOptions('', 1, false),
+                hydrateSelectedPocOptions(selectedPocs),
+            ]);
         } catch {
             message.error('加载关联弹药库失败');
         }
@@ -105,7 +204,6 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
 
     useEffect(() => {
         if (!open) return;
-        loadRefData();
         if (isNew) {
             form.setFieldsValue({
                 product: isGPMode ? GENERAL_POC_PREFIX : '',
@@ -113,6 +211,7 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
             });
             setWatchedProduct(isGPMode ? GENERAL_POC_PREFIX : '');
             setPocsState([]);
+            loadRefData([]);
         } else {
             form.setFieldsValue({
                 product: workflow!.product,
@@ -120,6 +219,7 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
             });
             setWatchedProduct(workflow!.product);
             setPocsState(workflow!.pocs || []);
+            loadRefData(workflow!.pocs || []);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open, workflow]);
@@ -130,6 +230,44 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
         () => !!watchedProduct && !isCurrentGP && fingerprintProducts.has(watchedProduct),
         [watchedProduct, fingerprintProducts, isCurrentGP],
     );
+
+    useEffect(() => {
+        if (!open || !watchedProduct || isCurrentGP || fingerprintProducts.has(watchedProduct)) return undefined;
+        const timer = window.setTimeout(async () => {
+            try {
+                const found = await getFingerprintDictPage({
+                    all: '1',
+                    q: watchedProduct,
+                    page: 1,
+                    page_size: 20,
+                });
+                const exact = (found.items || []).find((item) => item.product === watchedProduct);
+                if (exact) {
+                    setFingerprintProducts((current) => new Set([...Array.from(current), exact.product]));
+                    setFingerprintOptions((current) => uniqueStrings([...current, exact.product]));
+                }
+            } catch {
+                // Candidate lookup failure should not block typing in the product field.
+            }
+        }, 300);
+        return () => window.clearTimeout(timer);
+    }, [open, watchedProduct, isCurrentGP, fingerprintProducts]);
+
+    const handlePocPopupScroll = (event: React.UIEvent<HTMLDivElement>) => {
+        const target = event.currentTarget;
+        if (!pocHasMore || pocLoading) return;
+        if (target.scrollTop + target.offsetHeight >= target.scrollHeight - 24) {
+            loadPocOptions(pocSearch, pocPage + 1, true);
+        }
+    };
+
+    const handleFingerprintPopupScroll = (event: React.UIEvent<HTMLDivElement>) => {
+        const target = event.currentTarget;
+        if (!fingerprintHasMore || fingerprintLoading) return;
+        if (target.scrollTop + target.offsetHeight >= target.scrollHeight - 24) {
+            loadFingerprintOptions(fingerprintSearch, fingerprintPage + 1, true);
+        }
+    };
 
     const handleSaveWorkflow = async () => {
         try {
@@ -248,8 +386,9 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
 
     const handlePocSaved = (fileName: string) => {
         // 把新建 / 更新过的 POC 自动加入当前 workflow 的 POC 列表
-        setPocsState((cur) => (cur.includes(fileName) ? cur : [...cur, fileName]));
-        loadRefData();
+        const nextPocs = pocsState.includes(fileName) ? pocsState : [...pocsState, fileName];
+        setPocsState(nextPocs);
+        loadRefData(nextPocs);
     };
 
     const handleRemovePocFromWorkflow = (fileName: string) => {
@@ -264,8 +403,9 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
         try {
             await deleteArsenal('poc', realFileName);
             message.success(`POC ${fileName} 已从弹药库删除`);
-            handleRemovePocFromWorkflow(fileName);
-            loadRefData();
+            const nextPocs = pocsState.filter((p) => p !== fileName);
+            setPocsState(nextPocs);
+            loadRefData(nextPocs);
         } catch {
             message.error('POC 删除失败（请确认该 POC 文件存在于弹药库）');
         }
@@ -320,10 +460,14 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
                         placeholder="例：Liferay-Portal（输入后下拉可选指纹库已有 product）"
                         allowClear
                         showSearch
-                        filterOption={(input, option) =>
-                            (option?.value as string)?.toLowerCase().includes(input.toLowerCase())
-                        }
-                        options={Array.from(fingerprintProducts).sort().map((p) => ({
+                        filterOption={false}
+                        onSearch={(value) => {
+                            setFingerprintSearch(value);
+                            loadFingerprintOptions(value, 1, false);
+                        }}
+                        onPopupScroll={handleFingerprintPopupScroll}
+                        notFoundContent={fingerprintLoading ? <Spin size="small" /> : undefined}
+                        options={[...fingerprintOptions].sort().map((p) => ({
                             value: p,
                             label: (
                                 <Space>
@@ -334,7 +478,6 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
                         }))}
                     />
                 </Form.Item>
-
                 <Form.Item
                     label={
                         <Tooltip title="决定 POC 作用于目标 URL 的哪个层级。可多选组合。">
@@ -454,10 +597,15 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
                     showSearch
                     value={pocsState}
                     onChange={(v: string[]) => setPocsState(v)}
+                    onSearch={(value) => {
+                        setPocSearch(value);
+                        loadPocOptions(value, 1, false);
+                    }}
+                    onPopupScroll={handlePocPopupScroll}
                     options={pocOptions}
-                    filterOption={(input, option) =>
-                        (option?.label ?? '').toString().toLowerCase().includes(input.toLowerCase())
-                    }
+                    filterOption={false}
+                    loading={pocLoading}
+                    notFoundContent={pocLoading ? <Spin size="small" /> : undefined}
                     tagRender={() => <></>}
                 />
 
