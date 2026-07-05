@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -333,6 +335,41 @@ func TenantMiddleware() gin.HandlerFunc {
 // Global variable acting as hot-reload trigger
 var GlobalArsenalReloadCounter int64 = 0
 
+func validateUTF8TextBodyMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !shouldValidateUTF8Body(c.Request.Method, c.GetHeader("Content-Type")) || c.Request.Body == nil {
+			c.Next()
+			return
+		}
+		body, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
+			return
+		}
+		if !utf8.Valid(body) {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+				"error": "request body contains invalid UTF-8, please use UTF-8 encoding",
+			})
+			return
+		}
+		c.Request.Body = io.NopCloser(bytes.NewReader(body))
+		c.Next()
+	}
+}
+
+func shouldValidateUTF8Body(method string, contentType string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch:
+	default:
+		return false
+	}
+	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	return mediaType == "application/json" ||
+		strings.HasSuffix(mediaType, "+json") ||
+		strings.HasPrefix(mediaType, "text/") ||
+		mediaType == "application/x-www-form-urlencoded"
+}
+
 // InitRouter 初始化 Gin 路由
 func InitRouter(port string) {
 	r := gin.Default()
@@ -348,6 +385,7 @@ func InitRouter(port string) {
 		}
 		c.Next()
 	})
+	r.Use(validateUTF8TextBodyMiddleware())
 	r.Use(gzipMiddleware())
 
 	// 启动 WebSocket 广播中心
@@ -1741,9 +1779,10 @@ func getArsenals(c *gin.Context) {
 		query = query.Where("state = ?", "Approved")
 	}
 
+	isLite := c.Query("lite") == "1"
 	// 如果指定了 lite=1 ，则省略动辄几千上万行的巨大 Content 正文内容，只提取主要元数据
-	if c.Query("lite") == "1" {
-		query = query.Omit("Content")
+	if isLite {
+		query = query.Omit("Content", "PreviousContent")
 	}
 
 	if q := strings.TrimSpace(c.Query("q")); q != "" {
@@ -1751,7 +1790,7 @@ func getArsenals(c *gin.Context) {
 		query = query.Where("LOWER(file_name) LIKE ? OR LOWER(state) LIKE ? OR LOWER(hash) LIKE ?", like, like, like)
 	}
 
-	if c.Query("page") != "" || c.Query("page_size") != "" || c.Query("lite") == "1" || strings.TrimSpace(c.Query("q")) != "" {
+	if c.Query("page") != "" || c.Query("page_size") != "" || strings.TrimSpace(c.Query("q")) != "" {
 		page, pageSize := parsePagination(c, 50, 200)
 		var total int64
 		if err := query.Model(&db.Arsenal{}).Count(&total).Error; err != nil {
@@ -1762,6 +1801,9 @@ func getArsenals(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		if isLite {
+			clearArsenalLargeFields(arsenals)
+		}
 		c.JSON(http.StatusOK, pagedResponse(arsenals, total, page, pageSize, currentRuleVersion()))
 		return
 	}
@@ -1769,6 +1811,9 @@ func getArsenals(c *gin.Context) {
 	if err := query.Find(&arsenals).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if isLite {
+		clearArsenalLargeFields(arsenals)
 	}
 	c.JSON(http.StatusOK, arsenals)
 }
@@ -1783,6 +1828,13 @@ func getArsenal(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, arsenal)
+}
+
+func clearArsenalLargeFields(arsenals []db.Arsenal) {
+	for i := range arsenals {
+		arsenals[i].Content = ""
+		arsenals[i].PreviousContent = ""
+	}
 }
 
 func saveArsenal(c *gin.Context) {

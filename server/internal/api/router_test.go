@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -43,6 +45,87 @@ func TestShouldAgentReloadRules(t *testing.T) {
 				t.Fatalf("expected %v, got %v", tt.want, got)
 			}
 		})
+	}
+}
+
+func TestValidateUTF8TextBodyMiddlewareScopesToTextualBodies(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(validateUTF8TextBodyMiddleware())
+	router.POST("/echo", func(c *gin.Context) {
+		body, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.String(http.StatusInternalServerError, err.Error())
+			return
+		}
+		c.String(http.StatusOK, string(body))
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/echo", bytes.NewReader([]byte{0xe4}))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid JSON UTF-8 to be rejected, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/echo", bytes.NewReader([]byte{0xe4}))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected binary body to bypass UTF-8 validation, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.Bytes(); !bytes.Equal(got, []byte{0xe4}) {
+		t.Fatalf("expected binary body to reach handler unchanged, got %v", got)
+	}
+}
+
+func TestGetArsenalsLiteClearsLargeFieldsWithoutForcingPagination(t *testing.T) {
+	store := setupAITestDB(t)
+	arsenal := db.Arsenal{
+		ID:              "default:poc:demo.yaml",
+		TenantID:        "default",
+		Type:            "poc",
+		FileName:        "demo.yaml",
+		Content:         "id: demo\ninfo:\n  name: demo\n",
+		PreviousContent: "id: old\n",
+		Hash:            "hash-demo",
+		State:           "Approved",
+	}
+	if err := store.Create(&arsenal).Error; err != nil {
+		t.Fatalf("seed arsenal: %v", err)
+	}
+
+	ctx, recorder := newTenantContext(http.MethodGet, "/arsenals/poc?lite=1")
+	ctx.Params = gin.Params{{Key: "type", Value: "poc"}}
+	getArsenals(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected lite arsenals response, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var items []db.Arsenal
+	if err := json.Unmarshal(recorder.Body.Bytes(), &items); err != nil {
+		t.Fatalf("expected lite response to remain an array: %v; body=%s", err, recorder.Body.String())
+	}
+	if len(items) != 1 || items[0].Content != "" || items[0].PreviousContent != "" {
+		t.Fatalf("expected lite array to clear large fields, got %+v", items)
+	}
+
+	ctx, recorder = newTenantContext(http.MethodGet, "/arsenals/poc?lite=1&page=1&page_size=1")
+	ctx.Params = gin.Params{{Key: "type", Value: "poc"}}
+	getArsenals(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected paged lite arsenals response, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var paged struct {
+		Items []db.Arsenal `json:"items"`
+		Total int64        `json:"total"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &paged); err != nil {
+		t.Fatalf("decode paged lite response: %v", err)
+	}
+	if paged.Total != 1 || len(paged.Items) != 1 || paged.Items[0].Content != "" || paged.Items[0].PreviousContent != "" {
+		t.Fatalf("expected paged lite response to clear large fields, got %+v", paged)
 	}
 }
 

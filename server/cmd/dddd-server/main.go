@@ -175,10 +175,16 @@ func main() {
 	}
 
 	if migrationMode != db.MigrationModeVerify {
-		log.Println("Synchronizing rule catalog indexes...")
-		if err := db.SyncRuleCatalogFromArsenal(); err != nil {
-			log.Fatalf("Failed to synchronize rule catalog: %v", err)
-		}
+		// Run rule catalog sync in background to avoid blocking startup.
+		// The sync rebuilds structured rule tables from raw arsenal data.
+		go func() {
+			log.Println("Synchronizing rule catalog indexes (background)...")
+			if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+				log.Printf("[RuleCatalog] background sync error: %v", err)
+				return
+			}
+			log.Println("[RuleCatalog] background sync completed")
+		}()
 	}
 
 	if migrateOnly {
