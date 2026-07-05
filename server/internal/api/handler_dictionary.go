@@ -120,9 +120,45 @@ type workflowSummaryResponse struct {
 	UpdatedAt            string   `json:"updated_at"`
 }
 
+type workflowSummaryStatsResponse struct {
+	Total              int64 `json:"total" gorm:"column:total"`
+	FingerprintMissing int64 `json:"fp_missing" gorm:"column:fp_missing"`
+	POCMissing         int64 `json:"poc_missing" gorm:"column:poc_missing"`
+	TotalPOCs          int64 `json:"total_pocs" gorm:"column:total_pocs"`
+	FingerprintRules   int64 `json:"fingerprint_rules" gorm:"column:fingerprint_rules"`
+}
+
 func listWorkflowSummaries(c *gin.Context) {
 	tenantID := currentTenantID(c)
 	page, pageSize := parsePagination(c, 50, 200)
+	query := workflowSummaryQuery(c, tenantID)
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	stats, err := workflowSummaryStats(workflowSummaryQuery(c, tenantID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	var rows []db.WorkflowProductSummary
+	if err := workflowSummaryQuery(c, tenantID).Order("product_name ASC").Limit(pageSize).Offset((page - 1) * pageSize).Find(&rows).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	items := make([]workflowSummaryResponse, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, workflowSummaryToResponse(row))
+	}
+	c.JSON(http.StatusOK, pagedResponseWithStats(items, total, page, pageSize, currentRuleVersion(), stats))
+}
+
+func workflowSummaryQuery(c *gin.Context, tenantID string) *gorm.DB {
 	query := db.DB.Model(&db.WorkflowProductSummary{}).Where("tenant_id = ?", tenantID)
 
 	switch strings.ToLower(strings.TrimSpace(c.Query("scope"))) {
@@ -145,24 +181,19 @@ func listWorkflowSummaries(c *gin.Context) {
 		like := "%" + strings.ToLower(q) + "%"
 		query = query.Where("LOWER(product_name) LIKE ? OR LOWER(CAST(poc_names AS TEXT)) LIKE ? OR LOWER(CAST(match_types AS TEXT)) LIKE ?", like, like, like)
 	}
+	return query
+}
 
-	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	var rows []db.WorkflowProductSummary
-	if err := query.Order("product_name ASC").Limit(pageSize).Offset((page - 1) * pageSize).Find(&rows).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	items := make([]workflowSummaryResponse, 0, len(rows))
-	for _, row := range rows {
-		items = append(items, workflowSummaryToResponse(row))
-	}
-	c.JSON(http.StatusOK, pagedResponse(items, total, page, pageSize, currentRuleVersion()))
+func workflowSummaryStats(query *gorm.DB) (workflowSummaryStatsResponse, error) {
+	var stats workflowSummaryStatsResponse
+	err := query.Select(`
+		COUNT(*) AS total,
+		COALESCE(SUM(CASE WHEN is_general_poc = ? AND fingerprint_bound = ? THEN 1 ELSE 0 END), 0) AS fp_missing,
+		COALESCE(SUM(CASE WHEN missing_poc_count > 0 THEN 1 ELSE 0 END), 0) AS poc_missing,
+		COALESCE(SUM(poc_count), 0) AS total_pocs,
+		COALESCE(SUM(fingerprint_rule_count), 0) AS fingerprint_rules
+	`, false, false).Scan(&stats).Error
+	return stats, err
 }
 
 func workflowSummaryToResponse(row db.WorkflowProductSummary) workflowSummaryResponse {

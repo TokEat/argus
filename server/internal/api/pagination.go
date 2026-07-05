@@ -16,6 +16,7 @@ type paginatedResponse struct {
 	HasMore     bool        `json:"has_more"`
 	RuleVersion string      `json:"rule_version,omitempty"`
 	GeneratedAt string      `json:"generated_at"`
+	Stats       interface{} `json:"stats,omitempty"`
 }
 
 func parsePagination(c *gin.Context, defaultPageSize, maxPageSize int) (int, int) {
@@ -45,6 +46,12 @@ func pagedResponse(items interface{}, total int64, page, pageSize int, ruleVersi
 		RuleVersion: strings.TrimSpace(ruleVersion),
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 	}
+}
+
+func pagedResponseWithStats(items interface{}, total int64, page, pageSize int, ruleVersion string, stats interface{}) paginatedResponse {
+	resp := pagedResponse(items, total, page, pageSize, ruleVersion)
+	resp.Stats = stats
+	return resp
 }
 
 func currentRuleVersion() string {

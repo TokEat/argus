@@ -491,6 +491,18 @@ declare namespace API {
     updated_at: string;
   }
 
+  interface WorkflowStats {
+    total: number;
+    fp_missing: number;
+    poc_missing: number;
+    total_pocs: number;
+    fingerprint_rules: number;
+  }
+
+  interface WorkflowSummaryPage extends PagedResponse<WorkflowSummary> {
+    stats?: WorkflowStats;
+  }
+
   interface FingerprintItem {
     product: string;
     rules: string[];

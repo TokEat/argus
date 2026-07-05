@@ -27,8 +27,43 @@ interface EnrichedWorkflow extends API.WorkflowSummary {
     _missingPocs: string[];
 }
 
+interface WorkflowOverviewStats {
+    total: number;
+    fpMissing: number;
+    pocMissing: number;
+    totalPocs: number;
+    fingerprintRules: number;
+}
+
+const EMPTY_WORKFLOW_STATS: WorkflowOverviewStats = {
+    total: 0,
+    fpMissing: 0,
+    pocMissing: 0,
+    totalPocs: 0,
+    fingerprintRules: 0,
+};
+
 const GENERAL_POC_PREFIX = 'General-Poc-';
 const isGeneralPoc = (product: string) => product.startsWith(GENERAL_POC_PREFIX);
+
+const statsFromCurrentPage = (items: API.WorkflowSummary[], total: number): WorkflowOverviewStats => ({
+    total,
+    fpMissing: items.filter((item) => !item.is_general_poc && !item.fingerprint_bound).length,
+    pocMissing: items.filter((item) => (item.missing_poc_count || 0) > 0 || (item.missing_pocs || []).length > 0).length,
+    totalPocs: items.reduce((sum, item) => sum + (item.poc_count ?? item.pocs?.length ?? 0), 0),
+    fingerprintRules: items.reduce((sum, item) => sum + (item.fingerprint_rule_count || 0), 0),
+});
+
+const normalizeStats = (stats: API.WorkflowStats | undefined, items: API.WorkflowSummary[], total: number): WorkflowOverviewStats => {
+    if (!stats) return statsFromCurrentPage(items, total);
+    return {
+        total: stats.total || 0,
+        fpMissing: stats.fp_missing || 0,
+        pocMissing: stats.poc_missing || 0,
+        totalPocs: stats.total_pocs || 0,
+        fingerprintRules: stats.fingerprint_rules || 0,
+    };
+};
 
 import { useAutoContext } from '../../contexts/GlobalAIContext';
 
@@ -41,6 +76,7 @@ const WorkflowConfig: React.FC = () => {
     const [searchKeyword, setSearchKeyword] = useState('');
     const [healthFilter, setHealthFilter] = useState<'all' | 'fp_missing' | 'poc_missing' | 'healthy'>('all');
     const [ruleScope, setRuleScope] = useState<'specific' | 'general'>('specific');
+    const [stats, setStats] = useState<WorkflowOverviewStats>(EMPTY_WORKFLOW_STATS);
     const [drawer, setDrawer] = useState<{ open: boolean; workflow?: API.WorkflowItem; isGeneralPoc?: boolean }>({ open: false });
     const { message } = App.useApp();
     const canManageRules = canAccessRole('operator');
@@ -55,8 +91,11 @@ const WorkflowConfig: React.FC = () => {
                 scope: ruleScope,
                 health: healthFilter,
             });
-            setDictionaries(res.items || []);
-            setTotal(res.total || 0);
+            const items = res.items || [];
+            const nextTotal = res.total || 0;
+            setDictionaries(items);
+            setTotal(nextTotal);
+            setStats(normalizeStats(res.stats, items, nextTotal));
         } catch {
             message.error('加载 Workflow 弹药库失败');
         } finally {
@@ -79,15 +118,6 @@ const WorkflowConfig: React.FC = () => {
     );
 
     const filtered = enriched;
-
-    const stats = useMemo(() => {
-        const scoped = enriched;
-        const total = scoped.length;
-        const fpMissing = scoped.filter((e) => !e._fingerprintBound).length;
-        const pocMissing = scoped.filter((e) => e._missingPocs.length > 0).length;
-        const totalPocs = scoped.reduce((sum, e) => sum + (e.pocs?.length || 0), 0);
-        return { total, fpMissing, pocMissing, totalPocs };
-    }, [enriched]);
 
     useAutoContext({
         workflow_scope: ruleScope,
@@ -296,8 +326,8 @@ const WorkflowConfig: React.FC = () => {
                     {ruleScope !== 'general' && (
                         <Col flex="1">
                             <Statistic
-                                title="当前页指纹规则"
-                                value={enriched.reduce((sum, e) => sum + (e.fingerprint_rule_count || 0), 0)}
+                                title="指纹规则总数"
+                                value={stats.fingerprintRules}
                                 valueStyle={{ color: '#06b6d4' }}
                                 prefix={<ScanOutlined style={{ color: '#06b6d4' }} />}
                             />

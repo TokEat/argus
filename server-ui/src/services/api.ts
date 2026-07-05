@@ -493,7 +493,7 @@ export async function getWorkflowDictPage(params?: {
     q?: string;
     scope?: 'specific' | 'general' | 'all';
     health?: 'fp_missing' | 'poc_missing' | 'healthy' | 'all';
-}): Promise<API.PagedResponse<API.WorkflowSummary>> {
+}): Promise<API.WorkflowSummaryPage> {
     return request.get('/dictionaries/workflow', { params: { lite: '1', ...(params || {}) } });
 }
 

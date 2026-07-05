@@ -89,6 +89,77 @@ func TestWorkflowDictLiteUsesSummaryPagination(t *testing.T) {
 	}
 }
 
+func TestWorkflowDictLiteStatsUseAllMatchingRows(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.AutoMigrate(&db.WorkflowProductSummary{}); err != nil {
+		t.Fatalf("automigrate summary: %v", err)
+	}
+	rows := []db.WorkflowProductSummary{
+		{
+			TenantID:             "default",
+			ProductName:          "Alpha",
+			MatchTypes:           `["root"]`,
+			PocNames:             `["alpha-a","alpha-b"]`,
+			PocCount:             2,
+			MissingPocNames:      `[]`,
+			MissingPocCount:      0,
+			FingerprintBound:     true,
+			FingerprintRuleCount: 4,
+			State:                "Approved",
+			Enabled:              true,
+		},
+		{
+			TenantID:             "default",
+			ProductName:          "Beta",
+			MatchTypes:           `["root"]`,
+			PocNames:             `["beta-a","beta-b","beta-c"]`,
+			PocCount:             3,
+			MissingPocNames:      `["beta-c"]`,
+			MissingPocCount:      1,
+			FingerprintBound:     false,
+			FingerprintRuleCount: 0,
+			State:                "Approved",
+			Enabled:              true,
+		},
+		{
+			TenantID:             "default",
+			ProductName:          "Gamma",
+			MatchTypes:           `["base"]`,
+			PocNames:             `["gamma-a"]`,
+			PocCount:             1,
+			MissingPocNames:      `["gamma-a"]`,
+			MissingPocCount:      1,
+			FingerprintBound:     false,
+			FingerprintRuleCount: 0,
+			State:                "Approved",
+			Enabled:              true,
+		},
+	}
+	if err := store.Create(&rows).Error; err != nil {
+		t.Fatalf("seed summaries: %v", err)
+	}
+
+	ctx, recorder := newTenantContextWithRole(http.MethodGet, "/dictionaries/workflow?lite=1&page=1&page_size=1&scope=specific", "operator", "9")
+	getWorkflowDict(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("workflow lite status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var resp struct {
+		Items []workflowSummaryResponse    `json:"items"`
+		Total int64                        `json:"total"`
+		Stats workflowSummaryStatsResponse `json:"stats"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Items) != 1 || resp.Total != 3 {
+		t.Fatalf("expected first page of 3 matching rows, got %+v", resp)
+	}
+	if resp.Stats.Total != 3 || resp.Stats.FingerprintMissing != 2 || resp.Stats.POCMissing != 2 || resp.Stats.TotalPOCs != 6 || resp.Stats.FingerprintRules != 4 {
+		t.Fatalf("expected all-row workflow stats, got %+v", resp.Stats)
+	}
+}
+
 func TestGetArsenalReturnsSingleContent(t *testing.T) {
 	store := setupAITestDB(t)
 	if err := store.Create(&db.Arsenal{
