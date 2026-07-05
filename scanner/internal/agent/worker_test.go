@@ -1,14 +1,21 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"dddd/scanner/internal/arsenal"
 	"dddd/scanner/internal/engine"
 	pb "github.com/user/dddd-proto/go/scan"
 	"google.golang.org/grpc"
@@ -16,6 +23,8 @@ import (
 )
 
 func TestWorkerExecuteTaskReportsCancelled(t *testing.T) {
+	prepareUsableAgentConfig(t)
+
 	origNewScanContext := newScanContext
 	origRunScanTask := runScanTask
 	defer func() {
@@ -76,6 +85,8 @@ func TestWorkerExecuteTaskReportsCancelled(t *testing.T) {
 }
 
 func TestWorkerExecuteTaskFailsOnResultStreamSendError(t *testing.T) {
+	prepareUsableAgentConfig(t)
+
 	origNewScanContext := newScanContext
 	origRunScanTask := runScanTask
 	defer func() {
@@ -162,6 +173,121 @@ func TestReportTaskCompletionRetriesTransientFailures(t *testing.T) {
 	}
 }
 
+func TestSyncRulesMaterializesLocalDBWhenHashMatchesButManifestMissing(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	mustWriteAgentFile(t, filepath.Join("data", ".arsenal_hash"), []byte("samehash"))
+	createAgentTestArsenalDB(t, filepath.Join("data", "arsenal.db"), "HashMatchProduct", "hash-match.yaml")
+
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://server.local", 1, nil)
+	worker.apiGetFn = func(url string) (*http.Response, error) {
+		switch {
+		case strings.HasSuffix(url, "/api/v1/arsenals/db/hash"):
+			return testHTTPResponse(`{"hash":"samehash","rule_version":"v1","arsenal_count":4}`, nil), nil
+		case strings.HasSuffix(url, "/api/v1/arsenals/db"):
+			t.Fatalf("hash match with missing manifest should materialize local DB without downloading")
+		}
+		return testHTTPResponse(`not found`, nil), nil
+	}
+	worker.syncRules()
+
+	if !arsenal.IsRulePackageMaterialized("config", "samehash") {
+		t.Fatalf("expected local DB to be materialized when hash matches but manifest is missing")
+	}
+	if _, err := os.Stat(filepath.Join("config", "pocs", "hash-match.yaml")); err != nil {
+		t.Fatalf("expected materialized poc from local DB: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join("config", "pocs", "helpers", "payloads", "agent.txt")); err != nil {
+		t.Fatalf("expected materialized poc helper asset from local DB: %v", err)
+	}
+	assertAgentFileContent(t, filepath.Join("config", "dict", "mysql.txt"), "agent:mysql\n")
+	assertAgentFileContent(t, filepath.Join("config", "subdomains.txt"), "www\napi\n")
+}
+
+func TestSyncRulesDefersActivationWhileTasksRunning(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	dbBytes := createAgentTestArsenalDBBytes(t, "DeferredProduct", "deferred.yaml")
+
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://server.local", 1, nil)
+	worker.apiGetFn = func(url string) (*http.Response, error) {
+		switch {
+		case strings.HasSuffix(url, "/api/v1/arsenals/db/hash"):
+			return testHTTPResponse(`{"hash":"newhash","rule_version":"v2","arsenal_count":4}`, nil), nil
+		case strings.HasSuffix(url, "/api/v1/arsenals/db"):
+			return testHTTPResponseBytes(dbBytes, map[string]string{"X-Arsenal-Hash": "newhash"}), nil
+		}
+		return testHTTPResponse(`not found`, nil), nil
+	}
+	worker.runningTasks["task-running"] = func() {}
+	worker.syncRules()
+
+	if _, err := os.Stat(filepath.Join("data", "arsenal.db")); err != nil {
+		t.Fatalf("expected downloaded db to be cached: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join("config", ".argus-arsenal.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected activation to be deferred while tasks run, stat err=%v", err)
+	}
+	if got := worker.loadLocalDBHash(); got != "" {
+		t.Fatalf("expected hash not to be saved before activation, got %q", got)
+	}
+
+	delete(worker.runningTasks, "task-running")
+	worker.activatePendingRulesIfIdle()
+
+	if !arsenal.IsRulePackageMaterialized("config", "newhash") {
+		t.Fatalf("expected pending rules to activate after tasks finish")
+	}
+	if got := worker.loadLocalDBHash(); got != "newhash" {
+		t.Fatalf("expected hash saved after activation, got %q", got)
+	}
+}
+
+func TestSyncRulesDownloadsViaHTTPAndMaterializes(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	dbBytes := createAgentTestArsenalDBBytes(t, "HTTPProduct", "http-sync.yaml")
+
+	var sawHashRequest, sawDBRequest bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/arsenals/db/hash":
+			sawHashRequest = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"hash":"http-hash","rule_version":"v-http","arsenal_count":5}`))
+		case "/api/v1/arsenals/db":
+			sawDBRequest = true
+			w.Header().Set("X-Arsenal-Hash", "sqlite-file-hash")
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = w.Write(dbBytes)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	worker := NewWorker("agent-http", "127.0.0.1:50051", server.URL, 1, nil)
+	worker.syncRules()
+
+	if !sawHashRequest || !sawDBRequest {
+		t.Fatalf("expected syncRules to call hash and db endpoints, saw hash=%v db=%v", sawHashRequest, sawDBRequest)
+	}
+	if got := worker.loadLocalDBHash(); got != "http-hash" {
+		t.Fatalf("expected aggregate hash saved after materialization, got %q", got)
+	}
+	if !arsenal.IsRulePackageMaterialized("config", "http-hash") {
+		t.Fatalf("expected HTTP-downloaded rule package to be materialized")
+	}
+	if _, err := os.Stat(filepath.Join("config", "pocs", "http-sync.yaml")); err != nil {
+		t.Fatalf("expected HTTP-downloaded POC to be materialized: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join("config", "pocs", "helpers", "payloads", "agent.txt")); err != nil {
+		t.Fatalf("expected HTTP-downloaded POC helper asset to be materialized: %v", err)
+	}
+	assertAgentFileContent(t, filepath.Join("config", "dict", "mysql.txt"), "agent:mysql\n")
+	assertAgentFileContent(t, filepath.Join("config", "subdomains.txt"), "www\napi\n")
+}
+
 func TestEffectiveWorkerCountCapsToEngineLimit(t *testing.T) {
 	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 8, nil)
 	expected := engine.MaxConcurrentTasks()
@@ -170,6 +296,112 @@ func TestEffectiveWorkerCountCapsToEngineLimit(t *testing.T) {
 	}
 	if got := worker.effectiveWorkerCount(); got != expected {
 		t.Fatalf("expected effective worker count to be capped at %d, got %d", expected, got)
+	}
+}
+
+func createAgentTestArsenalDBBytes(t *testing.T, product, pocFile string) []byte {
+	t.Helper()
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "arsenal.db")
+	createAgentTestArsenalDB(t, dbPath, product, pocFile)
+	data, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatalf("read test arsenal db: %v", err)
+	}
+	return data
+}
+
+func createAgentTestArsenalDB(t *testing.T, dbPath, product, pocFile string) {
+	t.Helper()
+	if err := arsenal.OpenDB(dbPath); err != nil {
+		t.Fatalf("open test arsenal db: %v", err)
+	}
+	t.Cleanup(func() { arsenal.DB = nil })
+	if err := arsenal.DB.Create(&arsenal.Fingerprint{ProductName: product, RuleExpr: `body="` + product + `"`, Enabled: true}).Error; err != nil {
+		t.Fatalf("create fingerprint: %v", err)
+	}
+	if err := arsenal.DB.Create(&arsenal.Workflow{ProductName: product, PocName: pocFile, MatchType: "root", Enabled: true}).Error; err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	if err := arsenal.DB.Create(&arsenal.DirProbe{ProductName: product, Path: "/demo", Enabled: true}).Error; err != nil {
+		t.Fatalf("create dir probe: %v", err)
+	}
+	if err := arsenal.DB.Create(&arsenal.Poc{
+		Name:     pocFile,
+		FileName: pocFile,
+		Content:  "id: " + pocFile + "\ninfo:\n  name: demo\n  author: test\n  severity: info\nrequests: []\n",
+		Enabled:  true,
+	}).Error; err != nil {
+		t.Fatalf("create poc: %v", err)
+	}
+	if err := arsenal.DB.Create(&arsenal.PocAsset{
+		RelativePath: "helpers/payloads/agent.txt",
+		Content:      "payload\n",
+		Enabled:      true,
+	}).Error; err != nil {
+		t.Fatalf("create poc asset: %v", err)
+	}
+	if err := arsenal.DB.Create(&arsenal.ConfigAsset{
+		RelativePath: "dict/mysql.txt",
+		Content:      "agent:mysql\n",
+		Enabled:      true,
+	}).Error; err != nil {
+		t.Fatalf("create dict config asset: %v", err)
+	}
+	if err := arsenal.DB.Create(&arsenal.ConfigAsset{
+		RelativePath: "subdomains.txt",
+		Content:      "www\napi\n",
+		Enabled:      true,
+	}).Error; err != nil {
+		t.Fatalf("create subdomains config asset: %v", err)
+	}
+}
+
+func mustWriteAgentFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func assertAgentFileContent(t *testing.T, path, expected string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if string(data) != expected {
+		t.Fatalf("content %s = %q, want %q", path, string(data), expected)
+	}
+}
+
+func testHTTPResponse(body string, headers map[string]string) *http.Response {
+	return testHTTPResponseBytes([]byte(body), headers)
+}
+
+func testHTTPResponseBytes(body []byte, headers map[string]string) *http.Response {
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	}
+	for key, value := range headers {
+		resp.Header.Set(key, value)
+	}
+	return resp
+}
+
+func prepareUsableAgentConfig(t *testing.T) {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	mustWriteAgentFile(t, filepath.Join("config", "finger.yaml"), []byte("TestProduct:\n  - 'body=\"test\"'\n"))
+	mustWriteAgentFile(t, filepath.Join("config", "workflow.yaml"), []byte("TestProduct:\n  type:\n    - root\n  pocs:\n    - test.yaml\n"))
+	mustWriteAgentFile(t, filepath.Join("config", "dir.yaml"), []byte("TestProduct:\n  - /test\n"))
+	if err := os.MkdirAll(filepath.Join("config", "pocs"), 0o755); err != nil {
+		t.Fatalf("mkdir test pocs: %v", err)
 	}
 }
 

@@ -196,6 +196,10 @@ func CanonicalArsenalType(raw string) string {
 		return "dir"
 	case "poc":
 		return "poc"
+	case "poc_asset", "pocasset":
+		return "poc_asset"
+	case "config_asset", "configasset", "dict_asset", "dictasset":
+		return "config_asset"
 	case "exp", "exploit":
 		return "exp"
 	case "apiconfig":
@@ -215,6 +219,10 @@ func ArsenalTypeAliases(raw string) []string {
 		return []string{"workflow"}
 	case "poc":
 		return []string{"poc"}
+	case "poc_asset":
+		return []string{"poc_asset", "pocasset"}
+	case "config_asset":
+		return []string{"config_asset", "configasset", "dict_asset", "dictasset"}
 	case "exp":
 		return []string{"exp", "exploit"}
 	case "apiconfig":

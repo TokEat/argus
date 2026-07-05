@@ -39,7 +39,7 @@ func OpenDB(dsn string) error {
 		return fmt.Errorf("打开数据库失败: %w", err)
 	}
 
-	if err := db.AutoMigrate(&Fingerprint{}, &Poc{}, &Workflow{}, &DirProbe{}); err != nil {
+	if err := db.AutoMigrate(&Fingerprint{}, &Poc{}, &PocAsset{}, &ConfigAsset{}, &Workflow{}, &DirProbe{}); err != nil {
 		return fmt.Errorf("自动迁移表结构失败: %w", err)
 	}
 
@@ -225,6 +225,20 @@ func GetAllEnabledPocs() ([]Poc, error) {
 	var pocs []Poc
 	err := DB.Where("enabled = ?", true).Find(&pocs).Error
 	return pocs, err
+}
+
+// GetAllEnabledPocAssets 获取所有启用的 POC 辅助文件资产（扫描物化时使用）。
+func GetAllEnabledPocAssets() ([]PocAsset, error) {
+	var assets []PocAsset
+	err := DB.Where("enabled = ?", true).Order("relative_path").Find(&assets).Error
+	return assets, err
+}
+
+// GetAllEnabledConfigAssets 获取所有启用的运行时配置资产（扫描物化时使用）。
+func GetAllEnabledConfigAssets() ([]ConfigAsset, error) {
+	var assets []ConfigAsset
+	err := DB.Where("enabled = ?", true).Order("relative_path").Find(&assets).Error
+	return assets, err
 }
 
 // ---------- Workflow CRUD ----------

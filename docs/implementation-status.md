@@ -6,7 +6,7 @@
 >
 > 当前接口清单已经合并到本文末尾，避免实现状态与接口状态分散维护。
 >
-> 最后同步：2026-05-08。本次同步以当前工作树代码为准；只把已经接入 `/api/v1`、Agent 运行链路或 CI/Makefile 的能力标为已实现。
+> 最后同步：2026-07-05。本次同步以当前工作树代码为准；只把已经接入 `/api/v1`、Agent 运行链路或 CI/Makefile 的能力标为已实现。
 
 ---
 
@@ -47,11 +47,11 @@
 | 队列恢复 | Dead-Letter 回收、旧队列迁移、死亡节点任务抢救 | `server/internal/scheduler/queue.go` `server/cmd/dddd-server/main.go` |
 | 超时与重试 | 基于 `timeout_sec` 的超时扫描与自动重试守护协程 | `server/internal/api/router.go` |
 | gRPC 通信 | `Register` / `Heartbeat` / `FetchTask` / `StreamResult` / `TaskComplete` / `EmergencyDump` / `StreamLogs` | `server/internal/grpc/server.go` |
-| Agent 内部 HTTP API | Agent 命令轮询、Arsenal DB Hash / SQLite DB 同步端点，使用 `x-agent-id` + `x-agent-token` session 鉴权；`x-agent-psk` 仅保留给 gRPC/bootstrap | `server/internal/api/router.go` `server/internal/api/arsenal_export.go` |
+| Agent 内部 HTTP API | Agent 命令轮询、Arsenal DB Hash / SQLite DB 同步端点，使用 `x-agent-id` + `x-agent-token` session 鉴权；SQLite DB 作为规则传输包，包含指纹、Workflow、Dir、POC YAML 和 POC helper assets；`x-agent-psk` 仅保留给 gRPC/bootstrap | `server/internal/api/router.go` `server/internal/api/arsenal_export.go` |
 | 数据模型 | PostgreSQL migration runner + schema verify | `server/internal/db` |
 | 结果入库 | Asset / FingerprintHit / Vulnerability 三层结构化存储 | `server/internal/db/db.go` |
 | 防洪落库 | BatchWriter 异步缓冲写入 | `server/internal/db/db.go` |
-| Arsenal 管理 | POC / Finger / Workflow / Dir / EXP 的 CRUD、审批、Manifest、回滚、Agent SQLite DB 导出 | `server/internal/api/router.go` `server/internal/api/handler_exploits.go` `server/internal/api/arsenal_export.go` |
+| Arsenal 管理 | POC / Finger / Workflow / Dir / EXP 的 CRUD、审批、Manifest、回滚、Agent SQLite DB 导出；POC helper assets 随规则包同步，不进入 POC 规则治理列表 | `server/internal/api/router.go` `server/internal/api/handler_exploits.go` `server/internal/api/arsenal_export.go` |
 | Dictionary API | Workflow / Fingerprint 结构化 CRUD | `server/internal/api/handler_dictionary.go` |
 | 规则初始化 | 启动时从磁盘导入规则与结构化目录 | `server/internal/db/seed.go` |
 | 结果查询 | 漏洞、资产、指纹、融合画像接口 | `server/internal/api/router.go` |
@@ -72,7 +72,8 @@
 | 任务取消中断 | `context.Cancel` 注入扫描上下文 | `scanner/internal/agent/worker.go` |
 | 并发框架 | Worker Pool 与引擎并发上限协同控制，定期向 Subscribe 流上报 `capacity_update` | `scanner/internal/agent/worker.go` |
 | 动态控制 | 命令轮询接收取消任务与规则热加载信号 | `scanner/internal/agent/worker.go` |
-| 规则同步 | 通过 `x-agent-id` + `x-agent-token` 拉取 Arsenal DB Hash，变更后下载完整 SQLite DB 并原子替换本地 `data/arsenal.db` | `scanner/internal/agent/worker.go` |
+| 规则同步 | 通过 `x-agent-id` + `x-agent-token` 拉取 Arsenal DB Hash，变更后下载完整 SQLite DB 到 `data/arsenal.db`，再物化为 CLI 形态 `config/finger.yaml`、`config/workflow.yaml`、`config/dir.yaml`、`config/pocs/`、`config/dict/` 和 `config/subdomains.txt`；扫描任务读取本地 `config/`，不在扫描期从 DB 导出 POC | `scanner/internal/agent/worker.go` `scanner/internal/arsenal/materialize.go` |
+| 规则同步边界 | DB 同步包托管 Finger / Workflow / Dir / POC YAML / POC helper assets、GoPoc 字典和子域名字典；`socket.yaml` 当前没有接入扫描加载链路，不纳入同步；`api-config.yaml` 含搜索引擎凭据，不随 Agent 规则包下发 | `scanner/common/config` `scanner/gopocs` `scanner/internal/scanner/subdomain` |
 | POC / EXP 调试拦截 | POC 拦截 Nuclei/GoPoc 调试请求响应；EXP Python 以原生 Python 执行，请求/响应调试信息由脚本主动写入 `ctx.evidence` 摘要 | `scanner/internal/agent/debug.go` `scanner/internal/exploit/python_executor.go` |
 | 遥测日志 | gologger 全局 TeeWriter 通过 gRPC `StreamLogs` 持续上报 Agent 日志 | `scanner/internal/agent/worker.go` |
 | Spot 回收监听 | 云厂商竞价实例中断检测、紧急数据回传 | `scanner/internal/agent/signal.go` |

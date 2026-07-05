@@ -36,6 +36,30 @@ type Poc struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// PocAsset stores non-YAML files required by Nuclei templates, such as helpers payloads and wordlists.
+type PocAsset struct {
+	ID           uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	RelativePath string    `gorm:"uniqueIndex;not null" json:"relative_path"`
+	Content      string    `json:"-"`
+	ContentHash  string    `json:"content_hash"`
+	Enabled      bool      `gorm:"default:true" json:"enabled"`
+	Source       string    `gorm:"default:'server'" json:"source"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// ConfigAsset stores runtime config files that affect scan behavior but are not rule YAML files.
+type ConfigAsset struct {
+	ID           uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	RelativePath string    `gorm:"uniqueIndex;not null" json:"relative_path"`
+	Content      string    `json:"-"`
+	ContentHash  string    `json:"content_hash"`
+	Enabled      bool      `gorm:"default:true" json:"enabled"`
+	Source       string    `gorm:"default:'server'" json:"source"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 // Workflow 指纹→POC 映射关系。
 type Workflow struct {
 	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`

@@ -3,12 +3,11 @@ package engine
 import (
 	commoncfg "dddd/scanner/common"
 	"dddd/scanner/ddout"
-	"dddd/scanner/internal/arsenal"
 	"dddd/scanner/lib/ddfinger"
 	"dddd/scanner/structs"
 	"dddd/scanner/utils"
+	"embed"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -110,20 +109,16 @@ func ApplyConfigDefaults(cfg *Config) {
 
 func (sc *ScanContext) loadKnowledgeBase() error {
 	ApplyConfigDefaults(&sc.Config)
-	sc.EmbedPocs = commoncfg.EmbedNucleiPocs
+	if sc.Config.RuleFilesOnly {
+		sc.EmbedPocs = embed.FS{}
+	} else {
+		sc.EmbedPocs = commoncfg.EmbedNucleiPocs
+	}
 
 	if err := ensureAPIConfigFile(sc.Config); err != nil {
 		return err
 	}
 
-	// 优先级 1: 尝试从本地 SQLite (data/arsenal.db) 加载
-	if len(sc.FingerprintDB) == 0 && len(sc.WorkFlowDB) == 0 && len(sc.DirDB) == 0 {
-		if loaded := sc.tryLoadFromArsenalDB(); loaded {
-			return nil
-		}
-	}
-
-	// 优先级 2: fallback 到内嵌 + 外部 YAML 文件
 	if len(sc.FingerprintDB) == 0 {
 		fingerDB, err := loadFingerDB(sc.Config)
 		if err != nil {
@@ -151,129 +146,6 @@ func (sc *ScanContext) loadKnowledgeBase() error {
 	return nil
 }
 
-// tryLoadFromArsenalDB 尝试从本地 SQLite 弹药库加载知识库。
-// 返回 true 表示成功加载，false 表示需要 fallback。
-func (sc *ScanContext) tryLoadFromArsenalDB() bool {
-	if err := arsenal.OpenDB(""); err != nil {
-		return false
-	}
-	if !arsenal.IsDBReady() {
-		return false
-	}
-
-	log.Println("[Arsenal] 从本地弹药库加载规则...")
-
-	// --- 加载指纹 ---
-	fingers, err := arsenal.GetAllEnabledFingerprints()
-	if err != nil || len(fingers) == 0 {
-		return false
-	}
-	fingerDB := make([]FingerPEntity, 0, len(fingers))
-	for _, f := range fingers {
-		rules := ddfinger.ParseRule(f.RuleExpr)
-		engineRules := make([]RuleData, 0, len(rules))
-		for _, r := range rules {
-			engineRules = append(engineRules, RuleData(r))
-		}
-		fingerDB = append(fingerDB, FingerPEntity{
-			ProductName: f.ProductName,
-			AllString:   f.RuleExpr,
-			Rule:        engineRules,
-		})
-	}
-	sc.FingerprintDB = fingerDB
-
-	// --- 加载 Workflow ---
-	workflows, err := arsenal.GetAllEnabledWorkflows()
-	if err != nil {
-		return false
-	}
-	wfDB := make(map[string]WorkFlowEntity)
-	for _, w := range workflows {
-		existing := wfDB[w.ProductName]
-		switch strings.ToLower(w.MatchType) {
-		case "root":
-			existing.RootType = true
-		case "dir":
-			existing.DirType = true
-		case "base":
-			existing.BaseType = true
-		case "dir-fallback":
-			existing.DirFallback = true
-		}
-		// 去重添加 POC 名称
-		found := false
-		for _, p := range existing.PocsName {
-			if p == w.PocName {
-				found = true
-				break
-			}
-		}
-		if !found {
-			existing.PocsName = append(existing.PocsName, w.PocName)
-		}
-		wfDB[w.ProductName] = existing
-	}
-	sc.WorkFlowDB = wfDB
-
-	// --- 加载 Dir ---
-	probes, err := arsenal.GetAllEnabledDirProbes()
-	if err != nil {
-		return false
-	}
-	dirDB := make(map[string][]string)
-	for _, p := range probes {
-		dirDB[p.Path] = append(dirDB[p.Path], p.ProductName)
-		dirDB[p.Path] = utils.RemoveDuplicateElement(dirDB[p.Path])
-	}
-	sc.DirDB = dirDB
-
-	// --- 导出 POC 到临时目录（供 Nuclei 引擎使用）---
-	pocDir, err := exportPocsToTempDir()
-	if err == nil && pocDir != "" {
-		sc.Config.NucleiTemplate = pocDir
-	}
-
-	log.Printf("[Arsenal] 已加载: 指纹 %d, Workflow %d, Dir %d",
-		len(sc.FingerprintDB), len(sc.WorkFlowDB), len(sc.DirDB))
-
-	// 任何一个核心知识库为空都不可信，回退到 YAML 保底
-	if len(sc.FingerprintDB) == 0 || len(sc.WorkFlowDB) == 0 || len(sc.DirDB) == 0 {
-		log.Println("[Arsenal] 核心知识库不完整，回退到 YAML fallback")
-		// 清空已加载的不完整数据，让 loadKnowledgeBase 走 fallback 分支重新填充
-		sc.FingerprintDB = nil
-		sc.WorkFlowDB = nil
-		sc.DirDB = nil
-		return false
-	}
-	return true
-}
-
-// exportPocsToTempDir 将数据库中的 POC 导出到固定临时目录，避免泄漏。
-// 使用固定路径 + 原子清空，确保每次导出都是干净的。
-func exportPocsToTempDir() (string, error) {
-	pocs, err := arsenal.GetAllEnabledPocs()
-	if err != nil || len(pocs) == 0 {
-		return "", err
-	}
-
-	tmpDir := filepath.Join(os.TempDir(), "dddd-pocs")
-	// 清空旧内容，确保一致性
-	_ = os.RemoveAll(tmpDir)
-	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
-		return "", fmt.Errorf("创建 POC 临时目录失败: %w", err)
-	}
-
-	for _, p := range pocs {
-		if p.Content == "" || p.FileName == "" {
-			continue
-		}
-		outPath := filepath.Join(tmpDir, p.FileName)
-		_ = os.WriteFile(outPath, []byte(p.Content), 0o644)
-	}
-	return tmpDir, nil
-}
-
 func ensureAPIConfigFile(cfg Config) error {
 	needsAPIConfig := cfg.Fofa || cfg.Hunter || cfg.Quake || (cfg.Subdomain && !cfg.NoSubFinder)
 	if !needsAPIConfig || cfg.APIConfigFilePath == "" {
@@ -299,15 +171,18 @@ func ensureAPIConfigFile(cfg Config) error {
 func loadFingerDB(cfg Config) ([]FingerPEntity, error) {
 	merged := make(map[string][]string)
 
-	if err := mergeStringListYAML(merged, []byte(commoncfg.EmbedFingerData)); err != nil {
-		return nil, fmt.Errorf("parse embedded finger db: %w", err)
+	if !cfg.RuleFilesOnly {
+		if err := mergeStringListYAML(merged, []byte(commoncfg.EmbedFingerData)); err != nil {
+			return nil, fmt.Errorf("parse embedded finger db: %w", err)
+		}
 	}
-
 	if cfg.FingerConfigFilePath != "" {
 		if data, err := os.ReadFile(cfg.FingerConfigFilePath); err == nil {
 			if err := mergeStringListYAML(merged, data); err != nil {
 				return nil, fmt.Errorf("parse finger db %s: %w", cfg.FingerConfigFilePath, err)
 			}
+		} else if cfg.RuleFilesOnly {
+			return nil, fmt.Errorf("read finger db %s: %w", cfg.FingerConfigFilePath, err)
 		}
 	}
 
@@ -332,15 +207,18 @@ func loadFingerDB(cfg Config) ([]FingerPEntity, error) {
 func loadWorkflowDB(cfg Config) (map[string]WorkFlowEntity, error) {
 	result := make(map[string]WorkFlowEntity)
 
-	if err := mergeWorkflowYAML(result, []byte(commoncfg.EmbedWorkFlowData)); err != nil {
-		return nil, fmt.Errorf("parse embedded workflow db: %w", err)
+	if !cfg.RuleFilesOnly {
+		if err := mergeWorkflowYAML(result, []byte(commoncfg.EmbedWorkFlowData)); err != nil {
+			return nil, fmt.Errorf("parse embedded workflow db: %w", err)
+		}
 	}
-
 	if cfg.WorkflowYamlPath != "" {
 		if data, err := os.ReadFile(cfg.WorkflowYamlPath); err == nil {
 			if err := mergeWorkflowYAML(result, data); err != nil {
 				return nil, fmt.Errorf("parse workflow db %s: %w", cfg.WorkflowYamlPath, err)
 			}
+		} else if cfg.RuleFilesOnly {
+			return nil, fmt.Errorf("read workflow db %s: %w", cfg.WorkflowYamlPath, err)
 		}
 	}
 
@@ -350,15 +228,18 @@ func loadWorkflowDB(cfg Config) (map[string]WorkFlowEntity, error) {
 func loadDirDB(cfg Config) (map[string][]string, error) {
 	result := make(map[string][]string)
 
-	if err := mergeDirYAML(result, []byte(commoncfg.EmbedDirDBData)); err != nil {
-		return nil, fmt.Errorf("parse embedded dir db: %w", err)
+	if !cfg.RuleFilesOnly {
+		if err := mergeDirYAML(result, []byte(commoncfg.EmbedDirDBData)); err != nil {
+			return nil, fmt.Errorf("parse embedded dir db: %w", err)
+		}
 	}
-
 	if cfg.DirSearchYaml != "" {
 		if data, err := os.ReadFile(cfg.DirSearchYaml); err == nil {
 			if err := mergeDirYAML(result, data); err != nil {
 				return nil, fmt.Errorf("parse dir db %s: %w", cfg.DirSearchYaml, err)
 			}
+		} else if cfg.RuleFilesOnly {
+			return nil, fmt.Errorf("read dir db %s: %w", cfg.DirSearchYaml, err)
 		}
 	}
 

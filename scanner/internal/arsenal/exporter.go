@@ -80,9 +80,21 @@ func ExportWorkflowYAML() ([]byte, error) {
 	for _, k := range keys {
 		entry := grouped[k]
 		keyNode := &yaml.Node{Kind: yaml.ScalarNode, Value: k}
-		valNode := &yaml.Node{}
-		b, _ := yaml.Marshal(entry)
-		_ = yaml.Unmarshal(b, valNode)
+		sort.Strings(entry.Type)
+		sort.Strings(entry.Pocs)
+		typeNode := &yaml.Node{Kind: yaml.SequenceNode}
+		for _, t := range entry.Type {
+			typeNode.Content = append(typeNode.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: t})
+		}
+		pocNode := &yaml.Node{Kind: yaml.SequenceNode}
+		for _, p := range entry.Pocs {
+			pocNode.Content = append(pocNode.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: p})
+		}
+		valNode := &yaml.Node{Kind: yaml.MappingNode}
+		valNode.Content = append(valNode.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "type"}, typeNode,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "pocs"}, pocNode,
+		)
 		ordered.Content = append(ordered.Content, keyNode, valNode)
 	}
 

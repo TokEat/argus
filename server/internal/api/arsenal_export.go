@@ -56,6 +56,32 @@ type agentPoc struct {
 
 func (agentPoc) TableName() string { return "pocs" }
 
+type agentPocAsset struct {
+	ID           uint      `gorm:"primaryKey;autoIncrement"`
+	RelativePath string    `gorm:"uniqueIndex;not null"`
+	Content      string    ``
+	ContentHash  string    ``
+	Enabled      bool      `gorm:"default:true"`
+	Source       string    `gorm:"default:'server'"`
+	CreatedAt    time.Time ``
+	UpdatedAt    time.Time ``
+}
+
+func (agentPocAsset) TableName() string { return "poc_assets" }
+
+type agentConfigAsset struct {
+	ID           uint      `gorm:"primaryKey;autoIncrement"`
+	RelativePath string    `gorm:"uniqueIndex;not null"`
+	Content      string    ``
+	ContentHash  string    ``
+	Enabled      bool      `gorm:"default:true"`
+	Source       string    `gorm:"default:'server'"`
+	CreatedAt    time.Time ``
+	UpdatedAt    time.Time ``
+}
+
+func (agentConfigAsset) TableName() string { return "config_assets" }
+
 type agentWorkflow struct {
 	ID          uint      `gorm:"primaryKey;autoIncrement"`
 	ProductName string    `gorm:"index;not null"`
@@ -84,6 +110,8 @@ func agentSyncArsenalTypes() []string {
 	types = append(types, db.ArsenalTypeAliases("workflow")...)
 	types = append(types, db.ArsenalTypeAliases("dir")...)
 	types = append(types, db.ArsenalTypeAliases("poc")...)
+	types = append(types, db.ArsenalTypeAliases("poc_asset")...)
+	types = append(types, db.ArsenalTypeAliases("config_asset")...)
 	return types
 }
 
@@ -115,6 +143,8 @@ func buildArsenalSQLiteDB(tenantID string) (filePath string, hash string, err er
 	if err := sdb.AutoMigrate(
 		&agentFingerprint{},
 		&agentPoc{},
+		&agentPocAsset{},
+		&agentConfigAsset{},
 		&agentWorkflow{},
 		&agentDirProbe{},
 	); err != nil {
@@ -194,6 +224,72 @@ func buildArsenalSQLiteDB(tenantID string) (filePath string, hash string, err er
 		}
 	}
 
+	// --- 导入 POC 辅助资产（helpers payloads/wordlists 等，保留相对路径）---
+	var pocAssets []db.Arsenal
+	db.DB.
+		Where("tenant_id = ? AND state = ? AND type IN ?", tenantID, "Approved", db.ArsenalTypeAliases("poc_asset")).
+		Order("file_name").
+		Find(&pocAssets)
+	if len(pocAssets) > 0 {
+		batch := make([]agentPocAsset, 0, len(pocAssets))
+		for _, a := range pocAssets {
+			if a.FileName == "" || a.Content == "" {
+				continue
+			}
+			hash := a.Hash
+			if hash == "" {
+				hash = fmt.Sprintf("%x", md5.Sum([]byte(a.Content)))
+			}
+			batch = append(batch, agentPocAsset{
+				RelativePath: a.FileName,
+				Content:      a.Content,
+				ContentHash:  hash,
+				Enabled:      true,
+				Source:       "server",
+				CreatedAt:    now,
+				UpdatedAt:    now,
+			})
+		}
+		if len(batch) > 0 {
+			if err := sdb.CreateInBatches(batch, 500).Error; err != nil {
+				log.Printf("[ArsenalExport] ⚠️ POC 辅助资产写入 SQLite 失败: %v (count=%d)", err, len(batch))
+			}
+		}
+	}
+
+	// --- 导入运行时配置资产（GoPoc 字典、子域名字典等，不包含凭据配置）---
+	var configAssets []db.Arsenal
+	db.DB.
+		Where("tenant_id = ? AND state = ? AND type IN ?", tenantID, "Approved", db.ArsenalTypeAliases("config_asset")).
+		Order("file_name").
+		Find(&configAssets)
+	if len(configAssets) > 0 {
+		batch := make([]agentConfigAsset, 0, len(configAssets))
+		for _, a := range configAssets {
+			if a.FileName == "" || a.Content == "" {
+				continue
+			}
+			hash := a.Hash
+			if hash == "" {
+				hash = fmt.Sprintf("%x", md5.Sum([]byte(a.Content)))
+			}
+			batch = append(batch, agentConfigAsset{
+				RelativePath: a.FileName,
+				Content:      a.Content,
+				ContentHash:  hash,
+				Enabled:      true,
+				Source:       "server",
+				CreatedAt:    now,
+				UpdatedAt:    now,
+			})
+		}
+		if len(batch) > 0 {
+			if err := sdb.CreateInBatches(batch, 500).Error; err != nil {
+				log.Printf("[ArsenalExport] ⚠️ 配置资产写入 SQLite 失败: %v (count=%d)", err, len(batch))
+			}
+		}
+	}
+
 	// --- 导入 Workflow ---
 	var wfRules []db.WorkflowRule
 	db.DB.Where("tenant_id = ? AND enabled = ?", tenantID, true).Find(&wfRules)
@@ -243,8 +339,8 @@ func buildArsenalSQLiteDB(tenantID string) (filePath string, hash string, err er
 	}
 	fileHash := fmt.Sprintf("%x", md5.Sum(fileData))
 
-	log.Printf("[ArsenalExport] SQLite DB 构建完成: fingerprints=%d, pocs=%d, workflows=%d, dirs=%d, size=%d bytes, hash=%s",
-		len(fpRules), len(pocRules), len(wfRules), len(dirRules), len(fileData), fileHash[:8])
+	log.Printf("[ArsenalExport] SQLite DB 构建完成: fingerprints=%d, pocs=%d, poc_assets=%d, config_assets=%d, workflows=%d, dirs=%d, size=%d bytes, hash=%s",
+		len(fpRules), len(pocRules), len(pocAssets), len(configAssets), len(wfRules), len(dirRules), len(fileData), fileHash[:8])
 
 	return tmpPath, fileHash, nil
 }
@@ -410,9 +506,11 @@ func buildExportAggregateHash(arsenals []db.Arsenal) string {
 // getArsenalDBStats 返回 DB 导出的统计信息（调试用）。
 func getArsenalDBStats(c *gin.Context) {
 	tenantID := currentTenantID(c)
-	var fpCount, pocCount, wfCount, dirCount int64
+	var fpCount, pocCount, pocAssetCount, configAssetCount, wfCount, dirCount int64
 	db.DB.Model(&db.FingerprintRule{}).Where("tenant_id = ? AND enabled = ?", tenantID, true).Count(&fpCount)
 	db.DB.Model(&db.PocRule{}).Where("tenant_id = ? AND enabled = ?", tenantID, true).Count(&pocCount)
+	db.DB.Model(&db.Arsenal{}).Where("tenant_id = ? AND state = ? AND type IN ?", tenantID, "Approved", db.ArsenalTypeAliases("poc_asset")).Count(&pocAssetCount)
+	db.DB.Model(&db.Arsenal{}).Where("tenant_id = ? AND state = ? AND type IN ?", tenantID, "Approved", db.ArsenalTypeAliases("config_asset")).Count(&configAssetCount)
 	db.DB.Model(&db.WorkflowRule{}).Where("tenant_id = ? AND enabled = ?", tenantID, true).Count(&wfCount)
 	db.DB.Model(&db.DirRule{}).Where("tenant_id = ? AND enabled = ?", tenantID, true).Count(&dirCount)
 
@@ -425,6 +523,8 @@ func getArsenalDBStats(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"fingerprints":  fpCount,
 		"pocs":          pocCount,
+		"poc_assets":    pocAssetCount,
+		"config_assets": configAssetCount,
 		"workflows":     wfCount,
 		"dir_probes":    dirCount,
 		"local_db_size": dbSize,

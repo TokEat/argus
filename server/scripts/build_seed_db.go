@@ -75,14 +75,14 @@ func main() {
 		}
 	}
 
-	// 4. pocs/ 目录
+	// 4. pocs/ 目录：YAML 模板写入 poc，非 YAML 运行时资产写入 poc_asset 并保留相对路径。
 	pocDir := filepath.Join(configBaseDir, "pocs")
 	if stat, err := os.Stat(pocDir); err == nil && stat.IsDir() {
 		filepath.Walk(pocDir, func(path string, info os.FileInfo, walkErr error) error {
 			if walkErr != nil {
 				return nil
 			}
-			if info.IsDir() || !strings.HasSuffix(info.Name(), ".yaml") {
+			if info.IsDir() || strings.HasPrefix(info.Name(), ".") {
 				return nil
 			}
 			data, readErr := os.ReadFile(path)
@@ -90,7 +90,18 @@ func main() {
 				errs = append(errs, fmt.Errorf("read poc file failed at %s: %w", path, readErr))
 				return nil
 			}
-			if err := writeToDB(sdb, "poc", info.Name(), sanitizeSeedContent(path, data)); err != nil {
+			typ := "poc"
+			fileName := info.Name()
+			if !strings.HasSuffix(info.Name(), ".yaml") {
+				typ = "poc_asset"
+				rel, relErr := filepath.Rel(pocDir, path)
+				if relErr != nil {
+					errs = append(errs, fmt.Errorf("resolve poc asset path failed at %s: %w", path, relErr))
+					return nil
+				}
+				fileName = filepath.ToSlash(rel)
+			}
+			if err := writeToDB(sdb, typ, fileName, sanitizeSeedContent(path, data)); err != nil {
 				errs = append(errs, err)
 				return nil
 			}
@@ -121,6 +132,39 @@ func main() {
 			total++
 			return nil
 		})
+	}
+
+	// 6. 运行时配置资产：只同步会影响扫描行为且不含凭据的本地覆盖文件。
+	// socket.yaml 当前没有接入扫描加载链路；api-config.yaml 含外部查询凭据语义，均不打入 Agent 同步包。
+	dictDir := filepath.Join(configBaseDir, "dict")
+	if stat, err := os.Stat(dictDir); err == nil && stat.IsDir() {
+		filepath.Walk(dictDir, func(path string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return nil
+			}
+			if info.IsDir() || strings.HasPrefix(info.Name(), ".") || !strings.HasSuffix(info.Name(), ".txt") {
+				return nil
+			}
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				errs = append(errs, fmt.Errorf("read config asset failed at %s: %w", path, readErr))
+				return nil
+			}
+			rel := filepath.ToSlash(filepath.Join("dict", info.Name()))
+			if err := writeToDB(sdb, "config_asset", rel, sanitizeSeedContent(path, data)); err != nil {
+				errs = append(errs, err)
+				return nil
+			}
+			total++
+			return nil
+		})
+	}
+	if data, err := os.ReadFile(filepath.Join(configBaseDir, "subdomains.txt")); err == nil {
+		if err := writeToDB(sdb, "config_asset", "subdomains.txt", sanitizeSeedContent("subdomains.txt", data)); err != nil {
+			errs = append(errs, err)
+		} else {
+			total++
+		}
 	}
 
 	if len(errs) > 0 {

@@ -23,6 +23,7 @@ import (
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/mem"
 
+	"dddd/scanner/internal/arsenal"
 	"dddd/scanner/internal/engine"
 	"dddd/scanner/internal/exploit"
 	"dddd/scanner/structs"
@@ -184,6 +185,7 @@ type Worker struct {
 	psk          string // 预共享密钥，空则不发送鉴权信息
 	sessionToken string
 	client       pb.AgentServiceClient
+	apiGetFn     func(string) (*http.Response, error)
 	conn         *grpc.ClientConn
 	wg           sync.WaitGroup
 	mu           sync.Mutex
@@ -191,6 +193,8 @@ type Worker struct {
 	maxWorkers   int
 	ruleVersion  string
 	tags         map[string]string
+	rulesMu      sync.Mutex
+	pendingRules *arsenal.PreparedRulePackage
 
 	// sem 并发控制信号量
 	sem chan struct{}
@@ -258,6 +262,9 @@ func (w *Worker) SetPSK(psk string) {
 
 // apiGet 统一执行 Agent -> Server 的内部 HTTP GET，并附加注册会话头。
 func (w *Worker) apiGet(url string) (*http.Response, error) {
+	if w.apiGetFn != nil {
+		return w.apiGetFn(url)
+	}
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -622,6 +629,11 @@ func (w *Worker) commandLoop() {
 }
 
 func (w *Worker) syncRules() {
+	w.rulesMu.Lock()
+	defer w.rulesMu.Unlock()
+
+	w.activatePendingRulesLocked()
+
 	log.Println("[Sync] Checking Arsenal DB for updates...")
 
 	// 1. 探测 Server 端 DB hash（轻量级 JSON 请求）
@@ -653,15 +665,22 @@ func (w *Worker) syncRules() {
 	// 2. 与本地存储的 hash 对比
 	localHash := w.loadLocalDBHash()
 	if localHash == hashResp.Hash {
+		if !arsenal.IsRulePackageMaterialized("config", hashResp.Hash) {
+			log.Printf("[Sync] Arsenal DB hash is current but config materialization is missing (hash=%s)", truncHash(hashResp.Hash))
+			if err := w.prepareOrActivateRulesLocked(hashResp.Hash, hashResp.RuleVersion); err != nil {
+				log.Printf("[Sync] Failed to materialize local arsenal.db: %v", err)
+			}
+			return
+		}
 		log.Printf("[Sync] Arsenal DB up to date (hash=%s, version=%s, rules=%d)",
-			hashResp.Hash[:8], hashResp.RuleVersion, hashResp.ArsenalCount)
+			truncHash(hashResp.Hash), hashResp.RuleVersion, hashResp.ArsenalCount)
 		w.ruleVersion = hashResp.RuleVersion
 		return
 	}
 
 	// 3. Hash 不同，下载完整 DB 文件
 	log.Printf("[Sync] Arsenal DB outdated (local=%s, remote=%s), downloading...",
-		truncHash(localHash), hashResp.Hash[:8])
+		truncHash(localHash), truncHash(hashResp.Hash))
 
 	dbURL := w.apiURL + "/api/v1/arsenals/db"
 	dbResp, err := w.apiGet(dbURL)
@@ -718,16 +737,108 @@ func (w *Worker) syncRules() {
 		return
 	}
 
-	// 5. 保存 hash + 更新版本
-	serverHash := dbResp.Header.Get("X-Arsenal-Hash")
-	if serverHash == "" {
-		serverHash = fmt.Sprintf("%x", md5.Sum(dbData))
+	// 5. 先物化为 CLI 形态 config/，成功激活后才保存 hash + 更新版本。
+	fileHash := dbResp.Header.Get("X-Arsenal-Hash")
+	if fileHash == "" {
+		fileHash = fmt.Sprintf("%x", md5.Sum(dbData))
 	}
-	w.saveLocalDBHash(serverHash)
-	w.ruleVersion = hashResp.RuleVersion
+	if err := w.prepareOrActivateRulesLocked(hashResp.Hash, hashResp.RuleVersion); err != nil {
+		log.Printf("[Sync] Failed to materialize downloaded arsenal.db: %v", err)
+		return
+	}
 
-	log.Printf("[Sync] ✅ Arsenal DB updated: size=%d bytes, hash=%s, version=%s",
-		len(dbData), serverHash[:8], hashResp.RuleVersion)
+	log.Printf("[Sync] ✅ Arsenal DB cached: size=%d bytes, db_hash=%s, rule_hash=%s, version=%s",
+		len(dbData), truncHash(fileHash), truncHash(hashResp.Hash), hashResp.RuleVersion)
+}
+
+func (w *Worker) prepareOrActivateRulesLocked(hash, ruleVersion string) error {
+	prepared, err := arsenal.PrepareRulePackage(arsenal.MaterializeOptions{
+		DBPath:      filepath.Join("data", "arsenal.db"),
+		ConfigDir:   "config",
+		BackupRoot:  filepath.Join("data", "arsenal", "backups"),
+		Hash:        hash,
+		RuleVersion: ruleVersion,
+		BackupLimit: 3,
+	})
+	if err != nil {
+		return err
+	}
+	if w.runningTaskCount() > 0 {
+		w.replacePendingRulesLocked(prepared)
+		log.Printf("[Sync] Prepared rule package hash=%s version=%s; activation deferred until running tasks finish",
+			truncHash(hash), ruleVersion)
+		return nil
+	}
+	if err := w.activatePreparedRulesLocked(prepared); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (w *Worker) replacePendingRulesLocked(prepared *arsenal.PreparedRulePackage) {
+	if w.pendingRules != nil && w.pendingRules.StagingConfigDir != "" {
+		_ = os.RemoveAll(filepath.Dir(w.pendingRules.StagingConfigDir))
+	}
+	w.pendingRules = prepared
+}
+
+func (w *Worker) activatePendingRulesIfIdle() {
+	w.rulesMu.Lock()
+	defer w.rulesMu.Unlock()
+	w.activatePendingRulesLocked()
+}
+
+func (w *Worker) activatePendingRulesLocked() {
+	if w.pendingRules == nil || w.runningTaskCount() > 0 {
+		return
+	}
+	if err := w.activatePreparedRulesLocked(w.pendingRules); err != nil {
+		log.Printf("[Sync] Failed to activate pending rule package: %v", err)
+		return
+	}
+	w.pendingRules = nil
+}
+
+func (w *Worker) activatePreparedRulesLocked(prepared *arsenal.PreparedRulePackage) error {
+	if err := arsenal.ActivatePreparedRulePackage(prepared); err != nil {
+		return err
+	}
+	w.saveLocalDBHash(prepared.Manifest.Hash)
+	w.ruleVersion = prepared.Manifest.RuleVersion
+	log.Printf("[Sync] ✅ Arsenal rules materialized to config/: hash=%s version=%s pocs=%d",
+		truncHash(prepared.Manifest.Hash), prepared.Manifest.RuleVersion, prepared.Manifest.Counts.Pocs)
+	return nil
+}
+
+func (w *Worker) runningTaskCount() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(w.runningTasks)
+}
+
+func (w *Worker) ensureRulesMaterializedForTask() error {
+	if arsenal.HasUsableRuleFiles("config") {
+		return nil
+	}
+	w.rulesMu.Lock()
+	defer w.rulesMu.Unlock()
+
+	w.activatePendingRulesLocked()
+	if arsenal.HasUsableRuleFiles("config") {
+		return nil
+	}
+
+	localHash := w.loadLocalDBHash()
+	if localHash == "" {
+		return fmt.Errorf("agent rule files are not materialized and local arsenal hash is empty")
+	}
+	if err := w.prepareOrActivateRulesLocked(localHash, w.ruleVersion); err != nil {
+		return fmt.Errorf("materialize local arsenal.db: %w", err)
+	}
+	if !arsenal.HasUsableRuleFiles("config") {
+		return fmt.Errorf("agent rule files are not materialized; activation may be deferred by running tasks")
+	}
+	return nil
 }
 
 // loadLocalDBHash 读取本地存储的 DB hash（用于增量对比）。
@@ -756,6 +867,14 @@ func truncHash(h string) string {
 	return h
 }
 
+func applyAgentRuleFileConfig(cfg *engine.Config) {
+	cfg.RuleFilesOnly = true
+	cfg.FingerConfigFilePath = filepath.Join("config", "finger.yaml")
+	cfg.WorkflowYamlPath = filepath.Join("config", "workflow.yaml")
+	cfg.DirSearchYaml = filepath.Join("config", "dir.yaml")
+	cfg.NucleiTemplate = filepath.Join("config", "pocs")
+}
+
 func (w *Worker) executeTask(task *pb.Task) {
 	log.Printf("Received Task: %s with targets: %v", task.TaskId, task.Targets)
 
@@ -771,6 +890,14 @@ func (w *Worker) executeTask(task *pb.Task) {
 	cfg.Targets = task.Targets
 	cfg.OutputFile = ""
 	cfg.ReportName = ""
+	applyAgentRuleFileConfig(&cfg)
+
+	if err := w.ensureRulesMaterializedForTask(); err != nil {
+		err = fmt.Errorf("agent rules not ready: %w", err)
+		log.Printf("Failed to prepare rules for task %s: %v", task.TaskId, err)
+		w.reportTaskCompletion(task.TaskId, "FAILED", err.Error())
+		return
+	}
 
 	ctx, err := newScanContext(cfg)
 	if err != nil {
@@ -797,6 +924,7 @@ func (w *Worker) executeTask(task *pb.Task) {
 		w.mu.Lock()
 		delete(w.runningTasks, task.TaskId)
 		w.mu.Unlock()
+		w.activatePendingRulesIfIdle()
 	}()
 
 	// 挂载 OutputHook 进行 gRPC Stream 实时回传

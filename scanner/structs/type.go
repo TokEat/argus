@@ -99,6 +99,7 @@ type Config struct {
 	OutputType                 string
 	APIConfigFilePath          string
 	FingerConfigFilePath       string
+	RuleFilesOnly              bool
 	PasswordFile               string
 	Password                   string
 }

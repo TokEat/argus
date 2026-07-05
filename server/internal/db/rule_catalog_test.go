@@ -16,6 +16,32 @@ func TestCanonicalArsenalTypeEXP(t *testing.T) {
 	}
 }
 
+func TestCanonicalArsenalTypePocAsset(t *testing.T) {
+	if got := CanonicalArsenalType("pocasset"); got != "poc_asset" {
+		t.Fatalf("CanonicalArsenalType(pocasset) = %q, want poc_asset", got)
+	}
+	aliases := ArsenalTypeAliases("poc_asset")
+	if len(aliases) != 2 || aliases[0] != "poc_asset" || aliases[1] != "pocasset" {
+		t.Fatalf("ArsenalTypeAliases(poc_asset) = %#v, want [poc_asset pocasset]", aliases)
+	}
+}
+
+func TestCanonicalArsenalTypeConfigAsset(t *testing.T) {
+	if got := CanonicalArsenalType("dict_asset"); got != "config_asset" {
+		t.Fatalf("CanonicalArsenalType(dict_asset) = %q, want config_asset", got)
+	}
+	aliases := ArsenalTypeAliases("config_asset")
+	want := []string{"config_asset", "configasset", "dict_asset", "dictasset"}
+	if len(aliases) != len(want) {
+		t.Fatalf("ArsenalTypeAliases(config_asset) = %#v, want %#v", aliases, want)
+	}
+	for i := range want {
+		if aliases[i] != want[i] {
+			t.Fatalf("ArsenalTypeAliases(config_asset) = %#v, want %#v", aliases, want)
+		}
+	}
+}
+
 func TestMaterializeExploitRule(t *testing.T) {
 	arsenal := Arsenal{
 		ID:       "exp_demo.py",
