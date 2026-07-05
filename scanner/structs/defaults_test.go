@@ -7,7 +7,7 @@ import (
 
 func TestDefaultConfigIncludesDatabaseGoPocPorts(t *testing.T) {
 	ports := "," + DefaultConfig().Ports + ","
-	for _, port := range []string{"5236", "54321"} {
+	for _, port := range []string{"2379", "5236", "54321"} {
 		if !strings.Contains(ports, ","+port+",") {
 			t.Fatalf("expected default ports to include %s, got %q", port, DefaultConfig().Ports)
 		}

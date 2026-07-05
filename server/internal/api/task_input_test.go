@@ -7,7 +7,7 @@ import (
 
 func TestDefaultTaskScanConfigIncludesDatabaseGoPocPorts(t *testing.T) {
 	ports := "," + defaultTaskScanConfig().Ports + ","
-	for _, port := range []string{"5236", "54321"} {
+	for _, port := range []string{"2379", "5236", "54321"} {
 		if !strings.Contains(ports, ","+port+",") {
 			t.Fatalf("expected default task ports to include %s, got %q", port, defaultTaskScanConfig().Ports)
 		}

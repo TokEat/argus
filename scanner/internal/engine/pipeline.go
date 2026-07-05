@@ -22,6 +22,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/logrusorgru/aurora"
@@ -49,14 +50,6 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 	defer gologger.Info().Msg(aurora.BrightGreen("Done!").String())
 
-	// Agent 模式优化：默认跳过 ICMP 存活探测，避免在无 root 权限
-	// 的环境下 fallback 到极慢的逐个 ping 子进程模式。
-	if ctx != nil && ctx.OutputHook != nil {
-		if !ctx.Config.TCPPing {
-			ctx.Config.SkipHostDiscovery = true
-		}
-	}
-
 	// 无锁上下文绑定：仅加载知识库，不写全局变量，不获取互斥锁。
 	cleanup, err := bindAgentContext(ctx)
 	if err != nil {
@@ -65,6 +58,18 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	defer cleanup()
 
 	cfg := currentPipelineConfig(ctx)
+
+	// Agent 模式：大网段启用存活预扫描先发现存活主机。
+	// 小网段（<=256 IP）直接端口扫描更高效，也避免无 root 环境 ICMP 慢路径拖累任务。
+	if ctx != nil && ctx.OutputHook != nil {
+		if !cfg.TCPPing && !cfg.SkipHostDiscovery {
+			ipCount := estimateIPCount(cfg.Targets)
+			if ipCount <= 256 {
+				cfg.SkipHostDiscovery = true
+				setPipelineConfig(ctx, cfg)
+			}
+		}
+	}
 	enableLocalReports := ctx == nil || ctx.OutputHook == nil
 
 	if err := checkPipelineCancelled(ctx); err != nil {
@@ -188,9 +193,11 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 				emitPhase(ctx, PhaseTCPPing, "end", fmt.Sprintf("%d alive", len(TCPAlive)))
 			}
 
-			ips = append(ips, ICMPAlive...)
-			ips = append(ips, TCPAlive...)
-			ips = utils.RemoveDuplicateElement(ips)
+			// 存活探测命中时只扫描存活主机；无命中时保留原始目标继续扫描，避免误空跑。
+			if len(ICMPAlive) > 0 || len(TCPAlive) > 0 {
+				ips = append(ICMPAlive, TCPAlive...)
+				ips = utils.RemoveDuplicateElement(ips)
+			}
 		}
 		var tmpIPPort []string
 
@@ -337,6 +344,21 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		}
 	}
 	setPipelineResultMap(ctx, resultMap)
+
+	// WAF 过滤：Safedog / 安全狗 WAF 标题检测。
+	for _, entity := range currentPipelineURLMap(ctx) {
+		for _, path := range entity.WebPaths {
+			title := strings.ToLower(path.Title)
+			if strings.Contains(title, "当前网络访问异常") || strings.Contains(title, "请验证是否真人访问") {
+				for target := range resultMap {
+					if strings.Contains(target, entity.IP) {
+						delete(resultMap, target)
+						gologger.AuditTimeLogger("[WAF] %s 标题 Safedog → 跳过 Nuclei", target)
+					}
+				}
+			}
+		}
+	}
 
 	if cfg.NoPoc {
 		gologger.Info().Msg("跳过漏洞探测")
@@ -544,6 +566,33 @@ func currentPipelineConfig(ctx *ScanContext) Config {
 
 func setPipelineConfig(ctx *ScanContext, cfg Config) {
 	ctx.Config = cfg
+}
+
+// estimateIPCount 估算目标 IP 数量，用于决定是否做存活探测。
+func estimateIPCount(targets []string) int {
+	count := 0
+	for _, t := range targets {
+		t = strings.TrimSpace(t)
+		if strings.Contains(t, "/") {
+			_, cidr, err := net.ParseCIDR(t)
+			if err == nil {
+				ones, bits := cidr.Mask.Size()
+				if bits == 32 && ones >= 0 {
+					count += 1 << (bits - ones)
+				} else {
+					count++
+				}
+				continue
+			}
+		}
+		if strings.Contains(t, "-") {
+			ips := utils.RangerToIP(t)
+			count += len(ips)
+			continue
+		}
+		count++
+	}
+	return count
 }
 
 func currentPipelineIPPortMap(ctx *ScanContext) map[string]string {

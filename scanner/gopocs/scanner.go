@@ -141,7 +141,7 @@ func Dispatch(ipPortMap map[string]string, goPocThreads int, password string, pa
 				},
 				ch, &wg)
 		}
-		if result.TemplateID == "yongyou_u9_viewstate" || result.TemplateID == "viewstate-rce" {
+		if isViewStateNucleiResult(result) {
 			targetURL := result.Matched
 			if targetURL == "" {
 				targetURL = result.URL
@@ -153,6 +153,17 @@ func Dispatch(ipPortMap map[string]string, goPocThreads int, password string, pa
 						Password:     password,
 						PasswordFile: passwordFile,
 					},
+					ch, &wg)
+			}
+		}
+	}
+
+	// 指纹匹配 viewstate 后自动触发 ViewState 密钥爆破。
+	for host, fingers := range structs.GlobalResultMap {
+		for _, f := range fingers {
+			if strings.EqualFold(f, "viewstate") {
+				dispatcher.addScan("ViewState-Key-Crack",
+					structs.HostInfo{Url: host},
 					ch, &wg)
 			}
 		}
@@ -172,6 +183,10 @@ func Dispatch(ipPortMap map[string]string, goPocThreads int, password string, pa
 	return results
 }
 
+func isViewStateNucleiResult(result NucleiResult) bool {
+	return result.TemplateID == "yongyou_u9_viewstate"
+}
+
 func buildScanPlan(ipPortMap map[string]string, password string, passwordFile string, writeResult func(structs.GoPocsResultType)) []scanTask {
 	var tasks []scanTask
 	for hostPort, protocol := range ipPortMap {
@@ -181,6 +196,12 @@ func buildScanPlan(ipPortMap map[string]string, password string, passwordFile st
 		}
 		host := t[0]
 		port := t[1]
+
+		// 减少无效爆破：Web 服务跳过 GoPoc 暴力破解。
+		if protocol == "http" || protocol == "https" || protocol == "ssl/http" {
+			continue
+		}
+
 		info := structs.HostInfo{
 			Host:         host,
 			Ports:        port,
