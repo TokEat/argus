@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Button, Space, Tag, Popconfirm, Modal, Drawer, Typography, Input, Table, Empty, App, Tooltip, Segmented } from 'antd';
+import { Alert, Button, Space, Tag, Popconfirm, Modal, Drawer, Typography, Input, Table, Empty, App, Tooltip, Segmented } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     PlusOutlined,
@@ -18,15 +18,19 @@ import type { ColumnsType } from 'antd/es/table';
 import { listPocRulesPage, getWorkflowDictPage, getArsenal, saveArsenal, deleteArsenal, approveArsenal } from '../../services/api';
 import { useGlobalAI, useAutoContext } from '../../contexts/GlobalAIContext';
 import PocDebugPanel from './PocDebugPanel';
+import PocWorkflowLinkModal from './PocWorkflowLinkModal';
 import { canAccessRole } from '../../utils/auth';
 
 const { Text } = Typography;
 const WORKFLOW_USAGE_PAGE_SIZE = 100;
+const POC_INDEX_PAGE_SIZE = 200;
 
 const PocConfig: React.FC = () => {
     const { visible, openGlobalAI, registerEditableTarget } = useGlobalAI();
     const [loading, setLoading] = useState(true);
+    const [usageLoading, setUsageLoading] = useState(true);
     const [pocRules, setPocRules] = useState<API.PocRuleMetadata[]>([]);
+    const [pocIndex, setPocIndex] = useState<API.PocRuleMetadata[]>([]);
     const [total, setTotal] = useState(0);
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(15);
@@ -40,6 +44,7 @@ const PocConfig: React.FC = () => {
     const [editorContent, setEditorContent] = useState('');
     const [newFileName, setNewFileName] = useState('');
     const [debugVisible, setDebugVisible] = useState(false);
+    const [workflowLinkOpen, setWorkflowLinkOpen] = useState(false);
     const canManageArsenals = canAccessRole('operator');
     const canApproveArsenals = canAccessRole('admin');
 
@@ -64,37 +69,7 @@ const PocConfig: React.FC = () => {
     };
     const { message: msg } = App.useApp();
 
-    const fetchData = async () => {
-        setLoading(true);
-        try {
-            const [pocs, wfs] = await Promise.all([
-                listPocRulesPage({ all: '1', page, page_size: pageSize, q: searchKeyword || undefined }),
-                fetchWorkflowUsageSummaries(),
-            ]);
-            setPocRules(pocs.items || []);
-            setTotal(pocs.total || 0);
-            // 构造引用反向索引：POC 名（去后缀后） -> workflow product 列表
-            const map = new Map<string, string[]>();
-            (wfs || []).forEach((wf) => {
-                (wf.pocs || []).forEach((rawName) => {
-                    const key = rawName.replace(/\.(ya?ml)$/i, '');
-                    if (!map.has(key)) map.set(key, []);
-                    map.get(key)!.push(wf.product);
-                });
-            });
-            setUsageMap(map);
-        } catch {
-            msg.error('加载 POC 弹药库失败');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    useEffect(() => {
-        fetchData();
-    }, [page, pageSize, searchKeyword]);
-
-    const fetchWorkflowUsageSummaries = async (): Promise<API.WorkflowSummary[]> => {
+    async function fetchWorkflowUsageSummaries(): Promise<API.WorkflowSummary[]> {
         const all: API.WorkflowSummary[] = [];
         let nextPage = 1;
         for (;;) {
@@ -104,6 +79,70 @@ const PocConfig: React.FC = () => {
             if (!res.has_more) return all;
             nextPage += 1;
         }
+    }
+
+    async function fetchPocRuleSummaries(keyword: string): Promise<API.PocRuleMetadata[]> {
+        const all: API.PocRuleMetadata[] = [];
+        let nextPage = 1;
+        for (;;) {
+            const res = await listPocRulesPage({
+                all: '1',
+                page: nextPage,
+                page_size: POC_INDEX_PAGE_SIZE,
+                q: keyword || undefined,
+            }).catch(() => null);
+            if (!res) return all;
+            all.push(...(res.items || []));
+            if (!res.has_more) return all;
+            nextPage += 1;
+        }
+    }
+
+    const buildUsageMap = (workflows: API.WorkflowSummary[]) => {
+        const map = new Map<string, string[]>();
+        workflows.forEach((wf) => {
+            (wf.pocs || []).forEach((rawName) => {
+                const key = rawName.replace(/\.(ya?ml)$/i, '');
+                if (!map.has(key)) map.set(key, []);
+                map.get(key)!.push(wf.product);
+            });
+        });
+        return map;
+    };
+
+    const fetchPageData = async () => {
+        setLoading(true);
+        try {
+            const keyword = searchKeyword.trim();
+            const pocs = await listPocRulesPage({ all: '1', page, page_size: pageSize, q: keyword || undefined });
+            setPocRules(pocs.items || []);
+            setTotal(pocs.total || 0);
+        } catch {
+            msg.error('加载 POC 弹药库失败');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const fetchUsageData = async () => {
+        setUsageLoading(true);
+        try {
+            const keyword = searchKeyword.trim();
+            const [allPocs, workflows] = await Promise.all([
+                fetchPocRuleSummaries(keyword),
+                fetchWorkflowUsageSummaries(),
+            ]);
+            setPocIndex(allPocs);
+            setUsageMap(buildUsageMap(workflows));
+        } catch {
+            msg.error('加载 POC Workflow 统计失败');
+        } finally {
+            setUsageLoading(false);
+        }
+    };
+
+    const fetchData = async () => {
+        await Promise.all([fetchPageData(), fetchUsageData()]);
     };
 
     /** 返回该 POC 被哪些 workflow 引用（同时考虑带/不带后缀） */
@@ -112,19 +151,44 @@ const PocConfig: React.FC = () => {
         return usageMap.get(stripped) || usageMap.get(fileName) || [];
     };
 
-    const filtered = useMemo(() => {
-        let arr = pocRules;
+    const filteredIndex = useMemo(() => {
+        let arr = pocIndex;
         if (usageFilter === 'in_workflow') arr = arr.filter((a) => getUsage(a.source_file).length > 0);
         else if (usageFilter === 'not_in_workflow') arr = arr.filter((a) => getUsage(a.source_file).length === 0);
         return arr;
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [pocRules, usageFilter, usageMap]);
+    }, [pocIndex, usageFilter, usageMap]);
+
+    const visibleRows = useMemo(() => {
+        if (usageFilter === 'all') return pocRules;
+        const offset = (page - 1) * pageSize;
+        return filteredIndex.slice(offset, offset + pageSize);
+    }, [filteredIndex, page, pageSize, pocRules, usageFilter]);
+
+    const activeTotal = usageFilter === 'all' ? total : filteredIndex.length;
+
+    useEffect(() => {
+        if (usageFilter === 'all') fetchPageData();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [page, pageSize, searchKeyword, usageFilter]);
+
+    useEffect(() => {
+        fetchUsageData();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [searchKeyword]);
+
+    useEffect(() => {
+        if (usageFilter === 'all') return;
+        const maxPage = Math.max(1, Math.ceil(filteredIndex.length / pageSize));
+        if (page > maxPage) setPage(maxPage);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [usageFilter, filteredIndex.length, pageSize]);
 
     const usageStats = useMemo(() => {
-        const inWf = pocRules.filter((a) => getUsage(a.source_file).length > 0).length;
-        return { inWf, notInWf: pocRules.length - inWf };
+        const inWf = pocIndex.filter((a) => getUsage(a.source_file).length > 0).length;
+        return { inWf, notInWf: pocIndex.length - inWf };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [pocRules, usageMap]);
+    }, [pocIndex, usageMap]);
 
     const handleCreate = () => {
         if (!canManageArsenals) return;
@@ -150,6 +214,7 @@ http:
           - "keyword"
 `);
         setDebugVisible(false);
+        setWorkflowLinkOpen(false);
         setEditorVisible(true);
     };
 
@@ -159,6 +224,7 @@ http:
         setCurrentArsenal(null);
         setEditorContent('');
         setDebugVisible(false);
+        setWorkflowLinkOpen(false);
         setEditorVisible(true);
         try {
             const arsenal = await getArsenal('poc', record.source_file);
@@ -188,7 +254,8 @@ http:
         if (!name) return null;
         const withExt = /\.ya?ml$/i.test(name) ? name : `${name}.yaml`;
         const stripped = name.replace(/\.ya?ml$/i, '');
-        return pocRules.find((a) => {
+        const candidates = pocIndex.length > 0 ? pocIndex : pocRules;
+        return candidates.find((a) => {
             const aStripped = a.source_file.replace(/\.ya?ml$/i, '');
             return a.source_file === name || a.source_file === withExt || aStripped === stripped;
         }) || null;
@@ -329,6 +396,9 @@ http:
         return <Tag color="orange">草稿</Tag>;
     };
 
+    const currentPocFileName = isNew ? newFileName.trim() : currentArsenal?.FileName || '';
+    const currentPocUsage = currentPocFileName ? getUsage(currentPocFileName) : [];
+
     const columns: ColumnsType<API.PocRuleMetadata> = [
         {
             title: '文件名',
@@ -431,16 +501,19 @@ http:
                     />
                     <Segmented
                         value={usageFilter}
-                        onChange={(v) => setUsageFilter(v as typeof usageFilter)}
+                        onChange={(v) => {
+                            setUsageFilter(v as typeof usageFilter);
+                            setPage(1);
+                        }}
                         options={[
-                            { label: `全部 (${pocRules.length})`, value: 'all' },
+                            { label: `全部 (${pocIndex.length || total})`, value: 'all' },
                             { label: `在 Workflow 中 (${usageStats.inWf})`, value: 'in_workflow' },
                             { label: `不在 Workflow 中 (${usageStats.notInWf})`, value: 'not_in_workflow' },
                         ]}
                     />
                 </Space>
                 <Space>
-                    <Tag>当前页 {filtered.length} / 匹配 {total} 条</Tag>
+                    <Tag>当前页 {visibleRows.length} / 匹配 {activeTotal} 条</Tag>
                     {canManageArsenals && (
                         <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
                             新增 POC
@@ -450,18 +523,18 @@ http:
             </div>
 
             <ProCard className="glass-card" style={{ background: 'transparent', border: 'none', padding: 0 }}>
-                {filtered.length === 0 && !loading ? (
+                {visibleRows.length === 0 && !loading && !usageLoading ? (
                     <Empty description="暂无 POC 规则" style={{ padding: '60px 0' }} />
                 ) : (
                     <Table
                         columns={columns}
-                        dataSource={filtered}
+                        dataSource={visibleRows}
                         rowKey="id"
-                        loading={loading}
+                        loading={loading || (usageFilter !== 'all' && usageLoading)}
                         pagination={{
                             current: page,
                             pageSize,
-                            total,
+                            total: activeTotal,
                             showSizeChanger: true,
                             showTotal: (t) => `共 ${t} 条`,
                             onChange: (nextPage, nextPageSize) => {
@@ -478,7 +551,10 @@ http:
             <Drawer
                     title={isNew ? '新建 POC' : `编辑 POC — ${currentArsenal?.FileName}`}
                     open={editorVisible}
-                    onClose={() => setEditorVisible(false)}
+                    onClose={() => {
+                        setWorkflowLinkOpen(false);
+                        setEditorVisible(false);
+                    }}
                     width={debugVisible ? 1400 : 900}
                     style={{ transform: visible ? 'translateX(-400px)' : 'none', transition: 'transform 0.3s' }}
                     mask={!visible}
@@ -541,6 +617,37 @@ http:
                                 )}
                             </div>
                         )}
+                        {!isNew && currentPocFileName && (
+                            <div style={{ marginBottom: 12 }}>
+                                {currentPocUsage.length === 0 ? (
+                                    <Alert
+                                        type="warning"
+                                        showIcon
+                                        message="该 POC 不在 Workflow 中"
+                                        description="扫描不会主动触发该 POC。请关联到匹配的 Workflow product 后再发布或审核扫描规则。"
+                                        action={
+                                            <Button size="small" type="primary" icon={<LinkOutlined />} onClick={() => setWorkflowLinkOpen(true)}>
+                                                关联到 Workflow
+                                            </Button>
+                                        }
+                                    />
+                                ) : (
+                                    <Alert
+                                        type="info"
+                                        showIcon
+                                        message="该 POC 已关联 Workflow"
+                                        description={
+                                            <Space size={4} wrap>
+                                                {currentPocUsage.slice(0, 8).map((product) => (
+                                                    <Tag key={product} icon={<LinkOutlined />} color="blue">{product}</Tag>
+                                                ))}
+                                                {currentPocUsage.length > 8 && <Tag>+{currentPocUsage.length - 8}</Tag>}
+                                            </Space>
+                                        }
+                                    />
+                                )}
+                            </div>
+                        )}
                         <div style={{ flex: 1, border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
                             <Editor
                                 height="100%"
@@ -557,6 +664,14 @@ http:
                     </div>
                 </div>
                 </Drawer>
+            )}
+            {canManageArsenals && currentPocFileName && (
+                <PocWorkflowLinkModal
+                    open={workflowLinkOpen}
+                    pocFileName={currentPocFileName}
+                    onClose={() => setWorkflowLinkOpen(false)}
+                    onLinked={fetchData}
+                />
             )}
         </>
     );

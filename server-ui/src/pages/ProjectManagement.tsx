@@ -88,11 +88,6 @@ const ProjectManagement: React.FC = () => {
         }
     };
 
-    useEffect(() => {
-        fetchProjects();
-        if (isAdmin) fetchTenantUsers();
-    }, []);
-
     const fetchTenantUsers = async () => {
         try {
             const users = await listUsers();
@@ -104,6 +99,11 @@ const ProjectManagement: React.FC = () => {
             return [];
         }
     };
+
+    useEffect(() => {
+        fetchProjects();
+        if (isAdmin) fetchTenantUsers();
+    }, []);
 
     const handleCreate = async () => {
         if (!canCreateProjects) return;

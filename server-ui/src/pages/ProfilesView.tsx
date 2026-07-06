@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { Typography, Tag, Space, Spin, Input, Empty, Tooltip, Pagination, Popover, Badge } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import gsap from 'gsap';
@@ -379,6 +379,20 @@ const ProfilesView: React.FC = () => {
     const [searchKeyword, setSearchKeyword] = useState('');
     const cardsRef = useRef<HTMLDivElement>(null);
 
+    const fetchData = useCallback(async () => {
+        setLoading(true);
+        try {
+            const projectId = localStorage.getItem('active_project_id') || undefined;
+            const result = await getProfiles(page, pageSize, searchKeyword, projectId);
+            setProfiles(result.data || []);
+            setTotal(result.total || 0);
+        } catch (error) {
+            console.error('Failed to fetch profiles:', error);
+        } finally {
+            setLoading(false);
+        }
+    }, [page, pageSize, searchKeyword]);
+
     // GSAP stagger entrance for host cards
     useEffect(() => {
         if (loading || !cardsRef.current) return;
@@ -404,21 +418,7 @@ const ProfilesView: React.FC = () => {
             fetchData();
         }, 300);
         return () => clearTimeout(timer);
-    }, [page, pageSize, searchKeyword]);
-
-    const fetchData = async () => {
-        setLoading(true);
-        try {
-            const projectId = localStorage.getItem('active_project_id') || undefined;
-            const result = await getProfiles(page, pageSize, searchKeyword, projectId);
-            setProfiles(result.data || []);
-            setTotal(result.total || 0);
-        } catch (error) {
-            console.error('Failed to fetch profiles:', error);
-        } finally {
-            setLoading(false);
-        }
-    };
+    }, [fetchData]);
 
     // Compute aggregates
     const totalPorts = profiles.reduce((acc, p) => acc + (p.ports?.length || 0), 0);

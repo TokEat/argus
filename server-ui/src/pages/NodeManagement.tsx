@@ -45,9 +45,17 @@ function parseNodeTags(tags?: string): Record<string, string> {
 const NodeManagement: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [nodes, setNodes] = useState<API.AgentNode[]>([]);
+    const [now, setNow] = useState(0);
     const canManageNodes = canAccessRole('operator');
     const navigate = useNavigate();
     const cardsRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const updateNow = () => setNow(Date.now());
+        updateNow();
+        const timer = window.setInterval(updateNow, 30000);
+        return () => window.clearInterval(timer);
+    }, []);
 
     /* GSAP card entrance */
     useEffect(() => {
@@ -147,8 +155,8 @@ const NodeManagement: React.FC = () => {
     };
 
     const getTimeSince = (ts: number) => {
-        if (!ts) return '';
-        const diff = Date.now() - ts;
+        if (!ts || !now) return '';
+        const diff = now - ts;
         if (diff < 60000) return `${Math.floor(diff / 1000)}秒前`;
         if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`;
         return `${Math.floor(diff / 3600000)}小时前`;
