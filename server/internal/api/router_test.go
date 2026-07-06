@@ -1198,6 +1198,72 @@ func TestResultEndpointsPaginateAndRespectTaskProjectTenantScope(t *testing.T) {
 	}
 }
 
+func TestGetFingerprintsCanGroupByProductWithAllTargets(t *testing.T) {
+	store := setupAITestDB(t)
+	now := time.Now()
+	if err := store.Create(&db.Project{ID: "project-1", TenantID: "default", Name: "Project 1", Status: "active"}).Error; err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if err := store.Create(&db.RootTask{ID: "root-1", TenantID: "default", ProjectID: "project-1", Name: "root", Status: "Running"}).Error; err != nil {
+		t.Fatalf("seed root task: %v", err)
+	}
+	if err := store.Create(&db.SubTask{ID: "sub-1", TenantID: "default", ProjectID: "project-1", RootTaskID: "root-1", Status: "Done"}).Error; err != nil {
+		t.Fatalf("seed sub task: %v", err)
+	}
+	rows := []db.FingerprintHit{
+		{
+			TenantID: "default", ProjectID: "project-1", TaskID: "sub-1", RootTaskID: "root-1",
+			Target: "https://a.example", ProductName: "nginx", RuleName: "rule-a",
+			Evidence: `{"title":"A"}`, CreatedAt: now, UpdatedAt: now.Add(time.Minute),
+		},
+		{
+			TenantID: "default", ProjectID: "project-1", TaskID: "sub-1", RootTaskID: "root-1",
+			Target: "https://b.example", ProductName: "nginx", RuleName: "rule-b",
+			Evidence: `{"title":"B"}`, CreatedAt: now.Add(2 * time.Minute), UpdatedAt: now.Add(3 * time.Minute),
+		},
+		{
+			TenantID: "default", ProjectID: "project-1", TaskID: "sub-1", RootTaskID: "root-1",
+			Target: "https://tomcat.example", ProductName: "tomcat", RuleName: "rule-c",
+			CreatedAt: now, UpdatedAt: now,
+		},
+	}
+	if err := store.Create(&rows).Error; err != nil {
+		t.Fatalf("seed fingerprint hits: %v", err)
+	}
+
+	ctx, recorder := newTenantContext(http.MethodGet, "/fingerprints?project_id=project-1&task_id=root-1&group_by=product&page=1&page_size=1")
+	getFingerprints(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected grouped fingerprints response, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var resp struct {
+		Items []struct {
+			ProductName string `json:"ProductName"`
+			TargetCount int64  `json:"TargetCount"`
+			Targets     []struct {
+				Target   string `json:"Target"`
+				RuleName string `json:"RuleName"`
+			} `json:"Targets"`
+		} `json:"items"`
+		Total    int64 `json:"total"`
+		Page     int   `json:"page"`
+		PageSize int   `json:"page_size"`
+		HasMore  bool  `json:"has_more"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode grouped fingerprints response: %v; body=%s", err, recorder.Body.String())
+	}
+	if resp.Total != 2 || resp.Page != 1 || resp.PageSize != 1 || !resp.HasMore || len(resp.Items) != 1 {
+		t.Fatalf("unexpected grouped pagination metadata: %+v", resp)
+	}
+	if resp.Items[0].ProductName != "nginx" || resp.Items[0].TargetCount != 2 || len(resp.Items[0].Targets) != 2 {
+		t.Fatalf("expected nginx group with both targets, got %+v", resp.Items[0])
+	}
+	if resp.Items[0].Targets[0].Target != "https://a.example" || resp.Items[0].Targets[1].Target != "https://b.example" {
+		t.Fatalf("unexpected grouped targets: %+v", resp.Items[0].Targets)
+	}
+}
+
 func TestCopilotProfileAndContextCompaction(t *testing.T) {
 	profile := resolveCopilotProfile("poc_inline")
 	if profile.MaxTurns <= 4 || len(profile.Tools) != 4 {

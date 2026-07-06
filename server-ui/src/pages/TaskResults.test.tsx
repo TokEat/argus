@@ -9,6 +9,7 @@ const apiMocks = vi.hoisted(() => ({
     getVulns: vi.fn(),
     getAssets: vi.fn(),
     getFingerprints: vi.fn(),
+    getFingerprintGroups: vi.fn(),
     exportVulns: vi.fn(),
     getExploitCandidatesForVuln: vi.fn(),
 }));
@@ -45,6 +46,7 @@ describe('TaskResults', () => {
         ], 25, page));
         apiMocks.getAssets.mockResolvedValue(paged([], 0, 1));
         apiMocks.getFingerprints.mockResolvedValue(paged([], 0, 1));
+        apiMocks.getFingerprintGroups.mockResolvedValue(paged([], 0, 1));
     });
 
     it('requests the next vulnerability page from the server', async () => {
@@ -117,5 +119,45 @@ describe('TaskResults', () => {
 
         expect(await screen.findByText('当前页 Info: 2')).toBeInTheDocument();
         expect(screen.queryAllByText('当前页 Info: 1')).toHaveLength(0);
+    });
+
+    it('groups fingerprint results by product and shows all matched urls', async () => {
+        apiMocks.getFingerprintGroups.mockResolvedValue(paged([
+            {
+                ProductName: 'nginx',
+                TargetCount: 2,
+                Targets: [
+                    { Target: 'https://a.example', RuleName: 'rule-a' },
+                    { Target: 'https://b.example', RuleName: 'rule-b' },
+                ],
+                FirstSeen: '2026-07-05T00:00:00Z',
+                LastSeen: '2026-07-05T00:01:00Z',
+            },
+        ], 1, 1));
+
+        const user = userEvent.setup();
+        render(
+            <MemoryRouter initialEntries={['/tasks/task-1/results']}>
+                <App>
+                    <Routes>
+                        <Route path="/tasks/:taskId/results" element={<TaskResults />} />
+                    </Routes>
+                </App>
+            </MemoryRouter>,
+        );
+
+        await user.click(await screen.findByText(/指纹 \(1\)/));
+
+        await waitFor(() => {
+            expect(apiMocks.getFingerprintGroups).toHaveBeenCalledWith({
+                taskId: 'task-1',
+                projectId: 'project-1',
+                page: 1,
+                pageSize: 20,
+            });
+        });
+        expect(await screen.findByText('nginx')).toBeInTheDocument();
+        expect(screen.getByText('https://a.example')).toBeInTheDocument();
+        expect(screen.getByText('https://b.example')).toBeInTheDocument();
     });
 });

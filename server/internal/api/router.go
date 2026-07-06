@@ -2424,8 +2424,22 @@ func getAssets(c *gin.Context) {
 
 func getFingerprints(c *gin.Context) {
 	var fps []db.FingerprintHit
+	baseQuery := fingerprintResultQuery(c)
+	if strings.EqualFold(strings.TrimSpace(c.Query("group_by")), "product") {
+		getFingerprintGroups(c, baseQuery)
+		return
+	}
+	query := baseQuery.Order("created_at desc")
+	page, pageSize, total, ok := paginateResultQuery(c, query, &db.FingerprintHit{}, &fps)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, pagedResponse(fps, total, page, pageSize, ""))
+}
+
+func fingerprintResultQuery(c *gin.Context) *gorm.DB {
 	tenantID := currentTenantID(c)
-	query := db.DB.Where("tenant_id = ?", tenantID).Order("created_at desc")
+	query := db.DB.Model(&db.FingerprintHit{}).Where("tenant_id = ?", tenantID)
 	query, _ = applyProjectScope(c, query, "project_id")
 	if taskID := c.Query("task_id"); taskID != "" {
 		if scopedTaskIDs := resolveAccessibleTaskIDs(c, taskID); len(scopedTaskIDs) > 1 {
@@ -2436,11 +2450,99 @@ func getFingerprints(c *gin.Context) {
 			query = query.Where("1 = 0")
 		}
 	}
-	page, pageSize, total, ok := paginateResultQuery(c, query, &db.FingerprintHit{}, &fps)
-	if !ok {
+	return query
+}
+
+type fingerprintGroupTarget struct {
+	Target    string
+	RuleName  string
+	Evidence  string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type fingerprintGroup struct {
+	ProductName string
+	TargetCount int64
+	Targets     []fingerprintGroupTarget
+	FirstSeen   time.Time
+	LastSeen    time.Time
+}
+
+func getFingerprintGroups(c *gin.Context, query *gorm.DB) {
+	page, pageSize := parsePagination(c, 20, 200)
+	totalQuery := query.Session(&gorm.Session{}).
+		Select("product_name").
+		Group("product_name")
+
+	var total int64
+	if err := db.DB.Table("(?) as grouped", totalQuery).Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, pagedResponse(fps, total, page, pageSize, ""))
+
+	type groupRow struct {
+		ProductName string
+		TargetCount int64
+	}
+	rows := make([]groupRow, 0)
+	if err := query.Session(&gorm.Session{}).
+		Select("product_name, COUNT(*) as target_count").
+		Group("product_name").
+		Order("target_count DESC, product_name ASC").
+		Limit(pageSize).
+		Offset((page - 1) * pageSize).
+		Scan(&rows).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	productNames := make([]string, 0, len(rows))
+	groupIndexByProduct := make(map[string]int, len(rows))
+	groups := make([]fingerprintGroup, 0, len(rows))
+	for _, row := range rows {
+		group := fingerprintGroup{
+			ProductName: row.ProductName,
+			TargetCount: row.TargetCount,
+			Targets:     make([]fingerprintGroupTarget, 0, int(row.TargetCount)),
+		}
+		groups = append(groups, group)
+		groupIndexByProduct[row.ProductName] = len(groups) - 1
+		productNames = append(productNames, row.ProductName)
+	}
+
+	if len(productNames) > 0 {
+		hits := make([]db.FingerprintHit, 0)
+		if err := query.Session(&gorm.Session{}).
+			Where("product_name IN ?", productNames).
+			Order("product_name ASC, target ASC, created_at ASC").
+			Find(&hits).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		for _, hit := range hits {
+			groupIndex, ok := groupIndexByProduct[hit.ProductName]
+			if !ok {
+				continue
+			}
+			group := &groups[groupIndex]
+			group.Targets = append(group.Targets, fingerprintGroupTarget{
+				Target:    hit.Target,
+				RuleName:  hit.RuleName,
+				Evidence:  hit.Evidence,
+				CreatedAt: hit.CreatedAt,
+				UpdatedAt: hit.UpdatedAt,
+			})
+			if group.FirstSeen.IsZero() || hit.CreatedAt.Before(group.FirstSeen) {
+				group.FirstSeen = hit.CreatedAt
+			}
+			if group.LastSeen.IsZero() || hit.UpdatedAt.After(group.LastSeen) {
+				group.LastSeen = hit.UpdatedAt
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, pagedResponse(groups, total, page, pageSize, ""))
 }
 
 func paginateResultQuery(c *gin.Context, query *gorm.DB, model interface{}, dest interface{}) (int, int, int64, bool) {

@@ -15,7 +15,7 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useNavigate, useParams } from 'react-router-dom';
-import { getVulns, getAssets, getFingerprints, exportVulns, getExploitCandidatesForVuln } from '../services/api';
+import { getVulns, getAssets, getFingerprintGroups, exportVulns, getExploitCandidatesForVuln } from '../services/api';
 import { useAutoContext } from '../contexts/GlobalAIContext';
 import dayjs from 'dayjs';
 
@@ -46,7 +46,7 @@ const TaskResults: React.FC = () => {
     });
     const [vulns, setVulns] = useState<API.Vulnerability[]>([]);
     const [assets, setAssets] = useState<API.Asset[]>([]);
-    const [fingerprints, setFingerprints] = useState<API.FingerprintHit[]>([]);
+    const [fingerprints, setFingerprints] = useState<API.FingerprintGroup[]>([]);
     const [vulnPagination, setVulnPagination] = useState<ResultPageState>(initialPageState);
     const [assetPagination, setAssetPagination] = useState<ResultPageState>(initialPageState);
     const [fingerprintPagination, setFingerprintPagination] = useState<ResultPageState>(initialPageState);
@@ -103,7 +103,7 @@ const TaskResults: React.FC = () => {
         setTabBusy('fingerprints', true);
         try {
             const projectId = localStorage.getItem('active_project_id') || undefined;
-            const res = await getFingerprints({ taskId, projectId, page, pageSize });
+            const res = await getFingerprintGroups({ taskId, projectId, page, pageSize });
             setFingerprints(res.items || []);
             setFingerprintPagination({
                 current: res.page || page,
@@ -178,10 +178,9 @@ const TaskResults: React.FC = () => {
             service: a.Service,
         })),
         fingerprints_summary: fingerprints.slice(0, 10).map(f => ({
-            id: f.ID,
-            target: f.Target,
             product_name: f.ProductName,
-            rule_name: f.RuleName,
+            target_count: f.TargetCount,
+            targets: f.Targets?.slice(0, 5).map(target => target.Target) || [],
         })),
         viewing_vuln: drawerOpen ? selectedVuln : null,
     });
@@ -478,78 +477,49 @@ const TaskResults: React.FC = () => {
         },
     ];
 
-    const fpColumns: ColumnsType<API.FingerprintHit> = [
-        {
-            title: '主机',
-            key: 'host',
-            width: 160,
-            render: (_, record) => {
-                const host = extractHostFromTarget(record.Target);
-                return (
-                    <Text copyable={{ text: host }} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 500 }}>
-                        {host}
-                    </Text>
-                );
-            },
-            filters: (() => {
-                const hosts = [...new Set(fingerprints.map(f => extractHostFromTarget(f.Target)))];
-                return hosts.slice(0, 20).map(h => ({ text: h, value: h }));
-            })(),
-            onFilter: (value, record) => extractHostFromTarget(record.Target) === value,
-        },
+    const fpColumns: ColumnsType<API.FingerprintGroup> = [
         {
             title: '产品名称',
             dataIndex: 'ProductName',
             key: 'product_name',
+            width: 220,
             render: (v: string) => <Tag color="cyan">{v}</Tag>,
         },
         {
-            title: '证据',
-            dataIndex: 'Evidence',
-            key: 'evidence',
-            render: (v: string) => {
-                if (!v) return <Text type="secondary">-</Text>;
-                try {
-                    const parsed = JSON.parse(v);
-                    const web = parsed.web;
-                    return (
-                        <Popover
-                            content={<pre style={{ maxWidth: 500, maxHeight: 400, overflow: 'auto', fontSize: 12, margin: 0 }}>{JSON.stringify(parsed, null, 2)}</pre>}
-                            title={<span style={{ fontSize: 13 }}>完整证据 (JSON)</span>}
-                            trigger="hover"
-                            placement="left"
-                        >
-                            <Space size={4} style={{ cursor: 'pointer' }}>
-                                {web?.status && (
-                                    <Tag color={String(web.status) === '200' ? 'green' : (String(web.status).startsWith('3') ? 'blue' : 'orange')} style={{ margin: 0 }}>
-                                        {web.status}
-                                    </Tag>
-                                )}
-                                {web?.title ? (
-                                    <Text style={{ fontSize: 12, color: '#64748b', maxWidth: 250 }} ellipsis={{ tooltip: web.title }}>
-                                        {web.title}
-                                    </Text>
-                                ) : (
-                                    <Text style={{ fontSize: 12, color: '#64748b', maxWidth: 250 }} ellipsis>
-                                        {v}
-                                    </Text>
-                                )}
+            title: 'URL 数',
+            dataIndex: 'TargetCount',
+            key: 'target_count',
+            width: 100,
+            sorter: (a, b) => (a.TargetCount || 0) - (b.TargetCount || 0),
+            render: (v: number) => <Tag color="blue">{v || 0}</Tag>,
+        },
+        {
+            title: '匹配 URL',
+            key: 'targets',
+            render: (_, record) => {
+                const targets = record.Targets || [];
+                if (targets.length === 0) return <Text type="secondary">-</Text>;
+                return (
+                    <div style={{ maxHeight: 180, overflow: 'auto', display: 'grid', gap: 6 }}>
+                        {targets.map((target, index) => (
+                            <Space key={`${target.Target}-${index}`} size={6} wrap={false}>
+                                <Text
+                                    copyable={{ text: target.Target }}
+                                    style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}
+                                >
+                                    {target.Target}
+                                </Text>
+                                {target.RuleName && <Tag color="default">{target.RuleName}</Tag>}
                             </Space>
-                        </Popover>
-                    );
-                } catch {
-                    return (
-                        <Tooltip title={v}>
-                            <Text style={{ fontSize: 12, color: '#64748b', maxWidth: 260 }} ellipsis>{v}</Text>
-                        </Tooltip>
-                    );
-                }
+                        ))}
+                    </div>
+                );
             },
         },
         {
-            title: '发现时间',
-            dataIndex: 'CreatedAt',
-            key: 'created_at',
+            title: '最近发现',
+            dataIndex: 'LastSeen',
+            key: 'last_seen',
             width: 170,
             render: (v: string) => {
                 if (!v) return '-';
@@ -672,7 +642,7 @@ const TaskResults: React.FC = () => {
                                         bordered
                                         columns={fpColumns}
                                         dataSource={fingerprints}
-                                        rowKey="ID"
+                                        rowKey="ProductName"
                                         loading={tabLoading.fingerprints}
                                         pagination={{
                                             current: fingerprintPagination.current,

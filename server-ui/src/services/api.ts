@@ -213,6 +213,10 @@ export async function getFingerprints(first?: string | ResultPageParams, project
     return typeof first === 'object' && first !== null ? result : pagedItems(result);
 }
 
+export async function getFingerprintGroups(params: ResultPageParams): Promise<API.PagedResponse<API.FingerprintGroup>> {
+    return request.get('/fingerprints', { params: { ...buildResultParams(params), group_by: 'product' } });
+}
+
 export async function getProfiles(page: number = 1, pageSize: number = 50, search: string = '', projectId?: string): Promise<API.PaginatedResponse<API.Profile>> {
     const params: Record<string, string | number> = { page, page_size: pageSize, search };
     if (projectId) params.project_id = projectId;

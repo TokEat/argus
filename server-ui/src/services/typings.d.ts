@@ -262,6 +262,22 @@ declare namespace API {
     CreatedAt: string;
   }
 
+  interface FingerprintGroupTarget {
+    Target: string;
+    RuleName: string;
+    Evidence?: string;
+    CreatedAt?: string;
+    UpdatedAt?: string;
+  }
+
+  interface FingerprintGroup {
+    ProductName: string;
+    TargetCount: number;
+    Targets: FingerprintGroupTarget[];
+    FirstSeen?: string;
+    LastSeen?: string;
+  }
+
   /** 端口信息 */
   interface PortInfo {
     port: number;
