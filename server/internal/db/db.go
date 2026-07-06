@@ -369,6 +369,7 @@ type AIToolInvocation struct {
 // AgentLog 遥测日志模型
 type AgentLog struct {
 	ID        uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID  string `gorm:"default:'default';index"`
 	AgentID   string `gorm:"index"`
 	Level     string // INFO, WARN, ERROR
 	Message   string `gorm:"type:text"`

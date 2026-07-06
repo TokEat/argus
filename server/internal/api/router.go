@@ -153,7 +153,11 @@ func SetNotifyHub(hub *grpcpkg.NotifyHub) {
 }
 
 func currentTenantID(c *gin.Context) string {
-	tenantID := strings.TrimSpace(c.GetString("tenant"))
+	return normalizeTenantID(c.GetString("tenant"))
+}
+
+func normalizeTenantID(tenantID string) string {
+	tenantID = strings.TrimSpace(tenantID)
 	if tenantID == "" {
 		return "default"
 	}
@@ -3908,9 +3912,46 @@ func StartAgentLogRetentionDaemon(ctx context.Context) {
 }
 
 func tenantAgentIDs(tenantID string) []string {
-	var agentIDs []string
-	scopedNodeQuery(tenantID).Model(&db.Node{}).Pluck("agent_id", &agentIDs)
+	tenantID = normalizeTenantID(tenantID)
+	seen := make(map[string]struct{})
+	agentIDs := make([]string, 0)
+	add := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		agentIDs = append(agentIDs, id)
+	}
+
+	var nodeIDs []string
+	scopedNodeQuery(tenantID).Model(&db.Node{}).Pluck("agent_id", &nodeIDs)
+	for _, id := range nodeIDs {
+		add(id)
+	}
+
+	var logIDs []string
+	scopedAgentLogQuery(tenantID).Distinct("agent_id").Pluck("agent_id", &logIDs)
+	for _, id := range logIDs {
+		var crossTenantNodes int64
+		db.DB.Model(&db.Node{}).
+			Where("agent_id = ? AND tenant_id <> ?", id, tenantID).
+			Count(&crossTenantNodes)
+		if crossTenantNodes > 0 {
+			continue
+		}
+		add(id)
+	}
+	sort.Strings(agentIDs)
 	return agentIDs
+}
+
+func scopedAgentLogQuery(tenantID string) *gorm.DB {
+	tenantID = normalizeTenantID(tenantID)
+	return db.DB.Model(&db.AgentLog{}).Where("tenant_id = ?", tenantID)
 }
 
 func getAgentLogSummary(c *gin.Context) {
@@ -3918,6 +3959,7 @@ func getAgentLogSummary(c *gin.Context) {
 	agentIDs := tenantAgentIDs(tenantID)
 	if len(agentIDs) == 0 {
 		c.JSON(http.StatusOK, gin.H{
+			"agents":         []string{},
 			"level_counts":   []agentLogLevelCount{},
 			"recent_errors":  []db.AgentLog{},
 			"retention_days": getAgentLogRetentionDays(),
@@ -3925,7 +3967,7 @@ func getAgentLogSummary(c *gin.Context) {
 		return
 	}
 
-	query := db.DB.Model(&db.AgentLog{}).Where("agent_id IN ?", agentIDs)
+	query := scopedAgentLogQuery(tenantID).Where("agent_id IN ?", agentIDs)
 	if agentID := strings.TrimSpace(c.Query("agent_id")); agentID != "" {
 		query = query.Where("agent_id = ?", agentID)
 	}
@@ -3960,7 +4002,7 @@ func getAgentLogSummary(c *gin.Context) {
 		limit = 100
 	}
 	recentErrors := make([]db.AgentLog, 0)
-	errQuery := db.DB.Where("agent_id IN ? AND level IN ?", agentIDs, []string{"ERROR", "WARN"})
+	errQuery := scopedAgentLogQuery(tenantID).Where("agent_id IN ? AND level IN ?", agentIDs, []string{"ERROR", "WARN"})
 	if agentID := strings.TrimSpace(c.Query("agent_id")); agentID != "" {
 		errQuery = errQuery.Where("agent_id = ?", agentID)
 	}
@@ -3973,6 +4015,7 @@ func getAgentLogSummary(c *gin.Context) {
 	errQuery.Order("timestamp DESC").Limit(limit).Find(&recentErrors)
 
 	c.JSON(http.StatusOK, gin.H{
+		"agents":         agentIDs,
 		"level_counts":   counts,
 		"recent_errors":  recentErrors,
 		"retention_days": getAgentLogRetentionDays(),
@@ -4031,12 +4074,24 @@ func getAgentLogs(c *gin.Context) {
 
 	var node db.Node
 	if err := scopedNodeQuery(tenantID).Where("agent_id = ?", agentID).First(&node).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Agent not found"})
-		return
+		var crossTenantNodes int64
+		db.DB.Model(&db.Node{}).
+			Where("agent_id = ? AND tenant_id <> ?", agentID, normalizeTenantID(tenantID)).
+			Count(&crossTenantNodes)
+		if crossTenantNodes > 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Agent not found"})
+			return
+		}
+		var historicalLogs int64
+		scopedAgentLogQuery(tenantID).Where("agent_id = ?", agentID).Count(&historicalLogs)
+		if historicalLogs == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Agent not found"})
+			return
+		}
 	}
 
 	logs := make([]db.AgentLog, 0)
-	query := db.DB.Where("agent_id = ?", agentID)
+	query := scopedAgentLogQuery(tenantID).Where("agent_id = ?", agentID)
 	if level != "" {
 		query = query.Where("level = ?", level)
 	}
@@ -4150,7 +4205,7 @@ func archiveAgentLogs(c *gin.Context) {
 		return
 	}
 	var logs []db.AgentLog
-	if err := db.DB.Where("agent_id IN ? AND created_at >= ? AND created_at < ?", agentIDs, start, end).
+	if err := scopedAgentLogQuery(currentTenantID(c)).Where("agent_id IN ? AND created_at >= ? AND created_at < ?", agentIDs, start, end).
 		Order("timestamp ASC").Find(&logs).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

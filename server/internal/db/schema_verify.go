@@ -118,8 +118,8 @@ func schemaTableSpecs() []schemaTableSpec {
 		},
 		{
 			Table:   "agent_logs",
-			Columns: []string{"agent_id", "level", "message", "timestamp", "created_at"},
-			Indexes: []string{"idx_agent_logs_agent_id", "idx_agent_logs_timestamp"},
+			Columns: []string{"tenant_id", "agent_id", "level", "message", "timestamp", "created_at"},
+			Indexes: []string{"idx_agent_logs_tenant_id", "idx_agent_logs_agent_id", "idx_agent_logs_timestamp"},
 		},
 		{
 			Table:   "agent_log_alert_rules",

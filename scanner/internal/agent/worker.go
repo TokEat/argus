@@ -50,6 +50,12 @@ type grpcTeeWriter struct {
 	stopCh    chan struct{}
 	doneCh    chan struct{}
 	dropped   atomic.Uint64
+	stdLog    *standardLogTeeWriter
+}
+
+type standardLogTeeWriter struct {
+	original io.Writer
+	tee      *grpcTeeWriter
 }
 
 func (w *grpcTeeWriter) Write(data []byte, level levels.Level) {
@@ -59,12 +65,6 @@ func (w *grpcTeeWriter) Write(data []byte, level levels.Level) {
 	}
 
 	// 2. 尝试通过 gRPC 回传（非阻塞，忽略发送失败）
-	w.mu.Lock()
-	if w.closed || w.stream == nil {
-		w.mu.Unlock()
-		return
-	}
-
 	levelStr := "INFO"
 	switch level {
 	case levels.LevelError, levels.LevelFatal:
@@ -75,8 +75,17 @@ func (w *grpcTeeWriter) Write(data []byte, level levels.Level) {
 		levelStr = "DEBUG"
 	}
 
-	msg := strings.TrimSpace(string(data))
+	w.enqueue(levelStr, string(data))
+}
+
+func (w *grpcTeeWriter) enqueue(levelStr, message string) {
+	msg := strings.TrimSpace(message)
 	if msg == "" {
+		return
+	}
+
+	w.mu.Lock()
+	if w.closed || w.stream == nil {
 		w.mu.Unlock()
 		return
 	}
@@ -101,6 +110,17 @@ func (w *grpcTeeWriter) Write(data []byte, level levels.Level) {
 	if debugSink != nil {
 		debugSink(levelStr, msg)
 	}
+}
+
+func (w *standardLogTeeWriter) Write(data []byte) (int, error) {
+	var err error
+	if w.original != nil {
+		_, err = w.original.Write(data)
+	}
+	if w.tee != nil {
+		w.tee.enqueue("INFO", string(data))
+	}
+	return len(data), err
 }
 
 func (w *grpcTeeWriter) SetDebugSink(sink func(level, message string)) {
@@ -152,6 +172,10 @@ func (w *grpcTeeWriter) Close() {
 
 	<-w.doneCh
 
+	if w.stdLog != nil {
+		log.SetOutput(w.stdLog.original)
+		w.stdLog = nil
+	}
 	if w.stream != nil {
 		_, _ = w.stream.CloseAndRecv()
 	}
@@ -1156,6 +1180,8 @@ func (w *Worker) installGlobalLogTeeWriter() *grpcTeeWriter {
 	go tee.runSender()
 
 	gologger.DefaultLogger.SetWriter(tee)
+	tee.stdLog = &standardLogTeeWriter{original: log.Writer(), tee: tee}
+	log.SetOutput(tee.stdLog)
 	log.Printf("[LogTee] Streaming agent logs to Server")
 
 	return tee

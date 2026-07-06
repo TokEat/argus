@@ -784,6 +784,7 @@ func (s *Server) StreamLogs(stream pb.AgentService_StreamLogsServer) error {
 		}
 
 		logItem := db.AgentLog{
+			TenantID:  tenantIDForAgentLog(payload.AgentId),
 			AgentID:   payload.AgentId,
 			Level:     payload.Level,
 			Message:   payload.Message,
@@ -796,11 +797,22 @@ func (s *Server) StreamLogs(stream pb.AgentService_StreamLogsServer) error {
 	}
 }
 
-func createAgentLogAlerts(logItem db.AgentLog) {
+func tenantIDForAgentLog(agentID string) string {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return "default"
+	}
 	var node db.Node
-	tenantID := "default"
-	if err := db.DB.Select("tenant_id").Where("agent_id = ?", logItem.AgentID).First(&node).Error; err == nil && strings.TrimSpace(node.TenantID) != "" {
-		tenantID = node.TenantID
+	if err := db.DB.Select("tenant_id").Where("agent_id = ?", agentID).First(&node).Error; err == nil && strings.TrimSpace(node.TenantID) != "" {
+		return node.TenantID
+	}
+	return "default"
+}
+
+func createAgentLogAlerts(logItem db.AgentLog) {
+	tenantID := strings.TrimSpace(logItem.TenantID)
+	if tenantID == "" {
+		tenantID = tenantIDForAgentLog(logItem.AgentID)
 	}
 	var rules []db.AgentLogAlertRule
 	db.DB.Where("tenant_id = ? AND enabled = ?", tenantID, true).Find(&rules)

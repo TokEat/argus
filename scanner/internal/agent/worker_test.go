@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -359,6 +360,33 @@ func TestEffectiveWorkerCountCapsToEngineLimit(t *testing.T) {
 	}
 }
 
+func TestInstallGlobalLogTeeStreamsStandardLogs(t *testing.T) {
+	originalOutput := log.Writer()
+	defer log.SetOutput(originalOutput)
+
+	stream := &fakeLogStream{}
+	client := &fakeAgentClient{logStream: stream}
+	worker := NewWorker("agent-log", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	worker.client = client
+
+	tee := worker.installGlobalLogTeeWriter()
+	if tee == nil {
+		t.Fatal("expected log tee to be installed")
+	}
+	defer tee.Close()
+
+	log.Print("runtime log should reach server")
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if stream.contains("agent-log", "runtime log should reach server") {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected standard log to be streamed, got %+v", stream.payloads)
+}
+
 func createAgentTestArsenalDBBytes(t *testing.T, product, pocFile string) []byte {
 	t.Helper()
 	root := t.TempDir()
@@ -650,6 +678,7 @@ type fakeAgentClient struct {
 	streamErr         error
 	debugStream       grpc.ClientStreamingClient[pb.DebugEvent, pb.Ack]
 	debugErr          error
+	logStream         grpc.ClientStreamingClient[pb.LogPayload, pb.Ack]
 	taskCompleteReqs  []*pb.TaskCompleteReq
 	taskCompleteReqsM sync.Mutex
 	taskCompleteErrs  []error
@@ -705,7 +734,7 @@ func (c *fakeAgentClient) ClaimTask(ctx context.Context, in *pb.ClaimTaskReq, op
 }
 
 func (c *fakeAgentClient) StreamLogs(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[pb.LogPayload, pb.Ack], error) {
-	return nil, nil
+	return c.logStream, nil
 }
 
 func (c *fakeAgentClient) StreamDebug(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[pb.DebugEvent, pb.Ack], error) {
@@ -769,6 +798,64 @@ func (s *fakeResultStream) RecvMsg(m any) error {
 		return nil
 	}
 	return io.EOF
+}
+
+type fakeLogStream struct {
+	mu       sync.Mutex
+	payloads []*pb.LogPayload
+}
+
+func (s *fakeLogStream) Send(payload *pb.LogPayload) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.payloads = append(s.payloads, payload)
+	return nil
+}
+
+func (s *fakeLogStream) CloseAndRecv() (*pb.Ack, error) {
+	return &pb.Ack{Success: true}, nil
+}
+
+func (s *fakeLogStream) Header() (metadata.MD, error) {
+	return nil, nil
+}
+
+func (s *fakeLogStream) Trailer() metadata.MD {
+	return nil
+}
+
+func (s *fakeLogStream) CloseSend() error {
+	return nil
+}
+
+func (s *fakeLogStream) Context() context.Context {
+	return context.Background()
+}
+
+func (s *fakeLogStream) SendMsg(m any) error {
+	if payload, ok := m.(*pb.LogPayload); ok {
+		return s.Send(payload)
+	}
+	return nil
+}
+
+func (s *fakeLogStream) RecvMsg(m any) error {
+	if ack, ok := m.(*pb.Ack); ok {
+		ack.Success = true
+		return nil
+	}
+	return io.EOF
+}
+
+func (s *fakeLogStream) contains(agentID, message string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, payload := range s.payloads {
+		if payload.GetAgentId() == agentID && strings.Contains(payload.GetMessage(), message) {
+			return true
+		}
+	}
+	return false
 }
 
 type fakeDebugStream struct {

@@ -1054,6 +1054,72 @@ func TestGetAgentLogsUsesAgentIDPrimaryKeyAndTenantScope(t *testing.T) {
 	}
 }
 
+func TestGetAgentLogsReturnsHistoricalLogsWithoutNode(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.AutoMigrate(&db.AgentLog{}); err != nil {
+		t.Fatalf("migrate agent logs: %v", err)
+	}
+	nowMs := time.Now().UnixMilli()
+	if err := store.Create(&db.AgentLog{
+		AgentID:   "agent-history",
+		Level:     "INFO",
+		Message:   "historical log without node",
+		Timestamp: nowMs,
+		CreatedAt: time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("seed historical log: %v", err)
+	}
+
+	ctx, recorder := newTenantContext(http.MethodGet, "/agents/agent-history/logs?limit=10")
+	ctx.Params = gin.Params{{Key: "id", Value: "agent-history"}}
+	getAgentLogs(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected historical logs response, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var logs []db.AgentLog
+	if err := json.Unmarshal(recorder.Body.Bytes(), &logs); err != nil {
+		t.Fatalf("decode logs: %v", err)
+	}
+	if len(logs) != 1 || logs[0].Message != "historical log without node" {
+		t.Fatalf("expected historical log without node, got %+v", logs)
+	}
+}
+
+func TestAgentLogSummaryIncludesHistoricalLogAgents(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.AutoMigrate(&db.AgentLog{}); err != nil {
+		t.Fatalf("migrate agent logs: %v", err)
+	}
+	if err := store.Create(&db.AgentLog{
+		AgentID:   "agent-history",
+		Level:     "INFO",
+		Message:   "historical summary log",
+		Timestamp: time.Now().UnixMilli(),
+		CreatedAt: time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("seed historical log: %v", err)
+	}
+
+	ctx, recorder := newTenantContext(http.MethodGet, "/agent-logs/summary?agent_id=agent-history")
+	getAgentLogSummary(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected summary response, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var resp struct {
+		LevelCounts []agentLogLevelCount `json:"level_counts"`
+		Agents      []string             `json:"agents"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if len(resp.LevelCounts) != 1 || resp.LevelCounts[0].Level != "INFO" || resp.LevelCounts[0].Count != 1 {
+		t.Fatalf("expected historical INFO count, got %+v", resp.LevelCounts)
+	}
+	if len(resp.Agents) != 1 || resp.Agents[0] != "agent-history" {
+		t.Fatalf("expected historical agent in summary, got %+v", resp.Agents)
+	}
+}
+
 func TestAgentLogSummaryReturnsEmptyArraysForNodeWithoutLogs(t *testing.T) {
 	store := setupAITestDB(t)
 	if err := store.AutoMigrate(&db.AgentLog{}); err != nil {

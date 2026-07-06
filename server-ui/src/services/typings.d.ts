@@ -868,6 +868,7 @@ declare namespace API {
 
   interface AgentLog {
     ID: number;
+    TenantID?: string;
     AgentID: string;
     Level: string;
     Message: string;
@@ -876,6 +877,7 @@ declare namespace API {
   }
 
   interface AgentLogSummary {
+    agents?: string[];
     level_counts: {
       level: string;
       count: number;

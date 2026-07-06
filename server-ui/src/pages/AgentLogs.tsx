@@ -32,7 +32,10 @@ const filterStorageKey = 'argus_agent_log_filters';
 
 const asArray = <T,>(value: T[] | null | undefined): T[] => Array.isArray(value) ? value : [];
 
+const defaultLogRange = () => [dayjs().subtract(6, 'hour'), dayjs()];
+
 const normalizeSummary = (value: API.AgentLogSummary | null | undefined): API.AgentLogSummary => ({
+    agents: asArray(value?.agents),
     level_counts: asArray(value?.level_counts),
     recent_errors: asArray(value?.recent_errors),
     retention_days: value?.retention_days || 14,
@@ -47,30 +50,25 @@ const loadInitialFilters = () => {
             level?: string;
             q?: string;
             limit?: number;
-            since?: number;
-            until?: number;
         };
         return {
             agent_id: parsed.agent_id,
             level: parsed.level,
             q: parsed.q,
             limit: parsed.limit || 100,
-            range: parsed.since && parsed.until ? [dayjs(parsed.since), dayjs(parsed.until)] : [dayjs().subtract(6, 'hour'), dayjs()],
+            range: defaultLogRange(),
         };
     } catch {
-        return { limit: 100, range: [dayjs().subtract(6, 'hour'), dayjs()] };
+        return { limit: 100, range: defaultLogRange() };
     }
 };
 
 const persistFilters = (values: Record<string, unknown>) => {
-    const range = (values.range || []) as dayjs.Dayjs[];
     localStorage.setItem(filterStorageKey, JSON.stringify({
         agent_id: values.agent_id,
         level: values.level,
         q: values.q,
         limit: values.limit,
-        since: range[0] ? range[0].valueOf() : undefined,
-        until: range[1] ? range[1].valueOf() : undefined,
     }));
 };
 
@@ -80,6 +78,7 @@ const AgentLogs: React.FC = () => {
     const [nodes, setNodes] = useState<API.AgentNode[]>([]);
     const [logs, setLogs] = useState<API.AgentLog[]>([]);
     const [summary, setSummary] = useState<API.AgentLogSummary | null>(null);
+    const [historicalAgentIDs, setHistoricalAgentIDs] = useState<string[]>([]);
     const [alertRules, setAlertRules] = useState<API.AgentLogAlertRule[]>([]);
     const [alertEvents, setAlertEvents] = useState<API.AgentLogAlertEvent[]>([]);
     const [retentionDays, setRetentionDays] = useState<number>(14);
@@ -136,6 +135,7 @@ const AgentLogs: React.FC = () => {
 		});
 		const normalized = normalizeSummary(result);
 		setSummary(normalized);
+		setHistoricalAgentIDs(normalized.agents || []);
 		setRetentionDays(normalized.retention_days || retentionDays);
 	};
 
@@ -263,6 +263,21 @@ const AgentLogs: React.FC = () => {
         },
     ], []);
 
+    const agentOptions = useMemo(() => {
+        const seen = new Set<string>();
+        const options: { label: string; value: string }[] = [];
+        const add = (id?: string) => {
+            if (!id || seen.has(id)) return;
+            seen.add(id);
+            options.push({ label: id, value: id });
+        };
+        nodes.forEach((node) => add(node.AgentID));
+        historicalAgentIDs.forEach(add);
+        add(selectedAgentID);
+        add(queryAgentID);
+        return options;
+    }, [historicalAgentIDs, nodes, queryAgentID, selectedAgentID]);
+
     return (
         <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
@@ -303,7 +318,7 @@ const AgentLogs: React.FC = () => {
                         showSearch
                         placeholder="选择 Agent"
                         style={{ width: 260 }}
-                        options={nodes.map((node) => ({ label: node.AgentID, value: node.AgentID }))}
+                        options={agentOptions}
                     />
                 </Form.Item>
                 <Form.Item name="level">
@@ -372,8 +387,8 @@ const AgentLogs: React.FC = () => {
                 </Space>
             )}
 
-            {nodes.length === 0 ? (
-                <Empty description="暂无 Agent 节点" />
+            {agentOptions.length === 0 && !selectedAgentID ? (
+                <Empty description="暂无 Agent 日志" />
             ) : (
                 <Table
                     rowKey="ID"
@@ -391,7 +406,7 @@ const AgentLogs: React.FC = () => {
                         <Input />
                     </Form.Item>
                     <Form.Item name="agent_id" label="Agent">
-                        <Select allowClear options={nodes.map((node) => ({ label: node.AgentID, value: node.AgentID }))} />
+                        <Select allowClear options={agentOptions} />
                     </Form.Item>
                     <Form.Item name="level" label="级别">
                         <Select allowClear options={['ERROR', 'WARN', 'INFO', 'DEBUG'].map((level) => ({ label: level, value: level }))} />
