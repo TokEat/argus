@@ -374,6 +374,7 @@ func isPort(str string) bool {
 var (
 	domainRootString = `[a-z]{2,5}`
 	domainRegx       = regexp.MustCompile(`^([a-zA-Z0-9][-a-zA-Z0-9]{0,62}(?:\.[a-zA-Z0-9][-a-zA-Z0-9]{0,62})*\.(?:` + domainRootString + `))$`)
+	urlDomainRegx    = regexp.MustCompile(`^([a-zA-Z0-9][-_a-zA-Z0-9]{0,62}(?:\.[a-zA-Z0-9][-_a-zA-Z0-9]{0,62})*\.(?:` + domainRootString + `))$`)
 )
 
 func stringContainsCTLByte(s string) bool {
@@ -435,6 +436,27 @@ func isHostPath(str string) bool {
 	return isNetloc(host)
 }
 
+func isURLDomain(str string) bool {
+	if stringContainsCTLByte(str) {
+		return false
+	}
+	return urlDomainRegx.MatchString(str)
+}
+
+func isURLNetloc(str string) bool {
+	if str == "" || strings.Contains(str, "@") {
+		return false
+	}
+	if isNetloc(str) || isURLDomain(str) {
+		return true
+	}
+	parts := strings.Split(str, ":")
+	if len(parts) != 2 {
+		return false
+	}
+	return (isIPv4(parts[0]) || isURLDomain(parts[0])) && isPort(parts[1])
+}
+
 func isURL(str string) bool {
 	if stringContainsCTLByte(str) {
 		return false
@@ -448,7 +470,10 @@ func isURL(str string) bool {
 		return false
 	}
 	rest := str[index+3:]
-	return isNetloc(rest) || isNetlocPort(rest) || isHostPath(rest)
+	if slash := strings.Index(rest, "/"); slash >= 0 {
+		rest = rest[:slash]
+	}
+	return isURLNetloc(rest)
 }
 
 // ============================================================================

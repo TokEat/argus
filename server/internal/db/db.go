@@ -797,6 +797,53 @@ func normalizeSeverity(value string) string {
 	}
 }
 
+func isOSINTAssetPayloadType(payloadType string) bool {
+	return payloadType == "Quake" || payloadType == "Hunter" || payloadType == "Fofa"
+}
+
+func payloadString(payload map[string]interface{}, key string) string {
+	if payload == nil {
+		return ""
+	}
+	value, ok := payload[key].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func payloadPortString(payload map[string]interface{}) string {
+	if payload == nil {
+		return ""
+	}
+	switch value := payload["port"].(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case float64:
+		if value > 0 {
+			return strconv.Itoa(int(value))
+		}
+	}
+	return ""
+}
+
+func osintTargetFromPayload(payload map[string]interface{}, fallback string) string {
+	if uri := payloadString(payload, "uri"); uri != "" {
+		return uri
+	}
+	if ip := payloadString(payload, "ip"); ip != "" {
+		if port := payloadPortString(payload); port != "" {
+			return ip + ":" + port
+		}
+	}
+	for _, key := range []string{"target", "host", "url", "ip"} {
+		if value := payloadString(payload, key); value != "" {
+			return value
+		}
+	}
+	return fallback
+}
+
 func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 	// 优先从 LRU 缓存查找任务归属
 	projectID := "default_project"
@@ -880,9 +927,16 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 
 	switch payloadType {
 	case "asset", "port_scan", "subdomain",
-		"Web", "Protocol", "PortScan", "IPAlive", "Domain", "Domain-Bind", "Nmap":
+		"Web", "Protocol", "PortScan", "IPAlive", "Domain", "Domain-Bind", "Nmap",
+		"Quake", "Hunter", "Fofa":
 		// Agent 通过 ddout.OutputMessage 发送的 Type 为大写开头（如 Web/Protocol/PortScan/IPAlive/Domain/Nmap）
 		// 统一归入资产表
+		if isOSINTAssetPayloadType(payloadType) {
+			target = osintTargetFromPayload(p, target)
+			if proto, ok := p["protocol"].(string); ok && proto != "" {
+				service = proto
+			}
+		}
 
 		// 对 Web 类型提取更丰富的字段
 		if payloadType == "Web" || payloadType == "Domain-Bind" {
@@ -944,9 +998,10 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 			}
 		}
 
-		// 构建真实 URL (仅 Web 类型有意义)
+		// 构建真实 URL。OSINT 的纯 IP:Port 输出仍只作为资产 target 保存。
 		actualURL := ""
-		if payloadType == "Web" || payloadType == "Domain-Bind" {
+		if payloadType == "Web" || payloadType == "Domain-Bind" ||
+			(isOSINTAssetPayloadType(payloadType) && strings.Contains(target, "://")) {
 			actualURL = target // target 已 normalize 为 scheme://host:port 格式
 		}
 
