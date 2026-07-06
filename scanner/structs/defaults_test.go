@@ -19,3 +19,11 @@ func TestDefaultConfigEnablesWAFSkipOnManyFingerprints(t *testing.T) {
 		t.Fatal("expected WAFSkipOnManyFingerprints to default to true")
 	}
 }
+
+func TestDefaultConfigDisablesNoisyDiscoveryByDefault(t *testing.T) {
+	cfg := DefaultConfig()
+	if !cfg.NoSubdomainBruteForce || !cfg.NoSubFinder || !cfg.NoHostBind {
+		t.Fatalf("expected noisy discovery defaults to be disabled, got NoSubdomainBruteForce=%v NoSubFinder=%v NoHostBind=%v",
+			cfg.NoSubdomainBruteForce, cfg.NoSubFinder, cfg.NoHostBind)
+	}
+}

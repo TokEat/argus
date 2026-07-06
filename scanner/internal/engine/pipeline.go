@@ -464,6 +464,9 @@ func (p *Pipeline) searchEngine(ctx *ScanContext, cfg *Config) error {
 	if cfg.Quake {
 		cfg.Targets = uncover.QuakeSearch(cfg.Targets, searchCfg, searchState)
 		setPipelineConfig(ctx, *cfg)
+		if len(cfg.Targets) == 0 {
+			return fmt.Errorf("Quake 搜索返回 0 条结果，请检查: 1) API Key 是否已配置 2) 搜索语法是否正确")
+		}
 	}
 	return checkPipelineCancelled(ctx)
 }

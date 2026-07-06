@@ -671,12 +671,12 @@ func Flag() {
 
 	flagSet.CreateGroup("subdomain", "探索子域名",
 		flagSet.BoolVarP(&structs.GlobalConfig.Subdomain, "subdomain", "sd", false, "开启子域名枚举，默认关闭"),
-		flagSet.BoolVarP(&structs.GlobalConfig.NoSubdomainBruteForce, "no-subdomain-brute", "nsb", false, "关闭子域名爆破"),
-		flagSet.BoolVarP(&structs.GlobalConfig.NoSubFinder, "no-subfinder", "ns", false, "关闭被动子域名枚举"),
+		flagSet.BoolVarP(&structs.GlobalConfig.NoSubdomainBruteForce, "no-subdomain-brute", "nsb", true, "关闭子域名爆破"),
+		flagSet.BoolVarP(&structs.GlobalConfig.NoSubFinder, "no-subfinder", "ns", true, "关闭被动子域名枚举"),
 		flagSet.IntVarP(&structs.GlobalConfig.SubdomainBruteForceThreads, "subdomain-brute-threads", "sbt", 150, "子域名爆破线程数量"),
 		flagSet.BoolVarP(&structs.GlobalConfig.AllowLocalAreaDomain, "local-domain", "ld", false, "允许域名解析到局域网"),
 		flagSet.BoolVarP(&structs.GlobalConfig.AllowCDNAssets, "allow-cdn", "ac", false, "允许扫描带CDN的资产 | 默认略过"),
-		flagSet.BoolVarP(&structs.GlobalConfig.NoHostBind, "no-host-bind", "nhb", false, "禁用域名绑定资产探测"),
+		flagSet.BoolVarP(&structs.GlobalConfig.NoHostBind, "no-host-bind", "nhb", true, "禁用域名绑定资产探测"),
 	)
 
 	flagSet.CreateGroup("web", "Web探针配置",

@@ -21,6 +21,14 @@ func TestDefaultTaskScanConfigEnablesWAFSkipOnManyFingerprints(t *testing.T) {
 	}
 }
 
+func TestDefaultTaskScanConfigDisablesNoisyDiscoveryByDefault(t *testing.T) {
+	cfg := defaultTaskScanConfig()
+	if !cfg.NoSubdomainBruteForce || !cfg.NoSubFinder || !cfg.NoHostBind {
+		t.Fatalf("expected noisy discovery defaults to be disabled, got NoSubdomainBruteForce=%v NoSubFinder=%v NoHostBind=%v",
+			cfg.NoSubdomainBruteForce, cfg.NoSubFinder, cfg.NoHostBind)
+	}
+}
+
 func TestDirectTargetsAllowUnderscoreHostInFullURL(t *testing.T) {
 	targets, summary, err := parseAndValidateTargetsForMode(
 		json.RawMessage(`["http://mzt_sc_gov_cn_ipv6.dynky.cn"]`),

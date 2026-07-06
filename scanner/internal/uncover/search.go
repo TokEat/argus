@@ -102,8 +102,8 @@ type fofaResponse struct {
 }
 
 type quakeServiceInfo struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+	Code    interface{} `json:"code"`
+	Message string      `json:"message"`
 	Data    []struct {
 		Service struct {
 			HTTP struct {
@@ -413,9 +413,11 @@ func searchQuakeCore(keyword string, cfg Config, state *State, isVIP bool) []str
 
 	client := retryablehttp.NewClient(retryablehttp.DefaultOptionsSpraying)
 	payload := map[string]interface{}{
-		"query": keyword,
-		"start": "0",
-		"size":  strconv.Itoa(cfg.QuakeSize),
+		"query":        keyword,
+		"start":        "0",
+		"size":         strconv.Itoa(cfg.QuakeSize),
+		"latest":       false,
+		"ignore_cache": true,
 	}
 	if !isVIP {
 		payload["include"] = []string{"ip", "port"}
@@ -561,7 +563,7 @@ func readAPIKeys(path string, sourceName string) ([]string, error) {
 		if strings.EqualFold(source.Name(), sourceName) {
 			keys := sourceAPIKeysMap[strings.ToLower(source.Name())]
 			if len(keys) == 0 {
-				return nil, fmt.Errorf("%s API Key 为空", sourceName)
+				return nil, fmt.Errorf("%s API Key 为空，请在 config/api-config.yaml 中配置或通过 Web 控制台「字典管理」录入", sourceName)
 			}
 			return keys, nil
 		}

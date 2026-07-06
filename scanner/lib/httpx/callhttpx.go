@@ -114,7 +114,7 @@ func CallHTTPx(urls []string, callBack func(resp runner.Result), proxy string, t
 			TLSProbe:                  false,
 			TLSGrab:                   true,
 			MaxResponseBodySizeToRead: 1048576,
-			FollowHostRedirects:       true,
+			FollowHostRedirects:       false,
 			MaxRedirects:              3,
 			ExtractTitle:              true,
 			Timeout:                   timeout,
@@ -180,7 +180,7 @@ func DirBrute(urls []string, callBack func(resp runner.Result), proxy string, th
 		TLSProbe:                  false, // 同主探测一样关闭 TLS 资产发现
 		TLSGrab:                   true,  // 保留 TLS 证书抓取
 		MaxResponseBodySizeToRead: 1048576,
-		FollowHostRedirects:       true,
+		FollowHostRedirects:       false,
 		MaxRedirects:              3,
 		ExtractTitle:              true,
 		Timeout:                   timeout,
