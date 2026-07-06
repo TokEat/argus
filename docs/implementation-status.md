@@ -74,6 +74,7 @@
 | 动态控制 | 命令轮询接收取消任务与规则热加载信号 | `scanner/internal/agent/worker.go` |
 | 规则同步 | 通过 `x-agent-id` + `x-agent-token` 拉取 Arsenal DB Hash，变更后下载完整 SQLite DB 到 `data/arsenal.db`，再物化为 CLI 形态 `config/finger.yaml`、`config/workflow.yaml`、`config/dir.yaml`、`config/pocs/`、`config/dict/` 和 `config/subdomains.txt`；扫描任务读取本地 `config/`，不在扫描期从 DB 导出 POC | `scanner/internal/agent/worker.go` `scanner/internal/arsenal/materialize.go` |
 | 规则同步边界 | DB 同步包托管 Finger / Workflow / Dir / POC YAML / POC helper assets、GoPoc 字典和子域名字典；`socket.yaml` 当前没有接入扫描加载链路，不纳入同步；`api-config.yaml` 含搜索引擎凭据，不随 Agent 规则包下发 | `scanner/common/config` `scanner/gopocs` `scanner/internal/scanner/subdomain` |
+| 仓库规则基线回写 | Web/DB 治理结果需要进入源码规则基线时，先下载或生成 `arsenal_seed.db`，再用 `tools/arsenal-sync` 将 Approved 规则导出/对比/覆盖到 `scanner/common/config`，通过 Git diff 和 PR 审查后合并；Server 不自动写源码目录 | `tools/arsenal-sync` `scanner/common/config` |
 | POC / EXP 调试拦截 | POC 拦截 Nuclei/GoPoc 调试请求响应；EXP Python 以原生 Python 执行，请求/响应调试信息由脚本主动写入 `ctx.evidence` 摘要 | `scanner/internal/agent/debug.go` `scanner/internal/exploit/python_executor.go` |
 | 遥测日志 | gologger 全局 TeeWriter 通过 gRPC `StreamLogs` 持续上报 Agent 日志 | `scanner/internal/agent/worker.go` |
 | Spot 回收监听 | 云厂商竞价实例中断检测、紧急数据回传 | `scanner/internal/agent/signal.go` |

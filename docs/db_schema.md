@@ -673,3 +673,5 @@ Argus 早期结果入库以 `task_id` 为主要关联键，适合一次性扫描
 - 保存、审批、删除、回滚规则后，都会重新同步结构化规则表。
 - 字典编辑接口对 `finger.yaml` / `workflow.yaml` 的修改，也会联动刷新结构化表。
 - Agent 侧同步仍使用 `poc` / `finger` / `workflow` / `dir` 四类。
+- 仓库内 `scanner/common/config` 是构建和 Git 审查用的规则基线，不由 Server 后台自动回写；需要同步 DB 治理结果时，下载或生成 `arsenal_seed.db` 后运行 `tools/arsenal-sync diff/export/apply`，只把 Approved 规则显式还原到本地文件并通过 PR 合并。
+- `api-config.yaml` 不进入 DB 同步或回写链路；`socket.yaml` 当前不在扫描加载链路中，也不纳入 `tools/arsenal-sync` 的受管覆盖范围。
