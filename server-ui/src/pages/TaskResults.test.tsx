@@ -11,6 +11,8 @@ const apiMocks = vi.hoisted(() => ({
     getFingerprints: vi.fn(),
     getFingerprintGroups: vi.fn(),
     exportVulns: vi.fn(),
+    exportAssets: vi.fn(),
+    exportFingerprints: vi.fn(),
     getExploitCandidatesForVuln: vi.fn(),
 }));
 
@@ -47,6 +49,11 @@ describe('TaskResults', () => {
         apiMocks.getAssets.mockResolvedValue(paged([], 0, 1));
         apiMocks.getFingerprints.mockResolvedValue(paged([], 0, 1));
         apiMocks.getFingerprintGroups.mockResolvedValue(paged([], 0, 1));
+        apiMocks.exportVulns.mockResolvedValue(new Blob(['vulns']));
+        apiMocks.exportAssets.mockResolvedValue(new Blob(['assets']));
+        apiMocks.exportFingerprints.mockResolvedValue(new Blob(['fingerprints']));
+        vi.spyOn(window.URL, 'createObjectURL').mockReturnValue('blob:argus-test');
+        vi.spyOn(window.URL, 'revokeObjectURL').mockImplementation(() => undefined);
     });
 
     it('requests the next vulnerability page from the server', async () => {
@@ -159,5 +166,49 @@ describe('TaskResults', () => {
         expect(await screen.findByText('nginx')).toBeInTheDocument();
         expect(screen.getByText('https://a.example')).toBeInTheDocument();
         expect(screen.getByText('https://b.example')).toBeInTheDocument();
+    });
+
+    it('exports assets for the active assets tab with the current task scope', async () => {
+        const user = userEvent.setup();
+        render(
+            <MemoryRouter initialEntries={['/tasks/task-1/results']}>
+                <App>
+                    <Routes>
+                        <Route path="/tasks/:taskId/results" element={<TaskResults />} />
+                    </Routes>
+                </App>
+            </MemoryRouter>,
+        );
+
+        await user.click(await screen.findByText(/资产 \(0\)/));
+        await user.click(screen.getByRole('button', { name: /导出 CSV/ }));
+
+        await waitFor(() => {
+            expect(apiMocks.exportAssets).toHaveBeenCalledWith('project-1', 'task-1');
+        });
+        expect(apiMocks.exportVulns).not.toHaveBeenCalled();
+        expect(apiMocks.exportFingerprints).not.toHaveBeenCalled();
+    });
+
+    it('exports fingerprints for the active fingerprints tab with the current task scope', async () => {
+        const user = userEvent.setup();
+        render(
+            <MemoryRouter initialEntries={['/tasks/task-1/results']}>
+                <App>
+                    <Routes>
+                        <Route path="/tasks/:taskId/results" element={<TaskResults />} />
+                    </Routes>
+                </App>
+            </MemoryRouter>,
+        );
+
+        await user.click(await screen.findByText(/指纹 \(0\)/));
+        await user.click(screen.getByRole('button', { name: /导出 CSV/ }));
+
+        await waitFor(() => {
+            expect(apiMocks.exportFingerprints).toHaveBeenCalledWith('project-1', 'task-1');
+        });
+        expect(apiMocks.exportVulns).not.toHaveBeenCalled();
+        expect(apiMocks.exportAssets).not.toHaveBeenCalled();
     });
 });

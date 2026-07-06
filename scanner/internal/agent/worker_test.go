@@ -243,6 +243,8 @@ func TestSyncRulesMaterializesLocalDBWhenHashMatchesButManifestMissing(t *testin
 	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://server.local", 1, nil)
 	worker.apiGetFn = func(url string) (*http.Response, error) {
 		switch {
+		case strings.HasSuffix(url, "/api/v1/agents/config/api-keys"):
+			return testHTTPResponse("", nil), nil
 		case strings.HasSuffix(url, "/api/v1/arsenals/db/hash"):
 			return testHTTPResponse(`{"hash":"samehash","rule_version":"v1","arsenal_count":4}`, nil), nil
 		case strings.HasSuffix(url, "/api/v1/arsenals/db"):
@@ -265,6 +267,53 @@ func TestSyncRulesMaterializesLocalDBWhenHashMatchesButManifestMissing(t *testin
 	assertAgentFileContent(t, filepath.Join("config", "subdomains.txt"), "www\napi\n")
 }
 
+func TestSyncRulesWritesAgentAPIConfigFromInternalEndpoint(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://server.local", 1, nil)
+	worker.apiGetFn = func(url string) (*http.Response, error) {
+		switch {
+		case strings.HasSuffix(url, "/api/v1/agents/config/api-keys"):
+			return testHTTPResponse("quake:\n  - synced-key\n", map[string]string{"Content-Type": "application/x-yaml"}), nil
+		case strings.HasSuffix(url, "/api/v1/arsenals/db/hash"):
+			return testHTTPResponse(`{"hash":"","rule_version":"v-api","arsenal_count":0}`, nil), nil
+		default:
+			t.Fatalf("unexpected sync request: %s", url)
+		}
+		return testHTTPResponse(`not found`, nil), nil
+	}
+
+	worker.syncRules()
+
+	assertAgentFileContent(t, filepath.Join("config", "api-config.yaml"), "quake:\n  - synced-key\n")
+}
+
+func TestSyncRulesRemovesAgentAPIConfigWhenServerReturnsEmpty(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	mustWriteAgentFile(t, filepath.Join("config", "api-config.yaml"), []byte("quake:\n  - stale-key\n"))
+
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://server.local", 1, nil)
+	worker.apiGetFn = func(url string) (*http.Response, error) {
+		switch {
+		case strings.HasSuffix(url, "/api/v1/agents/config/api-keys"):
+			return testHTTPResponse("", nil), nil
+		case strings.HasSuffix(url, "/api/v1/arsenals/db/hash"):
+			return testHTTPResponse(`{"hash":"","rule_version":"v-api","arsenal_count":0}`, nil), nil
+		default:
+			t.Fatalf("unexpected sync request: %s", url)
+		}
+		return testHTTPResponse(`not found`, nil), nil
+	}
+
+	worker.syncRules()
+
+	if _, err := os.Stat(filepath.Join("config", "api-config.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("expected stale api-config.yaml to be removed when server returns empty config, stat err=%v", err)
+	}
+}
+
 func TestSyncRulesDefersActivationWhileTasksRunning(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
@@ -273,6 +322,8 @@ func TestSyncRulesDefersActivationWhileTasksRunning(t *testing.T) {
 	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://server.local", 1, nil)
 	worker.apiGetFn = func(url string) (*http.Response, error) {
 		switch {
+		case strings.HasSuffix(url, "/api/v1/agents/config/api-keys"):
+			return testHTTPResponse("", nil), nil
 		case strings.HasSuffix(url, "/api/v1/arsenals/db/hash"):
 			return testHTTPResponse(`{"hash":"newhash","rule_version":"v2","arsenal_count":4}`, nil), nil
 		case strings.HasSuffix(url, "/api/v1/arsenals/db"):
@@ -312,6 +363,8 @@ func TestSyncRulesDownloadsViaHTTPAndMaterializes(t *testing.T) {
 	var sawHashRequest, sawDBRequest bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v1/agents/config/api-keys":
+			w.WriteHeader(http.StatusNoContent)
 		case "/api/v1/arsenals/db/hash":
 			sawHashRequest = true
 			w.Header().Set("Content-Type", "application/json")

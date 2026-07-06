@@ -168,3 +168,57 @@ func TestRefreshRootTaskStatusTerminalPriority(t *testing.T) {
 		t.Fatalf("completed progress = chunks:%d targets:%d, want chunks:1 targets:1", got.CompletedChunks, got.CompletedTargets)
 	}
 }
+
+func TestRefreshRootTaskStatusPreservesPausedRoot(t *testing.T) {
+	store := setupTaskLifecycleTestDB(t)
+	rootID := "root-paused"
+	if err := store.Create(&RootTask{ID: rootID, TenantID: "default", Name: "paused", Status: "Paused"}).Error; err != nil {
+		t.Fatalf("seed root task: %v", err)
+	}
+	if err := store.Create(&SubTask{ID: "sub-running", TenantID: "default", RootTaskID: rootID, Status: "Running"}).Error; err != nil {
+		t.Fatalf("seed subtask: %v", err)
+	}
+
+	RefreshRootTaskStatus(rootID)
+
+	var got RootTask
+	if err := store.First(&got, "id = ?", rootID).Error; err != nil {
+		t.Fatalf("load root task: %v", err)
+	}
+	if got.Status != "Paused" {
+		t.Fatalf("expected paused root status to be preserved, got %s", got.Status)
+	}
+}
+
+func TestRefreshRootTaskStatusAllowsPausedRootToReachTerminalStatus(t *testing.T) {
+	store := setupTaskLifecycleTestDB(t)
+	rootID := "root-paused-finished"
+	if err := store.Create(&RootTask{ID: rootID, TenantID: "default", Name: "paused-finished", Status: "Paused"}).Error; err != nil {
+		t.Fatalf("seed root task: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		sub := SubTask{
+			ID:           fmt.Sprintf("paused-done-%d", i),
+			TenantID:     "default",
+			RootTaskID:   rootID,
+			Status:       "DONE",
+			ChunkTargets: `["https://example.test"]`,
+		}
+		if err := store.Create(&sub).Error; err != nil {
+			t.Fatalf("seed subtask %d: %v", i, err)
+		}
+	}
+
+	RefreshRootTaskStatus(rootID)
+
+	var got RootTask
+	if err := store.First(&got, "id = ?", rootID).Error; err != nil {
+		t.Fatalf("load root task: %v", err)
+	}
+	if got.Status != "FINISHED" {
+		t.Fatalf("expected paused root to converge to FINISHED when no paused or active subtasks remain, got %s", got.Status)
+	}
+	if got.CompletedChunks != 2 || got.CompletedTargets != 2 {
+		t.Fatalf("completed progress = chunks:%d targets:%d, want chunks:2 targets:2", got.CompletedChunks, got.CompletedTargets)
+	}
+}

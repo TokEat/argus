@@ -223,6 +223,8 @@ func TestTenantRolePermissionMatrix(t *testing.T) {
 		{method: "POST", path: "/api/v1/tasks", want: "operator"},
 		{method: "POST", path: "/api/v1/tasks/preview-selector", want: "operator"},
 		{method: "POST", path: "/api/v1/tasks/task-1/cancel", want: "operator"},
+		{method: "POST", path: "/api/v1/tasks/task-1/pause", want: "operator"},
+		{method: "POST", path: "/api/v1/tasks/task-1/resume", want: "operator"},
 		{method: "DELETE", path: "/api/v1/nodes/agent-1", want: "operator"},
 		{method: "POST", path: "/api/v1/dictionaries/workflow", want: "operator"},
 		{method: "PUT", path: "/api/v1/dictionaries/workflow/product", want: "operator"},
@@ -241,6 +243,8 @@ func TestTenantRolePermissionMatrix(t *testing.T) {
 		{method: "GET", path: "/api/v1/agents/agent-1/pyenv", want: "operator"},
 		{method: "POST", path: "/api/v1/agents/agent-1/pyenv/install", want: "admin"},
 		{method: "GET", path: "/api/v1/agents/agent-1/pyenv/jobs/job-1", want: "operator"},
+		{method: "GET", path: "/api/v1/reports/export/assets", want: "viewer"},
+		{method: "GET", path: "/api/v1/reports/export/fingerprints", want: "viewer"},
 		{method: "GET", path: "/api/v1/mcp/resources/pyexp/spec", want: "operator"},
 		{method: "POST", path: "/api/v1/mcp/tools/poc/debug", want: "operator"},
 		{method: "POST", path: "/api/v1/mcp/tools/agent/python-run", want: "admin"},
@@ -254,6 +258,7 @@ func TestTenantRolePermissionMatrix(t *testing.T) {
 		{method: "PUT", path: "/api/v1/roles/security-reviewer", want: "admin"},
 		{method: "DELETE", path: "/api/v1/roles/security-reviewer", want: "admin"},
 		{method: "GET", path: "/api/v1/cloud/accounts", want: "operator"},
+		{method: "POST", path: "/api/v1/cloud/instances/cleanup", want: "operator"},
 		{method: "POST", path: "/api/v1/cloud/accounts/ca-1/oss/upload", want: "operator"},
 		{method: "POST", path: "/api/v1/build/client", want: "admin"},
 		{method: "POST", path: "/api/v1/build/jobs/1/cancel", want: "admin"},
@@ -304,6 +309,200 @@ func TestExportVulnsRecordsReportObject(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(objectStorageRoot, filepath.FromSlash(key))); err != nil {
 		t.Fatalf("expected report object file: %v", err)
+	}
+}
+
+func TestExportAssetsScopesByRootTaskAndRecordsReportObject(t *testing.T) {
+	store := setupAITestDB(t)
+	oldRoot := objectStorageRoot
+	objectStorageRoot = t.TempDir()
+	t.Cleanup(func() {
+		objectStorageRoot = oldRoot
+	})
+	if err := store.Create(&db.Project{ID: "p1", TenantID: "default", OwnerUserID: "7", Name: "p1"}).Error; err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if err := store.Create(&db.RootTask{ID: "root-1", TenantID: "default", ProjectID: "p1", Status: "Finished"}).Error; err != nil {
+		t.Fatalf("seed root task: %v", err)
+	}
+	if err := store.Create(&db.SubTask{ID: "sub-1", TenantID: "default", ProjectID: "p1", RootTaskID: "root-1", Status: "Finished"}).Error; err != nil {
+		t.Fatalf("seed sub task: %v", err)
+	}
+	assets := []db.Asset{
+		{TenantID: "default", ProjectID: "p1", TaskID: "sub-1", RootTaskID: "root-1", Target: "https://in-scope.example", Protocol: "https", Port: 443, URL: "https://in-scope.example", Title: "in-scope"},
+		{TenantID: "default", ProjectID: "p1", TaskID: "other-task", RootTaskID: "other-root", Target: "https://out-of-scope.example", Protocol: "https", Port: 443, URL: "https://out-of-scope.example", Title: "out-of-scope"},
+	}
+	if err := store.Create(&assets).Error; err != nil {
+		t.Fatalf("seed assets: %v", err)
+	}
+
+	ctx, recorder := newTenantContextWithRole(http.MethodGet, "/reports/export/assets?task_id=root-1", "admin", "7")
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/reports/export/assets?task_id=root-1", nil)
+	exportAssets(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected export 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "in-scope.example") || strings.Contains(body, "out-of-scope.example") {
+		t.Fatalf("expected CSV body to only contain root task assets, got %s", body)
+	}
+	var report db.Report
+	if err := store.Where("type = ? AND format = ?", "assets", "csv").First(&report).Error; err != nil {
+		t.Fatalf("expected asset report metadata: %v", err)
+	}
+	key := strings.TrimPrefix(report.FileURL, "local://")
+	if key == report.FileURL || key == "" {
+		t.Fatalf("unexpected asset report file url: %s", report.FileURL)
+	}
+	if _, err := os.Stat(filepath.Join(objectStorageRoot, filepath.FromSlash(key))); err != nil {
+		t.Fatalf("expected asset report object file: %v", err)
+	}
+}
+
+func TestExportFingerprintsScopesByRootTaskAndRecordsReportObject(t *testing.T) {
+	store := setupAITestDB(t)
+	oldRoot := objectStorageRoot
+	objectStorageRoot = t.TempDir()
+	t.Cleanup(func() {
+		objectStorageRoot = oldRoot
+	})
+	if err := store.Create(&db.Project{ID: "p1", TenantID: "default", OwnerUserID: "7", Name: "p1"}).Error; err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if err := store.Create(&db.RootTask{ID: "root-1", TenantID: "default", ProjectID: "p1", Status: "Finished"}).Error; err != nil {
+		t.Fatalf("seed root task: %v", err)
+	}
+	if err := store.Create(&db.SubTask{ID: "sub-1", TenantID: "default", ProjectID: "p1", RootTaskID: "root-1", Status: "Finished"}).Error; err != nil {
+		t.Fatalf("seed sub task: %v", err)
+	}
+	fps := []db.FingerprintHit{
+		{TenantID: "default", ProjectID: "p1", TaskID: "sub-1", RootTaskID: "root-1", Target: "https://in-scope.example", ProductName: "nginx", RuleName: "nginx-title"},
+		{TenantID: "default", ProjectID: "p1", TaskID: "other-task", RootTaskID: "other-root", Target: "https://out-of-scope.example", ProductName: "apache", RuleName: "apache-title"},
+	}
+	if err := store.Create(&fps).Error; err != nil {
+		t.Fatalf("seed fingerprints: %v", err)
+	}
+
+	ctx, recorder := newTenantContextWithRole(http.MethodGet, "/reports/export/fingerprints?task_id=root-1", "admin", "7")
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/reports/export/fingerprints?task_id=root-1", nil)
+	exportFingerprints(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected export 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "nginx") || strings.Contains(body, "apache") {
+		t.Fatalf("expected CSV body to only contain root task fingerprints, got %s", body)
+	}
+	var report db.Report
+	if err := store.Where("type = ? AND format = ?", "fingerprints", "csv").First(&report).Error; err != nil {
+		t.Fatalf("expected fingerprint report metadata: %v", err)
+	}
+	key := strings.TrimPrefix(report.FileURL, "local://")
+	if key == report.FileURL || key == "" {
+		t.Fatalf("unexpected fingerprint report file url: %s", report.FileURL)
+	}
+	if _, err := os.Stat(filepath.Join(objectStorageRoot, filepath.FromSlash(key))); err != nil {
+		t.Fatalf("expected fingerprint report object file: %v", err)
+	}
+}
+
+func TestPauseTaskMovesUnclaimedSubTasksToPaused(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Project{ID: "p1", TenantID: "default", OwnerUserID: "7", Name: "p1"}).Error; err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if err := store.Create(&db.RootTask{ID: "root-pause", TenantID: "default", ProjectID: "p1", Status: "Running"}).Error; err != nil {
+		t.Fatalf("seed root task: %v", err)
+	}
+	subTasks := []db.SubTask{
+		{ID: "pending", TenantID: "default", ProjectID: "p1", RootTaskID: "root-pause", Status: "Pending", AgentID: "agent-old", StreamMsgID: "msg-old"},
+		{ID: "dispatching", TenantID: "default", ProjectID: "p1", RootTaskID: "root-pause", Status: subTaskStatusDispatching},
+		{ID: "recovered", TenantID: "default", ProjectID: "p1", RootTaskID: "root-pause", Status: "Recovered"},
+		{ID: "running", TenantID: "default", ProjectID: "p1", RootTaskID: "root-pause", Status: "Running", AgentID: "agent-1"},
+		{ID: "done", TenantID: "default", ProjectID: "p1", RootTaskID: "root-pause", Status: "DONE"},
+	}
+	if err := store.Create(&subTasks).Error; err != nil {
+		t.Fatalf("seed subtasks: %v", err)
+	}
+
+	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/tasks/root-pause/pause", "operator", "7")
+	ctx.Params = gin.Params{{Key: "id", Value: "root-pause"}}
+	pauseTask(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected pause 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+
+	var root db.RootTask
+	if err := store.First(&root, "id = ?", "root-pause").Error; err != nil {
+		t.Fatalf("load root: %v", err)
+	}
+	if root.Status != "Paused" {
+		t.Fatalf("expected root to be Paused, got %s", root.Status)
+	}
+	for _, id := range []string{"pending", "dispatching", "recovered"} {
+		var sub db.SubTask
+		if err := store.First(&sub, "id = ?", id).Error; err != nil {
+			t.Fatalf("load subtask %s: %v", id, err)
+		}
+		if sub.Status != "Paused" || sub.AgentID != "" || sub.StreamMsgID != "" {
+			t.Fatalf("expected %s to be paused and unassigned, got %+v", id, sub)
+		}
+	}
+	var running db.SubTask
+	if err := store.First(&running, "id = ?", "running").Error; err != nil {
+		t.Fatalf("load running subtask: %v", err)
+	}
+	if running.Status != "Running" || running.AgentID != "agent-1" {
+		t.Fatalf("expected running subtask to remain running, got %+v", running)
+	}
+}
+
+func TestResumeTaskOnlyReactivatesPausedSubTasks(t *testing.T) {
+	store := setupAITestDB(t)
+	oldQueue := taskQueue
+	taskQueue = nil
+	t.Cleanup(func() { taskQueue = oldQueue })
+	if err := store.Create(&db.Project{ID: "p1", TenantID: "default", OwnerUserID: "7", Name: "p1"}).Error; err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if err := store.Create(&db.RootTask{ID: "root-resume", TenantID: "default", ProjectID: "p1", Status: "Paused"}).Error; err != nil {
+		t.Fatalf("seed root task: %v", err)
+	}
+	subTasks := []db.SubTask{
+		{ID: "paused", TenantID: "default", ProjectID: "p1", RootTaskID: "root-resume", Status: "Paused"},
+		{ID: "stale-pending", TenantID: "default", ProjectID: "p1", RootTaskID: "root-resume", Status: "Pending"},
+		{ID: "running", TenantID: "default", ProjectID: "p1", RootTaskID: "root-resume", Status: "Running"},
+	}
+	if err := store.Create(&subTasks).Error; err != nil {
+		t.Fatalf("seed subtasks: %v", err)
+	}
+
+	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/tasks/root-resume/resume", "operator", "7")
+	ctx.Params = gin.Params{{Key: "id", Value: "root-resume"}}
+	resumeTask(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected resume 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var paused db.SubTask
+	if err := store.First(&paused, "id = ?", "paused").Error; err != nil {
+		t.Fatalf("load paused subtask: %v", err)
+	}
+	if paused.Status != subTaskStatusDispatching {
+		t.Fatalf("expected paused subtask to become Dispatching, got %+v", paused)
+	}
+	var stale db.SubTask
+	if err := store.First(&stale, "id = ?", "stale-pending").Error; err != nil {
+		t.Fatalf("load stale pending subtask: %v", err)
+	}
+	if stale.Status != "Pending" {
+		t.Fatalf("expected stale pending subtask to remain Pending, got %+v", stale)
+	}
+	var root db.RootTask
+	if err := store.First(&root, "id = ?", "root-resume").Error; err != nil {
+		t.Fatalf("load root: %v", err)
+	}
+	if root.Status == "Paused" {
+		t.Fatalf("expected root to leave Paused after resume, got %+v", root)
 	}
 }
 

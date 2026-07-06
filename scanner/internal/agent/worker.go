@@ -32,6 +32,7 @@ import (
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/gologger/levels"
 	gologgerWriter "github.com/projectdiscovery/gologger/writer"
+	"gopkg.in/yaml.v3"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -657,6 +658,7 @@ func (w *Worker) syncRules() {
 	defer w.rulesMu.Unlock()
 
 	w.activatePendingRulesLocked()
+	w.syncAPIConfigLocked()
 
 	log.Println("[Sync] Checking Arsenal DB for updates...")
 
@@ -773,6 +775,73 @@ func (w *Worker) syncRules() {
 
 	log.Printf("[Sync] ✅ Arsenal DB cached: size=%d bytes, db_hash=%s, rule_hash=%s, version=%s",
 		len(dbData), truncHash(fileHash), truncHash(hashResp.Hash), hashResp.RuleVersion)
+}
+
+func (w *Worker) syncAPIConfigLocked() {
+	resp, err := w.apiGet(w.apiURL + "/api/v1/agents/config/api-keys")
+	if err != nil {
+		log.Printf("[Sync] Failed to fetch agent api-config.yaml: %v", err)
+		return
+	}
+	data, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		log.Printf("[Sync] Failed to read agent api-config.yaml: %v", err)
+		return
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		if err := removeAgentAPIConfig(); err != nil {
+			log.Printf("[Sync] Failed to remove stale agent api-config.yaml: %v", err)
+		}
+		return
+	}
+	var parsed map[string][]string
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
+		log.Printf("[Sync] Ignoring invalid agent api-config.yaml: %v", err)
+		return
+	}
+	if err := writeAgentAPIConfig(data); err != nil {
+		log.Printf("[Sync] Failed to write agent api-config.yaml: %v", err)
+		return
+	}
+	log.Printf("[Sync] ✅ Agent api-config.yaml synchronized (%d providers)", len(parsed))
+}
+
+func removeAgentAPIConfig() error {
+	path := filepath.Join("config", "api-config.yaml")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func writeAgentAPIConfig(data []byte) error {
+	if err := os.MkdirAll("config", 0o755); err != nil {
+		return err
+	}
+	tmpFile, err := os.CreateTemp("config", "api-config-*.yaml.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, filepath.Join("config", "api-config.yaml")); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return nil
 }
 
 func (w *Worker) prepareOrActivateRulesLocked(hash, ruleVersion string) error {

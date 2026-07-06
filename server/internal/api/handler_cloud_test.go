@@ -115,6 +115,7 @@ func setupCloudHandlerTestDB(t *testing.T) *gorm.DB {
 		&db.CloudScalingPolicy{},
 		&db.CloudInstance{},
 		&db.User{},
+		&db.WSEventLog{},
 	); err != nil {
 		t.Fatalf("automigrate: %v", err)
 	}
@@ -168,6 +169,70 @@ func TestDeleteCloudAccountBlocksActiveInstances(t *testing.T) {
 	store.Model(&db.CloudAccount{}).Where("id = ?", account.ID).Count(&count)
 	if count != 1 {
 		t.Fatalf("expected account to remain, count=%d", count)
+	}
+}
+
+func TestCleanupCloudInstancesRequiresExplicitConfirmation(t *testing.T) {
+	setupCloudHandlerTestDB(t)
+
+	ctx, recorder := newTenantContext(http.MethodPost, "/cloud/instances/cleanup")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/cloud/instances/cleanup", strings.NewReader(`{"confirm":false}`))
+	cleanupCloudInstances(ctx)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 without confirmation, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestCleanupCloudInstancesSoftDeletesOnlyAccessibleTerminalRecords(t *testing.T) {
+	store := setupCloudHandlerTestDB(t)
+	accounts := []db.CloudAccount{
+		{ID: "ca-owned", TenantID: "default", OwnerUserID: "2", Name: "owned"},
+		{ID: "ca-other", TenantID: "default", OwnerUserID: "3", Name: "other"},
+	}
+	if err := store.Create(&accounts).Error; err != nil {
+		t.Fatalf("seed accounts: %v", err)
+	}
+	instances := []db.CloudInstance{
+		{ID: "terminated", TenantID: "default", CloudAccountID: "ca-owned", Status: db.CloudStatusTerminated},
+		{ID: "error", TenantID: "default", CloudAccountID: "ca-owned", Status: db.CloudStatusError},
+		{ID: "running", TenantID: "default", CloudAccountID: "ca-owned", Status: db.CloudStatusRunning},
+		{ID: "other-user", TenantID: "default", CloudAccountID: "ca-other", Status: db.CloudStatusError},
+	}
+	if err := store.Create(&instances).Error; err != nil {
+		t.Fatalf("seed instances: %v", err)
+	}
+
+	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/cloud/instances/cleanup", "operator", "2")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/cloud/instances/cleanup", strings.NewReader(`{"confirm":true,"reason":"test cleanup"}`))
+	cleanupCloudInstances(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"count":2`) {
+		t.Fatalf("expected response count=2, got %s", recorder.Body.String())
+	}
+
+	for _, id := range []string{"terminated", "error"} {
+		var count int64
+		store.Unscoped().Model(&db.CloudInstance{}).Where("id = ? AND deleted_at IS NOT NULL", id).Count(&count)
+		if count != 1 {
+			t.Fatalf("expected %s to be soft deleted, count=%d", id, count)
+		}
+	}
+	for _, id := range []string{"running", "other-user"} {
+		var count int64
+		store.Model(&db.CloudInstance{}).Where("id = ?", id).Count(&count)
+		if count != 1 {
+			t.Fatalf("expected %s to remain visible, count=%d", id, count)
+		}
+	}
+	var event db.WSEventLog
+	if err := store.Where("event_type = ?", "cloud.instances.cleanup").First(&event).Error; err != nil {
+		t.Fatalf("expected cleanup audit event: %v", err)
+	}
+	if !strings.Contains(event.Payload, `"count":2`) || !strings.Contains(event.Payload, `"operator_id":"2"`) {
+		t.Fatalf("unexpected cleanup audit payload: %s", event.Payload)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -818,6 +819,62 @@ func deleteCloudInstanceReal(c *gin.Context) {
 	}()
 
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "message": fmt.Sprintf("Instance %s is being terminated", id)})
+}
+
+type cleanupCloudInstancesRequest struct {
+	Confirm bool   `json:"confirm"`
+	Reason  string `json:"reason"`
+}
+
+func cleanupCloudInstances(c *gin.Context) {
+	tenantID := currentTenantID(c)
+	var req cleanupCloudInstancesRequest
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil || !req.Confirm {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "confirm=true is required"})
+		return
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		reason = "manual cloud instance cleanup"
+	}
+
+	var cleaned int64
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		res := tx.Where("tenant_id = ? AND cloud_account_id IN (?) AND status IN ?",
+			tenantID,
+			accessibleCloudAccountSubquery(c),
+			[]string{db.CloudStatusTerminated, db.CloudStatusError},
+		).Delete(&db.CloudInstance{})
+		if res.Error != nil {
+			return res.Error
+		}
+		cleaned = res.RowsAffected
+
+		payload, err := json.Marshal(map[string]interface{}{
+			"count":       cleaned,
+			"operator_id": currentUserID(c),
+			"reason":      reason,
+			"statuses":    []string{db.CloudStatusTerminated, db.CloudStatusError},
+		})
+		if err != nil {
+			return err
+		}
+		return tx.Create(&db.WSEventLog{
+			TenantID:   tenantID,
+			EventType:  "cloud.instances.cleanup",
+			Payload:    string(payload),
+			OccurredAt: time.Now().UTC(),
+		}).Error
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	log.Printf("[Cloud] cleaned %d terminal instance records tenant=%s operator=%s reason=%q", cleaned, tenantID, currentUserID(c), reason)
+	c.JSON(http.StatusOK, gin.H{
+		"status": "cleaned",
+		"count":  cleaned,
+	})
 }
 
 func rebootCloudInstance(c *gin.Context) {

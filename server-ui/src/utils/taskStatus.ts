@@ -21,6 +21,8 @@ export function getTaskStatusMeta(status?: string): TaskStatusMeta {
         case 'FINISHED':
         case 'DONE':
             return { color: 'success', text: '已完成' };
+        case 'PAUSED':
+            return { color: 'warning', text: '已暂停' };
         case 'CANCELPENDING':
             return { color: 'warning', text: '取消中' };
         case 'CANCELLED':
@@ -45,6 +47,21 @@ export function isTaskCancellable(status?: string): boolean {
         default:
             return false;
     }
+}
+
+export function isTaskPausable(status?: string): boolean {
+    switch (normalizeTaskStatus(status)) {
+        case 'QUEUED':
+        case 'RUNNING':
+        case 'PARTIALDONE':
+            return true;
+        default:
+            return false;
+    }
+}
+
+export function isTaskResumable(status?: string): boolean {
+    return normalizeTaskStatus(status) === 'PAUSED';
 }
 
 export function isTaskFailedLike(status?: string): boolean {

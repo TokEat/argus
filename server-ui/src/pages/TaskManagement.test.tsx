@@ -47,6 +47,8 @@ vi.mock('../services/api', () => ({
     connectWebSocket: vi.fn(() => ({ close: vi.fn() })),
     deleteTask: vi.fn(),
     cancelTask: vi.fn(),
+    pauseTask: vi.fn(),
+    resumeTask: vi.fn(),
     getTaskDetail: vi.fn(),
 }));
 
@@ -186,6 +188,84 @@ describe('TaskManagement', () => {
             page: 2,
             pageSize: 20,
         });
+    });
+
+    it('shows pause and resume actions for pausable task states', async () => {
+        listTasksMock.mockResolvedValue({
+            items: [
+                {
+                    ID: 'task-running',
+                    Name: 'Running Task',
+                    Status: 'Running',
+                    TotalTargets: 1,
+                    CompletedTargets: 0,
+                    TotalChunks: 1,
+                    CompletedChunks: 0,
+                    Priority: 1,
+                    CreatedAt: '2026-07-05T08:00:00Z',
+                } as API.RootTask,
+                {
+                    ID: 'task-paused',
+                    Name: 'Paused Task',
+                    Status: 'Paused',
+                    TotalTargets: 1,
+                    CompletedTargets: 0,
+                    TotalChunks: 1,
+                    CompletedChunks: 0,
+                    Priority: 1,
+                    CreatedAt: '2026-07-05T08:00:00Z',
+                } as API.RootTask,
+            ],
+            total: 2,
+            page: 1,
+            page_size: 20,
+            has_more: false,
+        });
+
+        render(
+            <MemoryRouter>
+                <App>
+                    <TaskManagement />
+                </App>
+            </MemoryRouter>
+        );
+
+        expect(await screen.findByText('Running Task')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /暂停/ })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /恢复/ })).toBeInTheDocument();
+    });
+
+    it('does not show pause action for pending tasks because backend only accepts queued running and partial done', async () => {
+        listTasksMock.mockResolvedValue({
+            items: [
+                {
+                    ID: 'task-pending',
+                    Name: 'Pending Task',
+                    Status: 'Pending',
+                    TotalTargets: 1,
+                    CompletedTargets: 0,
+                    TotalChunks: 1,
+                    CompletedChunks: 0,
+                    Priority: 1,
+                    CreatedAt: '2026-07-05T08:00:00Z',
+                } as API.RootTask,
+            ],
+            total: 1,
+            page: 1,
+            page_size: 20,
+            has_more: false,
+        });
+
+        render(
+            <MemoryRouter>
+                <App>
+                    <TaskManagement />
+                </App>
+            </MemoryRouter>
+        );
+
+        expect(await screen.findByText('Pending Task')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /暂停/ })).not.toBeInTheDocument();
     });
 });
 

@@ -50,6 +50,31 @@ func TestDictionaryListEmptyReturnsArray(t *testing.T) {
 	}
 }
 
+func TestGetAgentAPIConfigReturnsApprovedYAML(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Arsenal{
+		ID:       db.BuildTenantArsenalID("default", "apiconfig", "api-config.yaml"),
+		TenantID: "default",
+		Type:     "apiconfig",
+		FileName: "api-config.yaml",
+		Content:  "quake:\n  - secret-key\n",
+		Hash:     "api-config-hash",
+		State:    "Approved",
+	}).Error; err != nil {
+		t.Fatalf("seed api config: %v", err)
+	}
+
+	ctx, recorder := newTenantContextWithRole(http.MethodGet, "/agents/config/api-keys", "admin", "agent-1")
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/config/api-keys", nil)
+	getAgentAPIConfig(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected agent api config 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	if recorder.Body.String() != "quake:\n  - secret-key\n" {
+		t.Fatalf("unexpected api config body: %q", recorder.Body.String())
+	}
+}
+
 func TestFingerprintDictMergesMaterializedRules(t *testing.T) {
 	store := setupAITestDB(t)
 	if err := store.Create(&db.Arsenal{

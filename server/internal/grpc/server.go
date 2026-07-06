@@ -381,7 +381,38 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 			continue
 		}
 
+		if sub.RootTaskID != "" {
+			var rootStatus string
+			_ = db.DB.Model(&db.RootTask{}).Select("status").Where("id = ? AND tenant_id = ?", sub.RootTaskID, sub.TenantID).Scan(&rootStatus).Error
+			if normalizeSubTaskStatus(rootStatus) == "PAUSED" {
+				if s.ackTaskHook != nil && msgID != "" {
+					_ = s.ackTaskHook(msgID)
+				}
+				_ = db.DB.Model(&db.SubTask{}).
+					Where("id = ? AND status IN ?", sub.ID, claimableSubTaskStatuses).
+					Updates(map[string]interface{}{
+						"status":        "Paused",
+						"agent_id":      "",
+						"stream_msg_id": "",
+					}).Error
+				log.Printf("[ClaimTask] Dropped paused task message %s under root %s", task.TaskId, sub.RootTaskID)
+				continue
+			}
+		}
+
 		switch normalizeSubTaskStatus(sub.Status) {
+		case "PAUSED":
+			// 任务暂停后队列中可能残留旧消息：消费掉，等待 resume 重新投递。
+			if s.ackTaskHook != nil && msgID != "" {
+				_ = s.ackTaskHook(msgID)
+			}
+			_ = db.DB.Model(&db.SubTask{}).Where("id = ?", sub.ID).
+				Updates(map[string]interface{}{
+					"agent_id":      "",
+					"stream_msg_id": "",
+				}).Error
+			log.Printf("[ClaimTask] Dropped paused task message %s", task.TaskId)
+			continue
 		case "CANCELPENDING":
 			// 用户已取消但消息仍在队列里：消费掉并落库为 Cancelled。
 			if s.ackTaskHook != nil && msgID != "" {

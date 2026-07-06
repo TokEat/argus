@@ -15,7 +15,7 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useNavigate, useParams } from 'react-router-dom';
-import { getVulns, getAssets, getFingerprintGroups, exportVulns, getExploitCandidatesForVuln } from '../services/api';
+import { getVulns, getAssets, getFingerprintGroups, exportVulns, exportAssets, exportFingerprints, getExploitCandidatesForVuln } from '../services/api';
 import { useAutoContext } from '../contexts/GlobalAIContext';
 import dayjs from 'dayjs';
 
@@ -188,11 +188,22 @@ const TaskResults: React.FC = () => {
     const handleExport = async () => {
         try {
             const projectId = localStorage.getItem('active_project_id') || undefined;
-            const blob = await exportVulns(projectId);
+            let blob: Blob;
+            let filename: string;
+            if (activeTab === 'assets') {
+                blob = await exportAssets(projectId, taskId);
+                filename = `assets-${taskId || 'all'}.csv`;
+            } else if (activeTab === 'fingerprints') {
+                blob = await exportFingerprints(projectId, taskId);
+                filename = `fingerprints-${taskId || 'all'}.csv`;
+            } else {
+                blob = await exportVulns(projectId, taskId);
+                filename = `vulns-${taskId || 'all'}.csv`;
+            }
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `vulns-${taskId || 'all'}.csv`;
+            a.download = filename;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);

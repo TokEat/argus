@@ -147,6 +147,14 @@ export async function cancelTask(taskId: string): Promise<API.MessageResponse> {
     return request.post(`/tasks/${taskId}/cancel`);
 }
 
+export async function pauseTask(taskId: string): Promise<API.MessageResponse> {
+    return request.post(`/tasks/${encodeURIComponent(taskId)}/pause`);
+}
+
+export async function resumeTask(taskId: string): Promise<API.MessageResponse> {
+    return request.post(`/tasks/${encodeURIComponent(taskId)}/resume`);
+}
+
 export async function getTaskDetail(taskId: string): Promise<API.TaskDetailResponse> {
     return request.get(`/tasks/${taskId}`);
 }
@@ -248,11 +256,12 @@ export async function listPocRulesPage(params?: {
     return request.get('/poc-rules', { params: { lite: '1', ...(params || {}) } });
 }
 
-export async function exportVulns(projectId?: string): Promise<Blob> {
+const exportReportBlob = async (kind: 'vulns' | 'assets' | 'fingerprints', projectId?: string, taskId?: string): Promise<Blob> => {
     const params = new URLSearchParams();
     if (projectId) params.set('project_id', projectId);
+    if (taskId) params.set('task_id', taskId);
     const queryString = params.toString();
-    const url = `/api/v1/reports/export/vulns${queryString ? `?${queryString}` : ''}`;
+    const url = `/api/v1/reports/export/${kind}${queryString ? `?${queryString}` : ''}`;
     const response = await axios.get(url, {
         responseType: 'blob',
         headers: {
@@ -260,6 +269,18 @@ export async function exportVulns(projectId?: string): Promise<Blob> {
         },
     });
     return response.data;
+};
+
+export async function exportVulns(projectId?: string, taskId?: string): Promise<Blob> {
+    return exportReportBlob('vulns', projectId, taskId);
+}
+
+export async function exportAssets(projectId?: string, taskId?: string): Promise<Blob> {
+    return exportReportBlob('assets', projectId, taskId);
+}
+
+export async function exportFingerprints(projectId?: string, taskId?: string): Promise<Blob> {
+    return exportReportBlob('fingerprints', projectId, taskId);
 }
 
 export async function exportArsenalSeedDB(): Promise<Blob> {
@@ -763,6 +784,10 @@ export async function deleteCloudInstance(id: string): Promise<API.MessageRespon
 
 export async function rebootCloudInstance(id: string): Promise<API.MessageResponse> {
     return request.post(`/cloud/instances/${id}/reboot`);
+}
+
+export async function cleanupCloudInstances(data: { confirm: boolean; reason?: string }): Promise<{ status: string; count: number }> {
+    return request.post('/cloud/instances/cleanup', data);
 }
 
 // Region Discovery

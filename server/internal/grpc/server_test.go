@@ -77,6 +77,57 @@ func TestClaimTaskRespectsTenantRunningSubTaskQuota(t *testing.T) {
 	}
 }
 
+func TestClaimTaskDropsQueuedMessageWhenRootTaskPaused(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	if err := store.Create(&db.RootTask{ID: "root-paused", TenantID: "default", Status: "Paused"}).Error; err != nil {
+		t.Fatalf("seed root task: %v", err)
+	}
+	if err := store.Create(&db.SubTask{ID: "queued-paused", TenantID: "default", RootTaskID: "root-paused", Status: "Pending"}).Error; err != nil {
+		t.Fatalf("seed subtask: %v", err)
+	}
+
+	server := NewServer(50051)
+	acked := 0
+	returned := 0
+	server.SetClaimTaskHook(func(agentID string) (*pb.Task, string, error) {
+		if acked+returned > 0 {
+			return nil, "", nil
+		}
+		return &pb.Task{TaskId: "queued-paused", Targets: []string{"https://example.com"}}, "msg-paused", nil
+	})
+	server.SetAckTaskHook(func(msgID string) error {
+		if msgID == "msg-paused" {
+			acked++
+		}
+		return nil
+	})
+	server.SetReturnTaskHook(func(task *pb.Task, msgID string) error {
+		returned++
+		return nil
+	})
+
+	task, err := server.ClaimTask(context.Background(), &pb.ClaimTaskReq{
+		AgentId:   "agent-1",
+		FreeSlots: 1,
+	})
+	if err != nil {
+		t.Fatalf("claim task: %v", err)
+	}
+	if task.GetTaskId() != "" {
+		t.Fatalf("expected paused task claim to return empty task, got %+v", task)
+	}
+	if acked != 1 || returned != 0 {
+		t.Fatalf("expected paused queue message to be acked once and not returned, acked=%d returned=%d", acked, returned)
+	}
+	var sub db.SubTask
+	if err := store.First(&sub, "id = ?", "queued-paused").Error; err != nil {
+		t.Fatalf("load queued task: %v", err)
+	}
+	if sub.Status != "Paused" || sub.AgentID != "" || sub.StreamMsgID != "" {
+		t.Fatalf("expected queued task to be marked Paused and unassigned, got %+v", sub)
+	}
+}
+
 func TestRegisterPromotesWaitingCloudInstanceToRunning(t *testing.T) {
 	store := setupRegisterTestDB(t)
 	if err := store.Create(&db.CloudInstance{

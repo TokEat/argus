@@ -772,6 +772,17 @@ func getApiKeysConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, results)
 }
 
+func getAgentAPIConfig(c *gin.Context) {
+	arsenal, err := db.FindTenantArsenalByTypeAndFile(currentTenantID(c), "apiconfig", "api-config.yaml")
+	if err != nil || strings.TrimSpace(arsenal.Content) == "" {
+		c.Status(http.StatusNoContent)
+		return
+	}
+
+	c.Header("Content-Disposition", "attachment; filename=api-config.yaml")
+	c.Data(http.StatusOK, "application/x-yaml; charset=utf-8", []byte(arsenal.Content))
+}
+
 // saveApiKeysConfig updates the api-config in the Arsenal and triggers Agent reload
 func saveApiKeysConfig(c *gin.Context) {
 	tenantID := currentTenantID(c)

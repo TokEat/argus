@@ -74,6 +74,9 @@ func isAgentInternalEndpoint(c *gin.Context) bool {
 	if strings.HasPrefix(path, "/api/v1/agents/") && strings.HasSuffix(path, "/commands") {
 		return true
 	}
+	if path == "/api/v1/agents/config/api-keys" {
+		return true
+	}
 	if path == "/api/v1/arsenals/manifest" {
 		return true
 	}
@@ -427,6 +430,8 @@ func InitRouter(port string) {
 		api.POST("/tasks", createTask)
 		api.DELETE("/tasks/:id", deleteTask)
 		api.POST("/tasks/:id/cancel", cancelTask)
+		api.POST("/tasks/:id/pause", pauseTask)
+		api.POST("/tasks/:id/resume", resumeTask)
 		api.POST("/tasks/:id/append", appendTargets) // 动态追加目标
 
 		// 队列监控
@@ -467,6 +472,8 @@ func InitRouter(port string) {
 
 		// 战报输出引擎
 		api.GET("/reports/export/vulns", exportVulns)
+		api.GET("/reports/export/assets", exportAssets)
+		api.GET("/reports/export/fingerprints", exportFingerprints)
 
 		// Agent 节点
 		api.GET("/nodes", getNodes)
@@ -550,6 +557,7 @@ func InitRouter(port string) {
 		// API 密钥集中管理
 		api.GET("/config/api-keys", getApiKeysConfig)
 		api.PUT("/config/api-keys", saveApiKeysConfig)
+		api.GET("/agents/config/api-keys", getAgentAPIConfig)
 
 		// 用户管理 CRUD
 		api.GET("/users", listUsers)
@@ -598,6 +606,7 @@ func InitRouter(port string) {
 		api.POST("/cloud/instances", createCloudInstanceManual)
 		api.DELETE("/cloud/instances/:id", deleteCloudInstanceReal)
 		api.POST("/cloud/instances/:id/reboot", rebootCloudInstance)
+		api.POST("/cloud/instances/cleanup", cleanupCloudInstances)
 		// 云仪表盘
 		api.GET("/cloud/dashboard", cloudDashboard)
 
@@ -2257,7 +2266,7 @@ func exportVulns(c *gin.Context) {
 	var vulns []db.Vulnerability
 	tenantID := currentTenantID(c)
 	query := db.DB.Model(&db.Vulnerability{}).Where("tenant_id = ?", tenantID)
-	query, _ = applyProjectScope(c, query, "project_id")
+	query = applyReportResultScope(c, query)
 	query.Find(&vulns)
 
 	var buf bytes.Buffer
@@ -2271,21 +2280,85 @@ func exportVulns(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	recordReportExport(c, tenantID, buf.Bytes())
+	recordReportExport(c, tenantID, "vulnerabilities", "vulnerabilities.csv", buf.Bytes())
 
 	c.Writer.Header().Set("Content-Type", "text/csv")
 	c.Writer.Header().Set("Content-Disposition", "attachment;filename=vulnerabilities.csv")
 	c.Data(http.StatusOK, "text/csv", buf.Bytes())
 }
 
-func recordReportExport(c *gin.Context, tenantID string, content []byte) {
+func exportAssets(c *gin.Context) {
+	var assets []db.Asset
+	tenantID := currentTenantID(c)
+	query := db.DB.Model(&db.Asset{}).Where("tenant_id = ?", tenantID)
+	query = applyReportResultScope(c, query)
+	query.Find(&assets)
+
+	var buf bytes.Buffer
+	writer := csv.NewWriter(&buf)
+	_ = writer.Write([]string{"TenantID", "ProjectID", "TaskID", "Target", "Protocol", "Port", "URL", "Title", "Service", "DetectedAt"})
+	for _, a := range assets {
+		_ = writer.Write([]string{a.TenantID, a.ProjectID, a.TaskID, a.Target, a.Protocol, strconv.Itoa(a.Port), a.URL, a.Title, a.Service, a.CreatedAt.Format(time.RFC3339)})
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	recordReportExport(c, tenantID, "assets", "assets.csv", buf.Bytes())
+
+	c.Writer.Header().Set("Content-Type", "text/csv")
+	c.Writer.Header().Set("Content-Disposition", "attachment;filename=assets.csv")
+	c.Data(http.StatusOK, "text/csv", buf.Bytes())
+}
+
+func exportFingerprints(c *gin.Context) {
+	var fps []db.FingerprintHit
+	tenantID := currentTenantID(c)
+	query := db.DB.Model(&db.FingerprintHit{}).Where("tenant_id = ?", tenantID)
+	query = applyReportResultScope(c, query)
+	query.Find(&fps)
+
+	var buf bytes.Buffer
+	writer := csv.NewWriter(&buf)
+	_ = writer.Write([]string{"TenantID", "ProjectID", "TaskID", "Target", "ProductName", "RuleName", "DetectedAt"})
+	for _, f := range fps {
+		_ = writer.Write([]string{f.TenantID, f.ProjectID, f.TaskID, f.Target, f.ProductName, f.RuleName, f.CreatedAt.Format(time.RFC3339)})
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	recordReportExport(c, tenantID, "fingerprints", "fingerprints.csv", buf.Bytes())
+
+	c.Writer.Header().Set("Content-Type", "text/csv")
+	c.Writer.Header().Set("Content-Disposition", "attachment;filename=fingerprints.csv")
+	c.Data(http.StatusOK, "text/csv", buf.Bytes())
+}
+
+func applyReportResultScope(c *gin.Context, query *gorm.DB) *gorm.DB {
+	query, _ = applyProjectScope(c, query, "project_id")
+	if taskID := strings.TrimSpace(c.Query("task_id")); taskID != "" {
+		if scopedTaskIDs := resolveAccessibleTaskIDs(c, taskID); len(scopedTaskIDs) > 1 {
+			query = query.Where("task_id IN ?", scopedTaskIDs)
+		} else if len(scopedTaskIDs) == 1 {
+			query = query.Where("task_id = ?", scopedTaskIDs[0])
+		} else {
+			query = query.Where("1 = 0")
+		}
+	}
+	return query
+}
+
+func recordReportExport(c *gin.Context, tenantID, reportType, fileName string, content []byte) {
 	store, err := storage.NewLocalStore(objectStorageRoot)
 	if err != nil {
 		log.Printf("[Report] storage unavailable: %v", err)
 		return
 	}
 	now := time.Now().UTC()
-	key := fmt.Sprintf("reports/%s/vulnerabilities-%s.csv", tenantID, now.Format("20060102T150405Z"))
+	key := fmt.Sprintf("reports/%s/%s-%s.csv", tenantID, reportType, now.Format("20060102T150405Z"))
 	obj, err := store.Put(c.Request.Context(), key, bytes.NewReader(content))
 	if err != nil {
 		log.Printf("[Report] failed to persist export %s: %v", key, err)
@@ -2294,8 +2367,8 @@ func recordReportExport(c *gin.Context, tenantID string, content []byte) {
 	report := db.Report{
 		ID:        fmt.Sprintf("%s:%d", tenantID, now.UnixNano()),
 		ProjectID: strings.TrimSpace(c.Query("project_id")),
-		Name:      "vulnerabilities.csv",
-		Type:      "vulnerabilities",
+		Name:      fileName,
+		Type:      reportType,
 		Format:    "csv",
 		FileURL:   "local://" + obj.Key,
 		Status:    "ready",
@@ -2354,6 +2427,115 @@ func cancelTask(c *gin.Context) {
 		"status":                   "cancellation dispatched",
 		"cancelled_without_claim":  cancelledWithoutClaim,
 		"cancel_pending_on_agents": cancelPendingRunning,
+	})
+}
+
+func pauseTask(c *gin.Context) {
+	id := c.Param("id")
+	tenantID := currentTenantID(c)
+	var rootTask db.RootTask
+	if err := db.DB.Select("id", "project_id", "status").Where("id = ? AND tenant_id = ?", id, tenantID).First(&rootTask).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+		return
+	}
+	if !canAccessProject(c, rootTask.ProjectID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "project not accessible"})
+		return
+	}
+	switch db.NormalizeSubTaskStatus(rootTask.Status) {
+	case "QUEUED", "RUNNING", "PARTIALDONE":
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "task is not in a pausable state"})
+		return
+	}
+
+	var pausedWithoutClaim int64
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&db.SubTask{}).
+			Where("root_task_id = ? AND tenant_id = ? AND status IN ?", id, tenantID, []string{"Pending", "Recovered", subTaskStatusDispatching}).
+			Updates(map[string]interface{}{
+				"status":        "Paused",
+				"agent_id":      "",
+				"stream_msg_id": "",
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		pausedWithoutClaim = res.RowsAffected
+		return tx.Model(&db.RootTask{}).
+			Where("id = ? AND tenant_id = ?", id, tenantID).
+			Update("status", "Paused").Error
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":                 "paused",
+		"paused_without_claim":   pausedWithoutClaim,
+		"running_tasks_continue": true,
+	})
+}
+
+func resumeTask(c *gin.Context) {
+	id := c.Param("id")
+	tenantID := currentTenantID(c)
+	var rootTask db.RootTask
+	if err := db.DB.Select("id", "project_id", "status").Where("id = ? AND tenant_id = ?", id, tenantID).First(&rootTask).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+		return
+	}
+	if !canAccessProject(c, rootTask.ProjectID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "project not accessible"})
+		return
+	}
+	if db.NormalizeSubTaskStatus(rootTask.Status) != "PAUSED" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "task is not paused"})
+		return
+	}
+
+	var pausedSubs []db.SubTask
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("root_task_id = ? AND tenant_id = ? AND status = ?", id, tenantID, "Paused").
+			Find(&pausedSubs).Error; err != nil {
+			return err
+		}
+		for i := range pausedSubs {
+			pausedSubs[i].Status = subTaskStatusDispatching
+		}
+		if len(pausedSubs) > 0 {
+			ids := make([]string, 0, len(pausedSubs))
+			for _, sub := range pausedSubs {
+				ids = append(ids, sub.ID)
+			}
+			if err := tx.Model(&db.SubTask{}).
+				Where("id IN ? AND root_task_id = ? AND tenant_id = ? AND status = ?", ids, id, tenantID, "Paused").
+				Updates(map[string]interface{}{
+					"status":        subTaskStatusDispatching,
+					"agent_id":      "",
+					"stream_msg_id": "",
+				}).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Model(&db.RootTask{}).
+			Where("id = ? AND tenant_id = ?", id, tenantID).
+			Update("status", "Queued").Error
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	pushedByPriority, dispatchPending := dispatchSubTasks(context.Background(), taskQueue, pausedSubs)
+	if totalDispatchedTasks(pushedByPriority) > 0 {
+		broadcastDispatchedTasks(pushedByPriority)
+	}
+	db.RefreshRootTaskStatus(id)
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":           "resumed",
+		"reactivated":      len(pausedSubs),
+		"dispatch_pending": dispatchPending,
 	})
 }
 

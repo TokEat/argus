@@ -41,6 +41,8 @@ import {
     GlobalOutlined,
     InfoCircleOutlined,
     KeyOutlined,
+    PauseCircleOutlined,
+    PlayCircleOutlined,
     PlusOutlined,
     RadarChartOutlined,
     ReloadOutlined,
@@ -50,8 +52,8 @@ import {
     WifiOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { cancelTask, connectWebSocket, createTask, deleteTask, listTasks, listProjects, getTaskDetail, getNodes, previewTaskSelector } from '../services/api';
-import { getTaskStatusMeta, isTaskCancellable, isTaskFailedLike, isTaskFinished, normalizeTaskStatus } from '../utils/taskStatus';
+import { cancelTask, connectWebSocket, createTask, deleteTask, listTasks, listProjects, getTaskDetail, getNodes, pauseTask, previewTaskSelector, resumeTask } from '../services/api';
+import { getTaskStatusMeta, isTaskCancellable, isTaskFailedLike, isTaskFinished, isTaskPausable, isTaskResumable, normalizeTaskStatus } from '../utils/taskStatus';
 import { canAccessRole } from '../utils/auth';
 import { useAutoContext } from '../contexts/GlobalAIContext';
 import gsap from 'gsap';
@@ -473,6 +475,28 @@ const TaskManagement: React.FC = () => {
         }
     };
 
+    const handlePause = async (taskId: string) => {
+        if (!canManageTasks) return;
+        try {
+            await pauseTask(taskId);
+            message.success('任务已暂停');
+            fetchTasks();
+        } catch {
+            message.error('暂停失败');
+        }
+    };
+
+    const handleResume = async (taskId: string) => {
+        if (!canManageTasks) return;
+        try {
+            await resumeTask(taskId);
+            message.success('任务已恢复');
+            fetchTasks();
+        } catch {
+            message.error('恢复失败');
+        }
+    };
+
     const handleShowDetail = async (taskId: string) => {
         setDetailOpen(true);
         setDetailLoading(true);
@@ -593,7 +617,7 @@ const TaskManagement: React.FC = () => {
         {
             title: '操作',
             key: 'actions',
-            width: 200,
+            width: 280,
             render: (_, record) => (
                 <Space size={4}>
                     <Button type="link" size="small" icon={<InfoCircleOutlined />}
@@ -604,6 +628,20 @@ const TaskManagement: React.FC = () => {
                         onClick={() => navigate(`/tasks/${record.ID}/results`)}>
                         结果
                     </Button>
+                    {canManageTasks && isTaskPausable(record.Status) && (
+                        <Popconfirm title="确认暂停此任务？" onConfirm={() => handlePause(record.ID)}>
+                            <Button type="text" size="small" icon={<PauseCircleOutlined />}>
+                                暂停
+                            </Button>
+                        </Popconfirm>
+                    )}
+                    {canManageTasks && isTaskResumable(record.Status) && (
+                        <Popconfirm title="确认恢复此任务？" onConfirm={() => handleResume(record.ID)}>
+                            <Button type="text" size="small" icon={<PlayCircleOutlined />}>
+                                恢复
+                            </Button>
+                        </Popconfirm>
+                    )}
                     {canManageTasks && isTaskCancellable(record.Status) && (
                         <Popconfirm title="确认取消此任务？" onConfirm={() => handleCancel(record.ID)}>
                             <Button type="text" size="small" danger icon={<StopOutlined />}>

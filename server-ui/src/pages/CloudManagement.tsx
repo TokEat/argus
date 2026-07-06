@@ -5,7 +5,7 @@ import { CloudOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, WifiOutlin
 import type { ColumnsType } from 'antd/es/table';
 import Editor from '@monaco-editor/react';
 import {
-    listCloudInstances, createCloudInstance, deleteCloudInstance, rebootCloudInstance,
+    listCloudInstances, createCloudInstance, deleteCloudInstance, rebootCloudInstance, cleanupCloudInstances,
     listCloudAccounts, createCloudAccount, deleteCloudAccount, testCloudAccount,
     testOSSConnection,
     listCloudPolicies, createCloudPolicy, updateCloudPolicy, deleteCloudPolicy, toggleCloudPolicy,
@@ -227,6 +227,10 @@ const CloudManagement: React.FC = () => {
     const [modalRegionsLoading, setModalRegionsLoading] = useState(false);
     const currentRole = useMemo(() => getCurrentUserRole(), []);
     const isAdmin = canAccessRole('admin', currentRole);
+    const cleanupCandidateCount = useMemo(
+        () => instances.filter(i => ['Terminated', 'Error'].includes(i.status)).length,
+        [instances],
+    );
 
     const canManageAccount = useCallback((account?: API.CloudAccount | null) => {
         if (!account) return false;
@@ -571,6 +575,21 @@ echo "[Argus] Agent registered as systemd service and started"
         try {
             await deleteCloudInstance(id);
             message.success('销毁指令已下发');
+            fetchInstances();
+            fetchDashboard();
+        } catch (err) {
+            const msg = extractErrorMsg(err);
+            if (msg) message.error(msg);
+        }
+    };
+
+    const handleCleanupInstances = async () => {
+        try {
+            const result = await cleanupCloudInstances({
+                confirm: true,
+                reason: 'manual cleanup from cloud management',
+            });
+            message.success(`已清理 ${result.count} 个实例记录`);
             fetchInstances();
             fetchDashboard();
         } catch (err) {
@@ -1348,6 +1367,17 @@ echo "[Argus] Agent registered as systemd service and started"
                                 if (accounts.length === 0) await fetchAccounts();
                                 setInstanceModalOpen(true);
                             }}>手动弹容</Button>
+                            <Popconfirm
+                                title="确认清理所有已终止/错误的实例记录？"
+                                description="只会软删除当前可访问云账号下的终止或错误记录，不会销毁运行中的云实例。"
+                                onConfirm={handleCleanupInstances}
+                                okText="确认清理"
+                                cancelText="取消"
+                            >
+                                <Button danger icon={<DeleteOutlined />} disabled={cleanupCandidateCount === 0}>
+                                    一键清理 ({cleanupCandidateCount})
+                                </Button>
+                            </Popconfirm>
                             <Button icon={<ReloadOutlined />} onClick={fetchInstances} loading={loading}>刷新</Button>
                         </>
                     )}

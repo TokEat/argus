@@ -76,6 +76,14 @@ func TestBuildArsenalSQLiteDBIncludesPocAssets(t *testing.T) {
 	}
 }
 
+func TestAgentSyncArsenalTypesExcludeAPIConfig(t *testing.T) {
+	for _, typ := range agentSyncArsenalTypes() {
+		if typ == "apiconfig" {
+			t.Fatalf("agent arsenal DB sync must not include apiconfig secrets")
+		}
+	}
+}
+
 func TestArsenalDBEndpointsDownloadMaterializablePackage(t *testing.T) {
 	store := setupAITestDB(t)
 	seedArsenalExportRules(t, store)

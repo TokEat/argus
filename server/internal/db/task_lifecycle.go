@@ -23,6 +23,10 @@ func RefreshRootTaskStatus(rootTaskID string) {
 		return
 	}
 
+	var currentStatus string
+	DB.Model(&RootTask{}).Select("status").Where("id = ?", rootTaskID).Scan(&currentStatus)
+	currentPaused := NormalizeSubTaskStatus(currentStatus) == "PAUSED"
+
 	var counters []subTaskStatusCounter
 	DB.Model(&SubTask{}).
 		Select("status, count(*) as cnt").
@@ -36,6 +40,7 @@ func RefreshRootTaskStatus(rootTaskID string) {
 	timeout := int64(0)
 	failed := int64(0)
 	cancelled := int64(0)
+	paused := int64(0)
 
 	for _, c := range counters {
 		total += c.Cnt
@@ -43,6 +48,9 @@ func RefreshRootTaskStatus(rootTaskID string) {
 		case "DONE":
 			done += c.Cnt
 		case "PENDING", "RUNNING", "CANCELPENDING", "RECOVERED", "DISPATCHING":
+			active += c.Cnt
+		case "PAUSED":
+			paused += c.Cnt
 			active += c.Cnt
 		case "TIMEOUT":
 			timeout += c.Cnt
@@ -54,6 +62,9 @@ func RefreshRootTaskStatus(rootTaskID string) {
 	}
 
 	if total == 0 {
+		return
+	}
+	if currentPaused && (active > 0 || paused > 0) {
 		return
 	}
 
