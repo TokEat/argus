@@ -34,6 +34,8 @@ const DirConfig: React.FC = () => {
     const [dirProducts, setDirProducts] = useState<Set<string>>(new Set());
     const [searchKeyword, setSearchKeyword] = useState('');
     const [refFilter, setRefFilter] = useState<'all' | 'linked' | 'orphan'>('all');
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(15);
     const [modalVisible, setModalVisible] = useState(false);
     const [isNew, setIsNew] = useState(false);
     const [currentProduct, setCurrentProduct] = useState<string>('');
@@ -246,13 +248,19 @@ const DirConfig: React.FC = () => {
                         placeholder="搜索指纹产品特征或规则内容..."
                         prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
                         value={searchKeyword}
-                        onChange={(e) => setSearchKeyword(e.target.value)}
+                        onChange={(e) => {
+                            setSearchKeyword(e.target.value);
+                            setPage(1);
+                        }}
                         style={{ width: 280 }}
                         allowClear
                     />
                     <Segmented
                         value={refFilter}
-                        onChange={(v) => setRefFilter(v as typeof refFilter)}
+                        onChange={(v) => {
+                            setRefFilter(v as typeof refFilter);
+                            setPage(1);
+                        }}
                         options={[
                             { label: `全部 (${stats.total})`, value: 'all' },
                             { label: `已关联 (${stats.linked})`, value: 'linked' },
@@ -275,7 +283,18 @@ const DirConfig: React.FC = () => {
                         dataSource={filtered}
                         rowKey="product"
                         loading={loading}
-                        pagination={{ pageSize: 15, showSizeChanger: true }}
+                        pagination={{
+                            current: page,
+                            pageSize,
+                            total: filtered.length,
+                            showSizeChanger: true,
+                            pageSizeOptions: [15, 20, 50, 100],
+                            showTotal: (t) => `共 ${t} 条`,
+                            onChange: (nextPage, nextPageSize) => {
+                                setPage(nextPage);
+                                setPageSize(nextPageSize);
+                            },
+                        }}
                         size="middle"
                     />
                 )}

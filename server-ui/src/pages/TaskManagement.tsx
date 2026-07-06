@@ -112,6 +112,11 @@ const createInitialValues = {
     QuakeSize: 100,
 };
 
+const invertedSwitchBinding = {
+    getValueFromEvent: (checked: boolean) => !checked,
+    getValueProps: (value?: boolean) => ({ checked: value !== true }),
+};
+
 function compactObject(input: Record<string, unknown>) {
     return Object.fromEntries(
         Object.entries(input).filter(([, value]) => value !== undefined && value !== null && value !== '')
@@ -909,17 +914,17 @@ const TaskManagement: React.FC = () => {
                                 children: (
                                     <Row gutter={16}>
                                         <Col span={8}>
-                                            <Form.Item label={<>跳过主机发现 <Tooltip title="禁用ICMP和TCP探活，直接扫描"><InfoCircleOutlined /></Tooltip></>} name="SkipHostDiscovery" valuePropName="checked">
+                                            <Form.Item label={<>主机发现 <Tooltip title="关闭后跳过 ICMP 和 TCP 探活，直接扫描"><InfoCircleOutlined /></Tooltip></>} name="SkipHostDiscovery" {...invertedSwitchBinding}>
                                                 <Switch checkedChildren="开启" unCheckedChildren="关闭" />
                                             </Form.Item>
                                         </Col>
                                         <Col span={8}>
-                                            <Form.Item label="禁用 ICMP 探测" name="NoICMPPing" valuePropName="checked">
+                                            <Form.Item label="ICMP 探测" name="NoICMPPing" {...invertedSwitchBinding}>
                                                 <Switch checkedChildren="开启" unCheckedChildren="关闭" />
                                             </Form.Item>
                                         </Col>
                                         <Col span={8}>
-                                            <Form.Item label="启用 TCP 探活" name="TCPPing" valuePropName="checked">
+                                            <Form.Item label="TCP 探活" name="TCPPing" valuePropName="checked">
                                                 <Switch checkedChildren="开启" unCheckedChildren="关闭" />
                                             </Form.Item>
                                         </Col>
@@ -951,17 +956,17 @@ const TaskManagement: React.FC = () => {
                                     <>
                                         <Row gutter={16}>
                                             <Col span={8}>
-                                                <Form.Item label="开启子域名枚举" name="Subdomain" valuePropName="checked">
+                                                <Form.Item label="子域名枚举" name="Subdomain" valuePropName="checked">
                                                     <Switch checkedChildren="开启" unCheckedChildren="关闭" />
                                                 </Form.Item>
                                             </Col>
                                             <Col span={8}>
-                                                <Form.Item label="关闭子域爆破" name="NoSubdomainBruteForce" valuePropName="checked">
+                                                <Form.Item label="子域爆破" name="NoSubdomainBruteForce" {...invertedSwitchBinding}>
                                                     <Switch checkedChildren="开启" unCheckedChildren="关闭" />
                                                 </Form.Item>
                                             </Col>
                                             <Col span={8}>
-                                                <Form.Item label="关闭被动枚举" name="NoSubFinder" valuePropName="checked">
+                                                <Form.Item label="被动枚举" name="NoSubFinder" {...invertedSwitchBinding}>
                                                     <Switch checkedChildren="开启" unCheckedChildren="关闭" />
                                                 </Form.Item>
                                             </Col>
@@ -978,7 +983,7 @@ const TaskManagement: React.FC = () => {
                                                 </Form.Item>
                                             </Col>
                                             <Col span={8}>
-                                                <Form.Item label="关闭域名绑定探测" name="NoHostBind" valuePropName="checked">
+                                                <Form.Item label="域名绑定探测" name="NoHostBind" {...invertedSwitchBinding}>
                                                     <Switch checkedChildren="开启" unCheckedChildren="关闭" />
                                                 </Form.Item>
                                             </Col>
@@ -1002,7 +1007,7 @@ const TaskManagement: React.FC = () => {
                                             </Form.Item>
                                         </Col>
                                         <Col span={8}>
-                                            <Form.Item label="关闭主动目录指纹" name="NoDirSearch" valuePropName="checked">
+                                            <Form.Item label="主动目录指纹" name="NoDirSearch" {...invertedSwitchBinding}>
                                                 <Switch checkedChildren="开启" unCheckedChildren="关闭" />
                                             </Form.Item>
                                         </Col>
@@ -1016,17 +1021,17 @@ const TaskManagement: React.FC = () => {
                                     <>
                                         <Row gutter={16}>
                                             <Col span={8}>
-                                                <Form.Item label="关闭漏洞探测" name="NoPoc" valuePropName="checked">
+                                                <Form.Item label="漏洞探测" name="NoPoc" {...invertedSwitchBinding}>
                                                     <Switch checkedChildren="开启" unCheckedChildren="关闭" />
                                                 </Form.Item>
                                             </Col>
                                             <Col span={8}>
-                                                <Form.Item label="启用 GoPoc" name="GolangPoc" valuePropName="checked">
+                                                <Form.Item label="GoPoc" name="GolangPoc" valuePropName="checked">
                                                     <Switch checkedChildren="开启" unCheckedChildren="关闭" />
                                                 </Form.Item>
                                             </Col>
                                             <Col span={8}>
-                                                <Form.Item label="禁用通用 POC" name="DisableGeneralPoc" valuePropName="checked">
+                                                <Form.Item label="通用 POC" name="DisableGeneralPoc" {...invertedSwitchBinding}>
                                                     <Switch checkedChildren="开启" unCheckedChildren="关闭" />
                                                 </Form.Item>
                                             </Col>
