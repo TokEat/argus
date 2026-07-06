@@ -16317,6 +16317,8 @@ zywall-usg-100:
     - body="/r/cms/www/red/images/logo.png"
 信锐物联平台:
     - icon_hash="147973611"
+傲盾信息安全管理系统:
+    - body="傲盾软件" && body="aodun/aodun.js"
 儒松科技维保保服务管理平台:
     - title="维保保"||body="plugins/wbb/RSA.js"||body="static/common/js/wbb-list-common.js"
 入学入园招生管理系统:
@@ -16561,6 +16563,8 @@ zywall-usg-100:
     - body="css/fw/full.css" && body="js/p/login.js"
 天空卫士DLP(华东):
     - title="SkyGuard统一内容安全管理平台" && body="SecGator"
+天融信-TOPSEC:
+    - title="Web User Login" && body="/cgi/maincgi.cgi?Url=VerifyCode"
 天融信-上网行为管理系统:
     - body="ActiveXObject" && body="name=\"dkey_login\" " && body="repeat-x left top"
 天融信-公司产品:
@@ -16613,6 +16617,8 @@ zywall-usg-100:
 奥博克ERP系统(华南):
     - body="js/abacus-base.js"
 奥威亚教育视频云平台:
+    - body="/CSS/NewtonTheme/assets/app.css"
+奥威亚视频云平台:
     - body="/CSS/NewtonTheme/assets/app.css"
 奥联通讯管理平台:
     - icon_hash="-1356973161"
@@ -16751,7 +16757,8 @@ zywall-usg-100:
     - body="/images/company/towngas/favicon.ico"
 快云服务器小助手:
     - title="快云服务器小助手" || title="快云服务器助手-登录"
-思福迪堡垒机(北北京):
+思福迪堡垒机(北京):
+    - (title="Logbase运维安全管理系统" && body="/bhost/test_qrcode" && body="BHTunnelDaemon.exe") || (server="npaved" && body="window.location.href=\"/bhost/\"")
     - cert="logbase" || cert="BHOST" || title="Logbase运维安全管理系统" || body="/manage/images/hide-password.png" || body="BHTunnelDaemon.exe" || body="/bhost/login_link" || body="/bh/style/login.css"
 思维跳跃科技智能考试系统(华南):
     - body="/student/components/ueditor/"
@@ -16889,6 +16896,9 @@ zywall-usg-100:
     - body="js/jsCore.js" && body="Ajax_Code/Login.ashx" && body="login.css"
 智跃HR人力资源管理系统:
     - body="images/ZY.LOGO.64.png"
+智邦国际ERP系统:
+    - body="北京智邦国际软件技术有限公司" && body="window.SysConfig" && body="SYSN/skin/script/init/default.js"
+    - body="sysn/view/init/default.ashx" && body="SYSA/images/zbintelsng.png" && body="ZBRLib3175.DLL"
 智齿客服系统(西部):
     - body="8abc47d589af6c5e062a2a368a4baff6"||body="scripts/zc/echarts"
 服务社-企语iFair:
