@@ -1,0 +1,13 @@
+id: argus-mcp-smoke-poc
+info:
+  name: Argus MCP Smoke POC
+  author: argus
+  severity: info
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    matchers:
+      - type: word
+        words:
+          - "ArgusMCPFingerprint"

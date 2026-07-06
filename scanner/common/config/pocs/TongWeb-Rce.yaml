@@ -1,0 +1,43 @@
+id: TongWeb-Rce
+
+info:
+  name: 东方通反序列化
+  author: god
+  severity: critical
+  description: 东方通 TongWeb /ejbserver/ejb 接口反序列化漏洞检测，通过对比真实接口与不存在路径的响应差异来排除误报。
+  metadata:
+    max-request: 2
+    shodan-query: ""
+    verified: true
+  yakit-info:
+    sign: 809f30f0b457c2b243c079959519340d
+
+http:
+  # 第一个请求：访问真实接口
+  - method: POST
+    path:
+      - '{{RootURL}}/ejbserver/ejb'
+    headers:
+      User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36
+    max-redirects: 0
+    disable-cookie: true
+
+  # 第二个请求：访问不存在的路径，联合匹配
+  - method: POST
+    path:
+      - '{{RootURL}}/ejbserver/ejb1'
+    headers:
+      User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36
+    max-redirects: 0
+    disable-cookie: true
+    matchers-condition: and
+    matchers:
+      - type: dsl
+        dsl:
+          - 'status_code_0 == 200'
+      - type: dsl
+        dsl:
+          - 'len(body_0) == 0'
+      - type: dsl
+        dsl:
+          - 'status_code_1 != 200'
