@@ -7,7 +7,7 @@ DB_HOST ?= 127.0.0.1
 POSTGRES_PORT ?= 5432
 DB_PORT ?= $(POSTGRES_PORT)
 POSTGRES_USER ?= postgres
-POSTGRES_PASSWORD ?= root
+POSTGRES_PASSWORD ?= argus_dev_pg_S7m9Q4r2L8xP6nV3
 POSTGRES_DB ?= dddd
 DB_MIGRATION_MODE ?= apply
 DB_DSN ?= host=$(DB_HOST) user=$(POSTGRES_USER) password=$(POSTGRES_PASSWORD) dbname=$(POSTGRES_DB) port=$(DB_PORT) sslmode=disable

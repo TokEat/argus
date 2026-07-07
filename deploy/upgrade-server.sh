@@ -119,7 +119,9 @@ INSTALL_DIR="${INSTALL_DIR:-/opt/argus}"
 if [[ -z "$DB_DSN" && -n "$SERVICE_CMD" ]]; then
     DB_DSN="$(extract_quoted_arg "-db" "$SERVICE_CMD" || true)"
 fi
-DB_DSN="${DB_DSN:-host=127.0.0.1 user=postgres password=root dbname=dddd port=5432 sslmode=disable}"
+if [[ -z "$DB_DSN" ]]; then
+    die "未能从 ${SERVICE_FILE} 读取数据库 DSN，请使用 --db 或 ARGUS_DB_DSN 显式指定"
+fi
 
 API_ADDR="$(extract_quoted_arg "-api" "$SERVICE_CMD" || true)"
 GRPC_PORT="$(extract_plain_arg "-grpc" "$SERVICE_CMD" || true)"
@@ -136,7 +138,9 @@ POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(dsn_field password)}"
 POSTGRES_DB="${POSTGRES_DB:-$(dsn_field dbname)}"
 POSTGRES_PORT="${POSTGRES_PORT:-$(dsn_field port)}"
 POSTGRES_USER="${POSTGRES_USER:-postgres}"
-POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-root}"
+if [[ -z "${POSTGRES_PASSWORD}" ]]; then
+    die "数据库 DSN 缺少 password 字段，请使用 --db 或 ARGUS_DB_DSN 显式指定完整 DSN"
+fi
 POSTGRES_DB="${POSTGRES_DB:-dddd}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 

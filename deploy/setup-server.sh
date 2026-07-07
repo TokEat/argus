@@ -14,7 +14,7 @@
 #
 # 环境变量（可选，与 Makefile 保持一致）：
 #   POSTGRES_USER       PostgreSQL 用户（默认: postgres）
-#   POSTGRES_PASSWORD    PostgreSQL 密码（默认: root）
+#   POSTGRES_PASSWORD    PostgreSQL 密码（默认: 自动生成）
 #   POSTGRES_DB          数据库名（默认: dddd）
 #   POSTGRES_PORT        PostgreSQL 端口（默认: 5432）
 #   RABBITMQ_PORT        RabbitMQ 端口（默认: 5672）
@@ -41,14 +41,17 @@ gen_encrypt_key() {
     openssl rand -base64 32 2>/dev/null | tr -d '\n' || \
     head -c 32 /dev/urandom | base64 | tr -d '\n'
 }
+gen_hex_secret() {
+    openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | xxd -p
+}
 POSTGRES_USER="${POSTGRES_USER:-postgres}"
-POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-root}"
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(gen_hex_secret)}"
 POSTGRES_DB="${POSTGRES_DB:-dddd}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 RABBITMQ_PORT="${RABBITMQ_PORT:-5672}"
 RABBITMQ_MANAGEMENT_PORT="${RABBITMQ_MANAGEMENT_PORT:-15672}"
-RABBITMQ_DEFAULT_USER="${RABBITMQ_DEFAULT_USER:-guest}"
-RABBITMQ_DEFAULT_PASS="${RABBITMQ_DEFAULT_PASS:-guest}"
+RABBITMQ_DEFAULT_USER="${RABBITMQ_DEFAULT_USER:-argus}"
+RABBITMQ_DEFAULT_PASS="${RABBITMQ_DEFAULT_PASS:-$(gen_hex_secret)}"
 
 API_PORT="${ARGUS_API_PORT:-8085}"
 GRPC_PORT="${ARGUS_GRPC_PORT:-50051}"

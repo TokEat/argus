@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const DefaultPostgresDSN = "host=127.0.0.1 user=postgres password=root dbname=dddd port=5432 sslmode=disable"
+const DefaultPostgresDSN = "host=127.0.0.1 user=postgres password=argus_dev_pg_S7m9Q4r2L8xP6nV3 dbname=dddd port=5432 sslmode=disable"
 
 func normalizePostgresDSN(dsn string) string {
 	if strings.TrimSpace(dsn) == "" {

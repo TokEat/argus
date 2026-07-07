@@ -64,8 +64,8 @@ fi
 echo -e "\n${YELLOW}[2/4] 停止并清理 Docker 容器...${NC}"
 if [[ -f "$COMPOSE_FILE" ]]; then
     # 提供假变量避免 docker compose 警告
-    export POSTGRES_USER=postgres POSTGRES_PASSWORD=root POSTGRES_DB=dddd POSTGRES_PORT=5432
-    export RABBITMQ_DEFAULT_USER=guest RABBITMQ_DEFAULT_PASS=guest RABBITMQ_PORT=5672 RABBITMQ_MANAGEMENT_PORT=15672
+    export POSTGRES_USER=postgres POSTGRES_PASSWORD=unused-uninstall-password POSTGRES_DB=dddd POSTGRES_PORT=5432
+    export RABBITMQ_DEFAULT_USER=argus RABBITMQ_DEFAULT_PASS=unused-uninstall-password RABBITMQ_PORT=5672 RABBITMQ_MANAGEMENT_PORT=15672
     export INSTALL_DIR
     docker compose -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
     echo -e "${GREEN}[✔] 容器已清理${NC}"
