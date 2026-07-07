@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -490,6 +491,11 @@ func (w *Worker) subscribeAndClaim(quit chan struct{}) {
 			w.handleDebugCommand(notify.DebugCommand)
 			continue
 		}
+		if notify.NotifyType == "api_config_updated" {
+			log.Println("[Subscribe] Received API config update signal from Control Plane!")
+			w.syncAPIConfig()
+			continue
+		}
 
 		// 有空闲 worker 就立即去认领任务
 		w.claimAvailableTasks()
@@ -623,7 +629,9 @@ func (w *Worker) commandLoop() {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
-		resp, err := w.apiGet(w.apiURL + "/api/v1/agents/" + w.agentID + "/commands")
+		cmdURL := fmt.Sprintf("%s/api/v1/agents/%s/commands?api_config_hash=%s",
+			w.apiURL, w.agentID, url.QueryEscape(w.localAPIConfigHash()))
+		resp, err := w.apiGet(cmdURL)
 		if err != nil {
 			log.Printf("[Command] Poll failed: %v", err)
 			continue
@@ -631,26 +639,38 @@ func (w *Worker) commandLoop() {
 
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		var result struct {
-			CancelTasks []string `json:"cancel_tasks"`
-			ReloadRules bool     `json:"reload_rules"`
-			RuleVersion string   `json:"rule_version"`
-		}
-		if json.Unmarshal(body, &result) == nil {
-			if result.ReloadRules && result.RuleVersion != "" && result.RuleVersion != "unknown" && result.RuleVersion != w.ruleVersion {
-				log.Println("[Command] Received dynamic rule hot-reload signal from Control Plane!")
-				w.syncRules()
-			}
-			w.mu.Lock()
-			for _, tid := range result.CancelTasks {
-				if cancel, ok := w.runningTasks[tid]; ok {
-					log.Printf("[Cancel] Received kill instruction for subtask %s from Control Plane!", tid)
-					cancel()
-				}
-			}
-			w.mu.Unlock()
+		w.handleAgentCommandResponse(body)
+	}
+}
+
+func (w *Worker) handleAgentCommandResponse(body []byte) {
+	var result struct {
+		CancelTasks   []string `json:"cancel_tasks"`
+		ReloadRules   bool     `json:"reload_rules"`
+		RuleVersion   string   `json:"rule_version"`
+		SyncAPIConfig bool     `json:"sync_api_config"`
+		APIConfigHash string   `json:"api_config_hash"`
+	}
+	if json.Unmarshal(body, &result) != nil {
+		return
+	}
+	if result.SyncAPIConfig {
+		log.Printf("[Command] Received API config sync signal from Control Plane (remote=%s, local=%s)",
+			truncHash(result.APIConfigHash), truncHash(w.localAPIConfigHash()))
+		w.syncAPIConfig()
+	}
+	if result.ReloadRules && result.RuleVersion != "" && result.RuleVersion != "unknown" && result.RuleVersion != w.ruleVersion {
+		log.Println("[Command] Received dynamic rule hot-reload signal from Control Plane!")
+		w.syncRules()
+	}
+	w.mu.Lock()
+	for _, tid := range result.CancelTasks {
+		if cancel, ok := w.runningTasks[tid]; ok {
+			log.Printf("[Cancel] Received kill instruction for subtask %s from Control Plane!", tid)
+			cancel()
 		}
 	}
+	w.mu.Unlock()
 }
 
 func (w *Worker) syncRules() {
@@ -777,6 +797,12 @@ func (w *Worker) syncRules() {
 		len(dbData), truncHash(fileHash), truncHash(hashResp.Hash), hashResp.RuleVersion)
 }
 
+func (w *Worker) syncAPIConfig() {
+	w.rulesMu.Lock()
+	defer w.rulesMu.Unlock()
+	w.syncAPIConfigLocked()
+}
+
 func (w *Worker) syncAPIConfigLocked() {
 	resp, err := w.apiGet(w.apiURL + "/api/v1/agents/config/api-keys")
 	if err != nil {
@@ -805,6 +831,14 @@ func (w *Worker) syncAPIConfigLocked() {
 		return
 	}
 	log.Printf("[Sync] ✅ Agent api-config.yaml synchronized (%d providers)", len(parsed))
+}
+
+func (w *Worker) localAPIConfigHash() string {
+	data, err := os.ReadFile(filepath.Join("config", "api-config.yaml"))
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%x", md5.Sum(data))
 }
 
 func removeAgentAPIConfig() error {

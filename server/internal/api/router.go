@@ -226,6 +226,17 @@ func shouldAgentReloadRules(agentRuleVersion, ruleVersion string) bool {
 	return strings.TrimSpace(agentRuleVersion) != ruleVersion
 }
 
+func currentAPIConfigHashValue(tenantID string) string {
+	arsenal, err := db.FindTenantArsenalByTypeAndFile(normalizeTenantID(tenantID), "apiconfig", "api-config.yaml")
+	if err != nil || strings.TrimSpace(arsenal.Content) == "" {
+		return ""
+	}
+	if hash := strings.TrimSpace(arsenal.Hash); hash != "" {
+		return hash
+	}
+	return fmt.Sprintf("%x", md5.Sum([]byte(arsenal.Content)))
+}
+
 func resolveScopedTaskIDs(tenantID, taskID string) []string {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
@@ -2558,11 +2569,16 @@ func getAgentCommands(c *gin.Context) {
 	if err := scopedNodeQuery(tenantID).Select("rule_version").Where("agent_id = ?", id).Limit(1).Find(&nodes).Error; err == nil && len(nodes) > 0 {
 		reloadRules = shouldAgentReloadRules(nodes[0].RuleVersion, ruleVersion)
 	}
+	apiConfigHash := currentAPIConfigHashValue(tenantID)
+	agentAPIConfigHash := strings.TrimSpace(c.Query("api_config_hash"))
+	syncAPIConfig := agentAPIConfigHash != apiConfigHash
 
 	c.JSON(http.StatusOK, gin.H{
-		"cancel_tasks": cancels,
-		"reload_rules": reloadRules,
-		"rule_version": ruleVersion,
+		"cancel_tasks":    cancels,
+		"reload_rules":    reloadRules,
+		"rule_version":    ruleVersion,
+		"sync_api_config": syncAPIConfig,
+		"api_config_hash": apiConfigHash,
 	})
 }
 

@@ -783,7 +783,7 @@ func getAgentAPIConfig(c *gin.Context) {
 	c.Data(http.StatusOK, "application/x-yaml; charset=utf-8", []byte(arsenal.Content))
 }
 
-// saveApiKeysConfig updates the api-config in the Arsenal and triggers Agent reload
+// saveApiKeysConfig updates the api-config in the Arsenal and triggers Agent API config sync.
 func saveApiKeysConfig(c *gin.Context) {
 	tenantID := currentTenantID(c)
 	var entries []ApiKeyEntry
@@ -840,9 +840,8 @@ func saveApiKeysConfig(c *gin.Context) {
 		}
 	}
 
-	if _, err := syncRuleCatalogAndBumpVersion(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sync config"})
-		return
+	if notifyHub != nil {
+		notifyHub.BroadcastAPIConfigUpdated()
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "saved", "hash": hash})

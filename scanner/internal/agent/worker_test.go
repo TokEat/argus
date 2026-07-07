@@ -314,6 +314,65 @@ func TestSyncRulesRemovesAgentAPIConfigWhenServerReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestSubscribeAPIConfigUpdatedSyncsOnlyAPIConfig(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	stream := &fakeSubscribeClientStream{
+		recv: []*pb.TaskNotify{{NotifyType: "api_config_updated"}},
+	}
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://server.local", 1, nil)
+	worker.client = &fakeAgentClient{subscribeStream: stream}
+	worker.apiGetFn = func(url string) (*http.Response, error) {
+		switch {
+		case strings.HasSuffix(url, "/api/v1/agents/config/api-keys"):
+			return testHTTPResponse("quake:\n  - notify-key\n", map[string]string{"Content-Type": "application/x-yaml"}), nil
+		case strings.Contains(url, "/api/v1/arsenals/db"):
+			t.Fatalf("api_config_updated should not fetch arsenal DB endpoint: %s", url)
+		default:
+			t.Fatalf("unexpected api config notify request: %s", url)
+		}
+		return testHTTPResponse(`not found`, nil), nil
+	}
+
+	worker.subscribeAndClaim(make(chan struct{}))
+
+	assertAgentFileContent(t, filepath.Join("config", "api-config.yaml"), "quake:\n  - notify-key\n")
+	if stream.sentSignals == 0 {
+		t.Fatalf("expected subscribe to send initial ready signal")
+	}
+}
+
+func TestHandleCommandSyncAPIConfigWritesConfig(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://server.local", 1, nil)
+	worker.apiGetFn = func(url string) (*http.Response, error) {
+		if !strings.HasSuffix(url, "/api/v1/agents/config/api-keys") {
+			t.Fatalf("sync_api_config command should only fetch api config, got %s", url)
+		}
+		return testHTTPResponse("quake:\n  - command-key\n", map[string]string{"Content-Type": "application/x-yaml"}), nil
+	}
+
+	worker.handleAgentCommandResponse([]byte(`{"sync_api_config":true,"api_config_hash":"remote-hash"}`))
+
+	assertAgentFileContent(t, filepath.Join("config", "api-config.yaml"), "quake:\n  - command-key\n")
+}
+
+func TestLocalAPIConfigHash(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://server.local", 1, nil)
+	if got := worker.localAPIConfigHash(); got != "" {
+		t.Fatalf("missing api config hash = %q, want empty", got)
+	}
+	mustWriteAgentFile(t, filepath.Join("config", "api-config.yaml"), []byte("quake:\n  - hash-key\n"))
+	if got := worker.localAPIConfigHash(); got != "012e6f1b6ec96f9b190dd35aaa629028" {
+		t.Fatalf("api config md5 = %q", got)
+	}
+}
+
 func TestSyncRulesDefersActivationWhileTasksRunning(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
@@ -729,6 +788,7 @@ func TestWorkerPythonScratchpadRunStreamsCompletion(t *testing.T) {
 type fakeAgentClient struct {
 	stream            grpc.ClientStreamingClient[pb.ScanResult, pb.Ack]
 	streamErr         error
+	subscribeStream   grpc.BidiStreamingClient[pb.AgentSignal, pb.TaskNotify]
 	debugStream       grpc.ClientStreamingClient[pb.DebugEvent, pb.Ack]
 	debugErr          error
 	logStream         grpc.ClientStreamingClient[pb.LogPayload, pb.Ack]
@@ -779,7 +839,7 @@ func (c *fakeAgentClient) EmergencyDump(ctx context.Context, in *pb.EmergencyReq
 }
 
 func (c *fakeAgentClient) Subscribe(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[pb.AgentSignal, pb.TaskNotify], error) {
-	return nil, nil
+	return c.subscribeStream, nil
 }
 
 func (c *fakeAgentClient) ClaimTask(ctx context.Context, in *pb.ClaimTaskReq, opts ...grpc.CallOption) (*pb.Task, error) {
@@ -851,6 +911,46 @@ func (s *fakeResultStream) RecvMsg(m any) error {
 		return nil
 	}
 	return io.EOF
+}
+
+type fakeSubscribeClientStream struct {
+	recv        []*pb.TaskNotify
+	sentSignals int
+}
+
+func (s *fakeSubscribeClientStream) Send(*pb.AgentSignal) error {
+	s.sentSignals++
+	return nil
+}
+
+func (s *fakeSubscribeClientStream) Recv() (*pb.TaskNotify, error) {
+	if len(s.recv) == 0 {
+		return nil, io.EOF
+	}
+	msg := s.recv[0]
+	s.recv = s.recv[1:]
+	return msg, nil
+}
+
+func (s *fakeSubscribeClientStream) Header() (metadata.MD, error) { return nil, nil }
+func (s *fakeSubscribeClientStream) Trailer() metadata.MD         { return nil }
+func (s *fakeSubscribeClientStream) CloseSend() error             { return nil }
+func (s *fakeSubscribeClientStream) Context() context.Context     { return context.Background() }
+func (s *fakeSubscribeClientStream) SendMsg(m any) error {
+	if signal, ok := m.(*pb.AgentSignal); ok {
+		return s.Send(signal)
+	}
+	return nil
+}
+func (s *fakeSubscribeClientStream) RecvMsg(m any) error {
+	msg, err := s.Recv()
+	if err != nil {
+		return err
+	}
+	if notify, ok := m.(*pb.TaskNotify); ok {
+		*notify = *msg
+	}
+	return nil
 }
 
 type fakeLogStream struct {

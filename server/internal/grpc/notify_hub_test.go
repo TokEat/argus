@@ -32,6 +32,28 @@ func TestNotifyHubIgnoresStaleUnregister(t *testing.T) {
 	}
 }
 
+func TestNotifyHubBroadcastAPIConfigUpdated(t *testing.T) {
+	hub := NewNotifyHub()
+	streamA := &notifyHubTestStream{}
+	streamB := &notifyHubTestStream{}
+	hub.Register("agent-a", streamA, 0, nil)
+	hub.Register("agent-b", streamB, 2, nil)
+
+	hub.BroadcastAPIConfigUpdated()
+
+	for name, stream := range map[string]*notifyHubTestStream{"agent-a": streamA, "agent-b": streamB} {
+		if len(stream.sent) != 1 {
+			t.Fatalf("%s received %d notifications, want 1", name, len(stream.sent))
+		}
+		if got := stream.sent[0].NotifyType; got != "api_config_updated" {
+			t.Fatalf("%s notify_type = %q, want api_config_updated", name, got)
+		}
+		if stream.sent[0].AvailableTasks != 0 {
+			t.Fatalf("%s api config notification should not advertise tasks", name)
+		}
+	}
+}
+
 type notifyHubTestStream struct {
 	sent []*pb.TaskNotify
 }

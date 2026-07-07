@@ -1,13 +1,19 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	pb "github.com/user/dddd-proto/go/scan"
 	"github.com/user/dddd-server/internal/db"
+	grpcpkg "github.com/user/dddd-server/internal/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 func TestDictionaryListEmptyReturnsArray(t *testing.T) {
@@ -74,6 +80,69 @@ func TestGetAgentAPIConfigReturnsApprovedYAML(t *testing.T) {
 		t.Fatalf("unexpected api config body: %q", recorder.Body.String())
 	}
 }
+
+func TestSaveAPIKeysConfigDoesNotBumpRuleVersionAndBroadcastsAPIConfig(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.SystemConfig{Key: "rule_version", Value: "v-stable"}).Error; err != nil {
+		t.Fatalf("seed rule version: %v", err)
+	}
+
+	oldHub := notifyHub
+	hub := grpcpkg.NewNotifyHub()
+	stream := &fakeAPIConfigNotifyStream{sentCh: make(chan string, 1)}
+	hub.Register("agent-1", stream, 1, nil)
+	notifyHub = hub
+	t.Cleanup(func() { notifyHub = oldHub })
+
+	ctx, recorder := newTenantContextWithRole(http.MethodPut, "/config/api-keys", "admin", "9")
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/config/api-keys", strings.NewReader(`[{"provider":"quake","keys":["active-key"]}]`))
+	saveApiKeysConfig(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected save API keys 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var arsenal db.Arsenal
+	if err := store.First(&arsenal, "tenant_id = ? AND type = ? AND file_name = ?", "default", "apiconfig", "api-config.yaml").Error; err != nil {
+		t.Fatalf("expected apiconfig arsenal: %v", err)
+	}
+	if !strings.Contains(arsenal.Content, "active-key") || arsenal.Hash == "" {
+		t.Fatalf("unexpected apiconfig content/hash: content=%q hash=%q", arsenal.Content, arsenal.Hash)
+	}
+	var cfg db.SystemConfig
+	if err := store.First(&cfg, "key = ?", "rule_version").Error; err != nil {
+		t.Fatalf("load rule version: %v", err)
+	}
+	if cfg.Value != "v-stable" {
+		t.Fatalf("save api-config should not bump rule_version, got %q", cfg.Value)
+	}
+	select {
+	case got := <-stream.sentCh:
+		if got != "api_config_updated" {
+			t.Fatalf("notify type = %q, want api_config_updated", got)
+		}
+	default:
+		t.Fatalf("expected api_config_updated notification")
+	}
+}
+
+type fakeAPIConfigNotifyStream struct {
+	sentCh chan string
+}
+
+func (s *fakeAPIConfigNotifyStream) Send(msg *pb.TaskNotify) error {
+	if s.sentCh != nil {
+		s.sentCh <- msg.NotifyType
+	}
+	return nil
+}
+
+func (s *fakeAPIConfigNotifyStream) Recv() (*pb.AgentSignal, error) { return nil, io.EOF }
+func (s *fakeAPIConfigNotifyStream) SetHeader(metadata.MD) error    { return nil }
+func (s *fakeAPIConfigNotifyStream) SendHeader(metadata.MD) error   { return nil }
+func (s *fakeAPIConfigNotifyStream) SetTrailer(metadata.MD)         {}
+func (s *fakeAPIConfigNotifyStream) Context() context.Context       { return context.Background() }
+func (s *fakeAPIConfigNotifyStream) SendMsg(interface{}) error      { return nil }
+func (s *fakeAPIConfigNotifyStream) RecvMsg(interface{}) error      { return io.EOF }
 
 func TestFingerprintDictMergesMaterializedRules(t *testing.T) {
 	store := setupAITestDB(t)

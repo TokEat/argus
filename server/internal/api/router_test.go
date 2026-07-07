@@ -49,6 +49,68 @@ func TestShouldAgentReloadRules(t *testing.T) {
 	}
 }
 
+func TestGetAgentCommandsReportsAPIConfigSyncState(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Node{TenantID: "default", AgentID: "agent-api", Status: "Alive", RuleVersion: "v1"}).Error; err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+	if err := store.Create(&db.SystemConfig{Key: "rule_version", Value: "v1"}).Error; err != nil {
+		t.Fatalf("seed rule version: %v", err)
+	}
+	if err := store.Create(&db.Arsenal{
+		ID:       db.BuildTenantArsenalID("default", "apiconfig", "api-config.yaml"),
+		TenantID: "default",
+		Type:     "apiconfig",
+		FileName: "api-config.yaml",
+		Content:  "quake:\n  - active-key\n",
+		Hash:     "hash-api",
+		State:    "Approved",
+	}).Error; err != nil {
+		t.Fatalf("seed apiconfig: %v", err)
+	}
+
+	ctx, recorder := newTenantContextWithRole(http.MethodGet, "/agents/agent-api/commands?api_config_hash=hash-api", "admin", "agent-api")
+	ctx.Params = gin.Params{{Key: "id", Value: "agent-api"}}
+	getAgentCommands(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected commands 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var resp struct {
+		SyncAPIConfig bool   `json:"sync_api_config"`
+		APIConfigHash string `json:"api_config_hash"`
+		ReloadRules   bool   `json:"reload_rules"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode commands response: %v", err)
+	}
+	if resp.SyncAPIConfig || resp.APIConfigHash != "hash-api" || resp.ReloadRules {
+		t.Fatalf("unexpected up-to-date commands response: %+v", resp)
+	}
+
+	ctx, recorder = newTenantContextWithRole(http.MethodGet, "/agents/agent-api/commands?api_config_hash=stale", "admin", "agent-api")
+	ctx.Params = gin.Params{{Key: "id", Value: "agent-api"}}
+	getAgentCommands(ctx)
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode stale commands response: %v", err)
+	}
+	if !resp.SyncAPIConfig || resp.APIConfigHash != "hash-api" {
+		t.Fatalf("expected stale api_config_hash to request sync, got %+v", resp)
+	}
+
+	if err := store.Delete(&db.Arsenal{}, "tenant_id = ? AND type = ? AND file_name = ?", "default", "apiconfig", "api-config.yaml").Error; err != nil {
+		t.Fatalf("delete apiconfig: %v", err)
+	}
+	ctx, recorder = newTenantContextWithRole(http.MethodGet, "/agents/agent-api/commands?api_config_hash=stale", "admin", "agent-api")
+	ctx.Params = gin.Params{{Key: "id", Value: "agent-api"}}
+	getAgentCommands(ctx)
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode missing commands response: %v", err)
+	}
+	if !resp.SyncAPIConfig || resp.APIConfigHash != "" {
+		t.Fatalf("expected missing server config to request stale local removal, got %+v", resp)
+	}
+}
+
 func TestValidateUTF8TextBodyMiddlewareScopesToTextualBodies(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
