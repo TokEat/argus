@@ -255,10 +255,14 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	urls = utils.RemoveDuplicateElement(urls)
 
 	emitPhase(ctx, PhaseHTTPProbe, "start", fmt.Sprintf("%d urls", len(urls)))
-	httpx.CallHTTPx(urls, currentWebRuntime(ctx, emit).URLCallback,
+	webRuntime := currentWebRuntime(ctx, emit)
+	httpx.CallHTTPx(urls, webRuntime.URLCallback,
 		cfg.HTTPProxy,
 		cfg.WebThreads,
 		cfg.WebTimeout)
+	if err := p.probeRedirectLocations(ctx, &cfg, webRuntime); err != nil {
+		return err
+	}
 	emitPhase(ctx, PhaseHTTPProbe, "end", "")
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
@@ -469,6 +473,28 @@ func (p *Pipeline) searchEngine(ctx *ScanContext, cfg *Config) error {
 		}
 	}
 	return checkPipelineCancelled(ctx)
+}
+
+func (p *Pipeline) probeRedirectLocations(ctx *ScanContext, cfg *Config, webRuntime *web.Runtime) error {
+	const maxRedirectLocationPasses = 4
+
+	for pass := 0; pass < maxRedirectLocationPasses; pass++ {
+		if err := checkPipelineCancelled(ctx); err != nil {
+			return err
+		}
+
+		redirectURLs := webRuntime.DrainRedirectURLs()
+		if len(redirectURLs) == 0 {
+			return nil
+		}
+
+		gologger.Info().Msgf("[HTTPProbe] redirect pass=%d targets=%d follow_host_redirects=true", pass+1, len(redirectURLs))
+		httpx.CallHTTPxFollowHostRedirects(redirectURLs, webRuntime.URLCallback,
+			cfg.HTTPProxy,
+			cfg.WebThreads,
+			cfg.WebTimeout)
+	}
+	return nil
 }
 
 func checkPipelineCancelled(ctx *ScanContext) error {

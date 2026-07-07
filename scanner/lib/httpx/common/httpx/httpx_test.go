@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/projectdiscovery/retryablehttp-go"
@@ -27,4 +28,53 @@ func TestDo(t *testing.T) {
 		require.Nil(t, err)
 		require.Equal(t, 318, resp.ContentLength)
 	})
+}
+
+func TestSameRedirectOriginAllowsDefaultPortEquivalent(t *testing.T) {
+	previous := &http.Request{URL: mustParseURL(t, "https://example.com/portal/cas/login")}
+	redirected := &http.Request{URL: mustParseURL(t, "https://example.com:443/bic/ssoService/v1/casLogin")}
+
+	require.True(t, sameRedirectOrigin(previous, redirected))
+}
+
+func TestSameRedirectOriginAllowsDefaultHTTPToHTTPSUpgrade(t *testing.T) {
+	previous := &http.Request{URL: mustParseURL(t, "http://example.com/")}
+	redirected := &http.Request{URL: mustParseURL(t, "https://example.com/portal/")}
+
+	require.True(t, sameRedirectOrigin(previous, redirected))
+}
+
+func TestSameRedirectOriginSkipsHTTPToHTTPSFromNonDefaultPort(t *testing.T) {
+	previous := &http.Request{URL: mustParseURL(t, "http://example.com:8080/")}
+	redirected := &http.Request{URL: mustParseURL(t, "https://example.com/portal/")}
+
+	require.False(t, sameRedirectOrigin(previous, redirected))
+}
+
+func TestSameRedirectOriginSkipsSchemeChangeOnSameNonDefaultPort(t *testing.T) {
+	previous := &http.Request{URL: mustParseURL(t, "http://example.com:8443/")}
+	redirected := &http.Request{URL: mustParseURL(t, "https://example.com:8443/portal/")}
+
+	require.False(t, sameRedirectOrigin(previous, redirected))
+}
+
+func TestSameRedirectOriginKeepsNonDefaultPortDistinct(t *testing.T) {
+	previous := &http.Request{URL: mustParseURL(t, "https://example.com:8443/")}
+	redirected := &http.Request{URL: mustParseURL(t, "https://example.com/portal/")}
+
+	require.False(t, sameRedirectOrigin(previous, redirected))
+}
+
+func TestSameRedirectOriginAllowsSameNonDefaultPort(t *testing.T) {
+	previous := &http.Request{URL: mustParseURL(t, "https://example.com:8443/")}
+	redirected := &http.Request{URL: mustParseURL(t, "https://example.com:8443/portal/")}
+
+	require.True(t, sameRedirectOrigin(previous, redirected))
+}
+
+func mustParseURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	parsed, err := url.Parse(raw)
+	require.NoError(t, err)
+	return parsed
 }

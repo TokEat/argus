@@ -120,7 +120,7 @@ func TestDirBruteCallbackCanMatchIconHashRule(t *testing.T) {
 	}
 }
 
-func TestURLCallbackReplacesPlaceholderWebPath(t *testing.T) {
+func TestURLCallbackStoresFinalURLPath(t *testing.T) {
 	urlMap := map[string]structs.URLEntity{
 		"https://example.com": {
 			IP:       "1.1.1.1",
@@ -148,8 +148,243 @@ func TestURLCallbackReplacesPlaceholderWebPath(t *testing.T) {
 	})
 
 	pathEntry := urlMap["https://example.com"].WebPaths["/"]
+	if pathEntry.Hash != "" || pathEntry.StatusCode != 0 {
+		t.Fatalf("root placeholder should not be overwritten by redirected response: %#v", pathEntry)
+	}
+
+	pathEntry = urlMap["https://example.com"].WebPaths["/portal"]
 	if pathEntry.Hash != "body-real" || pathEntry.HeaderHashString != "header-real" || pathEntry.StatusCode != 200 {
-		t.Fatalf("placeholder path was not replaced: %#v", pathEntry)
+		t.Fatalf("final URL path was not recorded: %#v", pathEntry)
+	}
+}
+
+func TestURLCallbackStoresPortFromFinalURL(t *testing.T) {
+	urlMap := make(map[string]structs.URLEntity)
+	lock := &sync.Mutex{}
+	rt := NewRuntime(urlMap, lock, nil, nil, nil, nil, nil, nil, map[string][]string{}, &sync.Mutex{}, nil)
+
+	rt.URLCallback(runner.Result{
+		URL:           "http://example.com/",
+		FinalURL:      "https://example.com/login",
+		Scheme:        "http",
+		Host:          "example.com",
+		Port:          "80",
+		Path:          "/",
+		StatusCode:    200,
+		ContentType:   "text/html",
+		ContentLength: 2862,
+		Hashes: map[string]interface{}{
+			"body_md5":   "body-real",
+			"header_md5": "header-real",
+		},
+	})
+
+	entry, ok := urlMap["https://example.com"]
+	if !ok {
+		t.Fatalf("expected final URL root to be stored")
+	}
+	if entry.Port != 443 {
+		t.Fatalf("expected port from final URL, got %d", entry.Port)
+	}
+}
+
+func TestURLCallbackCollectsSameOriginRedirectLocation(t *testing.T) {
+	urlMap := make(map[string]structs.URLEntity)
+	lock := &sync.Mutex{}
+	rt := NewRuntime(urlMap, lock, nil, nil, nil, nil, nil, nil, map[string][]string{}, &sync.Mutex{}, nil)
+
+	rt.URLCallback(runner.Result{
+		URL:        "https://example.com",
+		Scheme:     "https",
+		Host:       "example.com",
+		Port:       "443",
+		Path:       "/",
+		StatusCode: 301,
+		Location:   "/portal/",
+		Hashes: map[string]interface{}{
+			"body_md5":   "body-redirect",
+			"header_md5": "header-redirect",
+		},
+	})
+
+	got := rt.DrainRedirectURLs()
+	want := []string{"https://example.com/portal/"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected redirect URLs: want=%v got=%v", want, got)
+	}
+}
+
+func TestURLCallbackCollectsSameOriginDefaultPortRedirectLocation(t *testing.T) {
+	urlMap := make(map[string]structs.URLEntity)
+	lock := &sync.Mutex{}
+	rt := NewRuntime(urlMap, lock, nil, nil, nil, nil, nil, nil, map[string][]string{}, &sync.Mutex{}, nil)
+
+	rt.URLCallback(runner.Result{
+		URL:        "https://example.com/portal/cas/login",
+		Scheme:     "https",
+		Host:       "example.com",
+		Port:       "443",
+		Path:       "/portal/cas/login",
+		StatusCode: 302,
+		Location:   "https://example.com:443/bic/ssoService/v1/casLogin",
+		Hashes: map[string]interface{}{
+			"body_md5":   "body-redirect",
+			"header_md5": "header-redirect",
+		},
+	})
+
+	got := rt.DrainRedirectURLs()
+	want := []string{"https://example.com:443/bic/ssoService/v1/casLogin"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected redirect URLs: want=%v got=%v", want, got)
+	}
+}
+
+func TestURLCallbackCollectsDefaultHTTPToHTTPSRedirectLocation(t *testing.T) {
+	urlMap := make(map[string]structs.URLEntity)
+	lock := &sync.Mutex{}
+	rt := NewRuntime(urlMap, lock, nil, nil, nil, nil, nil, nil, map[string][]string{}, &sync.Mutex{}, nil)
+
+	rt.URLCallback(runner.Result{
+		URL:        "http://example.com",
+		Scheme:     "http",
+		Host:       "example.com",
+		Port:       "80",
+		Path:       "/",
+		StatusCode: 301,
+		Location:   "https://example.com/portal/",
+		Hashes: map[string]interface{}{
+			"body_md5":   "body-redirect",
+			"header_md5": "header-redirect",
+		},
+	})
+
+	got := rt.DrainRedirectURLs()
+	want := []string{"https://example.com/portal/"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected redirect URLs: want=%v got=%v", want, got)
+	}
+}
+
+func TestURLCallbackSkipsHTTPToHTTPSRedirectFromNonDefaultPort(t *testing.T) {
+	urlMap := make(map[string]structs.URLEntity)
+	lock := &sync.Mutex{}
+	rt := NewRuntime(urlMap, lock, nil, nil, nil, nil, nil, nil, map[string][]string{}, &sync.Mutex{}, nil)
+
+	rt.URLCallback(runner.Result{
+		URL:        "http://example.com:8080",
+		Scheme:     "http",
+		Host:       "example.com",
+		Port:       "8080",
+		Path:       "/",
+		StatusCode: 301,
+		Location:   "https://example.com/portal/",
+		Hashes: map[string]interface{}{
+			"body_md5":   "body-redirect",
+			"header_md5": "header-redirect",
+		},
+	})
+
+	if got := rt.DrainRedirectURLs(); len(got) != 0 {
+		t.Fatalf("http-to-https redirect from non-default origin should not be queued: %v", got)
+	}
+}
+
+func TestURLCallbackSkipsSchemeChangeOnSameNonDefaultPort(t *testing.T) {
+	urlMap := make(map[string]structs.URLEntity)
+	lock := &sync.Mutex{}
+	rt := NewRuntime(urlMap, lock, nil, nil, nil, nil, nil, nil, map[string][]string{}, &sync.Mutex{}, nil)
+
+	rt.URLCallback(runner.Result{
+		URL:        "http://example.com:8443",
+		Scheme:     "http",
+		Host:       "example.com",
+		Port:       "8443",
+		Path:       "/",
+		StatusCode: 301,
+		Location:   "https://example.com:8443/portal/",
+		Hashes: map[string]interface{}{
+			"body_md5":   "body-redirect",
+			"header_md5": "header-redirect",
+		},
+	})
+
+	if got := rt.DrainRedirectURLs(); len(got) != 0 {
+		t.Fatalf("scheme change on same non-default port should not be queued: %v", got)
+	}
+}
+
+func TestURLCallbackKeepsSameOriginNonDefaultPortRedirectLocation(t *testing.T) {
+	urlMap := make(map[string]structs.URLEntity)
+	lock := &sync.Mutex{}
+	rt := NewRuntime(urlMap, lock, nil, nil, nil, nil, nil, nil, map[string][]string{}, &sync.Mutex{}, nil)
+
+	rt.URLCallback(runner.Result{
+		URL:        "https://example.com:8443",
+		Scheme:     "https",
+		Host:       "example.com",
+		Port:       "8443",
+		Path:       "/",
+		StatusCode: 301,
+		Location:   "/portal/",
+		Hashes: map[string]interface{}{
+			"body_md5":   "body-redirect",
+			"header_md5": "header-redirect",
+		},
+	})
+
+	got := rt.DrainRedirectURLs()
+	want := []string{"https://example.com:8443/portal/"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected redirect URLs: want=%v got=%v", want, got)
+	}
+}
+
+func TestURLCallbackSkipsDefaultPortRedirectFromNonDefaultPort(t *testing.T) {
+	urlMap := make(map[string]structs.URLEntity)
+	lock := &sync.Mutex{}
+	rt := NewRuntime(urlMap, lock, nil, nil, nil, nil, nil, nil, map[string][]string{}, &sync.Mutex{}, nil)
+
+	rt.URLCallback(runner.Result{
+		URL:        "https://example.com:8443",
+		Scheme:     "https",
+		Host:       "example.com",
+		Port:       "8443",
+		Path:       "/",
+		StatusCode: 302,
+		Location:   "https://example.com/portal/",
+		Hashes: map[string]interface{}{
+			"body_md5":   "body-redirect",
+			"header_md5": "header-redirect",
+		},
+	})
+
+	if got := rt.DrainRedirectURLs(); len(got) != 0 {
+		t.Fatalf("default-port redirect from non-default origin should not be queued: %v", got)
+	}
+}
+
+func TestURLCallbackSkipsCrossOriginRedirectLocation(t *testing.T) {
+	urlMap := make(map[string]structs.URLEntity)
+	lock := &sync.Mutex{}
+	rt := NewRuntime(urlMap, lock, nil, nil, nil, nil, nil, nil, map[string][]string{}, &sync.Mutex{}, nil)
+
+	rt.URLCallback(runner.Result{
+		URL:        "https://example.com",
+		Scheme:     "https",
+		Host:       "example.com",
+		Port:       "443",
+		Path:       "/",
+		StatusCode: 302,
+		Location:   "https://sso.example.net/login",
+		Hashes: map[string]interface{}{
+			"body_md5":   "body-redirect",
+			"header_md5": "header-redirect",
+		},
+	})
+
+	if got := rt.DrainRedirectURLs(); len(got) != 0 {
+		t.Fatalf("cross-origin redirect should not be queued: %v", got)
 	}
 }
 

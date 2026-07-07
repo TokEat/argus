@@ -6431,6 +6431,7 @@ xxl-rpc:
   - root
   - base
   pocs:
+  - hikvision-isecure-center-cmdb-alarmexport-upload-exposure
   - 海康威视综合安防管理平台任意文件读取漏洞
 润乾报表(西部):
   type:

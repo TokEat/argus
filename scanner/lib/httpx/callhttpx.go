@@ -88,6 +88,14 @@ func runEnumerationWithGuard(httpxRunner *runner.Runner, stage string, timeoutSe
 }
 
 func CallHTTPx(urls []string, callBack func(resp runner.Result), proxy string, threads int, timeout int) {
+	callHTTPx(urls, callBack, proxy, threads, timeout, false)
+}
+
+func CallHTTPxFollowHostRedirects(urls []string, callBack func(resp runner.Result), proxy string, threads int, timeout int) {
+	callHTTPx(urls, callBack, proxy, threads, timeout, true)
+}
+
+func callHTTPx(urls []string, callBack func(resp runner.Result), proxy string, threads int, timeout int, followHostRedirects bool) {
 	gologger.Info().Msg("获取Web响应中")
 
 	timeout = sanitizeTimeout(timeout)
@@ -103,6 +111,10 @@ func CallHTTPx(urls []string, callBack func(resp runner.Result), proxy string, t
 	times := 0
 	for len(nextUrls) > 0 && times < 3 {
 		gologger.Info().Msgf("[HTTPProbe] pass=%d targets=%d threads=%d timeout=%ds", times+1, len(nextUrls), threads, timeout)
+		maxRedirects := 3
+		if followHostRedirects {
+			maxRedirects = 8
+		}
 
 		t0 := time.Now()
 		options := runner.Options{
@@ -114,8 +126,8 @@ func CallHTTPx(urls []string, callBack func(resp runner.Result), proxy string, t
 			TLSProbe:                  false,
 			TLSGrab:                   true,
 			MaxResponseBodySizeToRead: 1048576,
-			FollowHostRedirects:       false,
-			MaxRedirects:              3,
+			FollowHostRedirects:       followHostRedirects,
+			MaxRedirects:              maxRedirects,
 			ExtractTitle:              true,
 			Timeout:                   timeout,
 			Retries:                   1,

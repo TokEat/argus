@@ -86,13 +86,7 @@ func New(options *Options) (*HTTPX, error) {
 			// add custom cookies if necessary
 			httpx.setCustomCookies(redirectedRequest)
 
-			// Check if we get a redirect to a different host
-			var newHost = redirectedRequest.URL.Host
-			var oldHost = previousRequests[0].Host
-			if oldHost == "" {
-				oldHost = previousRequests[0].URL.Host
-			}
-			if newHost != oldHost {
+			if !sameRedirectOrigin(previousRequests[0], redirectedRequest) {
 				// Tell the http client to not follow redirect
 				return http.ErrUseLastResponse
 			}
@@ -154,6 +148,67 @@ func New(options *Options) (*HTTPX, error) {
 	}
 
 	return httpx, nil
+}
+
+func sameRedirectOrigin(previousRequest, redirectedRequest *http.Request) bool {
+	if previousRequest == nil || redirectedRequest == nil || redirectedRequest.URL == nil {
+		return false
+	}
+	previousURL := previousRequest.URL
+	if previousURL.Host == "" && previousRequest.Host != "" {
+		if cloned := *previousRequest.URL; cloned.Host == "" {
+			cloned.Host = previousRequest.Host
+			previousURL = &cloned
+		}
+	}
+	if previousURL == nil || previousURL.Host == "" {
+		return false
+	}
+	if !strings.EqualFold(previousURL.Hostname(), redirectedRequest.URL.Hostname()) {
+		return false
+	}
+	if strings.EqualFold(previousURL.Scheme, redirectedRequest.URL.Scheme) &&
+		effectiveRedirectPort(previousURL) == effectiveRedirectPort(redirectedRequest.URL) {
+		return true
+	}
+	return isDefaultHTTPToHTTPSRedirect(previousURL, redirectedRequest.URL)
+}
+
+func effectiveRedirectPort(URL *url.URL) string {
+	if URL == nil {
+		return ""
+	}
+	if port := URL.Port(); port != "" {
+		return port
+	}
+	switch URL.Scheme {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
+}
+
+func isDefaultHTTPToHTTPSRedirect(previousURL, redirectedURL *url.URL) bool {
+	if previousURL == nil || redirectedURL == nil {
+		return false
+	}
+	return previousURL.Scheme == "http" &&
+		redirectedURL.Scheme == "https" &&
+		isDefaultRedirectPort(previousURL) &&
+		isDefaultRedirectPort(redirectedURL)
+}
+
+func isDefaultRedirectPort(URL *url.URL) bool {
+	if URL == nil {
+		return false
+	}
+	port := URL.Port()
+	return port == "" ||
+		(URL.Scheme == "http" && port == "80") ||
+		(URL.Scheme == "https" && port == "443")
 }
 
 // Do http request

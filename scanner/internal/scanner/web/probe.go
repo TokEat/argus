@@ -34,6 +34,9 @@ type Runtime struct {
 
 	fingerprintByProduct map[string][]structs.FingerPEntity
 	emit                 func(structs.OutputMessage)
+	redirectMu           sync.Mutex
+	redirectURLSet       map[string]struct{}
+	redirectURLs         []string
 }
 
 func NewRuntime(
@@ -67,6 +70,7 @@ func NewRuntime(
 		DirFallbackResultMapMu: dirFallbackResultMapMu,
 		emit:                   emit,
 		fingerprintByProduct:   make(map[string][]structs.FingerPEntity),
+		redirectURLSet:         make(map[string]struct{}),
 	}
 
 	for _, finger := range fingerprintDB {
@@ -81,6 +85,8 @@ func (rt *Runtime) URLCallback(resp runner.Result) {
 	if rt == nil {
 		return
 	}
+
+	rt.collectRedirectLocation(resp)
 
 	_, inserted := rt.upsertResponse(resp)
 	if !inserted {
@@ -98,6 +104,24 @@ func (rt *Runtime) URLCallback(resp runner.Result) {
 			Finger: nil,
 		})
 	}
+}
+
+// DrainRedirectURLs returns same-origin redirect locations discovered during
+// HTTP probing and clears the queue for the next bounded follow-up pass.
+func (rt *Runtime) DrainRedirectURLs() []string {
+	if rt == nil {
+		return nil
+	}
+
+	rt.redirectMu.Lock()
+	defer rt.redirectMu.Unlock()
+
+	if len(rt.redirectURLs) == 0 {
+		return nil
+	}
+	urls := append([]string(nil), rt.redirectURLs...)
+	rt.redirectURLs = nil
+	return utils.RemoveDuplicateElement(urls)
 }
 
 // DirBruteCallback 目录爆破回调。
@@ -292,10 +316,7 @@ func (rt *Runtime) upsertResponse(resp runner.Result) (string, bool) {
 		IconHash:         resp.FavIconMMH3,
 	}
 
-	port, err := strconv.Atoi(resp.Port)
-	if err != nil {
-		port = 0
-	}
+	port := responsePort(URL, resp.Port)
 
 	rt.lockURLMap()
 	defer rt.unlockURLMap()
@@ -408,6 +429,123 @@ func (rt *Runtime) unlockURLMap() {
 	}
 }
 
+func (rt *Runtime) collectRedirectLocation(resp runner.Result) {
+	if resp.StatusCode < 300 || resp.StatusCode >= 400 {
+		return
+	}
+
+	redirectURL, ok := sameOriginRedirectURL(resp)
+	if !ok {
+		return
+	}
+
+	rt.redirectMu.Lock()
+	defer rt.redirectMu.Unlock()
+
+	if _, exists := rt.redirectURLSet[redirectURL]; exists {
+		return
+	}
+	rt.redirectURLSet[redirectURL] = struct{}{}
+	rt.redirectURLs = append(rt.redirectURLs, redirectURL)
+}
+
+func sameOriginRedirectURL(resp runner.Result) (string, bool) {
+	location := strings.TrimSpace(resp.Location)
+	if location == "" {
+		return "", false
+	}
+
+	baseRaw := responseURL(resp)
+	if baseRaw == "" {
+		baseRaw = resp.URL
+	}
+	baseURL, err := url.Parse(baseRaw)
+	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" {
+		return "", false
+	}
+
+	locationURL, err := url.Parse(location)
+	if err != nil {
+		return "", false
+	}
+	redirectURL := baseURL.ResolveReference(locationURL)
+	if redirectURL.Scheme != "http" && redirectURL.Scheme != "https" {
+		return "", false
+	}
+	if !sameOriginHost(baseURL, redirectURL) {
+		return "", false
+	}
+	redirectURL.Fragment = ""
+
+	normalized := redirectURL.String()
+	if normalized == baseURL.String() || normalized == resp.URL || normalized == resp.FinalURL {
+		return "", false
+	}
+	return normalized, true
+}
+
+func sameOriginHost(baseURL, redirectURL *url.URL) bool {
+	if baseURL == nil || redirectURL == nil {
+		return false
+	}
+	if !strings.EqualFold(baseURL.Hostname(), redirectURL.Hostname()) {
+		return false
+	}
+	if strings.EqualFold(baseURL.Scheme, redirectURL.Scheme) && effectivePort(baseURL) == effectivePort(redirectURL) {
+		return true
+	}
+	return isDefaultHTTPToHTTPSUpgrade(baseURL, redirectURL)
+}
+
+func responsePort(URL *url.URL, fallback string) int {
+	port := effectivePort(URL)
+	if port == "" {
+		port = fallback
+	}
+	value, err := strconv.Atoi(port)
+	if err != nil {
+		return 0
+	}
+	return value
+}
+
+func effectivePort(URL *url.URL) string {
+	if URL == nil {
+		return ""
+	}
+	if port := URL.Port(); port != "" {
+		return port
+	}
+	switch URL.Scheme {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
+}
+
+func isDefaultHTTPToHTTPSUpgrade(baseURL, redirectURL *url.URL) bool {
+	if baseURL == nil || redirectURL == nil {
+		return false
+	}
+	return baseURL.Scheme == "http" &&
+		redirectURL.Scheme == "https" &&
+		isDefaultPort(baseURL) &&
+		isDefaultPort(redirectURL)
+}
+
+func isDefaultPort(URL *url.URL) bool {
+	if URL == nil {
+		return false
+	}
+	port := URL.Port()
+	return port == "" ||
+		(URL.Scheme == "http" && port == "80") ||
+		(URL.Scheme == "https" && port == "443")
+}
+
 func responseURL(resp runner.Result) string {
 	if resp.FinalURL != "" {
 		return resp.FinalURL
@@ -416,10 +554,17 @@ func responseURL(resp runner.Result) string {
 }
 
 func normalizedPath(resp runner.Result) string {
+	if resp.FinalURL != "" {
+		if URL, err := url.Parse(resp.FinalURL); err == nil {
+			if URL.Path != "" {
+				return URL.Path
+			}
+		}
+	}
+
 	path := resp.Path
 	if path == "" {
-		URL, err := url.Parse(responseURL(resp))
-		if err == nil {
+		if URL, err := url.Parse(responseURL(resp)); err == nil {
 			path = URL.Path
 		}
 	}
