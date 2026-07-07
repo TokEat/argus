@@ -106,3 +106,40 @@ func TestIdentifyWebFingerprints(t *testing.T) {
 		t.Fatalf("unexpected web fingerprints: want=%v got=%v", want, got)
 	}
 }
+
+func TestIdentifyWebFingerprintsByIconHash(t *testing.T) {
+	rt := NewRuntime(
+		map[string]string{},
+		map[string]structs.URLEntity{
+			"http://example.com": {
+				IP:   "1.1.1.1",
+				Port: 80,
+				WebPaths: map[string]structs.UrlPathEntity{
+					"/": {
+						IconHash: "-1760645692",
+					},
+				},
+			},
+		},
+		map[string][]string{},
+		nil,
+		nil,
+		nil,
+		[]structs.FingerPEntity{
+			{
+				ProductName: "IconOnlyProduct",
+				AllString:   `icon_hash="-1760645692"`,
+				Rule:        ddfinger.ParseRule(`icon_hash="-1760645692"`),
+			},
+		},
+		nil,
+	)
+
+	rt.Identify()
+
+	got := rt.ResultMap["http://example.com/"]
+	want := []string{"IconOnlyProduct"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected icon hash fingerprints: want=%v got=%v", want, got)
+	}
+}

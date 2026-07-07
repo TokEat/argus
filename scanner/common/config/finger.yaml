@@ -16897,6 +16897,7 @@ zywall-usg-100:
 智跃HR人力资源管理系统:
     - body="images/ZY.LOGO.64.png"
 智邦国际ERP系统:
+    - icon_hash="-682445886"
     - body="北京智邦国际软件技术有限公司" && body="window.SysConfig" && body="SYSN/skin/script/init/default.js"
     - body="sysn/view/init/default.ashx" && body="SYSA/images/zbintelsng.png" && body="ZBRLib3175.DLL"
 智齿客服系统(西部):
@@ -16986,7 +16987,7 @@ zywall-usg-100:
 泽元网站内容管理系统ZCMS(西部):
     - header="zcms" || icon_hash="-1832083333" || body="zcms_skin" || body="_zcms_stat" || body="ZCMS内容管理系统"
 派拉身份认证IAM(西部):
-    - 'icon_hash="-1760645692" || header="X-Powered-By: para-node"'
+    - 'icon_hash="-1760645692" || header="X-Powered-By: para-node" || header="X-Powered-By: PASG" || (status="302" && body="PASG Redirecting" && body="/selfcare/")'
 派拉零信任(西部):
     - body="派拉零信任" || title="派拉零信任"
 流量通 流量平台:

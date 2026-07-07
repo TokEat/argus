@@ -108,7 +108,7 @@ func CallHTTPx(urls []string, callBack func(resp runner.Result), proxy string, t
 		options := runner.Options{
 			Methods:                   "GET",
 			InputTargetHost:           nextUrls,
-			Favicon:                   false,
+			Favicon:                   true,
 			Hashes:                    "md5",
 			OutputServerHeader:        true,
 			TLSProbe:                  false,
@@ -175,6 +175,7 @@ func DirBrute(urls []string, callBack func(resp runner.Result), proxy string, th
 	options := runner.Options{
 		Methods:                   "GET",
 		InputTargetHost:           urls,
+		Favicon:                   true,
 		Hashes:                    "md5",
 		OutputServerHeader:        true,
 		TLSProbe:                  false, // 同主探测一样关闭 TLS 资产发现

@@ -1,6 +1,13 @@
 package ddfinger
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"dddd/scanner/structs"
+	"gopkg.in/yaml.v3"
+)
 
 func TestParseRuleMalformedExpressionsDoNotPanic(t *testing.T) {
 	cases := []string{
@@ -35,4 +42,47 @@ func TestParseRuleEmptyStringValue(t *testing.T) {
 	if rules[2].Op != 2 {
 		t.Fatalf("expected equality op, got %d", rules[2].Op)
 	}
+}
+
+func TestParaviewPASGRedirectFingerprintRuleMatches(t *testing.T) {
+	rules := loadFingerprintRules(t, "派拉身份认证IAM(西部)")
+	header := "HTTP/1.1 302 Found\r\nx-powered-by: PASG\r\nLocation: /selfcare/\r\n"
+	body := `<p></p><p>PASG Redirecting to <a href="/selfcare/">/selfcare/</a></p>`
+
+	for _, rule := range rules {
+		finger := structs.FingerPEntity{
+			ProductName: "派拉身份认证IAM(西部)",
+			AllString:   rule,
+			Rule:        ParseRule(rule),
+		}
+		if SingleCheck(finger, "https", header, body, "", "", "", 999, "/", "", "", 302, "text/html", "") {
+			return
+		}
+	}
+
+	t.Fatalf("expected 派拉身份认证IAM(西部) to match PASG 302 redirect, rules=%v", rules)
+}
+
+func loadFingerprintRules(t *testing.T, product string) []string {
+	t.Helper()
+
+	path := filepath.Join("..", "..", "common", "config", "finger.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+
+	var fingerprints map[string][]string
+	if err := yaml.Unmarshal(data, &fingerprints); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+
+	rules, ok := fingerprints[product]
+	if !ok {
+		t.Fatalf("product %q not found in %s", product, path)
+	}
+	if len(rules) == 0 {
+		t.Fatalf("product %q has no rules in %s", product, path)
+	}
+	return rules
 }
