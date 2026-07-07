@@ -78,6 +78,13 @@ const customRuleLabelStyle: React.CSSProperties = {
     gap: 6,
 };
 
+const normalizeCustomRule = (value?: string) =>
+    String(value || '')
+        .split(/\r?\n/)
+        .map((rule) => rule.trim())
+        .filter(Boolean)
+        .join('\n');
+
 const supportsFingerprintDebug = (version?: string): boolean => {
     const normalized = (version || '').trim().toLowerCase().replace(/^v/, '');
     const [majorRaw, minorRaw] = normalized.split('.');
@@ -296,7 +303,8 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
         } catch {
             return;
         }
-        if (!String(values.custom_rule || '').trim()) {
+        const customRule = normalizeCustomRule(values.custom_rule);
+        if (!customRule) {
             message.error('请填写一条指纹规则');
             return;
         }
@@ -327,9 +335,7 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
                 include_poc: isFingerOnly ? false : values.include_poc || false,
             };
             payload.custom_only = true;
-            if (values.custom_rule) {
-                payload.custom_rule = values.custom_rule;
-            }
+            payload.custom_rule = customRule;
             if (values.custom_product) {
                 payload.custom_product = values.custom_product;
             }
@@ -423,11 +429,11 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
                             rules={[{ required: true, message: '请输入一条指纹规则' }]}
                             tooltip="仅执行这一条表达式，不会加载全量指纹库"
                         >
-                            <Input
+                            <Input.TextArea
                                 data-testid="finger-debug-rule"
                                 placeholder={selectedProductRules[0] || '如 body="nacos" && title="Nacos"'}
-                                style={{ fontFamily: 'monospace' }}
-                                list="finger-debug-rule-options"
+                                autoSize={{ minRows: 4, maxRows: 10 }}
+                                style={{ fontFamily: 'monospace', fontSize: 13 }}
                             />
                         </Form.Item>
                         <Form.Item
@@ -449,9 +455,6 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
                                 }}
                             />
                         </Form.Item>
-                        <datalist id="finger-debug-rule-options">
-                            {selectedProductRules.map((rule) => <option key={rule} value={rule} />)}
-                        </datalist>
                     </div>
                 ) : (
                     <div style={customRuleBoxStyle}>
@@ -476,7 +479,12 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
                             style={{ marginBottom: 8 }}
                             tooltip="仅执行这一条表达式，不会加载全量指纹库"
                         >
-                            <Input data-testid="workflow-fingerprint-rule" placeholder='如 body="nacos" && title="Nacos"' style={{ fontFamily: 'monospace' }} />
+                            <Input.TextArea
+                                data-testid="workflow-fingerprint-rule"
+                                placeholder='如 body="nacos" && title="Nacos"'
+                                autoSize={{ minRows: 4, maxRows: 10 }}
+                                style={{ fontFamily: 'monospace', fontSize: 13 }}
+                            />
                         </Form.Item>
 
                         <Form.Item name="custom_wf_types" label="② 触发阶段" style={{ marginBottom: 8 }}

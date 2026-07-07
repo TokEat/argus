@@ -58,13 +58,15 @@ describe('DebugConfig', () => {
         await waitFor(() => expect(screen.getByText('Finger 规则调试')).toBeInTheDocument());
         await waitFor(() => expect(screen.getAllByText(/agent-1/).length).toBeGreaterThan(0));
 
-        await user.type(screen.getByTestId('finger-debug-rule'), 'body="only-one"');
+        const ruleInput = screen.getByTestId('finger-debug-rule');
+        expect(ruleInput.tagName).toBe('TEXTAREA');
+        await user.type(ruleInput, '  body="only-one"  {enter}{enter}  && title="OnlyOne"  ');
         await user.click(screen.getAllByRole('button', { name: /开始调试/i })[0]);
 
         await waitFor(() => expect(debugFingerprint).toHaveBeenCalled());
         expect(debugFingerprint).toHaveBeenLastCalledWith(expect.objectContaining({
             custom_only: true,
-            custom_rule: 'body="only-one"',
+            custom_rule: 'body="only-one"\n&& title="OnlyOne"',
         }));
         expect(debugFingerprint).toHaveBeenLastCalledWith(expect.not.objectContaining({
             custom_product: expect.any(String),
@@ -83,7 +85,9 @@ describe('DebugConfig', () => {
         await waitFor(() => expect(screen.getAllByText(/agent-1/).length).toBeGreaterThan(0));
 
         await user.type(screen.getByTestId('workflow-fingerprint-product'), 'OnlyOne');
-        await user.type(screen.getByTestId('workflow-fingerprint-rule'), 'body="only-one"');
+        const ruleInput = screen.getByTestId('workflow-fingerprint-rule');
+        expect(ruleInput.tagName).toBe('TEXTAREA');
+        await user.type(ruleInput, 'body="only-one"');
         await user.click(screen.getAllByRole('button', { name: /开始调试/i })[1]);
 
         await waitFor(() => expect(debugFingerprint).toHaveBeenCalled());

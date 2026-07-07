@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Button, Space, Tag, Popconfirm, Modal, Input, Table, Empty, App, Form, Select, Segmented, Tooltip } from 'antd';
+import { Button, Space, Tag, Popconfirm, Modal, Input, Table, Empty, App, Form, Segmented, Tooltip } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     PlusOutlined,
@@ -26,6 +26,14 @@ interface EnrichedFingerprint extends API.FingerprintItem {
     _refWorkflow: boolean;
     _refDir: boolean;
 }
+
+const rulesToText = (rules?: string[]) => (rules || []).join('\n');
+
+const textToRules = (value?: string) =>
+    String(value || '')
+        .split(/\r?\n/)
+        .map((rule) => rule.trim())
+        .filter(Boolean);
 
 const DirConfig: React.FC = () => {
     const [loading, setLoading] = useState(true);
@@ -71,7 +79,7 @@ const DirConfig: React.FC = () => {
         },
         editing_fingerprint_rule: modalVisible ? {
             product: currentProduct,
-            rules: form.getFieldValue('rules'),
+            rules: textToRules(form.getFieldValue('rules')),
             is_new: isNew
         } : null
     });
@@ -108,6 +116,7 @@ const DirConfig: React.FC = () => {
         setIsNew(true);
         setCurrentProduct('');
         form.resetFields();
+        form.setFieldsValue({ rules: '' });
         setModalVisible(true);
     };
 
@@ -117,7 +126,7 @@ const DirConfig: React.FC = () => {
         setCurrentProduct(record.product);
         form.setFieldsValue({
             product: record.product,
-            rules: record.rules || [],
+            rules: rulesToText(record.rules),
         });
         setModalVisible(true);
     };
@@ -129,13 +138,13 @@ const DirConfig: React.FC = () => {
             if (isNew) {
                 await addFingerprintDict({
                     product: values.product,
-                    rules: values.rules || [],
+                    rules: textToRules(values.rules),
                 });
                 message.success('追加成功，全局规则库已通知更新。');
             } else {
                 await updateFingerprintDict(currentProduct, {
                     product: values.product,
-                    rules: values.rules || [],
+                    rules: textToRules(values.rules),
                 });
                 message.success('更新成功，全局规则库已通知更新。');
             }
@@ -323,14 +332,21 @@ const DirConfig: React.FC = () => {
                         <Form.Item 
                             label="判定规则语句集 (Rules)" 
                             name="rules"
-                            rules={[{ required: true, message: '请提供至少1个匹配规则' }]}
-                            extra="输入 CEL 或 GoExpr 形式提取逻辑，按回车键确认为一条规则（多条为 OR 或列表关系）"
+                            rules={[
+                                { required: true, message: '请提供至少1个匹配规则' },
+                                {
+                                    validator: (_, value) =>
+                                        textToRules(value).length > 0
+                                            ? Promise.resolve()
+                                            : Promise.reject(new Error('请提供至少1个匹配规则')),
+                                },
+                            ]}
+                            extra="每行一条 CEL 或 GoExpr 规则；多行保存为多条规则，规则之间按 OR 关系处理。"
                         >
-                            <Select 
-                                mode="tags" 
-                                style={{ width: '100%' }} 
-                                placeholder="例：body=&#34;Liferay&#34; || header=&#34;liferay&#34;" 
-                                tokenSeparators={[]}
+                            <Input.TextArea
+                                autoSize={{ minRows: 5, maxRows: 12 }}
+                                placeholder="每行一条规则，规则之间按 OR 关系处理"
+                                style={{ fontFamily: 'monospace', fontSize: 13 }}
                             />
                         </Form.Item>
                     </Form>

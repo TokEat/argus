@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Drawer, Button, Space, Input, App, Form, Select, Alert } from 'antd';
+import { Drawer, Button, Space, Input, App, Form, Alert } from 'antd';
 import {
     getFingerprintDict,
     addFingerprintDict,
@@ -17,6 +17,14 @@ interface FingerprintInlineEditorProps {
     /** 保存成功后回调，回传最终的 product 名 */
     onSaved?: (product: string) => void;
 }
+
+const rulesToText = (rules?: string[]) => (rules || []).join('\n');
+
+const textToRules = (value?: string) =>
+    String(value || '')
+        .split(/\r?\n/)
+        .map((rule) => rule.trim())
+        .filter(Boolean);
 
 const FingerprintInlineEditor: React.FC<FingerprintInlineEditorProps> = ({
     open,
@@ -36,7 +44,7 @@ const FingerprintInlineEditor: React.FC<FingerprintInlineEditorProps> = ({
         if (!open) return;
         setNotFound(false);
         if (isNew) {
-            form.setFieldsValue({ product: defaultProduct || '', rules: [] });
+            form.setFieldsValue({ product: defaultProduct || '', rules: '' });
             return;
         }
         (async () => {
@@ -46,10 +54,10 @@ const FingerprintInlineEditor: React.FC<FingerprintInlineEditorProps> = ({
                 const item = all?.find((f) => f.product === product);
                 if (!item) {
                     setNotFound(true);
-                    form.setFieldsValue({ product, rules: [] });
+                    form.setFieldsValue({ product, rules: '' });
                     return;
                 }
-                form.setFieldsValue({ product: item.product, rules: item.rules || [] });
+                form.setFieldsValue({ product: item.product, rules: rulesToText(item.rules) });
             } catch {
                 message.error('加载指纹规则失败');
             } finally {
@@ -62,7 +70,7 @@ const FingerprintInlineEditor: React.FC<FingerprintInlineEditorProps> = ({
     useAutoContext({
         editing_fingerprint_rule: open ? {
             product: form.getFieldValue('product') || product || defaultProduct,
-            rules: form.getFieldValue('rules') || [],
+            rules: textToRules(form.getFieldValue('rules')),
             is_new: isNew,
             not_found_in_db: notFound
         } : null
@@ -72,7 +80,7 @@ const FingerprintInlineEditor: React.FC<FingerprintInlineEditorProps> = ({
         try {
             const values = await form.validateFields();
             const finalProduct = (values.product || '').trim();
-            const rules: string[] = (values.rules || []).map((r: string) => r.trim()).filter(Boolean);
+            const rules = textToRules(values.rules);
             if (!finalProduct) {
                 message.error('请填写 product 名称');
                 return;
@@ -131,13 +139,21 @@ const FingerprintInlineEditor: React.FC<FingerprintInlineEditorProps> = ({
                 <Form.Item
                     label="指纹规则表达式 (rules)"
                     name="rules"
-                    extra='每条规则一行，按回车录入。例：title="Liferay" 或 body="liferay" || header="liferay"'
+                    rules={[
+                        { required: true, message: '请提供至少1个匹配规则' },
+                        {
+                            validator: (_, value) =>
+                                textToRules(value).length > 0
+                                    ? Promise.resolve()
+                                    : Promise.reject(new Error('请提供至少1个匹配规则')),
+                        },
+                    ]}
+                    extra='每行一条规则；多行保存为多条规则。例：title="Liferay" 或 body="liferay" || header="liferay"'
                 >
-                    <Select
-                        mode="tags"
-                        style={{ width: '100%' }}
-                        placeholder='输入规则后回车，如 body="liferay"'
-                        tokenSeparators={[]}
+                    <Input.TextArea
+                        autoSize={{ minRows: 5, maxRows: 12 }}
+                        placeholder="每行一条规则，规则之间按 OR 关系处理"
+                        style={{ fontFamily: 'monospace', fontSize: 13 }}
                     />
                 </Form.Item>
             </Form>
