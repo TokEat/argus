@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from 'antd';
 import DebugConfig from './DebugConfig';
@@ -14,7 +14,10 @@ vi.mock('@monaco-editor/react', () => ({
 }));
 
 vi.mock('../../services/api', () => ({
-    getFingerprintDict: vi.fn().mockResolvedValue([{ product: 'OnlyOne', rules: ['body="only-one"'] }]),
+    getFingerprintDict: vi.fn().mockResolvedValue([{
+        product: 'OnlyOne',
+        rules: ['body="only-one"', 'title="OnlyOne"', '  ', 'header="only-one" || cert="only-one"'],
+    }]),
     getWorkflowDict: vi.fn().mockResolvedValue([]),
     getDirDict: vi.fn().mockResolvedValue([]),
     listArsenals: vi.fn().mockResolvedValue([]),
@@ -69,6 +72,9 @@ describe('DebugConfig', () => {
             custom_rule: 'body="only-one"\n&& title="OnlyOne"',
         }));
         expect(debugFingerprint).toHaveBeenLastCalledWith(expect.not.objectContaining({
+            custom_rules: expect.any(Array),
+        }));
+        expect(debugFingerprint).toHaveBeenLastCalledWith(expect.not.objectContaining({
             custom_product: expect.any(String),
         }));
     });
@@ -95,6 +101,39 @@ describe('DebugConfig', () => {
             custom_only: true,
             custom_product: 'OnlyOne',
             custom_rule: 'body="only-one"',
+        }));
+        expect(debugFingerprint).toHaveBeenLastCalledWith(expect.not.objectContaining({
+            custom_rules: expect.any(Array),
+        }));
+    });
+
+    it('fills all fingerprint rules when selecting a product for finger debug', async () => {
+        const user = userEvent.setup();
+        render(
+            <App>
+                <DebugConfig />
+            </App>,
+        );
+
+        await waitFor(() => expect(screen.getByText('Finger 规则调试')).toBeInTheDocument());
+        await waitFor(() => expect(screen.getAllByText(/agent-1/).length).toBeGreaterThan(0));
+
+        const productSelect = screen.getByTestId('finger-debug-product');
+        fireEvent.mouseDown(productSelect.querySelector('[role="combobox"]') as HTMLElement);
+        const optionContent = await screen.findByText('OnlyOne', { selector: '.ant-select-item-option-content' });
+        fireEvent.click(optionContent.closest('.ant-select-item-option') as HTMLElement);
+
+        const ruleInput = screen.getByTestId('finger-debug-rule');
+        await waitFor(() => expect(ruleInput).toHaveValue('body="only-one"\ntitle="OnlyOne"\n  \nheader="only-one" || cert="only-one"'));
+
+        await user.click(screen.getAllByRole('button', { name: /开始调试/i })[0]);
+
+        await waitFor(() => expect(debugFingerprint).toHaveBeenCalled());
+        expect(debugFingerprint).toHaveBeenLastCalledWith(expect.objectContaining({
+            custom_only: true,
+            custom_product: 'OnlyOne',
+            custom_rule: 'body="only-one"\ntitle="OnlyOne"\nheader="only-one" || cert="only-one"',
+            custom_rules: ['body="only-one"', 'title="OnlyOne"', 'header="only-one" || cert="only-one"'],
         }));
     });
 

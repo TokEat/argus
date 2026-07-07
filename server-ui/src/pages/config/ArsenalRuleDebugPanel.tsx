@@ -78,12 +78,11 @@ const customRuleLabelStyle: React.CSSProperties = {
     gap: 6,
 };
 
-const normalizeCustomRule = (value?: string) =>
+const normalizeCustomRules = (value?: string) =>
     String(value || '')
         .split(/\r?\n/)
         .map((rule) => rule.trim())
-        .filter(Boolean)
-        .join('\n');
+        .filter(Boolean);
 
 const supportsFingerprintDebug = (version?: string): boolean => {
     const normalized = (version || '').trim().toLowerCase().replace(/^v/, '');
@@ -140,6 +139,7 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
     const [complete, setComplete] = useState<API.DebugEvent | null>(null);
     const [pocMode, setPocMode] = useState<'select' | 'custom'>('select');
     const [customPocContent, setCustomPocContent] = useState('');
+    const [productCustomRules, setProductCustomRules] = useState<{ text: string; rules: string[] } | null>(null);
 
     const extractPocId = useCallback((yaml: string): string => {
         const m = yaml.match(/^id:\s*(.+)$/m);
@@ -303,8 +303,9 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
         } catch {
             return;
         }
-        const customRule = normalizeCustomRule(values.custom_rule);
-        if (!customRule) {
+        const customRules = normalizeCustomRules(values.custom_rule);
+        const customRule = customRules.join('\n');
+        if (customRules.length === 0) {
             message.error('请填写一条指纹规则');
             return;
         }
@@ -336,6 +337,9 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
             };
             payload.custom_only = true;
             payload.custom_rule = customRule;
+            if (productCustomRules && String(values.custom_rule || '') === productCustomRules.text) {
+                payload.custom_rules = productCustomRules.rules;
+            }
             if (values.custom_product) {
                 payload.custom_product = values.custom_product;
             }
@@ -443,14 +447,23 @@ const ArsenalRuleDebugPanel: React.FC<ArsenalRuleDebugPanelProps> = ({
                             tooltip="仅用于结果标记；不填也会执行规则调试"
                         >
                             <Select
+                                data-testid="finger-debug-product"
                                 allowClear
                                 showSearch
                                 placeholder="可选择已有 Product 自动带出规则"
                                 options={fingerprintProductOptions}
                                 onChange={(product) => {
-                                    const firstRule = fingerprints.find((fp) => fp.product === product)?.rules?.[0];
-                                    if (firstRule) {
-                                        form.setFieldValue('custom_rule', firstRule);
+                                    if (!product) {
+                                        setProductCustomRules(null);
+                                        return;
+                                    }
+                                    const rules = fingerprints.find((fp) => fp.product === product)?.rules || [];
+                                    if (rules.length > 0) {
+                                        const text = rules.join('\n');
+                                        form.setFieldValue('custom_rule', text);
+                                        setProductCustomRules({ text, rules: normalizeCustomRules(text) });
+                                    } else {
+                                        setProductCustomRules(null);
                                     }
                                 }}
                             />

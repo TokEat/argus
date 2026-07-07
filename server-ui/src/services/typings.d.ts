@@ -407,6 +407,7 @@ declare namespace API {
     custom_only?: boolean;
     custom_product?: string;
     custom_rule?: string;
+    custom_rules?: string[];
     custom_wf_product?: string;
     custom_wf_types?: string;
     custom_wf_pocs?: string;

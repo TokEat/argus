@@ -675,6 +675,125 @@ func TestFingerprintDebugCustomOnlyUsesSingleCustomRule(t *testing.T) {
 	}
 }
 
+func TestFingerprintDebugCustomOnlyUsesMultipleCustomRules(t *testing.T) {
+	origNewScanContext := newScanContext
+	origRunScanTask := runScanTask
+	defer func() {
+		newScanContext = origNewScanContext
+		runScanTask = origRunScanTask
+	}()
+
+	var scannedProducts []string
+	var scannedRules []string
+	newScanContext = func(cfg engine.Config) (*engine.ScanContext, error) {
+		ctx, cancel := context.WithCancel(context.Background())
+		return &engine.ScanContext{
+			Config: cfg,
+			Ctx:    ctx,
+			Cancel: cancel,
+			FingerprintDB: []engine.FingerPEntity{
+				{ProductName: "ExistingOne"},
+				{ProductName: "ExistingTwo"},
+			},
+		}, nil
+	}
+	runScanTask = func(ctx *engine.ScanContext) error {
+		for _, fp := range ctx.FingerprintDB {
+			scannedProducts = append(scannedProducts, fp.ProductName)
+			scannedRules = append(scannedRules, fp.AllString)
+		}
+		return nil
+	}
+
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	completed := false
+	var completeErr string
+
+	worker.runFingerprintDebugSession(
+		context.Background(),
+		&pb.DebugCommand{
+			Action:     "start_fingerprint_debug",
+			SessionId:  "debug-finger-multi",
+			TenantId:   "default",
+			TargetUrl:  "https://target.local/",
+			TimeoutSec: 5,
+			PocContent: `{"custom_only":true,"custom_product":"OnlyOne","custom_rules":["body=\"only-one\"","title=\"OnlyOne\""]}`,
+		},
+		5*time.Second,
+		func(*pb.DebugEvent) {},
+		func(errMsg string) {
+			completed = true
+			completeErr = errMsg
+		},
+	)
+
+	if !completed {
+		t.Fatalf("expected debug session to complete")
+	}
+	if completeErr != "" {
+		t.Fatalf("expected multi-rule debug to complete without error, got %q", completeErr)
+	}
+	if !slices.Equal(scannedProducts, []string{"OnlyOne", "OnlyOne"}) {
+		t.Fatalf("expected one custom fingerprint entity per rule, got %#v", scannedProducts)
+	}
+	if !slices.Equal(scannedRules, []string{`body="only-one"`, `title="OnlyOne"`}) {
+		t.Fatalf("expected custom rules to remain separate, got %#v", scannedRules)
+	}
+}
+
+func TestFingerprintDebugCustomRulesFallbackToCustomRuleWhenEmpty(t *testing.T) {
+	origNewScanContext := newScanContext
+	origRunScanTask := runScanTask
+	defer func() {
+		newScanContext = origNewScanContext
+		runScanTask = origRunScanTask
+	}()
+
+	var scannedRules []string
+	newScanContext = func(cfg engine.Config) (*engine.ScanContext, error) {
+		ctx, cancel := context.WithCancel(context.Background())
+		return &engine.ScanContext{
+			Config:        cfg,
+			Ctx:           ctx,
+			Cancel:        cancel,
+			FingerprintDB: []engine.FingerPEntity{{ProductName: "ExistingOne"}},
+		}, nil
+	}
+	runScanTask = func(ctx *engine.ScanContext) error {
+		for _, fp := range ctx.FingerprintDB {
+			scannedRules = append(scannedRules, fp.AllString)
+		}
+		return nil
+	}
+
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	var completeErr string
+
+	worker.runFingerprintDebugSession(
+		context.Background(),
+		&pb.DebugCommand{
+			Action:     "start_fingerprint_debug",
+			SessionId:  "debug-finger-fallback",
+			TenantId:   "default",
+			TargetUrl:  "https://target.local/",
+			TimeoutSec: 5,
+			PocContent: `{"custom_only":true,"custom_product":"OnlyOne","custom_rules":[" ",""],"custom_rule":"body=\"fallback\""}`,
+		},
+		5*time.Second,
+		func(*pb.DebugEvent) {},
+		func(errMsg string) {
+			completeErr = errMsg
+		},
+	)
+
+	if completeErr != "" {
+		t.Fatalf("expected empty custom_rules to fall back to custom_rule, got %q", completeErr)
+	}
+	if !slices.Equal(scannedRules, []string{`body="fallback"`}) {
+		t.Fatalf("expected fallback custom_rule to be scanned, got %#v", scannedRules)
+	}
+}
+
 func TestFingerprintDebugCustomOnlyAllowsRuleWithoutProduct(t *testing.T) {
 	origNewScanContext := newScanContext
 	origRunScanTask := runScanTask

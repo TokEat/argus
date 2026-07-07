@@ -247,15 +247,35 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 }
 
 type fingerprintDebugOptions struct {
-	IncludeDir       bool   `json:"include_dir"`
-	IncludePoc       bool   `json:"include_poc"`
-	CustomOnly       bool   `json:"custom_only"`
-	CustomProduct    string `json:"custom_product"`
-	CustomRule       string `json:"custom_rule"`
-	CustomWfProduct  string `json:"custom_wf_product"`
-	CustomWfTypes    string `json:"custom_wf_types"`
-	CustomWfPocs     string `json:"custom_wf_pocs"`
-	CustomPocContent string `json:"custom_poc_content"`
+	IncludeDir       bool     `json:"include_dir"`
+	IncludePoc       bool     `json:"include_poc"`
+	CustomOnly       bool     `json:"custom_only"`
+	CustomProduct    string   `json:"custom_product"`
+	CustomRule       string   `json:"custom_rule"`
+	CustomRules      []string `json:"custom_rules"`
+	CustomWfProduct  string   `json:"custom_wf_product"`
+	CustomWfTypes    string   `json:"custom_wf_types"`
+	CustomWfPocs     string   `json:"custom_wf_pocs"`
+	CustomPocContent string   `json:"custom_poc_content"`
+}
+
+func cleanCustomFingerprintRules(options fingerprintDebugOptions) []string {
+	if len(options.CustomRules) > 0 {
+		rules := make([]string, 0, len(options.CustomRules))
+		for _, rule := range options.CustomRules {
+			rule = strings.TrimSpace(rule)
+			if rule != "" {
+				rules = append(rules, rule)
+			}
+		}
+		if len(rules) > 0 {
+			return rules
+		}
+	}
+	if rule := strings.TrimSpace(options.CustomRule); rule != "" {
+		return []string{rule}
+	}
+	return nil
 }
 
 func (w *Worker) runFingerprintDebugSession(
@@ -300,35 +320,37 @@ func (w *Worker) runFingerprintDebugSession(
 	if options.CustomOnly {
 		sc.FingerprintDB = nil
 	}
-	if options.CustomRule != "" {
+	customRules := cleanCustomFingerprintRules(options)
+	if len(customRules) > 0 {
 		productName := strings.TrimSpace(options.CustomProduct)
 		if productName == "" {
 			productName = defaultDebugFingerprintProduct
 		}
-		rule := strings.TrimSpace(options.CustomRule)
-		parsed := ddfinger.ParseRule(rule)
-		if len(parsed) > 0 {
-			engineRules := make([]engine.RuleData, 0, len(parsed))
-			for _, r := range parsed {
-				engineRules = append(engineRules, engine.RuleData(r))
+		for _, rule := range customRules {
+			parsed := ddfinger.ParseRule(rule)
+			if len(parsed) > 0 {
+				engineRules := make([]engine.RuleData, 0, len(parsed))
+				for _, r := range parsed {
+					engineRules = append(engineRules, engine.RuleData(r))
+				}
+				sc.FingerprintDB = append(sc.FingerprintDB, engine.FingerPEntity{
+					ProductName: productName,
+					AllString:   rule,
+					Rule:        engineRules,
+				})
+				customProducts[productName] = true
+				send(&pb.DebugEvent{
+					Type:    "debug_log",
+					Level:   "INFO",
+					Message: fmt.Sprintf("injected custom fingerprint: %s → %s", productName, rule),
+				})
+			} else {
+				send(&pb.DebugEvent{
+					Type:    "debug_log",
+					Level:   "WARN",
+					Message: fmt.Sprintf("custom rule expression could not be parsed: %s", rule),
+				})
 			}
-			sc.FingerprintDB = append(sc.FingerprintDB, engine.FingerPEntity{
-				ProductName: productName,
-				AllString:   rule,
-				Rule:        engineRules,
-			})
-			customProducts[productName] = true
-			send(&pb.DebugEvent{
-				Type:    "debug_log",
-				Level:   "INFO",
-				Message: fmt.Sprintf("injected custom fingerprint: %s → %s", productName, rule),
-			})
-		} else {
-			send(&pb.DebugEvent{
-				Type:    "debug_log",
-				Level:   "WARN",
-				Message: fmt.Sprintf("custom rule expression could not be parsed: %s", rule),
-			})
 		}
 	}
 	if options.CustomOnly && len(customProducts) == 0 {

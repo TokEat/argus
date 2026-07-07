@@ -604,6 +604,55 @@ func TestMCPRuleDebugFingerprintRuleOnlyDispatchesCustomOnly(t *testing.T) {
 	}
 }
 
+func TestDebugFingerprintDispatchesCustomRules(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Node{TenantID: "default", AgentID: "agent-1", Status: "Alive", Version: "v2.3.0"}).Error; err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+	oldHub := notifyHub
+	hub := grpcpkg.NewNotifyHub()
+	stream := &fakeSubscribeStream{}
+	notifyHub = hub
+	oldWSHub := Hub
+	Hub = &WebSocketHub{clients: make(map[*websocket.Conn]string), broadcast: make(chan wsEnvelope, 16)}
+	oldSessions := pocDebugSessions
+	pocDebugSessions = &debugSessionManager{
+		sessions:     make(map[string]*debugSession),
+		activeTenant: make(map[string]string),
+	}
+	t.Cleanup(func() {
+		notifyHub = oldHub
+		Hub = oldWSHub
+		pocDebugSessions = oldSessions
+	})
+	hub.Register("agent-1", stream, 1, nil)
+
+	body := `{"agent_id":"agent-1","target_url":"http://target.local","custom_only":true,"custom_product":"OnlyOne","custom_rules":["body=\"only-one\"","title=\"OnlyOne\""],"timeout_sec":1}`
+	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/arsenals/finger-debug", "operator", "9")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/arsenals/finger-debug", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	debugFingerprint(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	if len(stream.sent) != 1 || stream.sent[0].DebugCommand == nil {
+		t.Fatalf("expected one debug command, got %#v", stream.sent)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(stream.sent[0].DebugCommand.PocContent), &payload); err != nil {
+		t.Fatalf("decode fingerprint debug payload: %v", err)
+	}
+	rawRules, ok := payload["custom_rules"].([]interface{})
+	if !ok || len(rawRules) != 2 || rawRules[0] != `body="only-one"` || rawRules[1] != `title="OnlyOne"` {
+		t.Fatalf("expected custom_rules to be forwarded, got %#v", payload)
+	}
+	if payload["custom_rule"] != nil {
+		t.Fatalf("custom_rule should not be required when custom_rules are provided: %#v", payload)
+	}
+}
+
 func TestDeleteFingerprintDictReturnsCatalogSyncError(t *testing.T) {
 	store := setupAITestDB(t)
 	if err := store.Create(&db.Arsenal{

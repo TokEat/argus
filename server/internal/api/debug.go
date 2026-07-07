@@ -26,20 +26,32 @@ const (
 var safeDebugPocIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 type debugRequest struct {
-	AgentID          string `json:"agent_id"`
-	PocContent       string `json:"poc_content"`
-	TargetURL        string `json:"target_url"`
-	Proxy            string `json:"proxy"`
-	TimeoutSec       int32  `json:"timeout_sec"`
-	IncludeDir       bool   `json:"include_dir"`
-	IncludePoc       bool   `json:"include_poc"`
-	CustomOnly       bool   `json:"custom_only"`
-	CustomProduct    string `json:"custom_product"`
-	CustomRule       string `json:"custom_rule"`
-	CustomWfProduct  string `json:"custom_wf_product"`
-	CustomWfTypes    string `json:"custom_wf_types"`
-	CustomWfPocs     string `json:"custom_wf_pocs"`
-	CustomPocContent string `json:"custom_poc_content"`
+	AgentID          string   `json:"agent_id"`
+	PocContent       string   `json:"poc_content"`
+	TargetURL        string   `json:"target_url"`
+	Proxy            string   `json:"proxy"`
+	TimeoutSec       int32    `json:"timeout_sec"`
+	IncludeDir       bool     `json:"include_dir"`
+	IncludePoc       bool     `json:"include_poc"`
+	CustomOnly       bool     `json:"custom_only"`
+	CustomProduct    string   `json:"custom_product"`
+	CustomRule       string   `json:"custom_rule"`
+	CustomRules      []string `json:"custom_rules"`
+	CustomWfProduct  string   `json:"custom_wf_product"`
+	CustomWfTypes    string   `json:"custom_wf_types"`
+	CustomWfPocs     string   `json:"custom_wf_pocs"`
+	CustomPocContent string   `json:"custom_poc_content"`
+}
+
+func cleanDebugRules(rules []string) []string {
+	cleaned := make([]string, 0, len(rules))
+	for _, rule := range rules {
+		rule = strings.TrimSpace(rule)
+		if rule != "" {
+			cleaned = append(cleaned, rule)
+		}
+	}
+	return cleaned
 }
 
 type debugSession struct {
@@ -195,7 +207,8 @@ func startAgentDebug(c *gin.Context, action string, requirePocContent bool) {
 			return
 		}
 	}
-	if action == "start_fingerprint_debug" && req.CustomOnly && strings.TrimSpace(req.CustomRule) == "" {
+	customRules := cleanDebugRules(req.CustomRules)
+	if action == "start_fingerprint_debug" && req.CustomOnly && strings.TrimSpace(req.CustomRule) == "" && len(customRules) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "custom_only fingerprint debug requires custom_rule"})
 		return
 	}
@@ -236,6 +249,9 @@ func startAgentDebug(c *gin.Context, action string, requirePocContent bool) {
 		}
 		if req.CustomRule != "" {
 			payloadMap["custom_rule"] = req.CustomRule
+		}
+		if len(customRules) > 0 {
+			payloadMap["custom_rules"] = customRules
 		}
 		if req.CustomWfProduct != "" && req.CustomWfPocs != "" {
 			payloadMap["custom_wf_product"] = req.CustomWfProduct
