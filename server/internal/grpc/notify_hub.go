@@ -3,6 +3,7 @@ package grpc
 import (
 	"errors"
 	"log"
+	"strings"
 	"sync"
 
 	pb "github.com/user/dddd-proto/go/scan"
@@ -29,6 +30,7 @@ var ErrAgentOffline = errors.New("agent is offline")
 // agentConn 单个 Agent 的连接状态
 type agentConn struct {
 	agentID   string
+	tenantID  string
 	stream    pb.AgentService_SubscribeServer
 	freeSlots int32 // Agent 上报的空闲 worker 数
 	tags      map[string]string
@@ -47,13 +49,18 @@ func (h *NotifyHub) Register(agentID string, stream pb.AgentService_SubscribeSer
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	tenantID := normalizeNotifyTenantID("")
+	if tags != nil {
+		tenantID = normalizeNotifyTenantID(tags["tenant_id"])
+	}
 	h.agents[agentID] = &agentConn{
 		agentID:   agentID,
+		tenantID:  tenantID,
 		stream:    stream,
 		freeSlots: freeSlots,
 		tags:      tags,
 	}
-	log.Printf("[NotifyHub] Agent %s subscribed (free_slots=%d)", agentID, freeSlots)
+	log.Printf("[NotifyHub] Agent %s subscribed (tenant=%s free_slots=%d)", agentID, tenantID, freeSlots)
 }
 
 // Unregister 移除 Agent 连接（断开时调用）。如果 Agent 已经建立了更新的
@@ -125,16 +132,19 @@ func (h *NotifyHub) SendDebugCommand(agentID string, cmd *pb.DebugCommand) error
 // BroadcastAPIConfigUpdated notifies online Agents to refresh API key config.
 // The notification intentionally contains no secret material; Agents must fetch
 // their scoped api-config.yaml through the internal HTTP endpoint.
-func (h *NotifyHub) BroadcastAPIConfigUpdated() {
+func (h *NotifyHub) BroadcastAPIConfigUpdated(tenantID string) {
+	tenantID = normalizeNotifyTenantID(tenantID)
 	h.mu.RLock()
 	agents := make([]*agentConn, 0, len(h.agents))
 	for _, conn := range h.agents {
-		agents = append(agents, conn)
+		if conn.tenantID == tenantID {
+			agents = append(agents, conn)
+		}
 	}
 	h.mu.RUnlock()
 
 	if len(agents) == 0 {
-		log.Printf("[NotifyHub] No agents online to notify api_config_updated")
+		log.Printf("[NotifyHub] No agents online to notify api_config_updated for tenant %s", tenantID)
 		return
 	}
 
@@ -150,7 +160,15 @@ func (h *NotifyHub) BroadcastAPIConfigUpdated() {
 		}
 		notified++
 	}
-	log.Printf("[NotifyHub] Broadcast api_config_updated: %d agents notified", notified)
+	log.Printf("[NotifyHub] Broadcast api_config_updated: %d agents notified for tenant %s", notified, tenantID)
+}
+
+func normalizeNotifyTenantID(tenantID string) string {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return "default"
+	}
+	return tenantID
 }
 
 // BroadcastNewTask 新任务入队后广播通知所有有空闲容量的 Agent。

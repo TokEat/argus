@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	pb "github.com/user/dddd-proto/go/scan"
@@ -273,13 +274,73 @@ func TestSubscribeMarksExistingOfflineNodeAlive(t *testing.T) {
 	}
 }
 
+func TestSubscribeRegistersNotifyHubWithNodeTenant(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	if err := store.Create(&db.Node{
+		TenantID: "tenant-a",
+		AgentID:  "agent-a",
+		Status:   "Offline",
+	}).Error; err != nil {
+		t.Fatalf("seed tenant-a node: %v", err)
+	}
+	if err := store.Create(&db.Node{
+		TenantID: "tenant-b",
+		AgentID:  "agent-b",
+		Status:   "Offline",
+	}).Error; err != nil {
+		t.Fatalf("seed tenant-b node: %v", err)
+	}
+
+	server := NewServer(50051)
+	streamA := &subscribeTestStream{
+		recv:     []*pb.AgentSignal{{AgentId: "agent-a", FreeSlots: 1, SignalType: "ready"}},
+		blockCh:  make(chan struct{}),
+		closeErr: io.EOF,
+	}
+	streamB := &subscribeTestStream{
+		recv:     []*pb.AgentSignal{{AgentId: "agent-b", FreeSlots: 1, SignalType: "ready"}},
+		blockCh:  make(chan struct{}),
+		closeErr: io.EOF,
+	}
+	errCh := make(chan error, 2)
+	go func() { errCh <- server.Subscribe(streamA) }()
+	go func() { errCh <- server.Subscribe(streamB) }()
+	waitForAgentOnline(t, server.Hub, "agent-a")
+	waitForAgentOnline(t, server.Hub, "agent-b")
+
+	server.Hub.BroadcastAPIConfigUpdated("tenant-a")
+
+	if len(streamA.sent) != 1 || streamA.sent[0].NotifyType != "api_config_updated" {
+		t.Fatalf("tenant-a subscribe stream should receive api_config_updated, got %#v", streamA.sent)
+	}
+	if len(streamB.sent) != 0 {
+		t.Fatalf("tenant-b subscribe stream should not receive tenant-a update, got %#v", streamB.sent)
+	}
+
+	close(streamA.blockCh)
+	close(streamB.blockCh)
+	for i := 0; i < 2; i++ {
+		if err := <-errCh; err != nil {
+			t.Fatalf("subscribe returned error: %v", err)
+		}
+	}
+}
+
 type subscribeTestStream struct {
-	recv []*pb.AgentSignal
-	sent []*pb.TaskNotify
+	recv     []*pb.AgentSignal
+	sent     []*pb.TaskNotify
+	blockCh  chan struct{}
+	closeErr error
 }
 
 func (s *subscribeTestStream) Recv() (*pb.AgentSignal, error) {
 	if len(s.recv) == 0 {
+		if s.blockCh != nil {
+			<-s.blockCh
+		}
+		if s.closeErr != nil {
+			return nil, s.closeErr
+		}
 		return nil, io.EOF
 	}
 	msg := s.recv[0]
@@ -298,3 +359,20 @@ func (s *subscribeTestStream) SetTrailer(metadata.MD)       {}
 func (s *subscribeTestStream) Context() context.Context     { return context.Background() }
 func (s *subscribeTestStream) SendMsg(interface{}) error    { return nil }
 func (s *subscribeTestStream) RecvMsg(interface{}) error    { return io.EOF }
+
+func waitForAgentOnline(t *testing.T, hub *NotifyHub, agentID string) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for agent %s to subscribe", agentID)
+		case <-ticker.C:
+			if hub.IsAgentOnline(agentID) {
+				return
+			}
+		}
+	}
+}

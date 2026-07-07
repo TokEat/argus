@@ -841,7 +841,7 @@ func saveApiKeysConfig(c *gin.Context) {
 	}
 
 	if notifyHub != nil {
-		notifyHub.BroadcastAPIConfigUpdated()
+		notifyHub.BroadcastAPIConfigUpdated(tenantID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "saved", "hash": hash})

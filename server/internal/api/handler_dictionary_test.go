@@ -125,6 +125,41 @@ func TestSaveAPIKeysConfigDoesNotBumpRuleVersionAndBroadcastsAPIConfig(t *testin
 	}
 }
 
+func TestSaveAPIKeysConfigBroadcastsOnlyCurrentTenant(t *testing.T) {
+	setupAITestDB(t)
+
+	oldHub := notifyHub
+	hub := grpcpkg.NewNotifyHub()
+	tenantAStream := &fakeAPIConfigNotifyStream{sentCh: make(chan string, 1)}
+	tenantBStream := &fakeAPIConfigNotifyStream{sentCh: make(chan string, 1)}
+	hub.Register("agent-a", tenantAStream, 1, map[string]string{"tenant_id": "tenant-a"})
+	hub.Register("agent-b", tenantBStream, 1, map[string]string{"tenant_id": "tenant-b"})
+	notifyHub = hub
+	t.Cleanup(func() { notifyHub = oldHub })
+
+	ctx, recorder := newTenantContextWithRole(http.MethodPut, "/config/api-keys", "admin", "9")
+	ctx.Set("tenant", "tenant-a")
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/config/api-keys", strings.NewReader(`[{"provider":"quake","keys":["tenant-a-key"]}]`))
+	saveApiKeysConfig(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected save API keys 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	select {
+	case got := <-tenantAStream.sentCh:
+		if got != "api_config_updated" {
+			t.Fatalf("tenant-a notify type = %q, want api_config_updated", got)
+		}
+	default:
+		t.Fatalf("expected tenant-a agent to receive api_config_updated")
+	}
+	select {
+	case got := <-tenantBStream.sentCh:
+		t.Fatalf("tenant-b agent should not receive tenant-a update, got %q", got)
+	default:
+	}
+}
+
 type fakeAPIConfigNotifyStream struct {
 	sentCh chan string
 }

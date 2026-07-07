@@ -39,7 +39,7 @@ func TestNotifyHubBroadcastAPIConfigUpdated(t *testing.T) {
 	hub.Register("agent-a", streamA, 0, nil)
 	hub.Register("agent-b", streamB, 2, nil)
 
-	hub.BroadcastAPIConfigUpdated()
+	hub.BroadcastAPIConfigUpdated("default")
 
 	for name, stream := range map[string]*notifyHubTestStream{"agent-a": streamA, "agent-b": streamB} {
 		if len(stream.sent) != 1 {
@@ -51,6 +51,28 @@ func TestNotifyHubBroadcastAPIConfigUpdated(t *testing.T) {
 		if stream.sent[0].AvailableTasks != 0 {
 			t.Fatalf("%s api config notification should not advertise tasks", name)
 		}
+	}
+}
+
+func TestNotifyHubBroadcastAPIConfigUpdatedIsTenantScoped(t *testing.T) {
+	hub := NewNotifyHub()
+	tenantAStream := &notifyHubTestStream{}
+	tenantBStream := &notifyHubTestStream{}
+	defaultStream := &notifyHubTestStream{}
+	hub.Register("agent-a", tenantAStream, 1, map[string]string{"tenant_id": "tenant-a"})
+	hub.Register("agent-b", tenantBStream, 1, map[string]string{"tenant_id": "tenant-b"})
+	hub.Register("agent-default", defaultStream, 1, nil)
+
+	hub.BroadcastAPIConfigUpdated("tenant-a")
+
+	if len(tenantAStream.sent) != 1 || tenantAStream.sent[0].NotifyType != "api_config_updated" {
+		t.Fatalf("tenant-a agent should receive api_config_updated, got %#v", tenantAStream.sent)
+	}
+	if len(tenantBStream.sent) != 0 {
+		t.Fatalf("tenant-b agent should not receive tenant-a api config notification, got %#v", tenantBStream.sent)
+	}
+	if len(defaultStream.sent) != 0 {
+		t.Fatalf("default tenant agent should not receive tenant-a api config notification, got %#v", defaultStream.sent)
 	}
 }
 

@@ -265,12 +265,13 @@ func (s *Server) Subscribe(stream pb.AgentService_SubscribeServer) error {
 		return fmt.Errorf("subscribe: agent_id is required in first AgentSignal")
 	}
 
+	tenantID := tenantIDForAgent(agentID)
 	// 注册到 NotifyHub
-	s.Hub.Register(agentID, stream, firstMsg.FreeSlots, nil)
+	s.Hub.Register(agentID, stream, firstMsg.FreeSlots, map[string]string{"tenant_id": tenantID})
 	defer s.Hub.Unregister(agentID, stream)
 	s.markSubscribedAgentAlive(agentID, firstMsg.FreeSlots)
 
-	log.Printf("[Subscribe] Agent %s stream established (free_slots=%d)", agentID, firstMsg.FreeSlots)
+	log.Printf("[Subscribe] Agent %s stream established (tenant=%s free_slots=%d)", agentID, tenantID, firstMsg.FreeSlots)
 
 	// 注册成功后，立即检查队列是否有积压任务并通知
 	if depth := s.getQueueDepth(); depth > 0 {
@@ -828,7 +829,7 @@ func (s *Server) StreamLogs(stream pb.AgentService_StreamLogsServer) error {
 	}
 }
 
-func tenantIDForAgentLog(agentID string) string {
+func tenantIDForAgent(agentID string) string {
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return "default"
@@ -838,6 +839,10 @@ func tenantIDForAgentLog(agentID string) string {
 		return node.TenantID
 	}
 	return "default"
+}
+
+func tenantIDForAgentLog(agentID string) string {
+	return tenantIDForAgent(agentID)
 }
 
 func createAgentLogAlerts(logItem db.AgentLog) {
