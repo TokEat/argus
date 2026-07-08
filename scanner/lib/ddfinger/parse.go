@@ -180,6 +180,9 @@ func getRuleData(rule string) structs.RuleData {
 		}
 
 	}
+	if start >= pos-ti {
+		return structs.RuleData{}
+	}
 	key := rule[start : pos-ti]
 
 	if pos+2 >= len(rule) {

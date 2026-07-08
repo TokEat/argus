@@ -12,6 +12,7 @@ import (
 func TestParseRuleMalformedExpressionsDoNotPanic(t *testing.T) {
 	cases := []string{
 		`="dangling-key"`,
+		`=="dangling-key"`,
 		`body="unterminated`,
 		`body="`,
 		`body="value" && = "bad"`,
