@@ -699,6 +699,7 @@ declare namespace API {
     instance_ttl_minutes: number;
     spot_strategy: string;
     max_spot_price: number;
+    spot_duration_hours?: number;
     user_data_template: string;
     last_scale_action?: string;
     created_at: string;

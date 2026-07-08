@@ -294,6 +294,7 @@ const CloudManagement: React.FC = () => {
         cooldown_seconds: 180,
         instance_ttl_minutes: 60,
         spot_strategy: 'SpotAsPriceGo',
+        spot_duration_hours: 1,
         ...(accounts.length === 1 ? { cloud_account_id: accounts[0].id } : {}),
     }), [accounts]);
 
@@ -402,11 +403,13 @@ echo "[Argus] Agent registered as systemd service and started"
             const result = await listCloudPolicies();
             setPolicies(result || []);
             if (result && result.length > 0) {
-                const policy = result[0];
-                setCurrentPolicyId(policy.id);
-                if (policy.user_data_template) {
-                    setUserDataScript(policy.user_data_template);
-                }
+                // 保留当前选中的策略（若仍存在），否则默认选第一个，支持多策略管理
+                const keepId = (currentPolicyId && result.some((p: any) => p.id === currentPolicyId))
+                    ? currentPolicyId
+                    : result[0].id;
+                const selected = result.find((p: any) => p.id === keepId) || result[0];
+                setCurrentPolicyId(keepId);
+                setUserDataScript(selected.user_data_template || defaultCloudInitTemplate);
             } else {
                 setCurrentPolicyId(null);
                 setUserDataScript(defaultCloudInitTemplate);
@@ -435,6 +438,7 @@ echo "[Argus] Agent registered as systemd service and started"
             cooldown_seconds: policy.cooldown_seconds ?? defaultPolicyFormValues.cooldown_seconds,
             instance_ttl_minutes: policy.instance_ttl_minutes ?? defaultPolicyFormValues.instance_ttl_minutes,
             spot_strategy: policy.spot_strategy ?? defaultPolicyFormValues.spot_strategy,
+            spot_duration_hours: policy.spot_duration_hours ?? defaultPolicyFormValues.spot_duration_hours,
             max_spot_price: policy.max_spot_price ?? undefined,
         };
     }, [defaultPolicyFormValues]);
@@ -458,13 +462,14 @@ echo "[Argus] Agent registered as systemd service and started"
     useEffect(() => {
         if (activeTab !== 'policy') return;
 
-        const values = buildPolicyFormValues(policies.length > 0 ? policies[0] : null);
+        const selected = policies.find((p: any) => p.id === currentPolicyId) || (policies.length > 0 ? policies[0] : null);
+        const values = buildPolicyFormValues(selected);
         const raf = window.requestAnimationFrame(() => {
             policyForm.setFieldsValue(values);
         });
 
         return () => window.cancelAnimationFrame(raf);
-    }, [activeTab, policies, policyForm, buildPolicyFormValues]);
+    }, [activeTab, policies, currentPolicyId, policyForm, buildPolicyFormValues]);
 
     useEffect(() => {
         fetchDashboard();
@@ -736,7 +741,7 @@ echo "[Argus] Agent registered as systemd service and started"
     };
 
     const handleTogglePolicy = async (checked: boolean) => {
-        if (!currentPolicyId) return;
+        if (!currentPolicyId) { message.warning('请先选择或创建一个策略'); return; }
         try {
             await toggleCloudPolicy(currentPolicyId);
             message.success(`策略已${checked ? '启用' : '禁用'}`);
@@ -749,7 +754,7 @@ echo "[Argus] Agent registered as systemd service and started"
     };
 
     const handleDeletePolicy = async () => {
-        if (!currentPolicyId) return;
+        if (!currentPolicyId) { message.warning('请先选择一个要删除的策略'); return; }
         try {
             await deleteCloudPolicy(currentPolicyId);
             message.success('策略已删除');
@@ -1242,11 +1247,37 @@ echo "[Argus] Agent registered as systemd service and started"
                     <Title level={5} style={{ margin: 0 }}>引擎调度开关</Title>
                     <Switch
                         checkedChildren="已启用" unCheckedChildren="已停用"
-                        checked={policies.length > 0 ? policies[0].enabled : false}
+                        checked={(policies.find((p: any) => p.id === currentPolicyId)?.enabled) ?? false}
                         onChange={(checked) => handleTogglePolicyRef.current(checked)}
                         disabled={!currentPolicyId}
                     />
                 </div>
+
+                {policies.length > 0 && (
+                    <div style={{ marginBottom: 16 }}>
+                        <div style={{ marginBottom: 6, fontWeight: 500 }}>选择策略（共 {policies.length} 条）</div>
+                        <Select
+                            style={{ width: '100%' }}
+                            value={currentPolicyId ?? '__new__'}
+                            onChange={(val) => {
+                                if (val === '__new__') {
+                                    setCurrentPolicyId(null);
+                                    policyForm.setFieldsValue(buildPolicyFormValues(null));
+                                    setUserDataScript(defaultCloudInitTemplate);
+                                } else {
+                                    const p = policies.find((x: any) => x.id === val) || null;
+                                    setCurrentPolicyId(val);
+                                    policyForm.setFieldsValue(buildPolicyFormValues(p));
+                                    setUserDataScript(p?.user_data_template || defaultCloudInitTemplate);
+                                }
+                            }}
+                            options={[
+                                ...policies.map((p: any) => ({ value: p.id, label: `${p.name}${p.enabled ? '' : '（已停用）'}` })),
+                                { value: '__new__', label: '＋ 新建策略' },
+                            ]}
+                        />
+                    </div>
+                )}
                 <Paragraph type="secondary">
                     配置 AutoScaler (自动伸缩引擎) 的行为模式。系统将根据后台任务队列深度，向指定云厂商自动请求或销毁 Spot 竞价实例。
                 </Paragraph>
@@ -1279,8 +1310,8 @@ echo "[Argus] Agent registered as systemd service and started"
 
                     <Row gutter={16}>
                         <Col span={8}>
-                            <Form.Item name="scale_up_threshold" label="扩容阈值" extra="队列任务数 > 此值则扩容">
-                                <InputNumber min={1} style={{ width: '100%' }} />
+                            <Form.Item name="scale_up_threshold" label="扩容阈值" extra="队列任务数 > 此值则扩容；填 0 表示有任务就扩容">
+                                <InputNumber min={0} style={{ width: '100%' }} />
                             </Form.Item>
                         </Col>
                         <Col span={8}>
@@ -1313,13 +1344,26 @@ echo "[Argus] Agent registered as systemd service and started"
                     </Row>
 
                     <Form.Item noStyle shouldUpdate={(prev: any, cur: any) => prev?.spot_strategy !== cur?.spot_strategy}>
-                        {({ getFieldValue }: any) =>
-                            getFieldValue('spot_strategy') === 'SpotWithPriceLimit' ? (
-                                <Form.Item name="max_spot_price" label="最高竞价限价 (元/小时)" extra="仅在设置最高限价模式时生效">
-                                    <InputNumber min={0.01} step={0.01} style={{ width: '100%' }} placeholder="例: 0.5" />
-                                </Form.Item>
-                            ) : null
-                        }
+                        {({ getFieldValue }: any) => {
+                            const strategy = getFieldValue('spot_strategy');
+                            if (strategy === 'NoSpot') return null;
+                            return (
+                                <Row gutter={16}>
+                                    <Col span={12}>
+                                        <Form.Item name="spot_duration_hours" label="抢占保留时长 (小时)" extra="0=无保护期(随时可回收)，1-6=保护期内不因库存被回收，推荐 1">
+                                            <InputNumber min={0} max={6} style={{ width: '100%' }} />
+                                        </Form.Item>
+                                    </Col>
+                                    {strategy === 'SpotWithPriceLimit' && (
+                                        <Col span={12}>
+                                            <Form.Item name="max_spot_price" label="最高竞价限价 (元/小时)" extra="仅在设置最高限价模式时生效">
+                                                <InputNumber min={0.01} step={0.01} style={{ width: '100%' }} placeholder="例: 0.5" />
+                                            </Form.Item>
+                                        </Col>
+                                    )}
+                                </Row>
+                            );
+                        }}
                     </Form.Item>
 
                     <Form.Item label={<span><CodeOutlined /> Cloud-Init (UserData) 注入模板</span>} extra="系统在下发实例时会自动替换 {{.DownloadURL}} {{.ServerAddr}} {{.AgentID}} {{.PSK}} 等模板变量。留空则使用内置默认模板。">
@@ -1346,7 +1390,7 @@ echo "[Argus] Agent registered as systemd service and started"
                 </Form>
             </ProCard>
         </div>
-    ), [policies, accounts, currentPolicyId, userDataScript, policyForm]);
+    ), [policies, accounts, currentPolicyId, userDataScript, policyForm, buildPolicyFormValues]);
 
     return (
         <div ref={pageRef} style={{ position: 'relative', overflow: 'hidden' }}>
