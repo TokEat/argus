@@ -6051,12 +6051,6 @@ xxl-rpc:
   - root
   pocs:
   - sanhui-smg-file-read
-东方通:
-  type:
-  - root
-  - dir-fallback
-  pocs:
-  - tongweb-ejb-rce-payload
 东方通-Console:
   type:
   - root
