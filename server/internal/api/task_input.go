@@ -495,18 +495,25 @@ type targetBatchGroup struct {
 	Targets      []string // 该批次内的目标列表
 }
 
-// batchSizeForTargetType 返回给定目标类型的激进档批大小
+// batchSizeForTargetType 按每类目标的扫描开销返回批大小（越重的类型批越小），
+// 让每批在超时内跑完、避免因批过大超时后反复二分拆分重试。
 func batchSizeForTargetType(targetType string) int {
 	switch targetType {
 	case "url":
-		return 200
-	case "domain", "domain_port":
-		return 500
-	case "ip", "cidr", "ip_range", "ip_port":
-		return 1000
+		return 100 // http_probe + dir_brute
+	case "domain":
+		return 50 // 子域枚举 + CDN + web，最重
+	case "domain_port":
+		return 200 // 指定 host:port，无子域枚举
+	case "ip":
+		return 50 // 端口扫描 + 协议识别 + gopoc 爆破，占用很大
+	case "ip_port":
+		return 200 // 直接协议识别 + web
+	case "cidr", "ip_range":
+		return 10 // 每条下游展开成几百个 IP，必须小
 	default:
-		// osint, unknown 等
-		return 200
+		// osint, unknown 等：osint 为搜索查询数，每条又炸出大量主机
+		return 100
 	}
 }
 
