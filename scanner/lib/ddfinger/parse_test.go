@@ -45,6 +45,15 @@ func TestParseRuleEmptyStringValue(t *testing.T) {
 	}
 }
 
+func TestDataCheckIntTreatsDoubleEqualsAsEquality(t *testing.T) {
+	if !dataCheckInt(2, 588710312, 588710312) {
+		t.Fatal("expected op=2 to match equal integer values")
+	}
+	if dataCheckInt(2, 588710312, 1) {
+		t.Fatal("expected op=2 to reject different integer values")
+	}
+}
+
 func TestParaviewPASGRedirectFingerprintRuleMatches(t *testing.T) {
 	rules := loadFingerprintRules(t, "派拉身份认证IAM(西部)")
 	header := "HTTP/1.1 302 Found\r\nx-powered-by: PASG\r\nLocation: /selfcare/\r\n"

@@ -263,7 +263,7 @@ func dataCheckString(op int16, dataSource string, dataRule string) bool {
 }
 
 func dataCheckInt(op int16, dataSource int, dataRule int) bool {
-	if op == 0 { // 数字相等
+	if op == 0 || op == 2 { // 数字相等（= 或 ==）
 		if dataSource == dataRule {
 			return true
 		}
