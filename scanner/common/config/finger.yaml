@@ -2,6 +2,7 @@
     - body="content=\"Visual Basic .NET 7.1"
 1Panel-面板:
     - body="icon\" href=\"/assets/png/favicon-abe32304" && title="loading..."
+    - icon_hash="1300107149"
 1caitong:
     - body="/custom/groupnewslist.aspx?groupid="
 3CDaemon:
@@ -2390,6 +2391,7 @@ CasaOS:
 Casdoor:
     - title=="Casdoor"
     - header="casdoor_session_id"
+    - body="SAML and CAS" && body="Single-Sign-On (SSO) platform with web UI"
 Casic card system:
     - body="充值卡及易捷卡系统" && body="积分规则管理"
 Castel:
@@ -2984,6 +2986,7 @@ Crhms-Medical-Insurance-Review-System:
     - body="url, \"中公网医疗信息管理系统\", option"
 Crocus:
     - (body="for=\"inp_verification\"" && body!="src=\"Images/logo.png\"")
+    - body="/ThirdResource/respond/respond.min.js"
 Crow-Force-portal-CMS:
     - body="中企动力提供技术支持"
 Crown Jinshen - KILL Mail Security Gateway:
@@ -3974,6 +3977,7 @@ Dynatrace-SAAS:
     - cert="test.sso-dev.dynatracelabs.com"
 DzzOffice- product:
     - body="dzz/system/scripts/jquery.jstree.min.js" || body="dzz/scripts/dzz_min.js" || body="<a href=\"http://www.dzzoffice.com\"" || body="misc.php?mod=sendmail"
+    - icon_hash="-1961736892"
 E-FAX:
     - title="- E-Fax - Login" || body="content=\"E-FAX "
 E-Smart关务管理系统:
@@ -4439,6 +4443,7 @@ Enlightenment Star - Tianyi Internet Behavior Control:
     - title="Netoray NSG 上网行为管理系统" && body!="莱克斯科技"
 EnterCRM:
     - body="EnterCRM"
+    - body="杭州恩软" && body="Ent.base.js"
 Enterasys-Networks-Firmware:
     - banner="Enterasys Networks Firmware"
 Enterprise Cloud Platform:
@@ -4972,6 +4977,7 @@ Fortinet-FortiGuard:
     - body="FortiGuard Web Filtering" || title="Web Filter Block Override" || body="/XX/YY/ZZ/CI/MGPGHGPGPFGHCDPFGGOGFGEH" || (banner="Web Filter Block Override" && banner="/XX/YY/ZZ/")
 Fortinet-FortiWeb:
     - 'body="<title ng-bind=\"''FortiWeb - '' + deviceState.admin.hostname\"></title>" || header="FortiWeb" || banner="Server: FortiWeb"'
+    - title="fortiweb - "
 Fortinet-WAF:
     - header="fortiwafsid=" || banner="fortiwafsid="
 Fortinet-firewall:
@@ -5684,6 +5690,8 @@ HIKVISION-智能应用服务器:
 HIKVISION-综合安防管理平台:
     - body="hasTimeZoneSwitch" && body="enableCsrf.headerName"
     - body="var notAllowCover = document.getElementById"
+    - title="综合安防管理平台"
+    - icon_hash="-808437027"
 HIKVISION-群组对讲服务配置平台:
     - body="js/jquery.breadcrumbs.ex.js"
 HIKVISION-视频图像信息数据库:
@@ -6368,6 +6376,7 @@ HollySys- Production System:
     - body="resource=\"Title_Sub\""
 Holographic sea - warehousing office assist management system:
     - '(body="广州全息若海信息科技有限公司" && body="src=\"/scripts/easyui/jquery.easyui.min.js\"") || (body="style=\"vertical-align: middle; cursor: pointer" && body="响应键盘的回车事件")'
+    - '(body="广州全息若海信息科技有限公司" && body="src=\"/scripts/easyui/jquery.easyui.min.js\"") || (body="vertical-align: middle; cursor: pointer" && body="响应键盘的回车事件")'
 Home-Assistant:
     - 'header="Server: Home Assistant" || banner="Server: Home Assistant" || title="Home Assistant" || (body="content=\"/static/icons/tile-win-70x70.png\"" && body="Home Assistant")'
 Home-Control-Box:
@@ -7256,6 +7265,7 @@ Jeecg-Boot:
     - title="JeecgBoot 企业级低代码平台"
     - body="LoginController.do"
     - body="window._CONFIG['imgDomainURL'] = 'http://localhost:8080/jeecg-boot/" || title="Jeecg-Boot 企业级快速开发平台" || title="Jeecg 快速开发平台" || body="'http://fileview.jeecg.com/onlinePreview'"
+    - body="滚动条优化"
 Jeeplus:
     - body="name=\"author\" content=\"http://www.jeeplus.org/" || body="<meta name=\"author\" content=\"jeeplus\">" || title="Jeeplus vue快速开发平台" || (body="jeeplus.js" && body="/static/common/") || title="JeePlus 快速开发平台"
 Jellyfin:
@@ -7311,6 +7321,7 @@ Jiubo Shares - Network Products:
     - body="/cgibin?pageid=92"
 Jiusi Software - Collaborative Office System:
     - body="九思软件" && (body="OA" || body="办公系统")
+    - body="/jsoa/login.jsp"
 Jive-SBS:
     - 'body="/jive-icons.css" || body="class=\"jive-body-formpage" || header="X-Jsl: " || banner="X-Jsl: " || body="jive.rte.defaultStyles"'
 Join_Cheer - Long Territories Financial Statements:
@@ -7322,6 +7333,7 @@ Jolokia:
 Joomla:
     - body="content=\"Joomla" || (body="/media/system/js/core.js" && body="/media/system/js/mootools-core.js")
     - body="Joomla! - Open Source Content Management"
+    - icon_hash="1747282642"
 Jorani:
     - title="Jorani"
 Journal Network Technology:
@@ -8303,6 +8315,7 @@ Marconi-switch:
     - banner="Marconi "
 Margatek -Journalx:
     - body="journalx/authorLogOn.action?mag_Id"
+    - body="/user/addCollerArticle.do"||body="/article/NumbersStatistics.do"||body="/article/showNewArticle.do"||body="/js/manu/lrtk.css"||web.body="北京玛格泰克科技发展有限公司"
 Marine shipping system:
     - body="海事选船系统</el-col>"
 Marketing management system:
@@ -9719,6 +9732,7 @@ OpenVPN-Monitor:
     - title="OpenVPN Monitor"
 OpenVPN-Products:
     - 'header="realm=\"OpenVPN" || header="Server: openvpn" || banner="Server: openvpn"'
+    - icon_hash="1462981117"
 OpenWrt:
     - title="OpenWrt Administrative" || header="realm=\"OpenWrt" || banner="realm=\"OpenWrt" || cert="OpenWrt" || title="OpenWrt"
 OpenWrt-Server:
@@ -9966,6 +9980,7 @@ PHPMyWind:
     - body="phpMyWind.com All Rights Reserved" || body="content=\"PHPMyWind"
 PHPOA:
     - body="admin_img/msg_bg.png"
+    - body="login.php" && body="提示信息" && body="showMsg"
 PHPOK:
     - title="phpok" || body="Powered By phpok.com" || body="content=\"phpok"
 PHPOpenChat:
@@ -10649,6 +10664,7 @@ REALOR-天翼应用虚拟化系统:
     - title="瑞友天翼－应用虚拟化系统"
     - title="瑞友应用虚拟化系统"
     - body="action=\"/CasMain.XGI"
+    - body="/CasMain.XGI"
 REALTEK-ADSL-Router:
     - header="realm=\"Realtek ADSL Router" || banner="realm=\"Realtek ADSL Router"
 REDCap:
@@ -11657,6 +11673,7 @@ Shoubao - Company Products:
     - body="<a href=\"/admin/index/home\" class=\"header-home-link\"" && body="开会宝</a>"
 ShowDoc:
     - title="ShowDoc"
+    - icon_hash="1969934080"
 Shuhui Information-Integrated Information Management System:
     - body="src=\"../../doc/config/shxmjgptapp.png\""
 Shun Net Wireless - Router:
@@ -12814,6 +12831,7 @@ Tainet-MERCURY-Router-Module:
     - banner="MERCURY Router Module, Tainet Communication System Corp."
 Tamronos-IPTV system:
     - title="TamronOS IPTV系统"
+    - body="TamronOS" && body="loginbox" && body="tamronos.com"
 Tandberg-Television-Web-server:
     - '(header="Server: Tandberg Television Web server") || (banner="Server: Tandberg Television Web server" && banner!="couchdb") || (banner="TANDBERG Gatekeeper" && banner!="couchdb")'
 Tas_tech-streaming server:
@@ -14046,8 +14064,10 @@ XWiki:
 XXL-JOB:
     - icon_hash="1691956220"
     - body="<a><b>XXL</b>JOB</a>"
+    - body="/static/adminlte/dist/css/AdminLTE.min.css" && body="bower_components/PACE/pace.min.js"
 XXL-JOB-执行器:
     - body="{\"code\":500,\"msg\":\"invalid request, HttpMethod not support.\"}"
+    - body="invalid request, HttpMethod not support."
 XYCMS:
     - title="Powered by XYCMS" || body="advfile/ad12.js"
 XYHCMS:
@@ -14879,6 +14899,7 @@ any800客服系统:
     - body="any800/echatManager.do"
 apereo-CAS:
     - body="CAS &#8211; Central Authentication Service"
+    - body="/CAS/js/cas.js" || body="Apereo Central Authentication Service"
 apex-LiveBPM:
     - body="href=\"/plug-in/login/fixed/css/login.css\""
 apilayer-Caddy:
@@ -15343,6 +15364,7 @@ eyoucms:
     - body="powered by eyoucms" || body="name=\"generator\" content=\"eyoucms"
 ezEIP:
     - body="ezEIP"
+    - body="Powered By wanhu - www.wanhu.com.cn"
 e慧签(华东):
     - body="e慧签"
 e签宝(深圳):
@@ -15735,6 +15757,7 @@ neustar-UltraDNS:
     - 'header="Server: UltraDNS Client Redirection Server" || banner="Server: UltraDNS Client Redirection Server" || (protocol="dns" && banner="UltraDNS")'
 nginxWebUI:
     - title="nginxWebUI"
+    - icon_hash="1117213901"
 noVNC:
     - 'body="id=\"noVNC-control-bar" || body="noVNC example: simple" || body="<!--noVNC Buttons-->" || title=="noVNC"'
 noVNC 远程访问:
@@ -16062,6 +16085,7 @@ upvel-UR-315BN:
     - title="UR-315BN"
 ureport:
     - body="Welcome to use ureport,please specify target url" || body="Handler [/] not exist"
+    - body="/ureport/res/ureport-asserts/js/designer.bundle.js"
 vBulletin:
     - 'title="Powered by vBulletin" || (body="content=\"vBulletin" && header!="X-Generator: Drupal" && header!="couchdb" && body!="Server: DVRDVS-Webs") || (header="bbsessionhash" && header="bblastvisit") || body="Powered by vBulletin&trade;" || body="<!-- Do not remove this copyright notice -->Powered by < a href=\"https://www.vbulletin.com\" id=\"vbulletinlink\">"'
 vRealize-Log-Insight:
@@ -16183,6 +16207,7 @@ zywall-usg-100:
     - icon_hash="-1827521324"
     - path="defaultroot/evo/ipad/login.jsp" && title="Error提示"
     - title="ezOFFICE" || body="EZOFFICEUSERNAME" || title="万户OA" || body="whirRootPath" || body="/defaultroot/js/cookie.js" || header="LocLan"
+    - icon_hash="2467445972"
 万鹏CMS(华东):
     - body="js/zmkm.js"
 三一谦成车辆管理系统(北京):
@@ -16429,6 +16454,7 @@ zywall-usg-100:
     - title="PMedia Platform" || body="src=\"images/login/badgezh_cn.png" || body="Huadean. All Rights "
 华测监测预警系统:
     - title="华测监测预警系统"
+    - body="华测监测预警系统" || icon_hash="-628229493"
 华炎魔方低代码平台(华东):
     - title="Steedos"
 华锐捷HIC车载监控平台(北京):
@@ -16511,6 +16537,7 @@ zywall-usg-100:
     - body="interlib/common/" && body="self.location.href"
 图创软件-图书馆站群管理系统:
     - body="/interlib/common/" && body="广州图创"
+    - body="Interlib图书馆集群管理系统" || body="/interlib3/system_index" || body="打开Interlib主界面"
 圣博润堡垒机:
     - body="/trust/version/sxf/trust/"
 圣博润堡垒机(北北京):
@@ -16598,6 +16625,7 @@ zywall-usg-100:
     - body="天问物业ERP系统"
 天问物业云:
     - body="天问物业云"
+    - icon_hash="782305744"
 天问物业云(华东):
     - body="天问物业云"
 奇安信-VPN:
@@ -16711,6 +16739,7 @@ zywall-usg-100:
     - body="down.download?FM_SYS_ID"
     - body="Dec.fineServletURL"
     - body="Powered by 帆软"
+    - body="isSupportForgetPwd"
 帆软报表(北北京):
     - app="帆软-FineReport"
 帆软数据决策系统:
@@ -16832,6 +16861,7 @@ zywall-usg-100:
     - icon_hash="2126778538"
 新软科技-极通EWEBS:
     - (body="/js/xajax05/xajax_js/xajax_core.js" && title!="易正远程") || body="<a href='../client/EWEBSClientsetup.exe'></a> </td>"
+    - body="N-soft" && body="ClientDownload.xgi"
 方正翔宇:
     - body="e5style/login1.css" && body="e5workspace/security/captcha.do"
 方正翔宇(西部):
@@ -17083,6 +17113,7 @@ zywall-usg-100:
     - title="FE协作" || (body="V_show" && body="V_hedden")
 用友-GRP-U8:
     - body="window.location.replace(\"login.jsp?up=1\")" || title="用友GRP-U8"
+    - icon_hash="-299520369"
 用友-NC-Cloud:
     - (banner="nccloud" && banner="Location" && banner="JSESSIONID") || (body="/platform/yonyou-yyy.js" && body="/platform/ca/nccsign.js") || body="window.location.href=\"platform/pub/welcome.do\";"
 用友-TurboCRM:
@@ -17129,6 +17160,7 @@ zywall-usg-100:
     - app="畅捷通-TPlus"
 畅捷通-畅捷CRM:
     - title="畅捷CRM"
+    - icon_hash="-1068428644"
 畅捷通-远程通:
     - body="远程通CHANJET_Remote"
     - body="<META HTTP-EQUIV=\"REFRESH\" CONTENT=\"0; URL=/GNRemote.dll?GNFunction=CheckLogin&ok=Web_sc/programs.gn&error=Web_sc/login.gn&Language=Web_sc"
@@ -17300,6 +17332,7 @@ zywall-usg-100:
     - icon_hash="410106848"||title="AnalyticsCloud分析云"||body="/newportal/static/js/"||icon_hash="888607769"
 致远OA-M3-Server:
     - body="/mobile_portal/"
+    - title="M3 Server" || title="M3 Server V2.0"
 致远互联-M1移动端:
     - title=="M1-Server 已启动"
 致远互联-OA:
@@ -17524,5 +17557,10 @@ zywall-usg-100:
     - body="/resources/sysManager"||body="shterm/login"||body="/css/qz.css"||body="shtermApp"
 齐治科技-堡垒机:
     - body="//xfpverifyExec.jsp"
+    - body="fp_download" && body="logo-icon-ico72.png"
 龙软科技接口服务(西部):
     - body="接口正常2024"
+浪潮HCM:
+    - icon_hash="-859381597"||body="HCM,Cloud,HR,人力资源,云,云服务"
+山东金钟科技集团股份有限公司:
+    - icon_hash=="-364449966"
