@@ -16,6 +16,7 @@ type InstanceConfig struct {
 	Tags          map[string]string // 实例标签
 	MaxPrice      float64           // 竞价实例最高容忍价格（0为按量付费）
 	SpotStrategy  string            // SpotAsPriceGo 或 SpotWithPriceLimit
+	SpotDuration  int32             // 抢占式保留时长（小时，0-6；0=无保护期）
 	AgentID       string            // 预分配的 Agent ID（Server 侧生成）
 	TenantID      string            // 租户 ID
 }

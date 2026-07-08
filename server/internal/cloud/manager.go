@@ -98,6 +98,7 @@ func (rm *ResourceManager) ProvisionInstance(
 		},
 		SpotStrategy: policy.SpotStrategy,
 		MaxPrice:     policy.MaxSpotPrice,
+		SpotDuration: int32(policy.SpotDurationHours),
 		AgentID:      agentID,
 		TenantID:     account.TenantID,
 	}

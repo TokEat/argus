@@ -92,7 +92,40 @@ func (p *ECSProvider) DiscoverRegions() ([]RegionInfo, error) {
 	return regions, nil
 }
 
+// CreateInstance 创建云实例。优先使用配置的抢占式保留时长（保护期）；
+// 若保护期库存不足，自动降级为无保护期抢占式，避免因保护期无库存而创建失败。
 func (p *ECSProvider) CreateInstance(cfg cloud.InstanceConfig) (*cloud.Instance, error) {
+	spotDuration := cfg.SpotDuration
+	if spotDuration < 0 {
+		spotDuration = 0
+	}
+	if spotDuration > 6 {
+		spotDuration = 6
+	}
+	durationsToTry := []int32{spotDuration}
+	if spotDuration > 0 && cfg.SpotStrategy != "NoSpot" {
+		durationsToTry = append(durationsToTry, 0) // 保护期无库存时退回无保护期抢占式
+	}
+
+	var lastErr error
+	for _, spotDur := range durationsToTry {
+		if spotDur < spotDuration {
+			log.Printf("[ECS] 保留时长 %dh 全部无库存，退回无保护期(0h)抢占式重试", spotDuration)
+		}
+		inst, err := p.createInstanceWithSpotDuration(cfg, spotDur)
+		if err == nil {
+			return inst, nil
+		}
+		lastErr = err
+		// 账户级致命错误（余额不足/权限等）不再降级重试
+		if isFatalCloudError(err.Error()) {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+func (p *ECSProvider) createInstanceWithSpotDuration(cfg cloud.InstanceConfig, spotDur int32) (*cloud.Instance, error) {
 	// 自动选择支持该实例规格的可用区 VSwitch + 规格降级，防止 InvalidResourceType.NotSupported
 	resolvedVSwitch, resolvedType, err := p.resolveCompatibleVSwitch(cfg)
 	if err != nil {
@@ -162,9 +195,9 @@ func (p *ECSProvider) CreateInstance(cfg cloud.InstanceConfig) (*cloud.Instance,
 			req.SystemDisk = &ecs.RunInstancesRequestSystemDisk{
 				Category: tea.String("cloud_essd"),
 			}
-			// 抢占式实例：无保护期（最便宜）
+			// 抢占式保留时长（保护期）：spotDur=0 表示无保护期
 			if spotStrategy != "NoSpot" && spotStrategy != "" {
-				req.SpotDuration = tea.Int32(0)
+				req.SpotDuration = tea.Int32(spotDur)
 			}
 			if spotPriceLimit > 0 {
 				req.SpotPriceLimit = tea.Float32(spotPriceLimit)

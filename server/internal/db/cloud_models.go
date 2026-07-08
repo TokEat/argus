@@ -62,6 +62,7 @@ type CloudScalingPolicy struct {
 	InstanceTTLMinutes int        `gorm:"default:120" json:"instance_ttl_minutes"`      // 实例最大存活时间（分钟）
 	SpotStrategy       string     `gorm:"default:'SpotAsPriceGo'" json:"spot_strategy"` // NoSpot / SpotAsPriceGo / SpotWithPriceLimit
 	MaxSpotPrice       float64    `json:"max_spot_price"`                               // 竞价最高价（SpotWithPriceLimit 时有效）
+	SpotDurationHours  int        `gorm:"default:1" json:"spot_duration_hours"`         // 抢占式保留时长（小时，0-6；0=无保护期，随时可回收）
 	UserDataTemplate   string     `gorm:"type:text" json:"user_data_template"`          // Cloud-Init 模板（可使用 Go template 变量）
 	LastScaleAction    *time.Time `json:"last_scale_action"`                            // 最近一次伸缩操作时间（用于冷却期判定）
 	CreatedAt          time.Time  `json:"created_at"`
