@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -126,6 +127,126 @@ func TestClaimTaskDropsQueuedMessageWhenRootTaskPaused(t *testing.T) {
 	}
 	if sub.Status != "Paused" || sub.AgentID != "" || sub.StreamMsgID != "" {
 		t.Fatalf("expected queued task to be marked Paused and unassigned, got %+v", sub)
+	}
+}
+
+func TestClaimTaskDropsDuplicateMessageForRunningSubTask(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	if err := store.Create(&db.SubTask{
+		ID:          "already-running",
+		TenantID:    "default",
+		Status:      "Running",
+		AgentID:     "agent-existing",
+		StreamMsgID: "msg-existing",
+	}).Error; err != nil {
+		t.Fatalf("seed running subtask: %v", err)
+	}
+
+	server := NewServer(50051)
+	delivered := false
+	acked := 0
+	returned := 0
+	server.SetClaimTaskHook(func(agentID string) (*pb.Task, string, error) {
+		if delivered {
+			return nil, "", nil
+		}
+		delivered = true
+		return &pb.Task{TaskId: "already-running", Targets: []string{"https://example.com"}}, "msg-duplicate", nil
+	})
+	server.SetAckTaskHook(func(msgID string) error {
+		if msgID == "msg-duplicate" {
+			acked++
+		}
+		return nil
+	})
+	server.SetReturnTaskHook(func(task *pb.Task, msgID string) error {
+		returned++
+		return nil
+	})
+
+	task, err := server.ClaimTask(context.Background(), &pb.ClaimTaskReq{AgentId: "agent-new", FreeSlots: 1})
+	if err != nil {
+		t.Fatalf("claim task: %v", err)
+	}
+	if task.GetTaskId() != "" {
+		t.Fatalf("duplicate running task should not be returned to agent, got %+v", task)
+	}
+	if acked != 1 || returned != 0 {
+		t.Fatalf("duplicate running message should be acked, not requeued: acked=%d returned=%d", acked, returned)
+	}
+
+	var sub db.SubTask
+	if err := store.First(&sub, "id = ?", "already-running").Error; err != nil {
+		t.Fatalf("load running subtask: %v", err)
+	}
+	if sub.Status != "Running" || sub.AgentID != "agent-existing" || sub.StreamMsgID != "msg-existing" {
+		t.Fatalf("duplicate message changed running assignment: %+v", sub)
+	}
+}
+
+func TestClaimTaskReturnsErrorWhenRunningDuplicateCannotBeAcknowledged(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	if err := store.Create(&db.SubTask{ID: "running-no-ack", TenantID: "default", Status: "Running"}).Error; err != nil {
+		t.Fatalf("seed running subtask: %v", err)
+	}
+
+	server := NewServer(50051)
+	server.SetClaimTaskHook(func(agentID string) (*pb.Task, string, error) {
+		return &pb.Task{TaskId: "running-no-ack"}, "msg-running", nil
+	})
+	if _, err := server.ClaimTask(context.Background(), &pb.ClaimTaskReq{AgentId: "agent-1", FreeSlots: 1}); err == nil {
+		t.Fatal("expected missing ACK hook to be reported")
+	}
+}
+
+func TestClaimTaskReturnsUnknownStatusMessageToQueue(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	if err := store.Create(&db.SubTask{ID: "future-status", TenantID: "default", Status: "Retrying"}).Error; err != nil {
+		t.Fatalf("seed future-status subtask: %v", err)
+	}
+
+	server := NewServer(50051)
+	claimCalls := 0
+	acked := 0
+	returned := 0
+	server.SetClaimTaskHook(func(agentID string) (*pb.Task, string, error) {
+		claimCalls++
+		return &pb.Task{TaskId: "future-status"}, "msg-future", nil
+	})
+	server.SetAckTaskHook(func(msgID string) error {
+		acked++
+		return nil
+	})
+	server.SetReturnTaskHook(func(task *pb.Task, msgID string) error {
+		returned++
+		return nil
+	})
+
+	task, err := server.ClaimTask(context.Background(), &pb.ClaimTaskReq{AgentId: "agent-1", FreeSlots: 1})
+	if err != nil {
+		t.Fatalf("claim unknown-status task: %v", err)
+	}
+	if task.GetTaskId() != "" || acked != 0 || returned != 1 || claimCalls != 1 {
+		t.Fatalf("unknown status must be returned once and end claim: task=%+v acked=%d returned=%d claims=%d", task, acked, returned, claimCalls)
+	}
+}
+
+func TestClaimTaskReturnsErrorWhenUnknownStatusCannotBeRequeued(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	if err := store.Create(&db.SubTask{ID: "unknown-requeue-fail", TenantID: "default", Status: "Retrying"}).Error; err != nil {
+		t.Fatalf("seed unknown-status subtask: %v", err)
+	}
+
+	server := NewServer(50051)
+	server.SetClaimTaskHook(func(agentID string) (*pb.Task, string, error) {
+		return &pb.Task{TaskId: "unknown-requeue-fail"}, "msg-unknown", nil
+	})
+	server.SetReturnTaskHook(func(task *pb.Task, msgID string) error {
+		return errors.New("injected requeue failure")
+	})
+
+	if _, err := server.ClaimTask(context.Background(), &pb.ClaimTaskReq{AgentId: "agent-1", FreeSlots: 1}); err == nil {
+		t.Fatal("expected unknown-status requeue failure to be returned")
 	}
 }
 

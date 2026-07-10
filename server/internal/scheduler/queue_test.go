@@ -76,6 +76,7 @@ func TestTaskQueueRabbitMQReconnectInvalidatesOldDelivery(t *testing.T) {
 	initialGeneration := queue.generation
 	connected := queue.connectionHealthyLocked()
 	queue.chMu.Unlock()
+	initialToken := queue.RecoveryToken()
 	if !connected {
 		t.Fatal("expected initial RabbitMQ connection")
 	}
@@ -110,6 +111,9 @@ func TestTaskQueueRabbitMQReconnectInvalidatesOldDelivery(t *testing.T) {
 	}
 	if newGeneration <= initialGeneration {
 		t.Fatalf("expected generation to advance from %d, got %d", initialGeneration, newGeneration)
+	}
+	if recoveredToken := queue.RecoveryToken(); recoveredToken == initialToken {
+		t.Fatalf("expected recovery token to change after reconnect, token=%q", recoveredToken)
 	}
 	if counts := queue.PendingCount(context.Background()); len(counts) != 0 {
 		t.Fatalf("expected old pending deliveries to be invalidated, got %+v", counts)

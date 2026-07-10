@@ -402,6 +402,8 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 		}
 
 		switch normalizeSubTaskStatus(sub.Status) {
+		case "PENDING", "RECOVERED", "DISPATCHING":
+			// Claimable states continue through selector, quota and CAS checks below.
 		case "PAUSED":
 			// 任务暂停后队列中可能残留旧消息：消费掉，等待 resume 重新投递。
 			if s.ackTaskHook != nil && msgID != "" {
@@ -442,6 +444,29 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 				}).Error
 			log.Printf("[ClaimTask] Dropped terminal task message %s (status=%s)", task.TaskId, sub.Status)
 			continue
+		case "RUNNING":
+			// A Running task already has an active assignment, so this queue message is a duplicate.
+			if s.ackTaskHook == nil {
+				return &pb.Task{}, fmt.Errorf("ack duplicate running task %s: queue ACK hook is unavailable", task.TaskId)
+			}
+			if err := s.ackTaskHook(msgID); err != nil {
+				log.Printf("[ClaimTask] Failed to ACK duplicate running task %s: %v", task.TaskId, err)
+				return &pb.Task{}, fmt.Errorf("ack duplicate running task %s: %w", task.TaskId, err)
+			}
+			log.Printf("[ClaimTask] Dropped duplicate running task %s", task.TaskId)
+			continue
+		default:
+			// Unknown states may become claimable in a future state machine revision.
+			// Return them conservatively instead of permanently acknowledging the message.
+			if s.returnTaskHook == nil {
+				return &pb.Task{}, fmt.Errorf("cannot return task %s with unknown status %s: queue return hook is unavailable", task.TaskId, sub.Status)
+			}
+			if err := s.returnTaskHook(task, msgID); err != nil {
+				log.Printf("[ClaimTask] Failed to return task %s with unknown status %s: %v", task.TaskId, sub.Status, err)
+				return &pb.Task{}, fmt.Errorf("return task %s with unknown status %s: %w", task.TaskId, sub.Status, err)
+			}
+			log.Printf("[ClaimTask] Returned task %s with unknown status %s", task.TaskId, sub.Status)
+			return &pb.Task{}, nil
 		}
 
 		// 标签路由检查

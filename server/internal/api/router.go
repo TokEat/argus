@@ -46,6 +46,8 @@ var objectStorageRoot = "./data/objects"
 
 const (
 	subTaskStatusDispatching = "Dispatching"
+	subTaskQueuedMarker      = "queued"
+	strandedPendingGrace     = 60 * time.Second
 	cancelPendingSettleGrace = 45 * time.Second
 	agentLogRetentionKey     = "agent_logs_retention_days"
 	defaultAgentLogRetention = 14
@@ -1264,7 +1266,10 @@ func dispatchSubTasks(ctx context.Context, q *scheduler.TaskQueue, subTasks []db
 		// 入队成功后再将状态推进为 Pending，避免“先改状态后崩溃”导致任务既不在队列也不可恢复。
 		updateRes := db.DB.Model(&db.SubTask{}).
 			Where("id = ? AND status = ?", st.ID, subTaskStatusDispatching).
-			Update("status", "Pending")
+			Updates(map[string]interface{}{
+				"status":        "Pending",
+				"stream_msg_id": queuedMarkerForQueue(q),
+			})
 		if updateRes.Error != nil {
 			log.Printf("[Dispatch] Subtask %s queued but status transition to Pending failed: %v", st.ID, updateRes.Error)
 		}
@@ -3778,6 +3783,12 @@ func StartTaskTimeoutDaemon(ctx context.Context, q *scheduler.TaskQueue) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
+	pendingRecovery := &pendingRecoveryState{}
+	_, err := recoverPendingTasksForQueueGeneration(ctx, q, pendingRecovery, time.Now())
+	if err != nil {
+		log.Printf("[DispatchRecover] initial pending reconciliation failed: %v", err)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -3785,6 +3796,12 @@ func StartTaskTimeoutDaemon(ctx context.Context, q *scheduler.TaskQueue) {
 		case <-ticker.C:
 			recoverQueueIfDead(q)
 			recoverDispatchingTasks(q)
+			recovered, err := recoverPendingTasksForQueueGeneration(ctx, q, pendingRecovery, time.Now())
+			if err != nil {
+				log.Printf("[DispatchRecover] pending reconciliation failed: %v", err)
+			} else if recovered > 0 {
+				log.Printf("[DispatchRecover] reconciled %d stranded pending subtasks", recovered)
+			}
 			handleTimeoutTasks(q)
 			db.AutoDispatchCleanup()
 		}
@@ -3811,11 +3828,10 @@ func recoverDispatchingTasks(q *scheduler.TaskQueue) {
 	}
 
 	var subs []db.SubTask
-	db.DB.Where("status = ?", subTaskStatusDispatching).
+	if err := db.DB.Where("status = ?", subTaskStatusDispatching).
 		Order("updated_at asc").
 		Limit(200).
-		Find(&subs)
-	if len(subs) == 0 {
+		Find(&subs).Error; err != nil || len(subs) == 0 {
 		return
 	}
 
@@ -3827,6 +3843,136 @@ func recoverDispatchingTasks(q *scheduler.TaskQueue) {
 	if pushedCount > 0 || dispatchPending > 0 {
 		log.Printf("[DispatchRecover] scanned=%d dispatched=%d pending=%d", len(subs), pushedCount, dispatchPending)
 	}
+}
+
+type pendingRecoveryState struct {
+	token              string
+	queuedRecoveryDone bool
+}
+
+func queuedMarkerForQueue(q *scheduler.TaskQueue) string {
+	if q == nil {
+		return subTaskQueuedMarker
+	}
+	token := q.RecoveryToken()
+	if token == "" {
+		return subTaskQueuedMarker
+	}
+	return subTaskQueuedMarker + ":" + token
+}
+
+func recoverPendingTasksForQueueGeneration(
+	ctx context.Context,
+	q *scheduler.TaskQueue,
+	state *pendingRecoveryState,
+	now time.Time,
+) (int, error) {
+	if q == nil {
+		return 0, nil
+	}
+	token := q.RecoveryToken()
+	if token == "" {
+		return 0, nil
+	}
+	if state.token != token {
+		state.token = token
+		state.queuedRecoveryDone = q.Mode() != "memory"
+	}
+
+	totalPushed := 0
+	dispatchClaimed := func(subs []db.SubTask) {
+		if len(subs) == 0 {
+			return
+		}
+		pushedByPriority, dispatchPending := dispatchSubTasks(ctx, q, subs)
+		pushedCount := totalDispatchedTasks(pushedByPriority)
+		totalPushed += pushedCount
+		if pushedCount > 0 {
+			broadcastDispatchedTasks(pushedByPriority)
+		}
+		log.Printf("[DispatchRecover] stranded-pending claimed=%d dispatched=%d pending=%d", len(subs), pushedCount, dispatchPending)
+	}
+
+	// The in-memory queue is intentionally ephemeral. For each new lifecycle,
+	// drain queued markers that predate the lifecycle boundary. Keep this phase
+	// retryable until a complete empty batch confirms that all rows were handled.
+	for !state.queuedRecoveryDone {
+		if err := ctx.Err(); err != nil {
+			return totalPushed, err
+		}
+		subs, claimErr := claimStrandedPendingSubTasks(ctx, time.Time{}, 200, true, queuedMarkerForQueue(q))
+		dispatchClaimed(subs)
+		if claimErr != nil {
+			return totalPushed, claimErr
+		}
+		if len(subs) == 0 {
+			state.queuedRecoveryDone = true
+		}
+	}
+
+	// Empty markers are scanned every cycle. This covers rows that become stale
+	// after the queue generation was first observed without duplicating queued rows.
+	for {
+		if err := ctx.Err(); err != nil {
+			return totalPushed, err
+		}
+		subs, claimErr := claimStrandedPendingSubTasks(ctx, now.Add(-strandedPendingGrace), 200, false, "")
+		dispatchClaimed(subs)
+		if claimErr != nil {
+			return totalPushed, claimErr
+		}
+		if len(subs) == 0 {
+			break
+		}
+	}
+	return totalPushed, nil
+}
+
+func claimStrandedPendingSubTasks(
+	ctx context.Context,
+	cutoff time.Time,
+	limit int,
+	queuedOnly bool,
+	currentQueuedMarker string,
+) ([]db.SubTask, error) {
+	var candidates []db.SubTask
+	store := db.DB.WithContext(ctx)
+	query := store.Where(
+		"status = ? AND updated_at < ? AND agent_id = '' AND stream_msg_id = ''",
+		"Pending", cutoff,
+	)
+	if queuedOnly {
+		query = store.Where(
+			"status = ? AND agent_id = '' AND (stream_msg_id = ? OR (stream_msg_id LIKE ? AND stream_msg_id <> ?))",
+			"Pending", subTaskQueuedMarker, subTaskQueuedMarker+":%", currentQueuedMarker,
+		)
+	}
+	query = query.Order("updated_at asc")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	if err := query.Find(&candidates).Error; err != nil {
+		return nil, err
+	}
+
+	claimed := make([]db.SubTask, 0, len(candidates))
+	for _, sub := range candidates {
+		claimQuery := store.Model(&db.SubTask{}).
+			Where("id = ? AND status = ? AND agent_id = '' AND stream_msg_id = ?", sub.ID, "Pending", sub.StreamMsgID)
+		if !queuedOnly {
+			claimQuery = claimQuery.Where("updated_at < ?", cutoff)
+		}
+		result := claimQuery.Update("status", subTaskStatusDispatching)
+		if result.Error != nil {
+			return claimed, result.Error
+		}
+		if result.RowsAffected == 0 {
+			continue
+		}
+		sub.Status = subTaskStatusDispatching
+		claimed = append(claimed, sub)
+	}
+	return claimed, nil
 }
 
 func handleTimeoutTasks(q *scheduler.TaskQueue) {

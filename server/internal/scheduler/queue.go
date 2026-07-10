@@ -106,6 +106,17 @@ func (q *TaskQueue) Mode() string {
 	return q.mode
 }
 
+// RecoveryToken identifies one queue process and connection generation.
+// It changes after a RabbitMQ reconnect and across server restarts.
+func (q *TaskQueue) RecoveryToken() string {
+	if q == nil {
+		return ""
+	}
+	q.chMu.Lock()
+	defer q.chMu.Unlock()
+	return fmt.Sprintf("%s|%d", q.epoch, q.generation)
+}
+
 // Close 关闭 RabbitMQ 连接
 func (q *TaskQueue) Close() {
 	q.chMu.Lock()
@@ -191,6 +202,11 @@ func (q *TaskQueue) connectLocked() error {
 			_ = conn.Close()
 			return fmt.Errorf("RabbitMQ queue declare %s failed: %w", queueName, err)
 		}
+	}
+	if err := ch.Confirm(false); err != nil {
+		_ = ch.Close()
+		_ = conn.Close()
+		return fmt.Errorf("RabbitMQ publisher confirm setup failed: %w", err)
 	}
 
 	q.generation++
@@ -298,7 +314,7 @@ func (q *TaskQueue) PushTask(ctx context.Context, task *pb.Task) error {
 		return err
 	}
 
-	err = q.ch.PublishWithContext(ctx, "", queueName, false, false, amqp.Publishing{
+	err = q.publishConfirmedLocked(ctx, queueName, amqp.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp.Persistent, // 消息持久化
 		Body:         data,
@@ -328,7 +344,7 @@ func (q *TaskQueue) PushTaskToFront(ctx context.Context, task *pb.Task) error {
 		return err
 	}
 
-	err = q.ch.PublishWithContext(ctx, "", priorityQueues[PriorityUrgent], false, false, amqp.Publishing{
+	err = q.publishConfirmedLocked(ctx, priorityQueues[PriorityUrgent], amqp.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp.Persistent,
 		Body:         data,
@@ -337,6 +353,24 @@ func (q *TaskQueue) PushTaskToFront(ctx context.Context, task *pb.Task) error {
 		q.unhealthy = true
 	}
 	return err
+}
+
+func (q *TaskQueue) publishConfirmedLocked(ctx context.Context, queueName string, msg amqp.Publishing) error {
+	confirmation, err := q.ch.PublishWithDeferredConfirmWithContext(ctx, "", queueName, false, false, msg)
+	if err != nil {
+		return err
+	}
+	if confirmation == nil {
+		return errors.New("RabbitMQ publisher confirm is not enabled")
+	}
+	acked, err := confirmation.WaitContext(ctx)
+	if err != nil {
+		return fmt.Errorf("RabbitMQ publisher confirm wait failed: %w", err)
+	}
+	if !acked {
+		return errors.New("RabbitMQ rejected published task")
+	}
+	return nil
 }
 
 // ============================================================================
