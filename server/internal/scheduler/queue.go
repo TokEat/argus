@@ -2,11 +2,15 @@ package scheduler
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -20,7 +24,7 @@ import (
 //   - 三级优先级队列: dddd.tasks.urgent / dddd.tasks.normal / dddd.tasks.low
 //   - 使用 basic.get (pull 模式) 按优先级降序消费，高优先级先消费
 //   - 手动 ACK 保证任务可靠投递（Server 崩溃时 RabbitMQ 自动 requeue）
-//   - 内存队列 fallback 用于无 RabbitMQ 的开发环境
+//   - 仅未配置 AMQP URL 时使用内存队列；显式 RabbitMQ 模式故障时保持失败可见
 //   - 支持队列深度监控 (QueueDepth)
 // ============================================================================
 
@@ -28,7 +32,14 @@ const (
 	PriorityUrgent = 0 // 回收/紧急任务
 	PriorityNormal = 1 // 普通任务（默认）
 	PriorityLow    = 2 // 低优先级/后台扫描
+
+	rabbitMQHeartbeat   = 10 * time.Second
+	rabbitMQDialTimeout = 5 * time.Second
 )
+
+var errTaskQueueClosed = errors.New("task queue is closed")
+
+var queueEpochCounter atomic.Uint64
 
 // priorityQueues 按优先级从高到低的 Queue 名
 var priorityQueues = []string{
@@ -39,77 +50,52 @@ var priorityQueues = []string{
 
 // pendingDelivery 记录一次未确认的消息投递
 type pendingDelivery struct {
-	tag       uint64
-	queueName string
-	agentID   string
-	claimedAt time.Time
+	tag        uint64
+	queueName  string
+	agentID    string
+	claimedAt  time.Time
+	generation uint64
 }
 
 // TaskQueue 封装基于 RabbitMQ 的多优先级任务队列
 type TaskQueue struct {
-	conn    *amqp.Connection
-	ch      *amqp.Channel
-	chMu    sync.Mutex // 保护 channel 操作的并发安全
-	amqpURL string     // 保留连接地址用于自动重连
-	mem     *memoryQueue
-	mode    string
+	conn       *amqp.Connection
+	ch         *amqp.Channel
+	chMu       sync.Mutex // 保护 channel 操作的并发安全
+	amqpURL    string     // 保留连接地址用于自动重连
+	mem        *memoryQueue
+	mode       string
+	epoch      string
+	closed     bool
+	unhealthy  bool
+	generation uint64
+	done       chan struct{}
+	closeOnce  sync.Once
 
 	// pendingAcks 跟踪未确认的投递: compositeID → *pendingDelivery
 	pendingAcks sync.Map
 }
 
-// NewTaskQueue 初始化队列（RabbitMQ 模式或内存 Fallback）
+// NewTaskQueue 根据 AMQP URL 是否配置初始化 RabbitMQ 或内存队列。
 func NewTaskQueue(amqpURL string) *TaskQueue {
-	queue := &TaskQueue{}
-
 	amqpURL = strings.TrimSpace(amqpURL)
+	epoch := newQueueEpoch()
 	if amqpURL == "" {
-		queue.mode = "memory"
-		queue.mem = newMemoryQueue()
-		return queue
+		return &TaskQueue{mode: "memory", epoch: epoch, mem: newMemoryQueue(), done: make(chan struct{})}
 	}
 
-	conn, err := amqp.Dial(amqpURL)
+	queue := &TaskQueue{mode: "rabbitmq", epoch: epoch, amqpURL: amqpURL, unhealthy: true, done: make(chan struct{})}
+	queue.chMu.Lock()
+	err := queue.connectLocked()
+	queue.chMu.Unlock()
 	if err != nil {
-		log.Printf("RabbitMQ unavailable at %s, falling back to in-memory queue: %v", amqpURL, err)
-		queue.mode = "memory"
-		queue.mem = newMemoryQueue()
-		return queue
-	}
-
-	ch, err := conn.Channel()
-	if err != nil {
-		conn.Close()
-		log.Printf("Failed to open RabbitMQ channel, falling back to in-memory queue: %v", err)
-		queue.mode = "memory"
-		queue.mem = newMemoryQueue()
-		return queue
-	}
-
-	queue.conn = conn
-	queue.ch = ch
-	queue.amqpURL = amqpURL
-	queue.mode = "rabbitmq"
-
-	// 声明三级优先级队列（持久化）
-	for _, queueName := range priorityQueues {
-		_, err := ch.QueueDeclare(
-			queueName,
-			true,  // durable — 队列持久化
-			false, // auto-delete
-			false, // exclusive
-			false, // no-wait
-			nil,
-		)
-		if err != nil {
-			log.Printf("Warning: failed to declare queue %s: %v", queueName, err)
-		}
+		log.Printf("[TaskQueue] RabbitMQ unavailable at startup; queue remains in rabbitmq mode and will retry: %v", err)
+	} else {
+		log.Printf("[TaskQueue] RabbitMQ initialized with %d priority queues", len(priorityQueues))
 	}
 
 	// 启动超时投递回收守护
 	go queue.staleSalvage()
-
-	log.Printf("[TaskQueue] RabbitMQ initialized with %d priority queues", len(priorityQueues))
 	return queue
 }
 
@@ -122,49 +108,170 @@ func (q *TaskQueue) Mode() string {
 
 // Close 关闭 RabbitMQ 连接
 func (q *TaskQueue) Close() {
+	q.chMu.Lock()
+	defer q.chMu.Unlock()
+	q.closed = true
+	q.closeOnce.Do(func() { close(q.done) })
+	q.invalidatePendingLocked()
 	if q.ch != nil {
-		q.ch.Close()
+		_ = q.ch.Close()
+		q.ch = nil
 	}
 	if q.conn != nil {
-		q.conn.Close()
+		_ = q.conn.Close()
+		q.conn = nil
 	}
 }
 
-// ensureChannel 在操作前检测 Channel 健康状态，如果 Channel 或 Connection 已关闭则自动重建。
+// ForceRecover 在 NotifyClose/heartbeat 标记连接失效后执行一次有界重连。
+// 显式 RabbitMQ 模式不会在故障时切换到内存队列。
+func (q *TaskQueue) ForceRecover() (bool, error) {
+	if q.mode == "memory" {
+		return false, nil
+	}
+
+	q.chMu.Lock()
+	defer q.chMu.Unlock()
+	if q.connectionHealthyLocked() {
+		return false, nil
+	}
+	if err := q.connectLocked(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ensureChannel 在操作前检测 Channel 健康状态并按需重建。
 // 调用方必须已持有 chMu 锁。
 func (q *TaskQueue) ensureChannel() error {
-	if q.ch != nil && !q.ch.IsClosed() {
-		return nil // Channel 健康
+	if q.mode == "memory" {
+		return nil
+	}
+	if q.connectionHealthyLocked() {
+		return nil
+	}
+	return q.connectLocked()
+}
+
+func (q *TaskQueue) connectionHealthyLocked() bool {
+	return !q.closed && !q.unhealthy && q.conn != nil && q.ch != nil && !q.conn.IsClosed() && !q.ch.IsClosed()
+}
+
+func (q *TaskQueue) connectLocked() error {
+	if q.closed {
+		return errTaskQueueClosed
 	}
 
-	log.Printf("[TaskQueue] Channel is closed, attempting to rebuild...")
-
-	// 如果连接也断了，先重建连接
-	if q.conn == nil || q.conn.IsClosed() {
-		conn, err := amqp.Dial(q.amqpURL)
-		if err != nil {
-			return fmt.Errorf("RabbitMQ reconnect failed: %w", err)
-		}
-		q.conn = conn
-		log.Printf("[TaskQueue] RabbitMQ connection re-established")
+	q.unhealthy = true
+	q.invalidatePendingLocked()
+	if q.ch != nil {
+		_ = q.ch.Close()
+		q.ch = nil
+	}
+	if q.conn != nil {
+		_ = q.conn.Close()
+		q.conn = nil
 	}
 
-	ch, err := q.conn.Channel()
+	conn, err := amqp.DialConfig(q.amqpURL, amqp.Config{
+		Heartbeat: rabbitMQHeartbeat,
+		Dial:      amqp.DefaultDial(rabbitMQDialTimeout),
+	})
 	if err != nil {
-		return fmt.Errorf("RabbitMQ channel reopen failed: %w", err)
+		return fmt.Errorf("RabbitMQ connect failed: %w", err)
 	}
-	q.ch = ch
-
-	// 重新声明队列（幂等操作）
+	ch, err := conn.Channel()
+	if err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("RabbitMQ channel open failed: %w", err)
+	}
 	for _, queueName := range priorityQueues {
-		_, err := ch.QueueDeclare(queueName, true, false, false, false, nil)
-		if err != nil {
-			log.Printf("[TaskQueue] Warning: failed to re-declare queue %s: %v", queueName, err)
+		if _, err := ch.QueueDeclare(queueName, true, false, false, false, nil); err != nil {
+			_ = ch.Close()
+			_ = conn.Close()
+			return fmt.Errorf("RabbitMQ queue declare %s failed: %w", queueName, err)
 		}
 	}
 
-	log.Printf("[TaskQueue] Channel rebuilt successfully")
+	q.generation++
+	q.conn = conn
+	q.ch = ch
+	q.unhealthy = false
+	q.watchConnection(q.generation, conn, ch)
 	return nil
+}
+
+func (q *TaskQueue) watchConnection(generation uint64, conn *amqp.Connection, ch *amqp.Channel) {
+	connClosed := conn.NotifyClose(make(chan *amqp.Error, 1))
+	channelClosed := ch.NotifyClose(make(chan *amqp.Error, 1))
+	go func() {
+		var closeErr *amqp.Error
+		select {
+		case closeErr = <-connClosed:
+		case closeErr = <-channelClosed:
+		}
+
+		q.chMu.Lock()
+		if q.closed || q.generation != generation || q.conn != conn {
+			q.chMu.Unlock()
+			return
+		}
+		q.unhealthy = true
+		q.chMu.Unlock()
+		if closeErr != nil {
+			log.Printf("[TaskQueue] RabbitMQ generation %d closed: %v", generation, closeErr)
+		} else {
+			log.Printf("[TaskQueue] RabbitMQ generation %d closed", generation)
+		}
+		q.reconnectLoop(generation)
+	}()
+}
+
+func (q *TaskQueue) reconnectLoop(closedGeneration uint64) {
+	backoff := time.Second
+	for {
+		select {
+		case <-q.done:
+			return
+		default:
+		}
+
+		recovered, err := q.ForceRecover()
+		if err == nil {
+			if recovered {
+				log.Printf("[TaskQueue] RabbitMQ generation %d recovered as generation %d", closedGeneration, q.currentGeneration())
+			}
+			return
+		}
+		if errors.Is(err, errTaskQueueClosed) {
+			return
+		}
+		log.Printf("[TaskQueue] RabbitMQ reconnect retry failed: %v", err)
+
+		timer := time.NewTimer(backoff)
+		select {
+		case <-q.done:
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		if backoff < 5*time.Second {
+			backoff *= 2
+			if backoff > 5*time.Second {
+				backoff = 5 * time.Second
+			}
+		}
+	}
+}
+
+func (q *TaskQueue) currentGeneration() uint64 {
+	q.chMu.Lock()
+	defer q.chMu.Unlock()
+	return q.generation
+}
+
+func (q *TaskQueue) invalidatePendingLocked() {
+	q.pendingAcks.Clear()
 }
 
 // ============================================================================
@@ -173,7 +280,7 @@ func (q *TaskQueue) ensureChannel() error {
 
 // PushTask 将任务按优先级路由到对应 Queue
 func (q *TaskQueue) PushTask(ctx context.Context, task *pb.Task) error {
-	if q.conn == nil {
+	if q.mode == "memory" {
 		q.mem.push(task, int(task.Priority))
 		return nil
 	}
@@ -191,16 +298,20 @@ func (q *TaskQueue) PushTask(ctx context.Context, task *pb.Task) error {
 		return err
 	}
 
-	return q.ch.PublishWithContext(ctx, "", queueName, false, false, amqp.Publishing{
+	err = q.ch.PublishWithContext(ctx, "", queueName, false, false, amqp.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp.Persistent, // 消息持久化
 		Body:         data,
 	})
+	if err != nil {
+		q.unhealthy = true
+	}
+	return err
 }
 
 // PushTaskToFront 将恢复/抢救的任务压入最高优先级 urgent 队列
 func (q *TaskQueue) PushTaskToFront(ctx context.Context, task *pb.Task) error {
-	if q.conn == nil {
+	if q.mode == "memory" {
 		q.mem.push(task, PriorityUrgent)
 		return nil
 	}
@@ -217,11 +328,15 @@ func (q *TaskQueue) PushTaskToFront(ctx context.Context, task *pb.Task) error {
 		return err
 	}
 
-	return q.ch.PublishWithContext(ctx, "", priorityQueues[PriorityUrgent], false, false, amqp.Publishing{
+	err = q.ch.PublishWithContext(ctx, "", priorityQueues[PriorityUrgent], false, false, amqp.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp.Persistent,
 		Body:         data,
 	})
+	if err != nil {
+		q.unhealthy = true
+	}
+	return err
 }
 
 // ============================================================================
@@ -230,7 +345,7 @@ func (q *TaskQueue) PushTaskToFront(ctx context.Context, task *pb.Task) error {
 
 // TryPopTask 完全非阻塞：按优先级从高到低依次 basic.get，立即返回
 func (q *TaskQueue) TryPopTask(ctx context.Context, agentID string) (*pb.Task, string, error) {
-	if q.conn == nil {
+	if q.mode == "memory" {
 		q.mem.mu.Lock()
 		if len(q.mem.tasks) > 0 {
 			task := q.mem.tasks[0].task
@@ -252,6 +367,7 @@ func (q *TaskQueue) TryPopTask(ctx context.Context, agentID string) (*pb.Task, s
 	for _, queueName := range priorityQueues {
 		msg, ok, err := q.ch.Get(queueName, false) // autoAck=false, 手动确认
 		if err != nil {
+			q.unhealthy = true
 			return nil, "", fmt.Errorf("RabbitMQ Get error on %s: %w", queueName, err)
 		}
 		if !ok {
@@ -261,18 +377,21 @@ func (q *TaskQueue) TryPopTask(ctx context.Context, agentID string) (*pb.Task, s
 		var task pb.Task
 		if err := json.Unmarshal(msg.Body, &task); err != nil {
 			// 格式错误，直接 ACK 掉避免反复消费
-			_ = q.ch.Ack(msg.DeliveryTag, false)
+			if ackErr := q.ch.Ack(msg.DeliveryTag, false); ackErr != nil {
+				q.unhealthy = true
+			}
 			log.Printf("[TaskQueue] Discarded malformed message from %s: %v", queueName, err)
 			continue
 		}
 
 		// 生成 compositeID 并记录投递信息
-		compositeID := fmt.Sprintf("%s|%d", queueName, msg.DeliveryTag)
+		compositeID := q.deliveryID(queueName, msg.DeliveryTag)
 		q.pendingAcks.Store(compositeID, &pendingDelivery{
-			tag:       msg.DeliveryTag,
-			queueName: queueName,
-			agentID:   agentID,
-			claimedAt: time.Now(),
+			tag:        msg.DeliveryTag,
+			queueName:  queueName,
+			agentID:    agentID,
+			claimedAt:  time.Now(),
+			generation: q.generation,
 		})
 
 		return &task, compositeID, nil
@@ -283,7 +402,7 @@ func (q *TaskQueue) TryPopTask(ctx context.Context, agentID string) (*pb.Task, s
 
 // PopTask 阻塞版本：先尝试立即获取，失败后等待 500ms 重试一次
 func (q *TaskQueue) PopTask(ctx context.Context, agentID string) (*pb.Task, string, error) {
-	if q.conn == nil {
+	if q.mode == "memory" {
 		t, err := q.mem.pop(ctx, time.Second)
 		return t, "", err
 	}
@@ -305,44 +424,68 @@ func (q *TaskQueue) PopTask(ctx context.Context, agentID string) (*pb.Task, stri
 
 // AckTask 确认任务完成
 func (q *TaskQueue) AckTask(ctx context.Context, compositeID string) error {
-	if q.conn == nil || compositeID == "" {
+	if q.mode == "memory" || compositeID == "" {
 		return nil
 	}
 
-	val, ok := q.pendingAcks.LoadAndDelete(compositeID)
-	if !ok {
-		return nil // 已确认或未知
-	}
-
-	pd := val.(*pendingDelivery)
 	q.chMu.Lock()
 	defer q.chMu.Unlock()
+	val, ok := q.pendingAcks.Load(compositeID)
+	if !ok {
+		return nil // 已确认、已失效或未知
+	}
+	pd := val.(*pendingDelivery)
+	if pd.generation != q.generation {
+		q.pendingAcks.Delete(compositeID)
+		return nil
+	}
 
 	if err := q.ensureChannel(); err != nil {
 		return err
 	}
-	return q.ch.Ack(pd.tag, false)
+	if pd.generation != q.generation {
+		q.pendingAcks.Delete(compositeID)
+		return nil
+	}
+	if err := q.ch.Ack(pd.tag, false); err != nil {
+		q.unhealthy = true
+		return err
+	}
+	q.pendingAcks.Delete(compositeID)
+	return nil
 }
 
 // NackTask 拒绝并重新入队（用于标签不匹配退回）
 func (q *TaskQueue) NackTask(ctx context.Context, compositeID string) error {
-	if q.conn == nil || compositeID == "" {
+	if q.mode == "memory" || compositeID == "" {
 		return nil
 	}
 
-	val, ok := q.pendingAcks.LoadAndDelete(compositeID)
+	q.chMu.Lock()
+	defer q.chMu.Unlock()
+	val, ok := q.pendingAcks.Load(compositeID)
 	if !ok {
 		return nil
 	}
-
 	pd := val.(*pendingDelivery)
-	q.chMu.Lock()
-	defer q.chMu.Unlock()
+	if pd.generation != q.generation {
+		q.pendingAcks.Delete(compositeID)
+		return nil
+	}
 
 	if err := q.ensureChannel(); err != nil {
 		return err
 	}
-	return q.ch.Nack(pd.tag, false, true) // requeue=true
+	if pd.generation != q.generation {
+		q.pendingAcks.Delete(compositeID)
+		return nil
+	}
+	if err := q.ch.Nack(pd.tag, false, true); err != nil { // requeue=true
+		q.unhealthy = true
+		return err
+	}
+	q.pendingAcks.Delete(compositeID)
+	return nil
 }
 
 // ============================================================================
@@ -352,7 +495,7 @@ func (q *TaskQueue) NackTask(ctx context.Context, compositeID string) error {
 // QueueDepth 返回各优先级队列中可消费的消息数（Ready 状态）
 func (q *TaskQueue) QueueDepth(ctx context.Context) map[string]int64 {
 	depths := make(map[string]int64)
-	if q.conn == nil {
+	if q.mode == "memory" {
 		q.mem.mu.Lock()
 		depths["memory"] = int64(len(q.mem.tasks))
 		q.mem.mu.Unlock()
@@ -361,20 +504,27 @@ func (q *TaskQueue) QueueDepth(ctx context.Context) map[string]int64 {
 
 	q.chMu.Lock()
 	defer q.chMu.Unlock()
+	if err := q.ensureChannel(); err != nil {
+		log.Printf("[TaskQueue] QueueDepth unavailable: %v", err)
+		return depths
+	}
 
 	pendingByQueue := q.pendingCountByQueue()
 
 	for _, queueName := range priorityQueues {
 		info, err := q.ch.QueueInspect(queueName)
-		if err == nil {
-			// QueueInspect.Messages = Ready + Unacked
-			// 可消费积压 = 总量 - 当前进程持有的未确认投递
-			ready := int64(info.Messages) - pendingByQueue[queueName]
-			if ready < 0 {
-				ready = 0
-			}
-			depths[queueName] = ready
+		if err != nil {
+			q.unhealthy = true
+			log.Printf("[TaskQueue] QueueDepth inspect %s failed: %v", queueName, err)
+			break
 		}
+		// QueueInspect.Messages = Ready + Unacked
+		// 可消费积压 = 总量 - 当前进程持有的未确认投递
+		ready := int64(info.Messages) - pendingByQueue[queueName]
+		if ready < 0 {
+			ready = 0
+		}
+		depths[queueName] = ready
 	}
 	return depths
 }
@@ -407,24 +557,29 @@ func (q *TaskQueue) staleSalvage() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		staleThreshold := time.Now().Add(-30 * time.Minute)
-		recovered := 0
+	for {
+		select {
+		case <-q.done:
+			return
+		case <-ticker.C:
+			staleThreshold := time.Now().Add(-30 * time.Minute)
+			recovered := 0
 
-		q.pendingAcks.Range(func(key, value any) bool {
-			pd := value.(*pendingDelivery)
-			if pd.claimedAt.Before(staleThreshold) {
-				compositeID := key.(string)
-				log.Printf("[Stale-Salvage] Nacking stale delivery %s (agent=%s, age=%v)",
-					compositeID, pd.agentID, time.Since(pd.claimedAt))
-				_ = q.NackTask(context.Background(), compositeID)
-				recovered++
+			q.pendingAcks.Range(func(key, value any) bool {
+				pd := value.(*pendingDelivery)
+				if pd.claimedAt.Before(staleThreshold) {
+					compositeID := key.(string)
+					log.Printf("[Stale-Salvage] Nacking stale delivery %s (agent=%s, age=%v)",
+						compositeID, pd.agentID, time.Since(pd.claimedAt))
+					_ = q.NackTask(context.Background(), compositeID)
+					recovered++
+				}
+				return true
+			})
+
+			if recovered > 0 {
+				log.Printf("[Stale-Salvage] Recovered %d stale deliveries", recovered)
 			}
-			return true
-		})
-
-		if recovered > 0 {
-			log.Printf("[Stale-Salvage] Recovered %d stale deliveries", recovered)
 		}
 	}
 }
@@ -442,6 +597,18 @@ func priorityToQueue(priority int) string {
 	default:
 		return priorityQueues[PriorityNormal]
 	}
+}
+
+func newQueueEpoch() string {
+	var random [16]byte
+	if _, err := rand.Read(random[:]); err == nil {
+		return hex.EncodeToString(random[:])
+	}
+	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), queueEpochCounter.Add(1))
+}
+
+func (q *TaskQueue) deliveryID(queueName string, deliveryTag uint64) string {
+	return fmt.Sprintf("%s|%d|%s|%d", q.epoch, q.generation, queueName, deliveryTag)
 }
 
 // ============================================================================

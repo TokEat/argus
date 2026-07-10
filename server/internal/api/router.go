@@ -3783,10 +3783,25 @@ func StartTaskTimeoutDaemon(ctx context.Context, q *scheduler.TaskQueue) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			recoverQueueIfDead(q)
 			recoverDispatchingTasks(q)
 			handleTimeoutTasks(q)
 			db.AutoDispatchCleanup()
 		}
+	}
+}
+
+func recoverQueueIfDead(q *scheduler.TaskQueue) {
+	if q == nil {
+		return
+	}
+	recovered, err := q.ForceRecover()
+	if err != nil {
+		log.Printf("[QueueRecover] RabbitMQ reconnect failed: %v", err)
+		return
+	}
+	if recovered {
+		log.Printf("[QueueRecover] RabbitMQ connection was dead -- rebuilt; stranded tasks will recover in next dispatch cycle")
 	}
 }
 
