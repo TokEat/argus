@@ -464,6 +464,97 @@ func TestCloudProviderMockSmoke(t *testing.T) {
 	}
 }
 
+func TestChooseOneClickInstanceType(t *testing.T) {
+	tests := []struct {
+		name      string
+		available []string
+		want      string
+	}{
+		{
+			name:      "prefers e series 2c2g regardless of discovery order",
+			available: []string{"ecs.g8i.large", "ecs.c6.large", "ecs.u1-c1m1.large", "ecs.e-c1m1.large"},
+			want:      "ecs.e-c1m1.large",
+		},
+		{
+			name:      "falls back to universal 2c2g",
+			available: []string{"ecs.g8i.large", "ecs.c6.large", "ecs.u1-c1m1.large"},
+			want:      "ecs.u1-c1m1.large",
+		},
+		{
+			name:      "falls back to c6 2c4g",
+			available: []string{"ecs.g8i.large", "ecs.c6.large"},
+			want:      "ecs.c6.large",
+		},
+		{
+			name:      "uses first discovered type when preferred types are unavailable",
+			available: []string{"ecs.g8i.large", "ecs.r8i.large"},
+			want:      "ecs.g8i.large",
+		},
+		{name: "returns empty for empty discovery", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := chooseOneClickInstanceType(tt.available); got != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestOneClickSetupPersistsPreferred2C2GInstanceType(t *testing.T) {
+	ensureCloudHandlerTestFactories()
+	fakeProviderDiscovery = map[string]interface{}{
+		"security_groups": []map[string]string{{"id": "sg-1", "name": "default"}},
+		"v_switches":      []map[string]string{{"id": "vsw-1", "name": "default"}},
+		"images":          []map[string]string{{"id": "img-1", "name": "ubuntu-22"}},
+		"instance_types": []map[string]interface{}{
+			{"id": "ecs.g8i.large", "cpu": 2, "memory_gb": 8.0, "family": "ecs.g8i"},
+			{"id": "ecs.c6.large", "cpu": 2, "memory_gb": 4.0, "family": "ecs.c6"},
+			{"id": "ecs.u1-c1m1.large", "cpu": 2, "memory_gb": 2.0, "family": "ecs.u1"},
+			{"id": "ecs.e-c1m1.large", "cpu": 2, "memory_gb": 2.0, "family": "ecs.e"},
+		},
+	}
+	fakeUploader = &fakeOSSUploader{files: []cloud.OSSFileInfo{{Key: requiredAgentObjectKey}}}
+
+	store := setupCloudHandlerTestDB(t)
+	akID, err := cloud.EncryptSecret("ak")
+	if err != nil {
+		t.Fatalf("encrypt ak: %v", err)
+	}
+	akSecret, err := cloud.EncryptSecret("sk")
+	if err != nil {
+		t.Fatalf("encrypt sk: %v", err)
+	}
+	account := db.CloudAccount{
+		ID:              "ca-preferred-2c2g",
+		TenantID:        "default",
+		Name:            "preferred 2c2g",
+		Provider:        "fake-review",
+		AccessKeyID:     akID,
+		AccessKeySecret: akSecret,
+		Region:          "cn-test",
+		OSSBucket:       "bucket",
+		OSSEndpoint:     "endpoint",
+		Status:          "active",
+	}
+	if err := store.Create(&account).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+
+	ctx, recorder := newTenantContext(http.MethodPost, "/cloud/accounts/"+account.ID+"/one-click-setup")
+	ctx.Params = gin.Params{{Key: "id", Value: account.ID}}
+	oneClickSetup(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	if err := store.Where("id = ?", account.ID).First(&account).Error; err != nil {
+		t.Fatalf("reload account: %v", err)
+	}
+	if account.DefaultInstanceType != "ecs.e-c1m1.large" {
+		t.Fatalf("expected preferred 2c2g type, got %q", account.DefaultInstanceType)
+	}
+}
+
 func TestSanitizeReleaseFilenameRejectsUnsafeUploads(t *testing.T) {
 	badNames := []string{
 		"../../release/dddd-agent-linux-amd64",

@@ -1592,15 +1592,13 @@ func oneClickSetup(c *gin.Context) {
 		}
 	}
 
-	// 实例规格：总是覆盖，优先 ecs.c6.large
+	// 实例规格：总是覆盖，优先 2c2g 经济型
 	if len(result.InstanceTypes) > 0 {
-		pick := result.InstanceTypes[0].ID
-		for _, it := range result.InstanceTypes {
-			if it.ID == "ecs.c6.large" {
-				pick = it.ID
-				break
-			}
+		instanceTypeIDs := make([]string, 0, len(result.InstanceTypes))
+		for _, instanceType := range result.InstanceTypes {
+			instanceTypeIDs = append(instanceTypeIDs, instanceType.ID)
 		}
+		pick := chooseOneClickInstanceType(instanceTypeIDs)
 		updates["default_instance_type"] = pick
 		chosen["instance_type"] = pick
 	} else {
@@ -1732,6 +1730,20 @@ func oneClickSetup(c *gin.Context) {
 			"instance_types":  len(result.InstanceTypes),
 		},
 	})
+}
+
+func chooseOneClickInstanceType(instanceTypes []string) string {
+	if len(instanceTypes) == 0 {
+		return ""
+	}
+	for _, preferred := range []string{"ecs.e-c1m1.large", "ecs.u1-c1m1.large", "ecs.c6.large"} {
+		for _, instanceType := range instanceTypes {
+			if instanceType == preferred {
+				return instanceType
+			}
+		}
+	}
+	return instanceTypes[0]
 }
 
 func containsIgnoreCase(s, sub string) bool {
