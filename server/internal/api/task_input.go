@@ -500,7 +500,7 @@ type targetBatchGroup struct {
 func batchSizeForTargetType(targetType string) int {
 	switch targetType {
 	case "url":
-		return 100 // http_probe + dir_brute
+		return 50 // http_probe + dir_brute + gopoc 爆破
 	case "domain":
 		return 50 // 子域枚举 + CDN + web，最重
 	case "domain_port":
@@ -510,7 +510,7 @@ func batchSizeForTargetType(targetType string) int {
 	case "ip_port":
 		return 200 // 直接协议识别 + web
 	case "cidr", "ip_range":
-		return 10 // 每条下游展开成几百个 IP，必须小
+		return 2 // 每条下游展开成几百个 IP（/24≈256），批要极小
 	default:
 		// osint, unknown 等：osint 为搜索查询数，每条又炸出大量主机
 		return 100

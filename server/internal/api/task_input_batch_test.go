@@ -4,13 +4,13 @@ import "testing"
 
 func TestBatchSizeForTargetType(t *testing.T) {
 	cases := map[string]int{
-		"url":         100,
+		"url":         50,
 		"domain":      50,
 		"domain_port": 200,
 		"ip":          50,
 		"ip_port":     200,
-		"cidr":        10,
-		"ip_range":    10,
+		"cidr":        2,
+		"ip_range":    2,
 		"osint":       100,
 		"unknown":     100,
 	}
@@ -37,10 +37,10 @@ func TestBatchTargetsOfTypeChunking(t *testing.T) {
 	}
 	for _, c := range []tc{
 		{"ip", 250, 5, 50},       // 250/50
-		{"url", 169, 2, 69},      // 169/100 -> 100 + 69
+		{"url", 169, 4, 19},      // 169/50 -> 50+50+50+19
 		{"domain", 120, 3, 20},   // 120/50 -> 50+50+20
 		{"ip_port", 200, 1, 200}, // 恰好一批
-		{"cidr", 25, 3, 5},       // 25/10 -> 10+10+5
+		{"cidr", 25, 13, 1},      // 25/2 -> 12*2 + 1
 	} {
 		batches := batchTargetsOfType(mk(c.count), c.typ, "")
 		if len(batches) != c.wantBatches {

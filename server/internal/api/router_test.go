@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1058,6 +1059,93 @@ func TestPreviewTaskSelectorUsesEffectiveTargetType(t *testing.T) {
 	}
 	if resp.MatchedNodes != 1 || resp.AvailableSlots != 1 {
 		t.Fatalf("expected selector rules to narrow matching nodes to one free slot, got %+v", resp)
+	}
+}
+
+func TestCreateTaskUsesReducedURLBatchSize(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Project{ID: "project-url-batches", TenantID: "default", OwnerUserID: "1", Status: "active"}).Error; err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	targets := make([]string, 51)
+	for i := range targets {
+		targets[i] = fmt.Sprintf("https://batch-%02d.example.test", i)
+	}
+	payload, err := json.Marshal(map[string]interface{}{
+		"project_id": "project-url-batches",
+		"targets":    strings.Join(targets, "\n"),
+		"config":     map[string]interface{}{},
+	})
+	if err != nil {
+		t.Fatalf("marshal task payload: %v", err)
+	}
+
+	oldQueue := taskQueue
+	queue := scheduler.NewTaskQueue("")
+	taskQueue = queue
+	t.Cleanup(func() {
+		queue.Close()
+		taskQueue = oldQueue
+	})
+
+	c, w := newTenantContextWithRole(http.MethodPost, "/tasks", "operator", "1")
+	c.Request = httptest.NewRequest(http.MethodPost, "/tasks", bytes.NewReader(payload))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	createTask(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create task status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		TaskID       string `json:"task_id"`
+		Dispatched   int    `json:"dispatched"`
+		BatchSummary struct {
+			TotalTargets int `json:"total_targets"`
+			TotalBatches int `json:"total_batches"`
+		} `json:"batch_summary"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode create task response: %v", err)
+	}
+	if resp.TaskID == "" || resp.Dispatched != 2 || resp.BatchSummary.TotalTargets != 51 || resp.BatchSummary.TotalBatches != 2 {
+		t.Fatalf("unexpected create task response: %+v", resp)
+	}
+	if depth := queue.QueueDepth(context.Background())["memory"]; depth != 2 {
+		t.Fatalf("queue depth = %d, want 2", depth)
+	}
+	var subtasks []db.SubTask
+	if err := store.Where("root_task_id = ?", resp.TaskID).Order("id").Find(&subtasks).Error; err != nil {
+		t.Fatalf("load subtasks: %v", err)
+	}
+	if len(subtasks) != 2 {
+		t.Fatalf("subtask count = %d, want 2", len(subtasks))
+	}
+	wantSizes := []int{50, 1}
+	for i, sub := range subtasks {
+		var chunk []string
+		if err := json.Unmarshal([]byte(sub.ChunkTargets), &chunk); err != nil {
+			t.Fatalf("decode subtask %s targets: %v", sub.ID, err)
+		}
+		if len(chunk) != wantSizes[i] || sub.Status != "Pending" {
+			t.Fatalf("subtask %d = size:%d status:%s, want size:%d status:Pending", i, len(chunk), sub.Status, wantSizes[i])
+		}
+		if sub.TenantID != "default" || sub.ProjectID != "project-url-batches" {
+			t.Fatalf("subtask %d scope = tenant:%s project:%s", i, sub.TenantID, sub.ProjectID)
+		}
+		var selector map[string]string
+		if err := json.Unmarshal([]byte(sub.AgentSelector), &selector); err != nil {
+			t.Fatalf("decode subtask %s selector: %v", sub.ID, err)
+		}
+		if selector["target_type"] != "url" {
+			t.Fatalf("subtask %d selector = %+v, want target_type=url", i, selector)
+		}
+	}
+	var firstChunk, secondChunk []string
+	_ = json.Unmarshal([]byte(subtasks[0].ChunkTargets), &firstChunk)
+	_ = json.Unmarshal([]byte(subtasks[1].ChunkTargets), &secondChunk)
+	if firstChunk[0] != targets[0] || firstChunk[49] != targets[49] || secondChunk[0] != targets[50] {
+		t.Fatalf("URL order changed across batches: first=%q/%q second=%q", firstChunk[0], firstChunk[49], secondChunk[0])
 	}
 }
 
