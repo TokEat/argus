@@ -16908,7 +16908,7 @@ zywall-usg-100:
 易软天创 易软天创-禅道项目管理系统(深圳):
     - app="易软天创-禅道系统"
 易软天创-ranzhi-OA:
-    - body="/sys/index.php?m=user&f=login&referer=" || (header="rid" && header="theme" && header="lang") || (banner="rid" && banner="theme" && banner="lang")
+    - body="/sys/index.php?m=user&f=login&referer="
 易软天创-禅道系统:
     - '(title="欢迎使用禅道集成运行环境" || body="<a id=''zentaopro'' href=''/pro/''" || body="$(''#zentaopro'').addClass" || body="powered by <a href=''http://www.zentao.net'' target=''_blank''>ZenTaoPMS" || body="Welcome to use zentao!" || body="href=''/zentao/favicon.ico") && server!="360 web server" && body!="Server: Netvox Z206-Webs" && body!="Server: CPWS"'
     - body="/zentao/user-login"
@@ -17305,7 +17305,7 @@ zywall-usg-100:
     - body="/assets/js/gohome.js"
     - body="/password/passwordFound" ||body="shiro-cas?loginService"||body="window.mobileSafePassWord"||body="window.mobileSafeAppeal"||body="window.mobileSafeProblem"
 联想网盘:
-    - body="#fileManagerTitle"||body="seajs.use(["
+    - body="#fileManagerTitle"
 联想网盘(华东):
     - body="SDK/UserManager"
 联软准入:
