@@ -37,7 +37,6 @@ import (
 var taskQueue *scheduler.TaskQueue
 var notifyHub *grpcpkg.NotifyHub
 var agentPSK string
-var developmentMode bool
 var buildMu sync.Mutex
 var buildCancelMu sync.Mutex
 var buildCancels = map[uint]context.CancelFunc{}
@@ -60,10 +59,6 @@ func SetTaskQueue(queue *scheduler.TaskQueue) {
 // SetAgentPSK 注入 Agent 预共享密钥，用于 Agent 内部 API 鉴权。
 func SetAgentPSK(psk string) {
 	agentPSK = strings.TrimSpace(psk)
-}
-
-func SetDevelopmentMode(enabled bool) {
-	developmentMode = enabled
 }
 
 func isAgentInternalEndpoint(c *gin.Context) bool {
@@ -2947,13 +2942,10 @@ func authLogin(c *gin.Context) {
 
 	// 尝试从数据库校验用户
 	var user db.User
-	tenantClaim := req.TenantID
-	if tenantClaim == "" {
-		tenantClaim = "default" // default fallback if neither provided
-	}
-	roleClaim := "admin"
-	userIDClaim := "dev:" + loginUsername
-	expAuthorizedClaim := false
+	var tenantClaim string
+	var roleClaim string
+	var userIDClaim string
+	var expAuthorizedClaim bool
 	if err := db.DB.Where("username = ?", loginUsername).First(&user).Error; err == nil {
 		// 数据库有此用户，校验密码
 		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
@@ -2972,12 +2964,8 @@ func authLogin(c *gin.Context) {
 		userIDClaim = fmt.Sprintf("%d", user.ID)
 		expAuthorizedClaim = user.ExpAuthorized
 	} else if errors.Is(err, gorm.ErrRecordNotFound) {
-		if !developmentMode || req.Password != "8888" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Wrong password"})
-			return
-		}
-		// 开发模式降级：强制使用 default 租户，与 Agent 注册的默认 tenant_id 保持一致
-		tenantClaim = "default"
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Wrong password"})
+		return
 	} else {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query user"})
 		return
