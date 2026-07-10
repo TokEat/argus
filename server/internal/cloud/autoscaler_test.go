@@ -1,6 +1,7 @@
 package cloud
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -18,8 +19,8 @@ func setupAutoScalerTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := store.AutoMigrate(&db.CloudInstance{}); err != nil {
-		t.Fatalf("automigrate cloud instances: %v", err)
+	if err := store.AutoMigrate(&db.CloudAccount{}, &db.CloudScalingPolicy{}, &db.CloudInstance{}, &db.Node{}); err != nil {
+		t.Fatalf("automigrate cloud models: %v", err)
 	}
 	return store
 }
@@ -77,7 +78,7 @@ func TestCalculateScaleUpDecisionRespectsThresholdWhenAgentsExist(t *testing.T) 
 	}
 }
 
-func TestColdStartBypassesCooldown(t *testing.T) {
+func TestColdStartRespectsCooldown(t *testing.T) {
 	lastAction := time.Now()
 	policy := db.CloudScalingPolicy{
 		MaxInstances:     5,
@@ -91,8 +92,36 @@ func TestColdStartBypassesCooldown(t *testing.T) {
 	}
 
 	needed, reason := calculateScaleUpDecision(&policy, 1, 0, 0, 0)
-	if needed != 1 || !scaleUpReasonBypassesCooldown(reason) {
-		t.Fatalf("cold-start decision = (%d, %s), want cooldown-bypassing scale up", needed, reason)
+	if needed != 1 || reason != scaleUpReasonColdStart {
+		t.Fatalf("cold-start decision = (%d, %s), want a decision that evaluatePolicy gates on cooldown", needed, reason)
+	}
+}
+
+func TestEvaluatePolicyDoesNotBypassCooldownForColdStart(t *testing.T) {
+	store := setupAutoScalerTestDB(t)
+	lastAction := time.Now().Add(-time.Minute).UTC().Truncate(time.Millisecond)
+	policy := db.CloudScalingPolicy{
+		ID:               "policy-cold-start-cooldown",
+		CloudAccountID:   "missing-account",
+		Name:             "cold start cooldown",
+		MaxInstances:     1,
+		ScaleUpThreshold: 50,
+		CooldownSeconds:  300,
+		LastScaleAction:  &lastAction,
+	}
+	if err := store.Create(&policy).Error; err != nil {
+		t.Fatalf("seed policy: %v", err)
+	}
+
+	as := NewAutoScaler(store, nil)
+	as.evaluatePolicy(context.Background(), &policy, 1)
+
+	var got db.CloudScalingPolicy
+	if err := store.First(&got, "id = ?", policy.ID).Error; err != nil {
+		t.Fatalf("reload policy: %v", err)
+	}
+	if got.LastScaleAction == nil || !got.LastScaleAction.Equal(lastAction) {
+		t.Fatalf("cold start bypassed cooldown: last_scale_action=%v want=%v", got.LastScaleAction, lastAction)
 	}
 }
 
@@ -118,5 +147,112 @@ func TestCapScaleUpCountByActiveInstancesRefreshesBeforeProvisioning(t *testing.
 	}
 	if got := as.capScaleUpCountByActiveInstances(&policy, 5); got != 0 {
 		t.Fatalf("capScaleUpCountByActiveInstances after reaching max = %d, want 0", got)
+	}
+}
+
+func TestIsFatalProvisionError(t *testing.T) {
+	tests := []struct {
+		message string
+		want    bool
+	}{
+		{message: "NotEnoughBalance: account balance is insufficient", want: true},
+		{message: "Forbidden.RiskControl", want: true},
+		{message: "InvalidParameter.InstanceType", want: true},
+		{message: "QuotaExceeded", want: true},
+		{message: "Throttling.User", want: true},
+		{message: "InvalidAccessKeyId.NotFound", want: true},
+		{message: "SignatureDoesNotMatch", want: true},
+		{message: "decrypt access_key_secret: invalid ciphertext", want: true},
+		{message: "unsupported cloud provider: demo", want: true},
+		{message: "该云凭证尚未配置地域", want: true},
+		{message: "该云凭证未配置 OSS", want: true},
+		{message: "NoStock: instance type unavailable", want: false},
+		{message: "InternalError: retry later", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.message, func(t *testing.T) {
+			if got := isFatalProvisionError(tt.message); got != tt.want {
+				t.Fatalf("isFatalProvisionError(%q) = %v, want %v", tt.message, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScaleUpOutcomeRequiresCooldown(t *testing.T) {
+	tests := []struct {
+		name       string
+		successes  int64
+		fatalFails int64
+		want       bool
+	}{
+		{name: "successful provision", successes: 1, want: true},
+		{name: "fatal failure", fatalFails: 1, want: true},
+		{name: "transient failures only", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := scaleUpOutcomeRequiresCooldown(tt.successes, tt.fatalFails); got != tt.want {
+				t.Fatalf("scaleUpOutcomeRequiresCooldown(%d, %d) = %v, want %v", tt.successes, tt.fatalFails, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScaleUpMissingAccountStartsCooldown(t *testing.T) {
+	store := setupAutoScalerTestDB(t)
+	policy := db.CloudScalingPolicy{
+		ID:             "policy-missing-account",
+		CloudAccountID: "missing-account",
+		Name:           "missing account",
+		MaxInstances:   1,
+	}
+	if err := store.Create(&policy).Error; err != nil {
+		t.Fatalf("seed policy: %v", err)
+	}
+
+	as := NewAutoScaler(store, nil)
+	as.scaleUp(context.Background(), &policy, 1, "", "")
+
+	var got db.CloudScalingPolicy
+	if err := store.First(&got, "id = ?", policy.ID).Error; err != nil {
+		t.Fatalf("reload policy: %v", err)
+	}
+	if got.LastScaleAction == nil {
+		t.Fatal("missing cloud account did not start scale-up cooldown")
+	}
+}
+
+func TestScaleUpManagerInitializationFailureStartsCooldown(t *testing.T) {
+	store := setupAutoScalerTestDB(t)
+	account := db.CloudAccount{
+		ID:              "invalid-credentials",
+		Name:            "invalid credentials",
+		Provider:        "aliyun",
+		AccessKeyID:     "not-base64",
+		AccessKeySecret: "not-base64",
+		Status:          "active",
+	}
+	if err := store.Create(&account).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	policy := db.CloudScalingPolicy{
+		ID:             "policy-invalid-credentials",
+		CloudAccountID: account.ID,
+		Name:           "invalid credentials",
+		MaxInstances:   1,
+	}
+	if err := store.Create(&policy).Error; err != nil {
+		t.Fatalf("seed policy: %v", err)
+	}
+
+	as := NewAutoScaler(store, nil)
+	as.scaleUp(context.Background(), &policy, 1, "", "")
+
+	var got db.CloudScalingPolicy
+	if err := store.First(&got, "id = ?", policy.ID).Error; err != nil {
+		t.Fatalf("reload policy: %v", err)
+	}
+	if got.LastScaleAction == nil {
+		t.Fatal("manager initialization failure did not start scale-up cooldown")
 	}
 }

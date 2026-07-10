@@ -2,6 +2,7 @@ package cloud
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strings"
 	"sync"
@@ -151,7 +152,7 @@ func (as *AutoScaler) evaluatePolicy(ctx context.Context, policy *db.CloudScalin
 
 	// Scale Up 判定
 	if needed, reason := calculateScaleUpDecision(policy, queueDepth, activeInstances, inFlightInstances, aliveAgents); needed > 0 {
-		if policyInCooldown(policy) && !scaleUpReasonBypassesCooldown(reason) {
+		if policyInCooldown(policy) {
 			return
 		}
 		log.Printf("[AutoScaler] Scale UP: policy=%s reason=%s queue=%d threshold=%d active_instances=%d alive_agents=%d max=%d → launching %d instances",
@@ -177,10 +178,6 @@ func policyInCooldown(policy *db.CloudScalingPolicy) bool {
 	return time.Since(*policy.LastScaleAction) < time.Duration(policy.CooldownSeconds)*time.Second
 }
 
-func scaleUpReasonBypassesCooldown(reason scaleUpReason) bool {
-	return reason == scaleUpReasonColdStart || reason == scaleUpReasonMinCapacity
-}
-
 func calculateScaleUpDecision(policy *db.CloudScalingPolicy, queueDepth, activeInstances, inFlightInstances, aliveAgents int64) (int64, scaleUpReason) {
 	maxInstances := int64(policy.MaxInstances)
 	if maxInstances <= 0 {
@@ -203,9 +200,8 @@ func calculateScaleUpDecision(policy *db.CloudScalingPolicy, queueDepth, activeI
 		return needed, scaleUpReasonMinCapacity
 	}
 
-	// Cold start: with zero live agents, even a small queue cannot drain.
-	// Do not wait for ScaleUpThreshold or cooldown unless another instance is
-	// already provisioning or waiting for agent registration.
+	// Cold start: with zero live agents, even a small queue cannot drain. This
+	// bypasses ScaleUpThreshold, while evaluatePolicy still enforces cooldown.
 	if queueDepth > 0 && aliveAgents == 0 && inFlightInstances == 0 {
 		return 1, scaleUpReasonColdStart
 	}
@@ -294,6 +290,9 @@ func (as *AutoScaler) scaleUp(ctx context.Context, policy *db.CloudScalingPolicy
 	var account db.CloudAccount
 	if err := as.db.First(&account, "id = ? AND status = ?", policy.CloudAccountID, "active").Error; err != nil {
 		log.Printf("[AutoScaler] Failed to load cloud account %s: %v", policy.CloudAccountID, err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			as.markScaleUpCooldown(policy, "cloud account is missing or inactive")
+		}
 		return
 	}
 
@@ -310,6 +309,9 @@ func (as *AutoScaler) scaleUp(ctx context.Context, policy *db.CloudScalingPolicy
 	manager, err := as.getOrCreateManager(&account)
 	if err != nil {
 		log.Printf("[AutoScaler] Failed to create manager for account %s: %v", account.ID, err)
+		// Manager creation only performs deterministic local credential/provider
+		// setup. Retrying it every reconcile cycle cannot recover without config changes.
+		as.markScaleUpCooldown(policy, "cloud manager initialization failed")
 		return
 	}
 
@@ -318,6 +320,7 @@ func (as *AutoScaler) scaleUp(ctx context.Context, policy *db.CloudScalingPolicy
 	sem := make(chan struct{}, maxConcurrentProvisions)
 	var wg sync.WaitGroup
 	var successCount int64
+	var fatalErrCount int64
 
 	for i := 0; i < count; i++ {
 		wg.Add(1)
@@ -328,6 +331,9 @@ func (as *AutoScaler) scaleUp(ctx context.Context, policy *db.CloudScalingPolicy
 			instance, err := manager.ProvisionInstance(ctx, &account, policy, as.grpcAddr, as.apiURL, as.psk)
 			if err != nil {
 				log.Printf("[AutoScaler] Failed to provision instance %d/%d: %v", idx+1, count, err)
+				if isFatalProvisionError(err.Error()) {
+					atomic.AddInt64(&fatalErrCount, 1)
+				}
 				return
 			}
 			atomic.AddInt64(&successCount, 1)
@@ -336,15 +342,18 @@ func (as *AutoScaler) scaleUp(ctx context.Context, policy *db.CloudScalingPolicy
 		}(i)
 	}
 
-	// 等待所有创建完成，仅在至少一个成功时才更新冷却时间戳
-	// 防止全部创建失败（如 NoStock）时错误进入冷却期导致扩容延迟
 	wg.Wait()
-	if atomic.LoadInt64(&successCount) > 0 {
-		now := time.Now()
-		as.db.Model(policy).Update("last_scale_action", &now)
-		log.Printf("[AutoScaler] Scale UP complete: %d/%d instances created successfully", successCount, count)
+	succeeded := atomic.LoadInt64(&successCount)
+	fatalFailures := atomic.LoadInt64(&fatalErrCount)
+	if scaleUpOutcomeRequiresCooldown(succeeded, fatalFailures) {
+		as.markScaleUpCooldown(policy, "provision attempt completed or failed fatally")
+		if succeeded > 0 {
+			log.Printf("[AutoScaler] Scale UP complete: %d/%d instances created successfully", succeeded, count)
+		} else {
+			log.Printf("[AutoScaler] Scale UP failed with %d fatal errors; cooldown updated to prevent retry spam", fatalFailures)
+		}
 	} else {
-		log.Printf("[AutoScaler] Scale UP failed: all %d instance creation attempts failed, cooldown NOT updated", count)
+		log.Printf("[AutoScaler] Scale UP failed: all %d instance creation attempts failed with transient errors; cooldown not updated", count)
 	}
 }
 
@@ -643,4 +652,51 @@ func (as *AutoScaler) shouldDeferTTLTermination(inst *db.CloudInstance, hardCuto
 		return false
 	}
 	return node.RunningTasks > 0
+}
+
+func scaleUpOutcomeRequiresCooldown(successCount, fatalFailureCount int64) bool {
+	return successCount > 0 || fatalFailureCount > 0
+}
+
+func (as *AutoScaler) markScaleUpCooldown(policy *db.CloudScalingPolicy, reason string) {
+	if as == nil || as.db == nil || policy == nil {
+		return
+	}
+	now := time.Now()
+	if err := as.db.Model(policy).Update("last_scale_action", &now).Error; err != nil {
+		log.Printf("[AutoScaler] Failed to update scale-up cooldown for policy=%s: %v", policy.Name, err)
+		return
+	}
+	policy.LastScaleAction = &now
+	log.Printf("[AutoScaler] Scale-up cooldown updated: policy=%s reason=%s", policy.Name, reason)
+}
+
+// isFatalProvisionError identifies account/configuration/quota and throttling
+// failures that should not trigger another scale-up attempt every 30 seconds.
+func isFatalProvisionError(errMsg string) bool {
+	normalized := strings.ToLower(errMsg)
+	for _, kw := range []string{
+		"notenoughbalance",
+		"realnameauthenticationerror",
+		"forbidden",
+		"quotaexceeded",
+		"maxspotinstancecountexceeded",
+		"operationdenied.riskcontrol",
+		"invalidparameter",
+		"throttling",
+		"invalidaccesskeyid",
+		"signaturedoesnotmatch",
+		"authfailure",
+		"unauthorized",
+		"invalidcredentials",
+		"decrypt access_key",
+		"unsupported cloud provider",
+		"尚未配置地域",
+		"未配置 oss",
+	} {
+		if strings.Contains(normalized, kw) {
+			return true
+		}
+	}
+	return false
 }

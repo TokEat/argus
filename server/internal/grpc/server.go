@@ -24,6 +24,7 @@ import (
 )
 
 const agentSessionTTL = 7 * 24 * time.Hour
+const retryQueuedMarker = "queued"
 
 // Server 封装了对 Agent 通信的 gRPC 服务端
 type Server struct {
@@ -658,6 +659,11 @@ func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb
 		return &pb.Ack{Success: true, Message: "duplicate completion ignored"}, nil
 	}
 
+	// A cancellation already accepted by the server wins over a late FAILED/TIMEOUT
+	// report from the Agent. This prevents the retry path from resurrecting it.
+	if currentStatus == "CANCELPENDING" {
+		status = "CANCELLED"
+	}
 	log.Printf("[TaskComplete] SubTask %s by Agent %s => Status: %s", req.TaskId, req.AgentId, status)
 
 	updates := map[string]interface{}{
@@ -665,8 +671,18 @@ func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb
 		"agent_id":      "",
 		"stream_msg_id": "",
 	}
-	if err := db.DB.Model(&db.SubTask{}).Where("id = ?", req.TaskId).Updates(updates).Error; err != nil {
+	completion := db.DB.Model(&db.SubTask{}).
+		Where("id = ? AND tenant_id = ? AND status = ?", req.TaskId, sub.TenantID, sub.Status)
+	if sub.AgentID != "" {
+		completion = completion.Where("agent_id = ?", req.AgentId)
+	}
+	completion = completion.Updates(updates)
+	if completion.Error != nil {
 		return &pb.Ack{Success: false, Message: "failed to persist completion"}, nil
+	}
+	if completion.RowsAffected != 1 {
+		log.Printf("[TaskComplete] Ignored completion for %s because its lease or status changed", req.TaskId)
+		return &pb.Ack{Success: true, Message: "stale completion ignored"}, nil
 	}
 
 	// 仅在任务处于活跃态时扣减节点并发计数。
@@ -681,42 +697,18 @@ func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb
 
 	// 失败批次拆分重试：对多目标失败批次执行二分拆分
 	if (status == "FAILED" || status == "TIMEOUT") && sub.RootTaskID != "" {
-		splitSubs, didSplit := db.SplitFailedSubTask(&sub)
+		sub.Status = status
+		splitSubs, didSplit, _ := db.SplitFailedSubTask(&sub, false)
 		if didSplit && len(splitSubs) > 0 {
-			// 拆分成功，将两个子批次推入 urgent 队列优先调度
+			// 拆分成功，将两个子批次推入 urgent 队列优先调度。
 			for _, splitSub := range splitSubs {
-				pbSub, err := db.SubTaskToProto(&splitSub)
-				if err != nil || pbSub == nil {
-					log.Printf("[SplitRetry] Failed to encode split subtask %s: %v", splitSub.ID, err)
-					continue
-				}
-				pbSub.Priority = 0 // urgent 优先级
-				if s.requeueTaskHook != nil {
-					if err := s.requeueTaskHook(pbSub); err != nil {
-						log.Printf("[SplitRetry] Failed to enqueue split subtask %s: %v", splitSub.ID, err)
-					}
-				}
+				s.enqueuePreparedRetry(splitSub)
 			}
 			log.Printf("[SplitRetry] Task %s split into %d sub-batches and re-enqueued", req.TaskId, len(splitSubs))
-		} else if sub.RetryCount < sub.MaxRetry {
+		} else if prepared, ok := db.PrepareSubTaskRetry(&sub); ok {
 			// 普通重试：单目标批次失败或无法拆分时，走常规重试流程
-			log.Printf("[Retry] Task %s failed, regular retry (%d/%d)", req.TaskId, sub.RetryCount+1, sub.MaxRetry)
-
-			sub.RetryCount++
-			if err := db.DB.Model(&sub).Where("id = ?", req.TaskId).Updates(map[string]interface{}{
-				"status":      "Dispatching",
-				"retry_count": sub.RetryCount,
-			}).Error; err == nil {
-				pbSub, err := db.SubTaskToProto(&sub)
-				if err == nil && pbSub != nil {
-					pbSub.Priority = 0 // 优先调度重试任务
-					if s.requeueTaskHook != nil {
-						if err := s.requeueTaskHook(pbSub); err != nil {
-							log.Printf("[Retry] Failed to requeue task %s: %v", sub.ID, err)
-						}
-					}
-				}
-			}
+			log.Printf("[Retry] Task %s failed, regular retry (%d/%d)", req.TaskId, prepared.RetryCount, prepared.MaxRetry)
+			s.enqueuePreparedRetry(prepared)
 		}
 	}
 
@@ -734,6 +726,34 @@ func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb
 	}
 
 	return &pb.Ack{Success: true}, nil
+}
+
+func (s *Server) enqueuePreparedRetry(sub db.SubTask) bool {
+	pbSub, err := db.SubTaskToProto(&sub)
+	if err != nil || pbSub == nil {
+		log.Printf("[Retry] Failed to encode subtask %s: %v", sub.ID, err)
+		return false
+	}
+	pbSub.Priority = 0
+	if s.requeueTaskHook == nil {
+		return false
+	}
+	if err := s.requeueTaskHook(pbSub); err != nil {
+		log.Printf("[Retry] Failed to enqueue subtask %s: %v", sub.ID, err)
+		return false
+	}
+
+	update := db.DB.Model(&db.SubTask{}).
+		Where("id = ? AND tenant_id = ? AND status = ?", sub.ID, sub.TenantID, "Dispatching").
+		Updates(map[string]interface{}{
+			"status":        "Pending",
+			"stream_msg_id": retryQueuedMarker,
+		})
+	if update.Error != nil {
+		log.Printf("[Retry] Subtask %s queued but Pending transition failed: %v", sub.ID, update.Error)
+		return false
+	}
+	return update.RowsAffected == 1
 }
 
 // ============================================================================

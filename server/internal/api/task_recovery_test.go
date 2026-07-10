@@ -370,3 +370,69 @@ func TestRecoverPendingTasksRabbitMQSmoke(t *testing.T) {
 		t.Fatalf("queue lifecycle change published duplicate task: %+v", duplicate)
 	}
 }
+
+func TestHandleTimeoutTasksDoesNotRetryPausedRoot(t *testing.T) {
+	store := setupAITestDB(t)
+	root := db.RootTask{ID: "root-paused-timeout", TenantID: "default", Status: "Paused", TotalChunks: 1}
+	if err := store.Create(&root).Error; err != nil {
+		t.Fatalf("seed root task: %v", err)
+	}
+	sub := db.SubTask{
+		ID:           "sub-paused-timeout",
+		TenantID:     root.TenantID,
+		RootTaskID:   root.ID,
+		Status:       "Running",
+		ChunkTargets: `["https://one.test"]`,
+		TimeoutSec:   1,
+		MaxRetry:     3,
+		UpdatedAt:    time.Now().Add(-time.Minute),
+	}
+	if err := store.Create(&sub).Error; err != nil {
+		t.Fatalf("seed subtask: %v", err)
+	}
+
+	handleTimeoutTasks(nil)
+	var got db.SubTask
+	if err := store.First(&got, "id = ?", sub.ID).Error; err != nil {
+		t.Fatalf("reload subtask: %v", err)
+	}
+	if got.Status != "Running" || got.RetryCount != 0 {
+		t.Fatalf("paused root timeout was retried: %+v", got)
+	}
+}
+
+func TestHandleTimeoutTasksPerformsLastResortSplit(t *testing.T) {
+	store := setupAITestDB(t)
+	root := db.RootTask{ID: "root-last-resort-timeout", TenantID: "default", Status: "Running", TotalChunks: 1}
+	if err := store.Create(&root).Error; err != nil {
+		t.Fatalf("seed root task: %v", err)
+	}
+	sub := db.SubTask{
+		ID:           "sub-last-resort-timeout",
+		TenantID:     root.TenantID,
+		RootTaskID:   root.ID,
+		Status:       "Running",
+		ChunkTargets: `["https://one.test","https://two.test"]`,
+		TimeoutSec:   1,
+		RetryCount:   3,
+		MaxRetry:     3,
+		UpdatedAt:    time.Now().Add(-time.Minute),
+	}
+	if err := store.Create(&sub).Error; err != nil {
+		t.Fatalf("seed subtask: %v", err)
+	}
+
+	handleTimeoutTasks(nil)
+	var got []db.SubTask
+	if err := store.Where("root_task_id = ?", root.ID).Order("id").Find(&got).Error; err != nil {
+		t.Fatalf("load split subtasks: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("last-resort split count = %d, want 2", len(got))
+	}
+	for _, item := range got {
+		if item.Status != subTaskStatusDispatching || item.RetryCount != 1 {
+			t.Fatalf("last-resort split state = %+v", item)
+		}
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"github.com/glebarez/sqlite"
 	pb "github.com/user/dddd-proto/go/scan"
 	"github.com/user/dddd-server/internal/db"
+	"github.com/user/dddd-server/internal/scheduler"
 	"google.golang.org/grpc/metadata"
 	"gorm.io/gorm"
 )
@@ -247,6 +248,155 @@ func TestClaimTaskReturnsErrorWhenUnknownStatusCannotBeRequeued(t *testing.T) {
 
 	if _, err := server.ClaimTask(context.Background(), &pb.ClaimTaskReq{AgentId: "agent-1", FreeSlots: 1}); err == nil {
 		t.Fatal("expected unknown-status requeue failure to be returned")
+	}
+}
+
+func TestTaskCompleteDoesNotRetryCancelledRootTask(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	root := db.RootTask{ID: "root-cancelled-complete", TenantID: "default", Status: "Cancelled", TotalChunks: 1}
+	if err := store.Create(&root).Error; err != nil {
+		t.Fatalf("seed cancelled root: %v", err)
+	}
+	sub := db.SubTask{
+		ID:           "sub-cancelled-complete",
+		TenantID:     "default",
+		RootTaskID:   root.ID,
+		Status:       "Running",
+		AgentID:      "agent-1",
+		ChunkTargets: `["https://one.test"]`,
+		MaxRetry:     3,
+	}
+	if err := store.Create(&sub).Error; err != nil {
+		t.Fatalf("seed running subtask: %v", err)
+	}
+
+	server := NewServer(50051)
+	queue := scheduler.NewTaskQueue("")
+	defer queue.Close()
+	server.SetRequeueTaskHook(func(task *pb.Task) error {
+		return queue.PushTaskToFront(context.Background(), task)
+	})
+	ack, err := server.TaskComplete(context.Background(), &pb.TaskCompleteReq{
+		TaskId:  sub.ID,
+		AgentId: "agent-1",
+		Status:  "FAILED",
+	})
+	if err != nil {
+		t.Fatalf("TaskComplete: %v", err)
+	}
+	if !ack.Success {
+		t.Fatalf("TaskComplete ack failed: %+v", ack)
+	}
+	if depth := queue.QueueDepth(context.Background())["memory"]; depth != 0 {
+		t.Fatalf("cancelled root task queue depth = %d, want 0", depth)
+	}
+	var got db.SubTask
+	if err := store.First(&got, "id = ?", sub.ID).Error; err != nil {
+		t.Fatalf("reload subtask: %v", err)
+	}
+	if got.Status != "FAILED" {
+		t.Fatalf("cancelled root completion status = %s, want FAILED without retry", got.Status)
+	}
+	var gotRoot db.RootTask
+	if err := store.First(&gotRoot, "id = ?", root.ID).Error; err != nil {
+		t.Fatalf("reload root task: %v", err)
+	}
+	if gotRoot.Status != "Cancelled" {
+		t.Fatalf("cancelled root status = %s, want Cancelled", gotRoot.Status)
+	}
+}
+
+func TestTaskCompleteSettlesCancelPendingWithoutRetry(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	root := db.RootTask{ID: "root-cancel-pending", TenantID: "default", Status: "Running", TotalChunks: 1}
+	if err := store.Create(&root).Error; err != nil {
+		t.Fatalf("seed root: %v", err)
+	}
+	sub := db.SubTask{
+		ID:           "sub-cancel-pending",
+		TenantID:     "default",
+		RootTaskID:   root.ID,
+		Status:       "CancelPending",
+		AgentID:      "agent-1",
+		ChunkTargets: `["https://one.test","https://two.test"]`,
+		MaxRetry:     3,
+	}
+	if err := store.Create(&sub).Error; err != nil {
+		t.Fatalf("seed subtask: %v", err)
+	}
+
+	server := NewServer(50051)
+	queue := scheduler.NewTaskQueue("")
+	defer queue.Close()
+	server.SetRequeueTaskHook(func(task *pb.Task) error {
+		return queue.PushTaskToFront(context.Background(), task)
+	})
+	if _, err := server.TaskComplete(context.Background(), &pb.TaskCompleteReq{
+		TaskId: sub.ID, AgentId: sub.AgentID, Status: "FAILED",
+	}); err != nil {
+		t.Fatalf("TaskComplete: %v", err)
+	}
+	if depth := queue.QueueDepth(context.Background())["memory"]; depth != 0 {
+		t.Fatalf("cancel-pending task queue depth = %d, want 0", depth)
+	}
+	var got db.SubTask
+	if err := store.First(&got, "id = ?", sub.ID).Error; err != nil {
+		t.Fatalf("reload subtask: %v", err)
+	}
+	if got.Status != "CANCELLED" {
+		t.Fatalf("cancel-pending completion status = %s, want CANCELLED", got.Status)
+	}
+}
+
+func TestTaskCompleteDuplicateFailureDoesNotSplitTwice(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	root := db.RootTask{ID: "root-duplicate-complete", TenantID: "default", Status: "Running", TotalChunks: 1}
+	if err := store.Create(&root).Error; err != nil {
+		t.Fatalf("seed root: %v", err)
+	}
+	sub := db.SubTask{
+		ID:           "sub-duplicate-complete",
+		TenantID:     "default",
+		RootTaskID:   root.ID,
+		Status:       "Running",
+		AgentID:      "agent-1",
+		ChunkTargets: `["https://one.test","https://two.test"]`,
+		MaxRetry:     3,
+	}
+	if err := store.Create(&sub).Error; err != nil {
+		t.Fatalf("seed subtask: %v", err)
+	}
+
+	server := NewServer(50051)
+	queue := scheduler.NewTaskQueue("")
+	defer queue.Close()
+	server.SetRequeueTaskHook(func(task *pb.Task) error {
+		return queue.PushTaskToFront(context.Background(), task)
+	})
+	req := &pb.TaskCompleteReq{TaskId: sub.ID, AgentId: sub.AgentID, Status: "FAILED"}
+	for i := 0; i < 2; i++ {
+		if _, err := server.TaskComplete(context.Background(), req); err != nil {
+			t.Fatalf("TaskComplete call %d: %v", i+1, err)
+		}
+	}
+	if depth := queue.QueueDepth(context.Background())["memory"]; depth != 2 {
+		t.Fatalf("duplicate completion queue depth = %d, want exactly first split pair", depth)
+	}
+	var count int64
+	if err := store.Model(&db.SubTask{}).Where("root_task_id = ?", root.ID).Count(&count).Error; err != nil {
+		t.Fatalf("count subtasks: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("duplicate completion created %d subtasks, want 2", count)
+	}
+	var queued []db.SubTask
+	if err := store.Where("root_task_id = ?", root.ID).Find(&queued).Error; err != nil {
+		t.Fatalf("load queued retries: %v", err)
+	}
+	for _, item := range queued {
+		if item.Status != "Pending" || item.StreamMsgID != retryQueuedMarker {
+			t.Fatalf("requeued subtask did not advance to Pending: %+v", item)
+		}
 	}
 }
 

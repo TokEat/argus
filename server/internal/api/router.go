@@ -4022,66 +4022,60 @@ func handleTimeoutTasks(q *scheduler.TaskQueue) {
 			continue
 		}
 
+		leaseAgentID := sub.AgentID
+		leaseStreamMsgID := sub.StreamMsgID
 		log.Printf("[TimeoutDaemon] SubTask %s timed out (timeout=%ds)", sub.ID, sub.TimeoutSec)
 		if sub.RetryCount < sub.MaxRetry {
-			recoveredByNack := false
-			if q != nil && sub.StreamMsgID != "" {
-				if err := q.NackTask(context.Background(), sub.StreamMsgID); err != nil {
-					log.Printf("[TimeoutDaemon] Nack failed for subtask %s: %v", sub.ID, err)
+			prepared, retryPrepared := db.PrepareSubTaskRetry(&sub)
+			if !retryPrepared {
+				log.Printf("[TimeoutDaemon] SubTask %s retry blocked by state, budget, or root lifecycle", sub.ID)
+				continue
+			}
+
+			oldMessageReleased := leaseStreamMsgID == ""
+			if q != nil && leaseStreamMsgID != "" {
+				if err := q.AckTask(context.Background(), leaseStreamMsgID); err != nil {
+					log.Printf("[TimeoutDaemon] ACK failed for timed-out subtask %s: %v", sub.ID, err)
 				} else {
-					recoveredByNack = true
+					oldMessageReleased = true
 				}
 			}
-
-			nextStatus := subTaskStatusDispatching
-			if recoveredByNack {
-				nextStatus = "Pending"
-			}
-
-			updateRes := db.DB.Model(&sub).Where("status = ?", "Running").Updates(map[string]interface{}{
-				"status":        nextStatus,
-				"retry_count":   sub.RetryCount + 1,
-				"agent_id":      "",
-				"stream_msg_id": "",
-			})
-			if updateRes.Error != nil {
-				log.Printf("[TimeoutDaemon] Failed to recover timed-out subtask %s: %v", sub.ID, updateRes.Error)
-				continue
-			}
-			if updateRes.RowsAffected == 0 {
-				continue
-			}
-
-			// 对无法通过 Nack 回收的任务立即尝试补投，失败则交由 dispatch 守护继续处理。
-			if !recoveredByNack && q != nil {
-				_, dispatchPending := dispatchSubTasks(context.Background(), q, []db.SubTask{sub})
+			if q != nil && oldMessageReleased {
+				_, dispatchPending := dispatchSubTasks(context.Background(), q, []db.SubTask{prepared})
 				if dispatchPending == 0 {
-					broadcastDispatchedTasks(map[int]int{sub.Priority: 1})
+					broadcastDispatchedTasks(map[int]int{prepared.Priority: 1})
 				}
 			}
 
-			log.Printf("[TimeoutDaemon] SubTask %s recovered (retry %d/%d)", sub.ID, sub.RetryCount+1, sub.MaxRetry)
+			log.Printf("[TimeoutDaemon] SubTask %s recovered (retry %d/%d)", sub.ID, prepared.RetryCount, prepared.MaxRetry)
 		} else {
-			// 超过重试次数：先尝试拆批（多目标批次的最后机会）
-			if q != nil && sub.StreamMsgID != "" {
-				_ = q.AckTask(context.Background(), sub.StreamMsgID)
-			}
-
 			// 尝试二分拆分重试（绕过 retry_count 上限检查，直接看目标数）
 			var targets []string
 			_ = json.Unmarshal([]byte(sub.ChunkTargets), &targets)
 			if len(targets) > 1 {
-				// 重置重试次数以允许拆分（拆分后的子批次用新的预算）
-				sub.RetryCount = 0
-				splitSubs, didSplit := db.SplitFailedSubTask(&sub)
-				if didSplit && q != nil {
-					_, dispatchPending := dispatchSubTasks(context.Background(), q, splitSubs)
-					if dispatchPending == 0 {
-						broadcastDispatchedTasks(map[int]int{sub.Priority: 1})
+				splitSubs, didSplit, retryAllowed := db.SplitFailedSubTask(&sub, true)
+				if !retryAllowed {
+					log.Printf("[TimeoutDaemon] SubTask %s last-resort split blocked by state or root lifecycle", sub.ID)
+					continue
+				}
+				if didSplit {
+					oldMessageReleased := leaseStreamMsgID == ""
+					if q != nil && leaseStreamMsgID != "" {
+						if err := q.AckTask(context.Background(), leaseStreamMsgID); err != nil {
+							log.Printf("[TimeoutDaemon] ACK failed before split dispatch for %s: %v", sub.ID, err)
+						} else {
+							oldMessageReleased = true
+						}
+					}
+					if q != nil && oldMessageReleased {
+						_, dispatchPending := dispatchSubTasks(context.Background(), q, splitSubs)
+						if dispatchPending == 0 {
+							broadcastDispatchedTasks(map[int]int{sub.Priority: 1})
+						}
 					}
 					log.Printf("[TimeoutDaemon] SubTask %s split into %d sub-batches (last-resort)", sub.ID, len(splitSubs))
-					if sub.AgentID != "" {
-						db.DB.Exec("UPDATE nodes SET running_tasks = GREATEST(running_tasks - 1, 0) WHERE agent_id = ?", sub.AgentID)
+					if leaseAgentID != "" {
+						db.DB.Exec("UPDATE nodes SET running_tasks = GREATEST(running_tasks - 1, 0) WHERE agent_id = ?", leaseAgentID)
 					}
 					continue
 				}
@@ -4099,6 +4093,11 @@ func handleTimeoutTasks(q *scheduler.TaskQueue) {
 			if updateRes.RowsAffected == 0 {
 				continue
 			}
+			if q != nil && leaseStreamMsgID != "" {
+				if err := q.AckTask(context.Background(), leaseStreamMsgID); err != nil {
+					log.Printf("[TimeoutDaemon] ACK failed for terminal subtask %s: %v", sub.ID, err)
+				}
+			}
 
 			log.Printf("[TimeoutDaemon] SubTask %s marked as Timeout (max retries exceeded)", sub.ID)
 			if sub.RootTaskID != "" {
@@ -4107,8 +4106,8 @@ func handleTimeoutTasks(q *scheduler.TaskQueue) {
 		}
 
 		// 递减关联节点 running_tasks
-		if sub.AgentID != "" {
-			db.DB.Exec("UPDATE nodes SET running_tasks = GREATEST(running_tasks - 1, 0) WHERE agent_id = ?", sub.AgentID)
+		if leaseAgentID != "" {
+			db.DB.Exec("UPDATE nodes SET running_tasks = GREATEST(running_tasks - 1, 0) WHERE agent_id = ?", leaseAgentID)
 		}
 	}
 }
