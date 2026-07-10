@@ -21,6 +21,18 @@ datas/
 .vscode/
 config/
 !server-ui/src/pages/config/
+!scanner/common/config/
+scanner/common/config/*
+!scanner/common/config/finger.yaml
+!scanner/common/config/workflow.yaml
+!scanner/common/config/dir.yaml
+!scanner/common/config/socket.yaml
+!scanner/common/config/api-config.yaml
+!scanner/common/config/subdomains.txt
+!scanner/common/config/pocs/
+!scanner/common/config/pocs/**
+!scanner/common/config/dict/
+!scanner/common/config/dict/**
 
 # OS files
 .DS_Store
