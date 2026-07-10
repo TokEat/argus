@@ -121,14 +121,14 @@ export const menuRoutes: RouteConfig[] = [
         path: '/config/workflow',
         name: '弹药库管理',
         icon: <DatabaseOutlined />,
-        minRole: 'viewer',
+        minRole: 'admin',
     },
     {
         path: '/config',
         name: '弹药库管理',
         icon: <DatabaseOutlined />,
         hideInMenu: true,
-        minRole: 'viewer',
+        minRole: 'admin',
         children: [
             {
                 path: '/config/workflow',
@@ -136,7 +136,7 @@ export const menuRoutes: RouteConfig[] = [
                 icon: <ApartmentOutlined />,
                 element: <ConfigLayout><WorkflowConfig /></ConfigLayout>,
                 hideInMenu: true,
-                minRole: 'viewer',
+                minRole: 'admin',
             },
             {
                 path: '/config/poc',
@@ -144,7 +144,7 @@ export const menuRoutes: RouteConfig[] = [
                 icon: <BugOutlined />,
                 element: <ConfigLayout><PocConfig /></ConfigLayout>,
                 hideInMenu: true,
-                minRole: 'viewer',
+                minRole: 'admin',
             },
             {
                 path: '/config/active-finger',
@@ -152,7 +152,7 @@ export const menuRoutes: RouteConfig[] = [
                 icon: <ScanOutlined />,
                 element: <ConfigLayout><ActiveFingerConfig /></ConfigLayout>,
                 hideInMenu: true,
-                minRole: 'viewer',
+                minRole: 'admin',
             },
             {
                 path: '/config/dir',
@@ -160,7 +160,7 @@ export const menuRoutes: RouteConfig[] = [
                 icon: <ScanOutlined />,
                 element: <ConfigLayout><DirProbeConfig /></ConfigLayout>,
                 hideInMenu: true,
-                minRole: 'viewer',
+                minRole: 'admin',
             },
             {
                 path: '/config/exploit',
@@ -168,7 +168,7 @@ export const menuRoutes: RouteConfig[] = [
                 icon: <ThunderboltOutlined />,
                 element: <ConfigLayout><ExploitConfig /></ConfigLayout>,
                 hideInMenu: true,
-                minRole: 'viewer',
+                minRole: 'admin',
             },
             {
                 path: '/config/debug',
@@ -176,7 +176,7 @@ export const menuRoutes: RouteConfig[] = [
                 icon: <RobotOutlined />,
                 element: <ConfigLayout><DebugConfig /></ConfigLayout>,
                 hideInMenu: true,
-                minRole: 'operator',
+                minRole: 'admin',
             },
         ],
     },

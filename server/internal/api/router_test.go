@@ -252,8 +252,8 @@ func TestAIPermissions(t *testing.T) {
 		path   string
 		want   string
 	}{
-		{method: "POST", path: "/api/v1/ai/arsenal/analyze", want: "operator"},
-		{method: "POST", path: "/api/v1/ai/arsenal/analyze/stream", want: "operator"},
+		{method: "POST", path: "/api/v1/ai/arsenal/analyze", want: "admin"},
+		{method: "POST", path: "/api/v1/ai/arsenal/analyze/stream", want: "admin"},
 		{method: "POST", path: "/api/v1/ai/chat", want: "operator"},
 		{method: "POST", path: "/api/v1/ai/actions/confirm", want: "operator"},
 		{method: "GET", path: "/api/v1/ai/copilot/prompts", want: "operator"},
@@ -288,12 +288,19 @@ func TestTenantRolePermissionMatrix(t *testing.T) {
 		{method: "POST", path: "/api/v1/tasks/task-1/pause", want: "operator"},
 		{method: "POST", path: "/api/v1/tasks/task-1/resume", want: "operator"},
 		{method: "DELETE", path: "/api/v1/nodes/agent-1", want: "operator"},
-		{method: "POST", path: "/api/v1/dictionaries/workflow", want: "operator"},
-		{method: "PUT", path: "/api/v1/dictionaries/workflow/product", want: "operator"},
-		{method: "POST", path: "/api/v1/arsenals/poc/demo.yaml", want: "operator"},
+		{method: "GET", path: "/api/v1/dictionaries/workflow", want: "admin"},
+		{method: "POST", path: "/api/v1/dictionaries/workflow", want: "admin"},
+		{method: "PUT", path: "/api/v1/dictionaries/workflow/product", want: "admin"},
+		{method: "DELETE", path: "/api/v1/dictionaries/workflow/product", want: "admin"},
+		{method: "GET", path: "/api/v1/arsenals/poc", want: "admin"},
+		{method: "POST", path: "/api/v1/arsenals/poc/demo.yaml", want: "admin"},
+		{method: "DELETE", path: "/api/v1/arsenals/poc/demo.yaml", want: "admin"},
 		{method: "POST", path: "/api/v1/arsenals/poc/demo.yaml/approve", want: "admin"},
 		{method: "POST", path: "/api/v1/arsenals/poc/demo.yaml/rollback", want: "admin"},
 		{method: "GET", path: "/api/v1/arsenals/seed-db", want: "admin"},
+		{method: "POST", path: "/api/v1/arsenals/ai/analyze", want: "admin"},
+		{method: "POST", path: "/api/v1/ai/arsenal/analyze", want: "admin"},
+		{method: "POST", path: "/api/v1/ai/arsenal/analyze/stream", want: "admin"},
 		{method: "GET", path: "/api/v1/exploits", want: "viewer"},
 		{method: "POST", path: "/api/v1/exploits/source/validate", want: "operator"},
 		{method: "POST", path: "/api/v1/exploits/source/dry-run", want: "operator"},
@@ -326,6 +333,66 @@ func TestTenantRolePermissionMatrix(t *testing.T) {
 		{method: "POST", path: "/api/v1/build/jobs/1/cancel", want: "admin"},
 		{method: "POST", path: "/api/v1/build/jobs/1/retry", want: "admin"},
 		{method: "GET", path: "/api/v1/undocumented", want: "admin"},
+	}
+	for _, tt := range tests {
+		if got := matchPermission(tt.method, tt.path); got != tt.want {
+			t.Fatalf("%s %s expected %s, got %s", tt.method, tt.path, tt.want, got)
+		}
+	}
+}
+
+func TestRBACRestrictsArsenalManagementToAdmin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	requests := []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/api/v1/arsenals/poc"},
+		{method: http.MethodPost, path: "/api/v1/arsenals/poc/demo.yaml"},
+		{method: http.MethodGet, path: "/api/v1/dictionaries/workflow"},
+		{method: http.MethodPut, path: "/api/v1/dictionaries/workflow/demo"},
+		{method: http.MethodPost, path: "/api/v1/ai/arsenal/analyze"},
+	}
+	for _, request := range requests {
+		for _, role := range []string{"viewer", "operator", "admin"} {
+			name := role + "_" + request.method + "_" + request.path
+			t.Run(name, func(t *testing.T) {
+				router := gin.New()
+				router.Use(func(c *gin.Context) {
+					c.Set("tenant", "tenant-a")
+					c.Set("role", role)
+					c.Next()
+				})
+				router.Use(RBACMiddleware())
+				router.Handle(request.method, request.path, func(c *gin.Context) {
+					c.JSON(http.StatusOK, gin.H{"status": "ok"})
+				})
+
+				recorder := httptest.NewRecorder()
+				router.ServeHTTP(recorder, httptest.NewRequest(request.method, request.path, nil))
+				want := http.StatusForbidden
+				if role == "admin" {
+					want = http.StatusOK
+				}
+				if recorder.Code != want {
+					t.Fatalf("expected %d, got %d body=%s", want, recorder.Code, recorder.Body.String())
+				}
+			})
+		}
+	}
+}
+
+func TestRBACKeepsMCPRuleAuthoringPermissions(t *testing.T) {
+	tests := []struct {
+		method string
+		path   string
+		want   string
+	}{
+		{method: http.MethodPost, path: "/api/v1/mcp/tools/poc/debug", want: "operator"},
+		{method: http.MethodPost, path: "/api/v1/mcp/tools/rule/context", want: "operator"},
+		{method: http.MethodPost, path: "/api/v1/mcp/tools/rule/debug", want: "operator"},
+		{method: http.MethodPost, path: "/api/v1/mcp/tools/rule/save", want: "operator"},
+		{method: http.MethodPost, path: "/api/v1/mcp/tools/rule/apply", want: "admin"},
 	}
 	for _, tt := range tests {
 		if got := matchPermission(tt.method, tt.path); got != tt.want {
