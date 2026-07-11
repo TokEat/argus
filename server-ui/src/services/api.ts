@@ -131,7 +131,11 @@ export async function listTasks(first?: string | TaskPageParams): Promise<API.Pa
     return typeof first === 'object' && first !== null ? result : pagedItems(result);
 }
 
-export async function createTask(data: API.CreateTaskRequest): Promise<{ status: string; task_id: string }> {
+export async function validateTargets(data: API.ValidateTargetsRequest): Promise<API.ValidateTargetsResponse> {
+    return request.post('/tasks/validate-targets', data);
+}
+
+export async function createTask(data: API.CreateTaskRequest): Promise<API.CreateTaskResponse> {
     return request.post('/tasks', data);
 }
 

@@ -285,6 +285,7 @@ func TestTenantRolePermissionMatrix(t *testing.T) {
 		{method: "PUT", path: "/api/v1/projects/proj-1/members", want: "operator"},
 		{method: "POST", path: "/api/v1/tasks", want: "operator"},
 		{method: "POST", path: "/api/v1/tasks/preview-selector", want: "operator"},
+		{method: "POST", path: "/api/v1/tasks/validate-targets", want: "operator"},
 		{method: "POST", path: "/api/v1/tasks/task-1/cancel", want: "operator"},
 		{method: "POST", path: "/api/v1/tasks/task-1/pause", want: "operator"},
 		{method: "POST", path: "/api/v1/tasks/task-1/resume", want: "operator"},
@@ -1059,6 +1060,99 @@ func TestPreviewTaskSelectorUsesEffectiveTargetType(t *testing.T) {
 	}
 	if resp.MatchedNodes != 1 || resp.AvailableSlots != 1 {
 		t.Fatalf("expected selector rules to narrow matching nodes to one free slot, got %+v", resp)
+	}
+}
+
+func TestValidateTargetsReturnsValidAndInvalidEntries(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/tasks/validate-targets", strings.NewReader(`{
+		"targets":"http://127.0.0.1:18080\ninvalid target",
+		"config":{}
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	validateTargets(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("validate targets status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Valid   []string          `json:"valid"`
+		Invalid []invalidTarget   `json:"invalid"`
+		Summary taskTargetSummary `json:"summary"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode validate response: %v", err)
+	}
+	if len(resp.Valid) != 1 || resp.Valid[0] != "http://127.0.0.1:18080" || len(resp.Invalid) != 1 {
+		t.Fatalf("unexpected validate response: %+v", resp)
+	}
+	if resp.Summary.Total != 2 || resp.Summary.URLs != 1 {
+		t.Fatalf("unexpected validate summary: %+v", resp.Summary)
+	}
+}
+
+func TestCreateTaskCanExplicitlySkipUnsupportedTargets(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Project{ID: "project-skip-targets", TenantID: "default", OwnerUserID: "1", Status: "active"}).Error; err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	oldQueue := taskQueue
+	queue := scheduler.NewTaskQueue("")
+	taskQueue = queue
+	t.Cleanup(func() {
+		queue.Close()
+		taskQueue = oldQueue
+	})
+
+	c, w := newTenantContextWithRole(http.MethodPost, "/tasks", "operator", "1")
+	c.Request = httptest.NewRequest(http.MethodPost, "/tasks", strings.NewReader(`{
+		"project_id":"project-skip-targets",
+		"targets":"http://127.0.0.1:18080\ninvalid target",
+		"config":{},
+		"skip_unsupported":true
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	createTask(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create task status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		TaskID         string          `json:"task_id"`
+		SkippedTargets []invalidTarget `json:"skipped_targets"`
+		BatchSummary   struct {
+			TotalTargets int `json:"total_targets"`
+		} `json:"batch_summary"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode create task response: %v", err)
+	}
+	if resp.TaskID == "" || resp.BatchSummary.TotalTargets != 1 || len(resp.SkippedTargets) != 1 || resp.SkippedTargets[0].Target != "invalid target" {
+		t.Fatalf("unexpected create response: %+v", resp)
+	}
+}
+
+func TestCreateTaskRejectsAllUnsupportedTargetsWhenSkipping(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Project{ID: "project-all-invalid", TenantID: "default", OwnerUserID: "1", Status: "active"}).Error; err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	c, w := newTenantContextWithRole(http.MethodPost, "/tasks", "operator", "1")
+	c.Request = httptest.NewRequest(http.MethodPost, "/tasks", strings.NewReader(`{
+		"project_id":"project-all-invalid",
+		"targets":"invalid target",
+		"config":{},
+		"skip_unsupported":true
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	createTask(c)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "targets is empty") {
+		t.Fatalf("expected all-invalid request to fail, got %d (%s)", w.Code, w.Body.String())
 	}
 }
 

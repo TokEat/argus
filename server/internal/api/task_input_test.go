@@ -77,3 +77,46 @@ func TestDirectTargetsRejectMalformedURLs(t *testing.T) {
 		})
 	}
 }
+
+func TestClassifyTargetsKeepsValidTargetsAndReportsInvalidTargets(t *testing.T) {
+	valid, invalid, summary := classifyTargets([]string{
+		"http://127.0.0.1:18080",
+		"invalid target",
+		"192.168.1.0/24",
+	}, taskTargetModeDirect)
+
+	if len(valid) != 2 || valid[0] != "http://127.0.0.1:18080" || valid[1] != "192.168.1.0/24" {
+		t.Fatalf("unexpected valid targets: %v", valid)
+	}
+	if len(invalid) != 1 || invalid[0].Target != "invalid target" || invalid[0].Reason == "" {
+		t.Fatalf("unexpected invalid targets: %+v", invalid)
+	}
+	if summary.Total != 3 || summary.URLs != 1 || summary.CIDRs != 1 {
+		t.Fatalf("unexpected target summary: %+v", summary)
+	}
+}
+
+func TestClassifyTargetsUsesSearchModeSyntax(t *testing.T) {
+	tests := []struct {
+		name    string
+		mode    taskTargetMode
+		valid   string
+		invalid string
+	}{
+		{name: "quake", mode: taskTargetModeQuake, valid: "service:http", invalid: "service=http"},
+		{name: "hunter", mode: taskTargetModeHunter, valid: "domain=example.com", invalid: "domain:example.com"},
+		{name: "fofa", mode: taskTargetModeFofa, valid: "domain=example.com", invalid: "domain:example.com"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			valid, invalid, summary := classifyTargets([]string{tt.valid, tt.invalid}, tt.mode)
+			if len(valid) != 1 || valid[0] != tt.valid || len(invalid) != 1 || invalid[0].Target != tt.invalid {
+				t.Fatalf("unexpected classification: valid=%v invalid=%+v", valid, invalid)
+			}
+			if summary.Total != 2 || summary.SearchInputs != 1 {
+				t.Fatalf("unexpected search summary: %+v", summary)
+			}
+		})
+	}
+}

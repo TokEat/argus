@@ -88,6 +88,29 @@ declare namespace API {
     timeout_sec?: number;
     agent_selector?: Record<string, string>;
     agent_selector_rules?: AgentSelectorRules;
+    skip_unsupported?: boolean;
+  }
+
+  interface InvalidTarget {
+    target: string;
+    reason: string;
+  }
+
+  interface ValidateTargetsRequest {
+    targets: string | string[];
+    config?: Record<string, unknown> | string;
+  }
+
+  interface ValidateTargetsResponse {
+    valid: string[];
+    invalid: InvalidTarget[];
+    summary: Record<string, unknown>;
+  }
+
+  interface CreateTaskResponse {
+    status: string;
+    task_id: string;
+    skipped_targets?: InvalidTarget[];
   }
 
   /** 调度选择器预览 (POST /api/v1/tasks/preview-selector) */

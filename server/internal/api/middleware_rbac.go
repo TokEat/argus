@@ -90,6 +90,7 @@ var permissionRules = map[string]string{
 	"GET:/projects/*/stats":            "operator",
 	"POST:/tasks":                      "operator",
 	"POST:/tasks/preview-selector":     "operator",
+	"POST:/tasks/validate-targets":     "operator",
 	"POST:/tasks/*/append":             "operator",
 	"POST:/tasks/*/cancel":             "operator",
 	"POST:/tasks/*/pause":              "operator",

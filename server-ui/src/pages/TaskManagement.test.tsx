@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { App } from 'antd';
 import { MemoryRouter } from 'react-router-dom';
 import TaskManagement from './TaskManagement';
-import { createTask, listTasks } from '../services/api';
+import { createTask, listTasks, validateTargets } from '../services/api';
 
 vi.mock('gsap', () => ({
     default: {
@@ -38,6 +38,7 @@ vi.mock('../services/api', () => ({
         },
     ]),
     createTask: vi.fn().mockResolvedValue({ status: 'ok' }),
+    validateTargets: vi.fn().mockResolvedValue({ valid: [], invalid: [], summary: {} }),
     previewTaskSelector: vi.fn().mockResolvedValue({
         matched_nodes: 1,
         available_slots: 3,
@@ -55,11 +56,14 @@ vi.mock('../services/api', () => ({
 describe('TaskManagement', () => {
     const listTasksMock = listTasks as unknown as Mock;
     const createTaskMock = createTask as unknown as Mock;
+    const validateTargetsMock = validateTargets as unknown as Mock;
 
     beforeEach(() => {
         localStorage.setItem('active_project_id', 'project-1');
         listTasksMock.mockReset();
         createTaskMock.mockClear();
+        validateTargetsMock.mockReset();
+        validateTargetsMock.mockResolvedValue({ valid: [], invalid: [], summary: {} });
         listTasksMock.mockResolvedValue({
             items: [],
             total: 0,
@@ -146,6 +150,75 @@ describe('TaskManagement', () => {
             }),
         })));
     });
+
+    it('shows invalid targets and explicitly skips them before creating', async () => {
+		const user = userEvent.setup();
+		validateTargetsMock.mockResolvedValue({
+			valid: ['http://127.0.0.1:18080'],
+			invalid: [{ target: 'invalid target', reason: '无法识别的目标格式' }],
+			summary: { mode: 'direct', total: 2, urls: 1 },
+		});
+		render(
+			<MemoryRouter>
+				<App>
+					<TaskManagement />
+				</App>
+			</MemoryRouter>
+		);
+
+		await user.click(await screen.findByRole('button', { name: /创建任务/i }));
+		await user.type(screen.getByPlaceholderText('输入任务名称'), '目标预校验任务');
+		await user.type(screen.getByPlaceholderText(/192\.168\.1\.10/), 'http://127.0.0.1:18080{enter}invalid target');
+		const createDialog = screen.getByRole('dialog', { name: '创建扫描任务' });
+		await user.click(within(createDialog).getByRole('button', { name: /创\s*建/ }));
+
+		expect(await screen.findByText('目标预校验')).toBeInTheDocument();
+		expect(await screen.findByDisplayValue('invalid target')).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: '跳过无效项并创建' }));
+
+		await waitFor(() => expect(createTaskMock).toHaveBeenCalledWith(expect.objectContaining({
+			skip_unsupported: true,
+			targets: expect.stringContaining('invalid target'),
+		})));
+	});
+
+	it('revalidates corrected invalid targets before creating', async () => {
+		const user = userEvent.setup();
+		validateTargetsMock
+			.mockResolvedValueOnce({
+				valid: ['http://127.0.0.1:18080'],
+				invalid: [{ target: 'bad target', reason: '无法识别的目标格式' }],
+				summary: { mode: 'direct', total: 2, urls: 1 },
+			})
+			.mockResolvedValueOnce({
+				valid: ['http://127.0.0.1:18080', 'https://example.test'],
+				invalid: [],
+				summary: { mode: 'direct', total: 2, urls: 2 },
+			});
+		render(
+			<MemoryRouter>
+				<App>
+					<TaskManagement />
+				</App>
+			</MemoryRouter>
+		);
+
+		await user.click(await screen.findByRole('button', { name: /创建任务/i }));
+		await user.type(screen.getByPlaceholderText('输入任务名称'), '目标修正任务');
+		await user.type(screen.getByPlaceholderText(/192\.168\.1\.10/), 'http://127.0.0.1:18080{enter}bad target');
+		await user.click(within(screen.getByRole('dialog', { name: '创建扫描任务' })).getByRole('button', { name: /创\s*建/ }));
+
+		const invalidInput = await screen.findByDisplayValue('bad target');
+		await user.clear(invalidInput);
+		await user.type(invalidInput, 'https://example.test');
+		await user.click(screen.getByRole('button', { name: '重新校验并创建' }));
+
+		await waitFor(() => expect(validateTargetsMock).toHaveBeenCalledTimes(2));
+		await waitFor(() => expect(createTaskMock).toHaveBeenCalledWith(expect.objectContaining({
+			skip_unsupported: false,
+			targets: 'http://127.0.0.1:18080\nhttps://example.test',
+		})));
+	});
 
     it('requests the next page from the server when table pagination changes', async () => {
         const user = userEvent.setup();

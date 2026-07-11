@@ -435,6 +435,7 @@ func InitRouter(port string) {
 		api.GET("/tasks", getTasks)
 		api.GET("/tasks/:id", getTaskDetail)
 		api.POST("/tasks/preview-selector", previewTaskSelector)
+		api.POST("/tasks/validate-targets", validateTargets)
 		api.POST("/tasks", createTask)
 		api.DELETE("/tasks/:id", deleteTask)
 		api.POST("/tasks/:id/cancel", cancelTask)
@@ -1607,6 +1608,29 @@ func previewTaskSelector(c *gin.Context) {
 	})
 }
 
+func validateTargets(c *gin.Context) {
+	var req struct {
+		Targets json.RawMessage `json:"targets"`
+		Config  json.RawMessage `json:"config"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	_, targetMode, err := normalizeTaskConfigPayload(req.Config)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	targets, err := parseTargets(req.Targets)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	valid, invalid, summary := classifyTargets(targets, targetMode)
+	c.JSON(http.StatusOK, gin.H{"valid": valid, "invalid": invalid, "summary": summary})
+}
+
 func createTask(c *gin.Context) {
 	var req struct {
 		ProjectID          string          `json:"project_id"`
@@ -1617,6 +1641,7 @@ func createTask(c *gin.Context) {
 		TimeoutSec         int             `json:"timeout_sec"`
 		AgentSelector      json.RawMessage `json:"agent_selector"`
 		AgentSelectorRules json.RawMessage `json:"agent_selector_rules"`
+		SkipUnsupported    bool            `json:"skip_unsupported"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -1661,7 +1686,22 @@ func createTask(c *gin.Context) {
 		return
 	}
 
-	targets, targetSummary, err := parseAndValidateTargetsForMode(req.Targets, targetMode)
+	var skippedTargets []invalidTarget
+	var targets []string
+	var targetSummary taskTargetSummary
+	if req.SkipUnsupported {
+		rawTargets, parseErr := parseTargets(req.Targets)
+		if parseErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": parseErr.Error()})
+			return
+		}
+		targets, skippedTargets, _ = classifyTargets(rawTargets, targetMode)
+		if len(targets) > 0 {
+			targets, targetSummary, err = validateTargetsByMode(targets, targetMode)
+		}
+	} else {
+		targets, targetSummary, err = parseAndValidateTargetsForMode(req.Targets, targetMode)
+	}
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1787,7 +1827,7 @@ func createTask(c *gin.Context) {
 	log.Printf("[CreateTask] RootTask %s: %d targets → %d batches (profile: %v)",
 		rootTask.ID, len(targets), len(subTasks), profile.BatchesByType)
 
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"status":           "task_created",
 		"task_id":          rootTask.ID,
 		"target_summary":   targetSummary,
@@ -1798,7 +1838,11 @@ func createTask(c *gin.Context) {
 			"total_targets": len(targets),
 			"total_batches": len(subTasks),
 		},
-	})
+	}
+	if len(skippedTargets) > 0 {
+		resp["skipped_targets"] = skippedTargets
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // ---------------- Arsenal --------------------

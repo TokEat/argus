@@ -270,21 +270,41 @@ func detectTargetModeFromConfig(cfg taskScanConfig) taskTargetMode {
 }
 
 func validateTargetsByMode(targets []string, mode taskTargetMode) ([]string, taskTargetSummary, error) {
-	summary := taskTargetSummary{
-		Mode:  string(mode),
-		Total: len(targets),
+	_, invalid, summary := classifyTargets(targets, mode)
+	if len(invalid) > 0 {
+		target := invalid[0].Target
+		switch mode {
+		case taskTargetModeHunter, taskTargetModeFofa, taskTargetModeHunterFofa:
+			return nil, taskTargetSummary{}, fmt.Errorf("invalid search query %q: hunter/fofa mode requires field=value syntax", target)
+		case taskTargetModeQuake:
+			return nil, taskTargetSummary{}, fmt.Errorf("invalid Quake query %q: quake mode requires field:value syntax", target)
+		default:
+			return nil, taskTargetSummary{}, fmt.Errorf("unsupported target %q", target)
+		}
 	}
 
+	return targets, summary, nil
+}
+
+type invalidTarget struct {
+	Target string `json:"target"`
+	Reason string `json:"reason"`
+}
+
+func classifyTargets(targets []string, mode taskTargetMode) (valid []string, invalid []invalidTarget, summary taskTargetSummary) {
+	summary = taskTargetSummary{Mode: string(mode), Total: len(targets)}
 	for _, target := range targets {
 		switch mode {
 		case taskTargetModeHunter, taskTargetModeFofa, taskTargetModeHunterFofa:
 			if !strings.Contains(target, "=") {
-				return nil, taskTargetSummary{}, fmt.Errorf("invalid search query %q: hunter/fofa mode requires field=value syntax", target)
+				invalid = append(invalid, invalidTarget{Target: target, Reason: "Hunter/Fofa 查询需要 field=value 语法"})
+				continue
 			}
 			summary.SearchInputs++
 		case taskTargetModeQuake:
 			if !strings.Contains(target, ":") {
-				return nil, taskTargetSummary{}, fmt.Errorf("invalid Quake query %q: quake mode requires field:value syntax", target)
+				invalid = append(invalid, invalidTarget{Target: target, Reason: "Quake 查询需要 field:value 语法"})
+				continue
 			}
 			summary.SearchInputs++
 		default:
@@ -304,12 +324,13 @@ func validateTargetsByMode(targets []string, mode taskTargetMode) ([]string, tas
 			case "url":
 				summary.URLs++
 			default:
-				return nil, taskTargetSummary{}, fmt.Errorf("unsupported target %q", target)
+				invalid = append(invalid, invalidTarget{Target: target, Reason: "无法识别的目标格式"})
+				continue
 			}
 		}
+		valid = append(valid, target)
 	}
-
-	return targets, summary, nil
+	return valid, invalid, summary
 }
 
 func detectDirectTargetType(input string) string {

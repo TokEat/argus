@@ -52,7 +52,7 @@ import {
     WifiOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { cancelTask, connectWebSocket, createTask, deleteTask, listTasks, listProjects, getTaskDetail, getNodes, pauseTask, previewTaskSelector, resumeTask } from '../services/api';
+import { cancelTask, connectWebSocket, createTask, deleteTask, listTasks, listProjects, getTaskDetail, getNodes, pauseTask, previewTaskSelector, resumeTask, validateTargets } from '../services/api';
 import { getTaskStatusMeta, isTaskCancellable, isTaskFailedLike, isTaskFinished, isTaskPausable, isTaskResumable, normalizeTaskStatus } from '../utils/taskStatus';
 import { canAccessRole } from '../utils/auth';
 import { useAutoContext } from '../contexts/GlobalAIContext';
@@ -256,6 +256,11 @@ const TaskManagement: React.FC = () => {
     const [taskDetail, setTaskDetail] = useState<API.TaskDetailResponse | null>(null);
     const [selectorPreview, setSelectorPreview] = useState<API.TaskSelectorPreview | null>(null);
     const [selectorPreviewLoading, setSelectorPreviewLoading] = useState(false);
+    const [targetValidationOpen, setTargetValidationOpen] = useState(false);
+    const [validTargets, setValidTargets] = useState<string[]>([]);
+    const [invalidTargets, setInvalidTargets] = useState<API.InvalidTarget[]>([]);
+    const [invalidTargetEdits, setInvalidTargetEdits] = useState<string[]>([]);
+    const pendingCreateRef = useRef<API.CreateTaskRequest | null>(null);
     const canManageTasks = canAccessRole('operator');
     const pageRef = useRef<HTMLDivElement>(null);
 
@@ -351,6 +356,18 @@ const TaskManagement: React.FC = () => {
         viewing_task_detail: detailOpen ? taskDetail : null,
     });
 
+    const finishCreate = async (request: API.CreateTaskRequest) => {
+        const result = await createTask(request);
+        const skippedCount = result.skipped_targets?.length || 0;
+        message.success(skippedCount > 0 ? `任务创建成功，已跳过 ${skippedCount} 个无效目标` : '任务创建成功');
+        setCreateOpen(false);
+        setTargetValidationOpen(false);
+        pendingCreateRef.current = null;
+        form.resetFields();
+        form.setFieldsValue(createInitialValues);
+        fetchTasks(1, taskPaginationRef.current.pageSize);
+    };
+
     const handleCreate = async () => {
         if (!canManageTasks) return;
         try {
@@ -366,11 +383,10 @@ const TaskManagement: React.FC = () => {
             const selectedProjectId = values.project_id;
             if (!selectedProjectId) {
                 message.error('请选择所属项目');
-                setCreating(false);
                 return;
             }
 
-            await createTask({
+            const request: API.CreateTaskRequest = {
                 project_id: selectedProjectId,
                 name: values.name,
                 targets: values.targets,
@@ -379,19 +395,60 @@ const TaskManagement: React.FC = () => {
                 timeout_sec: values.timeout_sec ?? 3600,
                 agent_selector: selectorFromPairs(values.agent_selector_pairs),
                 agent_selector_rules: selectorRulesFromJSON(values.agent_selector_rules_json),
-            });
-
-            message.success('任务创建成功');
-            setCreateOpen(false);
-            form.resetFields();
-            form.setFieldsValue(createInitialValues);
-            fetchTasks(1, taskPaginationRef.current.pageSize);
+            };
+            const validation = await validateTargets({ targets: request.targets, config: request.config });
+            if ((validation.invalid || []).length === 0) {
+                await finishCreate({ ...request, skip_unsupported: false });
+                return;
+            }
+            pendingCreateRef.current = request;
+            setValidTargets(validation.valid || []);
+            setInvalidTargets(validation.invalid || []);
+            setInvalidTargetEdits((validation.invalid || []).map((item) => item.target));
+            setTargetValidationOpen(true);
         } catch (error: unknown) {
             if (typeof error === 'string') {
                 message.error(error);
             } else if (error instanceof Error) {
                 message.error(error.message);
             }
+        } finally {
+            setCreating(false);
+        }
+    };
+
+    const handleSkipInvalidTargets = async () => {
+        const request = pendingCreateRef.current;
+        if (!request) return;
+        setCreating(true);
+        try {
+            await finishCreate({ ...request, skip_unsupported: true });
+        } catch (error: unknown) {
+            if (typeof error === 'string') message.error(error);
+            else if (error instanceof Error) message.error(error.message);
+        } finally {
+            setCreating(false);
+        }
+    };
+
+    const handleRevalidateTargets = async () => {
+        const request = pendingCreateRef.current;
+        if (!request) return;
+        const targets = [...validTargets, ...invalidTargetEdits.map((target) => target.trim()).filter(Boolean)].join('\n');
+        setCreating(true);
+        try {
+            const validation = await validateTargets({ targets, config: request.config });
+            if ((validation.invalid || []).length > 0) {
+                setValidTargets(validation.valid || []);
+                setInvalidTargets(validation.invalid || []);
+                setInvalidTargetEdits((validation.invalid || []).map((item) => item.target));
+                message.warning(`仍有 ${validation.invalid.length} 个目标无法识别`);
+                return;
+            }
+            await finishCreate({ ...request, targets, skip_unsupported: false });
+        } catch (error: unknown) {
+            if (typeof error === 'string') message.error(error);
+            else if (error instanceof Error) message.error(error.message);
         } finally {
             setCreating(false);
         }
@@ -1193,6 +1250,39 @@ const TaskManagement: React.FC = () => {
                 </Form>
                 </Modal>
             )}
+
+            <Modal
+                title="目标预校验"
+                open={targetValidationOpen}
+                onCancel={() => setTargetValidationOpen(false)}
+                width={760}
+                destroyOnHidden
+                footer={[
+                    <Button key="cancel" onClick={() => setTargetValidationOpen(false)}>返回修改</Button>,
+                    <Button key="skip" onClick={handleSkipInvalidTargets} loading={creating}>跳过无效项并创建</Button>,
+                    <Button key="revalidate" type="primary" onClick={handleRevalidateTargets} loading={creating}>重新校验并创建</Button>,
+                ]}
+            >
+                <Alert
+                    type="warning"
+                    showIcon
+                    message={`发现 ${invalidTargets.length} 个无法识别的目标`}
+                    description={`已识别 ${validTargets.length} 个有效目标。修正后重新校验，或明确跳过无效项。`}
+                    style={{ marginBottom: 16 }}
+                />
+                <Space direction="vertical" size={10} style={{ width: '100%' }}>
+                    {invalidTargets.map((item, index) => (
+                        <div key={`${item.target}-${index}`} style={{ display: 'grid', gridTemplateColumns: '180px minmax(0, 1fr)', gap: 10, alignItems: 'center' }}>
+                            <Tag color="error" style={{ margin: 0, whiteSpace: 'normal' }}>{item.reason}</Tag>
+                            <Input
+                                aria-label={`修正目标 ${index + 1}`}
+                                value={invalidTargetEdits[index] || ''}
+                                onChange={(event) => setInvalidTargetEdits((current) => current.map((value, itemIndex) => itemIndex === index ? event.target.value : value))}
+                            />
+                        </div>
+                    ))}
+                </Space>
+            </Modal>
 
             {/* 任务详情 Drawer */}
             <Drawer
