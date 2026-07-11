@@ -14,7 +14,10 @@ import (
 	"gorm.io/gorm"
 )
 
-const ttlActiveTaskGracePeriod = 30 * time.Minute
+const (
+	ttlActiveTaskGracePeriod    = 30 * time.Minute
+	maxAutomaticScaleUpPerCycle = int64(10)
+)
 
 type scaleUpReason string
 
@@ -38,13 +41,14 @@ const (
 
 // AutoScaler 自动伸缩控制器
 type AutoScaler struct {
-	db       *gorm.DB
-	queue    *scheduler.TaskQueue
-	managers map[string]*ResourceManager // accountID:region → manager
-	mu       sync.RWMutex
-	psk      string // Agent PSK，传入 Cloud-Init
-	apiURL   string // Server HTTP API 地址
-	grpcAddr string // Server gRPC 地址
+	db              *gorm.DB
+	queue           *scheduler.TaskQueue
+	managers        map[string]*ResourceManager // accountID:region → manager
+	mu              sync.RWMutex
+	psk             string // Agent PSK，传入 Cloud-Init
+	apiURL          string // Server HTTP API 地址
+	grpcAddr        string // Server gRPC 地址
+	scaleUpOverride func(context.Context, *db.CloudScalingPolicy, int, string, string)
 }
 
 // NewAutoScaler 创建自动伸缩控制器
@@ -155,9 +159,11 @@ func (as *AutoScaler) evaluatePolicy(ctx context.Context, policy *db.CloudScalin
 		if policyInCooldown(policy) {
 			return
 		}
-		log.Printf("[AutoScaler] Scale UP: policy=%s reason=%s queue=%d threshold=%d active_instances=%d alive_agents=%d max=%d → launching %d instances",
-			policy.Name, reason, queueDepth, policy.ScaleUpThreshold, activeInstances, aliveAgents, policy.MaxInstances, needed)
-		as.scaleUp(ctx, policy, int(needed), "", "")
+		requested := needed
+		allowed := capAutomaticScaleUpCount(requested)
+		log.Printf("[AutoScaler] Scale UP: policy=%s reason=%s queue=%d threshold=%d active_instances=%d alive_agents=%d max=%d requested=%d allowed=%d",
+			policy.Name, reason, queueDepth, policy.ScaleUpThreshold, activeInstances, aliveAgents, policy.MaxInstances, requested, allowed)
+		as.executeScaleUp(ctx, policy, int(allowed), "", "")
 		return
 	}
 
@@ -220,6 +226,16 @@ func calculateScaleUpDecision(policy *db.CloudScalingPolicy, queueDepth, activeI
 	return 0, scaleUpReasonNone
 }
 
+func capAutomaticScaleUpCount(needed int64) int64 {
+	if needed <= 0 {
+		return 0
+	}
+	if needed > maxAutomaticScaleUpPerCycle {
+		return maxAutomaticScaleUpPerCycle
+	}
+	return needed
+}
+
 // calculateScaleUpCount 计算需要扩容的实例数
 func calculateScaleUpCount(queueDepth, threshold, running, maxInst int64) int64 {
 	// 每台实例预期消化 256 个目标（与 SubTask 切分粒度一致）
@@ -240,6 +256,14 @@ func calculateScaleUpCount(queueDepth, threshold, running, maxInst int64) int64 
 // ScaleUpManual 手动触发扩容，绕过队列判定和冷却期限制
 func (as *AutoScaler) ScaleUpManual(ctx context.Context, policy *db.CloudScalingPolicy, count int, instanceTypeOverride, regionOverride string) {
 	log.Printf("[AutoScaler] Manual Scale UP: policy=%s launching %d instances (type=%s, region=%s)", policy.Name, count, instanceTypeOverride, regionOverride)
+	as.executeScaleUp(ctx, policy, count, instanceTypeOverride, regionOverride)
+}
+
+func (as *AutoScaler) executeScaleUp(ctx context.Context, policy *db.CloudScalingPolicy, count int, instanceTypeOverride, regionOverride string) {
+	if as.scaleUpOverride != nil {
+		as.scaleUpOverride(ctx, policy, count, instanceTypeOverride, regionOverride)
+		return
+	}
 	as.scaleUp(ctx, policy, count, instanceTypeOverride, regionOverride)
 }
 

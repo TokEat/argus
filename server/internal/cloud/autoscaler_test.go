@@ -78,6 +78,85 @@ func TestCalculateScaleUpDecisionRespectsThresholdWhenAgentsExist(t *testing.T) 
 	}
 }
 
+func TestCapAutomaticScaleUpCountLimitsLargeCycle(t *testing.T) {
+	if got := capAutomaticScaleUpCount(60); got != 10 {
+		t.Fatalf("capAutomaticScaleUpCount(60) = %d, want 10", got)
+	}
+}
+
+func TestCapAutomaticScaleUpCountPreservesSmallerDecision(t *testing.T) {
+	for _, needed := range []int64{0, 1, 9, 10} {
+		if got := capAutomaticScaleUpCount(needed); got != needed {
+			t.Fatalf("capAutomaticScaleUpCount(%d) = %d, want %d", needed, got, needed)
+		}
+	}
+}
+
+func TestAutomaticScaleUpDecisionRespectsRemainingCapacityBeforeCycleCap(t *testing.T) {
+	policy := db.CloudScalingPolicy{
+		MaxInstances:     7,
+		ScaleUpThreshold: 0,
+	}
+
+	needed, reason := calculateScaleUpDecision(&policy, 60*256, 0, 0, 1)
+	if reason != scaleUpReasonThreshold || needed != 7 {
+		t.Fatalf("decision = (%d, %s), want (7, %s)", needed, reason, scaleUpReasonThreshold)
+	}
+	if got := capAutomaticScaleUpCount(needed); got != 7 {
+		t.Fatalf("capAutomaticScaleUpCount(%d) = %d, want remaining capacity 7", needed, got)
+	}
+}
+
+func TestEvaluatePolicyCapsAutomaticScaleUpCycle(t *testing.T) {
+	store := setupAutoScalerTestDB(t)
+	policy := db.CloudScalingPolicy{
+		ID:               "policy-cycle-cap",
+		CloudAccountID:   "missing-account",
+		Name:             "cycle cap",
+		MaxInstances:     100,
+		ScaleUpThreshold: 0,
+	}
+	if err := store.Create(&policy).Error; err != nil {
+		t.Fatalf("seed policy: %v", err)
+	}
+	if err := store.Create(&db.Node{AgentID: "alive-agent", TenantID: "default", Status: "Alive"}).Error; err != nil {
+		t.Fatalf("seed alive agent: %v", err)
+	}
+
+	var got int
+	autoScaler := NewAutoScaler(store, nil)
+	autoScaler.scaleUpOverride = func(_ context.Context, _ *db.CloudScalingPolicy, count int, _, _ string) {
+		got = count
+	}
+	autoScaler.evaluatePolicy(context.Background(), &policy, 60*256)
+	if got != 10 {
+		t.Fatalf("automatic scale-up count = %d, want 10", got)
+	}
+}
+
+func TestScaleUpManualDoesNotApplyAutomaticCycleCap(t *testing.T) {
+	store := setupAutoScalerTestDB(t)
+	policy := db.CloudScalingPolicy{
+		ID:             "policy-manual-no-cycle-cap",
+		CloudAccountID: "missing-account",
+		Name:           "manual no cycle cap",
+		MaxInstances:   100,
+	}
+	if err := store.Create(&policy).Error; err != nil {
+		t.Fatalf("seed policy: %v", err)
+	}
+
+	var got int
+	autoScaler := NewAutoScaler(store, nil)
+	autoScaler.scaleUpOverride = func(_ context.Context, _ *db.CloudScalingPolicy, count int, _, _ string) {
+		got = count
+	}
+	autoScaler.ScaleUpManual(context.Background(), &policy, 60, "", "")
+	if got != 60 {
+		t.Fatalf("manual scale-up count = %d, want 60", got)
+	}
+}
+
 func TestColdStartRespectsCooldown(t *testing.T) {
 	lastAction := time.Now()
 	policy := db.CloudScalingPolicy{
