@@ -17460,13 +17460,12 @@ zywall-usg-100:
     - body="/ClientBin/Kingdee.BOS.XPF.App.xap"
     - title="金蝶云星空"
     - body="window.location='/k3cloud/html5/index.aspx"
-    - body="/K3Cloud"
     - body="kdUtils.min.js"
+    - body="kd.ui.login.css"
+    - icon_hash="-1629133697"
     - (title="K/3 Cloud" && body="金蝶国际软件集团有限公司版权所有") || body="var formidafterlogin = '\"BOS_MainConsoleSutra\"" || body="class=\"kd-div-loading-ct\""
 金蝶云星空BBC系统:
     - body="全渠道营销平台"
-金蝶云星空K3Cloud(北北京):
-    - body="kd.ui.login.css"
 金融决策系统:
     - icon_hash="2121571311"
 金证云原生平台(华南):

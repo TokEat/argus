@@ -73,6 +73,73 @@ func TestParaviewPASGRedirectFingerprintRuleMatches(t *testing.T) {
 	t.Fatalf("expected 派拉身份认证IAM(西部) to match PASG 302 redirect, rules=%v", rules)
 }
 
+func TestKingdeeK3CloudDoesNotMatchReflectedProbePath(t *testing.T) {
+	rules := loadFingerprintRules(t, "金蝶云星空")
+	body := `<html><title>400 Bad Request</title>URL: http://example.test/k3cloud</html>`
+
+	for _, rule := range rules {
+		finger := structs.FingerPEntity{
+			ProductName: "金蝶云星空",
+			AllString:   rule,
+			Rule:        ParseRule(rule),
+		}
+		if SingleCheck(finger, "http", "Server: nginx\r\n", body, "nginx", "400 Bad Request", "", 80, "/k3cloud", "", "", 400, "text/html", "") {
+			t.Fatalf("reflected probe path matched 金蝶云星空 rule %q", rule)
+		}
+	}
+}
+
+func TestKingdeeK3CloudMatchesStrongLoginAsset(t *testing.T) {
+	rules := loadFingerprintRules(t, "金蝶云星空")
+	body := `<html><title>金蝶云星空</title><link href="./k3cloud/HTML5/content/themes/kd.ui.login.css"></html>`
+
+	for _, rule := range rules {
+		finger := structs.FingerPEntity{
+			ProductName: "金蝶云星空",
+			AllString:   rule,
+			Rule:        ParseRule(rule),
+		}
+		if SingleCheck(finger, "http", "Server: Microsoft-IIS/10.0\r\n", body, "Microsoft-IIS/10.0", "金蝶云星空", "", 80, "/k3cloud", "", "", 200, "text/html", "") {
+			return
+		}
+	}
+
+	t.Fatalf("expected 金蝶云星空 strong login response to match, rules=%v", rules)
+}
+
+func TestKingdeeK3CloudMatchesIconHash(t *testing.T) {
+	rules := loadFingerprintRules(t, "金蝶云星空")
+	for _, rule := range rules {
+		finger := structs.FingerPEntity{
+			ProductName: "金蝶云星空",
+			AllString:   rule,
+			Rule:        ParseRule(rule),
+		}
+		if SingleCheck(finger, "http", "", "", "", "", "", 80, "/", "", "-1629133697", 200, "text/html", "") {
+			return
+		}
+	}
+	t.Fatalf("expected 金蝶云星空 icon hash to match, rules=%v", rules)
+}
+
+func TestKingdeeK3CloudKeepsActiveProbePath(t *testing.T) {
+	path := filepath.Join("..", "..", "common", "config", "dir.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var probes map[string][]string
+	if err := yaml.Unmarshal(data, &probes); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	for _, probe := range probes["金蝶云星空"] {
+		if probe == "/k3cloud" {
+			return
+		}
+	}
+	t.Fatalf("expected 金蝶云星空 active probe /k3cloud, got %v", probes["金蝶云星空"])
+}
+
 func loadFingerprintRules(t *testing.T, product string) []string {
 	t.Helper()
 
