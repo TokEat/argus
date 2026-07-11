@@ -475,6 +475,7 @@ func listFingerprintSummaries(c *gin.Context) {
 	}
 
 	items := make([]fingerprintSummaryResponse, 0, len(rows))
+	includeDisabled := c.Query("all") == "1"
 	for _, row := range rows {
 		item := fingerprintSummaryResponse{
 			Product:   row.ProductName,
@@ -485,13 +486,29 @@ func listFingerprintSummaries(c *gin.Context) {
 			UpdatedAt: formatPocRuleTime(row.UpdatedAt),
 		}
 		if includeRules {
-			var rules []string
-			_ = query.Session(&gorm.Session{}).Where("product_name = ?", row.ProductName).Order("rule_expr ASC").Pluck("rule_expr", &rules).Error
+			rules, err := loadFingerprintSummaryRules(tenantID, row.ProductName, includeDisabled)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
 			item.Rules = rules
 		}
 		items = append(items, item)
 	}
 	c.JSON(http.StatusOK, pagedResponse(items, total, page, pageSize, currentRuleVersion()))
+}
+
+func loadFingerprintSummaryRules(tenantID, productName string, includeDisabled bool) ([]string, error) {
+	query := db.DB.Model(&db.FingerprintRule{}).
+		Where("tenant_id = ? AND product_name = ?", tenantID, productName)
+	if !includeDisabled {
+		query = query.Where("enabled = ?", true)
+	}
+	var rules []string
+	if err := query.Order("rule_expr ASC").Pluck("rule_expr", &rules).Error; err != nil {
+		return nil, err
+	}
+	return rules, nil
 }
 
 func jsonStringSlice(raw string) []string {

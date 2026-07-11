@@ -218,6 +218,40 @@ func TestFingerprintDictMergesMaterializedRules(t *testing.T) {
 	}
 }
 
+func TestLoadFingerprintSummaryRulesScopesTenantAndEnabledState(t *testing.T) {
+	store := setupAITestDB(t)
+	for _, rule := range []db.FingerprintRule{
+		{TenantID: "tenant-a", ProductName: "SharedProduct", RuleExpr: `body="a"`, State: "Approved", Enabled: true},
+		{TenantID: "tenant-a", ProductName: "SharedProduct", RuleExpr: `title="disabled"`, State: "Approved", Enabled: false},
+		{TenantID: "tenant-b", ProductName: "SharedProduct", RuleExpr: `body="tenant-b"`, State: "Approved", Enabled: true},
+	} {
+		if err := store.Create(&rule).Error; err != nil {
+			t.Fatalf("seed fingerprint rule: %v", err)
+		}
+	}
+	if err := store.Model(&db.FingerprintRule{}).
+		Where("tenant_id = ? AND product_name = ? AND rule_expr = ?", "tenant-a", "SharedProduct", `title="disabled"`).
+		Update("enabled", false).Error; err != nil {
+		t.Fatalf("disable fingerprint rule: %v", err)
+	}
+
+	rules, err := loadFingerprintSummaryRules("tenant-a", "SharedProduct", false)
+	if err != nil {
+		t.Fatalf("load enabled rules: %v", err)
+	}
+	if len(rules) != 1 || rules[0] != `body="a"` {
+		t.Fatalf("enabled tenant rules = %v", rules)
+	}
+
+	allRules, err := loadFingerprintSummaryRules("tenant-a", "SharedProduct", true)
+	if err != nil {
+		t.Fatalf("load all rules: %v", err)
+	}
+	if len(allRules) != 2 || allRules[0] != `body="a"` || allRules[1] != `title="disabled"` {
+		t.Fatalf("all tenant rules = %v", allRules)
+	}
+}
+
 func TestWorkflowDictLiteUsesSummaryPagination(t *testing.T) {
 	store := setupAITestDB(t)
 	if err := store.AutoMigrate(&db.WorkflowProductSummary{}); err != nil {
