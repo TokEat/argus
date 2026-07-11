@@ -14,7 +14,9 @@ import (
 	pb "github.com/user/dddd-proto/go/scan"
 	"github.com/user/dddd-server/internal/db"
 	"github.com/user/dddd-server/internal/scheduler"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"gorm.io/gorm"
 )
 
@@ -77,6 +79,68 @@ func TestClaimTaskRespectsTenantRunningSubTaskQuota(t *testing.T) {
 	}
 	if sub.Status != "Dispatching" || sub.AgentID != "" {
 		t.Fatalf("quota-blocked task should remain unclaimed, got %+v", sub)
+	}
+}
+
+func TestClaimTaskDoesNotFetchForDrainingAgent(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	if err := store.Create(&db.Node{AgentID: "agent-draining", TenantID: "default", Status: "Draining"}).Error; err != nil {
+		t.Fatalf("seed draining node: %v", err)
+	}
+
+	server := NewServer(50051)
+	fetched := 0
+	server.SetClaimTaskHook(func(string) (*pb.Task, string, error) {
+		fetched++
+		return &pb.Task{TaskId: "must-not-fetch"}, "msg", nil
+	})
+	task, err := server.ClaimTask(context.Background(), &pb.ClaimTaskReq{AgentId: "agent-draining", FreeSlots: 1})
+	if err != nil {
+		t.Fatalf("ClaimTask draining agent: %v", err)
+	}
+	if task.GetTaskId() != "" || fetched != 0 {
+		t.Fatalf("draining agent fetched task=%+v calls=%d", task, fetched)
+	}
+}
+
+func TestClaimTaskReturnsFetchedMessageWhenAgentStartsDraining(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	if err := store.Create(&db.Node{AgentID: "agent-draining-race", TenantID: "tenant-a", Status: "Alive"}).Error; err != nil {
+		t.Fatalf("seed alive node: %v", err)
+	}
+	if err := store.Create(&db.SubTask{ID: "task-draining-race", TenantID: "tenant-a", Status: "Pending"}).Error; err != nil {
+		t.Fatalf("seed pending subtask: %v", err)
+	}
+
+	server := NewServer(50051)
+	returned := 0
+	server.SetClaimTaskHook(func(string) (*pb.Task, string, error) {
+		if err := store.Model(&db.Node{}).Where("agent_id = ?", "agent-draining-race").Update("status", "Draining").Error; err != nil {
+			t.Fatalf("mark node draining: %v", err)
+		}
+		return &pb.Task{TaskId: "task-draining-race"}, "msg-race", nil
+	})
+	server.SetReturnTaskHook(func(task *pb.Task, msgID string) error {
+		if task.TaskId != "task-draining-race" || msgID != "msg-race" {
+			t.Fatalf("unexpected returned message: task=%+v msg=%s", task, msgID)
+		}
+		returned++
+		return nil
+	})
+
+	task, err := server.ClaimTask(context.Background(), &pb.ClaimTaskReq{AgentId: "agent-draining-race", FreeSlots: 1})
+	if err != nil {
+		t.Fatalf("ClaimTask draining race: %v", err)
+	}
+	if task.GetTaskId() != "" || returned != 1 {
+		t.Fatalf("draining race task=%+v returned=%d, want empty/1", task, returned)
+	}
+	var sub db.SubTask
+	if err := store.First(&sub, "id = ?", "task-draining-race").Error; err != nil {
+		t.Fatalf("reload pending subtask: %v", err)
+	}
+	if sub.Status != "Pending" || sub.AgentID != "" || sub.StreamMsgID != "" {
+		t.Fatalf("draining race changed lease: %+v", sub)
 	}
 }
 
@@ -397,6 +461,283 @@ func TestTaskCompleteDuplicateFailureDoesNotSplitTwice(t *testing.T) {
 		if item.Status != "Pending" || item.StreamMsgID != retryQueuedMarker {
 			t.Fatalf("requeued subtask did not advance to Pending: %+v", item)
 		}
+	}
+}
+
+func seedEmergencyDumpAgent(t *testing.T, store *gorm.DB, agentID, tenantID, token string, spot bool, instanceStatus string) {
+	t.Helper()
+	expiresAt := time.Now().Add(time.Hour)
+	if err := store.Create(&db.Node{
+		AgentID:        agentID,
+		TenantID:       tenantID,
+		Status:         "Alive",
+		Token:          token,
+		TokenExpiresAt: &expiresAt,
+		RunningTasks:   1,
+	}).Error; err != nil {
+		t.Fatalf("seed emergency node: %v", err)
+	}
+	if err := store.Create(&db.CloudInstance{
+		ID:       "cloud-" + agentID,
+		AgentID:  agentID,
+		TenantID: tenantID,
+		Spot:     spot,
+		Status:   instanceStatus,
+	}).Error; err != nil {
+		t.Fatalf("seed emergency cloud instance: %v", err)
+	}
+}
+
+func emergencyDumpContext(token string) context.Context {
+	return metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-agent-token", token))
+}
+
+func TestEmergencyDumpRejectsInvalidAgentSession(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	seedEmergencyDumpAgent(t, store, "agent-spot", "tenant-a", "valid-token", true, db.CloudStatusRunning)
+
+	_, err := NewServer(50051).EmergencyDump(emergencyDumpContext("wrong-token"), &pb.EmergencyReq{AgentId: "agent-spot"})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("EmergencyDump invalid token error = %v, want Unauthenticated", err)
+	}
+}
+
+func TestEmergencyDumpRejectsNonSpotOrCrossTenantInstance(t *testing.T) {
+	t.Run("non spot", func(t *testing.T) {
+		store := setupRegisterTestDB(t)
+		seedEmergencyDumpAgent(t, store, "agent-non-spot", "tenant-a", "token", false, db.CloudStatusRunning)
+		_, err := NewServer(50051).EmergencyDump(emergencyDumpContext("token"), &pb.EmergencyReq{AgentId: "agent-non-spot"})
+		if status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("EmergencyDump non-spot error = %v, want FailedPrecondition", err)
+		}
+	})
+
+	t.Run("cross tenant", func(t *testing.T) {
+		store := setupRegisterTestDB(t)
+		expiresAt := time.Now().Add(time.Hour)
+		if err := store.Create(&db.Node{AgentID: "agent-cross", TenantID: "tenant-a", Status: "Alive", Token: "token", TokenExpiresAt: &expiresAt}).Error; err != nil {
+			t.Fatalf("seed cross-tenant node: %v", err)
+		}
+		if err := store.Create(&db.CloudInstance{ID: "cloud-cross", AgentID: "agent-cross", TenantID: "tenant-b", Spot: true, Status: db.CloudStatusRunning}).Error; err != nil {
+			t.Fatalf("seed cross-tenant instance: %v", err)
+		}
+		_, err := NewServer(50051).EmergencyDump(emergencyDumpContext("token"), &pb.EmergencyReq{AgentId: "agent-cross"})
+		if status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("EmergencyDump cross-tenant error = %v, want FailedPrecondition", err)
+		}
+	})
+}
+
+func TestEmergencyDumpAckFailureKeepsOriginalLease(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	seedEmergencyDumpAgent(t, store, "agent-spot", "tenant-a", "token", true, db.CloudStatusRunning)
+	if err := store.Create(&db.SubTask{ID: "task-ack-fail", TenantID: "tenant-a", Status: "Running", AgentID: "agent-spot", StreamMsgID: "msg-old"}).Error; err != nil {
+		t.Fatalf("seed running subtask: %v", err)
+	}
+
+	server := NewServer(50051)
+	requeued := 0
+	server.SetAckTaskHook(func(string) error { return errors.New("ack failed") })
+	server.SetRequeueTaskHook(func(*pb.Task) error { requeued++; return nil })
+	ack, err := server.EmergencyDump(emergencyDumpContext("token"), &pb.EmergencyReq{AgentId: "agent-spot"})
+	if err != nil {
+		t.Fatalf("EmergencyDump ACK failure: %v", err)
+	}
+	if ack.Success {
+		t.Fatalf("EmergencyDump ACK failure unexpectedly succeeded: %+v", ack)
+	}
+	if requeued != 0 {
+		t.Fatalf("ACK failure requeued %d tasks, want 0", requeued)
+	}
+	var sub db.SubTask
+	if err := store.First(&sub, "id = ?", "task-ack-fail").Error; err != nil {
+		t.Fatalf("reload subtask: %v", err)
+	}
+	if sub.Status != "Running" || sub.AgentID != "agent-spot" || sub.StreamMsgID != "msg-old" {
+		t.Fatalf("ACK failure changed original lease: %+v", sub)
+	}
+}
+
+func TestEmergencyDumpRequeuesRunningLeaseOnceAndIgnoresLateCompletion(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	seedEmergencyDumpAgent(t, store, "agent-spot", "tenant-a", "token", true, db.CloudStatusRunning)
+	if err := store.Create(&db.SubTask{ID: "task-requeue", TenantID: "tenant-a", Status: "Running", AgentID: "agent-spot", StreamMsgID: "msg-old", ChunkTargets: `["https://example.test"]`}).Error; err != nil {
+		t.Fatalf("seed running subtask: %v", err)
+	}
+
+	server := NewServer(50051)
+	acked := 0
+	requeued := 0
+	server.SetAckTaskHook(func(msgID string) error {
+		if msgID != "msg-old" {
+			t.Fatalf("unexpected ACK msg id: %s", msgID)
+		}
+		acked++
+		return nil
+	})
+	server.SetRequeueTaskHook(func(task *pb.Task) error {
+		if task.TaskId != "task-requeue" {
+			t.Fatalf("unexpected requeued task: %+v", task)
+		}
+		requeued++
+		return nil
+	})
+
+	for call := 1; call <= 2; call++ {
+		ack, err := server.EmergencyDump(emergencyDumpContext("token"), &pb.EmergencyReq{AgentId: "agent-spot"})
+		if err != nil || !ack.Success {
+			t.Fatalf("EmergencyDump call %d = ack=%+v err=%v", call, ack, err)
+		}
+	}
+	if acked != 1 || requeued != 1 {
+		t.Fatalf("duplicate dump ACK/requeue = %d/%d, want 1/1", acked, requeued)
+	}
+
+	var sub db.SubTask
+	if err := store.First(&sub, "id = ?", "task-requeue").Error; err != nil {
+		t.Fatalf("reload requeued subtask: %v", err)
+	}
+	if sub.Status != "Pending" || sub.AgentID != "" || sub.StreamMsgID != retryQueuedMarker {
+		t.Fatalf("unexpected requeued lease: %+v", sub)
+	}
+	if _, err := server.TaskComplete(context.Background(), &pb.TaskCompleteReq{TaskId: sub.ID, AgentId: "agent-spot", Status: "DONE"}); err != nil {
+		t.Fatalf("late TaskComplete: %v", err)
+	}
+	if err := store.First(&sub, "id = ?", "task-requeue").Error; err != nil {
+		t.Fatalf("reload after late completion: %v", err)
+	}
+	if sub.Status != "Pending" {
+		t.Fatalf("late completion changed requeued task: %+v", sub)
+	}
+
+	var node db.Node
+	if err := store.First(&node, "agent_id = ?", "agent-spot").Error; err != nil {
+		t.Fatalf("reload emergency node: %v", err)
+	}
+	if node.Status != "Offline" {
+		t.Fatalf("emergency node status = %s, want Offline", node.Status)
+	}
+	var instance db.CloudInstance
+	if err := store.First(&instance, "agent_id = ?", "agent-spot").Error; err != nil {
+		t.Fatalf("reload emergency instance: %v", err)
+	}
+	if instance.Status != db.CloudStatusTerminating {
+		t.Fatalf("emergency instance status = %s, want %s", instance.Status, db.CloudStatusTerminating)
+	}
+}
+
+func TestEmergencyDumpCASCompetitionDoesNotRequeueChangedLease(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	seedEmergencyDumpAgent(t, store, "agent-spot", "tenant-a", "token", true, db.CloudStatusRunning)
+	if err := store.Create(&db.SubTask{ID: "task-cas-race", TenantID: "tenant-a", Status: "Running", AgentID: "agent-spot", StreamMsgID: "msg-race"}).Error; err != nil {
+		t.Fatalf("seed running subtask: %v", err)
+	}
+
+	server := NewServer(50051)
+	requeued := 0
+	server.SetAckTaskHook(func(string) error {
+		return store.Model(&db.SubTask{}).Where("id = ?", "task-cas-race").Updates(map[string]interface{}{"status": "Done", "agent_id": "", "stream_msg_id": ""}).Error
+	})
+	server.SetRequeueTaskHook(func(*pb.Task) error { requeued++; return nil })
+	ack, err := server.EmergencyDump(emergencyDumpContext("token"), &pb.EmergencyReq{AgentId: "agent-spot"})
+	if err != nil || !ack.Success {
+		t.Fatalf("EmergencyDump CAS race = ack=%+v err=%v", ack, err)
+	}
+	if requeued != 0 {
+		t.Fatalf("CAS race requeued %d tasks, want 0", requeued)
+	}
+}
+
+func TestEmergencyDumpRequeueFailureLeavesDispatchingForRecovery(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	seedEmergencyDumpAgent(t, store, "agent-spot", "tenant-a", "token", true, db.CloudStatusRunning)
+	if err := store.Create(&db.SubTask{ID: "task-push-fail", TenantID: "tenant-a", Status: "Running", AgentID: "agent-spot", StreamMsgID: "msg-old"}).Error; err != nil {
+		t.Fatalf("seed running subtask: %v", err)
+	}
+
+	server := NewServer(50051)
+	server.SetAckTaskHook(func(string) error { return nil })
+	server.SetRequeueTaskHook(func(*pb.Task) error { return errors.New("publish failed") })
+	ack, err := server.EmergencyDump(emergencyDumpContext("token"), &pb.EmergencyReq{AgentId: "agent-spot"})
+	if err != nil || !ack.Success {
+		t.Fatalf("EmergencyDump push failure = ack=%+v err=%v", ack, err)
+	}
+	var sub db.SubTask
+	if err := store.First(&sub, "id = ?", "task-push-fail").Error; err != nil {
+		t.Fatalf("reload push-failed subtask: %v", err)
+	}
+	if sub.Status != "Dispatching" || sub.AgentID != "" || sub.StreamMsgID != "" {
+		t.Fatalf("push failure did not preserve recoverable Dispatching state: %+v", sub)
+	}
+}
+
+func TestEmergencyDumpSettlesCancelPendingWithoutRequeue(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	seedEmergencyDumpAgent(t, store, "agent-spot", "tenant-a", "token", true, db.CloudStatusRunning)
+	if err := store.Create(&db.SubTask{ID: "task-cancel", TenantID: "tenant-a", Status: "CancelPending", AgentID: "agent-spot", StreamMsgID: "msg-cancel"}).Error; err != nil {
+		t.Fatalf("seed cancel-pending subtask: %v", err)
+	}
+
+	server := NewServer(50051)
+	requeued := 0
+	server.SetAckTaskHook(func(string) error { return nil })
+	server.SetRequeueTaskHook(func(*pb.Task) error { requeued++; return nil })
+	ack, err := server.EmergencyDump(emergencyDumpContext("token"), &pb.EmergencyReq{AgentId: "agent-spot"})
+	if err != nil || !ack.Success {
+		t.Fatalf("EmergencyDump CancelPending = ack=%+v err=%v", ack, err)
+	}
+	if requeued != 0 {
+		t.Fatalf("CancelPending requeued %d tasks, want 0", requeued)
+	}
+	var sub db.SubTask
+	if err := store.First(&sub, "id = ?", "task-cancel").Error; err != nil {
+		t.Fatalf("reload cancelled subtask: %v", err)
+	}
+	if sub.Status != "Cancelled" || sub.AgentID != "" || sub.StreamMsgID != "" {
+		t.Fatalf("unexpected cancelled subtask: %+v", sub)
+	}
+}
+
+func TestHeartbeatDoesNotReviveTerminatingSpotAgent(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	seedEmergencyDumpAgent(t, store, "agent-terminating", "tenant-a", "token", true, db.CloudStatusTerminating)
+	if err := store.Model(&db.Node{}).Where("agent_id = ?", "agent-terminating").Update("status", "Offline").Error; err != nil {
+		t.Fatalf("mark terminating node offline: %v", err)
+	}
+
+	resp, err := NewServer(50051).Heartbeat(context.Background(), &pb.HeartbeatReq{
+		AgentId:      "agent-terminating",
+		RunningTasks: 1,
+	})
+	if err != nil {
+		t.Fatalf("Heartbeat terminating Spot agent: %v", err)
+	}
+	if !resp.ShouldTerminate {
+		t.Fatalf("Heartbeat response = %+v, want ShouldTerminate", resp)
+	}
+	var node db.Node
+	if err := store.First(&node, "agent_id = ?", "agent-terminating").Error; err != nil {
+		t.Fatalf("reload terminating node: %v", err)
+	}
+	if node.Status != "Offline" {
+		t.Fatalf("late heartbeat revived terminating Spot node: %+v", node)
+	}
+}
+
+func TestSubscribeDoesNotReviveTerminatingSpotAgent(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	seedEmergencyDumpAgent(t, store, "agent-terminating-subscribe", "tenant-a", "token", true, db.CloudStatusTerminating)
+	if err := store.Model(&db.Node{}).Where("agent_id = ?", "agent-terminating-subscribe").Update("status", "Offline").Error; err != nil {
+		t.Fatalf("mark terminating node offline: %v", err)
+	}
+
+	NewServer(50051).markSubscribedAgentAlive("agent-terminating-subscribe", 4)
+	var node db.Node
+	if err := store.First(&node, "agent_id = ?", "agent-terminating-subscribe").Error; err != nil {
+		t.Fatalf("reload terminating node: %v", err)
+	}
+	if node.Status != "Offline" {
+		t.Fatalf("late subscribe revived terminating Spot node: %+v", node)
 	}
 }
 

@@ -85,6 +85,131 @@ func TestWorkerExecuteTaskReportsCancelled(t *testing.T) {
 	}
 }
 
+func TestClaimAvailableTasksStopsWhenWorkerIsDraining(t *testing.T) {
+	client := &fakeAgentClient{}
+	worker := NewWorker("agent-draining", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	worker.client = client
+	worker.sem = make(chan struct{}, 1)
+	worker.freeSlots.Store(1)
+	worker.draining.Store(true)
+
+	worker.claimAvailableTasks()
+	if client.claimTaskCalls != 0 {
+		t.Fatalf("draining worker called ClaimTask %d times, want 0", client.claimTaskCalls)
+	}
+}
+
+func TestClaimAvailableTasksDoesNotExecuteInFlightClaimAfterDrain(t *testing.T) {
+	worker := NewWorker("agent-draining-race", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	client := &fakeAgentClient{}
+	client.claimTaskHook = func() *pb.Task {
+		worker.draining.Store(true)
+		return &pb.Task{TaskId: "task-after-drain"}
+	}
+	worker.client = client
+	worker.sem = make(chan struct{}, 1)
+	worker.freeSlots.Store(1)
+
+	worker.claimAvailableTasks()
+	if client.claimTaskCalls != 1 {
+		t.Fatalf("ClaimTask calls = %d, want 1 in-flight call", client.claimTaskCalls)
+	}
+	if len(worker.sem) != 0 || worker.freeSlots.Load() != 1 {
+		t.Fatalf("in-flight claim consumed capacity after drain: sem=%d free=%d", len(worker.sem), worker.freeSlots.Load())
+	}
+	worker.mu.Lock()
+	running := len(worker.runningTasks)
+	worker.mu.Unlock()
+	if running != 0 {
+		t.Fatalf("in-flight claim started %d tasks after drain", running)
+	}
+}
+
+func TestSubscribeAndClaimDoesNotReconnectWhileDraining(t *testing.T) {
+	client := &fakeAgentClient{}
+	worker := NewWorker("agent-draining", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	worker.client = client
+	worker.draining.Store(true)
+
+	worker.subscribeAndClaim(make(chan struct{}))
+	if client.subscribeCalls != 0 {
+		t.Fatalf("draining worker opened Subscribe stream %d times, want 0", client.subscribeCalls)
+	}
+}
+
+func TestRunSpotTerminationListenerDrainsAndCancelsAfterAcceptedDump(t *testing.T) {
+	metadataServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("2026-07-11T09:30:00+08:00"))
+	}))
+	defer metadataServer.Close()
+
+	client := &fakeAgentClient{emergencyDumpAcks: []*pb.Ack{{Success: false, Message: "retry"}, {Success: true}}}
+	worker := NewWorker("agent-spot", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	worker.client = client
+	worker.sessionToken = "session-token"
+	cancelled := make(chan struct{}, 1)
+	worker.runningTasks["task-running"] = func() { cancelled <- struct{}{} }
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	worker.runSpotTerminationListener(ctx, metadataServer.Client(), metadataServer.URL, time.Millisecond, time.Millisecond)
+
+	if !worker.draining.Load() {
+		t.Fatal("worker did not enter draining state")
+	}
+	if len(client.emergencyDumpReqs) != 2 {
+		t.Fatalf("EmergencyDump calls = %d, want rejected call plus retry", len(client.emergencyDumpReqs))
+	}
+	if got := client.emergencyDumpTokens; len(got) != 2 || got[0] != "session-token" || got[1] != "session-token" {
+		t.Fatalf("EmergencyDump session tokens = %v, want session-token on every call", got)
+	}
+	select {
+	case <-cancelled:
+	default:
+		t.Fatal("accepted EmergencyDump did not cancel local running task")
+	}
+}
+
+func TestRunSpotTerminationListenerDoesNotCancelWhenDumpNeverSucceeds(t *testing.T) {
+	metadataServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("termination pending"))
+	}))
+	defer metadataServer.Close()
+
+	rejectedAcks := make([]*pb.Ack, 100)
+	for i := range rejectedAcks {
+		rejectedAcks[i] = &pb.Ack{Success: false}
+	}
+	client := &fakeAgentClient{emergencyDumpAcks: rejectedAcks}
+	worker := NewWorker("agent-spot", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	worker.client = client
+	worker.sessionToken = "session-token"
+	cancelled := make(chan struct{}, 1)
+	worker.runningTasks["task-running"] = func() { cancelled <- struct{}{} }
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
+	defer cancel()
+	worker.runSpotTerminationListener(ctx, metadataServer.Client(), metadataServer.URL, time.Millisecond, time.Millisecond)
+
+	if !worker.draining.Load() {
+		t.Fatal("worker should stay draining after a rejected emergency dump")
+	}
+	select {
+	case <-cancelled:
+		t.Fatal("rejected EmergencyDump cancelled local task before lease release")
+	default:
+	}
+}
+
+func TestSpotTerminationURLUsesEnvironmentOverride(t *testing.T) {
+	t.Setenv("ARGUS_SPOT_TERMINATION_URL", "http://127.0.0.1:18099/termination")
+	if got := spotTerminationURL(); got != "http://127.0.0.1:18099/termination" {
+		t.Fatalf("spotTerminationURL() = %q", got)
+	}
+}
+
 func TestWorkerExecuteTaskFailsOnResultStreamSendError(t *testing.T) {
 	prepareUsableAgentConfig(t)
 
@@ -905,16 +1030,23 @@ func TestWorkerPythonScratchpadRunStreamsCompletion(t *testing.T) {
 }
 
 type fakeAgentClient struct {
-	stream            grpc.ClientStreamingClient[pb.ScanResult, pb.Ack]
-	streamErr         error
-	subscribeStream   grpc.BidiStreamingClient[pb.AgentSignal, pb.TaskNotify]
-	debugStream       grpc.ClientStreamingClient[pb.DebugEvent, pb.Ack]
-	debugErr          error
-	logStream         grpc.ClientStreamingClient[pb.LogPayload, pb.Ack]
-	taskCompleteReqs  []*pb.TaskCompleteReq
-	taskCompleteReqsM sync.Mutex
-	taskCompleteErrs  []error
-	taskCompleteAck   *pb.Ack
+	stream              grpc.ClientStreamingClient[pb.ScanResult, pb.Ack]
+	streamErr           error
+	subscribeStream     grpc.BidiStreamingClient[pb.AgentSignal, pb.TaskNotify]
+	debugStream         grpc.ClientStreamingClient[pb.DebugEvent, pb.Ack]
+	debugErr            error
+	logStream           grpc.ClientStreamingClient[pb.LogPayload, pb.Ack]
+	taskCompleteReqs    []*pb.TaskCompleteReq
+	taskCompleteReqsM   sync.Mutex
+	taskCompleteErrs    []error
+	taskCompleteAck     *pb.Ack
+	claimTaskCalls      int
+	claimTaskHook       func() *pb.Task
+	subscribeCalls      int
+	emergencyDumpReqs   []*pb.EmergencyReq
+	emergencyDumpAcks   []*pb.Ack
+	emergencyDumpErrs   []error
+	emergencyDumpTokens []string
 }
 
 func (c *fakeAgentClient) Register(ctx context.Context, in *pb.RegisterReq, opts ...grpc.CallOption) (*pb.RegisterResp, error) {
@@ -954,14 +1086,39 @@ func (c *fakeAgentClient) TaskComplete(ctx context.Context, in *pb.TaskCompleteR
 }
 
 func (c *fakeAgentClient) EmergencyDump(ctx context.Context, in *pb.EmergencyReq, opts ...grpc.CallOption) (*pb.Ack, error) {
+	c.emergencyDumpReqs = append(c.emergencyDumpReqs, in)
+	md, _ := metadata.FromOutgoingContext(ctx)
+	tokens := md.Get("x-agent-token")
+	if len(tokens) > 0 {
+		c.emergencyDumpTokens = append(c.emergencyDumpTokens, tokens[0])
+	} else {
+		c.emergencyDumpTokens = append(c.emergencyDumpTokens, "")
+	}
+	if len(c.emergencyDumpErrs) > 0 {
+		err := c.emergencyDumpErrs[0]
+		c.emergencyDumpErrs = c.emergencyDumpErrs[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(c.emergencyDumpAcks) > 0 {
+		ack := c.emergencyDumpAcks[0]
+		c.emergencyDumpAcks = c.emergencyDumpAcks[1:]
+		return ack, nil
+	}
 	return &pb.Ack{Success: true}, nil
 }
 
 func (c *fakeAgentClient) Subscribe(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[pb.AgentSignal, pb.TaskNotify], error) {
+	c.subscribeCalls++
 	return c.subscribeStream, nil
 }
 
 func (c *fakeAgentClient) ClaimTask(ctx context.Context, in *pb.ClaimTaskReq, opts ...grpc.CallOption) (*pb.Task, error) {
+	c.claimTaskCalls++
+	if c.claimTaskHook != nil {
+		return c.claimTaskHook(), nil
+	}
 	return &pb.Task{}, nil
 }
 

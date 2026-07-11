@@ -226,6 +226,8 @@ type Worker struct {
 	sem chan struct{}
 	// freeSlots 当前空闲 worker 数（原子操作）
 	freeSlots atomic.Int32
+	// draining prevents new claims after a Spot termination notice.
+	draining atomic.Bool
 
 	logTee *grpcTeeWriter
 	stopCh chan struct{}
@@ -402,6 +404,11 @@ func (w *Worker) Start() error {
 			return nil
 		default:
 		}
+		if w.draining.Load() {
+			w.wg.Wait()
+			log.Println("Spot drain completed. Shutting down agent scheduler.")
+			return nil
+		}
 
 		// 清空重连信号（防止残留信号导致立即退出）
 		select {
@@ -424,6 +431,9 @@ func (w *Worker) Start() error {
 
 // subscribeAndClaim 建立 Subscribe 流并监听任务通知，收到通知后 ClaimTask 认领
 func (w *Worker) subscribeAndClaim(quit chan struct{}) {
+	if w.draining.Load() {
+		return
+	}
 	stream, err := w.client.Subscribe(context.Background())
 	if err != nil {
 		log.Printf("[Subscribe] Failed to connect: %v", err)
@@ -431,9 +441,13 @@ func (w *Worker) subscribeAndClaim(quit chan struct{}) {
 	}
 
 	// 发送初始 AgentSignal（携带 agent_id 和初始空闲容量）
+	freeSlots := w.freeSlots.Load()
+	if w.draining.Load() {
+		freeSlots = 0
+	}
 	if err := stream.Send(&pb.AgentSignal{
 		AgentId:    w.agentID,
-		FreeSlots:  w.freeSlots.Load(),
+		FreeSlots:  freeSlots,
 		SignalType: "ready",
 	}); err != nil {
 		log.Printf("[Subscribe] Failed to send initial signal: %v", err)
@@ -452,9 +466,13 @@ func (w *Worker) subscribeAndClaim(quit chan struct{}) {
 			case <-stopCapacity:
 				return
 			case <-ticker.C:
+				freeSlots := w.freeSlots.Load()
+				if w.draining.Load() {
+					freeSlots = 0
+				}
 				_ = stream.Send(&pb.AgentSignal{
 					AgentId:    w.agentID,
-					FreeSlots:  w.freeSlots.Load(),
+					FreeSlots:  freeSlots,
 					SignalType: "capacity_update",
 				})
 			}
@@ -505,6 +523,9 @@ func (w *Worker) subscribeAndClaim(quit chan struct{}) {
 // claimAvailableTasks 在收到通知后，尽可能多地认领任务（填满空闲 worker）
 func (w *Worker) claimAvailableTasks() {
 	for {
+		if w.draining.Load() {
+			return
+		}
 		// 检查是否有空闲 worker
 		free := w.freeSlots.Load()
 		if free <= 0 {
@@ -516,6 +537,10 @@ func (w *Worker) claimAvailableTasks() {
 		case w.sem <- struct{}{}:
 		default:
 			return // 信号量满
+		}
+		if w.draining.Load() {
+			<-w.sem
+			return
 		}
 
 		// 向 Server 认领任务
@@ -534,6 +559,12 @@ func (w *Worker) claimAvailableTasks() {
 		if task.TaskId == "" {
 			// 队列已空
 			<-w.sem // 释放
+			return
+		}
+		if w.draining.Load() {
+			// EmergencyDump owns lease release once draining starts. Do not begin
+			// executing a task returned by an in-flight ClaimTask call.
+			<-w.sem
 			return
 		}
 
@@ -561,6 +592,9 @@ func (w *Worker) heartbeatLoop() {
 	const maxConsecutiveFailures = 3
 
 	for range ticker.C {
+		if w.draining.Load() {
+			return
+		}
 		if w.client != nil {
 			w.mu.Lock()
 			runningCount := int32(len(w.runningTasks))
@@ -629,6 +663,9 @@ func (w *Worker) commandLoop() {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
+		if w.draining.Load() {
+			return
+		}
 		cmdURL := fmt.Sprintf("%s/api/v1/agents/%s/commands?api_config_hash=%s",
 			w.apiURL, w.agentID, url.QueryEscape(w.localAPIConfigHash()))
 		resp, err := w.apiGet(cmdURL)

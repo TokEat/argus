@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const agentSessionTTL = 7 * 24 * time.Hour
@@ -311,6 +313,12 @@ func (s *Server) markSubscribedAgentAlive(agentID string, freeSlots int32) {
 	if agentID == "" {
 		return
 	}
+	var existing db.Node
+	if err := db.DB.Select("agent_id", "tenant_id").Where("agent_id = ?", agentID).First(&existing).Error; err == nil && isTerminatingSpotAgent(agentID, existing.TenantID) {
+		s.Hub.UpdateFreeSlots(agentID, 0)
+		log.Printf("[Subscribe] Agent %s belongs to a terminating Spot instance; preserving drain state", agentID)
+		return
+	}
 	now := time.Now().UnixMilli()
 	updates := map[string]interface{}{
 		"status":    "Alive",
@@ -344,6 +352,12 @@ func (s *Server) markSubscribedAgentAlive(agentID string, freeSlots int32) {
 // ============================================================================
 
 func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task, error) {
+	var nodeStatus string
+	if err := db.DB.Model(&db.Node{}).Select("status").Where("agent_id = ?", req.AgentId).Scan(&nodeStatus).Error; err == nil && nodeStatus != "" && !strings.EqualFold(nodeStatus, "Alive") {
+		log.Printf("[ClaimTask] Agent %s is %s; skipping task claim", req.AgentId, nodeStatus)
+		return &pb.Task{}, nil
+	}
+
 	hook := s.claimTaskHook
 	if hook == nil {
 		hook = s.fetchTaskHook // fallback
@@ -496,15 +510,43 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 			continue
 		}
 
+		// Lock the Agent row through the final lease CAS. EmergencyDump updates the
+		// same row to Draining, so either this claim becomes visible to the dump or
+		// the fetched MQ message is returned without creating a new lease.
+		tx := db.DB.Begin()
+		if tx.Error != nil {
+			if s.returnTaskHook != nil {
+				_ = s.returnTaskHook(task, msgID)
+			}
+			return &pb.Task{}, tx.Error
+		}
+		var claimNode db.Node
+		claimNodeErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("agent_id", "tenant_id", "status").
+			Where("agent_id = ? AND tenant_id = ? AND UPPER(status) = ?", req.AgentId, sub.TenantID, "ALIVE").
+			First(&claimNode).Error
+		if claimNodeErr != nil {
+			tx.Rollback()
+			if s.returnTaskHook == nil {
+				return &pb.Task{}, fmt.Errorf("return task %s after agent drain: queue return hook is unavailable", task.TaskId)
+			}
+			if err := s.returnTaskHook(task, msgID); err != nil {
+				return &pb.Task{}, fmt.Errorf("return task %s after agent drain: %w", task.TaskId, err)
+			}
+			log.Printf("[ClaimTask] Agent %s stopped accepting work before lease commit; returned task %s", req.AgentId, task.TaskId)
+			return &pb.Task{}, nil
+		}
+
 		// 认领成功：CAS 更新 DB 状态，避免并发状态漂移（例如被取消/超时回收）
-		updateRes := db.DB.Model(&db.SubTask{}).
-			Where("id = ? AND status IN ?", task.TaskId, claimableSubTaskStatuses).
+		updateRes := tx.Model(&db.SubTask{}).
+			Where("id = ? AND tenant_id = ? AND status IN ?", task.TaskId, sub.TenantID, claimableSubTaskStatuses).
 			Updates(map[string]interface{}{
 				"status":        "Running",
 				"agent_id":      req.AgentId,
 				"stream_msg_id": msgID,
 			})
 		if updateRes.Error != nil {
+			tx.Rollback()
 			if s.returnTaskHook != nil {
 				_ = s.returnTaskHook(task, msgID)
 			}
@@ -512,6 +554,7 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 			continue
 		}
 		if updateRes.RowsAffected == 0 {
+			tx.Rollback()
 			// 任务状态已变化（例如 CancelPending/Timeout），退回队列给下一轮处理。
 			if s.returnTaskHook != nil {
 				_ = s.returnTaskHook(task, msgID)
@@ -519,7 +562,19 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 			log.Printf("[ClaimTask] Task %s state changed before claim commit, returned to queue", task.TaskId)
 			continue
 		}
-		db.DB.Exec("UPDATE nodes SET running_tasks = running_tasks + 1 WHERE agent_id = ?", req.AgentId)
+		if err := tx.Exec("UPDATE nodes SET running_tasks = running_tasks + 1 WHERE agent_id = ? AND tenant_id = ?", req.AgentId, sub.TenantID).Error; err != nil {
+			tx.Rollback()
+			if s.returnTaskHook != nil {
+				_ = s.returnTaskHook(task, msgID)
+			}
+			return &pb.Task{}, fmt.Errorf("update agent running count for task %s: %w", task.TaskId, err)
+		}
+		if err := tx.Commit().Error; err != nil {
+			if s.returnTaskHook != nil {
+				_ = s.returnTaskHook(task, msgID)
+			}
+			return &pb.Task{}, fmt.Errorf("commit task claim %s: %w", task.TaskId, err)
+		}
 
 		// 更新 RootTask 状态
 		if db.DB.First(&sub, "id = ?", task.TaskId).Error == nil {
@@ -562,8 +617,17 @@ func (s *Server) FetchTask(ctx context.Context, req *pb.FetchTaskReq) (*pb.Task,
 
 func (s *Server) Heartbeat(ctx context.Context, req *pb.HeartbeatReq) (*pb.HeartbeatResp, error) {
 	var sessionNode db.Node
-	if err := db.DB.Select("agent_id", "token_expires_at", "token_revoked_at").Where("agent_id = ?", req.AgentId).First(&sessionNode).Error; err == nil {
+	if err := db.DB.Select("agent_id", "tenant_id", "status", "token_expires_at", "token_revoked_at").Where("agent_id = ?", req.AgentId).First(&sessionNode).Error; err == nil {
 		if sessionNode.TokenRevokedAt != nil || (sessionNode.TokenExpiresAt != nil && time.Now().After(*sessionNode.TokenExpiresAt)) {
+			return &pb.HeartbeatResp{
+				Ack:             true,
+				ShouldTerminate: true,
+				ShouldSyncRules: false,
+				TasksAvailable:  0,
+			}, nil
+		}
+		if isTerminatingSpotAgent(req.AgentId, sessionNode.TenantID) {
+			s.Hub.UpdateFreeSlots(req.AgentId, 0)
 			return &pb.HeartbeatResp{
 				Ack:             true,
 				ShouldTerminate: true,
@@ -630,6 +694,14 @@ func (s *Server) Heartbeat(ctx context.Context, req *pb.HeartbeatReq) (*pb.Heart
 		ShouldSyncRules: shouldSync,
 		TasksAvailable:  tasksAvailable,
 	}, nil
+}
+
+func isTerminatingSpotAgent(agentID, tenantID string) bool {
+	var count int64
+	err := db.DB.Model(&db.CloudInstance{}).
+		Where("agent_id = ? AND tenant_id = ? AND spot = ? AND status = ?", agentID, tenantID, true, db.CloudStatusTerminating).
+		Count(&count).Error
+	return err == nil && count > 0
 }
 
 // ============================================================================
@@ -778,25 +850,65 @@ func (s *Server) StreamResult(stream pb.AgentService_StreamResultServer) error {
 // ============================================================================
 
 func (s *Server) EmergencyDump(ctx context.Context, req *pb.EmergencyReq) (*pb.Ack, error) {
-	agentID := req.AgentId
+	agentID := strings.TrimSpace(req.AgentId)
+	node, err := validateEmergencyAgentSession(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	tenantID := strings.TrimSpace(node.TenantID)
+	if tenantID == "" {
+		tenantID = "default"
+	}
+
+	var instance db.CloudInstance
+	if err := db.DB.Where(
+		"agent_id = ? AND tenant_id = ? AND spot = ? AND status IN ?",
+		agentID,
+		tenantID,
+		true,
+		[]string{db.CloudStatusRunning, db.CloudStatusWaitingReady, db.CloudStatusTerminating},
+	).First(&instance).Error; err != nil {
+		return nil, status.Error(codes.FailedPrecondition, "agent is not attached to a reclaimable Spot instance")
+	}
+	if strings.EqualFold(node.Status, "Offline") && instance.Status != db.CloudStatusTerminating {
+		return nil, status.Error(codes.FailedPrecondition, "offline agent has no in-progress Spot termination")
+	}
+
 	log.Printf("[EmergencyDump] Agent %s triggered Spot termination emergency dump!", agentID)
 
-	// 1. 将 Node 立即标记为 Offline，防止 HeartbeatReaper 重复处理
-	db.DB.Model(&db.Node{}).Where("agent_id = ?", agentID).Updates(map[string]interface{}{
-		"status":        "Offline",
-		"running_tasks": 0,
-		"token":         "",
-	})
+	// Stop new claims before releasing any existing lease. The session token is
+	// preserved so a lost RPC response can be retried idempotently.
+	db.DB.Model(&db.Node{}).
+		Where("agent_id = ? AND tenant_id = ?", agentID, tenantID).
+		Update("status", "Draining")
+	s.Hub.UpdateFreeSlots(agentID, 0)
+	db.DB.Model(&db.CloudInstance{}).
+		Where("id = ? AND tenant_id = ? AND status IN ?", instance.ID, tenantID, []string{db.CloudStatusRunning, db.CloudStatusWaitingReady}).
+		Updates(map[string]interface{}{
+			"status":        db.CloudStatusTerminating,
+			"error_message": "Spot instance preempted by cloud provider",
+		})
 
-	// 2. 回收该 Agent 所有 Running 任务，退回队列重新调度
 	var orphanTasks []db.SubTask
-	db.DB.Where("agent_id = ? AND status IN ?", agentID, []string{"Running", "CancelPending"}).Find(&orphanTasks)
+	if err := db.DB.Where("tenant_id = ? AND agent_id = ? AND status IN ?", tenantID, agentID, []string{"Running", "CancelPending"}).Find(&orphanTasks).Error; err != nil {
+		return &pb.Ack{Success: false, Message: "failed to load active Spot leases"}, nil
+	}
 
-	recovered := 0
+	released := 0
+	requeued := 0
+	ackFailures := 0
 	for _, sub := range orphanTasks {
-		// ACK 掉旧的 MQ 消息
-		if sub.StreamMsgID != "" && s.ackTaskHook != nil {
-			_ = s.ackTaskHook(sub.StreamMsgID)
+		if sub.StreamMsgID != "" {
+			if s.ackTaskHook == nil {
+				ackFailures++
+				log.Printf("[EmergencyDump] Cannot release subtask %s: queue ACK hook is unavailable", sub.ID)
+				continue
+			}
+			if err := s.ackTaskHook(sub.StreamMsgID); err != nil {
+				ackFailures++
+				log.Printf("[EmergencyDump] Failed to ACK old lease for subtask %s: %v", sub.ID, err)
+				continue
+			}
 		}
 
 		nextStatus := "Dispatching"
@@ -804,21 +916,33 @@ func (s *Server) EmergencyDump(ctx context.Context, req *pb.EmergencyReq) (*pb.A
 			nextStatus = "Cancelled"
 		}
 
-		db.DB.Model(&db.SubTask{}).Where("id = ?", sub.ID).Updates(map[string]interface{}{
-			"status":        nextStatus,
-			"agent_id":      "",
-			"stream_msg_id": "",
-		})
+		update := db.DB.Model(&db.SubTask{}).
+			Where(
+				"id = ? AND tenant_id = ? AND status = ? AND agent_id = ? AND stream_msg_id = ?",
+				sub.ID, sub.TenantID, sub.Status, sub.AgentID, sub.StreamMsgID,
+			).
+			Updates(map[string]interface{}{
+				"status":        nextStatus,
+				"agent_id":      "",
+				"stream_msg_id": "",
+			})
+		if update.Error != nil {
+			log.Printf("[EmergencyDump] Failed to CAS subtask %s: %v", sub.ID, update.Error)
+			continue
+		}
+		if update.RowsAffected != 1 {
+			log.Printf("[EmergencyDump] Subtask %s lease already changed; skipping duplicate recovery", sub.ID)
+			continue
+		}
+		released++
 
-		// Running 任务重新入队
-		if nextStatus == "Dispatching" && s.requeueTaskHook != nil {
-			pbTask, err := db.SubTaskToProto(&sub)
-			if err == nil && pbTask != nil {
-				if pushErr := s.requeueTaskHook(pbTask); pushErr == nil {
-					db.DB.Model(&db.SubTask{}).Where("id = ? AND status = ?", sub.ID, "Dispatching").
-						Update("status", "Pending")
-					recovered++
-				}
+		if nextStatus == "Dispatching" {
+			prepared := sub
+			prepared.Status = "Dispatching"
+			prepared.AgentID = ""
+			prepared.StreamMsgID = ""
+			if s.enqueuePreparedRetry(prepared) {
+				requeued++
 			}
 		}
 
@@ -827,23 +951,57 @@ func (s *Server) EmergencyDump(ctx context.Context, req *pb.EmergencyReq) (*pb.A
 		}
 	}
 
-	// 3. 通知在线 Agent 有回收的任务可领取
-	if recovered > 0 {
-		s.Hub.BroadcastNewTask(int32(recovered), 0)
+	if requeued > 0 {
+		s.Hub.BroadcastNewTask(int32(requeued), 0)
 	}
 
-	// 4. 将关联的云实例标记为即将终止（Spot 回收后云端会自动销毁）
-	db.DB.Model(&db.CloudInstance{}).
-		Where("agent_id = ? AND status IN ?", agentID, []string{
-			db.CloudStatusRunning, db.CloudStatusWaitingReady,
-		}).
+	var remaining []string
+	_ = db.DB.Model(&db.SubTask{}).
+		Where("tenant_id = ? AND agent_id = ? AND status IN ?", tenantID, agentID, []string{"Running", "CancelPending"}).
+		Pluck("id", &remaining).Error
+	remainingJSON, _ := json.Marshal(remaining)
+	db.DB.Model(&db.Node{}).
+		Where("agent_id = ? AND tenant_id = ?", agentID, tenantID).
 		Updates(map[string]interface{}{
-			"status":        db.CloudStatusTerminating,
-			"error_message": "Spot instance preempted by cloud provider",
+			"status":           "Offline",
+			"running_tasks":    len(remaining),
+			"running_task_ids": string(remainingJSON),
 		})
 
-	log.Printf("[EmergencyDump] Agent %s: recovered %d tasks, marked node offline", agentID, recovered)
-	return &pb.Ack{Success: true, Message: fmt.Sprintf("Emergency dump processed: %d tasks recovered", recovered)}, nil
+	log.Printf("[EmergencyDump] Agent %s: released=%d requeued=%d ack_failures=%d remaining=%d", agentID, released, requeued, ackFailures, len(remaining))
+	if ackFailures > 0 {
+		return &pb.Ack{Success: false, Message: fmt.Sprintf("emergency dump incomplete: %d queue acknowledgements failed", ackFailures)}, nil
+	}
+	return &pb.Ack{Success: true, Message: fmt.Sprintf("emergency dump processed: %d leases released, %d tasks requeued", released, requeued)}, nil
+}
+
+func validateEmergencyAgentSession(ctx context.Context, agentID string) (db.Node, error) {
+	if agentID == "" {
+		return db.Node{}, status.Error(codes.InvalidArgument, "agent_id is required")
+	}
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return db.Node{}, status.Error(codes.Unauthenticated, "missing agent session metadata")
+	}
+	tokens := md.Get("x-agent-token")
+	if len(tokens) == 0 || strings.TrimSpace(tokens[0]) == "" {
+		return db.Node{}, status.Error(codes.Unauthenticated, "missing agent session token")
+	}
+
+	var node db.Node
+	if err := db.DB.Select("agent_id", "tenant_id", "status", "token", "token_expires_at", "token_revoked_at").Where("agent_id = ?", agentID).First(&node).Error; err != nil {
+		return db.Node{}, status.Error(codes.Unauthenticated, "invalid agent session")
+	}
+	token := strings.TrimSpace(tokens[0])
+	if node.TokenRevokedAt != nil || (node.TokenExpiresAt != nil && time.Now().After(*node.TokenExpiresAt)) || strings.TrimSpace(node.Token) == "" || subtle.ConstantTimeCompare([]byte(token), []byte(node.Token)) != 1 {
+		return db.Node{}, status.Error(codes.Unauthenticated, "invalid agent session")
+	}
+	switch strings.ToUpper(strings.TrimSpace(node.Status)) {
+	case "ALIVE", "DRAINING", "OFFLINE":
+	default:
+		return db.Node{}, status.Error(codes.FailedPrecondition, "agent session is not in a reclaimable state")
+	}
+	return node, nil
 }
 
 // ============================================================================
