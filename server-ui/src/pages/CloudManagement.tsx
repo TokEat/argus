@@ -1,9 +1,8 @@
 import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
-import { Typography, Table, Tag, Space, Button, Spin, Empty, Modal, Form, Input, Select, message, Popconfirm, Badge, Tabs, Switch, InputNumber, Row, Col, Alert, Descriptions, Drawer, Collapse, Tooltip, Segmented, Upload, Progress, Steps } from 'antd';
+import { Typography, Tag, Space, Button, Form, message, Modal, Popconfirm, Badge, Tabs, Alert, Descriptions, Tooltip, Steps } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
-import { CloudOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, WifiOutlined, KeyOutlined, SettingOutlined, AppstoreOutlined, CodeOutlined, PlayCircleOutlined, SyncOutlined, CloudUploadOutlined, SearchOutlined, CheckCircleOutlined, ThunderboltOutlined, SafetyCertificateOutlined, CopyOutlined, CheckOutlined, CloseOutlined, UserOutlined, LockOutlined, InboxOutlined, FileOutlined, CloudServerOutlined, UploadOutlined, LoadingOutlined, ExclamationCircleOutlined, ClockCircleOutlined, ApiOutlined, RocketOutlined, StopOutlined } from '@ant-design/icons';
+import { CloudOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, WifiOutlined, KeyOutlined, SettingOutlined, AppstoreOutlined, PlayCircleOutlined, SyncOutlined, CloudUploadOutlined, SearchOutlined, CheckCircleOutlined, ThunderboltOutlined, SafetyCertificateOutlined, UserOutlined, LoadingOutlined, ExclamationCircleOutlined, ClockCircleOutlined, ApiOutlined, RocketOutlined, StopOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import Editor from '@monaco-editor/react';
 import {
     listCloudInstances, createCloudInstance, deleteCloudInstance, rebootCloudInstance, cleanupCloudInstances,
     listCloudAccounts, createCloudAccount, deleteCloudAccount, testCloudAccount,
@@ -14,142 +13,23 @@ import {
     checkCloudPermissions, queryCloudPrice, listAvailableInstanceTypes,
     listCloudRegions, updateCloudAccountRegion,
     listReleaseFiles, uploadServerAgent, uploadLocalAgent,
-    listOSSFiles, deleteOSSFile,
     listUsers, getCloudAccountBindings, updateCloudAccountBindings
 } from '../services/api';
 import { useAutoContext } from '../contexts/GlobalAIContext';
 import { canAccessRole, getCurrentUserRole } from '../utils/auth';
 import gsap from 'gsap';
 import NetworkCanvas from '../components/NetworkCanvas';
+import { CloudAccountsPanel } from './cloud/CloudAccountsPanel';
+import { AddCloudAccountModal, CloudAccountBindingModal, CloudDiscoveryModal } from './cloud/CloudAccountDialogs';
+import { CloudOSSTestModal, CloudPermissionDrawer, CloudSetupResultModal } from './cloud/CloudAccountResultDialogs';
+import { CloudAgentUploadModal, CloudRegionSelectModal } from './cloud/CloudAgentDialogs';
+import { CloudAgentDistributionPanel } from './cloud/CloudAgentDistributionPanel';
+import { CloudInstancesPanel } from './cloud/CloudInstancesPanel';
+import { CloudInstanceCreateModal } from './cloud/CloudInstanceCreateModal';
+import { CloudPolicyPanel } from './cloud/CloudPolicyPanel';
+import { DEFAULT_CLOUD_INIT_TEMPLATE, extractErrorMsg } from './cloud/utils';
 
-const { Title, Text, Paragraph } = Typography;
-
-// 统一错误提取：兼容 string / Error / Axios rejected / Antd ValidateErrorEntity
-const extractErrorMsg = (err: unknown): string | null => {
-    if (!err) return null;
-    if (typeof err === 'string') return err;
-    if (err instanceof Error) return err.message;
-    if (typeof err === 'object') {
-        const obj = err as Record<string, any>;
-        // Ant Design 表单校验失败 (ValidateErrorEntity) 不弹后端错误
-        if (obj.errorFields) return null;
-        if (obj.error) return String(obj.error);
-        if (obj.message) return String(obj.message);
-    }
-    return String(err);
-};
-
-// OSS 文件浏览器子组件
-const OSSFileBrowser: React.FC<{ account: API.CloudAccount }> = ({ account }) => {
-    const [ossFiles, setOssFiles] = useState<API.OSSFileInfo[]>([]);
-    const [ossLoading, setOssLoading] = useState(false);
-    const [loaded, setLoaded] = useState(false);
-
-    const fetchOSSFiles = async () => {
-        setOssLoading(true);
-        try {
-            const res = await listOSSFiles(account.id);
-            setOssFiles(res.files || []);
-        } catch {
-            setOssFiles([]);
-        } finally {
-            setOssLoading(false);
-            setLoaded(true);
-        }
-    };
-
-    const handleDelete = async (objectKey: string) => {
-        try {
-            await deleteOSSFile(account.id, objectKey);
-            message.success('文件已从 OSS 删除');
-            fetchOSSFiles();
-        } catch (err: any) {
-            message.error(`删除失败: ${extractErrorMsg(err) || String(err)}`);
-        }
-    };
-
-    return (
-        <ProCard
-            bordered
-            size="small"
-            style={{ marginBottom: 12 }}
-            title={
-                <Space>
-                    <Tag color="blue" style={{ margin: 0 }}>{account.name}</Tag>
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                        {account.oss_bucket} / argus/agent/
-                    </Text>
-                </Space>
-            }
-            extra={
-                <Button
-                    size="small"
-                    icon={<ReloadOutlined />}
-                    onClick={fetchOSSFiles}
-                    loading={ossLoading}
-                >
-                    {loaded ? '刷新' : '加载文件列表'}
-                </Button>
-            }
-        >
-            {!loaded ? (
-                <div style={{ textAlign: 'center', padding: '24px 0', color: '#94a3b8' }}>
-                    <InboxOutlined style={{ fontSize: 28, marginBottom: 8 }} />
-                    <div style={{ fontSize: 13 }}>点击「加载文件列表」查看 OSS 中的 Agent 制品</div>
-                </div>
-            ) : ossLoading ? (
-                <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}><Spin /></div>
-            ) : ossFiles.length === 0 ? (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="OSS 中暂无 Agent 文件" style={{ padding: '16px 0' }} />
-            ) : (
-                <Table
-                    dataSource={ossFiles}
-                    rowKey="key"
-                    pagination={false}
-                    size="small"
-                    columns={[
-                        {
-                            title: 'Object Key', dataIndex: 'key', key: 'key',
-                            render: (key: string) => {
-                                const name = key.split('/').pop() || key;
-                                return (
-                                    <Space>
-                                        <FileOutlined style={{ color: '#64748b' }} />
-                                        <div>
-                                            <Text style={{ fontFamily: 'monospace', fontSize: 13 }}>{name}</Text>
-                                            <br />
-                                            <Text type="secondary" style={{ fontSize: 11 }}>{key}</Text>
-                                        </div>
-                                    </Space>
-                                );
-                            }
-                        },
-                        {
-                            title: '大小', dataIndex: 'size', key: 'size', width: 110,
-                            render: (size: number) => {
-                                if (size > 1024 * 1024) return <Text type="secondary">{(size / 1024 / 1024).toFixed(1)} MB</Text>;
-                                if (size > 1024) return <Text type="secondary">{(size / 1024).toFixed(1)} KB</Text>;
-                                return <Text type="secondary">{size} B</Text>;
-                            }
-                        },
-                        {
-                            title: '最后修改', dataIndex: 'last_modified', key: 'last_modified', width: 180,
-                            render: (v: string) => <Text style={{ fontSize: 12, color: '#64748b' }}>{v ? new Date(v).toLocaleString('zh-CN') : '-'}</Text>
-                        },
-                        {
-                            title: '操作', key: 'actions', width: 80,
-                            render: (_: any, record: API.OSSFileInfo) => (
-                                <Popconfirm title="确认从 OSS 删除此文件？" onConfirm={() => handleDelete(record.key)}>
-                                    <Button type="text" danger size="small" icon={<DeleteOutlined />} />
-                                </Popconfirm>
-                            )
-                        }
-                    ]}
-                />
-            )}
-        </ProCard>
-    );
-};
+const { Title, Text } = Typography;
 
 const CloudManagement: React.FC = () => {
     const [loading, setLoading] = useState(true);
@@ -298,64 +178,7 @@ const CloudManagement: React.FC = () => {
         ...(accounts.length === 1 ? { cloud_account_id: accounts[0].id } : {}),
     }), [accounts]);
 
-    // 默认 Cloud-Init 模板（与后端 DefaultCloudInitTemplate 保持一致）
-    // 系统在下发实例时会自动替换 {{.DownloadURL}} {{.ServerAddr}} {{.AgentID}} {{.PSK}} 等变量
-    const defaultCloudInitTemplate = `#!/bin/bash
-set -ex
-
-echo "[Argus] Starting agent provisioning..."
-
-# 下载 Agent 二进制（通过 OSS 预签名 URL 内网高速分发）
-DOWNLOAD_URL="{{.DownloadURL}}"
-AGENT_BIN="/usr/local/bin/dddd-agent"
-
-for i in 1 2 3 4 5; do
-    if curl -fsSL "$DOWNLOAD_URL" -o "$AGENT_BIN"; then
-        chmod +x "$AGENT_BIN"
-        echo "[Argus] Agent binary downloaded successfully"
-        break
-    fi
-    echo "[Argus] Download attempt $i failed, retrying in 10s..."
-    sleep 10
-done
-
-if [ ! -x "$AGENT_BIN" ]; then
-    echo "[Argus] FATAL: Failed to download agent binary after 5 attempts"
-    exit 1
-fi
-
-mkdir -p /var/log/argus
-
-cat > /etc/systemd/system/argus-agent.service <<EOF
-[Unit]
-Description=Argus Scanning Agent
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=$AGENT_BIN \\
-    --server "{{.ServerAddr}}" \\
-    --id "{{.AgentID}}" \\
-    --api "{{.APIURL}}" \\
-    --tags "cloud=true,auto_scaled=true,target_type=all"{{if .PSK}} \\
-    --psk "{{.PSK}}"{{end}}
-Restart=always
-RestartSec=5
-StandardOutput=append:/var/log/argus/agent.log
-StandardError=append:/var/log/argus/agent.log
-LimitNOFILE=65536
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable argus-agent
-systemctl start argus-agent
-
-echo "[Argus] Agent registered as systemd service and started"
-`;
+    const defaultCloudInitTemplate = DEFAULT_CLOUD_INIT_TEMPLATE;
     const [userDataScript, setUserDataScript] = useState(defaultCloudInitTemplate);
 
     const fetchDashboard = async () => {
@@ -1237,160 +1060,160 @@ echo "[Argus] Agent registered as systemd service and started"
 
     const cardStyle = { background: 'transparent', border: 'none' };
 
-    // 用 useMemo 稳定 policy tab 的 JSX 引用
-    // 只有当 policies/accounts/currentPolicyId/userDataScript 变化时才重建
-    // 避免 dashboard/loading/instances 等无关 state 更新导致 Form 被销毁重建
+    const handlePolicySelection = useCallback((policyId: string | null) => {
+        if (!policyId) {
+            setCurrentPolicyId(null);
+            policyForm.setFieldsValue(buildPolicyFormValues(null));
+            setUserDataScript(defaultCloudInitTemplate);
+            return;
+        }
+        const selected = policies.find(policy => policy.id === policyId) || null;
+        setCurrentPolicyId(policyId);
+        policyForm.setFieldsValue(buildPolicyFormValues(selected));
+        setUserDataScript(selected?.user_data_template || defaultCloudInitTemplate);
+    }, [buildPolicyFormValues, defaultCloudInitTemplate, policies, policyForm]);
+
+    const handleOpenAgentUpload = async (account: API.CloudAccount) => {
+        setAgentUploadAccountId(account.id);
+        setAgentUploadMode('服务器端制品');
+        setSelectedReleaseFiles([]);
+        setLocalFiles([]);
+        setLocalUploadProgress(0);
+        setAgentUploadOpen(true);
+        setReleaseFilesLoading(true);
+        try {
+            const result = await listReleaseFiles(account.id);
+            setReleaseFiles(result.files || []);
+        } catch {
+            setReleaseFiles([]);
+        } finally {
+            setReleaseFilesLoading(false);
+        }
+    };
+
+    const handleTestOSS = async (account: API.CloudAccount) => {
+        setOssTestLoading(true);
+        setOssTestResult(null);
+        setOssTestModalOpen(true);
+        try {
+            setOssTestResult(await testOSSConnection(account.id));
+        } catch (err) {
+            setOssTestResult({
+                status: 'error',
+                connection: false,
+                connection_err: extractErrorMsg(err) || String(err),
+                bucket: account.oss_bucket,
+                endpoint: account.oss_endpoint,
+            });
+        } finally {
+            setOssTestLoading(false);
+        }
+    };
+
+    const handleInstanceAccountChange = (accountId?: string) => {
+        if (!accountId) {
+            setPriceData(null);
+            setAvailableTypes([]);
+            setSelectedInstanceType('');
+            setModalRegion('');
+            setModalRegions([]);
+            return;
+        }
+        const account = accounts.find(item => item.id === accountId);
+        const defaultRegion = account?.region || '';
+        setModalRegion(defaultRegion);
+        setModalRegionsLoading(true);
+        listCloudRegions(accountId)
+            .then(result => setModalRegions(result?.regions || []))
+            .catch(() => undefined)
+            .finally(() => setModalRegionsLoading(false));
+        if (defaultRegion) refreshModalData(accountId, defaultRegion);
+    };
+
+    const handleInstanceRegionChange = (region: string) => {
+        setModalRegion(region);
+        const accountId = instanceForm.getFieldValue('account_id');
+        if (accountId && region) refreshModalData(accountId, region);
+    };
+
+    const handleInstanceTypeChange = (instanceType: string) => {
+        setSelectedInstanceType(instanceType);
+        const accountId = instanceForm.getFieldValue('account_id');
+        if (!accountId || !instanceType) return;
+        setPriceLoading(true);
+        const sequence = ++priceAbortRef.current;
+        queryCloudPrice(accountId, { instance_type: instanceType, region: modalRegion })
+            .then(result => {
+                if (sequence === priceAbortRef.current && result?.status !== 'error') setPriceData(result);
+            })
+            .catch(() => undefined)
+            .finally(() => {
+                if (sequence === priceAbortRef.current) setPriceLoading(false);
+            });
+    };
+
+    const handleAgentUploadModeChange = (mode: string) => {
+        setAgentUploadMode(mode);
+        if (mode !== '服务器端制品' || releaseFiles.length > 0 || releaseFilesLoading) return;
+        setReleaseFilesLoading(true);
+        listReleaseFiles(agentUploadAccountId)
+            .then(result => setReleaseFiles(result.files || []))
+            .catch(() => setReleaseFiles([]))
+            .finally(() => setReleaseFilesLoading(false));
+    };
+
+    const handleServerAgentUpload = async () => {
+        setServerUploading(true);
+        try {
+            const result = await uploadServerAgent(agentUploadAccountId, selectedReleaseFiles);
+            if (result?.status === 'ok') {
+                message.success(result.message || '上传成功');
+                setAgentUploadOpen(false);
+            } else {
+                message.error(result?.message || '上传失败');
+            }
+        } catch (err) {
+            message.error(`上传失败: ${extractErrorMsg(err) || String(err) || '未知错误'}`);
+        } finally {
+            setServerUploading(false);
+        }
+    };
+
+    const handleLocalAgentUpload = async () => {
+        setLocalUploading(true);
+        setLocalUploadProgress(0);
+        try {
+            const result = await uploadLocalAgent(agentUploadAccountId, localFiles, setLocalUploadProgress);
+            if (result?.status === 'ok') {
+                message.success(result.message || '上传成功');
+                setAgentUploadOpen(false);
+                setLocalFiles([]);
+                setLocalUploadProgress(0);
+            } else {
+                message.error(result?.message || '上传失败');
+            }
+        } catch (err) {
+            message.error(`上传失败: ${extractErrorMsg(err) || String(err) || '未知错误'}`);
+        } finally {
+            setLocalUploading(false);
+        }
+    };
+
     const policyTabContent = useMemo(() => (
-        <div style={{ padding: '20px 0', maxWidth: 800 }}>
-            <ProCard bordered style={{ marginBottom: 24 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                    <Title level={5} style={{ margin: 0 }}>引擎调度开关</Title>
-                    <Switch
-                        checkedChildren="已启用" unCheckedChildren="已停用"
-                        checked={(policies.find((p: any) => p.id === currentPolicyId)?.enabled) ?? false}
-                        onChange={(checked) => handleTogglePolicyRef.current(checked)}
-                        disabled={!currentPolicyId}
-                    />
-                </div>
-
-                {policies.length > 0 && (
-                    <div style={{ marginBottom: 16 }}>
-                        <div style={{ marginBottom: 6, fontWeight: 500 }}>选择策略（共 {policies.length} 条）</div>
-                        <Select
-                            style={{ width: '100%' }}
-                            value={currentPolicyId ?? '__new__'}
-                            onChange={(val) => {
-                                if (val === '__new__') {
-                                    setCurrentPolicyId(null);
-                                    policyForm.setFieldsValue(buildPolicyFormValues(null));
-                                    setUserDataScript(defaultCloudInitTemplate);
-                                } else {
-                                    const p = policies.find((x: any) => x.id === val) || null;
-                                    setCurrentPolicyId(val);
-                                    policyForm.setFieldsValue(buildPolicyFormValues(p));
-                                    setUserDataScript(p?.user_data_template || defaultCloudInitTemplate);
-                                }
-                            }}
-                            options={[
-                                ...policies.map((p: any) => ({ value: p.id, label: `${p.name}${p.enabled ? '' : '（已停用）'}` })),
-                                { value: '__new__', label: '＋ 新建策略' },
-                            ]}
-                        />
-                    </div>
-                )}
-                <Paragraph type="secondary">
-                    配置 AutoScaler (自动伸缩引擎) 的行为模式。系统将根据后台任务队列深度，向指定云厂商自动请求或销毁 Spot 竞价实例。
-                </Paragraph>
-
-                {!currentPolicyId && (
-                    <Alert message="暂无伸缩策略，请填写下方表单创建一个新策略" type="info" showIcon style={{ marginBottom: 16 }} />
-                )}
-
-                <Form form={policyForm} layout="vertical" initialValues={defaultPolicyFormValues}>
-                    <Form.Item name="name" label="策略名称" rules={[{ required: true }]}>
-                        <Input placeholder="例: 默认全局扩容策略" />
-                    </Form.Item>
-
-                    <Form.Item name="cloud_account_id" label="绑定的云凭证" rules={[{ required: true }]}>
-                        <Select placeholder="请选择凭证" options={accounts.map(a => ({ value: a.id, label: a.name + ' (' + a.provider + ')' }))} />
-                    </Form.Item>
-
-                    <Row gutter={16}>
-                        <Col span={12}>
-                            <Form.Item name="min_instances" label="最小实例数" extra="平时保持的最低机器数量">
-                                <InputNumber min={0} max={100} style={{ width: '100%' }} />
-                            </Form.Item>
-                        </Col>
-                        <Col span={12}>
-                            <Form.Item name="max_instances" label="最大实例数" extra="硬性上限，防止账单爆炸">
-                                <InputNumber min={1} max={500} style={{ width: '100%' }} />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-
-                    <Row gutter={16}>
-                        <Col span={8}>
-                            <Form.Item name="scale_up_threshold" label="扩容阈值" extra="队列任务数 > 此值则扩容；填 0 表示有任务就扩容">
-                                <InputNumber min={0} style={{ width: '100%' }} />
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item name="scale_down_threshold" label="缩容阈值" extra="队列任务数 <= 此值则缩容">
-                                <InputNumber min={0} style={{ width: '100%' }} />
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item name="cooldown_seconds" label="冷却时间 (秒)" extra="两次伸缩操作间的最小间隔">
-                                <InputNumber min={60} style={{ width: '100%' }} />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-
-                    <Row gutter={16}>
-                        <Col span={12}>
-                            <Form.Item name="spot_strategy" label="竞价实例策略">
-                                <Select options={[
-                                    { value: 'NoSpot', label: '按量付费 (不使用竞价)' },
-                                    { value: 'SpotAsPriceGo', label: '系统自动出价 (推荐)' },
-                                    { value: 'SpotWithPriceLimit', label: '设置最高限价' }
-                                ]} />
-                            </Form.Item>
-                        </Col>
-                        <Col span={12}>
-                            <Form.Item name="instance_ttl_minutes" label="TTL 回收 (分钟)" extra="到期优先等待任务空闲，超过 30 分钟宽限仍未空闲才强制释放">
-                                <InputNumber min={10} style={{ width: '100%' }} />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-
-                    <Form.Item noStyle shouldUpdate={(prev: any, cur: any) => prev?.spot_strategy !== cur?.spot_strategy}>
-                        {({ getFieldValue }: any) => {
-                            const strategy = getFieldValue('spot_strategy');
-                            if (strategy === 'NoSpot') return null;
-                            return (
-                                <Row gutter={16}>
-                                    <Col span={12}>
-                                        <Form.Item name="spot_duration_hours" label="抢占保留时长 (小时)" extra="0=无保护期(随时可回收)，1-6=保护期内不因库存被回收，推荐 1">
-                                            <InputNumber min={0} max={6} style={{ width: '100%' }} />
-                                        </Form.Item>
-                                    </Col>
-                                    {strategy === 'SpotWithPriceLimit' && (
-                                        <Col span={12}>
-                                            <Form.Item name="max_spot_price" label="最高竞价限价 (元/小时)" extra="仅在设置最高限价模式时生效">
-                                                <InputNumber min={0.01} step={0.01} style={{ width: '100%' }} placeholder="例: 0.5" />
-                                            </Form.Item>
-                                        </Col>
-                                    )}
-                                </Row>
-                            );
-                        }}
-                    </Form.Item>
-
-                    <Form.Item label={<span><CodeOutlined /> Cloud-Init (UserData) 注入模板</span>} extra="系统在下发实例时会自动替换 {{.DownloadURL}} {{.ServerAddr}} {{.AgentID}} {{.PSK}} 等模板变量。留空则使用内置默认模板。">
-                        <div style={{ height: 350, border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
-                            <Editor
-                                height="100%"
-                                language="shell"
-                                theme="vs-dark"
-                                value={userDataScript}
-                                onChange={(val) => setUserDataScript(val || '')}
-                                options={{ minimap: { enabled: false }, fontSize: 13 }}
-                            />
-                        </div>
-                    </Form.Item>
-
-                    <Space>
-                        <Button type="primary" onClick={() => handlePolicySubmitRef.current()}>保存调度策略</Button>
-                        {currentPolicyId && (
-                            <Popconfirm title="确认删除当前 AutoScaler 策略？" onConfirm={() => handleDeletePolicyRef.current()}>
-                                <Button danger icon={<DeleteOutlined />}>删除策略</Button>
-                            </Popconfirm>
-                        )}
-                    </Space>
-                </Form>
-            </ProCard>
-        </div>
-    ), [policies, accounts, currentPolicyId, userDataScript, policyForm, buildPolicyFormValues]);
+        <CloudPolicyPanel
+            policies={policies}
+            accounts={accounts}
+            currentPolicyId={currentPolicyId}
+            form={policyForm}
+            initialValues={defaultPolicyFormValues}
+            userDataScript={userDataScript}
+            onPolicyChange={handlePolicySelection}
+            onUserDataScriptChange={setUserDataScript}
+            onToggle={(enabled) => handleTogglePolicyRef.current(enabled)}
+            onSubmit={() => handlePolicySubmitRef.current()}
+            onDelete={() => handleDeletePolicyRef.current()}
+        />
+    ), [accounts, currentPolicyId, defaultPolicyFormValues, handlePolicySelection, policies, policyForm, userDataScript]);
 
     return (
         <div ref={pageRef} style={{ position: 'relative', overflow: 'hidden' }}>
@@ -1440,23 +1263,7 @@ echo "[Argus] Agent registered as systemd service and started"
                         {
                             key: 'instances',
                             label: <span><AppstoreOutlined /> 实例状态追踪</span>,
-                            children: (
-                                <div style={{ padding: '20px 0' }}>
-                                    {loading && instances.length === 0 ? (
-                                        <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}><Spin size="large" /></div>
-                                    ) : instances.length === 0 ? (
-                                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有正在运行或被调度的云实例" style={{ padding: '60px 0' }} />
-                                    ) : (
-                                        <Table columns={instanceColumns} dataSource={instances} rowKey="id"
-                                            pagination={{ pageSize: 20, showTotal: (total) => `共 ${total} 个实例` }} size="middle"
-                                            expandable={{
-                                                expandedRowRender: renderInstanceLifecycle,
-                                                rowExpandable: () => true,
-                                            }}
-                                        />
-                                    )}
-                                </div>
-                            ),
+                            children: <CloudInstancesPanel loading={loading} instances={instances} columns={instanceColumns} renderExpandedRow={renderInstanceLifecycle} />,
                         },
                         {
                             key: 'policy',
@@ -1467,1316 +1274,106 @@ echo "[Argus] Agent registered as systemd service and started"
                         {
                             key: 'credentials',
                             label: <span><KeyOutlined /> API 凭证管理</span>,
-                            children: (
-                                <div style={{ padding: '20px 0' }}>
-                                    <Alert message="所有 AccessKey 和 Secret 均在入库前通过 AES-256-GCM 算法进行加密存储。点击「自动探测」可通过 AK/SK 自动发现云资源并配置。" type="success" showIcon style={{ marginBottom: 16 }} />
-                                    <Table columns={credColumns} dataSource={accounts} rowKey="id" pagination={false} size="middle"
-                                        expandable={{
-                                            expandedRowRender: expandedAccountRow,
-                                            rowExpandable: () => true,
-                                        }}
-                                    />
-                                </div>
-                            ),
+                            children: <CloudAccountsPanel accounts={accounts} columns={credColumns} renderExpandedRow={expandedAccountRow} />,
                         },
                         {
                             key: 'agent-dist',
                             label: <span><CloudUploadOutlined /> Agent 分发</span>,
-                            children: (
-                                <div style={{ padding: '20px 0' }}>
-                                    <Alert
-                                        message="Agent 二进制分发管理"
-                                        description="弹性扩缩创建的 ECS 实例通过 OSS 内网高速下载 Agent 二进制（预签名 URL，1小时过期）。请确保凭证已配置 OSS Bucket 和 Endpoint，并已上传 Agent 制品。"
-                                        type="info"
-                                        showIcon
-                                        style={{ marginBottom: 16 }}
-                                    />
-                                    {accounts.length === 0 ? (
-                                        <Empty description="请先在「API 凭证管理」中添加云凭证" style={{ padding: '60px 0' }} />
-                                    ) : (
-                                        <Table
-                                            dataSource={accounts}
-                                            rowKey="id"
-                                            pagination={false}
-                                            size="middle"
-                                            columns={[
-                                                {
-                                                    title: '凭证别名', dataIndex: 'name', key: 'name',
-                                                    render: (text: string) => <Text strong>{text}</Text>
-                                                },
-                                                {
-                                                    title: 'OSS Bucket', dataIndex: 'oss_bucket', key: 'oss_bucket',
-                                                    render: (v: string) => v
-                                                        ? <Text style={{ color: '#10b981', fontFamily: 'monospace', fontSize: 12 }}>{v}</Text>
-                                                        : <Tag color="default">未配置</Tag>
-                                                },
-                                                {
-                                                    title: 'OSS Endpoint', dataIndex: 'oss_endpoint', key: 'oss_endpoint',
-                                                    render: (v: string) => v
-                                                        ? <Text style={{ color: '#10b981', fontFamily: 'monospace', fontSize: 12 }}>{v}</Text>
-                                                        : <Tag color="default">未配置</Tag>
-                                                },
-                                                {
-                                                    title: '分发通道', key: 'channel',
-                                                    render: (_: any, record: API.CloudAccount) => {
-                                                        const ossReady = !!(record.oss_bucket && record.oss_endpoint);
-                                                        return ossReady
-                                                            ? <Tag color="blue">OSS 内网高速分发</Tag>
-                                                            : <Tag color="red">未配置 OSS（无法分发）</Tag>;
-                                                    }
-                                                },
-                                                {
-                                                    title: '操作', key: 'actions', width: 260,
-                                                    render: (_: any, record: API.CloudAccount) => (
-                                                        <Space>
-                                                            <Button
-                                                                type="primary"
-                                                                size="small"
-                                                                icon={<CloudUploadOutlined />}
-                                                                disabled={!record.oss_bucket || !record.oss_endpoint}
-                                                                onClick={async () => {
-                                                                    setAgentUploadAccountId(record.id);
-                                                                    setAgentUploadMode('服务器端制品');
-                                                                    setSelectedReleaseFiles([]);
-                                                                    setLocalFiles([]);
-                                                                    setLocalUploadProgress(0);
-                                                                    setAgentUploadOpen(true);
-                                                                    // 预加载服务器端文件列表
-                                                                    setReleaseFilesLoading(true);
-                                                                    try {
-                                                                        const res = await listReleaseFiles(record.id);
-                                                                        setReleaseFiles(res.files || []);
-                                                                    } catch {
-                                                                        setReleaseFiles([]);
-                                                                    } finally {
-                                                                        setReleaseFilesLoading(false);
-                                                                    }
-                                                                }}
-                                                            >上传 Agent</Button>
-                                                            <Button
-                                                                size="small"
-                                                                icon={<PlayCircleOutlined />}
-                                                                disabled={!record.oss_bucket || !record.oss_endpoint}
-                                                                onClick={async () => {
-                                                                    setOssTestLoading(true);
-                                                                    setOssTestResult(null);
-                                                                    setOssTestModalOpen(true);
-                                                                    try {
-                                                                        const res = await testOSSConnection(record.id);
-                                                                        setOssTestResult(res);
-                                                                    } catch (err: any) {
-                                                                        setOssTestResult({
-                                                                            status: 'error',
-                                                                            connection: false,
-                                                                            connection_err: extractErrorMsg(err) || String(err),
-                                                                            bucket: record.oss_bucket,
-                                                                            endpoint: record.oss_endpoint,
-                                                                        });
-                                                                    } finally {
-                                                                        setOssTestLoading(false);
-                                                                    }
-                                                                }}
-                                                            >OSS 测试</Button>
-                                                        </Space>
-                                                    )
-                                                }
-                                            ]}
-                                        />
-                                    )}
-
-                                    {/* OSS 文件浏览器 */}
-                                    {accounts.filter(a => a.oss_bucket && a.oss_endpoint).length > 0 && (
-                                        <div style={{ marginTop: 24 }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                                                <InboxOutlined style={{ color: '#0ea5e9', fontSize: 16 }} />
-                                                <Text strong style={{ fontSize: 15 }}>OSS 制品浏览器</Text>
-                                                <Text type="secondary" style={{ fontSize: 12 }}>查看已上传到 OSS 的 Agent 文件</Text>
-                                            </div>
-                                            {accounts.filter(a => a.oss_bucket && a.oss_endpoint).map(account => (
-                                                <OSSFileBrowser key={account.id} account={account} />
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-                            ),
-                        }
+                            children: <CloudAgentDistributionPanel accounts={accounts} onUpload={handleOpenAgentUpload} onTest={handleTestOSS} />,
+                        },
                     ]}
                 />
             </ProCard>
 
-            <Modal
-                title={<><ThunderboltOutlined style={{ marginRight: 8, color: '#f59e0b' }} />手动弹性扩容</>}
+            <CloudInstanceCreateModal
                 open={instanceModalOpen}
-                onOk={handleCreateInstance}
+                form={instanceForm}
+                accounts={accounts}
+                policies={policies}
+                region={modalRegion}
+                regions={modalRegions}
+                regionsLoading={modalRegionsLoading}
+                availableTypes={availableTypes}
+                typesLoading={typesLoading}
+                selectedInstanceType={selectedInstanceType}
+                priceData={priceData}
+                priceLoading={priceLoading}
+                onSubmit={handleCreateInstance}
                 onCancel={() => setInstanceModalOpen(false)}
-                okText="确认创建"
-                cancelText="取消"
-                width={640}
-                okButtonProps={{ disabled: accounts.length === 0 }}
-            >
-                <Form form={instanceForm} layout="vertical" style={{ marginTop: 8 }} initialValues={{ count: 1 }}>
-                    <Alert
-                        message="手动扩容将绕过 AutoScaler 冷却限制，直接向云厂商发起实例创建请求"
-                        description="实例创建后将自动注入 Cloud-Init 脚本，下载并启动 Agent。请确保凭证已正确配置硬件规格和网络参数。"
-                        type="warning"
-                        showIcon
-                        style={{ marginBottom: 16 }}
-                    />
+                onAccountChange={handleInstanceAccountChange}
+                onRegionChange={handleInstanceRegionChange}
+                onInstanceTypeChange={handleInstanceTypeChange}
+            />
 
-                    {accounts.length === 0 ? (
-                        <Alert message="暂无可用云凭证，请先在「API 凭证管理」中添加并配置凭证。" type="info" showIcon style={{ marginBottom: 16 }} />
-                    ) : (
-                        <>
-                            <Row gutter={16}>
-                                <Col span={16}>
-                                    <Form.Item name="account_id" label="云凭证" rules={[{ required: true, message: '请选择云凭证' }]}>
-                                        <Select
-                                            placeholder="选择调用凭证"
-                                            options={accounts.map(a => {
-                                                const ready = !!(a.region && a.default_instance_type && a.default_image_id);
-                                                return {
-                                                    value: a.id,
-                                                    label: (
-                                                        <Space>
-                                                            <span>{a.name}</span>
-                                                            {ready
-                                                                ? <Tag color="success" style={{ fontSize: 10, lineHeight: '16px' }}>配置就绪</Tag>
-                                                                : <Tag color="warning" style={{ fontSize: 10, lineHeight: '16px' }}>配置不完整</Tag>}
-                                                        </Space>
-                                                    ),
-                                                };
-                                            })}
-                                            onChange={(val) => {
-                                                instanceForm.validateFields(['account_id']);
-                                                if (val) {
-                                                    const acct = accounts.find(a => a.id === val);
-                                                    const defaultRegion = acct?.region || '';
-                                                    setModalRegion(defaultRegion);
-                                                    // 加载地域列表
-                                                    setModalRegionsLoading(true);
-                                                    listCloudRegions(val).then(res => {
-                                                        setModalRegions(res?.regions || []);
-                                                    }).catch(() => {}).finally(() => setModalRegionsLoading(false));
-                                                    // 加载规格+价格
-                                                    if (defaultRegion) {
-                                                        refreshModalData(val, defaultRegion);
-                                                    }
-                                                } else {
-                                                    setPriceData(null);
-                                                    setAvailableTypes([]);
-                                                    setSelectedInstanceType('');
-                                                    setModalRegion('');
-                                                    setModalRegions([]);
-                                                }
-                                            }}
-                                        />
-                                    </Form.Item>
-                                </Col>
-                                <Col span={8}>
-                                    <Form.Item name="count" label="创建数量" rules={[{ required: true, message: '请输入数量' }]}>
-                                        <InputNumber min={1} max={10} style={{ width: '100%' }} addonAfter="台" />
-                                    </Form.Item>
-                                </Col>
-                            </Row>
-
-                            {/* 地域选择 */}
-                            {instanceForm.getFieldValue('account_id') && (
-                                <Form.Item label="地域" style={{ marginBottom: 12 }}>
-                                    <Select
-                                        loading={modalRegionsLoading}
-                                        value={modalRegion || undefined}
-                                        placeholder="选择目标地域"
-                                        showSearch
-                                        optionFilterProp="label"
-                                        onChange={(val) => {
-                                            setModalRegion(val);
-                                            const acctId = instanceForm.getFieldValue('account_id');
-                                            if (acctId && val) {
-                                                refreshModalData(acctId, val);
-                                            }
-                                        }}
-                                        options={modalRegions.map(r => ({
-                                            value: r.region_id,
-                                            label: `${r.region_id}  ${r.local_name ? '(' + r.local_name + ')' : ''}`,
-                                        }))}
-                                        style={{ width: '100%' }}
-                                    />
-                                </Form.Item>
-                            )}
-
-                            {/* 动态展示选中凭证的参数 */}
-                            <Form.Item noStyle shouldUpdate={(prev, cur) => prev.account_id !== cur.account_id || prev.count !== cur.count}>
-                                {({ getFieldValue }) => {
-                                    const accountId = getFieldValue('account_id');
-                                    const count = getFieldValue('count') || 1;
-                                    const account = accounts.find(a => a.id === accountId);
-                                    if (!account) return null;
-
-                                    const configReady = !!(account.region && account.default_instance_type && account.default_image_id);
-                                    const ossReady = !!(account.oss_bucket && account.oss_endpoint);
-
-                                    // 找到关联策略
-                                    const linkedPolicy = policies.find((p: any) => p.cloud_account_id === accountId);
-
-                                    return (
-                                        <div style={{
-                                            background: '#f8fafc',
-                                            borderRadius: 10,
-                                            padding: '16px 20px',
-                                            border: '1px solid #e2e8f0',
-                                        }}>
-                                            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                                                <SettingOutlined style={{ color: '#0ea5e9' }} />
-                                                实例创建参数预览
-                                                {!configReady && (
-                                                    <Tag color="error" style={{ fontSize: 10 }}>配置不完整，请先完成一键配置</Tag>
-                                                )}
-                                            </div>
-
-                                            <Descriptions size="small" column={2} bordered
-                                                labelStyle={{ width: 100, fontWeight: 500, background: '#fff', fontSize: 12 }}
-                                                contentStyle={{ fontSize: 12, fontFamily: 'monospace' }}
-                                            >
-                                                <Descriptions.Item label="地域">
-                                                    {modalRegion
-                                                        ? <Tag color="green">{modalRegion}</Tag>
-                                                        : <Tag color="red">未选择</Tag>}
-                                                </Descriptions.Item>
-                                                <Descriptions.Item label="提供商">
-                                                    <Tag color="blue">{account.provider === 'aliyun' ? '阿里云 ECS' : account.provider === 'aws' ? 'AWS EC2' : account.provider}</Tag>
-                                                </Descriptions.Item>
-                                                <Descriptions.Item label="实例规格" span={2}>
-                                                    {typesLoading ? (
-                                                        <Spin size="small" />
-                                                    ) : availableTypes.length > 0 ? (
-                                                        <Select
-                                                            size="small"
-                                                            style={{ width: '100%' }}
-                                                            value={selectedInstanceType}
-                                                            onChange={(val) => {
-                                                                setSelectedInstanceType(val);
-                                                                // 重新查询该规格的价格
-                                                                const acctId = instanceForm.getFieldValue('account_id');
-                                                                if (acctId && val) {
-                                                                    setPriceLoading(true);
-                                                                    const seq = ++priceAbortRef.current;
-                                                                    queryCloudPrice(acctId, { instance_type: val, region: modalRegion }).then(res => {
-                                                                        if (seq === priceAbortRef.current && res?.status !== 'error') setPriceData(res);
-                                                                    }).catch(() => {}).finally(() => {
-                                                                        if (seq === priceAbortRef.current) setPriceLoading(false);
-                                                                    });
-                                                                }
-                                                            }}
-                                                            showSearch
-                                                            optionFilterProp="label"
-                                                            options={availableTypes.map(t => ({
-                                                                value: t.id,
-                                                                label: `${t.id}  (${t.cpu}核 / ${t.memory_gb}G)${t.status === 'ClosedWithStock' ? ' · 限量' : ''}`,
-                                                            }))}
-                                                            optionRender={(option) => {
-                                                                const t = availableTypes.find(x => x.id === option.value);
-                                                                return (
-                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                                        <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{t?.id}</span>
-                                                                        <span style={{ fontSize: 11, color: '#64748b' }}>
-                                                                            {t?.cpu}核 / {t?.memory_gb}G
-                                                                            {t?.status === 'ClosedWithStock' && <Tag color="orange" style={{ marginLeft: 4, fontSize: 10 }}>限量</Tag>}
-                                                                        </span>
-                                                                    </div>
-                                                                );
-                                                            }}
-                                                        />
-                                                    ) : (
-                                                        <Text style={{ fontSize: 12 }}>
-                                                            {account.default_instance_type || <Tag color="red">未配置</Tag>}
-                                                        </Text>
-                                                    )}
-                                                </Descriptions.Item>
-                                                <Descriptions.Item label="系统镜像">
-                                                    {account.default_image_id
-                                                        ? <Text style={{ fontSize: 12 }}>{account.default_image_id.length > 20 ? account.default_image_id.slice(0, 20) + '...' : account.default_image_id}</Text>
-                                                        : <Tag color="red">未配置</Tag>}
-                                                </Descriptions.Item>
-                                                <Descriptions.Item label="安全组">
-                                                    {account.default_security_group
-                                                        ? <Text style={{ fontSize: 12 }}>{account.default_security_group}</Text>
-                                                        : <Tag color="orange">未配置</Tag>}
-                                                </Descriptions.Item>
-                                                <Descriptions.Item label="交换机">
-                                                    {account.default_v_switch
-                                                        ? <Text style={{ fontSize: 12 }}>{account.default_v_switch}</Text>
-                                                        : <Tag color="orange">未配置</Tag>}
-                                                </Descriptions.Item>
-                                            </Descriptions>
-
-                                            {/* 费用与策略预估 */}
-                                            <div style={{
-                                                marginTop: 12,
-                                                display: 'flex',
-                                                gap: 12,
-                                                flexWrap: 'wrap',
-                                            }}>
-                                                {/* 单价卡片 */}
-                                                <div style={{
-                                                    flex: 1,
-                                                    minWidth: 160,
-                                                    background: priceData ? 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)' : '#fff',
-                                                    borderRadius: 8,
-                                                    padding: '12px 16px',
-                                                    border: '1px solid #e2e8f0',
-                                                }}>
-                                                    <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>单台小时价</div>
-                                                    {priceLoading ? (
-                                                        <Spin size="small" />
-                                                    ) : priceData ? (
-                                                        <div>
-                                                            <div style={{ fontSize: 20, fontWeight: 700, color: '#059669' }}>
-                                                                ¥{(priceData.spot_price > 0 ? priceData.spot_price : priceData.total_hourly).toFixed(3)}
-                                                                <span style={{ fontSize: 11, fontWeight: 400, color: '#94a3b8' }}>/h</span>
-                                                            </div>
-                                                            {priceData.spot_price > 0 && priceData.spot_discount > 0 && (
-                                                                <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 2 }}>
-                                                                    原价 ¥{priceData.instance_price.toFixed(3)}/h · 节省 {priceData.spot_discount.toFixed(0)}%
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    ) : (
-                                                        <div style={{ fontSize: 13, color: '#94a3b8' }}>选择凭证后加载</div>
-                                                    )}
-                                                </div>
-
-                                                {/* 总费用预估 */}
-                                                <div style={{
-                                                    flex: 1,
-                                                    minWidth: 160,
-                                                    background: priceData ? 'linear-gradient(135deg, #eff6ff 0%, #eef2ff 100%)' : '#fff',
-                                                    borderRadius: 8,
-                                                    padding: '12px 16px',
-                                                    border: '1px solid #e2e8f0',
-                                                }}>
-                                                    <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>
-                                                        {count} 台 · {linkedPolicy ? `${linkedPolicy.instance_ttl_minutes} 分钟` : '1 小时'} 预估
-                                                    </div>
-                                                    {priceLoading ? (
-                                                        <Spin size="small" />
-                                                    ) : priceData ? (
-                                                        <div style={{ fontSize: 20, fontWeight: 700, color: '#2563eb' }}>
-                                                            ¥{((priceData.spot_price > 0 ? priceData.spot_price : priceData.total_hourly) * count * (linkedPolicy ? linkedPolicy.instance_ttl_minutes / 60 : 1)).toFixed(2)}
-                                                        </div>
-                                                    ) : (
-                                                        <div style={{ fontSize: 13, color: '#94a3b8' }}>--</div>
-                                                    )}
-                                                </div>
-
-                                                {/* 竞价策略 */}
-                                                <div style={{
-                                                    flex: 1,
-                                                    minWidth: 160,
-                                                    background: '#fff',
-                                                    borderRadius: 8,
-                                                    padding: '12px 16px',
-                                                    border: '1px solid #e2e8f0',
-                                                }}>
-                                                    <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>竞价策略</div>
-                                                    <div style={{ fontSize: 14, fontWeight: 600 }}>
-                                                        {linkedPolicy ? (
-                                                            <Tag color={linkedPolicy.spot_strategy === 'SpotAsPriceGo' ? 'orange' : linkedPolicy.spot_strategy === 'SpotWithPriceLimit' ? 'volcano' : 'blue'}>
-                                                                {linkedPolicy.spot_strategy === 'SpotAsPriceGo' ? '竞价（跟随市价）' :
-                                                                 linkedPolicy.spot_strategy === 'SpotWithPriceLimit' ? `竞价限价 ¥${linkedPolicy.max_spot_price}/h` : '按量付费'}
-                                                            </Tag>
-                                                        ) : (
-                                                            <Tag color="orange">抢占式（默认）</Tag>
-                                                        )}
-                                                    </div>
-                                                </div>
-
-                                                {/* Agent 分发 */}
-                                                <div style={{
-                                                    flex: 1,
-                                                    minWidth: 160,
-                                                    background: '#fff',
-                                                    borderRadius: 8,
-                                                    padding: '12px 16px',
-                                                    border: '1px solid #e2e8f0',
-                                                }}>
-                                                    <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>Agent 分发</div>
-                                                    <div style={{ fontSize: 14, fontWeight: 600 }}>
-                                                        {ossReady
-                                                            ? <Tag color="success">OSS 内网高速</Tag>
-                                                            : <Tag color="warning">HTTP Fallback</Tag>}
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            {/* 实例 TTL 提示 */}
-                                            {linkedPolicy && (
-                                                <div style={{ marginTop: 10, padding: '6px 12px', background: '#eff6ff', borderRadius: 6, fontSize: 12, color: '#3b82f6' }}>
-                                                    <CheckCircleOutlined style={{ marginRight: 4 }} />
-                                                    实例将在 {linkedPolicy.instance_ttl_minutes} 分钟后进入回收窗口，忙碌时最多宽限 30 分钟（策略: {linkedPolicy.name}）
-                                                </div>
-                                            )}
-
-                                            {!linkedPolicy && (
-                                                <Alert
-                                                    message="该凭证尚未绑定调度策略，创建实例可能失败。请先在「引擎调度 & 开关」中配置策略。"
-                                                    type="error"
-                                                    showIcon
-                                                    style={{ marginTop: 10, fontSize: 12 }}
-                                                />
-                                            )}
-                                        </div>
-                                    );
-                                }}
-                            </Form.Item>
-                        </>
-                    )}
-                </Form>
-            </Modal>
-
-            <Modal title="添加云服务凭证 (AK/SK)" open={akModalOpen} onOk={handleAddAk} onCancel={() => setAkModalOpen(false)}
-                okText="安全保存" cancelText="取消">
-                <Form form={akForm} layout="vertical" style={{ marginTop: 16 }}>
-                    <Form.Item name="provider" label="提供商" initialValue="aliyun" rules={[{ required: true }]}>
-                        <Select options={[
-                            { value: 'aliyun', label: '阿里云 ECS' },
-                            { value: 'aws', label: 'AWS EC2' },
-                            { value: 'tencent', label: '腾讯云 CVM' },
-                        ]} />
-                    </Form.Item>
-                    <Form.Item name="name" label="凭证别名" rules={[{ required: true }]}>
-                        <Input placeholder="例如：阿里云生产环境主账号" />
-                    </Form.Item>
-                    <Form.Item name="access_key_id" label="Access Key ID" rules={[{ required: true }]}>
-                        <Input placeholder="输入 AK" />
-                    </Form.Item>
-                    <Form.Item name="access_key_secret" label="Access Key Secret" rules={[{ required: true }]}>
-                        <Input.Password placeholder="输入 SK" />
-                    </Form.Item>
-
-                    <Form.Item name="region" label="地域 (Region)" extra="可选，弹性扩缩时需要指定。不填则在一键配置时自动选择。">
-                        <Input placeholder="可选，如 cn-shanghai、cn-hangzhou" />
-                    </Form.Item>
-
-                    <Form.Item label="默认云主机硬件配置" style={{ marginBottom: 4 }} extra="选填，如果留空将使用云厂商 API 的默认值">
-                        <Input.Group compact style={{ display: 'flex', gap: 8 }}>
-                            <Form.Item name="default_instance_type" noStyle>
-                                <Input placeholder="实例规格 (如 ecs.c6.large)" style={{ flex: 1 }} />
-                            </Form.Item>
-                            <Form.Item name="default_image_id" noStyle>
-                                <Input placeholder="系统镜像 ID (如 ubuntu_22_04)" style={{ flex: 1 }} />
-                            </Form.Item>
-                        </Input.Group>
-                    </Form.Item>
-
-                    <Form.Item label="网络与安全配置" style={{ marginBottom: 4 }}>
-                        <Input.Group compact style={{ display: 'flex', gap: 8 }}>
-                            <Form.Item name="default_security_group" noStyle>
-                                <Input placeholder="安全组 ID" style={{ flex: 1 }} />
-                            </Form.Item>
-                            <Form.Item name="default_v_switch" noStyle>
-                                <Input placeholder="虚拟交换机 ID" style={{ flex: 1 }} />
-                            </Form.Item>
-                        </Input.Group>
-                    </Form.Item>
-                    <Form.Item label="OSS 配置（可选，用于 Agent 二进制分发）" style={{ marginBottom: 4 }}>
-                        <Input.Group compact style={{ display: 'flex', gap: 8 }}>
-                            <Form.Item name="oss_bucket" noStyle>
-                                <Input placeholder="Bucket 名称，如 argus-release" style={{ flex: 1 }} />
-                            </Form.Item>
-                            <Form.Item name="oss_endpoint" noStyle>
-                                <Input placeholder="Endpoint，如 oss-cn-shanghai-internal.aliyuncs.com" style={{ flex: 2 }} />
-                            </Form.Item>
-                        </Input.Group>
-                    </Form.Item>
-                    {isAdmin && (
-                        <Form.Item name="bound_user_ids" label="同时绑定给用户" extra="凭证会自动绑定给创建者；这里可额外授权给当前租户的管理员或操作员。">
-                            <Select
-                                mode="multiple"
-                                placeholder="选择可使用此 AK/SK 的用户"
-                                options={tenantUsers.map(u => ({
-                                    value: String(u.id),
-                                    label: `${u.username} (${u.role})`,
-                                }))}
-                                onDropdownVisibleChange={(open) => {
-                                    if (open && tenantUsers.length === 0) fetchTenantUsers();
-                                }}
-                            />
-                        </Form.Item>
-                    )}
-                </Form>
-            </Modal>
-
-            <Modal
-                title={bindingAccount ? `绑定用户 - ${bindingAccount.name}` : '绑定用户'}
+            <AddCloudAccountModal
+                open={akModalOpen}
+                form={akForm}
+                isAdmin={isAdmin}
+                users={tenantUsers}
+                onSubmit={handleAddAk}
+                onCancel={() => setAkModalOpen(false)}
+                onLoadUsers={fetchTenantUsers}
+            />
+            <CloudAccountBindingModal
                 open={bindingModalOpen}
-                onOk={handleSaveBindings}
+                account={bindingAccount}
+                userIds={bindingUserIds}
+                users={tenantUsers}
+                saving={bindingSaving}
+                onChange={setBindingUserIds}
+                onSubmit={handleSaveBindings}
                 onCancel={() => setBindingModalOpen(false)}
-                confirmLoading={bindingSaving}
-                okText="保存绑定"
-                cancelText="取消"
-            >
-                <Alert
-                    message="绑定后的用户可以完整使用该 AK/SK 进行云资源与 OSS 操作；凭证基础配置仍只能由管理员或凭证所有者修改。"
-                    type="info"
-                    showIcon
-                    style={{ marginBottom: 16 }}
-                />
-                <Select
-                    mode="multiple"
-                    style={{ width: '100%' }}
-                    value={bindingUserIds}
-                    onChange={setBindingUserIds}
-                    placeholder="选择可使用此 AK/SK 的用户"
-                    options={tenantUsers.map(u => ({
-                        value: String(u.id),
-                        label: `${u.username} (${u.role})`,
-                    }))}
-                />
-            </Modal>
-
-            {/* 资源自动探测弹窗 */}
-            <Modal
-                title={<><SearchOutlined /> 云资源自动探测</>}
+            />
+            <CloudDiscoveryModal
                 open={discoverModalOpen}
+                loading={discovering}
+                saving={discoverSaving}
+                data={discoveryData}
+                form={discoverForm}
+                onSubmit={handleSaveDiscovery}
                 onCancel={() => setDiscoverModalOpen(false)}
-                footer={discoveryData ? [
-                    <Button key="cancel" onClick={() => setDiscoverModalOpen(false)}>取消</Button>,
-                    <Button key="save" type="primary" loading={discoverSaving} onClick={handleSaveDiscovery} icon={<CheckCircleOutlined />}>
-                        保存配置
-                    </Button>,
-                ] : null}
-                width={720}
-                destroyOnClose
-            >
-                {discovering ? (
-                    <div style={{ textAlign: 'center', padding: '60px 0' }}>
-                        <Spin size="large" />
-                        <div style={{ marginTop: 16 }}><Text type="secondary">正在通过 AK/SK 查询云资源...</Text></div>
-                    </div>
-                ) : discoveryData ? (
-                    <Form form={discoverForm} layout="vertical">
-                        <Alert
-                            message="以下资源已通过你的 AK/SK 从云厂商 API 自动获取，请在每一项中选择合适的值后保存。"
-                            type="info" showIcon style={{ marginBottom: 20 }}
-                        />
-                        <Form.Item name="default_instance_type" label={`实例规格 (发现 ${discoveryData.instance_types?.length || 0} 个)`}
-                            rules={[{ required: true, message: '请选择实例规格' }]}>
-                            <Select placeholder="选择实例规格" showSearch optionFilterProp="label"
-                                options={(discoveryData.instance_types || []).map((it: any) => ({
-                                    value: it.id,
-                                    label: `${it.id}  —  ${it.cpu}核 ${it.memory_gb}GB  (${it.family})`,
-                                }))}
-                            />
-                        </Form.Item>
-                        <Form.Item name="default_image_id" label={`系统镜像 (发现 ${discoveryData.images?.length || 0} 个)`}
-                            rules={[{ required: true, message: '请选择系统镜像' }]}>
-                            <Select placeholder="选择系统镜像" showSearch optionFilterProp="label"
-                                options={(discoveryData.images || []).map((img: any) => ({
-                                    value: img.id,
-                                    label: `${img.name}  —  ${img.desc}`,
-                                }))}
-                            />
-                        </Form.Item>
-                        <Form.Item name="default_security_group" label={`安全组 (发现 ${discoveryData.security_groups?.length || 0} 个)`}
-                            rules={[{ required: true, message: '请选择安全组' }]}>
-                            <Select placeholder="选择安全组" showSearch optionFilterProp="label"
-                                options={(discoveryData.security_groups || []).map((sg: any) => ({
-                                    value: sg.id,
-                                    label: `${sg.id}  —  ${sg.name || '(无名称)'}  ${sg.desc}`,
-                                }))}
-                            />
-                        </Form.Item>
-                        <Form.Item name="default_v_switch" label={`虚拟交换机 (发现 ${discoveryData.v_switches?.length || 0} 个)`}
-                            rules={[{ required: true, message: '请选择交换机' }]}>
-                            <Select placeholder="选择交换机" showSearch optionFilterProp="label"
-                                options={(discoveryData.v_switches || []).map((vsw: any) => ({
-                                    value: vsw.id,
-                                    label: `${vsw.id}  —  ${vsw.name || '(无名称)'}  ${vsw.desc}`,
-                                }))}
-                            />
-                        </Form.Item>
-                    </Form>
-                ) : (
-                    <div style={{ textAlign: 'center', padding: '40px 0', color: '#94a3b8' }}>
-                        <Text type="secondary">探测失败，请检查 AK/SK 权限是否包含 ECS 读取权限。</Text>
-                    </div>
-                )}
-            </Modal>
+            />
 
-            {/* 一键配置结果弹窗 */}
-            <Modal
-                title={<><ThunderboltOutlined style={{ color: '#0ea5e9' }} /> 一键配置结果</>}
-                open={setupResultOpen}
-                onCancel={() => setSetupResultOpen(false)}
-                footer={[<Button key="ok" type="primary" onClick={() => setSetupResultOpen(false)}>知道了</Button>]}
-                width={640}
-            >
-                {setupResult && (
-                    <div>
-                        {/* 警告信息 */}
-                        {setupResult.warnings && setupResult.warnings.length > 0 && (
-                            <Alert
-                                type="warning" showIcon
-                                style={{ marginBottom: 16 }}
-                                message="部分资源发现失败"
-                                description={
-                                    <ul style={{ margin: 0, paddingLeft: 16 }}>
-                                        {setupResult.warnings.map((w: string, i: number) => (
-                                            <li key={i} style={{ marginBottom: 4 }}>{w}</li>
-                                        ))}
-                                    </ul>
-                                }
-                            />
-                        )}
-
-                        {/* 策略信息 */}
-                        {setupResult.policy_created && (
-                            <Alert type="success" showIcon message="已自动创建调度策略（默认关闭），请在「引擎调度 & 开关」标签页中查看和启用。" style={{ marginBottom: 16 }} />
-                        )}
-
-                        {/* 当前配置 */}
-                        <Descriptions title="当前凭证配置" bordered size="small" column={1}
-                            labelStyle={{ width: 120, fontWeight: 500, background: '#f8fafc' }}
-                            contentStyle={{ fontFamily: 'monospace', fontSize: 13 }}
-                        >
-                            <Descriptions.Item label="地域">
-                                {setupResult.current_config?.region ?
-                                    <Tag color="green">{setupResult.current_config.region}</Tag> :
-                                    <Tag color="red">未配置</Tag>}
-                            </Descriptions.Item>
-                            <Descriptions.Item label="实例规格">
-                                {setupResult.current_config?.instance_type ?
-                                    <><Tag color="blue">{setupResult.current_config.instance_type}</Tag>
-                                        {setupResult.chosen?.instance_type && <Tag color="cyan">本次更新</Tag>}</> :
-                                    <Tag color="red">未配置</Tag>}
-                            </Descriptions.Item>
-                            <Descriptions.Item label="系统镜像">
-                                {setupResult.current_config?.image_id ?
-                                    <><Text code style={{ fontSize: 12 }}>{setupResult.current_config.image_id}</Text>
-                                        {setupResult.chosen?.image_name && <Text type="secondary" style={{ marginLeft: 8, fontSize: 11 }}>({setupResult.chosen.image_name})</Text>}
-                                        {setupResult.chosen?.image_id && <Tag color="cyan" style={{ marginLeft: 4 }}>本次更新</Tag>}</> :
-                                    <Tag color="red">未配置</Tag>}
-                            </Descriptions.Item>
-                            <Descriptions.Item label="安全组">
-                                {setupResult.current_config?.security_group ?
-                                    <><Text code style={{ fontSize: 12 }}>{setupResult.current_config.security_group}</Text>
-                                        {setupResult.chosen?.security_group && <Tag color="cyan" style={{ marginLeft: 4 }}>本次更新</Tag>}</> :
-                                    <Tag color="red">未配置 — 需在阿里云控制台创建安全组</Tag>}
-                            </Descriptions.Item>
-                            <Descriptions.Item label="交换机">
-                                {setupResult.current_config?.v_switch ?
-                                    <><Text code style={{ fontSize: 12 }}>{setupResult.current_config.v_switch}</Text>
-                                        {setupResult.chosen?.v_switch && <Tag color="cyan" style={{ marginLeft: 4 }}>本次更新</Tag>}</> :
-                                    <Tag color="red">未配置 — 需在阿里云控制台创建 VPC 和交换机</Tag>}
-                            </Descriptions.Item>
-                            <Descriptions.Item label="OSS 存储桶">
-                                {setupResult.current_config?.oss_bucket ?
-                                    <><Text code style={{ fontSize: 12 }}>{setupResult.current_config.oss_bucket}</Text>
-                                        {setupResult.chosen?.oss_bucket && <Tag color="cyan" style={{ marginLeft: 4 }}>自动创建</Tag>}</> :
-                                    <Tag color="red">未配置</Tag>}
-                            </Descriptions.Item>
-                            <Descriptions.Item label="OSS 访问节点">
-                                {setupResult.current_config?.oss_endpoint ?
-                                    <><Text code style={{ fontSize: 12 }}>{setupResult.current_config.oss_endpoint}</Text>
-                                        {setupResult.chosen?.oss_endpoint && <Tag color="cyan" style={{ marginLeft: 4 }}>自动配置</Tag>}</> :
-                                    <Tag color="red">未配置</Tag>}
-                            </Descriptions.Item>
-                        </Descriptions>
-
-                        {/* 发现统计 */}
-                        <div style={{ marginTop: 16, padding: '8px 12px', background: '#f1f5f9', borderRadius: 6, fontSize: 12, color: '#64748b' }}>
-                            资源发现统计：实例规格 {setupResult.discovery?.instance_types || 0} 个 | 镜像 {setupResult.discovery?.images || 0} 个 | 安全组 {setupResult.discovery?.security_groups || 0} 个 | 交换机 {setupResult.discovery?.v_switches || 0} 个
-                        </div>
-                    </div>
-                )}
-            </Modal>
-
-            {/* 权限检查 Drawer */}
-            <Drawer
-                title={<span><SafetyCertificateOutlined style={{ marginRight: 8, color: '#8b5cf6' }} />AK/SK 权限检查</span>}
+            <CloudSetupResultModal open={setupResultOpen} result={setupResult} onClose={() => setSetupResultOpen(false)} />
+            <CloudPermissionDrawer
                 open={permDrawerOpen}
+                loading={permLoading}
+                error={permError}
+                data={permData}
                 onClose={() => setPermDrawerOpen(false)}
-                width={720}
-                destroyOnClose
-            >
-                {permLoading ? (
-                    <div style={{ textAlign: 'center', padding: '80px 0' }}>
-                        <Spin size="large" />
-                        <div style={{ marginTop: 16 }}><Text type="secondary">正在通过 STS/RAM API 检查凭证权限...</Text></div>
-                        <div style={{ marginTop: 8, fontSize: 12, color: '#94a3b8' }}>首次检查可能需要 10-20 秒</div>
-                    </div>
-                ) : permError ? (
-                    <Alert
-                        type="error" showIcon
-                        message="权限检查失败"
-                        description={<>
-                            <div style={{ marginBottom: 8 }}>{permError}</div>
-                            <Text type="secondary" style={{ fontSize: 12 }}>可能原因：AK/SK 无效、网络不通、或缺少 sts:GetCallerIdentity / ram:ListPoliciesForUser 权限。</Text>
-                        </>}
-                    />
-                ) : permData ? (
-                    <div>
-                        {/* 一键配置就绪状态 */}
-                        <Alert
-                            type={permData.can_one_click_setup ? 'success' : 'warning'}
-                            showIcon
-                            icon={permData.can_one_click_setup ? <CheckCircleOutlined /> : <CloseOutlined />}
-                            message={permData.can_one_click_setup
-                                ? '权限充足，可以执行一键配置'
-                                : `缺少 ${permData.missing_permissions?.length || 0} 项权限，无法完成一键配置`}
-                            description={!permData.can_one_click_setup && permData.missing_permissions?.length > 0 && (
-                                <div style={{ marginTop: 8 }}>
-                                    <Text type="secondary">缺失权限：</Text>
-                                    <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                                        {permData.missing_permissions.map((p: string) => (
-                                            <Tag key={p} color="error" style={{ fontSize: 11 }}>{p}</Tag>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                            style={{ marginBottom: 20 }}
-                        />
-
-                        {/* 身份信息卡片 */}
-                        <div style={{
-                            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                            borderRadius: 12,
-                            padding: '20px 24px',
-                            marginBottom: 20,
-                            color: '#fff',
-                        }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-                                <UserOutlined style={{ fontSize: 24 }} />
-                                <div>
-                                    <div style={{ fontWeight: 600, fontSize: 16 }}>
-                                        {permData.identity_type === 'Root' ? '主账号 (Root)' :
-                                         permData.identity_type === 'RAMUser' ? `RAM 用户: ${permData.user_name}` :
-                                         permData.identity_type === 'RAMRole' ? `RAM 角色: ${permData.user_name}` :
-                                         `STS 临时凭证: ${permData.user_name || '未知'}`}
-                                    </div>
-                                    <div style={{ opacity: 0.8, fontSize: 12, marginTop: 2 }}>
-                                        Account ID: {permData.account_id}
-                                    </div>
-                                </div>
-                            </div>
-                            <div style={{ fontSize: 11, opacity: 0.7, fontFamily: 'monospace', wordBreak: 'break-all' }}>
-                                ARN: {permData.identity_arn}
-                            </div>
-                        </div>
-
-                        {/* 绑定策略列表 */}
-                        <div style={{ marginBottom: 20 }}>
-                            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <LockOutlined style={{ color: '#8b5cf6' }} />
-                                绑定的权限策略 ({permData.policies?.length || 0})
-                            </div>
-                            {permData.policies?.length > 0 ? (
-                                <Table
-                                    size="small"
-                                    dataSource={permData.policies}
-                                    rowKey={(r: any) => `${r.policy_name}-${r.attach_source}`}
-                                    pagination={false}
-                                    columns={[
-                                        {
-                                            title: '策略名称', dataIndex: 'policy_name', key: 'policy_name',
-                                            render: (name: string) => <Text strong style={{ fontSize: 12, fontFamily: 'monospace' }}>{name}</Text>
-                                        },
-                                        {
-                                            title: '类型', dataIndex: 'policy_type', key: 'policy_type', width: 80,
-                                            render: (type: string) => <Tag color={type === 'System' ? 'blue' : 'orange'}>{type === 'System' ? '系统' : '自定义'}</Tag>
-                                        },
-                                        {
-                                            title: '来源', dataIndex: 'attach_source', key: 'attach_source', width: 120,
-                                            render: (src: string) => {
-                                                if (src === 'User') return <Tag color="green">用户直绑</Tag>;
-                                                if (src === 'Role') return <Tag color="purple">角色绑定</Tag>;
-                                                if (src === 'RootAccount') return <Tag color="gold">主账号</Tag>;
-                                                if (src?.startsWith('Group:')) return <Tag color="cyan">组: {src.slice(6)}</Tag>;
-                                                return <Tag>{src}</Tag>;
-                                            }
-                                        },
-                                        {
-                                            title: '描述', dataIndex: 'description', key: 'description',
-                                            render: (desc: string) => <Text type="secondary" style={{ fontSize: 11 }}>{desc || '-'}</Text>
-                                        },
-                                    ]}
-                                    expandable={{
-                                        expandedRowRender: (record: any) => record.policy_document ? (
-                                            <pre style={{
-                                                background: '#1e1e1e', color: '#d4d4d4',
-                                                padding: 16, borderRadius: 8,
-                                                fontSize: 11, maxHeight: 300, overflow: 'auto',
-                                                margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all'
-                                            }}>
-                                                {(() => { try { return JSON.stringify(JSON.parse(record.policy_document), null, 2); } catch { return record.policy_document; } })()}
-                                            </pre>
-                                        ) : <Text type="secondary">系统策略不展示 Policy Document</Text>,
-                                        rowExpandable: () => true,
-                                    }}
-                                />
-                            ) : (
-                                <Empty description="未查询到绑定的权限策略" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-                            )}
-                        </div>
-
-                        {/* 所需权限比对表 */}
-                        <div>
-                            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <SafetyCertificateOutlined style={{ color: '#0ea5e9' }} />
-                                一键配置所需权限检查 ({permData.required_permissions?.filter((p: any) => p.satisfied).length || 0}/{permData.required_permissions?.length || 0})
-                            </div>
-                            <Collapse
-                                defaultActiveKey={['ECS', 'VPC', 'OSS']}
-                                style={{ background: '#fafafa' }}
-                                items={['ECS', 'VPC', 'OSS'].map(category => {
-                                    const items = (permData.required_permissions || []).filter((p: any) => p.category === category);
-                                    const satisfiedCount = items.filter((p: any) => p.satisfied).length;
-                                    const allSatisfied = satisfiedCount === items.length;
-                                    return {
-                                        key: category,
-                                        label: (
-                                            <Space>
-                                                <Tag color={allSatisfied ? 'success' : 'error'} style={{ fontWeight: 600 }}>
-                                                    {category}
-                                                </Tag>
-                                                <Text type={allSatisfied ? undefined : 'danger'} style={{ fontSize: 13 }}>
-                                                    {satisfiedCount}/{items.length} 项已授权
-                                                </Text>
-                                                {allSatisfied && <CheckOutlined style={{ color: '#10b981', fontSize: 12 }} />}
-                                            </Space>
-                                        ),
-                                        children: (
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                                {items.map((perm: any) => (
-                                                    <div key={perm.action_pattern} style={{
-                                                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                                                        padding: '8px 12px', background: '#fff', borderRadius: 6,
-                                                        border: `1px solid ${perm.satisfied ? '#d1fae5' : '#fecaca'}`,
-                                                    }}>
-                                                        <div>
-                                                            <Text style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 500 }}>
-                                                                {perm.action_pattern}
-                                                            </Text>
-                                                            <br />
-                                                            <Text type="secondary" style={{ fontSize: 11 }}>{perm.description}</Text>
-                                                        </div>
-                                                        {perm.satisfied
-                                                            ? <Tag icon={<CheckOutlined />} color="success">已授权</Tag>
-                                                            : <Tag icon={<CloseOutlined />} color="error">未授权</Tag>
-                                                        }
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        ),
-                                    };
-                                })}
-                            />
-
-                            {/* 快速复制最小权限策略 */}
-                            {!permData.can_one_click_setup && (
-                                <div style={{ marginTop: 20 }}>
-                                    <Alert
-                                        type="info" showIcon
-                                        message="快速修复"
-                                        description={
-                                            <div>
-                                                <div style={{ marginBottom: 8 }}>在阿里云 RAM 控制台创建自定义策略，粘贴以下 JSON 即可授予一键配置所需的最小权限：</div>
-                                                <Tooltip title="点击复制最小权限策略 JSON">
-                                                    <Button
-                                                        size="small"
-                                                        icon={<CopyOutlined />}
-                                                        onClick={() => {
-                                                            const actions = (permData.required_permissions || []).map((p: any) => p.action_pattern);
-                                                            const ecsActions = actions.filter((a: string) => a.startsWith('ecs:'));
-                                                            const ossActions = actions.filter((a: string) => a.startsWith('oss:'));
-                                                            const policy = JSON.stringify({
-                                                                Version: '1',
-                                                                Statement: [
-                                                                    { Effect: 'Allow', Action: ecsActions, Resource: '*' },
-                                                                    { Effect: 'Allow', Action: ossActions, Resource: '*' },
-                                                                ],
-                                                            }, null, 2);
-                                                            navigator.clipboard.writeText(policy);
-                                                            message.success('最小权限策略 JSON 已复制到剪贴板');
-                                                        }}
-                                                    >
-                                                        复制最小权限策略 JSON
-                                                    </Button>
-                                                </Tooltip>
-                                            </div>
-                                        }
-                                    />
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                ) : null}
-            </Drawer>
-
-            {/* OSS 测试结果 Modal */}
-            <Modal
-                title={<><PlayCircleOutlined style={{ marginRight: 8, color: '#8b5cf6' }} />OSS 连通性测试报告</>}
+            />
+            <CloudOSSTestModal
                 open={ossTestModalOpen}
-                onCancel={() => setOssTestModalOpen(false)}
-                footer={[<Button key="ok" type="primary" onClick={() => setOssTestModalOpen(false)}>知道了</Button>]}
-                width={600}
-            >
-                {ossTestLoading ? (
-                    <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                        <Spin size="large" />
-                        <div style={{ marginTop: 16 }}><Text type="secondary">正在测试 OSS 连通性...</Text></div>
-                    </div>
-                ) : ossTestResult ? (
-                    <div>
-                        {/* 总体结果 */}
-                        <Alert
-                            type={ossTestResult.connection ? 'success' : 'error'}
-                            showIcon
-                            message={ossTestResult.connection ? 'OSS 连通性测试通过' : 'OSS 连接失败'}
-                            description={ossTestResult.connection_err || undefined}
-                            style={{ marginBottom: 20 }}
-                        />
+                loading={ossTestLoading}
+                result={ossTestResult}
+                onClose={() => setOssTestModalOpen(false)}
+            />
 
-                        {/* 详细信息 */}
-                        <Descriptions bordered size="small" column={1}
-                            labelStyle={{ width: 130, fontWeight: 500, background: '#f8fafc' }}
-                            contentStyle={{ fontFamily: 'monospace', fontSize: 13 }}
-                        >
-                            <Descriptions.Item label="Bucket">
-                                <Text copyable style={{ fontSize: 13 }}>{ossTestResult.bucket || '-'}</Text>
-                            </Descriptions.Item>
-                            <Descriptions.Item label="Endpoint">
-                                <Text copyable style={{ fontSize: 13 }}>{ossTestResult.endpoint || '-'}</Text>
-                            </Descriptions.Item>
-                            <Descriptions.Item label="连接状态">
-                                {ossTestResult.connection
-                                    ? <Tag icon={<CheckCircleOutlined />} color="success">已连通</Tag>
-                                    : <Tag icon={<CloseOutlined />} color="error">连接失败</Tag>}
-                            </Descriptions.Item>
-                            {ossTestResult.connection && (
-                                <>
-                                    <Descriptions.Item label="Agent 文件数">
-                                        <Badge
-                                            count={ossTestResult.file_count || 0}
-                                            showZero
-                                            style={{ backgroundColor: ossTestResult.file_count > 0 ? '#10b981' : '#94a3b8' }}
-                                        />
-                                        <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-                                            (共 {((ossTestResult.total_size || 0) / 1024 / 1024).toFixed(1)} MB)
-                                        </Text>
-                                    </Descriptions.Item>
-                                    <Descriptions.Item label="核心制品">
-                                        {ossTestResult.agent_ready
-                                            ? <><Tag color="success">已就绪</Tag><Text type="secondary" style={{ fontSize: 11 }}>{ossTestResult.required_agent}</Text></>
-                                            : <><Tag color="warning">未上传</Tag><Text type="secondary" style={{ fontSize: 11 }}>需要上传 {ossTestResult.required_agent}</Text></>}
-                                    </Descriptions.Item>
-                                </>
-                            )}
-                        </Descriptions>
-
-                        {/* 文件列表 */}
-                        {ossTestResult.connection && ossTestResult.files?.length > 0 && (
-                            <div style={{ marginTop: 16 }}>
-                                <Text strong style={{ fontSize: 13, marginBottom: 8, display: 'block' }}>
-                                    <FileOutlined style={{ marginRight: 4 }} />OSS 中的 Agent 文件
-                                </Text>
-                                {ossTestResult.files.map((f: any) => {
-                                    const name = f.key?.split('/').pop() || f.key;
-                                    const sizeMB = (f.size / 1024 / 1024).toFixed(1);
-                                    const isRequired = f.key === ossTestResult.required_agent;
-                                    return (
-                                        <div key={f.key} style={{
-                                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                                            padding: '6px 12px', borderRadius: 4,
-                                            background: isRequired ? '#f0fdf4' : '#f8fafc',
-                                            border: isRequired ? '1px solid #bbf7d0' : '1px solid #f1f5f9',
-                                            marginBottom: 4,
-                                        }}>
-                                            <Space>
-                                                <FileOutlined style={{ color: isRequired ? '#10b981' : '#64748b' }} />
-                                                <Text style={{ fontFamily: 'monospace', fontSize: 12 }}>{name}</Text>
-                                                {isRequired && <Tag color="green" style={{ fontSize: 10 }}>核心制品</Tag>}
-                                            </Space>
-                                            <Text type="secondary" style={{ fontSize: 12 }}>{sizeMB} MB</Text>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </div>
-                ) : null}
-            </Modal>
-
-            {/* Agent 上传 Modal */}
-            <Modal
-                title={<><CloudUploadOutlined style={{ marginRight: 8, color: '#0ea5e9' }} />上传 Agent 到 OSS</>}
+            <CloudAgentUploadModal
                 open={agentUploadOpen}
-                onCancel={() => { setAgentUploadOpen(false); setLocalFiles([]); setLocalUploadProgress(0); }}
-                footer={null}
-                width={680}
-                destroyOnClose
-            >
-                <Segmented
-                    block
-                    value={agentUploadMode}
-                    onChange={(v) => {
-                        setAgentUploadMode(v as string);
-                        if (v === '服务器端制品' && releaseFiles.length === 0 && !releaseFilesLoading) {
-                            setReleaseFilesLoading(true);
-                            listReleaseFiles(agentUploadAccountId)
-                                .then(res => setReleaseFiles(res.files || []))
-                                .catch(() => setReleaseFiles([]))
-                                .finally(() => setReleaseFilesLoading(false));
-                        }
-                    }}
-                    options={[
-                        { label: <span><CloudServerOutlined style={{ marginRight: 4 }} />服务器端制品</span>, value: '服务器端制品' },
-                        { label: <span><UploadOutlined style={{ marginRight: 4 }} />本地上传</span>, value: '本地上传' },
-                    ]}
-                    style={{ marginBottom: 20 }}
-                />
-
-                {agentUploadMode === '服务器端制品' ? (
-                    <div>
-                        <Alert
-                            message="选择服务器 ./release 目录下的 Agent 二进制文件上传到 OSS"
-                            type="info"
-                            showIcon
-                            style={{ marginBottom: 16 }}
-                        />
-                        {releaseFilesLoading ? (
-                            <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 0' }}><Spin /></div>
-                        ) : releaseFiles.length === 0 ? (
-                            <Empty
-                                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                                description={<span>服务器 <Text code>./release</Text> 目录为空或不存在<br /><Text type="secondary" style={{ fontSize: 12 }}>请先构建 Agent 二进制或切换到「本地上传」</Text></span>}
-                                style={{ padding: '40px 0' }}
-                            />
-                        ) : (
-                            <>
-                                <Table
-                                    dataSource={releaseFiles}
-                                    rowKey="name"
-                                    pagination={false}
-                                    size="small"
-                                    rowSelection={{
-                                        selectedRowKeys: selectedReleaseFiles,
-                                        onChange: (keys) => setSelectedReleaseFiles(keys as string[]),
-                                    }}
-                                    columns={[
-                                        {
-                                            title: '文件名', dataIndex: 'name', key: 'name',
-                                            render: (name: string) => (
-                                                <Space>
-                                                    <FileOutlined style={{ color: '#64748b' }} />
-                                                    <Text style={{ fontFamily: 'monospace', fontSize: 13 }}>{name}</Text>
-                                                </Space>
-                                            )
-                                        },
-                                        {
-                                            title: '大小', dataIndex: 'size', key: 'size', width: 120,
-                                            render: (size: number) => <Text type="secondary">{(size / 1024 / 1024).toFixed(1)} MB</Text>
-                                        },
-                                        {
-                                            title: '修改时间', dataIndex: 'modified', key: 'modified', width: 180,
-                                            render: (v: string) => <Text style={{ fontSize: 12, color: '#64748b' }}>{v ? new Date(v).toLocaleString('zh-CN') : '-'}</Text>
-                                        },
-                                    ]}
-                                />
-                                <div style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <Text type="secondary" style={{ fontSize: 12 }}>
-                                        已选 {selectedReleaseFiles.length}/{releaseFiles.length} 个文件
-                                    </Text>
-                                    <Space>
-                                        <Button onClick={() => setSelectedReleaseFiles(releaseFiles.map(f => f.name))}>全选</Button>
-                                        <Button
-                                            type="primary"
-                                            icon={<CloudUploadOutlined />}
-                                            disabled={selectedReleaseFiles.length === 0}
-                                            loading={serverUploading}
-                                            onClick={async () => {
-                                                setServerUploading(true);
-                                                try {
-                                                    const res = await uploadServerAgent(agentUploadAccountId, selectedReleaseFiles);
-                                                    if (res?.status === 'ok') {
-                                                        message.success(res.message || '上传成功');
-                                                        setAgentUploadOpen(false);
-                                                    } else {
-                                                        message.error(res?.message || '上传失败');
-                                                    }
-                                                } catch (err: any) {
-                                                    const errMsg = extractErrorMsg(err) || String(err) || '未知错误';
-                                                    message.error(`上传失败: ${errMsg}`);
-                                                } finally {
-                                                    setServerUploading(false);
-                                                }
-                                            }}
-                                        >
-                                            上传选中文件到 OSS
-                                        </Button>
-                                    </Space>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                ) : (
-                    <div>
-                        <Alert
-                            message="从本地选择 Agent 二进制文件，上传到服务器并自动推送到 OSS"
-                            type="info"
-                            showIcon
-                            style={{ marginBottom: 16 }}
-                        />
-                        <Upload.Dragger
-                            multiple
-                            beforeUpload={(file, fileList) => {
-                                // 只在第一个文件触发时收集全部文件
-                                if (file === fileList[0]) {
-                                    setLocalFiles(prev => {
-                                        const existNames = new Set(prev.map(f => f.name));
-                                        const newFiles = fileList.filter(f => !existNames.has(f.name));
-                                        return [...prev, ...newFiles];
-                                    });
-                                }
-                                return false; // 阻止自动上传
-                            }}
-                            showUploadList={false}
-                            accept="*"
-                            disabled={localUploading}
-                        >
-                            <p className="ant-upload-drag-icon">
-                                <InboxOutlined style={{ color: '#0ea5e9', fontSize: 48 }} />
-                            </p>
-                            <p className="ant-upload-text">点击或拖拽文件到此区域</p>
-                            <p className="ant-upload-hint">支持多文件选择，支持 Linux/ARM 等多架构 Agent 二进制</p>
-                        </Upload.Dragger>
-
-                        {localFiles.length > 0 && (
-                            <div style={{ marginTop: 16 }}>
-                                <div style={{ marginBottom: 8, fontWeight: 500 }}>待上传文件 ({localFiles.length})</div>
-                                {localFiles.map((f, i) => (
-                                    <div key={f.name} style={{
-                                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                                        padding: '6px 12px', background: i % 2 === 0 ? '#f8fafc' : '#fff',
-                                        borderRadius: 4, marginBottom: 2,
-                                    }}>
-                                        <Space>
-                                            <FileOutlined style={{ color: '#64748b' }} />
-                                            <Text style={{ fontFamily: 'monospace', fontSize: 13 }}>{f.name}</Text>
-                                            <Text type="secondary" style={{ fontSize: 12 }}>({(f.size / 1024 / 1024).toFixed(1)} MB)</Text>
-                                        </Space>
-                                        <Button
-                                            type="text" size="small" danger
-                                            icon={<DeleteOutlined />}
-                                            onClick={() => setLocalFiles(prev => prev.filter((_, idx) => idx !== i))}
-                                            disabled={localUploading}
-                                        />
-                                    </div>
-                                ))}
-
-                                {localUploading && (
-                                    <Progress
-                                        percent={localUploadProgress}
-                                        status="active"
-                                        strokeColor={{ '0%': '#0ea5e9', '100%': '#10b981' }}
-                                        style={{ marginTop: 12 }}
-                                    />
-                                )}
-
-                                <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                                    <Button onClick={() => { setLocalFiles([]); setLocalUploadProgress(0); }} disabled={localUploading}>
-                                        清空
-                                    </Button>
-                                    <Button
-                                        type="primary"
-                                        icon={<CloudUploadOutlined />}
-                                        loading={localUploading}
-                                        onClick={async () => {
-                                            setLocalUploading(true);
-                                            setLocalUploadProgress(0);
-                                            try {
-                                                const res = await uploadLocalAgent(
-                                                    agentUploadAccountId,
-                                                    localFiles,
-                                                    (percent) => setLocalUploadProgress(percent)
-                                                );
-                                                if (res?.status === 'ok') {
-                                                    message.success(res.message || '上传成功');
-                                                    setAgentUploadOpen(false);
-                                                    setLocalFiles([]);
-                                                    setLocalUploadProgress(0);
-                                                } else {
-                                                    message.error(res?.message || '上传失败');
-                                                }
-                                            } catch (err: any) {
-                                                const errMsg = extractErrorMsg(err) || String(err) || '未知错误';
-                                                message.error(`上传失败: ${errMsg}`);
-                                            } finally {
-                                                setLocalUploading(false);
-                                            }
-                                        }}
-                                    >
-                                        上传到服务器 & OSS
-                                    </Button>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )}
-            </Modal>
-
-            {/* 地域选择 Modal */}
-            <Modal
-                title="选择云资源地域"
+                mode={agentUploadMode}
+                releaseFiles={releaseFiles}
+                releaseFilesLoading={releaseFilesLoading}
+                selectedReleaseFiles={selectedReleaseFiles}
+                serverUploading={serverUploading}
+                localFiles={localFiles}
+                localUploading={localUploading}
+                localUploadProgress={localUploadProgress}
+                onClose={() => { setAgentUploadOpen(false); setLocalFiles([]); setLocalUploadProgress(0); }}
+                onModeChange={handleAgentUploadModeChange}
+                onSelectedReleaseFilesChange={setSelectedReleaseFiles}
+                onServerUpload={handleServerAgentUpload}
+                onLocalFilesChange={setLocalFiles}
+                onLocalUpload={handleLocalAgentUpload}
+                onClearLocalFiles={() => { setLocalFiles([]); setLocalUploadProgress(0); }}
+            />
+            <CloudRegionSelectModal
                 open={regionModalOpen}
-                onCancel={() => setRegionModalOpen(false)}
-                footer={null}
-                width={600}
-            >
-                <Alert
-                    message="该凭证尚未指定地域，请选择一个地域以继续操作。地域决定了弹性扩缩时 ECS 实例的创建位置。"
-                    type="info"
-                    showIcon
-                    style={{ marginBottom: 16 }}
-                />
-                {regionLoading ? (
-                    <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 0' }}><Spin size="large" /></div>
-                ) : (
-                    <div style={{ maxHeight: 400, overflow: 'auto' }}>
-                        {regionList.map(r => {
-                            const isChinaMainland = r.region_id.startsWith('cn-');
-                            return (
-                                <div
-                                    key={r.region_id}
-                                    style={{
-                                        display: 'flex',
-                                        justifyContent: 'space-between',
-                                        alignItems: 'center',
-                                        padding: '10px 16px',
-                                        borderBottom: '1px solid #f0f0f0',
-                                        cursor: 'pointer',
-                                        borderRadius: 6,
-                                        transition: 'background 0.2s',
-                                    }}
-                                    onMouseEnter={e => (e.currentTarget.style.background = '#f0f9ff')}
-                                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                                    onClick={() => handleRegionSelect(r.region_id)}
-                                >
-                                    <div>
-                                        <Text strong style={{ fontSize: 14 }}>{r.local_name}</Text>
-                                        <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>{r.region_id}</Text>
-                                        {isChinaMainland && <Tag color="blue" style={{ marginLeft: 8, fontSize: 10 }}>推荐</Tag>}
-                                    </div>
-                                    <Button type="link" size="small">选择</Button>
-                                </div>
-                            );
-                        })}
-                        {regionList.length === 0 && !regionLoading && (
-                            <Empty description="未获取到可用地域" style={{ padding: '40px 0' }} />
-                        )}
-                    </div>
-                )}
-            </Modal>
+                loading={regionLoading}
+                regions={regionList}
+                onSelect={handleRegionSelect}
+                onClose={() => setRegionModalOpen(false)}
+            />
         </div>
     );
 };

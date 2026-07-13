@@ -5,7 +5,7 @@ scanner/internal/agent/debug.go 998
 scanner/internal/agent/worker.go 1379
 scanner/internal/agent/worker_test.go 1338
 server-ui/src/components/GlobalAIChatDrawer.tsx 1432
-server-ui/src/pages/CloudManagement.tsx 2784
+server-ui/src/pages/CloudManagement.tsx 1379
 server-ui/src/pages/Dashboard.tsx 711
 server-ui/src/pages/TaskManagement.tsx 1557
 server-ui/src/pages/TaskResults.tsx 897
