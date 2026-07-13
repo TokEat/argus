@@ -1,6 +1,5 @@
 # Temporary exceptions for files that predate the source-size ratchet.
 # Format: relative/path maximum_line_count
-mcp/internal/mcp/client.go 2233
 scanner/common/flag.go 817
 scanner/internal/agent/debug.go 998
 scanner/internal/agent/worker.go 1379
