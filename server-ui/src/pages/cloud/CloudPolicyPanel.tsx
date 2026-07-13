@@ -3,6 +3,7 @@ import { ProCard } from '@ant-design/pro-components';
 import { Alert, Button, Col, Form, Input, InputNumber, Popconfirm, Row, Select, Space, Switch, Typography } from 'antd';
 import type { FormInstance } from 'antd';
 import Editor from '@monaco-editor/react';
+import type { CloudPolicyFormValues } from './utils';
 
 const { Paragraph, Title } = Typography;
 
@@ -11,7 +12,7 @@ interface CloudPolicyPanelProps {
     accounts: API.CloudAccount[];
     currentPolicyId: string | null;
     form: FormInstance;
-    initialValues: Record<string, unknown>;
+    initialValues: CloudPolicyFormValues;
     userDataScript: string;
     onPolicyChange: (policyId: string | null) => void;
     onUserDataScriptChange: (value: string) => void;
