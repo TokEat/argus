@@ -42,22 +42,22 @@ func (c *Client) argusRuleGet(ctx context.Context, args map[string]interface{}) 
 				continue
 			}
 			if ruleID == "" && fileName != "" {
-				rowFileName := mapString(row, "source_file", "SourceFile", "file_name", "FileName")
+				rowFileName := firstNonEmpty(row.SourceFile, row.FileName)
 				if rowFileName != "" && rowFileName != fileName {
 					continue
 				}
 			}
 			if ruleID == "" && artifactID != "" {
-				rowArtifactID := mapString(row, "artifact_id", "ArtifactID")
+				rowArtifactID := row.ArtifactID
 				if rowArtifactID != "" && rowArtifactID != artifactID {
 					continue
 				}
 			}
 			if fileName == "" {
-				fileName = firstNonEmpty(mapString(row, "source_file", "SourceFile"), mapString(row, "file_name", "FileName"))
+				fileName = firstNonEmpty(row.SourceFile, row.FileName)
 			}
 			if artifactID == "" {
-				artifactID = mapString(row, "artifact_id", "ArtifactID")
+				artifactID = row.ArtifactID
 			}
 			if fileName != "" || artifactID != "" {
 				break
@@ -69,23 +69,26 @@ func (c *Client) argusRuleGet(ctx context.Context, args map[string]interface{}) 
 	if err != nil {
 		return nil, err
 	}
-	var found map[string]interface{}
+	var found arsenalRecord
+	foundOK := false
 	for _, row := range rows {
-		if artifactID != "" && mapString(row, "id", "ID", "artifact_id", "ArtifactID") == artifactID {
+		if artifactID != "" && row.StableID() == artifactID {
 			found = row
+			foundOK = true
 			break
 		}
-		if fileName != "" && mapString(row, "file_name", "FileName", "source_file", "SourceFile") == fileName {
+		if fileName != "" && row.EffectiveFileName() == fileName {
 			found = row
+			foundOK = true
 			break
 		}
 	}
-	if found == nil {
+	if !foundOK {
 		return nil, fmt.Errorf("rule not found for rule_type=%s file_name=%q artifact_id=%q rule_id=%q", publicRuleType(ruleType), fileName, artifactID, ruleID)
 	}
-	fileName = mapString(found, "file_name", "FileName")
-	artifactID = mapString(found, "id", "ID", "artifact_id", "ArtifactID")
-	content := mapString(found, "content", "Content")
+	fileName = found.EffectiveFileName()
+	artifactID = found.StableID()
+	content := found.Content
 	catalogMatches := filterCatalogForArtifact(catalog, ruleType, artifactID, fileName, ruleID, productName)
 	out := map[string]interface{}{
 		"status":        "success",
@@ -93,15 +96,15 @@ func (c *Client) argusRuleGet(ctx context.Context, args map[string]interface{}) 
 		"rule_type":     publicRuleType(ruleType),
 		"file_name":     fileName,
 		"artifact_id":   artifactID,
-		"state":         mapString(found, "state", "State"),
-		"hash":          mapString(found, "hash", "Hash"),
-		"version":       firstPresent(found, "version", "Version"),
+		"state":         found.State,
+		"hash":          found.Hash,
+		"version":       found.Version,
 		"content":       content,
 		"content_size":  len(content),
-		"catalog":       catalogMatches,
+		"catalog":       catalogRaw(catalogMatches),
 		"references":    c.ruleReferences(ctx, ruleType, fileName, productName, catalogMatches),
 		"mcp_guidance":  ruleGetGuidance(publicRuleType(ruleType)),
-		"last_updated":  firstNonEmpty(mapString(found, "updated_at", "UpdatedAt"), mapString(found, "created_at", "CreatedAt")),
+		"last_updated":  firstNonEmpty(found.UpdatedAt, found.CreatedAt),
 		"stable_ref":    stableRefFromArsenal(found, publicRuleType(ruleType)),
 		"product_entry": productEntryFromContent(ruleType, content, productName),
 	}
@@ -132,7 +135,7 @@ func (c *Client) argusRuleList(ctx context.Context, args map[string]interface{},
 		}
 		catalog, _ := c.loadRuleCatalog(ctx, ruleType)
 		for _, row := range rows {
-			if state != "" && !strings.EqualFold(mapString(row, "state", "State"), state) {
+			if state != "" && !strings.EqualFold(row.State, state) {
 				continue
 			}
 			item := summarizeArsenalForList(row, ruleType, catalog)
@@ -188,43 +191,43 @@ func (c *Client) argusRuleList(ctx context.Context, args map[string]interface{},
 }
 
 func (c *Client) loadArsenalContent(ctx context.Context, ruleType, fileName string) (string, error) {
-	var rows []map[string]interface{}
+	var rows []arsenalRecord
 	if err := c.do(ctx, http.MethodGet, "/api/v1/arsenals/"+url.PathEscape(ruleType)+"?all=1", nil, &rows); err != nil {
 		return "", err
 	}
 	for _, row := range rows {
-		if mapString(row, "file_name", "FileName") == fileName {
-			return mapString(row, "content", "Content"), nil
+		if row.FileName == fileName {
+			return row.Content, nil
 		}
 	}
 	return "", nil
 }
 
-func (c *Client) loadArsenalRows(ctx context.Context, ruleType string, lite bool) ([]map[string]interface{}, error) {
+func (c *Client) loadArsenalRows(ctx context.Context, ruleType string, lite bool) ([]arsenalRecord, error) {
 	path := "/api/v1/arsenals/" + url.PathEscape(ruleType) + "?all=1"
 	if lite {
 		path += "&lite=1"
 	}
-	var rows []map[string]interface{}
+	var rows []arsenalRecord
 	if err := c.do(ctx, http.MethodGet, path, nil, &rows); err != nil {
 		return nil, err
 	}
 	return rows, nil
 }
 
-func (c *Client) loadRuleCatalog(ctx context.Context, ruleType string) ([]map[string]interface{}, error) {
+func (c *Client) loadRuleCatalog(ctx context.Context, ruleType string) ([]catalogRecord, error) {
 	switch ruleType {
 	case "poc":
-		var rows []map[string]interface{}
+		var rows []catalogRecord
 		return rows, c.do(ctx, http.MethodGet, "/api/v1/poc-rules?all=1", nil, &rows)
 	case "exp":
-		var rows []map[string]interface{}
+		var rows []catalogRecord
 		return rows, c.do(ctx, http.MethodGet, "/api/v1/exploits?all=1", nil, &rows)
 	case "finger":
-		var rows []map[string]interface{}
+		var rows []catalogRecord
 		return rows, c.do(ctx, http.MethodGet, "/api/v1/dictionaries/fingerprint", nil, &rows)
 	case "workflow":
-		var rows []map[string]interface{}
+		var rows []catalogRecord
 		return rows, c.do(ctx, http.MethodGet, "/api/v1/dictionaries/workflow", nil, &rows)
 	default:
 		return nil, nil
@@ -249,29 +252,27 @@ func normalizeRuleListRange(args map[string]interface{}) (int, int, error) {
 	return start, end, nil
 }
 
-func summarizeArsenalForList(row map[string]interface{}, ruleType string, catalog []map[string]interface{}) map[string]interface{} {
-	content := mapString(row, "content", "Content")
+func summarizeArsenalForList(row arsenalRecord, ruleType string, catalog []catalogRecord) map[string]interface{} {
+	content := row.Content
 	contentSize := len(content)
-	if contentSize == 0 {
-		if size, ok := intFromAny(firstPresent(row, "content_size", "ContentSize")); ok {
-			contentSize = size
-		}
+	if contentSize == 0 && row.ContentSize > 0 {
+		contentSize = row.ContentSize
 	}
-	fileName := mapString(row, "file_name", "FileName")
-	artifactID := mapString(row, "id", "ID", "artifact_id", "ArtifactID")
+	fileName := row.EffectiveFileName()
+	artifactID := row.StableID()
 	summary := filterCatalogForArtifact(catalog, ruleType, artifactID, fileName, "", "")
 	item := map[string]interface{}{
 		"rule_type":       publicRuleType(ruleType),
 		"file_name":       fileName,
 		"artifact_id":     artifactID,
-		"state":           mapString(row, "state", "State"),
-		"hash":            mapString(row, "hash", "Hash"),
-		"version":         firstPresent(row, "version", "Version"),
+		"state":           row.State,
+		"hash":            row.Hash,
+		"version":         row.Version,
 		"content_size":    contentSize,
 		"content_preview": contentPreview(content, 280),
-		"catalog_summary": summary,
-		"updated_at":      mapString(row, "updated_at", "UpdatedAt"),
-		"created_at":      mapString(row, "created_at", "CreatedAt"),
+		"catalog_summary": catalogRaw(summary),
+		"updated_at":      row.UpdatedAt,
+		"created_at":      row.CreatedAt,
 	}
 	if item["updated_at"] == "" {
 		item["updated_at"] = item["created_at"]
@@ -314,33 +315,33 @@ func publicRuleTypeForList(ruleTypes []string) interface{} {
 	return out
 }
 
-func catalogRowMatchesRuleID(row map[string]interface{}, ruleType, ruleID string) bool {
+func catalogRowMatchesRuleID(row catalogRecord, ruleType, ruleID string) bool {
 	if ruleID == "" {
 		return true
 	}
 	switch ruleType {
 	case "exp":
-		return mapString(row, "rule_id", "RuleID") == ruleID
+		return row.RuleID == ruleID
 	case "poc":
-		return mapString(row, "name", "Name") == ruleID || mapString(row, "source_file", "SourceFile") == ruleID
+		return row.Name == ruleID || row.SourceFile == ruleID
 	case "finger", "workflow":
-		return mapString(row, "product", "Product", "product_name", "ProductName") == ruleID
+		return row.Product == ruleID
 	default:
 		return false
 	}
 }
 
-func filterCatalogForArtifact(catalog []map[string]interface{}, ruleType, artifactID, fileName, ruleID, productName string) []map[string]interface{} {
-	out := []map[string]interface{}{}
+func filterCatalogForArtifact(catalog []catalogRecord, ruleType, artifactID, fileName, ruleID, productName string) []catalogRecord {
+	out := []catalogRecord{}
 	for _, row := range catalog {
 		if artifactID != "" {
-			if got := mapString(row, "artifact_id", "ArtifactID"); got != "" && got == artifactID {
+			if row.ArtifactID != "" && row.ArtifactID == artifactID {
 				out = append(out, row)
 				continue
 			}
 		}
 		if fileName != "" {
-			if got := mapString(row, "source_file", "SourceFile", "file_name", "FileName"); got != "" && got == fileName {
+			if got := firstNonEmpty(row.SourceFile, row.FileName); got != "" && got == fileName {
 				out = append(out, row)
 				continue
 			}
@@ -349,7 +350,7 @@ func filterCatalogForArtifact(catalog []map[string]interface{}, ruleType, artifa
 			out = append(out, row)
 			continue
 		}
-		if productName != "" && mapString(row, "product", "Product", "product_name", "ProductName") == productName {
+		if productName != "" && row.Product == productName {
 			out = append(out, row)
 			continue
 		}
@@ -357,12 +358,12 @@ func filterCatalogForArtifact(catalog []map[string]interface{}, ruleType, artifa
 	return out
 }
 
-func stableRefFromArsenal(row map[string]interface{}, publicType string) map[string]interface{} {
+func stableRefFromArsenal(row arsenalRecord, publicType string) map[string]interface{} {
 	return map[string]interface{}{
-		"artifact_id": mapString(row, "id", "ID", "artifact_id", "ArtifactID"),
-		"file_name":   mapString(row, "file_name", "FileName"),
-		"hash":        mapString(row, "hash", "Hash"),
-		"version":     firstPresent(row, "version", "Version"),
+		"artifact_id": row.StableID(),
+		"file_name":   row.EffectiveFileName(),
+		"hash":        row.Hash,
+		"version":     row.Version,
 		"rule_type":   publicType,
 	}
 }
@@ -390,7 +391,7 @@ func productEntryFromContent(ruleType, content, productName string) interface{} 
 	return nil
 }
 
-func (c *Client) ruleReferences(ctx context.Context, ruleType, fileName, productName string, catalog []map[string]interface{}) map[string]interface{} {
+func (c *Client) ruleReferences(ctx context.Context, ruleType, fileName, productName string, catalog []catalogRecord) map[string]interface{} {
 	refs := map[string]interface{}{}
 	workflows, err := c.loadRuleCatalog(ctx, "workflow")
 	if err == nil {
@@ -398,9 +399,9 @@ func (c *Client) ruleReferences(ctx context.Context, ruleType, fileName, product
 		case "poc":
 			matches := []map[string]interface{}{}
 			for _, wf := range workflows {
-				for _, poc := range stringSliceFromAny(firstPresent(wf, "pocs", "Pocs", "workflow_pocs", "WorkflowPocs")) {
+				for _, poc := range wf.POCs {
 					if poc == fileName || strings.TrimSuffix(poc, ".yaml") == strings.TrimSuffix(fileName, ".yaml") {
-						matches = append(matches, wf)
+						matches = append(matches, wf.Raw)
 						break
 					}
 				}
@@ -410,8 +411,8 @@ func (c *Client) ruleReferences(ctx context.Context, ruleType, fileName, product
 			if productName != "" {
 				matches := []map[string]interface{}{}
 				for _, wf := range workflows {
-					if mapString(wf, "product", "Product", "product_name", "ProductName") == productName {
-						matches = append(matches, wf)
+					if wf.Product == productName {
+						matches = append(matches, wf.Raw)
 					}
 				}
 				refs["workflows"] = matches
@@ -419,7 +420,7 @@ func (c *Client) ruleReferences(ctx context.Context, ruleType, fileName, product
 		}
 	}
 	if ruleType == "exp" && len(catalog) > 0 {
-		refs["linked_pocs"] = firstPresent(catalog[0], "linked_pocs", "LinkedPocs")
+		refs["linked_pocs"] = catalog[0].LinkedPOCs
 	}
 	return refs
 }

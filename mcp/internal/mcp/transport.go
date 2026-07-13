@@ -8,7 +8,22 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
+
+type httpTransport struct {
+	baseURL string
+	token   string
+	client  *http.Client
+}
+
+func newHTTPTransport(baseURL, token string) *httpTransport {
+	return &httpTransport{
+		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		token:   strings.TrimSpace(token),
+		client:  &http.Client{Timeout: 5 * time.Minute},
+	}
+}
 
 func (c *Client) postTool(ctx context.Context, path string, args map[string]interface{}) (interface{}, error) {
 	var out interface{}
@@ -17,7 +32,11 @@ func (c *Client) postTool(ctx context.Context, path string, args map[string]inte
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body interface{}, out interface{}) error {
-	if c.baseURL == "" {
+	return c.transport.doJSON(ctx, method, path, body, out)
+}
+
+func (t *httpTransport) doJSON(ctx context.Context, method, path string, body interface{}, out interface{}) error {
+	if t.baseURL == "" {
 		return fmt.Errorf("ARGUS_BASE_URL is required")
 	}
 	var reader io.Reader
@@ -28,17 +47,17 @@ func (c *Client) do(ctx context.Context, method, path string, body interface{}, 
 		}
 		reader = bytes.NewReader(data)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
+	req, err := http.NewRequestWithContext(ctx, method, t.baseURL+path, reader)
 	if err != nil {
 		return err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	if t.token != "" {
+		req.Header.Set("Authorization", "Bearer "+t.token)
 	}
-	resp, err := c.http.Do(req)
+	resp, err := t.client.Do(req)
 	if err != nil {
 		return err
 	}

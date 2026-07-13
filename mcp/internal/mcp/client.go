@@ -4,22 +4,14 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
-	"time"
 )
 
 type Client struct {
-	baseURL string
-	token   string
-	http    *http.Client
+	transport *httpTransport
 }
 
 func NewClient(baseURL, token string) *Client {
-	return &Client{
-		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		token:   strings.TrimSpace(token),
-		http:    &http.Client{Timeout: 5 * time.Minute},
-	}
+	return &Client{transport: newHTTPTransport(baseURL, token)}
 }
 
 func (c *Client) Resource(ctx context.Context, uri string) (resourcePayload, error) {

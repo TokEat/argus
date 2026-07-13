@@ -55,23 +55,23 @@ func (c *Client) argusRuleSave(ctx context.Context, args map[string]interface{})
 }
 
 func (c *Client) enrichSavedPyexp(ctx context.Context, out map[string]interface{}, fileName string) {
-	var rules []map[string]interface{}
+	var rules []catalogRecord
 	if err := c.do(ctx, http.MethodGet, "/api/v1/exploits?all=1", nil, &rules); err != nil {
 		return
 	}
 	for _, rule := range rules {
-		if mapString(rule, "source_file", "SourceFile", "file_name", "FileName") != fileName {
+		if firstNonEmpty(rule.SourceFile, rule.FileName) != fileName {
 			continue
 		}
 		for _, key := range []string{"artifact_id", "rule_id", "requirements_hash", "requirements", "state"} {
-			if value := mapAny(rule, key); value != nil {
+			if value := mapAny(rule.Raw, key); value != nil {
 				out[key] = value
 			}
 		}
-		if value := mapAny(rule, "content_hash"); value != nil {
+		if value := mapAny(rule.Raw, "content_hash"); value != nil {
 			out["hash"] = value
 		}
-		if value := mapAny(rule, "version"); value != nil {
+		if value := mapAny(rule.Raw, "version"); value != nil {
 			out["version"] = value
 		}
 		return
@@ -150,7 +150,7 @@ func (c *Client) ensureArtifactFresh(ctx context.Context, ruleType, fileName, ar
 	if expectedHash == "" && expectedVersion == nil {
 		return nil
 	}
-	var rows []map[string]interface{}
+	var rows []arsenalRecord
 	if err := c.do(ctx, http.MethodGet, "/api/v1/arsenals/"+url.PathEscape(ruleType)+"?all=1&lite=1", nil, &rows); err != nil {
 		return err
 	}
@@ -158,13 +158,13 @@ func (c *Client) ensureArtifactFresh(ctx context.Context, ruleType, fileName, ar
 		if !arsenalRowMatches(row, ruleType, fileName, artifactID) {
 			continue
 		}
-		currentHash := mapString(row, "hash", "Hash")
+		currentHash := row.Hash
 		if expectedHash != "" && currentHash != expectedHash {
 			return fmt.Errorf("artifact hash mismatch for %s: current=%s expected=%s", fileName, currentHash, expectedHash)
 		}
 		if expectedVersion != nil {
-			current, ok := mapInt(row, "version", "Version")
-			if !ok {
+			current := row.VersionInt()
+			if row.Version == nil {
 				return fmt.Errorf("artifact version is missing for %s", fileName)
 			}
 			expected, ok := intFromAny(expectedVersion)
@@ -180,13 +180,13 @@ func (c *Client) ensureArtifactFresh(ctx context.Context, ruleType, fileName, ar
 	return fmt.Errorf("artifact %s/%s not found", ruleType, fileName)
 }
 
-func arsenalRowMatches(row map[string]interface{}, ruleType, fileName, artifactID string) bool {
-	if artifactID != "" && mapString(row, "artifact_id", "ID", "id") == artifactID {
+func arsenalRowMatches(row arsenalRecord, ruleType, fileName, artifactID string) bool {
+	if artifactID != "" && row.StableID() == artifactID {
 		return true
 	}
-	if mapString(row, "file_name", "FileName") == fileName {
+	if row.FileName == fileName {
 		return true
 	}
-	path := strings.TrimPrefix(mapString(row, "path", "Path"), "/")
+	path := strings.TrimPrefix(row.Path, "/")
 	return path == ruleType+"/"+fileName
 }

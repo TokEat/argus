@@ -47,19 +47,19 @@ func (c *Client) argusProductSearch(ctx context.Context, args map[string]interfa
 		limit = 100
 	}
 
-	var fingerprints []map[string]interface{}
+	var fingerprints []catalogRecord
 	if err := c.do(ctx, http.MethodGet, "/api/v1/dictionaries/fingerprint", nil, &fingerprints); err != nil {
 		return nil, err
 	}
-	var workflows []map[string]interface{}
+	var workflows []catalogRecord
 	if err := c.do(ctx, http.MethodGet, "/api/v1/dictionaries/workflow", nil, &workflows); err != nil {
 		return nil, err
 	}
-	var pocs []map[string]interface{}
+	var pocs []catalogRecord
 	if err := c.do(ctx, http.MethodGet, "/api/v1/poc-rules?all=1", nil, &pocs); err != nil {
 		return nil, err
 	}
-	var exps []map[string]interface{}
+	var exps []catalogRecord
 	if err := c.do(ctx, http.MethodGet, "/api/v1/exploits?all=1", nil, &exps); err != nil {
 		return nil, err
 	}
@@ -78,22 +78,22 @@ func (c *Client) argusProductSearch(ctx context.Context, args map[string]interfa
 	}
 
 	for _, fp := range fingerprints {
-		product := mapString(fp, "product", "Product", "product_name", "ProductName")
+		product := fp.Product
 		if product == "" {
 			continue
 		}
 		b := bucket(product)
-		rules := stringSliceFromAny(firstPresent(fp, "rules", "Rules"))
+		rules := fp.Rules
 		b.Fingerprint = append(b.Fingerprint, map[string]interface{}{"product_name": product, "rules": rules})
 		b.SearchText = append(b.SearchText, product)
 		b.SearchText = append(b.SearchText, rules...)
 	}
 
-	pocByName := map[string]map[string]interface{}{}
+	pocByName := map[string]catalogRecord{}
 	for _, poc := range pocs {
-		name := firstNonEmpty(mapString(poc, "name", "Name"), mapString(poc, "source_file", "SourceFile"))
-		sourceFile := mapString(poc, "source_file", "SourceFile")
-		targetProduct := mapString(poc, "target_product", "TargetProduct")
+		sourceFile := poc.EffectiveSourceFile()
+		name := firstNonEmpty(poc.Name, sourceFile)
+		targetProduct := poc.TargetProduct
 		if sourceFile != "" {
 			pocByName[strings.ToLower(sourceFile)] = poc
 		}
@@ -104,18 +104,18 @@ func (c *Client) argusProductSearch(ctx context.Context, args map[string]interfa
 			item := productSearchPOCItem(poc)
 			b := bucket(targetProduct)
 			b.POCs = appendLimited(b.POCs, item, 50)
-			b.SearchText = append(b.SearchText, targetProduct, name, sourceFile, mapString(poc, "tags", "Tags"), mapString(poc, "description", "Description"), mapString(poc, "cve", "CVE"))
+			b.SearchText = append(b.SearchText, targetProduct, name, sourceFile, poc.Tags, poc.Description, poc.CVE)
 			b.Evidence["poc_target_product"] = true
 		}
 	}
 
 	for _, wf := range workflows {
-		product := mapString(wf, "product", "Product", "product_name", "ProductName")
+		product := wf.Product
 		if product == "" {
 			continue
 		}
-		types := stringSliceFromAny(firstPresent(wf, "type", "Type", "workflow_types", "WorkflowTypes"))
-		pocNames := stringSliceFromAny(firstPresent(wf, "pocs", "Pocs", "workflow_pocs", "WorkflowPocs"))
+		types := wf.Types
+		pocNames := wf.POCs
 		b := bucket(product)
 		b.Workflows = appendLimited(b.Workflows, map[string]interface{}{
 			"product_name":  product,
@@ -134,32 +134,21 @@ func (c *Client) argusProductSearch(ctx context.Context, args map[string]interfa
 			if poc, ok := pocByName[strings.ToLower(pocName)]; ok {
 				item := productSearchPOCItem(poc)
 				b.POCs = appendLimited(b.POCs, item, 50)
-				b.SearchText = append(b.SearchText, mapString(poc, "name", "Name"), mapString(poc, "source_file", "SourceFile"), mapString(poc, "tags", "Tags"), mapString(poc, "description", "Description"), mapString(poc, "cve", "CVE"))
+				b.SearchText = append(b.SearchText, poc.Name, poc.SourceFile, poc.Tags, poc.Description, poc.CVE)
 				b.Evidence["workflow_linked_poc"] = true
 			}
 		}
 	}
 
 	for _, exp := range exps {
-		product := mapString(exp, "target_product", "TargetProduct")
+		product := exp.TargetProduct
 		if product == "" {
 			continue
 		}
-		item := map[string]interface{}{
-			"rule_id":      mapString(exp, "rule_id", "RuleID"),
-			"name":         mapString(exp, "name", "Name"),
-			"source_file":  mapString(exp, "source_file", "SourceFile"),
-			"risk_level":   mapString(exp, "risk_level", "RiskLevel"),
-			"state":        mapString(exp, "state", "State"),
-			"enabled":      mapBool(exp, "enabled", "Enabled"),
-			"linked_pocs":  firstPresent(exp, "linked_pocs", "LinkedPocs"),
-			"artifact_id":  mapString(exp, "artifact_id", "ArtifactID"),
-			"content_hash": mapString(exp, "content_hash", "ContentHash"),
-			"requirements": firstPresent(exp, "requirements", "Requirements"),
-		}
+		item := productSearchEXPItem(exp)
 		b := bucket(product)
 		b.EXPs = appendLimited(b.EXPs, item, 50)
-		b.SearchText = append(b.SearchText, product, mapString(exp, "rule_id", "RuleID"), mapString(exp, "name", "Name"), mapString(exp, "source_file", "SourceFile"), mapString(exp, "description", "Description"))
+		b.SearchText = append(b.SearchText, product, exp.RuleID, exp.Name, exp.EffectiveSourceFile(), exp.Description)
 		b.Evidence["exp_target_product"] = true
 	}
 
@@ -215,16 +204,33 @@ func (c *Client) argusProductSearch(ctx context.Context, args map[string]interfa
 	return map[string]interface{}{"status": "success", "source": "native_api", "query": query, "limit": limit, "matches": matches}, nil
 }
 
-func productSearchPOCItem(poc map[string]interface{}) map[string]interface{} {
+func productSearchPOCItem(poc catalogRecord) map[string]interface{} {
+	sourceFile := poc.EffectiveSourceFile()
 	return map[string]interface{}{
-		"name":           mapString(poc, "name", "Name"),
-		"source_file":    mapString(poc, "source_file", "SourceFile"),
-		"target_product": mapString(poc, "target_product", "TargetProduct"),
-		"severity":       mapString(poc, "severity", "Severity"),
-		"state":          mapString(poc, "state", "State"),
-		"enabled":        mapBool(poc, "enabled", "Enabled"),
-		"tags":           mapString(poc, "tags", "Tags"),
-		"cve":            mapString(poc, "cve", "CVE"),
+		"name":           firstNonEmpty(poc.Name, sourceFile),
+		"source_file":    sourceFile,
+		"target_product": poc.TargetProduct,
+		"severity":       poc.Severity,
+		"state":          poc.State,
+		"enabled":        poc.Enabled,
+		"tags":           poc.Tags,
+		"cve":            poc.CVE,
+	}
+}
+
+func productSearchEXPItem(exp catalogRecord) map[string]interface{} {
+	sourceFile := exp.EffectiveSourceFile()
+	return map[string]interface{}{
+		"rule_id":      exp.RuleID,
+		"name":         firstNonEmpty(exp.Name, sourceFile),
+		"source_file":  sourceFile,
+		"risk_level":   exp.RiskLevel,
+		"state":        exp.State,
+		"enabled":      exp.Enabled,
+		"linked_pocs":  exp.LinkedPOCs,
+		"artifact_id":  exp.ArtifactID,
+		"content_hash": exp.Hash,
+		"requirements": exp.Requirements,
 	}
 }
 

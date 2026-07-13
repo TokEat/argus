@@ -38,15 +38,15 @@ func (c *Client) argusWorkflowContext(ctx context.Context, args map[string]inter
 		limit = 50
 	}
 
-	var fingerprints []map[string]interface{}
+	var fingerprints []catalogRecord
 	if err := c.do(ctx, http.MethodGet, "/api/v1/dictionaries/fingerprint", nil, &fingerprints); err != nil {
 		return nil, err
 	}
-	var workflows []map[string]interface{}
+	var workflows []catalogRecord
 	if err := c.do(ctx, http.MethodGet, "/api/v1/dictionaries/workflow", nil, &workflows); err != nil {
 		return nil, err
 	}
-	var pocs []map[string]interface{}
+	var pocs []catalogRecord
 	if err := c.do(ctx, http.MethodGet, "/api/v1/poc-rules?all=1", nil, &pocs); err != nil {
 		return nil, err
 	}
@@ -54,30 +54,30 @@ func (c *Client) argusWorkflowContext(ctx context.Context, args map[string]inter
 	products := map[string]bool{}
 	fingerprintItems := []map[string]interface{}{}
 	for _, item := range fingerprints {
-		product := mapString(item, "product", "Product", "product_name", "ProductName")
+		product := item.Product
 		if product == "" || !matchesFilter(product, productFilter) {
 			continue
 		}
 		products[strings.ToLower(product)] = true
 		fingerprintItems = appendLimited(fingerprintItems, map[string]interface{}{
 			"product_name": product,
-			"rules":        item["rules"],
+			"rules":        item.Rules,
 		}, limit)
 	}
 
 	pocByName := map[string]map[string]interface{}{}
 	pocItems := []map[string]interface{}{}
 	for _, poc := range pocs {
-		name := firstNonEmpty(mapString(poc, "name", "Name"), mapString(poc, "source_file", "SourceFile"))
-		sourceFile := mapString(poc, "source_file", "SourceFile")
+		sourceFile := poc.EffectiveSourceFile()
+		name := firstNonEmpty(poc.Name, sourceFile)
 		if name == "" && sourceFile == "" {
 			continue
 		}
 		if sourceFile != "" {
-			pocByName[strings.ToLower(sourceFile)] = poc
+			pocByName[strings.ToLower(sourceFile)] = poc.Raw
 		}
 		if name != "" {
-			pocByName[strings.ToLower(name)] = poc
+			pocByName[strings.ToLower(name)] = poc.Raw
 		}
 		if !matchesFilter(name, pocFilter) && !matchesFilter(sourceFile, pocFilter) {
 			continue
@@ -85,9 +85,9 @@ func (c *Client) argusWorkflowContext(ctx context.Context, args map[string]inter
 		pocItems = appendLimited(pocItems, map[string]interface{}{
 			"name":        name,
 			"source_file": sourceFile,
-			"severity":    mapString(poc, "severity", "Severity"),
-			"state":       mapString(poc, "state", "State"),
-			"enabled":     mapBool(poc, "enabled", "Enabled"),
+			"severity":    poc.Severity,
+			"state":       poc.State,
+			"enabled":     poc.Enabled,
 		}, limit)
 	}
 
@@ -95,9 +95,9 @@ func (c *Client) argusWorkflowContext(ctx context.Context, args map[string]inter
 	conflicts := []map[string]interface{}{}
 	existing := map[string]bool{}
 	for _, workflow := range workflows {
-		product := mapString(workflow, "product", "Product", "product_name", "ProductName")
-		types := stringSliceFromAny(firstPresent(workflow, "type", "Type", "workflow_types", "WorkflowTypes"))
-		pocNames := stringSliceFromAny(firstPresent(workflow, "pocs", "Pocs", "workflow_pocs", "WorkflowPocs"))
+		product := workflow.Product
+		types := workflow.Types
+		pocNames := workflow.POCs
 		if product == "" || !matchesFilter(product, productFilter) {
 			continue
 		}

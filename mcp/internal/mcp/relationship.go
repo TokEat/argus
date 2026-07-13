@@ -10,10 +10,10 @@ import (
 )
 
 type relationshipSnapshot struct {
-	Fingerprints []map[string]interface{}
-	Workflows    []map[string]interface{}
-	POCs         []map[string]interface{}
-	Exploits     []map[string]interface{}
+	Fingerprints []catalogRecord
+	Workflows    []catalogRecord
+	POCs         []catalogRecord
+	Exploits     []catalogRecord
 }
 
 type workflowRef struct {
@@ -222,33 +222,31 @@ func clampRelationshipLimit(limit int) int {
 	return limit
 }
 
-func fingerprintProductSet(rows []map[string]interface{}) (map[string]string, int) {
+func fingerprintProductSet(rows []catalogRecord) (map[string]string, int) {
 	products := map[string]string{}
 	ruleCount := 0
 	for _, row := range rows {
-		product := firstNonEmpty(mapString(row, "product", "Product"), mapString(row, "product_name", "ProductName"))
+		product := row.Product
 		if product == "" {
 			continue
 		}
 		products[product] = product
-		ruleCount += len(stringSliceFromAny(firstPresent(row, "rules", "Rules")))
+		ruleCount += len(row.Rules)
 	}
 	return products, ruleCount
 }
 
-func workflowProductSetAndRefs(rows []map[string]interface{}) (map[string]string, []workflowRef) {
+func workflowProductSetAndRefs(rows []catalogRecord) (map[string]string, []workflowRef) {
 	products := map[string]string{}
 	refs := []workflowRef{}
 	for _, row := range rows {
-		product := firstNonEmpty(mapString(row, "product", "Product"), mapString(row, "product_name", "ProductName"))
+		product := row.Product
 		if product == "" {
 			continue
 		}
 		products[product] = product
-		types := stringSliceFromAny(firstPresent(row, "type", "Type", "workflow_types", "WorkflowTypes"))
-		pocs := stringSliceFromAny(firstPresent(row, "pocs", "Pocs", "workflow_pocs", "WorkflowPocs"))
-		for _, pocName := range pocs {
-			for _, matchType := range types {
+		for _, pocName := range row.POCs {
+			for _, matchType := range row.Types {
 				matchType = strings.ToLower(strings.TrimSpace(matchType))
 				if pocName == "" || matchType == "" {
 					continue
@@ -266,7 +264,7 @@ func workflowProductSetAndRefs(rows []map[string]interface{}) (map[string]string
 	return products, refs
 }
 
-func pocLookupSet(rows []map[string]interface{}) map[string]bool {
+func pocLookupSet(rows []catalogRecord) map[string]bool {
 	out := map[string]bool{}
 	add := func(value string) {
 		value = strings.TrimSpace(value)
@@ -278,8 +276,8 @@ func pocLookupSet(rows []map[string]interface{}) map[string]bool {
 		out[strings.TrimSuffix(value, ".yml")] = true
 	}
 	for _, row := range rows {
-		add(mapString(row, "name", "Name"))
-		add(mapString(row, "source_file", "SourceFile", "file_name", "FileName"))
+		add(row.Name)
+		add(firstNonEmpty(row.SourceFile, row.FileName))
 	}
 	return out
 }
