@@ -15,16 +15,17 @@ import (
 	"gorm.io/gorm"
 )
 
-func listCloudInstancesReal(c *gin.Context) {
+func (h *CloudHandler) listCloudInstancesReal(c *gin.Context) {
 	tenantID := currentTenantID(c)
 	var instances []db.CloudInstance
-	db.DB.Where("tenant_id = ? AND cloud_account_id IN (?) AND deleted_at IS NULL", tenantID, accessibleCloudAccountSubquery(c)).
+	h.DB.
+		Where("tenant_id = ? AND cloud_account_id IN (?) AND deleted_at IS NULL", tenantID, h.accessibleCloudAccountSubquery(requestActor(c))).
 		Order("created_at DESC").
 		Find(&instances)
 	c.JSON(http.StatusOK, instances)
 }
 
-func createCloudInstanceManual(c *gin.Context) {
+func (h *CloudHandler) createCloudInstanceManual(c *gin.Context) {
 	var req struct {
 		AccountID    string `json:"account_id" binding:"required"`
 		Count        int    `json:"count"`
@@ -44,24 +45,24 @@ func createCloudInstanceManual(c *gin.Context) {
 
 	tenantID := currentTenantID(c)
 
-	account, ok := loadCloudAccountForUse(c, req.AccountID, true)
+	account, ok := h.loadCloudAccountForUse(c, req.AccountID, true)
 	if !ok {
 		return
 	}
 
-	if cloudAutoScaler == nil {
+	if h.AutoScaler == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AutoScaler not initialized"})
 		return
 	}
 
 	var policy db.CloudScalingPolicy
-	if err := db.DB.Where("cloud_account_id = ? AND tenant_id = ? AND cloud_account_id IN (?)", req.AccountID, tenantID, accessibleCloudAccountSubquery(c)).First(&policy).Error; err != nil {
+	if err := h.DB.Where("cloud_account_id = ? AND tenant_id = ? AND cloud_account_id IN (?)", req.AccountID, tenantID, h.accessibleCloudAccountSubquery(requestActor(c))).First(&policy).Error; err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "该凭证尚未绑定 AutoScaler 策略。请先配置策略以获取 Cloud-Init 等参数。"})
 		return
 	}
 
 	// 异步调用手动扩容
-	go cloudAutoScaler.ScaleUpManual(context.Background(), &policy, req.Count, req.InstanceType, req.Region)
+	go h.AutoScaler.ScaleUpManual(context.Background(), &policy, req.Count, req.InstanceType, req.Region)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "accepted",
@@ -69,12 +70,12 @@ func createCloudInstanceManual(c *gin.Context) {
 	})
 }
 
-func deleteCloudInstanceReal(c *gin.Context) {
+func (h *CloudHandler) deleteCloudInstanceReal(c *gin.Context) {
 	id := c.Param("id")
 	tenantID := currentTenantID(c)
 
 	var inst db.CloudInstance
-	if err := db.DB.Where("id = ? AND tenant_id = ? AND cloud_account_id IN (?)", id, tenantID, accessibleCloudAccountSubquery(c)).First(&inst).Error; err != nil {
+	if err := h.DB.Where("id = ? AND tenant_id = ? AND cloud_account_id IN (?)", id, tenantID, h.accessibleCloudAccountSubquery(requestActor(c))).First(&inst).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Instance not found"})
 		return
 	}
@@ -85,8 +86,8 @@ func deleteCloudInstanceReal(c *gin.Context) {
 		inst.Status != db.CloudStatusError
 
 	if !needsCloudTerminate {
-		// 直接删除数据库记录
-		db.DB.Delete(&inst)
+		h.DB.
+			Delete(&inst)
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "ok",
 			"message": fmt.Sprintf("实例 %s 已从数据库清理（状态: %s）", id, inst.Status),
@@ -102,18 +103,19 @@ func deleteCloudInstanceReal(c *gin.Context) {
 	// 异步销毁有云端ID的活跃实例
 	go func() {
 		var account db.CloudAccount
-		if err := db.DB.First(&account, "id = ? AND tenant_id = ?", inst.CloudAccountID, inst.TenantID).Error; err != nil {
-			// 凭证也找不到，直接标记终止
-			db.DB.Model(&inst).Updates(map[string]interface{}{"status": db.CloudStatusTerminated})
+		if err := h.DB.First(&account, "id = ? AND tenant_id = ?", inst.CloudAccountID, inst.TenantID).Error; err != nil {
+			h.DB.
+				Model(&inst).Updates(map[string]interface{}{"status": db.CloudStatusTerminated})
 			return
 		}
-		provider, err := cloud.NewProviderFromAccount(&account)
+		provider, err := h.ProviderFactory(&account)
 		if err != nil {
-			db.DB.Model(&inst).Updates(map[string]interface{}{"status": db.CloudStatusTerminated})
+			h.DB.
+				Model(&inst).Updates(map[string]interface{}{"status": db.CloudStatusTerminated})
 			return
 		}
 		rm := cloud.NewResourceManager(provider)
-		rm.SetDB(db.DB)
+		rm.SetDB(h.DB)
 		_ = rm.TerminateInstance(context.Background(), &inst)
 	}()
 
@@ -125,7 +127,7 @@ type cleanupCloudInstancesRequest struct {
 	Reason  string `json:"reason"`
 }
 
-func cleanupCloudInstances(c *gin.Context) {
+func (h *CloudHandler) cleanupCloudInstances(c *gin.Context) {
 	tenantID := currentTenantID(c)
 	var req cleanupCloudInstancesRequest
 	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil || !req.Confirm {
@@ -138,11 +140,9 @@ func cleanupCloudInstances(c *gin.Context) {
 	}
 
 	var cleaned int64
-	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
 		res := tx.Where("tenant_id = ? AND cloud_account_id IN (?) AND status IN ?",
-			tenantID,
-			accessibleCloudAccountSubquery(c),
-			[]string{db.CloudStatusTerminated, db.CloudStatusError},
+			tenantID, h.accessibleCloudAccountSubquery(requestActor(c)), []string{db.CloudStatusTerminated, db.CloudStatusError},
 		).Delete(&db.CloudInstance{})
 		if res.Error != nil {
 			return res.Error
@@ -176,12 +176,12 @@ func cleanupCloudInstances(c *gin.Context) {
 	})
 }
 
-func rebootCloudInstance(c *gin.Context) {
+func (h *CloudHandler) rebootCloudInstance(c *gin.Context) {
 	id := c.Param("id")
 	tenantID := currentTenantID(c)
 
 	var inst db.CloudInstance
-	if err := db.DB.Where("id = ? AND tenant_id = ? AND cloud_account_id IN (?)", id, tenantID, accessibleCloudAccountSubquery(c)).First(&inst).Error; err != nil {
+	if err := h.DB.Where("id = ? AND tenant_id = ? AND cloud_account_id IN (?)", id, tenantID, h.accessibleCloudAccountSubquery(requestActor(c))).First(&inst).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Instance not found"})
 		return
 	}
@@ -207,15 +207,15 @@ func rebootCloudInstance(c *gin.Context) {
 	// 异步执行重启
 	go func() {
 		var account db.CloudAccount
-		if err := db.DB.First(&account, "id = ? AND tenant_id = ?", inst.CloudAccountID, inst.TenantID).Error; err != nil {
+		if err := h.DB.First(&account, "id = ? AND tenant_id = ?", inst.CloudAccountID, inst.TenantID).Error; err != nil {
 			return
 		}
-		provider, err := cloud.NewProviderFromAccount(&account)
+		provider, err := h.ProviderFactory(&account)
 		if err != nil {
 			return
 		}
 		rm := cloud.NewResourceManager(provider)
-		rm.SetDB(db.DB)
+		rm.SetDB(h.DB)
 		_ = rm.RebootInstance(context.Background(), &inst)
 	}()
 

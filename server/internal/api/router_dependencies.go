@@ -20,6 +20,7 @@ type RouterDependencies struct {
 	Build             *BuildService
 	TaskRecovery      *TaskRecoveryService
 	AgentLogRetention *AgentLogRetentionService
+	Cloud             *CloudHandler
 	ObjectStorageRoot string
 }
 
@@ -64,6 +65,7 @@ func normalizeRouterDependencies(deps RouterDependencies) *RouterDependencies {
 	if deps.AgentLogRetention == nil {
 		deps.AgentLogRetention = NewAgentLogRetentionService()
 	}
+	deps.Cloud = deps.Cloud.normalize()
 	return &deps
 }
 

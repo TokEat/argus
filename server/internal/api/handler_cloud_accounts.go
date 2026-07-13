@@ -12,10 +12,10 @@ import (
 	"gorm.io/gorm"
 )
 
-func listCloudAccounts(c *gin.Context) {
+func (h *CloudHandler) listCloudAccounts(c *gin.Context) {
 	tenantID := currentTenantID(c)
 	var accounts []db.CloudAccount
-	cloudAccountQuery(c).Order("created_at DESC").Find(&accounts)
+	h.cloudAccountQuery(requestActor(c)).Order("created_at DESC").Find(&accounts)
 
 	type AccountResp struct {
 		ID                   string   `json:"id"`
@@ -48,7 +48,8 @@ func listCloudAccounts(c *gin.Context) {
 	ownerNames := map[string]string{}
 	if len(ownerIDs) > 0 {
 		var users []db.User
-		db.DB.Where("tenant_id = ? AND id IN ?", tenantID, ownerIDs).Find(&users)
+		h.DB.
+			Where("tenant_id = ? AND id IN ?", tenantID, ownerIDs).Find(&users)
 		for _, user := range users {
 			ownerNames[fmt.Sprintf("%d", user.ID)] = user.Username
 		}
@@ -61,7 +62,8 @@ func listCloudAccounts(c *gin.Context) {
 			accountIDs = append(accountIDs, account.ID)
 		}
 		var bindings []db.CloudAccountBinding
-		db.DB.Where("tenant_id = ? AND cloud_account_id IN ?", tenantID, accountIDs).Find(&bindings)
+		h.DB.
+			Where("tenant_id = ? AND cloud_account_id IN ?", tenantID, accountIDs).Find(&bindings)
 		for _, binding := range bindings {
 			boundUserIDsByAccount[binding.CloudAccountID] = append(boundUserIDsByAccount[binding.CloudAccountID], binding.UserID)
 		}
@@ -76,7 +78,7 @@ func listCloudAccounts(c *gin.Context) {
 			TenantID:             a.TenantID,
 			OwnerUserID:          a.OwnerUserID,
 			OwnerUsername:        ownerNames[a.OwnerUserID],
-			AccessLevel:          accountAccessLevel(c, a),
+			AccessLevel:          h.accountAccessLevel(requestActor(c), a),
 			Name:                 a.Name,
 			Provider:             a.Provider,
 			AccessKeyID:          cloud.MaskSecret(akID),
@@ -97,7 +99,7 @@ func listCloudAccounts(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-func createCloudAccount(c *gin.Context) {
+func (h *CloudHandler) createCloudAccount(c *gin.Context) {
 	var req struct {
 		Name                 string   `json:"name" binding:"required"`
 		Provider             string   `json:"provider" binding:"required"`
@@ -153,17 +155,17 @@ func createCloudAccount(c *gin.Context) {
 	}
 
 	if currentUserIsAdmin(c) && len(req.BoundUserIDs) > 0 {
-		if _, err := validateCloudAccountBindingUsers(account.TenantID, req.BoundUserIDs); err != nil {
+		if _, err := h.validateCloudAccountBindingUsers(account.TenantID, req.BoundUserIDs); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 	}
 
-	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&account).Error; err != nil {
 			return err
 		}
-		if err := ensureCloudAccountBinding(tx, account.TenantID, account.ID, account.OwnerUserID, "owner"); err != nil {
+		if err := h.ensureCloudAccountBinding(tx, account.TenantID, account.ID, account.OwnerUserID, "owner"); err != nil {
 			return err
 		}
 		if currentUserIsAdmin(c) {
@@ -171,7 +173,7 @@ func createCloudAccount(c *gin.Context) {
 				if userID == account.OwnerUserID {
 					continue
 				}
-				if err := ensureCloudAccountBinding(tx, account.TenantID, account.ID, userID, "bound"); err != nil {
+				if err := h.ensureCloudAccountBinding(tx, account.TenantID, account.ID, userID, "bound"); err != nil {
 					return err
 				}
 			}
@@ -185,7 +187,7 @@ func createCloudAccount(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "id": account.ID})
 }
 
-func updateCloudAccount(c *gin.Context) {
+func (h *CloudHandler) updateCloudAccount(c *gin.Context) {
 	id := c.Param("id")
 
 	var req struct {
@@ -206,7 +208,7 @@ func updateCloudAccount(c *gin.Context) {
 		return
 	}
 
-	if _, ok := loadCloudAccountForManage(c, id); !ok {
+	if _, ok := h.loadCloudAccountForManage(c, id); !ok {
 		return
 	}
 
@@ -252,38 +254,39 @@ func updateCloudAccount(c *gin.Context) {
 		return
 	}
 
-	if err := db.DB.Model(&db.CloudAccount{}).Where("id = ? AND tenant_id = ?", id, currentTenantID(c)).Updates(updates).Error; err != nil {
+	if err := h.DB.Model(&db.CloudAccount{}).Where("id = ? AND tenant_id = ?", id, currentTenantID(c)).Updates(updates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// 如果凭证被更新，清除 AutoScaler 中缓存的旧 Provider
 	if _, hasAK := updates["access_key_id"]; hasAK {
-		if cloudAutoScaler != nil {
-			cloudAutoScaler.InvalidateManager(id)
+		if h.AutoScaler != nil {
+			h.AutoScaler.InvalidateManager(id)
 		}
 	}
 	if _, hasSK := updates["access_key_secret"]; hasSK {
-		if cloudAutoScaler != nil {
-			cloudAutoScaler.InvalidateManager(id)
+		if h.AutoScaler != nil {
+			h.AutoScaler.InvalidateManager(id)
 		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func deleteCloudAccount(c *gin.Context) {
+func (h *CloudHandler) deleteCloudAccount(c *gin.Context) {
 	id := c.Param("id")
 	tenantID := currentTenantID(c)
 
 	var account db.CloudAccount
 	var ok bool
-	if account, ok = loadCloudAccountForManage(c, id); !ok {
+	if account, ok = h.loadCloudAccountForManage(c, id); !ok {
 		return
 	}
 
 	var activeInstances int64
-	db.DB.Model(&db.CloudInstance{}).
+	h.DB.
+		Model(&db.CloudInstance{}).
 		Where("cloud_account_id = ? AND tenant_id = ? AND deleted_at IS NULL AND status <> ?", id, tenantID, db.CloudStatusTerminated).
 		Count(&activeInstances)
 	if activeInstances > 0 {
@@ -294,7 +297,8 @@ func deleteCloudAccount(c *gin.Context) {
 	}
 
 	var boundPolicies int64
-	db.DB.Model(&db.CloudScalingPolicy{}).
+	h.DB.
+		Model(&db.CloudScalingPolicy{}).
 		Where("cloud_account_id = ? AND tenant_id = ?", id, tenantID).
 		Count(&boundPolicies)
 	if boundPolicies > 0 {
@@ -304,7 +308,7 @@ func deleteCloudAccount(c *gin.Context) {
 		return
 	}
 
-	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("tenant_id = ? AND cloud_account_id = ?", tenantID, id).Delete(&db.CloudAccountBinding{}).Error; err != nil {
 			return err
 		}
@@ -313,24 +317,25 @@ func deleteCloudAccount(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if cloudAutoScaler != nil {
-		cloudAutoScaler.InvalidateManager(account.ID)
+	if h.AutoScaler != nil {
+		h.AutoScaler.InvalidateManager(account.ID)
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func getCloudAccountBindings(c *gin.Context) {
+func (h *CloudHandler) getCloudAccountBindings(c *gin.Context) {
 	if !currentUserIsAdmin(c) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Only tenant admin can manage cloud account bindings"})
 		return
 	}
-	account, ok := loadCloudAccountForUse(c, c.Param("id"), false)
+	account, ok := h.loadCloudAccountForUse(c, c.Param("id"), false)
 	if !ok {
 		return
 	}
 
 	var bindings []db.CloudAccountBinding
-	db.DB.Where("tenant_id = ? AND cloud_account_id = ?", account.TenantID, account.ID).
+	h.DB.
+		Where("tenant_id = ? AND cloud_account_id = ?", account.TenantID, account.ID).
 		Order("created_at ASC").
 		Find(&bindings)
 
@@ -347,12 +352,12 @@ func getCloudAccountBindings(c *gin.Context) {
 	})
 }
 
-func updateCloudAccountBindings(c *gin.Context) {
+func (h *CloudHandler) updateCloudAccountBindings(c *gin.Context) {
 	if !currentUserIsAdmin(c) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Only tenant admin can manage cloud account bindings"})
 		return
 	}
-	account, ok := loadCloudAccountForUse(c, c.Param("id"), false)
+	account, ok := h.loadCloudAccountForUse(c, c.Param("id"), false)
 	if !ok {
 		return
 	}
@@ -364,25 +369,25 @@ func updateCloudAccountBindings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := replaceCloudAccountBindings(account, req.UserIDs); err != nil {
+	if err := h.replaceCloudAccountBindings(account, req.UserIDs); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func testCloudAccount(c *gin.Context) {
+func (h *CloudHandler) testCloudAccount(c *gin.Context) {
 	id := c.Param("id")
 
 	var account db.CloudAccount
 	var ok bool
-	if account, ok = loadCloudAccountForUse(c, id, false); !ok {
+	if account, ok = h.loadCloudAccountForUse(c, id, false); !ok {
 		return
 	}
 
 	// 尝试创建 Provider 并验证连通性
 	// 如果未配置 Region，使用 DescribeRegions（全局 API）验证 AK/SK 有效性
-	provider, err := cloud.NewProviderFromAccount(&account)
+	provider, err := h.ProviderFactory(&account)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return

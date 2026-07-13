@@ -6,17 +6,16 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/user/dddd-server/internal/cloud"
-	"github.com/user/dddd-server/internal/cloud/aliyun"
 	"github.com/user/dddd-server/internal/db"
 )
 
 // checkCloudPermissions 检查指定凭证的 AK/SK 拥有的所有权限
-func checkCloudPermissions(c *gin.Context) {
+func (h *CloudHandler) checkCloudPermissions(c *gin.Context) {
 	accountID := c.Param("id")
 
 	var account db.CloudAccount
 	var ok bool
-	if account, ok = loadCloudAccountForUse(c, accountID, false); !ok {
+	if account, ok = h.loadCloudAccountForUse(c, accountID, false); !ok {
 		return
 	}
 
@@ -33,7 +32,7 @@ func checkCloudPermissions(c *gin.Context) {
 	}
 
 	// 调用权限检查模块
-	result, err := aliyun.CheckPermissions(akID, akSecret, account.Region)
+	result, err := h.PermissionCheck(akID, akSecret, account.Region)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "error",
@@ -48,13 +47,13 @@ func checkCloudPermissions(c *gin.Context) {
 	})
 }
 
-func queryCloudPrice(c *gin.Context) {
+func (h *CloudHandler) queryCloudPrice(c *gin.Context) {
 	id := c.Param("id")
 	tenantID := currentTenantID(c)
 
 	var account db.CloudAccount
 	var ok bool
-	if account, ok = loadCloudAccountForUse(c, id, false); !ok {
+	if account, ok = h.loadCloudAccountForUse(c, id, false); !ok {
 		return
 	}
 
@@ -78,7 +77,7 @@ func queryCloudPrice(c *gin.Context) {
 	// 获取关联策略的竞价策略
 	spotStrategy := "SpotAsPriceGo"
 	var policy db.CloudScalingPolicy
-	if err := db.DB.Where("cloud_account_id = ? AND tenant_id = ?", id, tenantID).First(&policy).Error; err == nil {
+	if err := h.DB.Where("cloud_account_id = ? AND tenant_id = ?", id, tenantID).First(&policy).Error; err == nil {
 		if policy.SpotStrategy != "" {
 			spotStrategy = policy.SpotStrategy
 		}
@@ -97,7 +96,7 @@ func queryCloudPrice(c *gin.Context) {
 		region = qr
 	}
 
-	provider, err := aliyun.NewECSProvider(akID, akSecret, region)
+	provider, err := h.CatalogFactory(akID, akSecret, region)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("创建 Provider 失败: %v", err)})
 		return
@@ -125,13 +124,13 @@ func queryCloudPrice(c *gin.Context) {
 	})
 }
 
-func listAvailableInstanceTypes(c *gin.Context) {
+func (h *CloudHandler) listAvailableInstanceTypes(c *gin.Context) {
 	id := c.Param("id")
 	tenantID := currentTenantID(c)
 
 	var account db.CloudAccount
 	var ok bool
-	if account, ok = loadCloudAccountForUse(c, id, false); !ok {
+	if account, ok = h.loadCloudAccountForUse(c, id, false); !ok {
 		return
 	}
 
@@ -154,7 +153,7 @@ func listAvailableInstanceTypes(c *gin.Context) {
 	// 获取竞价策略
 	spotStrategy := "SpotAsPriceGo"
 	var policy db.CloudScalingPolicy
-	if err := db.DB.Where("cloud_account_id = ? AND tenant_id = ?", id, tenantID).First(&policy).Error; err == nil {
+	if err := h.DB.Where("cloud_account_id = ? AND tenant_id = ?", id, tenantID).First(&policy).Error; err == nil {
 		if policy.SpotStrategy != "" {
 			spotStrategy = policy.SpotStrategy
 		}
@@ -168,7 +167,7 @@ func listAvailableInstanceTypes(c *gin.Context) {
 		region = qr
 	}
 
-	provider, err := aliyun.NewECSProvider(akID, akSecret, region)
+	provider, err := h.CatalogFactory(akID, akSecret, region)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("创建 Provider 失败: %v", err)})
 		return

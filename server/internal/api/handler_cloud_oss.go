@@ -16,12 +16,12 @@ import (
 const requiredAgentObjectKey = "argus/agent/dddd-agent-linux-amd64"
 
 // listReleaseFiles 列出服务器端 ./release 目录中的 Agent 二进制文件
-func listReleaseFiles(c *gin.Context) {
-	if _, ok := loadCloudAccountForUse(c, c.Param("id"), false); !ok {
+func (h *CloudHandler) listReleaseFiles(c *gin.Context) {
+	if _, ok := h.loadCloudAccountForUse(c, c.Param("id"), false); !ok {
 		return
 	}
 
-	releaseDir := "./release"
+	releaseDir := h.ossService().ReleaseDir
 
 	if _, err := os.Stat(releaseDir); os.IsNotExist(err) {
 		c.JSON(http.StatusOK, gin.H{"files": []interface{}{}, "release_dir": releaseDir})
@@ -65,12 +65,12 @@ func listReleaseFiles(c *gin.Context) {
 
 // uploadAgentToOSS 将 release 目录中的 Agent 二进制上传到指定账号的 OSS 存储桶
 // 支持可选的 files 参数来指定要上传的文件名列表
-func uploadAgentToOSS(c *gin.Context) {
+func (h *CloudHandler) uploadAgentToOSS(c *gin.Context) {
 	accountID := c.Param("id")
 
 	var account db.CloudAccount
 	var ok bool
-	if account, ok = loadCloudAccountForUse(c, accountID, false); !ok {
+	if account, ok = h.loadCloudAccountForUse(c, accountID, false); !ok {
 		return
 	}
 
@@ -79,7 +79,7 @@ func uploadAgentToOSS(c *gin.Context) {
 		return
 	}
 
-	uploader, err := cloud.NewOSSFromAccount(&account)
+	uploader, err := h.OSSFactory(&account)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create OSS client: %v", err)})
 		return
@@ -91,7 +91,7 @@ func uploadAgentToOSS(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&req) // 忽略解析错误，兼容无 body 的请求
 
-	releaseDir := "./release"
+	releaseDir := h.ossService().ReleaseDir
 	if _, err := os.Stat(releaseDir); os.IsNotExist(err) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "服务器本地不存在 ./release 目录，请先构建 Agent 二进制或将制品放置到该目录下"})
 		return
@@ -99,42 +99,7 @@ func uploadAgentToOSS(c *gin.Context) {
 
 	// 如果指定了 files 列表，只上传指定文件
 	if len(req.Files) > 0 {
-		var results []cloud.OSSUploadResult
-		for _, fname := range req.Files {
-			safeName, safeErr := sanitizeReleaseFilename(fname)
-			if safeErr != nil {
-				results = append(results, cloud.OSSUploadResult{
-					Filename: fname,
-					Error:    safeErr.Error(),
-				})
-				continue
-			}
-
-			localPath := filepath.Join(releaseDir, safeName)
-			objectKey := fmt.Sprintf("argus/agent/%s", safeName)
-
-			info, err := os.Stat(localPath)
-			if err != nil {
-				results = append(results, cloud.OSSUploadResult{
-					Filename:  safeName,
-					ObjectKey: objectKey,
-					Error:     fmt.Sprintf("文件不存在: %v", err),
-				})
-				continue
-			}
-
-			result := cloud.OSSUploadResult{
-				Filename:  safeName,
-				ObjectKey: objectKey,
-				Size:      info.Size(),
-			}
-			if err := uploader.UploadFile(localPath, objectKey); err != nil {
-				result.Error = err.Error()
-			} else {
-				result.Success = true
-			}
-			results = append(results, result)
-		}
+		results := h.ossService().UploadSelectedFiles(uploader, req.Files)
 
 		successCount := 0
 		for _, r := range results {
@@ -151,48 +116,32 @@ func uploadAgentToOSS(c *gin.Context) {
 	}
 
 	// 默认行为：上传全部 agent 二进制
-	results, err := uploader.UploadAgentBinaries(releaseDir)
+	summary, err := h.ossService().UploadAgentBinaries(uploader)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Upload failed: %v", err)})
 		return
 	}
-
-	successCount := 0
-	failedCount := 0
-	requiredFound := false
-	requiredUploaded := false
-	for _, r := range results {
-		if r.Success {
-			successCount++
-		} else {
-			failedCount++
-		}
-		if r.ObjectKey == requiredAgentObjectKey {
-			requiredFound = true
-			requiredUploaded = r.Success
-		}
-	}
-	if len(results) == 0 {
+	if len(summary.Results) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "./release 目录下未找到 Agent 二进制文件（dddd-agent-*），请先构建 Agent"})
 		return
 	}
-	if !requiredFound {
+	if !summary.RequiredFound {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Required agent binary %s was not found in ./release", requiredAgentObjectKey)})
 		return
 	}
-	if !requiredUploaded {
+	if !summary.RequiredUploaded {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   fmt.Sprintf("Agent 核心制品未上传成功，当前成功 %d/%d", successCount, len(results)),
-			"results": results,
+			"error":   fmt.Sprintf("Agent 核心制品未上传成功，当前成功 %d/%d", summary.SuccessCount, len(summary.Results)),
+			"results": summary.Results,
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":       "ok",
-		"message":      fmt.Sprintf("Agent 制品已在 OSS 就绪（成功上传 %d/%d，非关键文件失败 %d 个）", successCount, len(results), failedCount),
-		"failed_count": failedCount,
-		"results":      results,
+		"message":      fmt.Sprintf("Agent 制品已在 OSS 就绪（成功上传 %d/%d，非关键文件失败 %d 个）", summary.SuccessCount, len(summary.Results), summary.FailedCount),
+		"failed_count": summary.FailedCount,
+		"results":      summary.Results,
 	})
 }
 
@@ -212,12 +161,12 @@ func sanitizeReleaseFilename(name string) (string, error) {
 }
 
 // uploadLocalAgentToOSS 接收本地上传的文件，保存到 ./release 目录并推送到 OSS
-func uploadLocalAgentToOSS(c *gin.Context) {
+func (h *CloudHandler) uploadLocalAgentToOSS(c *gin.Context) {
 	accountID := c.Param("id")
 
 	var account db.CloudAccount
 	var ok bool
-	if account, ok = loadCloudAccountForUse(c, accountID, false); !ok {
+	if account, ok = h.loadCloudAccountForUse(c, accountID, false); !ok {
 		return
 	}
 
@@ -226,14 +175,14 @@ func uploadLocalAgentToOSS(c *gin.Context) {
 		return
 	}
 
-	uploader, err := cloud.NewOSSFromAccount(&account)
+	uploader, err := h.OSSFactory(&account)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create OSS client: %v", err)})
 		return
 	}
 
 	// 确保 ./release 目录存在
-	releaseDir := "./release"
+	releaseDir := h.ossService().ReleaseDir
 	if err := os.MkdirAll(releaseDir, 0755); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("创建 release 目录失败: %v", err)})
 		return
@@ -301,12 +250,12 @@ func uploadLocalAgentToOSS(c *gin.Context) {
 }
 
 // listOSSFiles 列出 OSS 存储桶中 argus/agent/ 前缀下的所有文件
-func listOSSFiles(c *gin.Context) {
+func (h *CloudHandler) listOSSFiles(c *gin.Context) {
 	accountID := c.Param("id")
 
 	var account db.CloudAccount
 	var ok bool
-	if account, ok = loadCloudAccountForUse(c, accountID, false); !ok {
+	if account, ok = h.loadCloudAccountForUse(c, accountID, false); !ok {
 		return
 	}
 
@@ -315,7 +264,7 @@ func listOSSFiles(c *gin.Context) {
 		return
 	}
 
-	uploader, err := cloud.NewOSSFromAccount(&account)
+	uploader, err := h.OSSFactory(&account)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("创建 OSS 客户端失败: %v", err)})
 		return
@@ -340,12 +289,12 @@ func listOSSFiles(c *gin.Context) {
 }
 
 // deleteOSSFile 从 OSS 存储桶中删除指定文件
-func deleteOSSFile(c *gin.Context) {
+func (h *CloudHandler) deleteOSSFile(c *gin.Context) {
 	accountID := c.Param("id")
 
 	var account db.CloudAccount
 	var ok bool
-	if account, ok = loadCloudAccountForUse(c, accountID, false); !ok {
+	if account, ok = h.loadCloudAccountForUse(c, accountID, false); !ok {
 		return
 	}
 
@@ -363,7 +312,7 @@ func deleteOSSFile(c *gin.Context) {
 		return
 	}
 
-	uploader, err := cloud.NewOSSFromAccount(&account)
+	uploader, err := h.OSSFactory(&account)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("创建 OSS 客户端失败: %v", err)})
 		return
@@ -378,12 +327,12 @@ func deleteOSSFile(c *gin.Context) {
 }
 
 // testOSSConnection 测试指定账号的 OSS 连通性，返回详细检测报告
-func testOSSConnection(c *gin.Context) {
+func (h *CloudHandler) testOSSConnection(c *gin.Context) {
 	accountID := c.Param("id")
 
 	var account db.CloudAccount
 	var ok bool
-	if account, ok = loadCloudAccountForUse(c, accountID, false); !ok {
+	if account, ok = h.loadCloudAccountForUse(c, accountID, false); !ok {
 		return
 	}
 
@@ -392,7 +341,7 @@ func testOSSConnection(c *gin.Context) {
 		return
 	}
 
-	uploader, err := cloud.NewOSSFromAccount(&account)
+	uploader, err := h.OSSFactory(&account)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Failed to create OSS client: %v", err)})
 		return
@@ -451,64 +400,4 @@ func testOSSConnection(c *gin.Context) {
 
 	result["message"] = "OSS 连通性测试通过"
 	c.JSON(http.StatusOK, result)
-}
-
-func ensureRequiredAgentArtifact(account *db.CloudAccount) error {
-	uploader, err := cloud.NewOSSFromAccount(account)
-	if err != nil {
-		return fmt.Errorf("create OSS client: %w", err)
-	}
-
-	exists, err := ossObjectExists(uploader, requiredAgentObjectKey)
-	if err != nil {
-		return fmt.Errorf("check existing agent artifact: %w", err)
-	}
-	if exists {
-		return nil
-	}
-
-	results, err := uploader.UploadAgentBinaries("./release")
-	if err != nil {
-		return fmt.Errorf("upload agent binaries: %w", err)
-	}
-	if len(results) == 0 {
-		return fmt.Errorf("no agent binaries found in ./release")
-	}
-
-	requiredFound := false
-	for _, result := range results {
-		if result.ObjectKey != requiredAgentObjectKey {
-			continue
-		}
-		requiredFound = true
-		if !result.Success {
-			return fmt.Errorf("upload %s failed: %s", requiredAgentObjectKey, result.Error)
-		}
-	}
-	if !requiredFound {
-		return fmt.Errorf("required agent binary %s is missing from ./release", requiredAgentObjectKey)
-	}
-
-	exists, err = ossObjectExists(uploader, requiredAgentObjectKey)
-	if err != nil {
-		return fmt.Errorf("verify uploaded agent artifact: %w", err)
-	}
-	if !exists {
-		return fmt.Errorf("required agent artifact %s is still missing from OSS after upload", requiredAgentObjectKey)
-	}
-
-	return nil
-}
-
-func ossObjectExists(uploader cloud.OSSUploader, objectKey string) (bool, error) {
-	files, err := uploader.ListFiles("argus/agent/")
-	if err != nil {
-		return false, err
-	}
-	for _, file := range files {
-		if file.Key == objectKey {
-			return true, nil
-		}
-	}
-	return false, nil
 }

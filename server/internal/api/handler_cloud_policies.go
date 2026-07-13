@@ -10,16 +10,17 @@ import (
 	"github.com/user/dddd-server/internal/db"
 )
 
-func listCloudPolicies(c *gin.Context) {
+func (h *CloudHandler) listCloudPolicies(c *gin.Context) {
 	tenantID := currentTenantID(c)
 	var policies []db.CloudScalingPolicy
-	db.DB.Where("tenant_id = ? AND cloud_account_id IN (?)", tenantID, accessibleCloudAccountSubquery(c)).
+	h.DB.
+		Where("tenant_id = ? AND cloud_account_id IN (?)", tenantID, h.accessibleCloudAccountSubquery(requestActor(c))).
 		Order("created_at DESC").
 		Find(&policies)
 	c.JSON(http.StatusOK, policies)
 }
 
-func createCloudPolicy(c *gin.Context) {
+func (h *CloudHandler) createCloudPolicy(c *gin.Context) {
 	var req db.CloudScalingPolicy
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -35,7 +36,7 @@ func createCloudPolicy(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cloud account is required"})
 		return
 	}
-	if _, ok := loadCloudAccountForUse(c, req.CloudAccountID, false); !ok {
+	if _, ok := h.loadCloudAccountForUse(c, req.CloudAccountID, false); !ok {
 		return
 	}
 
@@ -54,7 +55,7 @@ func createCloudPolicy(c *gin.Context) {
 		req.SpotStrategy = "SpotAsPriceGo" // 默认使用抢占式实例，节省 70-90%
 	}
 
-	if err := db.DB.Create(&req).Error; err != nil {
+	if err := h.DB.Create(&req).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -62,7 +63,7 @@ func createCloudPolicy(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "id": req.ID})
 }
 
-func updateCloudPolicy(c *gin.Context) {
+func (h *CloudHandler) updateCloudPolicy(c *gin.Context) {
 	id := c.Param("id")
 	tenantID := currentTenantID(c)
 
@@ -78,13 +79,13 @@ func updateCloudPolicy(c *gin.Context) {
 	delete(req, "created_at")
 	delete(req, "updated_at")
 	if accountID, ok := req["cloud_account_id"].(string); ok && strings.TrimSpace(accountID) != "" {
-		if _, ok := loadCloudAccountForUse(c, accountID, false); !ok {
+		if _, ok := h.loadCloudAccountForUse(c, accountID, false); !ok {
 			return
 		}
 	}
 
-	result := db.DB.Model(&db.CloudScalingPolicy{}).
-		Where("id = ? AND tenant_id = ? AND cloud_account_id IN (?)", id, tenantID, accessibleCloudAccountSubquery(c)).
+	result := h.DB.Model(&db.CloudScalingPolicy{}).
+		Where("id = ? AND tenant_id = ? AND cloud_account_id IN (?)", id, tenantID, h.accessibleCloudAccountSubquery(requestActor(c))).
 		Updates(req)
 	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
@@ -98,13 +99,14 @@ func updateCloudPolicy(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func deleteCloudPolicy(c *gin.Context) {
+func (h *CloudHandler) deleteCloudPolicy(c *gin.Context) {
 	id := c.Param("id")
 	tenantID := currentTenantID(c)
 
 	var activeInstances int64
-	db.DB.Model(&db.CloudInstance{}).
-		Where("policy_id = ? AND tenant_id = ? AND cloud_account_id IN (?) AND deleted_at IS NULL AND status NOT IN ?", id, tenantID, accessibleCloudAccountSubquery(c), []string{db.CloudStatusTerminated, db.CloudStatusTerminating}).
+	h.DB.
+		Model(&db.CloudInstance{}).
+		Where("policy_id = ? AND tenant_id = ? AND cloud_account_id IN (?) AND deleted_at IS NULL AND status NOT IN ?", id, tenantID, h.accessibleCloudAccountSubquery(requestActor(c)), []string{db.CloudStatusTerminated, db.CloudStatusTerminating}).
 		Count(&activeInstances)
 	if activeInstances > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -113,7 +115,7 @@ func deleteCloudPolicy(c *gin.Context) {
 		return
 	}
 
-	result := db.DB.Where("id = ? AND tenant_id = ? AND cloud_account_id IN (?)", id, tenantID, accessibleCloudAccountSubquery(c)).Delete(&db.CloudScalingPolicy{})
+	result := h.DB.Where("id = ? AND tenant_id = ? AND cloud_account_id IN (?)", id, tenantID, h.accessibleCloudAccountSubquery(requestActor(c))).Delete(&db.CloudScalingPolicy{})
 	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
 		return
@@ -125,18 +127,19 @@ func deleteCloudPolicy(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func toggleCloudPolicy(c *gin.Context) {
+func (h *CloudHandler) toggleCloudPolicy(c *gin.Context) {
 	id := c.Param("id")
 	tenantID := currentTenantID(c)
 
 	var policy db.CloudScalingPolicy
-	if err := db.DB.Where("id = ? AND tenant_id = ? AND cloud_account_id IN (?)", id, tenantID, accessibleCloudAccountSubquery(c)).First(&policy).Error; err != nil {
+	if err := h.DB.Where("id = ? AND tenant_id = ? AND cloud_account_id IN (?)", id, tenantID, h.accessibleCloudAccountSubquery(requestActor(c))).First(&policy).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Policy not found"})
 		return
 	}
 
 	newEnabled := !policy.Enabled
-	db.DB.Model(&policy).Update("enabled", newEnabled)
+	h.DB.
+		Model(&policy).Update("enabled", newEnabled)
 
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "enabled": newEnabled})
 }

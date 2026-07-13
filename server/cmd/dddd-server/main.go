@@ -315,7 +315,8 @@ func main() {
 	}
 	log.Printf("[Cloud] Using advertise endpoints for Cloud-Init: gRPC=%s API=%s", cloudGRPCAddr, cloudAPIURL)
 	autoScaler.SetServerAddrs(cloudGRPCAddr, cloudAPIURL, agentPSK)
-	api.SetAutoScaler(autoScaler)
+	routerDeps.Cloud = api.NewCloudHandler(conn, autoScaler)
+	api.ConfigureRouterDependencies(routerDeps)
 
 	// 启动自动伸缩决策循环
 	scalerCtx, scalerCancel := context.WithCancel(context.Background())

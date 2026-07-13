@@ -120,9 +120,12 @@ func setupCloudHandlerTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("automigrate: %v", err)
 	}
 	old := db.DB
+	oldCloud := routerRuntime().Cloud
 	db.DB = store
+	routerRuntime().Cloud = NewCloudHandler(store, nil)
 	t.Cleanup(func() {
 		db.DB = old
+		routerRuntime().Cloud = oldCloud
 	})
 	return store
 }
@@ -159,7 +162,7 @@ func TestDeleteCloudAccountBlocksActiveInstances(t *testing.T) {
 
 	ctx, recorder := newTenantContext(http.MethodDelete, "/cloud/accounts/"+account.ID)
 	ctx.Params = gin.Params{{Key: "id", Value: account.ID}}
-	deleteCloudAccount(ctx)
+	cloudRuntime().deleteCloudAccount(ctx)
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d (%s)", recorder.Code, recorder.Body.String())
@@ -177,7 +180,7 @@ func TestCleanupCloudInstancesRequiresExplicitConfirmation(t *testing.T) {
 
 	ctx, recorder := newTenantContext(http.MethodPost, "/cloud/instances/cleanup")
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/cloud/instances/cleanup", strings.NewReader(`{"confirm":false}`))
-	cleanupCloudInstances(ctx)
+	cloudRuntime().cleanupCloudInstances(ctx)
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 without confirmation, got %d (%s)", recorder.Code, recorder.Body.String())
@@ -205,7 +208,7 @@ func TestCleanupCloudInstancesSoftDeletesOnlyAccessibleTerminalRecords(t *testin
 
 	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/cloud/instances/cleanup", "operator", "2")
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/cloud/instances/cleanup", strings.NewReader(`{"confirm":true,"reason":"test cleanup"}`))
-	cleanupCloudInstances(ctx)
+	cloudRuntime().cleanupCloudInstances(ctx)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
 	}
@@ -253,7 +256,7 @@ func TestDeleteCloudAccountBlocksBoundPolicies(t *testing.T) {
 
 	ctx, recorder := newTenantContext(http.MethodDelete, "/cloud/accounts/"+account.ID)
 	ctx.Params = gin.Params{{Key: "id", Value: account.ID}}
-	deleteCloudAccount(ctx)
+	cloudRuntime().deleteCloudAccount(ctx)
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d (%s)", recorder.Code, recorder.Body.String())
@@ -283,7 +286,7 @@ func TestCreateCloudPolicyBindsSnakeCasePayload(t *testing.T) {
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/cloud/policies", strings.NewReader(body))
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	ctx.Set("tenant", "default")
-	createCloudPolicy(ctx)
+	cloudRuntime().createCloudPolicy(ctx)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
@@ -327,13 +330,13 @@ func TestCloudAccountBindingsRestrictOperatorAccess(t *testing.T) {
 	}
 
 	ctxA, recA := newTenantContextWithRole(http.MethodGet, "/cloud/accounts", "operator", "2")
-	listCloudAccounts(ctxA)
+	cloudRuntime().listCloudAccounts(ctxA)
 	if recA.Code != http.StatusOK || !strings.Contains(recA.Body.String(), account.ID) {
 		t.Fatalf("owner should see account, code=%d body=%s", recA.Code, recA.Body.String())
 	}
 
 	ctxB, recB := newTenantContextWithRole(http.MethodGet, "/cloud/accounts", "operator", "3")
-	listCloudAccounts(ctxB)
+	cloudRuntime().listCloudAccounts(ctxB)
 	if recB.Code != http.StatusOK || strings.Contains(recB.Body.String(), account.ID) {
 		t.Fatalf("unbound operator should not see account, code=%d body=%s", recB.Code, recB.Body.String())
 	}
@@ -345,7 +348,7 @@ func TestCloudAccountBindingsRestrictOperatorAccess(t *testing.T) {
 	ctxBCreate.Set("tenant", "default")
 	ctxBCreate.Set("role", "operator")
 	ctxBCreate.Set("user_id", "3")
-	createCloudPolicy(ctxBCreate)
+	cloudRuntime().createCloudPolicy(ctxBCreate)
 	if recBCreate.Code != http.StatusNotFound {
 		t.Fatalf("unbound operator should not create policy with account, got %d (%s)", recBCreate.Code, recBCreate.Body.String())
 	}
@@ -355,13 +358,13 @@ func TestCloudAccountBindingsRestrictOperatorAccess(t *testing.T) {
 	ctxBind.Request = httptest.NewRequest(http.MethodPut, "/cloud/accounts/ca-bound/bindings", strings.NewReader(`{"user_ids":["2","3"]}`))
 	ctxBind.Request.Header.Set("Content-Type", "application/json")
 	ctxBind.Set("tenant", "default")
-	updateCloudAccountBindings(ctxBind)
+	cloudRuntime().updateCloudAccountBindings(ctxBind)
 	if recBind.Code != http.StatusOK {
 		t.Fatalf("admin should bind users, got %d (%s)", recBind.Code, recBind.Body.String())
 	}
 
 	ctxB2, recB2 := newTenantContextWithRole(http.MethodGet, "/cloud/accounts", "operator", "3")
-	listCloudAccounts(ctxB2)
+	cloudRuntime().listCloudAccounts(ctxB2)
 	if recB2.Code != http.StatusOK || !strings.Contains(recB2.Body.String(), account.ID) {
 		t.Fatalf("bound operator should see account, code=%d body=%s", recB2.Code, recB2.Body.String())
 	}
@@ -373,7 +376,7 @@ func TestCloudAccountBindingsRestrictOperatorAccess(t *testing.T) {
 	ctxBUpdate.Set("tenant", "default")
 	ctxBUpdate.Set("role", "operator")
 	ctxBUpdate.Set("user_id", "3")
-	updateCloudAccount(ctxBUpdate)
+	cloudRuntime().updateCloudAccount(ctxBUpdate)
 	if recBUpdate.Code != http.StatusForbidden {
 		t.Fatalf("bound non-owner should not manage account, got %d (%s)", recBUpdate.Code, recBUpdate.Body.String())
 	}
@@ -429,9 +432,9 @@ func TestCloudAccountAccessMatrix(t *testing.T) {
 
 			var ok bool
 			if tt.manage {
-				_, ok = loadCloudAccountForManage(ctx, account.ID)
+				_, ok = cloudRuntime().loadCloudAccountForManage(ctx, account.ID)
 			} else {
-				_, ok = loadCloudAccountForUse(ctx, account.ID, true)
+				_, ok = cloudRuntime().loadCloudAccountForUse(ctx, account.ID, true)
 			}
 
 			if ok != tt.wantOK {
@@ -488,7 +491,7 @@ func TestCloudProviderMockSmoke(t *testing.T) {
 
 	ctx, recorder := newTenantContext(http.MethodPost, "/cloud/accounts/"+account.ID+"/test")
 	ctx.Params = gin.Params{{Key: "id", Value: account.ID}}
-	testCloudAccount(ctx)
+	cloudRuntime().testCloudAccount(ctx)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("credential/provider smoke should pass, got %d (%s)", recorder.Code, recorder.Body.String())
 	}
@@ -502,7 +505,7 @@ func TestCloudProviderMockSmoke(t *testing.T) {
 		"enabled":true
 	}`))
 	ctx.Request.Header.Set("Content-Type", "application/json")
-	createCloudPolicy(ctx)
+	cloudRuntime().createCloudPolicy(ctx)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("policy smoke should create policy, got %d (%s)", recorder.Code, recorder.Body.String())
 	}
@@ -513,14 +516,14 @@ func TestCloudProviderMockSmoke(t *testing.T) {
 
 	ctx, recorder = newTenantContext(http.MethodPost, "/cloud/policies/"+policy.ID+"/toggle")
 	ctx.Params = gin.Params{{Key: "id", Value: policy.ID}}
-	toggleCloudPolicy(ctx)
+	cloudRuntime().toggleCloudPolicy(ctx)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("policy toggle smoke should pass, got %d (%s)", recorder.Code, recorder.Body.String())
 	}
 
 	ctx, recorder = newTenantContext(http.MethodPost, "/cloud/accounts/"+account.ID+"/oss/upload")
 	ctx.Params = gin.Params{{Key: "id", Value: account.ID}}
-	uploadAgentToOSS(ctx)
+	cloudRuntime().uploadAgentToOSS(ctx)
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("OSS failure smoke should surface upload failure, got %d (%s)", recorder.Code, recorder.Body.String())
 	}
@@ -608,7 +611,7 @@ func TestOneClickSetupPersistsPreferred2C2GInstanceType(t *testing.T) {
 
 	ctx, recorder := newTenantContext(http.MethodPost, "/cloud/accounts/"+account.ID+"/one-click-setup")
 	ctx.Params = gin.Params{{Key: "id", Value: account.ID}}
-	oneClickSetup(ctx)
+	cloudRuntime().oneClickSetup(ctx)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
 	}
@@ -673,7 +676,7 @@ func TestOneClickSetupFailsWhenRequiredAgentArtifactIsUnavailable(t *testing.T) 
 
 	ctx, recorder := newTenantContext(http.MethodPost, "/cloud/accounts/"+account.ID+"/one-click-setup")
 	ctx.Params = gin.Params{{Key: "id", Value: account.ID}}
-	oneClickSetup(ctx)
+	cloudRuntime().oneClickSetup(ctx)
 
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d (%s)", recorder.Code, recorder.Body.String())
@@ -727,7 +730,7 @@ func TestUploadAgentToOSSFailsWhenRequiredArtifactMissing(t *testing.T) {
 
 	ctx, recorder := newTenantContext(http.MethodPost, "/cloud/accounts/"+account.ID+"/oss/upload")
 	ctx.Params = gin.Params{{Key: "id", Value: account.ID}}
-	uploadAgentToOSS(ctx)
+	cloudRuntime().uploadAgentToOSS(ctx)
 
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d (%s)", recorder.Code, recorder.Body.String())
@@ -781,7 +784,7 @@ func TestUploadAgentToOSSSucceedsWhenRequiredArtifactUploadedWithNonCriticalFail
 
 	ctx, recorder := newTenantContext(http.MethodPost, "/cloud/accounts/"+account.ID+"/oss/upload")
 	ctx.Params = gin.Params{{Key: "id", Value: account.ID}}
-	uploadAgentToOSS(ctx)
+	cloudRuntime().uploadAgentToOSS(ctx)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
