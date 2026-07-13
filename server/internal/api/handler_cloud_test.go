@@ -379,6 +379,71 @@ func TestCloudAccountBindingsRestrictOperatorAccess(t *testing.T) {
 	}
 }
 
+func TestCloudAccountAccessMatrix(t *testing.T) {
+	store := setupCloudHandlerTestDB(t)
+	account := db.CloudAccount{
+		ID:          "ca-access-matrix",
+		TenantID:    "default",
+		OwnerUserID: "2",
+		Name:        "access matrix",
+		Provider:    "aliyun",
+		Status:      "active",
+	}
+	if err := store.Create(&account).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	if err := store.Create(&db.CloudAccountBinding{
+		TenantID:       "default",
+		CloudAccountID: account.ID,
+		UserID:         "3",
+		AccessType:     "bound",
+	}).Error; err != nil {
+		t.Fatalf("seed binding: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		role       string
+		userID     string
+		tenantID   string
+		manage     bool
+		wantOK     bool
+		wantStatus int
+	}{
+		{name: "tenant admin can use", role: "admin", userID: "1", tenantID: "default", wantOK: true},
+		{name: "tenant admin can manage", role: "admin", userID: "1", tenantID: "default", manage: true, wantOK: true},
+		{name: "owner can use", role: "operator", userID: "2", tenantID: "default", wantOK: true},
+		{name: "owner can manage", role: "operator", userID: "2", tenantID: "default", manage: true, wantOK: true},
+		{name: "bound operator can use", role: "operator", userID: "3", tenantID: "default", wantOK: true},
+		{name: "bound operator cannot manage", role: "operator", userID: "3", tenantID: "default", manage: true, wantStatus: http.StatusForbidden},
+		{name: "unbound operator cannot use", role: "operator", userID: "4", tenantID: "default", wantStatus: http.StatusNotFound},
+		{name: "unbound operator cannot manage", role: "operator", userID: "4", tenantID: "default", manage: true, wantStatus: http.StatusNotFound},
+		{name: "cross tenant admin cannot use", role: "admin", userID: "5", tenantID: "tenant-b", wantStatus: http.StatusNotFound},
+		{name: "cross tenant admin cannot manage", role: "admin", userID: "5", tenantID: "tenant-b", manage: true, wantStatus: http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, recorder := newTenantContextWithRole(http.MethodGet, "/cloud/accounts/"+account.ID, tt.role, tt.userID)
+			ctx.Set("tenant", tt.tenantID)
+
+			var ok bool
+			if tt.manage {
+				_, ok = loadCloudAccountForManage(ctx, account.ID)
+			} else {
+				_, ok = loadCloudAccountForUse(ctx, account.ID, true)
+			}
+
+			if ok != tt.wantOK {
+				t.Fatalf("access result = %v, want %v (status=%d body=%s)", ok, tt.wantOK, recorder.Code, recorder.Body.String())
+			}
+			if !tt.wantOK && recorder.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d (body=%s)", recorder.Code, tt.wantStatus, recorder.Body.String())
+			}
+		})
+	}
+}
+
 func TestCloudProviderMockSmoke(t *testing.T) {
 	ensureCloudHandlerTestFactories()
 	fakeProviderDiscovery = map[string]interface{}{

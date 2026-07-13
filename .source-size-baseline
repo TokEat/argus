@@ -15,7 +15,6 @@ server-ui/src/pages/config/ExploitConfig.tsx 2477
 server-ui/src/services/api.ts 1180
 server-ui/src/services/typings.d.ts 1161
 server/internal/api/ai_tools.go 1287
-server/internal/api/handler_cloud.go 1994
 server/internal/api/handler_dictionary.go 882
 server/internal/api/handler_exploits.go 1843
 server/internal/api/handler_mcp.go 1219
