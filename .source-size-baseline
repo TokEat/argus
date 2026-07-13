@@ -9,7 +9,6 @@ server-ui/src/pages/Dashboard.tsx 711
 server-ui/src/pages/TaskManagement.tsx 1557
 server-ui/src/pages/TaskResults.tsx 897
 server-ui/src/pages/config/ArsenalRuleDebugPanel.tsx 764
-server-ui/src/pages/config/ExploitConfig.tsx 1579
 server-ui/src/services/api.ts 1180
 server-ui/src/services/typings.d.ts 1161
 server/internal/api/ai_tools.go 1287
