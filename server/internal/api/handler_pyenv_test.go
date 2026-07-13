@@ -49,12 +49,12 @@ func TestInstallAgentPyenvRequirementsNoopForEmptyRequirements(t *testing.T) {
 
 func TestInstallAgentPyenvRequirementsRejectsUnsupportedAgent(t *testing.T) {
 	store := setupAITestDB(t)
-	oldHub := notifyHub
+	oldHub := routerRuntime().NotifyHub
 	hub := grpcpkg.NewNotifyHub()
 	stream := &fakeSubscribeStream{}
-	notifyHub = hub
+	routerRuntime().NotifyHub = hub
 	t.Cleanup(func() {
-		notifyHub = oldHub
+		routerRuntime().NotifyHub = oldHub
 	})
 	hub.Register("agent-1", stream, 1, nil)
 
@@ -96,12 +96,12 @@ func TestInstallAgentPyenvRequirementsRejectsUnsupportedAgent(t *testing.T) {
 
 func TestInstallAgentPyenvRequirementsUsesComputedHash(t *testing.T) {
 	store := setupAITestDB(t)
-	oldHub := notifyHub
+	oldHub := routerRuntime().NotifyHub
 	hub := grpcpkg.NewNotifyHub()
 	stream := &fakeSubscribeStream{}
-	notifyHub = hub
+	routerRuntime().NotifyHub = hub
 	t.Cleanup(func() {
-		notifyHub = oldHub
+		routerRuntime().NotifyHub = oldHub
 	})
 	hub.Register("agent-1", stream, 1, nil)
 

@@ -209,7 +209,7 @@ func mcpPyexpDebug(c *gin.Context) {
 		c.JSON(http.StatusOK, resp)
 		return
 	}
-	if notifyHub == nil {
+	if routerRuntime().NotifyHub == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent notify hub is not ready"})
 		return
 	}
@@ -287,7 +287,7 @@ func mcpPyexpDebug(c *gin.Context) {
 		TimeoutSec: timeoutSec,
 		Params:     string(paramsJSON),
 	}
-	if err := notifyHub.SendDebugCommand(req.AgentID, cmd); err != nil {
+	if err := routerRuntime().NotifyHub.SendDebugCommand(req.AgentID, cmd); err != nil {
 		pocDebugSessions.finish(session.SessionID)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "failed to send EXP debug command to agent"})
 		return
@@ -315,7 +315,7 @@ func mcpPyexpDebug(c *gin.Context) {
 }
 
 func mcpPOCDebug(c *gin.Context) {
-	if notifyHub == nil {
+	if routerRuntime().NotifyHub == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent notify hub is not ready"})
 		return
 	}
@@ -368,7 +368,7 @@ func mcpPOCDebug(c *gin.Context) {
 		Proxy:      req.Proxy,
 		TimeoutSec: timeoutSec,
 	}
-	if err := notifyHub.SendDebugCommand(req.AgentID, cmd); err != nil {
+	if err := routerRuntime().NotifyHub.SendDebugCommand(req.AgentID, cmd); err != nil {
 		pocDebugSessions.finish(session.SessionID)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "failed to send debug command to agent"})
 		return
@@ -384,7 +384,7 @@ func mcpPOCDebug(c *gin.Context) {
 }
 
 func mcpAgentPythonRun(c *gin.Context) {
-	if notifyHub == nil {
+	if routerRuntime().NotifyHub == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent notify hub is not ready"})
 		return
 	}
@@ -426,7 +426,7 @@ func mcpAgentPythonRun(c *gin.Context) {
 		TimeoutSec: timeoutSec,
 		Params:     params,
 	}
-	if err := notifyHub.SendDebugCommand(req.AgentID, cmd); err != nil {
+	if err := routerRuntime().NotifyHub.SendDebugCommand(req.AgentID, cmd); err != nil {
 		pocDebugSessions.finish(session.SessionID)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "failed to send Python scratchpad command to agent"})
 		return
@@ -524,7 +524,7 @@ func mcpValidateDebugAgent(c *gin.Context, tenantID, agentID string, requirePyth
 		c.JSON(http.StatusBadRequest, gin.H{"error": "agent does not support debug; please upgrade agent"})
 		return false
 	}
-	if !notifyHub.IsAgentOnline(agentID) {
+	if !routerRuntime().NotifyHub.IsAgentOnline(agentID) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent subscribe stream is offline"})
 		return false
 	}

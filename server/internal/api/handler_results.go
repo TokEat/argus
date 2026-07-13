@@ -307,7 +307,7 @@ func applyReportResultScope(c *gin.Context, query *gorm.DB) *gorm.DB {
 }
 
 func recordReportExport(c *gin.Context, tenantID, reportType, fileName string, content []byte) {
-	store, err := storage.NewLocalStore(objectStorageRoot)
+	store, err := storage.NewLocalStore(routerRuntime().ObjectStorageRoot)
 	if err != nil {
 		log.Printf("[Report] storage unavailable: %v", err)
 		return

@@ -139,8 +139,8 @@ func cancelBuildJob(c *gin.Context) {
 		return
 	}
 
-	buildMu.Lock()
-	defer buildMu.Unlock()
+	routerRuntime().Build.mu.Lock()
+	defer routerRuntime().Build.mu.Unlock()
 
 	var job db.BuildJob
 	if err := db.DB.Select("id", "status").First(&job, "id = ?", jobID).Error; err != nil {
@@ -206,7 +206,7 @@ func retryBuildJob(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	go buildJobRunner(job.ID)
+	routerRuntime().Build.start(job.ID)
 
 	c.JSON(http.StatusAccepted, gin.H{
 		"status":      "queued",
@@ -261,7 +261,7 @@ func triggerBuild(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	go buildJobRunner(job.ID)
+	routerRuntime().Build.start(job.ID)
 
 	c.JSON(http.StatusAccepted, gin.H{
 		"status":     "queued",
@@ -274,8 +274,8 @@ func triggerBuild(c *gin.Context) {
 }
 
 func createBuildJobIfIdle(platform, arch string, pack bool, componentSets ...[]string) (db.BuildJob, error) {
-	buildMu.Lock()
-	defer buildMu.Unlock()
+	routerRuntime().Build.mu.Lock()
+	defer routerRuntime().Build.mu.Unlock()
 
 	var running int64
 	if err := db.DB.Model(&db.BuildJob{}).Where("status IN ?", []string{"queued", "running"}).Count(&running).Error; err != nil {
@@ -316,21 +316,21 @@ func parseBuildJobID(raw string) (uint, error) {
 }
 
 func registerBuildCancel(jobID uint, cancel context.CancelFunc) {
-	buildCancelMu.Lock()
-	defer buildCancelMu.Unlock()
-	buildCancels[jobID] = cancel
+	routerRuntime().Build.cancelMu.Lock()
+	defer routerRuntime().Build.cancelMu.Unlock()
+	routerRuntime().Build.cancels[jobID] = cancel
 }
 
 func unregisterBuildCancel(jobID uint) {
-	buildCancelMu.Lock()
-	defer buildCancelMu.Unlock()
-	delete(buildCancels, jobID)
+	routerRuntime().Build.cancelMu.Lock()
+	defer routerRuntime().Build.cancelMu.Unlock()
+	delete(routerRuntime().Build.cancels, jobID)
 }
 
 func cancelRegisteredBuild(jobID uint) {
-	buildCancelMu.Lock()
-	cancel := buildCancels[jobID]
-	buildCancelMu.Unlock()
+	routerRuntime().Build.cancelMu.Lock()
+	cancel := routerRuntime().Build.cancels[jobID]
+	routerRuntime().Build.cancelMu.Unlock()
 	if cancel != nil {
 		cancel()
 	}

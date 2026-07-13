@@ -1176,7 +1176,7 @@ func (t *RunSandboxDebugTool) InputSchema() map[string]interface{} {
 }
 
 func (t *RunSandboxDebugTool) Execute(ctx context.Context, input json.RawMessage) (interface{}, error) {
-	if notifyHub == nil {
+	if routerRuntime().NotifyHub == nil {
 		return nil, fmt.Errorf("agent notify hub is not ready")
 	}
 
@@ -1214,7 +1214,7 @@ func (t *RunSandboxDebugTool) Execute(ctx context.Context, input json.RawMessage
 	if !isDebugCapableAgent(node.Version) {
 		return nil, fmt.Errorf("agent does not support poc debug; please upgrade agent")
 	}
-	if !notifyHub.IsAgentOnline(args.AgentID) {
+	if !routerRuntime().NotifyHub.IsAgentOnline(args.AgentID) {
 		return nil, fmt.Errorf("agent subscribe stream is offline")
 	}
 
@@ -1236,7 +1236,7 @@ func (t *RunSandboxDebugTool) Execute(ctx context.Context, input json.RawMessage
 		TimeoutSec: 30,
 	}
 
-	if err := notifyHub.SendDebugCommand(args.AgentID, cmd); err != nil {
+	if err := routerRuntime().NotifyHub.SendDebugCommand(args.AgentID, cmd); err != nil {
 		return nil, fmt.Errorf("failed to send debug command to agent")
 	}
 

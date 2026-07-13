@@ -702,7 +702,7 @@ func mcpContextWorkflowTool(c *gin.Context, execute func(context.Context, json.R
 }
 
 func mcpRuleDebugFingerprint(c *gin.Context, req mcpRuleDebugRequest) {
-	if notifyHub == nil {
+	if routerRuntime().NotifyHub == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent notify hub is not ready"})
 		return
 	}
@@ -770,7 +770,7 @@ func mcpRuleDebugFingerprint(c *gin.Context, req mcpRuleDebugRequest) {
 		Proxy:      req.Proxy,
 		TimeoutSec: timeoutSec,
 	}
-	if err := notifyHub.SendDebugCommand(req.AgentID, cmd); err != nil {
+	if err := routerRuntime().NotifyHub.SendDebugCommand(req.AgentID, cmd); err != nil {
 		pocDebugSessions.finish(session.SessionID)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "failed to send fingerprint debug command to agent"})
 		return
@@ -796,7 +796,7 @@ func mcpValidateFingerprintDebugAgent(c *gin.Context, tenantID, agentID string) 
 		c.JSON(http.StatusBadRequest, gin.H{"error": "agent does not support fingerprint debug; please upgrade agent to v2.3.0+"})
 		return false
 	}
-	if !notifyHub.IsAgentOnline(agentID) {
+	if !routerRuntime().NotifyHub.IsAgentOnline(agentID) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent subscribe stream is offline"})
 		return false
 	}

@@ -14,7 +14,7 @@ import (
 
 func TestAPIV1RouteContract(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router := NewRouter()
+	router := NewRouter(RouterDependencies{})
 
 	routes := make([]string, 0, len(router.Routes()))
 	for _, route := range router.Routes() {
@@ -39,7 +39,7 @@ func TestNewRouterKeepsTenantAndRBACMiddleware(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)
 
-	NewRouter().ServeHTTP(recorder, request)
+	NewRouter(RouterDependencies{}).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("GET /api/v1/projects without credentials status = %d, want %d", recorder.Code, http.StatusUnauthorized)

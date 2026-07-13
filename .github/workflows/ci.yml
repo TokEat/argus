@@ -33,6 +33,9 @@ jobs:
         run: npm ci
         working-directory: server-ui
 
+      - name: Source size ratchet
+        run: make source-size-check
+
       - name: Go tests
         run: go test ./...
 

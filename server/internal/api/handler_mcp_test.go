@@ -106,14 +106,14 @@ func TestMCPRuleDebugPyexpSourceDispatchesWithoutSavedRule(t *testing.T) {
 	if err := store.Create(&db.Node{TenantID: "default", AgentID: "agent-1", Status: "Alive", Version: "v2.3.0", Tags: `{"python_exp":"true","pyexp_python":"/usr/bin/python3"}`}).Error; err != nil {
 		t.Fatalf("seed node: %v", err)
 	}
-	oldHub := notifyHub
+	oldHub := routerRuntime().NotifyHub
 	hub := grpcpkg.NewNotifyHub()
 	stream := &fakeSubscribeStream{sentCh: make(chan *pb.TaskNotify, 1)}
-	notifyHub = hub
+	routerRuntime().NotifyHub = hub
 	oldWSHub := Hub
 	Hub = &WebSocketHub{clients: make(map[*websocket.Conn]string), broadcast: make(chan wsEnvelope, 16)}
 	t.Cleanup(func() {
-		notifyHub = oldHub
+		routerRuntime().NotifyHub = oldHub
 		Hub = oldWSHub
 	})
 	hub.Register("agent-1", stream, 1, nil)
@@ -191,10 +191,10 @@ func TestMCPAgentPythonRunRejectsUnknownCommandBeforeDispatch(t *testing.T) {
 	if err := store.Create(&db.Node{TenantID: "default", AgentID: "agent-1", Status: "Alive", Version: "v2.3.0", Tags: `{"python_exp":"true","pyexp_python":"/usr/bin/python3"}`}).Error; err != nil {
 		t.Fatalf("seed node: %v", err)
 	}
-	oldHub := notifyHub
+	oldHub := routerRuntime().NotifyHub
 	hub := grpcpkg.NewNotifyHub()
-	notifyHub = hub
-	t.Cleanup(func() { notifyHub = oldHub })
+	routerRuntime().NotifyHub = hub
+	t.Cleanup(func() { routerRuntime().NotifyHub = oldHub })
 
 	body := `{"agent_id":"agent-1","command":"shell","params":{"argv":["sh","-c","id"]}}`
 	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/mcp/tools/agent/python-run", "admin", "9")
@@ -476,14 +476,14 @@ func TestMCPRuleDebugFingerprintDispatchesPayloadAndCollectsResult(t *testing.T)
 	if err := store.Create(&db.Node{TenantID: "default", AgentID: "agent-1", Status: "Alive", Version: "v2.3.0"}).Error; err != nil {
 		t.Fatalf("seed node: %v", err)
 	}
-	oldHub := notifyHub
+	oldHub := routerRuntime().NotifyHub
 	hub := grpcpkg.NewNotifyHub()
 	stream := &fakeSubscribeStream{}
-	notifyHub = hub
+	routerRuntime().NotifyHub = hub
 	oldWSHub := Hub
 	Hub = &WebSocketHub{clients: make(map[*websocket.Conn]string), broadcast: make(chan wsEnvelope, 16)}
 	t.Cleanup(func() {
-		notifyHub = oldHub
+		routerRuntime().NotifyHub = oldHub
 		Hub = oldWSHub
 	})
 	hub.Register("agent-1", stream, 1, nil)
@@ -544,14 +544,14 @@ func TestMCPRuleDebugFingerprintRuleOnlyDispatchesCustomOnly(t *testing.T) {
 	if err := store.Create(&db.Node{TenantID: "default", AgentID: "agent-1", Status: "Alive", Version: "v2.3.0"}).Error; err != nil {
 		t.Fatalf("seed node: %v", err)
 	}
-	oldHub := notifyHub
+	oldHub := routerRuntime().NotifyHub
 	hub := grpcpkg.NewNotifyHub()
 	stream := &fakeSubscribeStream{}
-	notifyHub = hub
+	routerRuntime().NotifyHub = hub
 	oldWSHub := Hub
 	Hub = &WebSocketHub{clients: make(map[*websocket.Conn]string), broadcast: make(chan wsEnvelope, 16)}
 	t.Cleanup(func() {
-		notifyHub = oldHub
+		routerRuntime().NotifyHub = oldHub
 		Hub = oldWSHub
 	})
 	hub.Register("agent-1", stream, 1, nil)
@@ -609,10 +609,10 @@ func TestDebugFingerprintDispatchesCustomRules(t *testing.T) {
 	if err := store.Create(&db.Node{TenantID: "default", AgentID: "agent-1", Status: "Alive", Version: "v2.3.0"}).Error; err != nil {
 		t.Fatalf("seed node: %v", err)
 	}
-	oldHub := notifyHub
+	oldHub := routerRuntime().NotifyHub
 	hub := grpcpkg.NewNotifyHub()
 	stream := &fakeSubscribeStream{}
-	notifyHub = hub
+	routerRuntime().NotifyHub = hub
 	oldWSHub := Hub
 	Hub = &WebSocketHub{clients: make(map[*websocket.Conn]string), broadcast: make(chan wsEnvelope, 16)}
 	oldSessions := pocDebugSessions
@@ -621,7 +621,7 @@ func TestDebugFingerprintDispatchesCustomRules(t *testing.T) {
 		activeTenant: make(map[string]string),
 	}
 	t.Cleanup(func() {
-		notifyHub = oldHub
+		routerRuntime().NotifyHub = oldHub
 		Hub = oldWSHub
 		pocDebugSessions = oldSessions
 	})

@@ -120,7 +120,7 @@ func installAgentPyenvRequirements(c *gin.Context) {
 		}
 	}
 	requirementsHash := pyexp.RequirementsHash(requirements)
-	if notifyHub == nil {
+	if routerRuntime().NotifyHub == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Agent notify hub is unavailable"})
 		return
 	}
@@ -155,7 +155,7 @@ func installAgentPyenvRequirements(c *gin.Context) {
 		TimeoutSec: 300,
 		Params:     string(paramsJSON),
 	}
-	if err := notifyHub.SendDebugCommand(agentID, cmd); err != nil {
+	if err := routerRuntime().NotifyHub.SendDebugCommand(agentID, cmd); err != nil {
 		finished := time.Now()
 		job.Status = "Failed"
 		job.Error = fmt.Sprintf("dispatch failed: %v", err)

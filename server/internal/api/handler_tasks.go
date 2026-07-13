@@ -323,7 +323,7 @@ func createTask(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if taskQueue == nil {
+	if routerRuntime().TaskQueue == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "task queue not initialized"})
 		return
 	}
@@ -424,7 +424,7 @@ func createTask(c *gin.Context) {
 	}
 
 	// 3. Dispatch to Queue（闭环保证：失败任务保留 Dispatching，守护协程会继续补投）
-	pushedByPriority, dispatchPending := dispatchSubTasks(context.Background(), taskQueue, subTasks)
+	pushedByPriority, dispatchPending := dispatchSubTasks(context.Background(), routerRuntime().TaskQueue, subTasks)
 	pushedCount := totalDispatchedTasks(pushedByPriority)
 	broadcastDispatchedTasks(pushedByPriority)
 	if dispatchPending > 0 {

@@ -181,7 +181,7 @@ func resumeTask(c *gin.Context) {
 		return
 	}
 
-	pushedByPriority, dispatchPending := dispatchSubTasks(context.Background(), taskQueue, pausedSubs)
+	pushedByPriority, dispatchPending := dispatchSubTasks(context.Background(), routerRuntime().TaskQueue, pausedSubs)
 	if totalDispatchedTasks(pushedByPriority) > 0 {
 		broadcastDispatchedTasks(pushedByPriority)
 	}
@@ -229,7 +229,7 @@ func appendTargets(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "No targets to append"})
 		return
 	}
-	if taskQueue == nil {
+	if routerRuntime().TaskQueue == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "task queue not initialized"})
 		return
 	}
@@ -293,7 +293,7 @@ func appendTargets(c *gin.Context) {
 	}
 
 	// 推入调度队列（失败保留 Dispatching，守护协程继续补投）
-	pushedByPriority, dispatchPending := dispatchSubTasks(context.Background(), taskQueue, newSubTasks)
+	pushedByPriority, dispatchPending := dispatchSubTasks(context.Background(), routerRuntime().TaskQueue, newSubTasks)
 	pushedCount := totalDispatchedTasks(pushedByPriority)
 	broadcastDispatchedTasks(pushedByPriority)
 	if dispatchPending > 0 {
@@ -319,15 +319,15 @@ func appendTargets(c *gin.Context) {
 }
 
 func getQueueDepth(c *gin.Context) {
-	if taskQueue == nil {
+	if routerRuntime().TaskQueue == nil {
 		c.JSON(http.StatusOK, gin.H{"error": "queue not initialized"})
 		return
 	}
 
 	tenantID := currentTenantID(c)
 	ctx := context.Background()
-	depth := taskQueue.QueueDepth(ctx)
-	pending := taskQueue.PendingCount(ctx)
+	depth := routerRuntime().TaskQueue.QueueDepth(ctx)
+	pending := routerRuntime().TaskQueue.PendingCount(ctx)
 
 	// 计算批次维度总量
 	readyBatches := int64(0)
@@ -364,7 +364,7 @@ func getQueueDepth(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"depth":           depth,
 		"pending":         pending,
-		"mode":            taskQueue.Mode(),
+		"mode":            routerRuntime().TaskQueue.Mode(),
 		"ready_batches":   readyBatches,
 		"pending_batches": pendingBatches,
 		"ready_targets":   readyTargets,

@@ -87,12 +87,12 @@ func TestSaveAPIKeysConfigDoesNotBumpRuleVersionAndBroadcastsAPIConfig(t *testin
 		t.Fatalf("seed rule version: %v", err)
 	}
 
-	oldHub := notifyHub
+	oldHub := routerRuntime().NotifyHub
 	hub := grpcpkg.NewNotifyHub()
 	stream := &fakeAPIConfigNotifyStream{sentCh: make(chan string, 1)}
 	hub.Register("agent-1", stream, 1, nil)
-	notifyHub = hub
-	t.Cleanup(func() { notifyHub = oldHub })
+	routerRuntime().NotifyHub = hub
+	t.Cleanup(func() { routerRuntime().NotifyHub = oldHub })
 
 	ctx, recorder := newTenantContextWithRole(http.MethodPut, "/config/api-keys", "admin", "9")
 	ctx.Request = httptest.NewRequest(http.MethodPut, "/config/api-keys", strings.NewReader(`[{"provider":"quake","keys":["active-key"]}]`))
@@ -128,14 +128,14 @@ func TestSaveAPIKeysConfigDoesNotBumpRuleVersionAndBroadcastsAPIConfig(t *testin
 func TestSaveAPIKeysConfigBroadcastsOnlyCurrentTenant(t *testing.T) {
 	setupAITestDB(t)
 
-	oldHub := notifyHub
+	oldHub := routerRuntime().NotifyHub
 	hub := grpcpkg.NewNotifyHub()
 	tenantAStream := &fakeAPIConfigNotifyStream{sentCh: make(chan string, 1)}
 	tenantBStream := &fakeAPIConfigNotifyStream{sentCh: make(chan string, 1)}
 	hub.Register("agent-a", tenantAStream, 1, map[string]string{"tenant_id": "tenant-a"})
 	hub.Register("agent-b", tenantBStream, 1, map[string]string{"tenant_id": "tenant-b"})
-	notifyHub = hub
-	t.Cleanup(func() { notifyHub = oldHub })
+	routerRuntime().NotifyHub = hub
+	t.Cleanup(func() { routerRuntime().NotifyHub = oldHub })
 
 	ctx, recorder := newTenantContextWithRole(http.MethodPut, "/config/api-keys", "admin", "9")
 	ctx.Set("tenant", "tenant-a")

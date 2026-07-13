@@ -2,10 +2,8 @@ package api
 
 import (
 	"bytes"
-	"context"
 	"crypto/md5"
 	"crypto/subtle"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -19,28 +17,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/user/dddd-server/internal/db"
-	grpcpkg "github.com/user/dddd-server/internal/grpc"
-	"github.com/user/dddd-server/internal/scheduler"
 	"gorm.io/gorm"
 )
-
-var taskQueue *scheduler.TaskQueue
-
-var notifyHub *grpcpkg.NotifyHub
-
-var agentPSK string
-
-var buildMu sync.Mutex
-
-var buildCancelMu sync.Mutex
-
-var buildCancels = map[uint]context.CancelFunc{}
-
-var buildJobRunner = runBuildJob
-
-var errBuildAlreadyQueued = errors.New("another build job is already queued or running")
-
-var objectStorageRoot = "./data/objects"
 
 const (
 	subTaskStatusDispatching = "Dispatching"
@@ -51,15 +29,6 @@ const (
 	defaultAgentLogRetention = 14
 	agentSessionTTL          = 7 * 24 * time.Hour
 )
-
-func SetTaskQueue(queue *scheduler.TaskQueue) {
-	taskQueue = queue
-}
-
-// SetAgentPSK 注入 Agent 预共享密钥，用于 Agent 内部 API 鉴权。
-func SetAgentPSK(psk string) {
-	agentPSK = strings.TrimSpace(psk)
-}
 
 func isAgentInternalEndpoint(c *gin.Context) bool {
 	if c.Request.Method != http.MethodGet {
@@ -84,14 +53,14 @@ func isAgentInternalEndpoint(c *gin.Context) bool {
 
 func validateAgentPSK(c *gin.Context) bool {
 	// 与 gRPC 保持一致：未配置 PSK 时允许开发模式开放访问。
-	if agentPSK == "" {
+	if routerRuntime().AgentPSK == "" {
 		return true
 	}
 	token := strings.TrimSpace(c.GetHeader("x-agent-psk"))
 	if token == "" {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(token), []byte(agentPSK)) == 1
+	return subtle.ConstantTimeCompare([]byte(token), []byte(routerRuntime().AgentPSK)) == 1
 }
 
 func hasBearerAuth(c *gin.Context) bool {
@@ -139,15 +108,6 @@ func validateAgentSession(c *gin.Context) bool {
 	c.Set("agent_id", agentID)
 	c.Set("agent_internal", true)
 	return true
-}
-
-// SetNotifyHub 注入 gRPC NotifyHub 引用，用于 createTask 后广播通知 Agent
-func SetNotifyHub(hub *grpcpkg.NotifyHub) {
-	notifyHub = hub
-	db.DebugEventHook = handleAgentDebugEvent
-	db.ExploitCleanupDispatchHook = func(run db.ExploitRun) error {
-		return dispatchExploitCleanup(run, run.TenantID)
-	}
 }
 
 func currentTenantID(c *gin.Context) string {
@@ -381,7 +341,8 @@ func shouldValidateUTF8Body(method string, contentType string) bool {
 }
 
 // NewRouter 构建 Gin 路由，不启动监听或后台 goroutine。
-func NewRouter() *gin.Engine {
+func NewRouter(deps RouterDependencies) *gin.Engine {
+	ConfigureRouterDependencies(deps)
 	r := gin.Default()
 
 	// 跨域处理
@@ -418,12 +379,13 @@ func NewRouter() *gin.Engine {
 	return r
 }
 
-func InitRouter(port string) {
+func InitRouter(port string, deps RouterDependencies) {
+	ConfigureRouterDependencies(deps)
 	// 启动 WebSocket 广播中心并连接底层实时推流 Hook。
 	go Hub.Start()
 	db.WSBroadcastHook = Hub.BroadcastToTenant
 
-	r := NewRouter()
+	r := NewRouter(deps)
 	log.Printf("Starting API Server on %s", port)
 	if err := r.Run(port); err != nil {
 		log.Fatalf("API server failed: %v", err)

@@ -1,0 +1,31 @@
+# Temporary exceptions for files that predate the source-size ratchet.
+# Format: relative/path maximum_line_count
+mcp/internal/mcp/client.go 2233
+scanner/common/flag.go 817
+scanner/internal/agent/debug.go 998
+scanner/internal/agent/worker.go 1379
+scanner/internal/agent/worker_test.go 1338
+server-ui/src/components/GlobalAIChatDrawer.tsx 1432
+server-ui/src/pages/CloudManagement.tsx 2784
+server-ui/src/pages/Dashboard.tsx 711
+server-ui/src/pages/TaskManagement.tsx 1557
+server-ui/src/pages/TaskResults.tsx 897
+server-ui/src/pages/config/ArsenalRuleDebugPanel.tsx 764
+server-ui/src/pages/config/ExploitConfig.tsx 2477
+server-ui/src/services/api.ts 1180
+server-ui/src/services/typings.d.ts 1161
+server/internal/api/ai_tools.go 1287
+server/internal/api/handler_cloud.go 1994
+server/internal/api/handler_dictionary.go 882
+server/internal/api/handler_exploits.go 1843
+server/internal/api/handler_mcp.go 1219
+server/internal/api/handler_mcp_rule.go 993
+server/internal/api/handler_mcp_test.go 851
+server/internal/api/router_test.go 2039
+server/internal/cloud/aliyun/ecs.go 1058
+server/internal/db/db.go 1166
+server/internal/db/rule_catalog.go 1307
+server/internal/grpc/server.go 1155
+server/internal/grpc/server_test.go 990
+shared/proto/pyexp/pyexp.go 1643
+tools/arsenal-sync/main.go 904

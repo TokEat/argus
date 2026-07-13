@@ -10,13 +10,21 @@ import (
 	"github.com/user/dddd-server/internal/scheduler"
 )
 
-// StartTaskTimeoutDaemon 由 main.go 启动，定期检查超时和重试逻辑
-func StartTaskTimeoutDaemon(ctx context.Context, q *scheduler.TaskQueue) {
-	ticker := time.NewTicker(30 * time.Second)
+type TaskRecoveryService struct {
+	queue    *scheduler.TaskQueue
+	interval time.Duration
+}
+
+func NewTaskRecoveryService(queue *scheduler.TaskQueue) *TaskRecoveryService {
+	return &TaskRecoveryService{queue: queue, interval: 30 * time.Second}
+}
+
+func (s *TaskRecoveryService) Run(ctx context.Context) {
+	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 
 	pendingRecovery := &pendingRecoveryState{}
-	_, err := recoverPendingTasksForQueueGeneration(ctx, q, pendingRecovery, time.Now())
+	_, err := recoverPendingTasksForQueueGeneration(ctx, s.queue, pendingRecovery, time.Now())
 	if err != nil {
 		log.Printf("[DispatchRecover] initial pending reconciliation failed: %v", err)
 	}
@@ -26,18 +34,23 @@ func StartTaskTimeoutDaemon(ctx context.Context, q *scheduler.TaskQueue) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			recoverQueueIfDead(q)
-			recoverDispatchingTasks(q)
-			recovered, err := recoverPendingTasksForQueueGeneration(ctx, q, pendingRecovery, time.Now())
+			recoverQueueIfDead(s.queue)
+			recoverDispatchingTasks(s.queue)
+			recovered, err := recoverPendingTasksForQueueGeneration(ctx, s.queue, pendingRecovery, time.Now())
 			if err != nil {
 				log.Printf("[DispatchRecover] pending reconciliation failed: %v", err)
 			} else if recovered > 0 {
 				log.Printf("[DispatchRecover] reconciled %d stranded pending subtasks", recovered)
 			}
-			handleTimeoutTasks(q)
+			handleTimeoutTasks(s.queue)
 			db.AutoDispatchCleanup()
 		}
 	}
+}
+
+// StartTaskTimeoutDaemon 保留旧内部入口，委托给显式 service。
+func StartTaskTimeoutDaemon(ctx context.Context, q *scheduler.TaskQueue) {
+	NewTaskRecoveryService(q).Run(ctx)
 }
 
 func recoverQueueIfDead(q *scheduler.TaskQueue) {

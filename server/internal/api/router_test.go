@@ -405,10 +405,10 @@ func TestRBACKeepsMCPRuleAuthoringPermissions(t *testing.T) {
 
 func TestExportVulnsRecordsReportObject(t *testing.T) {
 	store := setupAITestDB(t)
-	oldRoot := objectStorageRoot
-	objectStorageRoot = t.TempDir()
+	oldRoot := routerRuntime().ObjectStorageRoot
+	routerRuntime().ObjectStorageRoot = t.TempDir()
 	t.Cleanup(func() {
-		objectStorageRoot = oldRoot
+		routerRuntime().ObjectStorageRoot = oldRoot
 	})
 	if err := store.Create(&db.Vulnerability{
 		TenantID:  "default",
@@ -438,17 +438,17 @@ func TestExportVulnsRecordsReportObject(t *testing.T) {
 	if key == report.FileURL || key == "" {
 		t.Fatalf("unexpected report file url: %s", report.FileURL)
 	}
-	if _, err := os.Stat(filepath.Join(objectStorageRoot, filepath.FromSlash(key))); err != nil {
+	if _, err := os.Stat(filepath.Join(routerRuntime().ObjectStorageRoot, filepath.FromSlash(key))); err != nil {
 		t.Fatalf("expected report object file: %v", err)
 	}
 }
 
 func TestExportAssetsScopesByRootTaskAndRecordsReportObject(t *testing.T) {
 	store := setupAITestDB(t)
-	oldRoot := objectStorageRoot
-	objectStorageRoot = t.TempDir()
+	oldRoot := routerRuntime().ObjectStorageRoot
+	routerRuntime().ObjectStorageRoot = t.TempDir()
 	t.Cleanup(func() {
-		objectStorageRoot = oldRoot
+		routerRuntime().ObjectStorageRoot = oldRoot
 	})
 	if err := store.Create(&db.Project{ID: "p1", TenantID: "default", OwnerUserID: "7", Name: "p1"}).Error; err != nil {
 		t.Fatalf("seed project: %v", err)
@@ -485,17 +485,17 @@ func TestExportAssetsScopesByRootTaskAndRecordsReportObject(t *testing.T) {
 	if key == report.FileURL || key == "" {
 		t.Fatalf("unexpected asset report file url: %s", report.FileURL)
 	}
-	if _, err := os.Stat(filepath.Join(objectStorageRoot, filepath.FromSlash(key))); err != nil {
+	if _, err := os.Stat(filepath.Join(routerRuntime().ObjectStorageRoot, filepath.FromSlash(key))); err != nil {
 		t.Fatalf("expected asset report object file: %v", err)
 	}
 }
 
 func TestExportFingerprintsScopesByRootTaskAndRecordsReportObject(t *testing.T) {
 	store := setupAITestDB(t)
-	oldRoot := objectStorageRoot
-	objectStorageRoot = t.TempDir()
+	oldRoot := routerRuntime().ObjectStorageRoot
+	routerRuntime().ObjectStorageRoot = t.TempDir()
 	t.Cleanup(func() {
-		objectStorageRoot = oldRoot
+		routerRuntime().ObjectStorageRoot = oldRoot
 	})
 	if err := store.Create(&db.Project{ID: "p1", TenantID: "default", OwnerUserID: "7", Name: "p1"}).Error; err != nil {
 		t.Fatalf("seed project: %v", err)
@@ -532,7 +532,7 @@ func TestExportFingerprintsScopesByRootTaskAndRecordsReportObject(t *testing.T) 
 	if key == report.FileURL || key == "" {
 		t.Fatalf("unexpected fingerprint report file url: %s", report.FileURL)
 	}
-	if _, err := os.Stat(filepath.Join(objectStorageRoot, filepath.FromSlash(key))); err != nil {
+	if _, err := os.Stat(filepath.Join(routerRuntime().ObjectStorageRoot, filepath.FromSlash(key))); err != nil {
 		t.Fatalf("expected fingerprint report object file: %v", err)
 	}
 }
@@ -590,9 +590,9 @@ func TestPauseTaskMovesUnclaimedSubTasksToPaused(t *testing.T) {
 
 func TestResumeTaskOnlyReactivatesPausedSubTasks(t *testing.T) {
 	store := setupAITestDB(t)
-	oldQueue := taskQueue
-	taskQueue = nil
-	t.Cleanup(func() { taskQueue = oldQueue })
+	oldQueue := routerRuntime().TaskQueue
+	routerRuntime().TaskQueue = nil
+	t.Cleanup(func() { routerRuntime().TaskQueue = oldQueue })
 	if err := store.Create(&db.Project{ID: "p1", TenantID: "default", OwnerUserID: "7", Name: "p1"}).Error; err != nil {
 		t.Fatalf("seed project: %v", err)
 	}
@@ -711,9 +711,9 @@ func TestCreateTaskRejectsTenantQuotaExceeded(t *testing.T) {
 		t.Fatalf("seed active task: %v", err)
 	}
 
-	oldQueue := taskQueue
-	taskQueue = scheduler.NewTaskQueue("")
-	t.Cleanup(func() { taskQueue = oldQueue })
+	oldQueue := routerRuntime().TaskQueue
+	routerRuntime().TaskQueue = scheduler.NewTaskQueue("")
+	t.Cleanup(func() { routerRuntime().TaskQueue = oldQueue })
 
 	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/tasks", "operator", "1")
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/tasks", strings.NewReader(`{
@@ -1099,12 +1099,12 @@ func TestCreateTaskCanExplicitlySkipUnsupportedTargets(t *testing.T) {
 		t.Fatalf("create project: %v", err)
 	}
 
-	oldQueue := taskQueue
+	oldQueue := routerRuntime().TaskQueue
 	queue := scheduler.NewTaskQueue("")
-	taskQueue = queue
+	routerRuntime().TaskQueue = queue
 	t.Cleanup(func() {
 		queue.Close()
-		taskQueue = oldQueue
+		routerRuntime().TaskQueue = oldQueue
 	})
 
 	c, w := newTenantContextWithRole(http.MethodPost, "/tasks", "operator", "1")
@@ -1175,12 +1175,12 @@ func TestCreateTaskUsesReducedURLBatchSize(t *testing.T) {
 		t.Fatalf("marshal task payload: %v", err)
 	}
 
-	oldQueue := taskQueue
+	oldQueue := routerRuntime().TaskQueue
 	queue := scheduler.NewTaskQueue("")
-	taskQueue = queue
+	routerRuntime().TaskQueue = queue
 	t.Cleanup(func() {
 		queue.Close()
-		taskQueue = oldQueue
+		routerRuntime().TaskQueue = oldQueue
 	})
 
 	c, w := newTenantContextWithRole(http.MethodPost, "/tasks", "operator", "1")
@@ -1417,9 +1417,9 @@ func TestRetryBuildJobCreatesNewQueuedJob(t *testing.T) {
 	if err := os.WriteFile("build.sh", []byte("#!/bin/sh\nmkdir -p release\ntouch release/dddd-agent-linux-amd64\n"), 0o755); err != nil {
 		t.Fatalf("write build script: %v", err)
 	}
-	oldRunner := buildJobRunner
-	buildJobRunner = func(uint) {}
-	t.Cleanup(func() { buildJobRunner = oldRunner })
+	oldRunner := routerRuntime().Build.runner
+	routerRuntime().Build.runner = func(uint) {}
+	t.Cleanup(func() { routerRuntime().Build.runner = oldRunner })
 	oldJob := db.BuildJob{Platform: "linux", Arch: "amd64", Status: "failed", Error: "boom"}
 	if err := db.DB.Create(&oldJob).Error; err != nil {
 		t.Fatalf("seed failed build job: %v", err)

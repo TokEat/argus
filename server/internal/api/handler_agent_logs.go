@@ -58,14 +58,22 @@ func cleanupAgentLogsOnce(days int) (int64, error) {
 	return res.RowsAffected, res.Error
 }
 
-func StartAgentLogRetentionDaemon(ctx context.Context) {
+type AgentLogRetentionService struct {
+	interval time.Duration
+}
+
+func NewAgentLogRetentionService() *AgentLogRetentionService {
+	return &AgentLogRetentionService{interval: time.Hour}
+}
+
+func (s *AgentLogRetentionService) Run(ctx context.Context) {
 	if deleted, err := cleanupAgentLogsOnce(0); err != nil {
 		log.Printf("[AgentLogRetention] cleanup failed: %v", err)
 	} else if deleted > 0 {
 		log.Printf("[AgentLogRetention] cleaned %d expired logs", deleted)
 	}
 
-	ticker := time.NewTicker(1 * time.Hour)
+	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -79,6 +87,11 @@ func StartAgentLogRetentionDaemon(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// StartAgentLogRetentionDaemon 保留旧内部入口，委托给显式 service。
+func StartAgentLogRetentionDaemon(ctx context.Context) {
+	NewAgentLogRetentionService().Run(ctx)
 }
 
 func tenantAgentIDs(tenantID string) []string {
@@ -386,7 +399,7 @@ func archiveAgentLogs(c *gin.Context) {
 		_ = enc.Encode(item)
 	}
 	key := fmt.Sprintf("agent-logs/%s/%s.ndjson", currentTenantID(c), day)
-	store, err := storage.NewLocalStore(objectStorageRoot)
+	store, err := storage.NewLocalStore(routerRuntime().ObjectStorageRoot)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

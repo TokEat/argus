@@ -221,8 +221,6 @@ func main() {
 
 	log.Println("Initializing task queue...")
 	queue := scheduler.NewTaskQueue(amqpURL)
-	api.SetTaskQueue(queue)
-	api.SetAgentPSK(agentPSK)
 	log.Printf("Task queue mode: %s", queue.Mode())
 
 	log.Printf("Initializing gRPC server on :%d...", grpcPort)
@@ -285,7 +283,8 @@ func main() {
 
 	// ★ 将 gRPC Server 的 NotifyHub 暴露给 API 层
 	// 当 createTask 完成入队后，API 层通过此引用广播通知所有在线 Agent
-	api.SetNotifyHub(srv.Hub)
+	routerDeps := api.NewRouterDependencies(queue, srv.Hub, agentPSK)
+	api.ConfigureRouterDependencies(routerDeps)
 
 	// 注册 UI 动画广播 Hook
 	srv.SetOnTaskClaimedHook(func(agentID, taskID string) {
@@ -328,7 +327,7 @@ func main() {
 
 	// 挂载一个后台协程启动 API HTTP Server
 	go func() {
-		api.InitRouter(apiAddr)
+		api.InitRouter(apiAddr, routerDeps)
 	}()
 
 	// 挂载节点离线状态判定协程（含任务回收）
@@ -440,8 +439,8 @@ func main() {
 	}()
 
 	// 超时 + 重试守护协程
-	go api.StartTaskTimeoutDaemon(context.Background(), queue)
-	go api.StartAgentLogRetentionDaemon(context.Background())
+	go routerDeps.TaskRecovery.Run(context.Background())
+	go routerDeps.AgentLogRetention.Run(context.Background())
 
 	// 初始化规则版本号（如果尚未设置）
 	if api.GetCurrentRuleVersion() == "" {

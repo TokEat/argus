@@ -156,7 +156,7 @@ func debugFingerprint(c *gin.Context) {
 }
 
 func startAgentDebug(c *gin.Context, action string, requirePocContent bool) {
-	if notifyHub == nil {
+	if routerRuntime().NotifyHub == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent notify hub is not ready"})
 		return
 	}
@@ -227,7 +227,7 @@ func startAgentDebug(c *gin.Context, action string, requirePocContent bool) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "agent does not support poc debug; please upgrade agent"})
 		return
 	}
-	if !notifyHub.IsAgentOnline(req.AgentID) {
+	if !routerRuntime().NotifyHub.IsAgentOnline(req.AgentID) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent subscribe stream is offline"})
 		return
 	}
@@ -274,7 +274,7 @@ func startAgentDebug(c *gin.Context, action string, requirePocContent bool) {
 		Proxy:      req.Proxy,
 		TimeoutSec: req.TimeoutSec,
 	}
-	if err := notifyHub.SendDebugCommand(req.AgentID, cmd); err != nil {
+	if err := routerRuntime().NotifyHub.SendDebugCommand(req.AgentID, cmd); err != nil {
 		pocDebugSessions.finish(session.SessionID)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "failed to send debug command to agent"})
 		return
@@ -295,7 +295,7 @@ func startAgentDebug(c *gin.Context, action string, requirePocContent bool) {
 }
 
 func cancelDebugSession(c *gin.Context) {
-	if notifyHub == nil {
+	if routerRuntime().NotifyHub == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent notify hub is not ready"})
 		return
 	}
@@ -312,7 +312,7 @@ func cancelDebugSession(c *gin.Context) {
 		SessionId: session.SessionID,
 		TenantId:  session.TenantID,
 	}
-	if err := notifyHub.SendDebugCommand(session.AgentID, cmd); err != nil {
+	if err := routerRuntime().NotifyHub.SendDebugCommand(session.AgentID, cmd); err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "failed to send cancel command to agent"})
 		return
 	}

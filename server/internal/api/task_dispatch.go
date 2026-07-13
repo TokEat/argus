@@ -58,13 +58,13 @@ func totalDispatchedTasks(pushedByPriority map[int]int) int {
 }
 
 func broadcastDispatchedTasks(pushedByPriority map[int]int) {
-	if notifyHub == nil {
+	if routerRuntime().NotifyHub == nil {
 		return
 	}
 	for priority, count := range pushedByPriority {
 		if count <= 0 {
 			continue
 		}
-		notifyHub.BroadcastNewTask(int32(count), int32(priority))
+		routerRuntime().NotifyHub.BroadcastNewTask(int32(count), int32(priority))
 	}
 }
