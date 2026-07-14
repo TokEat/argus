@@ -44,7 +44,7 @@ echo ""
 echo -e "${YELLOW}[1/3] 编译项目二进制文件...${NC}"
 cd "${ROOT_DIR}"
 # 调用全平台构建脚本，只构建服务端和Agent的 linux/amd64 架构
-./build.sh --component dddd-server,dddd-agent --target linux/amd64
+./build.sh --pack --require-upx --component dddd-server,dddd-agent --target linux/amd64
 
 if [[ ! -f "${ROOT_DIR}/release/dddd-server-linux-amd64" ]] || [[ ! -f "${ROOT_DIR}/release/dddd-agent-linux-amd64" ]]; then
     echo -e "${RED}[!] 编译失败或未找到产物，请检查构建日志。${NC}"

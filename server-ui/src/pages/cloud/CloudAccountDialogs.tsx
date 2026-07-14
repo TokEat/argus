@@ -1,5 +1,5 @@
 import { CheckCircleOutlined, SearchOutlined } from '@ant-design/icons';
-import { Alert, Button, Form, Input, Modal, Select, Spin, Typography } from 'antd';
+import { Alert, Button, Form, Input, Modal, Select, Spin, Tag, Typography } from 'antd';
 import type { FormInstance } from 'antd';
 
 const { Text } = Typography;
@@ -116,16 +116,29 @@ interface CloudDiscoveryModalProps {
     form: FormInstance;
     onSubmit: () => void;
     onCancel: () => void;
+    onRegionChange: (region: string) => void;
 }
 
-export const CloudDiscoveryModal = ({ open, loading, saving, data, form, onSubmit, onCancel }: CloudDiscoveryModalProps) => (
+export const CloudDiscoveryModal = ({ open, loading, saving, data, form, onSubmit, onCancel, onRegionChange }: CloudDiscoveryModalProps) => {
+    const selectedRegion = Form.useWatch('region', form) || data?.region || '';
+    const recommendations = (data?.recommendations || []).filter((item: any) => !selectedRegion || item.region === selectedRegion);
+    const regionOptions = Array.from(new Map<string, { value: string; label: string }>([
+        ...(data?.region ? [[data.region, { value: data.region, label: data.region }] as [string, { value: string; label: string }]] : []),
+        ...(data?.regions || []).map((item: any) => [item.region_id || item.value, { value: item.region_id || item.value, label: `${item.region_id || item.value}${item.local_name ? ` — ${item.local_name}` : ''}` }] as [string, { value: string; label: string }]),
+        ...(data?.recommendations || []).map((item: any) => [item.region, { value: item.region, label: `${item.region}${item.region_name ? ` — ${item.region_name}` : ''}` }] as [string, { value: string; label: string }]),
+    ]).values());
+    const instanceOptions = (recommendations.length ? recommendations : data?.instance_types || []).map((item: any) => ({
+        value: item.instance_type || item.id,
+        label: `${item.instance_type || item.id} — ${item.cpu}核 ${item.memory_gb}GB${item.total_hourly ? ` · ${item.total_hourly} ${item.currency || ''}/小时` : ''}${data?.cheapest?.region === item.region && data?.cheapest?.instance_type === (item.instance_type || item.id) ? ' · 最便宜推荐' : ''}`,
+    }));
+    return (
     <Modal
         title={<><SearchOutlined /> 云资源自动探测</>}
         open={open}
         onCancel={onCancel}
         footer={data ? [
             <Button key="cancel" onClick={onCancel}>取消</Button>,
-            <Button key="save" type="primary" loading={saving} onClick={onSubmit} icon={<CheckCircleOutlined />}>保存配置</Button>,
+            <Button key="save" type="primary" loading={saving} disabled={loading || saving} onClick={onSubmit} icon={<CheckCircleOutlined />}>保存配置</Button>,
         ] : null}
         width={720}
         destroyOnClose
@@ -138,8 +151,21 @@ export const CloudDiscoveryModal = ({ open, loading, saving, data, form, onSubmi
         ) : data ? (
             <Form form={form} layout="vertical">
                 <Alert message="以下资源已通过你的 AK/SK 从云厂商 API 自动获取，请在每一项中选择合适的值后保存。" type="info" showIcon style={{ marginBottom: 20 }} />
-                <Form.Item name="default_instance_type" label={`实例规格 (发现 ${data.instance_types?.length || 0} 个)`} rules={[{ required: true, message: '请选择实例规格' }]}>
-                    <Select placeholder="选择实例规格" showSearch optionFilterProp="label" options={(data.instance_types || []).map((item: any) => ({ value: item.id, label: `${item.id}  —  ${item.cpu}核 ${item.memory_gb}GB  (${item.family})` }))} />
+                {data.cheapest && data.cheapest.region === selectedRegion && (
+                    <Alert
+                        type="success"
+                        showIcon
+                        style={{ marginBottom: 16 }}
+                        message="当前地域最低价推荐"
+                        description={<span><Tag color="green">{data.cheapest.region}</Tag> <strong>{data.cheapest.instance_type}</strong> · {data.cheapest.cpu}核 {data.cheapest.memory_gb}GB · {data.cheapest.total_hourly} {data.cheapest.currency}/{data.cheapest.price_unit || '小时'}（{data.cheapest.price_source === 'spot' ? '竞价' : '按量'}）</span>}
+                    />
+                )}
+                {data.warnings?.length > 0 && <Alert type="warning" showIcon message={data.warnings.join('；')} style={{ marginBottom: 16 }} />}
+                <Form.Item name="region" label="查询地域" rules={[{ required: true, message: '请选择地域' }]}>
+                    <Select placeholder="选择地域" options={regionOptions} onChange={onRegionChange} />
+                </Form.Item>
+                <Form.Item name="default_instance_type" label={`实例规格 (当前地域发现 ${instanceOptions.length} 个)`} rules={[{ required: true, message: '请选择实例规格' }]}>
+                    <Select placeholder="选择实例规格" showSearch optionFilterProp="label" options={instanceOptions} />
                 </Form.Item>
                 <Form.Item name="default_image_id" label={`系统镜像 (发现 ${data.images?.length || 0} 个)`} rules={[{ required: true, message: '请选择系统镜像' }]}>
                     <Select placeholder="选择系统镜像" showSearch optionFilterProp="label" options={(data.images || []).map((item: any) => ({ value: item.id, label: `${item.name}  —  ${item.desc}` }))} />
@@ -157,4 +183,5 @@ export const CloudDiscoveryModal = ({ open, loading, saving, data, form, onSubmi
             </div>
         )}
     </Modal>
-);
+    );
+};

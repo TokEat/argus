@@ -30,10 +30,11 @@ type ResourceItem struct {
 
 // InstanceTypeItem 实例规格条目
 type InstanceTypeItem struct {
-	ID     string  `json:"id"`
-	CPU    int     `json:"cpu"`
-	Memory float64 `json:"memory_gb"`
-	Family string  `json:"family"`
+	ID          string  `json:"id"`
+	CPU         int     `json:"cpu"`
+	Memory      float64 `json:"memory_gb"`
+	Family      string  `json:"family"`
+	HourlyPrice float64 `json:"hourly_price,omitempty"`
 }
 
 // DiscoverResources 根据 AK/SK 自动发现该地域下可用的云资源
@@ -42,7 +43,6 @@ func (p *ECSProvider) DiscoverResources() (interface{}, error) {
 		return nil, fmt.Errorf("资源发现需要指定地域 (Region)，请先选择地域后再执行")
 	}
 	result := &DiscoveryResult{}
-
 
 	// 1. 查询安全组
 	sgReq := &ecs.DescribeSecurityGroupsRequest{
@@ -154,13 +154,17 @@ func (p *ECSProvider) DiscoverResources() (interface{}, error) {
 		}
 	}
 
-	// 5. 查询推荐实例规格（计算型 c 系列优先）
-	itReq := &ecs.DescribeInstanceTypesRequest{
-		InstanceTypeFamily: tea.String("ecs.c6"),
-	}
-	itRes, err := p.client.DescribeInstanceTypes(itReq)
-	if err == nil && itRes.Body != nil && itRes.Body.InstanceTypes != nil {
+	// 5. 查询推荐实例规格。经济型/通用型 2C2G 规格必须包含在候选集中。
+	for _, family := range []string{"ecs.e", "ecs.u1", "ecs.c6", "ecs.g6"} {
+		itReq := &ecs.DescribeInstanceTypesRequest{InstanceTypeFamily: tea.String(family)}
+		itRes, err := p.client.DescribeInstanceTypes(itReq)
+		if err != nil || itRes.Body == nil || itRes.Body.InstanceTypes == nil {
+			continue
+		}
 		for _, it := range itRes.Body.InstanceTypes.InstanceType {
+			if it.InstanceTypeId == nil {
+				continue
+			}
 			cpu := int32(0)
 			if it.CpuCoreCount != nil {
 				cpu = *it.CpuCoreCount
@@ -169,41 +173,28 @@ func (p *ECSProvider) DiscoverResources() (interface{}, error) {
 			if it.MemorySize != nil {
 				mem = *it.MemorySize
 			}
-			// 只显示 2~16 核的规格，过滤超大机型
-			if cpu >= 2 && cpu <= 16 {
-				result.InstanceTypes = append(result.InstanceTypes, InstanceTypeItem{
-					ID:     *it.InstanceTypeId,
-					CPU:    int(cpu),
-					Memory: float64(mem),
-					Family: "ecs.c6",
-				})
+			if cpu < 1 || cpu > 16 {
+				continue
 			}
+			result.InstanceTypes = append(result.InstanceTypes, InstanceTypeItem{
+				ID: *it.InstanceTypeId, CPU: int(cpu), Memory: float64(mem), Family: family,
+			})
 		}
 	}
 
-	// 补充 g6 (通用型) 系列
-	itReq2 := &ecs.DescribeInstanceTypesRequest{
-		InstanceTypeFamily: tea.String("ecs.g6"),
-	}
-	itRes2, err := p.client.DescribeInstanceTypes(itReq2)
-	if err == nil && itRes2.Body != nil && itRes2.Body.InstanceTypes != nil {
-		for _, it := range itRes2.Body.InstanceTypes.InstanceType {
-			cpu := int32(0)
-			if it.CpuCoreCount != nil {
-				cpu = *it.CpuCoreCount
-			}
-			mem := float32(0)
-			if it.MemorySize != nil {
-				mem = *it.MemorySize
-			}
-			if cpu >= 2 && cpu <= 16 {
-				result.InstanceTypes = append(result.InstanceTypes, InstanceTypeItem{
-					ID:     *it.InstanceTypeId,
-					CPU:    int(cpu),
-					Memory: float64(mem),
-					Family: "ecs.g6",
-				})
-			}
+	// 6. 仅为 2C2G/2C4G 候选查询价格，避免对所有规格逐一计价。
+	for i := range result.InstanceTypes {
+		candidate := &result.InstanceTypes[i]
+		if candidate.CPU < 1 || candidate.CPU > 4 || candidate.Memory > 16 {
+			continue
+		}
+		price, priceErr := p.QueryPrice(candidate.ID, "SpotAsPriceGo")
+		if priceErr != nil || price == nil {
+			continue
+		}
+		candidate.HourlyPrice = price.SpotPrice
+		if candidate.HourlyPrice <= 0 {
+			candidate.HourlyPrice = price.TotalHourly
 		}
 	}
 

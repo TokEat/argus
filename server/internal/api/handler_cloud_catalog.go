@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/user/dddd-server/internal/cloud"
@@ -49,7 +50,6 @@ func (h *CloudHandler) checkCloudPermissions(c *gin.Context) {
 
 func (h *CloudHandler) queryCloudPrice(c *gin.Context) {
 	id := c.Param("id")
-	tenantID := currentTenantID(c)
 
 	var account db.CloudAccount
 	var ok bool
@@ -74,19 +74,7 @@ func (h *CloudHandler) queryCloudPrice(c *gin.Context) {
 		return
 	}
 
-	// 获取关联策略的竞价策略
-	spotStrategy := "SpotAsPriceGo"
-	var policy db.CloudScalingPolicy
-	if err := h.DB.Where("cloud_account_id = ? AND tenant_id = ?", id, tenantID).First(&policy).Error; err == nil {
-		if policy.SpotStrategy != "" {
-			spotStrategy = policy.SpotStrategy
-		}
-	}
-
-	// 允许 query 参数覆盖
-	if qs := c.Query("spot_strategy"); qs != "" {
-		spotStrategy = qs
-	}
+	spotStrategy := h.resolveCloudSpotStrategy(c, id)
 	instanceType := account.DefaultInstanceType
 	if qt := c.Query("instance_type"); qt != "" {
 		instanceType = qt
@@ -126,7 +114,6 @@ func (h *CloudHandler) queryCloudPrice(c *gin.Context) {
 
 func (h *CloudHandler) listAvailableInstanceTypes(c *gin.Context) {
 	id := c.Param("id")
-	tenantID := currentTenantID(c)
 
 	var account db.CloudAccount
 	var ok bool
@@ -150,17 +137,7 @@ func (h *CloudHandler) listAvailableInstanceTypes(c *gin.Context) {
 		return
 	}
 
-	// 获取竞价策略
-	spotStrategy := "SpotAsPriceGo"
-	var policy db.CloudScalingPolicy
-	if err := h.DB.Where("cloud_account_id = ? AND tenant_id = ?", id, tenantID).First(&policy).Error; err == nil {
-		if policy.SpotStrategy != "" {
-			spotStrategy = policy.SpotStrategy
-		}
-	}
-	if qs := c.Query("spot_strategy"); qs != "" {
-		spotStrategy = qs
-	}
+	spotStrategy := h.resolveCloudSpotStrategy(c, id)
 
 	region := account.Region
 	if qr := c.Query("region"); qr != "" {
@@ -184,4 +161,52 @@ func (h *CloudHandler) listAvailableInstanceTypes(c *gin.Context) {
 		"region":         region,
 		"default_type":   account.DefaultInstanceType,
 	})
+}
+
+func (h *CloudHandler) listCloudRecommendations(c *gin.Context) {
+	id := c.Param("id")
+	var account db.CloudAccount
+	var ok bool
+	if account, ok = h.loadCloudAccountForUse(c, id, false); !ok {
+		return
+	}
+	akID, err := cloud.DecryptSecret(account.AccessKeyID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "凭证解密失败"})
+		return
+	}
+	akSecret, err := cloud.DecryptSecret(account.AccessKeySecret)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "凭证解密失败"})
+		return
+	}
+	spotStrategy := h.resolveCloudSpotStrategy(c, id)
+	region := strings.TrimSpace(c.Query("region"))
+	if region == "" {
+		region = strings.TrimSpace(account.Region)
+	}
+	if region == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "未指定查询地域，请先配置凭证地域或通过 region 参数指定"})
+		return
+	}
+	result, err := h.setupService().CheapestRecommendations(&account, akID, akSecret, region, spotStrategy)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *CloudHandler) resolveCloudSpotStrategy(c *gin.Context, accountID string) string {
+	strategy := "SpotAsPriceGo"
+	var policy db.CloudScalingPolicy
+	if err := h.DB.Where("cloud_account_id = ? AND tenant_id = ?", accountID, currentTenantID(c)).First(&policy).Error; err == nil {
+		if configured := strings.TrimSpace(policy.SpotStrategy); configured != "" {
+			strategy = configured
+		}
+	}
+	if override := strings.TrimSpace(c.Query("spot_strategy")); override != "" {
+		strategy = override
+	}
+	return strategy
 }

@@ -48,11 +48,12 @@ show_help() {
 dddd build script
 
 Usage:
-  ./build.sh [pack] [--component <name[,name...]>] [--target <os/arch[,os/arch...]>]
+  ./build.sh [pack] [--require-upx] [--component <name[,name...]>] [--target <os/arch[,os/arch...]>]
   ./build.sh --list
 
 Options:
   pack, --pack            启用 UPX 压缩（需本机安装 upx）
+  --require-upx           UPX 缺失、压缩失败或压缩后自检失败时直接终止
   -c, --component         指定组件类型，支持多个逗号分隔：
                           dddd, dddd-agent, dddd-server
   -t, --target            指定平台版本，支持多个逗号分隔：
@@ -110,6 +111,7 @@ contains_target() {
 }
 
 USE_UPX_REQUESTED=false
+REQUIRE_UPX=false
 LIST_ONLY=false
 COMPONENT_FILTER=""
 TARGET_FILTER=""
@@ -117,6 +119,11 @@ TARGET_FILTER=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         pack|--pack)
+            USE_UPX_REQUESTED=true
+            shift
+            ;;
+        --require-upx)
+            REQUIRE_UPX=true
             USE_UPX_REQUESTED=true
             shift
             ;;
@@ -169,6 +176,10 @@ if [[ "$USE_UPX_REQUESTED" == "true" ]]; then
     else
         echo -e "${RED}[!] 收到 pack 参数，但未安装 upx。跳过压缩。${NC}"
         echo -e "${YELLOW}    提示: macOS 请使用 'brew install upx' 安装${NC}"
+        if [[ "$REQUIRE_UPX" == "true" ]]; then
+            echo -e "${RED}[!] 当前构建要求 UPX，无法继续。${NC}"
+            exit 1
+        fi
     fi
 fi
 
@@ -262,6 +273,12 @@ for target in "${SELECTED_TARGETS[@]}"; do
 
         echo -n "  编译 [${name}] ... "
 
+        # 增量构建时，Go 可能保留已被 UPX 压缩且源码未变化的旧产物。
+        # 先移除目标文件，确保本轮从未压缩二进制开始，再执行 UPX 和自检。
+        if [[ "$USE_UPX" == "true" && -f "$out_file" ]]; then
+            rm -f "$out_file"
+        fi
+
         if [[ "$name" == "dddd-agent" ]]; then
             if CGO_ENABLED=0 GOOS="${os}" GOARCH="${arch}" go build \
                 -tags noembed \
@@ -295,7 +312,21 @@ for target in "${SELECTED_TARGETS[@]}"; do
             set -e
 
             if [[ $upx_status -eq 0 ]]; then
-                echo -e "    ${YELLOW}↳ UPX 压缩成功${NC}"
+                set +e
+                upx -t "${out_file}" >/dev/null 2>&1
+                test_status=$?
+                set -e
+                if [[ $test_status -eq 0 ]]; then
+                    echo -e "    ${YELLOW}↳ UPX 压缩并自检成功${NC}"
+                elif [[ "$REQUIRE_UPX" == "true" ]]; then
+                    echo -e "    ${RED}↳ UPX 自检失败，终止构建${NC}"
+                    exit 1
+                else
+                    echo -e "    ${RED}↳ UPX 自检失败，保留未验证产物${NC}"
+                fi
+            elif [[ "$REQUIRE_UPX" == "true" ]]; then
+                echo -e "    ${RED}↳ UPX 压缩失败，终止构建${NC}"
+                exit 1
             else
                 echo -e "    ${RED}↳ UPX 跳过该架构 (暂不支持或失败)${NC}"
             fi

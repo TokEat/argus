@@ -50,6 +50,9 @@ func (h *CloudHandler) discoverCloudResources(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if region := c.Query("region"); region != "" {
+		account.Region = region
+	}
 
 	result, serviceErr := h.setupService().DiscoverResources(&account)
 	if serviceErr != nil {
@@ -64,6 +67,7 @@ func (h *CloudHandler) autoConfigureCloudAccount(c *gin.Context) {
 	accountID := c.Param("id")
 
 	var req struct {
+		Region               string `json:"region"`
 		DefaultInstanceType  string `json:"default_instance_type"`
 		DefaultImageID       string `json:"default_image_id"`
 		DefaultSecurityGroup string `json:"default_security_group"`
@@ -73,11 +77,18 @@ func (h *CloudHandler) autoConfigureCloudAccount(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if req.Region != "" && (req.DefaultInstanceType == "" || req.DefaultImageID == "" || req.DefaultSecurityGroup == "" || req.DefaultVSwitch == "") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "切换地域时必须同时提供实例规格、镜像、安全组和交换机"})
+		return
+	}
 	if _, ok := h.loadCloudAccountForManage(c, accountID); !ok {
 		return
 	}
 
 	updates := map[string]interface{}{}
+	if req.Region != "" {
+		updates["region"] = req.Region
+	}
 	if req.DefaultInstanceType != "" {
 		updates["default_instance_type"] = req.DefaultInstanceType
 	}
@@ -132,6 +143,40 @@ func chooseOneClickInstanceType(instanceTypes []string) string {
 		}
 	}
 	return instanceTypes[0]
+}
+
+func chooseOneClickInstanceTypeFromDiscovery(instanceTypes []cloudInstanceTypeItem) string {
+	if len(instanceTypes) == 0 {
+		return ""
+	}
+	preferred := []string{"ecs.e-c1m1.large", "ecs.u1-c1m1.large", "ecs.c6.large"}
+	best := ""
+	bestPrice := 0.0
+	exact2C2G := make([]cloudInstanceTypeItem, 0)
+	for _, candidate := range instanceTypes {
+		if candidate.CPU == 2 && candidate.Memory >= 1.9 && candidate.Memory <= 2.1 {
+			exact2C2G = append(exact2C2G, candidate)
+			if candidate.HourlyPrice > 0 && (best == "" || candidate.HourlyPrice < bestPrice) {
+				best = candidate.ID
+				bestPrice = candidate.HourlyPrice
+			}
+		}
+	}
+	if best != "" {
+		return best
+	}
+	for _, want := range preferred {
+		for _, candidate := range exact2C2G {
+			if candidate.ID == want {
+				return candidate.ID
+			}
+		}
+	}
+	ids := make([]string, 0, len(instanceTypes))
+	for _, candidate := range instanceTypes {
+		ids = append(ids, candidate.ID)
+	}
+	return chooseOneClickInstanceType(ids)
 }
 
 func containsIgnoreCase(s, sub string) bool {

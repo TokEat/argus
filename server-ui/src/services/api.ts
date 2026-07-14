@@ -860,16 +860,15 @@ export async function deleteOSSFile(accountId: string, objectKey: string): Promi
 }
 
 // Resource Discovery
-export async function discoverCloudResources(accountId: string): Promise<any> {
-    return request.get(`/cloud/accounts/${accountId}/discover`);
+export async function discoverCloudResources(accountId: string, params?: { region?: string }): Promise<any> {
+    return request.get(`/cloud/accounts/${accountId}/discover`, { params });
 }
 
-export async function autoConfigureCloudAccount(accountId: string, data: {
-    default_instance_type?: string;
-    default_image_id?: string;
-    default_security_group?: string;
-    default_v_switch?: string;
-}): Promise<API.MessageResponse> {
+export async function listCloudRecommendations(accountId: string, spotStrategy?: string, region?: string): Promise<API.CloudRecommendationResult> {
+    return request.get(`/cloud/accounts/${accountId}/recommendations`, { params: { ...(spotStrategy ? { spot_strategy: spotStrategy } : {}), ...(region ? { region } : {}) }, timeout: 120000 });
+}
+
+export async function autoConfigureCloudAccount(accountId: string, data: { region?: string; default_instance_type?: string; default_image_id?: string; default_security_group?: string; default_v_switch?: string }): Promise<API.MessageResponse> {
     return request.post(`/cloud/accounts/${accountId}/auto-configure`, data);
 }
 

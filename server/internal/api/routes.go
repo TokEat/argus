@@ -195,6 +195,7 @@ func registerAPIV1Routes(api *gin.RouterGroup) {
 	api.GET("/cloud/accounts/:id/permissions", cloudHandler.checkCloudPermissions)
 	api.GET("/cloud/accounts/:id/price", cloudHandler.queryCloudPrice)
 	api.GET("/cloud/accounts/:id/instance-types", cloudHandler.listAvailableInstanceTypes)
+	api.GET("/cloud/accounts/:id/recommendations", cloudHandler.listCloudRecommendations)
 	// 伸缩策略管理
 	api.GET("/cloud/policies", cloudHandler.listCloudPolicies)
 	api.POST("/cloud/policies", cloudHandler.createCloudPolicy)

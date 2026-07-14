@@ -1,10 +1,11 @@
 import { Form, message } from 'antd';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
     autoConfigureCloudAccount,
     checkCloudPermissions,
     discoverCloudResources,
     listCloudRegions,
+    listCloudRecommendations,
     oneClickSetup,
     updateCloudAccountRegion,
 } from '../../services/api';
@@ -42,28 +43,65 @@ export const useCloudDiscovery = ({
     const [regions, setRegions] = useState<API.RegionInfo[]>([]);
     const [regionAccountId, setRegionAccountId] = useState('');
     const [pendingAction, setPendingAction] = useState<'oneclick' | 'discover' | null>(null);
+    const discoveryRequestRef = useRef(0);
 
-    const discover = useCallback(async (targetAccountId: string) => {
+    const discover = useCallback(async (targetAccountId: string, regionOverride?: string) => {
+        const requestId = ++discoveryRequestRef.current;
+        const account = accounts.find(item => item.id === targetAccountId);
+        const currentRegion = regionOverride || account?.region || '';
         setAccountId(targetAccountId);
         setLoading(true);
         setModalOpen(true);
         setData(null);
         form.resetFields();
+        if (currentRegion) form.setFieldValue('region', currentRegion);
         try {
-            setData(await discoverCloudResources(targetAccountId));
+            const [discovery, recommendations, regionResult] = await Promise.all([
+                discoverCloudResources(targetAccountId, currentRegion ? { region: currentRegion } : undefined),
+                listCloudRecommendations(targetAccountId, undefined, currentRegion || undefined).catch(() => ({ recommendations: [], cheapest: null, warnings: ['当前地域价格查询失败，已保留资源探测结果'] })),
+                listCloudRegions(targetAccountId).catch(() => ({ regions: [] })),
+            ]);
+            const merged = {
+                ...discovery,
+                ...recommendations,
+                regions: regionResult.regions || [],
+                warnings: recommendations.warnings || [],
+                region: currentRegion,
+            };
+            if (requestId !== discoveryRequestRef.current || form.getFieldValue('region') !== currentRegion) return;
+            setData(merged);
+            const initialRecommendation = merged.cheapest || merged.recommendations?.find((item: any) => item.region === currentRegion);
+            form.setFieldsValue({ region: currentRegion });
+            if (initialRecommendation && initialRecommendation.region === currentRegion) {
+                form.setFieldsValue({
+                    default_instance_type: initialRecommendation.instance_type,
+                });
+            }
         } catch (err) {
+            if (requestId !== discoveryRequestRef.current) return;
             const messageText = extractErrorMsg(err);
             if (messageText) message.error(`资源探测失败: ${messageText}`);
         } finally {
-            setLoading(false);
+            if (requestId === discoveryRequestRef.current) setLoading(false);
         }
-    }, [form]);
+    }, [accounts, form]);
 
     const save = useCallback(async () => {
         try {
             const values = await form.validateFields();
+            const requiredFields = ['region', 'default_instance_type', 'default_image_id', 'default_security_group', 'default_v_switch'];
+            const missingField = requiredFields.find(field => !values[field]);
+            if (missingField) {
+                message.warning('当前地域资源尚未探测完成，请等待完成后再保存配置');
+                return;
+            }
             setSaving(true);
-            await autoConfigureCloudAccount(accountId, values);
+            const selectedRecommendation = data?.recommendations?.find((item: any) => item.region === values.region && item.instance_type === values.default_instance_type);
+            await autoConfigureCloudAccount(accountId, selectedRecommendation ? {
+                ...values,
+                region: selectedRecommendation.region,
+                default_instance_type: selectedRecommendation.instance_type,
+            } : values);
             message.success('云资源配置已自动保存到凭证');
             setModalOpen(false);
             onAccountsRefresh();
@@ -73,7 +111,47 @@ export const useCloudDiscovery = ({
         } finally {
             setSaving(false);
         }
-    }, [accountId, form, onAccountsRefresh]);
+    }, [accountId, data, form, onAccountsRefresh]);
+
+    const changeRegion = useCallback(async (targetRegion: string) => {
+        if (!targetRegion) return;
+        const requestId = ++discoveryRequestRef.current;
+        form.setFieldValue('region', targetRegion);
+        form.setFieldsValue({
+            default_instance_type: undefined,
+            default_image_id: undefined,
+            default_security_group: undefined,
+            default_v_switch: undefined,
+        });
+        setData((previous: any) => ({
+            ...previous,
+            region: targetRegion,
+            images: [],
+            security_groups: [],
+            v_switches: [],
+            instance_types: [],
+            recommendations: [],
+            cheapest: null,
+            warnings: [],
+        }));
+        setLoading(true);
+        try {
+            const [discovery, recommendations] = await Promise.all([
+                discoverCloudResources(accountId, { region: targetRegion }),
+                listCloudRecommendations(accountId, undefined, targetRegion).catch(() => ({ recommendations: [], cheapest: null, warnings: [`当前地域 ${targetRegion} 价格查询失败`] })),
+            ]);
+            if (requestId !== discoveryRequestRef.current || form.getFieldValue('region') !== targetRegion) return;
+            setData((previous: any) => ({ ...previous, ...discovery, ...recommendations, region: targetRegion }));
+            if (recommendations.cheapest?.region === targetRegion) {
+                form.setFieldValue('default_instance_type', recommendations.cheapest.instance_type);
+            }
+        } catch (err) {
+            if (requestId !== discoveryRequestRef.current || form.getFieldValue('region') !== targetRegion) return;
+            message.warning(`地域 ${targetRegion} 的资源探测失败，请不要保存该地域配置: ${extractErrorMsg(err)}`);
+        } finally {
+            if (requestId === discoveryRequestRef.current) setLoading(false);
+        }
+    }, [accountId, form]);
 
     const runOneClick = useCallback(async (targetAccountId: string) => {
         const account = accounts.find(item => item.id === targetAccountId);
@@ -125,7 +203,7 @@ export const useCloudDiscovery = ({
             setRegionOpen(false);
             await onAccountsRefresh();
             if (pendingAction === 'oneclick') runOneClick(regionAccountId);
-            else if (pendingAction === 'discover') discover(regionAccountId);
+            else if (pendingAction === 'discover') discover(regionAccountId, regionId);
         } catch (err) {
             message.error(`保存地域失败: ${extractErrorMsg(err)}`);
         }
@@ -170,6 +248,7 @@ export const useCloudDiscovery = ({
         save,
         ensureRegionThen,
         selectRegion,
+        changeRegion,
         checkPermissions,
     };
 };

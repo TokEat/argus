@@ -22,6 +22,7 @@ const apiMocks = vi.hoisted(() => ({
     toggleCloudPolicy: vi.fn(),
     getCloudDashboard: vi.fn(),
     discoverCloudResources: vi.fn(),
+    listCloudRecommendations: vi.fn(),
     autoConfigureCloudAccount: vi.fn(),
     oneClickSetup: vi.fn(),
     checkCloudPermissions: vi.fn(),
@@ -149,6 +150,7 @@ describe('CloudManagement', () => {
         apiMocks.listCloudPolicies.mockResolvedValue([policy()]);
         apiMocks.listUsers.mockResolvedValue([]);
         apiMocks.listCloudRegions.mockResolvedValue({ regions: [] });
+        apiMocks.listCloudRecommendations.mockResolvedValue({ recommendations: [] });
         apiMocks.listAvailableInstanceTypes.mockResolvedValue({ instance_types: [] });
         apiMocks.queryCloudPrice.mockResolvedValue({ status: 'ok' });
         apiMocks.listReleaseFiles.mockResolvedValue({ files: [] });

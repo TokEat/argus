@@ -36,7 +36,15 @@ func (a RequestActor) IsAdmin() bool {
 type CloudProviderFactory func(*db.CloudAccount) (cloud.CloudProvider, error)
 type CloudOSSFactory func(*db.CloudAccount) (cloud.OSSUploader, error)
 type CloudPermissionChecker func(string, string, string) (*aliyun.PermissionCheckResult, error)
-type CloudCatalogFactory func(string, string, string) (*aliyun.ECSProvider, error)
+type CloudCatalog interface {
+	QueryPrice(string, string) (*aliyun.PriceInfo, error)
+	QueryAvailableInstanceTypes(string) ([]aliyun.AvailableInstanceType, error)
+}
+type CloudCatalogFactory func(string, string, string) (CloudCatalog, error)
+
+func defaultCloudCatalogFactory(accessKeyID, accessKeySecret, region string) (CloudCatalog, error) {
+	return aliyun.NewECSProvider(accessKeyID, accessKeySecret, region)
+}
 
 // CloudHandler owns the dependencies used by Cloud API handlers.
 type CloudHandler struct {
@@ -57,7 +65,7 @@ func NewCloudHandler(store *gorm.DB, autoScaler *cloud.AutoScaler) *CloudHandler
 		ProviderFactory: cloud.NewProviderFromAccount,
 		OSSFactory:      cloud.NewOSSFromAccount,
 		PermissionCheck: aliyun.CheckPermissions,
-		CatalogFactory:  aliyun.NewECSProvider,
+		CatalogFactory:  defaultCloudCatalogFactory,
 	}
 	handler.rebuildServices()
 	return handler
@@ -80,7 +88,7 @@ func (h *CloudHandler) normalize() *CloudHandler {
 		h.PermissionCheck = aliyun.CheckPermissions
 	}
 	if h.CatalogFactory == nil {
-		h.CatalogFactory = aliyun.NewECSProvider
+		h.CatalogFactory = defaultCloudCatalogFactory
 	}
 	h.rebuildServices()
 	return h
@@ -99,6 +107,7 @@ func (h *CloudHandler) setupService() *CloudSetupService {
 	h.rebuildServices()
 	h.Setup.DB = h.DB
 	h.Setup.ProviderFactory = h.ProviderFactory
+	h.Setup.CatalogFactory = h.CatalogFactory
 	h.Setup.OSSFactory = h.OSSFactory
 	return h.Setup
 }

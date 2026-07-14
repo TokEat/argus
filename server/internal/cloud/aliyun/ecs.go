@@ -549,13 +549,14 @@ func (p *ECSProvider) searchPublicImage(instanceType string) string {
 	}
 	return ""
 }
+
 // isFatalCloudError 判断是否为账户级致命错误（不应重试）
 func isFatalCloudError(errMsg string) bool {
 	fatalKeywords := []string{
-		"NotEnoughBalance",   // 余额不足
-		"RealNameAuthenticationError", // 未实名认证
-		"Forbidden",          // 权限不足
-		"QuotaExceeded",      // 配额超限
+		"NotEnoughBalance",             // 余额不足
+		"RealNameAuthenticationError",  // 未实名认证
+		"Forbidden",                    // 权限不足
+		"QuotaExceeded",                // 配额超限
 		"MaxSpotInstanceCountExceeded", // 抢占式实例配额超限
 		"OperationDenied.RiskControl",  // 风控
 	}
@@ -596,9 +597,9 @@ func generateFallbackTypes(instanceType string) []string {
 	// 主流计算/通用/内存系列的代际升级路径
 	// 排除 e (经济型，有镜像限制)、t (突发型，CPU 受限)、s (共享型，性能不稳定)
 	upgradeMap := map[string][]string{
-		"c": {"c7", "c8y", "c8i", "c7a", "c8a"},     // 计算型
-		"g": {"g7", "g8y", "g8i", "g7a", "g8a"},     // 通用型
-		"r": {"r7", "r8y", "r8i", "r7a", "r8a"},     // 内存型
+		"c": {"c7", "c8y", "c8i", "c7a", "c8a"}, // 计算型
+		"g": {"g7", "g8y", "g8i", "g7a", "g8a"}, // 通用型
+		"r": {"r7", "r8y", "r8i", "r7a", "r8a"}, // 内存型
 	}
 
 	candidates, ok := upgradeMap[family]
@@ -832,13 +833,13 @@ func (p *ECSProvider) ListInstances(tags map[string]string) ([]*cloud.Instance, 
 
 // PriceInfo 实例价格查询结果
 type PriceInfo struct {
-	InstancePrice   float64 `json:"instance_price"`   // 实例小时价（元/h）
-	BandwidthPrice  float64 `json:"bandwidth_price"`  // 带宽小时价（元/h）
-	TotalHourly     float64 `json:"total_hourly"`     // 合计小时价
-	Currency        string  `json:"currency"`          // 货币单位
-	SpotPrice       float64 `json:"spot_price"`        // 竞价实例价格（仅 Spot 模式有值）
-	SpotDiscount    float64 `json:"spot_discount"`     // 竞价折扣率 (0-100%)
-	PriceUnit       string  `json:"price_unit"`        // "Hour"
+	InstancePrice  float64 `json:"instance_price"`  // 实例小时价（元/h）
+	BandwidthPrice float64 `json:"bandwidth_price"` // 带宽小时价（元/h）
+	TotalHourly    float64 `json:"total_hourly"`    // 合计小时价
+	Currency       string  `json:"currency"`        // 货币单位
+	SpotPrice      float64 `json:"spot_price"`      // 竞价实例价格（仅 Spot 模式有值）
+	SpotDiscount   float64 `json:"spot_discount"`   // 竞价折扣率 (0-100%)
+	PriceUnit      string  `json:"price_unit"`      // "Hour"
 }
 
 // QueryPrice 查询实例规格的按量付费价格
@@ -937,122 +938,4 @@ func (p *ECSProvider) QueryPrice(instanceType, spotStrategy string) (*PriceInfo,
 	}
 
 	return info, nil
-}
-
-// AvailableInstanceType 可用实例规格（含库存状态）
-type AvailableInstanceType struct {
-	ID       string  `json:"id"`        // ecs.c7.large
-	CPU      int     `json:"cpu"`       // vCPU 核数
-	MemoryGB float64 `json:"memory_gb"` // 内存 GB
-	Family   string  `json:"family"`    // ecs.c7
-	Status   string  `json:"status"`    // WithStock / ClosedWithStock
-}
-
-// QueryAvailableInstanceTypes 查询当前地域下有库存的实例规格列表
-func (p *ECSProvider) QueryAvailableInstanceTypes(spotStrategy string) ([]AvailableInstanceType, error) {
-	// 主流系列（含 ecs.e 经济型——创建时若镜像不兼容会自动查找兼容镜像）
-	families := []string{"ecs.c7", "ecs.c8y", "ecs.c8i", "ecs.g7", "ecs.g8y", "ecs.r7", "ecs.e", "ecs.u1", "ecs.c6", "ecs.g6"}
-
-	// 1. 查询可用资源（带库存状态）
-	stockMap := make(map[string]string) // instanceType -> statusCategory
-	req := &ecs.DescribeAvailableResourceRequest{
-		RegionId:            tea.String(p.regionId),
-		DestinationResource: tea.String("InstanceType"),
-		InstanceChargeType:  tea.String("PostPaid"),
-		NetworkCategory:     tea.String("vpc"),
-	}
-	if spotStrategy != "" && spotStrategy != "NoSpot" {
-		req.SpotStrategy = tea.String(spotStrategy)
-	}
-
-	res, err := p.client.DescribeAvailableResource(req)
-	if err == nil && res.Body != nil && res.Body.AvailableZones != nil {
-		for _, az := range res.Body.AvailableZones.AvailableZone {
-			status := ""
-			if az.StatusCategory != nil {
-				status = *az.StatusCategory
-			}
-			if status != "WithStock" && status != "ClosedWithStock" && status != "" {
-				continue
-			}
-			if az.AvailableResources == nil {
-				continue
-			}
-			for _, ar := range az.AvailableResources.AvailableResource {
-				if ar.SupportedResources == nil {
-					continue
-				}
-				for _, sr := range ar.SupportedResources.SupportedResource {
-					if sr.Value == nil {
-						continue
-					}
-					srStatus := "WithStock"
-					if sr.StatusCategory != nil {
-						srStatus = *sr.StatusCategory
-					}
-					if srStatus == "WithStock" || srStatus == "ClosedWithStock" {
-						// 保留最好的库存状态
-						existing, ok := stockMap[*sr.Value]
-						if !ok || existing == "ClosedWithStock" {
-							stockMap[*sr.Value] = srStatus
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// 2. 查询实例规格详情（CPU/内存）
-	var result []AvailableInstanceType
-	seen := make(map[string]bool)
-
-	for _, family := range families {
-		itReq := &ecs.DescribeInstanceTypesRequest{
-			InstanceTypeFamily: tea.String(family),
-		}
-		itRes, err := p.client.DescribeInstanceTypes(itReq)
-		if err != nil || itRes.Body == nil || itRes.Body.InstanceTypes == nil {
-			continue
-		}
-		for _, it := range itRes.Body.InstanceTypes.InstanceType {
-			if it.InstanceTypeId == nil {
-				continue
-			}
-			typeID := *it.InstanceTypeId
-			if seen[typeID] {
-				continue
-			}
-
-			cpu := int32(0)
-			if it.CpuCoreCount != nil {
-				cpu = *it.CpuCoreCount
-			}
-			mem := float32(0)
-			if it.MemorySize != nil {
-				mem = *it.MemorySize
-			}
-
-			// 只显示 2~16 核的实用规格
-			if cpu < 2 || cpu > 16 {
-				continue
-			}
-
-			// 检查库存
-			status, hasStock := stockMap[typeID]
-			if !hasStock {
-				continue // 跳过无库存的规格
-			}
-
-			seen[typeID] = true
-			result = append(result, AvailableInstanceType{
-				ID:       typeID,
-				CPU:      int(cpu),
-				MemoryGB: float64(mem),
-				Family:   family,
-				Status:   status,
-			})
-		}
-	}
-
-	return result, nil
 }

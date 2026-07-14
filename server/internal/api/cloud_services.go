@@ -17,6 +17,7 @@ import (
 type CloudSetupService struct {
 	DB              *gorm.DB
 	ProviderFactory CloudProviderFactory
+	CatalogFactory  CloudCatalogFactory
 	OSSFactory      CloudOSSFactory
 }
 
@@ -49,10 +50,11 @@ type cloudResourceItem struct {
 }
 
 type cloudInstanceTypeItem struct {
-	ID     string  `json:"id"`
-	CPU    int     `json:"cpu"`
-	Memory float64 `json:"memory_gb"`
-	Family string  `json:"family"`
+	ID          string  `json:"id"`
+	CPU         int     `json:"cpu"`
+	Memory      float64 `json:"memory_gb"`
+	Family      string  `json:"family"`
+	HourlyPrice float64 `json:"hourly_price"`
 }
 
 type cloudDiscoveryResult struct {
@@ -116,11 +118,7 @@ func (s *CloudSetupService) OneClickSetup(actor RequestActor, account db.CloudAc
 	}
 
 	if len(result.InstanceTypes) > 0 {
-		instanceTypeIDs := make([]string, 0, len(result.InstanceTypes))
-		for _, instanceType := range result.InstanceTypes {
-			instanceTypeIDs = append(instanceTypeIDs, instanceType.ID)
-		}
-		pick := chooseOneClickInstanceType(instanceTypeIDs)
+		pick := chooseOneClickInstanceTypeFromDiscovery(result.InstanceTypes)
 		updates["default_instance_type"] = pick
 		chosen["instance_type"] = pick
 	} else {

@@ -197,9 +197,9 @@ sequenceDiagram
 
 ---
 
-## 4. API 设计 (28 个端点)
+## 4. API 设计 (31 项能力)
 
-云管控的 REST API 均在 `server/internal/api/handler_cloud.go` 中实现：
+云管控 REST API 当前由 `server/internal/api/handler_cloud_*.go` 各领域处理器实现，并通过 `server/internal/api/cloud_handler.go` 统一注入运行依赖；通用云服务编排位于 `server/internal/api/cloud_services.go`，Provider 与 AutoScaler 位于 `server/internal/cloud/`。
 
 | 领域 | 动作 | API 路径 | 备注 |
 |------|------|----------|------|
@@ -208,6 +208,7 @@ sequenceDiagram
 | **凭证** | Update | `PUT /cloud/accounts/:id` | 更新凭证配置（区域、镜像、安全组等） |
 | **凭证** | Delete | `DELETE /cloud/accounts/:id` | 仅当无活跃实例且无绑定伸缩策略时允许删除 |
 | **凭证** | Test | `POST /cloud/accounts/:id/test` | 测试云端连通性 |
+| **凭证** | Bindings | `GET/PUT /cloud/accounts/:id/bindings` | 查询或更新同租户用户绑定关系 |
 | **凭证** | OSS Upload | `POST /cloud/accounts/:id/oss/upload` | 从 Server release/ 上传 Agent 到 OSS |
 | **凭证** | OSS Local Upload | `POST /cloud/accounts/:id/oss/upload-local` | 前端本地文件直传 OSS |
 | **凭证** | OSS Test | `POST /cloud/accounts/:id/oss/test` | 测试 OSS 连通性 |
@@ -221,6 +222,7 @@ sequenceDiagram
 | **凭证** | Permissions | `GET /cloud/accounts/:id/permissions` | AK/SK 权限检查（STS 身份 + RAM 策略比对） |
 | **凭证** | Price | `GET /cloud/accounts/:id/price` | 实时价格查询（按量/竞价），支持 `region` 参数覆盖 |
 | **凭证** | InstanceTypes | `GET /cloud/accounts/:id/instance-types` | 有库存的实例规格列表（含 CPU/内存），支持 `region`、`spot_strategy` 参数覆盖 |
+| **凭证** | Recommendations | `GET /cloud/accounts/:id/recommendations` | 只查询单个地域的库存与价格；默认使用凭证地域，支持 `region`、`spot_strategy` 参数覆盖 |
 | **策略** | List | `GET /cloud/policies` | - |
 | **策略** | Create | `POST /cloud/policies` | - |
 | **策略** | Update | `PUT /cloud/policies/:id` | - |
@@ -230,6 +232,7 @@ sequenceDiagram
 | **实例** | Create | `POST /cloud/instances` | 手动弹容（含可用区智能路由 + 价格预估 + 地域/规格覆盖） |
 | **实例** | Delete | `DELETE /cloud/instances/:id` | 人工强制缩容 |
 | **实例** | Reboot | `POST /cloud/instances/:id/reboot` | OS 级重启；重启后回到 `WaitingReady` 等待 Agent 重注册 |
+| **实例** | Cleanup | `POST /cloud/instances/cleanup` | 清理当前用户可访问范围内的终态实例记录 |
 | **大屏** | Dashboard | `GET /cloud/dashboard` | 活跃账号数、实例统计与最新事件 |
 
 ---
@@ -271,23 +274,32 @@ sequenceDiagram
 - **Cloud-Init 启动参数修正**：默认模板与前端模板统一为 Agent 当前支持的参数集，云实例默认标签改为 `cloud=true,auto_scaled=true,target_type=all`。
 - **前端 Form 稳定性修复**：策略表单提取为 `useMemo` + `useRef` 架构——`useMemo` 隔离无关 state 更新导致的 Tabs re-render，`useRef` 持有 handler 最新引用避免 stale closure；`initialValues` 补全全部字段（含 `name`）作为 Form 重建兜底。
 
-### 5.2 2026-04-28 全链路审查修复
+### 5.2 2026-07-13 架构与调度稳定性修订
+
+- **云处理器职责拆分**：云账号、目录、实例、OSS、策略、仪表盘和一键配置分别由独立处理器承载，避免单一云处理器继续膨胀；`CloudHandler` 通过显式注入的数据库、AutoScaler、Provider Factory 和 OSS Factory 提供运行依赖。
+- **扩容保护**：AutoScaler 增加单轮扩容实例数量上限，并统一扩容冷却记录，避免队列突增或重复评估导致短时间内过量创建实例。
+- **任务恢复收敛**：扩容失败、任务重试和滞留 Pending 子任务恢复路径进一步统一，防止云实例状态与队列状态脱节。
+- **区域与规格覆盖**：手动弹容继续支持以请求参数覆盖默认地域和实例规格，实时价格与可用规格查询也支持地域覆盖，不修改云账号默认配置。
+- **按地域价格推荐**：价格推荐接口改为只查询当前选定地域，默认使用凭证地域；前端切换地域时同步刷新资源和价格，避免一次请求遍历全部地域导致超时。
+- **验证边界**：当前以 Cloud Provider mock smoke 和依赖注入测试验证控制面逻辑；真实云账号下的弹容、回收、OSS 分发仍需按发布清单单独执行 smoke。
+
+### 5.3 2026-04-28 全链路审查修复
 
 - **[P0] reboot_count Migration 缺失修复**：`CloudInstance` GORM 模型中定义了 `RebootCount` 字段（梯度容错策略用于判定"先重启还是直接销毁"），但 `060_add_cloud_tables.sql` 遗漏了对应的 SQL 列。新增 `080_add_cloud_instance_reboot_count.sql` 补齐，修复生产 `apply` 模式下的 SQL 执行错误。
 - **[P1] 多租户 Register 修复**：gRPC `Register` 原先将 Node 的 `tenant_id` 硬编码为 `"default"`，导致非默认租户的云实例注册后 Node 记录与 CloudInstance 记录租户不匹配。修复后优先从 Agent 启动标签 `--tags tenant_id=xxx`（Cloud-Init 注入）提取，回退到关联 CloudInstance 记录的 `tenant_id`，最终兜底 `"default"`。
 - **可用区智能路由**：`CreateInstance` 前新增 `resolveCompatibleVSwitch` 预检步骤：调用 `DescribeAvailableResource` 查询实例规格在当前地域下哪些可用区有库存，若配置的 VSwitch 所在可用区不支持该规格，则自动在同 VPC 下查找或创建兼容可用区的 VSwitch。解决 `InvalidResourceType.NotSupported` 错误（如 `ecs.c6.large` 在 `cn-shanghai-k` 不存在）。
 - **实时价格查询**：新增 `GET /cloud/accounts/:id/price` API，调用 `DescribePrice` + `DescribeSpotPriceHistory` 返回单台小时价、竞价折扣率；前端弹容 Modal 选择凭证后自动查价，展示「单台小时价 + 总费用预估 + 竞价折扣」。
 
-### 5.3 2026-04-28 库存韧性与弹性选择增强
+### 5.4 2026-04-28 库存韧性与弹性选择增强
 
 - **[P0] NoStock 多维重试**：`CreateInstance` 重写为**多规格 × 多可用区**重试循环。当 `RunInstances` 返回 `OperationDenied.NoStock` 或 `InvalidResourceType.NotSupported` 时，自动切换到下一个可用区；穷尽后切换到同族更新代规格（如 c6→c7→c8y→c8i→c7a→c8a），直至找到有库存的组合或全部失败。新增 `getOrCreateVSwitchForZone` 按需解析/创建目标可用区的 VSwitch。
 - **[P0] 实例规格降级引擎**：新增 `generateFallbackTypes()` 函数，内置主流 6 大系列（c/g/r/e/t/s）的代际升级路径映射表，未知系列自动按代际号 +1/+2 尝试。`resolveCompatibleVSwitch` 升级为 `(vSwitchID, resolvedInstanceType, error)` 三元返回，降级后在日志中标注规格变更。
-- **[P1] 可用规格实时查询**：新增 `GET /cloud/accounts/:id/instance-types` API + `QueryAvailableInstanceTypes()` 方法，交叉比对 `DescribeAvailableResource`（库存状态）与 `DescribeInstanceTypes`（CPU/内存详情），返回 10 个主流系列中 2~16 核且有库存的规格列表（含 `WithStock` / `ClosedWithStock` 状态标记）。
+- **[P1] 可用规格实时查询**：新增 `GET /cloud/accounts/:id/instance-types` API + `QueryAvailableInstanceTypes()` 方法，交叉比对 `DescribeAvailableResource`（库存状态）与 `DescribeInstanceTypes`（CPU/内存详情），返回 10 个主流系列中 1~16 核且有库存的规格列表（含 `WithStock` / `ClosedWithStock` 状态标记）。
 - **[P1] 弹容地域可选**：手动弹容 Modal 新增地域 Select 下拉框，选择凭证后自动加载全部可用地域列表；切换地域联动刷新可用规格和实时价格。创建请求支持 `region` 和 `instance_type` 参数覆盖，通过 `ScaleUpManual` 的 `regionOverride` / `instanceTypeOverride` 临时注入（不修改数据库凭证配置）。
 - **[P2] 库存过滤放宽**：`queryAvailableZones` 新增接受 `ClosedWithStock` 状态（限量库存但仍可购买），扩大可用区搜索范围。
-- **[P2] 价格/规格 API Region 覆盖**：`queryCloudPrice` 和 `listAvailableInstanceTypes` 均支持 `?region=xxx` 查询参数覆盖凭证默认地域，供前端跨地域比价/选规格。
+- **[P2] 价格/规格 API Region 覆盖**：`queryCloudPrice`、`listAvailableInstanceTypes` 和地域推荐接口均支持 `?region=xxx` 查询参数覆盖凭证默认地域，供前端按选定地域查询和选规格。
 
-### 5.4 2026-04-28 Phase 11a 文档与功能修订
+### 5.5 2026-04-28 Phase 11a 文档与功能修订
 
 - **移除 Server HTTP Fallback**：统一 Agent 分发通道为 OSS。`ProvisionInstance` 在 OSS 未配置时直接返回错误，不再尝试构造 Server HTTP 下载 URL。设计理由：Server 端从未注册文件下载路由，该路径实际不可用；且公网带宽在高并发冷启动场景下必然成为瓶颈。
 - **EmergencyDump 数据持久化**：从空壳日志改为实际的紧急回收逻辑——Agent 感知 Spot 回收后调用 `EmergencyDump` RPC，Server 端立即将 Node 标记 Offline、回收所有 Running 任务重新入队、标记 CloudInstance 为 Terminating。整个流程 < 1 秒完成，实现零任务丢失。
