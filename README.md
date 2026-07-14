@@ -51,8 +51,8 @@
 - **Agent (数据面)**：轻量游击型探针，即插即用、弹性扩缩
 - **RabbitMQ** 三级优先队列调度：手动 ACK/Nack、超时回收、死节点任务打捞、Channel 自动重建
 - **gRPC** 双向通信：节点注册、心跳、任务派发、流式结果回传、远程终止
-- **PSK 预共享密钥鉴权**：生产模式强制 Agent 双向认证
-- 规则库热更新：支持 POC / 指纹 / Workflow 版本化同步
+- **Agent 鉴权**：生产模式强制使用 PSK 完成接入鉴权，注册后通过 Agent session token 保护后续内部调用
+- 规则库热更新：Server 使用 `arsenal.db` 作为传输包，Agent 同步后物化为本地 `config/` 规则目录再执行扫描
 - JWT 认证 + 多租户隔离中间件
 
 ### 🤖 AI Copilot 与智能化
@@ -71,7 +71,7 @@
 ### 🔗 资源整合
 - Hunter / Fofa / Quake 空间引擎集成
 - Hunter 低感知模式
-- 零 CGO 依赖（纯 Go SQLite），多平台开箱即用
+- 规则传输包使用纯 Go SQLite 驱动；发行构建使用 `CGO_ENABLED=0`，支持多平台交叉编译
 
 ---
 
@@ -142,7 +142,7 @@ Argus 支持三种运行模式：
 
 从 [Releases](https://github.com/P0lar1ght/argus/releases) 下载对应平台的二进制文件，直接命令行运行即可。
 
-> **提示**：v2.0 起可以独立于 config 文件夹运行。
+> **提示**：发行版 CLI 会内嵌 Fingerprint、Workflow、Dir 和 POC 规则，可以独立于 `config/` 目录运行。Agent 采用 `noembed` 构建，通过 Server 下载 `arsenal.db` 后物化为本地 `config/` 目录，不在扫描任务中直接查询 DB。
 
 ### 从源码构建
 
@@ -154,6 +154,7 @@ make all
 make cli        # 单机版 CLI
 make agent      # Agent 探针节点
 make server     # Server 控制面
+make mcp        # MCP 代理
 
 # 全平台交叉编译 (Linux/macOS/Windows)
 ./build.sh
@@ -163,6 +164,8 @@ make server     # Server 控制面
 ```
 
 产物输出在 `bin/`（make）或 `release/`（build.sh）目录。
+
+`build.sh` 默认使用 `CGO_ENABLED=0`、`-trimpath` 和 `-ldflags="-s -w"` 构建发行产物；CLI 内嵌规则，Agent 自动使用 `noembed`。UPX 是可选压缩步骤，未安装、目标平台不支持或压缩失败时会跳过，不影响未压缩产物。
 
 ### 单机模式
 
@@ -209,20 +212,22 @@ make smoke-local
 
 | 环境变量 | 说明 | 示例 |
 |---------|------|------|
-| `ARGUS_AGENT_PSK` | Agent-Server 双向认证预共享密钥 | `openssl rand -hex 32` |
+| `ARGUS_AGENT_PSK` | Agent 接入认证预共享密钥 | `openssl rand -hex 32` |
 | `ARGUS_JWT_SECRET` | Web API JWT 签名密钥 | `openssl rand -hex 32` |
+| `ARGUS_ENCRYPT_KEY` | 云账号等敏感配置的 AES-256 加密密钥 | `openssl rand -base64 32` |
 
-> **安全约束**：生产模式下两个环境变量必须设置，否则 Server 会直接 Fatal 退出。开发环境可通过 `--dev` flag 跳过。
+> **安全约束**：生产模式下以上三个环境变量必须设置，否则 Server 会直接退出。开发环境可通过 `--dev` flag 跳过这些启动检查；`--dev` 不得用于生产环境。
 
 #### 生产部署
 
 ```bash
-# 1. 在开发机或构建机生成 v0.1.0 发行包
-./deploy/build-bundle.sh v0.1.0
+# 1. 在开发机或构建机生成发行包
+VERSION=v0.1.0
+./deploy/build-bundle.sh "$VERSION"
 
 # 2. 上传到目标 Linux 服务器后解包
-tar -xzf argus-release-v0.1.0-linux-amd64.tar.gz
-cd argus-release-v0.1.0
+tar -xzf "argus-release-${VERSION}-linux-amd64.tar.gz"
+cd "argus-release-${VERSION}"
 
 # 3. 使用公网 IP 一键安装控制端
 sudo ./deploy/setup-server.sh --public-ip <ip>
@@ -244,7 +249,7 @@ sudo ./deploy/upgrade-server.sh
 
 升级脚本会复用现有 `argus-server.service` 的安装目录和数据库连接，先创建 `backups/upgrade-<时间>` 备份，再替换二进制、Agent 分发文件和前端资源，执行数据库迁移与规则资产同步，最后重启服务。不要删除旧安装目录下的 `data/`，PostgreSQL 和 RabbitMQ 的持久化数据都在那里。
 
-安装完成后登录控制台，按页面提示接入 Agent，然后创建第一个扫描任务。CloudManagement、OSS 自动弹容和真实云回收若未通过真实云账号 smoke，在 `v0.1.0` 中按 beta 能力发布。
+安装完成后登录控制台，按页面提示接入 Agent，然后创建第一个扫描任务。CloudManagement、OSS 自动弹容和真实云回收必须按发布检查清单完成真实云账号 smoke；未验证的能力应在对应 Release Notes 中标记为 beta。
 
 #### 开发模式
 
@@ -264,7 +269,9 @@ sudo ./deploy/upgrade-server.sh
 | `--amqp` | `amqp://guest:guest@localhost:5672/` | RabbitMQ 地址，空则回退内存队列 |
 | `--grpc` | `50051` | gRPC 监听端口 |
 | `--api` | `:8085` | HTTP API 监听地址 |
+| `--config-dir` | 空 | 预留的规则目录参数；批量导入预编译规则请使用 `--seed-from-db` |
 | `--agent-psk` | 空 | Agent PSK（也可通过 `ARGUS_AGENT_PSK` 设置） |
+| `--seed-from-db` | 空 | 从指定 SQLite seed DB 导入规则到 PostgreSQL 后退出 |
 | `--dev` | `false` | 开发模式，跳过安全检查 |
 
 #### Agent 命令行参数
@@ -273,8 +280,8 @@ sudo ./deploy/upgrade-server.sh
 |------|--------|------|
 | `--server` | `127.0.0.1:50051` | Server gRPC 地址 |
 | `--api` | `http://127.0.0.1:8085` | Server REST API 地址 |
-| `--id` | `agent-local-1` | Agent 唯一标识 |
-| `--workers` | `1` | 并发 worker 数 |
+| `--id` | `agent-<hostname>-<pid>` | Agent 唯一标识 |
+| `--workers` | `0` | 并发 worker 数；`0` 表示按 CPU 自动计算 |
 | `--tags` | 空 | 节点标签 `key1=val1,key2=val2` |
 | `--psk` | 空 | PSK 密钥（也可通过 `ARGUS_AGENT_PSK` 设置） |
 
@@ -308,7 +315,7 @@ dddd -t 172.16.120.11:3307 -npoc
 |------|----------|------|
 | 文本结果 | `result.txt` | `-o` 更改路径，`-ot json` 切换格式 |
 | HTML 报表 | `<timestamp>.html` | `-ho` 更改路径 |
-| 审计日志 | `audit.log`（需 `-a` 开启） | — |
+| 审计日志 | `audit_YYYYMMDD_HHMMSS.log`（需 `-a` 开启） | `-alf` 更改文件名 |
 
 > 扫描可随时终止，结果实时持久化到文件。
 
@@ -358,7 +365,7 @@ argus/
 ├── shared/
 │   └── proto/                 # Protobuf 定义 + 生成桩代码
 │
-├── data/                      # 规则库数据 (arsenal.db)
+├── data/                      # Agent 规则传输包缓存、hash 与备份
 ├── docs/                      # 架构与设计文档
 ├── Makefile                   # 构建入口
 ├── build.sh                   # 全平台交叉编译脚本

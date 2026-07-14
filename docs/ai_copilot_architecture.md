@@ -2,7 +2,9 @@
 
 > 分支：`main`
 >
-> 更新时间：2026-05-07
+> 更新时间：2026-07-14
+
+> 2026-07-14 复核说明：本次仅更新文档同步时间和可执行验证命令。当前代码未新增需要改变 Copilot 动作白名单、审计边界或上下文协议的能力；仍保持草稿优先、人工确认、租户隔离和审计留痕。
 
 本文用于同步当前 AI Copilot / POC AI / EXP Builder 能力的实现状态、架构边界、收口风险和后续推进计划。当前阶段的重点不是重新定义愿景，而是把已经在分支中形成的能力梳理清楚，避免结构化 POC 审查、Python EXP 生成和全局 Copilot 对话几条线互相覆盖。
 
@@ -340,15 +342,15 @@ P3 首批动作必须是草稿类、可取消、低风险动作；发布、审�
 
 | 命令 | 当前结果 | 说明 |
 |------|----------|------|
-| `npm run build` (`server-ui`) | 通过 | 前端类型检查与生产构建已通过，覆盖 Copilot 管理 Tabs |
-| `go test ./server/internal/ai ./server/internal/api` | 通过 | AI/Copilot API、P3 动作确认、Prompt Registry 与路由测试已通过 |
+| `npm --prefix server-ui run build` | 通过 | 前端类型检查与生产构建已通过，覆盖 Copilot 管理 Tabs |
+| `cd server && go test ./internal/ai ./internal/api` | 通过 | AI/Copilot API、P3 动作确认、Prompt Registry 与路由测试已通过 |
 | `go test ./scanner/internal/agent` | 通过 | Agent 调试相关测试已通过 |
 | `git diff --check` | 通过 | 当前工作区无 trailing whitespace |
 
 后续完成标准：
 
-- `go test ./server/internal/ai ./server/internal/api ./scanner/internal/agent` 通过。
-- `npm run build`（`server-ui`）通过。
+- `cd server && go test ./internal/ai ./internal/api` 与 `go test ./scanner/internal/agent` 通过。
+- `npm --prefix server-ui run build` 通过。
 - `git diff --check` 无 trailing whitespace。
 - 手动验证 `/api/v1/ai/config`、`/api/v1/ai/arsenal/analyze/stream`、`/api/v1/ai/chat`、`/api/v1/ai/copilot/prompts`、`/api/v1/ai/tool-invocations` 五条主路径，以及 `/ai-config` 动作白名单和 `/config/exploit` 的 EXP Builder Copilot 上下文。
 

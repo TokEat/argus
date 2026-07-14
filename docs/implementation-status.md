@@ -6,7 +6,16 @@
 >
 > 当前接口清单已经合并到本文末尾，避免实现状态与接口状态分散维护。
 >
-> 最后同步：2026-07-05。本次同步以当前工作树代码为准；只把已经接入 `/api/v1`、Agent 运行链路或 CI/Makefile 的能力标为已实现。
+> 最后同步：2026-07-14。本次同步以当前工作树代码为准；只把已经接入 `/api/v1`、Agent 运行链路或 CI/Makefile 的能力标为已实现。
+
+## 2026-07-14 增量同步
+
+- **规则同步闭环**：Server 可导出带租户边界的 Arsenal SQLite 同步包，Agent 已将同步包物化为 `config/finger.yaml`、`config/workflow.yaml`、`config/dir.yaml`、`config/pocs/`、`config/dict/` 等扫描期目录；`tools/arsenal-sync` 支持将已审核规则回写源码基线，仍需通过 Git diff 和 PR 审查合并。
+- **任务输入校验**：创建任务前新增目标格式、协议和地址范围预校验，避免无效目标进入 RootTask/SubTask 调度链路。
+- **调度稳定性**：扩容增加单轮实例数量上限，扩容冷却、任务重试和滞留 Pending 子任务恢复逻辑已收敛；Spot 回收仍通过 `EmergencyDump`、队列 ACK/NACK 和服务端恢复协程提供兜底。
+- **云资源 API 架构**：云账号、目录、实例、OSS、策略和一键配置处理器已拆分，运行依赖通过 `CloudHandler` 显式注入；当前 mock smoke 覆盖依赖注入、凭证权限边界和主要 OSS/Provider 分支。
+- **MCP 代理**：MCP 客户端已按参数、传输、规则读写、关系查询、调试和产品检索职责拆分，核心规则数据改为类型化 DTO，并增加协议契约测试。
+- **安全基线**：开发模式固定密码登录已删除，弹药库访问继续受管理员权限和审核/发布流程约束。
 
 ---
 
@@ -106,7 +115,7 @@
 | POC / Finger / Workflow / Dir / EXP 配置页 | 可视化 CRUD 可用，已接入在线调试、AI 辅助增强与 EXP Builder |
 | UserManagement | 可用 |
 | ProjectManagement | 项目 viewer / operator / owner 成员分配已接入 |
-| CloudManagement | 云凭证、策略、实例、OSS 制品上传、权限检查和价格/规格选择已接入真实 API |
+| CloudManagement | 云凭证、策略、实例、OSS 制品上传、权限检查和按地域价格/规格选择已接入真实 API |
 | ClientBuild | 构建产物、BuildJob 队列、状态和 `/release/*` 下载入口可用 |
 | AgentLogs | Agent 日志筛选、查看与导出可用 |
 | RoleManagement | 已接入后端角色列表、内置角色只读展示、自定义角色创建/编辑/删除、权限基线说明和租户任务配额配置 |
