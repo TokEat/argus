@@ -90,6 +90,9 @@ jobs:
       - name: Build bundle
         run: ./deploy/build-bundle.sh "${{ steps.version.outputs.version }}"
 
+      - name: Package frontend dist
+        run: tar -czf release/server-ui-dist.tar.gz -C server-ui dist
+
       - name: Upload release bundle
         uses: actions/upload-artifact@v4
         with:
@@ -105,11 +108,56 @@ jobs:
           path: |
             release/dddd-server-linux-amd64
             release/dddd-agent-linux-amd64
+            release/server-ui-dist.tar.gz
             server-ui/dist/**
+
+  cross-build:
+    name: Build ${{ matrix.name }} artifacts
+    needs: preflight
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-amd64
+            goos: windows
+            goarch: amd64
+          - name: windows-arm64
+            goos: windows
+            goarch: arm64
+          - name: darwin-arm64
+            goos: darwin
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install UPX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y upx-ucl
+
+      - name: Build CLI/agent/server for ${{ matrix.name }}
+        # UPX 压缩为尽力而为：windows/amd64 压缩；
+        # darwin 目标不压缩（Mach-O 压缩产物在 macOS 上无法运行），
+        # windows/arm64 目前 UPX 不支持，均保留未压缩产物。
+        run: ./build.sh --pack --component dddd,dddd-agent,dddd-server --target ${{ matrix.goos }}/${{ matrix.goarch }}
+
+      - name: Upload ${{ matrix.name }} binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: argus-${{ matrix.name }}
+          if-no-files-found: error
+          path: release/dddd*
 
   draft-release:
     name: Draft GitHub Release
-    needs: build
+    needs: [build, cross-build]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
@@ -125,5 +173,4 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             release-artifacts/**/*.tar.gz
-            release-artifacts/**/dddd-server-linux-amd64
-            release-artifacts/**/dddd-agent-linux-amd64
+            release-artifacts/**/dddd-*

@@ -2,7 +2,7 @@
 
 # ==============================================================================
 # dddd 全平台自动构建脚本
-# 支持交叉编译：Linux (amd64/arm64), macOS (amd64/arm64), Windows (amd64/386)
+# 支持交叉编译：Linux (amd64/arm64), macOS (amd64/arm64), Windows (amd64/arm64/386)
 #
 # 新增能力：
 # 1) 可按组件类型编译（dddd / dddd-agent / dddd-server）
@@ -34,6 +34,7 @@ declare -a TARGETS=(
     "linux:amd64"
     "linux:arm64"
     "windows:amd64"
+    "windows:arm64"
     "windows:386"
 )
 
@@ -300,11 +301,12 @@ for target in "${SELECTED_TARGETS[@]}"; do
             exit 1
         fi
 
-        if [[ "$USE_UPX" == "true" ]]; then
+        if [[ "$USE_UPX" == "true" && "$os" == "darwin" ]]; then
+            # UPX 压缩的 Mach-O 产物在 macOS 上会被系统直接终止（实测 exit 137），
+            # darwin 平台保持未压缩，与历史 release 产物一致。
+            echo -e "    ${YELLOW}↳ UPX 跳过 darwin (Mach-O 压缩产物无法在 macOS 运行)${NC}"
+        elif [[ "$USE_UPX" == "true" ]]; then
             upx_args="-9 --quiet"
-            if [[ "$os" == "darwin" ]]; then
-                upx_args="$upx_args --force-macos"
-            fi
 
             set +e
             upx $upx_args "${out_file}" >/dev/null 2>&1
