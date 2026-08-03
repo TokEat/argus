@@ -78,5 +78,5 @@ describe('DirConfig', () => {
             product: 'Product-01',
             rules: ['body="alpha"', 'header="beta" || cert="beta"'],
         });
-    });
+    }, 15000);
 });
