@@ -44,5 +44,8 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     globals: true,
+    // CI 并行负载下多步骤 userEvent 交互用例实测可超过默认 5s 超时，
+    // 放宽至 15s，避免重交互用例偶发超时失败（真正挂起的测试仍会失败）。
+    testTimeout: 15000,
   },
 });
