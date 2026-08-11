@@ -22,7 +22,7 @@ func schemaTableSpecs() []schemaTableSpec {
 		{
 			Table:   "projects",
 			Columns: []string{"tenant_id", "owner_user_id", "name", "status", "deleted_at"},
-			Indexes: []string{"idx_projects_tenant_id", "idx_projects_owner_user_id", "idx_projects_status", "idx_projects_deleted_at"},
+			Indexes: []string{"idx_projects_tenant_id", "idx_projects_owner_user_id", "idx_projects_status", "idx_projects_deleted_at", "idx_projects_scope_id"},
 		},
 		{
 			Table:   "project_members",
@@ -35,13 +35,200 @@ func schemaTableSpecs() []schemaTableSpec {
 		},
 		{
 			Table:   "root_tasks",
-			Columns: []string{"project_id", "cron_task_id", "total_targets", "completed_targets", "status"},
-			Indexes: []string{"idx_root_tasks_tenant_id", "idx_root_tasks_project_id", "idx_root_tasks_status"},
+			Columns: []string{"project_id", "cron_task_id", "total_targets", "completed_targets", "status", "archived_at", "current_config_version"},
+			Indexes: []string{"idx_root_tasks_tenant_id", "idx_root_tasks_project_id", "idx_root_tasks_status", "idx_root_tasks_archived_at", "idx_root_tasks_scope_id"},
 		},
 		{
 			Table:   "sub_tasks",
-			Columns: []string{"project_id", "agent_selector", "agent_selector_rules", "timeout_sec", "retry_count", "max_retry"},
-			Indexes: []string{"idx_sub_tasks_project_id", "idx_sub_tasks_root_task_id", "idx_sub_tasks_status"},
+			Columns: []string{"project_id", "batch_id", "attempt_no", "parent_attempt_id", "trigger", "failure_reason", "agent_selector", "agent_selector_rules", "timeout_sec", "retry_count", "max_retry", "config_version", "rule_version", "started_at", "finished_at"},
+			Indexes: []string{"idx_sub_tasks_project_id", "idx_sub_tasks_root_task_id", "idx_sub_tasks_batch_id", "idx_sub_tasks_parent_attempt_id", "idx_sub_tasks_trigger", "idx_sub_tasks_status", "idx_sub_tasks_started_at", "idx_sub_tasks_finished_at", "idx_sub_tasks_scope_attempt_id", "idx_sub_tasks_scope_attempt_agent_id"},
+		},
+		{
+			Table:   "task_batches",
+			Columns: []string{"tenant_id", "project_id", "root_task_id", "sequence", "kind", "target_type", "targets", "target_count", "status", "control_state", "config_version", "rule_version", "priority", "timeout_sec", "agent_selector", "agent_selector_rules", "current_attempt_no", "attempt_count", "latest_attempt_id", "created_by", "created_at", "updated_at", "archived_at"},
+			Indexes: []string{"idx_task_batches_tenant_id", "idx_task_batches_project_id", "idx_task_batches_root_task_id", "idx_task_batches_task_sequence", "idx_task_batches_kind", "idx_task_batches_target_type", "idx_task_batches_status", "idx_task_batches_control_state", "idx_task_batches_latest_attempt_id", "idx_task_batches_created_by", "idx_task_batches_archived_at", "idx_task_batches_scope_id"},
+		},
+		{
+			Table:   "task_config_revisions",
+			Columns: []string{"tenant_id", "project_id", "root_task_id", "version", "config", "config_hash", "priority", "timeout_sec", "agent_selector", "agent_selector_rules", "created_by", "change_note", "created_at"},
+			Indexes: []string{"idx_task_config_revisions_tenant_id", "idx_task_config_revisions_project_id", "idx_task_config_revisions_root_task_id", "idx_task_config_revisions_task_version", "idx_task_config_revisions_config_hash", "idx_task_config_revisions_created_by", "idx_task_config_revisions_scope_version"},
+		},
+		{
+			Table:   "task_audits",
+			Columns: []string{"tenant_id", "project_id", "root_task_id", "batch_id", "attempt_id", "operator_id", "action", "before_status", "after_status", "details", "created_at"},
+			Indexes: []string{"idx_task_audits_tenant_id", "idx_task_audits_project_id", "idx_task_audits_root_task_id", "idx_task_audits_batch_id", "idx_task_audits_attempt_id", "idx_task_audits_operator_id", "idx_task_audits_action", "idx_task_audits_created_at"},
+		},
+		{
+			Table: "asset_discovery_audits",
+			Columns: []string{
+				"tenant_id", "project_id", "notebook_item_id", "provider", "action", "operator_id", "query_hash", "config_version", "config_hash",
+				"requested_limit", "provider_total", "returned_count", "skipped_rows", "truncated", "status", "error_code", "duration_ms", "created_at",
+			},
+			Indexes: []string{
+				"idx_asset_discovery_audits_tenant_id", "idx_asset_discovery_audits_project_id", "idx_asset_discovery_audits_provider",
+				"idx_asset_discovery_audits_action", "idx_asset_discovery_audits_operator_id", "idx_asset_discovery_audits_query_hash",
+				"idx_asset_discovery_audits_status", "idx_asset_discovery_audits_error_code", "idx_asset_discovery_audits_created_at",
+				"idx_asset_discovery_audits_scope_id", "idx_asset_discovery_audits_notebook_item_id",
+			},
+		},
+		{
+			Table: "asset_discovery_snapshots",
+			Columns: []string{
+				"schema_version", "tenant_id", "project_id", "audit_id", "provider", "expression", "query_hash", "config_version", "config_hash",
+				"requested_limit", "provider_total", "returned_count", "skipped_rows", "truncated", "created_by", "created_at",
+			},
+			Indexes: []string{
+				"idx_asset_discovery_snapshots_audit_id", "idx_asset_discovery_snapshots_tenant_id", "idx_asset_discovery_snapshots_project_id",
+				"idx_asset_discovery_snapshots_provider", "idx_asset_discovery_snapshots_query_hash", "idx_asset_discovery_snapshots_created_by",
+				"idx_asset_discovery_snapshots_created_at", "idx_asset_discovery_snapshots_project_created",
+				"idx_asset_discovery_snapshots_scope_id",
+			},
+		},
+		{
+			Table: "asset_discovery_snapshot_items",
+			Columns: []string{
+				"tenant_id", "project_id", "snapshot_id", "position", "normalized_target", "target_hash", "ip", "port", "domain", "protocol",
+				"title", "icp", "country", "city", "company", "status_code", "source", "observed_at", "created_at",
+			},
+			Indexes: []string{
+				"idx_asset_discovery_snapshot_items_target", "idx_asset_discovery_snapshot_items_tenant_id", "idx_asset_discovery_snapshot_items_project_id",
+				"idx_asset_discovery_snapshot_items_snapshot_id", "idx_asset_discovery_snapshot_items_ip", "idx_asset_discovery_snapshot_items_domain",
+				"idx_asset_discovery_snapshot_items_protocol", "idx_asset_discovery_snapshot_items_source", "idx_asset_discovery_snapshot_items_observed_at",
+				"idx_asset_discovery_snapshot_items_project_snapshot",
+				"idx_asset_discovery_snapshot_items_scope_id",
+			},
+		},
+		{
+			Table: "asset_discovery_notebook_items",
+			Columns: []string{
+				"tenant_id", "project_id", "normalized_target", "target_hash", "created_by", "created_at", "updated_at", "updated_by", "note", "removed_at", "removed_by",
+			},
+			Indexes: []string{
+				"idx_asset_discovery_notebook_items_target", "idx_asset_discovery_notebook_items_scope_id",
+				"idx_asset_discovery_notebook_items_tenant_id", "idx_asset_discovery_notebook_items_project_id",
+				"idx_asset_discovery_notebook_items_created_by", "idx_asset_discovery_notebook_items_created_at",
+				"idx_asset_discovery_notebook_items_updated_at", "idx_asset_discovery_notebook_items_updated_by",
+				"idx_asset_discovery_notebook_items_removed_at", "idx_asset_discovery_notebook_items_removed_by", "idx_adn_items_active_updated",
+			},
+		},
+		{
+			Table: "asset_discovery_notebook_sources",
+			Columns: []string{
+				"tenant_id", "project_id", "notebook_item_id", "snapshot_id", "snapshot_item_id", "audit_id", "archived_by", "archived_at",
+			},
+			Indexes: []string{
+				"idx_asset_discovery_notebook_sources_snapshot_item", "idx_asset_discovery_notebook_sources_tenant_id",
+				"idx_asset_discovery_notebook_sources_project_id", "idx_asset_discovery_notebook_sources_notebook_item_id",
+				"idx_asset_discovery_notebook_sources_snapshot_id", "idx_asset_discovery_notebook_sources_snapshot_item_id",
+				"idx_asset_discovery_notebook_sources_audit_id", "idx_asset_discovery_notebook_sources_archived_by",
+				"idx_asset_discovery_notebook_sources_archived_at",
+			},
+		},
+		{Table: "asset_discovery_notebook_tags", Columns: []string{"id", "tenant_id", "project_id", "name", "created_at"}, Indexes: []string{"idx_adn_tag", "idx_adn_tag_scope"}},
+		{Table: "asset_discovery_notebook_item_tags", Columns: []string{"id", "tenant_id", "project_id", "notebook_item_id", "tag_id", "created_at"}, Indexes: []string{"idx_adn_item_tag"}},
+		{
+			Table: "asset_discovery_notebook_distribution_intents",
+			Columns: []string{
+				"schema_version", "tenant_id", "project_id", "root_task_id", "operator_id", "operation", "idempotency_key_hash", "request_hash", "plan_hash", "config_hash", "preview_schema_version", "task_status", "config_version", "rule_version", "selected", "fresh", "duplicate", "scope_added", "seed_targets_added", "batch_count", "status", "created_at",
+			},
+			Indexes: []string{"idx_addi_scope_id", "idx_addi_idempotency", "idx_addi_task_created", "idx_addi_operator_created", "idx_addi_status_created"},
+		},
+		{
+			Table:   "asset_discovery_notebook_distribution_intent_items",
+			Columns: []string{"tenant_id", "project_id", "intent_id", "position", "notebook_item_id", "normalized_target", "target_hash", "disposition", "created_at"},
+			Indexes: []string{"idx_addii_scope_id", "idx_addii_intent_position", "idx_addii_intent_notebook_item", "idx_addii_intent_target_hash", "idx_addii_notebook_item", "idx_addii_target_hash"},
+		},
+		{
+			Table:   "asset_discovery_notebook_distribution_materializations",
+			Columns: []string{"tenant_id", "project_id", "intent_id", "root_task_id", "status", "task_status", "batch_ids", "attempt_ids", "created_at"},
+			Indexes: []string{"idx_addm_scope_id", "idx_addm_intent", "idx_addm_task_created"},
+		},
+		{
+			Table:   "task_creation_idempotencies",
+			Columns: []string{"schema_version", "tenant_id", "project_id", "operator_id", "operation", "idempotency_key_hash", "request_hash", "root_task_id", "attempt_ids", "project_scope_added", "project_seeds_added", "created_at"},
+			Indexes: []string{"idx_tci_scope_id", "idx_tci_idempotency", "idx_tci_task_created", "idx_tci_operator_created"},
+		},
+		{
+			Table:   "task_append_idempotencies",
+			Columns: []string{"schema_version", "tenant_id", "project_id", "root_task_id", "operator_id", "operation", "idempotency_key_hash", "request_hash", "outcome", "config_version", "config_hash", "rule_version", "before_status", "after_status", "batch_ids", "attempt_ids", "requested_targets", "new_targets", "duplicate_targets", "project_scope_added", "project_seeds_added", "total_chunks", "total_targets", "created_at"},
+			Indexes: []string{"idx_tai_scope_id", "idx_tai_idempotency", "idx_tai_task_created", "idx_tai_operator_created"},
+		},
+		{
+			Table:   "task_retry_idempotencies",
+			Columns: []string{"schema_version", "tenant_id", "project_id", "root_task_id", "operator_id", "operation", "idempotency_key_hash", "request_hash", "before_status", "after_status", "attempt_ids", "completed_skipped", "paused_skipped", "created_at"},
+			Indexes: []string{"idx_tri_scope_id", "idx_tri_idempotency", "idx_tri_task_created", "idx_tri_operator_created"},
+		},
+		{
+			Table:   "task_batch_retry_idempotencies",
+			Columns: []string{"schema_version", "tenant_id", "project_id", "root_task_id", "batch_id", "operator_id", "operation", "idempotency_key_hash", "request_hash", "attempt_id", "attempt_no", "config_version", "config_hash", "rule_version", "before_status", "after_status", "created_at"},
+			Indexes: []string{"idx_tbri_scope_id", "idx_tbri_idempotency", "idx_tbri_batch_created", "idx_tbri_operator_created"},
+		},
+		{
+			Table:   "risk_validation_execution_idempotencies",
+			Columns: []string{"schema_version", "tenant_id", "project_id", "root_task_id", "operator_id", "operation", "idempotency_key_hash", "request_hash", "plan_hash", "poc_set_hash", "config_version", "config_hash", "rule_version", "batch_id", "batch_sequence", "attempt_id", "attempt_no", "candidate_count", "target_count", "poc_count", "estimated_requests", "second_confirmation_required", "before_status", "after_status", "created_at"},
+			Indexes: []string{"idx_rvei_scope_id", "idx_rvei_idempotency", "idx_rvei_task_created", "idx_rvei_operator_created"},
+		},
+		{
+			Table: "scan_observations",
+			Columns: []string{
+				"schema_version", "tenant_id", "project_id", "network_zone", "normalized_target", "target_hash", "stage", "work_key_hash",
+				"scope_hash", "config_hash", "rule_version", "poc_set_hash", "endpoint_content_hash", "source_event_id", "root_task_id", "batch_id",
+				"attempt_id", "agent_id", "outcome", "content_hash", "checkpoint", "checkpoint_hash", "evidence_hash", "error_code", "error_message", "observed_at", "created_at",
+			},
+			Indexes: []string{
+				"idx_scan_observations_tenant_event", "idx_scan_observations_tenant_id", "idx_scan_observations_project_id", "idx_scan_observations_target_hash",
+				"idx_scan_observations_stage", "idx_scan_observations_work_key_hash", "idx_scan_observations_rule_version", "idx_scan_observations_root_task_id",
+				"idx_scan_observations_batch_id", "idx_scan_observations_attempt_id", "idx_scan_observations_agent_id", "idx_scan_observations_outcome",
+				"idx_scan_observations_observed_at", "idx_scan_observations_scope",
+			},
+		},
+		{
+			Table: "scan_coverages",
+			Columns: []string{
+				"schema_version", "tenant_id", "project_id", "network_zone", "normalized_target", "target_hash", "stage", "work_key_hash",
+				"scope_hash", "config_hash", "rule_version", "poc_set_hash", "endpoint_content_hash", "status", "outcome", "started_at", "finished_at",
+				"valid_until", "observation_hash", "source_observation_id", "source_task_id", "source_batch_id", "source_attempt_id", "revision",
+				"invalid_reason", "created_at", "updated_at",
+			},
+			Indexes: []string{
+				"idx_scan_coverages_tenant_project_work", "idx_scan_coverages_tenant_id", "idx_scan_coverages_project_id", "idx_scan_coverages_stage",
+				"idx_scan_coverages_rule_version", "idx_scan_coverages_status", "idx_scan_coverages_outcome", "idx_scan_coverages_finished_at",
+				"idx_scan_coverages_valid_until", "idx_scan_coverages_source_observation_id", "idx_scan_coverages_source_task_id",
+				"idx_scan_coverages_source_batch_id", "idx_scan_coverages_source_attempt_id", "idx_scan_coverages_lookup",
+			},
+		},
+		{
+			Table: "scan_work_claims",
+			Columns: []string{
+				"schema_version", "tenant_id", "project_id", "network_zone", "normalized_target", "target_hash", "stage", "work_key_hash", "scope_hash", "config_hash",
+				"rule_version", "poc_set_hash", "endpoint_content_hash", "status", "owner_task_id", "owner_batch_id", "owner_attempt_id", "owner_agent_id",
+				"lease_token_hash", "lease_expires_at", "claimed_at", "released_at", "revision", "last_error", "created_at", "updated_at",
+			},
+			Indexes: []string{
+				"idx_scan_work_claims_tenant_project_work", "idx_scan_work_claims_tenant_id", "idx_scan_work_claims_project_id",
+				"idx_scan_work_claims_network_zone", "idx_scan_work_claims_target_hash", "idx_scan_work_claims_stage", "idx_scan_work_claims_rule_version",
+				"idx_scan_work_claims_status", "idx_scan_work_claims_owner_task_id", "idx_scan_work_claims_owner_batch_id",
+				"idx_scan_work_claims_owner_attempt_id", "idx_scan_work_claims_owner_agent_id", "idx_scan_work_claims_lease_expires_at",
+			},
+		},
+		{
+			Table: "task_coverage_links",
+			Columns: []string{
+				"schema_version", "tenant_id", "project_id", "root_task_id", "batch_id", "attempt_id", "work_key_hash", "link_type", "status", "coverage_id", "claim_id",
+				"source_task_id", "source_batch_id", "source_attempt_id", "reason", "created_at", "updated_at",
+			},
+			Indexes: []string{
+				"idx_task_coverage_links_destination_work", "idx_task_coverage_links_tenant_id", "idx_task_coverage_links_project_id",
+				"idx_task_coverage_links_root_task_id", "idx_task_coverage_links_batch_id", "idx_task_coverage_links_attempt_id",
+				"idx_task_coverage_links_work_key_hash", "idx_task_coverage_links_link_type", "idx_task_coverage_links_status",
+				"idx_task_coverage_links_coverage_id", "idx_task_coverage_links_claim_id", "idx_task_coverage_links_source_task_id",
+				"idx_task_coverage_links_source_batch_id", "idx_task_coverage_links_source_attempt_id",
+			},
+		},
+		{
+			Table:   "scan_timing_events",
+			Columns: []string{"schema_version", "tenant_id", "project_id", "root_task_id", "batch_id", "attempt_id", "agent_id", "source_event_id", "kind", "stage", "outcome", "started_at", "finished_at", "duration_ns", "config_version", "rule_version", "created_at"},
+			Indexes: []string{"idx_scan_timing_events_tenant_source_event", "idx_scan_timing_events_scope_created", "idx_scan_timing_events_attempt_created"},
 		},
 		{
 			Table:   "nodes",
@@ -213,8 +400,8 @@ func schemaTableSpecs() []schemaTableSpec {
 		},
 		{
 			Table:   "poc_rules",
-			Columns: []string{"artifact_id", "source_file", "name", "target_product", "cve", "compatibility_status", "source_version", "severity", "enabled"},
-			Indexes: []string{"idx_poc_rule_unique", "idx_poc_rules_enabled", "idx_poc_rules_target_product", "idx_poc_rules_cve", "idx_poc_rules_compatibility_status", "idx_poc_rules_tenant_enabled_updated", "idx_poc_rules_name_trgm", "idx_poc_rules_source_file_trgm"},
+			Columns: []string{"artifact_id", "source_file", "name", "target_product", "cve", "compatibility_status", "source_version", "severity", "execution_class", "risk_level", "enabled"},
+			Indexes: []string{"idx_poc_rule_unique", "idx_poc_rules_enabled", "idx_poc_rules_target_product", "idx_poc_rules_cve", "idx_poc_rules_compatibility_status", "idx_poc_rules_execution_class", "idx_poc_rules_risk_level", "idx_poc_rules_tenant_enabled_updated", "idx_poc_rules_name_trgm", "idx_poc_rules_source_file_trgm"},
 		},
 		{
 			Table:   "workflow_rules",

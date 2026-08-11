@@ -988,14 +988,21 @@ Required fields:
 - id: stable safe identifier
 - info.name
 - info.severity
+- info.metadata.argus-execution-class: detection or verification
+- info.metadata.argus-risk-level: low, medium or high
 - requests: HTTP request definitions
 - matchers: status, word, regex or other supported Nuclei matchers
+
+Legacy templates without Argus governance metadata are indexed as detection + unknown and require elevated confirmation. The exploit/exp execution class is forbidden for POC rules; capabilities intended to exploit, persist, or change target state must use a separate EXP package. Every POC remains disabled in normal asset discovery and can run only after an explicit risk-validation confirmation; high and unknown risk require a second confirmation.
 
 Minimal structure:
 id: example-poc
 info:
   name: Example POC
   severity: info
+  metadata:
+    argus-execution-class: detection
+    argus-risk-level: low
 requests:
   - method: GET
     path:
@@ -1208,6 +1215,9 @@ info:
   name: Example POC
   author: argus
   severity: info
+  metadata:
+    argus-execution-class: detection
+    argus-risk-level: low
 requests:
   - method: GET
     path:

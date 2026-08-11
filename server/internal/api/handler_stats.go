@@ -12,7 +12,7 @@ func getStats(c *gin.Context) {
 	tenantID := currentTenantID(c)
 	var taskCount, nodeCount, assetCount, fpCount, vulnCount int64
 
-	taskQ := db.DB.Model(&db.RootTask{}).Where("tenant_id = ?", tenantID)
+	taskQ := db.DB.Model(&db.RootTask{}).Where("tenant_id = ? AND archived_at IS NULL", tenantID)
 	taskQ, _ = applyProjectScope(c, taskQ, "project_id")
 	taskQ.Count(&taskCount)
 

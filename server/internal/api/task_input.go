@@ -13,13 +13,7 @@ import (
 
 type taskTargetMode string
 
-const (
-	taskTargetModeDirect     taskTargetMode = "direct"
-	taskTargetModeHunter     taskTargetMode = "hunter"
-	taskTargetModeFofa       taskTargetMode = "fofa"
-	taskTargetModeHunterFofa taskTargetMode = "hunter_fofa"
-	taskTargetModeQuake      taskTargetMode = "quake"
-)
+const taskTargetModeDirect taskTargetMode = "direct"
 
 type taskTargetSummary struct {
 	Mode         string `json:"mode"`
@@ -113,16 +107,19 @@ func defaultTaskScanConfig() taskScanConfig {
 		FofaMaxCount:               100,
 		QuakeSize:                  100,
 		NoSubdomainBruteForce:      true,
-		NoSubFinder:                true,
+		NoSubFinder:                false,
+		Subdomain:                  true,
 		NoHostBind:                 true,
 		GoPocThreads:               50,
-		GolangPoc:                  true,
+		NoDirSearch:                true,
+		NoPoc:                      true,
+		GolangPoc:                  false,
+		DisableGeneralPoc:          true,
 		WAFBypassHeaders:           true,
 		WAFSkipOnManyFingerprints:  true,
 		NoInteractsh:               true,
 		OutputFile:                 "result.txt",
 		OutputType:                 "text",
-		APIConfigFilePath:          "config/api-config.yaml",
 		NucleiTemplate:             "config/pocs",
 		WorkflowYamlPath:           "config/workflow.yaml",
 		FingerConfigFilePath:       "config/finger.yaml",
@@ -153,7 +150,7 @@ func normalizeTaskConfigPayload(raw json.RawMessage) (string, taskTargetMode, er
 		return "", taskTargetModeDirect, err
 	}
 
-	return string(configJSON), detectTargetModeFromConfig(cfg), nil
+	return string(configJSON), taskTargetModeDirect, nil
 }
 
 func normalizeJSONObjectPayload(raw json.RawMessage) ([]byte, error) {
@@ -198,24 +195,18 @@ func normalizeJSONObjectPayload(raw json.RawMessage) ([]byte, error) {
 }
 
 func validateTaskScanConfig(cfg *taskScanConfig) error {
+	if !cfg.NoPoc || cfg.GolangPoc || !cfg.DisableGeneralPoc || strings.TrimSpace(cfg.PocNameForSearch) != "" {
+		return fmt.Errorf("POC execution is isolated from asset discovery; use task risk validation")
+	}
+
 	switch strings.ToLower(strings.TrimSpace(cfg.PortScanType)) {
 	case "", "tcp", "syn":
 	default:
 		return fmt.Errorf("PortScanType must be tcp or syn")
 	}
 
-	if cfg.Quake && (cfg.Hunter || cfg.Fofa) {
-		return fmt.Errorf("Quake cannot be combined with Hunter or Fofa")
-	}
-
-	if cfg.LowPerceptionMode {
-		if cfg.Fofa {
-			return fmt.Errorf("LowPerceptionMode only supports Hunter")
-		}
-		if !cfg.Hunter && !cfg.Fofa {
-			cfg.Hunter = true
-		}
-		cfg.NoDirSearch = true
+	if legacyProviderConfig(*cfg) {
+		return fmt.Errorf("Provider discovery is Server-only; use project asset discovery")
 	}
 
 	if !cfg.SkipHostDiscovery && cfg.NoICMPPing && !cfg.TCPPing {
@@ -229,11 +220,23 @@ func validateTaskScanConfig(cfg *taskScanConfig) error {
 		}
 	}
 
-	if !strings.HasSuffix(strings.ToLower(cfg.APIConfigFilePath), ".yaml") {
-		return fmt.Errorf("APIConfigFilePath must end with .yaml")
-	}
-
 	return nil
+}
+
+// legacyProviderConfig identifies task settings that could cause a Scanner or
+// Agent to use third-party discovery credentials. They are retained solely so
+// persisted legacy task JSON remains decodable and can be failed closed.
+func legacyProviderConfig(cfg taskScanConfig) bool {
+	return cfg.Hunter || cfg.Fofa || cfg.Quake || cfg.LowPerceptionMode || cfg.OnlyIPPort ||
+		strings.TrimSpace(cfg.APIConfigFilePath) != ""
+}
+
+func legacyProviderConfigJSON(configJSON string) bool {
+	if strings.TrimSpace(configJSON) == "" {
+		return false
+	}
+	cfg := defaultTaskScanConfig()
+	return json.Unmarshal([]byte(configJSON), &cfg) == nil && legacyProviderConfig(cfg)
 }
 
 func parseAndValidateTargetsForMode(raw json.RawMessage, mode taskTargetMode) ([]string, taskTargetSummary, error) {
@@ -241,46 +244,19 @@ func parseAndValidateTargetsForMode(raw json.RawMessage, mode taskTargetMode) ([
 	if err != nil {
 		return nil, taskTargetSummary{}, err
 	}
+	targets = normalizeTargetsForMode(targets, mode)
 	return validateTargetsByMode(targets, mode)
 }
 
 func detectTargetModeFromStoredConfig(configJSON string) taskTargetMode {
-	if strings.TrimSpace(configJSON) == "" {
-		return taskTargetModeDirect
-	}
-
-	cfg := defaultTaskScanConfig()
-	_ = json.Unmarshal([]byte(configJSON), &cfg)
-	return detectTargetModeFromConfig(cfg)
-}
-
-func detectTargetModeFromConfig(cfg taskScanConfig) taskTargetMode {
-	switch {
-	case cfg.Quake:
-		return taskTargetModeQuake
-	case cfg.Hunter && cfg.Fofa:
-		return taskTargetModeHunterFofa
-	case cfg.Hunter:
-		return taskTargetModeHunter
-	case cfg.Fofa:
-		return taskTargetModeFofa
-	default:
-		return taskTargetModeDirect
-	}
+	return taskTargetModeDirect
 }
 
 func validateTargetsByMode(targets []string, mode taskTargetMode) ([]string, taskTargetSummary, error) {
 	_, invalid, summary := classifyTargets(targets, mode)
 	if len(invalid) > 0 {
 		target := invalid[0].Target
-		switch mode {
-		case taskTargetModeHunter, taskTargetModeFofa, taskTargetModeHunterFofa:
-			return nil, taskTargetSummary{}, fmt.Errorf("invalid search query %q: hunter/fofa mode requires field=value syntax", target)
-		case taskTargetModeQuake:
-			return nil, taskTargetSummary{}, fmt.Errorf("invalid Quake query %q: quake mode requires field:value syntax", target)
-		default:
-			return nil, taskTargetSummary{}, fmt.Errorf("unsupported target %q", target)
-		}
+		return nil, taskTargetSummary{}, fmt.Errorf("unsupported target %q", target)
 	}
 
 	return targets, summary, nil
@@ -294,39 +270,24 @@ type invalidTarget struct {
 func classifyTargets(targets []string, mode taskTargetMode) (valid []string, invalid []invalidTarget, summary taskTargetSummary) {
 	summary = taskTargetSummary{Mode: string(mode), Total: len(targets)}
 	for _, target := range targets {
-		switch mode {
-		case taskTargetModeHunter, taskTargetModeFofa, taskTargetModeHunterFofa:
-			if !strings.Contains(target, "=") {
-				invalid = append(invalid, invalidTarget{Target: target, Reason: "Hunter/Fofa 查询需要 field=value 语法"})
-				continue
-			}
-			summary.SearchInputs++
-		case taskTargetModeQuake:
-			if !strings.Contains(target, ":") {
-				invalid = append(invalid, invalidTarget{Target: target, Reason: "Quake 查询需要 field:value 语法"})
-				continue
-			}
-			summary.SearchInputs++
+		switch detectDirectTargetType(target) {
+		case "ip":
+			summary.IPs++
+		case "ip_port":
+			summary.IPPorts++
+		case "cidr":
+			summary.CIDRs++
+		case "ip_range":
+			summary.IPRanges++
+		case "domain":
+			summary.Domains++
+		case "domain_port":
+			summary.DomainPorts++
+		case "url":
+			summary.URLs++
 		default:
-			switch detectDirectTargetType(target) {
-			case "ip":
-				summary.IPs++
-			case "ip_port":
-				summary.IPPorts++
-			case "cidr":
-				summary.CIDRs++
-			case "ip_range":
-				summary.IPRanges++
-			case "domain":
-				summary.Domains++
-			case "domain_port":
-				summary.DomainPorts++
-			case "url":
-				summary.URLs++
-			default:
-				invalid = append(invalid, invalidTarget{Target: target, Reason: "无法识别的目标格式"})
-				continue
-			}
+			invalid = append(invalid, invalidTarget{Target: target, Reason: "无法识别的目标格式"})
+			continue
 		}
 		valid = append(valid, target)
 	}
@@ -556,13 +517,8 @@ func selectorForTargetType(targetType string) string {
 
 // groupAndBatchTargets 将目标按类型分组后切批，返回 targetBatchGroup 列表
 // 对于 direct 模式：按 detectDirectTargetType 分组
-// 对于 OSINT 模式：统一归为 osint 类型
+// Task targets are always direct scan targets. Provider queries are Server-only.
 func groupAndBatchTargets(targets []string, targetMode taskTargetMode) []targetBatchGroup {
-	if targetMode != taskTargetModeDirect {
-		// OSINT 模式：所有目标统一类型
-		return batchTargetsOfType(targets, "osint", selectorForTargetType("osint"))
-	}
-
 	// Direct 模式：按目标类型分组
 	grouped := make(map[string][]string) // targetType -> targets
 	groupOrder := make([]string, 0)      // 保持稳定顺序

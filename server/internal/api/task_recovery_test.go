@@ -126,6 +126,79 @@ func TestRecoverPendingTasksCoversGenerationGraceWindow(t *testing.T) {
 	}
 }
 
+func TestRecoverScanWorkClaimWaitersDispatchesTerminalSourceDependents(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.AutoMigrate(&db.ScanWorkClaim{}, &db.TaskCoverageLink{}); err != nil {
+		t.Fatalf("migrate work claim recovery tables: %v", err)
+	}
+	tenantID := "tenant-work-claim-recovery"
+	projectID := "project-work-claim-recovery"
+	source := db.SubTask{
+		ID: "source-work-claim-recovery", TenantID: tenantID, ProjectID: projectID,
+		RootTaskID: "root-source-work-claim-recovery", BatchID: "batch-source-work-claim-recovery",
+		Status: "Done", ChunkTargets: `[` + `"https://recovery.example.test"` + `]`,
+	}
+	waiter := db.SubTask{
+		ID: "waiter-work-claim-recovery", TenantID: tenantID, ProjectID: projectID,
+		RootTaskID: "root-waiter-work-claim-recovery", BatchID: "batch-waiter-work-claim-recovery",
+		Status: "Pending", StreamMsgID: "workclaim:digest", Priority: scheduler.PriorityNormal,
+		ChunkTargets: `[` + `"https://recovery.example.test"` + `]`, Config: `{}`,
+	}
+	claim := db.ScanWorkClaim{
+		SchemaVersion: "argus.scanplan/v1", TenantID: tenantID, ProjectID: projectID,
+		NetworkZone: "agent:agent-recovery", NormalizedTarget: "https://recovery.example.test",
+		Stage: "fingerprint", WorkKeyHash: "recovery-work-key", Status: "active",
+		OwnerTaskID: source.RootTaskID, OwnerBatchID: source.BatchID, OwnerAttemptID: source.ID,
+		OwnerAgentID: "agent-recovery", ClaimedAt: time.Now().Add(-time.Minute), Revision: 1,
+	}
+	for _, record := range []interface{}{
+		&source,
+		&db.RootTask{ID: waiter.RootTaskID, TenantID: tenantID, ProjectID: projectID, Status: "Queued", TotalChunks: 1, TotalTargets: 1},
+		&db.TaskBatch{ID: waiter.BatchID, TenantID: tenantID, ProjectID: projectID, RootTaskID: waiter.RootTaskID, Sequence: 0, Status: "Pending", LatestAttemptID: waiter.ID},
+		&waiter,
+		&claim,
+	} {
+		if err := store.Create(record).Error; err != nil {
+			t.Fatalf("seed work claim recovery: %v", err)
+		}
+	}
+	link := db.TaskCoverageLink{
+		SchemaVersion: "argus.scanplan/v1", TenantID: tenantID, ProjectID: projectID,
+		RootTaskID: waiter.RootTaskID, BatchID: waiter.BatchID, AttemptID: waiter.ID,
+		WorkKeyHash: claim.WorkKeyHash, LinkType: "in_flight", Status: "waiting", ClaimID: claim.ID,
+		SourceTaskID: source.RootTaskID, SourceBatchID: source.BatchID, SourceAttemptID: source.ID,
+	}
+	if err := store.Create(&link).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	queue := scheduler.NewTaskQueue("")
+	defer queue.Close()
+	recoverScanWorkClaimWaiters(queue)
+	task, _, err := queue.TryPopTask(context.Background(), "agent-recovery")
+	if err != nil || task == nil || task.TaskId != waiter.ID {
+		t.Fatalf("recovered task=%+v err=%v", task, err)
+	}
+	if err := store.First(&waiter, "id = ?", waiter.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if waiter.Status != "Pending" || waiter.StreamMsgID != queuedMarkerForQueue(queue) {
+		t.Fatalf("recovered waiter was not durably queued: %+v", waiter)
+	}
+	if err := store.First(&claim, claim.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if claim.Status != "completed" || claim.ReleasedAt == nil {
+		t.Fatalf("terminal source claim was not released: %+v", claim)
+	}
+	if err := store.First(&link, link.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if link.Status != "resolved" {
+		t.Fatalf("waiter provenance was not resolved: %+v", link)
+	}
+}
+
 func TestRecoverPendingTasksFindsRowsThatBecomeStaleAfterInitialScan(t *testing.T) {
 	store := setupAITestDB(t)
 	observedAt := time.Now()
@@ -427,12 +500,21 @@ func TestHandleTimeoutTasksPerformsLastResortSplit(t *testing.T) {
 	if err := store.Where("root_task_id = ?", root.ID).Order("id").Find(&got).Error; err != nil {
 		t.Fatalf("load split subtasks: %v", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("last-resort split count = %d, want 2", len(got))
+	if len(got) != 3 {
+		t.Fatalf("last-resort split attempts = %d, want original plus 2 retries", len(got))
 	}
+	dispatching := 0
 	for _, item := range got {
-		if item.Status != subTaskStatusDispatching || item.RetryCount != 1 {
-			t.Fatalf("last-resort split state = %+v", item)
+		if item.Status == subTaskStatusDispatching {
+			dispatching++
+			if item.RetryCount != 1 || item.ParentAttemptID != sub.ID {
+				t.Fatalf("last-resort retry state = %+v", item)
+			}
+		} else if item.ID != sub.ID || item.Status != "Timeout" || item.FinishedAt == nil {
+			t.Fatalf("last-resort original evidence = %+v", item)
 		}
+	}
+	if dispatching != 2 {
+		t.Fatalf("last-resort dispatching retries = %d, want 2", dispatching)
 	}
 }

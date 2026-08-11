@@ -26,9 +26,19 @@ var roleHierarchy = map[string]int{
 // 权限映射：endpoint pattern => 最低角色
 var permissionRules = map[string]string{
 	// 只读查询：viewer 起可用，仅返回当前 tenant_id 范围内数据。
-	"GET:/projects":                    "viewer",
-	"GET:/tasks":                       "viewer",
-	"GET:/tasks/*":                     "viewer",
+	"GET:/projects": "viewer",
+	"GET:/tasks":    "viewer",
+	"GET:/tasks/*":  "viewer",
+	"GET:/projects/*/asset-discovery/queries":          "viewer",
+	"GET:/projects/*/asset-discovery/queries/*":        "viewer",
+	"GET:/projects/*/asset-discovery/queries/*/export": "viewer",
+	"GET:/projects/*/asset-discovery/notebook-items":   "viewer",
+	"GET:/asset-discovery/notebook-items":              "viewer",
+
+	// This POST computes a read-only, version-bound preview and never schedules work.
+	"POST:/tasks/*/risk-validation/preview": "viewer",
+	"POST:/tasks/*/risk-validation":         "operator",
+
 	"GET:/nodes":                       "viewer",
 	"GET:/vulns":                       "viewer",
 	"GET:/assets":                      "viewer",
@@ -71,6 +81,16 @@ var permissionRules = map[string]string{
 	"GET:/ws":                          "viewer",
 
 	// 日常操作：operator 可创建项目、下发/调整任务和执行受控 MCP 草稿操作。
+	"POST:/projects/*/asset-discovery/fofa/query":                     "operator",
+	"POST:/projects/*/asset-discovery/hunter/query":                   "operator",
+	"POST:/projects/*/asset-discovery/quake/query":                    "operator",
+	"POST:/projects/*/asset-discovery/queries/*/notebook-items":       "operator",
+	"POST:/projects/*/asset-discovery/notebook-distributions/preview": "operator",
+	"POST:/projects/*/asset-discovery/notebook-distributions":         "operator",
+	"PATCH:/projects/*/asset-discovery/notebook-items/*":              "operator",
+	"POST:/projects/*/asset-discovery/notebook-items/*/remove":        "operator",
+	"POST:/projects/*/asset-discovery/notebook-items/*/restore":       "operator",
+
 	"GET:/queue/depth":                 "operator",
 	"GET:/agents/*/logs":               "operator",
 	"GET:/agents/*/pyenv":              "operator",
@@ -93,9 +113,17 @@ var permissionRules = map[string]string{
 	"POST:/tasks/validate-targets":     "operator",
 	"POST:/tasks/*/append":             "operator",
 	"POST:/tasks/*/cancel":             "operator",
+	"POST:/tasks/*/stop":               "operator",
 	"POST:/tasks/*/pause":              "operator",
 	"POST:/tasks/*/resume":             "operator",
+	"POST:/tasks/*/retry":              "operator",
+	"POST:/tasks/*/batches/*/pause":    "operator",
+	"POST:/tasks/*/batches/*/resume":   "operator",
+	"POST:/tasks/*/batches/*/stop":     "operator",
+	"POST:/tasks/*/batches/*/retry":    "operator",
+	"PUT:/tasks/*/config":              "operator",
 	"DELETE:/tasks/*":                  "operator",
+	"DELETE:/tasks/*/batches/*":        "operator",
 	"DELETE:/nodes/*":                  "operator",
 	"POST:/nodes/*/revoke-token":       "admin",
 	"POST:/nodes/clean":                "operator",

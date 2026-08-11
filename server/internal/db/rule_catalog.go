@@ -23,12 +23,21 @@ import (
 
 const (
 	RuleCatalogBootstrapKey    = "rule_catalog_v1"
-	RuleCatalogSchemaVersion   = 3
+	RuleCatalogSchemaVersion   = 4
 	RuleCatalogStatusReady     = "ready"
 	RuleCatalogStatusPartial   = "partial"
 	RuleCatalogStatusEmpty     = "empty"
 	maxRuleCatalogErrorMessage = 4000
 	maxPocDescriptionRunes     = 500
+)
+
+const (
+	PocExecutionClassDetection    = "detection"
+	PocExecutionClassVerification = "verification"
+	PocRiskLevelUnknown           = "unknown"
+	PocRiskLevelLow               = "low"
+	PocRiskLevelMedium            = "medium"
+	PocRiskLevelHigh              = "high"
 )
 
 var (
@@ -88,6 +97,8 @@ type PocRule struct {
 	SourceVersion       string
 	ContentHash         string `gorm:"index"`
 	Severity            string `gorm:"index;default:'info'"`
+	ExecutionClass      string `gorm:"index;default:'detection'"`
+	RiskLevel           string `gorm:"index;default:'unknown'"`
 	Tags                string `gorm:"type:text"`
 	Author              string
 	Description         string `gorm:"type:text"`
@@ -96,6 +107,39 @@ type PocRule struct {
 	Enabled             bool   `gorm:"default:true;index"`
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+}
+
+func NormalizePocExecutionClass(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", PocExecutionClassDetection:
+		return PocExecutionClassDetection, nil
+	case PocExecutionClassVerification:
+		return PocExecutionClassVerification, nil
+	case "exploit", "exp":
+		return "", fmt.Errorf("POC execution_class %q is not allowed; use a separate EXP package", raw)
+	default:
+		return "", fmt.Errorf("POC execution_class must be detection or verification")
+	}
+}
+
+func NormalizePocRiskLevel(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", PocRiskLevelUnknown:
+		return PocRiskLevelUnknown, nil
+	case PocRiskLevelLow:
+		return PocRiskLevelLow, nil
+	case PocRiskLevelMedium:
+		return PocRiskLevelMedium, nil
+	case PocRiskLevelHigh:
+		return PocRiskLevelHigh, nil
+	default:
+		return "", fmt.Errorf("POC risk_level must be unknown, low, medium, or high")
+	}
+}
+
+func PocRequiresSecondConfirmation(riskLevel string) bool {
+	normalized, err := NormalizePocRiskLevel(riskLevel)
+	return err != nil || normalized == PocRiskLevelUnknown || normalized == PocRiskLevelHigh
 }
 
 // WorkflowRule stores one product -> poc -> match_type mapping per row.
@@ -506,7 +550,12 @@ func materializeRuleCatalog(arsenals []Arsenal) materializedRuleCatalog {
 			}
 			out.dirs = append(out.dirs, rows...)
 		case "poc":
-			out.pocs = append(out.pocs, materializePocRule(arsenal))
+			rule, err := materializePocRule(arsenal)
+			if err != nil {
+				out.errors = append(out.errors, err.Error())
+				continue
+			}
+			out.pocs = append(out.pocs, rule)
 		case "exp":
 			rule, err := materializeExploitRule(arsenal)
 			if err != nil {
@@ -695,8 +744,16 @@ func materializeDirRules(arsenal Arsenal) ([]DirRule, error) {
 	return rows, nil
 }
 
-func materializePocRule(arsenal Arsenal) PocRule {
+func materializePocRule(arsenal Arsenal) (PocRule, error) {
 	meta := parsePocMeta([]byte(arsenal.Content))
+	executionClass, err := NormalizePocExecutionClass(meta.executionClass)
+	if err != nil {
+		return PocRule{}, fmt.Errorf("poc governance metadata invalid for %s: %w", arsenal.FileName, err)
+	}
+	riskLevel, err := NormalizePocRiskLevel(meta.riskLevel)
+	if err != nil {
+		return PocRule{}, fmt.Errorf("poc governance metadata invalid for %s: %w", arsenal.FileName, err)
+	}
 	name := meta.id
 	if name == "" {
 		ext := filepath.Ext(arsenal.FileName)
@@ -714,13 +771,15 @@ func materializePocRule(arsenal Arsenal) PocRule {
 		SourceVersion:       meta.sourceVersion,
 		ContentHash:         arsenal.Hash,
 		Severity:            meta.severity,
+		ExecutionClass:      executionClass,
+		RiskLevel:           riskLevel,
 		Tags:                meta.tags,
 		Author:              meta.author,
 		Description:         meta.description,
 		Version:             arsenal.Version,
 		State:               arsenal.State,
 		Enabled:             arsenal.State == "Approved",
-	}
+	}, nil
 }
 
 func materializeExploitRule(arsenal Arsenal) (ExploitRule, error) {
@@ -782,6 +841,8 @@ type pocMeta struct {
 	cve                 string
 	compatibilityStatus string
 	sourceVersion       string
+	executionClass      string
+	riskLevel           string
 }
 
 type exploitMeta struct {
@@ -838,7 +899,12 @@ func parseExploitMeta(content []byte) (exploitMeta, error) {
 func parsePocMeta(content []byte) pocMeta {
 	text := sanitizePostgresText(string(content))
 	content = []byte(text)
-	meta := pocMeta{severity: "info", compatibilityStatus: "unknown"}
+	meta := pocMeta{
+		severity:            "info",
+		compatibilityStatus: "unknown",
+		executionClass:      PocExecutionClassDetection,
+		riskLevel:           PocRiskLevelUnknown,
+	}
 	type nucleiYAML struct {
 		ID   string `yaml:"id"`
 		Info struct {
@@ -863,6 +929,14 @@ func parsePocMeta(content []byte) pocMeta {
 		meta.cve = normalizePocCVE(stringifyPocMetaValue(parsed.Info.Classification.CVEID))
 		meta.targetProduct = strings.TrimSpace(firstPocMetadataValue(parsed.Info.Metadata, "product", "vendor", "fofa-query", "shodan-query"))
 		meta.sourceVersion = strings.TrimSpace(firstPocMetadataValue(parsed.Info.Metadata, "version", "source_version", "template-version"))
+		meta.executionClass = strings.TrimSpace(firstPocMetadataValue(parsed.Info.Metadata, "argus-execution-class", "argus_execution_class", "execution-class", "execution_class"))
+		meta.riskLevel = strings.TrimSpace(firstPocMetadataValue(parsed.Info.Metadata, "argus-risk-level", "argus_risk_level", "risk-level", "risk_level"))
+		if meta.executionClass == "" {
+			meta.executionClass = PocExecutionClassDetection
+		}
+		if meta.riskLevel == "" {
+			meta.riskLevel = PocRiskLevelUnknown
+		}
 		if meta.id != "" || strings.TrimSpace(parsed.Info.Name) != "" {
 			meta.compatibilityStatus = "indexed"
 		}

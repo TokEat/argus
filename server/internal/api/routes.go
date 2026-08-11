@@ -20,18 +20,44 @@ func registerAPIV1Routes(api *gin.RouterGroup) {
 	api.GET("/projects/:id/stats", getProjectStats)
 	api.GET("/projects/:id/members", getProjectMembers)
 	api.PUT("/projects/:id/members", updateProjectMembers)
+	api.POST("/projects/:id/asset-discovery/fofa/query", queryProjectFOFAPreview)
+	api.POST("/projects/:id/asset-discovery/hunter/query", queryProjectHunterPreview)
+	api.POST("/projects/:id/asset-discovery/quake/query", queryProjectQuakePreview)
+	api.GET("/projects/:id/asset-discovery/queries", listProjectDiscoveryQueries)
+	api.GET("/projects/:id/asset-discovery/queries/:snapshot_id", getProjectDiscoveryQuery)
+	api.GET("/projects/:id/asset-discovery/queries/:snapshot_id/export", exportProjectDiscoveryQuery)
+	api.POST("/projects/:id/asset-discovery/queries/:snapshot_id/notebook-items", archiveProjectDiscoveryNotebookItems)
+	api.GET("/projects/:id/asset-discovery/notebook-items", listProjectDiscoveryNotebookItemsOperations)
+	api.PATCH("/projects/:id/asset-discovery/notebook-items/:item_id", patchProjectDiscoveryNotebookItem)
+	api.POST("/projects/:id/asset-discovery/notebook-items/:item_id/remove", removeProjectDiscoveryNotebookItem)
+	api.POST("/projects/:id/asset-discovery/notebook-items/:item_id/restore", restoreProjectDiscoveryNotebookItem)
+	api.GET("/asset-discovery/notebook-items", listTenantDiscoveryNotebookItems)
+	api.POST("/projects/:id/asset-discovery/notebook-distributions/preview", previewProjectNotebookDistribution)
+	api.POST("/projects/:id/asset-discovery/notebook-distributions", materializeProjectNotebookDistribution)
 
 	// 任务 CRUD
 	api.GET("/tasks", getTasks)
 	api.GET("/tasks/:id", getTaskDetail)
+	api.GET("/tasks/:id/config-revisions", getTaskConfigRevisions)
+	api.GET("/tasks/:id/batches", listTaskBatches)
+	api.POST("/tasks/:id/risk-validation/preview", previewTaskRiskValidation)
+	api.POST("/tasks/:id/risk-validation", executeTaskRiskValidation)
 	api.POST("/tasks/preview-selector", previewTaskSelector)
 	api.POST("/tasks/validate-targets", validateTargets)
 	api.POST("/tasks", createTask)
 	api.DELETE("/tasks/:id", deleteTask)
 	api.POST("/tasks/:id/cancel", cancelTask)
+	api.POST("/tasks/:id/stop", cancelTask)
 	api.POST("/tasks/:id/pause", pauseTask)
 	api.POST("/tasks/:id/resume", resumeTask)
+	api.POST("/tasks/:id/retry", retryTask)
 	api.POST("/tasks/:id/append", appendTargets) // 动态追加目标
+	api.PUT("/tasks/:id/config", updateTaskConfig)
+	api.POST("/tasks/:id/batches/:batch_id/pause", pauseTaskBatch)
+	api.POST("/tasks/:id/batches/:batch_id/resume", resumeTaskBatch)
+	api.POST("/tasks/:id/batches/:batch_id/stop", stopTaskBatch)
+	api.POST("/tasks/:id/batches/:batch_id/retry", retryTaskBatch)
+	api.DELETE("/tasks/:id/batches/:batch_id", archiveTaskBatch)
 
 	// 队列监控
 	api.GET("/queue/depth", getQueueDepth)
@@ -156,7 +182,6 @@ func registerAPIV1Routes(api *gin.RouterGroup) {
 	// API 密钥集中管理
 	api.GET("/config/api-keys", getApiKeysConfig)
 	api.PUT("/config/api-keys", saveApiKeysConfig)
-	api.GET("/agents/config/api-keys", getAgentAPIConfig)
 
 	// 用户管理 CRUD
 	api.GET("/users", listUsers)

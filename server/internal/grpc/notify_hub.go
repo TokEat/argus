@@ -129,40 +129,6 @@ func (h *NotifyHub) SendDebugCommand(agentID string, cmd *pb.DebugCommand) error
 	return nil
 }
 
-// BroadcastAPIConfigUpdated notifies online Agents to refresh API key config.
-// The notification intentionally contains no secret material; Agents must fetch
-// their scoped api-config.yaml through the internal HTTP endpoint.
-func (h *NotifyHub) BroadcastAPIConfigUpdated(tenantID string) {
-	tenantID = normalizeNotifyTenantID(tenantID)
-	h.mu.RLock()
-	agents := make([]*agentConn, 0, len(h.agents))
-	for _, conn := range h.agents {
-		if conn.tenantID == tenantID {
-			agents = append(agents, conn)
-		}
-	}
-	h.mu.RUnlock()
-
-	if len(agents) == 0 {
-		log.Printf("[NotifyHub] No agents online to notify api_config_updated for tenant %s", tenantID)
-		return
-	}
-
-	notify := &pb.TaskNotify{NotifyType: "api_config_updated"}
-	notified := 0
-	for _, conn := range agents {
-		conn.sendMu.Lock()
-		err := conn.stream.Send(notify)
-		conn.sendMu.Unlock()
-		if err != nil {
-			log.Printf("[NotifyHub] Failed to notify Agent %s api_config_updated: %v", conn.agentID, err)
-			continue
-		}
-		notified++
-	}
-	log.Printf("[NotifyHub] Broadcast api_config_updated: %d agents notified for tenant %s", notified, tenantID)
-}
-
 func normalizeNotifyTenantID(tenantID string) string {
 	tenantID = strings.TrimSpace(tenantID)
 	if tenantID == "" {

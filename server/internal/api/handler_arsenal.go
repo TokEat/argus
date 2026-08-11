@@ -137,6 +137,12 @@ func saveArsenal(c *gin.Context) {
 		Version:         version,
 		State:           "Draft",
 	}
+	if typ == "poc" {
+		if err := db.ValidateRuleCatalogCandidate(arsenal); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("POC governance validation failed: %v", err)})
+			return
+		}
+	}
 	if err := db.DB.Save(&arsenal).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -156,6 +162,19 @@ func approveArsenal(c *gin.Context) {
 	typ := db.CanonicalArsenalType(c.Param("type"))
 	fn := c.Param("filename")
 	tenantID := currentTenantID(c)
+	if typ == "poc" {
+		var existing db.Arsenal
+		if err := db.DB.Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).First(&existing).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
+			return
+		}
+		candidate := existing
+		candidate.State = "Approved"
+		if err := db.ValidateRuleCatalogCandidate(candidate); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("POC governance validation failed: %v", err)})
+			return
+		}
+	}
 
 	// EXP 包严格校验
 	if typ == "exp" {

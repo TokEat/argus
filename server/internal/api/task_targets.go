@@ -3,7 +3,10 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +31,7 @@ func validateTargets(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	targets = normalizeTargetsForMode(targets, targetMode)
 	valid, invalid, summary := classifyTargets(targets, targetMode)
 	c.JSON(http.StatusOK, gin.H{"valid": valid, "invalid": invalid, "summary": summary})
 }
@@ -86,4 +90,106 @@ func dedupeStrings(items []string) []string {
 		out = append(out, item)
 	}
 	return out
+}
+
+func normalizeTargetsForMode(items []string, mode taskTargetMode) []string {
+	seen := make(map[string]struct{}, len(items))
+	normalized := make([]string, 0, len(items))
+	for _, item := range items {
+		item = normalizeTaskTarget(item, mode)
+		if item == "" {
+			continue
+		}
+		if _, exists := seen[item]; exists {
+			continue
+		}
+		seen[item] = struct{}{}
+		normalized = append(normalized, item)
+	}
+	return normalized
+}
+
+func normalizeTaskTarget(raw string, mode taskTargetMode) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || mode != taskTargetModeDirect {
+		return raw
+	}
+	if canonical, ok := canonicalizeURLTarget(raw); ok {
+		return canonical
+	}
+
+	targetType := detectDirectTargetType(raw)
+	if targetType == "" {
+		// The validators intentionally accept DNS labels case-insensitively, while
+		// URL paths and search queries must retain their original case.
+		targetType = detectDirectTargetType(strings.ToLower(raw))
+	}
+	switch targetType {
+	case "ip":
+		if parsed := net.ParseIP(raw); parsed != nil {
+			return parsed.String()
+		}
+	case "cidr":
+		if _, network, err := net.ParseCIDR(raw); err == nil {
+			return network.String()
+		}
+	case "ip_range":
+		parts := strings.SplitN(raw, "-", 2)
+		if len(parts) == 2 {
+			start := net.ParseIP(strings.TrimSpace(parts[0]))
+			end := net.ParseIP(strings.TrimSpace(parts[1]))
+			if start != nil && end != nil {
+				return start.String() + "-" + end.String()
+			}
+		}
+	case "ip_port":
+		parts := strings.SplitN(raw, ":", 2)
+		if len(parts) == 2 {
+			ip := net.ParseIP(parts[0])
+			port, err := strconv.Atoi(parts[1])
+			if ip != nil && err == nil {
+				return fmt.Sprintf("%s:%d", ip.String(), port)
+			}
+		}
+	case "domain":
+		return strings.ToLower(raw)
+	case "domain_port":
+		parts := strings.SplitN(raw, ":", 2)
+		if len(parts) == 2 {
+			port, err := strconv.Atoi(parts[1])
+			if err == nil {
+				return fmt.Sprintf("%s:%d", strings.ToLower(parts[0]), port)
+			}
+		}
+	case "url":
+		if canonical, ok := canonicalizeURLTarget(raw); ok {
+			return canonical
+		}
+	}
+	return raw
+}
+
+func canonicalizeURLTarget(raw string) (string, bool) {
+	if !strings.Contains(raw, "://") {
+		return "", false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil {
+		return "", false
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	host := strings.ToLower(parsed.Hostname())
+	if port := parsed.Port(); port != "" {
+		host += ":" + port
+	}
+	parsed.Host = host
+	parsed.Fragment = ""
+	if parsed.Path == "/" && parsed.RawQuery == "" {
+		parsed.Path = ""
+	}
+	canonical := parsed.String()
+	if detectDirectTargetType(canonical) != "url" {
+		return "", false
+	}
+	return canonical, true
 }

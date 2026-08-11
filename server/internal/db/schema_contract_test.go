@@ -16,6 +16,15 @@ func TestSchemaModelTableNames(t *testing.T) {
 		"CronTask":               "cron_tasks",
 		"RootTask":               "root_tasks",
 		"SubTask":                "sub_tasks",
+		"TaskBatch":              "task_batches",
+		"TaskConfigRevision":     "task_config_revisions",
+		"TaskAudit":              "task_audits",
+		"AssetDiscoveryAudit":    "asset_discovery_audits",
+		"ScanObservation":        "scan_observations",
+		"ScanCoverage":           "scan_coverages",
+		"ScanWorkClaim":          "scan_work_claims",
+		"TaskCoverageLink":       "task_coverage_links",
+		"ScanTimingEvent":        "scan_timing_events",
 		"NotificationRule":       "notification_rules",
 		"Domain":                 "domains",
 		"Asset":                  "assets",
@@ -56,6 +65,20 @@ func TestSchemaModelTableNames(t *testing.T) {
 		"CloudScalingPolicy":     "cloud_scaling_policies",
 		"CloudInstance":          "cloud_instances",
 	}
+	expected["AssetDiscoverySnapshot"] = "asset_discovery_snapshots"
+	expected["AssetDiscoverySnapshotItem"] = "asset_discovery_snapshot_items"
+	expected["AssetDiscoveryNotebookItem"] = "asset_discovery_notebook_items"
+	expected["AssetDiscoveryNotebookSource"] = "asset_discovery_notebook_sources"
+	expected["AssetDiscoveryNotebookTag"] = "asset_discovery_notebook_tags"
+	expected["AssetDiscoveryNotebookItemTag"] = "asset_discovery_notebook_item_tags"
+	expected["AssetDiscoveryNotebookDistributionIntent"] = "asset_discovery_notebook_distribution_intents"
+	expected["AssetDiscoveryNotebookDistributionIntentItem"] = "asset_discovery_notebook_distribution_intent_items"
+	expected["AssetDiscoveryNotebookDistributionMaterialization"] = "asset_discovery_notebook_distribution_materializations"
+	expected["TaskCreationIdempotency"] = "task_creation_idempotencies"
+	expected["TaskAppendIdempotency"] = "task_append_idempotencies"
+	expected["TaskRetryIdempotency"] = "task_retry_idempotencies"
+	expected["TaskBatchRetryIdempotency"] = "task_batch_retry_idempotencies"
+	expected["RiskValidationExecutionIdempotency"] = "risk_validation_execution_idempotencies"
 
 	models := append([]interface{}{&SchemaMigration{}}, schemaModels()...)
 	seen := make(map[string]bool, len(models))

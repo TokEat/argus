@@ -347,58 +347,75 @@ func main() {
 				db.DB.Model(&n).Updates(agentOfflineUpdates())
 
 				// 回收该节点持有的 Running 任务：退回队列重新调度
+				tenantID := strings.TrimSpace(n.TenantID)
+				if tenantID == "" {
+					tenantID = "default"
+				}
 				var orphanTasks []db.SubTask
-				db.DB.Where("agent_id = ? AND status IN ?", n.AgentID, []string{"Running", "CancelPending"}).Find(&orphanTasks)
+				db.DB.Where("tenant_id = ? AND agent_id = ? AND status IN ?", tenantID, n.AgentID, []string{"Running", "CancelPending"}).Find(&orphanTasks)
+				requeued := 0
 				for _, sub := range orphanTasks {
 					// ACK 掉旧的 MQ 消息（如果还在）
 					if sub.StreamMsgID != "" {
 						_ = queue.AckTask(context.Background(), sub.StreamMsgID)
 					}
 
-					nextStatus := "Dispatching"
-					if db.NormalizeSubTaskStatus(sub.Status) == "CANCELPENDING" {
-						nextStatus = "Cancelled"
-					}
-
-					db.DB.Model(&db.SubTask{}).Where("id = ?", sub.ID).Updates(map[string]interface{}{
-						"status":        nextStatus,
-						"agent_id":      "",
-						"stream_msg_id": "",
-					})
-
-					// Running 任务重新入队
-					if nextStatus == "Dispatching" {
-						pbTask, err := db.SubTaskToProto(&sub)
+					if db.IsStoppingAttemptStatus(sub.Status) {
+						finishedAt := time.Now()
+						db.DB.Model(&db.SubTask{}).
+							Where("id = ? AND tenant_id = ? AND status = ?", sub.ID, sub.TenantID, sub.Status).
+							Updates(map[string]interface{}{
+								"status":         "Cancelled",
+								"stream_msg_id":  "",
+								"failure_reason": "cancelled while Agent went offline",
+								"finished_at":    finishedAt,
+							})
+						_ = db.SettleStoppedTaskBatch(db.DB, sub.TenantID, sub.BatchID, sub.ID)
+						_ = db.SyncTaskBatchStatuses(db.DB, sub.TenantID, sub.RootTaskID)
+						log.Printf("[DeadNode] Settled cancelled attempt %s from dead agent %s", sub.ID, n.AgentID)
+					} else if prepared, appended := db.AppendSubTaskAttempt(&sub, db.AttemptRetryOptions{
+						Trigger:              db.AttemptTriggerAgentOfflineRecovery,
+						TerminalStatus:       "Failed",
+						FailureReason:        "Agent heartbeat expired during execution",
+						ConsumeRetryBudget:   false,
+						UseCurrentTaskConfig: true,
+					}); appended {
+						pbTask, err := db.SubTaskToProto(&prepared)
 						if err == nil && pbTask != nil {
 							if pushErr := queue.PushTaskToFront(context.Background(), pbTask); pushErr == nil {
-								db.DB.Model(&db.SubTask{}).Where("id = ? AND status = ?", sub.ID, "Dispatching").
+								db.DB.Model(&db.SubTask{}).Where("id = ? AND tenant_id = ? AND status = ?", prepared.ID, prepared.TenantID, "Dispatching").
+									Updates(map[string]interface{}{"status": "Pending", "stream_msg_id": "queued"})
+								db.DB.Model(&db.TaskBatch{}).
+									Where("id = ? AND tenant_id = ? AND latest_attempt_id = ?", prepared.BatchID, prepared.TenantID, prepared.ID).
 									Update("status", "Pending")
+								requeued++
 							}
 						}
+					} else if db.SettlePausedTaskBatchAttempt(&sub, "Failed", "Agent heartbeat expired while batch was paused") {
+						log.Printf("[DeadNode] Settled paused attempt %s without automatic recovery", sub.ID)
 					}
 
 					if sub.RootTaskID != "" {
 						db.RefreshRootTaskStatus(sub.RootTaskID)
 					}
-					log.Printf("[DeadNode] Recovered subtask %s from dead agent %s → %s", sub.ID, n.AgentID, nextStatus)
 				}
 
 				// 回收后通知在线 Agent
-				if len(orphanTasks) > 0 {
-					srv.Hub.BroadcastNewTask(int32(len(orphanTasks)), 0)
+				if requeued > 0 {
+					srv.Hub.BroadcastNewTask(int32(requeued), 0)
 				}
 
 				// ★ 若断线 Agent 对应的是一台云实例，执行梯度容错策略：
 				//   重启次数 < 2  → 尝试 OS 级重启（保留机器，等 Agent 自动恢复）
 				//   重启次数 >= 2 → 放弃治疗，直接销毁底层机器
 				var cloudInst db.CloudInstance
-				if err := db.DB.Where("agent_id = ? AND status IN ?", n.AgentID, []string{
+				if err := db.DB.Where("tenant_id = ? AND agent_id = ? AND status IN ?", tenantID, n.AgentID, []string{
 					db.CloudStatusRunning, db.CloudStatusWaitingReady, db.CloudStatusProvisioning,
 				}).First(&cloudInst).Error; err == nil {
 					const maxRebootAttempts = 2
 					go func(inst db.CloudInstance) {
 						var account db.CloudAccount
-						if err := db.DB.First(&account, "id = ?", inst.CloudAccountID).Error; err != nil {
+						if err := db.DB.Where("id = ? AND tenant_id = ?", inst.CloudAccountID, inst.TenantID).First(&account).Error; err != nil {
 							log.Printf("[Heartbeat] Cannot load cloud account for instance %s: %v", inst.ID, err)
 							return
 						}

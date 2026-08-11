@@ -17,7 +17,7 @@ func setupTaskLifecycleTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := store.AutoMigrate(&RootTask{}, &SubTask{}); err != nil {
+	if err := store.AutoMigrate(&SystemConfig{}, &RootTask{}, &SubTask{}, &TaskBatch{}, &TaskConfigRevision{}); err != nil {
 		t.Fatalf("automigrate: %v", err)
 	}
 	old := DB
@@ -224,6 +224,50 @@ func TestRefreshRootTaskStatusAllowsPausedRootToReachTerminalStatus(t *testing.T
 	}
 }
 
+func TestRefreshRootTaskStatusKeepsPausedRootAfterClaimedFailure(t *testing.T) {
+	store := setupTaskLifecycleTestDB(t)
+	rootID := "root-paused-failed"
+	if err := store.Create(&RootTask{ID: rootID, TenantID: "default", Name: "paused-failed", Status: "Paused"}).Error; err != nil {
+		t.Fatalf("seed root task: %v", err)
+	}
+	if err := store.Create(&SubTask{ID: "paused-failed-attempt", TenantID: "default", RootTaskID: rootID, Status: "Failed"}).Error; err != nil {
+		t.Fatalf("seed failed attempt: %v", err)
+	}
+
+	RefreshRootTaskStatus(rootID)
+
+	var got RootTask
+	if err := store.First(&got, "id = ?", rootID).Error; err != nil {
+		t.Fatalf("load root task: %v", err)
+	}
+	if got.Status != "Paused" {
+		t.Fatalf("claimed failure must wait for an explicit resume, got %s", got.Status)
+	}
+}
+
+func TestRefreshRootTaskStatusPreservesStoppingRootUntilAllAttemptsSettle(t *testing.T) {
+	store := setupTaskLifecycleTestDB(t)
+	rootID := "root-stopping"
+	if err := store.Create(&RootTask{ID: rootID, TenantID: "default", Name: "stopping", Status: "CancelPending"}).Error; err != nil {
+		t.Fatalf("seed root task: %v", err)
+	}
+	for index, status := range []string{"Cancelled", "CancelPending"} {
+		if err := store.Create(&SubTask{ID: fmt.Sprintf("stopping-%d", index), TenantID: "default", RootTaskID: rootID, Status: status}).Error; err != nil {
+			t.Fatalf("seed attempt %d: %v", index, err)
+		}
+	}
+
+	RefreshRootTaskStatus(rootID)
+
+	var got RootTask
+	if err := store.First(&got, "id = ?", rootID).Error; err != nil {
+		t.Fatalf("load root task: %v", err)
+	}
+	if got.Status != "CancelPending" {
+		t.Fatalf("stopping root re-entered dispatchable state: %s", got.Status)
+	}
+}
+
 func TestSplitFailedSubTaskRespectsRootLifecycleAndTenant(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -247,13 +291,14 @@ func TestSplitFailedSubTaskRespectsRootLifecycleAndTenant(t *testing.T) {
 				t.Fatalf("seed root: %v", err)
 			}
 			sub := SubTask{
-				ID:           "sub-split",
-				TenantID:     tt.subTenant,
-				RootTaskID:   root.ID,
-				Status:       "Running",
-				ChunkTargets: `["https://one.test","https://two.test"]`,
-				RetryCount:   0,
-				MaxRetry:     3,
+				ID:            "sub-split",
+				TenantID:      tt.subTenant,
+				RootTaskID:    root.ID,
+				Status:        "Running",
+				ChunkTargets:  `["https://one.test","https://two.test"]`,
+				RetryCount:    0,
+				MaxRetry:      3,
+				ConfigVersion: 2,
 			}
 			if err := store.Create(&sub).Error; err != nil {
 				t.Fatalf("seed subtask: %v", err)
@@ -271,8 +316,27 @@ func TestSplitFailedSubTaskRespectsRootLifecycleAndTenant(t *testing.T) {
 				if err := store.Model(&SubTask{}).Where("root_task_id = ? AND tenant_id = ?", root.ID, tt.subTenant).Count(&count).Error; err != nil {
 					t.Fatalf("count split subtasks: %v", err)
 				}
-				if count != 2 {
-					t.Fatalf("split subtask count = %d, want 2", count)
+				if count != 3 {
+					t.Fatalf("split attempt count = %d, want original plus 2 retries", count)
+				}
+				for _, splitSub := range split {
+					if splitSub.ConfigVersion != 2 {
+						t.Fatalf("split subtask config version = %d, want 2", splitSub.ConfigVersion)
+					}
+				}
+				var batchCount int64
+				if err := store.Model(&TaskBatch{}).Where("root_task_id = ? AND tenant_id = ?", root.ID, tt.subTenant).Count(&batchCount).Error; err != nil {
+					t.Fatalf("count split task batches: %v", err)
+				}
+				if batchCount != 2 || split[0].BatchID == split[1].BatchID || split[1].AttemptNo != 1 {
+					t.Fatalf("split batch linkage invalid: batches=%d split=%+v", batchCount, split)
+				}
+				var original SubTask
+				if err := store.First(&original, "id = ?", "sub-split").Error; err != nil {
+					t.Fatalf("reload original attempt: %v", err)
+				}
+				if original.Status != "Failed" || original.FinishedAt == nil || original.AgentID != sub.AgentID {
+					t.Fatalf("split overwrote original execution evidence: %+v", original)
 				}
 				return
 			}
@@ -356,13 +420,141 @@ func TestPrepareSubTaskRetryRespectsRootLifecycle(t *testing.T) {
 				t.Fatalf("reload subtask: %v", err)
 			}
 			if tt.want {
-				if prepared.Status != "Dispatching" || got.Status != "Dispatching" || got.RetryCount != 1 {
+				if prepared.Status != "Dispatching" || prepared.AttemptNo != 2 || got.Status != "Dispatching" || got.RetryCount != 1 {
 					t.Fatalf("prepared retry = %+v persisted=%+v", prepared, got)
+				}
+				var original SubTask
+				if err := store.First(&original, "id = ?", "sub-retry").Error; err != nil {
+					t.Fatalf("reload original attempt: %v", err)
+				}
+				if original.Status != "FAILED" || original.FinishedAt == nil || original.ID == prepared.ID {
+					t.Fatalf("retry mutated original attempt: original=%+v prepared=%+v", original, prepared)
 				}
 			} else if got.Status != "FAILED" || got.RetryCount != 0 {
 				t.Fatalf("blocked retry changed subtask: %+v", got)
 			}
 		})
+	}
+}
+
+func TestPrepareSubTaskRetryAppendsImmutableAttemptWithCurrentSnapshots(t *testing.T) {
+	store := setupTaskLifecycleTestDB(t)
+	root := RootTask{
+		ID: "root-retry-history", TenantID: "tenant-a", ProjectID: "project-a",
+		Status: "Running", TotalChunks: 1, CurrentConfigVersion: 2,
+	}
+	if err := store.Create(&root).Error; err != nil {
+		t.Fatalf("seed root: %v", err)
+	}
+	if err := store.Create(&TaskConfigRevision{
+		TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Version: 2,
+		Config: `{"NoPoc":true,"WebTimeout":15}`, Priority: 2, TimeoutSec: 120,
+		AgentSelector: `{"region":"east"}`, AgentSelectorRules: `{"not_match":{"draining":["true"]}}`,
+	}).Error; err != nil {
+		t.Fatalf("seed config revision: %v", err)
+	}
+	if err := store.Create(&SystemConfig{Key: "rule_version", Value: "rules-v2"}).Error; err != nil {
+		t.Fatalf("seed rule version: %v", err)
+	}
+	original := SubTask{
+		ID: "batch-history-attempt-1", TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID,
+		BatchID: "batch-history", AttemptNo: 1, Trigger: AttemptTriggerInitial,
+		Status: "FAILED", AgentID: "agent-old", ChunkTargets: `["https://one.test"]`,
+		Config: `{"NoPoc":true,"WebTimeout":5}`, ConfigVersion: 1, RuleVersion: "rules-v1",
+		Priority: 1, TimeoutSec: 30, RetryCount: 0, MaxRetry: 3,
+	}
+	if err := store.Create(&original).Error; err != nil {
+		t.Fatalf("seed original attempt: %v", err)
+	}
+	if err := store.Create(&TaskBatch{
+		ID: original.BatchID, TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID,
+		Sequence: 0, Kind: "asset_scan", TargetType: "url", Targets: original.ChunkTargets, TargetCount: 1,
+		Status: original.Status, ConfigVersion: 1, RuleVersion: "rules-v1", Priority: 1, TimeoutSec: 30,
+		CurrentAttemptNo: 1, AttemptCount: 1, LatestAttemptID: original.ID,
+	}).Error; err != nil {
+		t.Fatalf("seed batch: %v", err)
+	}
+
+	expected := original
+	prepared, ok := PrepareSubTaskRetry(&expected)
+	if !ok {
+		t.Fatal("expected retry attempt to be appended")
+	}
+	if prepared.ID != "batch-history-attempt-2" || prepared.ParentAttemptID != original.ID || prepared.AttemptNo != 2 || prepared.Trigger != AttemptTriggerAutomaticRetry {
+		t.Fatalf("retry identity mismatch: %+v", prepared)
+	}
+	if prepared.ConfigVersion != 2 || prepared.RuleVersion != "rules-v2" || prepared.Priority != 2 || prepared.TimeoutSec != 120 {
+		t.Fatalf("retry snapshots are stale: %+v", prepared)
+	}
+	if !strings.Contains(prepared.AgentSelector, `"region":"east"`) || !strings.Contains(prepared.AgentSelector, `"target_type":"url"`) || !strings.Contains(prepared.AgentSelectorRules, `"draining"`) {
+		t.Fatalf("retry selector snapshot mismatch: selector=%s rules=%s", prepared.AgentSelector, prepared.AgentSelectorRules)
+	}
+
+	var persistedOriginal SubTask
+	if err := store.First(&persistedOriginal, "id = ?", original.ID).Error; err != nil {
+		t.Fatalf("reload original attempt: %v", err)
+	}
+	if persistedOriginal.Status != "FAILED" || persistedOriginal.AgentID != "agent-old" || persistedOriginal.ConfigVersion != 1 || persistedOriginal.RuleVersion != "rules-v1" || persistedOriginal.FinishedAt == nil {
+		t.Fatalf("original execution evidence was overwritten: %+v", persistedOriginal)
+	}
+
+	duplicateExpected := original
+	if _, duplicate := PrepareSubTaskRetry(&duplicateExpected); duplicate {
+		t.Fatal("same terminal attempt created a duplicate retry")
+	}
+	var attemptCount int64
+	if err := store.Model(&SubTask{}).Where("batch_id = ?", original.BatchID).Count(&attemptCount).Error; err != nil {
+		t.Fatalf("count attempts: %v", err)
+	}
+	if attemptCount != 2 {
+		t.Fatalf("attempt count = %d, want 2", attemptCount)
+	}
+	var batch TaskBatch
+	if err := store.First(&batch, "id = ?", original.BatchID).Error; err != nil {
+		t.Fatalf("reload batch: %v", err)
+	}
+	if batch.LatestAttemptID != prepared.ID || batch.CurrentAttemptNo != 2 || batch.AttemptCount != 2 {
+		t.Fatalf("batch attempt pointer mismatch: %+v", batch)
+	}
+}
+
+func TestSettlePausedTaskBatchAttemptPreservesPauseIntent(t *testing.T) {
+	store := setupTaskLifecycleTestDB(t)
+	root := RootTask{ID: "root-paused-settle", TenantID: "tenant-a", Status: "Running"}
+	if err := store.Create(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	attempt := SubTask{
+		ID: "batch-paused-settle-attempt-1", BatchID: "batch-paused-settle", AttemptNo: 1,
+		TenantID: root.TenantID, RootTaskID: root.ID, Status: "Running", AgentID: "agent-old",
+		ChunkTargets: `["https://one.test"]`, MaxRetry: 3,
+	}
+	batch := TaskBatch{
+		ID: attempt.BatchID, TenantID: root.TenantID, RootTaskID: root.ID, Sequence: 0,
+		Status: "Running", ControlState: string(BatchControlPaused), LatestAttemptID: attempt.ID,
+		CurrentAttemptNo: 1, AttemptCount: 1,
+	}
+	if err := store.Create(&batch).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(&attempt).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if !SettlePausedTaskBatchAttempt(&attempt, "Failed", "Agent went offline") {
+		t.Fatal("paused attempt was not settled")
+	}
+	if err := store.First(&attempt, "id = ?", attempt.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.First(&batch, "id = ?", batch.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if attempt.Status != "Failed" || attempt.FinishedAt == nil || attempt.FailureReason != "Agent went offline" {
+		t.Fatalf("settled evidence mismatch: %+v", attempt)
+	}
+	if batch.Status != "Failed" || CanonicalBatchControlState(batch.ControlState) != BatchControlPaused || batch.AttemptCount != 1 {
+		t.Fatalf("pause intent or attempt history changed: %+v", batch)
 	}
 }
 
@@ -388,6 +580,33 @@ func TestRefreshRootTaskStatusIgnoresForeignTenantSubTasks(t *testing.T) {
 	}
 	if got.Status != "FINISHED" || got.CompletedChunks != 1 || got.CompletedTargets != 1 {
 		t.Fatalf("tenant-scoped root aggregate = %+v", got)
+	}
+}
+
+func TestRefreshRootTaskStatusUsesLatestAttemptPerBatch(t *testing.T) {
+	store := setupTaskLifecycleTestDB(t)
+	root := RootTask{ID: "root-latest-attempt", TenantID: "tenant-a", Status: "Running", TotalChunks: 1, TotalTargets: 1}
+	if err := store.Create(&root).Error; err != nil {
+		t.Fatalf("seed root: %v", err)
+	}
+	attempts := []SubTask{
+		{ID: "batch-latest-attempt-1", BatchID: "batch-latest", AttemptNo: 1, TenantID: root.TenantID, RootTaskID: root.ID, Status: "Failed", ChunkTargets: `["https://one.test"]`},
+		{ID: "batch-latest-attempt-2", BatchID: "batch-latest", AttemptNo: 2, TenantID: root.TenantID, RootTaskID: root.ID, Status: "Done", ChunkTargets: `["https://one.test"]`},
+	}
+	if err := store.Create(&attempts).Error; err != nil {
+		t.Fatalf("seed attempts: %v", err)
+	}
+	if err := store.Create(&TaskBatch{ID: "batch-latest", TenantID: root.TenantID, RootTaskID: root.ID, Sequence: 0, Targets: `["https://one.test"]`, TargetCount: 1, Status: "Done", LatestAttemptID: attempts[1].ID, CurrentAttemptNo: 2, AttemptCount: 2}).Error; err != nil {
+		t.Fatalf("seed batch: %v", err)
+	}
+
+	RefreshRootTaskStatus(root.ID)
+	var got RootTask
+	if err := store.First(&got, "id = ?", root.ID).Error; err != nil {
+		t.Fatalf("reload root: %v", err)
+	}
+	if got.Status != "FINISHED" || got.TotalChunks != 1 || got.CompletedChunks != 1 || got.CompletedTargets != 1 {
+		t.Fatalf("historical failure polluted latest batch aggregate: %+v", got)
 	}
 }
 

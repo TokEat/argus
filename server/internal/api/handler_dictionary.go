@@ -789,18 +789,8 @@ func getApiKeysConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, results)
 }
 
-func getAgentAPIConfig(c *gin.Context) {
-	arsenal, err := db.FindTenantArsenalByTypeAndFile(currentTenantID(c), "apiconfig", "api-config.yaml")
-	if err != nil || strings.TrimSpace(arsenal.Content) == "" {
-		c.Status(http.StatusNoContent)
-		return
-	}
-
-	c.Header("Content-Disposition", "attachment; filename=api-config.yaml")
-	c.Data(http.StatusOK, "application/x-yaml; charset=utf-8", []byte(arsenal.Content))
-}
-
-// saveApiKeysConfig updates the api-config in the Arsenal and triggers Agent API config sync.
+// saveApiKeysConfig updates Server-only asset discovery credentials. Agents
+// never receive this configuration or a notification that it changed.
 func saveApiKeysConfig(c *gin.Context) {
 	tenantID := currentTenantID(c)
 	var entries []ApiKeyEntry
@@ -855,10 +845,6 @@ func saveApiKeysConfig(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save config"})
 			return
 		}
-	}
-
-	if routerRuntime().NotifyHub != nil {
-		routerRuntime().NotifyHub.BroadcastAPIConfigUpdated(tenantID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "saved", "hash": hash})

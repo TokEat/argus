@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/md5"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -36,9 +37,6 @@ func isAgentInternalEndpoint(c *gin.Context) bool {
 	}
 	path := c.Request.URL.Path
 	if strings.HasPrefix(path, "/api/v1/agents/") && strings.HasSuffix(path, "/commands") {
-		return true
-	}
-	if path == "/api/v1/agents/config/api-keys" {
 		return true
 	}
 	if path == "/api/v1/arsenals/manifest" {
@@ -313,6 +311,11 @@ func validateUTF8TextBodyMiddleware() gin.HandlerFunc {
 		}
 		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {
+			var maxBytesError *http.MaxBytesError
+			if errors.As(err, &maxBytesError) {
+				c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body is too large"})
+				return
+			}
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
 			return
 		}
@@ -349,13 +352,14 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 	r.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, UPDATE")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Idempotency-Key")
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
 			return
 		}
 		c.Next()
 	})
+	r.Use(assetDiscoveryRequestBodyLimitMiddleware())
 	r.Use(validateUTF8TextBodyMiddleware())
 	r.Use(gzipMiddleware())
 

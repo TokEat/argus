@@ -65,24 +65,26 @@ type CronTask struct {
 }
 
 type RootTask struct {
-	ID               string `gorm:"primaryKey"`
-	TenantID         string `gorm:"default:'default';index"`
-	ProjectID        string `gorm:"index"`
-	CronTaskID       string `gorm:"index"`
-	UserID           string `gorm:"index"`
-	Name             string
-	OriginalTargets  string `gorm:"type:text"`
-	Status           string `gorm:"index"`
-	TotalChunks      int    // 批次总数（聚合后的 SubTask 数量）
-	CompletedChunks  int    // 已完成批次数
-	TotalTargets     int    // 原始目标总数（用于目标维度进度）
-	CompletedTargets int    // 已完成目标数
-	Config           string `gorm:"type:text"`
-	Priority         int
-	TimeoutSec       int
-	RuleVersion      string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID                   string `gorm:"primaryKey"`
+	TenantID             string `gorm:"default:'default';index"`
+	ProjectID            string `gorm:"index"`
+	CronTaskID           string `gorm:"index"`
+	UserID               string `gorm:"index"`
+	Name                 string
+	OriginalTargets      string `gorm:"type:text"`
+	Status               string `gorm:"index"`
+	TotalChunks          int    // 批次总数（聚合后的 SubTask 数量）
+	CompletedChunks      int    // 已完成批次数
+	TotalTargets         int    // 原始目标总数（用于目标维度进度）
+	CompletedTargets     int    // 已完成目标数
+	Config               string `gorm:"type:text"`
+	Priority             int
+	TimeoutSec           int
+	RuleVersion          string
+	CurrentConfigVersion int `gorm:"default:1"`
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	ArchivedAt           *time.Time `gorm:"index"`
 }
 
 type SubTask struct {
@@ -90,9 +92,14 @@ type SubTask struct {
 	TenantID           string `gorm:"default:'default';index"`
 	ProjectID          string `gorm:"index"`
 	RootTaskID         string `gorm:"index"`
+	BatchID            string `gorm:"index"`
+	AttemptNo          int    `gorm:"default:1"`
+	ParentAttemptID    string `gorm:"index"`
+	Trigger            string `gorm:"default:'initial';index"`
 	ChunkTargets       string `gorm:"type:text"`
 	Status             string `gorm:"index"`
 	AgentID            string `gorm:"index"`
+	FailureReason      string `gorm:"type:text"`
 	Config             string `gorm:"type:text"`
 	StreamMsgID        string
 	Priority           int    `gorm:"default:1;index"` // 0=最高, 1=普通, 2=低
@@ -101,8 +108,96 @@ type SubTask struct {
 	TimeoutSec         int
 	RetryCount         int
 	MaxRetry           int `gorm:"default:3"`
+	ConfigVersion      int `gorm:"default:1"`
+	RuleVersion        string
+	StartedAt          *time.Time `gorm:"index"`
+	FinishedAt         *time.Time `gorm:"index"`
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+}
+
+type TaskBatch struct {
+	ID                 string `gorm:"primaryKey"`
+	TenantID           string `gorm:"default:'default';index"`
+	ProjectID          string `gorm:"index"`
+	RootTaskID         string `gorm:"index;uniqueIndex:idx_task_batches_task_sequence,priority:1"`
+	Sequence           int    `gorm:"uniqueIndex:idx_task_batches_task_sequence,priority:2"`
+	Kind               string `gorm:"default:'asset_scan';index"`
+	TargetType         string `gorm:"index"`
+	Targets            string `gorm:"type:text"`
+	TargetCount        int
+	Status             string `gorm:"index"`
+	ControlState       string `gorm:"default:'active';index"`
+	ConfigVersion      int    `gorm:"default:1"`
+	RuleVersion        string
+	Priority           int
+	TimeoutSec         int
+	AgentSelector      string `gorm:"type:text"`
+	AgentSelectorRules string `gorm:"type:text"`
+	CurrentAttemptNo   int    `gorm:"default:1"`
+	AttemptCount       int    `gorm:"default:1"`
+	LatestAttemptID    string `gorm:"index"`
+	CreatedBy          string `gorm:"index"`
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	ArchivedAt         *time.Time `gorm:"index"`
+}
+
+type TaskConfigRevision struct {
+	ID                 uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID           string `gorm:"default:'default';index"`
+	ProjectID          string `gorm:"index"`
+	RootTaskID         string `gorm:"index;uniqueIndex:idx_task_config_revisions_task_version,priority:1"`
+	Version            int    `gorm:"uniqueIndex:idx_task_config_revisions_task_version,priority:2"`
+	Config             string `gorm:"type:text"`
+	ConfigHash         string `gorm:"size:64;index"`
+	Priority           int
+	TimeoutSec         int
+	AgentSelector      string `gorm:"type:text"`
+	AgentSelectorRules string `gorm:"type:text"`
+	CreatedBy          string `gorm:"index"`
+	ChangeNote         string `gorm:"type:text"`
+	CreatedAt          time.Time
+}
+
+type TaskAudit struct {
+	ID           uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID     string `gorm:"default:'default';index"`
+	ProjectID    string `gorm:"index"`
+	RootTaskID   string `gorm:"index"`
+	BatchID      string `gorm:"index"`
+	AttemptID    string `gorm:"index"`
+	OperatorID   string `gorm:"index"`
+	Action       string `gorm:"index"`
+	BeforeStatus string
+	AfterStatus  string
+	Details      string    `gorm:"type:jsonb;default:'{}'"`
+	CreatedAt    time.Time `gorm:"index"`
+}
+
+// AssetDiscoveryAudit records project-scoped control-plane discovery calls.
+// Raw provider expressions, credentials, URLs, and response bodies are never
+// stored here; QueryHash and ConfigHash are correlation-only digests.
+type AssetDiscoveryAudit struct {
+	ID             uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID       string `gorm:"default:'default';index"`
+	ProjectID      string `gorm:"index"`
+	NotebookItemID *uint  `gorm:"index"`
+	Provider       string `gorm:"size:32;index"`
+	Action         string `gorm:"size:64;index"`
+	OperatorID     string `gorm:"index"`
+	QueryHash      string `gorm:"size:64;index"`
+	ConfigVersion  int
+	ConfigHash     string `gorm:"size:64"`
+	RequestedLimit int
+	ProviderTotal  int
+	ReturnedCount  int
+	SkippedRows    int
+	Truncated      bool
+	Status         string `gorm:"size:32;index"`
+	ErrorCode      string `gorm:"size:64;index"`
+	DurationMS     int64
+	CreatedAt      time.Time `gorm:"index"`
 }
 
 type Node struct {
@@ -1141,26 +1236,4 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
 	}
-}
-
-func SubTaskToProto(task *SubTask) (*pb.Task, error) {
-	var targets []string
-	if task.ChunkTargets != "" {
-		if err := json.Unmarshal([]byte(task.ChunkTargets), &targets); err != nil {
-			return nil, err
-		}
-	}
-
-	config := []byte("{}")
-	if task.Config != "" {
-		config = []byte(task.Config)
-	}
-
-	return &pb.Task{
-		TaskId:     task.ID,
-		Targets:    targets,
-		Config:     config,
-		Priority:   int32(task.Priority),
-		TimeoutSec: int32(task.TimeoutSec),
-	}, nil
 }
