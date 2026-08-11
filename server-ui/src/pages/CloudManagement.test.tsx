@@ -63,16 +63,6 @@ vi.mock('@monaco-editor/react', () => ({
     default: () => <div data-testid="cloud-init-editor" />,
 }));
 
-vi.mock('gsap', () => ({
-    default: {
-        context: (callback: () => void) => {
-            callback();
-            return { revert: vi.fn() };
-        },
-        from: vi.fn(),
-    },
-}));
-
 const account = (overrides: Partial<API.CloudAccount> = {}): API.CloudAccount => ({
     id: 'account-1',
     tenant_id: 'tenant-1',

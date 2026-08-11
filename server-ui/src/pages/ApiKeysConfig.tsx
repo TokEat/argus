@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button, Space, Tag, Input, Table, Empty, App, Switch, Typography } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
@@ -11,7 +11,6 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { getApiKeysConfig, saveApiKeysConfig } from '../services/api';
-import gsap from 'gsap';
 import NetworkCanvas from '../components/NetworkCanvas';
 
 const { Text } = Typography;
@@ -61,22 +60,6 @@ const ApiKeysConfig: React.FC = () => {
     const [showKeys, setShowKeys] = useState(false);
     const [modified, setModified] = useState(false);
     const { message } = App.useApp();
-    const pageRef = useRef<HTMLDivElement>(null);
-
-    /* GSAP entrance */
-    useEffect(() => {
-        if (!pageRef.current) return;
-        const els = pageRef.current.querySelectorAll('.sys-animate-in');
-        if (els.length === 0) return;
-        const ctx = gsap.context(() => {
-            gsap.from(els, {
-                y: 24, opacity: 0, duration: 0.45,
-                stagger: 0.08, ease: 'power2.out', clearProps: 'transform,opacity',
-            });
-        }, pageRef);
-        return () => ctx.revert();
-    }, []);
-
     const fetchData = async () => {
         setLoading(true);
         try {
@@ -249,9 +232,9 @@ const ApiKeysConfig: React.FC = () => {
     ];
 
     return (
-        <div ref={pageRef} style={{ position: 'relative', overflow: 'hidden' }}>
+        <div style={{ position: 'relative', overflow: 'hidden' }}>
             <NetworkCanvas color="#6366f1" count={25} speed={0.12} linkDist={90} />
-            <div className="sys-animate-in" style={{
+            <div style={{
                 background: 'rgba(15, 23, 42, 0.6)',
                 borderRadius: 8,
                 padding: '12px 16px',
@@ -267,7 +250,7 @@ const ApiKeysConfig: React.FC = () => {
                 多个密钥可换行分隔（轮转使用）。
             </div>
 
-            <div className="sys-animate-in" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, position: 'relative', zIndex: 1 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, position: 'relative', zIndex: 1 }}>
                 <Space>
                     <Input
                         placeholder="搜索引擎名..."
@@ -301,7 +284,7 @@ const ApiKeysConfig: React.FC = () => {
                 </Space>
             </div>
 
-            <ProCard className="glass-card sys-animate-in" style={{ background: 'transparent', border: 'none', padding: 0, position: 'relative', zIndex: 1 }}>
+            <ProCard className="glass-card" style={{ background: 'transparent', border: 'none', padding: 0, position: 'relative', zIndex: 1 }}>
                 {filtered.length === 0 && !loading ? (
                     <Empty description="暂无 API 密钥配置" style={{ padding: '60px 0' }} />
                 ) : (

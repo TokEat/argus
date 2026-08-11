@@ -1,5 +1,4 @@
 import React, { useRef, useEffect, useCallback } from 'react';
-import gsap from 'gsap';
 
 /* ── Types ── */
 interface AgentNode {
@@ -198,7 +197,7 @@ const DispatchCanvas: React.FC<Props> = ({ nodes, wsMessages, queueDepth }) => {
     resize();
   }, [activeNodes.length, resize]);
 
-  /* ── GSAP ticker: main render loop ── */
+  /* ── Browser-native main render loop ── */
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -481,14 +480,14 @@ const DispatchCanvas: React.FC<Props> = ({ nodes, wsMessages, queueDepth }) => {
       ctx.restore();
     };
 
+    let animationFrame = 0;
     const ticker = () => {
       draw();
+      animationFrame = window.requestAnimationFrame(ticker);
     };
 
-    gsap.ticker.add(ticker);
-    return () => {
-      gsap.ticker.remove(ticker);
-    };
+    animationFrame = window.requestAnimationFrame(ticker);
+    return () => window.cancelAnimationFrame(animationFrame);
   }, [totalQueued, activeNodes]);
 
   return (

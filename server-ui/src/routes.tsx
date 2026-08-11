@@ -20,6 +20,7 @@ import {
     RobotOutlined,
     ThunderboltOutlined,
     FileTextOutlined,
+    GlobalOutlined,
 } from '@ant-design/icons';
 import BasicLayout from './layouts/BasicLayout';
 import Dashboard from './pages/Dashboard';
@@ -29,6 +30,7 @@ import TaskManagement from './pages/TaskManagement';
 import TaskResults from './pages/TaskResults';
 import ProfilesView from './pages/ProfilesView';
 import ProjectManagement from './pages/ProjectManagement';
+import AssetDiscovery from './pages/AssetDiscovery';
 import ConfigLayout from './pages/config/ConfigLayout';
 import PocConfig from './pages/config/PocConfig';
 import ActiveFingerConfig from './pages/config/DirConfig';
@@ -93,6 +95,13 @@ export const menuRoutes: RouteConfig[] = [
         name: '项目管理',
         icon: <ProjectOutlined />,
         element: <ProjectManagement />,
+        minRole: 'viewer',
+    },
+    {
+        path: '/asset-discovery',
+        name: '资产测绘',
+        icon: <GlobalOutlined />,
+        element: <AssetDiscovery />,
         minRole: 'viewer',
     },
     {

@@ -56,6 +56,10 @@ const orphanPoc: API.PocRuleMetadata = {
     compatibility_status: '',
     source_version: '',
     severity: 'medium',
+    execution_class: 'detection',
+    risk_level: 'unknown',
+    requires_confirmation: true,
+    requires_second_confirmation: true,
     tags: '',
     author: '',
     description: '',
@@ -197,6 +201,14 @@ describe('PocConfig Workflow governance', () => {
             CreatedAt: '2026-07-06T00:00:00Z',
             UpdatedAt: '2026-07-06T00:00:00Z',
         });
+    });
+
+    it('shows execution governance and elevated confirmation for legacy POCs', async () => {
+        await renderPocConfig();
+
+        expect(screen.getByText('POC 不随普通资产扫描自动执行')).toBeInTheDocument();
+        expect(screen.getByText('检测型')).toBeInTheDocument();
+        expect(screen.getByText('风险未分类')).toBeInTheDocument();
     });
 
     it('shows a governance prompt when editing a POC that is not in Workflow', async () => {

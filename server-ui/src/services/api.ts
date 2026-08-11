@@ -110,6 +110,7 @@ type TaskPageParams = {
     projectId?: string;
     page?: number;
     pageSize?: number;
+    archived?: 'active' | 'only' | 'include';
 };
 
 const buildTaskParams = (first?: string | TaskPageParams): Record<string, string | number> => {
@@ -118,6 +119,7 @@ const buildTaskParams = (first?: string | TaskPageParams): Record<string, string
         if (first.projectId) params.project_id = first.projectId;
         if (first.page) params.page = first.page;
         if (first.pageSize) params.page_size = first.pageSize;
+        if (first.archived) params.archived = first.archived;
         return params;
     }
     if (first) params.project_id = first;
@@ -135,8 +137,13 @@ export async function validateTargets(data: API.ValidateTargetsRequest): Promise
     return request.post('/tasks/validate-targets', data);
 }
 
-export async function createTask(data: API.CreateTaskRequest): Promise<API.CreateTaskResponse> {
-    return request.post('/tasks', data);
+export async function createTask(data: API.CreateTaskRequest, idempotencyKey?: string): Promise<API.CreateTaskResponse> {
+    const result = await request.post('/tasks', data, idempotencyKey
+        ? { headers: { 'Idempotency-Key': idempotencyKey } }
+        : undefined) as unknown as API.CreateTaskResponse;
+    // Older servers do not include this field; keep their response compatible
+    // while exposing a stable boolean to the page.
+    return { ...result, replayed: result.replayed ?? false };
 }
 
 export async function previewTaskSelector(data: API.TaskSelectorPreviewRequest): Promise<API.TaskSelectorPreview> {
@@ -151,6 +158,10 @@ export async function cancelTask(taskId: string): Promise<API.MessageResponse> {
     return request.post(`/tasks/${taskId}/cancel`);
 }
 
+export async function stopTask(taskId: string): Promise<API.MessageResponse> {
+    return request.post(`/tasks/${encodeURIComponent(taskId)}/stop`);
+}
+
 export async function pauseTask(taskId: string): Promise<API.MessageResponse> {
     return request.post(`/tasks/${encodeURIComponent(taskId)}/pause`);
 }
@@ -159,12 +170,91 @@ export async function resumeTask(taskId: string): Promise<API.MessageResponse> {
     return request.post(`/tasks/${encodeURIComponent(taskId)}/resume`);
 }
 
-export async function getTaskDetail(taskId: string): Promise<API.TaskDetailResponse> {
-    return request.get(`/tasks/${taskId}`);
+export async function retryTask(taskId: string, idempotencyKey?: string): Promise<API.TaskRetryResponse> {
+    const result = await request.post(`/tasks/${encodeURIComponent(taskId)}/retry`, undefined, idempotencyKey
+        ? { headers: { 'Idempotency-Key': idempotencyKey } }
+        : undefined) as unknown as API.TaskRetryResponse;
+    // Older servers do not include this field; keep their response compatible
+    // while exposing a stable boolean to the page.
+    return { ...result, replayed: result.replayed ?? false };
 }
 
-export async function appendTargets(taskId: string, targets: string): Promise<{ status: string; new_subtasks: number; new_targets: number; total_chunks: number }> {
-    return request.post(`/tasks/${taskId}/append`, { targets });
+export async function getTaskDetail(taskId: string): Promise<API.TaskDetailResponse> {
+    return request.get(`/tasks/${encodeURIComponent(taskId)}`);
+}
+
+export async function previewTaskRiskValidation(
+    taskId: string,
+    page: number = 1,
+    pageSize: number = 50,
+	data?: API.RiskValidationPreviewRequest,
+): Promise<API.RiskValidationPreviewResponse> {
+	return request.post(`/tasks/${encodeURIComponent(taskId)}/risk-validation/preview`, data, {
+        params: { page, page_size: pageSize },
+    });
+}
+
+export async function executeTaskRiskValidation(
+    taskId: string,
+    data: API.ExecuteRiskValidationRequest,
+    idempotencyKey?: string,
+): Promise<API.ExecuteRiskValidationResponse> {
+    const result = await request.post(`/tasks/${encodeURIComponent(taskId)}/risk-validation`, data, idempotencyKey
+        ? { headers: { 'Idempotency-Key': idempotencyKey } }
+        : undefined) as API.ExecuteRiskValidationResponse;
+    // Older servers do not include this field; expose a stable UI contract.
+    return { ...result, replayed: result.replayed ?? false };
+}
+
+export async function getTaskConfigRevisions(taskId: string): Promise<API.TaskConfigRevisionList> {
+    return request.get(`/tasks/${encodeURIComponent(taskId)}/config-revisions`);
+}
+
+export async function updateTaskConfig(taskId: string, data: API.UpdateTaskConfigRequest): Promise<API.UpdateTaskConfigResponse> {
+    return request.put(`/tasks/${encodeURIComponent(taskId)}/config`, data);
+}
+
+export async function appendTargets(taskId: string, targets: string, idempotencyKey?: string): Promise<API.AppendTargetsResponse> {
+    const result = await request.post(`/tasks/${encodeURIComponent(taskId)}/append`, { targets }, idempotencyKey
+        ? { headers: { 'Idempotency-Key': idempotencyKey } }
+        : undefined) as unknown as API.AppendTargetsResponse;
+    // Older servers do not include this field; keep their response compatible
+    // while exposing a stable boolean to the page.
+    return { ...result, replayed: result.replayed ?? false };
+}
+
+export async function listTaskBatches(taskId: string, archived: 'active' | 'only' | 'include' = 'active'): Promise<API.TaskBatchList> {
+    return request.get(`/tasks/${encodeURIComponent(taskId)}/batches`, { params: { archived } });
+}
+
+const batchActionPath = (taskId: string, batchId: string, action?: string) => {
+    const base = `/tasks/${encodeURIComponent(taskId)}/batches/${encodeURIComponent(batchId)}`;
+    return action ? `${base}/${action}` : base;
+};
+
+export async function pauseTaskBatch(taskId: string, batchId: string): Promise<API.TaskBatchMutationResponse> {
+    return request.post(batchActionPath(taskId, batchId, 'pause'));
+}
+
+export async function resumeTaskBatch(taskId: string, batchId: string): Promise<API.TaskBatchMutationResponse> {
+    return request.post(batchActionPath(taskId, batchId, 'resume'));
+}
+
+export async function stopTaskBatch(taskId: string, batchId: string): Promise<API.TaskBatchMutationResponse> {
+    return request.post(batchActionPath(taskId, batchId, 'stop'));
+}
+
+export async function retryTaskBatch(taskId: string, batchId: string, idempotencyKey?: string): Promise<API.TaskBatchRetryResponse> {
+    const result = await request.post(batchActionPath(taskId, batchId, 'retry'), undefined, idempotencyKey
+        ? { headers: { 'Idempotency-Key': idempotencyKey } }
+        : undefined) as API.TaskBatchMutationResponse;
+    // Older servers do not include this field; keep their response compatible
+    // while exposing a stable boolean to the page.
+    return { ...result, replayed: (result as API.TaskBatchRetryResponse).replayed ?? false };
+}
+
+export async function archiveTaskBatch(taskId: string, batchId: string): Promise<API.TaskBatchMutationResponse> {
+    return request.delete(batchActionPath(taskId, batchId));
 }
 
 export async function getQueueDepth(): Promise<{
@@ -238,6 +328,8 @@ export async function getProfiles(page: number = 1, pageSize: number = 50, searc
 export async function listPocRules(params?: {
     all?: string;
     severity?: string;
+    execution_class?: string;
+    risk_level?: string;
     product?: string;
     cve?: string;
     compatibility_status?: string;
@@ -249,6 +341,8 @@ export async function listPocRules(params?: {
 export async function listPocRulesPage(params?: {
     all?: string;
     severity?: string;
+    execution_class?: string;
+    risk_level?: string;
     product?: string;
     cve?: string;
     compatibility_status?: string;
