@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/P0lar1ght/argus/scanner/ddout"
-	"github.com/P0lar1ght/argus/scanner/internal/output"
 	"github.com/P0lar1ght/argus/scanner/internal/scanner/cdn"
 	"github.com/P0lar1ght/argus/scanner/internal/scanner/discovery"
 	"github.com/P0lar1ght/argus/scanner/internal/scanner/portscan"
@@ -410,11 +409,6 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		return nil
 	}
 
-	// 漏洞检测
-	if enableLocalReports {
-		output.InitReportName()
-	}
-
 	nucleiResults, err := runNucleiPhase(ctx, &cfg, resultMap, enableLocalReports, emit)
 	if err != nil {
 		return err
@@ -434,24 +428,42 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	var goPocResults []structs.GoPocsResultType
 
 	emitPhase(ctx, "gopoc_telnet_cve", "start", fmt.Sprintf("%d targets", telnetTargets))
-	goPocResults = append(goPocResults, gopoc.TelnetCVEOnly(
+	telnetResults, telnetErr := gopoc.TelnetCVEOnly(
 		ipPortMap,
 		cfg.GoPocThreads,
 		cfg.Password,
 		cfg.PasswordFile,
 		emit,
-	)...)
+	)
+	goPocResults = append(goPocResults, telnetResults...)
+	if telnetErr != nil {
+		emitPhase(ctx, "gopoc_telnet_cve", "failed", "GoPoc execution failed")
+		emitPhase(ctx, PhaseGoPoc, "failed", "GoPoc execution failed")
+		if ctx != nil {
+			ctx.GoPocsResults = toEngineGoPocResults(goPocResults)
+		}
+		return fmt.Errorf("run Telnet GoPoc dispatcher: %w", telnetErr)
+	}
 	emitPhase(ctx, "gopoc_telnet_cve", "end", fmt.Sprintf("%d results", len(goPocResults)))
 
 	if cfg.GolangPoc {
 		emitPhase(ctx, "gopoc_dispatch", "start", fmt.Sprintf("%d services", len(ipPortMap)))
 		var dispatchResults []structs.GoPocsResultType
+		var dispatchErr error
 		if cfg.MachineOutput {
-			dispatchResults = gopoc.DispatchMachine(ipPortMap, cfg.GoPocThreads, cfg.Password, cfg.PasswordFile, nucleiResults, emit)
+			dispatchResults, dispatchErr = gopoc.DispatchMachine(ipPortMap, resultMap, cfg.GoPocThreads, cfg.Password, cfg.PasswordFile, nucleiResults, emit)
 		} else {
-			dispatchResults = gopoc.Dispatch(ipPortMap, cfg.GoPocThreads, cfg.Password, cfg.PasswordFile, nucleiResults, emit)
+			dispatchResults, dispatchErr = gopoc.Dispatch(ipPortMap, resultMap, cfg.GoPocThreads, cfg.Password, cfg.PasswordFile, nucleiResults, emit)
 		}
 		goPocResults = append(goPocResults, dispatchResults...)
+		if dispatchErr != nil {
+			emitPhase(ctx, "gopoc_dispatch", "failed", "GoPoc execution failed")
+			emitPhase(ctx, PhaseGoPoc, "failed", "GoPoc execution failed")
+			if ctx != nil {
+				ctx.GoPocsResults = toEngineGoPocResults(goPocResults)
+			}
+			return fmt.Errorf("run GoPoc dispatcher: %w", dispatchErr)
+		}
 		emitPhase(ctx, "gopoc_dispatch", "end", fmt.Sprintf("%d results", len(dispatchResults)))
 	}
 	emitPhase(ctx, PhaseGoPoc, "end", fmt.Sprintf("%d total results", len(goPocResults)))
@@ -461,11 +473,6 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 	if ctx != nil {
 		ctx.GoPocsResults = toEngineGoPocResults(goPocResults)
-	}
-
-	if enableLocalReports {
-		output.GenerateHTMLReportFooter()
-		output.GenerateAssetReport(cfg.OutputFile)
 	}
 
 	return nil

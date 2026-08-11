@@ -62,29 +62,11 @@ type HostInfo = structs.HostInfo
 
 // --- 输出相关 ---
 
-// WebInfo Web 页面信息
-type WebInfo struct {
-	Status string `json:"status,omitempty"`
-	Title  string `json:"title,omitempty"`
-}
-
-// OutputMessage 统一输出消息格式
-type OutputMessage struct {
-	Type          string           `json:"type,omitempty"`
-	IP            string           `json:"ip,omitempty"`
-	IPs           []string         `json:"ips,omitempty"`
-	Port          string           `json:"port,omitempty"`
-	Protocol      string           `json:"protocol,omitempty"`
-	Web           WebInfo          `json:"web,omitempty"`
-	Finger        []string         `json:"finger,omitempty"`
-	Domain        string           `json:"domain,omitempty"`
-	GoPoc         GoPocsResultType `json:"go_poc,omitempty"`
-	URI           string           `json:"uri,omitempty"`
-	City          string           `json:"city,omitempty"`
-	AdditionalMsg string           `json:"am,omitempty"`
-	Show          string           `json:"-"`
-	Nuclei        string           `json:"nuclei,omitempty"`
-}
+// WebInfo and OutputMessage share the canonical scanner output contract. The
+// aliases keep CLI report, local history, and Agent streaming consumers on the
+// same structured event instead of maintaining parallel projections.
+type WebInfo = structs.WebInfo
+type OutputMessage = structs.OutputMessage
 
 // --- 阶段进度事件 ---
 

@@ -27,7 +27,7 @@ func aDBUnauthorized(info *structs.HostInfo, ip string, port string) (error, str
 		return err, ""
 	}
 
-	_, err = conn.Write([]byte{0x43, 0x4e, 0x58, 0x4e, 0x01, 0x00, 0x00, 0x01,
+	adbRequest := []byte{0x43, 0x4e, 0x58, 0x4e, 0x01, 0x00, 0x00, 0x01,
 		0x00, 0x00, 0x10, 0x00, 0xea, 0x00, 0x00, 0x00,
 		0x44, 0x5b, 0x00, 0x00, 0xbc, 0xb1, 0xa7, 0xb1,
 		0x68, 0x6f, 0x73, 0x74, 0x3a, 0x3a, 0x66, 0x65,
@@ -59,7 +59,8 @@ func aDBUnauthorized(info *structs.HostInfo, ip string, port string) (error, str
 		0x79, 0x5f, 0x72, 0x75, 0x6e, 0x5f, 0x73, 0x65,
 		0x6e, 0x64, 0x2c, 0x6f, 0x70, 0x65, 0x6e, 0x73,
 		0x63, 0x72, 0x65, 0x65, 0x6e, 0x5f, 0x6d, 0x64,
-		0x6e, 0x73})
+		0x6e, 0x73}
+	_, err = conn.Write(adbRequest)
 	if err != nil {
 		return err, ""
 	}
@@ -78,6 +79,7 @@ func aDBUnauthorized(info *structs.HostInfo, ip string, port string) (error, str
 	if n > 4 && string(buf[:4]) != "CNXN" {
 		return fmt.Errorf("ADB需要授权/非ADB服务"), ""
 	}
+	responseBytes := append([]byte(nil), buf[:n]...)
 
 	if strings.Contains(string(buf[:n]), "ro.product.name") {
 		result += string(buf[24:n]) + "\n"
@@ -89,10 +91,14 @@ func aDBUnauthorized(info *structs.HostInfo, ip string, port string) (error, str
 		}
 
 		result += string(buf[:n]) + "\n"
+		responseBytes = append(responseBytes, buf[:n]...)
 	}
 
 	// fmt.Println(result)
 	if result != "" {
+		exchanges := []structs.GoPocExchange{
+			binaryGoPocExchange("ADB CNXN authorization verification", adbRequest, responseBytes),
+		}
 		info.Emit(ddout.OutputMessage{
 			Type:     "GoPoc",
 			IP:       "",
@@ -106,6 +112,7 @@ func aDBUnauthorized(info *structs.HostInfo, ip string, port string) (error, str
 				Security:    "CRITICAL",
 				Target:      ip + ":" + port,
 				InfoLeft:    result,
+				Exchanges:   exchanges,
 				Description: "安卓调试桥未授权访问,可尝试RCE",
 				ShowMsg:     fmt.Sprintf("ADB: %s:%s", ip, port)},
 			AdditionalMsg: "",
@@ -116,6 +123,7 @@ func aDBUnauthorized(info *structs.HostInfo, ip string, port string) (error, str
 			Security:    "CRITICAL",
 			Target:      ip + ":" + port,
 			InfoLeft:    result,
+			Exchanges:   exchanges,
 			Description: "安卓调试桥未授权访问,可尝试RCE",
 		})
 	}

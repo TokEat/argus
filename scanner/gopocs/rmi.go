@@ -20,7 +20,7 @@ func RMIScan(info *structs.HostInfo) error {
 
 	// RMI protocol handshake: JRMI + StreamProtocol
 	probe, _ := hex.DecodeString("4a524d4900024b")
-	conn.Write(probe)
+	written, _ := conn.Write(probe)
 
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
@@ -31,6 +31,9 @@ func RMIScan(info *structs.HostInfo) error {
 	if buf[0] != 0x4e {
 		return nil
 	}
+	exchanges := []structs.GoPocExchange{
+		binaryGoPocWriteExchange("RMI registry handshake verification", probe, written, buf[:n]),
+	}
 
 	result := fmt.Sprintf("RMI://%s Registry Exposed", realhost)
 	info.Emit(ddout.OutputMessage{
@@ -39,6 +42,7 @@ func RMIScan(info *structs.HostInfo) error {
 			PocName:     "RMI-Exposed",
 			Security:    "MEDIUM",
 			Target:      realhost,
+			Exchanges:   exchanges,
 			Description: "Java RMI注册表暴露",
 			ShowMsg:     result,
 		},
@@ -47,6 +51,7 @@ func RMIScan(info *structs.HostInfo) error {
 		PocName:     "RMI-Exposed",
 		Security:    "MEDIUM",
 		Target:      realhost,
+		Exchanges:   exchanges,
 		Description: "Java RMI注册表暴露",
 	})
 	return nil

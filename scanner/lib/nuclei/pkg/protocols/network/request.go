@@ -40,6 +40,13 @@ var (
 	DefaultReadTimeout = time.Duration(5) * time.Second
 )
 
+const networkPacketEventKey = "network-packet"
+
+type networkExchange struct {
+	request  []byte
+	response []byte
+}
+
 var _ protocols.Request = &Request{}
 
 // Type returns the type of the protocol request
@@ -220,6 +227,7 @@ func (request *Request) executeRequestWithPayloads(variables map[string]interfac
 	var interactshURLs []string
 
 	var responseBuilder, reqBuilder strings.Builder
+	exchanges := make([]networkExchange, len(request.Inputs))
 
 	interimValues := generators.MergeMaps(variables, payloads)
 
@@ -229,7 +237,7 @@ func (request *Request) executeRequestWithPayloads(variables map[string]interfac
 
 	inputEvents := make(map[string]interface{})
 
-	for _, input := range request.Inputs {
+	for inputIndex, input := range request.Inputs {
 		data := []byte(input.Data)
 
 		if request.options.Interactsh != nil {
@@ -261,7 +269,9 @@ func (request *Request) executeRequestWithPayloads(variables map[string]interfac
 			}
 		}
 
-		if _, err := conn.Write(finalData); err != nil {
+		written, err := conn.Write(finalData)
+		appendWrittenNetworkBytes(&exchanges[inputIndex].request, finalData, written)
+		if err != nil {
 			request.options.Output.Request(request.options.TemplatePath, address, request.Type().String(), err)
 			request.options.Progress.IncrementFailedRequestsBy(1)
 			return errors.Wrap(err, "could not write request to server")
@@ -274,6 +284,7 @@ func (request *Request) executeRequestWithPayloads(variables map[string]interfac
 			}
 
 			responseBuilder.Write(buffer)
+			exchanges[inputIndex].response = append(exchanges[inputIndex].response, buffer...)
 
 			bufferStr := string(buffer)
 			if input.Name != "" {
@@ -324,6 +335,13 @@ func (request *Request) executeRequestWithPayloads(variables map[string]interfac
 		return errors.Wrap(err, "could not read from server")
 	}
 	responseBuilder.Write(final)
+	if len(final) > 0 {
+		if len(exchanges) == 0 {
+			exchanges = append(exchanges, networkExchange{})
+		}
+		lastExchange := len(exchanges) - 1
+		exchanges[lastExchange].response = append(exchanges[lastExchange].response, final...)
+	}
 
 	response := responseBuilder.String()
 	outputEvent := request.responseToDSLMap(reqBuilder.String(), string(final), response, input.MetaInput.Input, actualAddress)
@@ -347,6 +365,9 @@ func (request *Request) executeRequestWithPayloads(variables map[string]interfac
 	}
 	if request.options.Interactsh != nil {
 		request.options.Interactsh.MakePlaceholders(interactshURLs, outputEvent)
+	}
+	if packet := makeNetworkPacket(exchanges); len(packet) > 0 {
+		outputEvent[networkPacketEventKey] = packet
 	}
 
 	var event *output.InternalWrappedEvent
@@ -372,6 +393,37 @@ func (request *Request) executeRequestWithPayloads(variables map[string]interfac
 	dumpResponse(event, request, response, actualAddress, address)
 
 	return nil
+}
+
+func appendWrittenNetworkBytes(destination *[]byte, data []byte, written int) {
+	if written <= 0 || len(data) == 0 {
+		return
+	}
+	if written > len(data) {
+		written = len(data)
+	}
+	*destination = append(*destination, data[:written]...)
+}
+
+func makeNetworkPacket(exchanges []networkExchange) map[int]output.RequestResponsePair {
+	var packet map[int]output.RequestResponsePair
+	for index, exchange := range exchanges {
+		if len(exchange.request) == 0 && len(exchange.response) == 0 {
+			continue
+		}
+		if packet == nil {
+			packet = make(map[int]output.RequestResponsePair)
+		}
+		pair := output.RequestResponsePair{}
+		if len(exchange.request) > 0 {
+			pair.Request = hex.Dump(exchange.request)
+		}
+		if len(exchange.response) > 0 {
+			pair.Response = hex.Dump(exchange.response)
+		}
+		packet[index] = pair
+	}
+	return packet
 }
 
 func dumpResponse(event *output.InternalWrappedEvent, request *Request, response string, actualAddress, address string) {

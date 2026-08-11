@@ -5,12 +5,16 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"fmt"
 	"github.com/P0lar1ght/argus/scanner/ddout"
 	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/P0lar1ght/argus/scanner/utils"
 	"net"
 	"os"
 	"strings"
+	"sync"
 )
 
 var PluginList = map[string]interface{}{
@@ -256,6 +260,164 @@ func writeResult(info *structs.HostInfo, result structs.GoPocsResultType) {
 	if info != nil && info.WriteResult != nil {
 		info.WriteResult(result)
 	}
+}
+
+func binaryGoPocExchange(label string, request, response []byte) structs.GoPocExchange {
+	return structs.GoPocExchange{
+		Label:    label,
+		Request:  hex.Dump(request),
+		Response: hex.Dump(response),
+		Encoding: "hex-dump",
+	}
+}
+
+func binaryGoPocWriteExchange(label string, request []byte, written int, response []byte) structs.GoPocExchange {
+	if written < 0 {
+		written = 0
+	}
+	if written > len(request) {
+		written = len(request)
+	}
+	return binaryGoPocExchange(label, request[:written], response)
+}
+
+// successfulSessionEvidenceLimit bounds the amount of raw protocol data kept
+// for one credential attempt. Each attempt owns its recorder; failed attempts
+// are discarded and never contribute bytes to a later successful finding.
+const successfulSessionEvidenceLimit = 4 << 20
+
+var errSuccessfulSessionEvidenceLimit = errors.New("successful GoPoc session evidence limit exceeded")
+
+type recordedIODirection uint8
+
+const (
+	recordedIORead recordedIODirection = iota
+	recordedIOWrite
+)
+
+type recordedIOEvent struct {
+	direction recordedIODirection
+	data      []byte
+}
+
+// boundedRecordingConn records exactly the bytes accepted by Write and
+// returned by Read, in call order. It deliberately sits below protocol
+// libraries (and below any TLS layer those libraries create), so the report
+// contains the actual wire bytes rather than reconstructed messages. Reaching
+// the evidence limit stops copying but does not alter authentication I/O; the
+// caller fails closed only if that credential session ultimately succeeds.
+type boundedRecordingConn struct {
+	net.Conn
+
+	ioGate sync.RWMutex
+	closed bool
+	mu     sync.Mutex
+	limit  int
+	used   int
+	events []recordedIOEvent
+	err    error
+}
+
+func newBoundedRecordingConn(conn net.Conn, limit int) *boundedRecordingConn {
+	return &boundedRecordingConn{Conn: conn, limit: limit}
+}
+
+func (conn *boundedRecordingConn) Read(buffer []byte) (int, error) {
+	conn.ioGate.RLock()
+	defer conn.ioGate.RUnlock()
+	if conn.closed {
+		return 0, net.ErrClosed
+	}
+
+	n, readErr := conn.Conn.Read(buffer)
+	recordErr := conn.record(recordedIORead, buffer[:max(n, 0)])
+	return n, errors.Join(readErr, recordErr)
+}
+
+func (conn *boundedRecordingConn) Write(buffer []byte) (int, error) {
+	conn.ioGate.RLock()
+	defer conn.ioGate.RUnlock()
+	if conn.closed {
+		return 0, net.ErrClosed
+	}
+
+	n, writeErr := conn.Conn.Write(buffer)
+	recordErr := conn.record(recordedIOWrite, buffer[:max(n, 0)])
+	return n, errors.Join(writeErr, recordErr)
+}
+
+func (conn *boundedRecordingConn) Close() error {
+	closeErr := conn.Conn.Close()
+	conn.ioGate.Lock()
+	conn.closed = true
+	conn.ioGate.Unlock()
+	return closeErr
+}
+
+func (conn *boundedRecordingConn) record(direction recordedIODirection, data []byte) error {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
+	if conn.err != nil {
+		return nil
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	if conn.limit < 0 || len(data) > conn.limit-conn.used {
+		conn.events = nil
+		conn.err = fmt.Errorf("%w (limit: %d bytes)", errSuccessfulSessionEvidenceLimit, conn.limit)
+		return nil
+	}
+
+	copyOfData := append([]byte(nil), data...)
+	conn.events = append(conn.events, recordedIOEvent{direction: direction, data: copyOfData})
+	conn.used += len(copyOfData)
+	return nil
+}
+
+func (conn *boundedRecordingConn) recordingError() error {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+	return conn.err
+}
+
+func (conn *boundedRecordingConn) exchanges(label string) ([]structs.GoPocExchange, error) {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
+	if conn.err != nil {
+		return nil, conn.err
+	}
+	exchanges := make([]structs.GoPocExchange, 0, len(conn.events))
+	for index, event := range conn.events {
+		eventLabel := fmt.Sprintf("%s wire I/O #%d", label, index+1)
+		if event.direction == recordedIOWrite {
+			exchanges = append(exchanges, binaryGoPocExchange(eventLabel+" request", event.data, nil))
+			continue
+		}
+		exchanges = append(exchanges, binaryGoPocExchange(eventLabel+" response", nil, event.data))
+	}
+	return exchanges, nil
+}
+
+func captureSuccessfulSessionEvidence(conn net.Conn, label string, limit int, operation func(net.Conn) error) ([]structs.GoPocExchange, error) {
+	recorder := newBoundedRecordingConn(conn, limit)
+	operationErr := operation(recorder)
+	// Every credential attempt already owns a short-lived connection. Closing
+	// it here also waits out library background readers before the snapshot.
+	_ = recorder.Close()
+	if operationErr != nil {
+		return nil, operationErr
+	}
+	if recordErr := recorder.recordingError(); recordErr != nil {
+		return nil, recordErr
+	}
+	return recorder.exchanges(label)
+}
+
+func isSuccessfulSessionEvidenceError(err error) bool {
+	return errors.Is(err, errSuccessfulSessionEvidenceLimit)
 }
 
 func emitOutput(info *structs.HostInfo, msg ddout.OutputMessage) {

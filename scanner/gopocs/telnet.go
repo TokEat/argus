@@ -3,15 +3,15 @@ package gopocs
 import (
 	_ "embed"
 	"fmt"
-	"github.com/P0lar1ght/argus/scanner/ddout"
-	"github.com/P0lar1ght/argus/scanner/gopocs/telnetlib"
-	"github.com/P0lar1ght/argus/scanner/structs"
-	"github.com/P0lar1ght/argus/scanner/utils"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/gopocs/telnetlib"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	"github.com/projectdiscovery/gologger"
 )
 
@@ -19,14 +19,23 @@ import (
 var telnetUserPasswdDict string
 
 func GetTelnetServerType(ip string, port int) int {
+	serverType, _ := getTelnetServerTypeWithEvidence(ip, port)
+	return serverType
+}
+
+func getTelnetServerTypeWithEvidence(ip string, port int) (int, []telnetlib.RawExchange) {
 	gologger.AuditTimeLogger("[Go] [TelnetScan] GetTelnetServerType try %s:%v", ip, port)
 	client := telnetlib.New(ip, port)
 	err := client.Connect()
 	if err != nil {
-		return telnetlib.Closed
+		return telnetlib.Closed, nil
 	}
 	defer client.Close()
-	return client.MakeServerType()
+	serverType := client.MakeServerType()
+	if serverType != telnetlib.UnauthorizedAccess {
+		return serverType, nil
+	}
+	return serverType, client.RawExchanges()
 }
 
 func TelnetScan(info *structs.HostInfo) (tmperr error) {
@@ -43,7 +52,7 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 	defer gologger.AuditTimeLogger("[Go] [TelnetScan] TelnetScan return %s:%v", info.Host, info.Ports)
 
 	// Telnet 未授权检测
-	serverType := GetTelnetServerType(info.Host, portInt)
+	serverType, unauthorizedEvidence := getTelnetServerTypeWithEvidence(info.Host, portInt)
 	gologger.AuditTimeLogger("[Go] [TelnetScan] start try %s:%v Type: %v", info.Host, info.Ports, serverType)
 	if serverType == telnetlib.UnauthorizedAccess {
 		result := fmt.Sprintf("Telnet://%v:%v Unauthorized", info.Host, info.Ports)
@@ -51,31 +60,7 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 
 		showData := fmt.Sprintf("Host: %v:%v\nUnauthorized\n", info.Host, info.Ports)
 
-		info.Emit(ddout.OutputMessage{
-			Type:     "GoPoc",
-			IP:       "",
-			IPs:      nil,
-			Port:     "",
-			Protocol: "",
-			Web:      ddout.WebInfo{},
-			Finger:   nil,
-			Domain:   "",
-			GoPoc: ddout.GoPocsResultType{PocName: "Telnet-Login",
-				Security:    "CRITICAL",
-				Target:      info.Host + ":" + info.Ports,
-				InfoLeft:    showData,
-				Description: "Telnet未授权/弱口令",
-				ShowMsg:     result},
-			AdditionalMsg: "",
-		})
-
-		writeResult(info, structs.GoPocsResultType{
-			PocName:     "Telnet-Login",
-			Security:    "CRITICAL",
-			Target:      info.Host + ":" + info.Ports,
-			InfoLeft:    showData,
-			Description: "Telnet未授权/弱口令",
-		})
+		publishTelnetFinding(info, showData, result, unauthorizedEvidence)
 
 		return tmperr
 	}
@@ -125,7 +110,7 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 
 		for _, pass := range passList {
 			gologger.AuditTimeLogger("[Go] [Telnet-Brute] start try %s:%v %v %v", info.Host, info.Ports, user, pass)
-			err := TelnetCheck(info.Host, user, pass, portInt, serverType)
+			err, successfulEvidence := telnetCheckWithEvidence(info.Host, user, pass, portInt, serverType)
 			if err == nil {
 				if serverType == telnetlib.OnlyPassword {
 					result := fmt.Sprintf("Telnet://%v:%v %s", info.Host, info.Ports, pass)
@@ -133,31 +118,7 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 
 					showData := fmt.Sprintf("Host: %v:%v\nPass: %v\n", info.Host, info.Ports, pass)
 
-					info.Emit(ddout.OutputMessage{
-						Type:     "GoPoc",
-						IP:       "",
-						IPs:      nil,
-						Port:     "",
-						Protocol: "",
-						Web:      ddout.WebInfo{},
-						Finger:   nil,
-						Domain:   "",
-						GoPoc: ddout.GoPocsResultType{PocName: "Telnet-Login",
-							Security:    "CRITICAL",
-							Target:      info.Host + ":" + info.Ports,
-							InfoLeft:    showData,
-							Description: "Telnet未授权/弱口令",
-							ShowMsg:     result},
-						AdditionalMsg: "",
-					})
-
-					writeResult(info, structs.GoPocsResultType{
-						PocName:     "Telnet-Login",
-						Security:    "CRITICAL",
-						Target:      info.Host + ":" + info.Ports,
-						InfoLeft:    showData,
-						Description: "Telnet未授权/弱口令",
-					})
+					publishTelnetFinding(info, showData, result, successfulEvidence)
 
 					return err
 				} else if serverType == telnetlib.UsernameAndPassword {
@@ -168,31 +129,7 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 
 					showData := fmt.Sprintf("Host: %v:%v\nUser: %v\nPass: %v\n", info.Host, info.Ports, user, pass)
 
-					info.Emit(ddout.OutputMessage{
-						Type:     "GoPoc",
-						IP:       "",
-						IPs:      nil,
-						Port:     "",
-						Protocol: "",
-						Web:      ddout.WebInfo{},
-						Finger:   nil,
-						Domain:   "",
-						GoPoc: ddout.GoPocsResultType{PocName: "Telnet-Login",
-							Security:    "CRITICAL",
-							Target:      info.Host + ":" + info.Ports,
-							InfoLeft:    showData,
-							Description: "Telnet未授权/弱口令",
-							ShowMsg:     result},
-						AdditionalMsg: "",
-					})
-
-					writeResult(info, structs.GoPocsResultType{
-						PocName:     "Telnet-Login",
-						Security:    "CRITICAL",
-						Target:      info.Host + ":" + info.Ports,
-						InfoLeft:    showData,
-						Description: "Telnet未授权/弱口令",
-					})
+					publishTelnetFinding(info, showData, result, successfulEvidence)
 
 					return err
 				}
@@ -214,10 +151,15 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 }
 
 func TelnetCheck(addr, username, password string, port, serverType int) error {
+	err, _ := telnetCheckWithEvidence(addr, username, password, port, serverType)
+	return err
+}
+
+func telnetCheckWithEvidence(addr, username, password string, port, serverType int) (error, []telnetlib.RawExchange) {
 	client := telnetlib.New(addr, port)
 	err := client.Connect()
 	if err != nil {
-		return err
+		return err, nil
 	}
 	defer client.Close()
 	client.UserName = username
@@ -225,7 +167,48 @@ func TelnetCheck(addr, username, password string, port, serverType int) error {
 	client.ServerType = serverType
 	err = client.Login()
 	if err != nil {
-		return err
+		return err, nil
 	}
-	return nil
+	return nil, client.RawExchanges()
+}
+
+func publishTelnetFinding(info *structs.HostInfo, showData, showMessage string, raw []telnetlib.RawExchange) {
+	pocResult := structs.GoPocsResultType{
+		PocName:     "Telnet-Login",
+		Security:    "CRITICAL",
+		Target:      info.Host + ":" + info.Ports,
+		InfoLeft:    showData,
+		Exchanges:   telnetGoPocExchanges(raw),
+		Description: "Telnet未授权/弱口令",
+		ShowMsg:     showMessage,
+	}
+	emitOutput(info, ddout.OutputMessage{
+		Type:          "GoPoc",
+		IP:            "",
+		IPs:           nil,
+		Port:          "",
+		Protocol:      "",
+		Web:           ddout.WebInfo{},
+		Finger:        nil,
+		Domain:        "",
+		GoPoc:         pocResult,
+		AdditionalMsg: "",
+	})
+	writeResult(info, pocResult)
+}
+
+func telnetGoPocExchanges(raw []telnetlib.RawExchange) []structs.GoPocExchange {
+	exchanges := make([]structs.GoPocExchange, 0, len(raw))
+	for index, exchange := range raw {
+		direction := "read"
+		if len(exchange.Request) > 0 {
+			direction = "write"
+		}
+		exchanges = append(exchanges, binaryGoPocExchange(
+			fmt.Sprintf("Telnet I/O event %d (%s)", index+1, direction),
+			exchange.Request,
+			exchange.Response,
+		))
+	}
+	return exchanges
 }

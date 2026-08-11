@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"github.com/P0lar1ght/argus/scanner/ddout"
 	"github.com/P0lar1ght/argus/scanner/structs"
-	"io"
 	"net/url"
 	"os"
 	"regexp"
@@ -52,7 +51,7 @@ func ViewStateKeyCheck(info *structs.HostInfo) {
 
 	gologger.AuditTimeLogger("[Go] [ViewState] detect %v", urlStr)
 
-	vsValue, vsGen, enc, err := fetchAndExtractViewState(urlStr)
+	vsValue, vsGen, enc, exchange, err := fetchAndExtractViewStateWithEvidence(urlStr)
 	if err != nil || vsValue == "" {
 		gologger.AuditTimeLogger("[Go] [ViewState] not found: %v (%v)", urlStr, err)
 		return
@@ -85,51 +84,57 @@ func ViewStateKeyCheck(info *structs.HostInfo) {
 	}
 
 	show := fmt.Sprintf("Host: %v\nalg: %v\nkey: %v\n", urlStr, alg, keyHex)
-	emitOutput(info, ddout.OutputMessage{
-		Type:     "GoPoc",
-		IP:       "",
-		IPs:      nil,
-		Port:     "",
-		Protocol: "",
-		Web:      ddout.WebInfo{},
-		Finger:   nil,
-		Domain:   "",
-		GoPoc: ddout.GoPocsResultType{PocName: "ASP.NET ViewState Weak Key",
-			Security:    "HIGH",
-			Target:      urlStr,
-			InfoLeft:    show,
-			InfoRight:   "",
-			Description: "ViewState validation key can be derived",
-			ShowMsg:     fmt.Sprintf("%s\tALG=%s\tKEY=%s", urlStr, alg, keyHex),
-		},
-		AdditionalMsg: "",
-	})
-
-	writeResult(info, structs.GoPocsResultType{
+	pocResult := structs.GoPocsResultType{
 		PocName:     "ASP.NET ViewState Weak Key",
 		Security:    "HIGH",
 		Target:      urlStr,
 		InfoLeft:    show,
 		InfoRight:   "",
+		Exchanges:   []structs.GoPocExchange{exchange},
 		Description: "ViewState validation key can be derived",
+		ShowMsg:     fmt.Sprintf("%s\tALG=%s\tKEY=%s", urlStr, alg, keyHex),
+	}
+	emitOutput(info, ddout.OutputMessage{
+		Type:          "GoPoc",
+		IP:            "",
+		IPs:           nil,
+		Port:          "",
+		Protocol:      "",
+		Web:           ddout.WebInfo{},
+		Finger:        nil,
+		Domain:        "",
+		GoPoc:         pocResult,
+		AdditionalMsg: "",
 	})
+
+	writeResult(info, pocResult)
 }
 
 func fetchAndExtractViewState(u string) (value string, generator string, encrypted bool, err error) {
+	value, generator, encrypted, _, err = fetchAndExtractViewStateWithEvidence(u)
+	return value, generator, encrypted, err
+}
+
+func fetchAndExtractViewStateWithEvidence(u string) (value string, generator string, encrypted bool, exchange structs.GoPocExchange, err error) {
 	// GET the page
 	req, err := retryablehttp.NewRequest("GET", u, nil)
 	if err != nil {
-		return "", "", false, err
+		return "", "", false, structs.GoPocExchange{}, err
 	}
 	client := retryablehttp.NewClient(retryablehttp.DefaultOptionsSpraying)
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", "", false, err
+		return "", "", false, structs.GoPocExchange{}, err
 	}
 	defer resp.Body.Close()
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, err := readCompleteGoPocHTTPBody(resp.Body)
+	if err != nil {
+		return "", "", false, structs.GoPocExchange{}, err
+	}
 	html := string(bodyBytes)
-	return extractViewState(html)
+	exchange = httpGoPocExchange("ASP.NET ViewState weak-key source page", resp.Request, nil, resp, bodyBytes)
+	value, generator, encrypted, err = extractViewState(html)
+	return value, generator, encrypted, exchange, err
 }
 
 func extractViewState(html string) (string, string, bool, error) {

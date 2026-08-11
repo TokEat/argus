@@ -20,7 +20,7 @@ func MQTTScan(info *structs.HostInfo) error {
 
 	// MQTT CONNECT with anonymous access (no username/password)
 	connectPkt, _ := hex.DecodeString("101600044d5154540402003c000a61726775735f73636e")
-	conn.Write(connectPkt)
+	written, _ := conn.Write(connectPkt)
 
 	buf := make([]byte, 256)
 	n, err := conn.Read(buf)
@@ -35,6 +35,9 @@ func MQTTScan(info *structs.HostInfo) error {
 	if returnCode != 0x00 {
 		return nil
 	}
+	exchanges := []structs.GoPocExchange{
+		binaryGoPocWriteExchange("MQTT anonymous CONNECT verification", connectPkt, written, buf[:n]),
+	}
 
 	result := fmt.Sprintf("MQTT://%s Anonymous Access OK", realhost)
 	info.Emit(ddout.OutputMessage{
@@ -43,6 +46,7 @@ func MQTTScan(info *structs.HostInfo) error {
 			PocName:     "MQTT-Anonymous",
 			Security:    "HIGH",
 			Target:      realhost,
+			Exchanges:   exchanges,
 			Description: "MQTT Broker匿名访问",
 			ShowMsg:     result,
 		},
@@ -51,6 +55,7 @@ func MQTTScan(info *structs.HostInfo) error {
 		PocName:     "MQTT-Anonymous",
 		Security:    "HIGH",
 		Target:      realhost,
+		Exchanges:   exchanges,
 		Description: "MQTT Broker匿名访问",
 	})
 	return nil

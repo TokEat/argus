@@ -20,12 +20,15 @@ func MSMQScan(info *structs.HostInfo) error {
 
 	// MSMQ Ping packet
 	probe, _ := hex.DecodeString("10010000000000000000000000000000")
-	conn.Write(probe)
+	written, _ := conn.Write(probe)
 
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
 	if err != nil || n < 4 {
 		return err
+	}
+	exchanges := []structs.GoPocExchange{
+		binaryGoPocWriteExchange("MSMQ service probe", probe, written, buf[:n]),
 	}
 
 	result := fmt.Sprintf("MSMQ://%s Service Detected", realhost)
@@ -35,6 +38,7 @@ func MSMQScan(info *structs.HostInfo) error {
 			PocName:     "MSMQ-Detect",
 			Security:    "INFO",
 			Target:      realhost,
+			Exchanges:   exchanges,
 			Description: "Microsoft消息队列服务",
 			ShowMsg:     result,
 		},
@@ -43,6 +47,7 @@ func MSMQScan(info *structs.HostInfo) error {
 		PocName:     "MSMQ-Detect",
 		Security:    "INFO",
 		Target:      realhost,
+		Exchanges:   exchanges,
 		Description: "Microsoft消息队列服务",
 	})
 	return nil

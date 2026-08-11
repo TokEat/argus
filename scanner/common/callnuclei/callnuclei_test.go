@@ -25,10 +25,10 @@ func TestReadConfigWAFBypassHeaders(t *testing.T) {
 	}
 }
 
-func TestApplyPresentationLeavesInteractiveDefaults(t *testing.T) {
+func TestApplyPresentationUsesArgusAsInteractiveFindingSink(t *testing.T) {
 	options := &types.Options{NoColor: false, EnableProgressBar: true}
 	applyPresentation(options, nil)
-	if options.NoColor || !options.EnableProgressBar {
+	if options.NoColor || !options.EnableProgressBar || !options.DisableStdout {
 		t.Fatalf("interactive presentation changed options: %+v", options)
 	}
 }
@@ -36,7 +36,7 @@ func TestApplyPresentationLeavesInteractiveDefaults(t *testing.T) {
 func TestApplyPresentationConfiguresMachineOutput(t *testing.T) {
 	options := &types.Options{NoColor: false, EnableProgressBar: true}
 	applyPresentation(options, []Presentation{{MachineOutput: true}})
-	if !options.NoColor || options.EnableProgressBar {
+	if !options.NoColor || options.EnableProgressBar || !options.DisableStdout {
 		t.Fatalf("machine presentation did not set no-color/progress options: %+v", options)
 	}
 }

@@ -20,7 +20,7 @@ func SAPP4Scan(info *structs.HostInfo) error {
 
 	// SAP P4 (NI protocol) route string ping
 	probe := []byte("NI_PING\x00")
-	conn.Write(probe)
+	written, _ := conn.Write(probe)
 
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
@@ -31,6 +31,9 @@ func SAPP4Scan(info *structs.HostInfo) error {
 	if !strings.Contains(resp, "NI") && !strings.Contains(resp, "SAP") {
 		return nil
 	}
+	exchanges := []structs.GoPocExchange{
+		binaryGoPocWriteExchange("SAP P4 NI protocol verification", probe, written, buf[:n]),
+	}
 
 	result := fmt.Sprintf("SAP-P4://%s NetWeaver Detected", realhost)
 	info.Emit(ddout.OutputMessage{
@@ -39,6 +42,7 @@ func SAPP4Scan(info *structs.HostInfo) error {
 			PocName:     "SAP-P4-Detect",
 			Security:    "MEDIUM",
 			Target:      realhost,
+			Exchanges:   exchanges,
 			Description: "SAP NetWeaver Java P4协议检测",
 			ShowMsg:     result,
 		},
@@ -47,6 +51,7 @@ func SAPP4Scan(info *structs.HostInfo) error {
 		PocName:     "SAP-P4-Detect",
 		Security:    "MEDIUM",
 		Target:      realhost,
+		Exchanges:   exchanges,
 		Description: "SAP NetWeaver Java P4协议检测",
 	})
 	return nil

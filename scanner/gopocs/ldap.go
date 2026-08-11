@@ -20,7 +20,7 @@ func LDAPScan(info *structs.HostInfo) error {
 
 	// LDAP Anonymous Simple Bind (version 2, empty DN, empty password)
 	bindReq, _ := hex.DecodeString("300c020101600702010204008000")
-	conn.Write(bindReq)
+	written, _ := conn.Write(bindReq)
 
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
@@ -30,6 +30,9 @@ func LDAPScan(info *structs.HostInfo) error {
 	// Check for BindResponse success (resultCode == 0)
 	// Response: 30 0c 02 01 01 61 07 0a 01 00 04 00 04 00
 	if n >= 14 && buf[9] == 0x00 {
+		exchanges := []structs.GoPocExchange{
+			binaryGoPocWriteExchange("LDAP anonymous bind verification", bindReq, written, buf[:n]),
+		}
 		result := fmt.Sprintf("LDAP://%s Anonymous Bind OK", realhost)
 		info.Emit(ddout.OutputMessage{
 			Type: "GoPoc",
@@ -37,6 +40,7 @@ func LDAPScan(info *structs.HostInfo) error {
 				PocName:     "LDAP-Anonymous",
 				Security:    "HIGH",
 				Target:      realhost,
+				Exchanges:   exchanges,
 				Description: "LDAP匿名绑定未授权访问",
 				ShowMsg:     result,
 			},
@@ -45,6 +49,7 @@ func LDAPScan(info *structs.HostInfo) error {
 			PocName:     "LDAP-Anonymous",
 			Security:    "HIGH",
 			Target:      realhost,
+			Exchanges:   exchanges,
 			Description: "LDAP匿名绑定未授权访问",
 		})
 	}

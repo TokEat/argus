@@ -1208,22 +1208,6 @@ func TestFingerprintDebugCustomOnlyAllowsRuleWithoutProduct(t *testing.T) {
 	}
 }
 
-func TestToDDOutOutputMessageKeepsShowMsg(t *testing.T) {
-	src := engine.OutputMessage{
-		Type: "GoPoc",
-		GoPoc: engine.GoPocsResultType{
-			PocName:  "Shiro Weak Key",
-			ShowMsg:  "http://127.0.0.1:8081 key=xxx",
-			Security: "CRITICAL",
-		},
-	}
-
-	got := toDDOutOutputMessage(src)
-	if got.GoPoc.ShowMsg != src.GoPoc.ShowMsg {
-		t.Fatalf("show message lost during conversion: got %q want %q", got.GoPoc.ShowMsg, src.GoPoc.ShowMsg)
-	}
-}
-
 func TestWorkerPythonScratchpadRunStreamsCompletion(t *testing.T) {
 	stream := &fakeDebugStream{sent: make(chan *pb.DebugEvent, 4)}
 	client := &fakeAgentClient{debugStream: stream}

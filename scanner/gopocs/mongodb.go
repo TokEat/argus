@@ -45,10 +45,10 @@ func MongodbUnauth(info *structs.HostInfo) (flag bool, err error) {
 
 	realhost := fmt.Sprintf("%s:%v", info.Host, info.Ports)
 
-	checkUnAuth := func(address string, packet []byte) (string, error) {
+	checkUnAuth := func(packet []byte) ([]byte, []byte, error) {
 		conn, err := utils.WrapperTcpWithTimeout("tcp", realhost, time.Duration(6)*time.Second)
 		if err != nil {
-			return "", err
+			return nil, nil, err
 		}
 		defer func() {
 			if conn != nil {
@@ -57,61 +57,65 @@ func MongodbUnauth(info *structs.HostInfo) (flag bool, err error) {
 		}()
 		err = conn.SetReadDeadline(time.Now().Add(time.Duration(6) * time.Second))
 		if err != nil {
-			return "", err
+			return nil, nil, err
 		}
-		_, err = conn.Write(packet)
+		written, err := conn.Write(packet)
 		gologger.AuditTimeLogger("[Go] [Mongodb] Dumped TCP request for %s\n\n%s\n", realhost, hex.Dump(packet))
 		if err != nil {
-			return "", err
+			return nil, nil, err
 		}
 		reply := make([]byte, 1024)
 		count, err := conn.Read(reply)
 		if err != nil {
-			return "", err
+			return nil, nil, err
 		}
 		gologger.AuditTimeLogger("[Go] [Mongodb] Dumped TCP response for %s\n\n%s\n", realhost, hex.Dump(reply[0:count]))
-		return string(reply[0:count]), nil
+		return packet[:written], reply[:count], nil
 	}
 
 	// send OP_MSG first
-	reply, err := checkUnAuth(realhost, packet1)
+	selectedLabel := "MongoDB OP_MSG unauthenticated verification"
+	request, response, err := checkUnAuth(packet1)
 	if err != nil {
-		reply, err = checkUnAuth(realhost, packet2)
+		selectedLabel = "MongoDB OP_QUERY unauthenticated verification"
+		request, response, err = checkUnAuth(packet2)
 		if err != nil {
 			return flag, err
 		}
 	}
+	reply := string(response)
 	if strings.Contains(reply, "totalLinesWritten") {
 		flag = true
 
 		result := fmt.Sprintf("Mongodb://%s Unauthorized", realhost)
 		// gologger.Silent().Msg(result)
-
-		info.Emit(ddout.OutputMessage{
-			Type:     "GoPoc",
-			IP:       "",
-			IPs:      nil,
-			Port:     "",
-			Protocol: "",
-			Web:      ddout.WebInfo{},
-			Finger:   nil,
-			Domain:   "",
-			GoPoc: ddout.GoPocsResultType{PocName: "Mongodb-Unauthorized",
-				Security:    "HIGH",
-				Target:      realhost,
-				InfoLeft:    reply,
-				Description: "Mongodb未授权访问",
-				ShowMsg:     result},
-			AdditionalMsg: "",
-		})
-
-		writeResult(info, structs.GoPocsResultType{
+		exchanges := []structs.GoPocExchange{
+			binaryGoPocExchange(selectedLabel, request, response),
+		}
+		pocResult := structs.GoPocsResultType{
 			PocName:     "Mongodb-Unauthorized",
 			Security:    "HIGH",
 			Target:      realhost,
 			InfoLeft:    reply,
+			Exchanges:   exchanges,
 			Description: "Mongodb未授权访问",
+			ShowMsg:     result,
+		}
+
+		info.Emit(ddout.OutputMessage{
+			Type:          "GoPoc",
+			IP:            "",
+			IPs:           nil,
+			Port:          "",
+			Protocol:      "",
+			Web:           ddout.WebInfo{},
+			Finger:        nil,
+			Domain:        "",
+			GoPoc:         pocResult,
+			AdditionalMsg: "",
 		})
+
+		writeResult(info, pocResult)
 	}
 	return flag, err
 }

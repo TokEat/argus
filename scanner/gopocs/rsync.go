@@ -5,12 +5,13 @@ import (
 	"crypto/md5"
 	"encoding/base64"
 	"fmt"
+	"strings"
+	"time"
+
 	"github.com/P0lar1ght/argus/scanner/ddout"
 	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/P0lar1ght/argus/scanner/utils"
 	"github.com/projectdiscovery/gologger"
-	"strings"
-	"time"
 )
 
 const (
@@ -59,7 +60,7 @@ func RsyncScan(info *structs.HostInfo) (err error) {
 		gologger.AuditTimeLogger("[Go] [Rsync] Testing module: %s", module)
 
 		// 先测试是否未授权访问（空用户空密码）
-		success, msg := tryLogin(address, module, "", "")
+		success, msg, exchanges := tryLoginWithEvidence(address, module, "", "")
 		if success {
 			gologger.AuditTimeLogger("[Go] ✅ %s", msg)
 
@@ -67,34 +68,30 @@ func RsyncScan(info *structs.HostInfo) (err error) {
 			result := fmt.Sprintf("Rsync://%s/%s", address, module)
 			showData := fmt.Sprintf("Module: %s\nUsername: <empty>\nPassword: <empty>\n", module)
 
-			emitOutput(info, ddout.OutputMessage{
-				Type:     "GoPoc",
-				IP:       "",
-				IPs:      nil,
-				Port:     "",
-				Protocol: "",
-				Web:      ddout.WebInfo{},
-				Finger:   nil,
-				Domain:   "",
-				GoPoc: ddout.GoPocsResultType{
-					PocName:     "Rsync-Brute",
-					Security:    "HIGH",
-					Target:      address,
-					InfoLeft:    showData,
-					InfoRight:   "Rsync 未授权访问",
-					Description: "Rsync 未授权访问或弱口令",
-					ShowMsg:     result,
-				},
-				AdditionalMsg: "",
-			})
-
-			writeResult(info, structs.GoPocsResultType{
+			pocResult := structs.GoPocsResultType{
 				PocName:     "Rsync-Brute",
 				Security:    "HIGH",
 				Target:      address,
 				InfoLeft:    showData,
+				InfoRight:   "Rsync 未授权访问",
 				Description: "Rsync 未授权访问或弱口令",
+				ShowMsg:     result,
+				Exchanges:   exchanges,
+			}
+			emitOutput(info, ddout.OutputMessage{
+				Type:          "GoPoc",
+				IP:            "",
+				IPs:           nil,
+				Port:          "",
+				Protocol:      "",
+				Web:           ddout.WebInfo{},
+				Finger:        nil,
+				Domain:        "",
+				GoPoc:         pocResult,
+				AdditionalMsg: "",
 			})
+
+			writeResult(info, pocResult)
 
 			// 加个小延迟，确保输出刷出
 			time.Sleep(50 * time.Millisecond)
@@ -129,7 +126,7 @@ func RsyncScan(info *structs.HostInfo) (err error) {
 				maskedPass := maskPassword(pass)
 				gologger.AuditTimeLogger("[Go] [Rsync] Trying %s:%s on module %s", user, maskedPass, module)
 
-				success, msg := tryLogin(address, module, user, pass)
+				success, msg, exchanges := tryLoginWithEvidence(address, module, user, pass)
 				if success {
 					gologger.AuditTimeLogger("[Go] ✅ %s", msg)
 
@@ -137,34 +134,30 @@ func RsyncScan(info *structs.HostInfo) (err error) {
 					result := fmt.Sprintf("Rsync://%s/%s", address, module)
 					showData := fmt.Sprintf("Module: %s\nUsername: %s\nPassword: %s\n", module, user, maskedPass)
 
-					emitOutput(info, ddout.OutputMessage{
-						Type:     "GoPoc",
-						IP:       "",
-						IPs:      nil,
-						Port:     "",
-						Protocol: "",
-						Web:      ddout.WebInfo{},
-						Finger:   nil,
-						Domain:   "",
-						GoPoc: ddout.GoPocsResultType{
-							PocName:     "Rsync-Brute",
-							Security:    "HIGH",
-							Target:      address,
-							InfoLeft:    showData,
-							InfoRight:   fmt.Sprintf("Module: %s, Access: Authenticated", module),
-							Description: "Rsync 弱口令",
-							ShowMsg:     result,
-						},
-						AdditionalMsg: "",
-					})
-
-					writeResult(info, structs.GoPocsResultType{
+					pocResult := structs.GoPocsResultType{
 						PocName:     "Rsync-Brute",
 						Security:    "HIGH",
 						Target:      address,
 						InfoLeft:    showData,
+						InfoRight:   fmt.Sprintf("Module: %s, Access: Authenticated", module),
 						Description: "Rsync 弱口令",
+						ShowMsg:     result,
+						Exchanges:   exchanges,
+					}
+					emitOutput(info, ddout.OutputMessage{
+						Type:          "GoPoc",
+						IP:            "",
+						IPs:           nil,
+						Port:          "",
+						Protocol:      "",
+						Web:           ddout.WebInfo{},
+						Finger:        nil,
+						Domain:        "",
+						GoPoc:         pocResult,
+						AdditionalMsg: "",
 					})
+
+					writeResult(info, pocResult)
 
 					// 加个小延迟，确保输出刷出
 					time.Sleep(50 * time.Millisecond)
@@ -236,38 +229,60 @@ func getModuleList(address string) ([]string, error) {
 
 // tryLogin 尝试登录模块（支持未授权和认证）
 func tryLogin(address, module, username, password string) (bool, string) {
+	success, message, _ := tryLoginWithEvidence(address, module, username, password)
+	return success, message
+}
+
+func tryLoginWithEvidence(address, module, username, password string) (bool, string, []structs.GoPocExchange) {
 	conn, err := utils.WrapperTcpWithTimeout("tcp", address, 10*time.Second)
 	if err != nil {
-		return false, fmt.Sprintf("connect failed: %v", err)
+		return false, fmt.Sprintf("connect failed: %v", err), nil
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(rsyncIOTimeout))
 
 	reader := bufio.NewReader(conn)
+	exchanges := make([]structs.GoPocExchange, 0, 3)
 
-	if _, err := conn.Write([]byte(RsyncProtocol)); err != nil {
-		return false, fmt.Sprintf("write error: %v", err)
-	}
-	_, _ = reader.ReadString('\n')
-
-	if _, err := conn.Write([]byte(module + "\n")); err != nil {
-		return false, fmt.Sprintf("write error: %v", err)
-	}
-
-	line, err := reader.ReadString('\n')
+	greetingRequest := []byte(RsyncProtocol)
+	greetingWritten, err := conn.Write(greetingRequest)
 	if err != nil {
-		return false, "read response failed"
+		return false, fmt.Sprintf("write error: %v", err), nil
 	}
-	line = strings.TrimSpace(line)
+	greetingResponse, _ := reader.ReadString('\n')
+	exchanges = append(exchanges, binaryGoPocWriteExchange(
+		"Rsync protocol greeting",
+		greetingRequest,
+		greetingWritten,
+		[]byte(greetingResponse),
+	))
+
+	moduleRequest := []byte(module + "\n")
+	moduleWritten, err := conn.Write(moduleRequest)
+	if err != nil {
+		return false, fmt.Sprintf("write error: %v", err), nil
+	}
+
+	moduleResponse, err := reader.ReadString('\n')
+	if err != nil {
+		return false, "read response failed", nil
+	}
+	exchanges = append(exchanges, binaryGoPocWriteExchange(
+		"Rsync module access request",
+		moduleRequest,
+		moduleWritten,
+		[]byte(moduleResponse),
+	))
+	line := strings.TrimSpace(moduleResponse)
 
 	if strings.HasPrefix(line, "@RSYNCD: OK") {
-		return true, fmt.Sprintf("✅ No Auth! Module=[%s]", module)
+		return true, fmt.Sprintf("✅ No Auth! Module=[%s]", module), exchanges
 	}
 
 	if strings.HasPrefix(line, "@RSYNCD: AUTHREQD") {
 		parts := strings.Fields(line)
 		if len(parts) < 3 {
-			return false, "invalid authreqd format"
+			return false, "invalid authreqd format", nil
 		}
 		challenge := strings.TrimSuffix(parts[2], "\n")
 
@@ -276,19 +291,26 @@ func tryLogin(address, module, username, password string) (bool, string) {
 		response := base64.StdEncoding.EncodeToString(hash[:])
 
 		authLine := fmt.Sprintf("%s %s\n", username, response)
-		_, err = conn.Write([]byte(authLine))
+		authRequest := []byte(authLine)
+		authWritten, err := conn.Write(authRequest)
 		if err != nil {
-			return false, "send auth failed"
+			return false, "send auth failed", nil
 		}
 
-		resultLine, _ := reader.ReadString('\n')
-		resultLine = strings.TrimSpace(resultLine)
+		authResponse, _ := reader.ReadString('\n')
+		resultLine := strings.TrimSpace(authResponse)
 
 		if strings.Contains(resultLine, "RSYNCD: OK") {
-			return true, fmt.Sprintf("✅ Auth Success! Module=[%s] User=[%s] Pass=[%s]", module, username, maskPassword(password))
+			exchanges = append(exchanges, binaryGoPocWriteExchange(
+				"Rsync authentication",
+				authRequest,
+				authWritten,
+				[]byte(authResponse),
+			))
+			return true, fmt.Sprintf("✅ Auth Success! Module=[%s] User=[%s] Pass=[%s]", module, username, maskPassword(password)), exchanges
 		}
-		return false, "auth failed"
+		return false, "auth failed", nil
 	}
 
-	return false, "access denied"
+	return false, "access denied", nil
 }

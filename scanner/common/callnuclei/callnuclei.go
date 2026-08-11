@@ -2,6 +2,7 @@ package callnuclei
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -29,15 +30,18 @@ var (
 	memProfile string // optional profile file path
 )
 
-// Presentation controls output from a single embedded Nuclei invocation. Its
-// zero value retains the interactive defaults used by Server and Agent calls.
-// MachineOutput is for callers that route findings through Argus' callback and
-// reserve stdout for their own structured stream.
+// Presentation controls output from a single embedded Nuclei invocation.
+// Argus always owns the finding sink through its callback; MachineOutput also
+// disables color and progress for a structured CLI stream.
 type Presentation struct {
 	MachineOutput bool
 }
 
 func applyPresentation(options *types.Options, presentation []Presentation) {
+	// Argus owns the finding sink through AddResultCallback. Leaving the
+	// embedded writer enabled duplicates interactive findings and corrupts the
+	// CLI NDJSON stream with Nuclei screen output.
+	options.DisableStdout = true
 	if len(presentation) == 0 || !presentation[0].MachineOutput {
 		return
 	}
@@ -55,7 +59,7 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 	np string,
 	excludeTags []string,
 	severities []string,
-	presentation ...Presentation) []output.ResultEvent {
+	presentation ...Presentation) ([]output.ResultEvent, error) {
 
 	// Task 2.1: 清空全局 Results，防止跨 batch 调用结果累积。
 	output.ResultsLock.Lock()
@@ -75,7 +79,7 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 	output.AddResultCallback = callBack
 	if err := exportrunner.ExportRunnerConfigureOptions(); err != nil {
 		gologger.Error().Msgf("Could not initialize options: %s\n", err)
-		return []output.ResultEvent{}
+		return nil, fmt.Errorf("initialize Nuclei options: %w", err)
 	}
 
 	readConfig(options, TargetAndPocsName, proxy, nameForSearch, NoInteractsh, wafBypassHeaders, np, excludeTags)
@@ -85,7 +89,7 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 	if options.ListDslSignatures {
 		gologger.Info().Msgf("The available custom DSL functions are:")
 		fmt.Println(dsl.GetPrintableDslFunctionSignatures(options.NoColor))
-		return []output.ResultEvent{}
+		return nil, nil
 	}
 
 	// Profiling related code
@@ -93,7 +97,7 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 		f, err := os.Create(memProfile)
 		if err != nil {
 			gologger.Error().Msgf("profile: could not create memory profile %q: %v", memProfile, err)
-			return []output.ResultEvent{}
+			return nil, fmt.Errorf("create Nuclei memory profile: %w", err)
 		}
 		old := runtime.MemProfileRate
 		runtime.MemProfileRate = 4096
@@ -112,10 +116,10 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 	nucleiRunner, err := exportrunner.ExportRunnerNew(options)
 	if err != nil {
 		gologger.Error().Msgf("Could not create runner: %s\n", err)
-		return []output.ResultEvent{}
+		return nil, fmt.Errorf("create Nuclei runner: %w", err)
 	}
 	if nucleiRunner == nil {
-		return []output.ResultEvent{}
+		return nil, errors.New("create Nuclei runner: nil runner")
 	}
 
 	nucleiRunner.EmbedPocsFS = fs
@@ -129,12 +133,13 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 	// 此处的 SIGINT 处理会泄漏 goroutine 且可能杀死宿主进程。
 	resumeFileName := types.DefaultResumeFilePath()
 
-	if err := nucleiRunner.RunEnumeration(TargetAndPocsName); err != nil {
+	runErr := nucleiRunner.RunEnumeration(TargetAndPocsName)
+	if runErr != nil {
 		// Task 1.2: Fatal→Error，防止 Nuclei 错误杀死 Agent 进程。
 		if options.Validate {
-			gologger.Error().Msgf("Could not validate templates: %s\n", err)
+			gologger.Error().Msgf("Could not validate templates: %s\n", runErr)
 		} else {
-			gologger.Error().Msgf("Could not run nuclei: %s\n", err)
+			gologger.Error().Msgf("Could not run nuclei: %s\n", runErr)
 		}
 	}
 	nucleiRunner.Close()
@@ -142,7 +147,10 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 	if fileutil.FileExists(resumeFileName) {
 		os.Remove(resumeFileName)
 	}
-	return output.Results
+	if runErr != nil {
+		return output.Results, fmt.Errorf("run Nuclei enumeration: %w", runErr)
+	}
+	return output.Results, nil
 }
 
 // CallNucleiDebug 与 CallNuclei 相同，但启用 MatcherStatus 模式。
@@ -159,7 +167,7 @@ func CallNucleiDebug(TargetAndPocsName map[string][]string,
 	np string,
 	excludeTags []string,
 	severities []string,
-	presentation ...Presentation) []output.ResultEvent {
+	presentation ...Presentation) ([]output.ResultEvent, error) {
 
 	output.ResultsLock.Lock()
 	output.Results = nil
@@ -172,7 +180,7 @@ func CallNucleiDebug(TargetAndPocsName map[string][]string,
 	output.AddResultCallback = callBack
 	if err := exportrunner.ExportRunnerConfigureOptions(); err != nil {
 		gologger.Error().Msgf("Could not initialize options: %s\n", err)
-		return []output.ResultEvent{}
+		return nil, fmt.Errorf("initialize Nuclei debug options: %w", err)
 	}
 
 	readConfig(options, TargetAndPocsName, proxy, nameForSearch, NoInteractsh, wafBypassHeaders, np, excludeTags)
@@ -183,7 +191,7 @@ func CallNucleiDebug(TargetAndPocsName map[string][]string,
 	options.MatcherStatus = true
 
 	if options.ListDslSignatures {
-		return []output.ResultEvent{}
+		return nil, nil
 	}
 
 	exportrunner.ExportRunnerParseOptions(options)
@@ -191,10 +199,10 @@ func CallNucleiDebug(TargetAndPocsName map[string][]string,
 	nucleiRunner, err := exportrunner.ExportRunnerNew(options)
 	if err != nil {
 		gologger.Error().Msgf("Could not create runner: %s\n", err)
-		return []output.ResultEvent{}
+		return nil, fmt.Errorf("create Nuclei debug runner: %w", err)
 	}
 	if nucleiRunner == nil {
-		return []output.ResultEvent{}
+		return nil, errors.New("create Nuclei debug runner: nil runner")
 	}
 
 	nucleiRunner.EmbedPocsFS = fs
@@ -205,18 +213,22 @@ func CallNucleiDebug(TargetAndPocsName map[string][]string,
 
 	resumeFileName := types.DefaultResumeFilePath()
 
-	if err := nucleiRunner.RunEnumeration(TargetAndPocsName); err != nil {
+	runErr := nucleiRunner.RunEnumeration(TargetAndPocsName)
+	if runErr != nil {
 		if options.Validate {
-			gologger.Error().Msgf("Could not validate templates: %s\n", err)
+			gologger.Error().Msgf("Could not validate templates: %s\n", runErr)
 		} else {
-			gologger.Error().Msgf("Could not run nuclei: %s\n", err)
+			gologger.Error().Msgf("Could not run nuclei: %s\n", runErr)
 		}
 	}
 	nucleiRunner.Close()
 	if fileutil.FileExists(resumeFileName) {
 		os.Remove(resumeFileName)
 	}
-	return output.Results
+	if runErr != nil {
+		return output.Results, fmt.Errorf("run Nuclei debug enumeration: %w", runErr)
+	}
+	return output.Results, nil
 }
 
 func readConfig(options *types.Options,

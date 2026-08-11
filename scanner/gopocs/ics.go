@@ -3,11 +3,12 @@ package gopocs
 import (
 	"encoding/hex"
 	"fmt"
+	"time"
+
 	"github.com/P0lar1ght/argus/scanner/ddout"
 	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/P0lar1ght/argus/scanner/utils"
 	"github.com/projectdiscovery/gologger"
-	"time"
 )
 
 func DNP3Scan(info *structs.HostInfo) error {
@@ -21,7 +22,7 @@ func DNP3Scan(info *structs.HostInfo) error {
 
 	// DNP3 Link Layer Read request
 	probe, _ := hex.DecodeString("056405060100000055c4")
-	conn.Write(probe)
+	written, _ := conn.Write(probe)
 	gologger.AuditTimeLogger("[Go] [DNP3] Dumped TCP request for %s\n\n%s\n", realhost, hex.Dump(probe))
 
 	buf := make([]byte, 1024)
@@ -35,7 +36,8 @@ func DNP3Scan(info *structs.HostInfo) error {
 	}
 
 	result := fmt.Sprintf("DNP3://%s Device Detected", realhost)
-	emitICS(info, "DNP3-Detect", realhost, result, "DNP3协议设备")
+	emitICS(info, "DNP3-Detect", realhost, result, "DNP3协议设备",
+		binaryGoPocWriteExchange("DNP3 link-layer read", probe, written, buf[:n]))
 	return nil
 }
 
@@ -50,7 +52,7 @@ func S7Scan(info *structs.HostInfo) error {
 
 	// COTP Connection Request
 	cotpCR, _ := hex.DecodeString("0300001611e00000000100c0010ac1020100c2020102")
-	conn.Write(cotpCR)
+	cotpWritten, _ := conn.Write(cotpCR)
 	gologger.AuditTimeLogger("[Go] [S7] Dumped COTP CR for %s\n\n%s\n", realhost, hex.Dump(cotpCR))
 
 	buf := make([]byte, 1024)
@@ -61,10 +63,11 @@ func S7Scan(info *structs.HostInfo) error {
 	if buf[0] != 0x03 || buf[1] != 0x00 {
 		return nil
 	}
+	cotpResponse := append([]byte(nil), buf[:n]...)
 
 	// S7 Setup Communication
 	s7Setup, _ := hex.DecodeString("0300001902f08032010000000000080000f0000001000101e0")
-	conn.Write(s7Setup)
+	setupWritten, _ := conn.Write(s7Setup)
 	gologger.AuditTimeLogger("[Go] [S7] Dumped S7 Setup for %s\n\n%s\n", realhost, hex.Dump(s7Setup))
 
 	n, err = conn.Read(buf)
@@ -74,7 +77,9 @@ func S7Scan(info *structs.HostInfo) error {
 	gologger.AuditTimeLogger("[Go] [S7] Dumped S7 response for %s\n\n%s\n", realhost, hex.Dump(buf[:n]))
 
 	result := fmt.Sprintf("S7://%s PLC Detected", realhost)
-	emitICS(info, "S7-Detect", realhost, result, "Siemens S7 PLC")
+	emitICS(info, "S7-Detect", realhost, result, "Siemens S7 PLC",
+		binaryGoPocWriteExchange("S7 COTP connection", cotpCR, cotpWritten, cotpResponse),
+		binaryGoPocWriteExchange("S7 setup communication", s7Setup, setupWritten, buf[:n]))
 	return nil
 }
 
@@ -89,7 +94,7 @@ func EtherNetIPScan(info *structs.HostInfo) error {
 
 	// EtherNet/IP ListIdentity
 	probe, _ := hex.DecodeString("630000000000000000000000000000000000000000000000")
-	conn.Write(probe)
+	written, _ := conn.Write(probe)
 
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
@@ -101,7 +106,8 @@ func EtherNetIPScan(info *structs.HostInfo) error {
 	}
 
 	result := fmt.Sprintf("EtherNet/IP://%s CIP Device Detected", realhost)
-	emitICS(info, "EtherNetIP-Detect", realhost, result, "EtherNet/IP CIP设备")
+	emitICS(info, "EtherNetIP-Detect", realhost, result, "EtherNet/IP CIP设备",
+		binaryGoPocWriteExchange("EtherNet/IP ListIdentity", probe, written, buf[:n]))
 	return nil
 }
 
@@ -116,7 +122,7 @@ func ATGScan(info *structs.HostInfo) error {
 
 	// ATG I20100 inventory command
 	probe := []byte("\x01I20100\n")
-	conn.Write(probe)
+	written, _ := conn.Write(probe)
 
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
@@ -129,7 +135,8 @@ func ATGScan(info *structs.HostInfo) error {
 	}
 
 	result := fmt.Sprintf("ATG://%s Tank Gauge Detected", realhost)
-	emitICS(info, "ATG-Detect", realhost, result, "自动液位计(ATG)")
+	emitICS(info, "ATG-Detect", realhost, result, "自动液位计(ATG)",
+		binaryGoPocWriteExchange("ATG inventory command", probe, written, buf[:n]))
 	return nil
 }
 
@@ -144,7 +151,7 @@ func MELSECScan(info *structs.HostInfo) error {
 
 	// MELSEC-Q binary read
 	probe, _ := hex.DecodeString("5700000011000000000000ffff0300001c001008000000000000000000000104010001000000")
-	conn.Write(probe)
+	written, _ := conn.Write(probe)
 
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
@@ -156,7 +163,8 @@ func MELSECScan(info *structs.HostInfo) error {
 	}
 
 	result := fmt.Sprintf("MELSEC://%s PLC Detected", realhost)
-	emitICS(info, "MELSEC-Detect", realhost, result, "三菱MELSEC-Q PLC")
+	emitICS(info, "MELSEC-Detect", realhost, result, "三菱MELSEC-Q PLC",
+		binaryGoPocWriteExchange("MELSEC-Q binary read", probe, written, buf[:n]))
 	return nil
 }
 
@@ -171,7 +179,7 @@ func FINSScan(info *structs.HostInfo) error {
 
 	// FINS/TCP node address request
 	probe, _ := hex.DecodeString("46494e530000000c00000000000000000000000000")
-	conn.Write(probe)
+	written, _ := conn.Write(probe)
 
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
@@ -183,7 +191,8 @@ func FINSScan(info *structs.HostInfo) error {
 	}
 
 	result := fmt.Sprintf("FINS://%s Omron PLC Detected", realhost)
-	emitICS(info, "FINS-Detect", realhost, result, "欧姆龙FINS PLC")
+	emitICS(info, "FINS-Detect", realhost, result, "欧姆龙FINS PLC",
+		binaryGoPocWriteExchange("FINS/TCP node address request", probe, written, buf[:n]))
 	return nil
 }
 
@@ -197,7 +206,7 @@ func CrimsonScan(info *structs.HostInfo) error {
 	conn.SetDeadline(time.Now().Add(6 * time.Second))
 
 	probe, _ := hex.DecodeString("00040116")
-	conn.Write(probe)
+	written, _ := conn.Write(probe)
 
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
@@ -206,7 +215,8 @@ func CrimsonScan(info *structs.HostInfo) error {
 	}
 
 	result := fmt.Sprintf("Crimson://%s Red Lion Device Detected", realhost)
-	emitICS(info, "Crimson-Detect", realhost, result, "Red Lion Crimson v3")
+	emitICS(info, "Crimson-Detect", realhost, result, "Red Lion Crimson v3",
+		binaryGoPocWriteExchange("Crimson service probe", probe, written, buf[:n]))
 	return nil
 }
 
@@ -221,7 +231,7 @@ func IEC104Scan(info *structs.HostInfo) error {
 
 	// STARTDT act U-frame
 	probe, _ := hex.DecodeString("680407000000")
-	conn.Write(probe)
+	written, _ := conn.Write(probe)
 
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
@@ -233,17 +243,22 @@ func IEC104Scan(info *structs.HostInfo) error {
 	}
 
 	result := fmt.Sprintf("IEC104://%s RTU/SCADA Detected", realhost)
-	emitICS(info, "IEC104-Detect", realhost, result, "IEC-60870-5-104 RTU/SCADA")
+	emitICS(info, "IEC104-Detect", realhost, result, "IEC-60870-5-104 RTU/SCADA",
+		binaryGoPocWriteExchange("IEC-104 STARTDT activation", probe, written, buf[:n]))
 	return nil
 }
 
-func emitICS(info *structs.HostInfo, pocName, target, showMsg, desc string) {
+func emitICS(info *structs.HostInfo, pocName, target, showMsg, desc string, exchanges ...structs.GoPocExchange) {
+	emittedExchanges := append([]structs.GoPocExchange(nil), exchanges...)
+	storedExchanges := append([]structs.GoPocExchange(nil), exchanges...)
+
 	info.Emit(ddout.OutputMessage{
 		Type: "GoPoc",
 		GoPoc: ddout.GoPocsResultType{
 			PocName:     pocName,
 			Security:    "INFO",
 			Target:      target,
+			Exchanges:   emittedExchanges,
 			Description: desc,
 			ShowMsg:     showMsg,
 		},
@@ -252,6 +267,7 @@ func emitICS(info *structs.HostInfo, pocName, target, showMsg, desc string) {
 		PocName:     pocName,
 		Security:    "INFO",
 		Target:      target,
+		Exchanges:   storedExchanges,
 		Description: desc,
 	})
 }

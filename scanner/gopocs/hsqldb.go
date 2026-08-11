@@ -28,6 +28,9 @@ func HsqlDbScan(info *structs.HostInfo) error {
 	if !strings.Contains(resp, "HSQLDB") {
 		return nil
 	}
+	exchanges := []structs.GoPocExchange{
+		binaryGoPocExchange("HSQLDB banner response", nil, buf[:n]),
+	}
 
 	version := ""
 	if idx := strings.Index(resp, "Version("); idx > 0 {
@@ -45,6 +48,7 @@ func HsqlDbScan(info *structs.HostInfo) error {
 			Security:    "MEDIUM",
 			Target:      realhost,
 			InfoLeft:    version,
+			Exchanges:   exchanges,
 			Description: "HsqlDb数据库检测",
 			ShowMsg:     result,
 		},
@@ -54,6 +58,7 @@ func HsqlDbScan(info *structs.HostInfo) error {
 		Security:    "MEDIUM",
 		Target:      realhost,
 		InfoLeft:    version,
+		Exchanges:   exchanges,
 		Description: "HsqlDb数据库检测",
 	})
 	return nil

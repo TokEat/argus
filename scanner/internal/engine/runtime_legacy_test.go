@@ -3,8 +3,10 @@ package engine
 import (
 	"github.com/P0lar1ght/argus/scanner/ddout"
 	"github.com/P0lar1ght/argus/scanner/internal/arsenal"
+	"github.com/P0lar1ght/argus/scanner/structs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -15,12 +17,18 @@ func TestToEngineOutputMessageKeepsGoPocShowMsg(t *testing.T) {
 			PocName:  "Shiro Weak Key",
 			ShowMsg:  "http://127.0.0.1:8081 key=kPH+bIxk5D2deZiIxcaaaA==",
 			Security: "CRITICAL",
+			Exchanges: []structs.GoPocExchange{{
+				Label: "verification", Request: "request", Response: "response", Encoding: "text",
+			}},
 		},
 	}
 
 	got := toEngineOutputMessage(src)
 	if got.GoPoc.ShowMsg != src.GoPoc.ShowMsg {
 		t.Fatalf("show message lost during conversion: got %q want %q", got.GoPoc.ShowMsg, src.GoPoc.ShowMsg)
+	}
+	if !reflect.DeepEqual(got.GoPoc.Exchanges, src.GoPoc.Exchanges) {
+		t.Fatalf("exchanges lost during conversion: got %#v want %#v", got.GoPoc.Exchanges, src.GoPoc.Exchanges)
 	}
 }
 

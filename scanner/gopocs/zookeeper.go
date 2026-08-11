@@ -18,7 +18,8 @@ func ZookeeperScan(info *structs.HostInfo) error {
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(6 * time.Second))
 
-	conn.Write([]byte("envi\r\n"))
+	probe := []byte("envi\r\n")
+	written, _ := conn.Write(probe)
 
 	buf := make([]byte, 4096)
 	n, err := conn.Read(buf)
@@ -38,6 +39,9 @@ func ZookeeperScan(info *structs.HostInfo) error {
 			break
 		}
 	}
+	exchanges := []structs.GoPocExchange{
+		binaryGoPocWriteExchange("ZooKeeper envi verification", probe, written, buf[:n]),
+	}
 
 	result := fmt.Sprintf("Zookeeper://%s Unauthorized (version: %s)", realhost, version)
 	info.Emit(ddout.OutputMessage{
@@ -47,6 +51,7 @@ func ZookeeperScan(info *structs.HostInfo) error {
 			Security:    "HIGH",
 			Target:      realhost,
 			InfoLeft:    version,
+			Exchanges:   exchanges,
 			Description: "Zookeeper未授权访问",
 			ShowMsg:     result,
 		},
@@ -56,6 +61,7 @@ func ZookeeperScan(info *structs.HostInfo) error {
 		Security:    "HIGH",
 		Target:      realhost,
 		InfoLeft:    version,
+		Exchanges:   exchanges,
 		Description: "Zookeeper未授权访问",
 	})
 	return nil

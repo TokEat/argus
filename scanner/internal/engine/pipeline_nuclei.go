@@ -20,7 +20,7 @@ import (
 	nucleiOutput "github.com/projectdiscovery/nuclei/v3/pkg/output"
 )
 
-type nucleiCaller func(map[string][]string, string, func(nucleiOutput.ResultEvent), string, bool, bool, embed.FS, string, []string, []string) []nucleiOutput.ResultEvent
+type nucleiCaller func(map[string][]string, string, func(nucleiOutput.ResultEvent), string, bool, bool, embed.FS, string, []string, []string) ([]nucleiOutput.ResultEvent, error)
 
 var (
 	callNuclei        nucleiCaller = nuclei.Call
@@ -127,12 +127,9 @@ func runRiskValidationPhase(ctx *ScanContext, cfg *Config, enableLocalReports bo
 	if err := validateRiskValidationPocFiles(cfg, targets); err != nil {
 		return nil, err
 	}
-	if enableLocalReports {
-		output.InitReportName()
-	}
 	emitPhase(ctx, PhaseNuclei, "start", fmt.Sprintf("%d explicitly confirmed pocs", count))
 	addResult, collector := buildNucleiResultHandler(ctx, enableLocalReports)
-	results := configuredNucleiCaller(cfg)(
+	results, callErr := configuredNucleiCaller(cfg)(
 		targets,
 		cfg.HTTPProxy,
 		addResult,
@@ -144,14 +141,12 @@ func runRiskValidationPhase(ctx *ScanContext, cfg *Config, enableLocalReports bo
 		strings.Split(cfg.ExcludeTags, ","),
 		strings.Split(cfg.Severities, ","),
 	)
-	if collected := collector.snapshot(); len(collected) > 0 {
-		results = append(results, collected...)
+	results = authoritativeNucleiResults(results, collector.snapshot())
+	if callErr != nil {
+		emitPhase(ctx, PhaseNuclei, "failed", "nuclei execution failed")
+		return nil, callErr
 	}
 	emitPhase(ctx, PhaseNuclei, "end", "")
-	if enableLocalReports {
-		output.GenerateHTMLReportFooter()
-		output.GenerateAssetReport(cfg.OutputFile)
-	}
 	converted := make([]gopocs.NucleiResult, len(results))
 	for i, result := range results {
 		converted[i] = gopocs.NucleiResult{TemplateID: result.TemplateID, Matched: result.Matched, URL: result.URL}
@@ -163,9 +158,6 @@ func runNucleiPhase(ctx *ScanContext, cfg *Config, resultMap map[string][]string
 	if cfg.NoPoc {
 		return nil, nil
 	}
-	if enableLocalReports {
-		output.InitReportName()
-	}
 	var nucleiResults []nucleiOutput.ResultEvent
 	TargetAndPocsName, count := mapper.GetPocs(resultMap, currentPipelineWorkflowDB(ctx), cfg.DisableGeneralPoc, cfg.WAFSkipOnManyFingerprints)
 	gologger.Info().Msgf("[Pipeline] Nuclei 映射结果: targets=%d pocs=%d template_path=%s", len(TargetAndPocsName), count, cfg.NucleiTemplate)
@@ -175,13 +167,16 @@ func runNucleiPhase(ctx *ScanContext, cfg *Config, resultMap map[string][]string
 	if count > 0 {
 		emitPhase(ctx, PhaseNuclei, "start", fmt.Sprintf("%d pocs", count))
 		addResult, collector := buildNucleiResultHandler(ctx, enableLocalReports)
-		nucleiResults = configuredNucleiCaller(cfg)(TargetAndPocsName,
+		var callErr error
+		nucleiResults, callErr = configuredNucleiCaller(cfg)(TargetAndPocsName,
 			cfg.HTTPProxy, addResult,
 			"", cfg.NoInteractsh, cfg.WAFBypassHeaders, currentPipelineEmbedPocs(ctx),
 			cfg.NucleiTemplate, strings.Split(cfg.ExcludeTags, ","),
 			strings.Split(cfg.Severities, ","))
-		if collected := collector.snapshot(); len(collected) > 0 {
-			nucleiResults = append(nucleiResults, collected...)
+		nucleiResults = authoritativeNucleiResults(nucleiResults, collector.snapshot())
+		if callErr != nil {
+			emitPhase(ctx, PhaseNuclei, "failed", "nuclei execution failed")
+			return nil, callErr
 		}
 		emitPhase(ctx, PhaseNuclei, "end", "")
 	}
@@ -192,27 +187,34 @@ func runNucleiPhase(ctx *ScanContext, cfg *Config, resultMap map[string][]string
 	return converted, nil
 }
 
+func authoritativeNucleiResults(returned, collected []nucleiOutput.ResultEvent) []nucleiOutput.ResultEvent {
+	if len(collected) == 0 {
+		return returned
+	}
+	// The vendored writer both invokes the callback and appends the same event
+	// to its return slice. The callback stream is authoritative for reporting,
+	// so do not duplicate successful POCs before GoPoc dispatch.
+	return collected
+}
+
 func runPocSearch(ctx *ScanContext, cfg *Config, aliveURLs []string, enableLocalReports bool) ([]gopocs.NucleiResult, error) {
 	TargetAndPocsName := make(map[string][]string)
 	for _, url := range aliveURLs {
 		TargetAndPocsName[url] = []string{}
 	}
-	if enableLocalReports {
-		output.InitReportName()
-	}
 	emitPhase(ctx, PhaseNuclei, "start", fmt.Sprintf("%d targets, poc=%s", len(TargetAndPocsName), cfg.PocNameForSearch))
 	addResult, _ := buildNucleiResultHandler(ctx, enableLocalReports)
-	nucleiResults := configuredNucleiCaller(cfg)(TargetAndPocsName,
+	nucleiResults, callErr := configuredNucleiCaller(cfg)(TargetAndPocsName,
 		cfg.HTTPProxy, addResult,
 		cfg.PocNameForSearch, cfg.NoInteractsh,
 		cfg.WAFBypassHeaders,
 		currentPipelineEmbedPocs(ctx), cfg.NucleiTemplate,
 		strings.Split(cfg.ExcludeTags, ","), strings.Split(cfg.Severities, ","))
-	emitPhase(ctx, PhaseNuclei, "end", "")
-	if enableLocalReports {
-		output.GenerateHTMLReportFooter()
-		output.GenerateAssetReport(cfg.OutputFile)
+	if callErr != nil {
+		emitPhase(ctx, PhaseNuclei, "failed", "nuclei execution failed")
+		return nil, callErr
 	}
+	emitPhase(ctx, PhaseNuclei, "end", "")
 	converted := make([]gopocs.NucleiResult, len(nucleiResults))
 	for i, r := range nucleiResults {
 		converted[i] = gopocs.NucleiResult{TemplateID: r.TemplateID, Matched: r.Matched, URL: r.URL}

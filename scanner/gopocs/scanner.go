@@ -1,13 +1,15 @@
 package gopocs
 
 import (
+	"errors"
 	"fmt"
-	"github.com/P0lar1ght/argus/scanner/common/report"
-	"github.com/P0lar1ght/argus/scanner/ddout"
-	"github.com/P0lar1ght/argus/scanner/structs"
+	"net/url"
 	"reflect"
 	"strings"
 	"sync"
+
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/structs"
 
 	"github.com/projectdiscovery/gologger"
 )
@@ -64,6 +66,8 @@ type dispatcher struct {
 	allCount     int
 	emit         func(structs.OutputMessage)
 	presentation Presentation
+	executionMu  sync.Mutex
+	executionErr []error
 }
 
 func (d *dispatcher) addScan(name string, info structs.HostInfo, ch chan struct{}, wg *sync.WaitGroup) {
@@ -94,52 +98,68 @@ func (d *dispatcher) scanFunc(name string, info *structs.HostInfo) {
 	defer func() {
 		if r := recover(); r != nil {
 			gologger.Error().Msgf("[GoPoc] Plugin '%s' panic: %v", name, r)
+			d.recordExecutionError(fmt.Errorf("GoPoc plugin %q panicked", name))
 		}
 	}()
 	plugin, ok := PluginList[name]
 	if !ok || plugin == nil {
 		gologger.Error().Msgf("[GoPoc] Plugin '%s' not found in PluginList", name)
+		d.recordExecutionError(fmt.Errorf("GoPoc plugin %q is unavailable", name))
 		return
 	}
 	f := reflect.ValueOf(plugin)
 	in := []reflect.Value{reflect.ValueOf(info)}
-	f.Call(in)
+	for _, output := range f.Call(in) {
+		pluginErr, ok := output.Interface().(error)
+		if ok && isSuccessfulSessionEvidenceError(pluginErr) {
+			d.recordExecutionError(fmt.Errorf("GoPoc plugin %q could not preserve successful-session evidence: %w", name, pluginErr))
+		}
+	}
+}
+
+func (d *dispatcher) recordExecutionError(err error) {
+	if err == nil {
+		return
+	}
+	d.executionMu.Lock()
+	d.executionErr = append(d.executionErr, err)
+	d.executionMu.Unlock()
+}
+
+func (d *dispatcher) executionError() error {
+	d.executionMu.Lock()
+	defer d.executionMu.Unlock()
+	return errors.Join(d.executionErr...)
 }
 
 func (d *dispatcher) writeResult(result structs.GoPocsResultType) {
 	d.resultsMu.Lock()
+	result.Exchanges = append([]structs.GoPocExchange(nil), result.Exchanges...)
 	d.results = append(d.results, result)
 	d.resultsMu.Unlock()
-	report.AddResultByGoPocResult(result)
 }
 
 func (d *dispatcher) snapshotResults() []structs.GoPocsResultType {
 	d.resultsMu.Lock()
 	defer d.resultsMu.Unlock()
-	return append([]structs.GoPocsResultType(nil), d.results...)
+	results := make([]structs.GoPocsResultType, len(d.results))
+	for index, result := range d.results {
+		result.Exchanges = append([]structs.GoPocExchange(nil), result.Exchanges...)
+		results[index] = result
+	}
+	return results
 }
 
-func GoPocsDispatcher(nucleiResults []NucleiResult) {
-	structs.GoPocsResults = Dispatch(
-		structs.GlobalIPPortMap,
-		structs.GlobalConfig.GoPocThreads,
-		structs.GlobalConfig.Password,
-		structs.GlobalConfig.PasswordFile,
-		nucleiResults,
-		nil, // no emit in CLI global fallback
-	)
+// DispatchScoped runs GoPoc with task-local services and fingerprints.
+func DispatchScoped(ipPortMap map[string]string, fingerprints map[string][]string, goPocThreads int, password string, passwordFile string, nucleiResults []NucleiResult, emit func(structs.OutputMessage)) ([]structs.GoPocsResultType, error) {
+	return DispatchWithPresentationScoped(ipPortMap, fingerprints, goPocThreads, password, passwordFile, nucleiResults, emit, Presentation{})
 }
 
-func Dispatch(ipPortMap map[string]string, goPocThreads int, password string, passwordFile string, nucleiResults []NucleiResult, emit func(structs.OutputMessage)) []structs.GoPocsResultType {
-	return DispatchWithPresentation(ipPortMap, goPocThreads, password, passwordFile, nucleiResults, emit, Presentation{})
-}
-
-// DispatchWithPresentation is the structured-output variant of Dispatch.
-// It is deliberately explicit so Agent and existing callers retain their
-// current interactive presentation unless they opt in.
-func DispatchWithPresentation(ipPortMap map[string]string, goPocThreads int, password string, passwordFile string, nucleiResults []NucleiResult, emit func(structs.OutputMessage), presentation Presentation) []structs.GoPocsResultType {
-	if len(ipPortMap) == 0 && len(nucleiResults) == 0 {
-		return nil
+// DispatchWithPresentationScoped keeps follow-up triggers within the current
+// task. In particular, Agent jobs must never read the legacy global ResultMap.
+func DispatchWithPresentationScoped(ipPortMap map[string]string, fingerprints map[string][]string, goPocThreads int, password string, passwordFile string, nucleiResults []NucleiResult, emit func(structs.OutputMessage), presentation Presentation) ([]structs.GoPocsResultType, error) {
+	if len(ipPortMap) == 0 && len(nucleiResults) == 0 && len(fingerprints) == 0 {
+		return nil, nil
 	}
 
 	InitDictionaries()
@@ -155,10 +175,10 @@ func DispatchWithPresentation(ipPortMap map[string]string, goPocThreads int, pas
 		presentation: presentation,
 	}
 
-	plan := buildScanPlan(ipPortMap, password, passwordFile, dispatcher.writeResult)
-	dispatcher.allCount = len(plan) + len(nucleiResults)
+	plan := buildDispatchPlan(ipPortMap, fingerprints, nucleiResults, password, passwordFile, dispatcher.writeResult)
+	dispatcher.allCount = len(plan)
 	if dispatcher.allCount == 0 {
-		return nil
+		return nil, nil
 	}
 
 	if goPocThreads <= 0 {
@@ -171,45 +191,6 @@ func DispatchWithPresentation(ipPortMap map[string]string, goPocThreads int, pas
 
 	for _, task := range plan {
 		dispatcher.addScan(task.Name, task.Info, ch, &wg)
-	}
-
-	// Nuclei 检测到 Shiro 后自动触发 Shiro Key 爆破
-	for _, result := range nucleiResults {
-		if result.TemplateID == "shiro-detect" {
-			dispatcher.addScan("Shiro-Key-Crack",
-				structs.HostInfo{
-					Url:          result.Matched,
-					Password:     password,
-					PasswordFile: passwordFile,
-				},
-				ch, &wg)
-		}
-		if isViewStateNucleiResult(result) {
-			targetURL := result.Matched
-			if targetURL == "" {
-				targetURL = result.URL
-			}
-			if targetURL != "" {
-				dispatcher.addScan("ViewState-Key-Crack",
-					structs.HostInfo{
-						Url:          targetURL,
-						Password:     password,
-						PasswordFile: passwordFile,
-					},
-					ch, &wg)
-			}
-		}
-	}
-
-	// 指纹匹配 viewstate 后自动触发 ViewState 密钥爆破。
-	for host, fingers := range structs.GlobalResultMap {
-		for _, f := range fingers {
-			if strings.EqualFold(f, "viewstate") {
-				dispatcher.addScan("ViewState-Key-Crack",
-					structs.HostInfo{Url: host},
-					ch, &wg)
-			}
-		}
 	}
 
 	wg.Wait()
@@ -225,7 +206,76 @@ func DispatchWithPresentation(ipPortMap map[string]string, goPocThreads int, pas
 			gologger.Info().Msgf("[%s] %s %s\n%s", res.Security, res.PocName, res.Target, res.InfoLeft)
 		}
 	}
-	return results
+	return results, dispatcher.executionError()
+}
+
+func appendUniqueScanTask(plan *[]scanTask, seen map[string]struct{}, task scanTask) {
+	key := scanTaskIdentity(task)
+	if _, exists := seen[key]; exists {
+		return
+	}
+	seen[key] = struct{}{}
+	*plan = append(*plan, task)
+}
+
+func buildDispatchPlan(ipPortMap map[string]string, fingerprints map[string][]string, nucleiResults []NucleiResult, password, passwordFile string, writeResult func(structs.GoPocsResultType)) []scanTask {
+	basePlan := buildScanPlan(ipPortMap, password, passwordFile, writeResult)
+	seen := make(map[string]struct{}, len(basePlan)+len(nucleiResults)+len(fingerprints))
+	plan := make([]scanTask, 0, len(basePlan)+len(nucleiResults)+len(fingerprints))
+	for _, task := range basePlan {
+		appendUniqueScanTask(&plan, seen, task)
+	}
+	for _, result := range nucleiResults {
+		if result.TemplateID == "shiro-detect" {
+			appendUniqueScanTask(&plan, seen, scanTask{Name: "Shiro-Key-Crack", Info: structs.HostInfo{
+				Url: result.Matched, Password: password, PasswordFile: passwordFile,
+			}})
+		}
+		if isViewStateNucleiResult(result) {
+			targetURL := firstNonEmpty(result.Matched, result.URL)
+			if targetURL != "" {
+				appendUniqueScanTask(&plan, seen, scanTask{Name: "ViewState-Key-Crack", Info: structs.HostInfo{
+					Url: targetURL, Password: password, PasswordFile: passwordFile,
+				}})
+			}
+		}
+	}
+	for host, values := range fingerprints {
+		for _, fingerprint := range values {
+			if strings.EqualFold(fingerprint, "viewstate") {
+				appendUniqueScanTask(&plan, seen, scanTask{Name: "ViewState-Key-Crack", Info: structs.HostInfo{
+					Url: host, Password: password, PasswordFile: passwordFile,
+				}})
+			}
+		}
+	}
+	return plan
+}
+
+func scanTaskIdentity(task scanTask) string {
+	target := strings.TrimSpace(task.Info.Url)
+	if parsed, err := url.Parse(target); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		parsed.Scheme = strings.ToLower(parsed.Scheme)
+		parsed.Host = strings.ToLower(parsed.Host)
+		parsed.Fragment = ""
+		if parsed.Path == "" {
+			parsed.Path = "/"
+		}
+		target = parsed.String()
+	}
+	if target == "" {
+		target = strings.ToLower(strings.TrimSpace(task.Info.Host)) + ":" + strings.TrimSpace(task.Info.Ports)
+	}
+	return task.Name + "\x00" + target
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func isViewStateNucleiResult(result NucleiResult) bool {
