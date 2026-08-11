@@ -4,14 +4,15 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
-	"github.com/P0lar1ght/argus/scanner/ddout"
-	"github.com/P0lar1ght/argus/scanner/structs"
-	"github.com/P0lar1ght/argus/scanner/utils"
-	"github.com/projectdiscovery/gologger"
 	"net"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/utils"
+	"github.com/projectdiscovery/gologger"
 )
 
 var (
@@ -47,20 +48,23 @@ func FindnetScan(info *structs.HostInfo) error {
 	}
 
 	reply := make([]byte, 4096)
-	_, err = conn.Read(reply)
+	firstResponseLength, err := conn.Read(reply)
 	if err != nil {
 		return err
 	}
-	gologger.AuditTimeLogger("[Go] [WMI-Leak] [1/2] Dumped TCP response for %s\n\n%s\n", realhost, hex.Dump(reply))
+	firstResponse := append([]byte(nil), reply[:firstResponseLength]...)
+	gologger.AuditTimeLogger("[Go] [WMI-Leak] [1/2] Dumped TCP response for %s\n\n%s\n", realhost, hex.Dump(firstResponse))
 	_, err = conn.Write(bufferV2)
 	gologger.AuditTimeLogger("[Go] [WMI-Leak] [2/2] Dumped TCP request for %s\n\n%s\n", realhost, hex.Dump(bufferV2))
 	if err != nil {
 		return err
 	}
-	if n, err := conn.Read(reply); err != nil || n < 42 {
+	secondResponseLength, err := conn.Read(reply)
+	if err != nil || secondResponseLength < 42 {
 		return err
 	}
-	gologger.AuditTimeLogger("[Go] [WMI-Leak] [2/2] Dumped TCP response for %s\n\n%s\n", realhost, hex.Dump(reply))
+	secondResponse := append([]byte(nil), reply[:secondResponseLength]...)
+	gologger.AuditTimeLogger("[Go] [WMI-Leak] [2/2] Dumped TCP response for %s\n\n%s\n", realhost, hex.Dump(secondResponse))
 	text := reply[42:]
 	flag := true
 	for i := 0; i < len(text)-5; i++ {
@@ -73,7 +77,11 @@ func FindnetScan(info *structs.HostInfo) error {
 	if flag {
 		return err
 	}
-	err = read(info, text, info.Host)
+	exchanges := []structs.GoPocExchange{
+		binaryGoPocExchange("WMI DCE/RPC bind", bufferV1, firstResponse),
+		binaryGoPocExchange("WMI DCE/RPC host information query", bufferV2, secondResponse),
+	}
+	err = read(info, text, info.Host, exchanges)
 	return err
 }
 
@@ -102,7 +110,7 @@ func HexUnicodeStringToString(src string) string {
 	return context
 }
 
-func read(info *structs.HostInfo, text []byte, host string) error {
+func read(info *structs.HostInfo, text []byte, host string, exchanges []structs.GoPocExchange) error {
 	encodedStr := hex.EncodeToString(text)
 
 	hn := ""
@@ -140,6 +148,15 @@ func read(info *structs.HostInfo, text []byte, host string) error {
 	for _, v := range ipInfo {
 		result += " => " + v
 	}
+	emitFindnetFinding(info, host, result, exchanges)
+
+	return nil
+}
+
+func emitFindnetFinding(info *structs.HostInfo, host, result string, exchanges []structs.GoPocExchange) {
+	emittedExchanges := append([]structs.GoPocExchange(nil), exchanges...)
+	storedExchanges := append([]structs.GoPocExchange(nil), exchanges...)
+
 	// gologger.Silent().Msg("[GoPoc] RPC:" + result)
 	info.Emit(ddout.OutputMessage{
 		Type:     "GoPoc",
@@ -154,6 +171,7 @@ func read(info *structs.HostInfo, text []byte, host string) error {
 			Security:    "INFO",
 			Target:      host,
 			InfoLeft:    strings.ReplaceAll(result, "=>", "\n"),
+			Exchanges:   emittedExchanges,
 			Description: "WMI服务泄露了主机名、网卡信息",
 			ShowMsg:     result},
 		AdditionalMsg: "",
@@ -164,8 +182,7 @@ func read(info *structs.HostInfo, text []byte, host string) error {
 		Security:    "INFO",
 		Target:      host,
 		InfoLeft:    strings.ReplaceAll(result, "=>", "\n"),
+		Exchanges:   storedExchanges,
 		Description: "WMI服务泄露了主机名、网卡信息",
 	})
-
-	return nil
 }

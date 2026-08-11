@@ -99,6 +99,10 @@ func (request *Request) MakeResultEventItem(wrapped *output.InternalWrappedEvent
 	if types.ToString(wrapped.InternalEvent["ip"]) != "" {
 		fields.Ip = types.ToString(wrapped.InternalEvent["ip"])
 	}
+	response := types.ToString(wrapped.InternalEvent["raw"])
+	if response == "" {
+		response = types.ToString(wrapped.InternalEvent["data"])
+	}
 	data := &output.ResultEvent{
 		TemplateID:       types.ToString(wrapped.InternalEvent["template-id"]),
 		TemplatePath:     types.ToString(wrapped.InternalEvent["template-path"]),
@@ -114,9 +118,22 @@ func (request *Request) MakeResultEventItem(wrapped *output.InternalWrappedEvent
 		MatcherStatus:    true,
 		IP:               fields.Ip,
 		Request:          types.ToString(wrapped.InternalEvent["request"]),
-		Response:         types.ToString(wrapped.InternalEvent["data"]),
+		Response:         response,
+		Packet:           cloneNetworkPacket(wrapped.InternalEvent),
 		TemplateEncoded:  request.options.EncodeTemplate(),
 		Error:            types.ToString(wrapped.InternalEvent["error"]),
 	}
 	return data
+}
+
+func cloneNetworkPacket(event output.InternalEvent) map[int]output.RequestResponsePair {
+	packet, ok := event[networkPacketEventKey].(map[int]output.RequestResponsePair)
+	if !ok || len(packet) == 0 {
+		return nil
+	}
+	cloned := make(map[int]output.RequestResponsePair, len(packet))
+	for index, pair := range packet {
+		cloned[index] = pair
+	}
+	return cloned
 }

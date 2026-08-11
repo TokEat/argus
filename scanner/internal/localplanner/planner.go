@@ -51,7 +51,7 @@ func Execute(ctx *engine.ScanContext, run *localstate.Run) error {
 	return ExecuteWithTiming(ctx, run, nil)
 }
 
-func ExecuteWithTiming(ctx *engine.ScanContext, run *localstate.Run, recorder *timing.Recorder) error {
+func ExecuteWithTiming(ctx *engine.ScanContext, run *localstate.Run, recorder *timing.Recorder, outputObservers ...func(engine.OutputMessage)) error {
 	if ctx == nil || run == nil {
 		return errors.New("local planner requires a scan context and active run")
 	}
@@ -105,6 +105,11 @@ func ExecuteWithTiming(ctx *engine.ScanContext, run *localstate.Run, recorder *t
 		ctx.OutputObserver = func(message engine.OutputMessage) {
 			run.ObserveOutput(message)
 			reporter.observeOutput(message)
+			for _, observer := range outputObservers {
+				if observer != nil {
+					observer(message)
+				}
+			}
 		}
 		ctx.PhaseObserver = reporter.observePhase
 		gologger.Info().Msgf("[Argus] %s scan: %s", item.decision.Action, strings.Join(item.targets, ", "))

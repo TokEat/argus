@@ -1,8 +1,11 @@
 package gopocs
 
 import (
-	"github.com/P0lar1ght/argus/scanner/structs"
+	"errors"
+	"strings"
 	"testing"
+
+	"github.com/P0lar1ght/argus/scanner/structs"
 )
 
 func TestPresentationDefaultsToInteractive(t *testing.T) {
@@ -77,5 +80,90 @@ func TestIsViewStateNucleiResultUsesExpectedTemplateTrigger(t *testing.T) {
 	}
 	if isViewStateNucleiResult(NucleiResult{TemplateID: "viewstate-rce"}) {
 		t.Fatal("did not expect viewstate-rce to trigger ViewState scan")
+	}
+}
+
+func TestDispatcherReportsInfrastructureFailures(t *testing.T) {
+	missing := &dispatcher{}
+	missing.scanFunc("argus-test-missing-plugin", &structs.HostInfo{})
+	if err := missing.executionError(); err == nil || !strings.Contains(err.Error(), "is unavailable") {
+		t.Fatalf("missing plugin error = %v", err)
+	}
+
+	const pluginName = "argus-test-panicking-plugin"
+	PluginList[pluginName] = func(*structs.HostInfo) error {
+		panic("synthetic secret panic detail")
+	}
+	defer delete(PluginList, pluginName)
+
+	panicking := &dispatcher{}
+	panicking.scanFunc(pluginName, &structs.HostInfo{})
+	err := panicking.executionError()
+	if err == nil || !strings.Contains(err.Error(), "panicked") {
+		t.Fatalf("panic error = %v", err)
+	}
+	if strings.Contains(err.Error(), "synthetic secret") {
+		t.Fatalf("panic detail leaked through task error: %v", err)
+	}
+}
+
+func TestDispatcherPropagatesSuccessfulSessionEvidenceFailureOnly(t *testing.T) {
+	const evidencePlugin = "argus-test-evidence-limit-plugin"
+	PluginList[evidencePlugin] = func(*structs.HostInfo) error {
+		return errors.Join(errSuccessfulSessionEvidenceLimit, errors.New("bounded transcript unavailable"))
+	}
+	defer delete(PluginList, evidencePlugin)
+
+	dispatcherWithEvidenceFailure := &dispatcher{}
+	dispatcherWithEvidenceFailure.scanFunc(evidencePlugin, &structs.HostInfo{})
+	if err := dispatcherWithEvidenceFailure.executionError(); !errors.Is(err, errSuccessfulSessionEvidenceLimit) {
+		t.Fatalf("evidence failure was not propagated: %v", err)
+	}
+
+	const ordinaryMissPlugin = "argus-test-ordinary-miss-plugin"
+	PluginList[ordinaryMissPlugin] = func(*structs.HostInfo) error {
+		return errors.New("credential rejected")
+	}
+	defer delete(PluginList, ordinaryMissPlugin)
+
+	dispatcherWithOrdinaryMiss := &dispatcher{}
+	dispatcherWithOrdinaryMiss.scanFunc(ordinaryMissPlugin, &structs.HostInfo{})
+	if err := dispatcherWithOrdinaryMiss.executionError(); err != nil {
+		t.Fatalf("ordinary probe miss was promoted to a task failure: %v", err)
+	}
+}
+
+func TestTelnetDispatcherPropagatesPluginPanic(t *testing.T) {
+	original := PluginList["Telnet-Bypass"]
+	PluginList["Telnet-Bypass"] = func(*structs.HostInfo) error {
+		panic("synthetic telnet dispatcher panic")
+	}
+	defer func() { PluginList["Telnet-Bypass"] = original }()
+
+	results, err := TelnetBypassDispatchScoped(map[string]string{"127.0.0.1:23": "telnet"}, 1, "", "", func(structs.OutputMessage) {})
+	if len(results) != 0 {
+		t.Fatalf("unexpected results after plugin panic: %#v", results)
+	}
+	if err == nil || !strings.Contains(err.Error(), "panicked") {
+		t.Fatalf("telnet dispatcher error = %v", err)
+	}
+}
+
+func TestBuildDispatchPlanUsesTaskLocalFingerprintsAndDeduplicatesViewState(t *testing.T) {
+	previous := structs.GlobalResultMap
+	structs.GlobalResultMap = map[string][]string{"https://legacy.example.test/": {"viewstate"}}
+	defer func() { structs.GlobalResultMap = previous }()
+
+	plan := buildDispatchPlan(
+		nil,
+		map[string][]string{"https://CURRENT.example.test": {"ViewState"}},
+		[]NucleiResult{{TemplateID: "yongyou_u9_viewstate", Matched: "https://current.example.test/"}},
+		"", "", func(structs.GoPocsResultType) {},
+	)
+	if len(plan) != 1 {
+		t.Fatalf("dispatch plan = %#v, want one de-duplicated task-local trigger", plan)
+	}
+	if plan[0].Name != "ViewState-Key-Crack" || !strings.EqualFold(plan[0].Info.Url, "https://current.example.test/") {
+		t.Fatalf("unexpected task-local trigger: %#v", plan[0])
 	}
 }

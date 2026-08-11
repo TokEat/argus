@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"embed"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,12 +29,12 @@ func TestPipelineRiskValidationRunsOnlyExactNucleiPhase(t *testing.T) {
 		_ string,
 		_ []string,
 		_ []string,
-	) []nucleiOutput.ResultEvent {
+	) ([]nucleiOutput.ResultEvent, error) {
 		if nameForSearch != "" {
 			t.Fatalf("risk validation used fuzzy POC search: %q", nameForSearch)
 		}
 		received = targets
-		return nil
+		return nil, nil
 	}
 
 	pocDir := t.TempDir()
@@ -83,8 +84,8 @@ func TestRunPocSearchEmitsRiskPhase(t *testing.T) {
 	callNuclei = func(
 		_ map[string][]string, _ string, _ func(nucleiOutput.ResultEvent), _ string,
 		_ bool, _ bool, _ embed.FS, _ string, _ []string, _ []string,
-	) []nucleiOutput.ResultEvent {
-		return nil
+	) ([]nucleiOutput.ResultEvent, error) {
+		return nil, nil
 	}
 	var phases []PhaseEvent
 	ctx := &ScanContext{PhaseObserver: func(event PhaseEvent) { phases = append(phases, event) }}
@@ -94,6 +95,27 @@ func TestRunPocSearchEmitsRiskPhase(t *testing.T) {
 	}
 	if len(phases) != 2 || phases[0].Phase != PhaseNuclei || phases[0].Status != "start" || phases[1].Phase != PhaseNuclei || phases[1].Status != "end" {
 		t.Fatalf("POC search phases = %#v", phases)
+	}
+}
+
+func TestRunPocSearchPropagatesNucleiFailure(t *testing.T) {
+	originalCall := callNuclei
+	t.Cleanup(func() { callNuclei = originalCall })
+	wantErr := errors.New("nuclei runner unavailable")
+	callNuclei = func(
+		_ map[string][]string, _ string, _ func(nucleiOutput.ResultEvent), _ string,
+		_ bool, _ bool, _ embed.FS, _ string, _ []string, _ []string,
+	) ([]nucleiOutput.ResultEvent, error) {
+		return nil, wantErr
+	}
+	var phases []PhaseEvent
+	ctx := &ScanContext{PhaseObserver: func(event PhaseEvent) { phases = append(phases, event) }}
+	cfg := Config{PocNameForSearch: "explicit-check"}
+	if _, err := runPocSearch(ctx, &cfg, []string{"https://example.test"}, false); !errors.Is(err, wantErr) {
+		t.Fatalf("runPocSearch error = %v, want %v", err, wantErr)
+	}
+	if len(phases) != 2 || phases[0].Status != "start" || phases[1].Status != "failed" {
+		t.Fatalf("failed POC search phases = %#v", phases)
 	}
 }
 

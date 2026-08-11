@@ -23,7 +23,7 @@ func Call(targetAndPocsName map[string][]string,
 	nucleiTemplate string,
 	excludeTags []string,
 	severities []string,
-) []output.ResultEvent {
+) ([]output.ResultEvent, error) {
 	callMu.Lock()
 	defer callMu.Unlock()
 
@@ -44,7 +44,7 @@ func CallMachine(targetAndPocsName map[string][]string,
 	nucleiTemplate string,
 	excludeTags []string,
 	severities []string,
-) []output.ResultEvent {
+) ([]output.ResultEvent, error) {
 	callMu.Lock()
 	defer callMu.Unlock()
 
@@ -65,7 +65,7 @@ func CallDebug(targetAndPocsName map[string][]string,
 	nucleiTemplate string,
 	excludeTags []string,
 	severities []string,
-) []output.ResultEvent {
+) ([]output.ResultEvent, error) {
 	callMu.Lock()
 	defer callMu.Unlock()
 

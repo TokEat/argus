@@ -74,13 +74,14 @@ type JSONWeb struct {
 }
 
 type JSONGoPoc struct {
-	PocName     string `json:"poc_name,omitempty"`
-	Security    string `json:"security,omitempty"`
-	Description string `json:"description,omitempty"`
-	Target      string `json:"target,omitempty"`
-	InfoLeft    string `json:"info_left,omitempty"`
-	InfoRight   string `json:"info_right,omitempty"`
-	ShowMsg     string `json:"show_msg,omitempty"`
+	PocName     string                  `json:"poc_name,omitempty"`
+	Security    string                  `json:"security,omitempty"`
+	Description string                  `json:"description,omitempty"`
+	Target      string                  `json:"target,omitempty"`
+	InfoLeft    string                  `json:"info_left,omitempty"`
+	InfoRight   string                  `json:"info_right,omitempty"`
+	ShowMsg     string                  `json:"show_msg,omitempty"`
+	Exchanges   []structs.GoPocExchange `json:"exchanges,omitempty"`
 }
 
 // JSONRecord is the stable NDJSON wire record used by the CLI only.
@@ -98,14 +99,15 @@ var (
 	outputSink func(msg OutputMessage)
 	sinkMu     sync.Mutex
 
-	writeMu      sync.Mutex
-	stdout       io.Writer = os.Stdout
-	runID        string
-	sequence     uint64
-	findingCount int64
-	runStarted   bool
-	runEnded     bool
-	runWriteErr  error
+	writeMu             sync.Mutex
+	stdout              io.Writer = os.Stdout
+	runID               string
+	sequence            uint64
+	findingCount        int64
+	runStarted          bool
+	runEnded            bool
+	runWriteErr         error
+	protectedOutputPath string
 )
 
 // SetOutputSink sets a non-CLI output sink and returns the prior sink.
@@ -129,7 +131,7 @@ func BeginRun(id string) error {
 	if id == "" || len(id) > 256 || strings.ContainsAny(id, "\r\n\x00") {
 		return errors.New("ddout: run id is invalid")
 	}
-	runID, sequence, findingCount, runWriteErr = id, 0, 0, nil
+	runID, sequence, findingCount, runWriteErr, protectedOutputPath = id, 0, 0, nil, ""
 	runStarted, runEnded = true, false
 	return nil
 }
@@ -246,10 +248,11 @@ func jsonFinding(msg OutputMessage) *JSONFinding {
 	if msg.Web.Status != "" || msg.Web.Title != "" {
 		finding.Web = &JSONWeb{Status: msg.Web.Status, Title: msg.Web.Title}
 	}
-	if msg.GoPoc.PocName != "" || msg.GoPoc.Security != "" || msg.GoPoc.Description != "" || msg.GoPoc.Target != "" || msg.GoPoc.InfoLeft != "" || msg.GoPoc.InfoRight != "" || msg.GoPoc.ShowMsg != "" {
+	if msg.GoPoc.PocName != "" || msg.GoPoc.Security != "" || msg.GoPoc.Description != "" || msg.GoPoc.Target != "" || msg.GoPoc.InfoLeft != "" || msg.GoPoc.InfoRight != "" || msg.GoPoc.ShowMsg != "" || len(msg.GoPoc.Exchanges) > 0 {
 		finding.GoPoc = &JSONGoPoc{
 			PocName: msg.GoPoc.PocName, Security: msg.GoPoc.Security, Description: msg.GoPoc.Description,
 			Target: msg.GoPoc.Target, InfoLeft: msg.GoPoc.InfoLeft, InfoRight: msg.GoPoc.InfoRight, ShowMsg: msg.GoPoc.ShowMsg,
+			Exchanges: append([]structs.GoPocExchange(nil), msg.GoPoc.Exchanges...),
 		}
 	}
 	return finding
@@ -268,6 +271,7 @@ func (finding JSONFinding) outputMessage() OutputMessage {
 		msg.GoPoc = GoPocsResultType{
 			PocName: finding.GoPoc.PocName, Security: finding.GoPoc.Security, Description: finding.GoPoc.Description,
 			Target: finding.GoPoc.Target, InfoLeft: finding.GoPoc.InfoLeft, InfoRight: finding.GoPoc.InfoRight, ShowMsg: finding.GoPoc.ShowMsg,
+			Exchanges: append([]structs.GoPocExchange(nil), finding.GoPoc.Exchanges...),
 		}
 	}
 	return msg
@@ -368,7 +372,7 @@ func failedTerminalRecord(record *JSONRecord) ([]byte, error) {
 }
 
 func appendTerminalRecord(filename string, record []byte) (*os.File, int64, error) {
-	file, err := os.OpenFile(filename, os.O_CREATE|os.O_RDWR, 0o666)
+	file, err := openPrivateOutputFile(filename, os.O_CREATE|os.O_RDWR)
 	if err != nil {
 		return nil, 0, fmt.Errorf("open output file: %w", err)
 	}
@@ -491,7 +495,7 @@ func formatTextLine(msg OutputMessage) string {
 }
 
 func appendToFile(filename, line string) error {
-	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o666)
+	f, err := openPrivateOutputFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY)
 	if err != nil {
 		return fmt.Errorf("open output file: %w", err)
 	}
@@ -502,6 +506,21 @@ func appendToFile(filename, line string) error {
 	return nil
 }
 
+func openPrivateOutputFile(filename string, flags int) (*os.File, error) {
+	file, err := os.OpenFile(filename, flags, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if protectedOutputPath != filename {
+		if err := protectOutputFile(filename); err != nil {
+			_ = file.Close()
+			return nil, fmt.Errorf("protect output file: %w", err)
+		}
+		protectedOutputPath = filename
+	}
+	return file, nil
+}
+
 // resetForTest isolates package-global output state. It is intentionally
 // unexported so production callers cannot reset an active run.
 func resetForTest() {
@@ -510,6 +529,6 @@ func resetForTest() {
 	sinkMu.Unlock()
 	writeMu.Lock()
 	OutputType, OutputFileName, stdout = "text", "", os.Stdout
-	runID, sequence, findingCount, runStarted, runEnded, runWriteErr = "", 0, 0, false, false, nil
+	runID, sequence, findingCount, runStarted, runEnded, runWriteErr, protectedOutputPath = "", 0, 0, false, false, nil, ""
 	writeMu.Unlock()
 }

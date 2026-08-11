@@ -31,8 +31,19 @@ func MS17010(info *structs.HostInfo) error {
 	return err
 }
 
+func cloneMS17010ProbeRequests() (negotiate, sessionSetup, treeConnect, namedPipe []byte) {
+	return append([]byte(nil), negotiateProtocolRequest...),
+		append([]byte(nil), sessionSetupRequest...),
+		append([]byte(nil), treeConnectRequest...),
+		append([]byte(nil), transNamedPipeRequest...)
+}
+
 func MS17010Scan(info *structs.HostInfo) error {
 	ip := info.Host
+	// The templates below carry connection-specific UID/TID bytes. Keep a
+	// private copy per probe so concurrent targets cannot mutate each other's
+	// wire request or the evidence captured for it.
+	negotiateProtocolRequest, sessionSetupRequest, treeConnectRequest, transNamedPipeRequest := cloneMS17010ProbeRequests()
 	// connecting to a host in LAN if reachable should be very quick
 	conn, err := utils.WrapperTcpWithTimeout("tcp", ip+":445", time.Duration(7)*time.Second)
 	defer func() {
@@ -55,12 +66,14 @@ func MS17010Scan(info *structs.HostInfo) error {
 		return err
 	}
 	reply := make([]byte, 1024)
+	exchanges := make([]structs.GoPocExchange, 0, 4)
 	// let alone half packet
 	n, errReply := conn.Read(reply)
 	if errReply != nil || n < 36 {
 		return err
 	}
 	gologger.AuditTimeLogger("[Go] [MS17-010] [1/4] Dumped TCP response for %s\n\n%s\n", ip+":445", hex.Dump(reply[0:n]))
+	exchanges = append(exchanges, binaryGoPocExchange("SMB negotiate protocol", negotiateProtocolRequest, reply[:n]))
 
 	if binary.LittleEndian.Uint32(reply[9:13]) != 0 {
 		// status != 0
@@ -77,6 +90,7 @@ func MS17010Scan(info *structs.HostInfo) error {
 		return err
 	}
 	gologger.AuditTimeLogger("[Go] [MS17-010] [2/4] Dumped TCP response for %s\n\n%s\n", ip+":445", hex.Dump(reply[0:n]))
+	exchanges = append(exchanges, binaryGoPocExchange("SMB session setup", sessionSetupRequest, reply[:n]))
 
 	if binary.LittleEndian.Uint32(reply[9:13]) != 0 {
 		// status != 0
@@ -119,6 +133,7 @@ func MS17010Scan(info *structs.HostInfo) error {
 		return err
 	}
 	gologger.AuditTimeLogger("[Go] [MS17-010] [3/4] Dumped TCP response for %s\n\n%s\n", ip+":445", hex.Dump(reply[:n]))
+	exchanges = append(exchanges, binaryGoPocExchange("SMB tree connect", treeConnectRequest, reply[:n]))
 	treeID := reply[28:30]
 	transNamedPipeRequest[28] = treeID[0]
 	transNamedPipeRequest[29] = treeID[1]
@@ -136,6 +151,7 @@ func MS17010Scan(info *structs.HostInfo) error {
 		return err
 	}
 	gologger.AuditTimeLogger("[Go] [MS17-010] [4/4] Dumped TCP response for %s\n\n%s\n", ip+":445", hex.Dump(reply[:n]))
+	exchanges = append(exchanges, binaryGoPocExchange("SMB named pipe transaction", transNamedPipeRequest, reply[:n]))
 
 	if reply[9] == 0x05 && reply[10] == 0x02 && reply[11] == 0x00 && reply[12] == 0xc0 {
 		result := fmt.Sprintf("MS17-010 %s (%s)", ip, os)
@@ -154,6 +170,7 @@ func MS17010Scan(info *structs.HostInfo) error {
 				Security:    "CRITICAL",
 				Target:      ip,
 				InfoLeft:    os,
+				Exchanges:   exchanges,
 				Description: "MS17-010 远程命令执行漏洞",
 				ShowMsg:     result},
 			AdditionalMsg: "",
@@ -164,6 +181,7 @@ func MS17010Scan(info *structs.HostInfo) error {
 			Security:    "CRITICAL",
 			Target:      ip,
 			InfoLeft:    os,
+			Exchanges:   exchanges,
 			Description: "MS17-010 远程命令执行漏洞",
 		})
 

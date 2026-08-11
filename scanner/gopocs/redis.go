@@ -112,7 +112,8 @@ func RedisConn(info *structs.HostInfo, pass string) (flag bool, err error) {
 	if err != nil {
 		return flag, err
 	}
-	_, err = conn.Write([]byte(fmt.Sprintf("auth %s\r\n", pass)))
+	authRequest := []byte(fmt.Sprintf("auth %s\r\n", pass))
+	_, err = conn.Write(authRequest)
 	if err != nil {
 		return flag, err
 	}
@@ -122,6 +123,9 @@ func RedisConn(info *structs.HostInfo, pass string) (flag bool, err error) {
 	}
 	if strings.Contains(reply, "+OK") {
 		flag = true
+		exchanges := []structs.GoPocExchange{
+			binaryGoPocExchange("Redis AUTH verification", authRequest, []byte(reply)),
+		}
 
 		result := fmt.Sprintf("Redis:%s %s", realhost, pass)
 		// gologger.Silent().Msg("[GoPoc] " + result)
@@ -142,6 +146,7 @@ func RedisConn(info *structs.HostInfo, pass string) (flag bool, err error) {
 				Target:      realhost,
 				InfoLeft:    showData,
 				InfoRight:   reply,
+				Exchanges:   exchanges,
 				Description: "Redis未授权/弱口令",
 				ShowMsg:     result},
 			AdditionalMsg: "",
@@ -153,6 +158,7 @@ func RedisConn(info *structs.HostInfo, pass string) (flag bool, err error) {
 			Target:      realhost,
 			InfoLeft:    showData,
 			InfoRight:   reply,
+			Exchanges:   exchanges,
 			Description: "Redis未授权/弱口令",
 		})
 
@@ -188,6 +194,9 @@ func RedisUnauth(info *structs.HostInfo) (flag bool, err error) {
 	gologger.AuditTimeLogger("[GoPoc] [Redis-Unauth] Dumped TCP response for %s\n\n%s\n", realhost, hex.Dump([]byte(reply)))
 	if strings.Contains(reply, "redis_version") {
 		flag = true
+		exchanges := []structs.GoPocExchange{
+			binaryGoPocExchange("Redis INFO verification", []byte("info\r\n"), []byte(reply)),
+		}
 
 		result := fmt.Sprintf("Redis:%s %s", realhost, "Unauthorized")
 		// gologger.Silent().Msg("[GoPoc] " + result)
@@ -208,6 +217,7 @@ func RedisUnauth(info *structs.HostInfo) (flag bool, err error) {
 				Target:      realhost,
 				InfoLeft:    showData,
 				InfoRight:   reply,
+				Exchanges:   exchanges,
 				Description: "Redis未授权/弱口令",
 				ShowMsg:     result},
 			AdditionalMsg: "",
@@ -219,6 +229,7 @@ func RedisUnauth(info *structs.HostInfo) (flag bool, err error) {
 			Target:      realhost,
 			InfoLeft:    showData,
 			InfoRight:   reply,
+			Exchanges:   exchanges,
 			Description: "Redis未授权/弱口令",
 		})
 

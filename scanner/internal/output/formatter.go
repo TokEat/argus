@@ -1,25 +1,28 @@
-// Package output 输出格式化与报告生成。
-// 桥接层：底层调用 ddout 和 common/report 的原始实现。
+// Package output projects Nuclei results onto the canonical scanner output
+// stream consumed by result.txt, CLI observers, and Agent hooks.
 package output
 
 import (
-	"github.com/P0lar1ght/argus/scanner/common/report"
+	"encoding/json"
+	"fmt"
+
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	nucleiOutput "github.com/projectdiscovery/nuclei/v3/pkg/output"
 )
 
-// InitReportName 初始化报告文件名。
-func InitReportName() {
-	report.InitReportName()
+// AddResultByResultEvent projects a Nuclei event onto the canonical scanner
+// output stream. CLI reports and result.txt consume the same structured event;
+// Agent callers continue to use their existing output hook.
+func AddResultByResultEvent(result nucleiOutput.ResultEvent) {
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return
+	}
+	show := fmt.Sprintf("[%s] [%s] %v", result.TemplateID,
+		result.Info.SeverityHolder.Severity.String(), result.Matched)
+	ddout.FormatOutput(ddout.OutputMessage{
+		Type:   "Nuclei",
+		Nuclei: string(payload),
+		Show:   show,
+	})
 }
-
-// GenerateHTMLReportFooter 生成漏洞报告尾部。
-func GenerateHTMLReportFooter() {
-	report.GenerateHTMLReportFooter()
-}
-
-// GenerateAssetReport 生成资产报告。
-func GenerateAssetReport(outputFile string) {
-	report.GenerateAssetReport(outputFile)
-}
-
-// AddResultByResultEvent 添加扫描结果到报告（Nuclei 回调）。
-var AddResultByResultEvent = report.AddResultByResultEvent

@@ -7,6 +7,7 @@ import (
 	"net"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -115,6 +116,15 @@ type Client struct {
 	conn         net.Conn
 	LastResponse string
 	ServerType   int
+	evidenceMu   sync.Mutex
+	exchanges    []RawExchange
+}
+
+// RawExchange contains bytes observed by this client at the net.Conn boundary.
+// A read event has Response set and a write event has Request set.
+type RawExchange struct {
+	Request  []byte
+	Response []byte
 }
 
 func New(addr string, port int) *Client {
@@ -321,6 +331,9 @@ func (c *Client) read() ([]byte, error) {
 	var n int
 	//_ = c.conn.SetReadDeadline(time.Now().Add(time.Second * 3))
 	n, err := c.conn.Read(buf[0:])
+	if n > 0 {
+		c.recordExchange(nil, buf[:n])
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -331,11 +344,37 @@ func (c *Client) read() ([]byte, error) {
 func (c *Client) write(buf []byte) error {
 	//slog.Println(slog.DEBUG, ">>>>>>>>>-", buf)
 	_ = c.conn.SetWriteDeadline(time.Now().Add(time.Second * 3))
-	_, err := c.conn.Write(buf)
+	n, err := c.conn.Write(buf)
+	if n > 0 {
+		c.recordExchange(buf[:n], nil)
+	}
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+func (c *Client) recordExchange(request, response []byte) {
+	c.evidenceMu.Lock()
+	defer c.evidenceMu.Unlock()
+	c.exchanges = append(c.exchanges, RawExchange{
+		Request:  append([]byte(nil), request...),
+		Response: append([]byte(nil), response...),
+	})
+}
+
+// RawExchanges returns a deep copy of this client's ordered connection I/O.
+func (c *Client) RawExchanges() []RawExchange {
+	c.evidenceMu.Lock()
+	defer c.evidenceMu.Unlock()
+	result := make([]RawExchange, len(c.exchanges))
+	for i, exchange := range c.exchanges {
+		result[i] = RawExchange{
+			Request:  append([]byte(nil), exchange.Request...),
+			Response: append([]byte(nil), exchange.Response...),
+		}
+	}
+	return result
 }
 
 func (c *Client) Login() error {

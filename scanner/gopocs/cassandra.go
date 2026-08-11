@@ -21,7 +21,7 @@ func CassandraScan(info *structs.HostInfo) error {
 
 	// CQL OPTIONS request (v4)
 	optionsReq, _ := hex.DecodeString("0400000005000000000000")
-	conn.Write(optionsReq)
+	written, _ := conn.Write(optionsReq)
 
 	buf := make([]byte, 4096)
 	n, err := conn.Read(buf)
@@ -32,6 +32,9 @@ func CassandraScan(info *structs.HostInfo) error {
 	if !strings.Contains(resp, "CQL_VERSION") {
 		return nil
 	}
+	exchanges := []structs.GoPocExchange{
+		binaryGoPocWriteExchange("Cassandra CQL OPTIONS verification", optionsReq, written, buf[:n]),
+	}
 
 	result := fmt.Sprintf("CQL://%s Cassandra Unauthorized", realhost)
 	info.Emit(ddout.OutputMessage{
@@ -40,6 +43,7 @@ func CassandraScan(info *structs.HostInfo) error {
 			PocName:     "Cassandra-Unauthorized",
 			Security:    "HIGH",
 			Target:      realhost,
+			Exchanges:   exchanges,
 			Description: "CQL数据库未授权访问",
 			ShowMsg:     result,
 		},
@@ -48,6 +52,7 @@ func CassandraScan(info *structs.HostInfo) error {
 		PocName:     "Cassandra-Unauthorized",
 		Security:    "HIGH",
 		Target:      realhost,
+		Exchanges:   exchanges,
 		Description: "CQL数据库未授权访问",
 	})
 	return nil

@@ -109,15 +109,15 @@ func (request *Request) executeRaceRequest(input *contextargs.Context, previous 
 	mutex := &sync.Mutex{}
 	for i := 0; i < request.RaceNumberRequests; i++ {
 		wg.Add(1)
-		go func(httpRequest *generatedRequest) {
+		go func(httpRequest *generatedRequest, eventHistory output.InternalEvent) {
 			defer wg.Done()
-			err := request.executeRequest(input, httpRequest, previous, false, callback, 0)
+			err := request.executeRequest(input, httpRequest, eventHistory, false, callback, 0)
 			mutex.Lock()
 			if err != nil {
 				requestErr = multierr.Append(requestErr, err)
 			}
 			mutex.Unlock()
-		}(generatedRequests[i])
+		}(generatedRequests[i], cloneHTTPEvent(previous))
 		request.options.Progress.IncrementRequests()
 	}
 	wg.Wait()
@@ -218,16 +218,16 @@ func (request *Request) executeTurboHTTP(input *contextargs.Context, dynamicValu
 		}
 		generatedHttpRequest.pipelinedClient = pipeClient
 		swg.Add()
-		go func(httpRequest *generatedRequest) {
+		go func(httpRequest *generatedRequest, eventHistory output.InternalEvent) {
 			defer swg.Done()
 
-			err := request.executeRequest(input, httpRequest, previous, false, callback, 0)
+			err := request.executeRequest(input, httpRequest, eventHistory, false, callback, 0)
 			mutex.Lock()
 			if err != nil {
 				requestErr = multierr.Append(requestErr, err)
 			}
 			mutex.Unlock()
-		}(generatedHttpRequest)
+		}(generatedHttpRequest, cloneHTTPEvent(previous))
 		request.options.Progress.IncrementRequests()
 	}
 	swg.Wait()
@@ -778,16 +778,11 @@ func (request *Request) executeRequest(input *contextargs.Context, generatedRequ
 			finalEvent[k] = v
 		}
 
-		// Add to history the current request number metadata if asked by the user.
-		if request.NeedsRequestCondition() {
-			for k, v := range outputEvent {
-				key := fmt.Sprintf("%s_%d", k, requestCount)
-				if previousEvent != nil {
-					previousEvent[key] = v
-				}
-				finalEvent[key] = v
-			}
-		}
+		// Always retain the numbered request and response for every HTTP step so
+		// successful multi-request templates keep the complete evidence chain.
+		// Matchers and extractors that explicitly reference numbered fields still
+		// receive the complete per-step event as before.
+		recordHTTPExchangeHistory(previousEvent, finalEvent, outputEvent, requestCount, request.NeedsRequestCondition())
 		// prune signature internal values if any
 		request.pruneSignatureInternalValues(generatedRequest.meta)
 
@@ -817,6 +812,27 @@ func (request *Request) executeRequest(input *contextargs.Context, generatedRequ
 	}
 	// return project file save error if any
 	return errx
+}
+
+func recordHTTPExchangeHistory(previousEvent, finalEvent, outputEvent output.InternalEvent, requestCount int, includeAll bool) {
+	for key, value := range outputEvent {
+		if !includeAll && key != "request" && key != "response" {
+			continue
+		}
+		numberedKey := fmt.Sprintf("%s_%d", key, requestCount)
+		if previousEvent != nil {
+			previousEvent[numberedKey] = value
+		}
+		finalEvent[numberedKey] = value
+	}
+}
+
+func cloneHTTPEvent(event output.InternalEvent) output.InternalEvent {
+	cloned := make(output.InternalEvent, len(event))
+	for key, value := range event {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 // handleSignature of the http request

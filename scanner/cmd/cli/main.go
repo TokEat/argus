@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/P0lar1ght/argus/scanner/common"
+	"github.com/P0lar1ght/argus/scanner/common/report"
 	"github.com/P0lar1ght/argus/scanner/ddout"
 	"github.com/P0lar1ght/argus/scanner/internal/arsenal"
 	"github.com/P0lar1ght/argus/scanner/internal/config"
@@ -61,6 +62,19 @@ func runCLI() int {
 		writeCLIError("cli history init failed", err)
 		return exitFailure
 	}
+	reportSession, err := report.NewSession(report.Options{
+		Path:       ctx.Config.ReportName,
+		RunID:      run.ID,
+		Targets:    ctx.Config.Targets,
+		SourceFile: ctx.Config.OutputFile,
+		StartedAt:  time.Now(),
+	})
+	if err != nil {
+		_ = run.Finish(err)
+		writeCLIError("cli report init failed", err)
+		return exitFailure
+	}
+	defer reportSession.Abort()
 	if err := ddout.BeginRun(run.ID); err != nil {
 		_ = run.Finish(err)
 		writeCLIError("cli output init failed", err)
@@ -75,7 +89,7 @@ func runCLI() int {
 
 	stopInterruptWatch := watchInterrupt(ctx.Cancel)
 	defer stopInterruptWatch()
-	scanErr := localplanner.ExecuteWithTiming(ctx, run, recorder)
+	scanErr := localplanner.ExecuteWithTiming(ctx, run, recorder, reportSession.Observe)
 	if events, snapshotErr := recorder.Snapshot(); snapshotErr != nil {
 		if presentation.Interactive {
 			writeCLIError("cli timing snapshot failed", snapshotErr)
@@ -103,7 +117,9 @@ func runCLI() int {
 	}
 
 	outputErr := ddout.RunError()
-	exitCode, status := terminalOutcome(scanErr, errors.Join(historyErr, summaryErr, outputErr))
+	_, scanStatus := terminalOutcome(scanErr, errors.Join(historyErr, summaryErr, outputErr))
+	reportErr := reportSession.Finish(report.Summary{Status: scanStatus, FinishedAt: time.Now()})
+	exitCode, status := terminalOutcome(scanErr, errors.Join(historyErr, summaryErr, outputErr, reportErr))
 	targets, _, coverage := run.Counts()
 	endErr := ddout.EndRun(ddout.RunSummary{
 		Status:   status,
@@ -118,13 +134,16 @@ func runCLI() int {
 	})
 	if endErr != nil {
 		writeCLIError("cli output finalize failed", endErr)
-		exitCode = exitFailure
 	}
+	exitCode, _ = terminalOutcome(scanErr, errors.Join(historyErr, summaryErr, outputErr, endErr, reportErr))
 	if scanErr != nil && !errors.Is(scanErr, context.Canceled) {
 		writeCLIError("pipeline failed", scanErr)
 	}
 	if historyErr != nil {
 		writeCLIError("cli history finalize failed", historyErr)
+	}
+	if reportErr != nil {
+		writeCLIError("cli report finalize failed", reportErr)
 	}
 	return exitCode
 }
@@ -186,13 +205,37 @@ func watchInterrupt(cancel context.CancelFunc) func() {
 }
 
 func terminalOutcome(scanErr, otherErr error) (int, string) {
-	if errors.Is(scanErr, context.Canceled) {
+	if cancellationOnly(scanErr) && otherErr == nil {
 		return exitCanceled, "canceled"
 	}
 	if scanErr != nil || otherErr != nil {
 		return exitFailure, "failed"
 	}
 	return exitSuccess, "completed"
+}
+
+func cancellationOnly(err error) bool {
+	if err == nil {
+		return false
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		children := joined.Unwrap()
+		if len(children) == 0 {
+			return false
+		}
+		for _, child := range children {
+			if child != nil && !cancellationOnly(child) {
+				return false
+			}
+		}
+		return true
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		if child := wrapped.Unwrap(); child != nil {
+			return cancellationOnly(child)
+		}
+	}
+	return errors.Is(err, context.Canceled)
 }
 
 func writeCLIError(label string, err error) {

@@ -28,6 +28,9 @@ func ActiveMQScan(info *structs.HostInfo) error {
 	if !strings.Contains(resp, "ActiveMQ") {
 		return nil
 	}
+	exchanges := []structs.GoPocExchange{
+		binaryGoPocExchange("ActiveMQ OpenWire banner response", nil, buf[:n]),
+	}
 
 	version := ""
 	idx := strings.Index(resp, "ProviderVersion")
@@ -50,6 +53,7 @@ func ActiveMQScan(info *structs.HostInfo) error {
 			Security:    "MEDIUM",
 			Target:      realhost,
 			InfoLeft:    version,
+			Exchanges:   exchanges,
 			Description: "ActiveMQ OpenWire协议检测 (CVE-2023-46604)",
 			ShowMsg:     result,
 		},
@@ -59,6 +63,7 @@ func ActiveMQScan(info *structs.HostInfo) error {
 		Security:    "MEDIUM",
 		Target:      realhost,
 		InfoLeft:    version,
+		Exchanges:   exchanges,
 		Description: "ActiveMQ OpenWire协议检测 (CVE-2023-46604)",
 	})
 	return nil

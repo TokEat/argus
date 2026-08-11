@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/P0lar1ght/argus/scanner/structs"
 )
 
 func TestJSONOutputIsVersionedNDJSONAndSummarizedOnce(t *testing.T) {
@@ -76,6 +79,36 @@ func TestDecodeFindingLineSupportsVersionedAndLegacyFingerRecords(t *testing.T) 
 	}
 	if _, ok, err := DecodeFindingLine(string(summary)); err != nil || ok {
 		t.Fatalf("summary decoded as finding: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestJSONGoPocEvidenceRoundTripsWithoutDroppingExchanges(t *testing.T) {
+	want := OutputMessage{
+		Type: "GoPoc",
+		GoPoc: GoPocsResultType{
+			PocName:  "MS17-010",
+			Security: "CRITICAL",
+			Exchanges: []structs.GoPocExchange{{
+				Label: "SMB negotiate", Request: "00000000  ff", Response: "00000000  fe", Encoding: "hex-dump",
+			}},
+		},
+	}
+	record := JSONRecord{
+		SchemaVersion: JSONSchemaVersion,
+		RecordType:    "finding",
+		Sequence:      1,
+		Finding:       jsonFinding(want),
+	}
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := DecodeFindingLine(string(encoded))
+	if err != nil || !ok {
+		t.Fatalf("DecodeFindingLine() ok=%v err=%v", ok, err)
+	}
+	if !reflect.DeepEqual(got.GoPoc.Exchanges, want.GoPoc.Exchanges) {
+		t.Fatalf("GoPoc exchanges lost: got %#v want %#v", got.GoPoc.Exchanges, want.GoPoc.Exchanges)
 	}
 }
 

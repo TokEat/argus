@@ -28,6 +28,9 @@ func SVNScan(info *structs.HostInfo) error {
 	if !strings.Contains(resp, "success") || !strings.Contains(resp, "SVN") {
 		return nil
 	}
+	exchanges := []structs.GoPocExchange{
+		binaryGoPocExchange("SVN banner response", nil, buf[:n]),
+	}
 
 	result := fmt.Sprintf("SVN://%s Repository Detected", realhost)
 	info.Emit(ddout.OutputMessage{
@@ -36,6 +39,7 @@ func SVNScan(info *structs.HostInfo) error {
 			PocName:     "SVN-Detect",
 			Security:    "INFO",
 			Target:      realhost,
+			Exchanges:   exchanges,
 			Description: "SVN仓库服务检测",
 			ShowMsg:     result,
 		},
@@ -44,6 +48,7 @@ func SVNScan(info *structs.HostInfo) error {
 		PocName:     "SVN-Detect",
 		Security:    "INFO",
 		Target:      realhost,
+		Exchanges:   exchanges,
 		Description: "SVN仓库服务检测",
 	})
 	return nil

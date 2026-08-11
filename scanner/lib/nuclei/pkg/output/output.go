@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -234,6 +235,7 @@ func NewStandardWriter(options *types.Options) (*StandardWriter, error) {
 		storeResponse:    options.StoreResponse,
 		storeResponseDir: options.StoreResponseDir,
 		omitTemplate:     options.OmitTemplate,
+		DisableStdout:    options.DisableStdout,
 	}
 	return writer, nil
 }
@@ -393,6 +395,7 @@ func (w *StandardWriter) WriteFailure(wrappedEvent *InternalWrappedEvent) error 
 		IP:            fields.Ip,
 		Request:       types.ToString(event["request"]),
 		Response:      types.ToString(event["response"]),
+		CURLCommand:   types.ToString(event["curl-command"]),
 		MatcherStatus: false,
 		Timestamp:     time.Now(),
 		//FIXME: this is workaround to encode the template when no results were found
@@ -404,29 +407,34 @@ func (w *StandardWriter) WriteFailure(wrappedEvent *InternalWrappedEvent) error 
 	// so debug/failure events also include all steps, not just the last one.
 	// NeedsRequestCondition uses currentIndex starting from 0,
 	// while MakeResultEventItem starts from 1 — we check both ranges.
-	packet := make(map[int]RequestResponsePair)
-	for idx := 0; idx <= 20; idx++ {
-		reqKey := fmt.Sprintf("request_%d", idx)
-		respKey := fmt.Sprintf("response_%d", idx)
-		reqVal, reqOK := event[reqKey]
-		respVal, respOK := event[respKey]
-		if !reqOK && !respOK {
-			continue
-		}
-		pair := RequestResponsePair{}
-		if reqOK {
-			pair.Request = types.ToString(reqVal)
-		}
-		if respOK {
-			pair.Response = types.ToString(respVal)
-		}
-		packet[idx] = pair
-	}
+	packet := collectRequestResponsePackets(event)
 	if len(packet) > 0 {
 		data.Packet = packet
 	}
 
 	return w.Write(data)
+}
+
+func collectRequestResponsePackets(event map[string]interface{}) map[int]RequestResponsePair {
+	packet := make(map[int]RequestResponsePair)
+	for key, value := range event {
+		kind, rawIndex, found := strings.Cut(key, "_")
+		if !found || (kind != "request" && kind != "response") {
+			continue
+		}
+		index, err := strconv.Atoi(rawIndex)
+		if err != nil || index < 0 {
+			continue
+		}
+		pair := packet[index]
+		if kind == "request" {
+			pair.Request = types.ToString(value)
+		} else {
+			pair.Response = types.ToString(value)
+		}
+		packet[index] = pair
+	}
+	return packet
 }
 
 var maxTemplateFileSizeForEncoding = 1024 * 1024

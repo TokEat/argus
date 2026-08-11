@@ -118,6 +118,9 @@ func TestDirBruteCallbackCanMatchIconHashRule(t *testing.T) {
 	if len(emitted) != 1 || !reflect.DeepEqual(emitted[0].Finger, []string{"IconProduct"}) {
 		t.Fatalf("expected icon_hash rule to emit IconProduct, got %#v", emitted)
 	}
+	if emitted[0].Web.Status != "200" {
+		t.Fatalf("expected active fingerprint evidence status 200, got %#v", emitted[0].Web)
+	}
 }
 
 func TestURLCallbackStoresFinalURLPath(t *testing.T) {

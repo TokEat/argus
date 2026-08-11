@@ -9,6 +9,7 @@ import (
 	"github.com/P0lar1ght/argus/scanner/utils"
 	"github.com/mitchellh/go-vnc"
 	"github.com/projectdiscovery/gologger"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -18,16 +19,25 @@ import (
 var vncPasswordDict string
 
 func VncScan(info *structs.HostInfo) (tmperr error) {
+	return vncScanWithConnector(info, VncConn)
+}
+
+type vncConnector func(*structs.HostInfo, string) (bool, error)
+
+func vncScanWithConnector(info *structs.HostInfo, connect vncConnector) (tmperr error) {
 	starttime := time.Now().Unix()
 
 	// 1. 尝试空密码
 	gologger.AuditTimeLogger("[Go] [VNC-Unauth] Try %s:%v with empty password", info.Host, info.Ports)
-	flagA, errA := VncConn(info, "")
+	flagA, errA := connect(info, "")
 	if flagA && errA == nil {
 		gologger.AuditTimeLogger("[Go] ✅ VNC 空密码登录成功: %s:%v", info.Host, info.Ports)
 		return nil
 	} else if errA != nil {
 		gologger.AuditTimeLogger("[Go] [VNC-Unauth] 空密码失败: %v", errA)
+		if isSuccessfulSessionEvidenceError(errA) {
+			return errA
+		}
 	}
 
 	var passwdList []string
@@ -82,7 +92,7 @@ func VncScan(info *structs.HostInfo) (tmperr error) {
 	for i, pass := range expandedPassList {
 		gologger.AuditTimeLogger("[Go] [VNC-Brute] Trying %s:%v Pass:%s (%d/%d)", info.Host, info.Ports, maskPassword(pass), i+1, len(expandedPassList))
 
-		flag, err := VncConn(info, pass)
+		flag, err := connect(info, pass)
 
 		if flag && err == nil {
 			gologger.AuditTimeLogger("[Go] ✅ VNC 登录成功: %s:%v 密码=%s", info.Host, info.Ports, maskPassword(pass))
@@ -93,6 +103,9 @@ func VncScan(info *structs.HostInfo) (tmperr error) {
 				tmperr = err
 			} else {
 				gologger.AuditTimeLogger("[Go] [VNC-Brute] 密码 '%s' 认证失败 (flag=false, err=nil)", maskPassword(pass))
+			}
+			if isSuccessfulSessionEvidenceError(err) {
+				return err
 			}
 
 			if CheckErrs(err) {
@@ -112,7 +125,6 @@ func VncScan(info *structs.HostInfo) (tmperr error) {
 }
 
 func VncConn(info *structs.HostInfo, pass string) (flag bool, err error) {
-	flag = false
 	hostAddr := fmt.Sprintf("%s:%s", info.Host, info.Ports)
 
 	// 1. 建立 TCP 连接
@@ -134,24 +146,40 @@ func VncConn(info *structs.HostInfo, pass string) (flag bool, err error) {
 		return false, err
 	}
 
-	// 3. 尝试 VNC 认证（关键：移除 Exclusive=true）
+	return vncConnWithEvidence(info, pass, conn, successfulSessionEvidenceLimit, authenticateVNC)
+}
+
+type vncAuthenticator func(net.Conn, string) error
+
+func authenticateVNC(conn net.Conn, pass string) error {
+	// Exclusive intentionally remains false because some VNC servers reject
+	// exclusive sessions.
 	vncClient, err := vnc.Client(conn, &vnc.ClientConfig{
 		Auth: []vnc.ClientAuth{
 			&vnc.PasswordAuth{Password: pass},
 		},
-		// Exclusive: true,  // ❌ 注释掉！某些 VNC 服务拒绝此模式
 	})
-
 	if err != nil {
 		gologger.AuditTimeLogger("[Go] [VNC-Conn] 认证失败 (vnc.Client): %v", err)
+		return err
+	}
+	// Closing before evidence is finalized makes the library's background
+	// reader quiescent, so no successful-session bytes race the snapshot.
+	// Close errors were historically cleanup-only and do not change whether
+	// authentication succeeded.
+	_ = vncClient.Close()
+	return nil
+}
+
+func vncConnWithEvidence(info *structs.HostInfo, pass string, conn net.Conn, limit int, authenticate vncAuthenticator) (bool, error) {
+	exchanges, err := captureSuccessfulSessionEvidence(conn, "VNC authentication", limit, func(recordingConn net.Conn) error {
+		return authenticate(recordingConn, pass)
+	})
+	if err != nil {
 		return false, err
 	}
 
-	// 4. 成功连接
-	defer vncClient.Close()
-	flag = true
-
-	// 5. 输出成功结果
+	hostAddr := fmt.Sprintf("%s:%s", info.Host, info.Ports)
 	passwordDisplay := pass
 	if pass == "" {
 		passwordDisplay = "<empty>"
@@ -164,26 +192,18 @@ func VncConn(info *structs.HostInfo, pass string) (flag bool, err error) {
 		securityLevel = "CRITICAL"
 	}
 
-	emitOutput(info, ddout.OutputMessage{
-		Type: "GoPoc",
-		GoPoc: ddout.GoPocsResultType{
-			PocName:     "VNC-Login",
-			Security:    securityLevel,
-			Target:      hostAddr,
-			InfoLeft:    showData,
-			InfoRight:   "VNC authentication succeeded.",
-			Description: "VNC 未授权访问或弱口令",
-			ShowMsg:     result,
-		},
-	})
-
-	writeResult(info, structs.GoPocsResultType{
+	pocResult := structs.GoPocsResultType{
 		PocName:     "VNC-Login",
 		Security:    securityLevel,
 		Target:      hostAddr,
 		InfoLeft:    showData,
+		InfoRight:   "VNC authentication succeeded.",
+		Exchanges:   exchanges,
 		Description: "VNC 未授权访问或弱口令",
-	})
+		ShowMsg:     result,
+	}
+	emitOutput(info, ddout.OutputMessage{Type: "GoPoc", GoPoc: pocResult})
+	writeResult(info, pocResult)
 
 	return true, nil
 }

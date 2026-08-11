@@ -9,20 +9,11 @@ import (
 	"github.com/projectdiscovery/gologger"
 )
 
-// TelnetCVEOnlyDispatcher 独立运行 Telnet CVE 扫描，不依赖 NoGolangPoc 开关
-func TelnetCVEOnlyDispatcher() {
-	structs.GoPocsResults = TelnetBypassDispatch(
-		structs.GlobalIPPortMap,
-		structs.GlobalConfig.GoPocThreads,
-		structs.GlobalConfig.Password,
-		structs.GlobalConfig.PasswordFile,
-		nil,
-	)
-}
-
-func TelnetBypassDispatch(ipPortMap map[string]string, goPocThreads int, password string, passwordFile string, emit func(structs.OutputMessage)) []structs.GoPocsResultType {
+// TelnetBypassDispatchScoped reports dispatcher infrastructure failures to
+// task-scoped callers while retaining Telnet probe misses as zero findings.
+func TelnetBypassDispatchScoped(ipPortMap map[string]string, goPocThreads int, password string, passwordFile string, emit func(structs.OutputMessage)) ([]structs.GoPocsResultType, error) {
 	if len(ipPortMap) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	if goPocThreads <= 0 {
@@ -58,7 +49,7 @@ func TelnetBypassDispatch(ipPortMap map[string]string, goPocThreads int, passwor
 		}
 	}
 	if len(tasks) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	dispatcher := &dispatcher{
@@ -75,5 +66,5 @@ func TelnetBypassDispatch(ipPortMap map[string]string, goPocThreads int, passwor
 		dispatcher.addScan(task.Name, task.Info, ch, &wg)
 	}
 	wg.Wait()
-	return dispatcher.snapshotResults()
+	return dispatcher.snapshotResults(), dispatcher.executionError()
 }

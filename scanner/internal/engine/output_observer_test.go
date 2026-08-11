@@ -48,6 +48,14 @@ func TestNucleiResultMirrorsToObserverAndAgentHook(t *testing.T) {
 	}
 }
 
+func TestAuthoritativeNucleiResultsDoesNotDuplicateCallbackEvents(t *testing.T) {
+	event := nucleiOutput.ResultEvent{TemplateID: "safe-check", Matched: "https://example.test"}
+	results := authoritativeNucleiResults([]nucleiOutput.ResultEvent{event}, []nucleiOutput.ResultEvent{event})
+	if len(results) != 1 || results[0].TemplateID != event.TemplateID {
+		t.Fatalf("authoritative results = %#v", results)
+	}
+}
+
 func TestResetClearsCLIObserver(t *testing.T) {
 	ctx := &ScanContext{LocalRunID: "run-1", OutputObserver: func(OutputMessage) {}}
 	ctx.Reset()

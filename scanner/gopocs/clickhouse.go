@@ -21,7 +21,7 @@ func ClickHouseScan(info *structs.HostInfo) error {
 
 	// ClickHouse native client hello with "default" user
 	hello, _ := hex.DecodeString("0011436c69636b486f75736520636c69656e741508b1a903000764656661756c7400")
-	conn.Write(hello)
+	written, _ := conn.Write(hello)
 
 	buf := make([]byte, 4096)
 	n, err := conn.Read(buf)
@@ -32,6 +32,9 @@ func ClickHouseScan(info *structs.HostInfo) error {
 	if !strings.Contains(resp, "ClickHouse") {
 		return nil
 	}
+	exchanges := []structs.GoPocExchange{
+		binaryGoPocWriteExchange("ClickHouse native hello verification", hello, written, buf[:n]),
+	}
 
 	result := fmt.Sprintf("ClickHouse://%s Native Unauthorized", realhost)
 	info.Emit(ddout.OutputMessage{
@@ -40,6 +43,7 @@ func ClickHouseScan(info *structs.HostInfo) error {
 			PocName:     "ClickHouse-Unauthorized",
 			Security:    "HIGH",
 			Target:      realhost,
+			Exchanges:   exchanges,
 			Description: "ClickHouse数据库未授权访问",
 			ShowMsg:     result,
 		},
@@ -48,6 +52,7 @@ func ClickHouseScan(info *structs.HostInfo) error {
 		PocName:     "ClickHouse-Unauthorized",
 		Security:    "HIGH",
 		Target:      realhost,
+		Exchanges:   exchanges,
 		Description: "ClickHouse数据库未授权访问",
 	})
 	return nil

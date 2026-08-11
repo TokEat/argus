@@ -214,7 +214,7 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 
 	// CallDebug 启用 MatcherStatus=true，Nuclei 对未命中模板也会触发回调
 	// （通过 WriteFailure），回调中 MatcherStatus 为 false 的就是未命中事件。
-	nuclei.CallDebug(targetAndPocs, cmd.Proxy, func(result output.ResultEvent) {
+	_, nucleiErr := nuclei.CallDebug(targetAndPocs, cmd.Proxy, func(result output.ResultEvent) {
 		if stopped.Load() {
 			return
 		}
@@ -242,7 +242,7 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 
 	close(done)
 	if !completeSent.Load() {
-		sendComplete("")
+		completeNucleiDebug(sendComplete, nucleiErr)
 	}
 }
 

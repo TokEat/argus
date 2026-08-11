@@ -33,12 +33,16 @@ func TelnetCVEScan(info *structs.HostInfo) error {
 	}
 
 	result := fmt.Sprintf("Telnet://%s GNU inetutils (CVE-2024-24061 possible)", realhost)
+	exchanges := []structs.GoPocExchange{
+		binaryGoPocExchange("Telnet negotiation vulnerability response", nil, buf[:n]),
+	}
 	info.Emit(ddout.OutputMessage{
 		Type: "GoPoc",
 		GoPoc: ddout.GoPocsResultType{
 			PocName:     "Telnet-CVE-2024-24061",
 			Security:    "HIGH",
 			Target:      realhost,
+			Exchanges:   exchanges,
 			Description: "GNU inetutils telnet可能存在CVE-2024-24061漏洞",
 			ShowMsg:     result,
 		},
@@ -47,6 +51,7 @@ func TelnetCVEScan(info *structs.HostInfo) error {
 		PocName:     "Telnet-CVE-2024-24061",
 		Security:    "HIGH",
 		Target:      realhost,
+		Exchanges:   exchanges,
 		Description: "GNU inetutils telnet可能存在CVE-2024-24061漏洞",
 	})
 	return nil

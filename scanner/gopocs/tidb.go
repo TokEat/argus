@@ -28,6 +28,9 @@ func TiDBScan(info *structs.HostInfo) error {
 	if !strings.Contains(resp, "TiDB") {
 		return nil
 	}
+	exchanges := []structs.GoPocExchange{
+		binaryGoPocExchange("TiDB MySQL greeting response", nil, buf[:n]),
+	}
 
 	result := fmt.Sprintf("TiDB://%s MySQL Protocol Detected", realhost)
 	info.Emit(ddout.OutputMessage{
@@ -36,6 +39,7 @@ func TiDBScan(info *structs.HostInfo) error {
 			PocName:     "TiDB-Detect",
 			Security:    "MEDIUM",
 			Target:      realhost,
+			Exchanges:   exchanges,
 			Description: "TiDB数据库未授权访问",
 			ShowMsg:     result,
 		},
@@ -44,6 +48,7 @@ func TiDBScan(info *structs.HostInfo) error {
 		PocName:     "TiDB-Detect",
 		Security:    "MEDIUM",
 		Target:      realhost,
+		Exchanges:   exchanges,
 		Description: "TiDB数据库未授权访问",
 	})
 	return nil

@@ -430,7 +430,9 @@ func toStructGoPocResults(src []GoPocsResultType) []structs.GoPocsResultType {
 	}
 	dst := make([]structs.GoPocsResultType, 0, len(src))
 	for _, result := range src {
-		dst = append(dst, structs.GoPocsResultType(result))
+		cloned := structs.GoPocsResultType(result)
+		cloned.Exchanges = append([]structs.GoPocExchange(nil), result.Exchanges...)
+		dst = append(dst, cloned)
 	}
 	return dst
 }
@@ -441,7 +443,9 @@ func toEngineGoPocResults(src []structs.GoPocsResultType) []GoPocsResultType {
 	}
 	dst := make([]GoPocsResultType, 0, len(src))
 	for _, result := range src {
-		dst = append(dst, GoPocsResultType(result))
+		cloned := GoPocsResultType(result)
+		cloned.Exchanges = append([]structs.GoPocExchange(nil), result.Exchanges...)
+		dst = append(dst, cloned)
 	}
 	return dst
 }
@@ -467,6 +471,7 @@ func toEngineOutputMessage(msg ddout.OutputMessage) OutputMessage {
 			InfoLeft:    msg.GoPoc.InfoLeft,
 			InfoRight:   msg.GoPoc.InfoRight,
 			ShowMsg:     msg.GoPoc.ShowMsg,
+			Exchanges:   append([]structs.GoPocExchange(nil), msg.GoPoc.Exchanges...),
 		},
 		URI:           msg.URI,
 		City:          msg.City,

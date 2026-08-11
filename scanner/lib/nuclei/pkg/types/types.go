@@ -201,6 +201,9 @@ type Options struct {
 	ShowVarDump bool
 	// No-Color disables the colored output.
 	NoColor bool
+	// DisableStdout lets embedders own the authoritative finding stream while
+	// retaining callback and file output.
+	DisableStdout bool
 	// UpdateTemplates updates the templates installed at startup (also used by cloud to update datasources)
 	UpdateTemplates bool
 	// JSON writes json line output to files

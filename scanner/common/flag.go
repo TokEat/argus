@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
@@ -282,9 +281,11 @@ func prepare() error {
 	var tmpTargets []string
 
 	// 参数冲突校验
+	if err := validateCLIRiskFlags(structs.GlobalConfig); err != nil {
+		return err
+	}
 	if structs.GlobalConfig.ReportName != "" {
-		suffix := path.Ext(structs.GlobalConfig.ReportName)
-		if suffix != ".html" && suffix != ".htm" {
+		if !hasHTMLReportExtension(structs.GlobalConfig.ReportName) {
 			return &CLIUsageError{Message: "HTML 输出必须使用 .html 或 .htm 扩展名"}
 		}
 	}
@@ -412,31 +413,28 @@ func prepare() error {
 		taskName = strings.TrimSuffix(filepath.Base(structs.GlobalConfig.ReportName), filepath.Ext(structs.GlobalConfig.ReportName))
 	}
 
-	taskName = strings.ReplaceAll(taskName, "://", "_")
-	taskName = strings.ReplaceAll(taskName, "/", "_")
-	taskName = strings.ReplaceAll(taskName, ":", "_")
-	taskName = strings.ReplaceAll(taskName, "\\", "_")
-	if len(taskName) > 50 {
-		taskName = taskName[:50]
+	taskName = sanitizeResultDirectoryName(taskName)
+	outputName := filepath.Base(structs.GlobalConfig.OutputFile)
+	reportName := timestamp + ".html"
+	if structs.GlobalConfig.ReportName != "" {
+		reportName = filepath.Base(structs.GlobalConfig.ReportName)
 	}
-	taskName = strings.Trim(taskName, "._")
-
-	dirName := filepath.Join("datas", fmt.Sprintf("%s_%s", taskName, timestamp))
-	if err := os.MkdirAll(dirName, 0755); err == nil {
-		gologger.Info().Msgf("结果目录: %s", dirName)
-		structs.GlobalConfig.OutputFile = filepath.Join(dirName, filepath.Base(structs.GlobalConfig.OutputFile))
-
-		if structs.GlobalConfig.ReportName != "" {
-			structs.GlobalConfig.ReportName = filepath.Join(dirName, filepath.Base(structs.GlobalConfig.ReportName))
-		} else {
-			structs.GlobalConfig.ReportName = filepath.Join(dirName, timestamp+".html")
-		}
-
-		if gologger.AuditLogFileName != "" {
-			gologger.AuditLogFileName = filepath.Join(dirName, filepath.Base(gologger.AuditLogFileName))
-		}
-	} else {
-		gologger.Warning().Msgf("创建结果目录失败: %v", err)
+	auditName := ""
+	if gologger.Audit && gologger.AuditLogFileName != "" {
+		auditName = filepath.Base(gologger.AuditLogFileName)
+	}
+	if err := validateCLIArtifactNames(outputName, reportName, auditName); err != nil {
+		return err
+	}
+	dirName, err := createUniqueResultDirectory("datas", fmt.Sprintf("%s_%s", taskName, timestamp))
+	if err != nil {
+		return fmt.Errorf("创建唯一结果目录失败: %w", err)
+	}
+	gologger.Info().Msgf("结果目录: %s", dirName)
+	structs.GlobalConfig.OutputFile = filepath.Join(dirName, outputName)
+	structs.GlobalConfig.ReportName = filepath.Join(dirName, reportName)
+	if gologger.AuditLogFileName != "" {
+		gologger.AuditLogFileName = filepath.Join(dirName, filepath.Base(gologger.AuditLogFileName))
 	}
 
 	// 如果是Linux则调整扫描线程 gogo抄的感谢感谢
@@ -636,7 +634,7 @@ func FlagWithError() error {
 	flagSet.CreateGroup("output", "输出",
 		flagSet.StringVarP(&structs.GlobalConfig.OutputFile, "output", "o", "result.txt", "结果输出文件"),
 		flagSet.StringVarP(&structs.GlobalConfig.OutputType, "output-type", "ot", "text", "结果输出格式 text,json"),
-		flagSet.StringVarP(&structs.GlobalConfig.ReportName, "html-output", "ho", "", "html漏洞报告的名称"),
+		flagSet.StringVarP(&structs.GlobalConfig.ReportName, "html-output", "ho", "", "Argus HTML 扫描报告名称（资产、服务、指纹和漏洞证据统一展示）"),
 	)
 
 	flagSet.CreateGroup("vuln-detect", "漏洞探测",

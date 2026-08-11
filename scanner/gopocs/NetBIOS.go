@@ -5,53 +5,29 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/P0lar1ght/argus/scanner/ddout"
 	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/P0lar1ght/argus/scanner/utils"
 	"github.com/projectdiscovery/gologger"
 	"gopkg.in/yaml.v3"
-	"net"
-	"strconv"
-	"strings"
-	"time"
 )
 
 var netbioserr = errors.New("netbios error")
 
 func NetBIOS(info *structs.HostInfo) error {
-	netbios, _ := NetBIOS1(info)
+	netbios, exchanges, _ := netBIOS1WithEvidence(info)
 	output := netbios.String()
 	if len(output) > 0 {
 		realhost := fmt.Sprintf("%s:%v", info.Host, info.Ports)
 		result := fmt.Sprintf("NetBios: %s %s ", info.Host, output)
 
 		showData := fmt.Sprintf("Host: %v\nInfo: %v", realhost, output)
-
-		// gologger.Silent().Msg("[GoPoc] " + result)
-		info.Emit(ddout.OutputMessage{
-			Type:     "GoPoc",
-			IP:       "",
-			IPs:      nil,
-			Port:     "",
-			Protocol: "",
-			Web:      ddout.WebInfo{},
-			Finger:   nil,
-			Domain:   "",
-			GoPoc: ddout.GoPocsResultType{PocName: "NetBIOS-Leak",
-				Security:    "INFO",
-				Target:      realhost,
-				InfoLeft:    showData,
-				Description: "NetBIOS服务泄露了主机名、网卡信息",
-				ShowMsg:     result},
-			AdditionalMsg: "",
-		})
-
-		writeResult(info, structs.GoPocsResultType{
-			PocName:     "NetBIOS-Leak",
-			Security:    "INFO",
-			Target:      realhost,
-			InfoLeft:    showData,
-			Description: "NetBIOS服务泄露了主机名、网卡信息"})
+		emitNetBIOSFinding(info, realhost, result, showData, exchanges)
 
 		return nil
 	}
@@ -59,7 +35,16 @@ func NetBIOS(info *structs.HostInfo) error {
 }
 
 func NetBIOS1(info *structs.HostInfo) (netbios NetBiosInfo, err error) {
-	netbios, err = GetNbnsname(info)
+	netbios, _, err = netBIOS1WithEvidence(info)
+	return
+}
+
+func netBIOS1WithEvidence(info *structs.HostInfo) (netbios NetBiosInfo, exchanges []structs.GoPocExchange, err error) {
+	var nbnsExchange *structs.GoPocExchange
+	netbios, nbnsExchange, err = getNbnsnameWithEvidence(info)
+	if nbnsExchange != nil {
+		exchanges = append(exchanges, *nbnsExchange)
+	}
 	var payload0 []byte
 	if netbios.ServerService != "" || netbios.WorkstationService != "" {
 		ss := netbios.ServerService
@@ -98,6 +83,7 @@ func NetBIOS1(info *structs.HostInfo) (netbios NetBiosInfo, err error) {
 			return
 		}
 		gologger.AuditTimeLogger("[Go] [netbios] [NetBIOS1] [1/] Dumped TCP response for %s\n\n%s\n", realhost, hex.Dump(t))
+		exchanges = append(exchanges, binaryGoPocExchange("NetBIOS session service", payload0, t))
 	}
 
 	_, err = conn.Write(NegotiateSMBv1Data1)
@@ -110,6 +96,7 @@ func NetBIOS1(info *structs.HostInfo) (netbios NetBiosInfo, err error) {
 		return
 	}
 	gologger.AuditTimeLogger("[Go] [netbios] [NetBIOS1] [2/] Dumped TCP response for %s\n\n%s\n", realhost, hex.Dump(t))
+	exchanges = append(exchanges, binaryGoPocExchange("SMBv1 negotiate", NegotiateSMBv1Data1, t))
 
 	_, err = conn.Write(NegotiateSMBv1Data2)
 	gologger.AuditTimeLogger("[Go] [netbios] [NetBIOS1] [3/] Dumped TCP request for %s\n\n%s\n", realhost, hex.Dump(NegotiateSMBv1Data2))
@@ -122,12 +109,18 @@ func NetBIOS1(info *structs.HostInfo) (netbios NetBiosInfo, err error) {
 		return
 	}
 	gologger.AuditTimeLogger("[Go] [netbios] [NetBIOS1] [3/] Dumped TCP response for %s\n\n%s\n", realhost, hex.Dump(ret))
+	exchanges = append(exchanges, binaryGoPocExchange("SMBv1 NTLM challenge", NegotiateSMBv1Data2, ret))
 	netbios2, err := ParseNTLM(ret)
 	JoinNetBios(&netbios, &netbios2)
 	return
 }
 
 func GetNbnsname(info *structs.HostInfo) (netbios NetBiosInfo, err error) {
+	netbios, _, err = getNbnsnameWithEvidence(info)
+	return
+}
+
+func getNbnsnameWithEvidence(info *structs.HostInfo) (netbios NetBiosInfo, exchange *structs.GoPocExchange, err error) {
 	senddata1 := []byte{102, 102, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 32, 67, 75, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 0, 0, 33, 0, 1}
 	//senddata1 := []byte("ff\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00 CKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\x00\x00!\x00\x01")
 	realhost := fmt.Sprintf("%s:137", info.Host)
@@ -151,8 +144,45 @@ func GetNbnsname(info *structs.HostInfo) (netbios NetBiosInfo, err error) {
 	}
 	text, _ := ReadBytes(conn)
 	gologger.AuditTimeLogger("[Go] [netbios] [GetNbnsname] Dumped UDP response for %s\n\n%s\n", realhost, hex.Dump(text))
+	if len(text) > 0 {
+		captured := binaryGoPocExchange("NetBIOS NBNS node status", senddata1, text)
+		exchange = &captured
+	}
 	netbios, err = ParseNetBios(text)
 	return
+}
+
+func emitNetBIOSFinding(info *structs.HostInfo, target, result, showData string, exchanges []structs.GoPocExchange) {
+	emittedExchanges := append([]structs.GoPocExchange(nil), exchanges...)
+	storedExchanges := append([]structs.GoPocExchange(nil), exchanges...)
+
+	// gologger.Silent().Msg("[GoPoc] " + result)
+	info.Emit(ddout.OutputMessage{
+		Type:     "GoPoc",
+		IP:       "",
+		IPs:      nil,
+		Port:     "",
+		Protocol: "",
+		Web:      ddout.WebInfo{},
+		Finger:   nil,
+		Domain:   "",
+		GoPoc: ddout.GoPocsResultType{PocName: "NetBIOS-Leak",
+			Security:    "INFO",
+			Target:      target,
+			InfoLeft:    showData,
+			Exchanges:   emittedExchanges,
+			Description: "NetBIOS服务泄露了主机名、网卡信息",
+			ShowMsg:     result},
+		AdditionalMsg: "",
+	})
+
+	writeResult(info, structs.GoPocsResultType{
+		PocName:     "NetBIOS-Leak",
+		Security:    "INFO",
+		Target:      target,
+		InfoLeft:    showData,
+		Exchanges:   storedExchanges,
+		Description: "NetBIOS服务泄露了主机名、网卡信息"})
 }
 
 func bytetoint(text byte) (int, error) {

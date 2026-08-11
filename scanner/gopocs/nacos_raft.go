@@ -20,7 +20,7 @@ func NacosRaftScan(info *structs.HostInfo) error {
 
 	// Nacos JRaft protocol probe
 	probe := []byte("\x00\x00\x00\x00\x00\x00\x00\x00\x12\x00\x00\x00\x08")
-	conn.Write(probe)
+	written, _ := conn.Write(probe)
 
 	buf := make([]byte, 4096)
 	n, err := conn.Read(buf)
@@ -31,6 +31,9 @@ func NacosRaftScan(info *structs.HostInfo) error {
 	if !strings.Contains(resp, "nacos") && !strings.Contains(resp, "raft") && n < 10 {
 		return nil
 	}
+	exchanges := []structs.GoPocExchange{
+		binaryGoPocWriteExchange("Nacos JRaft protocol verification", probe, written, buf[:n]),
+	}
 
 	result := fmt.Sprintf("Nacos-Raft://%s JRaft Server Detected", realhost)
 	info.Emit(ddout.OutputMessage{
@@ -39,6 +42,7 @@ func NacosRaftScan(info *structs.HostInfo) error {
 			PocName:     "Nacos-Raft-Detect",
 			Security:    "HIGH",
 			Target:      realhost,
+			Exchanges:   exchanges,
 			Description: "Nacos Raft协议检测(可能存在反序列化RCE)",
 			ShowMsg:     result,
 		},
@@ -47,6 +51,7 @@ func NacosRaftScan(info *structs.HostInfo) error {
 		PocName:     "Nacos-Raft-Detect",
 		Security:    "HIGH",
 		Target:      realhost,
+		Exchanges:   exchanges,
 		Description: "Nacos Raft协议检测(可能存在反序列化RCE)",
 	})
 	return nil

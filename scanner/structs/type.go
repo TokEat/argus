@@ -225,10 +225,21 @@ type GoPocsResultType struct {
 	Target      string
 	InfoLeft    string
 	InfoRight   string
-	ShowMsg     string // 格式化后的展示文本
+	Exchanges   []GoPocExchange `json:"exchanges,omitempty"`
+	ShowMsg     string          // 格式化后的展示文本
 }
 
 // GoPocsResults 存储Go Poc的输出
+// GoPocExchange preserves one successful verification exchange. Binary
+// protocols use a lossless textual encoding such as hex-dump so evidence can
+// pass through JSON and the offline HTML report without invalid UTF-8 loss.
+type GoPocExchange struct {
+	Label    string `json:"label,omitempty"`
+	Request  string `json:"request,omitempty"`
+	Response string `json:"response,omitempty"`
+	Encoding string `json:"encoding,omitempty"`
+}
+
 var GoPocsResults []GoPocsResultType
 
 type UserPasswd struct {

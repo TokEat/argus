@@ -1,8 +1,8 @@
 package http
 
 import (
-	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -157,22 +157,7 @@ func (request *Request) MakeResultEventItem(wrapped *output.InternalWrappedEvent
 	if types.ToString(wrapped.InternalEvent["path"]) != "" {
 		fields.Path = types.ToString(wrapped.InternalEvent["path"])
 	}
-	Packet := make(map[int]output.RequestResponsePair)
-	for index := 0; index <= 20; index++ {
-		d := output.RequestResponsePair{}
-		reqT, reqOK := wrapped.InternalEvent[fmt.Sprintf("request_%v", index)]
-		rspT, rspOK := wrapped.InternalEvent[fmt.Sprintf("response_%v", index)]
-		if !reqOK && !rspOK {
-			continue
-		}
-		if reqOK {
-			d.Request = types.ToString(reqT)
-		}
-		if rspOK {
-			d.Response = types.ToString(rspT)
-		}
-		Packet[index] = d
-	}
+	Packet := collectRequestResponsePackets(wrapped.InternalEvent)
 	data := &output.ResultEvent{
 		TemplateID:       types.ToString(wrapped.InternalEvent["template-id"]),
 		TemplatePath:     types.ToString(wrapped.InternalEvent["template-path"]),
@@ -197,6 +182,28 @@ func (request *Request) MakeResultEventItem(wrapped *output.InternalWrappedEvent
 		Packet:           Packet,
 	}
 	return data
+}
+
+func collectRequestResponsePackets(event map[string]interface{}) map[int]output.RequestResponsePair {
+	packets := make(map[int]output.RequestResponsePair)
+	for key, value := range event {
+		kind, rawIndex, found := strings.Cut(key, "_")
+		if !found || (kind != "request" && kind != "response") {
+			continue
+		}
+		index, err := strconv.Atoi(rawIndex)
+		if err != nil || index < 0 {
+			continue
+		}
+		pair := packets[index]
+		if kind == "request" {
+			pair.Request = types.ToString(value)
+		} else {
+			pair.Response = types.ToString(value)
+		}
+		packets[index] = pair
+	}
+	return packets
 }
 
 func (request *Request) truncateResponse(response interface{}) string {
