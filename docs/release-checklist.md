@@ -7,11 +7,12 @@
 - [ ] `git status --short --ignored` 确认只有预期改动，`deploy/argus-release-*.tar.gz`、`deploy/arsenal_seed.db`、`server/build_seed_db` 为 ignored 生成物。
 - [ ] `git diff --check` 无空白错误。
 - [ ] `make ci` 通过，包含根模块 Go test、`server` 子模块 Go test、`server-ui` lint/test/build 和 smoke。
+- [ ] 在临时 PostgreSQL 库执行 `make db-migrate DB_MIGRATION_MODE=apply` 和 `make db-verify`，并确认升级前 Notebook 数据不含无对应项目的孤儿行。
 
 ## 2. 发行包构建
 
-- [ ] 执行 `./deploy/build-bundle.sh v0.1.0`。
-- [ ] 发行包生成在 `deploy/argus-release-v0.1.0-linux-amd64.tar.gz`。
+- [ ] 执行 `make release-artifacts VERSION=vX.Y.Z`（或等价的 `./deploy/build-bundle.sh vX.Y.Z`）。
+- [ ] 发行包生成在 `deploy/argus-release-vX.Y.Z-linux-amd64.tar.gz`，且版本与 tag、Release Notes 一致。
 - [ ] 解包后确认以下文件存在：
   - `bin/dddd-server-linux-amd64`
   - `bin/dddd-agent-linux-amd64`
@@ -38,6 +39,8 @@
 - [ ] 漏洞 CSV 可导出。
 - [ ] Agent 日志页面可筛选并导出日志。
 - [ ] BuildJob 列表可查看，已存在构建产物可下载。
+- [ ] 资产测绘仅由 Server 以当前租户已批准凭据执行；CLI/Agent 的旧 Provider 参数或遗留任务配置均被拒绝，不会向第三方 Provider 发起请求。
+- [ ] 测绘 Notebook 的筛选、标签、备注、移除/恢复只在当前用户有项目访问权的范围内可用；跨项目/跨租户请求失败关闭并留有脱敏审计。
 
 ## 5. Beta 边界
 

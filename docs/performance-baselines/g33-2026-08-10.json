@@ -1,0 +1,63 @@
+{
+  "schema_version": "argus.performance-baseline-set/v1",
+  "goal": "G33",
+  "issue": 169,
+  "captured_at": "2026-08-10T07:29:51+08:00",
+  "environment": {
+    "go_version": "go1.25.4",
+    "os": "windows",
+    "arch": "amd64",
+    "arsenal_sha256": "9f2907fffc945ffb3ce0b3fa15cb172651f51cecdb4468f6d9b065219760ce3e",
+    "materialized_config_sha256": "fa994c0c65c7b922aac9cd96708422647b7ae16151181bbf5c31666a1b9d5a64"
+  },
+  "process_wall": [
+    {
+      "case": "g33-hanging-http-before",
+      "binary_sha256": "661e07c68fc5e140f0643edd393e1232d10624e39891c630caba31487d82f89c",
+      "web_timeout_seconds": 1,
+      "warmups": 3,
+      "samples": 30,
+      "min_ns": 2373218300,
+      "p50_ns": 2406650000,
+      "p95_ns": 3063354600,
+      "max_ns": 3395787000
+    },
+    {
+      "case": "g33-hanging-http-after",
+      "binary_sha256": "0f5a3e861d7d6a1c9665a5004202635d7ff4b01593726a6b868944eb19145f9e",
+      "web_timeout_seconds": 1,
+      "warmups": 3,
+      "samples": 30,
+      "min_ns": 1371299100,
+      "p50_ns": 1381324000,
+      "p95_ns": 1416422200,
+      "max_ns": 1431620500
+    }
+  ],
+  "cli_smoke": {
+    "fixture": "loopback silent TCP service",
+    "binary_sha256": "0f5a3e861d7d6a1c9665a5004202635d7ff4b01593726a6b868944eb19145f9e",
+    "profile": "explicit HTTP URL; ping, directory search and POC disabled; force full; one web thread; text output",
+    "samples": 1,
+    "web_timeout_seconds": 2,
+    "process_wall_ns": 2467580000,
+    "http_probe_ns": 2045585900,
+    "exit_code": 0,
+    "poc_enabled": false,
+    "http_reusable_coverage_written": false,
+    "downstream_reusable_coverage_written": false
+  },
+  "acceptance": {
+    "hanging_target_p95_le_timeout_plus_1_5s": true,
+    "explicit_scheme_has_no_alternate_probe": true,
+    "retry_and_redirects_share_target_budget": true,
+    "parent_cancellation_reaches_requests": true,
+    "expired_target_does_not_create_reusable_coverage": true
+  },
+  "notes": [
+    "Before and after use the same machine, Go toolchain, Arsenal, materialized config identity, loopback fixture, arguments and warm-up policy.",
+    "The after P95 is 1.416 seconds for a one-second target budget, below the 2.5-second acceptance ceiling; the before P95 was 3.063 seconds.",
+    "The CLI smoke uses an explicit HTTP URL with POC disabled. It records the HTTP stage and HTTP-dependent stages as failed when the target budget expires, so incomplete evidence cannot be reused.",
+    "Host binding and directory brute-force retain their existing independent timeout behavior and remain outside G33. Global URL deduplication remains G34."
+  ]
+}

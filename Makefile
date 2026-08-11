@@ -3,6 +3,7 @@
 COMPOSE_FILE := server/deploy/docker-compose.yml
 DOCKER_COMPOSE := docker compose -f $(COMPOSE_FILE)
 COVERAGE_DIR ?= /tmp/argus-coverage
+VERSION ?= v0.1.0
 DB_HOST ?= 127.0.0.1
 POSTGRES_PORT ?= 5432
 DB_PORT ?= $(POSTGRES_PORT)
@@ -85,7 +86,7 @@ source-size-check:
 	go run ./tools/source-size-check --root . --baseline .source-size-baseline
 
 release-artifacts:
-	./deploy/build-bundle.sh v0.1.0
+	./deploy/build-bundle.sh $(VERSION)
 
 lint:
 	npm --prefix server-ui run lint

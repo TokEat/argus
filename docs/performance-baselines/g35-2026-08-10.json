@@ -1,0 +1,61 @@
+{
+  "schema_version": "argus.performance-baseline-set/v1",
+  "goal": "G35",
+  "issue": 171,
+  "captured_at": "2026-08-10T09:08:11+08:00",
+  "environment": {
+    "go_version": "go1.25.4",
+    "os": "windows",
+    "arch": "amd64",
+    "arsenal_sha256": "9f2907fffc945ffb3ce0b3fa15cb172651f51cecdb4468f6d9b065219760ce3e",
+    "before_manifest_sha256": "5b3726d3e4deb2ab76c1224f08f77c3fa2f706ca38e337b874570ee0c81105ec",
+    "after_manifest_sha256": "2e1ac871cad3b5d70410ceb201bed9d99c28c9f9263cbb69a56225ae1c62eff8"
+  },
+  "agent_context": [
+    {
+      "case": "g35-agent-context-before",
+      "binary_sha256": "d75f8cef2b3340e7e783ee6e49bc47ea842f1c0de6f107f2dd71b7602211b275",
+      "warmups": 3,
+      "samples": 30,
+      "min_ns": 132896300,
+      "p50_ns": 138481800,
+      "p95_ns": 153013100,
+      "max_ns": 158321300
+    },
+    {
+      "case": "g35-agent-context-after",
+      "binary_sha256": "71257f9b4ea990dc0e02dd5f226a504b42e36849ddef085cfdebf48382134b41",
+      "warmups": 3,
+      "samples": 30,
+      "min_ns": 40276500,
+      "p50_ns": 42914800,
+      "p95_ns": 45304900,
+      "max_ns": 45549800
+    }
+  ],
+  "improvement": {
+    "p50_percent": 69.0,
+    "p95_percent": 70.4
+  },
+  "acceptance": {
+    "same_arsenal_agent_context_p95_le_500ms": true,
+    "same_identity_concurrent_builds_once": true,
+    "failed_build_is_not_cached": true,
+    "task_mutable_state_is_not_shared": true,
+    "benchmark_manifest_matches_arsenal_file": true,
+    "downloaded_package_sha256_is_verified": true,
+    "rule_activation_waits_for_initializing_and_running_tasks": true,
+    "poc_execution_defaults_unchanged": true
+  },
+  "reproduction": {
+    "command": "go run ./scanner/cmd/perf-baseline -mode agent-context -case g35-agent-context-after -agent-config-dir ./config -arsenal-file ./data/arsenal.db -config-file ./config/.argus-arsenal.json -warmups 3 -samples 30",
+    "network_activity": false,
+    "poc_enabled": false
+  },
+  "notes": [
+    "Before and after use the same machine, Go toolchain, Arsenal SQLite bytes, materialized Fingerprint/Workflow/Dir content, warm-up policy and sample count.",
+    "The manifest file identity changed only because G35 adds package_sha256; the recorded Arsenal SHA-256 is identical in both cases.",
+    "The after P50 is 42.915 ms and P95 is 45.305 ms, improving 69.0% and 70.4% respectively while remaining below the 500 ms acceptance ceiling.",
+    "The cache contains parsed Fingerprint, Workflow and Dir knowledge only. Nuclei runner/template preparation and HybridMap selection remain G36."
+  ]
+}

@@ -30,6 +30,7 @@
 | 租户隔离 | 仅本租户 | 仅本租户 | 仅本租户 |
 | 仪表盘、项目、任务、任务结果 | 查看被授权项目 | 查看/操作自己创建或被分发项目 | 全租户项目 |
 | 项目创建 | - | 允许，默认归属自己 | 允许，可创建后分发给 operator |
+| Server 测绘查询预览 | - | 仅被授权项目，凭据不返回 | 当前租户全部项目，凭据不返回 |
 | 项目归档、删除 | - | 仅自己创建的项目 | 全租户项目 |
 | 项目分发 | - | 项目 owner 可维护成员 | 可绑定当前租户 active 用户到指定项目 |
 | 任务下发、追加、取消、删除 | - | 仅可访问项目内允许 | 全租户项目内允许 |
@@ -50,7 +51,9 @@
 ### viewer 起可访问
 
 - `GET /projects`
-- `GET /tasks`、`GET /tasks/:id`
+- `GET /tasks`、`GET /tasks/:id`、`GET /tasks/:id/config-revisions`、`GET /tasks/:id/batches`
+- `POST /tasks/:id/risk-validation/preview`：虽然使用 POST 承载分页预览请求，但语义严格只读；仅返回当前租户且当前用户有项目访问权的任务数据，不创建批次、不入队、不执行 POC
+- `POST /tasks/:id/risk-validation`：至少需要 operator；重新校验当前租户、项目归属、任务终态、预览计划、规则/配置版本和 POC 内容哈希，要求授权确认，高风险或未分类规则要求二次确认，并写入批次级审计。可选 `Idempotency-Key` 只在认证、RBAC、项目/任务对象授权和归档检查后重放同一已提交确认；原始 Key 不落库，同 Key 改变 plan、候选或确认字段返回 409，Key 不能替代授权或风险确认
 - `GET /nodes`
 - `GET /vulns`、`GET /assets`、`GET /fingerprints`、`GET /profiles`
 - `GET /stats`、`GET /stats/trends`、`GET /stats/severity`、`GET /stats/task-results`、`GET /stats/recent-high-vulns`
@@ -62,8 +65,16 @@
 ### operator 起可访问
 
 - `POST /projects`
+- `POST /projects/:id/asset-discovery/fofa/query`、`POST /projects/:id/asset-discovery/hunter/query`、`POST /projects/:id/asset-discovery/quake/query`：只允许查询当前用户可访问的项目，凭据仅由 Server 从当前租户已批准配置读取；结果返回前必须写入不含原始表达式、凭据或 Provider 响应的审计
 - `PUT /projects/:id`、`DELETE /projects/:id`：operator 仅限自己创建的项目
-- `POST /tasks`、`POST /tasks/:id/append`、`POST /tasks/:id/cancel`、`DELETE /tasks/:id`
+- `POST /tasks`、`POST /tasks/:id/append`、`POST /tasks/:id/pause|resume|stop|cancel|retry`、`POST /tasks/:id/batches/:batch_id/pause|resume|stop|retry`、`DELETE /tasks/:id/batches/:batch_id`、`PUT /tasks/:id/config`、`DELETE /tasks/:id`
+  - 所有接口继续校验租户与项目归属；任务与批次的暂停、恢复、停止、重试和归档均记录操作者与前后状态。
+  - `POST /tasks` 的可选 `Idempotency-Key` 不是授权凭证：认证、operator RBAC、项目访问和 active 状态校验均先于重放；唯一作用域为 tenant/project/operator/`create_task_v1`/Key hash，同请求重放首次结果，异请求返回 409。
+  - `POST /tasks/:id/append` 的可选 `Idempotency-Key` 同样不是授权凭证：唯一作用域额外包含 Task ID；只有同 tenant/project/task/operator/`append_targets_v1`/Key 的同一规范请求可重放首次结果，重放不再次派发，异请求返回 409。
+  - `POST /tasks/:id/retry` 的可选 `Idempotency-Key` 也不能替代对象授权：Server 先校验 tenant、operator、Project 访问、Task 归属和归档状态，再按 tenant/project/task/operator/`retry_task_v1`/Key hash 重放首次结果；重放不会新增 Attempt、审计或再次派发。
+  - `POST /tasks/:id/batches/:batch_id/retry` 的可选 `Idempotency-Key` 额外绑定 Batch ID。Server 在账本读取前校验 tenant/project/task/batch 归属与归档状态；同一 Key 不能跨批次、任务、项目、租户或操作者重放，成功重放也不会新增 Attempt、审计或队列消息。
+  - `DELETE /tasks/:id` 只归档已进入终态的任务，不删除批次和扫描结果；活动任务必须先停止。
+  - `PUT /tasks/:id/config` 只为当前租户和已授权项目中的未归档任务创建新配置版本；旧批次快照不被覆盖，变更只影响后续批次并写审计。
 - `GET /queue/depth`
 - `GET /agents/:id/logs`
 - `GET /users`：用于项目成员选择

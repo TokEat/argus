@@ -257,6 +257,21 @@ echo -e "\n${YELLOW}检查依赖状态...${NC}"
 go mod verify >/dev/null
 echo -e "${GREEN}[✔] 依赖校验通过${NC}"
 
+CLI_PACKAGE_DB=""
+for component in "${SELECTED_COMPONENTS[@]}"; do
+    IFS=":" read -r name _path _win_exe <<< "$component"
+    if [[ "$name" == "dddd" ]]; then
+        CLI_PACKAGE_DB="${OUTPUT_DIR}/.arsenal-package/arsenal.db"
+        mkdir -p "$(dirname "$CLI_PACKAGE_DB")"
+        rm -f "$CLI_PACKAGE_DB"
+        echo -e "\n${YELLOW}生成 CLI 离线弹药库...${NC}"
+        go run ./scanner/cmd/arsenal-package \
+            --config scanner/common/config \
+            --output "$CLI_PACKAGE_DB"
+        break
+    fi
+done
+
 echo -e "\n${YELLOW}开始编译...${NC}"
 echo -e "${BLUE}组件数量: ${#SELECTED_COMPONENTS[@]}，平台数量: ${#SELECTED_TARGETS[@]}${NC}"
 
@@ -280,7 +295,7 @@ for target in "${SELECTED_TARGETS[@]}"; do
             rm -f "$out_file"
         fi
 
-        if [[ "$name" == "dddd-agent" ]]; then
+        if [[ "$name" == "dddd-agent" || "$name" == "dddd" ]]; then
             if CGO_ENABLED=0 GOOS="${os}" GOARCH="${arch}" go build \
                 -tags noembed \
                 -ldflags="-s -w" \
@@ -332,6 +347,18 @@ for target in "${SELECTED_TARGETS[@]}"; do
             else
                 echo -e "    ${RED}↳ UPX 跳过该架构 (暂不支持或失败)${NC}"
             fi
+        fi
+
+        if [[ "$name" == "dddd" ]]; then
+            package_stage="$(mktemp -d "${OUTPUT_DIR}/.dddd-${os}-${arch}.XXXXXX")"
+            cp "$out_file" "$package_stage/"
+            mkdir -p "$package_stage/argus-data/arsenal"
+            cp "$CLI_PACKAGE_DB" "$package_stage/argus-data/arsenal/arsenal.db"
+            package_file="${OUTPUT_DIR}/dddd-${os}-${arch}.tar.gz"
+            rm -f "$package_file"
+            tar -czf "$package_file" -C "$package_stage" .
+            rm -rf "$package_stage"
+            echo -e "    ${GREEN}↳ CLI 离线包: ${package_file}${NC}"
         fi
     done
 done

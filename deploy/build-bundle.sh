@@ -28,6 +28,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 VERSION=${1:-"v0.1.0"}
+if [[ ! "${VERSION}" =~ ^v[0-9]+(\.[0-9]+){2}([-.][0-9A-Za-z.-]+)?$ ]]; then
+    echo "Invalid release version: ${VERSION}; expected vMAJOR.MINOR.PATCH" >&2
+    exit 2
+fi
 BUNDLE_NAME="argus-release-${VERSION}"
 BUNDLE_DIR="${ROOT_DIR}/${BUNDLE_NAME}"
 ARCHIVE_NAME="${BUNDLE_NAME}-linux-amd64.tar.gz"

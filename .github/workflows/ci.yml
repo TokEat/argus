@@ -13,6 +13,20 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: argus_ci
+          POSTGRES_DB: dddd
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d dddd"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,6 +56,13 @@ jobs:
       - name: Server Go tests
         run: go test ./...
         working-directory: server
+
+      - name: PostgreSQL migration apply and schema verify
+        env:
+          DB_DSN: host=127.0.0.1 user=postgres password=argus_ci dbname=dddd port=5432 sslmode=disable
+        run: |
+          make db-migrate DB_MIGRATION_MODE=apply
+          make db-verify
 
       - name: Go coverage
         run: |

@@ -1,0 +1,84 @@
+{
+  "schema_version": "argus.performance-baseline-set/v1",
+  "goal": "G31",
+  "issue": 167,
+  "captured_at": "2026-08-10T05:08:22+08:00",
+  "environment": {
+    "go_version": "go1.25.4",
+    "os": "windows",
+    "arch": "amd64",
+    "arsenal_sha256": "9f2907fffc945ffb3ce0b3fa15cb172651f51cecdb4468f6d9b065219760ce3e",
+    "scan_config_sha256": "d8b127c2450217b6e188010c6fc5e83756ada1a90a3637f130e440b45f956729",
+    "materialized_config_sha256": "fa994c0c65c7b922aac9cd96708422647b7ae16151181bbf5c31666a1b9d5a64"
+  },
+  "process_wall": [
+    {
+      "case": "dddd-help-before",
+      "binary_sha256": "42fb1edfaf48db85abaeb3e4bb82319a1e01d345e0b8f1e7b1cd40d652e4dad2",
+      "warmups": 3,
+      "samples": 30,
+      "min_ns": 390186500,
+      "p50_ns": 405644500,
+      "p95_ns": 506759600,
+      "max_ns": 520307400
+    },
+    {
+      "case": "dddd-help-after",
+      "binary_sha256": "3c080a7918ad7e33f6eb623f2e5ef9eb0f159a880a5f239cbfd9dbfe31dc8a92",
+      "warmups": 3,
+      "samples": 30,
+      "min_ns": 392337600,
+      "p50_ns": 406010300,
+      "p95_ns": 478146200,
+      "max_ns": 523299300
+    },
+    {
+      "case": "dddd-url-poc-off-before",
+      "binary_sha256": "42fb1edfaf48db85abaeb3e4bb82319a1e01d345e0b8f1e7b1cd40d652e4dad2",
+      "warmups": 2,
+      "samples": 10,
+      "min_ns": 735418700,
+      "p50_ns": 764449700,
+      "p95_ns": 850517300,
+      "max_ns": 850517300
+    },
+    {
+      "case": "dddd-url-poc-off-after",
+      "binary_sha256": "3c080a7918ad7e33f6eb623f2e5ef9eb0f159a880a5f239cbfd9dbfe31dc8a92",
+      "warmups": 2,
+      "samples": 10,
+      "min_ns": 742316600,
+      "p50_ns": 754175800,
+      "p95_ns": 850040700,
+      "max_ns": 850040700
+    }
+  ],
+  "agent_context": {
+    "case": "agent-context-same-arsenal-after",
+    "warmups": 3,
+    "samples": 30,
+    "min_ns": 126934100,
+    "p50_ns": 140274400,
+    "p95_ns": 149995800,
+    "max_ns": 167499700
+  },
+  "cli_in_process_sample": {
+    "process_startup_ns": 158044400,
+    "rule_prepare_ns": 147406400,
+    "context_init_ns": 2000600,
+    "stages": [
+      { "stage": "http_probe", "outcome": "success", "duration_ns": 55834000 },
+      { "stage": "fingerprint", "outcome": "negative", "duration_ns": 73440900 }
+    ]
+  },
+  "acceptance": {
+    "dddd_help_p95_le_300ms": false,
+    "explicit_url_poc_off_p95_le_1s": true,
+    "same_arsenal_agent_context_p95_le_500ms": true
+  },
+  "notes": [
+    "The before and after process cases use the same machine, Arsenal, config identity, warm-up policy and local authorized service.",
+    "G31 adds measurement only. The unmet help threshold is carried into G32 and is not presented as fixed.",
+    "In-process segments can overlap and must not be summed or compared directly with process_wall."
+  ]
+}
