@@ -7,7 +7,7 @@ Argus 的 Server、Agent 与离线 CLI 共享 `github.com/P0lar1ght/argus/shared
 | 场景 | 用途 | 安全边界 |
 | --- | --- | --- |
 | `external-map` | Server 默认外网资产测绘 | 不包含 POC/EXP 阶段 |
-| `internal-fast` | CLI 默认内网快速增量探测 | 使用 `_local/_default/_local` 作为离线租户、项目和网络区域占位符 |
+| `internal-fast` | 兼容保留的 CLI 本地场景标识 | 使用 `_local/_default/_local` 作为离线租户、项目和网络区域占位符；独立 CLI 不再维护阶段级长期状态 |
 | `internal-server` | Server + Agent 内网扫描 | 必须使用 Agent 的实际 `network_zone`，不能按私网 IP 跨区域复用 |
 | `risk-validation` | 已确认的独立 POC 验证 | Plan 只能包含强制执行的 `risk_validation`，不能混入资产发现阶段 |
 
@@ -25,25 +25,17 @@ project_id  = _default
 network_zone = _local
 ```
 
-CLI 扫描流程在可执行文件同级创建 `argus-data/` 作为离线状态根目录，或使用 `ARGUS_HOME` 覆盖到指定绝对/相对路径；相对覆盖以启动时工作目录规范化。目录以仅当前用户可访问的权限创建（Windows 由系统 ACL 语义约束），不会上传 Server。
+CLI 扫描结果统一写入当前工作目录的 `datas/<目标_时间>/`。每个 Run 保留 `result.txt`、一份权威 HTML 报告，以及同目录的 `summary.txt`、`targets.tsv`、`findings.tsv`、`coverage.tsv`、`timing.tsv` 等轻量证据；普通扫描不会再为了“扫描记忆”创建或合并 `argus-data/state`、`argus-data/runs` 这套长期状态目录。`ARGUS_HOME/argus-data` 仅作为显式离线规则包管理的兼容位置保留。
 
-G24 已建立 `argus-tsv/v1` 分层布局：`state/assets.tsv` 与 `state/coverage.tsv` 是长期状态表，每次扫描在唯一的 `runs/<run-id>/` 下保存 `summary.txt`、`targets.tsv`、`findings.tsv` 与 `coverage.tsv`。两行表头固定声明 schema 和列名，字段中的反斜线、制表符与换行会被可逆转义；以 `= + - @` 开头的字段也会转义，避免目标可控内容形成表格公式。已有表头损坏或版本不兼容时失败关闭且不覆盖原文件。CLI 只旁路观察输出，不把 CLI 切换为 Agent 模式。
+`argus-tsv/v1` TSV 使用两行表头固定声明 schema 和列名，字段中的反斜线、制表符与换行会被可逆转义；以 `= + - @` 开头的字段也会转义，避免目标可控内容形成表格公式。CLI 只旁路观察输出，不把 CLI 切换为 Agent 模式。
 
-G25 将 Run 目录设为提交日志：`running` 期间只写独立文件，扫描结束先原子写为 `finalizing`，再在跨进程状态锁下幂等归并 assets/coverage，最后原子写入 `completed|failed + merge_status=merged`。状态表更新采用同目录临时文件、文件刷盘和原子替换；Windows 使用 `MoveFileEx(REPLACE_EXISTING | WRITE_THROUGH)`，其他平台使用 rename 并同步目录。并发运行通过 `.active.lock` 的操作系统文件锁区分，恢复器不会接管仍活跃的 CLI；失锁的 `running` 固定标为 `interrupted/not_merged`，不归并不完整证据，失锁的 `finalizing` 则安全重放幂等归并。首次 G25 启动会迁移 G24 终态 Run，之后只检查保留活动标记的异常运行，避免随历史数量线性增加启动开销。
+普通 CLI 仍默认关闭 POC、通用 POC 和 GoPoc；只有 `-poc` 或 `-gp` 等显式风险参数保持原执行语义，并强制完整扫描。Planner 启动时只扫描 `datas/` 下已完成的历史目录：带 `summary.txt` 的 Run 必须同时满足 `status=completed` 与 `terminal_status=completed`；老格式目录只有在 `result.txt` 非空时才作为已有发现使用。历史来源包括 `targets.tsv` 中已完成的 `full/incremental` 目标，以及 `result.txt` 中的资产、端口、Web、指纹和风险验证记录。
 
-数据行损坏、列数不符、重复键或语义无效时会形成可见 warning 并在下一次原子写入中剔除；不支持的表头版本仍失败关闭。状态归并按规范键排序，重复资产折叠并保留最早 `first_seen`，较旧 `last_seen/observed_at` 不得覆盖更新证据。
+跳过粒度是保守的目标/资产身份匹配，而不是阶段级恢复：命中历史时，当前 Run 的 `targets.tsv` 写入 `skipped/history_asset_match:<历史目录>`，该目标不再进入扫描流水线；未命中的目标合并执行完整发现流程。CLI 不再读取 TTL 策略、不生成 `ResumePlan`、不做端口前缀复核，也不维护长期资产差异表。显式风险参数和 `-force` 永远绕过 `datas` 历史跳过，避免复用旧发现掩盖用户明确要求的新验证。
 
-G26 将 CLI 接入保守的 `internal-fast` Planner。普通扫描默认关闭 POC、通用 POC 和 GoPoc；只有已有 `-poc` 或 `-gp` 显式风险参数保持原执行语义，并强制完整扫描。Planner 按本地 WorkKey 读取同目标、配置、规则和网络区域的未过期 `success/negative` 覆盖；当前仅在 IP、CIDR 或 IP 范围的端口阶段位于可复用前缀且检查点不超过 4096 项时尝试恢复。稳定时使用状态资产派生、不含响应正文的端口检查点，从协议识别继续执行 HTTP、目录、Host 绑定与指纹阶段。域名、URL、无覆盖、过期、失败、损坏、版本漂移或检查点校验失败都不会跳扫。
+G28 只为 CLI 增加可选 `-force`。该开关保存在 CLI-only ScanContext 字段中，不进入 Server/Agent Config，也不改变目标、端口、规则或风险策略；Planner 读取历史后直接为所有目标生成 `full/force_full_scan` 决策。
 
-G27 在数据根目录原子创建并严格加载 `argus-local-policy/v1` 的 `config.yaml`。默认 TTL 为存活 5 分钟、完整端口 1 小时、协议 6 小时、Web/Host 绑定/目录 6 小时、指纹 6 小时、显式风险验证 24 小时；搜索、子域和 CDN 等资产发现阶段使用协议档。增量执行默认每次用 200ms 单端点预算、64 并发、最多 512 个端点复核已知服务和已知主机存活，存活端口为 80/443/3389/445/22。存活端口可在 `-p` 范围外用于可达性判断，但不会扩大完整扫描范围；只有当前 `-p` 范围内的新服务或已有服务消失才触发服务变化回退。轻量存活形成独立 `tcp_liveness executed` 覆盖，端口前缀保持 `reused`。没有可复核已知主机、预算超界或结果变化时不生成恢复计划。
-
-本地策略要求完整字段和单一 YAML 文档，并拒绝未知字段、符号链接、不支持版本、非正或超过 30 天的 TTL、10ms..10s 外超时、1..1024 外并发、1..4096 外端点上限以及重复/非法存活端口。策略的规范内容参与 ConfigHash，因此任何 TTL 或复核策略变化都会使旧覆盖失配并至少完整执行一次。风险验证 TTL 只描述用户显式执行的本地风险证据；普通扫描的 POC-off 边界不受策略文件控制。
-
-G28 只为 CLI 增加可选 `-force`。该开关保存在 CLI-only ScanContext 字段中，不进入 Server/Agent Config，也不改变 WorkKey、目标、端口、规则或风险策略。Planner 在读取历史后直接为所有目标生成 `full/force_full_scan` 决策，不执行覆盖预复核、不创建 ResumePlan、不写 `reused` 行；完整扫描产生的 `executed` 阶段证据继续按原 WorkKey 追加并更新当前覆盖。`ScanContext.Reset` 在一个多目标 CLI Run 的执行分组之间保留 force 指令。没有 `-force` 时行为与 G27 默认增量完全一致。
-
-G30 为每个新 Run 增加版本化 `delta.tsv`，作为先于长期状态归并写入的不可变本地差异证据。稳定种类为 `asset_new`、`service_changed`、`asset_disappeared`、`asset_not_assessed`、`stage_executed` 与 `stage_reused`：前两者由本 Run 的确定性聚合与归并前同一 asset key 比较，后两种阶段记录只来自本 Run coverage。恢复、重复完成或乱序归并复用既有 delta，不重新推导结论。仅当 completed Run 对目标执行 `full` 扫描，权威发现阶段实际为 `success` 或 `negative`，并且 scope、配置、规则均可比且历史资产能证明归属当前目标时，才能记录 `asset_disappeared`；failed、interrupted、pending、incremental、阶段缺失/失败/跳过或任一漂移一律记录 `asset_not_assessed`。确认消失在 `state/assets.tsv` 中保留确认时间和 Run；重现必须来自成功完成、可信且更晚的观察，恢复旧 delta 也必须匹配原 status/hash/time/run，因而失败 Run、延迟旧 Run 或 stale recovery 不能覆盖较新状态。重新激活后继续保持最早 `first_seen`。文本模式在成功完成后输出简洁计数摘要；`-ot json` 不向 stdout 写入该人类摘要。本地历史不上传，也不自动清理。
-
-运行历史遵循最小证据原则：Nuclei 仅保留模板、匹配位置、严重性等摘要，不保存原始请求/响应、packet、Interactsh 详情、复现命令和提取内容；GoPoc 只保留名称、等级、描述与目标，不保存用户名、密码、命令输出或展示详情。URL 用户信息会脱敏，查询串和片段不会落盘。
+运行历史遵循最小证据原则：`datas/` 是本地授权扫描证据，不上传 Server，也不自动清理；其中可能包含 HTML 报告、POC 请求/响应包和目标信息，应按敏感文件保护。历史跳过只读取目标和发现身份，不把 HTML 内容或原始 POC 证据作为跳过判断依据。
 
 ## Timing evidence
 

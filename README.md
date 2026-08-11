@@ -184,50 +184,15 @@ argus -t 192.168.0.0-192.168.0.12
 argus -t http://test.com
 ```
 
-单机 CLI 首次进入扫描流程时，会在可执行文件同级创建私有的 `argus-data/` 目录，作为后续离线扫描历史、增量覆盖和本地策略的根目录；其中的数据不会上传到 Server。便携目录不可写或希望把历史放到其他磁盘时，可设置 `ARGUS_HOME`，不需要增加任何扫描参数：
+单机 CLI 的扫描结果统一保存在当前工作目录的 `datas/<目标_时间>/` 下。每次运行都会保留 `result.txt`、一份权威 HTML 报告，以及同目录的 `summary.txt`、`targets.tsv`、`findings.tsv`、`coverage.tsv`、`timing.tsv` 等轻量运行证据；不会再为了扫描记忆额外创建 `argus-data/state` 或 `argus-data/runs` 这套长期状态目录。TSV 使用 `argus-tsv/v1` 表头并把制表符、换行和反斜线转义为单行文本；以 `= + - @` 开头的字段也会可逆转义，避免表格软件把目标可控内容当作公式执行。
 
-```powershell
-$env:ARGUS_HOME = 'D:\argus-data'
-argus -t 192.168.0.1
-```
+扫描开始时，CLI 会自动读取 `datas` 下已完成的历史结果作为“扫描记忆”。旧目录如果只有 `result.txt`，Argus 会从其中的 `[Alive]`、`[Port]`、`[Web]`、`[Finger]`、`[Active-Finger]`、JSON finding 等记录抽取已发现资产；新目录如果包含已完成的 `targets.tsv`，即使某个目标没有 finding，也能证明这个目标曾完整执行过。当前输入目标与历史资产精确匹配时，本次会在 `targets.tsv` 记录 `skipped/history_asset_match:<来源目录>` 并直接进入下一个目标；没有命中的目标仍执行完整资产发现流水线。
 
-```bash
-ARGUS_HOME=/data/argus-data argus -t 192.168.0.1
-```
-
-每次实际扫描都会建立独立的 `runs/<run-id>/`，保存 `summary.txt`、`targets.tsv`、`findings.tsv`、`coverage.tsv` 和版本化的 `delta.tsv`；长期状态表位于 `state/assets.tsv` 与 `state/coverage.tsv`。TSV 使用 `argus-tsv/v1` 表头并把制表符、换行和反斜线转义为单行文本；以 `= + - @` 开头的字段也会可逆转义，避免表格软件把目标可控内容当作公式执行。
-
-扫描结束后，CLI 在跨进程互斥下将运行证据归并到长期状态，并通过同目录临时文件、刷盘和原子替换提交；重复目标会折叠，较旧证据不会覆盖较新状态。运行中断时，独立 Run 文件保留但不会污染当前状态；下次启动会跳过仍持有进程锁的并行扫描，将失锁的 `running` 标记为 `interrupted`，并自动重试已经进入 `finalizing` 的待归并运行。损坏数据行会警告并跳过，损坏或不兼容表头仍失败关闭且不覆盖原文件。`state/.merge.lock`、`state/.recovery-v1` 和运行期间短暂存在的 `.active.lock` 只用于协调，不包含扫描数据。
-
-`delta.tsv` 是该 Run 的不可变差异证据，稳定记录 `asset_new`、`service_changed`、`asset_disappeared`、`asset_not_assessed`、`stage_executed` 和 `stage_reused`。新增与服务变化比较的是归并长期状态前的同一资产，而执行与复用只反映本次 Run 的 `coverage.tsv`。资产消失不会从“本次没有输出”推断：只有 Run 已完成、目标按 `full` 执行、权威发现阶段实际给出 `success` 或 `negative`，且 scope、配置、规则可比并能证明历史资产归属当前目标时才确认消失；任一证据不足则记录 `asset_not_assessed`。确认消失的资产会在 `state/assets.tsv` 保留带确认时间和 Run 的 tombstone；只有成功完成且晚于该确认的可信观察才能恢复 active，延迟旧 Run 或失败 Run 不会覆盖较新状态。
+历史跳过只对普通信息收集扫描生效。用户显式传入 `-poc <name>` 或 `-gp` 时，Argus 会认为这是一次新的风险验证意图，不会因为 `datas` 中已有资产而跳过；`-force` 也会忽略历史并强制完整重扫。历史结果损坏、仍在运行、失败或与当前目标无法精确匹配时会被忽略，不会阻断本次扫描。
 
 成功完成时，交互文本输出会给出新增、变化、消失、未评估、执行和复用的简洁摘要。`-ot json` 使用版本化 UTF-8 NDJSON：每个 finding 独占一行，最后一行是唯一 `run_summary`；stdout 不包含 Banner、ANSI、进度或普通日志。重定向的文本模式同样只保留扫描结果和必要错误。完整 Schema、退出码和迁移示例见 [Argus CLI 结构化输出](docs/cli-output.md)。
 
-CLI 默认使用 `internal-fast` 安全增量策略：没有可证明覆盖的新目标执行完整资产探测；同一配置和规则版本下，未过期的 IP/CIDR/IP 范围端口覆盖会先复核已知服务与当前端口范围内的单 IP 常用存活端口，结果不一致立即回退完整扫描，结果稳定时复用端口阶段并从协议识别继续。URL、域名、历史缺失/损坏/过期、规则或配置变化以及无法安全恢复检查点的输入都执行完整流水线。每次 Run 的 `targets.tsv` 会记录 `full` 或 `incremental` 决策，`coverage.tsv` 会区分 `executed` 与 `reused`；无需增加参数。
-
-首次扫描会原子创建 `argus-data/config.yaml`，默认策略如下；修改后下一次运行自动加载，不增加 CLI 参数：
-
-```yaml
-schema_version: argus-local-policy/v1
-ttl:
-  liveness: 5m
-  port: 1h
-  protocol: 6h
-  web: 6h
-  fingerprint: 6h
-  risk_validation: 24h
-revalidation:
-  liveness_every_run: true
-  known_services_every_run: true
-  timeout: 200ms
-  concurrency: 64
-  max_endpoints: 512
-  liveness_ports: [80, 443, 3389, 445, 22]
-```
-
-存活端口只用于轻量判断已知主机是否仍可达，不会扩大 `-p` 的完整端口扫描范围；已知服务消失或当前扫描范围内出现新常用服务时仍会回退全扫。策略文件要求完整字段、唯一 YAML 文档和受支持的版本；未知字段、缺项、非法时长/端口、越界预算或符号链接会让本次扫描失败关闭，不会静默套用默认值。策略本身参与 ConfigHash，修改 TTL 或复核预算后旧覆盖不会继续命中。`risk_validation` TTL 只记录用户显式执行的风险阶段，不会让普通扫描自动运行或复用 POC。
-
-普通 CLI 扫描现在默认只执行资产发现，不自动启动 Nuclei POC、通用 POC 或 GoPoc/弱口令探测；已有 `-poc <name>` 或 `-gp` 仍代表用户显式请求风险操作，并固定绕过本地增量复用。`-npoc` 保留兼容，可继续用于脚本中明确表达“只做资产发现”；它与 `-poc`、`-gp` 同时出现时会按参数冲突退出，不会静默执行风险阶段。
+普通 CLI 扫描现在默认只执行资产发现，不自动启动 Nuclei POC、通用 POC 或 GoPoc/弱口令探测；已有 `-poc <name>` 或 `-gp` 仍代表用户显式请求风险操作，并固定绕过 `datas` 历史跳过。`-npoc` 保留兼容，可继续用于脚本中明确表达“只做资产发现”；它与 `-poc`、`-gp` 同时出现时会按参数冲突退出，不会静默执行风险阶段。
 
 需要忽略未过期历史并重新执行完整资产流水线时，只增加可选 `-force`：
 
@@ -235,9 +200,9 @@ revalidation:
 argus -t 192.168.0.1 -force
 ```
 
-`-force` 不会扩大目标或端口范围，不会开启 POC/GoPoc，也不会删除或覆盖旧 Run；本次完整执行仍追加新证据并成为相同 WorkKey 的最新覆盖。默认命令和其他现有参数保持不变。
+`-force` 不会扩大目标或端口范围，不会开启 POC/GoPoc，也不会删除或覆盖旧结果；本次完整执行仍会写入新的 `datas/<目标_时间>/` 目录。默认命令和其他现有参数保持不变。
 
-本地历史不保存 Nuclei 原始请求/响应、交互数据、复现命令或 GoPoc 凭据详情；URL 用户信息会替换为 `redacted`，查询串和片段不会写入历史。`argus-data/` 仍可能包含授权目标、资产名称和发现摘要，应按敏感测试数据保护；本地历史不会上传，也不会自动清理，只能由操作者手动清理。
+`datas/` 可能包含授权目标、资产名称、发现摘要以及 HTML 中的验证证据，应按敏感测试数据保护；它不会上传 Server，也不会自动清理，只能由操作者手动清理。
 
 ### 分布式模式
 
