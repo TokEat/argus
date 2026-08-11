@@ -1,0 +1,92 @@
+package common
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"unicode"
+
+	"github.com/P0lar1ght/argus/scanner/structs"
+)
+
+func hasHTMLReportExtension(name string) bool {
+	suffix := filepath.Ext(name)
+	return strings.EqualFold(suffix, ".html") || strings.EqualFold(suffix, ".htm")
+}
+
+func validateCLIRiskFlags(config structs.Config) error {
+	if !config.NoPoc {
+		return nil
+	}
+	if strings.TrimSpace(config.PocNameForSearch) != "" || config.GolangPoc {
+		return &CLIUsageError{Message: "-npoc 不能与 -poc/--poc-name 或 -gp/--golang-poc 同时使用"}
+	}
+	return nil
+}
+
+func sanitizeResultDirectoryName(value string) string {
+	var sanitized strings.Builder
+	for _, character := range value {
+		switch {
+		case unicode.IsLetter(character), unicode.IsNumber(character), character == '-', character == '_', character == '.':
+			sanitized.WriteRune(character)
+		default:
+			sanitized.WriteByte('_')
+		}
+		if sanitized.Len() >= 80 {
+			break
+		}
+	}
+	result := strings.Trim(sanitized.String(), "._")
+	if result == "" {
+		return "task"
+	}
+	return result
+}
+
+func validateCLIArtifactNames(outputName, reportName, auditName string) error {
+	type artifact struct {
+		label string
+		name  string
+	}
+	artifacts := []artifact{{label: "结果文件", name: outputName}, {label: "HTML 报告", name: reportName}}
+	if auditName != "" {
+		artifacts = append(artifacts, artifact{label: "审计日志", name: auditName})
+	}
+	for left := 0; left < len(artifacts); left++ {
+		for right := left + 1; right < len(artifacts); right++ {
+			if portableArtifactNameKey(artifacts[left].name) == portableArtifactNameKey(artifacts[right].name) {
+				return &CLIUsageError{Message: fmt.Sprintf("%s与%s不能使用同一文件名", artifacts[left].label, artifacts[right].label)}
+			}
+		}
+	}
+	return nil
+}
+
+func portableArtifactNameKey(name string) string {
+	// Win32 aliases names that differ only by case or trailing dots/spaces.
+	// Apply that stricter comparison on every platform so a CLI invocation is
+	// portable and cannot merge result, report, and audit sinks on Windows.
+	return strings.ToLower(strings.TrimRight(filepath.Clean(name), ". "))
+}
+
+func createUniqueResultDirectory(root, base string) (string, error) {
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return "", err
+	}
+	for suffix := 0; suffix < 10_000; suffix++ {
+		name := base
+		if suffix > 0 {
+			name = fmt.Sprintf("%s_%d", base, suffix+1)
+		}
+		candidate := filepath.Join(root, name)
+		if err := os.Mkdir(candidate, 0o755); err == nil {
+			return candidate, nil
+		} else if !errors.Is(err, os.ErrExist) {
+			return "", err
+		}
+	}
+	return "", errors.New("too many result directory collisions")
+}

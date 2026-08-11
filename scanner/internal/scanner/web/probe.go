@@ -137,7 +137,11 @@ func (rt *Runtime) DirBruteCallback(resp runner.Result) {
 			if success {
 				rt.upsertResponse(resp)
 				rt.emit(ddout.OutputMessage{
-					Type:   "Active-Finger",
+					Type: "Active-Finger",
+					Web: structs.WebInfo{
+						Status: strconv.Itoa(resp.StatusCode),
+						Title:  resp.Title,
+					},
 					Finger: []string{productName},
 					URI:    resp.URL,
 				})
@@ -159,7 +163,11 @@ func (rt *Runtime) DirBruteCallback(resp runner.Result) {
 			}
 
 			rt.emit(ddout.OutputMessage{
-				Type:          "Active-Finger",
+				Type: "Active-Finger",
+				Web: structs.WebInfo{
+					Status: strconv.Itoa(resp.StatusCode),
+					Title:  resp.Title,
+				},
 				Finger:        []string{productName},
 				URI:           resp.URL,
 				AdditionalMsg: "[dir-fallback]",

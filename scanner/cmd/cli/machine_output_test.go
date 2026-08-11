@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -49,6 +50,7 @@ func TestCLIProcessMachineAndNonTTYOutputContracts(t *testing.T) {
 		t.Fatalf("unexpected summary: %#v", summary)
 	}
 	assertResultFileMatchesStdout(t, jsonRun.workDir, jsonRun.stdout)
+	assertUnifiedHTMLReport(t, jsonRun.workDir, server.URL)
 
 	textRun := runMachineHelper(t, "text", server.URL, home)
 	if textRun.exitCode != exitSuccess || textRun.stderr != "" {
@@ -57,6 +59,7 @@ func TestCLIProcessMachineAndNonTTYOutputContracts(t *testing.T) {
 	if strings.Contains(textRun.stdout, "Argus CLI v") || strings.ContainsRune(textRun.stdout, '\x1b') || !strings.Contains(textRun.stdout, "[Web] "+server.URL) {
 		t.Fatalf("redirected text output is noisy or missing finding: %q", textRun.stdout)
 	}
+	assertUnifiedHTMLReport(t, textRun.workDir, server.URL)
 }
 
 func TestCLIProcessUsageErrorsKeepStructuredStdoutEmpty(t *testing.T) {
@@ -87,6 +90,8 @@ func TestTerminalOutcomeUsesStableCodes(t *testing.T) {
 	}{
 		{code: exitSuccess, status: "completed"},
 		{scanErr: context.Canceled, code: exitCanceled, status: "canceled"},
+		{scanErr: context.Canceled, otherErr: os.ErrPermission, code: exitFailure, status: "failed"},
+		{scanErr: errors.Join(context.Canceled, os.ErrPermission), code: exitFailure, status: "failed"},
 		{scanErr: context.DeadlineExceeded, code: exitFailure, status: "failed"},
 		{otherErr: os.ErrPermission, code: exitFailure, status: "failed"},
 	} {
@@ -170,5 +175,25 @@ func assertResultFileMatchesStdout(t *testing.T, workDir, stdout string) {
 	}
 	if string(contents) != stdout {
 		t.Fatalf("result file differs from stdout:\nfile=%q\nstdout=%q", contents, stdout)
+	}
+}
+
+func assertUnifiedHTMLReport(t *testing.T, workDir, target string) {
+	t.Helper()
+	reports, err := filepath.Glob(filepath.Join(workDir, "datas", "*", "*.html"))
+	if err != nil || len(reports) != 1 {
+		t.Fatalf("HTML reports=%v err=%v", reports, err)
+	}
+	rootReports, err := filepath.Glob(filepath.Join(workDir, "*.html"))
+	if err != nil || len(rootReports) != 0 {
+		t.Fatalf("unexpected split HTML reports=%v err=%v", rootReports, err)
+	}
+	contents, err := os.ReadFile(reports[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(contents)
+	if !strings.Contains(html, "Argus") || !strings.Contains(html, target) || strings.Contains(strings.ToLower(html), "_assets.html") {
+		t.Fatalf("unified report missing Argus/target or references a split report: %s", reports[0])
 	}
 }
