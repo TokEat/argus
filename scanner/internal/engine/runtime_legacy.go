@@ -1,15 +1,14 @@
 package engine
 
 import (
-	commoncfg "dddd/scanner/common"
-	"dddd/scanner/ddout"
-	"dddd/scanner/lib/ddfinger"
-	"dddd/scanner/structs"
-	"dddd/scanner/utils"
 	"embed"
 	"fmt"
+	commoncfg "github.com/P0lar1ght/argus/scanner/common"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/lib/ddfinger"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -48,18 +47,6 @@ func ApplyConfigDefaults(cfg *Config) {
 	if cfg.SubdomainBruteForceThreads == 0 {
 		cfg.SubdomainBruteForceThreads = 150
 	}
-	if cfg.HunterPageSize == 0 {
-		cfg.HunterPageSize = 100
-	}
-	if cfg.HunterMaxPageCount == 0 {
-		cfg.HunterMaxPageCount = 10
-	}
-	if cfg.FofaMaxCount == 0 {
-		cfg.FofaMaxCount = 100
-	}
-	if cfg.QuakeSize == 0 {
-		cfg.QuakeSize = 100
-	}
 	if cfg.GoPocThreads == 0 {
 		cfg.GoPocThreads = 50
 	}
@@ -74,9 +61,6 @@ func ApplyConfigDefaults(cfg *Config) {
 	}
 	if cfg.OutputType == "" {
 		cfg.OutputType = "text"
-	}
-	if cfg.APIConfigFilePath == "" {
-		cfg.APIConfigFilePath = "config/api-config.yaml"
 	}
 	if cfg.NucleiTemplate == "" {
 		cfg.NucleiTemplate = "config/pocs"
@@ -96,12 +80,6 @@ func ApplyConfigDefaults(cfg *Config) {
 	if cfg.Ports == "" {
 		cfg.Ports = commoncfg.PortTOP100
 	}
-	if cfg.LowPerceptionMode {
-		cfg.NoDirSearch = true
-		if !cfg.Fofa && !cfg.Hunter {
-			cfg.Hunter = true
-		}
-	}
 	if !cfg.SkipHostDiscovery && !cfg.TCPPing && cfg.NoICMPPing {
 		cfg.SkipHostDiscovery = true
 	}
@@ -115,8 +93,20 @@ func (sc *ScanContext) loadKnowledgeBase() error {
 		sc.EmbedPocs = commoncfg.EmbedNucleiPocs
 	}
 
-	if err := ensureAPIConfigFile(sc.Config); err != nil {
+	if err := ValidateLegacyProviderConfig(sc.Config); err != nil {
 		return err
+	}
+	useKnowledgeCache, err := knowledgeIdentityEnabled(sc.Config)
+	if err != nil {
+		return err
+	}
+	if useKnowledgeCache {
+		snapshot, err := sc.cachedKnowledgeSnapshot()
+		if err != nil {
+			return err
+		}
+		sc.knowledge = snapshot
+		return nil
 	}
 
 	if len(sc.FingerprintDB) == 0 {
@@ -146,24 +136,12 @@ func (sc *ScanContext) loadKnowledgeBase() error {
 	return nil
 }
 
-func ensureAPIConfigFile(cfg Config) error {
-	needsAPIConfig := cfg.Fofa || cfg.Hunter || cfg.Quake || (cfg.Subdomain && !cfg.NoSubFinder)
-	if !needsAPIConfig || cfg.APIConfigFilePath == "" {
-		return nil
-	}
-	if _, err := os.Stat(cfg.APIConfigFilePath); err == nil {
-		return nil
-	}
-
-	dir := filepath.Dir(cfg.APIConfigFilePath)
-	if dir != "." && dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("create api config dir: %w", err)
-		}
-	}
-
-	if err := os.WriteFile(cfg.APIConfigFilePath, []byte(commoncfg.EmbedAPIConfigData), 0o666); err != nil {
-		return fmt.Errorf("write default api config: %w", err)
+// ValidateLegacyProviderConfig rejects compatibility-only Provider fields before
+// any response store, rule, or network initialization. The fields remain in
+// Config solely so old task JSON can be decoded and failed closed.
+func ValidateLegacyProviderConfig(cfg Config) error {
+	if cfg.Hunter || cfg.Fofa || cfg.Quake || cfg.LowPerceptionMode || cfg.OnlyIPPort || strings.TrimSpace(cfg.APIConfigFilePath) != "" {
+		return fmt.Errorf("legacy Provider search configuration is no longer supported; use Argus Server asset discovery")
 	}
 	return nil
 }

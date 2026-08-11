@@ -3,8 +3,10 @@ package arsenal
 import (
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/glebarez/sqlite"
@@ -18,11 +20,27 @@ var DB *gorm.DB
 // DefaultDBPath 默认本地 SQLite 路径。
 const DefaultDBPath = "data/arsenal.db"
 
+var configuredDefaultDBPath = DefaultDBPath
+
+// SetDefaultDBPath changes the process-local database used by CLI management
+// subcommands when they do not provide an explicit path. Agent and Server
+// package materialization always passes an explicit path and is unaffected.
+func SetDefaultDBPath(path string) {
+	if path = strings.TrimSpace(path); path != "" {
+		configuredDefaultDBPath = path
+	}
+}
+
+// ConfiguredDefaultDBPath returns the process-local CLI database path.
+func ConfiguredDefaultDBPath() string {
+	return configuredDefaultDBPath
+}
+
 // OpenDB 打开弹药库数据库并自动迁移表结构。
 // 传空字符串使用默认路径。
 func OpenDB(dsn string) error {
 	if strings.TrimSpace(dsn) == "" {
-		dsn = DefaultDBPath
+		dsn = configuredDefaultDBPath
 	}
 
 	dir := filepath.Dir(dsn)
@@ -43,8 +61,75 @@ func OpenDB(dsn string) error {
 		return fmt.Errorf("自动迁移表结构失败: %w", err)
 	}
 
+	closeCurrentDB()
 	DB = db
 	return nil
+}
+
+// OpenExistingDB opens an existing rule package without migrating or otherwise
+// mutating it. Package validation and materialization must never repair an
+// untrusted or incompatible replacement in place.
+func OpenExistingDB(dsn string) error {
+	dsn = strings.TrimSpace(dsn)
+	if dsn == "" {
+		return fmt.Errorf("arsenal db path is required")
+	}
+	absPath, err := filepath.Abs(filepath.Clean(dsn))
+	if err != nil {
+		return fmt.Errorf("normalize arsenal db path: %w", err)
+	}
+	info, err := os.Lstat(absPath)
+	if err != nil {
+		return fmt.Errorf("inspect arsenal db: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("arsenal db must be a regular non-symlink file")
+	}
+
+	uriPath := filepath.ToSlash(absPath)
+	if runtime.GOOS == "windows" && !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	uri := &url.URL{Scheme: "file", Path: uriPath}
+	query := uri.Query()
+	query.Set("mode", "ro")
+	uri.RawQuery = query.Encode()
+	dsn = uri.String()
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		return fmt.Errorf("open existing arsenal db: %w", err)
+	}
+	if err := db.Exec("PRAGMA query_only = ON").Error; err != nil {
+		if sqlDB, sqlErr := db.DB(); sqlErr == nil {
+			_ = sqlDB.Close()
+		}
+		return fmt.Errorf("enable read-only arsenal db: %w", err)
+	}
+
+	closeCurrentDB()
+	DB = db
+	return nil
+}
+
+// CloseDB releases the current package database. Materialized scanners only
+// use exported rule files, so they must not keep arsenal.db locked on Windows.
+func CloseDB() error {
+	if DB == nil {
+		return nil
+	}
+	db := DB
+	DB = nil
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close()
+}
+
+func closeCurrentDB() {
+	_ = CloseDB()
 }
 
 // MustOpenDB 打开数据库，失败直接退出。
@@ -145,6 +230,8 @@ func AddPoc(p *Poc) (created bool, err error) {
 		existing.Content = p.Content
 		existing.ContentHash = p.ContentHash
 		existing.Severity = p.Severity
+		existing.ExecutionClass = p.ExecutionClass
+		existing.RiskLevel = p.RiskLevel
 		existing.Tags = p.Tags
 		existing.Author = p.Author
 		existing.Description = p.Description
@@ -184,7 +271,7 @@ func ListPocs(name, severity, source string, enabledOnly bool, limit, offset int
 		limit = 50
 	}
 	// 不选 content 字段，减少内存
-	err := q.Select("id, name, file_name, content_hash, severity, tags, author, description, enabled, source, created_at, updated_at").
+	err := q.Select("id, name, file_name, content_hash, severity, execution_class, risk_level, tags, author, description, enabled, source, created_at, updated_at").
 		Order("name").Limit(limit).Offset(offset).Find(&pocs).Error
 	return pocs, total, err
 }

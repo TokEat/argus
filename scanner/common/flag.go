@@ -1,13 +1,13 @@
 package common
 
 import (
-	"dddd/scanner/ddout"
-	"dddd/scanner/lib/ddfinger"
-	"dddd/scanner/structs"
-	"dddd/scanner/utils"
-	_ "embed"
-	"encoding/json"
+	"embed"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/internal/taskstore"
+	"github.com/P0lar1ght/argus/scanner/lib/ddfinger"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	"net/http"
 	"net/url"
 	"os"
@@ -22,7 +22,6 @@ import (
 
 	"github.com/projectdiscovery/goflags"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/hmap/store/hybrid"
 	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/severity"
 	"github.com/projectdiscovery/retryablehttp-go"
 	"gopkg.in/yaml.v3"
@@ -42,34 +41,33 @@ func GC() {
 	debug.FreeOSMemory()
 }
 
-var version = "2.0.1"
-
-func showBanner() {
-	banner := fmt.Sprintf(`
-     _       _       _       _   
-  __| |   __| |   __| |   __| |  
- / _`+"`"+` |  / _ `+"`"+`|  / _`+"`"+` |  / _`+"`"+` |  
- \__,_|  \__,_|  \__,_|  \__,_|  
-_|"""""|_|"""""|_|"""""|_|"""""| 
-"`+"`"+`-0-0-'"`+"`"+`-0-0-'"`+"`"+`-0-0-`+"`"+`"`+"`"+`-0-0-'
-dddd.version: %s
-`, version)
-	fmt.Println(banner)
-}
-
 var TargetString string
 var PortString string
+var CLIForceFullScan bool
 var disableWAFBypassHeaders bool
 var disableWAFSkipOnManyFingerprints bool
+var cliRulePackageDir string
+
+// ConfigureCLIRulePackage makes an already validated, materialized offline
+// arsenal package the standalone CLI's authoritative rule source. Explicit
+// legacy path flags still override these defaults during argument parsing.
+func ConfigureCLIRulePackage(configDir string) {
+	cliRulePackageDir = filepath.Clean(configDir)
+	structs.GlobalConfig.RuleFilesOnly = true
+}
+
+func cliRulePath(name, fallback string) string {
+	if strings.TrimSpace(cliRulePackageDir) == "" {
+		return fallback
+	}
+	return filepath.Join(cliRulePackageDir, name)
+}
 
 //go:embed config/dir.yaml
 var EmbedDirDBData string
 
 //go:embed config/finger.yaml
 var EmbedFingerData string
-
-//go:embed config/api-config.yaml
-var EmbedAPIConfigData string
 
 // EmbedNucleiPocs 由 embed_pocs.go (默认内嵌) 或 embed_nopocs.go (noembed tag) 提供。
 // Agent 模式构建时使用 -tags noembed 可跳过内嵌 POC，减小二进制体积。
@@ -96,9 +94,12 @@ func splitPathAndFileName(path string) (string, string) {
 func ReadDirDB() {
 	// 先读取默认的，再读取文件内的进行补充
 	fps := make(map[string]interface{})
-	err := yaml.Unmarshal([]byte(EmbedDirDBData), &fps)
-	if err != nil {
-		return
+	var err error
+	if !structs.GlobalConfig.RuleFilesOnly {
+		err = yaml.Unmarshal([]byte(EmbedDirDBData), &fps)
+		if err != nil {
+			return
+		}
 	}
 
 	structs.DirDB = make(map[string][]string)
@@ -158,8 +159,11 @@ var EmbedWorkFlowData string
 func ReadWorkFlowDB() {
 	structs.WorkFlowDB = make(map[string]structs.WorkFlowEntity)
 	fps := make(map[string]interface{})
-	err := yaml.Unmarshal([]byte(EmbedWorkFlowData), &fps)
-	if err == nil {
+	var err error
+	if !structs.GlobalConfig.RuleFilesOnly {
+		err = yaml.Unmarshal([]byte(EmbedWorkFlowData), &fps)
+	}
+	if err == nil && !structs.GlobalConfig.RuleFilesOnly {
 		for productName, rulesInterface := range fps {
 			var workflowEntity structs.WorkFlowEntity
 			ruleInterface := rulesInterface.(map[string]interface{})
@@ -274,46 +278,20 @@ func GetFdLimit() int {
 	return ToInt(s)
 }
 
-func prepare() {
+func prepare() error {
 	var tmpTargets []string
 
 	// 参数冲突校验
 	if structs.GlobalConfig.ReportName != "" {
 		suffix := path.Ext(structs.GlobalConfig.ReportName)
 		if suffix != ".html" && suffix != ".htm" {
-			gologger.Fatal().Msgf("输出参数(-o)必须为html拓展名或htm拓展名")
+			return &CLIUsageError{Message: "HTML 输出必须使用 .html 或 .htm 扩展名"}
 		}
 	}
-	if (structs.GlobalConfig.Fofa || structs.GlobalConfig.Hunter) && structs.GlobalConfig.Quake {
-		structs.GlobalConfig.Fofa = false
-		structs.GlobalConfig.Quake = false
-		gologger.Warning().Msg("quake参数不兼容fofa或hunter参数")
-	}
-
-	if !strings.HasSuffix(strings.ToLower(structs.GlobalConfig.APIConfigFilePath), ".yaml") {
-		gologger.Fatal().Msg("API配置文件需要以 .yaml 为拓展名。")
-	}
-
-	structs.GlobalEmbedPocs = EmbedNucleiPocs
-
-	// 进行需要配置API的活动，没有找到API配置文件则直接进行生成
-	if structs.GlobalConfig.Fofa || structs.GlobalConfig.Hunter || structs.GlobalConfig.Quake || (structs.GlobalConfig.Subdomain && !structs.GlobalConfig.NoSubFinder) {
-		if !fileExists(structs.GlobalConfig.APIConfigFilePath) && !fileExists("config/api-config.yaml") {
-			gologger.Info().Msgf("未检测到API配置文件: %v", structs.GlobalConfig.APIConfigFilePath)
-			p, _ := splitPathAndFileName(structs.GlobalConfig.APIConfigFilePath)
-			if !fileExists(p) {
-				err := os.MkdirAll(p, os.ModePerm)
-				if err != nil {
-					gologger.Fatal().Msgf("创建文件夹失败: %v", err.Error())
-				}
-			}
-
-			err := os.WriteFile(structs.GlobalConfig.APIConfigFilePath, []byte(EmbedAPIConfigData), 0666)
-			if err != nil {
-				gologger.Fatal().Msgf("写出默认API配置文件失败: %v", err.Error())
-			}
-			gologger.Info().Msgf("已自动生成默认API配置文件: %v", structs.GlobalConfig.APIConfigFilePath)
-		}
+	if structs.GlobalConfig.RuleFilesOnly {
+		structs.GlobalEmbedPocs = embed.FS{}
+	} else {
+		structs.GlobalEmbedPocs = EmbedNucleiPocs
 	}
 
 	if !structs.GlobalConfig.SkipHostDiscovery && !structs.GlobalConfig.TCPPing && structs.GlobalConfig.NoICMPPing {
@@ -324,7 +302,7 @@ func prepare() {
 	if structs.GlobalConfig.HTTPProxyTest && structs.GlobalConfig.HTTPProxy != "" {
 		proxyURL, parseErr := url.Parse(structs.GlobalConfig.HTTPProxy)
 		if parseErr != nil {
-			gologger.Fatal().Msgf("代理格式不正确: %v", structs.GlobalConfig.HTTPProxy)
+			return &CLIUsageError{Message: "HTTP 代理格式不正确"}
 		}
 		transport := retryablehttp.DefaultHostSprayingTransport()
 		transport.Proxy = http.ProxyURL(proxyURL)
@@ -332,7 +310,7 @@ func prepare() {
 		gologger.Info().Msgf("测试代理中: %s", structs.GlobalConfig.HTTPProxy)
 		req, err := retryablehttp.NewRequest("GET", structs.GlobalConfig.HTTPProxyTestURL, nil)
 		if err != nil {
-			gologger.Fatal().Msg("代理测试失败！")
+			return &CLIUsageError{Message: "HTTP 代理测试 URL 无效"}
 		}
 		opts := retryablehttp.DefaultOptionsSpraying
 		client := retryablehttp.NewClient(opts)
@@ -341,7 +319,7 @@ func prepare() {
 		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36")
 		resp, err := client.Do(req)
 		if err != nil {
-			gologger.Fatal().Msg("代理测试失败！")
+			return fmt.Errorf("HTTP 代理测试失败")
 		}
 		gologger.Info().Msgf("代理有效！测试URL返回码: %v", resp.StatusCode)
 	}
@@ -364,22 +342,6 @@ func prepare() {
 	}
 	tmpTargets = utils.RemoveDuplicateElement(tmpTargets)
 
-	// 低感知模式
-	if structs.GlobalConfig.LowPerceptionMode {
-		if structs.GlobalConfig.Fofa && structs.GlobalConfig.Hunter {
-			gologger.Fatal().Msg("暂不支持在低感知模式下同时使用-fofa与-hunter参数，请使用-hunter参数")
-		}
-		if structs.GlobalConfig.Fofa {
-			gologger.Fatal().Msg("暂不支持基于Fofa的低感知模式，请使用-hunter参数。")
-		}
-		// 默认使用hunter fofa不支持
-		if !structs.GlobalConfig.Fofa && !structs.GlobalConfig.Hunter {
-			structs.GlobalConfig.Hunter = true
-		}
-		// 低感知模式下不进行目录探测
-		structs.GlobalConfig.NoDirSearch = true
-	}
-
 	structs.GlobalResultMap = make(map[string][]string)
 	structs.DirFallbackResultMap = make(map[string][]string)
 
@@ -388,70 +350,55 @@ func prepare() {
 		if tg == "" {
 			continue
 		}
-		if structs.GlobalConfig.Hunter || structs.GlobalConfig.Fofa {
-			// 从网络空间搜索引擎中获取目标
-			if !strings.Contains(tg, "=") {
-				gologger.Error().Msgf("不支持的格式: %s", tg)
-				continue
-			}
-		} else if structs.GlobalConfig.Quake {
-			if !strings.Contains(tg, ":") {
-				gologger.Error().Msgf("不支持的格式: %s", tg)
-				continue
-			}
-		} else if !structs.GlobalConfig.Fofa && !structs.GlobalConfig.Hunter {
-			// 从本地文件获取目标
-			if utils.GetInputType(tg) == structs.TypeUnSupport {
-				if strings.HasPrefix(tg, "[") {
-					// 解析历史指纹
-					if strings.HasPrefix(tg, "[Finger") {
-						t := strings.Split(tg, " ")
-						uri := t[1]
-						tf := ""
+		// 从本地文件获取目标
+		if utils.GetInputType(tg) == structs.TypeUnSupport {
+			if strings.HasPrefix(tg, "[") {
+				// 解析历史指纹
+				if strings.HasPrefix(tg, "[Finger") {
+					t := strings.Split(tg, " ")
+					uri := t[1]
+					tf := ""
 
-						if strings.HasPrefix(uri, "http") {
-							tf = t[3]
-						} else {
-							tf = t[2]
-						}
-						if len(tf) <= 2 {
-							continue
-						}
-						tf = tf[1 : len(tf)-1]
-						fingers := strings.Split(tf, ",")
-						structs.GlobalResultMap[uri] = fingers
+					if strings.HasPrefix(uri, "http") {
+						tf = t[3]
+					} else {
+						tf = t[2]
+					}
+					if len(tf) <= 2 {
 						continue
 					}
-
-				} else if strings.HasPrefix(tg, "{") {
-					var in ddout.OutputMessage
-					err := json.Unmarshal([]byte(tg), &in)
-					if err == nil {
-						if in.Type == "Finger" {
-							structs.GlobalResultMap[in.URI] = in.Finger
-							continue
-						}
-						continue
-					}
-
-				} else if strings.HasSuffix(tg, " open") {
-					ipPort := strings.ReplaceAll(tg, " open", "")
-					if utils.IsIPPort(ipPort) {
-						structs.GlobalConfig.Targets = append(structs.GlobalConfig.Targets, ipPort)
-						continue
-					}
-
+					tf = tf[1 : len(tf)-1]
+					fingers := strings.Split(tf, ",")
+					structs.GlobalResultMap[uri] = fingers
+					continue
 				}
-				// gologger.Error().Msgf("不支持的格式: %s", tg)
-				continue
-			}
-		}
 
+			} else if strings.HasPrefix(tg, "{") {
+				in, ok, err := ddout.DecodeFindingLine(tg)
+				if err == nil && ok {
+					if in.Type == "Finger" {
+						structs.GlobalResultMap[in.URI] = in.Finger
+						continue
+					}
+					continue
+				}
+
+			} else if strings.HasSuffix(tg, " open") {
+				ipPort := strings.ReplaceAll(tg, " open", "")
+				if utils.IsIPPort(ipPort) {
+					structs.GlobalConfig.Targets = append(structs.GlobalConfig.Targets, ipPort)
+					continue
+				}
+
+			}
+			// gologger.Error().Msgf("不支持的格式: %s", tg)
+			continue
+		}
 		structs.GlobalConfig.Targets = append(structs.GlobalConfig.Targets, tg)
 	}
 
 	if len(structs.GlobalConfig.Targets) == 0 && len(structs.GlobalResultMap) == 0 {
-		gologger.Fatal().Msgf("无目标输入")
+		return &CLIUsageError{Message: "无目标输入；请使用 -t/--target 指定已授权目标"}
 	}
 
 	loc := time.FixedZone("CST", 8*3600)
@@ -512,50 +459,54 @@ func prepare() {
 		structs.GlobalConfig.Ports = PortString
 	}
 
-	hm, err := hybrid.New(hybrid.DefaultDiskOptions)
-	if err != nil {
-		gologger.Fatal().Msg("Web响应体缓存数据库初始化失败。")
+	if err := initializeLegacyResponseStores(); err != nil {
+		return fmt.Errorf("initialize response stores: %w", err)
 	}
-	structs.GlobalHttpBodyHMap = hm
-
-	hm, err = hybrid.New(hybrid.DefaultDiskOptions)
-	if err != nil {
-		gologger.Fatal().Msg("Web响应头缓存数据库初始化失败。")
-	}
-	structs.GlobalHttpHeaderHMap = hm
-
-	hm, err = hybrid.New(hybrid.DefaultDiskOptions)
-	if err != nil {
-		gologger.Fatal().Msg("Banner缓存数据库初始化失败。")
-	}
-	structs.GlobalBannerHMap = hm
 	structs.GlobalIPPortMap = make(map[string]string)
 	structs.GlobalIPDomainMap = make(map[string][]string)
 	structs.GlobalURLMap = make(map[string]structs.URLEntity)
 
-	parseFingerDB()
+	if err := parseFingerDB(); err != nil {
+		return err
+	}
 	if len(structs.FingerprintDB) == 0 {
-		gologger.Fatal().Msg("请检查指纹数据库是否正常，是否正确放置config文件夹。")
+		return fmt.Errorf("fingerprint rule database is empty")
 	}
 	gologger.Info().Msgf("YAML指纹数据: %d 条\n", len(structs.FingerprintDB))
 
 	ReadWorkFlowDB()
 	if len(structs.WorkFlowDB) == 0 {
-		gologger.Fatal().Msg("请检查工作流数据库是否正常。")
+		return fmt.Errorf("workflow rule database is empty")
 	}
 	gologger.Info().Msgf("漏洞检测支持指纹: %d 条", len(structs.WorkFlowDB))
 
 	ReadDirDB()
 	if len(structs.DirDB) == 0 {
-		gologger.Fatal().Msg("请检查主动指纹探测数据库是否正常。")
+		return fmt.Errorf("directory fingerprint database is empty")
 	}
+	return nil
 }
 
-func parseFingerDB() {
-	fps := make(map[string]interface{})
-	err := yaml.Unmarshal([]byte(EmbedFingerData), &fps)
+// initializeLegacyResponseStores preserves the legacy globals while sharing
+// the same task-private response-store policy as engine.ScanContext.
+func initializeLegacyResponseStores() error {
+	stores, err := taskstore.New(structs.GlobalConfig)
 	if err != nil {
-		gologger.Fatal().Msg(err.Error())
+		return err
+	}
+	structs.GlobalHttpBodyHMap = stores.Body
+	structs.GlobalHttpHeaderHMap = stores.Header
+	structs.GlobalBannerHMap = stores.Banner
+	return nil
+}
+
+func parseFingerDB() error {
+	fps := make(map[string]interface{})
+	if !structs.GlobalConfig.RuleFilesOnly {
+		err := yaml.Unmarshal([]byte(EmbedFingerData), &fps)
+		if err != nil {
+			return fmt.Errorf("parse embedded fingerprint rules: %w", err)
+		}
 	}
 
 	m := make(map[string][]string)
@@ -580,8 +531,14 @@ func parseFingerDB() {
 
 	if fileExists(fingerPath) {
 		data, err := os.ReadFile(fingerPath)
+		if err != nil {
+			return fmt.Errorf("read fingerprint rules: %w", err)
+		}
 		fps = make(map[string]interface{})
 		err = yaml.Unmarshal(data, &fps)
+		if err != nil {
+			return fmt.Errorf("parse fingerprint rules: %w", err)
+		}
 		if err == nil {
 			for productName, rulesInterface := range fps {
 				for _, ruleInterface := range rulesInterface.([]interface{}) {
@@ -613,39 +570,24 @@ func parseFingerDB() {
 			}()
 		}
 	}
-
+	return nil
 }
 
-func Flag() {
-	showBanner()
+func FlagWithError() error {
+	presentation := ConfigureCLIPresentation(os.Args[1:])
+	structs.GlobalConfig.MachineOutput = !presentation.Interactive
+	if presentation.ShowBanner {
+		showBanner()
+	}
 
 	flagSet := goflags.NewFlagSet()
 	flagSet.CaseSensitive = true
-	flagSet.SetDescription(`dddd是一款使用简单的批量信息收集,供应链漏洞探测工具。旨在优化红队工作流，减少伤肝、枯燥、乏味的机械性操作。`)
-	flagSet.SetCustomHelpText(`
-子命令:
-  finger      管理指纹规则库
-  poc         管理 POC 规则库
-  workflow    管理指纹到 POC 的映射关系
+	flagSet.SetDescription(cliDescription)
+	flagSet.SetCustomHelpText(cliHelpText)
 
-帮助:
-  dddd help
-  dddd help finger
-  dddd help poc
-  dddd help workflow
-  dddd finger --help
-  dddd poc --help
-  dddd workflow --help
-
-示例:
-  dddd -t https://example.com
-  dddd finger list --product nginx
-  dddd poc list --severity high
-  dddd workflow list --product ruoyi`)
-
-	// 目标设置
 	flagSet.CreateGroup("input", "扫描目标",
-		flagSet.StringVarP(&TargetString, "target", "t", "", "被扫描的目标。 192.168.0.1 192.168.0.0/16 192.168.0.1:80 baidu.com:80 file.txt(一行一个) result.txt(fscan/dddd)"),
+		flagSet.StringVarP(&TargetString, "target", "t", "", "被扫描的目标。 192.168.0.1 192.168.0.0/16 192.168.0.1:80 baidu.com:80 file.txt(一行一个) result.txt(fscan/argus)"),
+		flagSet.BoolVar(&CLIForceFullScan, "force", false, "忽略本地增量覆盖并执行完整扫描"),
 	)
 
 	flagSet.CreateGroup("portscan", "端口扫描",
@@ -691,18 +633,6 @@ func Flag() {
 		flagSet.StringVarP(&structs.GlobalConfig.HTTPProxyTestURL, "proxy-test-url", "ptu", "https://www.baidu.com", "测试HTTP代理的url，需要url返回200"),
 	)
 
-	flagSet.CreateGroup("uncover", "网络空间搜索引擎",
-		flagSet.BoolVar(&structs.GlobalConfig.Hunter, "hunter", false, "从hunter中获取资产,开启此选项后-t参数变更为需要在hunter中搜索的关键词"),
-		flagSet.IntVarP(&structs.GlobalConfig.HunterPageSize, "hunter-page-size", "hps", 100, "Hunter查询每页资产条数"),
-		flagSet.IntVarP(&structs.GlobalConfig.HunterMaxPageCount, "hunter-max-page-count", "hmpc", 10, "Hunter 最大查询页数"),
-		flagSet.BoolVarP(&structs.GlobalConfig.LowPerceptionMode, "low-perception-mode", "lpm", false, "Hunter低感知模式 | 从Hunter直接取响应判断指纹，直接进入漏洞扫描阶段"),
-		flagSet.BoolVar(&structs.GlobalConfig.OnlyIPPort, "oip", false, "从网络空间搜索引擎中以IP:Port的形式拉取资产，而不是Domain(IP):Port"),
-		flagSet.BoolVar(&structs.GlobalConfig.Fofa, "fofa", false, "从Fofa中获取资产,开启此选项后-t参数变更为需要在fofa中搜索的关键词"),
-		flagSet.IntVarP(&structs.GlobalConfig.FofaMaxCount, "fofa-max-count", "fmc", 100, "Fofa 查询资产条数 Max:10000"),
-		flagSet.BoolVar(&structs.GlobalConfig.Quake, "quake", false, "从Quake中获取资产,开启此选项后-t参数变更为需要在quake中搜索的关键词"),
-		flagSet.IntVarP(&structs.GlobalConfig.QuakeSize, "quake-max-count", "qmc", 100, "Quake 查询资产条数"),
-	)
-
 	flagSet.CreateGroup("output", "输出",
 		flagSet.StringVarP(&structs.GlobalConfig.OutputFile, "output", "o", "result.txt", "结果输出文件"),
 		flagSet.StringVarP(&structs.GlobalConfig.OutputType, "output-type", "ot", "text", "结果输出格式 text,json"),
@@ -724,12 +654,11 @@ func Flag() {
 	)
 
 	flagSet.CreateGroup("config", "配置文件",
-		flagSet.StringVarP(&structs.GlobalConfig.APIConfigFilePath, "api-config-file", "acf", "config/api-config.yaml", "API配置文件"),
-		flagSet.StringVarP(&structs.GlobalConfig.NucleiTemplate, "nuclei-template", "nt", "config/pocs", "指定存放Nuclei Poc的文件夹路径"),
-		flagSet.StringVarP(&structs.GlobalConfig.WorkflowYamlPath, "workflow-yaml", "wy", "config/workflow.yaml", "指定存放workflow.yaml (指纹=>漏洞映射) 的路径"),
-		flagSet.StringVarP(&structs.GlobalConfig.FingerConfigFilePath, "finger-yaml", "fy", "config/finger.yaml", "指定存放finger.yaml (指纹配置) 的路径"),
-		flagSet.StringVarP(&structs.GlobalConfig.DirSearchYaml, "dir-yaml", "dy", "config/dir.yaml", "主动指纹数据库路径"),
-		flagSet.StringVarP(&structs.GlobalConfig.SubdomainWordListFile, "subdomain-word-list", "swl", "config/subdomains.txt", "子域名字典文件路径"),
+		flagSet.StringVarP(&structs.GlobalConfig.NucleiTemplate, "nuclei-template", "nt", cliRulePath("pocs", "config/pocs"), "指定存放Nuclei Poc的文件夹路径"),
+		flagSet.StringVarP(&structs.GlobalConfig.WorkflowYamlPath, "workflow-yaml", "wy", cliRulePath("workflow.yaml", "config/workflow.yaml"), "指定存放workflow.yaml (指纹=>漏洞映射) 的路径"),
+		flagSet.StringVarP(&structs.GlobalConfig.FingerConfigFilePath, "finger-yaml", "fy", cliRulePath("finger.yaml", "config/finger.yaml"), "指定存放finger.yaml (指纹配置) 的路径"),
+		flagSet.StringVarP(&structs.GlobalConfig.DirSearchYaml, "dir-yaml", "dy", cliRulePath("dir.yaml", "config/dir.yaml"), "主动指纹数据库路径"),
+		flagSet.StringVarP(&structs.GlobalConfig.SubdomainWordListFile, "subdomain-word-list", "swl", cliRulePath("subdomains.txt", "config/subdomains.txt"), "子域名字典文件路径"),
 	)
 
 	flagSet.CreateGroup("passwd", "爆破密码配置",
@@ -746,7 +675,12 @@ func Flag() {
 		flagSet.StringVarP(&gologger.AuditLogFileName, "audit-log-filename", "alf", defaultAuditLogFileName, "审计日志文件名称，默认格式: audit_YYYYMMDD_HHMMSS.log"),
 	)
 
-	_ = flagSet.Parse()
+	if err := parseCLIFlags(flagSet.Parse, presentation, os.Args[1:]); err != nil {
+		return fmt.Errorf("parse CLI configuration: %w", err)
+	}
+	if err := ValidateCLIOutputType(structs.GlobalConfig.OutputType); err != nil {
+		return err
+	}
 	if disableWAFBypassHeaders {
 		structs.GlobalConfig.WAFBypassHeaders = false
 	}
@@ -754,13 +688,15 @@ func Flag() {
 		structs.GlobalConfig.WAFSkipOnManyFingerprints = false
 	}
 
-	prepare()
+	if err := prepare(); err != nil {
+		return err
+	}
 	flagAudit()
+	return nil
 }
 
-// 记录启动信息
 func flagAudit() {
-	gologger.AuditTimeLogger("dddd启动")
+	gologger.AuditTimeLogger("Argus 启动")
 	gologger.AuditLogger("本次启动参数如下:")
 	gologger.AuditLogger("Target: %s", strings.Join(structs.GlobalConfig.Targets, ","))
 	gologger.AuditLogger("Subdomain: %v", structs.GlobalConfig.Subdomain)
@@ -805,7 +741,6 @@ func flagAudit() {
 	gologger.AuditLogger("AuditLogFileName: %v", gologger.AuditLogFileName)
 	gologger.AuditLogger("GetBannerTimeout: %v", structs.GlobalConfig.GetBannerTimeout)
 	gologger.AuditLogger("SubdomainWordListFile: %v", structs.GlobalConfig.SubdomainWordListFile)
-	gologger.AuditLogger("APIConfigFilePath: %v", structs.GlobalConfig.APIConfigFilePath)
 	gologger.AuditLogger("NucleiTemplate: %v", structs.GlobalConfig.NucleiTemplate)
 	gologger.AuditLogger("DirSearchYaml: %v", structs.GlobalConfig.DirSearchYaml)
 	gologger.AuditLogger("WorkflowYamlPath: %v", structs.GlobalConfig.WorkflowYamlPath)

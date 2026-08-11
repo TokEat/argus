@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
-	"github.com/user/dddd-server/internal/db"
 )
 
 func parseAgentSelector(raw json.RawMessage) (map[string]string, error) {

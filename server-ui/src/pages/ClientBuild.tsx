@@ -169,7 +169,7 @@ const ClientBuild: React.FC = () => {
             render: (_, record) => (
                 <Space direction="vertical" size={2}>
                     <Text code>{record.platform}/{record.arch}</Text>
-                    <Space wrap size={4}>{(record.components || ['dddd-agent']).map((item) => <Tag key={item}>{item}</Tag>)}</Space>
+                    <Space wrap size={4}>{(record.components || ['argus-agent']).map((item) => <Tag key={item}>{item}</Tag>)}</Space>
                 </Space>
             ),
         },
@@ -314,13 +314,13 @@ const ClientBuild: React.FC = () => {
                             </Form.Item>
                         </Col>
                     </Row>
-                    <Form.Item name="components" label="构建组件" initialValue={['dddd-agent']} rules={[{ required: true }]}>
+                    <Form.Item name="components" label="构建组件" initialValue={['argus-agent']} rules={[{ required: true }]}>
                         <Select
                             mode="multiple"
                             options={[
-                                { value: 'dddd-agent', label: 'Agent' },
-                                { value: 'dddd-server', label: 'Server' },
-                                { value: 'dddd', label: 'CLI' },
+                                { value: 'argus-agent', label: 'Agent' },
+                                { value: 'argus-server', label: 'Server' },
+                                { value: 'argus', label: 'CLI' },
                                 { value: 'server-ui', label: 'Server UI' },
                             ]}
                         />

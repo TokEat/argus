@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"dddd/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/structs"
 	"gopkg.in/yaml.v3"
 )
 

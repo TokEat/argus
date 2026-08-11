@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"dddd/scanner/internal/agent"
-	"dddd/scanner/internal/engine"
+	"github.com/P0lar1ght/argus/scanner/internal/agent"
+	"github.com/P0lar1ght/argus/scanner/internal/engine"
 )
 
 func main() {
@@ -50,7 +50,7 @@ func main() {
 		tags["target_type"] = "all"
 	}
 
-	log.Printf("Starting dddd-agent: ID=%s, Server=%s, API=%s, Workers=%d, Tags=%v", *agentID, *serverAddr, *apiURL, effectiveWorkers, tags)
+	log.Printf("Starting argus-agent: ID=%s, Server=%s, API=%s, Workers=%d, Tags=%v", *agentID, *serverAddr, *apiURL, effectiveWorkers, tags)
 
 	worker := agent.NewWorker(*agentID, *serverAddr, *apiURL, effectiveWorkers, tags)
 	worker.SetPSK(*psk)

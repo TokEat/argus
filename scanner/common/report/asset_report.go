@@ -227,7 +227,7 @@ func generateAssetHTML(entries []*AssetEntry, sourceFile string) string {
 <meta charset="UTF-8">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>dddd 资产报告</title>
+<title>Argus 资产报告</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft Yahei",Arial,sans-serif;background:#1c1b19;color:#FEFEFF;font-size:14px;min-width:900px;}
@@ -273,7 +273,7 @@ tr:hover td{background:#242320;}
 </head>
 <body>
 <div class="header">
-  <span>🛡️ &nbsp;dddd 资产报告</span>
+  <span>🛡️ &nbsp;Argus 资产报告</span>
   <span class="ts">`)
 	sb.WriteString(html.EscapeString(now))
 	sb.WriteString(`</span>

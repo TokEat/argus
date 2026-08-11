@@ -111,7 +111,7 @@ func GetTaskResultStats(tenantID string, projectID string, limit int) []TaskStat
 				WHERE v2.tenant_id = ? AND v2.project_id = ?
 				GROUP BY st.root_task_id
 			) v ON v.root_task_id = rt.id
-			WHERE rt.tenant_id = ? AND rt.project_id = ?
+			WHERE rt.tenant_id = ? AND rt.project_id = ? AND rt.archived_at IS NULL
 			ORDER BY rt.created_at DESC
 			LIMIT ?
 		`, tenantID, projectID, tenantID, projectID, tenantID, projectID, tenantID, projectID, limit).Scan(&results)
@@ -140,7 +140,7 @@ func GetTaskResultStats(tenantID string, projectID string, limit int) []TaskStat
 				WHERE v2.tenant_id = ?
 				GROUP BY st.root_task_id
 			) v ON v.root_task_id = rt.id
-			WHERE rt.tenant_id = ?
+			WHERE rt.tenant_id = ? AND rt.archived_at IS NULL
 			ORDER BY rt.created_at DESC
 			LIMIT ?
 		`, tenantID, tenantID, tenantID, tenantID, limit).Scan(&results)

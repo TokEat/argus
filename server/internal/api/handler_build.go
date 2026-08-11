@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/storage"
 	"github.com/gin-gonic/gin"
-	"github.com/user/dddd-server/internal/db"
-	"github.com/user/dddd-server/internal/storage"
 )
 
 func listBuildArtifacts(c *gin.Context) {
@@ -43,6 +43,9 @@ func listBuildArtifacts(c *gin.Context) {
 			continue
 		}
 		name := obj.Key
+		if !isSupportedBuildArtifactName(name) {
+			continue
+		}
 		platform, arch := parseBinaryName(name)
 		artifacts = append(artifacts, Artifact{
 			Name:     name,
@@ -54,6 +57,56 @@ func listBuildArtifacts(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, artifacts)
+}
+
+func isSupportedBuildArtifactName(name string) bool {
+	if name == "server-ui-dist.tar.gz" {
+		return true
+	}
+
+	for _, component := range []string{"argus-agent", "argus-server", "argus"} {
+		prefix := component + "-"
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+
+		rest := strings.TrimPrefix(name, prefix)
+		packaged := strings.HasSuffix(rest, ".tar.gz")
+		windowsExecutable := strings.HasSuffix(rest, ".exe")
+		switch {
+		case packaged:
+			if component != "argus" {
+				return false
+			}
+			rest = strings.TrimSuffix(rest, ".tar.gz")
+		case windowsExecutable:
+			rest = strings.TrimSuffix(rest, ".exe")
+		}
+
+		parts := strings.Split(rest, "-")
+		if len(parts) != 2 || !isSupportedReleaseTarget(parts[0], parts[1]) {
+			return false
+		}
+		if packaged {
+			return true
+		}
+		if parts[0] == "windows" {
+			return windowsExecutable
+		}
+		return !windowsExecutable
+	}
+	return false
+}
+
+func isSupportedReleaseTarget(platform, arch string) bool {
+	switch platform {
+	case "linux", "darwin":
+		return arch == "amd64" || arch == "arm64"
+	case "windows":
+		return arch == "amd64" || arch == "arm64" || arch == "386"
+	default:
+		return false
+	}
 }
 
 func parseBinaryName(name string) (platform, arch string) {
@@ -349,9 +402,9 @@ func isSupportedBuildTarget(platform, arch string) bool {
 
 func normalizeBuildComponents(raw []string) ([]string, error) {
 	if len(raw) == 0 {
-		return []string{"dddd-agent"}, nil
+		return []string{"argus-agent"}, nil
 	}
-	allowed := map[string]bool{"dddd": true, "dddd-agent": true, "dddd-server": true, "server-ui": true}
+	allowed := map[string]bool{"argus": true, "argus-agent": true, "argus-server": true, "server-ui": true}
 	seen := map[string]struct{}{}
 	components := make([]string, 0, len(raw))
 	for _, item := range raw {
@@ -369,7 +422,7 @@ func normalizeBuildComponents(raw []string) ([]string, error) {
 		components = append(components, component)
 	}
 	if len(components) == 0 {
-		return []string{"dddd-agent"}, nil
+		return []string{"argus-agent"}, nil
 	}
 	return components, nil
 }
@@ -523,7 +576,7 @@ func runBuildJob(jobID uint) {
 }
 
 func expectedBuildArtifact(platform, arch string) string {
-	name := fmt.Sprintf("dddd-agent-%s-%s", platform, arch)
+	name := fmt.Sprintf("argus-agent-%s-%s", platform, arch)
 	if platform == "windows" {
 		name += ".exe"
 	}

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Row, Col, Typography, List, Tag, Space, Spin, Badge, Tooltip, Table, Empty } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
@@ -18,7 +18,6 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import ReactECharts from 'echarts-for-react';
-import gsap from 'gsap';
 import DispatchCanvas from '../components/DispatchCanvas';
 import {
     getDashboardStats,
@@ -155,94 +154,6 @@ const Dashboard: React.FC = () => {
         };
     }, [fetchData]);
 
-    // GSAP refs
-    const statCardsRef = useRef<HTMLDivElement>(null);
-    const nodeSectionRef = useRef<HTMLDivElement>(null);
-    const taskSectionRef = useRef<HTMLDivElement>(null);
-    const chartSectionRef = useRef<HTMLDivElement>(null);
-
-    // GSAP entrance animations
-    useEffect(() => {
-        if (loading) return;
-
-        const ctx = gsap.context(() => {
-            // Stat cards stagger entrance + countUp
-            if (statCardsRef.current) {
-                const cards = statCardsRef.current.querySelectorAll('.stat-card-item');
-                gsap.from(cards, {
-                    y: 30,
-                    opacity: 0,
-                    duration: 0.5,
-                    stagger: 0.08,
-                    ease: 'power2.out',
-                    clearProps: 'transform,opacity',
-                });
-
-                // CountUp for each stat value
-                cards.forEach((card) => {
-                    const valEl = card.querySelector('.stat-value-num');
-                    if (!valEl) return;
-                    const target = Number(valEl.textContent) || 0;
-                    if (target === 0) return;
-                    const obj = { val: 0 };
-                    gsap.to(obj, {
-                        val: target,
-                        duration: 1,
-                        ease: 'power2.out',
-                        delay: 0.3,
-                        onUpdate: () => {
-                            valEl.textContent = String(Math.round(obj.val));
-                        },
-                    });
-                });
-            }
-
-            // Node list stagger from left
-            if (nodeSectionRef.current) {
-                const items = nodeSectionRef.current.querySelectorAll('.ant-list-item');
-                gsap.from(items, {
-                    x: -20,
-                    opacity: 0,
-                    duration: 0.4,
-                    stagger: 0.05,
-                    ease: 'power2.out',
-                    delay: 0.4,
-                    clearProps: 'transform,opacity',
-                });
-            }
-
-            // Task list stagger from right
-            if (taskSectionRef.current) {
-                const items = taskSectionRef.current.querySelectorAll('.ant-list-item');
-                gsap.from(items, {
-                    x: 20,
-                    opacity: 0,
-                    duration: 0.4,
-                    stagger: 0.05,
-                    ease: 'power2.out',
-                    delay: 0.5,
-                    clearProps: 'transform,opacity',
-                });
-            }
-
-            // Chart cards entrance
-            if (chartSectionRef.current) {
-                const cards = chartSectionRef.current.querySelectorAll('.glass-card');
-                gsap.from(cards, {
-                    scale: 0.92,
-                    opacity: 0,
-                    duration: 0.5,
-                    stagger: 0.1,
-                    ease: 'power2.out',
-                    delay: 0.3,
-                    clearProps: 'transform,opacity',
-                });
-            }
-        });
-
-        return () => ctx.revert();
-    }, [loading, stats, nodes, recentTasks]);
-
     const getStatusTag = (status: string) => {
         const { color, text } = getTaskStatusMeta(status);
         return <Tag color={color}>{text}</Tag>;
@@ -250,18 +161,17 @@ const Dashboard: React.FC = () => {
 
     const getStatusIcon = (status: string) => {
         switch (normalizeTaskStatus(status)) {
-            case 'FINISHED':
-            case 'DONE':
+            case 'COMPLETED':
                 return <CheckCircleOutlined style={{ color: '#10b981' }} />;
-            case 'PARTIALDONE':
+            case 'PARTIAL':
                 return <CheckCircleOutlined style={{ color: '#0ea5e9' }} />;
             case 'RUNNING':
                 return <ClockCircleOutlined style={{ color: '#0ea5e9' }} spin />;
             case 'FAILED':
             case 'TIMEOUT':
                 return <ExclamationCircleOutlined style={{ color: '#ef4444' }} />;
-            case 'CANCELLED':
-            case 'CANCELPENDING':
+            case 'STOPPED':
+            case 'STOPPING':
                 return <ExclamationCircleOutlined style={{ color: '#94a3b8' }} />;
             default: return <ClockCircleOutlined style={{ color: '#f59e0b' }} />;
         }
@@ -417,15 +327,15 @@ const Dashboard: React.FC = () => {
             </div>
 
             {/* Stat Cards - 5 columns */}
-            <div ref={statCardsRef}>
+            <div>
                 <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
                     {statCards.map((card, i) => (
                         <Col key={i} xs={12} sm={8} md={6} lg={4} xl={4}>
-                            <ProCard hoverable className="glass-card stat-card-item" bodyStyle={{ padding: 18 }} style={{ height: '100%', background: 'transparent', border: 'none' }}>
+                            <ProCard hoverable className="glass-card" bodyStyle={{ padding: 18 }} style={{ height: '100%', background: 'transparent', border: 'none' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                     <div>
                                         <Text style={{ color: '#64748b', fontSize: 12 }}>{card.title}</Text>
-                                        <div className="stat-value-num" style={{ fontSize: 26, fontWeight: 700, color: card.color, marginTop: 2 }}>
+                                        <div style={{ fontSize: 26, fontWeight: 700, color: card.color, marginTop: 2 }}>
                                             {card.value}
                                         </div>
                                     </div>
@@ -466,7 +376,7 @@ const Dashboard: React.FC = () => {
                     </ProCard>
                 </Col>
                 <Col xs={24} lg={8}>
-                    <div ref={nodeSectionRef}>
+                    <div>
                     <ProCard
                         title={
                             <Space>
@@ -507,7 +417,7 @@ const Dashboard: React.FC = () => {
                     </div>
                 </Col>
                 <Col xs={24} lg={8}>
-                    <div ref={taskSectionRef}>
+                    <div>
                     <ProCard
                         title={
                             <Space>
@@ -559,7 +469,7 @@ const Dashboard: React.FC = () => {
             </Row>
 
             {/* Agent Workload Dashboard */}
-            <div ref={chartSectionRef}>
+            <div>
             <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
                 <Col xs={24} lg={12}>
                     <ProCard

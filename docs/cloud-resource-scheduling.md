@@ -105,7 +105,7 @@ stateDiagram-v2
 
 - Cloud-Init 中注入给 Agent 的 `--server` / `--api` 地址必须是可路由地址。系统会优先使用 `ARGUS_PUBLIC_IP` 与 `ARGUS_PUBLIC_API`；未设置时会自动探测本机的出站地址，不再把 `0.0.0.0` 写入实例脚本。
 - 默认 Cloud-Init 模板与前端模板保持一致，Agent 启动参数使用 `--tags "cloud=true,auto_scaled=true,target_type=all"`；若配置了 PSK，则额外追加 `--psk`。
-- 一键配置在返回成功前会同步校验 `argus/agent/dddd-agent-linux-amd64` 是否已经可用；缺失时会尝试上传，仍不可用则直接报错，避免后续新实例反复下载 404。
+- 一键配置在返回成功前会同步校验 `argus/agent/argus-agent-linux-amd64` 是否已经可用；缺失时会尝试上传，仍不可用则直接报错，避免后续新实例反复下载 404。
 
 **OSS 分发完整流程：**
 
@@ -117,9 +117,9 @@ sequenceDiagram
     participant ECS as 新建 ECS 实例
 
     Note over Admin,Server: Phase 1: 构建 + 上传
-    Admin->>Server: build.sh --component dddd-agent
+    Admin->>Server: build.sh --component argus-agent
     Admin->>Server: POST /cloud/accounts/:id/oss/upload
-    Server->>OSS: 分片上传 release/dddd-agent-* (~100MB)
+    Server->>OSS: 分片上传 release/argus-agent-* (~100MB)
     OSS-->>Server: 上传完成
 
     Note over Server,ECS: Phase 2: 实例创建 + 自动部署

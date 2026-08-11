@@ -203,6 +203,9 @@ info:
   severity: medium
   description: Description here
   tags: tag1,tag2
+  metadata:
+    argus-execution-class: detection
+    argus-risk-level: low
 
 http:
   - method: GET
@@ -396,6 +399,28 @@ http:
         return <Tag color="orange">草稿</Tag>;
     };
 
+    const getExecutionClassTag = (value: API.PocRuleMetadata['execution_class']) => (
+        value === 'verification'
+            ? <Tag color="purple">验证型</Tag>
+            : <Tag color="blue">检测型</Tag>
+    );
+
+    const getRiskTag = (record: API.PocRuleMetadata) => {
+        const labels: Record<API.PocRuleMetadata['risk_level'], string> = {
+            unknown: '风险未分类', low: '低风险', medium: '中风险', high: '高风险',
+        };
+        const colors: Record<API.PocRuleMetadata['risk_level'], string> = {
+            unknown: 'orange', low: 'green', medium: 'gold', high: 'red',
+        };
+        return (
+            <Tooltip title={record.requires_second_confirmation ? '执行前必须二次确认' : '执行前仍需明确确认'}>
+                <Tag color={colors[record.risk_level]} icon={record.requires_second_confirmation ? <WarningOutlined /> : undefined}>
+                    {labels[record.risk_level]}
+                </Tag>
+            </Tooltip>
+        );
+    };
+
     const currentPocFileName = isNew ? newFileName.trim() : currentArsenal?.FileName || '';
     const currentPocUsage = currentPocFileName ? getUsage(currentPocFileName) : [];
 
@@ -445,6 +470,21 @@ http:
                     </Tooltip>
                 );
             },
+        },
+        {
+            title: (
+                <Tooltip title="执行类别和执行风险独立于漏洞严重度；所有 POC 只能在风险验证流程中确认后执行。">
+                    <span>执行治理</span>
+                </Tooltip>
+            ),
+            key: 'execution_governance',
+            width: 190,
+            render: (_, record) => (
+                <Space direction="vertical" size={2}>
+                    {getExecutionClassTag(record.execution_class)}
+                    {getRiskTag(record)}
+                </Space>
+            ),
         },
         {
             title: 'Hash',
@@ -522,6 +562,14 @@ http:
                 </Space>
             </div>
 
+            <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 12 }}
+                message="POC 不随普通资产扫描自动执行"
+                description="所有 POC 仅能通过风险验证流程显式确认；高风险或未分类规则必须二次确认。需要利用、持久化或状态变更的能力必须使用独立 EXP 包。"
+            />
+
             <ProCard className="glass-card" style={{ background: 'transparent', border: 'none', padding: 0 }}>
                 {visibleRows.length === 0 && !loading && !usageLoading ? (
                     <Empty description="暂无 POC 规则" style={{ padding: '60px 0' }} />
@@ -543,6 +591,7 @@ http:
                             },
                         }}
                         size="middle"
+                        scroll={{ x: 1180 }}
                     />
                 )}
             </ProCard>

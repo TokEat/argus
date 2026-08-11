@@ -1,9 +1,9 @@
 package arsenal
 
 import (
-	"dddd/scanner/lib/ddfinger"
-	"dddd/scanner/structs"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/lib/ddfinger"
+	"github.com/P0lar1ght/argus/scanner/structs"
 	"strings"
 )
 

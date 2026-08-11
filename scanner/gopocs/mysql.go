@@ -2,10 +2,10 @@ package gopocs
 
 import (
 	"database/sql"
-	"dddd/scanner/ddout"
-	"dddd/scanner/structs"
 	_ "embed"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/structs"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/projectdiscovery/gologger"
 	"time"

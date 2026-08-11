@@ -1,4 +1,4 @@
-module dddd
+module github.com/P0lar1ght/argus
 
 go 1.25.4
 
@@ -17,7 +17,7 @@ require (
 	github.com/shirou/gopsutil/v3 v3.23.7
 	github.com/sijms/go-ora/v2 v2.7.9
 	github.com/tomatome/grdp v0.1.0
-	github.com/user/dddd-proto v0.0.0-00010101000000-000000000000
+	github.com/P0lar1ght/argus/shared/proto v0.0.0-00010101000000-000000000000
 	google.golang.org/grpc v1.80.0
 	gorm.io/gorm v1.31.1
 )
@@ -317,7 +317,7 @@ require (
 	golang.org/x/mod v0.34.0 // indirect
 	golang.org/x/net v0.53.0
 	golang.org/x/oauth2 v0.34.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
+	golang.org/x/sys v0.43.0
 	golang.org/x/text v0.36.0 // indirect
 	golang.org/x/tools v0.43.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
@@ -342,6 +342,6 @@ replace (
 	github.com/tomatome/grdp v0.1.0 => github.com/shadow1ng/grdp v1.0.3
 )
 
-replace github.com/user/dddd-proto => ./shared/proto
+replace github.com/P0lar1ght/argus/shared/proto => ./shared/proto
 
 replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20240318140521-94a12d6c2237

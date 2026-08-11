@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React from 'react';
 import { App, Button, Tabs } from 'antd';
 import {
     BugOutlined,
@@ -11,7 +11,6 @@ import {
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { canAccessRole } from '../../utils/auth';
-import gsap from 'gsap';
 import NetworkCanvas from '../../components/NetworkCanvas';
 import { exportArsenalSeedDB } from '../../services/api';
 
@@ -24,7 +23,6 @@ interface ConfigLayoutProps {
 const ConfigLayout: React.FC<ConfigLayoutProps> = ({ children }) => {
     const navigate = useNavigate();
     const location = useLocation();
-    const pageRef = useRef<HTMLDivElement>(null);
     const { message } = App.useApp();
     const canExportSeedDB = canAccessRole('admin');
 
@@ -47,20 +45,6 @@ const ConfigLayout: React.FC<ConfigLayoutProps> = ({ children }) => {
         }
     };
 
-    /* GSAP entrance */
-    useEffect(() => {
-        if (!pageRef.current) return;
-        const els = pageRef.current.querySelectorAll('.config-animate-in');
-        if (els.length === 0) return;
-        const ctx = gsap.context(() => {
-            gsap.from(els, {
-                y: 24, opacity: 0, duration: 0.45,
-                stagger: 0.08, ease: 'power2.out', clearProps: 'transform,opacity',
-            });
-        }, pageRef);
-        return () => ctx.revert();
-    }, [location.pathname]);
-
     const tabItems = [
         { key: '/config/workflow', label: 'Workflow 编排', icon: <ApartmentOutlined /> },
         { key: '/config/poc', label: 'POC 弹药库', icon: <BugOutlined /> },
@@ -71,9 +55,9 @@ const ConfigLayout: React.FC<ConfigLayoutProps> = ({ children }) => {
     ];
 
     return (
-        <div ref={pageRef} style={{ position: 'relative', overflow: 'hidden' }}>
+        <div style={{ position: 'relative', overflow: 'hidden' }}>
             <NetworkCanvas color="#8b5cf6" count={25} speed={0.12} linkDist={90} />
-            <div className="config-animate-in" style={{
+            <div style={{
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
@@ -102,7 +86,7 @@ const ConfigLayout: React.FC<ConfigLayoutProps> = ({ children }) => {
                     </Button>
                 )}
             </div>
-            <div className="config-animate-in" style={{ position: 'relative', zIndex: 1 }}>
+            <div style={{ position: 'relative', zIndex: 1 }}>
                 {children}
             </div>
         </div>

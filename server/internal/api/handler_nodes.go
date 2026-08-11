@@ -3,11 +3,10 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 	"time"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
-	"github.com/user/dddd-server/internal/db"
 )
 
 // 提供给 Agent 轮询其需强制退出的指令以及规则重载指令
@@ -29,16 +28,10 @@ func getAgentCommands(c *gin.Context) {
 	if err := scopedNodeQuery(tenantID).Select("rule_version").Where("agent_id = ?", id).Limit(1).Find(&nodes).Error; err == nil && len(nodes) > 0 {
 		reloadRules = shouldAgentReloadRules(nodes[0].RuleVersion, ruleVersion)
 	}
-	apiConfigHash := currentAPIConfigHashValue(tenantID)
-	agentAPIConfigHash := strings.TrimSpace(c.Query("api_config_hash"))
-	syncAPIConfig := agentAPIConfigHash != apiConfigHash
-
 	c.JSON(http.StatusOK, gin.H{
-		"cancel_tasks":    cancels,
-		"reload_rules":    reloadRules,
-		"rule_version":    ruleVersion,
-		"sync_api_config": syncAPIConfig,
-		"api_config_hash": apiConfigHash,
+		"cancel_tasks": cancels,
+		"reload_rules": reloadRules,
+		"rule_version": ruleVersion,
 	})
 }
 

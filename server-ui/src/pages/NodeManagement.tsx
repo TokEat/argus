@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Typography, Tag, Space, Button, Spin, Tooltip, Popover, Badge, Empty, Progress, List, Row, Col, Divider, message, Popconfirm } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
@@ -20,7 +20,6 @@ import {
 import { cleanOfflineNodes, connectWebSocket, deleteNode, getNodes, revokeNodeToken } from '../services/api';
 import { useAutoContext } from '../contexts/GlobalAIContext';
 import { canAccessRole } from '../utils/auth';
-import gsap from 'gsap';
 import NetworkCanvas from '../components/NetworkCanvas';
 
 const { Title, Text } = Typography;
@@ -48,7 +47,6 @@ const NodeManagement: React.FC = () => {
     const [now, setNow] = useState(0);
     const canManageNodes = canAccessRole('operator');
     const navigate = useNavigate();
-    const cardsRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         const updateNow = () => setNow(Date.now());
@@ -56,20 +54,6 @@ const NodeManagement: React.FC = () => {
         const timer = window.setInterval(updateNow, 30000);
         return () => window.clearInterval(timer);
     }, []);
-
-    /* GSAP card entrance */
-    useEffect(() => {
-        if (!cardsRef.current || nodes.length === 0) return;
-        const cards = cardsRef.current.querySelectorAll('.node-card');
-        if (cards.length === 0) return;
-        const ctx = gsap.context(() => {
-            gsap.from(cards, {
-                y: 30, opacity: 0, duration: 0.45,
-                stagger: 0.06, ease: 'power2.out', clearProps: 'transform,opacity',
-            });
-        }, cardsRef);
-        return () => ctx.revert();
-    }, [nodes]);
 
     const fetchNodes = async () => {
         setLoading(true);
@@ -222,7 +206,7 @@ const NodeManagement: React.FC = () => {
         return (
             <Col xs={24} sm={12} md={12} lg={8} xl={6} key={record.AgentID}>
                 <ProCard 
-                    className="glass-card node-card hover-lift"
+                    className="glass-card hover-lift"
                     style={{ 
                         borderRadius: 16, 
                         border: '1px solid rgba(255, 255, 255, 0.4)',
@@ -416,7 +400,7 @@ const NodeManagement: React.FC = () => {
                     style={{ padding: '100px 0', background: 'rgba(255,255,255,0.4)', borderRadius: 16 }}
                 />
             ) : (
-                <div ref={cardsRef} style={{ position: 'relative', zIndex: 1 }}>
+                <div style={{ position: 'relative', zIndex: 1 }}>
                     <Row gutter={[20, 20]}>
                         {nodes.map(node => renderNodeCard(node))}
                     </Row>
@@ -424,9 +408,6 @@ const NodeManagement: React.FC = () => {
             )}
             
             <style>{`
-                .node-card {
-                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-                }
                 .hover-lift:hover {
                     transform: translateY(-4px);
                     box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.08), 0 4px 12px -4px rgba(0, 0, 0, 0.04);

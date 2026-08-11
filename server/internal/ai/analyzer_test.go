@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/glebarez/sqlite"
-	"github.com/user/dddd-server/internal/db"
 	"gorm.io/gorm"
 )
 

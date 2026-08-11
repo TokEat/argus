@@ -11,11 +11,13 @@ import (
 	"io"
 	"log"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
-	pb "github.com/user/dddd-proto/go/scan"
-	"github.com/user/dddd-server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/db"
+	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
@@ -27,6 +29,62 @@ import (
 
 const agentSessionTTL = 7 * 24 * time.Hour
 const retryQueuedMarker = "queued"
+
+func agentSupportsRiskValidation(version string) bool {
+	return agentSupportsVersion(version, 2, 4, 0)
+}
+
+func agentSupportsCheckpointResume(version string) bool {
+	return agentSupportsVersion(version, 2, 6, 0)
+}
+
+func agentSupportsVersion(version string, requiredMajor, requiredMinor, requiredPatch int) bool {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	parts := strings.Split(version, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	major, majorErr := strconv.Atoi(parts[0])
+	minor, minorErr := strconv.Atoi(parts[1])
+	patch, patchErr := strconv.Atoi(parts[2])
+	if majorErr != nil || minorErr != nil || patchErr != nil || major < 0 || minor < 0 || patch < 0 {
+		return false
+	}
+	if major != requiredMajor {
+		return major > requiredMajor
+	}
+	if minor != requiredMinor {
+		return minor > requiredMinor
+	}
+	return patch >= requiredPatch
+}
+
+func isRiskValidationTask(task *pb.Task) bool {
+	if task == nil || len(task.Config) == 0 {
+		return false
+	}
+	var internal struct {
+		ExecutionMode string
+	}
+	return json.Unmarshal(task.Config, &internal) == nil && strings.EqualFold(strings.TrimSpace(internal.ExecutionMode), "risk_validation")
+}
+
+func taskRequestsUnconfirmedPOC(task *pb.Task) bool {
+	if task == nil || len(task.Config) == 0 || isRiskValidationTask(task) {
+		return false
+	}
+	var config struct {
+		NoPoc             *bool
+		GolangPoc         bool
+		DisableGeneralPoc *bool
+		PocNameForSearch  string
+	}
+	if json.Unmarshal(task.Config, &config) != nil {
+		return false
+	}
+	return (config.NoPoc != nil && !*config.NoPoc) || config.GolangPoc ||
+		(config.DisableGeneralPoc != nil && !*config.DisableGeneralPoc) || strings.TrimSpace(config.PocNameForSearch) != ""
+}
 
 // Server 封装了对 Agent 通信的 gRPC 服务端
 type Server struct {
@@ -52,6 +110,13 @@ func heartbeatRunningTasksExpr(reported int) interface{} {
 		return gorm.Expr("MAX(running_tasks, ?)", reported)
 	}
 	return gorm.Expr("GREATEST(running_tasks, ?)", reported)
+}
+
+func decrementRunningTasksExpr() interface{} {
+	if db.DB != nil && db.DB.Dialector != nil && db.DB.Dialector.Name() == "sqlite" {
+		return gorm.Expr("MAX(running_tasks - 1, 0)")
+	}
+	return gorm.Expr("GREATEST(running_tasks - 1, 0)")
 }
 
 var (
@@ -352,9 +417,9 @@ func (s *Server) markSubscribedAgentAlive(agentID string, freeSlots int32) {
 // ============================================================================
 
 func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task, error) {
-	var nodeStatus string
-	if err := db.DB.Model(&db.Node{}).Select("status").Where("agent_id = ?", req.AgentId).Scan(&nodeStatus).Error; err == nil && nodeStatus != "" && !strings.EqualFold(nodeStatus, "Alive") {
-		log.Printf("[ClaimTask] Agent %s is %s; skipping task claim", req.AgentId, nodeStatus)
+	var claimCandidate db.Node
+	if err := db.DB.Select("status", "version", "rule_version").Where("agent_id = ?", req.AgentId).First(&claimCandidate).Error; err == nil && claimCandidate.Status != "" && !strings.EqualFold(claimCandidate.Status, "Alive") {
+		log.Printf("[ClaimTask] Agent %s is %s; skipping task claim", req.AgentId, claimCandidate.Status)
 		return &pb.Task{}, nil
 	}
 
@@ -388,7 +453,7 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 
 		// DB 状态机校验：只允许 Pending / Recovered 任务进入执行态。
 		var sub db.SubTask
-		if err := db.DB.Select("id", "tenant_id", "status", "root_task_id").Where("id = ?", task.TaskId).First(&sub).Error; err != nil {
+		if err := db.DB.Where("id = ?", task.TaskId).First(&sub).Error; err != nil {
 			// 队列里有脏消息（DB 不存在），直接 ACK 丢弃避免死循环。
 			if s.ackTaskHook != nil && msgID != "" {
 				_ = s.ackTaskHook(msgID)
@@ -411,6 +476,7 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 						"agent_id":      "",
 						"stream_msg_id": "",
 					}).Error
+				_ = db.SyncTaskBatchStatuses(db.DB, sub.TenantID, sub.RootTaskID)
 				log.Printf("[ClaimTask] Dropped paused task message %s under root %s", task.TaskId, sub.RootTaskID)
 				continue
 			}
@@ -438,11 +504,13 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 			}
 			_ = db.DB.Model(&db.SubTask{}).Where("id = ?", sub.ID).
 				Updates(map[string]interface{}{
-					"status":        "Cancelled",
-					"agent_id":      "",
-					"stream_msg_id": "",
+					"status":         "Cancelled",
+					"stream_msg_id":  "",
+					"failure_reason": "cancelled before Agent assignment",
+					"finished_at":    time.Now(),
 				}).Error
 			if sub.RootTaskID != "" {
+				_ = db.SyncTaskBatchStatuses(db.DB, sub.TenantID, sub.RootTaskID)
 				db.RefreshRootTaskStatus(sub.RootTaskID)
 			}
 			log.Printf("[ClaimTask] Dropped cancelled task %s before assignment", task.TaskId)
@@ -454,7 +522,6 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 			}
 			_ = db.DB.Model(&db.SubTask{}).Where("id = ?", sub.ID).
 				Updates(map[string]interface{}{
-					"agent_id":      "",
 					"stream_msg_id": "",
 				}).Error
 			log.Printf("[ClaimTask] Dropped terminal task message %s (status=%s)", task.TaskId, sub.Status)
@@ -484,6 +551,49 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 			return &pb.Task{}, nil
 		}
 
+		if taskRequestsUnconfirmedPOC(task) {
+			if s.ackTaskHook == nil {
+				return &pb.Task{}, fmt.Errorf("reject unconfirmed POC task %s: queue ACK hook is unavailable", task.TaskId)
+			}
+			if err := s.ackTaskHook(msgID); err != nil {
+				return &pb.Task{}, fmt.Errorf("reject unconfirmed POC task %s: %w", task.TaskId, err)
+			}
+			finishedAt := time.Now()
+			if err := db.DB.Model(&db.SubTask{}).
+				Where("id = ? AND tenant_id = ? AND status IN ?", sub.ID, sub.TenantID, claimableSubTaskStatuses).
+				Updates(map[string]interface{}{
+					"status": "Failed", "failure_reason": "POC execution requires a confirmed risk-validation batch",
+					"finished_at": finishedAt, "agent_id": "", "stream_msg_id": "",
+				}).Error; err != nil {
+				return &pb.Task{}, fmt.Errorf("record unconfirmed POC rejection for task %s: %w", task.TaskId, err)
+			}
+			if sub.RootTaskID != "" {
+				_ = db.SyncTaskBatchStatuses(db.DB, sub.TenantID, sub.RootTaskID)
+				db.RefreshRootTaskStatus(sub.RootTaskID)
+			}
+			log.Printf("[ClaimTask] Rejected unconfirmed POC execution in ordinary task %s", task.TaskId)
+			continue
+		}
+
+		if taskRequestsLegacyProviderDiscovery(task) {
+			if err := s.rejectLegacyProviderTask(task, msgID, sub); err != nil {
+				return &pb.Task{}, err
+			}
+			continue
+		}
+
+		if isRiskValidationTask(task) && (!agentSupportsRiskValidation(claimCandidate.Version) || strings.TrimSpace(claimCandidate.RuleVersion) != strings.TrimSpace(sub.RuleVersion)) {
+			if s.returnTaskHook == nil {
+				return &pb.Task{}, fmt.Errorf("return risk validation task %s for incompatible Agent: queue return hook is unavailable", task.TaskId)
+			}
+			if err := s.returnTaskHook(task, msgID); err != nil {
+				return &pb.Task{}, fmt.Errorf("return risk validation task %s for incompatible Agent: %w", task.TaskId, err)
+			}
+			log.Printf("[ClaimTask] Returned risk validation task %s: Agent %s version=%q rules=%q requires version>=v2.4.0 rules=%q",
+				task.TaskId, req.AgentId, claimCandidate.Version, claimCandidate.RuleVersion, sub.RuleVersion)
+			return &pb.Task{}, nil
+		}
+
 		// 标签路由检查
 		if !s.matchAgentSelector(task.TaskId, nodeTagsJSON) {
 			log.Printf("[ClaimTask] Task %s selector mismatch for Agent %s, returning to queue (attempt %d)",
@@ -492,6 +602,84 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 				_ = s.returnTaskHook(task, msgID)
 			}
 			continue
+		}
+
+		// Historical reuse is planned only after the destination Agent is known,
+		// because private network zones are derived from that Agent's registered
+		// tags. A full reuse completes the Attempt before assignment; partial
+		// target reuse sends only the remaining targets to the Agent.
+		reuse := db.ScanReuseAtClaimResult{}
+		if s.ackTaskHook != nil && msgID != "" {
+			plannedReuse, reuseErr := db.ApplyReusableCoverageAtClaim(db.DB, sub.ID, sub.TenantID, req.AgentId)
+			if reuseErr != nil {
+				if s.returnTaskHook == nil {
+					return &pb.Task{}, fmt.Errorf("return task %s after reuse planning failure: queue return hook is unavailable: %w", task.TaskId, reuseErr)
+				}
+				if err := s.returnTaskHook(task, msgID); err != nil {
+					return &pb.Task{}, fmt.Errorf("return task %s after reuse planning failure: %w", task.TaskId, err)
+				}
+				log.Printf("[ClaimTask] Reuse planning deferred task %s: %v", task.TaskId, reuseErr)
+				continue
+			}
+			reuse = plannedReuse
+			if reuse.FullyReused {
+				if sub.RootTaskID != "" {
+					_ = db.SyncTaskBatchStatuses(db.DB, sub.TenantID, sub.RootTaskID)
+					db.RefreshRootTaskStatus(sub.RootTaskID)
+				}
+				if err := s.ackTaskHook(msgID); err != nil {
+					return &pb.Task{}, fmt.Errorf("ack fully reused task %s: %w", task.TaskId, err)
+				}
+				log.Printf("[ClaimTask] Completed task %s from project coverage (targets=%d stages=%d)", task.TaskId, reuse.ReusedTargets, reuse.ReusedStages)
+				continue
+			}
+		}
+
+		// The Scanner executes one target as a whole pipeline. A fingerprint
+		// WorkKey therefore acts as the execution mutex for that target: if an
+		// identical pipeline is already active, park this Attempt and ACK its
+		// queue message without consuming Agent capacity. Terminal resolution
+		// will enqueue it for a fresh coverage decision.
+		workClaimPlan := db.ScanWorkClaimPlan{}
+		if s.ackTaskHook != nil && msgID != "" {
+			claimTargets := task.Targets
+			if reuse.ReusedTargets > 0 {
+				claimTargets = reuse.RemainingTargets
+			}
+			plannedClaims, claimErr := db.PlanScanWorkClaimsAtClaim(db.DB, sub.ID, sub.TenantID, req.AgentId, claimTargets)
+			if claimErr != nil {
+				if s.returnTaskHook == nil {
+					return &pb.Task{}, fmt.Errorf("return task %s after work claim planning failure: queue return hook is unavailable: %w", task.TaskId, claimErr)
+				}
+				if err := s.returnTaskHook(task, msgID); err != nil {
+					return &pb.Task{}, fmt.Errorf("return task %s after work claim planning failure: %w", task.TaskId, err)
+				}
+				log.Printf("[ClaimTask] Work claim planning deferred task %s: %v", task.TaskId, claimErr)
+				continue
+			}
+			workClaimPlan = plannedClaims
+			attached, claimCount, attachErr := db.AttachAttemptToActiveWorkClaims(db.DB, workClaimPlan)
+			if attachErr != nil {
+				if s.returnTaskHook == nil {
+					return &pb.Task{}, fmt.Errorf("return task %s after work claim attachment failure: queue return hook is unavailable: %w", task.TaskId, attachErr)
+				}
+				if err := s.returnTaskHook(task, msgID); err != nil {
+					return &pb.Task{}, fmt.Errorf("return task %s after work claim attachment failure: %w", task.TaskId, err)
+				}
+				log.Printf("[ClaimTask] Work claim attachment deferred task %s: %v", task.TaskId, attachErr)
+				continue
+			}
+			if attached {
+				if err := s.ackTaskHook(msgID); err != nil {
+					return &pb.Task{}, fmt.Errorf("ack work claim waiter %s: %w", task.TaskId, err)
+				}
+				if sub.RootTaskID != "" {
+					_ = db.SyncTaskBatchStatuses(db.DB, sub.TenantID, sub.RootTaskID)
+					db.RefreshRootTaskStatus(sub.RootTaskID)
+				}
+				log.Printf("[ClaimTask] Attached task %s to %d active project work claim(s)", task.TaskId, claimCount)
+				continue
+			}
 		}
 
 		if err := db.CheckTenantSubTaskClaimQuota(db.DB, sub.TenantID); err != nil {
@@ -522,7 +710,7 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 		}
 		var claimNode db.Node
 		claimNodeErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("agent_id", "tenant_id", "status").
+			Select("agent_id", "tenant_id", "status", "version", "rule_version", "tags").
 			Where("agent_id = ? AND tenant_id = ? AND UPPER(status) = ?", req.AgentId, sub.TenantID, "ALIVE").
 			First(&claimNode).Error
 		if claimNodeErr != nil {
@@ -536,15 +724,99 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 			log.Printf("[ClaimTask] Agent %s stopped accepting work before lease commit; returned task %s", req.AgentId, task.TaskId)
 			return &pb.Task{}, nil
 		}
+		if err := db.ValidateReusableCoverageLinksAtLease(tx, sub.ID, sub.TenantID, req.AgentId, reuse.Links); err != nil {
+			tx.Rollback()
+			if s.returnTaskHook == nil {
+				return &pb.Task{}, fmt.Errorf("return task %s after reusable coverage changed: queue return hook is unavailable: %w", task.TaskId, err)
+			}
+			if returnErr := s.returnTaskHook(task, msgID); returnErr != nil {
+				return &pb.Task{}, fmt.Errorf("return task %s after reusable coverage changed: %w", task.TaskId, returnErr)
+			}
+			log.Printf("[ClaimTask] Replanned task %s after reusable coverage changed: %v", task.TaskId, err)
+			continue
+		}
+		var resumeLinks []db.TaskCoverageLink
+		var resumeConfig []byte
+		useResumePlan := reuse.ResumePlan != nil && len(reuse.ResumePlan.ReusedStages) > 0 &&
+			agentSupportsCheckpointResume(claimNode.Version) && strings.TrimSpace(claimNode.RuleVersion) == strings.TrimSpace(sub.RuleVersion)
+		if useResumePlan {
+			resumeLinks, err = db.ValidateResumePlanAtLease(tx, sub.ID, sub.TenantID, req.AgentId, reuse.ResumePlan, reuse.ResumePlanHash)
+			if err == nil {
+				resumeConfig, err = configWithResumePlan(sub.Config, reuse.ResumePlan, reuse.ResumePlanHash)
+			}
+			if err != nil {
+				tx.Rollback()
+				if s.returnTaskHook == nil {
+					return &pb.Task{}, fmt.Errorf("return task %s after resume plan changed: queue return hook is unavailable: %w", task.TaskId, err)
+				}
+				if returnErr := s.returnTaskHook(task, msgID); returnErr != nil {
+					return &pb.Task{}, fmt.Errorf("return task %s after resume plan changed: %w", task.TaskId, returnErr)
+				}
+				log.Printf("[ClaimTask] Replanned task %s after resume evidence changed: %v", task.TaskId, err)
+				continue
+			}
+		}
+		acquiredClaims, err := db.AcquireScanWorkClaimsAtLease(tx, workClaimPlan)
+		if err != nil {
+			tx.Rollback()
+			if s.returnTaskHook == nil {
+				return &pb.Task{}, fmt.Errorf("return task %s after work claim acquisition failure: queue return hook is unavailable: %w", task.TaskId, err)
+			}
+			if returnErr := s.returnTaskHook(task, msgID); returnErr != nil {
+				return &pb.Task{}, fmt.Errorf("return task %s after work claim acquisition failure: %w", task.TaskId, returnErr)
+			}
+			log.Printf("[ClaimTask] Replanned task %s after work claim acquisition changed: %v", task.TaskId, err)
+			continue
+		}
+		if acquiredClaims.Conflict {
+			tx.Rollback()
+			attached, claimCount, attachErr := db.AttachAttemptToActiveWorkClaims(db.DB, workClaimPlan)
+			if attachErr != nil {
+				if s.returnTaskHook == nil {
+					return &pb.Task{}, fmt.Errorf("return raced work claim task %s: queue return hook is unavailable: %w", task.TaskId, attachErr)
+				}
+				if returnErr := s.returnTaskHook(task, msgID); returnErr != nil {
+					return &pb.Task{}, fmt.Errorf("return raced work claim task %s: %w", task.TaskId, returnErr)
+				}
+				continue
+			}
+			if attached {
+				if err := s.ackTaskHook(msgID); err != nil {
+					return &pb.Task{}, fmt.Errorf("ack raced work claim waiter %s: %w", task.TaskId, err)
+				}
+				log.Printf("[ClaimTask] Attached raced task %s to %d active project work claim(s)", task.TaskId, claimCount)
+				continue
+			}
+			if s.returnTaskHook == nil {
+				return &pb.Task{}, fmt.Errorf("return task %s after work claim race: queue return hook is unavailable", task.TaskId)
+			}
+			if err := s.returnTaskHook(task, msgID); err != nil {
+				return &pb.Task{}, fmt.Errorf("return task %s after work claim race: %w", task.TaskId, err)
+			}
+			continue
+		}
 
 		// 认领成功：CAS 更新 DB 状态，避免并发状态漂移（例如被取消/超时回收）
+		attemptUpdates := map[string]interface{}{
+			"status":        "Running",
+			"agent_id":      req.AgentId,
+			"stream_msg_id": msgID,
+			"started_at":    time.Now(),
+		}
+		if reuse.ReusedTargets > 0 {
+			remainingJSON, err := json.Marshal(reuse.RemainingTargets)
+			if err != nil {
+				tx.Rollback()
+				if s.returnTaskHook != nil {
+					_ = s.returnTaskHook(task, msgID)
+				}
+				return &pb.Task{}, fmt.Errorf("encode remaining targets for task %s: %w", task.TaskId, err)
+			}
+			attemptUpdates["chunk_targets"] = string(remainingJSON)
+		}
 		updateRes := tx.Model(&db.SubTask{}).
 			Where("id = ? AND tenant_id = ? AND status IN ?", task.TaskId, sub.TenantID, claimableSubTaskStatuses).
-			Updates(map[string]interface{}{
-				"status":        "Running",
-				"agent_id":      req.AgentId,
-				"stream_msg_id": msgID,
-			})
+			Updates(attemptUpdates)
 		if updateRes.Error != nil {
 			tx.Rollback()
 			if s.returnTaskHook != nil {
@@ -562,6 +834,45 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 			log.Printf("[ClaimTask] Task %s state changed before claim commit, returned to queue", task.TaskId)
 			continue
 		}
+		for index := range reuse.Links {
+			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&reuse.Links[index]).Error; err != nil {
+				tx.Rollback()
+				if s.returnTaskHook != nil {
+					_ = s.returnTaskHook(task, msgID)
+				}
+				return &pb.Task{}, fmt.Errorf("record reusable coverage for task %s: %w", task.TaskId, err)
+			}
+		}
+		for index := range resumeLinks {
+			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&resumeLinks[index]).Error; err != nil {
+				tx.Rollback()
+				if s.returnTaskHook != nil {
+					_ = s.returnTaskHook(task, msgID)
+				}
+				return &pb.Task{}, fmt.Errorf("record resume coverage for task %s: %w", task.TaskId, err)
+			}
+		}
+		for index := range acquiredClaims.Links {
+			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&acquiredClaims.Links[index]).Error; err != nil {
+				tx.Rollback()
+				if s.returnTaskHook != nil {
+					_ = s.returnTaskHook(task, msgID)
+				}
+				return &pb.Task{}, fmt.Errorf("record executed work claim for task %s: %w", task.TaskId, err)
+			}
+		}
+		if sub.BatchID != "" {
+			batchUpdate := tx.Model(&db.TaskBatch{}).
+				Where("id = ? AND tenant_id = ? AND latest_attempt_id = ?", sub.BatchID, sub.TenantID, sub.ID).
+				Update("status", "Running")
+			if batchUpdate.Error != nil {
+				tx.Rollback()
+				if s.returnTaskHook != nil {
+					_ = s.returnTaskHook(task, msgID)
+				}
+				return &pb.Task{}, fmt.Errorf("update batch %s for task claim: %w", sub.BatchID, batchUpdate.Error)
+			}
+		}
 		if err := tx.Exec("UPDATE nodes SET running_tasks = running_tasks + 1 WHERE agent_id = ? AND tenant_id = ?", req.AgentId, sub.TenantID).Error; err != nil {
 			tx.Rollback()
 			if s.returnTaskHook != nil {
@@ -574,6 +885,14 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 				_ = s.returnTaskHook(task, msgID)
 			}
 			return &pb.Task{}, fmt.Errorf("commit task claim %s: %w", task.TaskId, err)
+		}
+		if reuse.ReusedTargets > 0 {
+			task.Targets = append([]string(nil), reuse.RemainingTargets...)
+			log.Printf("[ClaimTask] Reused project coverage for task %s (targets=%d stages=%d remaining=%d)", task.TaskId, reuse.ReusedTargets, reuse.ReusedStages, len(task.Targets))
+		}
+		if len(resumeConfig) > 0 {
+			task.Config = resumeConfig
+			log.Printf("[ClaimTask] Applied checkpoint resume for task %s (reused_stages=%d execute_stages=%d)", task.TaskId, len(reuse.ResumePlan.ReusedStages), len(reuse.ResumePlan.ExecutionStages))
 		}
 
 		// 更新 RootTask 状态
@@ -738,10 +1057,23 @@ func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb
 	}
 	log.Printf("[TaskComplete] SubTask %s by Agent %s => Status: %s", req.TaskId, req.AgentId, status)
 
+	finishedAt := time.Now()
+	failureReason := db.NormalizeAttemptFailureReason(req.ErrorMessage)
+	if failureReason == "" {
+		switch status {
+		case "FAILED":
+			failureReason = "Agent reported scan failure"
+		case "TIMEOUT":
+			failureReason = "Agent reported scan timeout"
+		case "CANCELLED":
+			failureReason = "scan attempt cancelled"
+		}
+	}
 	updates := map[string]interface{}{
-		"status":        status,
-		"agent_id":      "",
-		"stream_msg_id": "",
+		"status":         status,
+		"stream_msg_id":  "",
+		"failure_reason": failureReason,
+		"finished_at":    finishedAt,
 	}
 	completion := db.DB.Model(&db.SubTask{}).
 		Where("id = ? AND tenant_id = ? AND status = ?", req.TaskId, sub.TenantID, sub.Status)
@@ -756,10 +1088,27 @@ func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb
 		log.Printf("[TaskComplete] Ignored completion for %s because its lease or status changed", req.TaskId)
 		return &pb.Ack{Success: true, Message: "stale completion ignored"}, nil
 	}
+	sub.Status = status
+	sub.FailureReason = failureReason
+	sub.FinishedAt = &finishedAt
+	if sub.BatchID != "" {
+		batchUpdates := map[string]interface{}{"status": status}
+		if status == "DONE" {
+			batchUpdates["control_state"] = db.BatchControlActive
+		}
+		if err := db.DB.Model(&db.TaskBatch{}).
+			Where("id = ? AND tenant_id = ? AND latest_attempt_id = ?", sub.BatchID, sub.TenantID, sub.ID).
+			Updates(batchUpdates).Error; err != nil {
+			log.Printf("[TaskComplete] Failed to update batch %s status: %v", sub.BatchID, err)
+		}
+		if status == "CANCELLED" {
+			_ = db.SettleStoppedTaskBatch(db.DB, sub.TenantID, sub.BatchID, sub.ID)
+		}
+	}
 
 	// 仅在任务处于活跃态时扣减节点并发计数。
 	if currentStatus == "RUNNING" || currentStatus == "CANCELPENDING" {
-		db.DB.Exec("UPDATE nodes SET running_tasks = GREATEST(running_tasks - 1, 0) WHERE agent_id = ?", req.AgentId)
+		db.DB.Model(&db.Node{}).Where("agent_id = ?", req.AgentId).Update("running_tasks", decrementRunningTasksExpr())
 	}
 
 	// 终态统一 ACK，防止 FAILED/CANCELLED 任务在 MQ 中“复活”。
@@ -769,7 +1118,6 @@ func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb
 
 	// 失败批次拆分重试：对多目标失败批次执行二分拆分
 	if (status == "FAILED" || status == "TIMEOUT") && sub.RootTaskID != "" {
-		sub.Status = status
 		splitSubs, didSplit, _ := db.SplitFailedSubTask(&sub, false)
 		if didSplit && len(splitSubs) > 0 {
 			// 拆分成功，将两个子批次推入 urgent 队列优先调度。
@@ -781,6 +1129,22 @@ func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb
 			// 普通重试：单目标批次失败或无法拆分时，走常规重试流程
 			log.Printf("[Retry] Task %s failed, regular retry (%d/%d)", req.TaskId, prepared.RetryCount, prepared.MaxRetry)
 			s.enqueuePreparedRetry(prepared)
+		}
+	}
+
+	// Release the source's unique WorkClaims only after its terminal state is
+	// durable. Waiters are moved to Dispatching in the same DB transaction and
+	// then re-enqueued; a queue failure deliberately leaves them recoverable by
+	// the periodic dispatch reconciler.
+	readyWaiters, resolveErr := db.ResolveScanWorkClaimsForAttempt(db.DB, sub.ID)
+	if resolveErr != nil {
+		log.Printf("[WorkClaim] Failed to resolve terminal source %s: %v", sub.ID, resolveErr)
+	} else {
+		for _, waiter := range readyWaiters {
+			s.enqueueWorkClaimReplan(waiter)
+		}
+		if len(readyWaiters) > 0 {
+			log.Printf("[WorkClaim] Replanned %d waiter(s) after source %s became %s", len(readyWaiters), sub.ID, status)
 		}
 	}
 
@@ -825,7 +1189,56 @@ func (s *Server) enqueuePreparedRetry(sub db.SubTask) bool {
 		log.Printf("[Retry] Subtask %s queued but Pending transition failed: %v", sub.ID, update.Error)
 		return false
 	}
-	return update.RowsAffected == 1
+	if update.RowsAffected != 1 {
+		return false
+	}
+	if sub.BatchID != "" {
+		if err := db.DB.Model(&db.TaskBatch{}).
+			Where("id = ? AND tenant_id = ? AND latest_attempt_id = ?", sub.BatchID, sub.TenantID, sub.ID).
+			Update("status", "Pending").Error; err != nil {
+			log.Printf("[Retry] Batch %s Pending transition failed: %v", sub.BatchID, err)
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) enqueueWorkClaimReplan(sub db.SubTask) bool {
+	pbSub, err := db.SubTaskToProto(&sub)
+	if err != nil || pbSub == nil {
+		log.Printf("[WorkClaim] Failed to encode replanned subtask %s: %v", sub.ID, err)
+		return false
+	}
+	if s.requeueTaskHook == nil {
+		return false
+	}
+	if err := s.requeueTaskHook(pbSub); err != nil {
+		log.Printf("[WorkClaim] Failed to enqueue replanned subtask %s: %v", sub.ID, err)
+		return false
+	}
+
+	update := db.DB.Model(&db.SubTask{}).
+		Where("id = ? AND tenant_id = ? AND status = ?", sub.ID, sub.TenantID, "Dispatching").
+		Updates(map[string]interface{}{
+			"status":        "Pending",
+			"stream_msg_id": retryQueuedMarker,
+		})
+	if update.Error != nil {
+		log.Printf("[WorkClaim] Replanned subtask %s queued but Pending transition failed: %v", sub.ID, update.Error)
+		return false
+	}
+	if update.RowsAffected != 1 {
+		return false
+	}
+	if sub.BatchID != "" {
+		if err := db.DB.Model(&db.TaskBatch{}).
+			Where("id = ? AND tenant_id = ? AND latest_attempt_id = ?", sub.BatchID, sub.TenantID, sub.ID).
+			Update("status", "Pending").Error; err != nil {
+			log.Printf("[WorkClaim] Batch %s Pending transition failed: %v", sub.BatchID, err)
+			return false
+		}
+	}
+	return true
 }
 
 // ============================================================================
@@ -841,8 +1254,84 @@ func (s *Server) StreamResult(stream pb.AgentService_StreamResultServer) error {
 		if err != nil {
 			return err
 		}
+		if res.PayloadType == scanplan.StageObservationPayloadType {
+			event, err := validateStageObservationResult(res)
+			if err != nil {
+				return status.Error(codes.InvalidArgument, err.Error())
+			}
+			attempt, err := validateStageObservationOwnership(event)
+			if err != nil {
+				return status.Error(codes.PermissionDenied, err.Error())
+			}
+			merged, err := db.MergeStageObservationEvent(db.DB, attempt, event)
+			if err != nil {
+				return status.Error(codes.Internal, "merge coverage event: "+err.Error())
+			}
+			if db.WSBroadcastHook != nil {
+				db.WSBroadcastHook(attempt.TenantID, map[string]interface{}{
+					"type":                  "coverage_event",
+					"task_id":               attempt.RootTaskID,
+					"attempt_id":            attempt.ID,
+					"stage":                 event.Stage,
+					"outcome":               event.Outcome,
+					"observations_created":  merged.ObservationsCreated,
+					"coverages_created":     merged.CoveragesCreated,
+					"coverages_updated":     merged.CoveragesUpdated,
+					"coverages_invalidated": merged.CoveragesInvalidated,
+				})
+			}
+			continue
+		}
+		if res.PayloadType == scanplan.TimingEventPayloadType {
+			if err := persistTimingEvent(stream.Context(), res); err != nil {
+				return err
+			}
+			continue
+		}
 		db.AddResultAsync(res.TaskId, res.PayloadType, string(res.Payload))
 	}
+}
+
+func validateStageObservationResult(result *pb.ScanResult) (scanplan.StageObservationEvent, error) {
+	if result == nil || strings.TrimSpace(result.TaskId) == "" {
+		return scanplan.StageObservationEvent{}, errors.New("coverage event requires task_id")
+	}
+	var event scanplan.StageObservationEvent
+	if err := json.Unmarshal(result.Payload, &event); err != nil {
+		return scanplan.StageObservationEvent{}, fmt.Errorf("decode coverage event: %w", err)
+	}
+	if err := event.Validate(); err != nil {
+		return scanplan.StageObservationEvent{}, fmt.Errorf("validate coverage event: %w", err)
+	}
+	if event.AttemptID != strings.TrimSpace(result.TaskId) {
+		return scanplan.StageObservationEvent{}, errors.New("coverage event attempt_id does not match stream task_id")
+	}
+	return event, nil
+}
+
+func validateStageObservationOwnership(event scanplan.StageObservationEvent) (db.SubTask, error) {
+	var attempt db.SubTask
+	if err := db.DB.Where("id = ? AND agent_id = ? AND status IN ?", event.AttemptID, event.AgentID, activeSubTaskStatuses).
+		First(&attempt).Error; err != nil {
+		return db.SubTask{}, errors.New("coverage event does not belong to an active attempt assigned to this agent")
+	}
+	var assignedTargets []string
+	if err := json.Unmarshal([]byte(attempt.ChunkTargets), &assignedTargets); err != nil {
+		return db.SubTask{}, errors.New("assigned attempt targets are invalid")
+	}
+	allowed := make(map[string]struct{}, len(assignedTargets))
+	for _, target := range assignedTargets {
+		target = strings.TrimSpace(target)
+		if target != "" {
+			allowed[target] = struct{}{}
+		}
+	}
+	for _, target := range event.Targets {
+		if _, ok := allowed[target]; !ok {
+			return db.SubTask{}, fmt.Errorf("coverage target %q is outside the assigned attempt", target)
+		}
+	}
+	return attempt, nil
 }
 
 // ============================================================================
@@ -911,36 +1400,46 @@ func (s *Server) EmergencyDump(ctx context.Context, req *pb.EmergencyReq) (*pb.A
 			}
 		}
 
-		nextStatus := "Dispatching"
-		if db.NormalizeSubTaskStatus(sub.Status) == "CANCELPENDING" {
-			nextStatus = "Cancelled"
-		}
-
-		update := db.DB.Model(&db.SubTask{}).
-			Where(
-				"id = ? AND tenant_id = ? AND status = ? AND agent_id = ? AND stream_msg_id = ?",
-				sub.ID, sub.TenantID, sub.Status, sub.AgentID, sub.StreamMsgID,
-			).
-			Updates(map[string]interface{}{
-				"status":        nextStatus,
-				"agent_id":      "",
-				"stream_msg_id": "",
+		if db.IsStoppingAttemptStatus(sub.Status) {
+			finishedAt := time.Now()
+			update := db.DB.Model(&db.SubTask{}).
+				Where(
+					"id = ? AND tenant_id = ? AND status = ? AND agent_id = ? AND stream_msg_id = ?",
+					sub.ID, sub.TenantID, sub.Status, sub.AgentID, sub.StreamMsgID,
+				).
+				Updates(map[string]interface{}{
+					"status":         "Cancelled",
+					"stream_msg_id":  "",
+					"failure_reason": "cancelled during Spot instance termination",
+					"finished_at":    finishedAt,
+				})
+			if update.Error != nil || update.RowsAffected != 1 {
+				log.Printf("[EmergencyDump] Failed to settle cancelled attempt %s: %v", sub.ID, update.Error)
+				continue
+			}
+			released++
+			_ = db.SettleStoppedTaskBatch(db.DB, sub.TenantID, sub.BatchID, sub.ID)
+			_ = db.SyncTaskBatchStatuses(db.DB, sub.TenantID, sub.RootTaskID)
+		} else {
+			prepared, appended := db.AppendSubTaskAttempt(&sub, db.AttemptRetryOptions{
+				Trigger:              db.AttemptTriggerSpotRecovery,
+				TerminalStatus:       "Failed",
+				FailureReason:        "Agent lease interrupted by Spot instance termination",
+				ConsumeRetryBudget:   false,
+				UseCurrentTaskConfig: true,
 			})
-		if update.Error != nil {
-			log.Printf("[EmergencyDump] Failed to CAS subtask %s: %v", sub.ID, update.Error)
-			continue
-		}
-		if update.RowsAffected != 1 {
-			log.Printf("[EmergencyDump] Subtask %s lease already changed; skipping duplicate recovery", sub.ID)
-			continue
-		}
-		released++
-
-		if nextStatus == "Dispatching" {
-			prepared := sub
-			prepared.Status = "Dispatching"
-			prepared.AgentID = ""
-			prepared.StreamMsgID = ""
+			if !appended {
+				if db.SettlePausedTaskBatchAttempt(&sub, "Failed", "Agent lease interrupted while batch was paused") {
+					released++
+					if sub.RootTaskID != "" {
+						db.RefreshRootTaskStatus(sub.RootTaskID)
+					}
+					continue
+				}
+				log.Printf("[EmergencyDump] Attempt %s lease already changed; skipping duplicate recovery", sub.ID)
+				continue
+			}
+			released++
 			if s.enqueuePreparedRetry(prepared) {
 				requeued++
 			}

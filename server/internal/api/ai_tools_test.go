@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
+	aipkg "github.com/P0lar1ght/argus/server/internal/ai"
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
-	aipkg "github.com/user/dddd-server/internal/ai"
-	"github.com/user/dddd-server/internal/db"
 	"gorm.io/gorm"
 )
 
@@ -39,6 +39,10 @@ func setupAITestDB(t *testing.T) *gorm.DB {
 		&db.Credential{},
 		&db.RootTask{},
 		&db.SubTask{},
+		&db.TaskBatch{},
+		&db.TaskConfigRevision{},
+		&db.TaskAudit{},
+		&db.AssetDiscoveryAudit{},
 		&db.Node{},
 		&db.FingerprintHit{},
 		&db.Vulnerability{},
@@ -61,6 +65,11 @@ func setupAITestDB(t *testing.T) *gorm.DB {
 		&db.User{},
 		&db.CustomRole{},
 		&db.TenantQuota{},
+		&db.ScanObservation{},
+		&db.ScanCoverage{},
+		&db.ScanWorkClaim{},
+		&db.TaskCoverageLink{},
+		&db.ScanTimingEvent{},
 		&db.AIToolInvocation{},
 	); err != nil {
 		t.Fatalf("automigrate: %v", err)
@@ -296,6 +305,13 @@ func TestConfirmCopilotActionCreatesTaskDraftWithoutDispatch(t *testing.T) {
 	store.Model(&db.SubTask{}).Where("root_task_id = ?", root.ID).Count(&subtasks)
 	if subtasks != 0 || root.TotalTargets != 1 {
 		t.Fatalf("expected draft without dispatch, root=%+v subtasks=%d", root, subtasks)
+	}
+	var revision db.TaskConfigRevision
+	if err := store.First(&revision, "root_task_id = ? AND version = ?", root.ID, 1).Error; err != nil {
+		t.Fatalf("expected initial draft config revision: %v", err)
+	}
+	if root.CurrentConfigVersion != 1 || revision.ConfigHash == "" || revision.CreatedBy != "u1" {
+		t.Fatalf("unexpected draft config version: root=%+v revision=%+v", root, revision)
 	}
 }
 

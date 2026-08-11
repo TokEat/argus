@@ -1,0 +1,89 @@
+{
+  "schema_version": "argus.performance-baseline-set/v1",
+  "goal": "G32",
+  "issue": 168,
+  "captured_at": "2026-08-10T06:21:10+08:00",
+  "environment": {
+    "go_version": "go1.25.4",
+    "os": "windows",
+    "arch": "amd64",
+    "arsenal_sha256": "9f2907fffc945ffb3ce0b3fa15cb172651f51cecdb4468f6d9b065219760ce3e",
+    "scan_config_sha256": "d8b127c2450217b6e188010c6fc5e83756ada1a90a3637f130e440b45f956729",
+    "materialized_config_sha256": "fa994c0c65c7b922aac9cd96708422647b7ae16151181bbf5c31666a1b9d5a64"
+  },
+  "process_wall": [
+    {
+      "case": "g32-dddd-help-before",
+      "binary_sha256": "0700b4b7b2c26c5e5bb0468e2f42c74312e43792161922a68eb8a9e572a9d151",
+      "warmups": 3,
+      "samples": 30,
+      "min_ns": 395135800,
+      "p50_ns": 412033600,
+      "p95_ns": 466673100,
+      "max_ns": 526488700
+    },
+    {
+      "case": "g32-dddd-help-after",
+      "binary_sha256": "661e07c68fc5e140f0643edd393e1232d10624e39891c630caba31487d82f89c",
+      "warmups": 3,
+      "samples": 30,
+      "min_ns": 94644600,
+      "p50_ns": 101062500,
+      "p95_ns": 104528300,
+      "max_ns": 104966000
+    },
+    {
+      "case": "dddd-url-poc-off-before",
+      "binary_sha256": "0700b4b7b2c26c5e5bb0468e2f42c74312e43792161922a68eb8a9e572a9d151",
+      "warmups": 3,
+      "samples": 30,
+      "min_ns": 745623900,
+      "p50_ns": 758293700,
+      "p95_ns": 869837500,
+      "max_ns": 870117300
+    },
+    {
+      "case": "g32-dddd-url-poc-off-after",
+      "binary_sha256": "661e07c68fc5e140f0643edd393e1232d10624e39891c630caba31487d82f89c",
+      "warmups": 3,
+      "samples": 30,
+      "min_ns": 433922800,
+      "p50_ns": 441752500,
+      "p95_ns": 544693500,
+      "max_ns": 2450064600
+    }
+  ],
+  "gonmap_package_init": {
+    "before": {
+      "clock_ns": 292000000,
+      "allocated_bytes": 308323776,
+      "allocations": 1390918,
+      "probe_snapshot_loaded": true
+    },
+    "after": {
+      "clock_ns": 3000000,
+      "allocated_bytes": 5748320,
+      "allocations": 1299,
+      "probe_snapshot_loaded": false
+    }
+  },
+  "first_protocol_stage_sample": {
+    "duration_ns": 3280797800,
+    "outcome": "success",
+    "recognized_service": "http",
+    "poc_enabled": false
+  },
+  "acceptance": {
+    "dddd_help_p95_le_300ms": true,
+    "help_does_not_build_probe_snapshot": true,
+    "explicit_url_poc_off_p95_le_1s": true,
+    "first_protocol_stage_preserves_result": true
+  },
+  "notes": [
+    "Before and after use the same machine, Go toolchain, Arsenal, materialized config identity and warm-up policy.",
+    "The before binary is commit b79e668, including the focused G31 zero-duration timing compatibility fix. The after binary is the same source plus only the uncommitted G32 lazy gonmap change and plan documentation.",
+    "Package inittrace still includes the lightweight service-name table and static regular expressions after G32; the independent-process test proves the heavy probe snapshot remains absent until New or SetFilter.",
+    "The first protocol-stage duration includes probe construction and real localhost protocol identification and must not be interpreted as probe construction alone.",
+    "The after URL case had one 2.45s maximum outlier; its nearest-rank P95 remained 544.69ms and is the fixed acceptance statistic."
+  ]
+}

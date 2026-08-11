@@ -11,16 +11,17 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	aipkg "github.com/P0lar1ght/argus/server/internal/ai"
+	"github.com/P0lar1ght/argus/server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/scheduler"
 	"github.com/gin-gonic/gin"
-	aipkg "github.com/user/dddd-server/internal/ai"
-	"github.com/user/dddd-server/internal/db"
-	"github.com/user/dddd-server/internal/scheduler"
 )
 
 func ptrTime(v time.Time) *time.Time {
@@ -50,7 +51,7 @@ func TestShouldAgentReloadRules(t *testing.T) {
 	}
 }
 
-func TestGetAgentCommandsReportsAPIConfigSyncState(t *testing.T) {
+func TestGetAgentCommandsDoesNotExposeAPIConfigSyncState(t *testing.T) {
 	store := setupAITestDB(t)
 	if err := store.Create(&db.Node{TenantID: "default", AgentID: "agent-api", Status: "Alive", RuleVersion: "v1"}).Error; err != nil {
 		t.Fatalf("seed node: %v", err)
@@ -58,57 +59,21 @@ func TestGetAgentCommandsReportsAPIConfigSyncState(t *testing.T) {
 	if err := store.Create(&db.SystemConfig{Key: "rule_version", Value: "v1"}).Error; err != nil {
 		t.Fatalf("seed rule version: %v", err)
 	}
-	if err := store.Create(&db.Arsenal{
-		ID:       db.BuildTenantArsenalID("default", "apiconfig", "api-config.yaml"),
-		TenantID: "default",
-		Type:     "apiconfig",
-		FileName: "api-config.yaml",
-		Content:  "quake:\n  - active-key\n",
-		Hash:     "hash-api",
-		State:    "Approved",
-	}).Error; err != nil {
-		t.Fatalf("seed apiconfig: %v", err)
-	}
-
 	ctx, recorder := newTenantContextWithRole(http.MethodGet, "/agents/agent-api/commands?api_config_hash=hash-api", "admin", "agent-api")
 	ctx.Params = gin.Params{{Key: "id", Value: "agent-api"}}
 	getAgentCommands(ctx)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected commands 200, got %d (%s)", recorder.Code, recorder.Body.String())
 	}
-	var resp struct {
-		SyncAPIConfig bool   `json:"sync_api_config"`
-		APIConfigHash string `json:"api_config_hash"`
-		ReloadRules   bool   `json:"reload_rules"`
-	}
+	var resp map[string]json.RawMessage
 	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode commands response: %v", err)
 	}
-	if resp.SyncAPIConfig || resp.APIConfigHash != "hash-api" || resp.ReloadRules {
-		t.Fatalf("unexpected up-to-date commands response: %+v", resp)
+	if _, ok := resp["sync_api_config"]; ok {
+		t.Fatalf("commands response must not expose api config sync: %s", recorder.Body.String())
 	}
-
-	ctx, recorder = newTenantContextWithRole(http.MethodGet, "/agents/agent-api/commands?api_config_hash=stale", "admin", "agent-api")
-	ctx.Params = gin.Params{{Key: "id", Value: "agent-api"}}
-	getAgentCommands(ctx)
-	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode stale commands response: %v", err)
-	}
-	if !resp.SyncAPIConfig || resp.APIConfigHash != "hash-api" {
-		t.Fatalf("expected stale api_config_hash to request sync, got %+v", resp)
-	}
-
-	if err := store.Delete(&db.Arsenal{}, "tenant_id = ? AND type = ? AND file_name = ?", "default", "apiconfig", "api-config.yaml").Error; err != nil {
-		t.Fatalf("delete apiconfig: %v", err)
-	}
-	ctx, recorder = newTenantContextWithRole(http.MethodGet, "/agents/agent-api/commands?api_config_hash=stale", "admin", "agent-api")
-	ctx.Params = gin.Params{{Key: "id", Value: "agent-api"}}
-	getAgentCommands(ctx)
-	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode missing commands response: %v", err)
-	}
-	if !resp.SyncAPIConfig || resp.APIConfigHash != "" {
-		t.Fatalf("expected missing server config to request stale local removal, got %+v", resp)
+	if _, ok := resp["api_config_hash"]; ok {
+		t.Fatalf("commands response must not expose api config hash: %s", recorder.Body.String())
 	}
 }
 
@@ -247,6 +212,156 @@ func TestGetTasksReturnsPagedResponse(t *testing.T) {
 	}
 }
 
+func TestArchiveTaskPreservesResultsAndWritesAudit(t *testing.T) {
+	store := setupAITestDB(t)
+	project := db.Project{ID: "project-archive", TenantID: "default", OwnerUserID: "7", Name: "Archive project", Status: "active"}
+	if err := store.Create(&project).Error; err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	root := db.RootTask{ID: "root-archive", TenantID: "default", ProjectID: project.ID, Name: "Archive me", Status: "FINISHED"}
+	if err := store.Create(&root).Error; err != nil {
+		t.Fatalf("seed root task: %v", err)
+	}
+	sub := db.SubTask{ID: "sub-archive", TenantID: "default", ProjectID: project.ID, RootTaskID: root.ID, Status: "FINISHED"}
+	if err := store.Create(&sub).Error; err != nil {
+		t.Fatalf("seed sub task: %v", err)
+	}
+	if err := store.Create(&db.Asset{TenantID: "default", ProjectID: project.ID, TaskID: sub.ID, RootTaskID: root.ID, Target: "archive.test", Protocol: "https"}).Error; err != nil {
+		t.Fatalf("seed asset: %v", err)
+	}
+	if err := store.Create(&db.FingerprintHit{TenantID: "default", ProjectID: project.ID, TaskID: sub.ID, RootTaskID: root.ID, Target: "archive.test", ProductName: "nginx"}).Error; err != nil {
+		t.Fatalf("seed fingerprint: %v", err)
+	}
+	if err := store.Create(&db.Vulnerability{TenantID: "default", ProjectID: project.ID, TaskID: sub.ID, RootTaskID: root.ID, Target: "archive.test", Plugin: "safe-check"}).Error; err != nil {
+		t.Fatalf("seed vulnerability: %v", err)
+	}
+
+	ctx, recorder := newTenantContextWithRole(http.MethodDelete, "/tasks/root-archive", "operator", "7")
+	ctx.Params = gin.Params{{Key: "id", Value: root.ID}}
+	deleteTask(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected archive 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+
+	var archived db.RootTask
+	if err := store.First(&archived, "id = ?", root.ID).Error; err != nil {
+		t.Fatalf("archived root task must remain queryable: %v", err)
+	}
+	if archived.ArchivedAt == nil || archived.Status != "FINISHED" {
+		t.Fatalf("expected separate archive timestamp without status rewrite, got %+v", archived)
+	}
+	for name, model := range map[string]interface{}{
+		"sub task":      &db.SubTask{},
+		"asset":         &db.Asset{},
+		"fingerprint":   &db.FingerprintHit{},
+		"vulnerability": &db.Vulnerability{},
+	} {
+		var count int64
+		if err := store.Model(model).Where("root_task_id = ? AND tenant_id = ?", root.ID, "default").Count(&count).Error; err != nil {
+			t.Fatalf("count preserved %s: %v", name, err)
+		}
+		if count != 1 {
+			t.Fatalf("expected preserved %s, got count %d", name, count)
+		}
+	}
+	var audit db.TaskAudit
+	if err := store.Where("root_task_id = ? AND action = ?", root.ID, "archive").First(&audit).Error; err != nil {
+		t.Fatalf("load archive audit: %v", err)
+	}
+	if audit.TenantID != "default" || audit.ProjectID != project.ID || audit.OperatorID != "7" || audit.BeforeStatus != "FINISHED" || audit.AfterStatus != "FINISHED" {
+		t.Fatalf("unexpected archive audit: %+v", audit)
+	}
+
+	activeCtx, activeRecorder := newTenantContextWithRole(http.MethodGet, "/tasks?project_id=project-archive", "viewer", "7")
+	getTasks(activeCtx)
+	if activeRecorder.Code != http.StatusOK || strings.Contains(activeRecorder.Body.String(), root.ID) {
+		t.Fatalf("default task list must exclude archived task, got %d (%s)", activeRecorder.Code, activeRecorder.Body.String())
+	}
+	archivedCtx, archivedRecorder := newTenantContextWithRole(http.MethodGet, "/tasks?project_id=project-archive&archived=only", "viewer", "7")
+	getTasks(archivedCtx)
+	if archivedRecorder.Code != http.StatusOK || !strings.Contains(archivedRecorder.Body.String(), root.ID) {
+		t.Fatalf("archived task list must include archived task, got %d (%s)", archivedRecorder.Code, archivedRecorder.Body.String())
+	}
+	detailCtx, detailRecorder := newTenantContextWithRole(http.MethodGet, "/tasks/root-archive", "viewer", "7")
+	detailCtx.Params = gin.Params{{Key: "id", Value: root.ID}}
+	getTaskDetail(detailCtx)
+	if detailRecorder.Code != http.StatusOK || !strings.Contains(detailRecorder.Body.String(), `"action":"archive"`) || !strings.Contains(detailRecorder.Body.String(), `"assets":1`) {
+		t.Fatalf("archived task detail must retain results and audits, got %d (%s)", detailRecorder.Code, detailRecorder.Body.String())
+	}
+}
+
+func TestArchiveTaskRejectsActiveAndInaccessibleTasks(t *testing.T) {
+	store := setupAITestDB(t)
+	projects := []db.Project{
+		{ID: "owned-project", TenantID: "default", OwnerUserID: "7", Name: "Owned", Status: "active"},
+		{ID: "foreign-project", TenantID: "default", OwnerUserID: "8", Name: "Foreign", Status: "active"},
+	}
+	if err := store.Create(&projects).Error; err != nil {
+		t.Fatalf("seed projects: %v", err)
+	}
+	tasks := []db.RootTask{
+		{ID: "active-task-archive", TenantID: "default", ProjectID: "owned-project", Status: "Running"},
+		{ID: "foreign-task-archive", TenantID: "default", ProjectID: "foreign-project", Status: "FINISHED"},
+	}
+	if err := store.Create(&tasks).Error; err != nil {
+		t.Fatalf("seed tasks: %v", err)
+	}
+
+	ctx, recorder := newTenantContextWithRole(http.MethodDelete, "/tasks/active-task-archive", "operator", "7")
+	ctx.Params = gin.Params{{Key: "id", Value: "active-task-archive"}}
+	deleteTask(ctx)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("expected active archive conflict, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+
+	ctx, recorder = newTenantContextWithRole(http.MethodDelete, "/tasks/foreign-task-archive", "operator", "7")
+	ctx.Params = gin.Params{{Key: "id", Value: "foreign-task-archive"}}
+	deleteTask(ctx)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected inaccessible project archive forbidden, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+
+	var archiveCount int64
+	store.Model(&db.RootTask{}).Where("archived_at IS NOT NULL").Count(&archiveCount)
+	if archiveCount != 0 {
+		t.Fatalf("rejected archives must not mutate tasks, got %d archived", archiveCount)
+	}
+	var auditCount int64
+	store.Model(&db.TaskAudit{}).Count(&auditCount)
+	if auditCount != 0 {
+		t.Fatalf("rejected archives must not write audits, got %d", auditCount)
+	}
+}
+
+func TestGetStatsExcludesArchivedTasks(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Project{ID: "project-stats-archive", TenantID: "default", OwnerUserID: "7", Name: "Stats", Status: "active"}).Error; err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	archivedAt := time.Now()
+	tasks := []db.RootTask{
+		{ID: "stats-active", TenantID: "default", ProjectID: "project-stats-archive", Status: "FINISHED"},
+		{ID: "stats-archived", TenantID: "default", ProjectID: "project-stats-archive", Status: "FINISHED", ArchivedAt: &archivedAt},
+	}
+	if err := store.Create(&tasks).Error; err != nil {
+		t.Fatalf("seed tasks: %v", err)
+	}
+	ctx, recorder := newTenantContextWithRole(http.MethodGet, "/stats?project_id=project-stats-archive", "viewer", "7")
+	getStats(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected stats 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Tasks int64 `json:"tasks"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode stats: %v", err)
+	}
+	if payload.Tasks != 1 {
+		t.Fatalf("expected only active task in stats, got %+v", payload)
+	}
+}
+
 func TestAIPermissions(t *testing.T) {
 	tests := []struct {
 		method string
@@ -279,16 +394,30 @@ func TestTenantRolePermissionMatrix(t *testing.T) {
 	}{
 		{method: "GET", path: "/api/v1/projects", want: "viewer"},
 		{method: "GET", path: "/api/v1/tasks/task-1", want: "viewer"},
+		{method: "GET", path: "/api/v1/tasks/task-1/config-revisions", want: "viewer"},
+		{method: "GET", path: "/api/v1/tasks/task-1/batches", want: "viewer"},
 		{method: "GET", path: "/api/v1/reports/export/vulns", want: "viewer"},
 		{method: "POST", path: "/api/v1/projects", want: "operator"},
+		{method: "POST", path: "/api/v1/projects/proj-1/asset-discovery/fofa/query", want: "operator"},
+		{method: "POST", path: "/api/v1/projects/proj-1/asset-discovery/hunter/query", want: "operator"},
+		{method: "POST", path: "/api/v1/projects/proj-1/asset-discovery/quake/query", want: "operator"},
 		{method: "GET", path: "/api/v1/projects/proj-1/members", want: "operator"},
 		{method: "PUT", path: "/api/v1/projects/proj-1/members", want: "operator"},
 		{method: "POST", path: "/api/v1/tasks", want: "operator"},
 		{method: "POST", path: "/api/v1/tasks/preview-selector", want: "operator"},
 		{method: "POST", path: "/api/v1/tasks/validate-targets", want: "operator"},
 		{method: "POST", path: "/api/v1/tasks/task-1/cancel", want: "operator"},
+		{method: "POST", path: "/api/v1/tasks/task-1/stop", want: "operator"},
 		{method: "POST", path: "/api/v1/tasks/task-1/pause", want: "operator"},
 		{method: "POST", path: "/api/v1/tasks/task-1/resume", want: "operator"},
+		{method: "POST", path: "/api/v1/tasks/task-1/retry", want: "operator"},
+		{method: "POST", path: "/api/v1/tasks/task-1/batches/batch-1/pause", want: "operator"},
+		{method: "POST", path: "/api/v1/tasks/task-1/batches/batch-1/resume", want: "operator"},
+		{method: "POST", path: "/api/v1/tasks/task-1/batches/batch-1/stop", want: "operator"},
+		{method: "POST", path: "/api/v1/tasks/task-1/batches/batch-1/retry", want: "operator"},
+		{method: "PUT", path: "/api/v1/tasks/task-1/config", want: "operator"},
+		{method: "DELETE", path: "/api/v1/tasks/task-1", want: "operator"},
+		{method: "DELETE", path: "/api/v1/tasks/task-1/batches/batch-1", want: "operator"},
 		{method: "DELETE", path: "/api/v1/nodes/agent-1", want: "operator"},
 		{method: "GET", path: "/api/v1/dictionaries/workflow", want: "admin"},
 		{method: "POST", path: "/api/v1/dictionaries/workflow", want: "admin"},
@@ -586,6 +715,68 @@ func TestPauseTaskMovesUnclaimedSubTasksToPaused(t *testing.T) {
 	if running.Status != "Running" || running.AgentID != "agent-1" {
 		t.Fatalf("expected running subtask to remain running, got %+v", running)
 	}
+	var audit db.TaskAudit
+	if err := store.Where("root_task_id = ? AND action = ?", "root-pause", "pause").First(&audit).Error; err != nil {
+		t.Fatalf("load pause audit: %v", err)
+	}
+	if audit.OperatorID != "7" || audit.BeforeStatus != "Running" || audit.AfterStatus != "Paused" {
+		t.Fatalf("unexpected pause audit: %+v", audit)
+	}
+}
+
+func TestCancelTaskWritesStopAuditAndPersistsStoppingState(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Project{ID: "p-stop", TenantID: "default", OwnerUserID: "7", Name: "p-stop"}).Error; err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if err := store.Create(&db.RootTask{ID: "root-stop", TenantID: "default", ProjectID: "p-stop", Status: "Running"}).Error; err != nil {
+		t.Fatalf("seed root task: %v", err)
+	}
+	subs := []db.SubTask{
+		{ID: "stop-pending", TenantID: "default", ProjectID: "p-stop", RootTaskID: "root-stop", Status: "Pending"},
+		{ID: "stop-running", TenantID: "default", ProjectID: "p-stop", RootTaskID: "root-stop", Status: "Running", AgentID: "agent-1"},
+	}
+	if err := store.Create(&subs).Error; err != nil {
+		t.Fatalf("seed subtasks: %v", err)
+	}
+
+	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/tasks/root-stop/cancel", "operator", "7")
+	ctx.Params = gin.Params{{Key: "id", Value: "root-stop"}}
+	cancelTask(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected stop 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var root db.RootTask
+	if err := store.First(&root, "id = ?", "root-stop").Error; err != nil {
+		t.Fatalf("load stopped root: %v", err)
+	}
+	if root.Status != "CancelPending" {
+		t.Fatalf("expected root stopping state, got %+v", root)
+	}
+	var audit db.TaskAudit
+	if err := store.Where("root_task_id = ? AND action = ?", "root-stop", "stop").First(&audit).Error; err != nil {
+		t.Fatalf("load stop audit: %v", err)
+	}
+	if audit.OperatorID != "7" || audit.BeforeStatus != "Running" || audit.AfterStatus != "CancelPending" {
+		t.Fatalf("unexpected stop audit: %+v", audit)
+	}
+}
+
+func TestCancelTaskRejectsTerminalLegacyState(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Project{ID: "p1", TenantID: "default", OwnerUserID: "7", Name: "p1"}).Error; err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if err := store.Create(&db.RootTask{ID: "root-finished", TenantID: "default", ProjectID: "p1", Status: "FINISHED"}).Error; err != nil {
+		t.Fatalf("seed root task: %v", err)
+	}
+
+	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/tasks/root-finished/cancel", "operator", "7")
+	ctx.Params = gin.Params{{Key: "id", Value: "root-finished"}}
+	cancelTask(ctx)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected terminal task cancel to return 400, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
 }
 
 func TestResumeTaskOnlyReactivatesPausedSubTasks(t *testing.T) {
@@ -634,6 +825,13 @@ func TestResumeTaskOnlyReactivatesPausedSubTasks(t *testing.T) {
 	}
 	if root.Status == "Paused" {
 		t.Fatalf("expected root to leave Paused after resume, got %+v", root)
+	}
+	var audit db.TaskAudit
+	if err := store.Where("root_task_id = ? AND action = ?", "root-resume", "resume").First(&audit).Error; err != nil {
+		t.Fatalf("load resume audit: %v", err)
+	}
+	if audit.OperatorID != "7" || audit.BeforeStatus != "Paused" || audit.AfterStatus != "Queued" {
+		t.Fatalf("unexpected resume audit: %+v", audit)
 	}
 }
 
@@ -745,6 +943,8 @@ func TestListPocRulesFiltersMetadata(t *testing.T) {
 		TargetProduct:       "DemoProduct",
 		CVE:                 "CVE-2026-0003",
 		CompatibilityStatus: "indexed",
+		ExecutionClass:      db.PocExecutionClassVerification,
+		RiskLevel:           db.PocRiskLevelHigh,
 		Severity:            "high",
 		Enabled:             true,
 	}).Error; err != nil {
@@ -757,14 +957,16 @@ func TestListPocRulesFiltersMetadata(t *testing.T) {
 		TargetProduct:       "OtherProduct",
 		CVE:                 "CVE-2026-9999",
 		CompatibilityStatus: "unknown",
+		ExecutionClass:      db.PocExecutionClassDetection,
+		RiskLevel:           db.PocRiskLevelLow,
 		Severity:            "low",
 		Enabled:             true,
 	}).Error; err != nil {
 		t.Fatalf("seed other poc rule: %v", err)
 	}
 
-	ctx, recorder := newTenantContextWithRole(http.MethodGet, "/poc-rules?product=demo&cve=2026-0003&compatibility_status=indexed", "viewer", "1")
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/poc-rules?product=demo&cve=2026-0003&compatibility_status=indexed", nil)
+	ctx, recorder := newTenantContextWithRole(http.MethodGet, "/poc-rules?product=demo&cve=2026-0003&compatibility_status=indexed&execution_class=verification&risk_level=high", "viewer", "1")
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/poc-rules?product=demo&cve=2026-0003&compatibility_status=indexed&execution_class=verification&risk_level=high", nil)
 	listPocRules(ctx)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d (%s)", recorder.Code, recorder.Body.String())
@@ -775,6 +977,9 @@ func TestListPocRulesFiltersMetadata(t *testing.T) {
 	}
 	if len(resp) != 1 || resp[0].Name != "demo-poc" || resp[0].CVE != "CVE-2026-0003" {
 		t.Fatalf("unexpected filtered poc rules: %+v", resp)
+	}
+	if resp[0].ExecutionClass != db.PocExecutionClassVerification || resp[0].RiskLevel != db.PocRiskLevelHigh || !resp[0].RequiresConfirmation || !resp[0].RequiresSecondConfirmation {
+		t.Fatalf("unexpected POC execution governance response: %+v", resp[0])
 	}
 }
 
@@ -1215,6 +1420,13 @@ func TestCreateTaskUsesReducedURLBatchSize(t *testing.T) {
 	if len(subtasks) != 2 {
 		t.Fatalf("subtask count = %d, want 2", len(subtasks))
 	}
+	var taskBatches []db.TaskBatch
+	if err := store.Where("root_task_id = ?", resp.TaskID).Order("sequence").Find(&taskBatches).Error; err != nil {
+		t.Fatalf("load task batches: %v", err)
+	}
+	if len(taskBatches) != 2 {
+		t.Fatalf("task batch count = %d, want 2", len(taskBatches))
+	}
 	wantSizes := []int{50, 1}
 	for i, sub := range subtasks {
 		var chunk []string
@@ -1224,7 +1436,7 @@ func TestCreateTaskUsesReducedURLBatchSize(t *testing.T) {
 		if len(chunk) != wantSizes[i] || sub.Status != "Pending" {
 			t.Fatalf("subtask %d = size:%d status:%s, want size:%d status:Pending", i, len(chunk), sub.Status, wantSizes[i])
 		}
-		if sub.TenantID != "default" || sub.ProjectID != "project-url-batches" {
+		if sub.TenantID != "default" || sub.ProjectID != "project-url-batches" || sub.ConfigVersion != 1 {
 			t.Fatalf("subtask %d scope = tenant:%s project:%s", i, sub.TenantID, sub.ProjectID)
 		}
 		var selector map[string]string
@@ -1234,12 +1446,221 @@ func TestCreateTaskUsesReducedURLBatchSize(t *testing.T) {
 		if selector["target_type"] != "url" {
 			t.Fatalf("subtask %d selector = %+v, want target_type=url", i, selector)
 		}
+		if sub.BatchID == "" || sub.AttemptNo != 1 || sub.ID != sub.BatchID+"-attempt-1" {
+			t.Fatalf("subtask %d is not linked as attempt 1: %+v", i, sub)
+		}
+		batch := taskBatches[i]
+		if batch.ID != sub.BatchID || batch.LatestAttemptID != sub.ID || batch.TargetCount != wantSizes[i] || batch.AttemptCount != 1 {
+			t.Fatalf("batch %d does not match initial attempt: batch=%+v sub=%+v", i, batch, sub)
+		}
 	}
 	var firstChunk, secondChunk []string
 	_ = json.Unmarshal([]byte(subtasks[0].ChunkTargets), &firstChunk)
 	_ = json.Unmarshal([]byte(subtasks[1].ChunkTargets), &secondChunk)
 	if firstChunk[0] != targets[0] || firstChunk[49] != targets[49] || secondChunk[0] != targets[50] {
 		t.Fatalf("URL order changed across batches: first=%q/%q second=%q", firstChunk[0], firstChunk[49], secondChunk[0])
+	}
+	var root db.RootTask
+	if err := store.First(&root, "id = ?", resp.TaskID).Error; err != nil {
+		t.Fatalf("load root task: %v", err)
+	}
+	if root.CurrentConfigVersion != 1 {
+		t.Fatalf("root current config version = %d, want 1", root.CurrentConfigVersion)
+	}
+	var revision db.TaskConfigRevision
+	if err := store.First(&revision, "root_task_id = ? AND version = ?", resp.TaskID, 1).Error; err != nil {
+		t.Fatalf("load initial config revision: %v", err)
+	}
+	if revision.ConfigHash == "" || revision.TenantID != "default" || revision.ProjectID != "project-url-batches" {
+		t.Fatalf("unexpected initial config revision: %+v", revision)
+	}
+}
+
+func TestTaskConfigRevisionPreservesOldAttemptsAndAppliesToAppendedWork(t *testing.T) {
+	store := setupAITestDB(t)
+	project := db.Project{ID: "project-config", TenantID: "default", OwnerUserID: "1", Name: "Config project", Status: "active"}
+	if err := store.Create(&project).Error; err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	root := db.RootTask{
+		ID:                   "task-config",
+		TenantID:             "default",
+		ProjectID:            project.ID,
+		UserID:               "1",
+		Name:                 "Versioned config",
+		Status:               "Running",
+		Config:               `{"NoPoc":true,"WebTimeout":10}`,
+		Priority:             1,
+		TimeoutSec:           60,
+		CurrentConfigVersion: 1,
+	}
+	if err := store.Create(&root).Error; err != nil {
+		t.Fatalf("seed root: %v", err)
+	}
+	revision := db.NewTaskConfigRevision(root, 1, `{}`, `{}`, "1", "initial")
+	if err := store.Create(&revision).Error; err != nil {
+		t.Fatalf("seed revision: %v", err)
+	}
+	oldSub := db.SubTask{
+		ID: "task-config-batch-0-url", TenantID: "default", ProjectID: project.ID, RootTaskID: root.ID,
+		ChunkTargets: `["https://old.example.test"]`, Status: "Finished", Config: root.Config,
+		Priority: 1, TimeoutSec: 60, ConfigVersion: 1, AgentSelector: `{"target_type":"url"}`, AgentSelectorRules: `{"match":{"target_type":["url"]}}`,
+	}
+	if err := store.Create(&oldSub).Error; err != nil {
+		t.Fatalf("seed old subtask: %v", err)
+	}
+
+	body := `{
+		"config":{"NoPoc":true,"WebTimeout":15},
+		"priority":2,
+		"timeout_sec":120,
+		"agent_selector":{"network_zone":"office"},
+		"agent_selector_rules":{"not_match":{"maintenance":"true"}},
+		"change_note":"tune future batches"
+	}`
+	ctx, recorder := newTenantContextWithRole(http.MethodPut, "/tasks/"+root.ID+"/config", "operator", "1")
+	ctx.Params = gin.Params{{Key: "id", Value: root.ID}}
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/tasks/"+root.ID+"/config", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	updateTaskConfig(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("update config status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	var updateResp struct {
+		Unchanged bool `json:"unchanged"`
+		Version   int  `json:"current_config_version"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &updateResp); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if updateResp.Unchanged || updateResp.Version != 2 {
+		t.Fatalf("unexpected update response: %+v", updateResp)
+	}
+
+	if err := store.First(&root, "id = ?", root.ID).Error; err != nil {
+		t.Fatalf("reload root: %v", err)
+	}
+	if root.CurrentConfigVersion != 2 || root.Priority != 2 || root.TimeoutSec != 120 || !strings.Contains(root.Config, `"WebTimeout":15`) {
+		t.Fatalf("root current config not advanced: %+v", root)
+	}
+	if err := store.First(&oldSub, "id = ?", oldSub.ID).Error; err != nil {
+		t.Fatalf("reload old subtask: %v", err)
+	}
+	if oldSub.ConfigVersion != 1 || oldSub.Priority != 1 || oldSub.TimeoutSec != 60 || !strings.Contains(oldSub.Config, `"WebTimeout":10`) {
+		t.Fatalf("old attempt snapshot changed: %+v", oldSub)
+	}
+	var revisionCount int64
+	store.Model(&db.TaskConfigRevision{}).Where("root_task_id = ?", root.ID).Count(&revisionCount)
+	if revisionCount != 2 {
+		t.Fatalf("revision count = %d, want 2", revisionCount)
+	}
+	var audit db.TaskAudit
+	if err := store.First(&audit, "root_task_id = ? AND action = ?", root.ID, "config_update").Error; err != nil {
+		t.Fatalf("load config audit: %v", err)
+	}
+	if audit.OperatorID != "1" || !strings.Contains(audit.Details, `"to_version":2`) {
+		t.Fatalf("unexpected config audit: %+v", audit)
+	}
+
+	// Repeating the same desired configuration is idempotent at the revision layer.
+	ctx, recorder = newTenantContextWithRole(http.MethodPut, "/tasks/"+root.ID+"/config", "operator", "1")
+	ctx.Params = gin.Params{{Key: "id", Value: root.ID}}
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/tasks/"+root.ID+"/config", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	updateTaskConfig(ctx)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"unchanged":true`) {
+		t.Fatalf("identical config should be unchanged, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	store.Model(&db.TaskConfigRevision{}).Where("root_task_id = ?", root.ID).Count(&revisionCount)
+	if revisionCount != 2 {
+		t.Fatalf("identical update created a revision, count=%d", revisionCount)
+	}
+
+	oldQueue := routerRuntime().TaskQueue
+	queue := scheduler.NewTaskQueue("")
+	routerRuntime().TaskQueue = queue
+	t.Cleanup(func() {
+		queue.Close()
+		routerRuntime().TaskQueue = oldQueue
+	})
+	ctx, recorder = newTenantContextWithRole(http.MethodPost, "/tasks/"+root.ID+"/append", "operator", "1")
+	ctx.Params = gin.Params{{Key: "id", Value: root.ID}}
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/tasks/"+root.ID+"/append", strings.NewReader(`{"targets":"https://new.example.test"}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	appendTargets(ctx)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"config_version":2`) {
+		t.Fatalf("append status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	var newSub db.SubTask
+	if err := store.Where("root_task_id = ? AND id <> ?", root.ID, oldSub.ID).First(&newSub).Error; err != nil {
+		t.Fatalf("load appended subtask: %v", err)
+	}
+	if newSub.ConfigVersion != 2 || newSub.Priority != 2 || newSub.TimeoutSec != 120 || !strings.Contains(newSub.Config, `"WebTimeout":15`) {
+		t.Fatalf("appended work did not use current revision: %+v", newSub)
+	}
+	var appendedBatch db.TaskBatch
+	if err := store.First(&appendedBatch, "id = ?", newSub.BatchID).Error; err != nil {
+		t.Fatalf("load appended batch: %v", err)
+	}
+	if appendedBatch.ConfigVersion != 2 || appendedBatch.LatestAttemptID != newSub.ID || appendedBatch.TargetCount != 1 {
+		t.Fatalf("appended batch snapshot mismatch: %+v", appendedBatch)
+	}
+	var selector map[string]string
+	if err := json.Unmarshal([]byte(newSub.AgentSelector), &selector); err != nil {
+		t.Fatalf("decode appended selector: %v", err)
+	}
+	if selector["target_type"] != "url" || selector["network_zone"] != "office" {
+		t.Fatalf("appended selector lost current revision: %+v", selector)
+	}
+
+	ctx, recorder = newTenantContextWithRole(http.MethodGet, "/tasks/"+root.ID+"/config-revisions", "viewer", "1")
+	ctx.Params = gin.Params{{Key: "id", Value: root.ID}}
+	getTaskConfigRevisions(ctx)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"current_config_version":2`) {
+		t.Fatalf("list revisions status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestTaskConfigRevisionEnforcesProjectAndArchiveBoundaries(t *testing.T) {
+	store := setupAITestDB(t)
+	archivedAt := time.Now().UTC()
+	projects := []db.Project{
+		{ID: "project-private-config", TenantID: "default", OwnerUserID: "99", Status: "active"},
+		{ID: "project-archived-config", TenantID: "default", OwnerUserID: "1", Status: "active"},
+	}
+	if err := store.Create(&projects).Error; err != nil {
+		t.Fatalf("seed projects: %v", err)
+	}
+	tasks := []db.RootTask{
+		{ID: "private-config", TenantID: "default", ProjectID: projects[0].ID, Status: "Finished", Config: `{}`, CurrentConfigVersion: 1},
+		{ID: "archived-config", TenantID: "default", ProjectID: projects[1].ID, Status: "Finished", Config: `{}`, CurrentConfigVersion: 1, ArchivedAt: &archivedAt},
+		{ID: "other-tenant-config", TenantID: "tenant-b", ProjectID: projects[1].ID, Status: "Finished", Config: `{}`, CurrentConfigVersion: 1},
+	}
+	if err := store.Create(&tasks).Error; err != nil {
+		t.Fatalf("seed tasks: %v", err)
+	}
+
+	for _, tc := range []struct {
+		id   string
+		want int
+	}{
+		{id: "private-config", want: http.StatusForbidden},
+		{id: "archived-config", want: http.StatusConflict},
+		{id: "other-tenant-config", want: http.StatusNotFound},
+	} {
+		ctx, recorder := newTenantContextWithRole(http.MethodPut, "/tasks/"+tc.id+"/config", "operator", "1")
+		ctx.Params = gin.Params{{Key: "id", Value: tc.id}}
+		ctx.Request = httptest.NewRequest(http.MethodPut, "/tasks/"+tc.id+"/config", strings.NewReader(`{"priority":2}`))
+		ctx.Request.Header.Set("Content-Type", "application/json")
+		updateTaskConfig(ctx)
+		if recorder.Code != tc.want {
+			t.Fatalf("task %s status = %d, want %d (%s)", tc.id, recorder.Code, tc.want, recorder.Body.String())
+		}
+	}
+	var count int64
+	store.Model(&db.TaskConfigRevision{}).Count(&count)
+	if count != 0 {
+		t.Fatalf("unauthorized or archived updates created %d revisions", count)
 	}
 }
 
@@ -1296,25 +1717,79 @@ func TestTaskDetailIncludesReasonStats(t *testing.T) {
 	}
 }
 
+func TestTaskDetailSeparatesCurrentBatchStateFromAttemptHistory(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Project{ID: "project-history", TenantID: "default", Status: "active"}).Error; err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	root := db.RootTask{ID: "task-history", TenantID: "default", ProjectID: "project-history", Name: "history", Status: "FINISHED", Config: `{}`}
+	if err := store.Create(&root).Error; err != nil {
+		t.Fatalf("seed root: %v", err)
+	}
+	finished := time.Now()
+	attempts := []db.SubTask{
+		{ID: "batch-history-attempt-1", BatchID: "batch-history", AttemptNo: 1, Trigger: db.AttemptTriggerInitial, TenantID: "default", ProjectID: root.ProjectID, RootTaskID: root.ID, Status: "Failed", AgentID: "agent-old", FailureReason: "connection reset", ChunkTargets: `["https://one.test"]`, FinishedAt: &finished},
+		{ID: "batch-history-attempt-2", BatchID: "batch-history", AttemptNo: 2, ParentAttemptID: "batch-history-attempt-1", Trigger: db.AttemptTriggerAutomaticRetry, TenantID: "default", ProjectID: root.ProjectID, RootTaskID: root.ID, Status: "Done", AgentID: "agent-new", ChunkTargets: `["https://one.test"]`, FinishedAt: &finished},
+	}
+	if err := store.Create(&attempts).Error; err != nil {
+		t.Fatalf("seed attempts: %v", err)
+	}
+	if err := store.Create(&db.TaskBatch{ID: "batch-history", TenantID: "default", ProjectID: root.ProjectID, RootTaskID: root.ID, Sequence: 0, Status: "Done", Targets: `["https://one.test"]`, TargetCount: 1, CurrentAttemptNo: 2, AttemptCount: 2, LatestAttemptID: attempts[1].ID}).Error; err != nil {
+		t.Fatalf("seed batch: %v", err)
+	}
+
+	ctx, recorder := newTenantContext(http.MethodGet, "/tasks/"+root.ID)
+	ctx.Params = gin.Params{{Key: "id", Value: root.ID}}
+	getTaskDetail(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("task detail status = %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var resp struct {
+		SubTasks []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"sub_tasks"`
+		Attempts []struct {
+			ID              string `json:"id"`
+			AgentID         string `json:"agent_id"`
+			FailureReason   string `json:"failure_reason"`
+			ParentAttemptID string `json:"parent_attempt_id"`
+		} `json:"attempts"`
+		StatusDistribution map[string]int `json:"status_distribution"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode task detail: %v", err)
+	}
+	if len(resp.SubTasks) != 1 || resp.SubTasks[0].ID != attempts[1].ID || resp.SubTasks[0].Status != "Done" {
+		t.Fatalf("current batch view includes stale attempts: %+v", resp.SubTasks)
+	}
+	if len(resp.Attempts) != 2 || resp.Attempts[0].AgentID != "agent-old" || resp.Attempts[0].FailureReason != "connection reset" || resp.Attempts[1].ParentAttemptID != attempts[0].ID {
+		t.Fatalf("attempt history missing execution evidence: %+v", resp.Attempts)
+	}
+	if resp.StatusDistribution["Done"] != 1 || resp.StatusDistribution["Failed"] != 0 {
+		t.Fatalf("status distribution counted historical failures: %+v", resp.StatusDistribution)
+	}
+}
+
 func TestBuildJobHelpers(t *testing.T) {
 	if !isSupportedBuildTarget("linux", "arm64") || isSupportedBuildTarget("linux", "386") {
 		t.Fatalf("unexpected linux build target validation")
 	}
-	if got := expectedBuildArtifact("windows", "amd64"); got != "dddd-agent-windows-amd64.exe" {
+	if got := expectedBuildArtifact("windows", "amd64"); got != "argus-agent-windows-amd64.exe" {
 		t.Fatalf("unexpected windows artifact name: %s", got)
 	}
 	if got := truncateBuildLog("abcdef", 3); got != "def" {
 		t.Fatalf("unexpected truncated log: %s", got)
 	}
-	components, err := normalizeBuildComponents([]string{"server-ui", "dddd-server", "dddd-server"})
+	components, err := normalizeBuildComponents([]string{"server-ui", "argus-server", "argus-server"})
 	if err != nil {
 		t.Fatalf("normalize components: %v", err)
 	}
-	if strings.Join(components, ",") != "server-ui,dddd-server" {
+	if strings.Join(components, ",") != "server-ui,argus-server" {
 		t.Fatalf("unexpected normalized components: %+v", components)
 	}
-	artifacts := expectedBuildArtifacts([]string{"dddd-agent", "server-ui"}, "linux", "amd64")
-	if strings.Join(artifacts, ",") != "dddd-agent-linux-amd64,server-ui-dist.tar.gz" {
+	artifacts := expectedBuildArtifacts([]string{"argus-agent", "server-ui"}, "linux", "amd64")
+	if strings.Join(artifacts, ",") != "argus-agent-linux-amd64,server-ui-dist.tar.gz" {
 		t.Fatalf("unexpected multi-component artifacts: %+v", artifacts)
 	}
 }
@@ -1412,9 +1887,12 @@ func TestCancelBuildJobMarksQueuedJobCanceled(t *testing.T) {
 }
 
 func TestRetryBuildJobCreatesNewQueuedJob(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("build job fixture is a POSIX shell script; release builds run build.sh in Linux CI")
+	}
 	setupAITestDB(t)
 	t.Chdir(t.TempDir())
-	if err := os.WriteFile("build.sh", []byte("#!/bin/sh\nmkdir -p release\ntouch release/dddd-agent-linux-amd64\n"), 0o755); err != nil {
+	if err := os.WriteFile("build.sh", []byte("#!/bin/sh\nmkdir -p release\ntouch release/argus-agent-linux-amd64\n"), 0o755); err != nil {
 		t.Fatalf("write build script: %v", err)
 	}
 	oldRunner := routerRuntime().Build.runner
@@ -1442,9 +1920,12 @@ func TestRetryBuildJobCreatesNewQueuedJob(t *testing.T) {
 }
 
 func TestRunBuildJobStoresFullLogAndArtifact(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("build job fixture is a POSIX shell script; release builds run build.sh in Linux CI")
+	}
 	setupAITestDB(t)
 	t.Chdir(t.TempDir())
-	if err := os.WriteFile("build.sh", []byte("#!/bin/sh\necho full-build-log\nmkdir -p release\ntouch release/dddd-agent-linux-amd64\n"), 0o755); err != nil {
+	if err := os.WriteFile("build.sh", []byte("#!/bin/sh\necho full-build-log\nmkdir -p release\ntouch release/argus-agent-linux-amd64\n"), 0o755); err != nil {
 		t.Fatalf("write build script: %v", err)
 	}
 	job, err := createBuildJobIfIdle("linux", "amd64", false)
@@ -1458,7 +1939,7 @@ func TestRunBuildJobStoresFullLogAndArtifact(t *testing.T) {
 	if err := db.DB.First(&updated, job.ID).Error; err != nil {
 		t.Fatalf("load updated job: %v", err)
 	}
-	if updated.Status != "success" || updated.Artifact != "dddd-agent-linux-amd64" {
+	if updated.Status != "success" || updated.Artifact != "argus-agent-linux-amd64" {
 		t.Fatalf("expected successful build artifact, got %+v", updated)
 	}
 	if !strings.Contains(updated.LogText, "full-build-log") || !strings.Contains(updated.LogTail, "full-build-log") {

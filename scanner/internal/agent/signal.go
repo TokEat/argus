@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	pb "github.com/user/dddd-proto/go/scan"
+	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 	"google.golang.org/grpc/metadata"
 )
 

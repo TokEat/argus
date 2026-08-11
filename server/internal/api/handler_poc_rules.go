@@ -5,30 +5,34 @@ import (
 	"strings"
 	"time"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
-	"github.com/user/dddd-server/internal/db"
 )
 
 type pocRuleResponse struct {
-	ID                  uint   `json:"id"`
-	TenantID            string `json:"tenant_id"`
-	ArtifactID          string `json:"artifact_id"`
-	SourceFile          string `json:"source_file"`
-	Name                string `json:"name"`
-	TargetProduct       string `json:"target_product"`
-	CVE                 string `json:"cve"`
-	CompatibilityStatus string `json:"compatibility_status"`
-	SourceVersion       string `json:"source_version"`
-	ContentHash         string `json:"content_hash"`
-	Severity            string `json:"severity"`
-	Tags                string `json:"tags"`
-	Author              string `json:"author"`
-	Description         string `json:"description"`
-	Version             int    `json:"version"`
-	State               string `json:"state"`
-	Enabled             bool   `json:"enabled"`
-	CreatedAt           string `json:"created_at"`
-	UpdatedAt           string `json:"updated_at"`
+	ID                         uint   `json:"id"`
+	TenantID                   string `json:"tenant_id"`
+	ArtifactID                 string `json:"artifact_id"`
+	SourceFile                 string `json:"source_file"`
+	Name                       string `json:"name"`
+	TargetProduct              string `json:"target_product"`
+	CVE                        string `json:"cve"`
+	CompatibilityStatus        string `json:"compatibility_status"`
+	SourceVersion              string `json:"source_version"`
+	ContentHash                string `json:"content_hash"`
+	Severity                   string `json:"severity"`
+	ExecutionClass             string `json:"execution_class"`
+	RiskLevel                  string `json:"risk_level"`
+	RequiresConfirmation       bool   `json:"requires_confirmation"`
+	RequiresSecondConfirmation bool   `json:"requires_second_confirmation"`
+	Tags                       string `json:"tags"`
+	Author                     string `json:"author"`
+	Description                string `json:"description"`
+	Version                    int    `json:"version"`
+	State                      string `json:"state"`
+	Enabled                    bool   `json:"enabled"`
+	CreatedAt                  string `json:"created_at"`
+	UpdatedAt                  string `json:"updated_at"`
 }
 
 func listPocRules(c *gin.Context) {
@@ -40,6 +44,12 @@ func listPocRules(c *gin.Context) {
 	}
 	if severity := strings.ToLower(strings.TrimSpace(c.Query("severity"))); severity != "" {
 		query = query.Where("severity = ?", severity)
+	}
+	if executionClass := strings.ToLower(strings.TrimSpace(c.Query("execution_class"))); executionClass != "" {
+		query = query.Where("execution_class = ?", executionClass)
+	}
+	if riskLevel := strings.ToLower(strings.TrimSpace(c.Query("risk_level"))); riskLevel != "" {
+		query = query.Where("risk_level = ?", riskLevel)
 	}
 	if product := strings.TrimSpace(c.Query("product")); product != "" {
 		query = query.Where("LOWER(target_product) LIKE ?", "%"+strings.ToLower(product)+"%")
@@ -53,8 +63,8 @@ func listPocRules(c *gin.Context) {
 	if q := strings.TrimSpace(c.Query("q")); q != "" {
 		like := "%" + strings.ToLower(q) + "%"
 		query = query.Where(
-			"LOWER(name) LIKE ? OR LOWER(source_file) LIKE ? OR LOWER(target_product) LIKE ? OR LOWER(cve) LIKE ? OR LOWER(tags) LIKE ?",
-			like, like, like, like, like,
+			"LOWER(name) LIKE ? OR LOWER(source_file) LIKE ? OR LOWER(target_product) LIKE ? OR LOWER(cve) LIKE ? OR LOWER(tags) LIKE ? OR LOWER(execution_class) LIKE ? OR LOWER(risk_level) LIKE ?",
+			like, like, like, like, like, like, like,
 		)
 	}
 
@@ -91,26 +101,38 @@ func listPocRules(c *gin.Context) {
 }
 
 func pocRuleToResponse(rule db.PocRule) pocRuleResponse {
+	executionClass, err := db.NormalizePocExecutionClass(rule.ExecutionClass)
+	if err != nil {
+		executionClass = db.PocExecutionClassDetection
+	}
+	riskLevel, err := db.NormalizePocRiskLevel(rule.RiskLevel)
+	if err != nil {
+		riskLevel = db.PocRiskLevelUnknown
+	}
 	return pocRuleResponse{
-		ID:                  rule.ID,
-		TenantID:            rule.TenantID,
-		ArtifactID:          rule.ArtifactID,
-		SourceFile:          rule.SourceFile,
-		Name:                rule.Name,
-		TargetProduct:       rule.TargetProduct,
-		CVE:                 rule.CVE,
-		CompatibilityStatus: rule.CompatibilityStatus,
-		SourceVersion:       rule.SourceVersion,
-		ContentHash:         rule.ContentHash,
-		Severity:            rule.Severity,
-		Tags:                rule.Tags,
-		Author:              rule.Author,
-		Description:         rule.Description,
-		Version:             rule.Version,
-		State:               rule.State,
-		Enabled:             rule.Enabled,
-		CreatedAt:           formatPocRuleTime(rule.CreatedAt),
-		UpdatedAt:           formatPocRuleTime(rule.UpdatedAt),
+		ID:                         rule.ID,
+		TenantID:                   rule.TenantID,
+		ArtifactID:                 rule.ArtifactID,
+		SourceFile:                 rule.SourceFile,
+		Name:                       rule.Name,
+		TargetProduct:              rule.TargetProduct,
+		CVE:                        rule.CVE,
+		CompatibilityStatus:        rule.CompatibilityStatus,
+		SourceVersion:              rule.SourceVersion,
+		ContentHash:                rule.ContentHash,
+		Severity:                   rule.Severity,
+		ExecutionClass:             executionClass,
+		RiskLevel:                  riskLevel,
+		RequiresConfirmation:       true,
+		RequiresSecondConfirmation: db.PocRequiresSecondConfirmation(riskLevel),
+		Tags:                       rule.Tags,
+		Author:                     rule.Author,
+		Description:                rule.Description,
+		Version:                    rule.Version,
+		State:                      rule.State,
+		Enabled:                    rule.Enabled,
+		CreatedAt:                  formatPocRuleTime(rule.CreatedAt),
+		UpdatedAt:                  formatPocRuleTime(rule.UpdatedAt),
 	}
 }
 

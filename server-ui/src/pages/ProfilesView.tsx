@@ -1,7 +1,6 @@
-import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { Typography, Tag, Space, Spin, Input, Empty, Tooltip, Pagination, Popover, Badge } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
-import gsap from 'gsap';
 import {
     ProfileOutlined,
     SearchOutlined,
@@ -377,7 +376,6 @@ const ProfilesView: React.FC = () => {
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(20);
     const [searchKeyword, setSearchKeyword] = useState('');
-    const cardsRef = useRef<HTMLDivElement>(null);
 
     const fetchData = useCallback(async () => {
         setLoading(true);
@@ -392,26 +390,6 @@ const ProfilesView: React.FC = () => {
             setLoading(false);
         }
     }, [page, pageSize, searchKeyword]);
-
-    // GSAP stagger entrance for host cards
-    useEffect(() => {
-        if (loading || !cardsRef.current) return;
-        const cards = cardsRef.current.querySelectorAll('.host-card-item');
-        if (cards.length === 0) return;
-
-        const ctx = gsap.context(() => {
-            gsap.from(cards, {
-                y: 20,
-                opacity: 0,
-                duration: 0.4,
-                stagger: 0.05,
-                ease: 'power2.out',
-                clearProps: 'transform,opacity',
-            });
-        }, cardsRef);
-
-        return () => ctx.revert();
-    }, [loading, profiles]);
 
     useEffect(() => {
         const timer = setTimeout(() => {
@@ -476,9 +454,9 @@ const ProfilesView: React.FC = () => {
                 </ProCard>
             ) : (
                 <>
-                    <div ref={cardsRef} style={{ display: 'flex', flexDirection: 'column', gap: 12, position: 'relative', zIndex: 1 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, position: 'relative', zIndex: 1 }}>
                         {profiles.map(p => (
-                            <div key={p.host} className="host-card-item">
+                            <div key={p.host}>
                                 <HostCard profile={p} />
                             </div>
                         ))}

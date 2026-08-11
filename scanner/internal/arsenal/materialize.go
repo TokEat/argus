@@ -38,7 +38,9 @@ type RulePackageCounts struct {
 }
 
 type RulePackageManifest struct {
+	SchemaVersion  string            `json:"schema_version"`
 	Hash           string            `json:"hash"`
+	PackageSHA256  string            `json:"package_sha256"`
 	RuleVersion    string            `json:"rule_version"`
 	MaterializedAt string            `json:"materialized_at"`
 	ManagedFiles   []string          `json:"managed_files"`
@@ -66,9 +68,14 @@ func PrepareRulePackage(opts MaterializeOptions) (*PreparedRulePackage, error) {
 	if strings.TrimSpace(opts.Hash) == "" {
 		return nil, fmt.Errorf("rule package hash is required")
 	}
-	if err := OpenDB(opts.DBPath); err != nil {
+	packageSHA256, err := HashRulePackageFile(opts.DBPath)
+	if err != nil {
+		return nil, fmt.Errorf("hash arsenal package: %w", err)
+	}
+	if err := OpenExistingDB(opts.DBPath); err != nil {
 		return nil, fmt.Errorf("open arsenal db: %w", err)
 	}
+	defer CloseDB()
 	if !IsDBReady() {
 		return nil, fmt.Errorf("arsenal db is empty or not ready")
 	}
@@ -210,7 +217,9 @@ func PrepareRulePackage(opts MaterializeOptions) (*PreparedRulePackage, error) {
 		BackupRoot:       opts.BackupRoot,
 		BackupLimit:      opts.BackupLimit,
 		Manifest: RulePackageManifest{
+			SchemaVersion:  RulePackageSchemaVersion,
 			Hash:           opts.Hash,
+			PackageSHA256:  packageSHA256,
 			RuleVersion:    opts.RuleVersion,
 			MaterializedAt: time.Now().UTC().Format(time.RFC3339Nano),
 			ManagedFiles:   managedFiles,
@@ -278,21 +287,38 @@ func ActivatePreparedRulePackage(prepared *PreparedRulePackage) error {
 }
 
 func IsRulePackageMaterialized(configDir, hash string) bool {
-	if strings.TrimSpace(configDir) == "" {
-		configDir = "config"
-	}
-	if !HasUsableRuleFiles(configDir) {
-		return false
-	}
-	data, err := os.ReadFile(filepath.Join(configDir, ".argus-arsenal.json"))
+	manifest, err := ReadRulePackageManifest(configDir)
 	if err != nil {
 		return false
 	}
-	var manifest RulePackageManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
+	return HasUsableRuleFiles(configDir) && manifest.SchemaVersion == RulePackageSchemaVersion && manifest.Hash == hash && isLowercaseSHA256(manifest.PackageSHA256) && strings.TrimSpace(manifest.RuleVersion) != ""
+}
+
+func isLowercaseSHA256(value string) bool {
+	if len(value) != 64 {
 		return false
 	}
-	return manifest.Hash == hash
+	for _, r := range value {
+		if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func ReadRulePackageManifest(configDir string) (RulePackageManifest, error) {
+	if strings.TrimSpace(configDir) == "" {
+		configDir = "config"
+	}
+	data, err := os.ReadFile(filepath.Join(configDir, ".argus-arsenal.json"))
+	if err != nil {
+		return RulePackageManifest{}, err
+	}
+	var manifest RulePackageManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return RulePackageManifest{}, err
+	}
+	return manifest, nil
 }
 
 func HasUsableRuleFiles(configDir string) bool {

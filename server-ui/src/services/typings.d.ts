@@ -43,6 +43,10 @@ declare namespace API {
     Name: string;
     Description: string;
     Status: string;
+    SeedTargets?: string;
+    Scope?: string;
+    DefaultConfig?: string;
+    NodeAffinity?: string;
     owner_username?: string;
     access_level?: 'admin' | 'owner' | 'operator' | 'viewer' | 'member';
     member_user_ids?: string[];
@@ -64,7 +68,7 @@ declare namespace API {
     UserID: string;
     Name: string;
     OriginalTargets: string;
-    Status: string;            // Queued, Pending, Running, PartialDone, FINISHED, Failed, Timeout, CancelPending, Cancelled
+    Status: string;            // Legacy and canonical task states; normalize through utils/taskStatus
     TotalChunks: number;       // 批次总数
     CompletedChunks: number;   // 已完成批次数
     TotalTargets: number;      // 原始目标总数
@@ -74,14 +78,16 @@ declare namespace API {
     Capacity?: number;
     RunningTasks?: number;
     RuleVersion?: string;
+    CurrentConfigVersion?: number;
     CreatedAt: string;
     UpdatedAt: string;
+    ArchivedAt?: string | null;
   }
 
   /** 创建任务请求 (POST /api/v1/tasks) */
   interface CreateTaskRequest {
     project_id: string;
-    name: string;
+    name?: string;
     targets: string | string[];               // 多行文本或 JSON 数组
     config?: Record<string, unknown> | string; // JSON 对象或 JSON 字符串
     priority?: number;
@@ -110,7 +116,26 @@ declare namespace API {
   interface CreateTaskResponse {
     status: string;
     task_id: string;
+    replayed: boolean;
+    config_version?: number;
     skipped_targets?: InvalidTarget[];
+  }
+
+  interface AppendTargetsResponse {
+    status: 'appended' | 'unchanged';
+    /** True when the Server replayed the first completed append request. */
+    replayed: boolean;
+    new_subtasks: number;
+    new_batches: number;
+    new_targets: number;
+    duplicate_targets: number;
+    config_version: number;
+    total_chunks: number;
+    total_targets: number;
+    project_scope_added?: number;
+    project_seeds_added?: number;
+    dispatched?: number;
+    dispatch_pending?: number;
   }
 
   /** 调度选择器预览 (POST /api/v1/tasks/preview-selector) */
@@ -163,18 +188,151 @@ declare namespace API {
   /** 子任务摘要 (GET /api/v1/tasks/:id) */
   interface SubTaskSummary {
     id: string;
+    batch_id?: string;
+    attempt_no?: number;
+    parent_attempt_id?: string;
+    trigger?: string;
     status: string;
     agent_id: string;
+    failure_reason?: string;
     target_count: number;
     retry_count: number;
     max_retry: number;
     priority: number;
     timeout_sec: number;
+    config_version: number;
+    rule_version?: string;
+    started_at?: string | null;
+    finished_at?: string | null;
     created_at: string;
     updated_at: string;
   }
 
+  interface TaskBatchSummary {
+    id: string;
+    sequence: number;
+    kind: string;
+    target_type: string;
+    target_count: number;
+    status: string;
+    display_status: string;
+    control_state: 'active' | 'paused' | 'stopping' | 'stopped' | string;
+    config_version: number;
+    rule_version?: string;
+    priority: number;
+    timeout_sec: number;
+    current_attempt_no: number;
+    attempt_count: number;
+    latest_attempt_id: string;
+    agent_id?: string;
+    failure_reason?: string;
+    retry_count: number;
+    max_retry: number;
+    started_at?: string | null;
+    finished_at?: string | null;
+    created_at: string;
+    updated_at: string;
+    archived_at?: string | null;
+  }
+
+  interface TaskBatchList {
+    task_id: string;
+    items: TaskBatchSummary[];
+  }
+
+  interface TaskBatchMutationResponse extends MessageResponse {
+    status: string;
+    attempt_id?: string;
+    attempt_no?: number;
+    dispatch_pending?: number;
+    archived_at?: string;
+    already_archived?: boolean;
+    already_paused?: boolean;
+    already_stopped?: boolean;
+  }
+
+  interface TaskBatchRetryResponse extends TaskBatchMutationResponse {
+    /** True when the Server replayed the first completed batch retry request. */
+    replayed: boolean;
+  }
+
+  interface TaskCoverageExplanationSource {
+    task_id: string;
+    task_name: string;
+    batch_id: string;
+    attempt_id: string;
+  }
+
+  interface TaskCoverageExplanationItem {
+    link_type: 'executed' | 'reused' | 'in_flight' | string;
+    status: string;
+    normalized_target: string;
+    stage: string;
+    network_zone: string;
+    source: TaskCoverageExplanationSource;
+    reason: string;
+    created_at: string;
+  }
+
+  interface TaskCoverageInvalidationItem {
+    normalized_target: string;
+    stage: string;
+    status: string;
+    reason: string;
+    source: TaskCoverageExplanationSource;
+    invalidated_at: string;
+    valid_until?: string | null;
+  }
+
+  interface TaskCoverageExplanation {
+    schema_version: 'argus.task-coverage-explanation/v1' | string;
+    summary: {
+      executed_work_items: number;
+      reused_stages: number;
+      in_flight_work_items: number;
+      invalidated_stages: number;
+      expired_stages: number;
+      saved_stages: number;
+      saved_targets: number;
+    };
+    items: TaskCoverageExplanationItem[];
+    invalidations: TaskCoverageInvalidationItem[];
+    items_truncated: boolean;
+    invalidations_truncated: boolean;
+  }
+
+  interface TaskRetryResponse extends MessageResponse {
+    status: string;
+    /** True when the Server replayed the first completed retry request. */
+    replayed: boolean;
+    retried_batches: number;
+    completed_skipped: number;
+    paused_skipped: number;
+    dispatch_pending: number;
+  }
+
   /** 任务详情响应 (GET /api/v1/tasks/:id) */
+  interface TaskTimingEvent {
+    kind: 'process_startup' | 'rule_prepare' | 'context_init' | 'stage' | string;
+    stage?: string;
+    outcome: 'success' | 'negative' | 'failed' | 'skipped' | string;
+    duration_ns?: number;
+    duration_ms?: number;
+    started_at?: string;
+    finished_at?: string;
+  }
+
+  interface TaskTimingAttempt {
+    attempt_id: string;
+    available: boolean;
+    events?: TaskTimingEvent[];
+  }
+
+  interface TaskTimingProjection {
+    attempts: TaskTimingAttempt[];
+    truncated: boolean;
+  }
+
   interface TaskDetailResponse {
     task: {
       id: string;
@@ -189,10 +347,14 @@ declare namespace API {
       original_targets: string;
       config: Record<string, unknown> | string;
       rule_version: string;
+      current_config_version: number;
       created_at: string;
       updated_at: string;
+      archived_at?: string | null;
     };
     sub_tasks: SubTaskSummary[];
+    batches?: TaskBatchSummary[];
+    attempts?: SubTaskSummary[];
     status_distribution: Record<string, number>;
     reason_stats: {
       status: string;
@@ -200,12 +362,157 @@ declare namespace API {
       count: number;
       target_count: number;
     }[];
+    coverage_explanation?: TaskCoverageExplanation;
+    /** Optional so newer UI remains compatible with servers that do not return timing. */
+    timing?: TaskTimingProjection;
+    audits: {
+      id: number;
+      operator_id: string;
+      batch_id?: string;
+      attempt_id?: string;
+      action: 'pause' | 'resume' | 'stop' | 'archive' | 'config_update' | 'batch_append' | string;
+      before_status: string;
+      after_status: string;
+      details: Record<string, unknown>;
+      created_at: string;
+    }[];
     result_stats: {
       assets: number;
       fingerprints: number;
       vulns: number;
       severity: Record<string, number>;
     };
+  }
+
+  interface RiskValidationPreviewAsset {
+    target: string;
+    url: string;
+    protocol: string;
+    port: number;
+    title: string;
+    service: string;
+  }
+
+  interface RiskValidationPreviewCandidate {
+    asset: RiskValidationPreviewAsset;
+    endpoint: string;
+    products: string[];
+    match_types: string[];
+    workflow_sources: string[];
+    poc_name: string;
+    poc_file: string;
+    severity: string;
+    execution_class: 'detection' | 'verification';
+    risk_level: 'unknown' | 'low' | 'medium' | 'high';
+    requires_second_confirmation: boolean;
+    poc_content_hash: string;
+    template_request_estimate: number;
+    estimated_requests: number;
+    estimate_basis: 'template_upper_bound' | 'fallback_one_request' | string;
+  }
+
+  interface RiskValidationPreviewExcluded {
+    product: string;
+    poc_name: string;
+    reason: 'missing_poc' | 'poc_not_approved' | 'invalid_poc_governance' | 'unsupported_match_type' | string;
+    workflow: string;
+  }
+
+  interface RiskValidationPreviewResponse {
+    task: { id: string; name: string; project_id: string };
+    task_rule_version: string;
+    rule_version: string;
+    config_version: number;
+    generated_at: string;
+    plan_hash: string;
+    summary: {
+      fingerprint_hits: number;
+      unique_assets: number;
+      products: number;
+      workflow_rules: number;
+      poc_rules: number;
+      candidates: number;
+      estimated_requests: number;
+      second_confirmation_required: boolean;
+      second_confirmation_items: number;
+      unmatched_products: number;
+      excluded_mappings: number;
+    };
+    items: RiskValidationPreviewCandidate[];
+    unmatched_products: string[];
+    excluded: RiskValidationPreviewExcluded[];
+    page: number;
+    page_size: number;
+    total: number;
+    has_more: boolean;
+  }
+
+  interface RiskValidationPreviewRequest {
+    specified_pocs?: string[];
+  }
+
+  interface RiskValidationSelection {
+    endpoint: string;
+    poc_file: string;
+    poc_content_hash: string;
+  }
+
+  interface ExecuteRiskValidationRequest {
+    plan_hash: string;
+    specified_pocs?: string[];
+    selected?: RiskValidationSelection[];
+    confirmed: boolean;
+    second_confirmation: boolean;
+  }
+
+  interface ExecuteRiskValidationResponse extends MessageResponse {
+    status: 'scheduled' | string;
+    task_id: string;
+    batch_id: string;
+    attempt_id: string;
+    candidate_count: number;
+    target_count: number;
+    poc_count: number;
+    estimated_requests: number;
+    config_version: number;
+    rule_version: string;
+    dispatch_pending: number;
+    replayed: boolean;
+  }
+
+  interface TaskConfigRevision {
+    version: number;
+    config: Record<string, unknown>;
+    config_hash: string;
+    priority: number;
+    timeout_sec: number;
+    agent_selector: Record<string, string>;
+    agent_selector_rules: AgentSelectorRules;
+    created_by: string;
+    change_note: string;
+    created_at: string;
+  }
+
+  interface TaskConfigRevisionList {
+    task_id: string;
+    current_config_version: number;
+    items: TaskConfigRevision[];
+  }
+
+  interface UpdateTaskConfigRequest {
+    config?: Record<string, unknown>;
+    priority?: number;
+    timeout_sec?: number;
+    agent_selector?: Record<string, string>;
+    agent_selector_rules?: AgentSelectorRules;
+    change_note?: string;
+  }
+
+  interface UpdateTaskConfigResponse {
+    status: string;
+    unchanged: boolean;
+    current_config_version: number;
+    revision: TaskConfigRevision;
   }
 
   // ======================== Node ========================
@@ -674,6 +981,10 @@ declare namespace API {
     source_version: string;
     content_hash: string;
     severity: string;
+    execution_class: 'detection' | 'verification';
+    risk_level: 'unknown' | 'low' | 'medium' | 'high';
+    requires_confirmation: boolean;
+    requires_second_confirmation: boolean;
     tags: string;
     author: string;
     description: string;

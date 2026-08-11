@@ -1,4 +1,4 @@
-module github.com/user/argus-mcp
+module github.com/P0lar1ght/argus/mcp
 
 go 1.25.4
 

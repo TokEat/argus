@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
+	grpcpkg "github.com/P0lar1ght/argus/server/internal/grpc"
+	"github.com/P0lar1ght/argus/shared/proto/pyexp"
 	"github.com/gin-gonic/gin"
-	"github.com/user/dddd-proto/pyexp"
-	"github.com/user/dddd-server/internal/db"
-	grpcpkg "github.com/user/dddd-server/internal/grpc"
 )
 
 func TestInstallAgentPyenvRequirementsNoopForEmptyRequirements(t *testing.T) {

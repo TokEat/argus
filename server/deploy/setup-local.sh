@@ -11,7 +11,7 @@ RABBITMQ_SERVICE="${RABBITMQ_SERVICE:-rabbitmq}"
 
 POSTGRES_USER="${POSTGRES_USER:-postgres}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-argus_dev_pg_S7m9Q4r2L8xP6nV3}"
-POSTGRES_DB="${POSTGRES_DB:-dddd}"
+POSTGRES_DB="${POSTGRES_DB:-argus}"
 DB_HOST="${DB_HOST:-127.0.0.1}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 DB_PORT="${DB_PORT:-${POSTGRES_PORT}}"
@@ -67,31 +67,31 @@ wait_for_service() {
 run_migrate_only() {
   (
     cd "${ROOT_DIR}"
-    if [[ -x "${ROOT_DIR}/bin/dddd-server" ]]; then
+    if [[ -x "${ROOT_DIR}/bin/argus-server" ]]; then
       if [[ "${DB_MIGRATION_MODE}" == "dev-auto" ]]; then
-        ./bin/dddd-server --db "${DB_DSN}" --migrate-only --db-migration-mode "${DB_MIGRATION_MODE}" --dev
+        ./bin/argus-server --db "${DB_DSN}" --migrate-only --db-migration-mode "${DB_MIGRATION_MODE}" --dev
       else
-        ./bin/dddd-server --db "${DB_DSN}" --migrate-only --db-migration-mode "${DB_MIGRATION_MODE}"
+        ./bin/argus-server --db "${DB_DSN}" --migrate-only --db-migration-mode "${DB_MIGRATION_MODE}"
       fi
       return
     fi
 
     require_cmd go
     if [[ "${DB_MIGRATION_MODE}" == "dev-auto" ]]; then
-      go run ./server/cmd/dddd-server --db "${DB_DSN}" --migrate-only --db-migration-mode "${DB_MIGRATION_MODE}" --dev
+      go run ./server/cmd/argus-server --db "${DB_DSN}" --migrate-only --db-migration-mode "${DB_MIGRATION_MODE}" --dev
     else
-      go run ./server/cmd/dddd-server --db "${DB_DSN}" --migrate-only --db-migration-mode "${DB_MIGRATION_MODE}"
+      go run ./server/cmd/argus-server --db "${DB_DSN}" --migrate-only --db-migration-mode "${DB_MIGRATION_MODE}"
     fi
   )
 }
 
 next_server_command() {
-  if [[ -x "${ROOT_DIR}/bin/dddd-server" ]]; then
-    printf './bin/dddd-server --db "%s" --dev' "${DB_DSN}"
+  if [[ -x "${ROOT_DIR}/bin/argus-server" ]]; then
+    printf './bin/argus-server --db "%s" --dev' "${DB_DSN}"
     return
   fi
 
-  printf 'make server && ./bin/dddd-server --db "%s" --dev' "${DB_DSN}"
+  printf 'make server && ./bin/argus-server --db "%s" --dev' "${DB_DSN}"
 }
 
 require_cmd docker
@@ -118,5 +118,5 @@ cat <<EOF
 [setup-local] PostgreSQL:    host=${DB_HOST} port=${DB_PORT} dbname=${POSTGRES_DB} user=${POSTGRES_USER}
 [setup-local] Next:
 [setup-local]   $(next_server_command)
-[setup-local]   ./bin/dddd-agent --server 127.0.0.1:50051
+[setup-local]   ./bin/argus-agent --server 127.0.0.1:50051
 EOF

@@ -49,7 +49,7 @@ type AgentConfig struct {
 func Default() Config {
 	return Config{
 		App: AppConfig{
-			Name:        "dddd-server",
+			Name:        "argus-server",
 			Environment: "local",
 		},
 		HTTP: HTTPConfig{

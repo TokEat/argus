@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-import "dddd/scanner/structs"
+import "github.com/P0lar1ght/argus/scanner/structs"
 
 // IsIPv4 IsIP checks if a string is either IP version 4 Alias for `net.ParseIP`
 func IsIPv4(str string) bool {

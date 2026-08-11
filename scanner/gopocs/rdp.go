@@ -1,12 +1,12 @@
 package gopocs
 
 import (
-	"dddd/scanner/utils"
-	"dddd/scanner/ddout"
-	"dddd/scanner/structs"
 	_ "embed"
 	"errors"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	"github.com/projectdiscovery/gologger"
 	"github.com/tomatome/grdp/core"
 	"github.com/tomatome/grdp/glog"

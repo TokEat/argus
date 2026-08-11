@@ -1,0 +1,84 @@
+{
+  "schema_version": "argus.performance-baseline-set/v1",
+  "goal": "G36",
+  "issue": 172,
+  "captured_at": "2026-08-10T09:55:13+08:00",
+  "environment": {
+    "go_version": "go1.25.4",
+    "os": "windows",
+    "arch": "amd64",
+    "cpu": "AMD Ryzen 7 7800X3D 8-Core Processor",
+    "arsenal_sha256": "9f2907fffc945ffb3ce0b3fa15cb172651f51cecdb4468f6d9b065219760ce3e",
+    "manifest_sha256": "2e1ac871cad3b5d70410ceb201bed9d99c28c9f9263cbb69a56225ae1c62eff8"
+  },
+  "agent_context": [
+    {
+      "case": "g36-agent-context-before",
+      "source_commit": "616d96bc0289e6ba84074f181d0082ae5fbcf16c",
+      "binary_sha256": "71257f9b4ea990dc0e02dd5f226a504b42e36849ddef085cfdebf48382134b41",
+      "warmups": 3,
+      "samples": 30,
+      "min_ns": 41272900,
+      "p50_ns": 47672200,
+      "p95_ns": 53839500,
+      "max_ns": 55305700,
+      "response_storage": "disk"
+    },
+    {
+      "case": "g36-agent-context-after",
+      "binary_sha256": "db38db894a3f111997e5695218aed919a9fb3f66f7db82cb3ccda9a6ce093776",
+      "warmups": 3,
+      "samples": 30,
+      "min_ns": 0,
+      "p50_ns": 0,
+      "p95_ns": 0,
+      "max_ns": 1002500,
+      "response_storage": "memory",
+      "measurement_resolution_limited": true
+    }
+  ],
+  "response_store_microbenchmark": {
+    "command": "go test ./scanner/internal/taskstore -run '^$' -bench '^BenchmarkNewResponseStores$' -benchmem -benchtime=2s -count=5",
+    "bounded_memory": {
+      "ns_per_op_samples": [14690, 13766, 14573, 14141, 14639],
+      "p50_ns_per_op": 14573,
+      "p95_ns_per_op": 14690,
+      "bytes_per_op_range": [27618, 27629],
+      "allocs_per_op": 277
+    },
+    "range_disk": {
+      "ns_per_op_samples": [51612433, 49963885, 52209969, 50698154, 52673852],
+      "p50_ns_per_op": 51612433,
+      "p95_ns_per_op": 52673852,
+      "bytes_per_op_range": [14109620, 14125783],
+      "allocs_per_op_range": [12045, 12068]
+    },
+    "p95_lifecycle_reduction_percent": 99.97
+  },
+  "acceptance": {
+    "agent_context_after_p95_le_500ms": true,
+    "agent_context_after_not_regressed": true,
+    "bounded_endpoint_tasks_use_memory": true,
+    "unknown_or_expanding_tasks_use_disk": true,
+    "directory_and_host_expansion_use_disk": true,
+    "all_three_maps_share_one_decision": true,
+    "partial_initialization_rolls_back": true,
+    "memory_and_disk_read_write_results_match": true,
+    "disk_close_removes_windows_temporary_directories": true,
+    "nuclei_input_error_path_removes_temporary_directory": true,
+    "nuclei_execution_cache_implemented": false,
+    "poc_execution_defaults_unchanged": true
+  },
+  "reproduction": {
+    "agent_context_command": "go run ./scanner/cmd/perf-baseline -mode agent-context -case g36-agent-context-after -agent-config-dir ./config -arsenal-file ./data/arsenal.db -config-file ./config/.argus-arsenal.json -warmups 3 -samples 30",
+    "network_activity": false,
+    "poc_enabled": false
+  },
+  "notes": [
+    "Before and after use the same machine, Go toolchain, Arsenal SQLite bytes, manifest, warm-up policy and sample count.",
+    "The after operation is shorter than the effective Windows wall-clock sample resolution, so zero-valued context samples are treated only as an upper-bound result and not as literal zero-cost execution.",
+    "The repeated Go microbenchmark supplies the high-resolution storage lifecycle evidence: bounded memory P95 is 14.690 microseconds versus 52.674 milliseconds for the retained disk path.",
+    "Only no-target, risk-validation, or at most eight explicit URL/IP:Port/Domain:Port inputs with provider, subdomain, directory-probe and HostBind expansion disabled use memory. CIDR, ranges, bare hosts, unknown inputs, expanding discovery and larger sets retain disk storage.",
+    "Nuclei Runner and compiled execution objects are intentionally not cached because they contain targets, callbacks, output, proxy and header variables, Interactsh state, resume data and task-owned resources. Risk validation continues to re-read and content-hash the exact selected POC files."
+  ]
+}

@@ -1,4 +1,4 @@
--- Bootstrap role and database for the dddd control plane.
+-- Bootstrap role and database for the Argus control plane.
 -- Required psql variables:
 --   app_db_name
 --   app_db_user

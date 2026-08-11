@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     Alert,
     App,
@@ -37,7 +37,6 @@ import {
     testAIConnection,
 } from '../services/api';
 import { canAccessRole, getCurrentUserRole } from '../utils/auth';
-import gsap from 'gsap';
 import NetworkCanvas from '../components/NetworkCanvas';
 
 const { Paragraph, Text } = Typography;
@@ -95,21 +94,6 @@ const AIConfig: React.FC = () => {
     const [selectedAudit, setSelectedAudit] = useState<API.AIToolInvocation | null>(null);
 
     const { message } = App.useApp();
-    const pageRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        if (!pageRef.current) return;
-        const els = pageRef.current.querySelectorAll('.sys-animate-in');
-        if (els.length === 0) return;
-        const ctx = gsap.context(() => {
-            gsap.from(els, {
-                y: 24, opacity: 0, duration: 0.45,
-                stagger: 0.08, ease: 'power2.out', clearProps: 'transform,opacity',
-            });
-        }, pageRef);
-        return () => ctx.revert();
-    }, []);
-
     const fetchModels = useCallback(async (overrideBaseURL?: string, overrideAPIKey?: string) => {
         setModelsLoading(true);
         setModelsError('');
@@ -621,9 +605,9 @@ const AIConfig: React.FC = () => {
     ];
 
     return (
-        <div ref={pageRef} style={{ position: 'relative', overflow: 'hidden' }}>
+        <div style={{ position: 'relative', overflow: 'hidden' }}>
             <NetworkCanvas color="#6366f1" count={25} speed={0.12} linkDist={90} />
-            <div className="sys-animate-in" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, position: 'relative', zIndex: 1 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, position: 'relative', zIndex: 1 }}>
                 <Space>
                     <RobotOutlined style={{ color: '#6366f1' }} />
                     <Text strong>AI Copilot 管理</Text>
@@ -632,7 +616,7 @@ const AIConfig: React.FC = () => {
                 {!isAdmin && <Text type="secondary">模型连接配置仅管理员可见；当前可管理 Prompt 与自己的审计记录。</Text>}
             </div>
 
-            <div className="sys-animate-in" style={{ position: 'relative', zIndex: 1 }}>
+            <div style={{ position: 'relative', zIndex: 1 }}>
                 <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
             </div>
 

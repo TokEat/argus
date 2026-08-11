@@ -19,14 +19,12 @@ import { useCloudDiscovery } from './cloud/useCloudDiscovery';
 import { useCloudInstances } from './cloud/useCloudInstances';
 import { useCloudOSS } from './cloud/useCloudOSS';
 import { useCloudPolicies } from './cloud/useCloudPolicies';
-import gsap from 'gsap';
 
 const { Title } = Typography;
 
 const CloudManagement = () => {
     const [activeTab, setActiveTab] = useState('instances');
     const [dashboard, setDashboard] = useState<API.CloudDashboard | null>(null);
-    const pageRef = useRef<HTMLDivElement>(null);
     const isAdmin = useMemo(() => canAccessRole('admin', getCurrentUserRole()), []);
 
     const fetchDashboard = useCallback(async () => {
@@ -93,16 +91,6 @@ const CloudManagement = () => {
     ]);
 
     useEffect(() => {
-        if (!pageRef.current) return;
-        const elements = pageRef.current.querySelectorAll('.cloud-animate-in');
-        if (elements.length === 0) return;
-        const context = gsap.context(() => {
-            gsap.from(elements, { y: 24, opacity: 0, duration: 0.45, stagger: 0.08, ease: 'power2.out', clearProps: 'transform,opacity' });
-        }, pageRef);
-        return () => context.revert();
-    }, []);
-
-    useEffect(() => {
         const actions = tabLifecycleRef.current;
         actions.fetchDashboard();
         if (activeTab === 'instances') {
@@ -155,9 +143,9 @@ const CloudManagement = () => {
     ]);
 
     return (
-        <div ref={pageRef} style={{ position: 'relative', overflow: 'hidden' }}>
+        <div style={{ position: 'relative', overflow: 'hidden' }}>
             <NetworkCanvas color="#0ea5e9" count={30} speed={0.15} linkDist={100} />
-            <div className="cloud-animate-in" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, position: 'relative', zIndex: 1 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, position: 'relative', zIndex: 1 }}>
                 <Title level={4} style={{ margin: 0, color: '#1e293b', fontWeight: 600 }}>
                     <CloudOutlined style={{ marginRight: 8, color: '#0ea5e9' }} />云资源动态调度
                 </Title>
@@ -182,7 +170,7 @@ const CloudManagement = () => {
                 </Space>
             </div>
 
-            <ProCard className="glass-card cloud-animate-in" style={{ background: 'transparent', border: 'none', position: 'relative', zIndex: 1 }} bodyStyle={{ padding: 0 }}>
+            <ProCard className="glass-card" style={{ background: 'transparent', border: 'none', position: 'relative', zIndex: 1 }} bodyStyle={{ padding: 0 }}>
                 <Tabs
                     activeKey={activeTab}
                     onChange={setActiveTab}

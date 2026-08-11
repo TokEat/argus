@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/P0lar1ght/argus/server/internal/cloud"
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
-	"github.com/user/dddd-server/internal/cloud"
-	"github.com/user/dddd-server/internal/db"
 )
 
-const requiredAgentObjectKey = "argus/agent/dddd-agent-linux-amd64"
+const requiredAgentObjectKey = "argus/agent/argus-agent-linux-amd64"
 
 // listReleaseFiles 列出服务器端 ./release 目录中的 Agent 二进制文件
 func (h *CloudHandler) listReleaseFiles(c *gin.Context) {
@@ -122,7 +122,7 @@ func (h *CloudHandler) uploadAgentToOSS(c *gin.Context) {
 		return
 	}
 	if len(summary.Results) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "./release 目录下未找到 Agent 二进制文件（dddd-agent-*），请先构建 Agent"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "./release 目录下未找到 Agent 二进制文件（argus-agent-*），请先构建 Agent"})
 		return
 	}
 	if !summary.RequiredFound {
@@ -154,7 +154,7 @@ func sanitizeReleaseFilename(name string) (string, error) {
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/") || strings.Contains(clean, "\\") {
 		return "", fmt.Errorf("非法文件名: %s", name)
 	}
-	if !strings.HasPrefix(clean, "dddd-agent-") {
+	if !strings.HasPrefix(clean, "argus-agent-") {
 		return "", fmt.Errorf("仅允许上传 Agent 二进制文件: %s", clean)
 	}
 	return clean, nil

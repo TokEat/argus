@@ -3,13 +3,14 @@ package subdomain
 
 import (
 	"bytes"
-	"dddd/scanner/ddout"
-	"dddd/scanner/utils"
 	_ "embed"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	"io"
 	"strings"
 
 	"github.com/projectdiscovery/dnsx/calldnsx"
+	"github.com/projectdiscovery/goflags"
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/subfinder/v2/pkg/resolve"
 	"github.com/projectdiscovery/subfinder/v2/pkg/runner"
@@ -21,7 +22,6 @@ type Config struct {
 	NoSubFinder                bool
 	SubdomainBruteForceThreads int
 	SubdomainWordListFile      string
-	APIConfigFilePath          string
 	EmitFunc                   func(ddout.OutputMessage)
 }
 
@@ -47,7 +47,7 @@ func Enumerate(domains []string, cfg Config) []string {
 		}
 
 		if !cfg.NoSubFinder {
-			results = append(results, subFinder(domain, cfg.APIConfigFilePath, cfg.EmitFunc)...)
+			results = append(results, subFinder(domain, cfg.EmitFunc)...)
 		}
 	}
 
@@ -55,7 +55,7 @@ func Enumerate(domains []string, cfg Config) []string {
 	return removeEmpty(results)
 }
 
-func subFinder(domain string, providerConfig string, emit func(ddout.OutputMessage)) []string {
+func subFinder(domain string, emit func(ddout.OutputMessage)) []string {
 	runnerInstance, err := runner.NewRunner(&runner.Options{
 		Threads:            10,
 		Timeout:            15,
@@ -70,7 +70,10 @@ func subFinder(domain string, providerConfig string, emit func(ddout.OutputMessa
 		},
 		RemoveWildcard:     true,
 		DisableUpdateCheck: true,
-		ProviderConfig:     providerConfig,
+		// Passive discovery remains available, but Scanner and Agent must never
+		// load Provider credentials or execute the migrated search providers.
+		DisableProviderConfig: true,
+		ExcludeSources:        goflags.StringSlice{"fofa", "hunter", "quake"},
 	})
 	if err != nil {
 		gologger.Error().Msgf("[SubFinder] 初始化失败: %v", err)

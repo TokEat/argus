@@ -4,7 +4,7 @@
 #
 # 在一台全新的 Ubuntu 22.04/24.04 云实例上运行此脚本，将自动：
 # 1. 安装 Docker 并通过 docker-compose 启动 PostgreSQL + RabbitMQ
-# 2. 部署 dddd-server 二进制并执行数据库迁移
+# 2. 部署 argus-server 二进制并执行数据库迁移
 # 3. 注册为 systemd 服务并启动
 #
 # 用法：
@@ -12,10 +12,13 @@
 #   chmod +x deploy/setup-server.sh
 #   ./deploy/setup-server.sh --public-ip <公网IP>
 #
+# 安装目录：发布包根目录（即 deploy/ 的父目录）。该绝对路径会写入
+# argus-server.service 的 WorkingDirectory，卸载脚本据此定位真实安装目录。
+#
 # 环境变量（可选，与 Makefile 保持一致）：
 #   POSTGRES_USER       PostgreSQL 用户（默认: postgres）
 #   POSTGRES_PASSWORD    PostgreSQL 密码（默认: 自动生成）
-#   POSTGRES_DB          数据库名（默认: dddd）
+#   POSTGRES_DB          数据库名（默认: argus）
 #   POSTGRES_PORT        PostgreSQL 端口（默认: 5432）
 #   RABBITMQ_PORT        RabbitMQ 端口（默认: 5672）
 #   ARGUS_AGENT_PSK      Agent 认证预共享密钥（默认: 自动生成）
@@ -46,7 +49,7 @@ gen_hex_secret() {
 }
 POSTGRES_USER="${POSTGRES_USER:-postgres}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(gen_hex_secret)}"
-POSTGRES_DB="${POSTGRES_DB:-dddd}"
+POSTGRES_DB="${POSTGRES_DB:-argus}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 RABBITMQ_PORT="${RABBITMQ_PORT:-5672}"
 RABBITMQ_MANAGEMENT_PORT="${RABBITMQ_MANAGEMENT_PORT:-15672}"
@@ -61,9 +64,10 @@ ENCRYPT_KEY="${ARGUS_ENCRYPT_KEY:-$(gen_encrypt_key)}"
 PUBLIC_IP=""
 
 # 自动定位项目根目录（脚本在 deploy/ 目录下）
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
 COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
+SERVICE_FILE="/etc/systemd/system/argus-server.service"
 
 # 解析参数
 while [[ $# -gt 0 ]]; do
@@ -104,6 +108,7 @@ echo -e "  JWT Secret: ${GREEN}已生成/已加载${NC}"
 echo -e "  EncryptKey: ${GREEN}已生成/已加载 (base64, 32-byte)${NC}"
 echo -e "  PostgreSQL: ${GREEN}${POSTGRES_USER}:****@127.0.0.1:${POSTGRES_PORT}/${POSTGRES_DB}${NC}"
 echo -e "  RabbitMQ:   ${GREEN}${RABBITMQ_DEFAULT_USER}:****@127.0.0.1:${RABBITMQ_PORT}${NC}"
+echo -e "  安装目录:   ${GREEN}${INSTALL_DIR}${NC}"
 echo -e "${BLUE}================================================${NC}"
 echo ""
 # ============================================================
@@ -184,11 +189,11 @@ mkdir -p "$INSTALL_DIR/server-ui/dist"
 # 查找 server 二进制（按优先级）
 SERVER_BIN=""
 for candidate in \
-    "${ROOT_DIR}/bin/dddd-server-linux-amd64" \
-    "${ROOT_DIR}/bin/dddd-server" \
-    "${ROOT_DIR}/release/dddd-server-linux-amd64" \
-    "${ROOT_DIR}/dddd-server-linux-amd64" \
-    "./dddd-server-linux-amd64"; do
+    "${ROOT_DIR}/bin/argus-server-linux-amd64" \
+    "${ROOT_DIR}/bin/argus-server" \
+    "${ROOT_DIR}/release/argus-server-linux-amd64" \
+    "${ROOT_DIR}/argus-server-linux-amd64" \
+    "./argus-server-linux-amd64"; do
     if [[ -f "$candidate" ]]; then
         SERVER_BIN="$candidate"
         break
@@ -206,9 +211,9 @@ if [[ -z "$SERVER_BIN" ]]; then
         tar -xzf "$TAR_FILE" -C "${ROOT_DIR}"
         # 解压后通常会有一个 argus-release-xxx 目录，再次尝试查找
         for candidate in \
-            "${ROOT_DIR}"/argus-release-*/bin/dddd-server-linux-amd64 \
-            "${ROOT_DIR}/bin/dddd-server-linux-amd64" \
-            "${ROOT_DIR}/bin/dddd-server"; do
+            "${ROOT_DIR}"/argus-release-*/bin/argus-server-linux-amd64 \
+            "${ROOT_DIR}/bin/argus-server-linux-amd64" \
+            "${ROOT_DIR}/bin/argus-server"; do
             if [[ -f "$candidate" ]]; then
                 SERVER_BIN="$candidate"
                 break
@@ -218,28 +223,28 @@ if [[ -z "$SERVER_BIN" ]]; then
 fi
 
 if [[ -z "$SERVER_BIN" ]]; then
-    echo -e "${RED}[!] 找不到 dddd-server 二进制文件${NC}"
+    echo -e "${RED}[!] 找不到 argus-server 二进制文件${NC}"
     echo -e "    请先在开发机编译:"
-    echo -e "      ${YELLOW}./build.sh --component dddd-server --target linux/amd64${NC}"
+    echo -e "      ${YELLOW}./build.sh --component argus-server --target linux/amd64${NC}"
     echo -e "    或者: ${YELLOW}make server GOOS=linux GOARCH=amd64${NC}"
     exit 1
 fi
 
-if [[ "$SERVER_BIN" != "$INSTALL_DIR/bin/dddd-server" ]]; then
-    rm -f "$INSTALL_DIR/bin/dddd-server"
-    cp "$SERVER_BIN" "$INSTALL_DIR/bin/dddd-server"
+if [[ "$SERVER_BIN" != "$INSTALL_DIR/bin/argus-server" ]]; then
+    rm -f "$INSTALL_DIR/bin/argus-server"
+    cp "$SERVER_BIN" "$INSTALL_DIR/bin/argus-server"
 fi
-chmod +x "$INSTALL_DIR/bin/dddd-server"
-echo -e "  Server: ${GREEN}${SERVER_BIN} → ${INSTALL_DIR}/bin/dddd-server${NC}"
+chmod +x "$INSTALL_DIR/bin/argus-server"
+echo -e "  Server: ${GREEN}${SERVER_BIN} → ${INSTALL_DIR}/bin/argus-server${NC}"
 
 # 部署 Agent 二进制（用于 HTTP 分发给云实例）
 AGENT_BIN=""
 for candidate in \
-    "${ROOT_DIR}/bin/dddd-agent-linux-amd64" \
-    "${ROOT_DIR}/release/dddd-agent-linux-amd64" \
-    "${ROOT_DIR}/dddd-agent-linux-amd64" \
-    "./dddd-agent-linux-amd64" \
-    "${ROOT_DIR}"/argus-release-*/bin/dddd-agent-linux-amd64; do
+    "${ROOT_DIR}/bin/argus-agent-linux-amd64" \
+    "${ROOT_DIR}/release/argus-agent-linux-amd64" \
+    "${ROOT_DIR}/argus-agent-linux-amd64" \
+    "./argus-agent-linux-amd64" \
+    "${ROOT_DIR}"/argus-release-*/bin/argus-agent-linux-amd64; do
     if [[ -f "$candidate" ]]; then
         AGENT_BIN="$candidate"
         break
@@ -247,11 +252,11 @@ for candidate in \
 done
 
 if [[ -n "$AGENT_BIN" ]]; then
-    if [[ "$AGENT_BIN" != "$INSTALL_DIR/release/dddd-agent-linux-amd64" ]]; then
-        rm -f "$INSTALL_DIR/release/dddd-agent-linux-amd64"
-        cp "$AGENT_BIN" "$INSTALL_DIR/release/dddd-agent-linux-amd64"
+    if [[ "$AGENT_BIN" != "$INSTALL_DIR/release/argus-agent-linux-amd64" ]]; then
+        rm -f "$INSTALL_DIR/release/argus-agent-linux-amd64"
+        cp "$AGENT_BIN" "$INSTALL_DIR/release/argus-agent-linux-amd64"
     fi
-    echo -e "  Agent:  ${GREEN}${AGENT_BIN} → ${INSTALL_DIR}/release/dddd-agent-linux-amd64${NC}"
+    echo -e "  Agent:  ${GREEN}${AGENT_BIN} → ${INSTALL_DIR}/release/argus-agent-linux-amd64${NC}"
 fi
 
 # 部署组件配置
@@ -279,7 +284,7 @@ echo -e "${GREEN}[✔] 二进制及配置部署完成${NC}"
 # ============================================================
 echo -e "${YELLOW}[4/6] 执行数据库迁移...${NC}"
 
-"$INSTALL_DIR/bin/dddd-server" --db "$DB_DSN" --migrate-only --db-migration-mode apply --config-dir "$INSTALL_DIR/config"
+"$INSTALL_DIR/bin/argus-server" --db "$DB_DSN" --migrate-only --db-migration-mode apply --config-dir "$INSTALL_DIR/config"
 echo -e "${GREEN}[✔] 数据库迁移完成${NC}"
 
 # ============================================================
@@ -288,7 +293,7 @@ echo -e "${GREEN}[✔] 数据库迁移完成${NC}"
 echo -e "${YELLOW}[4.5/6] 导入安全规则资产库 (从预编译 DB 中恢复)...${NC}"
 
 if [[ -f "${SCRIPT_DIR}/arsenal_seed.db" ]]; then
-    if ! "$INSTALL_DIR/bin/dddd-server" --db "$DB_DSN" --seed-from-db "${SCRIPT_DIR}/arsenal_seed.db"; then
+    if ! "$INSTALL_DIR/bin/argus-server" --db "$DB_DSN" --seed-from-db "${SCRIPT_DIR}/arsenal_seed.db"; then
         echo -e "${RED}[!] 规则资产导入失败${NC}"
         echo -e "    请确认部署包由最新代码重新生成，或删除损坏的 deploy/arsenal_seed.db 后重新打包。"
         exit 1
@@ -326,7 +331,7 @@ fi
 # ============================================================
 echo -e "${YELLOW}[5/6] 配置 systemd 服务...${NC}"
 
-cat > /etc/systemd/system/argus-server.service <<EOF
+cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=Argus Security Platform Server
 After=network-online.target docker.service
@@ -341,7 +346,7 @@ Environment=ARGUS_PUBLIC_IP=${PUBLIC_IP}
 Environment=ARGUS_AGENT_PSK=${AGENT_PSK}
 Environment=ARGUS_JWT_SECRET=${JWT_SECRET}
 Environment=ARGUS_ENCRYPT_KEY=${ENCRYPT_KEY}
-ExecStart=${INSTALL_DIR}/bin/dddd-server \\
+ExecStart=${INSTALL_DIR}/bin/argus-server \\
     -db "${DB_DSN}" \\
     -amqp "${AMQP_URL}" \\
     -api ":${API_PORT}" \\
@@ -407,5 +412,5 @@ echo -e "     - ${YELLOW}${API_PORT}${NC} (TCP) — HTTP API / 管理面板"
 echo -e "     - ${YELLOW}${GRPC_PORT}${NC} (TCP) — Agent gRPC 通信"
 echo ""
 echo -e "  📦 部署 Agent 到扫描节点:"
-echo -e "     ${YELLOW}./dddd-agent --server ${PUBLIC_IP}:${GRPC_PORT} --api http://${PUBLIC_IP}:${API_PORT} --psk ${AGENT_PSK}${NC}"
+echo -e "     ${YELLOW}./argus-agent --server ${PUBLIC_IP}:${GRPC_PORT} --api http://${PUBLIC_IP}:${API_PORT} --psk ${AGENT_PSK}${NC}"
 echo ""

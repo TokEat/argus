@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
+	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 	"github.com/gin-gonic/gin"
-	pb "github.com/user/dddd-proto/go/scan"
-	"github.com/user/dddd-server/internal/db"
 	"gopkg.in/yaml.v3"
 )
 

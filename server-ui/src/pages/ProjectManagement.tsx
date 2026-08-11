@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { App, Button, Form, Input, Modal, Space, Table, Tag, Typography, Spin, Empty, Statistic, Tooltip, Select } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
@@ -21,7 +21,6 @@ import {
 } from '../services/api';
 import { canAccessRole, getCurrentUserRole } from '../utils/auth';
 import dayjs from 'dayjs';
-import gsap from 'gsap';
 import NetworkCanvas from '../components/NetworkCanvas';
 
 const { Title, Text } = Typography;
@@ -46,22 +45,6 @@ const ProjectManagement: React.FC = () => {
     const isAdmin = currentRole === 'admin';
     const canCreateProjects = canAccessRole('operator');
     const canManageProject = (project: API.Project) => isAdmin || project.access_level === 'owner';
-    const pageRef = useRef<HTMLDivElement>(null);
-
-    /* GSAP entrance */
-    useEffect(() => {
-        if (!pageRef.current) return;
-        const els = pageRef.current.querySelectorAll('.project-animate-in');
-        if (els.length === 0) return;
-        const ctx = gsap.context(() => {
-            gsap.from(els, {
-                y: 24, opacity: 0, duration: 0.45,
-                stagger: 0.08, ease: 'power2.out', clearProps: 'transform,opacity',
-            });
-        }, pageRef);
-        return () => ctx.revert();
-    }, []);
-
     // Delete confirmation state
     const [deleteModalOpen, setDeleteModalOpen] = useState(false);
     const [deleteTarget, setDeleteTarget] = useState<API.Project | null>(null);
@@ -355,9 +338,9 @@ const ProjectManagement: React.FC = () => {
     ];
 
     return (
-        <div ref={pageRef} style={{ position: 'relative', overflow: 'hidden' }}>
+        <div style={{ position: 'relative', overflow: 'hidden' }}>
             <NetworkCanvas color="#0ea5e9" count={30} speed={0.15} linkDist={100} />
-            <div className="project-animate-in" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, position: 'relative', zIndex: 1 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, position: 'relative', zIndex: 1 }}>
                 <Title level={4} style={{ margin: 0, color: '#1e293b', fontWeight: 600 }}>
                     <ProjectOutlined style={{ marginRight: 8, color: '#0ea5e9' }} />
                     项目管理
@@ -374,7 +357,7 @@ const ProjectManagement: React.FC = () => {
                 </Space>
             </div>
 
-            <ProCard className="glass-card project-animate-in" style={{ background: 'transparent', border: 'none', position: 'relative', zIndex: 1 }}>
+            <ProCard className="glass-card" style={{ background: 'transparent', border: 'none', position: 'relative', zIndex: 1 }}>
                 {loading && projects.length === 0 ? (
                     <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}>
                         <Spin size="large" />

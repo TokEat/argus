@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"dddd/scanner/internal/exploit"
+	"github.com/P0lar1ght/argus/scanner/internal/exploit"
 )
 
 type debugOutput struct {

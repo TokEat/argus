@@ -10,7 +10,7 @@
 | Agent 日志空数组返回 | `server/internal/api/router.go` | 日志 summary、告警规则、告警事件等空结果返回空数组 |
 | JSON/text 请求体 UTF-8 校验 | `server/internal/api/router.go` | 对 JSON、text、form 写接口校验 UTF-8；二进制请求体不受影响 |
 | 扫描结果分页 | `server/internal/api/router.go` | `/vulns`、`/assets`、`/fingerprints` 支持 `page`、`page_size` 和分页响应 |
-| 规则目录后台同步 | `server/cmd/dddd-server/main.go` | Server 启动后后台执行规则目录索引同步，避免阻塞启动流程 |
+| 规则目录后台同步 | `server/cmd/argus-server/main.go` | Server 启动后后台执行规则目录索引同步，避免阻塞启动流程 |
 | Arsenal lite 响应瘦身 | `server/internal/api/router.go` | `lite=1` 查询返回前清空 `Content` 和 `PreviousContent` |
 | 默认端口补齐 | `server/internal/api/task_input.go` | Server 任务默认端口补入 `2379`、`5236`、`54321` |
 
@@ -79,7 +79,7 @@
 | 文件 | 说明 |
 |------|------|
 | `scanner/gopocs/table_list.go` | 新增，支持 PG/MySQL/MSSQL/Oracle/DM/Kingbase 表名查询 |
-| `scanner/gopocs/postgres.go` | 爆破成功后显示 `DBs: postgres,dddd`，限制 5 个 |
+| `scanner/gopocs/postgres.go` | 爆破成功后显示 `DBs: postgres,argus`，限制 5 个 |
 
 ## [Server] 2026-07-03 — Server 分页/索引/摘要优化 + UTF-8 校验
 
@@ -98,7 +98,7 @@
 
 | 文件 | 变更 |
 |------|------|
-| `server/cmd/dddd-server/main.go` | 规则目录同步改为后台 goroutine 异步执行，避免阻塞启动 |
+| `server/cmd/argus-server/main.go` | 规则目录同步改为后台 goroutine 异步执行，避免阻塞启动 |
 | `server/internal/api/router.go` | `getArsenals` 支持 `page`/`page_size`/`q` 查询参数；`lite=1` 返回前清空 `Content` 和 `PreviousContent` |
 | `server/internal/api/handler_dictionary.go` | 指纹/Workflow 字典支持分页模式（`lite=1`+`page`+`page_size`），从物化摘要表查询 |
 | `server/internal/api/handler_exploits.go` | 添加分页支持 |

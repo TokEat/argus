@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/md5"
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/user/dddd-server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/db"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -39,19 +40,21 @@ type agentFingerprint struct {
 func (agentFingerprint) TableName() string { return "fingerprints" }
 
 type agentPoc struct {
-	ID          uint      `gorm:"primaryKey;autoIncrement"`
-	Name        string    `gorm:"uniqueIndex;not null"`
-	FileName    string    `gorm:"index;not null"`
-	Content     string    ``
-	ContentHash string    ``
-	Severity    string    `gorm:"index;default:'info'"`
-	Tags        string    ``
-	Author      string    ``
-	Description string    ``
-	Enabled     bool      `gorm:"default:true"`
-	Source      string    `gorm:"default:'server'"`
-	CreatedAt   time.Time ``
-	UpdatedAt   time.Time ``
+	ID             uint      `gorm:"primaryKey;autoIncrement"`
+	Name           string    `gorm:"uniqueIndex;not null"`
+	FileName       string    `gorm:"index;not null"`
+	Content        string    ``
+	ContentHash    string    ``
+	Severity       string    `gorm:"index;default:'info'"`
+	ExecutionClass string    `gorm:"index;default:'detection'"`
+	RiskLevel      string    `gorm:"index;default:'unknown'"`
+	Tags           string    ``
+	Author         string    ``
+	Description    string    ``
+	Enabled        bool      `gorm:"default:true"`
+	Source         string    `gorm:"default:'server'"`
+	CreatedAt      time.Time ``
+	UpdatedAt      time.Time ``
 }
 
 func (agentPoc) TableName() string { return "pocs" }
@@ -121,11 +124,11 @@ func agentSyncArsenalTypes() []string {
 
 // buildArsenalSQLiteDB 从 PostgreSQL 的结构化规则表中读取已启用的规则，
 // 构建一个与 Agent 端 arsenal.db 完全兼容的 SQLite 文件。
-// 返回临时文件路径和文件内容的 MD5 Hash。调用者负责在使用后删除临时文件。
-func buildArsenalSQLiteDB(tenantID string) (filePath string, hash string, err error) {
+// 返回临时文件路径、文件内容的 MD5 Hash 和小写 SHA-256 Hash。调用者负责在使用后删除临时文件。
+func buildArsenalSQLiteDB(tenantID string) (filePath string, md5Hash string, sha256Hash string, err error) {
 	tmpFile, err := os.CreateTemp("", "arsenal-export-*.db")
 	if err != nil {
-		return "", "", fmt.Errorf("创建临时文件失败: %w", err)
+		return "", "", "", fmt.Errorf("创建临时文件失败: %w", err)
 	}
 	tmpPath := tmpFile.Name()
 	tmpFile.Close()
@@ -136,7 +139,7 @@ func buildArsenalSQLiteDB(tenantID string) (filePath string, hash string, err er
 	})
 	if err != nil {
 		os.Remove(tmpPath)
-		return "", "", fmt.Errorf("打开临时 SQLite 失败: %w", err)
+		return "", "", "", fmt.Errorf("打开临时 SQLite 失败: %w", err)
 	}
 
 	// 创建表结构（与 Agent 端 arsenal 包一致）
@@ -149,7 +152,7 @@ func buildArsenalSQLiteDB(tenantID string) (filePath string, hash string, err er
 		&agentDirProbe{},
 	); err != nil {
 		os.Remove(tmpPath)
-		return "", "", fmt.Errorf("SQLite AutoMigrate 失败: %w", err)
+		return "", "", "", fmt.Errorf("SQLite AutoMigrate 失败: %w", err)
 	}
 
 	now := time.Now()
@@ -205,18 +208,20 @@ func buildArsenalSQLiteDB(tenantID string) (filePath string, hash string, err er
 			seen[r.Name] = true
 			content := contentMap[r.ArtifactID]
 			batch = append(batch, agentPoc{
-				Name:        r.Name,
-				FileName:    r.SourceFile,
-				Content:     content,
-				ContentHash: r.ContentHash,
-				Severity:    r.Severity,
-				Tags:        r.Tags,
-				Author:      r.Author,
-				Description: r.Description,
-				Enabled:     true,
-				Source:      "server",
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				Name:           r.Name,
+				FileName:       r.SourceFile,
+				Content:        content,
+				ContentHash:    r.ContentHash,
+				Severity:       r.Severity,
+				ExecutionClass: r.ExecutionClass,
+				RiskLevel:      r.RiskLevel,
+				Tags:           r.Tags,
+				Author:         r.Author,
+				Description:    r.Description,
+				Enabled:        true,
+				Source:         "server",
+				CreatedAt:      now,
+				UpdatedAt:      now,
 			})
 		}
 		if err := sdb.CreateInBatches(batch, 500).Error; err != nil {
@@ -335,19 +340,20 @@ func buildArsenalSQLiteDB(tenantID string) (filePath string, hash string, err er
 	fileData, err := os.ReadFile(tmpPath)
 	if err != nil {
 		os.Remove(tmpPath)
-		return "", "", fmt.Errorf("读取生成的 DB 文件失败: %w", err)
+		return "", "", "", fmt.Errorf("读取生成的 DB 文件失败: %w", err)
 	}
-	fileHash := fmt.Sprintf("%x", md5.Sum(fileData))
+	fileMD5Hash := fmt.Sprintf("%x", md5.Sum(fileData))
+	fileSHA256Hash := fmt.Sprintf("%x", sha256.Sum256(fileData))
 
-	log.Printf("[ArsenalExport] SQLite DB 构建完成: fingerprints=%d, pocs=%d, poc_assets=%d, config_assets=%d, workflows=%d, dirs=%d, size=%d bytes, hash=%s",
-		len(fpRules), len(pocRules), len(pocAssets), len(configAssets), len(wfRules), len(dirRules), len(fileData), fileHash[:8])
+	log.Printf("[ArsenalExport] SQLite DB 构建完成: fingerprints=%d, pocs=%d, poc_assets=%d, config_assets=%d, workflows=%d, dirs=%d, size=%d bytes, md5=%s, sha256=%s",
+		len(fpRules), len(pocRules), len(pocAssets), len(configAssets), len(wfRules), len(dirRules), len(fileData), fileMD5Hash[:8], fileSHA256Hash[:8])
 
-	return tmpPath, fileHash, nil
+	return tmpPath, fileMD5Hash, fileSHA256Hash, nil
 }
 
 // buildArsenalSeedSQLiteDB 从 PostgreSQL 的 arsenals 原始表导出安装/迁移用 seed DB。
 // 文件结构与 server/scripts/build_seed_db.go 生成的 deploy/arsenal_seed.db 一致，
-// 可直接通过 dddd-server --seed-from-db 导入。
+// 可直接通过 argus-server --seed-from-db 导入。
 func buildArsenalSeedSQLiteDB(tenantID string) (filePath string, hash string, count int, err error) {
 	tmpFile, err := os.CreateTemp("", "arsenal-seed-export-*.db")
 	if err != nil {
@@ -430,7 +436,7 @@ func closeSQLite(database *gorm.DB) {
 // GET /api/v1/arsenals/db
 func getArsenalDB(c *gin.Context) {
 	tenantID := currentTenantID(c)
-	tmpPath, hash, err := buildArsenalSQLiteDB(tenantID)
+	tmpPath, md5Hash, sha256Hash, err := buildArsenalSQLiteDB(tenantID)
 	if err != nil {
 		log.Printf("[ArsenalExport] 构建失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -438,7 +444,8 @@ func getArsenalDB(c *gin.Context) {
 	}
 	defer os.Remove(tmpPath)
 
-	c.Header("X-Arsenal-Hash", hash)
+	c.Header("X-Arsenal-Hash", md5Hash)
+	c.Header("X-Arsenal-SHA256", sha256Hash)
 	c.Header("Content-Disposition", "attachment; filename=arsenal.db")
 	c.File(tmpPath)
 }

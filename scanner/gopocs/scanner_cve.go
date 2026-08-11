@@ -1,8 +1,8 @@
 package gopocs
 
 import (
-	"dddd/scanner/ddout"
-	"dddd/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/structs"
 	"strings"
 	"sync"
 

@@ -40,7 +40,10 @@ func NewRunner(options *Options) (*Runner, error) {
 
 	// Check if the application loading with any provider configuration, then take it
 	// Otherwise load the default provider config
-	if fileutil.FileExists(options.ProviderConfig) {
+	if options.DisableProviderConfig {
+		// Explicitly do not fall back to config/api-config.yaml. The caller may
+		// still use unauthenticated passive sources.
+	} else if fileutil.FileExists(options.ProviderConfig) {
 		// gologger.Info().Msgf("Loading provider config from %s", options.ProviderConfig)
 		options.loadProvidersFrom(options.ProviderConfig)
 	} else {

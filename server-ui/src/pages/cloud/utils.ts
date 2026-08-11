@@ -66,7 +66,7 @@ echo "[Argus] Starting agent provisioning..."
 
 # 下载 Agent 二进制（通过 OSS 预签名 URL 内网高速分发）
 DOWNLOAD_URL="{{.DownloadURL}}"
-AGENT_BIN="/usr/local/bin/dddd-agent"
+AGENT_BIN="/usr/local/bin/argus-agent"
 
 for i in 1 2 3 4 5; do
     if curl -fsSL "$DOWNLOAD_URL" -o "$AGENT_BIN"; then

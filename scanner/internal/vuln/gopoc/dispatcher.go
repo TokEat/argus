@@ -3,13 +3,19 @@
 package gopoc
 
 import (
-	"dddd/scanner/gopocs"
-	"dddd/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/gopocs"
+	"github.com/P0lar1ght/argus/scanner/structs"
 )
 
 // Dispatch GoPoc 主调度器。
 func Dispatch(ipPortMap map[string]string, goPocThreads int, password string, passwordFile string, nucleiResults []gopocs.NucleiResult, emit func(structs.OutputMessage)) []structs.GoPocsResultType {
 	return gopocs.Dispatch(ipPortMap, goPocThreads, password, passwordFile, nucleiResults, emit)
+}
+
+// DispatchMachine preserves the GoPoc execution plan while suppressing
+// transient terminal output for a standalone machine-readable CLI stream.
+func DispatchMachine(ipPortMap map[string]string, goPocThreads int, password string, passwordFile string, nucleiResults []gopocs.NucleiResult, emit func(structs.OutputMessage)) []structs.GoPocsResultType {
+	return gopocs.DispatchWithPresentation(ipPortMap, goPocThreads, password, passwordFile, nucleiResults, emit, gopocs.Presentation{MachineOutput: true})
 }
 
 // TelnetCVEOnly 高危 CVE 专项检测（不依赖 GoPoc 开关）。

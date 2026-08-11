@@ -1,4 +1,4 @@
-module github.com/user/dddd-server
+module github.com/P0lar1ght/argus/server
 
 go 1.25.4
 
@@ -11,7 +11,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/rabbitmq/amqp091-go v1.10.0
-	github.com/user/dddd-proto v0.0.0-00010101000000-000000000000
+	github.com/P0lar1ght/argus/shared/proto v0.0.0-00010101000000-000000000000
 	golang.org/x/crypto v0.50.0
 	google.golang.org/grpc v1.64.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -78,4 +78,4 @@ require (
 	modernc.org/sqlite v1.23.1 // indirect
 )
 
-replace github.com/user/dddd-proto => ../shared/proto
+replace github.com/P0lar1ght/argus/shared/proto => ../shared/proto

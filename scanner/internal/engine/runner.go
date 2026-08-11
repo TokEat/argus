@@ -2,8 +2,8 @@ package engine
 
 import (
 	"context"
-	"dddd/scanner/structs"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/structs"
 )
 
 // RunTask executes the unified scan entrypoint for both CLI and agent modes.
@@ -29,6 +29,7 @@ func NewScanContextFromLegacyGlobals(taskID string) (*ScanContext, error) {
 		IPPortMap:            structs.GlobalIPPortMap,
 		IPDomainMap:          structs.GlobalIPDomainMap,
 		URLMap:               toEngineURLMap(structs.GlobalURLMap),
+		httpURLVisits:        make(map[string]struct{}),
 		ResultMap:            structs.GlobalResultMap,
 		DirFallbackResultMap: structs.DirFallbackResultMap,
 		GoPocsResults:        toEngineGoPocResults(structs.GoPocsResults),

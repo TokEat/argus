@@ -8,7 +8,7 @@ import (
 	"github.com/olekukonko/tablewriter"
 )
 
-// HandleWorkflowCommand 处理 `dddd workflow <subcommand>` 命令。
+// HandleWorkflowCommand 处理 `argus workflow <subcommand>` 命令。
 func HandleWorkflowCommand(args []string) {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		workflowUsage()
@@ -37,13 +37,15 @@ func HandleWorkflowCommand(args []string) {
 }
 
 func workflowUsage() {
-	fmt.Println(`用法: dddd workflow <子命令>
+	fmt.Println(`Argus CLI 规则库管理
+
+用法: argus workflow <子命令>
 
 子命令:
   list      列出映射 (--product 过滤)
-  add       添加映射: dddd workflow add <产品名> <POC名> <类型(root/dir/base)>
-  del       删除映射: dddd workflow del <产品名> <POC名>
-  import    从 YAML 导入: dddd workflow import <文件路径>
+  add       添加映射: argus workflow add <产品名> <POC名> <类型(root/dir/base)>
+  del       删除映射: argus workflow del <产品名> <POC名>
+  import    从 YAML 导入: argus workflow import <文件路径>
   export    导出为 YAML 格式`)
 }
 
@@ -77,7 +79,7 @@ func workflowList(args []string) {
 
 func workflowAdd(args []string) {
 	if len(args) < 3 {
-		fmt.Fprintln(os.Stderr, "用法: dddd workflow add <产品名> <POC名> <类型(root/dir/base/dir-fallback)>")
+		fmt.Fprintln(os.Stderr, "用法: argus workflow add <产品名> <POC名> <类型(root/dir/base/dir-fallback)>")
 		os.Exit(1)
 	}
 	product := args[0]
@@ -104,7 +106,7 @@ func workflowAdd(args []string) {
 
 func workflowDel(args []string) {
 	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "用法: dddd workflow del <产品名> <POC名>")
+		fmt.Fprintln(os.Stderr, "用法: argus workflow del <产品名> <POC名>")
 		os.Exit(1)
 	}
 	affected, err := DeleteWorkflow(args[0], args[1])
@@ -121,7 +123,7 @@ func workflowDel(args []string) {
 
 func workflowImportCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "用法: dddd workflow import <yaml文件路径>")
+		fmt.Fprintln(os.Stderr, "用法: argus workflow import <yaml文件路径>")
 		os.Exit(1)
 	}
 	data, err := os.ReadFile(args[0])

@@ -4,15 +4,6 @@ import { App } from 'antd';
 import { MemoryRouter } from 'react-router-dom';
 import Login from './Login';
 
-vi.mock('gsap', () => ({
-    default: {
-        context: (_fn: () => void) => ({ revert: vi.fn() }),
-        fromTo: vi.fn(),
-        to: vi.fn(),
-        timeline: () => ({ fromTo: vi.fn().mockReturnThis(), to: vi.fn().mockReturnThis() }),
-    },
-}));
-
 vi.mock('../components/NetworkCanvas', () => ({
     default: () => <div data-testid="network-canvas" />,
 }));

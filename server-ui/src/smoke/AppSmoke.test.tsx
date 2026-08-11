@@ -8,16 +8,6 @@ import Dashboard from '../pages/Dashboard';
 import ClientBuild from '../pages/ClientBuild';
 import AgentLogs from '../pages/AgentLogs';
 
-vi.mock('gsap', () => ({
-    default: {
-        context: (_fn: () => void) => ({ revert: vi.fn() }),
-        from: vi.fn(),
-        fromTo: vi.fn(),
-        to: vi.fn(),
-        timeline: () => ({ fromTo: vi.fn().mockReturnThis(), to: vi.fn().mockReturnThis() }),
-    },
-}));
-
 vi.mock('echarts-for-react', () => ({
     default: () => <div data-testid="echarts" />,
 }));

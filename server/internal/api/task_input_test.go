@@ -21,11 +21,15 @@ func TestDefaultTaskScanConfigEnablesWAFSkipOnManyFingerprints(t *testing.T) {
 	}
 }
 
-func TestDefaultTaskScanConfigDisablesNoisyDiscoveryByDefault(t *testing.T) {
+func TestDefaultTaskScanConfigUsesSafeExternalMapProfile(t *testing.T) {
 	cfg := defaultTaskScanConfig()
-	if !cfg.NoSubdomainBruteForce || !cfg.NoSubFinder || !cfg.NoHostBind {
-		t.Fatalf("expected noisy discovery defaults to be disabled, got NoSubdomainBruteForce=%v NoSubFinder=%v NoHostBind=%v",
-			cfg.NoSubdomainBruteForce, cfg.NoSubFinder, cfg.NoHostBind)
+	if !cfg.Subdomain || !cfg.NoSubdomainBruteForce || cfg.NoSubFinder || !cfg.NoHostBind {
+		t.Fatalf("unexpected discovery defaults: Subdomain=%v NoSubdomainBruteForce=%v NoSubFinder=%v NoHostBind=%v",
+			cfg.Subdomain, cfg.NoSubdomainBruteForce, cfg.NoSubFinder, cfg.NoHostBind)
+	}
+	if !cfg.NoPoc || cfg.GolangPoc || !cfg.DisableGeneralPoc || !cfg.NoDirSearch {
+		t.Fatalf("expected POC, password-adjacent directory probing, and general POC to stay disabled: NoPoc=%v GolangPoc=%v DisableGeneralPoc=%v NoDirSearch=%v",
+			cfg.NoPoc, cfg.GolangPoc, cfg.DisableGeneralPoc, cfg.NoDirSearch)
 	}
 }
 
@@ -49,6 +53,39 @@ func TestDirectTargetsKeepUnderscoreBareDomainUnsupported(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "unsupported target") {
 		t.Fatalf("expected bare domain with underscore to stay unsupported, got %v", err)
+	}
+}
+
+func TestDirectTargetsNormalizeBeforeDeduplication(t *testing.T) {
+	targets, summary, err := parseAndValidateTargetsForMode(json.RawMessage(`[
+		"EXAMPLE.COM",
+		"example.com",
+		"HTTPS://Example.COM/",
+		"https://example.com#ignored",
+		"192.168.1.12/24",
+		"192.168.1.0/24",
+		"192.168.1.10 - 192.168.1.20",
+		"192.168.1.10-192.168.1.20"
+	]`), taskTargetModeDirect)
+	if err != nil {
+		t.Fatalf("normalize targets: %v", err)
+	}
+	want := []string{
+		"example.com",
+		"https://example.com",
+		"192.168.1.0/24",
+		"192.168.1.10-192.168.1.20",
+	}
+	if len(targets) != len(want) {
+		t.Fatalf("normalized targets = %v, want %v", targets, want)
+	}
+	for index := range want {
+		if targets[index] != want[index] {
+			t.Fatalf("normalized target %d = %q, want %q", index, targets[index], want[index])
+		}
+	}
+	if summary.Total != len(want) || summary.Domains != 1 || summary.URLs != 1 || summary.CIDRs != 1 || summary.IPRanges != 1 {
+		t.Fatalf("unexpected normalized summary: %+v", summary)
 	}
 }
 
@@ -96,27 +133,14 @@ func TestClassifyTargetsKeepsValidTargetsAndReportsInvalidTargets(t *testing.T) 
 	}
 }
 
-func TestClassifyTargetsUsesSearchModeSyntax(t *testing.T) {
-	tests := []struct {
-		name    string
-		mode    taskTargetMode
-		valid   string
-		invalid string
-	}{
-		{name: "quake", mode: taskTargetModeQuake, valid: "service:http", invalid: "service=http"},
-		{name: "hunter", mode: taskTargetModeHunter, valid: "domain=example.com", invalid: "domain:example.com"},
-		{name: "fofa", mode: taskTargetModeFofa, valid: "domain=example.com", invalid: "domain:example.com"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			valid, invalid, summary := classifyTargets([]string{tt.valid, tt.invalid}, tt.mode)
-			if len(valid) != 1 || valid[0] != tt.valid || len(invalid) != 1 || invalid[0].Target != tt.invalid {
-				t.Fatalf("unexpected classification: valid=%v invalid=%+v", valid, invalid)
-			}
-			if summary.Total != 2 || summary.SearchInputs != 1 {
-				t.Fatalf("unexpected search summary: %+v", summary)
-			}
-		})
+func TestNormalizeTaskConfigRejectsLegacyProviderSettings(t *testing.T) {
+	for _, payload := range []string{
+		`{"Hunter":true}`, `{"Fofa":true}`, `{"Quake":true}`,
+		`{"LowPerceptionMode":true}`, `{"OnlyIPPort":true}`,
+		`{"APIConfigFilePath":"config/api-config.yaml"}`,
+	} {
+		if _, _, err := normalizeTaskConfigPayload(json.RawMessage(payload)); err == nil || !strings.Contains(err.Error(), "Server-only") {
+			t.Fatalf("legacy Provider payload %s err = %v, want Server-only rejection", payload, err)
+		}
 	}
 }

@@ -13,10 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
+	"github.com/P0lar1ght/argus/shared/proto/pyexp"
 	"github.com/gin-gonic/gin"
-	"github.com/user/dddd-proto/pyexp"
-	"github.com/user/dddd-server/internal/db"
 	"gopkg.in/yaml.v3"
+	"gorm.io/gorm"
 )
 
 const (
@@ -216,22 +217,29 @@ func executeCreateTaskDraft(c *gin.Context, params map[string]interface{}) (copi
 
 	taskID := fmt.Sprintf("task-draft-%d", time.Now().UnixNano())
 	rootTask := db.RootTask{
-		ID:               taskID,
-		TenantID:         currentTenantID(c),
-		ProjectID:        projectID,
-		UserID:           currentUserID(c),
-		Name:             name,
-		Status:           "Draft",
-		OriginalTargets:  string(targetsJSON),
-		Config:           configJSON,
-		TotalChunks:      0,
-		CompletedChunks:  0,
-		TotalTargets:     len(targets),
-		CompletedTargets: 0,
-		Priority:         priority,
-		TimeoutSec:       timeoutSec,
+		ID:                   taskID,
+		TenantID:             currentTenantID(c),
+		ProjectID:            projectID,
+		UserID:               currentUserID(c),
+		Name:                 name,
+		Status:               "Draft",
+		OriginalTargets:      string(targetsJSON),
+		Config:               configJSON,
+		TotalChunks:          0,
+		CompletedChunks:      0,
+		TotalTargets:         len(targets),
+		CompletedTargets:     0,
+		Priority:             priority,
+		TimeoutSec:           timeoutSec,
+		CurrentConfigVersion: 1,
 	}
-	if err := db.DB.Create(&rootTask).Error; err != nil {
+	revision := db.NewTaskConfigRevision(rootTask, 1, "{}", "{}", currentUserID(c), "initial draft configuration")
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&rootTask).Error; err != nil {
+			return err
+		}
+		return tx.Create(&revision).Error
+	}); err != nil {
 		return copilotActionResult{}, err
 	}
 	return copilotActionResult{
@@ -243,6 +251,7 @@ func executeCreateTaskDraft(c *gin.Context, params map[string]interface{}) (copi
 			"task_id":        taskID,
 			"project_id":     projectID,
 			"state":          "Draft",
+			"config_version": 1,
 			"target_summary": targetSummary,
 		},
 	}, nil

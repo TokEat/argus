@@ -27,3 +27,11 @@ func TestDefaultConfigDisablesNoisyDiscoveryByDefault(t *testing.T) {
 			cfg.NoSubdomainBruteForce, cfg.NoSubFinder, cfg.NoHostBind)
 	}
 }
+
+func TestDefaultConfigDisablesImplicitPocAndCredentialChecks(t *testing.T) {
+	cfg := DefaultConfig()
+	if !cfg.NoPoc || cfg.GolangPoc || !cfg.DisableGeneralPoc || cfg.PocNameForSearch != "" {
+		t.Fatalf("expected shared defaults to require explicit risk execution, got NoPoc=%v GolangPoc=%v DisableGeneralPoc=%v PocNameForSearch=%q",
+			cfg.NoPoc, cfg.GolangPoc, cfg.DisableGeneralPoc, cfg.PocNameForSearch)
+	}
+}

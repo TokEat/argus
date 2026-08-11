@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -61,6 +62,16 @@ func TestMaterializeRulePackageWritesCLIConfigAndPreservesUnmanagedFiles(t *test
 	if manifest.Hash != "hash-1" || manifest.RuleVersion != "v1" {
 		t.Fatalf("unexpected manifest: %+v", manifest)
 	}
+	wantPackageSHA256, err := HashRulePackageFile(dbPath)
+	if err != nil {
+		t.Fatalf("hash materialized package: %v", err)
+	}
+	if manifest.PackageSHA256 != wantPackageSHA256 {
+		t.Fatalf("manifest package SHA-256 = %q, want %q", manifest.PackageSHA256, wantPackageSHA256)
+	}
+	if !IsRulePackageMaterialized(configDir, "hash-1") {
+		t.Fatal("expected materialized manifest with package SHA-256 to be usable")
+	}
 	if manifestContains := slicesContains(manifest.ManagedFiles, "dict/") && slicesContains(manifest.ManagedFiles, "subdomains.txt"); !manifestContains {
 		t.Fatalf("expected manifest to list managed config assets, got %+v", manifest.ManagedFiles)
 	}
@@ -77,6 +88,45 @@ func TestMaterializeRulePackageWritesCLIConfigAndPreservesUnmanagedFiles(t *test
 		t.Fatalf("expected old config backup: %v", err)
 	}
 	assertFileContent(t, filepath.Join(backupConfig, "dict", "mysql.txt"), "old:old\n")
+}
+
+func TestIsRulePackageMaterializedRequiresLowercasePackageSHA256(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "config")
+	for _, name := range []string{"finger.yaml", "workflow.yaml", "dir.yaml"} {
+		mustWriteFile(t, filepath.Join(configDir, name), []byte("rules: []\n"))
+	}
+	if err := os.MkdirAll(filepath.Join(configDir, "pocs"), 0o755); err != nil {
+		t.Fatalf("create pocs directory: %v", err)
+	}
+
+	valid := strings.Repeat("a", 64)
+	tests := []struct {
+		name          string
+		packageSHA256 string
+		want          bool
+	}{
+		{name: "valid lowercase SHA-256", packageSHA256: valid, want: true},
+		{name: "missing legacy field", packageSHA256: "", want: false},
+		{name: "uppercase", packageSHA256: strings.ToUpper(valid), want: false},
+		{name: "wrong length", packageSHA256: strings.Repeat("a", 63), want: false},
+		{name: "non hexadecimal", packageSHA256: strings.Repeat("g", 64), want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := writeManifest(configDir, RulePackageManifest{
+				SchemaVersion: RulePackageSchemaVersion,
+				Hash:          "server-aggregate-hash",
+				PackageSHA256: test.packageSHA256,
+				RuleVersion:   "v1",
+			}); err != nil {
+				t.Fatalf("write manifest: %v", err)
+			}
+			if got := IsRulePackageMaterialized(configDir, "server-aggregate-hash"); got != test.want {
+				t.Fatalf("IsRulePackageMaterialized() = %v, want %v", got, test.want)
+			}
+		})
+	}
 }
 
 func TestMaterializeRulePackageRejectsUnsafePocFileName(t *testing.T) {
@@ -161,7 +211,7 @@ func createMaterializeTestDB(t *testing.T, dbPath, pocFile string) {
 	if err := OpenDB(dbPath); err != nil {
 		t.Fatalf("open test arsenal db: %v", err)
 	}
-	t.Cleanup(func() { DB = nil })
+	t.Cleanup(func() { _ = CloseDB() })
 	if err := DB.Create(&Fingerprint{ProductName: "DemoProduct", RuleExpr: `body="demo-product"`, Enabled: true}).Error; err != nil {
 		t.Fatalf("create fingerprint: %v", err)
 	}

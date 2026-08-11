@@ -9,7 +9,8 @@ import (
 
 // CLI is a concurrent output writer to terminal.
 type CLI struct {
-	mutex *sync.Mutex
+	mutex        *sync.Mutex
+	suppressInfo bool
 }
 
 var _ Writer = &CLI{}
@@ -19,8 +20,18 @@ func NewCLI() *CLI {
 	return &CLI{mutex: &sync.Mutex{}}
 }
 
+// NewCLIWithOptions creates a terminal writer for an explicitly configured
+// command-line client. The default logger keeps using NewCLI so services such
+// as the Agent retain their existing presentation.
+func NewCLIWithOptions(suppressInfo bool) *CLI {
+	return &CLI{mutex: &sync.Mutex{}, suppressInfo: suppressInfo}
+}
+
 // WriteString writes an output to the underlying file
 func (w *CLI) Write(data []byte, level levels.Level) {
+	if w.suppressInfo && level == levels.LevelInfo {
+		return
+	}
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 

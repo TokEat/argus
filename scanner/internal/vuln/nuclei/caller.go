@@ -3,8 +3,8 @@
 package nuclei
 
 import (
-	"dddd/scanner/common/callnuclei"
 	"embed"
+	"github.com/P0lar1ght/argus/scanner/common/callnuclei"
 	"sync"
 
 	"github.com/projectdiscovery/nuclei/v3/pkg/output"
@@ -30,6 +30,27 @@ func Call(targetAndPocsName map[string][]string,
 	return callnuclei.CallNuclei(targetAndPocsName, httpProxy, addResult,
 		pocNameForSearch, noInteractsh, wafBypassHeaders, embedPocs, nucleiTemplate,
 		excludeTags, severities)
+}
+
+// CallMachine executes the same templates while reserving stdout for the
+// standalone CLI's structured output contract.
+func CallMachine(targetAndPocsName map[string][]string,
+	httpProxy string,
+	addResult func(result output.ResultEvent),
+	pocNameForSearch string,
+	noInteractsh bool,
+	wafBypassHeaders bool,
+	embedPocs embed.FS,
+	nucleiTemplate string,
+	excludeTags []string,
+	severities []string,
+) []output.ResultEvent {
+	callMu.Lock()
+	defer callMu.Unlock()
+
+	return callnuclei.CallNuclei(targetAndPocsName, httpProxy, addResult,
+		pocNameForSearch, noInteractsh, wafBypassHeaders, embedPocs, nucleiTemplate,
+		excludeTags, severities, callnuclei.Presentation{MachineOutput: true})
 }
 
 // CallDebug 调用 Nuclei 并启用 MatcherStatus，确保未命中时也能

@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Form, Input, Button, App, ConfigProvider, theme } from 'antd';
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
-import gsap from 'gsap';
 import { login } from '../services/api';
 import argusLogoMark from '../assets/brand/argus-logo-mark.svg';
 import NetworkCanvas from '../components/NetworkCanvas';
@@ -163,74 +162,6 @@ const Login: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
     const { message } = App.useApp();
-    const leftPanelRef = useRef<HTMLDivElement>(null);
-    const rightPanelRef = useRef<HTMLDivElement>(null);
-    const motionHeroRef = useRef<HTMLDivElement>(null);
-
-    /* GSAP animations */
-    useEffect(() => {
-        const ctx = gsap.context(() => {
-            const hero = motionHeroRef.current;
-            if (hero) {
-                gsap.from(hero.querySelectorAll('.argus-motion-in'), {
-                    y: 26,
-                    opacity: 0,
-                    duration: 0.65,
-                    stagger: 0.08,
-                    ease: 'power3.out',
-                });
-                gsap.to(hero.querySelector('.argus-logo-mark'), {
-                    y: -10,
-                    scale: 1.025,
-                    duration: 3.2,
-                    ease: 'sine.inOut',
-                    yoyo: true,
-                    repeat: -1,
-                });
-                gsap.to(hero.querySelector('.argus-scan-line'), {
-                    y: 242,
-                    opacity: 0.88,
-                    duration: 2.7,
-                    ease: 'sine.inOut',
-                    yoyo: true,
-                    repeat: -1,
-                });
-                gsap.to(hero.querySelectorAll('.argus-signal-ring'), {
-                    rotate: 360,
-                    duration: 10,
-                    ease: 'none',
-                    repeat: -1,
-                    stagger: 0.6,
-                });
-                gsap.to(hero.querySelectorAll('.argus-rail'), {
-                    x: 26,
-                    opacity: 0.42,
-                    duration: 2.4,
-                    ease: 'sine.inOut',
-                    yoyo: true,
-                    repeat: -1,
-                    stagger: 0.35,
-                });
-            }
-
-            // 右侧表单入场
-            if (rightPanelRef.current) {
-                const items = rightPanelRef.current.querySelectorAll('.login-form-item');
-                gsap.from(items, {
-                    y: 28,
-                    opacity: 0,
-                    duration: 0.5,
-                    stagger: 0.1,
-                    ease: 'power2.out',
-                    delay: 0.2,
-                });
-            }
-
-        });
-
-        return () => ctx.revert();
-    }, []);
-
     const onFinish = async (values: { tenant_id: string; password: string }) => {
         setLoading(true);
         try {
@@ -253,7 +184,7 @@ const Login: React.FC = () => {
     return (
         <div style={styles.root}>
             {/* ──────────── LEFT PANEL ──────────── */}
-            <div ref={leftPanelRef} className="login-left-panel" style={styles.leftPanel}>
+            <div className="login-left-panel" style={styles.leftPanel}>
                 {/* canvas particle network */}
                 <NetworkCanvas color="#f4f7fa" count={42} speed={0.16} linkDist={125} style={{ opacity: 0.34 }} />
                 <div style={styles.gridOverlay} />
@@ -275,7 +206,7 @@ const Login: React.FC = () => {
                 ))}
 
                 {/* HyperFrames-inspired motion hero */}
-                <div ref={motionHeroRef} style={styles.motionWrap}>
+                <div style={styles.motionWrap}>
                     <div style={styles.motionStage}>
                         <div className="argus-motion-in login-tagline" style={styles.illustrationTagline}>Security Automation Platform</div>
                         <div className="argus-motion-in argus-rail argus-rail-a" />
@@ -296,7 +227,7 @@ const Login: React.FC = () => {
             </div>
 
             {/* ──────────── RIGHT PANEL ──────────── */}
-            <div ref={rightPanelRef} style={styles.rightPanel}>
+            <div style={styles.rightPanel}>
                 <ConfigProvider
                     theme={{
                         algorithm: theme.defaultAlgorithm,
@@ -437,6 +368,58 @@ const Login: React.FC = () => {
                     top: 42px;
                     transform: rotate(-16deg);
                 }
+                .argus-motion-in {
+                    animation: argus-enter 0.65s cubic-bezier(0.22, 1, 0.36, 1) both;
+                }
+                .argus-motion-in:nth-child(2) { animation-delay: 0.08s; }
+                .argus-motion-in:nth-child(3) { animation-delay: 0.16s; }
+                .argus-motion-in:nth-child(4) { animation-delay: 0.24s; }
+                .argus-motion-in:nth-child(5) { animation-delay: 0.32s; }
+                .argus-motion-in:nth-child(6) { animation-delay: 0.40s; }
+                .argus-motion-in:nth-child(7) { animation-delay: 0.48s; }
+                .argus-logo-mark {
+                    animation: argus-logo-float 3.2s ease-in-out infinite alternate;
+                }
+                .argus-scan-line {
+                    animation: argus-scan 2.7s ease-in-out infinite alternate;
+                }
+                .argus-signal-ring {
+                    animation: argus-ring-spin 10s linear infinite;
+                }
+                .argus-signal-right { animation-delay: -0.6s; }
+                .argus-rail {
+                    animation: argus-rail-shift 2.4s ease-in-out infinite alternate;
+                }
+                .argus-rail-b { animation-delay: -0.35s; }
+                .login-form-item {
+                    animation: login-form-enter 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+                }
+                .login-form-item:nth-child(2) { animation-delay: 0.1s; }
+                .login-form-item:nth-child(3) { animation-delay: 0.2s; }
+                .login-form-item:nth-child(4) { animation-delay: 0.3s; }
+                @keyframes argus-enter {
+                    from { transform: translateY(26px); }
+                    to { transform: translateY(0); }
+                }
+                @keyframes argus-logo-float {
+                    from { transform: translateY(0) scale(1); }
+                    to { transform: translateY(-10px) scale(1.025); }
+                }
+                @keyframes argus-scan {
+                    from { transform: translateY(0); opacity: 0.32; }
+                    to { transform: translateY(242px); opacity: 0.88; }
+                }
+                @keyframes argus-ring-spin {
+                    to { rotate: 360deg; }
+                }
+                @keyframes argus-rail-shift {
+                    from { translate: 0 0; opacity: 0.84; }
+                    to { translate: 26px 0; opacity: 0.42; }
+                }
+                @keyframes login-form-enter {
+                    from { transform: translateY(28px); }
+                    to { transform: translateY(0); }
+                }
                 .ant-input-affix-wrapper:focus-within,
                 .ant-input-affix-wrapper-focused {
                     border-color: #030507 !important;
@@ -446,6 +429,16 @@ const Login: React.FC = () => {
                     opacity: 0.9;
                     transform: translateY(-1px);
                     box-shadow: 0 14px 30px rgba(3,5,7,0.28) !important;
+                }
+                @media (prefers-reduced-motion: reduce) {
+                    .argus-motion-in,
+                    .argus-logo-mark,
+                    .argus-scan-line,
+                    .argus-signal-ring,
+                    .argus-rail,
+                    .login-form-item {
+                        animation: none !important;
+                    }
                 }
                 @media (max-width: 768px) {
                     .login-left-panel { display: none !important; }

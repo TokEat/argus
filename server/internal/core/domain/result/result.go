@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/user/dddd-server/internal/core/domain/common"
+	"github.com/P0lar1ght/argus/server/internal/core/domain/common"
 )
 
 type Asset struct {

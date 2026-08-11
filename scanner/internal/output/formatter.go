@@ -3,7 +3,7 @@
 package output
 
 import (
-	"dddd/scanner/common/report"
+	"github.com/P0lar1ght/argus/scanner/common/report"
 )
 
 // InitReportName 初始化报告文件名。

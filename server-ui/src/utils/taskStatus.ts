@@ -3,8 +3,44 @@ export interface TaskStatusMeta {
     text: string;
 }
 
+export type TaskState =
+    | 'UNKNOWN'
+    | 'CREATED'
+    | 'QUEUED'
+    | 'RUNNING'
+    | 'PARTIAL'
+    | 'PAUSING'
+    | 'PAUSED'
+    | 'STOPPING'
+    | 'STOPPED'
+    | 'COMPLETED'
+    | 'FAILED'
+    | 'TIMEOUT';
+
 export function normalizeTaskStatus(status?: string): string {
-    return (status || '').trim().toUpperCase();
+    switch ((status || '').trim().toUpperCase()) {
+        case 'CREATED': return 'CREATED';
+        case 'QUEUED':
+        case 'PENDING': return 'QUEUED';
+        case 'RUNNING': return 'RUNNING';
+        case 'PARTIAL':
+        case 'PARTIALDONE': return 'PARTIAL';
+        case 'PAUSING': return 'PAUSING';
+        case 'PAUSED': return 'PAUSED';
+        case 'STOPPING':
+        case 'CANCELPENDING': return 'STOPPING';
+        case 'STOPPED':
+        case 'CANCELLED':
+        case 'CANCELED': return 'STOPPED';
+        case 'COMPLETED':
+        case 'FINISHED':
+        case 'DONE':
+        case 'SUCCESS':
+        case 'SUCCEEDED': return 'COMPLETED';
+        case 'FAILED': return 'FAILED';
+        case 'TIMEOUT': return 'TIMEOUT';
+        default: return 'UNKNOWN';
+    }
 }
 
 export function getTaskStatusMeta(status?: string): TaskStatusMeta {
@@ -16,17 +52,17 @@ export function getTaskStatusMeta(status?: string): TaskStatusMeta {
             return { color: 'orange', text: '等待中' };
         case 'RUNNING':
             return { color: 'processing', text: '运行中' };
-        case 'PARTIALDONE':
+        case 'PARTIAL':
             return { color: 'cyan', text: '部分完成' };
-        case 'FINISHED':
-        case 'DONE':
+        case 'COMPLETED':
             return { color: 'success', text: '已完成' };
+        case 'PAUSING':
+            return { color: 'warning', text: '暂停中' };
         case 'PAUSED':
             return { color: 'warning', text: '已暂停' };
-        case 'CANCELPENDING':
+        case 'STOPPING':
             return { color: 'warning', text: '取消中' };
-        case 'CANCELLED':
-        case 'CANCELED':
+        case 'STOPPED':
             return { color: 'default', text: '已取消' };
         case 'FAILED':
             return { color: 'error', text: '失败' };
@@ -42,7 +78,8 @@ export function isTaskCancellable(status?: string): boolean {
         case 'QUEUED':
         case 'PENDING':
         case 'RUNNING':
-        case 'PARTIALDONE':
+        case 'PARTIAL':
+        case 'PAUSED':
             return true;
         default:
             return false;
@@ -53,7 +90,7 @@ export function isTaskPausable(status?: string): boolean {
     switch (normalizeTaskStatus(status)) {
         case 'QUEUED':
         case 'RUNNING':
-        case 'PARTIALDONE':
+        case 'PARTIAL':
             return true;
         default:
             return false;
@@ -74,10 +111,20 @@ export function isTaskFailedLike(status?: string): boolean {
     }
 }
 
+export function isTaskRetryable(status?: string): boolean {
+    switch (normalizeTaskStatus(status)) {
+        case 'FAILED':
+        case 'TIMEOUT':
+        case 'STOPPED':
+            return true;
+        default:
+            return false;
+    }
+}
+
 export function isTaskFinished(status?: string): boolean {
     switch (normalizeTaskStatus(status)) {
-        case 'FINISHED':
-        case 'DONE':
+        case 'COMPLETED':
             return true;
         default:
             return false;

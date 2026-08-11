@@ -76,7 +76,7 @@ func (x *Ack) GetMessage() string {
 type RegisterReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`                                                      // 节点唯一ID (可以由云主机的 instance_id 充当)
-	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`                                                                     // dddd-agent 版本
+	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`                                                                     // Argus Agent 版本
 	Tags          map[string]string      `protobuf:"bytes,3,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // 节点标签能力
 	Os            string                 `protobuf:"bytes,4,opt,name=os,proto3" json:"os,omitempty"`                                                                               // 节点操作系统
 	Arch          string                 `protobuf:"bytes,5,opt,name=arch,proto3" json:"arch,omitempty"`                                                                           // 节点架构
@@ -1329,7 +1329,7 @@ const file_proto_scan_agent_proto_rawDesc = "" +
 	"\rEmergencyDump\x12\x12.scan.EmergencyReq\x1a\t.scan.Ack\x12+\n" +
 	"\n" +
 	"StreamLogs\x12\x10.scan.LogPayload\x1a\t.scan.Ack(\x01\x12,\n" +
-	"\vStreamDebug\x12\x10.scan.DebugEvent\x1a\t.scan.Ack(\x01B$Z\"github.com/user/dddd-proto/go/scanb\x06proto3"
+	"\vStreamDebug\x12\x10.scan.DebugEvent\x1a\t.scan.Ack(\x01B1Z/github.com/P0lar1ght/argus/shared/proto/go/scanb\x06proto3"
 
 var (
 	file_proto_scan_agent_proto_rawDescOnce sync.Once

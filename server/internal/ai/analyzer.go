@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/user/dddd-server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"gorm.io/gorm"
 )
 
@@ -253,7 +253,7 @@ func parseLLMAnalysis(raw string) (llmAnalysis, error) {
 
 func stripJSONFences(raw string) string {
 	raw = strings.TrimSpace(raw)
-	
+
 	// 提取 ```json ... ``` 块
 	start := strings.LastIndex(raw, "```json")
 	if start != -1 {
@@ -262,14 +262,14 @@ func stripJSONFences(raw string) string {
 			return strings.TrimSpace(raw[start+7 : start+7+end])
 		}
 	}
-	
+
 	// 提取 {...}
 	startBracket := strings.Index(raw, "{")
 	endBracket := strings.LastIndex(raw, "}")
 	if startBracket != -1 && endBracket != -1 && endBracket > startBracket {
 		return strings.TrimSpace(raw[startBracket : endBracket+1])
 	}
-	
+
 	return raw
 }
 

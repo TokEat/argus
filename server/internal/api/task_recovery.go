@@ -3,11 +3,12 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
-	"github.com/user/dddd-server/internal/db"
-	"github.com/user/dddd-server/internal/scheduler"
+	"github.com/P0lar1ght/argus/server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/scheduler"
 )
 
 type TaskRecoveryService struct {
@@ -24,6 +25,7 @@ func (s *TaskRecoveryService) Run(ctx context.Context) {
 	defer ticker.Stop()
 
 	pendingRecovery := &pendingRecoveryState{}
+	recoverScanWorkClaimWaiters(s.queue)
 	_, err := recoverPendingTasksForQueueGeneration(ctx, s.queue, pendingRecovery, time.Now())
 	if err != nil {
 		log.Printf("[DispatchRecover] initial pending reconciliation failed: %v", err)
@@ -35,6 +37,7 @@ func (s *TaskRecoveryService) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			recoverQueueIfDead(s.queue)
+			recoverScanWorkClaimWaiters(s.queue)
 			recoverDispatchingTasks(s.queue)
 			recovered, err := recoverPendingTasksForQueueGeneration(ctx, s.queue, pendingRecovery, time.Now())
 			if err != nil {
@@ -43,9 +46,27 @@ func (s *TaskRecoveryService) Run(ctx context.Context) {
 				log.Printf("[DispatchRecover] reconciled %d stranded pending subtasks", recovered)
 			}
 			handleTimeoutTasks(s.queue)
+			recoverScanWorkClaimWaiters(s.queue)
 			db.AutoDispatchCleanup()
 		}
 	}
+}
+
+func recoverScanWorkClaimWaiters(q *scheduler.TaskQueue) {
+	ready, err := db.ResolveTerminalScanWorkClaimWaiters(db.DB, 200)
+	if err != nil {
+		log.Printf("[WorkClaimRecover] terminal owner reconciliation failed: %v", err)
+		return
+	}
+	if len(ready) == 0 {
+		return
+	}
+	pushedByPriority, dispatchPending := dispatchSubTasks(context.Background(), q, ready)
+	pushedCount := totalDispatchedTasks(pushedByPriority)
+	if pushedCount > 0 {
+		broadcastDispatchedTasks(pushedByPriority)
+	}
+	log.Printf("[WorkClaimRecover] replanned=%d dispatched=%d pending=%d", len(ready), pushedCount, dispatchPending)
 }
 
 // StartTaskTimeoutDaemon 保留旧内部入口，委托给显式 service。
@@ -227,7 +248,7 @@ func handleTimeoutTasks(q *scheduler.TaskQueue) {
 
 	now := time.Now()
 	for _, sub := range subs {
-		if db.NormalizeSubTaskStatus(sub.Status) == "CANCELPENDING" {
+		if db.IsStoppingAttemptStatus(sub.Status) {
 			cancelDeadline := sub.UpdatedAt.Add(cancelPendingSettleGrace)
 			if now.Before(cancelDeadline) {
 				continue
@@ -240,9 +261,10 @@ func handleTimeoutTasks(q *scheduler.TaskQueue) {
 			updateRes := db.DB.Model(&db.SubTask{}).
 				Where("id = ? AND status = ?", sub.ID, "CancelPending").
 				Updates(map[string]interface{}{
-					"status":        "Cancelled",
-					"agent_id":      "",
-					"stream_msg_id": "",
+					"status":         "Cancelled",
+					"stream_msg_id":  "",
+					"failure_reason": "cancel request exceeded Agent grace period",
+					"finished_at":    now,
 				})
 			if updateRes.Error != nil {
 				log.Printf("[TimeoutDaemon] Failed to settle CancelPending subtask %s: %v", sub.ID, updateRes.Error)
@@ -257,6 +279,10 @@ func handleTimeoutTasks(q *scheduler.TaskQueue) {
 				db.DB.Exec("UPDATE nodes SET running_tasks = GREATEST(running_tasks - 1, 0) WHERE agent_id = ?", sub.AgentID)
 			}
 			if sub.RootTaskID != "" {
+				if sub.BatchID != "" {
+					_ = db.SettleStoppedTaskBatch(db.DB, sub.TenantID, sub.BatchID, sub.ID)
+				}
+				_ = db.SyncTaskBatchStatuses(db.DB, sub.TenantID, sub.RootTaskID)
 				db.RefreshRootTaskStatus(sub.RootTaskID)
 			}
 			continue
@@ -271,8 +297,42 @@ func handleTimeoutTasks(q *scheduler.TaskQueue) {
 		leaseStreamMsgID := sub.StreamMsgID
 		log.Printf("[TimeoutDaemon] SubTask %s timed out (timeout=%ds)", sub.ID, sub.TimeoutSec)
 		if sub.RetryCount < sub.MaxRetry {
-			prepared, retryPrepared := db.PrepareSubTaskRetry(&sub)
+			prepared, retryPrepared := db.AppendSubTaskAttempt(&sub, db.AttemptRetryOptions{
+				Trigger:              db.AttemptTriggerTimeoutRetry,
+				TerminalStatus:       "Timeout",
+				FailureReason:        fmt.Sprintf("attempt exceeded %d second timeout", sub.TimeoutSec),
+				ConsumeRetryBudget:   true,
+				UseCurrentTaskConfig: true,
+			})
 			if !retryPrepared {
+				var batch db.TaskBatch
+				batchPaused := sub.BatchID != "" && db.DB.Select("id", "control_state").
+					Where("id = ? AND tenant_id = ? AND latest_attempt_id = ?", sub.BatchID, sub.TenantID, sub.ID).
+					First(&batch).Error == nil && db.CanonicalBatchControlState(batch.ControlState) == db.BatchControlPaused
+				if batchPaused {
+					settled := db.DB.Model(&db.SubTask{}).
+						Where("id = ? AND tenant_id = ? AND status = ?", sub.ID, sub.TenantID, "Running").
+						Updates(map[string]interface{}{
+							"status": "Timeout", "stream_msg_id": "",
+							"failure_reason": fmt.Sprintf("attempt exceeded %d second timeout while batch was paused", sub.TimeoutSec),
+							"finished_at":    now,
+						})
+					if settled.Error == nil && settled.RowsAffected == 1 {
+						if q != nil && leaseStreamMsgID != "" {
+							_ = q.AckTask(context.Background(), leaseStreamMsgID)
+						}
+						_ = db.DB.Model(&db.TaskBatch{}).
+							Where("id = ? AND tenant_id = ? AND latest_attempt_id = ?", sub.BatchID, sub.TenantID, sub.ID).
+							Update("status", "Timeout").Error
+						if leaseAgentID != "" {
+							db.DB.Exec("UPDATE nodes SET running_tasks = GREATEST(running_tasks - 1, 0) WHERE agent_id = ?", leaseAgentID)
+						}
+						if sub.RootTaskID != "" {
+							db.RefreshRootTaskStatus(sub.RootTaskID)
+						}
+					}
+					continue
+				}
 				log.Printf("[TimeoutDaemon] SubTask %s retry blocked by state, budget, or root lifecycle", sub.ID)
 				continue
 			}
@@ -327,9 +387,10 @@ func handleTimeoutTasks(q *scheduler.TaskQueue) {
 			}
 
 			updateRes := db.DB.Model(&sub).Where("status = ?", "Running").Updates(map[string]interface{}{
-				"status":        "Timeout",
-				"agent_id":      "",
-				"stream_msg_id": "",
+				"status":         "Timeout",
+				"stream_msg_id":  "",
+				"failure_reason": fmt.Sprintf("attempt exceeded %d second timeout and retry budget", sub.TimeoutSec),
+				"finished_at":    now,
 			})
 			if updateRes.Error != nil {
 				log.Printf("[TimeoutDaemon] Failed to mark subtask %s as Timeout: %v", sub.ID, updateRes.Error)
@@ -346,6 +407,7 @@ func handleTimeoutTasks(q *scheduler.TaskQueue) {
 
 			log.Printf("[TimeoutDaemon] SubTask %s marked as Timeout (max retries exceeded)", sub.ID)
 			if sub.RootTaskID != "" {
+				_ = db.SyncTaskBatchStatuses(db.DB, sub.TenantID, sub.RootTaskID)
 				db.RefreshRootTaskStatus(sub.RootTaskID)
 			}
 		}

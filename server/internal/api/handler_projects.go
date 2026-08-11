@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
-	"github.com/user/dddd-server/internal/db"
 	"gorm.io/gorm"
 )
 
@@ -146,7 +146,7 @@ func getProjectStats(c *gin.Context) {
 	}
 
 	var taskCount, assetCount, fpCount, vulnCount int64
-	db.DB.Model(&db.RootTask{}).Where("project_id = ? AND tenant_id = ?", projectID, tenantID).Count(&taskCount)
+	db.DB.Model(&db.RootTask{}).Where("project_id = ? AND tenant_id = ? AND archived_at IS NULL", projectID, tenantID).Count(&taskCount)
 	db.DB.Model(&db.Asset{}).Where("project_id = ?", projectID).Count(&assetCount)
 	db.DB.Model(&db.FingerprintHit{}).Where("project_id = ?", projectID).Count(&fpCount)
 	db.DB.Model(&db.Vulnerability{}).Where("project_id = ?", projectID).Count(&vulnCount)

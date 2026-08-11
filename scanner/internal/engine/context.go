@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"sync"
 
-	"dddd/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/internal/taskstore"
+	"github.com/P0lar1ght/argus/scanner/structs"
 
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 	"github.com/projectdiscovery/hmap/store/hybrid"
 )
 
@@ -21,6 +23,7 @@ import (
 //	structs.GlobalIPPortMap      → ctx.IPPortMap
 //	structs.GlobalIPDomainMap    → ctx.IPDomainMap
 //	structs.GlobalURLMap         → ctx.URLMap
+//	httpx.GlobalUsedUrl          → ctx.httpURLVisits（仅通过 TryVisitHTTPURL 访问）
 //	structs.GlobalResultMap      → ctx.ResultMap
 //	structs.DirFallbackResultMap → ctx.DirFallbackResultMap
 //	structs.GoPocsResults        → ctx.GoPocsResults
@@ -40,6 +43,21 @@ type ScanContext struct {
 	// Config 扫描配置（从 CLI 参数或 Server 下发的任务中获取）
 	Config Config
 
+	// ResumePlan is an internal, Server-issued execution suffix. CLI scans
+	// leave it nil and continue to execute the complete local pipeline.
+	ResumePlan *scanplan.ResumePlan
+
+	// LocalDataRoot is set only for standalone CLI scans. It points to the
+	// private argus-data root used by offline history and is never uploaded.
+	LocalDataRoot string
+	LocalRunID    string
+	// LocalForceFullScan is set only by the standalone CLI -force flag. It
+	// bypasses local coverage reuse without changing scan scope or POC policy.
+	LocalForceFullScan bool
+	// LocalArsenalVersion is the validated semantic identity of the offline
+	// arsenal.db package. It is empty when a source build falls back to embeds.
+	LocalArsenalVersion string
+
 	// --- 数据容器（替代 structs 包的全局 Map） ---
 
 	// IPPortMap IP:Port → Protocol (如 "192.168.1.1:80" → "http")
@@ -53,6 +71,11 @@ type ScanContext struct {
 	// URLMap RootURL → URLEntity (如 "http://example.com" → URLEntity{...})
 	URLMap     map[string]URLEntity
 	URLMapLock sync.Mutex
+
+	// httpURLVisits records URLs submitted to the HTTP probe for this scan.
+	// It is separate from URLMap, which stores probe results.
+	httpURLVisits     map[string]struct{}
+	httpURLVisitsLock sync.Mutex
 
 	// ResultMap Target → []Fingerprint (指纹识别结果)
 	ResultMap map[string][]string
@@ -90,6 +113,11 @@ type ScanContext struct {
 	// DirDB 主动指纹探测路径数据库
 	DirDB map[string][]string
 
+	// knowledge is an immutable, process-shared rules snapshot when the Agent
+	// supplied a verified package identity. Pipeline readers use it instead of
+	// the public compatibility fields above.
+	knowledge *knowledgeSnapshot
+
 	// --- 扫描计数器 ---
 
 	// AddScanNum 额外扫描任务数（由搜索引擎等动态添加）
@@ -104,10 +132,19 @@ type ScanContext struct {
 	// 如果为 nil，则使用默认的本地文件输出。
 	OutputHook func(msg OutputMessage)
 
+	// OutputObserver mirrors output without replacing the normal CLI file or
+	// Agent stream sink. CLI history uses it so observation cannot accidentally
+	// switch the Pipeline into Agent behavior.
+	OutputObserver func(msg OutputMessage)
+
 	// PhaseHook 阶段进度回调。Pipeline 每进入一个扫描阶段时触发。
 	// 用于实时向 Server 推送扫描进度，让 UI 显示当前扫描所处阶段。
 	// 如果为 nil，则不上报阶段进度。
 	PhaseHook func(phase PhaseEvent)
+
+	// PhaseObserver mirrors phase progress without replacing the Agent progress
+	// sink. Standalone CLI history uses it to derive local coverage evidence.
+	PhaseObserver func(phase PhaseEvent)
 
 	// --- 生命周期 ---
 
@@ -119,28 +156,16 @@ type ScanContext struct {
 // NewScanContext 创建一个新的扫描上下文，初始化所有数据容器。
 func NewScanContext(cfg Config) (*ScanContext, error) {
 	ApplyConfigDefaults(&cfg)
+	if err := ValidateLegacyProviderConfig(cfg); err != nil {
+		return nil, err
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	hmBody, err := hybrid.New(hybrid.DefaultDiskOptions)
+	stores, err := taskstore.New(structs.Config(cfg))
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("初始化 BodyHMap 失败: %w", err)
-	}
-
-	hmHeader, err := hybrid.New(hybrid.DefaultDiskOptions)
-	if err != nil {
-		hmBody.Close()
-		cancel()
-		return nil, fmt.Errorf("初始化 HeaderHMap 失败: %w", err)
-	}
-
-	hmBanner, err := hybrid.New(hybrid.DefaultDiskOptions)
-	if err != nil {
-		hmBody.Close()
-		hmHeader.Close()
-		cancel()
-		return nil, fmt.Errorf("初始化 BannerHMap 失败: %w", err)
+		return nil, fmt.Errorf("initialize response stores: %w", err)
 	}
 
 	sc := &ScanContext{
@@ -149,12 +174,13 @@ func NewScanContext(cfg Config) (*ScanContext, error) {
 		IPPortMap:            make(map[string]string),
 		IPDomainMap:          make(map[string][]string),
 		URLMap:               make(map[string]URLEntity),
+		httpURLVisits:        make(map[string]struct{}),
 		ResultMap:            make(map[string][]string),
 		DirFallbackResultMap: make(map[string][]string),
 
-		BannerHMap: hmBanner,
-		BodyHMap:   hmBody,
-		HeaderHMap: hmHeader,
+		BannerHMap: stores.Banner,
+		BodyHMap:   stores.Body,
+		HeaderHMap: stores.Header,
 
 		EmbedPocs: structs.GlobalEmbedPocs,
 
@@ -170,9 +196,32 @@ func NewScanContext(cfg Config) (*ScanContext, error) {
 	return sc, nil
 }
 
-// Reset 重置扫描上下文的运行时数据，保留配置和知识库。
-// 用于 Agent 多任务复用场景，避免重复初始化 HybridMap。
+// TryVisitHTTPURL atomically records raw as submitted to the HTTP probe.
+// It returns true only for the first visit during this ScanContext lifecycle.
+// Callers that need URL normalization must do so before calling this method.
+func (sc *ScanContext) TryVisitHTTPURL(raw string) bool {
+	if sc == nil || raw == "" {
+		return false
+	}
+	sc.httpURLVisitsLock.Lock()
+	defer sc.httpURLVisitsLock.Unlock()
+	if sc.httpURLVisits == nil {
+		sc.httpURLVisits = make(map[string]struct{})
+	}
+	if _, visited := sc.httpURLVisits[raw]; visited {
+		return false
+	}
+	sc.httpURLVisits[raw] = struct{}{}
+	return true
+}
+
+// Reset 重置一个已结束执行分组的运行时数据，保留配置和知识库。
+// 调用方必须保证没有活跃 Pipeline；CLI Planner 用它隔离连续执行分组。
 func (sc *ScanContext) Reset() {
+	sc.ResumePlan = nil
+	sc.LocalRunID = ""
+	sc.OutputObserver = nil
+	sc.PhaseObserver = nil
 	sc.IPPortMapLock.Lock()
 	sc.IPPortMap = make(map[string]string)
 	sc.IPPortMapLock.Unlock()
@@ -185,6 +234,10 @@ func (sc *ScanContext) Reset() {
 	sc.URLMap = make(map[string]URLEntity)
 	sc.URLMapLock.Unlock()
 
+	sc.httpURLVisitsLock.Lock()
+	sc.httpURLVisits = make(map[string]struct{})
+	sc.httpURLVisitsLock.Unlock()
+
 	sc.DirFallbackResultMapLock.Lock()
 	sc.DirFallbackResultMap = make(map[string][]string)
 	sc.DirFallbackResultMapLock.Unlock()
@@ -193,6 +246,24 @@ func (sc *ScanContext) Reset() {
 	sc.GoPocsResults = nil
 	sc.AddScanNum = 0
 	sc.AddScanEnd = 0
+}
+
+// DetachKnowledge makes the current rules independently writable for debug or
+// custom-rule callers. Normal scan execution must not mutate shared rules.
+func (sc *ScanContext) DetachKnowledge() {
+	if sc == nil {
+		return
+	}
+	if sc.knowledge != nil {
+		sc.FingerprintDB = cloneFingerDB(sc.knowledge.fingerprintDB)
+		sc.WorkFlowDB = cloneWorkflowDB(sc.knowledge.workflowDB)
+		sc.DirDB = cloneDirDB(sc.knowledge.dirDB)
+		sc.knowledge = nil
+		return
+	}
+	sc.FingerprintDB = cloneFingerDB(sc.FingerprintDB)
+	sc.WorkFlowDB = cloneWorkflowDB(sc.WorkFlowDB)
+	sc.DirDB = cloneDirDB(sc.DirDB)
 }
 
 // Close 释放扫描上下文持有的所有资源。

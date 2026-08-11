@@ -10,7 +10,7 @@ import (
 	"github.com/olekukonko/tablewriter"
 )
 
-// HandlePocCommand 处理 `dddd poc <subcommand>` 命令。
+// HandlePocCommand 处理 `argus poc <subcommand>` 命令。
 func HandlePocCommand(args []string) {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		pocUsage()
@@ -45,17 +45,19 @@ func HandlePocCommand(args []string) {
 }
 
 func pocUsage() {
-	fmt.Println(`用法: dddd poc <子命令>
+	fmt.Println(`Argus CLI 规则库管理
+
+用法: argus poc <子命令>
 
 子命令:
   list      列出 POC (--name, --severity 过滤)
   count     统计 POC 数量
-  show      查看 POC 详情: dddd poc show <名称>
-  add       添加 POC: dddd poc add <yaml文件>
-  del       删除 POC: dddd poc del <名称>
-  validate  校验 POC: dddd poc validate <yaml文件>
-  import    批量导入目录: dddd poc import <目录>
-  export    导出所有 POC: dddd poc export --dir <输出目录>`)
+  show      查看 POC 详情: argus poc show <名称>
+  add       添加 POC: argus poc add <yaml文件>
+  del       删除 POC: argus poc del <名称>
+  validate  校验 POC: argus poc validate <yaml文件>
+  import    批量导入目录: argus poc import <目录>
+  export    导出所有 POC: argus poc export --dir <输出目录>`)
 }
 
 func pocList(args []string) {
@@ -74,7 +76,7 @@ func pocList(args []string) {
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"名称", "严重度", "标签", "来源", "启用"})
+	table.SetHeader([]string{"名称", "漏洞等级", "执行类别", "执行风险", "标签", "来源", "启用"})
 	table.SetAutoWrapText(false)
 
 	for _, p := range pocs {
@@ -86,7 +88,7 @@ func pocList(args []string) {
 		if !p.Enabled {
 			enabled = "⬜"
 		}
-		table.Append([]string{p.Name, p.Severity, tags, p.Source, enabled})
+		table.Append([]string{p.Name, p.Severity, p.ExecutionClass, p.RiskLevel, tags, p.Source, enabled})
 	}
 	table.Render()
 	fmt.Printf("  共 %d 个 (显示 %d-%d)\n", total, *offset+1, *offset+len(pocs))
@@ -102,7 +104,7 @@ func pocCount() {
 
 func pocShow(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "用法: dddd poc show <名称>")
+		fmt.Fprintln(os.Stderr, "用法: argus poc show <名称>")
 		os.Exit(1)
 	}
 	poc, err := GetPocByName(args[0])
@@ -112,6 +114,8 @@ func pocShow(args []string) {
 	}
 	fmt.Printf("# Name:     %s\n", poc.Name)
 	fmt.Printf("# Severity: %s\n", poc.Severity)
+	fmt.Printf("# Execution: %s\n", poc.ExecutionClass)
+	fmt.Printf("# Risk:     %s\n", poc.RiskLevel)
 	fmt.Printf("# Tags:     %s\n", poc.Tags)
 	fmt.Printf("# Author:   %s\n", poc.Author)
 	fmt.Printf("# Source:    %s\n", poc.Source)
@@ -122,7 +126,7 @@ func pocShow(args []string) {
 
 func pocAdd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "用法: dddd poc add <yaml文件>")
+		fmt.Fprintln(os.Stderr, "用法: argus poc add <yaml文件>")
 		os.Exit(1)
 	}
 	content, err := os.ReadFile(args[0])
@@ -144,7 +148,7 @@ func pocAdd(args []string) {
 
 func pocDel(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "用法: dddd poc del <名称>")
+		fmt.Fprintln(os.Stderr, "用法: argus poc del <名称>")
 		os.Exit(1)
 	}
 	affected, err := DeletePoc(args[0])
@@ -161,7 +165,7 @@ func pocDel(args []string) {
 
 func pocValidate(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "用法: dddd poc validate <yaml文件>")
+		fmt.Fprintln(os.Stderr, "用法: argus poc validate <yaml文件>")
 		os.Exit(1)
 	}
 	content, err := os.ReadFile(args[0])
@@ -182,7 +186,7 @@ func pocValidate(args []string) {
 
 func pocImportCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "用法: dddd poc import <目录路径>")
+		fmt.Fprintln(os.Stderr, "用法: argus poc import <目录路径>")
 		os.Exit(1)
 	}
 	dir := args[0]

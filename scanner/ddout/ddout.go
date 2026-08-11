@@ -1,12 +1,16 @@
-// Package ddout 统一输出引擎。
-// 所有扫描结果通过 FormatOutput 经由可替换的 Sink 函数输出。
-// CLI 模式下 Sink 写文件/终端；Agent 模式下 Sink 走 gRPC 回传。
+// Package ddout provides the scanner output boundary.
+//
+// CLI text output remains human readable. CLI JSON output is UTF-8 NDJSON:
+// each line is an independently decodable, versioned record. Agent callers
+// continue to use SetOutputSink and receive the original OutputMessage.
 package ddout
 
 import (
-	"dddd/scanner/structs"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -14,29 +18,97 @@ import (
 	"github.com/projectdiscovery/gologger"
 )
 
-// WebInfo is an alias for backward compatibility (optional but good).
+const JSONSchemaVersion = "argus.cli-output/v1"
+
 type WebInfo = structs.WebInfo
-
-// OutputMessage is an alias.
 type OutputMessage = structs.OutputMessage
-
-// GoPocsResultType is an alias.
 type GoPocsResultType = structs.GoPocsResultType
 
-// OutputType 当前输出格式 ("text" 或 "json")。
-var OutputType string = "text"
-
-// OutputFileName 输出文件名。
+var OutputType = "text"
 var OutputFileName string
 
-// outputSink 可替换的输出处理函数。
-// 默认为 nil，使用 defaultFormatOutput。
+// RunCounts is the stable, bounded counter set in a terminal summary.
+type RunCounts struct {
+	Targets            int64 `json:"targets"`
+	Findings           int64 `json:"findings"`
+	Coverage           int64 `json:"coverage"`
+	AssetsNew          int64 `json:"assets_new"`
+	ServicesChanged    int64 `json:"services_changed"`
+	AssetsDisappeared  int64 `json:"assets_disappeared"`
+	AssetsNotAssessed  int64 `json:"assets_not_assessed"`
+	StagesExecuted     int64 `json:"stages_executed"`
+	StagesReused       int64 `json:"stages_reused"`
+	TargetsFull        int64 `json:"targets_full"`
+	TargetsIncremental int64 `json:"targets_incremental"`
+}
+
+// RunSummary is emitted once by EndRun in JSON mode. Findings always reflects
+// records successfully written through this CLI output stream.
+type RunSummary struct {
+	Status   string    `json:"status"`
+	ExitCode int       `json:"exit_code"`
+	Counts   RunCounts `json:"counts"`
+}
+
+// JSONFinding is the stable CLI projection of a scanner finding. Pointer
+// fields prevent empty Web/GoPoc structs from appearing in every record.
+type JSONFinding struct {
+	Type          string     `json:"type,omitempty"`
+	IP            string     `json:"ip,omitempty"`
+	IPs           []string   `json:"ips,omitempty"`
+	Port          string     `json:"port,omitempty"`
+	Protocol      string     `json:"protocol,omitempty"`
+	Web           *JSONWeb   `json:"web,omitempty"`
+	Finger        []string   `json:"finger,omitempty"`
+	Domain        string     `json:"domain,omitempty"`
+	GoPoc         *JSONGoPoc `json:"go_poc,omitempty"`
+	URI           string     `json:"uri,omitempty"`
+	City          string     `json:"city,omitempty"`
+	AdditionalMsg string     `json:"am,omitempty"`
+	Nuclei        string     `json:"nuclei,omitempty"`
+}
+
+type JSONWeb struct {
+	Status string `json:"status,omitempty"`
+	Title  string `json:"title,omitempty"`
+}
+
+type JSONGoPoc struct {
+	PocName     string `json:"poc_name,omitempty"`
+	Security    string `json:"security,omitempty"`
+	Description string `json:"description,omitempty"`
+	Target      string `json:"target,omitempty"`
+	InfoLeft    string `json:"info_left,omitempty"`
+	InfoRight   string `json:"info_right,omitempty"`
+	ShowMsg     string `json:"show_msg,omitempty"`
+}
+
+// JSONRecord is the stable NDJSON wire record used by the CLI only.
+// Exactly one of Finding or Summary is set according to RecordType.
+type JSONRecord struct {
+	SchemaVersion string       `json:"schema_version"`
+	RecordType    string       `json:"record_type"`
+	Sequence      uint64       `json:"sequence"`
+	RunID         string       `json:"run_id,omitempty"`
+	Finding       *JSONFinding `json:"finding,omitempty"`
+	Summary       *RunSummary  `json:"summary,omitempty"`
+}
+
 var (
 	outputSink func(msg OutputMessage)
 	sinkMu     sync.Mutex
+
+	writeMu      sync.Mutex
+	stdout       io.Writer = os.Stdout
+	runID        string
+	sequence     uint64
+	findingCount int64
+	runStarted   bool
+	runEnded     bool
+	runWriteErr  error
 )
 
-// SetOutputSink 设置自定义的输出处理器，返回先前的处理器。
+// SetOutputSink sets a non-CLI output sink and returns the prior sink.
 func SetOutputSink(sink func(msg OutputMessage)) func(msg OutputMessage) {
 	sinkMu.Lock()
 	defer sinkMu.Unlock()
@@ -45,43 +117,323 @@ func SetOutputSink(sink func(msg OutputMessage)) func(msg OutputMessage) {
 	return prev
 }
 
-// FormatOutput 格式化并输出一条扫描结果。
+// BeginRun starts one CLI output run. It does not emit a record; EndRun emits
+// the single terminal run_summary record in JSON mode.
+func BeginRun(id string) error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	if runStarted && !runEnded {
+		return errors.New("ddout: run already started")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > 256 || strings.ContainsAny(id, "\r\n\x00") {
+		return errors.New("ddout: run id is invalid")
+	}
+	runID, sequence, findingCount, runWriteErr = id, 0, 0, nil
+	runStarted, runEnded = true, false
+	return nil
+}
+
+// EndRun emits exactly one terminal run_summary for a started JSON run.
+func EndRun(summary RunSummary) error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	if !runStarted {
+		return errors.New("ddout: no run started")
+	}
+	if runEnded {
+		return errors.New("ddout: run already ended")
+	}
+	if err := summary.validate(); err != nil {
+		return err
+	}
+	runEnded = true
+	if OutputType != "json" {
+		return nil
+	}
+	summary.Counts.Findings = findingCount
+	sequence++
+	record := JSONRecord{
+		SchemaVersion: JSONSchemaVersion,
+		RecordType:    "run_summary",
+		Sequence:      sequence,
+		RunID:         runID,
+		Summary:       &summary,
+	}
+	err := writeTerminalJSONRecordLocked(&record)
+	recordWriteErrorLocked(err)
+	return err
+}
+
+func (summary RunSummary) validate() error {
+	wantCode := map[string]int{"completed": 0, "failed": 1, "canceled": 130}
+	code, ok := wantCode[summary.Status]
+	if !ok || summary.ExitCode != code {
+		return fmt.Errorf("ddout: invalid terminal status/exit code %q/%d", summary.Status, summary.ExitCode)
+	}
+	counts := []int64{
+		summary.Counts.Targets, summary.Counts.Findings, summary.Counts.Coverage,
+		summary.Counts.AssetsNew, summary.Counts.ServicesChanged, summary.Counts.AssetsDisappeared,
+		summary.Counts.AssetsNotAssessed, summary.Counts.StagesExecuted, summary.Counts.StagesReused,
+		summary.Counts.TargetsFull, summary.Counts.TargetsIncremental,
+	}
+	for _, count := range counts {
+		if count < 0 {
+			return errors.New("ddout: summary count is negative")
+		}
+	}
+	return nil
+}
+
+// FormatOutput writes one finding. Output failures are reported to stderr so
+// legacy void call sites cannot silently lose a record.
 func FormatOutput(msg OutputMessage) {
+	if err := FormatOutputE(msg); err != nil {
+		gologger.Error().Msgf("write scan output: %s", err)
+	}
+}
+
+// FormatOutputE is the error-returning form for callers that need to fail a
+// run when a result cannot be serialized or written.
+func FormatOutputE(msg OutputMessage) error {
 	sinkMu.Lock()
 	sink := outputSink
 	sinkMu.Unlock()
-
 	if sink != nil {
 		sink(msg)
-		return
+		return nil
 	}
 
-	// 默认输出逻辑
-	defaultFormatOutput(msg)
-}
-
-// defaultFormatOutput 默认的输出实现（写终端 + 写文件）。
-func defaultFormatOutput(msg OutputMessage) {
-	line := formatLine(msg)
-	if line == "" {
-		return
-	}
-
-	gologger.Silent().Msgf("%s", line)
-
-	if OutputFileName != "" {
-		appendToFile(OutputFileName, line)
-	}
-}
-
-// formatLine 根据消息类型和输出格式生成一行输出。
-func formatLine(msg OutputMessage) string {
+	writeMu.Lock()
+	defer writeMu.Unlock()
 	if OutputType == "json" {
-		b, _ := json.Marshal(msg)
-		return string(b)
+		if !runStarted {
+			return errors.New("ddout: JSON output requires BeginRun")
+		}
+		if runEnded {
+			return errors.New("ddout: cannot write finding after EndRun")
+		}
+		sequence++
+		if err := writeJSONRecordLocked(JSONRecord{
+			SchemaVersion: JSONSchemaVersion,
+			RecordType:    "finding",
+			Sequence:      sequence,
+			RunID:         runID,
+			Finding:       jsonFinding(msg),
+		}); err != nil {
+			recordWriteErrorLocked(err)
+			return err
+		}
+		findingCount++
+		return nil
 	}
 
-	// text 模式
+	line := formatTextLine(msg)
+	if line == "" {
+		return nil
+	}
+	err := writeLineLocked(line)
+	recordWriteErrorLocked(err)
+	return err
+}
+
+func jsonFinding(msg OutputMessage) *JSONFinding {
+	finding := &JSONFinding{
+		Type: msg.Type, IP: msg.IP, IPs: msg.IPs, Port: msg.Port, Protocol: msg.Protocol,
+		Finger: msg.Finger, Domain: msg.Domain, URI: msg.URI, City: msg.City,
+		AdditionalMsg: msg.AdditionalMsg, Nuclei: msg.Nuclei,
+	}
+	if msg.Web.Status != "" || msg.Web.Title != "" {
+		finding.Web = &JSONWeb{Status: msg.Web.Status, Title: msg.Web.Title}
+	}
+	if msg.GoPoc.PocName != "" || msg.GoPoc.Security != "" || msg.GoPoc.Description != "" || msg.GoPoc.Target != "" || msg.GoPoc.InfoLeft != "" || msg.GoPoc.InfoRight != "" || msg.GoPoc.ShowMsg != "" {
+		finding.GoPoc = &JSONGoPoc{
+			PocName: msg.GoPoc.PocName, Security: msg.GoPoc.Security, Description: msg.GoPoc.Description,
+			Target: msg.GoPoc.Target, InfoLeft: msg.GoPoc.InfoLeft, InfoRight: msg.GoPoc.InfoRight, ShowMsg: msg.GoPoc.ShowMsg,
+		}
+	}
+	return finding
+}
+
+func (finding JSONFinding) outputMessage() OutputMessage {
+	msg := OutputMessage{
+		Type: finding.Type, IP: finding.IP, IPs: finding.IPs, Port: finding.Port, Protocol: finding.Protocol,
+		Finger: finding.Finger, Domain: finding.Domain, URI: finding.URI, City: finding.City,
+		AdditionalMsg: finding.AdditionalMsg, Nuclei: finding.Nuclei,
+	}
+	if finding.Web != nil {
+		msg.Web = WebInfo{Status: finding.Web.Status, Title: finding.Web.Title}
+	}
+	if finding.GoPoc != nil {
+		msg.GoPoc = GoPocsResultType{
+			PocName: finding.GoPoc.PocName, Security: finding.GoPoc.Security, Description: finding.GoPoc.Description,
+			Target: finding.GoPoc.Target, InfoLeft: finding.GoPoc.InfoLeft, InfoRight: finding.GoPoc.InfoRight, ShowMsg: finding.GoPoc.ShowMsg,
+		}
+	}
+	return msg
+}
+
+// DecodeFindingLine accepts both the versioned CLI record and the legacy
+// top-level finding JSON used by historical result files. Summary lines are
+// valid but return ok=false.
+func DecodeFindingLine(line string) (message OutputMessage, ok bool, err error) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return OutputMessage{}, false, nil
+	}
+	var header struct {
+		SchemaVersion string `json:"schema_version"`
+		RecordType    string `json:"record_type"`
+	}
+	if err := json.Unmarshal([]byte(line), &header); err != nil {
+		return OutputMessage{}, false, err
+	}
+	if header.SchemaVersion == "" {
+		var legacy OutputMessage
+		if err := json.Unmarshal([]byte(line), &legacy); err != nil {
+			return OutputMessage{}, false, err
+		}
+		return legacy, legacy.Type != "", nil
+	}
+	if header.SchemaVersion != JSONSchemaVersion {
+		return OutputMessage{}, false, fmt.Errorf("unsupported CLI output schema %q", header.SchemaVersion)
+	}
+	var record JSONRecord
+	if err := json.Unmarshal([]byte(line), &record); err != nil {
+		return OutputMessage{}, false, err
+	}
+	if record.RecordType == "run_summary" {
+		return OutputMessage{}, false, nil
+	}
+	if record.RecordType != "finding" || record.Finding == nil {
+		return OutputMessage{}, false, fmt.Errorf("invalid CLI finding record")
+	}
+	return record.Finding.outputMessage(), true, nil
+}
+
+func writeJSONRecordLocked(record JSONRecord) error {
+	b, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("marshal JSON output record: %w", err)
+	}
+	return writeLineLocked(string(b))
+}
+
+func writeTerminalJSONRecordLocked(record *JSONRecord) error {
+	b, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("marshal JSON output record: %w", err)
+	}
+	if OutputFileName == "" {
+		if _, err := fmt.Fprintln(stdout, string(b)); err != nil {
+			return fmt.Errorf("write stdout: %w", err)
+		}
+		return nil
+	}
+
+	file, offset, fileErr := appendTerminalRecord(OutputFileName, b)
+	if fileErr != nil {
+		failed, marshalErr := failedTerminalRecord(record)
+		if marshalErr != nil {
+			return errors.Join(fileErr, marshalErr)
+		}
+		if _, stdoutErr := fmt.Fprintln(stdout, string(failed)); stdoutErr != nil {
+			return errors.Join(fileErr, fmt.Errorf("write stdout: %w", stdoutErr))
+		}
+		return fileErr
+	}
+
+	if _, stdoutErr := fmt.Fprintln(stdout, string(b)); stdoutErr != nil {
+		failed, marshalErr := failedTerminalRecord(record)
+		repairErr := marshalErr
+		if marshalErr == nil {
+			repairErr = replaceTerminalRecord(file, offset, failed)
+		}
+		_ = file.Close()
+		return errors.Join(fmt.Errorf("write stdout: %w", stdoutErr), repairErr)
+	}
+	// The file was synced before stdout was published, so an eventual Close
+	// error cannot make the two durable records disagree.
+	_ = file.Close()
+	return nil
+}
+
+func failedTerminalRecord(record *JSONRecord) ([]byte, error) {
+	record.Summary.Status, record.Summary.ExitCode = "failed", 1
+	b, err := json.Marshal(record)
+	if err != nil {
+		return nil, fmt.Errorf("marshal failed terminal record: %w", err)
+	}
+	return b, nil
+}
+
+func appendTerminalRecord(filename string, record []byte) (*os.File, int64, error) {
+	file, err := os.OpenFile(filename, os.O_CREATE|os.O_RDWR, 0o666)
+	if err != nil {
+		return nil, 0, fmt.Errorf("open output file: %w", err)
+	}
+	offset, err := file.Seek(0, io.SeekEnd)
+	if err == nil {
+		_, err = fmt.Fprintln(file, string(record))
+	}
+	if err == nil {
+		err = file.Sync()
+	}
+	if err != nil {
+		_ = file.Truncate(offset)
+		_ = file.Close()
+		return nil, 0, fmt.Errorf("append terminal output record: %w", err)
+	}
+	return file, offset, nil
+}
+
+func replaceTerminalRecord(file *os.File, offset int64, record []byte) error {
+	if err := file.Truncate(offset); err != nil {
+		return fmt.Errorf("remove stale terminal output record: %w", err)
+	}
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return fmt.Errorf("seek terminal output record: %w", err)
+	}
+	if _, err := fmt.Fprintln(file, string(record)); err != nil {
+		_ = file.Truncate(offset)
+		return fmt.Errorf("write failed terminal output record: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Truncate(offset)
+		return fmt.Errorf("sync failed terminal output record: %w", err)
+	}
+	return nil
+}
+
+func writeLineLocked(line string) error {
+	if OutputFileName != "" {
+		if err := appendToFile(OutputFileName, line); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintln(stdout, line); err != nil {
+		return fmt.Errorf("write stdout: %w", err)
+	}
+	return nil
+}
+
+func recordWriteErrorLocked(err error) {
+	if err != nil {
+		runWriteErr = errors.Join(runWriteErr, err)
+	}
+}
+
+// RunError returns output failures observed since BeginRun.
+func RunError() error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	return runWriteErr
+}
+
+// Render returns the legacy text-mode line without writing it.
+func Render(msg OutputMessage) string { return formatTextLine(msg) }
+
+func formatTextLine(msg OutputMessage) string {
 	switch msg.Type {
 	case "IPAlive":
 		if msg.AdditionalMsg != "" {
@@ -134,23 +486,30 @@ func formatLine(msg OutputMessage) string {
 	case "Domain":
 		return fmt.Sprintf("[Domain] %s -> %s", msg.Domain, strings.Join(msg.IPs, ","))
 	default:
-		if msg.Show != "" {
-			return msg.Show
-		}
-		return ""
+		return msg.Show
 	}
 }
 
-// Render returns the text-mode line for a message without writing it.
-func Render(msg OutputMessage) string {
-	return formatLine(msg)
-}
-
-func appendToFile(filename, line string) {
+func appendToFile(filename, line string) error {
 	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o666)
 	if err != nil {
-		return
+		return fmt.Errorf("open output file: %w", err)
 	}
 	defer f.Close()
-	fmt.Fprintln(f, line)
+	if _, err := fmt.Fprintln(f, line); err != nil {
+		return fmt.Errorf("write output file: %w", err)
+	}
+	return nil
+}
+
+// resetForTest isolates package-global output state. It is intentionally
+// unexported so production callers cannot reset an active run.
+func resetForTest() {
+	sinkMu.Lock()
+	outputSink = nil
+	sinkMu.Unlock()
+	writeMu.Lock()
+	OutputType, OutputFileName, stdout = "text", "", os.Stdout
+	runID, sequence, findingCount, runStarted, runEnded, runWriteErr = "", 0, 0, false, false, nil
+	writeMu.Unlock()
 }

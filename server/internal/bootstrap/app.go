@@ -1,13 +1,13 @@
 package bootstrap
 
 import (
-	"github.com/user/dddd-server/internal/adapters/grpcagent"
-	"github.com/user/dddd-server/internal/adapters/httpapi"
-	"github.com/user/dddd-server/internal/adapters/persistence/gormrepo"
-	"github.com/user/dddd-server/internal/adapters/queue"
-	"github.com/user/dddd-server/internal/adapters/ws"
-	"github.com/user/dddd-server/internal/config"
-	"github.com/user/dddd-server/internal/core/usecase"
+	"github.com/P0lar1ght/argus/server/internal/adapters/grpcagent"
+	"github.com/P0lar1ght/argus/server/internal/adapters/httpapi"
+	"github.com/P0lar1ght/argus/server/internal/adapters/persistence/gormrepo"
+	"github.com/P0lar1ght/argus/server/internal/adapters/queue"
+	"github.com/P0lar1ght/argus/server/internal/adapters/ws"
+	"github.com/P0lar1ght/argus/server/internal/config"
+	"github.com/P0lar1ght/argus/server/internal/core/usecase"
 	"gorm.io/gorm"
 )
 

@@ -31,7 +31,7 @@
 - 控制面主实体多使用字符串主键；高基数流水类表多使用自增整型主键。
 - 结果表通过联合唯一索引 + `ON CONFLICT` Upsert 保证幂等写入。
 - 扫描结果统一做 `target` 归一化，避免 URL / Host / IP 多种写法导致重复资产。
-- 为保证吞吐，当前模型基本不依赖物理外键，而是通过应用层逻辑关联 `project_id`、`root_task_id`、`agent_id` 等业务主键。
+- 为保证吞吐，当前模型基本不依赖物理外键，而是通过应用层逻辑关联 `project_id`、`root_task_id`、`agent_id` 等业务主键。测绘证据链是例外：查询快照、笔记本来源及分发意图使用 tenant/project 复合外键绑定审计、资产项、任务配置和选中项，防止后续历史、导出、归档或分发链路产生跨项目挂接。
 - 灵活结构统一使用 `jsonb` 或 `text(JSON)` 存储，例如标签、任务配置、节点选择器、规则详情。
 - 误删风险高的实体使用软删除：当前包括 `projects`、`cron_tasks`、`credentials`。
 
@@ -54,8 +54,10 @@
 核心数据关系可以概括为：
 
 - `projects` 是项目隔离的顶层容器，向下关联 `project_members`、`cron_tasks`、`root_tasks`、`notification_rules`、`domains`、`assets`、`credentials`、`fingerprint_hits`、`vulnerabilities`、`asset_change_logs`、`reports`。
-- `root_tasks` 表示一次用户发起或定时触发的巡航任务，向下切分为多个 `sub_tasks`。
-- `sub_tasks` 由 `nodes` 认领执行，并驱动结果写入 `domains`、`assets`、`fingerprint_hits`、`vulnerabilities`。
+- `root_tasks` 表示一次用户发起或定时触发的巡航任务，向下包含稳定的 `task_batches`，每个批次以追加式 `sub_tasks` 保存真实 Attempt。
+- `sub_tasks` 由 `nodes` 认领执行，并驱动结果写入 `domains`、`assets`、`fingerprint_hits`、`vulnerabilities`；阶段级证据另以 `scan_observations` 追加保存。
+- `scan_coverages` 保存一个 WorkKey 的当前覆盖状态，`scan_work_claims` 为并发相同工作提供唯一占用槽，`task_coverage_links` 记录任务实际执行、历史复用或执行中挂接的来源。
+- `asset_discovery_audits` 保存 Server 网络空间测绘查询、导出和笔记本归档的项目级脱敏审计；只记录查询/配置哈希、计数、状态与耗时，不保存原始表达式、凭据或 Provider 响应。`asset_discovery_snapshots` 与 `asset_discovery_snapshot_items` 是查询历史、导出和笔记本的追加式来源；`asset_discovery_notebook_items` 与 `asset_discovery_notebook_sources` 分离项目内去重目标和每次快照来源；`asset_discovery_notebook_distribution_intents` 及其 item 表冻结分发确认的幂等请求快照，`asset_discovery_notebook_distribution_materializations` 冻结确认后的 typed 结果。intent 单独存在不代表授权或执行。
 - `nodes` 维护在线 Agent 的会话、容量、心跳和运行任务信息；`agent_logs` 记录节点侧黑匣子日志。
 - `arsenals` 是规则文件真相源；`fingerprint_rules`、`poc_rules`、`workflow_rules`、`dir_rules` 是由 `arsenals` 物化出的结构化检索层，`rule_catalog_bootstraps` 记录物化状态。
 - `system_configs` 承载全局配置与 `mcp_*` 类型的 API Key。
@@ -81,6 +83,8 @@
 | `node_affinity` | jsonb | 节点亲和性策略 | - |
 | `status` | string | `active` / `disabled` | Index, Default:`active` |
 | `created_at` / `updated_at` / `deleted_at` | timestamp | 审计时间与软删除时间 | `deleted_at` Index |
+
+操作员向未归档任务增加批次时，Server 会在同一事务中锁定 Task 与 Project，将规范化后的新目标稳定并集到 `seed_targets` 和授权 `scope`。重复目标只返回 `unchanged`，不会新建 TaskBatch；实际新增目标、Scope 变化和操作者写入 `task_audits`。
 
 #### `project_members`
 
@@ -157,19 +161,48 @@
 | `priority` | int | 优先级 | - |
 | `timeout_sec` | int | 单批次超时秒数 | - |
 | `rule_version` | string | 任务运行时规则版本 | - |
-| `created_at` / `updated_at` | timestamp | 审计时间 | - |
+| `current_config_version` | int | 当前配置修订版本；新批次读取该版本 | Default:`1` |
+| `created_at` / `updated_at` | timestamp | 创建与更新时间 | - |
+| `archived_at` | timestamp | 归档时间；为空表示当前任务 | Index |
 
-#### `sub_tasks`
+#### `task_batches`
+
+`task_batches` 是任务下稳定、可管理的扫描单元。批次身份不会因执行失败或重试改变，实际执行记录由 `sub_tasks`（Attempt）追加保存。
 
 | 字段 | 类型 | 说明 | 约束 / 索引 |
 |------|------|------|-------------|
-| `id` | string | 子任务 / 批次 ID | PK |
+| `id` | string | 稳定批次 ID | PK |
+| `tenant_id` / `project_id` | string | 租户与项目归属 | Index |
+| `root_task_id` | string | 所属根任务 | Index，与 `sequence` 唯一 |
+| `sequence` | int | 任务内稳定顺序号 | Unique(`root_task_id`, `sequence`) |
+| `kind` / `target_type` | string | 批次场景与目标类型 | Index |
+| `targets` / `target_count` | text / int | 规范化目标快照及数量 | Text |
+| `status` | string | 最新 Attempt 的镜像状态 | Index |
+| `control_state` | string | 与执行状态正交的批次控制意图：`active` / `paused` / `stopping` / `stopped` | Index, Default:`active` |
+| `config_version` / `rule_version` | int / string | 创建批次时绑定的配置与规则版本 | - |
+| `priority` / `timeout_sec` | int | 调度参数快照 | - |
+| `agent_selector` / `agent_selector_rules` | text | Agent 选择条件快照 | Text(JSON) |
+| `current_attempt_no` / `attempt_count` | int | 当前尝试序号与累计尝试数 | Default:`1` |
+| `latest_attempt_id` | string | 最新实际执行记录 | Index |
+| `created_by` | string | 创建操作者 | Index |
+| `created_at` / `updated_at` / `archived_at` | timestamp | 生命周期时间 | `archived_at` Index |
+
+#### `sub_tasks`（Attempt）
+
+| 字段 | 类型 | 说明 | 约束 / 索引 |
+|------|------|------|-------------|
+| `id` | string | 实际执行 / Attempt ID | PK |
 | `tenant_id` | string | 租户隔离键 | Index |
 | `project_id` | string | 所属项目 | Index |
 | `root_task_id` | string | 关联根任务 | Index |
+| `batch_id` | string | 关联稳定批次 | Index |
+| `attempt_no` | int | 批次内尝试序号 | Default:`1` |
+| `parent_attempt_id` | string | 触发本次执行的上一 Attempt | Index |
+| `trigger` | string | `initial` / 自动、超时、拆分、掉线、Spot 或手动重试来源 | Index |
 | `chunk_targets` | text | 当前批次目标列表 JSON | Text |
 | `status` | string | 子任务状态机 | Index |
-| `agent_id` | string | 当前认领节点 | Index |
+| `agent_id` | string | 实际执行节点；终态后保留 | Index |
+| `failure_reason` | text | Agent 或恢复链路记录的失败原因摘要 | Text |
 | `config` | text | 当前批次配置 JSON | Text |
 | `stream_msg_id` | string | 队列消息句柄 / MQ 消息标识 | - |
 | `priority` | int | 调度优先级，默认 `1` | Index, Default:`1` |
@@ -177,6 +210,9 @@
 | `timeout_sec` | int | 批次超时秒数 | - |
 | `retry_count` | int | 当前重试次数 | - |
 | `max_retry` | int | 最大重试次数 | Default:`3` |
+| `config_version` | int | 此执行记录使用的不可变配置版本 | Default:`1` |
+| `rule_version` | string | 此执行使用的规则版本 | - |
+| `started_at` / `finished_at` | timestamp | 实际开始和终态时间；未发生时为空 | Index |
 | `created_at` / `updated_at` | timestamp | 审计时间 | - |
 
 设计要点：
@@ -184,6 +220,98 @@
 - 任务创建后初始进入 `Dispatching` 或 `Pending`。
 - 失败 / 超时时允许进入 `Recovered` 或进行二分拆分重试。
 - 用户取消走 `CancelPending -> Cancelled` 两段式收敛。
+- 普通删除只设置 `root_tasks.archived_at`，不会删除 `sub_tasks` 或扫描结果；活动任务必须先停止到终态再归档。
+- `root_tasks.config/priority/timeout_sec` 继续镜像当前修订以兼容旧 Agent；已创建 `sub_tasks` 保留自己的 `config` 与 `config_version`，不会被后续任务配置修改覆盖。
+- 迁移为每条旧 `sub_tasks` 记录回填一个同 ID 的稳定批次，并将旧记录关联为 Attempt 1；Agent 协议仍使用不透明的 Attempt ID，因此旧 Agent 无须同时升级。
+- 重试、超时恢复、Agent 掉线和 Spot 回收不会把原 Attempt 改回待执行态；原记录保留 Agent、配置/规则版本、时间和失败原因，并在同一批次下追加新 Attempt。RootTask 进度只聚合每个 TaskBatch 的 `latest_attempt_id`。
+- 增加批次先按目标类型规范化，再在 RootTask 行锁内与历史批次和 `original_targets` 去重；完成态任务有真实新目标时回到 `Running`，暂停任务新增的 Attempt 保持 `Paused`，不会绕过暂停直接派发。
+- 携带 `Idempotency-Key` 的增加批次请求在相同 RootTask 行锁内查询或写入追加专用账本；同 Task/操作者/Key 的同一请求返回首次结果，异请求冲突。全重复请求可冻结 `unchanged`，但不创建 Batch/Attempt、范围变化或业务审计。
+- 批次暂停只修改 `control_state`；未领取 Attempt 同时进入 `Paused`，已领取 Attempt 允许完成。暂停期间失败、超时、Agent 掉线或 Spot 回收只收敛当前 Attempt，不自动追加重试。恢复或显式重试通过新 Attempt 保留历史证据。
+- 批次归档只设置 `task_batches.archived_at`。归档批次退出默认列表和 RootTask 进度聚合，但 Attempt、资产、指纹、漏洞和审计记录均保留。
+
+#### `task_config_revisions`
+
+| 字段 | 类型 | 说明 | 约束 / 索引 |
+|------|------|------|-------------|
+| `id` | bigint | 修订记录 ID | PK |
+| `tenant_id` / `project_id` | string | 租户与项目归属 | Index |
+| `root_task_id` | string | 根任务 ID | Index，与 `version` 唯一 |
+| `version` | int | 从 1 递增的任务内版本号 | Unique(`root_task_id`, `version`) |
+| `config` | text | 规范化扫描配置 JSON | Text |
+| `config_hash` | string | 配置、优先级、超时和 Agent 选择条件的 SHA-256 | Index |
+| `priority` / `timeout_sec` | int | 此版本调度参数 | - |
+| `agent_selector` / `agent_selector_rules` | text | 用户指定的 Agent 选择条件，不含按目标类型自动合并的条件 | Text(JSON) |
+| `created_by` | string | 创建修订的操作者 | Index |
+| `change_note` | text | 可选变更说明 | Text |
+| `created_at` | timestamp | 修订创建时间 | - |
+
+新建任务在同一事务中写入 v1；配置更新锁定根任务、追加下一版本、更新兼容镜像并写入 `config_update` 审计。迁移为旧任务和旧子任务回填 v1，重复执行不会产生重复修订。
+
+#### `task_audits`
+
+| 字段 | 类型 | 说明 | 约束 / 索引 |
+|------|------|------|-------------|
+| `id` | bigint | 审计记录 ID | PK |
+| `tenant_id` | string | 租户隔离键 | Index |
+| `project_id` | string | 所属项目 | Index |
+| `root_task_id` | string | 根任务 ID | Index |
+| `batch_id` / `attempt_id` | string | 后续批次与尝试审计关联位 | Index |
+| `operator_id` | string | 操作者用户 ID | Index |
+| `action` | string | `pause` / `resume` / `stop` / `retry` / `archive` 等任务级动作及 `batch_*` 批次动作 | Index |
+| `before_status` / `after_status` | string | 操作前后任务状态 | - |
+| `details` | jsonb | 不含目标正文和扫描配置的动作摘要 | Default:`{}` |
+| `created_at` | timestamp | 操作时间 | Index |
+
+任务状态变更与对应 `task_audits` 记录在同一数据库事务内提交。归档状态与运行状态分离，默认任务列表、Dashboard 任务数和项目任务数不统计已归档任务，但任务详情和历史结果仍可按 ID 访问。
+
+#### `asset_discovery_audits`
+
+| 字段 | 类型 | 说明 | 约束 / 索引 |
+|------|------|------|-------------|
+| `id` | bigint | 测绘查询审计 ID | PK |
+| `tenant_id` / `project_id` | string | 租户与项目隔离键 | Index |
+| `provider` / `action` | string | Provider 与 `query_preview` / `export_snapshot` / `notebook_archive` / `notebook_update` / `notebook_remove` / `notebook_restore` 动作 | Index |
+| `notebook_item_id` | bigint nullable | Notebook 操作关联的项目级条目；普通查询/导出为空 | Index, tenant/project 复合 FK, RESTRICT |
+| `operator_id` | string | 发起查询的用户 ID | Index |
+| `query_hash` | string | 规范化查询表达式 SHA-256；不保存原文 | Index |
+| `config_version` / `config_hash` | int / string | 租户 API 配置版本与语义 SHA-256 | - |
+| `requested_limit` | int | 请求结果上限 | - |
+| `provider_total` / `returned_count` / `skipped_rows` | int | Provider 总量与规范化计数 | - |
+| `truncated` | bool | 是否因预算截断 | - |
+| `status` / `error_code` | string | `success` / `failed` 与稳定脱敏错误码 | Index |
+| `duration_ms` / `created_at` | bigint / timestamp | 耗时与审计时间 | `created_at` Index |
+
+该表不包含原始查询、email、API key、请求 URL、Provider 响应正文或资产结果。项目访问校验失败时不调用 Provider，也不创建可能泄露项目存在性的审计；通过访问校验后的查询必须先完成审计写入才会向调用者返回结果。
+
+#### `asset_discovery_snapshots` / `asset_discovery_snapshot_items`
+
+| 表 | 角色 | 关键字段 / 约束 |
+|------|------|-----------------|
+| `asset_discovery_snapshots` | 一次成功 Provider 查询的不可变项目快照 | `schema_version`、tenant/project/audit、Provider、原始表达式与查询哈希、配置版本/哈希、请求及结果计数；一个审计最多关联一个快照 |
+| `asset_discovery_snapshot_items` | 快照内按返回顺序保存的规范资产候选 | tenant/project/snapshot、规范目标与 SHA-256、IP/域名/端口/协议及最小展示元数据；`(snapshot_id, target_hash)` 唯一 |
+
+原始表达式属于受 tenant/project 对象权限保护的项目业务数据，用于项目查询历史；它不会复制到通用审计或日志。两张表不包含 Provider 凭据或原始响应字段，也不写入当前 `assets` 视图。快照通过 `(tenant_id, project_id, audit_id)` 复合外键绑定审计，资产项通过 `(tenant_id, project_id, snapshot_id)` 复合外键绑定快照，避免跨租户或跨项目挂接。FOFA/Hunter/Quake 成功路径在一个数据库事务内创建成功审计、快照和全部资产项；任一写入失败均回滚完整成功记录并隐藏结果。历史列表、单次资产读取和 CSV 导出都强制使用 tenant/project/snapshot 过滤并受数量、时间与响应大小约束，公开 DTO 和导出文件不包含查询、配置或目标哈希；成功导出另写 `action=export_snapshot` 的脱敏审计，审计失败不返回文件。
+
+#### `asset_discovery_notebook_items` / `asset_discovery_notebook_sources`
+
+| 表 | 角色 | 关键字段 / 约束 |
+|------|------|-----------------|
+| `asset_discovery_notebook_items` | 项目级规范候选目标与运营状态 | tenant/project、规范目标、目标 SHA-256、创建/更新人、备注、软移除时间/操作者；`(tenant_id, project_id, target_hash)` 唯一，每项目由应用层限制 10000 条 |
+| `asset_discovery_notebook_sources` | 笔记本目标的不可变快照来源 | tenant/project、notebook item、snapshot/item、归档审计与操作者；`(tenant_id, project_id, snapshot_id, snapshot_item_id)` 唯一 |
+| `asset_discovery_notebook_tags` | 项目内规范标签 | tenant/project/name 唯一；名称 1–64 字节，复合 FK 绑定项目 |
+| `asset_discovery_notebook_item_tags` | 条目与标签的项目内关联 | tenant/project/item/tag 唯一；两个复合 FK 均 `ON DELETE RESTRICT` |
+
+来源表以 tenant/project 复合外键分别绑定笔记本目标、快照资产项和脱敏审计，避免跨项目挂接。Migration 480 为条目补充标签、备注和软移除状态，并把项目、标签、关联和 Notebook 操作审计全部纳入复合 FK；启动时 schema verify 同时检查新增列与索引。归档或运营写入都在锁定项目/条目后写脱敏审计，失败会回滚。操作审计保存 item ID、目标哈希和不含标签/备注正文的变更摘要哈希。笔记本不复制原始表达式、Provider 凭据或响应，不写入 `assets`；只有另行确认的分发事务可扩展 Scope/SeedTargets 或创建 TaskBatch。
+
+#### `asset_discovery_notebook_distribution_intents` / `asset_discovery_notebook_distribution_intent_items` / `asset_discovery_notebook_distribution_materializations`
+
+| 表 | 角色 | 关键字段 / 约束 |
+|------|------|-----------------|
+| `asset_discovery_notebook_distribution_intents` | 内部、不可变的笔记本分发请求快照 | tenant/project/task/operator/operation、Idempotency-Key SHA-256、请求/预览/配置哈希、预览与配置/规则版本、任务状态、计数和 `recorded` 状态；`(tenant_id, project_id, operator_id, operation, idempotency_key_hash)` 唯一 |
+| `asset_discovery_notebook_distribution_intent_items` | 一次意图中的有序选中项快照 | tenant/project/intent/notebook item、0 起始位置、规范目标、目标 SHA-256 与 `new`/`duplicate` 判定；同一 intent 内位置、条目和目标哈希分别唯一 |
+| `asset_discovery_notebook_distribution_materializations` | 一次已确认意图的不可变 typed 结果 | tenant/project/intent/task、`materialized`/`unchanged`、提交后的任务状态以及有界 Batch/Attempt ID 数组；每个 intent 唯一 |
+
+意图通过 tenant/project 复合外键绑定 RootTask 与对应 TaskConfigRevision；逐项快照同样绑定 Intent 和 NotebookItem，materialization 绑定 Intent 与 RootTask，全部使用 `ON DELETE RESTRICT`。确认接口把 intent/items、materialization、Project Scope/SeedTargets、RootTask、TaskBatch/Attempt 和 `notebook_distribution_materialize` TaskAudit 放入同一事务；提交后才派发。相同幂等键与相同确认返回该不可变结果，不同确认冲突，原始幂等键不落库。三张表都没有 Provider 凭据、原始查询或响应字段；intent 单独存在不构成扫描授权。
 
 #### `nodes`
 
@@ -230,7 +358,60 @@
 
 ---
 
+#### `task_creation_idempotencies`
+
+Migration 430 的内部、不可变创建任务幂等账本。`(tenant_id, project_id, operator_id, operation, idempotency_key_hash)` 唯一，其中 `operation=create_task_v1`；只保存原始 Key 的 SHA-256、规范请求 SHA-256、RootTask ID、首批 Attempt ID 与首次 Project Scope/SeedTargets 增量，绝不持久化原始 Key、目标或配置正文。其 tenant/project 复合外键绑定 RootTask；与 RootTask、配置修订、TaskBatch、Attempt、Scope/SeedTargets 扩展和单条创建审计同事务提交，失败整体回滚。该账本不构成授权凭证，重放前仍需完成认证、operator RBAC、项目访问和 active 状态校验。
+
+#### `task_append_idempotencies`
+
+Migration 440 的内部、不可变增加批次幂等账本。`(tenant_id, project_id, root_task_id, operator_id, operation, idempotency_key_hash)` 唯一，其中 `operation=append_targets_v1`；保存原始 Key/规范请求的 SHA-256、首次 outcome、配置与规则身份、状态、Batch/Attempt ID、目标/范围增量和提交后的任务总计数。它不保存原始 Key、目标列表或配置正文。账本通过 tenant/project/task 复合外键绑定 RootTask，并与新增 Batch/Attempt、Project Scope/SeedTargets、RootTask 聚合和单条 `batch_append` 审计在同一事务提交；全重复 `unchanged` 只写账本且不产生业务变更。只有首次新增在提交后进入队列，重放读取冻结对象且不会再次派发。
+
+#### `task_retry_idempotencies`
+
+Migration 450 的内部、不可变任务重试幂等账本。`(tenant_id, project_id, root_task_id, operator_id, operation, idempotency_key_hash)` 唯一，其中 `operation=retry_task_v1`；只保存原始 Key 的 SHA-256、版本化请求的 SHA-256、首次重试前后状态、新增 Attempt ID，以及首次跳过的完成/暂停批次数。账本不保存原始 Key、目标、配置、规则正文或 Provider 数据；Attempt 列表必须非空。它通过 tenant/project/task 复合外键绑定 RootTask，并与新 Attempt、RootTask 状态和单条 `retry` 审计在同一事务提交。只有首次提交后主动派发；重放读取首次 Attempt 的当前投递状态但不会再次入队，也不能绕过认证、operator RBAC、项目访问或归档校验。
+
+#### `task_batch_retry_idempotencies`
+
+Migration 460 的内部、不可变单批次重试幂等账本。`(tenant_id, project_id, root_task_id, batch_id, operator_id, operation, idempotency_key_hash)` 唯一，其中 `operation=retry_task_batch_v1`；只保存原始 Key 的 SHA-256、版本化请求的 SHA-256、首次重试前后状态以及新 Attempt 的 ID、编号、配置版本和规则版本。账本不保存原始 Key、目标、配置/规则正文或 Provider 数据，并通过 tenant/project/task/batch 复合外键绑定稳定 TaskBatch。账本、新 Attempt、Task/Batch 状态和单条 `batch_retry` 审计同事务提交；只有首次提交后主动派发，重放只投影该 Attempt 当前是否仍待投递，不会新增 Attempt、审计或队列消息。认证、operator RBAC、项目和批次对象授权及归档校验始终先于账本读取。
+
+#### `risk_validation_execution_idempotencies`
+
+Migration 470 的内部、不可变风险验证执行账本。`(tenant_id, project_id, root_task_id, operator_id, operation, idempotency_key_hash)` 唯一，其中 `operation=execute_risk_validation_v1`；只保存原始 Key 的 SHA-256，以及规范请求、preview plan、POC/端点集合和实际 Attempt 配置各自的 SHA-256，并保存配置/规则版本、Batch/Attempt ID、候选/目标/POC/预计请求计数、二次确认要求和前后状态。账本没有目标、POC 文件或内容、配置正文、Provider 查询、凭据或原始 Key 字段；复合 deferred/RESTRICT 外键将其绑定到同 tenant/project/task 的配置修订、risk-validation Batch 与 Attempt。首次确认的账本、Batch、Attempt、RootTask 状态和单条 `risk_validation_execute` 审计在同一事务提交，只有首次提交后派发；同 Key 同请求只重放已提交结果，异请求固定冲突。认证、operator RBAC、项目/任务对象授权和归档校验始终先于账本读取；新 Key 仍必须重新验证 preview、配置、规则、POC 内容哈希和双重确认，账本本身不是授权凭证。
+
 ### 3.3 资产、结果与报表
+
+#### 扫描记忆与覆盖存储
+
+这组表使用 `argus.scanplan/v1` 契约，但不会替代现有资产结果表。G17 已接入新 Agent 阶段事件的幂等归并；G18 已在 Agent 领取前读取有效覆盖并按完整目标复用；G19 已接入执行中 WorkClaim 唯一占用和等待关联。旧 Agent 未上报阶段事件时不会生成覆盖，因此仍按未知并继续扫描。
+
+| 表 | 角色 | 关键字段 / 约束 |
+|------|------|-----------------|
+| `scan_observations` | 追加式阶段证据；成功、阴性、失败、跳过均保留，后续事件不覆盖旧记录 | `tenant_id/project_id/network_zone`、完整 WorkKey 维度、来源 Task/Batch/Attempt/Agent、结果与证据哈希；可选 `checkpoint/checkpoint_hash` 只保存单目标阶段的有界派生资产；`(tenant_id, source_event_id)` 在事件 ID 非空时唯一 |
+| `scan_coverages` | 每个规范 WorkKey 的当前覆盖状态，指向不可变来源观测 | `(tenant_id, project_id, work_key_hash)` 唯一；保存 `complete/incomplete/invalidated`、有效期、修订号与失效原因 |
+| `scan_work_claims` | 相同工作并发合并所需的唯一租约槽 | `(tenant_id, project_id, work_key_hash)` 唯一；保存 owner Task/Batch/Attempt/Agent、租约哈希、到期时间和错误摘要 |
+| `task_coverage_links` | 解释目标任务的工作是实际执行、历史复用还是挂接执行中来源 | 目标 Task/Batch/Attempt + WorkKey + link type 唯一；保存 Coverage/Claim 及来源 Task/Batch/Attempt |
+
+四张表均显式保存 `tenant_id` 与 `project_id`，任何读取或写入仍须由应用层验证当前用户对项目和任务的对象级权限。WorkKey 哈希不能替代租户条件；网络区域、Scope/Config、规则版本以及风险验证的 POC 集合和端点内容哈希均作为独立列保留，便于失效解释和审计。
+
+当前归并规则是：Observation 只追加；同一租户内重复事件按目标派生幂等键；Coverage 只接受不早于当前来源的事件并递增修订号。成功或阴性事件在 Server 配置/规则快照一致时可形成 `complete`，失败或跳过只能形成 `incomplete`，版本漂移和缺少风险验证内容维度形成 `invalidated`。
+
+G21A 为新完成 Coverage 设置 Server 有效期：ICMP/TCP 存活 5 分钟，端口 1 小时，搜索/子域/CDN/协议/Web/Host 绑定/目录/指纹 6 小时，显式风险验证 24 小时。失效或不完整 Coverage 的 `valid_until` 为空且始终不可复用。Scope、配置、规则与网络区域属于 WorkKey 维度，变化后不会命中旧行；旧版本证据不做破坏性覆盖，仍可按原 WorkKey 审计。相同 WorkKey 的上游内容变化会把较旧的依赖 Coverage 置为 `invalidated`，原因使用 `upstream_content_changed:<stage>`，而上游和无关阶段保持有效。
+
+Migration 360 只为 `scan_observations` 增加 `checkpoint JSONB` 与 `checkpoint_hash`。检查点使用 `argus.checkpoint/v1`，只接收单目标成功/阴性事件的最多 4096 个存活 IP、开放端点、协议服务、URL 或域名；不保存响应正文、Header、凭据或任意错误文本。旧记录回填为空对象，旧 Agent 无检查点时保持兼容。当前 Coverage 仍通过 `source_observation_id` 指向不可变检查点，不复制 payload。
+
+G18 的领取时复用不会修改 `task_batches.targets/target_count`，它们继续表示用户请求的稳定范围。全量复用时，目标 Attempt 与 Batch 直接完成并写 `task_coverage_links(link_type=reused)`；部分目标复用时，剩余 `sub_tasks.chunk_targets`、Agent 租约和 reused links 在同一事务提交。每条关联保存来源 Task/Batch/Attempt/Coverage，RootTask 进度仍按稳定 Batch 范围聚合。显式手动重试和 `risk_validation` Batch 不读取历史覆盖。
+
+G20 起，网络区域由 Server 按目标和已注册 Node 标签派生：明确公网目标使用 `public`；私网、特殊用途地址或 split-horizon DNS 使用 `private:<network_zone>`；无区域标签的私网目标使用 `agent:<agent_id>`。带区域标签的 Agent 只有在 `network_scope=public` 时才把普通 DNS 归入公网，私网/保留 IP 始终不能提升为公网。归并、复用与 WorkClaim 都使用同一派生器，因此相同私网地址不会跨错误区域共享，且网络区域仍只是 WorkKey 维度，不能替代 tenant/project 查询条件。
+
+G19 将 `scan_work_claims.status` 约束为运行期 `active` 以及终态 `completed/failed`；相同唯一键的后续真实执行复用同一行并递增 `revision`，不会增长出多个活动 owner。`task_coverage_links` 使用 `executed/active` 表示 Claim 所有者，使用 `in_flight/waiting` 表示挂接者；来源结束后关联变为 `resolved` 或 `source_failed`。等待 Attempt 不写 Agent、使用 `workclaim:<digest>` 作为内部等待标记，普通 Pending 恢复查询不会提前派发它；所有依赖结束后才以 CAS 转为 `Dispatching`。Claim 获取与 Attempt/Agent 租约同事务提交，失败或状态竞态整体回滚。显式人工重试与 `risk_validation` 继续绕过 WorkClaim。
+
+#### `scan_timing_events`
+
+G31 新增的 additive、append-only 表，保存 `argus.timing/v1` 的已校验计时证据，不改变 `scan_coverages`、任务状态或扫描结果。字段为 schema、tenant/project/root task/batch/attempt/agent、源 event ID、kind、stage、outcome、UTC 起止时间、非负 `duration_ns`、配置版本、规则版本和创建时间；不保存 target、配置正文、message、HTTP 流量、凭据、POC 细节或原始日志。`duration_ns` 是生产者单调时钟的权威区间，允许为 0；它与 UTC 时间用于展示和排序，但事件总和不表示进程 wall time。
+
+写入前 Server 以活动 Attempt 的分配 Agent、会话和 tenant/project/task 归属重建边界，不接受 Agent 自行声明 tenant 或 project。`(tenant_id, source_event_id)` 唯一：同 ID 且所有受保存字段相同的重放返回已有记录，不同内容视为冲突；历史事件不更新或删除。索引 `idx_scan_timing_events_scope_created` 供已授权任务详情按 tenant/project/task 读取，`idx_scan_timing_events_attempt_created` 供 Attempt 历史排序。租户、项目、任务、批次、Attempt 与 Agent 归属通过不可变 Attempt 复合外键并使用 `ON DELETE RESTRICT`；计时表不外键到可清理的 `nodes` 行，因此不会阻断既有离线 Agent 清理。
+
+任务详情只在已完成 tenant + project + task 对象授权后构建有界 projection：按 Attempt 返回 `available` 和 `kind/stage/outcome/duration/start/finish`，最多 5000 条，超出时置 `truncated`。旧 Agent 没有事件时保持 unavailable，不以 0 代替；投影不返回 Agent 会话、target、WorkKey、事件 ID、配置/规则哈希或原始日志。
 
 #### `domains`
 
@@ -428,6 +609,8 @@
 | `name` | string | 模板名 | Index |
 | `content_hash` | string | 内容哈希 | Index |
 | `severity` | string | 严重度 | Index, Default:`info` |
+| `execution_class` | string | POC 执行类别：`detection` / `verification`；`exploit` / `exp` 必须使用独立 EXP 包 | Index, Default:`detection` |
+| `risk_level` | string | 执行风险：`unknown` / `low` / `medium` / `high`；旧规则回填为 `unknown` | Index, Default:`unknown` |
 | `tags` | text | 标签串 | Text |
 | `author` | string | 作者 | - |
 | `description` | text | 描述 | Text |
@@ -437,6 +620,8 @@
 | `created_at` / `updated_at` | timestamp | 审计时间 | - |
 
 联合唯一约束：`(tenant_id, source_file)`。
+
+`severity` 表示漏洞严重度，不能替代执行风险。所有 POC 仅能在显式风险验证流程确认后执行；`high` 和 `unknown` 需要二次确认。`arsenals` 中的 Nuclei YAML 仍是权威来源，治理字段来自 `info.metadata.argus-execution-class` 与 `info.metadata.argus-risk-level`，`poc_rules` 和 Agent `arsenal.db` 仅作为派生检索与分发层。
 
 #### `arsenal_ai_reviews`
 
@@ -658,7 +843,7 @@ Argus 早期结果入库以 `task_id` 为主要关联键，适合一次性扫描
 - `arsenals`：原始规则文件仓库，直接服务于 Agent 的增量/全量同步。
 - 结构化规则表：由 `arsenals` 物化生成，便于统计、检索、审批、AI 工具理解和后续治理。
 
-启动 `dddd-server` 时的初始化流程：
+启动 `argus-server` 时的初始化流程：
 
 1. 规范化历史 `arsenals.type`，将 `fingerprint -> finger`、`dirprobe -> dir` 等旧别名迁移到标准类型。
 2. 如果 `arsenals` 为空，则从 `scanner/common/config` 首次导入 `finger.yaml`、`workflow.yaml`、`dir.yaml`、`pocs/*.yaml`。

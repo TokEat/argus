@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/P0lar1ght/argus/server/internal/cloud"
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
-	"github.com/user/dddd-server/internal/cloud"
 )
 
 func init() {
@@ -122,7 +122,7 @@ func (o *OSSClient) UploadAgentBinaries(releaseDir string) ([]cloud.OSSUploadRes
 
 // isAgentBinary 判断文件是否是 Agent 二进制
 func isAgentBinary(name string) bool {
-	return len(name) > 11 && name[:11] == "dddd-agent-"
+	return len(name) > 12 && name[:12] == "argus-agent-"
 }
 
 // TestConnection 测试 OSS 连通性

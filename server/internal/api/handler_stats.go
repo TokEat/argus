@@ -4,15 +4,15 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
-	"github.com/user/dddd-server/internal/db"
 )
 
 func getStats(c *gin.Context) {
 	tenantID := currentTenantID(c)
 	var taskCount, nodeCount, assetCount, fpCount, vulnCount int64
 
-	taskQ := db.DB.Model(&db.RootTask{}).Where("tenant_id = ?", tenantID)
+	taskQ := db.DB.Model(&db.RootTask{}).Where("tenant_id = ? AND archived_at IS NULL", tenantID)
 	taskQ, _ = applyProjectScope(c, taskQ, "project_id")
 	taskQ.Count(&taskCount)
 

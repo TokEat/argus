@@ -303,14 +303,17 @@ func loadApprovedArsenals(seedDBPath string) ([]arsenalRow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get seed db handle: %w", err)
 	}
-	defer sqlDB.Close()
 
 	var rows []arsenalRow
 	if err := database.
 		Where("state = ?", "Approved").
 		Order("type, file_name, version, id").
 		Find(&rows).Error; err != nil {
+		_ = sqlDB.Close()
 		return nil, fmt.Errorf("query approved arsenals: %w", err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		return nil, fmt.Errorf("close seed db: %w", err)
 	}
 	return rows, nil
 }
@@ -882,23 +885,4 @@ func safeConfigAssetPath(fileName string) (relPath string, root string, err erro
 		return clean, "dict/", nil
 	}
 	return "", "", fmt.Errorf("unsupported config asset path %q", fileName)
-}
-
-func canonicalArsenalType(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "finger", "fingerprint":
-		return "finger"
-	case "workflow":
-		return "workflow"
-	case "dir", "dirprobe":
-		return "dir"
-	case "poc":
-		return "poc"
-	case "poc_asset", "pocasset":
-		return "poc_asset"
-	case "config_asset", "configasset", "dict_asset", "dictasset":
-		return "config_asset"
-	default:
-		return strings.ToLower(strings.TrimSpace(raw))
-	}
 }

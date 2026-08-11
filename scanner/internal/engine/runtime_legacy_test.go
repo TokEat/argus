@@ -1,8 +1,8 @@
 package engine
 
 import (
-	"dddd/scanner/ddout"
-	"dddd/scanner/internal/arsenal"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/internal/arsenal"
 	"os"
 	"path/filepath"
 	"testing"
@@ -38,7 +38,7 @@ func TestNewScanContextRuleFilesOnlyIgnoresArsenalDB(t *testing.T) {
 	if err := arsenal.OpenDB(dbPath); err != nil {
 		t.Fatalf("open test arsenal db: %v", err)
 	}
-	t.Cleanup(func() { arsenal.DB = nil })
+	t.Cleanup(func() { _ = arsenal.CloseDB() })
 	if err := arsenal.DB.Create(&arsenal.Fingerprint{ProductName: "DBProduct", RuleExpr: `body="db-product"`, Enabled: true}).Error; err != nil {
 		t.Fatalf("create db fingerprint: %v", err)
 	}

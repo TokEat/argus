@@ -3,10 +3,10 @@ package portscan
 
 import (
 	"bytes"
-	"dddd/scanner/ddout"
-	"dddd/scanner/lib/masscan"
-	"dddd/scanner/utils"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/lib/masscan"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -15,7 +15,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
 
 	"github.com/projectdiscovery/gologger"
 )

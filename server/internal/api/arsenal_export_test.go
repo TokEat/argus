@@ -1,7 +1,10 @@
 package api
 
 import (
+	"crypto/md5"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,9 +12,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
-	"github.com/user/dddd-server/internal/db"
 	"gorm.io/gorm"
 )
 
@@ -34,10 +37,12 @@ type exportedConfigAsset struct {
 func (exportedConfigAsset) TableName() string { return "config_assets" }
 
 type exportedPoc struct {
-	Name     string
-	FileName string
-	Content  string
-	Enabled  bool
+	Name           string
+	FileName       string
+	Content        string
+	ExecutionClass string
+	RiskLevel      string
+	Enabled        bool
 }
 
 func (exportedPoc) TableName() string { return "pocs" }
@@ -56,7 +61,7 @@ func TestBuildArsenalSQLiteDBIncludesPocAssets(t *testing.T) {
 		t.Fatalf("seed poc asset: %v", err)
 	}
 
-	dbPath, _, err := buildArsenalSQLiteDB("default")
+	dbPath, _, _, err := buildArsenalSQLiteDB("default")
 	if err != nil {
 		t.Fatalf("build arsenal sqlite db: %v", err)
 	}
@@ -66,6 +71,11 @@ func TestBuildArsenalSQLiteDBIncludesPocAssets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open exported db: %v", err)
 	}
+	sqlDB, err := sdb.DB()
+	if err != nil {
+		t.Fatalf("unwrap exported sqlite DB: %v", err)
+	}
+	defer sqlDB.Close()
 
 	var asset exportedPocAsset
 	if err := sdb.Where("relative_path = ?", "helpers/payloads/demo.txt").First(&asset).Error; err != nil {
@@ -133,12 +143,21 @@ func TestArsenalDBEndpointsDownloadMaterializablePackage(t *testing.T) {
 	if dbResp.Header.Get("X-Arsenal-Hash") == "" {
 		t.Fatalf("expected X-Arsenal-Hash header")
 	}
+	if dbResp.Header.Get("X-Arsenal-SHA256") == "" {
+		t.Fatalf("expected X-Arsenal-SHA256 header")
+	}
 	dbData, err := io.ReadAll(dbResp.Body)
 	if err != nil {
 		t.Fatalf("read db response body: %v", err)
 	}
 	if len(dbData) == 0 {
 		t.Fatalf("expected non-empty sqlite db response")
+	}
+	if got, want := dbResp.Header.Get("X-Arsenal-Hash"), fmt.Sprintf("%x", md5.Sum(dbData)); got != want {
+		t.Fatalf("X-Arsenal-Hash = %q, want downloaded DB MD5 %q", got, want)
+	}
+	if got, want := dbResp.Header.Get("X-Arsenal-SHA256"), fmt.Sprintf("%x", sha256.Sum256(dbData)); got != want {
+		t.Fatalf("X-Arsenal-SHA256 = %q, want downloaded DB SHA-256 %q", got, want)
 	}
 
 	dbPath := filepath.Join(t.TempDir(), "arsenal.db")
@@ -149,6 +168,11 @@ func TestArsenalDBEndpointsDownloadMaterializablePackage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open downloaded db: %v", err)
 	}
+	sqlDB, err := sdb.DB()
+	if err != nil {
+		t.Fatalf("get downloaded db handle: %v", err)
+	}
+	defer sqlDB.Close()
 
 	var poc exportedPoc
 	if err := sdb.Where("file_name = ?", "http-demo.yaml").First(&poc).Error; err != nil {
@@ -156,6 +180,9 @@ func TestArsenalDBEndpointsDownloadMaterializablePackage(t *testing.T) {
 	}
 	if poc.Content == "" || !poc.Enabled {
 		t.Fatalf("unexpected exported poc: %+v", poc)
+	}
+	if poc.ExecutionClass != db.PocExecutionClassVerification || poc.RiskLevel != db.PocRiskLevelHigh {
+		t.Fatalf("expected POC governance metadata in exported arsenal: %+v", poc)
 	}
 
 	var asset exportedPocAsset
@@ -290,13 +317,15 @@ func seedArsenalExportRules(t *testing.T, store *gorm.DB) {
 		t.Fatalf("seed dir rule: %v", err)
 	}
 	if err := store.Create(&db.PocRule{
-		TenantID:    "default",
-		ArtifactID:  pocID,
-		Name:        "http-demo",
-		SourceFile:  "http-demo.yaml",
-		ContentHash: "poc-hash",
-		Severity:    "info",
-		Enabled:     true,
+		TenantID:       "default",
+		ArtifactID:     pocID,
+		Name:           "http-demo",
+		SourceFile:     "http-demo.yaml",
+		ContentHash:    "poc-hash",
+		Severity:       "info",
+		ExecutionClass: db.PocExecutionClassVerification,
+		RiskLevel:      db.PocRiskLevelHigh,
+		Enabled:        true,
 	}).Error; err != nil {
 		t.Fatalf("seed poc rule: %v", err)
 	}

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	pb "github.com/user/dddd-proto/go/scan"
-	aipkg "github.com/user/dddd-server/internal/ai"
-	"github.com/user/dddd-server/internal/db"
+	aipkg "github.com/P0lar1ght/argus/server/internal/ai"
+	"github.com/P0lar1ght/argus/server/internal/db"
+	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 )
 
 const generalPOCWorkflowPrefix = "General-Poc-"
@@ -324,6 +324,8 @@ func (t *GetTaskInsightTool) Execute(ctx context.Context, input json.RawMessage)
 	query := db.DB.WithContext(ctx).Where("tenant_id = ?", t.TenantID)
 	if taskID := strings.TrimSpace(args.TaskID); taskID != "" {
 		query = query.Where("id = ?", taskID)
+	} else {
+		query = query.Where("archived_at IS NULL")
 	}
 	var task db.RootTask
 	if err := query.Order("created_at desc").First(&task).Error; err != nil {
@@ -491,11 +493,15 @@ func summarizePocRules(pocs []db.PocRule) []map[string]interface{} {
 	out := make([]map[string]interface{}, 0, len(pocs))
 	for _, poc := range pocs {
 		out = append(out, map[string]interface{}{
-			"name":        poc.Name,
-			"source_file": poc.SourceFile,
-			"severity":    poc.Severity,
-			"tags":        truncateString(poc.Tags, 180),
-			"state":       poc.State,
+			"name":                         poc.Name,
+			"source_file":                  poc.SourceFile,
+			"severity":                     poc.Severity,
+			"execution_class":              poc.ExecutionClass,
+			"risk_level":                   poc.RiskLevel,
+			"requires_confirmation":        true,
+			"requires_second_confirmation": db.PocRequiresSecondConfirmation(poc.RiskLevel),
+			"tags":                         truncateString(poc.Tags, 180),
+			"state":                        poc.State,
 		})
 	}
 	return out
@@ -1035,9 +1041,11 @@ func buildDictionarySuggestions(product string, assets []map[string]interface{},
 }
 
 type pocRuleState struct {
-	Exists  bool
-	Enabled bool
-	State   string
+	Exists         bool
+	Enabled        bool
+	State          string
+	ExecutionClass string
+	RiskLevel      string
 }
 
 func loadPocStateMap(ctx context.Context, tenantID string) map[string]pocRuleState {
@@ -1047,7 +1055,10 @@ func loadPocStateMap(ctx context.Context, tenantID string) map[string]pocRuleSta
 	}
 	out := make(map[string]pocRuleState, len(pocs))
 	for _, poc := range pocs {
-		state := pocRuleState{Exists: true, Enabled: poc.Enabled, State: poc.State}
+		state := pocRuleState{
+			Exists: true, Enabled: poc.Enabled, State: poc.State,
+			ExecutionClass: poc.ExecutionClass, RiskLevel: poc.RiskLevel,
+		}
 		out[strings.ToLower(poc.Name)] = state
 		if poc.SourceFile != "" {
 			out[strings.ToLower(poc.SourceFile)] = state
@@ -1127,6 +1138,8 @@ func detectWorkflowConflicts(workflows []db.WorkflowRule, pocState map[string]po
 			add("missing_poc", "high", "Workflow 引用了不存在的 POC。", rule)
 		} else if !state.Enabled {
 			add("disabled_poc", "high", "Workflow 引用了已禁用的 POC。", rule)
+		} else if db.PocRequiresSecondConfirmation(state.RiskLevel) {
+			add("poc_requires_second_confirmation", "high", "Workflow 引用的 POC 为高风险或未分类执行风险，执行时必须二次确认。", rule)
 		}
 		if !isGeneralPOCWorkflowProduct(rule.ProductName) && !fingerprintProducts[product] {
 			add("missing_fingerprint", "medium", "Workflow 产品缺少启用的 FingerprintRule 支撑，可能无法稳定命中。", rule)

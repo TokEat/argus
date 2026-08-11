@@ -1,9 +1,8 @@
-import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { Typography, Tag, Space, Row, Col, List, Table, Divider, Button, Modal, Form, Input, Select, message, Popconfirm, Spin, Empty, InputNumber, Alert } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import { SafetyOutlined, CrownOutlined, ToolOutlined, EyeOutlined, PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import gsap from 'gsap';
 import NetworkCanvas from '../components/NetworkCanvas';
 import { createRoleApi, deleteRoleApi, getTenantQuota, listRoles, updateRoleApi, updateTenantQuota } from '../services/api';
 
@@ -66,7 +65,6 @@ const baseRoleOptions = [
 ];
 
 const RoleManagement: React.FC = () => {
-    const pageRef = useRef<HTMLDivElement>(null);
     const [loading, setLoading] = useState(true);
     const [roles, setRoles] = useState<API.RoleDefinition[]>([]);
     const [modalOpen, setModalOpen] = useState(false);
@@ -74,19 +72,6 @@ const RoleManagement: React.FC = () => {
     const [quota, setQuota] = useState<API.TenantQuota | null>(null);
     const [form] = Form.useForm();
     const [quotaForm] = Form.useForm();
-
-    useEffect(() => {
-        if (!pageRef.current) return;
-        const els = pageRef.current.querySelectorAll('.sys-animate-in');
-        if (els.length === 0) return;
-        const ctx = gsap.context(() => {
-            gsap.from(els, {
-                y: 24, opacity: 0, duration: 0.45,
-                stagger: 0.08, ease: 'power2.out', clearProps: 'transform,opacity',
-            });
-        }, pageRef);
-        return () => ctx.revert();
-    }, [roles.length]);
 
     const fetchRoles = useCallback(async () => {
         setLoading(true);
@@ -247,9 +232,9 @@ const RoleManagement: React.FC = () => {
     };
 
     return (
-        <div ref={pageRef} style={{ position: 'relative', overflow: 'hidden' }}>
+        <div style={{ position: 'relative', overflow: 'hidden' }}>
             <NetworkCanvas color="#6366f1" count={25} speed={0.12} linkDist={90} />
-            <div className="sys-animate-in" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, position: 'relative', zIndex: 1 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, position: 'relative', zIndex: 1 }}>
                 <Title level={4} style={{ margin: 0, color: '#1e293b', fontWeight: 600 }}>
                     <SafetyOutlined style={{ marginRight: 8, color: '#6366f1' }} />
                     角色权限管理
@@ -267,7 +252,7 @@ const RoleManagement: React.FC = () => {
             ) : roles.length === 0 ? (
                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无角色" style={{ padding: '60px 0', position: 'relative', zIndex: 1 }} />
             ) : (
-                <Row gutter={[16, 16]} className="sys-animate-in" style={{ position: 'relative', zIndex: 1 }}>
+                <Row gutter={[16, 16]} style={{ position: 'relative', zIndex: 1 }}>
                     {roles.map(renderRoleCard)}
                 </Row>
             )}

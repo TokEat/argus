@@ -6,8 +6,8 @@
 .
 ├── scanner/
 │   ├── cmd/
-│   │   ├── cli/             # dddd CLI entrypoint
-│   │   └── agent/           # dddd-agent entrypoint
+│   │   ├── cli/             # argus CLI entrypoint
+│   │   └── agent/           # argus-agent entrypoint
 │   ├── internal/            # scan runtime and pipeline (module-private)
 │   ├── common/              # legacy compatibility layer + embedded config
 │   ├── gopocs/              # go-native poc engine
@@ -15,7 +15,7 @@
 │   ├── ddout/               # unified output sink abstraction
 │   ├── structs/             # shared runtime models
 │   └── utils/               # scanner utility functions
-├── server/                  # controller/api/grpc service (module: github.com/user/dddd-server)
+├── server/                  # controller/api/grpc service (module: github.com/P0lar1ght/argus/server)
 ├── server-ui/               # React/Vite management console
 ├── mcp/                     # standalone MCP proxy and typed protocol clients
 ├── deploy/                  # production/local deployment templates and release scripts
@@ -23,7 +23,7 @@
 ├── scripts/                 # local development, MCP and release helpers
 ├── config/                  # scanner dictionaries and POC/runtime configuration
 └── shared/
-    └── proto/               # protobuf definitions + generated stubs (module: github.com/user/dddd-proto)
+    └── proto/               # protobuf definitions + generated stubs (module: github.com/P0lar1ght/argus/shared/proto)
 ```
 
 ## 职责边界
@@ -42,7 +42,7 @@
 
 - CLI：`scanner/cmd/cli/main.go`
 - Agent：`scanner/cmd/agent/main.go`
-- Server：`server/cmd/dddd-server/main.go`
+- Server：`server/cmd/argus-server/main.go`
 - MCP：`mcp/cmd/argus-mcp`
 - Web：`server-ui/`
 - Proto：`shared/proto/proto/scan/agent.proto`
@@ -51,10 +51,10 @@
 ## 当前迁移状态
 
 - CLI main moved from root `main.go` to `scanner/cmd/cli/main.go`.
-- Agent main moved from `cmd/dddd-agent/main.go` to `scanner/cmd/agent/main.go`.
+- Agent main moved from `cmd/argus-agent/main.go` to `scanner/cmd/agent/main.go`.
 - Scanner runtime packages were consolidated under `scanner/`.
-- `dddd-server` moved to `server`.
-- `dddd-proto` moved to `shared/proto`.
+- `argus-server` moved to `server`.
+- The shared protocol module lives in `shared/proto`.
 - `go.work`, root `go.mod`, and `server/go.mod` path mappings were updated accordingly.
 - Build entrypoints were updated in `Makefile`, `build.sh`, and `compile.sh`.
 - `server/internal/adapters/httpapi`、`server/internal/adapters/grpcagent`、`server/internal/core/usecase` 已存在，但仍是 Clean Architecture 迁移 scaffold，尚未承接主业务。
@@ -66,6 +66,7 @@
 - [实现状态与接口清单](implementation-status.md)
 - [数据库设计总览](db_schema.md)
 - [分布式扫描架构](distributed-scan-architecture.md)
+- [ScanPlan 与覆盖契约](scanplan-contract.md)
 - [云资源动态调度](cloud-resource-scheduling.md)
 - [EXP 能力规划](exp-capability-planning.md)
 - [AI Copilot 架构](ai_copilot_architecture.md)

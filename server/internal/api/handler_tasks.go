@@ -3,15 +3,18 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 	"github.com/gin-gonic/gin"
-	"github.com/user/dddd-server/internal/db"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func getTasks(c *gin.Context) {
@@ -20,6 +23,16 @@ func getTasks(c *gin.Context) {
 	page, pageSize := parsePagination(c, 20, 100)
 	query := db.DB.Where("tenant_id = ?", tenantID)
 	query, _ = applyProjectScope(c, query, "project_id")
+	switch strings.ToLower(strings.TrimSpace(c.Query("archived"))) {
+	case "", "active":
+		query = query.Where("archived_at IS NULL")
+	case "only":
+		query = query.Where("archived_at IS NOT NULL")
+	case "include":
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "archived must be active, only, or include"})
+		return
+	}
 
 	var total int64
 	if err := query.Model(&db.RootTask{}).Count(&total).Error; err != nil {
@@ -81,20 +94,26 @@ func buildTaskReasonStats(subTasks []db.SubTask) []taskReasonStat {
 
 	for _, st := range subTasks {
 		targetCount := subTaskTargetCount(st)
-		switch db.NormalizeSubTaskStatus(st.Status) {
-		case "FAILED":
-			add(st.Status, "批次失败或重试耗尽", targetCount)
-		case "TIMEOUT":
-			if st.TimeoutSec > 0 {
+		switch db.CanonicalAttemptState(st.Status) {
+		case db.AttemptStateFailed:
+			reason := strings.TrimSpace(st.FailureReason)
+			if reason == "" {
+				reason = "批次失败或重试耗尽"
+			}
+			add(st.Status, reason, targetCount)
+		case db.AttemptStateTimeout:
+			if strings.TrimSpace(st.FailureReason) != "" {
+				add(st.Status, st.FailureReason, targetCount)
+			} else if st.TimeoutSec > 0 {
 				add(st.Status, fmt.Sprintf("超过 %d 秒未完成或重试耗尽", st.TimeoutSec), targetCount)
 			} else {
 				add(st.Status, "批次超时或重试耗尽", targetCount)
 			}
-		case "CANCELLED":
+		case db.AttemptStateStopped:
 			add(st.Status, "用户取消后已终止", targetCount)
-		case "CANCELPENDING":
+		case db.AttemptStateStopping:
 			add(st.Status, "取消请求已下发，等待 Agent 确认", targetCount)
-		case "PENDING", "DISPATCHING", "RECOVERED":
+		case db.AttemptStateQueued, db.AttemptStateDispatching, db.AttemptStateRecovered:
 			if strings.TrimSpace(st.AgentID) == "" {
 				add(st.Status, "等待可匹配节点认领", targetCount)
 			}
@@ -130,45 +149,96 @@ func getTaskDetail(c *gin.Context) {
 		return
 	}
 
-	// 查询关联的所有 SubTask
+	// 查询全部 Attempt，并按 TaskBatch.latest_attempt_id 生成当前批次视图。
 	var subTasks []db.SubTask
 	db.DB.Where("root_task_id = ? AND tenant_id = ?", taskID, tenantID).
-		Order("created_at asc").Find(&subTasks)
+		Order("batch_id asc, attempt_no asc, created_at asc").Find(&subTasks)
+	var taskBatches []db.TaskBatch
+	db.DB.Where("root_task_id = ? AND tenant_id = ?", taskID, tenantID).
+		Order("sequence asc").Find(&taskBatches)
+	attemptByID := make(map[string]db.SubTask, len(subTasks))
+	for _, attempt := range subTasks {
+		attemptByID[attempt.ID] = attempt
+	}
+	latestSubTasks := make([]db.SubTask, 0, len(taskBatches))
+	for _, batch := range taskBatches {
+		if batch.ArchivedAt != nil {
+			continue
+		}
+		if attempt, exists := attemptByID[batch.LatestAttemptID]; exists {
+			latestSubTasks = append(latestSubTasks, attempt)
+		}
+	}
+	if len(taskBatches) == 0 {
+		latestSubTasks = subTasks
+	}
 
 	// 子任务状态分布统计
 	statusDistribution := make(map[string]int)
-	for _, st := range subTasks {
+	for _, st := range latestSubTasks {
 		statusDistribution[st.Status]++
 	}
 
 	// 构建子任务摘要（不暴露完整 Config 和 ChunkTargets 原文）
 	type SubTaskSummary struct {
-		ID          string    `json:"id"`
-		Status      string    `json:"status"`
-		AgentID     string    `json:"agent_id"`
-		TargetCount int       `json:"target_count"`
-		RetryCount  int       `json:"retry_count"`
-		MaxRetry    int       `json:"max_retry"`
-		Priority    int       `json:"priority"`
-		TimeoutSec  int       `json:"timeout_sec"`
-		CreatedAt   time.Time `json:"created_at"`
-		UpdatedAt   time.Time `json:"updated_at"`
+		ID              string     `json:"id"`
+		BatchID         string     `json:"batch_id"`
+		AttemptNo       int        `json:"attempt_no"`
+		ParentAttemptID string     `json:"parent_attempt_id"`
+		Trigger         string     `json:"trigger"`
+		Status          string     `json:"status"`
+		AgentID         string     `json:"agent_id"`
+		FailureReason   string     `json:"failure_reason"`
+		TargetCount     int        `json:"target_count"`
+		RetryCount      int        `json:"retry_count"`
+		MaxRetry        int        `json:"max_retry"`
+		Priority        int        `json:"priority"`
+		TimeoutSec      int        `json:"timeout_sec"`
+		ConfigVersion   int        `json:"config_version"`
+		RuleVersion     string     `json:"rule_version"`
+		StartedAt       *time.Time `json:"started_at"`
+		FinishedAt      *time.Time `json:"finished_at"`
+		CreatedAt       time.Time  `json:"created_at"`
+		UpdatedAt       time.Time  `json:"updated_at"`
 	}
-	subSummaries := make([]SubTaskSummary, 0, len(subTasks))
-	for _, st := range subTasks {
-		targetCount := subTaskTargetCount(st)
-		subSummaries = append(subSummaries, SubTaskSummary{
-			ID:          st.ID,
-			Status:      st.Status,
-			AgentID:     st.AgentID,
-			TargetCount: targetCount,
-			RetryCount:  st.RetryCount,
-			MaxRetry:    st.MaxRetry,
-			Priority:    st.Priority,
-			TimeoutSec:  st.TimeoutSec,
-			CreatedAt:   st.CreatedAt,
-			UpdatedAt:   st.UpdatedAt,
-		})
+	buildSubSummaries := func(items []db.SubTask) []SubTaskSummary {
+		summaries := make([]SubTaskSummary, 0, len(items))
+		for _, st := range items {
+			summaries = append(summaries, SubTaskSummary{
+				ID:              st.ID,
+				BatchID:         st.BatchID,
+				AttemptNo:       st.AttemptNo,
+				ParentAttemptID: st.ParentAttemptID,
+				Trigger:         st.Trigger,
+				Status:          st.Status,
+				AgentID:         st.AgentID,
+				FailureReason:   st.FailureReason,
+				TargetCount:     subTaskTargetCount(st),
+				RetryCount:      st.RetryCount,
+				MaxRetry:        st.MaxRetry,
+				Priority:        st.Priority,
+				TimeoutSec:      st.TimeoutSec,
+				ConfigVersion:   st.ConfigVersion,
+				RuleVersion:     st.RuleVersion,
+				StartedAt:       st.StartedAt,
+				FinishedAt:      st.FinishedAt,
+				CreatedAt:       st.CreatedAt,
+				UpdatedAt:       st.UpdatedAt,
+			})
+		}
+		return summaries
+	}
+	subSummaries := buildSubSummaries(latestSubTasks)
+	attemptSummaries := buildSubSummaries(subTasks)
+	coverageExplanation, err := buildTaskCoverageExplanation(db.DB, rootTask)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	timingProjection, err := db.BuildTaskTimingProjection(db.DB, rootTask, subTasks)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load task timing"})
+		return
 	}
 
 	// 结果统计（通过 root_task_id 直接关联到 RootTask，不受 upsert 改写 task_id 影响）
@@ -209,26 +279,71 @@ func getTaskDetail(c *gin.Context) {
 		configObj = rootTask.Config
 	}
 
+	type TaskAuditResponse struct {
+		ID           uint            `json:"id"`
+		BatchID      string          `json:"batch_id"`
+		AttemptID    string          `json:"attempt_id"`
+		OperatorID   string          `json:"operator_id"`
+		Action       string          `json:"action"`
+		BeforeStatus string          `json:"before_status"`
+		AfterStatus  string          `json:"after_status"`
+		Details      json.RawMessage `json:"details"`
+		CreatedAt    time.Time       `json:"created_at"`
+	}
+	var auditRows []db.TaskAudit
+	if err := db.DB.Where("root_task_id = ? AND tenant_id = ?", taskID, tenantID).
+		Order("created_at desc, id desc").
+		Limit(100).
+		Find(&auditRows).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	audits := make([]TaskAuditResponse, 0, len(auditRows))
+	for _, row := range auditRows {
+		details := json.RawMessage(row.Details)
+		if !json.Valid(details) {
+			details = json.RawMessage(`{}`)
+		}
+		audits = append(audits, TaskAuditResponse{
+			ID:           row.ID,
+			BatchID:      row.BatchID,
+			AttemptID:    row.AttemptID,
+			OperatorID:   row.OperatorID,
+			Action:       row.Action,
+			BeforeStatus: row.BeforeStatus,
+			AfterStatus:  row.AfterStatus,
+			Details:      details,
+			CreatedAt:    row.CreatedAt,
+		})
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"task": gin.H{
-			"id":                rootTask.ID,
-			"name":              rootTask.Name,
-			"status":            rootTask.Status,
-			"priority":          rootTask.Priority,
-			"total_chunks":      rootTask.TotalChunks,
-			"completed_chunks":  rootTask.CompletedChunks,
-			"total_targets":     rootTask.TotalTargets,
-			"completed_targets": rootTask.CompletedTargets,
-			"timeout_sec":       rootTask.TimeoutSec,
-			"original_targets":  rootTask.OriginalTargets,
-			"config":            configObj,
-			"rule_version":      rootTask.RuleVersion,
-			"created_at":        rootTask.CreatedAt,
-			"updated_at":        rootTask.UpdatedAt,
+			"id":                     rootTask.ID,
+			"name":                   rootTask.Name,
+			"status":                 rootTask.Status,
+			"priority":               rootTask.Priority,
+			"total_chunks":           rootTask.TotalChunks,
+			"completed_chunks":       rootTask.CompletedChunks,
+			"total_targets":          rootTask.TotalTargets,
+			"completed_targets":      rootTask.CompletedTargets,
+			"timeout_sec":            rootTask.TimeoutSec,
+			"original_targets":       rootTask.OriginalTargets,
+			"config":                 configObj,
+			"rule_version":           rootTask.RuleVersion,
+			"current_config_version": rootTask.CurrentConfigVersion,
+			"created_at":             rootTask.CreatedAt,
+			"updated_at":             rootTask.UpdatedAt,
+			"archived_at":            rootTask.ArchivedAt,
 		},
-		"sub_tasks":           subSummaries,
-		"status_distribution": statusDistribution,
-		"reason_stats":        buildTaskReasonStats(subTasks),
+		"sub_tasks":            subSummaries,
+		"batches":              buildTaskBatchSummaries(taskBatches, attemptByID),
+		"attempts":             attemptSummaries,
+		"status_distribution":  statusDistribution,
+		"reason_stats":         buildTaskReasonStats(latestSubTasks),
+		"audits":               audits,
+		"coverage_explanation": coverageExplanation,
+		"timing":               timingProjection,
 		"result_stats": gin.H{
 			"assets":       assetCount,
 			"fingerprints": fpCount,
@@ -244,8 +359,8 @@ func createTask(c *gin.Context) {
 		Name               string          `json:"name"`
 		Targets            json.RawMessage `json:"targets"`
 		Config             json.RawMessage `json:"config"`
-		Priority           int             `json:"priority"`
-		TimeoutSec         int             `json:"timeout_sec"`
+		Priority           *int            `json:"priority"`
+		TimeoutSec         *int            `json:"timeout_sec"`
 		AgentSelector      json.RawMessage `json:"agent_selector"`
 		AgentSelectorRules json.RawMessage `json:"agent_selector_rules"`
 		SkipUnsupported    bool            `json:"skip_unsupported"`
@@ -267,12 +382,25 @@ func createTask(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "project is not active"})
 		return
 	}
+	idempotencyKey, idempotencyRequested, idempotencyErr := parseTaskCreateIdempotencyKey(c.Request.Header)
+	if idempotencyErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "invalid_idempotency_key", "error": idempotencyErr.Error()})
+		return
+	}
 
-	if req.Priority < 0 || req.Priority > 2 {
+	priority := 1
+	if req.Priority != nil {
+		priority = *req.Priority
+	}
+	timeoutSec := 3600
+	if req.TimeoutSec != nil {
+		timeoutSec = *req.TimeoutSec
+	}
+	if priority < 0 || priority > 2 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "priority must be 0 (urgent), 1 (normal), or 2 (low)"})
 		return
 	}
-	if req.TimeoutSec < 0 {
+	if timeoutSec < 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "timeout_sec must be greater than or equal to 0"})
 		return
 	}
@@ -292,6 +420,31 @@ func createTask(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	var effectiveConfig taskScanConfig
+	if err := json.Unmarshal([]byte(configJSON), &effectiveConfig); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	targetSource := "request"
+	if len(strings.TrimSpace(string(req.Targets))) == 0 || strings.TrimSpace(string(req.Targets)) == "null" || strings.TrimSpace(string(req.Targets)) == `""` {
+		if targetMode != taskTargetModeDirect {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "targets is required for network search modes"})
+			return
+		}
+		projectTargets, projectErr := projectDefaultTargets(project)
+		if projectErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": projectErr.Error()})
+			return
+		}
+		if len(projectTargets) > 0 {
+			req.Targets, err = json.Marshal(projectTargets)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			targetSource = "project_scope"
+		}
+	}
 
 	var skippedTargets []invalidTarget
 	var targets []string
@@ -302,6 +455,7 @@ func createTask(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": parseErr.Error()})
 			return
 		}
+		rawTargets = normalizeTargetsForMode(rawTargets, targetMode)
 		targets, skippedTargets, _ = classifyTargets(rawTargets, targetMode)
 		if len(targets) > 0 {
 			targets, targetSummary, err = validateTargetsByMode(targets, targetMode)
@@ -323,13 +477,9 @@ func createTask(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if routerRuntime().TaskQueue == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "task queue not initialized"})
-		return
-	}
-
 	rootTaskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
-	name := strings.TrimSpace(req.Name)
+	requestedName := strings.TrimSpace(req.Name)
+	name := requestedName
 	if name == "" {
 		name = targets[0]
 	}
@@ -348,7 +498,39 @@ func createTask(c *gin.Context) {
 	// ================================================================
 
 	batches := groupAndBatchTargets(targets, targetMode)
+	ruleVersion := currentRuleVersion()
+	operatorID := currentUserID(c)
+	selectorJSON := mergeAgentSelector("{}", userSelector)
+	selectorRulesJSON := db.SelectorRulesToJSON(userRules)
+	requestHash := ""
+	if idempotencyRequested {
+		// The ledger deliberately does not persist rejected raw inputs. Sort the
+		// bounded, sanitized projection so equivalent retries return the same
+		// response while legacy requests retain their existing presentation.
+		skippedTargets = canonicalTaskCreateSkippedTargets(skippedTargets)
+		requestHash, err = buildTaskCreateRequestHash(canonicalTaskCreateRequest{
+			TenantID:           tenantID,
+			ProjectID:          req.ProjectID,
+			OperatorID:         operatorID,
+			Name:               requestedName,
+			Targets:            targets,
+			SkippedTargets:     skippedTargets,
+			Config:             configJSON,
+			TargetMode:         string(targetMode),
+			Priority:           priority,
+			TimeoutSec:         timeoutSec,
+			AgentSelector:      selectorJSON,
+			AgentSelectorRules: canonicalTaskCreateSelectorRules(userRules),
+			SkipUnsupported:    req.SkipUnsupported,
+			TargetSource:       targetSource,
+		})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to canonicalize task creation request"})
+			return
+		}
+	}
 
+	var taskBatches []db.TaskBatch
 	var subTasks []db.SubTask
 	profile := batchProfile{
 		TotalTargets:  len(targets),
@@ -361,18 +543,48 @@ func createTask(c *gin.Context) {
 		chunkJSON, _ := json.Marshal(batch.Targets)
 
 		_, _, rulesJSON := effectiveSelectorRules(batch.SelectorJSON, userSelector, userRules)
-		subTasks = append(subTasks, db.SubTask{
-			ID:                 fmt.Sprintf("%s-batch-%d-%s", rootTaskID, idx, batch.TargetType),
+		batchID := fmt.Sprintf("%s-batch-%d-%s", rootTaskID, idx, batch.TargetType)
+		attemptID := fmt.Sprintf("%s-attempt-1", batchID)
+		effectiveSelector := mergeAgentSelector(batch.SelectorJSON, userSelector)
+		taskBatches = append(taskBatches, db.TaskBatch{
+			ID:                 batchID,
 			TenantID:           tenantID,
 			ProjectID:          req.ProjectID,
 			RootTaskID:         rootTaskID,
+			Sequence:           idx,
+			Kind:               "asset_scan",
+			TargetType:         batch.TargetType,
+			Targets:            string(chunkJSON),
+			TargetCount:        len(batch.Targets),
+			Status:             subTaskStatusDispatching,
+			ConfigVersion:      1,
+			RuleVersion:        ruleVersion,
+			Priority:           priority,
+			TimeoutSec:         timeoutSec,
+			AgentSelector:      effectiveSelector,
+			AgentSelectorRules: rulesJSON,
+			CurrentAttemptNo:   1,
+			AttemptCount:       1,
+			LatestAttemptID:    attemptID,
+			CreatedBy:          operatorID,
+		})
+		subTasks = append(subTasks, db.SubTask{
+			ID:                 attemptID,
+			TenantID:           tenantID,
+			ProjectID:          req.ProjectID,
+			RootTaskID:         rootTaskID,
+			BatchID:            batchID,
+			AttemptNo:          1,
+			Trigger:            db.AttemptTriggerInitial,
 			ChunkTargets:       string(chunkJSON),
 			Status:             subTaskStatusDispatching,
 			Config:             configJSON,
-			Priority:           req.Priority,
-			TimeoutSec:         req.TimeoutSec,
+			Priority:           priority,
+			TimeoutSec:         timeoutSec,
 			MaxRetry:           3,
-			AgentSelector:      mergeAgentSelector(batch.SelectorJSON, userSelector),
+			ConfigVersion:      1,
+			RuleVersion:        ruleVersion,
+			AgentSelector:      effectiveSelector,
 			AgentSelectorRules: rulesJSON,
 		})
 
@@ -383,43 +595,167 @@ func createTask(c *gin.Context) {
 	}
 
 	rootTask := db.RootTask{
-		ID:               rootTaskID,
-		TenantID:         tenantID,
-		ProjectID:        req.ProjectID,
-		UserID:           currentUserID(c),
-		Name:             name,
-		Status:           "Queued",
-		OriginalTargets:  string(targetsJSON),
-		Config:           configJSON,
-		TotalChunks:      len(subTasks),
-		CompletedChunks:  0,
-		TotalTargets:     len(targets),
-		CompletedTargets: 0,
-		Priority:         req.Priority,
-		TimeoutSec:       req.TimeoutSec,
+		ID:                   rootTaskID,
+		TenantID:             tenantID,
+		ProjectID:            req.ProjectID,
+		UserID:               operatorID,
+		Name:                 name,
+		Status:               "Queued",
+		OriginalTargets:      string(targetsJSON),
+		Config:               configJSON,
+		TotalChunks:          len(subTasks),
+		CompletedChunks:      0,
+		TotalTargets:         len(targets),
+		CompletedTargets:     0,
+		Priority:             priority,
+		TimeoutSec:           timeoutSec,
+		RuleVersion:          ruleVersion,
+		CurrentConfigVersion: 1,
 	}
+	configRevision := db.NewTaskConfigRevision(rootTask, 1, selectorJSON, selectorRulesJSON, operatorID, "initial configuration")
 
 	// 2. Transaction for Root and SubTasks
+	var projectScopeAdded, projectSeedsAdded int
+	var replayed bool
+	var replayDispatched, replayPending int
+	var replayTargetSummary taskTargetSummary
+	var replayProfile batchProfile
+	attemptIDs := make([]string, 0, len(subTasks))
+	for _, attempt := range subTasks {
+		attemptIDs = append(attemptIDs, attempt.ID)
+	}
 	err = db.DB.Transaction(func(tx *gorm.DB) error {
+		var currentProject db.Project
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND tenant_id = ? AND status = ?", project.ID, tenantID, "active").
+			First(&currentProject).Error; err != nil {
+			return err
+		}
+		scopeExpansionTargets := targets
+		if targetMode != taskTargetModeDirect {
+			scopeExpansionTargets = nil
+		}
+		seedTargets, seedAdded, _, err := mergeStoredTargetList(currentProject.SeedTargets, scopeExpansionTargets, false)
+		if err != nil {
+			return err
+		}
+		scopeTargets, scopeAdded, scopeTotal, err := mergeStoredTargetList(currentProject.Scope, scopeExpansionTargets, false)
+		if err != nil {
+			return err
+		}
+		projectSeedsAdded = len(seedAdded)
+		projectScopeAdded = len(scopeAdded)
+		if idempotencyRequested {
+			idempotencyResult, err := db.RecordTaskCreationIdempotencyTx(tx, db.TaskCreationIdempotencyDraft{
+				TenantID:          tenantID,
+				ProjectID:         req.ProjectID,
+				OperatorID:        operatorID,
+				Operation:         taskCreateIdempotencyOperation,
+				IdempotencyKey:    idempotencyKey,
+				RequestHash:       requestHash,
+				RootTaskID:        rootTask.ID,
+				AttemptIDs:        attemptIDs,
+				ProjectScopeAdded: projectScopeAdded,
+				ProjectSeedsAdded: projectSeedsAdded,
+			})
+			if err != nil {
+				return err
+			}
+			if idempotencyResult.Replayed {
+				var existingRoot db.RootTask
+				if err := tx.Where("id = ? AND tenant_id = ? AND project_id = ?", idempotencyResult.Record.RootTaskID, tenantID, req.ProjectID).First(&existingRoot).Error; err != nil {
+					return err
+				}
+				replayDispatched, replayPending, err = taskCreationReplayDispatchCounts(tx, idempotencyResult.Record)
+				if err != nil {
+					return err
+				}
+				replayTargetSummary, replayProfile, err = taskCreationReplayScanSummary(tx, idempotencyResult.Record)
+				if err != nil {
+					return err
+				}
+				rootTask.ID = existingRoot.ID
+				// A replay returns the immutable creation result. Later task
+				// configuration revisions must not rewrite that response.
+				rootTask.CurrentConfigVersion = 1
+				projectScopeAdded = idempotencyResult.Record.ProjectScopeAdded
+				projectSeedsAdded = idempotencyResult.Record.ProjectSeedsAdded
+				replayed = true
+				return nil
+			}
+		}
+		if routerRuntime().TaskQueue == nil {
+			return errTaskCreateQueueUnavailable
+		}
 		if err := db.CheckTenantTaskCreationQuota(tx, tenantID, time.Now()); err != nil {
+			return err
+		}
+		if err := tx.Model(&db.Project{}).
+			Where("id = ? AND tenant_id = ? AND status = ?", currentProject.ID, tenantID, "active").
+			Updates(map[string]interface{}{
+				"seed_targets": seedTargets,
+				"scope":        scopeTargets,
+				"updated_at":   time.Now(),
+			}).Error; err != nil {
 			return err
 		}
 		if err := tx.Create(&rootTask).Error; err != nil {
 			return err
+		}
+		if err := tx.Create(&configRevision).Error; err != nil {
+			return err
+		}
+		if len(taskBatches) > 0 {
+			if err := tx.CreateInBatches(taskBatches, 100).Error; err != nil {
+				return err
+			}
 		}
 		if len(subTasks) > 0 {
 			if err := tx.CreateInBatches(subTasks, 100).Error; err != nil {
 				return err
 			}
 		}
-		return nil
+		return recordTaskAudit(tx, rootTask, "create", "", rootTask.Status, operatorID, map[string]interface{}{
+			"profile":                   scanplan.ScenarioExternalMap,
+			"target_source":             targetSource,
+			"target_count":              len(targets),
+			"batch_count":               len(taskBatches),
+			"project_scope_added_count": len(scopeAdded),
+			"project_scope_after_count": scopeTotal,
+			"project_seeds_added_count": len(seedAdded),
+			"poc_enabled":               !effectiveConfig.NoPoc,
+		})
 	})
 
 	if err != nil {
+		if errors.Is(err, db.ErrTaskCreationIdempotencyConflict) {
+			c.JSON(http.StatusConflict, gin.H{"code": "idempotency_conflict", "error": "Idempotency-Key was already used for a different task creation request"})
+			return
+		}
+		if errors.Is(err, errTaskCreateQueueUnavailable) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "task queue not initialized"})
+			return
+		}
 		if writeTenantQuotaError(c, err) {
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if replayed {
+		c.JSON(http.StatusOK, buildTaskCreateResponse(taskCreateResponseInput{
+			TaskID:            rootTask.ID,
+			ConfigVersion:     rootTask.CurrentConfigVersion,
+			TargetSummary:     replayTargetSummary,
+			Dispatched:        replayDispatched,
+			DispatchPending:   replayPending,
+			Profile:           replayProfile,
+			TargetSource:      targetSource,
+			ProjectScopeAdded: projectScopeAdded,
+			ProjectSeedsAdded: projectSeedsAdded,
+			SkippedTargets:    skippedTargets,
+			Replayed:          true,
+		}))
 		return
 	}
 
@@ -434,20 +770,16 @@ func createTask(c *gin.Context) {
 	log.Printf("[CreateTask] RootTask %s: %d targets → %d batches (profile: %v)",
 		rootTask.ID, len(targets), len(subTasks), profile.BatchesByType)
 
-	resp := gin.H{
-		"status":           "task_created",
-		"task_id":          rootTask.ID,
-		"target_summary":   targetSummary,
-		"dispatched":       pushedCount,
-		"dispatch_pending": dispatchPending,
-		"batch_profile":    profile,
-		"batch_summary": gin.H{
-			"total_targets": len(targets),
-			"total_batches": len(subTasks),
-		},
-	}
-	if len(skippedTargets) > 0 {
-		resp["skipped_targets"] = skippedTargets
-	}
-	c.JSON(http.StatusOK, resp)
+	c.JSON(http.StatusOK, buildTaskCreateResponse(taskCreateResponseInput{
+		TaskID:            rootTask.ID,
+		ConfigVersion:     rootTask.CurrentConfigVersion,
+		TargetSummary:     targetSummary,
+		Dispatched:        pushedCount,
+		DispatchPending:   dispatchPending,
+		Profile:           profile,
+		TargetSource:      targetSource,
+		ProjectScopeAdded: projectScopeAdded,
+		ProjectSeedsAdded: projectSeedsAdded,
+		SkippedTargets:    skippedTargets,
+	}))
 }

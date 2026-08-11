@@ -141,18 +141,26 @@ info:
   metadata:
     product: DemoProduct
     version: v1.2.3
+    argus-execution-class: verification
+    argus-risk-level: high
 `,
 		Hash:    "hash",
 		Version: 3,
 		State:   "Approved",
 	}
 
-	rule := materializePocRule(arsenal)
+	rule, err := materializePocRule(arsenal)
+	if err != nil {
+		t.Fatalf("materialize POC rule: %v", err)
+	}
 	if rule.Name != "CVE-2026-0002" || rule.TargetProduct != "DemoProduct" || rule.CVE != "CVE-2026-0002" {
 		t.Fatalf("unexpected poc metadata identity: %#v", rule)
 	}
 	if rule.CompatibilityStatus != "indexed" || rule.SourceVersion != "v1.2.3" || rule.Severity != "high" {
 		t.Fatalf("unexpected poc governance metadata: %#v", rule)
+	}
+	if rule.ExecutionClass != PocExecutionClassVerification || rule.RiskLevel != PocRiskLevelHigh || !PocRequiresSecondConfirmation(rule.RiskLevel) {
+		t.Fatalf("unexpected POC execution governance: %#v", rule)
 	}
 	if rule.Author != "polar" || rule.Tags != "demo,auth" || !rule.Enabled {
 		t.Fatalf("unexpected poc author/tags/state: %#v", rule)
@@ -171,7 +179,10 @@ func TestMaterializePocRuleSanitizesInvalidUTF8(t *testing.T) {
 		State:    "Approved",
 	}
 
-	rule := materializePocRule(arsenal)
+	rule, err := materializePocRule(arsenal)
+	if err != nil {
+		t.Fatalf("materialize POC rule: %v", err)
+	}
 	if !utf8.ValidString(rule.Author) || !utf8.ValidString(rule.Description) {
 		t.Fatalf("materialized poc metadata contains invalid UTF-8: %#v", rule)
 	}
@@ -195,12 +206,39 @@ func TestMaterializePocRuleSanitizesNullEscapes(t *testing.T) {
 		State:    "Approved",
 	}
 
-	rule := materializePocRule(arsenal)
+	rule, err := materializePocRule(arsenal)
+	if err != nil {
+		t.Fatalf("materialize POC rule: %v", err)
+	}
 	if strings.ContainsRune(rule.Author, '\x00') || strings.ContainsRune(rule.Description, '\x00') {
 		t.Fatalf("materialized poc metadata contains NUL: %#v", rule)
 	}
 	if rule.Author != "alicebob" || rule.Description != "leftright" {
 		t.Fatalf("unexpected sanitized metadata: %#v", rule)
+	}
+}
+
+func TestMaterializePocRuleDefaultsLegacyMetadataAndRejectsEXPClass(t *testing.T) {
+	legacy, err := materializePocRule(Arsenal{
+		TenantID: "default", Type: "poc", FileName: "legacy.yaml",
+		Content: "id: legacy\ninfo:\n  name: Legacy\n  severity: info\n", State: "Approved",
+	})
+	if err != nil {
+		t.Fatalf("legacy POC should stay compatible: %v", err)
+	}
+	if legacy.ExecutionClass != PocExecutionClassDetection || legacy.RiskLevel != PocRiskLevelUnknown {
+		t.Fatalf("unexpected legacy defaults: %#v", legacy)
+	}
+	if !PocRequiresSecondConfirmation(legacy.RiskLevel) {
+		t.Fatal("unknown legacy risk must require second confirmation")
+	}
+
+	_, err = materializePocRule(Arsenal{
+		TenantID: "default", Type: "poc", FileName: "exploit.yaml",
+		Content: "id: exploit\ninfo:\n  name: Exploit\n  severity: high\n  metadata:\n    argus-execution-class: exploit\n    argus-risk-level: high\n",
+	})
+	if err == nil || !strings.Contains(err.Error(), "separate EXP package") {
+		t.Fatalf("expected exploit POC class to be rejected, got %v", err)
 	}
 }
 

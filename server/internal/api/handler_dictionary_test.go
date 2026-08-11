@@ -1,19 +1,14 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
-	pb "github.com/user/dddd-proto/go/scan"
-	"github.com/user/dddd-server/internal/db"
-	grpcpkg "github.com/user/dddd-server/internal/grpc"
-	"google.golang.org/grpc/metadata"
 )
 
 func TestDictionaryListEmptyReturnsArray(t *testing.T) {
@@ -56,43 +51,11 @@ func TestDictionaryListEmptyReturnsArray(t *testing.T) {
 	}
 }
 
-func TestGetAgentAPIConfigReturnsApprovedYAML(t *testing.T) {
-	store := setupAITestDB(t)
-	if err := store.Create(&db.Arsenal{
-		ID:       db.BuildTenantArsenalID("default", "apiconfig", "api-config.yaml"),
-		TenantID: "default",
-		Type:     "apiconfig",
-		FileName: "api-config.yaml",
-		Content:  "quake:\n  - secret-key\n",
-		Hash:     "api-config-hash",
-		State:    "Approved",
-	}).Error; err != nil {
-		t.Fatalf("seed api config: %v", err)
-	}
-
-	ctx, recorder := newTenantContextWithRole(http.MethodGet, "/agents/config/api-keys", "admin", "agent-1")
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/agents/config/api-keys", nil)
-	getAgentAPIConfig(ctx)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected agent api config 200, got %d (%s)", recorder.Code, recorder.Body.String())
-	}
-	if recorder.Body.String() != "quake:\n  - secret-key\n" {
-		t.Fatalf("unexpected api config body: %q", recorder.Body.String())
-	}
-}
-
-func TestSaveAPIKeysConfigDoesNotBumpRuleVersionAndBroadcastsAPIConfig(t *testing.T) {
+func TestSaveAPIKeysConfigDoesNotBumpRuleVersionOrNotifyAgents(t *testing.T) {
 	store := setupAITestDB(t)
 	if err := store.Create(&db.SystemConfig{Key: "rule_version", Value: "v-stable"}).Error; err != nil {
 		t.Fatalf("seed rule version: %v", err)
 	}
-
-	oldHub := routerRuntime().NotifyHub
-	hub := grpcpkg.NewNotifyHub()
-	stream := &fakeAPIConfigNotifyStream{sentCh: make(chan string, 1)}
-	hub.Register("agent-1", stream, 1, nil)
-	routerRuntime().NotifyHub = hub
-	t.Cleanup(func() { routerRuntime().NotifyHub = oldHub })
 
 	ctx, recorder := newTenantContextWithRole(http.MethodPut, "/config/api-keys", "admin", "9")
 	ctx.Request = httptest.NewRequest(http.MethodPut, "/config/api-keys", strings.NewReader(`[{"provider":"quake","keys":["active-key"]}]`))
@@ -115,69 +78,7 @@ func TestSaveAPIKeysConfigDoesNotBumpRuleVersionAndBroadcastsAPIConfig(t *testin
 	if cfg.Value != "v-stable" {
 		t.Fatalf("save api-config should not bump rule_version, got %q", cfg.Value)
 	}
-	select {
-	case got := <-stream.sentCh:
-		if got != "api_config_updated" {
-			t.Fatalf("notify type = %q, want api_config_updated", got)
-		}
-	default:
-		t.Fatalf("expected api_config_updated notification")
-	}
 }
-
-func TestSaveAPIKeysConfigBroadcastsOnlyCurrentTenant(t *testing.T) {
-	setupAITestDB(t)
-
-	oldHub := routerRuntime().NotifyHub
-	hub := grpcpkg.NewNotifyHub()
-	tenantAStream := &fakeAPIConfigNotifyStream{sentCh: make(chan string, 1)}
-	tenantBStream := &fakeAPIConfigNotifyStream{sentCh: make(chan string, 1)}
-	hub.Register("agent-a", tenantAStream, 1, map[string]string{"tenant_id": "tenant-a"})
-	hub.Register("agent-b", tenantBStream, 1, map[string]string{"tenant_id": "tenant-b"})
-	routerRuntime().NotifyHub = hub
-	t.Cleanup(func() { routerRuntime().NotifyHub = oldHub })
-
-	ctx, recorder := newTenantContextWithRole(http.MethodPut, "/config/api-keys", "admin", "9")
-	ctx.Set("tenant", "tenant-a")
-	ctx.Request = httptest.NewRequest(http.MethodPut, "/config/api-keys", strings.NewReader(`[{"provider":"quake","keys":["tenant-a-key"]}]`))
-	saveApiKeysConfig(ctx)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected save API keys 200, got %d (%s)", recorder.Code, recorder.Body.String())
-	}
-	select {
-	case got := <-tenantAStream.sentCh:
-		if got != "api_config_updated" {
-			t.Fatalf("tenant-a notify type = %q, want api_config_updated", got)
-		}
-	default:
-		t.Fatalf("expected tenant-a agent to receive api_config_updated")
-	}
-	select {
-	case got := <-tenantBStream.sentCh:
-		t.Fatalf("tenant-b agent should not receive tenant-a update, got %q", got)
-	default:
-	}
-}
-
-type fakeAPIConfigNotifyStream struct {
-	sentCh chan string
-}
-
-func (s *fakeAPIConfigNotifyStream) Send(msg *pb.TaskNotify) error {
-	if s.sentCh != nil {
-		s.sentCh <- msg.NotifyType
-	}
-	return nil
-}
-
-func (s *fakeAPIConfigNotifyStream) Recv() (*pb.AgentSignal, error) { return nil, io.EOF }
-func (s *fakeAPIConfigNotifyStream) SetHeader(metadata.MD) error    { return nil }
-func (s *fakeAPIConfigNotifyStream) SendHeader(metadata.MD) error   { return nil }
-func (s *fakeAPIConfigNotifyStream) SetTrailer(metadata.MD)         {}
-func (s *fakeAPIConfigNotifyStream) Context() context.Context       { return context.Background() }
-func (s *fakeAPIConfigNotifyStream) SendMsg(interface{}) error      { return nil }
-func (s *fakeAPIConfigNotifyStream) RecvMsg(interface{}) error      { return io.EOF }
 
 func TestFingerprintDictMergesMaterializedRules(t *testing.T) {
 	store := setupAITestDB(t)

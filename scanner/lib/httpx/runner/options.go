@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"os"
@@ -263,11 +264,14 @@ type Options struct {
 	OutputFilterCondition     string
 	OutputMatchCondition      string
 	OnResult                  OnResultCallback
-	DisableUpdateCheck        bool
-	NoDecode                  bool
-	Screenshot                bool
-	UseInstalledChrome        bool
-	IsBrute                   bool // 是否为目录爆破，如果是目录爆破默认不存响应
+	// TargetContext returns the context shared by every HTTP attempt for one
+	// original input. A nil result falls back to context.Background.
+	TargetContext      func(string) context.Context
+	DisableUpdateCheck bool
+	NoDecode           bool
+	Screenshot         bool
+	UseInstalledChrome bool
+	IsBrute            bool // 是否为目录爆破，如果是目录爆破默认不存响应
 }
 
 // ParseOptions parses the command line options for application

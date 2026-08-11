@@ -1,5 +1,4 @@
 import React, { useRef, useEffect, useCallback } from 'react';
-import gsap from 'gsap';
 
 interface Props {
   /** 粒子数量 (默认 60) */
@@ -152,9 +151,13 @@ const NetworkCanvas: React.FC<Props> = ({
       ctx.restore();
     };
 
-    const ticker = () => draw();
-    gsap.ticker.add(ticker);
-    return () => { gsap.ticker.remove(ticker); };
+    let animationFrame = 0;
+    const ticker = () => {
+      draw();
+      animationFrame = window.requestAnimationFrame(ticker);
+    };
+    animationFrame = window.requestAnimationFrame(ticker);
+    return () => window.cancelAnimationFrame(animationFrame);
   }, [count, linkDist, speed, showRadial, rgb.r, rgb.g, rgb.b]);
 
   return (

@@ -33,6 +33,14 @@ func init() {
 	DefaultLogger.SetWriter(writer.NewCLI())
 }
 
+// ConfigureCLIOutput applies presentation rules for the standalone CLI only.
+// It is deliberately opt-in: Agent and server processes retain their default
+// logger configuration unless their own entrypoint calls it.
+func ConfigureCLIOutput(noUseColors, suppressInfo bool) {
+	DefaultLogger.SetFormatter(formatter.NewCLI(noUseColors))
+	DefaultLogger.SetWriter(writer.NewCLIWithOptions(suppressInfo))
+}
+
 func AuditLogger(format string, args ...interface{}) {
 	if !Audit {
 		return
