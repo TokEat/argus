@@ -339,7 +339,8 @@ func createSeedDB(t *testing.T, path string, rows []arsenalRow) {
 func mustSymlink(t *testing.T, oldname, newname string) {
 	t.Helper()
 	if err := os.Symlink(oldname, newname); err != nil {
-		if runtime.GOOS == "windows" && errors.Is(err, syscall.ERROR_PRIVILEGE_NOT_HELD) {
+		const windowsErrorPrivilegeNotHeld syscall.Errno = 1314
+		if runtime.GOOS == "windows" && errors.Is(err, windowsErrorPrivilegeNotHeld) {
 			t.Skipf("symlink creation requires Windows privilege: %v", err)
 		}
 		t.Fatalf("symlink %s: %v", newname, err)
