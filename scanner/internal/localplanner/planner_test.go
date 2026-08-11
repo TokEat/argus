@@ -2,7 +2,9 @@ package localplanner
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,136 +30,92 @@ func TestApplyCLISafetyDefaultsDisablesImplicitRiskExecution(t *testing.T) {
 	}
 }
 
-func TestPortIncludedHonorsExplicitScope(t *testing.T) {
-	for _, test := range []struct {
-		ports, candidate string
-		want             bool
+func TestBuildExecutionsSkipsTargetsFoundInDatasHistory(t *testing.T) {
+	history := dataResultHistory{targetSources: map[string]string{}}
+	history.addTarget("192.0.2.10", "run-a")
+	history.addTarget("https://app.example.test/login", "run-b")
+	cfg := engine.Config{Targets: []string{"192.0.2.10", "192.0.2.11", "https://APP.example.test/login"}}
+	executions, decisions := buildExecutions(cfg, history, "rules", "config", false, false)
+
+	if len(executions) != 1 || len(executions[0].targets) != 1 || executions[0].targets[0] != "192.0.2.11" {
+		t.Fatalf("executions = %#v, want only the unseen target", executions)
+	}
+	if got := decisions["192.0.2.10"]; got.Action != "skipped" || !strings.Contains(got.Reason, "history_asset_match:run-a") {
+		t.Fatalf("skipped decision = %#v", got)
+	}
+	if got := decisions["https://APP.example.test/login"]; got.Action != "skipped" {
+		t.Fatalf("URL decision = %#v", got)
+	}
+	if got := decisions["192.0.2.11"]; got.Action != "full" || got.Reason != "history_asset_missing" {
+		t.Fatalf("full decision = %#v", got)
+	}
+}
+
+func TestBuildExecutionsDoesNotSkipExplicitRiskOrForce(t *testing.T) {
+	history := dataResultHistory{targetSources: map[string]string{}}
+	history.addTarget("192.0.2.10", "run-a")
+	cfg := engine.Config{Targets: []string{"192.0.2.10"}}
+	for name, test := range map[string]struct {
+		explicitRisk bool
+		force        bool
+		reason       string
 	}{
-		{ports: "3000", candidate: "445", want: false},
-		{ports: "22,80,443", candidate: "80", want: true},
-		{ports: "8000-8100", candidate: "8080", want: true},
-		{ports: "8000-8100", candidate: "443", want: false},
+		"explicit risk": {explicitRisk: true, reason: "explicit_risk_operation"},
+		"force":         {force: true, reason: "force_full_scan"},
 	} {
-		if got := portIncluded(test.ports, test.candidate); got != test.want {
-			t.Fatalf("portIncluded(%q, %q)=%v, want %v", test.ports, test.candidate, got, test.want)
-		}
+		t.Run(name, func(t *testing.T) {
+			executions, decisions := buildExecutions(cfg, history, "rules", "config", test.explicitRisk, test.force)
+			if len(executions) != 1 || len(executions[0].targets) != 1 {
+				t.Fatalf("executions = %#v, want full execution", executions)
+			}
+			if got := decisions["192.0.2.10"]; got.Action != "full" || got.Reason != test.reason {
+				t.Fatalf("decision = %#v", got)
+			}
+		})
 	}
 }
 
-func TestPreflightRevalidatesLivenessWithoutExpandingPortScope(t *testing.T) {
-	policy := localstate.DefaultLocalPolicy().Revalidation
-	previousProbe := probeTCP
-	probeTCP = func(endpoint string, _ time.Duration) bool {
-		return endpoint == "192.0.2.10:3000" || endpoint == "192.0.2.10:445"
-	}
-	t.Cleanup(func() { probeTCP = previousProbe })
-
-	result, ok := preflightTarget("192.0.2.10", "3000", []string{"192.0.2.10:3000"}, []string{"192.0.2.10"}, policy)
-	if !ok || !result.unchanged || len(result.openEndpoints) != 2 {
-		t.Fatalf("out-of-scope liveness result = %#v, ok=%v", result, ok)
-	}
-	result, ok = preflightTarget("192.0.2.10", "3000,445", []string{"192.0.2.10:3000"}, []string{"192.0.2.10"}, policy)
-	if !ok || result.unchanged {
-		t.Fatalf("new in-scope service was not detected: %#v, ok=%v", result, ok)
-	}
-}
-
-func TestLocalPolicyParticipatesInConfigHash(t *testing.T) {
-	cfg := engine.Config{Ports: "80"}
-	first := localstate.DefaultLocalPolicy()
-	second := first
-	second.TTL.Port = localstate.Duration(90 * time.Minute)
-	if localConfigHash(cfg, first) == localConfigHash(cfg, second) {
-		t.Fatal("policy change did not invalidate config hash")
-	}
-}
-
-func TestBuildExecutionsResumesAtProtocolAfterStablePortCoverage(t *testing.T) {
-	now := time.Date(2026, 8, 9, 1, 2, 3, 0, time.UTC)
-	cfg := engine.Config{
-		Targets: []string{"192.0.2.10"}, Ports: "80,443", SkipHostDiscovery: true,
-		NoHostBind: true, NoDirSearch: true, NoPoc: true, DisableGeneralPoc: true,
-	}
-	policy := localstate.DefaultLocalPolicy()
-	ruleVersion, configHash := hashValues("rules"), localConfigHash(cfg, policy)
-	scopeHash := hashValues("internal-fast", cfg.Targets[0])
-	key := scanplan.WorkKey{
-		TenantID: scanplan.LocalTenantID, ProjectID: scanplan.LocalProjectID, NetworkZone: scanplan.LocalNetworkZone,
-		NormalizedTarget: cfg.Targets[0], Stage: scanplan.StagePortScan, ScopeHash: scopeHash,
-		ConfigHash: configHash, RuleVersion: ruleVersion,
-	}
-	workKey, err := key.Digest()
-	if err != nil {
+func TestLoadDataResultHistoryReadsLegacyResultsAndCompletedTargets(t *testing.T) {
+	root := t.TempDir()
+	legacy := filepath.Join(root, "legacy")
+	if err := os.Mkdir(legacy, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	snapshot := localstate.Snapshot{
-		Assets: []localstate.AssetRecord{{NormalizedTarget: "192.0.2.10:80", AssetType: "ip_port", NetworkZone: scanplan.LocalNetworkZone, Status: "active"}},
-		Coverages: []localstate.CoverageRecord{{
-			WorkKey: workKey, NormalizedTarget: cfg.Targets[0], Stage: string(scanplan.StagePortScan),
-			ScopeHash: scopeHash, ConfigHash: configHash, RuleVersion: ruleVersion, Outcome: "success",
-			ObservedAt: now.Add(-time.Minute), ValidUntil: now.Add(time.Hour), LastRunID: "source-run",
-		}},
+	if err := os.WriteFile(filepath.Join(legacy, "result.txt"), []byte("[Port] 192.0.2.20:443\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	previousProbe := probeTCP
-	probeTCP = func(endpoint string, _ time.Duration) bool { return endpoint == "192.0.2.10:80" }
-	t.Cleanup(func() { probeTCP = previousProbe })
-
-	executions, decisions := buildExecutions(cfg, snapshot, policy, ruleVersion, configHash, now, false, false)
-	if len(executions) != 1 || executions[0].plan == nil {
-		t.Fatalf("executions = %#v, want one incremental plan", executions)
+	completed := filepath.Join(root, "completed")
+	if err := os.Mkdir(completed, 0o700); err != nil {
+		t.Fatal(err)
 	}
-	plan := executions[0].plan
-	if plan.StartStage != scanplan.StageProtocolIdentify || len(plan.ReusedStages) != 1 || plan.ReusedStages[0] != scanplan.StagePortScan {
-		t.Fatalf("resume plan starts at %q with reused %v", plan.StartStage, plan.ReusedStages)
+	if err := os.WriteFile(filepath.Join(completed, "summary.txt"), []byte("schema_version=argus-run-summary/v1\nrun_id=completed\nstatus=completed\nterminal_status=completed\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if got := plan.Checkpoints[0].Checkpoint.OpenPorts; len(got) != 1 || got[0] != "192.0.2.10:80" {
-		t.Fatalf("checkpoint ports = %v", got)
+	targets := "# argus-tsv/v1\trun_targets\n" +
+		"target_index\traw_target\tnormalized_target\ttarget_type\taction\treason\n" +
+		"1\t192.0.2.30\t192.0.2.30\tip\tfull\thistory_asset_missing\n"
+	if err := os.WriteFile(filepath.Join(completed, "targets.tsv"), []byte(targets), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if err := engine.ValidateResumePlan(cfg, cfg.Targets, ruleVersion, executions[0].planHash, plan); err != nil {
-		t.Fatalf("generated plan was rejected: %v", err)
+	current := filepath.Join(root, "current")
+	if err := os.Mkdir(current, 0o700); err != nil {
+		t.Fatal(err)
 	}
-	if decision := decisions[cfg.Targets[0]]; decision.Action != "incremental" {
-		t.Fatalf("decision = %#v", decision)
-	}
-	if len(executions[0].preflight) != 1 || executions[0].preflight[0].Stage != string(scanplan.StageTCPLiveness) || executions[0].preflight[0].Outcome != "success" {
-		t.Fatalf("preflight coverage = %#v", executions[0].preflight)
-	}
-	if got := executions[0].preflight[0].ValidUntil.Sub(executions[0].preflight[0].ObservedAt); got != 5*time.Minute {
-		t.Fatalf("liveness TTL = %s", got)
-	}
-	probeTCP = func(string, time.Duration) bool { panic("force scan must not probe reusable coverage") }
-	forced, forceDecisions := buildExecutions(cfg, snapshot, policy, ruleVersion, configHash, now, false, true)
-	if len(forced) != 1 || forced[0].plan != nil || forceDecisions[cfg.Targets[0]].Reason != "force_full_scan" {
-		t.Fatalf("force execution=%#v decisions=%#v", forced, forceDecisions)
-	}
-}
-
-func TestBuildExecutionsFallsBackForExpiredOrChangedCoverage(t *testing.T) {
-	now := time.Now().UTC()
-	cfg := engine.Config{Targets: []string{"192.0.2.10"}, Ports: "22,80,443,445,3389", SkipHostDiscovery: true, NoPoc: true, DisableGeneralPoc: true}
-	policy := localstate.DefaultLocalPolicy()
-	ruleVersion, configHash := hashValues("rules"), localConfigHash(cfg, policy)
-	scopeHash := hashValues("internal-fast", cfg.Targets[0])
-	key := scanplan.WorkKey{
-		TenantID: scanplan.LocalTenantID, ProjectID: scanplan.LocalProjectID, NetworkZone: scanplan.LocalNetworkZone,
-		NormalizedTarget: cfg.Targets[0], Stage: scanplan.StagePortScan, ScopeHash: scopeHash, ConfigHash: configHash, RuleVersion: ruleVersion,
-	}
-	workKey, _ := key.Digest()
-	snapshot := localstate.Snapshot{Coverages: []localstate.CoverageRecord{{
-		WorkKey: workKey, Outcome: "negative", ValidUntil: now.Add(-time.Second), LastRunID: "old",
-	}}}
-	executions, _ := buildExecutions(cfg, snapshot, policy, ruleVersion, configHash, now, false, false)
-	if len(executions) != 1 || executions[0].plan != nil {
-		t.Fatalf("expired coverage should produce a full execution: %#v", executions)
+	if err := os.WriteFile(filepath.Join(current, "result.txt"), []byte("[Port] 192.0.2.40:443\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
-	snapshot.Coverages[0].ValidUntil = now.Add(time.Hour)
-	previousProbe := probeTCP
-	probeTCP = func(endpoint string, _ time.Duration) bool { return endpoint == "192.0.2.10:22" }
-	t.Cleanup(func() { probeTCP = previousProbe })
-	executions, _ = buildExecutions(cfg, snapshot, policy, ruleVersion, configHash, now, false, false)
-	if len(executions) != 1 || executions[0].plan != nil {
-		t.Fatalf("new common service should produce a full execution: %#v", executions)
+	history, warnings := loadDataResultHistory(root, filepath.Join(current, "result.txt"))
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	for _, target := range []string{"192.0.2.20:443", "192.0.2.30"} {
+		if _, ok := history.MatchTarget(target); !ok {
+			t.Fatalf("history did not match %s; keys=%v", target, sortedHistoryTargets(history))
+		}
+	}
+	if _, ok := history.MatchTarget("192.0.2.40:443"); ok {
+		t.Fatal("current run result was treated as previous history")
 	}
 }
 
@@ -254,5 +212,99 @@ func TestStageReporterTimesStartedFailureButNotUnstartedSkip(t *testing.T) {
 		if coverage.Stage == string(scanplan.StageHTTPProbe) {
 			t.Fatalf("failed HTTP budget must not become reusable coverage: %+v", coverage)
 		}
+	}
+}
+
+func TestRunInDatasDirectoryDoesNotMergeArgusDataState(t *testing.T) {
+	run, err := localstate.StartRunInDirectory(filepath.Join(t.TempDir(), "datas", "target_20260812_120000"), []string{"192.0.2.50"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := run.SetTargetDecisions(map[string]localstate.TargetDecision{"192.0.2.50": {Action: "skipped", Reason: "history_asset_match:old"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.Finish(nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(run.Dir, "summary.txt")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExecuteWithTimingSkipsDatasHistoryWithoutRunningPipeline(t *testing.T) {
+	root := t.TempDir()
+	oldDir := filepath.Join(root, "datas", "old")
+	if err := os.MkdirAll(oldDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldDir, "result.txt"), []byte("[Port] 192.0.2.60:443\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	currentDir := filepath.Join(root, "datas", "current")
+	run, err := localstate.StartRunInDirectory(currentDir, []string{"192.0.2.60:443"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousRunTask := runTask
+	runTask = func(*engine.ScanContext) error {
+		t.Fatal("history-skipped targets must not execute the scanner pipeline")
+		return nil
+	}
+	t.Cleanup(func() { runTask = previousRunTask })
+	ctx := &engine.ScanContext{Config: engine.Config{
+		Targets: []string{"192.0.2.60:443"}, OutputFile: filepath.Join(currentDir, "result.txt"),
+		NoPoc: true, DisableGeneralPoc: true,
+	}}
+	if err := ExecuteWithTiming(ctx, run, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.Finish(nil); err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(run.TargetsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(contents), "skipped") || !strings.Contains(string(contents), "history_asset_match:old") {
+		t.Fatalf("targets.tsv did not record history skip:\n%s", contents)
+	}
+}
+
+func TestExecuteWithTimingForceRunsEvenWhenHistoryMatches(t *testing.T) {
+	root := t.TempDir()
+	oldDir := filepath.Join(root, "datas", "old")
+	if err := os.MkdirAll(oldDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldDir, "result.txt"), []byte("[Web] http://127.0.0.1:8080 200\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	currentDir := filepath.Join(root, "datas", "current")
+	run, err := localstate.StartRunInDirectory(currentDir, []string{"http://127.0.0.1:8080"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	previousRunTask := runTask
+	runTask = func(ctx *engine.ScanContext) error {
+		called = true
+		if len(ctx.Config.Targets) != 1 || ctx.Config.Targets[0] != "http://127.0.0.1:8080" {
+			t.Fatalf("targets = %#v", ctx.Config.Targets)
+		}
+		return nil
+	}
+	t.Cleanup(func() { runTask = previousRunTask })
+	ctx := &engine.ScanContext{LocalForceFullScan: true, Config: engine.Config{
+		Targets: []string{"http://127.0.0.1:8080"}, OutputFile: filepath.Join(currentDir, "result.txt"),
+		NoPoc: true, DisableGeneralPoc: true,
+	}}
+	if err := ExecuteWithTiming(ctx, run, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.Finish(nil); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("force scan did not execute the scanner pipeline")
 	}
 }

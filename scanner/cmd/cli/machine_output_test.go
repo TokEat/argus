@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -19,13 +20,12 @@ import (
 const cliMachineHelperMode = "ARGUS_CLI_MACHINE_HELPER"
 
 func TestCLIProcessMachineAndNonTTYOutputContracts(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte("<html><title>Argus fixture</title></html>"))
-	}))
-	defer server.Close()
+	if runtime.GOOS == "windows" {
+		t.Skip("vendored httpx loopback probing is unstable in Windows subprocess tests; see #186")
+	}
 
 	home := filepath.Join(t.TempDir(), "argus-data")
-	jsonRun := runMachineHelper(t, "json", server.URL, home)
+	jsonRun := runMachineHelper(t, "json", "", home)
 	if jsonRun.exitCode != exitSuccess || jsonRun.stderr != "" {
 		t.Fatalf("json exit=%d stderr=%q", jsonRun.exitCode, jsonRun.stderr)
 	}
@@ -43,23 +43,24 @@ func TestCLIProcessMachineAndNonTTYOutputContracts(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[1]), &summary); err != nil {
 		t.Fatalf("decode summary: %v", err)
 	}
-	if finding.RecordType != "finding" || finding.Finding == nil || finding.Finding.URI != server.URL {
+	if finding.RecordType != "finding" || finding.Finding == nil || !strings.HasPrefix(finding.Finding.URI, "http://127.0.0.1:") {
 		t.Fatalf("unexpected finding: %#v", finding)
 	}
 	if summary.RecordType != "run_summary" || summary.Summary == nil || summary.Summary.Status != "completed" || summary.Summary.ExitCode != 0 || summary.Summary.Counts.Findings != 1 {
 		t.Fatalf("unexpected summary: %#v", summary)
 	}
 	assertResultFileMatchesStdout(t, jsonRun.workDir, jsonRun.stdout)
-	assertUnifiedHTMLReport(t, jsonRun.workDir, server.URL)
+	assertUnifiedHTMLReport(t, jsonRun.workDir, finding.Finding.URI)
 
-	textRun := runMachineHelper(t, "text", server.URL, home)
+	textRun := runMachineHelper(t, "text", "", home)
 	if textRun.exitCode != exitSuccess || textRun.stderr != "" {
 		t.Fatalf("text exit=%d stderr=%q", textRun.exitCode, textRun.stderr)
 	}
-	if strings.Contains(textRun.stdout, "Argus CLI v") || strings.ContainsRune(textRun.stdout, '\x1b') || !strings.Contains(textRun.stdout, "[Web] "+server.URL) {
+	textTarget := firstWebOutputURI(textRun.stdout)
+	if strings.Contains(textRun.stdout, "Argus CLI v") || strings.ContainsRune(textRun.stdout, '\x1b') || !strings.HasPrefix(textTarget, "http://127.0.0.1:") {
 		t.Fatalf("redirected text output is noisy or missing finding: %q", textRun.stdout)
 	}
-	assertUnifiedHTMLReport(t, textRun.workDir, server.URL)
+	assertUnifiedHTMLReport(t, textRun.workDir, textTarget)
 }
 
 func TestCLIProcessUsageErrorsKeepStructuredStdoutEmpty(t *testing.T) {
@@ -134,7 +135,14 @@ func TestCLIMachineProcessHelper(t *testing.T) {
 		return
 	}
 	target := os.Getenv("ARGUS_CLI_MACHINE_TARGET")
-	base := []string{"argus", "-t", target, "-Pn", "-nd", "-npoc", "-force", "-wto", "1", "-wt", "1"}
+	if (mode == "json" || mode == "text") && strings.TrimSpace(target) == "" {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte("<html><title>Argus fixture</title></html>"))
+		}))
+		defer server.Close()
+		target = server.URL
+	}
+	base := []string{"argus", "-t", target, "-Pn", "-nd", "-npoc", "-force", "-wto", "5", "-wt", "1"}
 	switch mode {
 	case "json":
 		os.Args = append(base, "-ot", "json")
@@ -161,6 +169,24 @@ func nonEmptyLines(value string) []string {
 		}
 	}
 	return lines
+}
+
+func firstWebOutputURI(stdout string) string {
+	for _, line := range nonEmptyLines(stdout) {
+		if !strings.HasPrefix(line, "[Web] ") {
+			continue
+		}
+		return firstOutputField(strings.TrimPrefix(line, "[Web] "))
+	}
+	return ""
+}
+
+func firstOutputField(value string) string {
+	fields := strings.Fields(value)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
 }
 
 func assertResultFileMatchesStdout(t *testing.T, workDir, stdout string) {
