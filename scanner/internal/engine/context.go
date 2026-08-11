@@ -48,7 +48,8 @@ type ScanContext struct {
 	ResumePlan *scanplan.ResumePlan
 
 	// LocalDataRoot is set only for standalone CLI scans. It points to the
-	// private argus-data root used by offline history and is never uploaded.
+	// compatibility root used by explicit offline arsenal commands and is never
+	// uploaded.
 	LocalDataRoot string
 	LocalRunID    string
 	// LocalForceFullScan is set only by the standalone CLI -force flag. It

@@ -1,5 +1,6 @@
-// Package localstate owns the CLI-only, offline scan history root.
-// It does not upload state and is not used by Server-managed Agents.
+// Package localstate owns CLI-only local run metadata and the compatibility
+// root used by explicit offline arsenal commands. It does not upload state and
+// is not used by Server-managed Agents.
 package localstate
 
 import (
@@ -14,9 +15,9 @@ const (
 	DefaultHomeName = "argus-data"
 )
 
-// Home describes the stable root reserved for CLI history and policy files.
-// Versioned state and per-run files live below Root without adding mandatory
-// command-line parameters.
+// Home describes the stable compatibility root reserved for explicit offline
+// arsenal management and legacy local-state helpers. Ordinary scan runs write
+// their evidence under datas/<run> instead of this root.
 type Home struct {
 	Root string
 }

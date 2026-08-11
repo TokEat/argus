@@ -52,6 +52,7 @@ type Run struct {
 	warnings      []string
 	writeErr      error
 	finished      bool
+	mergeState    bool
 }
 
 type TargetDecision struct {
@@ -137,12 +138,86 @@ func startRun(layout Layout, targets []string, startedAt time.Time, random io.Re
 		TimingPath:   filepath.Join(runDir, "timing.tsv"),
 		activeLock:   activeLock,
 		layout:       layout,
+		mergeState:   true,
 	}
 	if err := run.writeInitialFiles(targets); err != nil {
 		run.releaseActiveLock(false)
 		return nil, err
 	}
 	return run, nil
+}
+
+// StartRunInDirectory records the current CLI run beside result.txt and the
+// HTML report under datas/<run>. It deliberately skips the old argus-data
+// state merge; datas is the only user-visible history source for CLI scans.
+func StartRunInDirectory(runDir string, targets []string) (*Run, error) {
+	runDir = strings.TrimSpace(runDir)
+	if runDir == "" {
+		return nil, errors.New("run directory is empty")
+	}
+	absolute, err := filepath.Abs(filepath.Clean(runDir))
+	if err != nil {
+		return nil, fmt.Errorf("normalize run directory: %w", err)
+	}
+	if err := os.MkdirAll(absolute, 0o700); err != nil {
+		return nil, fmt.Errorf("create run directory %q: %w", absolute, err)
+	}
+	info, err := os.Stat(absolute)
+	if err != nil {
+		return nil, fmt.Errorf("inspect run directory %q: %w", absolute, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("run path %q is not a directory", absolute)
+	}
+	runID := sanitizeRunDirectoryID(filepath.Base(absolute))
+	if runID == "" {
+		return nil, fmt.Errorf("run directory %q does not produce a valid run id", absolute)
+	}
+	activeLock, locked, err := acquireFileLock(filepath.Join(absolute, ".active.lock"), false)
+	if err != nil {
+		return nil, err
+	}
+	if !locked {
+		return nil, fmt.Errorf("acquire active lock for run %q", runID)
+	}
+	run := &Run{
+		ID: runID, Dir: absolute, startedAt: time.Now().UTC(), targetCount: len(targets),
+		SummaryPath:  filepath.Join(absolute, "summary.txt"),
+		TargetsPath:  filepath.Join(absolute, "targets.tsv"),
+		FindingsPath: filepath.Join(absolute, "findings.tsv"),
+		CoveragePath: filepath.Join(absolute, "coverage.tsv"),
+		DeltaPath:    filepath.Join(absolute, "delta.tsv"),
+		TimingPath:   filepath.Join(absolute, "timing.tsv"),
+		activeLock:   activeLock,
+		mergeState:   false,
+	}
+	if err := run.writeInitialFiles(targets); err != nil {
+		run.releaseActiveLock(false)
+		return nil, err
+	}
+	return run, nil
+}
+
+func sanitizeRunDirectoryID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "." || value == ".." {
+		return ""
+	}
+	var builder strings.Builder
+	for _, char := range value {
+		switch {
+		case char >= 'a' && char <= 'z', char >= 'A' && char <= 'Z', char >= '0' && char <= '9':
+			builder.WriteRune(char)
+		case char == '-', char == '_', char == '.':
+			builder.WriteRune(char)
+		default:
+			builder.WriteByte('_')
+		}
+		if builder.Len() >= 255 {
+			break
+		}
+	}
+	return strings.Trim(builder.String(), ".")
 }
 
 func newRunID(startedAt time.Time, random io.Reader) (string, error) {
@@ -290,7 +365,7 @@ func (run *Run) SetTargetDecisions(decisions map[string]TargetDecision) error {
 			continue
 		}
 		action := strings.ToLower(strings.TrimSpace(decision.Action))
-		if action != "full" && action != "incremental" {
+		if action != "full" && action != "incremental" && action != "skipped" {
 			return fmt.Errorf("target decision action %q is unsupported", action)
 		}
 		rows[index][4] = action
@@ -362,6 +437,16 @@ func (run *Run) Finish(scanErr error) error {
 			removeMarker = false
 		}
 		run.releaseActiveLock(removeMarker)
+		return run.writeErr
+	}
+	if !run.mergeState {
+		baseSummary.Status = terminalStatus
+		baseSummary.MergeStatus = "merged"
+		baseSummary.MergedAt = time.Now().UTC()
+		if err := writeRunSummary(run.SummaryPath, baseSummary); err != nil {
+			run.writeErr = err
+		}
+		run.releaseActiveLock(run.writeErr == nil)
 		return run.writeErr
 	}
 	baseSummary.Status = "finalizing"

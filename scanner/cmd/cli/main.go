@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -57,7 +58,7 @@ func runCLI() int {
 	}
 	defer ctx.Close()
 
-	run, err := localstate.StartRun(localstate.Home{Root: ctx.LocalDataRoot}, ctx.Config.Targets)
+	run, err := localstate.StartRunInDirectory(filepath.Dir(ctx.Config.OutputFile), ctx.Config.Targets)
 	if err != nil {
 		writeCLIError("cli history init failed", err)
 		return exitFailure

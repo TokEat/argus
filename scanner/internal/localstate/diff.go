@@ -322,7 +322,7 @@ func readRunTargets(path string) ([]RunTargetRecord, []string, error) {
 			continue
 		}
 		action := strings.ToLower(strings.TrimSpace(row[4]))
-		if action != "full" && action != "incremental" && action != "requested" {
+		if action != "full" && action != "incremental" && action != "skipped" && action != "requested" {
 			warnings = append(warnings, fmt.Sprintf("%s data row %d skipped: action is unsupported", filepath.Base(path), index+1))
 			continue
 		}

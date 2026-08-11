@@ -45,7 +45,7 @@ func InitCLIWithTiming(recorder *timing.Recorder) (*engine.ScanContext, error) {
 		}
 		return nil, fmt.Errorf("help output completed")
 	}
-	home, err := localstate.Ensure()
+	home, err := localstate.Resolve()
 	if err != nil {
 		return nil, err
 	}

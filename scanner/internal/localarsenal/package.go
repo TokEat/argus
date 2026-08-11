@@ -54,15 +54,6 @@ func ResolveLayout(homeRoot string) Layout {
 // the full runtime-package validation succeeds.
 func Prepare(homeRoot string) (Activation, error) {
 	layout := ResolveLayout(homeRoot)
-	if err := os.MkdirAll(layout.Root, 0o700); err != nil {
-		return Activation{}, fmt.Errorf("create local arsenal directory: %w", err)
-	}
-	lock, err := localstate.AcquireExclusiveFileLock(layout.LockPath)
-	if err != nil {
-		return Activation{}, err
-	}
-	defer lock.Close()
-
 	candidates := make([]packageCandidate, 0, 2)
 	if executable, execErr := os.Executable(); execErr == nil {
 		shipped := filepath.Join(filepath.Dir(executable), localstate.DefaultHomeName, "arsenal", "arsenal.db")
@@ -76,7 +67,30 @@ func Prepare(homeRoot string) (Activation, error) {
 			candidates = append(candidates, packageCandidate{path: legacy})
 		}
 	}
+	if !localPackageInputExists(layout.DBPath, candidates) {
+		return Activation{DBPath: layout.DBPath, ConfigDir: layout.ConfigDir}, nil
+	}
+	if err := os.MkdirAll(layout.Root, 0o700); err != nil {
+		return Activation{}, fmt.Errorf("create local arsenal directory: %w", err)
+	}
+	lock, err := localstate.AcquireExclusiveFileLock(layout.LockPath)
+	if err != nil {
+		return Activation{}, err
+	}
+	defer lock.Close()
 	return prepareLocked(layout, candidates)
+}
+
+func localPackageInputExists(fixedPath string, candidates []packageCandidate) bool {
+	if _, err := os.Lstat(fixedPath); err == nil {
+		return true
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Lstat(candidate.path); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func prepareLocked(layout Layout, candidates []packageCandidate) (Activation, error) {
