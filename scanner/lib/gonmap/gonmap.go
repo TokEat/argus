@@ -5,10 +5,16 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
-var nmap *Nmap
+var (
+	nmap            *Nmap
+	nmapMu          sync.RWMutex
+	nmapOnce        sync.Once
+	nmapInitFailure interface{}
+)
 
 var ProbesCount = 0     //探针数
 var MatchCount = 0      //指纹数
@@ -23,14 +29,9 @@ type Logger interface {
 }
 
 // r["PROBE"] 总探针数、r["MATCH"] 总指纹数 、r["USED_PROBE"] 已使用探针数、r["USED_MATCH"] 已使用指纹数
-func init() {
-	initWithFilter(9)
-}
-
-func initWithFilter(filter int) {
+func buildNmap(filter int) *Nmap {
 	//初始化NMAP探针库
-	repairNMAPString()
-	nmap = &Nmap{
+	nmap := &Nmap{
 		exclude:      emptyPortList,
 		probeNameMap: make(map[string]*probe),
 		probeSort:    []string{},
@@ -64,13 +65,13 @@ func initWithFilter(filter int) {
 	for i := 0; i <= 65535; i++ {
 		nmap.portProbeMap[i] = []string{}
 	}
-	nmap.loads(nmapServiceProbes + nmapCustomizeProbes)
+	nmap.loads(repairNMAPString(nmapServiceProbes) + nmapCustomizeProbes)
 	//修复fallback
 	nmap.fixFallback()
 	//新增自定义指纹信息
-	customNMAPMatch()
+	customNMAPMatch(nmap)
 	//优化检测逻辑，及端口对应的默认探针
-	optimizeNMAPProbes()
+	optimizeNMAPProbes(nmap)
 	//排序
 	nmap.sslSecondProbeMap = nmap.sortOfRarity(nmap.sslSecondProbeMap)
 	nmap.allProbeMap = nmap.sortOfRarity(nmap.allProbeMap)
@@ -79,21 +80,56 @@ func initWithFilter(filter int) {
 		nmap.portProbeMap[index] = nmap.sortOfRarity(value)
 	}
 	//输出统计数据状态
-	statistical()
+	return nmap
 }
 
-func statistical() {
-	ProbesCount = len(nmap.probeSort)
+// installNmap publishes a fully constructed read-only snapshot while nmapMu is held.
+func installNmap(next *Nmap) {
+	ProbesCount, MatchCount, UsedProbesCount, UsedMatchCount = statistical(next)
+	nmap = next
+}
+
+// runInitialization makes sync.Once initialization failures stable: the first
+// panic is rethrown for every caller instead of degrading into a nil snapshot.
+func runInitialization(once *sync.Once, failure *interface{}, initialize func()) {
+	once.Do(func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				*failure = recovered
+			}
+		}()
+		initialize()
+	})
+	if *failure != nil {
+		panic(*failure)
+	}
+}
+
+func initializeNmap(filter int, builder func(int) *Nmap) bool {
+	initialized := false
+	runInitialization(&nmapOnce, &nmapInitFailure, func() {
+		next := builder(filter)
+		nmapMu.Lock()
+		defer nmapMu.Unlock()
+		installNmap(next)
+		initialized = true
+	})
+	return initialized
+}
+
+func statistical(nmap *Nmap) (probesCount, matchCount, usedProbesCount, usedMatchCount int) {
+	probesCount = len(nmap.probeSort)
 	for _, p := range nmap.probeNameMap {
-		MatchCount += len(p.matchGroup)
+		matchCount += len(p.matchGroup)
 	}
-	UsedProbesCount = len(nmap.portProbeMap[0])
+	usedProbesCount = len(nmap.portProbeMap[0])
 	for _, p := range nmap.portProbeMap[0] {
-		UsedMatchCount += len(nmap.probeNameMap[p].matchGroup)
+		usedMatchCount += len(nmap.probeNameMap[p].matchGroup)
 	}
+	return
 }
 
-func repairNMAPString() {
+func repairNMAPString(nmapServiceProbes string) string {
 	nmapServiceProbes = strings.ReplaceAll(nmapServiceProbes, "${backquote}", "`")
 	nmapServiceProbes = strings.ReplaceAll(nmapServiceProbes, `q|GET / HTTP/1.0\r\n\r\n|`,
 		`q|GET / HTTP/1.0\r\nHost: {Host}\r\nUser-Agent: Mozilla/5.0 (Windows; U; MSIE 9.0; Windows NT 9.0; en-US)\r\nAccept-Language: zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2\r\nAccept: */*\r\n\r\n|`)
@@ -117,9 +153,10 @@ func repairNMAPString() {
 	nmapServiceProbes = strings.ReplaceAll(nmapServiceProbes, `match rtmp`, `# match rtmp`)
 	nmapServiceProbes = strings.ReplaceAll(nmapServiceProbes, `nmap`, `pamn`)
 	nmapServiceProbes = strings.ReplaceAll(nmapServiceProbes, `Nmap`, `pamn`)
+	return nmapServiceProbes
 }
 
-func customNMAPMatch() {
+func customNMAPMatch(nmap *Nmap) {
 	//新增自定义指纹信息
 	nmap.AddMatch("TCP_GetRequest", `echo m|^GET / HTTP/1.0\r\n\r\n$|s`)
 	nmap.AddMatch("TCP_GetRequest", `mongodb m|.*It looks like you are trying to access MongoDB.*|s p/MongoDB/`)
@@ -154,7 +191,7 @@ func customNMAPMatch() {
 	nmap.AddMatch("TCP_redis-server", `redis m|^-NOAUTH Authentication required.|s p/Redis key-value store/`)
 }
 
-func optimizeNMAPProbes() {
+func optimizeNMAPProbes(nmap *Nmap) {
 	nmap.probeNameMap["TCP_GenericLines"].sslports = nmap.probeNameMap["TCP_GenericLines"].sslports.append(993, 994, 456, 995)
 	//优化检测逻辑，及端口对应的默认探针
 	nmap.portProbeMap[993] = append([]string{"TCP_GenericLines"}, nmap.portProbeMap[993]...)
@@ -183,7 +220,13 @@ func optimizeNMAPProbes() {
 
 // 配置类
 func SetFilter(filter int) {
-	initWithFilter(filter)
+	if initializeNmap(filter, buildNmap) {
+		return
+	}
+	nmapMu.Lock()
+	defer nmapMu.Unlock()
+	next := buildNmap(filter)
+	installNmap(next)
 }
 
 func SetLogger(v Logger) {
@@ -192,7 +235,10 @@ func SetLogger(v Logger) {
 
 // 功能类
 func New() *Nmap {
+	initializeNmap(9, buildNmap)
+	nmapMu.RLock()
 	n := *nmap
+	nmapMu.RUnlock()
 	return &n
 }
 

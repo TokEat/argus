@@ -45,6 +45,13 @@ type OutputMessage struct {
 }
 
 type Config struct {
+	// ExecutionMode and RiskValidationTargets are internal Server-to-Agent
+	// fields. Public task creation deliberately does not accept them; they are
+	// populated only after a version-bound risk-validation confirmation.
+	ExecutionMode              string
+	RequiredRuleVersion        string
+	RiskValidationTargets      map[string][]string
+	RiskValidationPocHashes    map[string]string
 	Targets                    []string
 	Ports                      string
 	NoSubdomainBruteForce      bool
@@ -100,8 +107,15 @@ type Config struct {
 	APIConfigFilePath          string
 	FingerConfigFilePath       string
 	RuleFilesOnly              bool
-	PasswordFile               string
-	Password                   string
+	// KnowledgePackageHash and KnowledgeRuleVersion are verified Agent rule
+	// identities. They are internal-only and must never enter task JSON.
+	KnowledgePackageHash string `json:"-"`
+	KnowledgeRuleVersion string `json:"-"`
+	// MachineOutput is a standalone CLI presentation hint. It is never
+	// accepted from Server task JSON and does not change scan stages.
+	MachineOutput bool `json:"-"`
+	PasswordFile  string
+	Password      string
 }
 
 type CDNResult struct {

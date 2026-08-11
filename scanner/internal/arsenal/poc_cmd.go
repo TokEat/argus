@@ -45,7 +45,9 @@ func HandlePocCommand(args []string) {
 }
 
 func pocUsage() {
-	fmt.Println(`用法: dddd poc <子命令>
+	fmt.Println(`Argus CLI 规则库管理
+
+用法: dddd poc <子命令>
 
 子命令:
   list      列出 POC (--name, --severity 过滤)
@@ -74,7 +76,7 @@ func pocList(args []string) {
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"名称", "严重度", "标签", "来源", "启用"})
+	table.SetHeader([]string{"名称", "漏洞等级", "执行类别", "执行风险", "标签", "来源", "启用"})
 	table.SetAutoWrapText(false)
 
 	for _, p := range pocs {
@@ -86,7 +88,7 @@ func pocList(args []string) {
 		if !p.Enabled {
 			enabled = "⬜"
 		}
-		table.Append([]string{p.Name, p.Severity, tags, p.Source, enabled})
+		table.Append([]string{p.Name, p.Severity, p.ExecutionClass, p.RiskLevel, tags, p.Source, enabled})
 	}
 	table.Render()
 	fmt.Printf("  共 %d 个 (显示 %d-%d)\n", total, *offset+1, *offset+len(pocs))
@@ -112,6 +114,8 @@ func pocShow(args []string) {
 	}
 	fmt.Printf("# Name:     %s\n", poc.Name)
 	fmt.Printf("# Severity: %s\n", poc.Severity)
+	fmt.Printf("# Execution: %s\n", poc.ExecutionClass)
+	fmt.Printf("# Risk:     %s\n", poc.RiskLevel)
 	fmt.Printf("# Tags:     %s\n", poc.Tags)
 	fmt.Printf("# Author:   %s\n", poc.Author)
 	fmt.Printf("# Source:    %s\n", poc.Source)

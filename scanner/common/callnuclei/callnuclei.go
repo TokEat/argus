@@ -29,6 +29,22 @@ var (
 	memProfile string // optional profile file path
 )
 
+// Presentation controls output from a single embedded Nuclei invocation. Its
+// zero value retains the interactive defaults used by Server and Agent calls.
+// MachineOutput is for callers that route findings through Argus' callback and
+// reserve stdout for their own structured stream.
+type Presentation struct {
+	MachineOutput bool
+}
+
+func applyPresentation(options *types.Options, presentation []Presentation) {
+	if len(presentation) == 0 || !presentation[0].MachineOutput {
+		return
+	}
+	options.NoColor = true
+	options.EnableProgressBar = false
+}
+
 func CallNuclei(TargetAndPocsName map[string][]string,
 	proxy string,
 	callBack func(result output.ResultEvent),
@@ -38,7 +54,8 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 	fs embed.FS,
 	np string,
 	excludeTags []string,
-	severities []string) []output.ResultEvent {
+	severities []string,
+	presentation ...Presentation) []output.ResultEvent {
 
 	// Task 2.1: 清空全局 Results，防止跨 batch 调用结果累积。
 	output.ResultsLock.Lock()
@@ -62,6 +79,7 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 	}
 
 	readConfig(options, TargetAndPocsName, proxy, nameForSearch, NoInteractsh, wafBypassHeaders, np, excludeTags)
+	applyPresentation(options, presentation)
 	// configPath, _ := flagSet.GetConfigFilePath()
 
 	if options.ListDslSignatures {
@@ -140,7 +158,8 @@ func CallNucleiDebug(TargetAndPocsName map[string][]string,
 	fs embed.FS,
 	np string,
 	excludeTags []string,
-	severities []string) []output.ResultEvent {
+	severities []string,
+	presentation ...Presentation) []output.ResultEvent {
 
 	output.ResultsLock.Lock()
 	output.Results = nil
@@ -157,6 +176,7 @@ func CallNucleiDebug(TargetAndPocsName map[string][]string,
 	}
 
 	readConfig(options, TargetAndPocsName, proxy, nameForSearch, NoInteractsh, wafBypassHeaders, np, excludeTags)
+	applyPresentation(options, presentation)
 
 	// Enable MatcherStatus so WriteFailure fires for non-matching templates,
 	// giving us request/response data even when the POC doesn't match.

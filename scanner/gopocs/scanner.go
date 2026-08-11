@@ -24,6 +24,38 @@ type scanTask struct {
 	Info structs.HostInfo
 }
 
+// Presentation controls terminal-only output for one GoPoc dispatch.  Its zero
+// value preserves the interactive behaviour used by existing callers.
+//
+// MachineOutput must be set by a caller that owns a structured stdout stream.
+// Findings still use the supplied emit callback (or ddout's fallback); only
+// transient progress and diagnostics are suppressed.
+type Presentation struct {
+	MachineOutput bool
+}
+
+var presentations sync.Map // map[*structs.HostInfo]Presentation
+
+func presentationFor(info *structs.HostInfo) Presentation {
+	if info == nil {
+		return Presentation{}
+	}
+	if value, ok := presentations.Load(info); ok {
+		return value.(Presentation)
+	}
+	return Presentation{}
+}
+
+func shouldRenderProgress(info *structs.HostInfo) bool {
+	return !presentationFor(info).MachineOutput
+}
+
+func printDiagnostic(info *structs.HostInfo, values ...interface{}) {
+	if shouldRenderProgress(info) {
+		fmt.Println(values...)
+	}
+}
+
 type dispatcher struct {
 	progressMu   sync.Mutex
 	currentCount int
@@ -31,6 +63,7 @@ type dispatcher struct {
 	resultsMu    sync.Mutex
 	allCount     int
 	emit         func(structs.OutputMessage)
+	presentation Presentation
 }
 
 func (d *dispatcher) addScan(name string, info structs.HostInfo, ch chan struct{}, wg *sync.WaitGroup) {
@@ -51,6 +84,8 @@ func (d *dispatcher) addScan(name string, info structs.HostInfo, ch chan struct{
 		defer func() { <-ch }()
 		info.WriteResult = d.writeResult
 		info.Emit = d.emit
+		presentations.Store(&info, d.presentation)
+		defer presentations.Delete(&info)
 		d.scanFunc(name, &info)
 	}()
 }
@@ -96,6 +131,13 @@ func GoPocsDispatcher(nucleiResults []NucleiResult) {
 }
 
 func Dispatch(ipPortMap map[string]string, goPocThreads int, password string, passwordFile string, nucleiResults []NucleiResult, emit func(structs.OutputMessage)) []structs.GoPocsResultType {
+	return DispatchWithPresentation(ipPortMap, goPocThreads, password, passwordFile, nucleiResults, emit, Presentation{})
+}
+
+// DispatchWithPresentation is the structured-output variant of Dispatch.
+// It is deliberately explicit so Agent and existing callers retain their
+// current interactive presentation unless they opt in.
+func DispatchWithPresentation(ipPortMap map[string]string, goPocThreads int, password string, passwordFile string, nucleiResults []NucleiResult, emit func(structs.OutputMessage), presentation Presentation) []structs.GoPocsResultType {
 	if len(ipPortMap) == 0 && len(nucleiResults) == 0 {
 		return nil
 	}
@@ -109,7 +151,8 @@ func Dispatch(ipPortMap map[string]string, goPocThreads int, password string, pa
 	}
 
 	dispatcher := &dispatcher{
-		emit: emit,
+		emit:         emit,
+		presentation: presentation,
 	}
 
 	plan := buildScanPlan(ipPortMap, password, passwordFile, dispatcher.writeResult)
@@ -170,7 +213,9 @@ func Dispatch(ipPortMap map[string]string, goPocThreads int, password string, pa
 	}
 
 	wg.Wait()
-	fmt.Printf("\r\033[K")
+	if !presentation.MachineOutput {
+		fmt.Printf("\r\033[K")
+	}
 	gologger.Info().Msg("Golang Poc引擎扫描结束")
 
 	results := dispatcher.snapshotResults()

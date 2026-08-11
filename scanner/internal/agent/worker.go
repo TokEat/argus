@@ -2,15 +2,15 @@ package agent
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/sha256"
 	"dddd/scanner/ddout"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -27,17 +27,19 @@ import (
 	"dddd/scanner/internal/arsenal"
 	"dddd/scanner/internal/engine"
 	"dddd/scanner/internal/exploit"
+	"dddd/scanner/internal/timing"
 	"dddd/scanner/structs"
 	pb "github.com/user/dddd-proto/go/scan"
+	"github.com/user/dddd-proto/go/scanplan"
 
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/gologger/levels"
 	gologgerWriter "github.com/projectdiscovery/gologger/writer"
-	"gopkg.in/yaml.v3"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/metadata"
 )
 
 // grpcTeeWriter 实现 gologger Writer 接口，将日志同时写入本地终端和 gRPC StreamLogs。
@@ -201,7 +203,13 @@ var (
 	runScanTask    = engine.RunTask
 )
 
-const agentVersion = "v2.3.0"
+const agentVersion = "v2.7.0"
+
+type dispatchedTaskEnvelope struct {
+	ResumePlan            *scanplan.ResumePlan
+	ResumePlanHash        string
+	ObservationConfigHash string
+}
 
 // Worker 是扫描节点的核心
 type Worker struct {
@@ -221,6 +229,15 @@ type Worker struct {
 	tags         map[string]string
 	rulesMu      sync.Mutex
 	pendingRules *arsenal.PreparedRulePackage
+	// activePackageSHA256 is the verified byte identity of the SQLite package
+	// that produced the currently materialized config directory. It is guarded
+	// by rulesMu and is never supplied by a dispatched task.
+	activePackageSHA256 string
+	// initializingRules covers the interval after a task has verified the
+	// materialized rule package and before it is visible in runningTasks.
+	// Keeping that interval counted prevents activation from replacing files
+	// while NewScanContext is still reading them.
+	initializingRules int
 
 	// sem 并发控制信号量
 	sem chan struct{}
@@ -509,12 +526,6 @@ func (w *Worker) subscribeAndClaim(quit chan struct{}) {
 			w.handleDebugCommand(notify.DebugCommand)
 			continue
 		}
-		if notify.NotifyType == "api_config_updated" {
-			log.Println("[Subscribe] Received API config update signal from Control Plane!")
-			w.syncAPIConfig()
-			continue
-		}
-
 		// 有空闲 worker 就立即去认领任务
 		w.claimAvailableTasks()
 	}
@@ -597,8 +608,8 @@ func (w *Worker) heartbeatLoop() {
 		}
 		if w.client != nil {
 			w.mu.Lock()
-			runningCount := int32(len(w.runningTasks))
-			taskIDs := make([]string, 0, runningCount)
+			runningCount := int32(len(w.runningTasks) + w.initializingRules)
+			taskIDs := make([]string, 0, len(w.runningTasks))
 			for tid := range w.runningTasks {
 				taskIDs = append(taskIDs, tid)
 			}
@@ -618,7 +629,7 @@ func (w *Worker) heartbeatLoop() {
 			resp, err := w.client.Heartbeat(hbCtx, &pb.HeartbeatReq{
 				AgentId:        w.agentID,
 				Status:         "Alive",
-				RuleVersion:    w.ruleVersion,
+				RuleVersion:    w.currentRuleVersion(),
 				RunningTasks:   runningCount,
 				RunningTaskIds: taskIDs,
 				CpuUsage:       float32(cpuUsage),
@@ -666,8 +677,7 @@ func (w *Worker) commandLoop() {
 		if w.draining.Load() {
 			return
 		}
-		cmdURL := fmt.Sprintf("%s/api/v1/agents/%s/commands?api_config_hash=%s",
-			w.apiURL, w.agentID, url.QueryEscape(w.localAPIConfigHash()))
+		cmdURL := fmt.Sprintf("%s/api/v1/agents/%s/commands", w.apiURL, w.agentID)
 		resp, err := w.apiGet(cmdURL)
 		if err != nil {
 			log.Printf("[Command] Poll failed: %v", err)
@@ -682,21 +692,14 @@ func (w *Worker) commandLoop() {
 
 func (w *Worker) handleAgentCommandResponse(body []byte) {
 	var result struct {
-		CancelTasks   []string `json:"cancel_tasks"`
-		ReloadRules   bool     `json:"reload_rules"`
-		RuleVersion   string   `json:"rule_version"`
-		SyncAPIConfig bool     `json:"sync_api_config"`
-		APIConfigHash string   `json:"api_config_hash"`
+		CancelTasks []string `json:"cancel_tasks"`
+		ReloadRules bool     `json:"reload_rules"`
+		RuleVersion string   `json:"rule_version"`
 	}
 	if json.Unmarshal(body, &result) != nil {
 		return
 	}
-	if result.SyncAPIConfig {
-		log.Printf("[Command] Received API config sync signal from Control Plane (remote=%s, local=%s)",
-			truncHash(result.APIConfigHash), truncHash(w.localAPIConfigHash()))
-		w.syncAPIConfig()
-	}
-	if result.ReloadRules && result.RuleVersion != "" && result.RuleVersion != "unknown" && result.RuleVersion != w.ruleVersion {
+	if result.ReloadRules && result.RuleVersion != "" && result.RuleVersion != "unknown" && result.RuleVersion != w.currentRuleVersion() {
 		log.Println("[Command] Received dynamic rule hot-reload signal from Control Plane!")
 		w.syncRules()
 	}
@@ -715,8 +718,6 @@ func (w *Worker) syncRules() {
 	defer w.rulesMu.Unlock()
 
 	w.activatePendingRulesLocked()
-	w.syncAPIConfigLocked()
-
 	log.Println("[Sync] Checking Arsenal DB for updates...")
 
 	// 1. 探测 Server 端 DB hash（轻量级 JSON 请求）
@@ -755,6 +756,11 @@ func (w *Worker) syncRules() {
 			}
 			return
 		}
+		manifest, err := arsenal.ReadRulePackageManifest("config")
+		if err != nil || w.bindActivePackageSHA256Locked(manifest) != nil {
+			log.Printf("[Sync] Materialized Arsenal package failed SHA-256 verification; refusing to use it")
+			return
+		}
 		log.Printf("[Sync] Arsenal DB up to date (hash=%s, version=%s, rules=%d)",
 			truncHash(hashResp.Hash), hashResp.RuleVersion, hashResp.ArsenalCount)
 		w.ruleVersion = hashResp.RuleVersion
@@ -780,6 +786,12 @@ func (w *Worker) syncRules() {
 
 	if len(dbData) == 0 {
 		log.Println("[Sync] Downloaded empty DB, skipping")
+		return
+	}
+	declaredPackageSHA256 := strings.TrimSpace(dbResp.Header.Get("X-Arsenal-SHA256"))
+	actualPackageSHA256 := fmt.Sprintf("%x", sha256.Sum256(dbData))
+	if len(declaredPackageSHA256) != sha256.Size*2 || declaredPackageSHA256 != strings.ToLower(declaredPackageSHA256) || declaredPackageSHA256 != actualPackageSHA256 {
+		log.Printf("[Sync] Downloaded Arsenal DB failed package SHA-256 verification")
 		return
 	}
 
@@ -823,7 +835,7 @@ func (w *Worker) syncRules() {
 	// 5. 先物化为 CLI 形态 config/，成功激活后才保存 hash + 更新版本。
 	fileHash := dbResp.Header.Get("X-Arsenal-Hash")
 	if fileHash == "" {
-		fileHash = fmt.Sprintf("%x", md5.Sum(dbData))
+		fileHash = actualPackageSHA256
 	}
 	if err := w.prepareOrActivateRulesLocked(hashResp.Hash, hashResp.RuleVersion); err != nil {
 		log.Printf("[Sync] Failed to materialize downloaded arsenal.db: %v", err)
@@ -832,87 +844,6 @@ func (w *Worker) syncRules() {
 
 	log.Printf("[Sync] ✅ Arsenal DB cached: size=%d bytes, db_hash=%s, rule_hash=%s, version=%s",
 		len(dbData), truncHash(fileHash), truncHash(hashResp.Hash), hashResp.RuleVersion)
-}
-
-func (w *Worker) syncAPIConfig() {
-	w.rulesMu.Lock()
-	defer w.rulesMu.Unlock()
-	w.syncAPIConfigLocked()
-}
-
-func (w *Worker) syncAPIConfigLocked() {
-	resp, err := w.apiGet(w.apiURL + "/api/v1/agents/config/api-keys")
-	if err != nil {
-		log.Printf("[Sync] Failed to fetch agent api-config.yaml: %v", err)
-		return
-	}
-	data, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		log.Printf("[Sync] Failed to read agent api-config.yaml: %v", err)
-		return
-	}
-	if strings.TrimSpace(string(data)) == "" {
-		if err := removeAgentAPIConfig(); err != nil {
-			log.Printf("[Sync] Failed to remove stale agent api-config.yaml: %v", err)
-		}
-		return
-	}
-	var parsed map[string][]string
-	if err := yaml.Unmarshal(data, &parsed); err != nil {
-		log.Printf("[Sync] Ignoring invalid agent api-config.yaml: %v", err)
-		return
-	}
-	if err := writeAgentAPIConfig(data); err != nil {
-		log.Printf("[Sync] Failed to write agent api-config.yaml: %v", err)
-		return
-	}
-	log.Printf("[Sync] ✅ Agent api-config.yaml synchronized (%d providers)", len(parsed))
-}
-
-func (w *Worker) localAPIConfigHash() string {
-	data, err := os.ReadFile(filepath.Join("config", "api-config.yaml"))
-	if err != nil || len(data) == 0 {
-		return ""
-	}
-	return fmt.Sprintf("%x", md5.Sum(data))
-}
-
-func removeAgentAPIConfig() error {
-	path := filepath.Join("config", "api-config.yaml")
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
-}
-
-func writeAgentAPIConfig(data []byte) error {
-	if err := os.MkdirAll("config", 0o755); err != nil {
-		return err
-	}
-	tmpFile, err := os.CreateTemp("config", "api-config-*.yaml.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmpFile.Name()
-	if _, err := tmpFile.Write(data); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
-		return err
-	}
-	if err := tmpFile.Close(); err != nil {
-		os.Remove(tmpPath)
-		return err
-	}
-	if err := os.Chmod(tmpPath, 0o600); err != nil {
-		os.Remove(tmpPath)
-		return err
-	}
-	if err := os.Rename(tmpPath, filepath.Join("config", "api-config.yaml")); err != nil {
-		os.Remove(tmpPath)
-		return err
-	}
-	return nil
 }
 
 func (w *Worker) prepareOrActivateRulesLocked(hash, ruleVersion string) error {
@@ -969,6 +900,7 @@ func (w *Worker) activatePreparedRulesLocked(prepared *arsenal.PreparedRulePacka
 	}
 	w.saveLocalDBHash(prepared.Manifest.Hash)
 	w.ruleVersion = prepared.Manifest.RuleVersion
+	w.activePackageSHA256 = prepared.Manifest.PackageSHA256
 	log.Printf("[Sync] ✅ Arsenal rules materialized to config/: hash=%s version=%s pocs=%d",
 		truncHash(prepared.Manifest.Hash), prepared.Manifest.RuleVersion, prepared.Manifest.Counts.Pocs)
 	return nil
@@ -977,32 +909,7 @@ func (w *Worker) activatePreparedRulesLocked(prepared *arsenal.PreparedRulePacka
 func (w *Worker) runningTaskCount() int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return len(w.runningTasks)
-}
-
-func (w *Worker) ensureRulesMaterializedForTask() error {
-	if arsenal.HasUsableRuleFiles("config") {
-		return nil
-	}
-	w.rulesMu.Lock()
-	defer w.rulesMu.Unlock()
-
-	w.activatePendingRulesLocked()
-	if arsenal.HasUsableRuleFiles("config") {
-		return nil
-	}
-
-	localHash := w.loadLocalDBHash()
-	if localHash == "" {
-		return fmt.Errorf("agent rule files are not materialized and local arsenal hash is empty")
-	}
-	if err := w.prepareOrActivateRulesLocked(localHash, w.ruleVersion); err != nil {
-		return fmt.Errorf("materialize local arsenal.db: %w", err)
-	}
-	if !arsenal.HasUsableRuleFiles("config") {
-		return fmt.Errorf("agent rule files are not materialized; activation may be deferred by running tasks")
-	}
-	return nil
+	return len(w.runningTasks) + w.initializingRules
 }
 
 // loadLocalDBHash 读取本地存储的 DB hash（用于增量对比）。
@@ -1043,6 +950,14 @@ func (w *Worker) executeTask(task *pb.Task) {
 	log.Printf("Received Task: %s with targets: %v", task.TaskId, task.Targets)
 
 	cfg := engine.Config(structs.DefaultConfig())
+	// Server-dispatched asset discovery is always POC-off. Apply the safe
+	// baseline before decoding so legacy `{}` configs cannot inherit the CLI's
+	// explicit POC defaults.
+	cfg.NoPoc = true
+	cfg.GolangPoc = false
+	cfg.DisableGeneralPoc = true
+	cfg.PocNameForSearch = ""
+	var envelope dispatchedTaskEnvelope
 	if len(task.Config) > 0 {
 		if err := json.Unmarshal(task.Config, &cfg); err != nil {
 			err = fmt.Errorf("decode task config: %w", err)
@@ -1050,27 +965,112 @@ func (w *Worker) executeTask(task *pb.Task) {
 			w.reportTaskCompletion(task.TaskId, "FAILED", err.Error())
 			return
 		}
+		if err := json.Unmarshal(task.Config, &envelope); err != nil {
+			err = fmt.Errorf("decode internal task envelope: %w", err)
+			log.Printf("Failed to decode task envelope for task %s: %v", task.TaskId, err)
+			w.reportTaskCompletion(task.TaskId, "FAILED", err.Error())
+			return
+		}
+	}
+	if err := engine.ValidateLegacyProviderConfig(cfg); err != nil {
+		err = fmt.Errorf("reject legacy provider task: %w", err)
+		log.Printf("Rejected legacy provider task %s: %v", task.TaskId, err)
+		w.reportTaskCompletion(task.TaskId, "FAILED", err.Error())
+		return
+	}
+	if strings.TrimSpace(cfg.ExecutionMode) == "" && (!cfg.NoPoc || cfg.GolangPoc || !cfg.DisableGeneralPoc || strings.TrimSpace(cfg.PocNameForSearch) != "") {
+		err := errors.New("ordinary Agent tasks cannot execute POCs; use a confirmed risk-validation batch")
+		log.Printf("Rejected unconfirmed POC task %s: %v", task.TaskId, err)
+		w.reportTaskCompletion(task.TaskId, "FAILED", err.Error())
+		return
 	}
 	cfg.Targets = task.Targets
 	cfg.OutputFile = ""
 	cfg.ReportName = ""
 	applyAgentRuleFileConfig(&cfg)
 
-	if err := w.ensureRulesMaterializedForTask(); err != nil {
+	timingRecorder := timing.NewRecorder(nil)
+	ruleSpan, timingErr := timingRecorder.Begin(scanplan.TimingRulePrepare, "")
+	if timingErr != nil {
+		log.Printf("Failed to begin rule preparation timing for task %s: %v", task.TaskId, timingErr)
+	}
+	taskRuleHash, taskRuleVersion, releaseRuleUse, err := w.acquireTaskRuleUse()
+	if ruleSpan != nil {
+		outcome := scanplan.ObservationSuccess
+		if err != nil {
+			outcome = scanplan.ObservationFailed
+		}
+		if finishErr := finishTimingSpan(ruleSpan, outcome); finishErr != nil {
+			log.Printf("Failed to finish rule preparation timing for task %s: %v", task.TaskId, finishErr)
+		}
+	}
+	if err != nil {
 		err = fmt.Errorf("agent rules not ready: %w", err)
 		log.Printf("Failed to prepare rules for task %s: %v", task.TaskId, err)
 		w.reportTaskCompletion(task.TaskId, "FAILED", err.Error())
 		return
 	}
+	// The Engine cache is keyed by the verified package identity. These fields
+	// are deliberately not part of task JSON and cannot be controlled by the
+	// dispatcher.
+	cfg.KnowledgePackageHash = taskRuleHash
+	cfg.KnowledgeRuleVersion = taskRuleVersion
+	if strings.EqualFold(strings.TrimSpace(cfg.ExecutionMode), "risk_validation") {
+		requiredRuleVersion := strings.TrimSpace(cfg.RequiredRuleVersion)
+		if requiredRuleVersion == "" || taskRuleVersion != requiredRuleVersion {
+			err := fmt.Errorf("risk validation requires Agent rules %q, current version is %q", requiredRuleVersion, taskRuleVersion)
+			log.Printf("Rejected risk validation task %s: %v", task.TaskId, err)
+			w.reportTaskCompletion(task.TaskId, "FAILED", err.Error())
+			releaseRuleUse()
+			return
+		}
+	}
+	resumeRequested := envelope.ResumePlan != nil || strings.TrimSpace(envelope.ResumePlanHash) != "" || strings.TrimSpace(envelope.ObservationConfigHash) != ""
+	if resumeRequested {
+		decodedConfigHash, configHashErr := hex.DecodeString(envelope.ObservationConfigHash)
+		if envelope.ResumePlan == nil || strings.TrimSpace(envelope.ResumePlanHash) == "" ||
+			envelope.ObservationConfigHash != strings.ToLower(strings.TrimSpace(envelope.ObservationConfigHash)) ||
+			configHashErr != nil || len(decodedConfigHash) != 32 {
+			err := errors.New("incomplete or mismatched resume task envelope")
+			log.Printf("Rejected resume task %s: %v", task.TaskId, err)
+			w.reportTaskCompletion(task.TaskId, "FAILED", err.Error())
+			releaseRuleUse()
+			return
+		}
+		if err := engine.ValidateResumePlan(cfg, task.Targets, taskRuleVersion, envelope.ResumePlanHash, envelope.ResumePlan); err != nil {
+			err = fmt.Errorf("reject resume task: %w", err)
+			log.Printf("Rejected resume task %s: %v", task.TaskId, err)
+			w.reportTaskCompletion(task.TaskId, "FAILED", err.Error())
+			releaseRuleUse()
+			return
+		}
+	}
 
+	contextSpan, timingErr := timingRecorder.Begin(scanplan.TimingContextInit, "")
+	if timingErr != nil {
+		log.Printf("Failed to begin context initialization timing for task %s: %v", task.TaskId, timingErr)
+	}
 	ctx, err := newScanContext(cfg)
+	if contextSpan != nil {
+		outcome := scanplan.ObservationSuccess
+		if err != nil {
+			outcome = scanplan.ObservationFailed
+		}
+		if finishErr := finishTimingSpan(contextSpan, outcome); finishErr != nil {
+			log.Printf("Failed to finish context initialization timing for task %s: %v", task.TaskId, finishErr)
+		}
+	}
 	if err != nil {
 		log.Printf("Failed to initialize scan context for task %s: %v", task.TaskId, err)
 		w.reportTaskCompletion(task.TaskId, "FAILED", err.Error())
+		releaseRuleUse()
 		return
 	}
 	defer ctx.Close()
 	ctx.TaskID = task.TaskId
+	if resumeRequested {
+		ctx.ResumePlan = envelope.ResumePlan
+	}
 
 	var cancelRequested atomic.Bool
 	cancelTask := func() {
@@ -1083,6 +1083,7 @@ func (w *Worker) executeTask(task *pb.Task) {
 	w.mu.Lock()
 	w.runningTasks[task.TaskId] = cancelTask
 	w.mu.Unlock()
+	releaseRuleUse()
 
 	defer func() {
 		w.mu.Lock()
@@ -1092,7 +1093,11 @@ func (w *Worker) executeTask(task *pb.Task) {
 	}()
 
 	// 挂载 OutputHook 进行 gRPC Stream 实时回传
-	stream, err := w.client.StreamResult(context.Background())
+	streamCtx := context.Background()
+	if w.sessionToken != "" {
+		streamCtx = metadata.AppendToOutgoingContext(streamCtx, "x-agent-token", w.sessionToken)
+	}
+	stream, err := w.client.StreamResult(streamCtx)
 	if err != nil {
 		err = fmt.Errorf("open grpc result stream: %w", err)
 		log.Printf("Failed to open grpc stream for task %s: %v", task.TaskId, err)
@@ -1102,6 +1107,87 @@ func (w *Worker) executeTask(task *pb.Task) {
 
 	var streamMu sync.Mutex
 	var streamErr error
+	sendTimingEventLocked := func(event *scanplan.TimingEvent) {
+		if streamErr != nil || event == nil {
+			return
+		}
+		if err := event.Validate(); err != nil {
+			streamErr = fmt.Errorf("validate timing event: %w", err)
+			if ctx.Cancel != nil {
+				ctx.Cancel()
+			}
+			return
+		}
+		payload, err := json.Marshal(event)
+		if err != nil {
+			streamErr = fmt.Errorf("marshal timing event: %w", err)
+			if ctx.Cancel != nil {
+				ctx.Cancel()
+			}
+			return
+		}
+		if err := stream.Send(&pb.ScanResult{TaskId: task.TaskId, PayloadType: scanplan.TimingEventPayloadType, Payload: payload, Timestamp: event.FinishedAt.UnixMilli()}); err != nil {
+			streamErr = fmt.Errorf("send timing event: %w", err)
+			if ctx.Cancel != nil {
+				ctx.Cancel()
+			}
+		}
+	}
+	if err := timingRecorder.Bind(task.TaskId, w.agentID); err != nil {
+		streamErr = fmt.Errorf("bind timing recorder: %w", err)
+		if ctx.Cancel != nil {
+			ctx.Cancel()
+		}
+	} else if events, err := timingRecorder.Snapshot(); err != nil {
+		streamErr = fmt.Errorf("snapshot timing events: %w", err)
+		if ctx.Cancel != nil {
+			ctx.Cancel()
+		}
+	} else {
+		for i := range events {
+			sendTimingEventLocked(&events[i])
+		}
+	}
+	reporterPlan := []stageObservationReporterPlan(nil)
+	if resumeRequested {
+		reporterPlan = append(reporterPlan, stageObservationReporterPlan{
+			ConfigHash: envelope.ObservationConfigHash,
+			Stages:     envelope.ResumePlan.ExecutionStages,
+		})
+	}
+	coverageReporter := newStageObservationReporter(task.TaskId, w.agentID, task.Targets, task.Config, taskRuleVersion, cfg.ExecutionMode, reporterPlan...)
+	stageTimings := newStageTimingTracker(nil)
+	sendCoverageEventLocked := func(event *scanplan.StageObservationEvent) {
+		if streamErr != nil || event == nil {
+			return
+		}
+		if err := event.Validate(); err != nil {
+			streamErr = fmt.Errorf("validate coverage event: %w", err)
+			if ctx.Cancel != nil {
+				ctx.Cancel()
+			}
+			return
+		}
+		payload, err := json.Marshal(event)
+		if err != nil {
+			streamErr = fmt.Errorf("marshal coverage event: %w", err)
+			if ctx.Cancel != nil {
+				ctx.Cancel()
+			}
+			return
+		}
+		if err := stream.Send(&pb.ScanResult{
+			TaskId:      task.TaskId,
+			PayloadType: scanplan.StageObservationPayloadType,
+			Payload:     payload,
+			Timestamp:   event.FinishedAt.UnixMilli(),
+		}); err != nil {
+			streamErr = fmt.Errorf("send coverage event: %w", err)
+			if ctx.Cancel != nil {
+				ctx.Cancel()
+			}
+		}
+	}
 	ctx.OutputHook = func(msg engine.OutputMessage) {
 		mirrorAgentConsoleOutput(msg)
 
@@ -1120,6 +1206,7 @@ func (w *Worker) executeTask(task *pb.Task) {
 			}
 			return
 		}
+		coverageReporter.recordOutput(msg.Type, payload)
 
 		if err := stream.Send(&pb.ScanResult{
 			TaskId:      task.TaskId,
@@ -1149,18 +1236,53 @@ func (w *Worker) executeTask(task *pb.Task) {
 		}
 
 		log.Printf("[Phase] Task %s: %s %s %s", task.TaskId, phase.Phase, phase.Status, phase.Message)
-		_ = stream.Send(&pb.ScanResult{
+		if err := stream.Send(&pb.ScanResult{
 			TaskId:      task.TaskId,
 			PayloadType: "phase",
 			Payload:     payload,
 			Timestamp:   time.Now().UnixMilli(),
-		})
+		}); err != nil {
+			streamErr = fmt.Errorf("send phase event: %w", err)
+			if ctx.Cancel != nil {
+				ctx.Cancel()
+			}
+			return
+		}
+		stageTimings.observePhase(phase)
+		for _, event := range coverageReporter.observePhase(phase) {
+			sendCoverageEventLocked(event)
+			timingEvent, err := stageTimings.eventForObservation(event)
+			if err != nil {
+				streamErr = fmt.Errorf("build stage timing event: %w", err)
+				if ctx.Cancel != nil {
+					ctx.Cancel()
+				}
+				return
+			}
+			sendTimingEventLocked(timingEvent)
+		}
 	}
 
 	// 启动引擎
 	log.Printf("Starting Pipeline for Task %s...", task.TaskId)
 
 	runErr := runScanTask(ctx)
+	streamMu.Lock()
+	if streamErr == nil {
+		for _, event := range coverageReporter.finalize(runErr, cancelRequested.Load()) {
+			sendCoverageEventLocked(event)
+			timingEvent, err := stageTimings.eventForObservation(event)
+			if err != nil {
+				streamErr = fmt.Errorf("build terminal stage timing event: %w", err)
+				if ctx.Cancel != nil {
+					ctx.Cancel()
+				}
+				break
+			}
+			sendTimingEventLocked(timingEvent)
+		}
+	}
+	streamMu.Unlock()
 
 	if streamErr != nil && (runErr == nil || (!cancelRequested.Load() && errors.Is(runErr, context.Canceled))) {
 		runErr = streamErr

@@ -22,6 +22,12 @@ func NewCLI(noUseColors bool) *CLI {
 
 // Format formats the log event data into bytes
 func (c *CLI) Format(event *LogEvent) ([]byte, error) {
+	if c.NoUseColors {
+		event.Message = stripANSI(event.Message)
+		for key, value := range event.Metadata {
+			event.Metadata[key] = stripANSI(value)
+		}
+	}
 	c.colorizeLabel(event)
 
 	buffer := &bytes.Buffer{}
@@ -53,6 +59,37 @@ func (c *CLI) Format(event *LogEvent) ([]byte, error) {
 	}
 	data := buffer.Bytes()
 	return data, nil
+}
+
+// stripANSI removes CSI control sequences which may have been embedded by a
+// caller using aurora directly. Disabling the formatter's own color output is
+// otherwise not sufficient for machine-readable CLI modes.
+func stripANSI(value string) string {
+	const escape = '\x1b'
+	for {
+		start := -1
+		for i := 0; i < len(value); i++ {
+			if value[i] == escape {
+				start = i
+				break
+			}
+		}
+		if start == -1 {
+			return value
+		}
+		end := start + 1
+		if end < len(value) && value[end] == '[' {
+			end++
+			for end < len(value) {
+				if value[end] >= '@' && value[end] <= '~' {
+					end++
+					break
+				}
+				end++
+			}
+		}
+		value = value[:start] + value[end:]
+	}
 }
 
 // colorizeKey colorizes the metadata key if enabled

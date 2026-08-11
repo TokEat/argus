@@ -21,19 +21,21 @@ type Fingerprint struct {
 
 // Poc 漏洞检测模板。
 type Poc struct {
-	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	Name        string    `gorm:"uniqueIndex;not null" json:"name"`     // 模板 ID，如 CVE-2023-12345
-	FileName    string    `gorm:"index;not null" json:"file_name"`      // 完整文件名
-	Content     string    `json:"-"`                                    // Nuclei YAML 全文（列表查询时不返回）
-	ContentHash string    `json:"content_hash"`                         // MD5
-	Severity    string    `gorm:"index;default:'info'" json:"severity"` // info/low/medium/high/critical
-	Tags        string    `json:"tags"`                                 // JSON 数组
-	Author      string    `json:"author"`
-	Description string    `json:"description"`
-	Enabled     bool      `gorm:"default:true" json:"enabled"`
-	Source      string    `gorm:"default:'builtin'" json:"source"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID             uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name           string    `gorm:"uniqueIndex;not null" json:"name"`     // 模板 ID，如 CVE-2023-12345
+	FileName       string    `gorm:"index;not null" json:"file_name"`      // 完整文件名
+	Content        string    `json:"-"`                                    // Nuclei YAML 全文（列表查询时不返回）
+	ContentHash    string    `json:"content_hash"`                         // MD5
+	Severity       string    `gorm:"index;default:'info'" json:"severity"` // info/low/medium/high/critical
+	ExecutionClass string    `gorm:"index;default:'detection'" json:"execution_class"`
+	RiskLevel      string    `gorm:"index;default:'unknown'" json:"risk_level"`
+	Tags           string    `json:"tags"` // JSON 数组
+	Author         string    `json:"author"`
+	Description    string    `json:"description"`
+	Enabled        bool      `gorm:"default:true" json:"enabled"`
+	Source         string    `gorm:"default:'builtin'" json:"source"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // PocAsset stores non-YAML files required by Nuclei templates, such as helpers payloads and wordlists.

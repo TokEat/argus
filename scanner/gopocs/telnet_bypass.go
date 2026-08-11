@@ -36,7 +36,7 @@ const (
 
 func TelnetBypassScan(info *structs.HostInfo) (bool, error) {
 	gologger.Info().Msgf("[Go] [TelnetBypass] Start checking %s:%s", info.Host, info.Ports)
-	address := fmt.Sprintf("%s:%s", info.Host, info.Ports)
+	address := net.JoinHostPort(info.Host, info.Ports)
 	// 连接超时设置为5秒
 	conn, err := net.DialTimeout("tcp", address, 3*time.Second)
 	if err != nil {

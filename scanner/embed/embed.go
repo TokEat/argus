@@ -10,7 +10,6 @@
 //   - finger.yaml     指纹规则数据库
 //   - workflow.yaml    指纹→PoC 工作流映射
 //   - dir.yaml         主动探测路径数据库
-//   - api-config.yaml  搜索引擎 API 配置
 //   - subdomains.txt   子域名字典
 //   - pocs/            内嵌 Nuclei PoC 模板
 package embed

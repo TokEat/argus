@@ -48,24 +48,27 @@ type Options struct {
 	Domain             goflags.StringSlice // Domain is the domain to find subdomains for
 	DomainsFile        string              // DomainsFile is the file containing list of domains to find subdomains for
 	Output             io.Writer
-	OutputFile         string               // Output is the file to write found subdomains to.
-	OutputDirectory    string               // OutputDirectory is the directory to write results to in case list of domains is given
-	Sources            goflags.StringSlice  `yaml:"sources,omitempty"`         // Sources contains a comma-separated list of sources to use for enumeration
-	ExcludeSources     goflags.StringSlice  `yaml:"exclude-sources,omitempty"` // ExcludeSources contains the comma-separated sources to not include in the enumeration process
-	Resolvers          goflags.StringSlice  `yaml:"resolvers,omitempty"`       // Resolvers is the comma-separated resolvers to use for enumeration
-	ResolverList       string               // ResolverList is a text file containing list of resolvers to use for enumeration
-	Config             string               // Config contains the location of the config file
-	ProviderConfig     string               // ProviderConfig contains the location of the provider config file
-	Proxy              string               // HTTP proxy
-	RateLimit          int                  // Global maximum number of HTTP requests to send per second
-	RateLimits         goflags.RateLimitMap // Maximum number of HTTP requests to send per second
-	ExcludeIps         bool
-	Match              goflags.StringSlice
-	Filter             goflags.StringSlice
-	matchRegexes       []*regexp.Regexp
-	filterRegexes      []*regexp.Regexp
-	ResultCallback     OnResultCallback // OnResult callback
-	DisableUpdateCheck bool             // DisableUpdateCheck disable update checking
+	OutputFile         string              // Output is the file to write found subdomains to.
+	OutputDirectory    string              // OutputDirectory is the directory to write results to in case list of domains is given
+	Sources            goflags.StringSlice `yaml:"sources,omitempty"`         // Sources contains a comma-separated list of sources to use for enumeration
+	ExcludeSources     goflags.StringSlice `yaml:"exclude-sources,omitempty"` // ExcludeSources contains the comma-separated sources to not include in the enumeration process
+	Resolvers          goflags.StringSlice `yaml:"resolvers,omitempty"`       // Resolvers is the comma-separated resolvers to use for enumeration
+	ResolverList       string              // ResolverList is a text file containing list of resolvers to use for enumeration
+	Config             string              // Config contains the location of the config file
+	ProviderConfig     string              // ProviderConfig contains the location of the provider config file
+	// DisableProviderConfig prevents library callers from reading any provider
+	// credential file. It is used by Argus Scanner/Agent passive enumeration.
+	DisableProviderConfig bool
+	Proxy                 string               // HTTP proxy
+	RateLimit             int                  // Global maximum number of HTTP requests to send per second
+	RateLimits            goflags.RateLimitMap // Maximum number of HTTP requests to send per second
+	ExcludeIps            bool
+	Match                 goflags.StringSlice
+	Filter                goflags.StringSlice
+	matchRegexes          []*regexp.Regexp
+	filterRegexes         []*regexp.Regexp
+	ResultCallback        OnResultCallback // OnResult callback
+	DisableUpdateCheck    bool             // DisableUpdateCheck disable update checking
 }
 
 // OnResultCallback (hostResult)

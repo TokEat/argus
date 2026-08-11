@@ -44,7 +44,9 @@ func HandleFingerCommand(args []string) {
 }
 
 func fingerUsage() {
-	fmt.Println(`用法: dddd finger <子命令>
+	fmt.Println(`Argus CLI 规则库管理
+
+用法: dddd finger <子命令>
 
 子命令:
   list     列出指纹规则 (--product, --category, --source 过滤)

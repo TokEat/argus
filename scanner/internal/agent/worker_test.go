@@ -3,7 +3,11 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -18,9 +22,12 @@ import (
 
 	"dddd/scanner/internal/arsenal"
 	"dddd/scanner/internal/engine"
+	"dddd/scanner/structs"
 	pb "github.com/user/dddd-proto/go/scan"
+	"github.com/user/dddd-proto/go/scanplan"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestWorkerExecuteTaskReportsCancelled(t *testing.T) {
@@ -284,6 +291,41 @@ func TestWorkerExecuteTaskFailsOnInvalidTaskConfig(t *testing.T) {
 	}
 }
 
+func TestWorkerRejectsLegacyProviderConfigBeforeRuleOrContextInitialization(t *testing.T) {
+	origNewScanContext := newScanContext
+	t.Cleanup(func() { newScanContext = origNewScanContext })
+	newScanContext = func(cfg engine.Config) (*engine.ScanContext, error) {
+		t.Fatal("legacy Provider config reached scanner initialization")
+		return nil, nil
+	}
+	client := &fakeAgentClient{stream: &fakeResultStream{}}
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	worker.client = client
+	worker.executeTask(&pb.Task{TaskId: "task-legacy-provider", Targets: []string{"127.0.0.1"}, Config: []byte(`{"Quake":true}`)})
+	if len(client.taskCompleteReqs) != 1 || client.taskCompleteReqs[0].Status != "FAILED" || !strings.Contains(client.taskCompleteReqs[0].ErrorMessage, "legacy Provider") {
+		t.Fatalf("expected legacy Provider rejection, got %#v", client.taskCompleteReqs)
+	}
+}
+
+func TestWorkerRejectsUnconfirmedPocConfigFromOrdinaryTask(t *testing.T) {
+	origNewScanContext := newScanContext
+	t.Cleanup(func() { newScanContext = origNewScanContext })
+	newScanContext = func(cfg engine.Config) (*engine.ScanContext, error) {
+		t.Fatal("unconfirmed POC config reached scanner initialization")
+		return nil, nil
+	}
+	client := &fakeAgentClient{stream: &fakeResultStream{}}
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	worker.client = client
+	worker.executeTask(&pb.Task{
+		TaskId: "task-unconfirmed-poc", Targets: []string{"127.0.0.1"},
+		Config: []byte(`{"NoPoc":false,"GolangPoc":true}`),
+	})
+	if len(client.taskCompleteReqs) != 1 || client.taskCompleteReqs[0].Status != "FAILED" || !strings.Contains(client.taskCompleteReqs[0].ErrorMessage, "risk-validation") {
+		t.Fatalf("expected unconfirmed POC rejection, got %#v", client.taskCompleteReqs)
+	}
+}
+
 func TestWorkerExecuteTaskForcesRuleFilesOnlyConfig(t *testing.T) {
 	prepareUsableAgentConfig(t)
 
@@ -313,10 +355,15 @@ func TestWorkerExecuteTaskForcesRuleFilesOnlyConfig(t *testing.T) {
 	}
 	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
 	worker.client = client
+	worker.ruleVersion = "rules-v1"
 	worker.executeTask(&pb.Task{
 		TaskId:  "task-rule-files",
 		Targets: []string{"127.0.0.1"},
 		Config: []byte(`{
+			"ExecutionMode": "risk_validation",
+			"RequiredRuleVersion": "rules-v1",
+			"RiskValidationTargets": {"127.0.0.1": ["safe.yaml"]},
+			"RiskValidationPocHashes": {"safe.yaml": "0123456789abcdef0123456789abcdef"},
 			"FingerConfigFilePath": "data/arsenal.db",
 			"WorkflowYamlPath": "data/arsenal.db",
 			"DirSearchYaml": "data/arsenal.db",
@@ -339,8 +386,204 @@ func TestWorkerExecuteTaskForcesRuleFilesOnlyConfig(t *testing.T) {
 	if captured.NucleiTemplate != filepath.Join("config", "pocs") {
 		t.Fatalf("unexpected nuclei template path: %q", captured.NucleiTemplate)
 	}
+	if captured.ExecutionMode != "risk_validation" || captured.RequiredRuleVersion != "rules-v1" || captured.RiskValidationPocHashes["safe.yaml"] == "" || len(captured.RiskValidationTargets["127.0.0.1"]) != 1 || captured.RiskValidationTargets["127.0.0.1"][0] != "safe.yaml" {
+		t.Fatalf("internal risk validation config was not preserved: %+v", captured)
+	}
 	if len(client.taskCompleteReqs) != 1 || client.taskCompleteReqs[0].Status != "DONE" {
 		t.Fatalf("expected task completion DONE, got %#v", client.taskCompleteReqs)
+	}
+}
+
+func TestWorkerReportsTerminalCoverageEventsWithoutTrustBoundaryDimensions(t *testing.T) {
+	prepareUsableAgentConfig(t)
+	origNewScanContext := newScanContext
+	origRunScanTask := runScanTask
+	t.Cleanup(func() {
+		newScanContext = origNewScanContext
+		runScanTask = origRunScanTask
+	})
+	newScanContext = func(cfg engine.Config) (*engine.ScanContext, error) {
+		ctx, cancel := context.WithCancel(context.Background())
+		return &engine.ScanContext{Config: cfg, Ctx: ctx, Cancel: cancel}, nil
+	}
+	runScanTask = func(ctx *engine.ScanContext) error {
+		ctx.PhaseHook(engine.PhaseEvent{Phase: engine.PhaseHTTPProbe, Status: "start"})
+		ctx.OutputHook(engine.OutputMessage{Type: "Web", URI: "https://example.test"})
+		ctx.PhaseHook(engine.PhaseEvent{Phase: engine.PhaseHTTPProbe, Status: "end"})
+		return nil
+	}
+
+	stream := &fakeResultStream{}
+	client := &fakeAgentClient{stream: stream}
+	worker := NewWorker("agent-coverage", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	worker.client = client
+	worker.ruleVersion = "rules-v1"
+	worker.executeTask(&pb.Task{TaskId: "attempt-coverage", Targets: []string{"https://example.test"}, Config: []byte(`{}`)})
+
+	var events []scanplan.StageObservationEvent
+	for _, result := range stream.results() {
+		if result.PayloadType != scanplan.StageObservationPayloadType {
+			continue
+		}
+		var event scanplan.StageObservationEvent
+		if err := json.Unmarshal(result.Payload, &event); err != nil {
+			t.Fatalf("decode coverage event: %v", err)
+		}
+		if err := event.Validate(); err != nil {
+			t.Fatalf("invalid coverage event: %v", err)
+		}
+		events = append(events, event)
+	}
+	if len(events) != len(assetObservationStages) {
+		t.Fatalf("coverage events=%d, want %d", len(events), len(assetObservationStages))
+	}
+	var httpSuccess, skipped int
+	for _, event := range events {
+		if event.AttemptID != "attempt-coverage" || event.AgentID != "agent-coverage" || event.RuleVersion != "rules-v1" {
+			t.Fatalf("coverage source identity mismatch: %+v", event)
+		}
+		if event.Stage == scanplan.StageHTTPProbe && event.Outcome == scanplan.ObservationSuccess {
+			httpSuccess++
+		}
+		if event.Outcome == scanplan.ObservationSkipped {
+			skipped++
+		}
+	}
+	if httpSuccess != 1 || skipped != len(assetObservationStages)-1 {
+		t.Fatalf("httpSuccess=%d skipped=%d", httpSuccess, skipped)
+	}
+}
+
+func TestWorkerExecutesValidatedResumeSuffixAndReportsOnlyExecutedStages(t *testing.T) {
+	prepareUsableAgentConfig(t)
+	origNewScanContext := newScanContext
+	origRunScanTask := runScanTask
+	t.Cleanup(func() {
+		newScanContext = origNewScanContext
+		runScanTask = origRunScanTask
+	})
+	newScanContext = func(cfg engine.Config) (*engine.ScanContext, error) {
+		ctx, cancel := context.WithCancel(context.Background())
+		return &engine.ScanContext{Config: cfg, Ctx: ctx, Cancel: cancel, IPPortMap: make(map[string]string)}, nil
+	}
+	runScanTask = func(ctx *engine.ScanContext) error {
+		if ctx.ResumePlan == nil || ctx.ResumePlan.StartStage != scanplan.StageProtocolIdentify {
+			t.Fatalf("resume plan did not reach Pipeline context: %+v", ctx.ResumePlan)
+		}
+		// A reused phase must never create a skipped/negative replacement event.
+		ctx.PhaseHook(engine.PhaseEvent{Phase: engine.PhasePortScan, Status: "start"})
+		ctx.PhaseHook(engine.PhaseEvent{Phase: engine.PhasePortScan, Status: "end"})
+		ctx.PhaseHook(engine.PhaseEvent{Phase: engine.PhaseProtocol, Status: "start"})
+		ctx.PhaseHook(engine.PhaseEvent{Phase: engine.PhaseProtocol, Status: "end"})
+		ctx.PhaseHook(engine.PhaseEvent{Phase: engine.PhaseHTTPProbe, Status: "start"})
+		ctx.PhaseHook(engine.PhaseEvent{Phase: engine.PhaseHTTPProbe, Status: "end"})
+		return nil
+	}
+
+	target := "192.0.2.10"
+	checkpoint := scanplan.StageCheckpoint{SchemaVersion: scanplan.CheckpointSchemaVersion, Stage: scanplan.StagePortScan, OpenPorts: []string{"192.0.2.10:443"}}
+	canonicalCheckpoint, err := checkpoint.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointDigest := sha256.Sum256(canonicalCheckpoint)
+	plan := &scanplan.ResumePlan{
+		SchemaVersion: scanplan.ResumePlanSchemaVersion,
+		TenantID:      "tenant-a", ProjectID: "project-a", NetworkZone: "public", Target: target,
+		ScopeHash: workerTestHash("scope"), ConfigHash: workerTestHash("config"), RuleVersion: "rules-v1",
+		RequiredStages:  []scanplan.Stage{scanplan.StagePortScan, scanplan.StageProtocolIdentify, scanplan.StageHTTPProbe, scanplan.StageFingerprint},
+		ReusedStages:    []scanplan.Stage{scanplan.StagePortScan},
+		ExecutionStages: []scanplan.Stage{scanplan.StageProtocolIdentify, scanplan.StageHTTPProbe, scanplan.StageFingerprint},
+		StartStage:      scanplan.StageProtocolIdentify,
+		Checkpoints: []scanplan.ResumeCheckpoint{{
+			Stage: scanplan.StagePortScan, WorkKeyHash: workerTestHash("work"), CoverageID: 1,
+			SourceObservationID: 1, ObservationHash: workerTestHash("observation"),
+			CheckpointHash: hex.EncodeToString(checkpointDigest[:]), Checkpoint: checkpoint,
+		}},
+	}
+	planHash, err := plan.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := map[string]interface{}{
+		"NoPoc": true, "GolangPoc": false, "DisableGeneralPoc": true,
+		"SkipHostDiscovery": true, "NoHostBind": true, "NoDirSearch": true,
+		"ResumePlan": plan, "ResumePlanHash": planHash, "ObservationConfigHash": strings.Repeat("b", 64),
+	}
+	encodedConfig, _ := json.Marshal(config)
+	stream := &fakeResultStream{}
+	client := &fakeAgentClient{stream: stream}
+	worker := NewWorker("agent-resume", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	worker.client = client
+	worker.ruleVersion = "rules-v1"
+	worker.executeTask(&pb.Task{TaskId: "attempt-resume", Targets: []string{target}, Config: encodedConfig})
+
+	var stages []scanplan.Stage
+	for _, result := range stream.results() {
+		if result.PayloadType != scanplan.StageObservationPayloadType {
+			continue
+		}
+		var event scanplan.StageObservationEvent
+		if err := json.Unmarshal(result.Payload, &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.ConfigHash != strings.Repeat("b", 64) {
+			t.Fatalf("event used injected config hash instead of authoritative base hash: %s", event.ConfigHash)
+		}
+		stages = append(stages, event.Stage)
+	}
+	if !slices.Equal(stages, plan.ExecutionStages) {
+		t.Fatalf("reported stages=%v, want execution suffix=%v", stages, plan.ExecutionStages)
+	}
+	if len(client.taskCompleteReqs) != 1 || client.taskCompleteReqs[0].Status != "DONE" {
+		t.Fatalf("unexpected completion: %#v", client.taskCompleteReqs)
+	}
+}
+
+func TestWorkerRejectsTamperedResumePlanBeforeScannerInitialization(t *testing.T) {
+	prepareUsableAgentConfig(t)
+	origNewScanContext := newScanContext
+	t.Cleanup(func() { newScanContext = origNewScanContext })
+	newScanContext = func(cfg engine.Config) (*engine.ScanContext, error) {
+		t.Fatal("tampered resume plan reached scanner initialization")
+		return nil, nil
+	}
+	client := &fakeAgentClient{stream: &fakeResultStream{}}
+	worker := NewWorker("agent-resume", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	worker.client = client
+	worker.ruleVersion = "rules-v1"
+	worker.executeTask(&pb.Task{
+		TaskId: "attempt-tampered", Targets: []string{"192.0.2.10"},
+		Config: []byte(`{"NoPoc":true,"DisableGeneralPoc":true,"ResumePlanHash":"bad","ObservationConfigHash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}`),
+	})
+	if len(client.taskCompleteReqs) != 1 || client.taskCompleteReqs[0].Status != "FAILED" || !strings.Contains(client.taskCompleteReqs[0].ErrorMessage, "resume") {
+		t.Fatalf("tampered plan was not failed closed: %#v", client.taskCompleteReqs)
+	}
+}
+
+func workerTestHash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+func TestWorkerRejectsRiskValidationWithDifferentRuleVersion(t *testing.T) {
+	prepareUsableAgentConfig(t)
+	origNewScanContext := newScanContext
+	t.Cleanup(func() { newScanContext = origNewScanContext })
+	newScanContext = func(cfg engine.Config) (*engine.ScanContext, error) {
+		t.Fatal("rule-version mismatch reached scanner initialization")
+		return nil, nil
+	}
+	client := &fakeAgentClient{stream: &fakeResultStream{}}
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	worker.client = client
+	worker.ruleVersion = "rules-v1"
+	worker.executeTask(&pb.Task{
+		TaskId: "task-stale-risk-rules", Targets: []string{"127.0.0.1"},
+		Config: []byte(`{"ExecutionMode":"risk_validation","RequiredRuleVersion":"rules-confirmed"}`),
+	})
+	if len(client.taskCompleteReqs) != 1 || client.taskCompleteReqs[0].Status != "FAILED" || !strings.Contains(client.taskCompleteReqs[0].ErrorMessage, "rules-confirmed") {
+		t.Fatalf("expected safe rule-version rejection, got %#v", client.taskCompleteReqs)
 	}
 }
 
@@ -392,110 +635,21 @@ func TestSyncRulesMaterializesLocalDBWhenHashMatchesButManifestMissing(t *testin
 	assertAgentFileContent(t, filepath.Join("config", "subdomains.txt"), "www\napi\n")
 }
 
-func TestSyncRulesWritesAgentAPIConfigFromInternalEndpoint(t *testing.T) {
+func TestSyncRulesDoesNotFetchAgentProviderConfig(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-
 	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://server.local", 1, nil)
 	worker.apiGetFn = func(url string) (*http.Response, error) {
-		switch {
-		case strings.HasSuffix(url, "/api/v1/agents/config/api-keys"):
-			return testHTTPResponse("quake:\n  - synced-key\n", map[string]string{"Content-Type": "application/x-yaml"}), nil
-		case strings.HasSuffix(url, "/api/v1/arsenals/db/hash"):
-			return testHTTPResponse(`{"hash":"","rule_version":"v-api","arsenal_count":0}`, nil), nil
-		default:
-			t.Fatalf("unexpected sync request: %s", url)
+		if strings.Contains(url, "api-keys") {
+			t.Fatalf("Agent must not request Provider credentials: %s", url)
 		}
-		return testHTTPResponse(`not found`, nil), nil
+		if strings.HasSuffix(url, "/api/v1/arsenals/db/hash") {
+			return testHTTPResponse(`{"hash":"","rule_version":"v1","arsenal_count":0}`, nil), nil
+		}
+		t.Fatalf("unexpected sync request: %s", url)
+		return nil, nil
 	}
-
 	worker.syncRules()
-
-	assertAgentFileContent(t, filepath.Join("config", "api-config.yaml"), "quake:\n  - synced-key\n")
-}
-
-func TestSyncRulesRemovesAgentAPIConfigWhenServerReturnsEmpty(t *testing.T) {
-	root := t.TempDir()
-	t.Chdir(root)
-	mustWriteAgentFile(t, filepath.Join("config", "api-config.yaml"), []byte("quake:\n  - stale-key\n"))
-
-	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://server.local", 1, nil)
-	worker.apiGetFn = func(url string) (*http.Response, error) {
-		switch {
-		case strings.HasSuffix(url, "/api/v1/agents/config/api-keys"):
-			return testHTTPResponse("", nil), nil
-		case strings.HasSuffix(url, "/api/v1/arsenals/db/hash"):
-			return testHTTPResponse(`{"hash":"","rule_version":"v-api","arsenal_count":0}`, nil), nil
-		default:
-			t.Fatalf("unexpected sync request: %s", url)
-		}
-		return testHTTPResponse(`not found`, nil), nil
-	}
-
-	worker.syncRules()
-
-	if _, err := os.Stat(filepath.Join("config", "api-config.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("expected stale api-config.yaml to be removed when server returns empty config, stat err=%v", err)
-	}
-}
-
-func TestSubscribeAPIConfigUpdatedSyncsOnlyAPIConfig(t *testing.T) {
-	root := t.TempDir()
-	t.Chdir(root)
-
-	stream := &fakeSubscribeClientStream{
-		recv: []*pb.TaskNotify{{NotifyType: "api_config_updated"}},
-	}
-	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://server.local", 1, nil)
-	worker.client = &fakeAgentClient{subscribeStream: stream}
-	worker.apiGetFn = func(url string) (*http.Response, error) {
-		switch {
-		case strings.HasSuffix(url, "/api/v1/agents/config/api-keys"):
-			return testHTTPResponse("quake:\n  - notify-key\n", map[string]string{"Content-Type": "application/x-yaml"}), nil
-		case strings.Contains(url, "/api/v1/arsenals/db"):
-			t.Fatalf("api_config_updated should not fetch arsenal DB endpoint: %s", url)
-		default:
-			t.Fatalf("unexpected api config notify request: %s", url)
-		}
-		return testHTTPResponse(`not found`, nil), nil
-	}
-
-	worker.subscribeAndClaim(make(chan struct{}))
-
-	assertAgentFileContent(t, filepath.Join("config", "api-config.yaml"), "quake:\n  - notify-key\n")
-	if stream.sentSignals == 0 {
-		t.Fatalf("expected subscribe to send initial ready signal")
-	}
-}
-
-func TestHandleCommandSyncAPIConfigWritesConfig(t *testing.T) {
-	root := t.TempDir()
-	t.Chdir(root)
-
-	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://server.local", 1, nil)
-	worker.apiGetFn = func(url string) (*http.Response, error) {
-		if !strings.HasSuffix(url, "/api/v1/agents/config/api-keys") {
-			t.Fatalf("sync_api_config command should only fetch api config, got %s", url)
-		}
-		return testHTTPResponse("quake:\n  - command-key\n", map[string]string{"Content-Type": "application/x-yaml"}), nil
-	}
-
-	worker.handleAgentCommandResponse([]byte(`{"sync_api_config":true,"api_config_hash":"remote-hash"}`))
-
-	assertAgentFileContent(t, filepath.Join("config", "api-config.yaml"), "quake:\n  - command-key\n")
-}
-
-func TestLocalAPIConfigHash(t *testing.T) {
-	root := t.TempDir()
-	t.Chdir(root)
-	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://server.local", 1, nil)
-	if got := worker.localAPIConfigHash(); got != "" {
-		t.Fatalf("missing api config hash = %q, want empty", got)
-	}
-	mustWriteAgentFile(t, filepath.Join("config", "api-config.yaml"), []byte("quake:\n  - hash-key\n"))
-	if got := worker.localAPIConfigHash(); got != "012e6f1b6ec96f9b190dd35aaa629028" {
-		t.Fatalf("api config md5 = %q", got)
-	}
 }
 
 func TestSyncRulesDefersActivationWhileTasksRunning(t *testing.T) {
@@ -511,7 +665,7 @@ func TestSyncRulesDefersActivationWhileTasksRunning(t *testing.T) {
 		case strings.HasSuffix(url, "/api/v1/arsenals/db/hash"):
 			return testHTTPResponse(`{"hash":"newhash","rule_version":"v2","arsenal_count":4}`, nil), nil
 		case strings.HasSuffix(url, "/api/v1/arsenals/db"):
-			return testHTTPResponseBytes(dbBytes, map[string]string{"X-Arsenal-Hash": "newhash"}), nil
+			return testHTTPResponseBytes(dbBytes, arsenalDownloadHeaders(dbBytes, "newhash")), nil
 		}
 		return testHTTPResponse(`not found`, nil), nil
 	}
@@ -556,6 +710,7 @@ func TestSyncRulesDownloadsViaHTTPAndMaterializes(t *testing.T) {
 		case "/api/v1/arsenals/db":
 			sawDBRequest = true
 			w.Header().Set("X-Arsenal-Hash", "sqlite-file-hash")
+			w.Header().Set("X-Arsenal-SHA256", fmt.Sprintf("%x", sha256.Sum256(dbBytes)))
 			w.Header().Set("Content-Type", "application/octet-stream")
 			_, _ = w.Write(dbBytes)
 		default:
@@ -584,6 +739,32 @@ func TestSyncRulesDownloadsViaHTTPAndMaterializes(t *testing.T) {
 	}
 	assertAgentFileContent(t, filepath.Join("config", "dict", "mysql.txt"), "agent:mysql\n")
 	assertAgentFileContent(t, filepath.Join("config", "subdomains.txt"), "www\napi\n")
+}
+
+func TestSyncRulesRejectsDownloadedPackageWithMismatchedSHA256(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	dbBytes := createAgentTestArsenalDBBytes(t, "RejectedProduct", "rejected.yaml")
+	worker := NewWorker("agent-sha", "127.0.0.1:50051", "http://server.local", 1, nil)
+	worker.apiGetFn = func(url string) (*http.Response, error) {
+		switch {
+		case strings.HasSuffix(url, "/api/v1/agents/config/api-keys"):
+			return testHTTPResponse("", nil), nil
+		case strings.HasSuffix(url, "/api/v1/arsenals/db/hash"):
+			return testHTTPResponse(`{"hash":"rejected-hash","rule_version":"v-rejected","arsenal_count":4}`, nil), nil
+		case strings.HasSuffix(url, "/api/v1/arsenals/db"):
+			return testHTTPResponseBytes(dbBytes, map[string]string{"X-Arsenal-SHA256": strings.Repeat("0", 64)}), nil
+		default:
+			return testHTTPResponse(`not found`, nil), nil
+		}
+	}
+	worker.syncRules()
+	if _, err := os.Stat(filepath.Join("data", "arsenal.db")); !os.IsNotExist(err) {
+		t.Fatalf("mismatched package was persisted, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join("config", ".argus-arsenal.json")); !os.IsNotExist(err) {
+		t.Fatalf("mismatched package was materialized, stat err=%v", err)
+	}
 }
 
 func TestEffectiveWorkerCountCapsToEngineLimit(t *testing.T) {
@@ -641,7 +822,7 @@ func createAgentTestArsenalDB(t *testing.T, dbPath, product, pocFile string) {
 	if err := arsenal.OpenDB(dbPath); err != nil {
 		t.Fatalf("open test arsenal db: %v", err)
 	}
-	t.Cleanup(func() { arsenal.DB = nil })
+	t.Cleanup(func() { _ = arsenal.CloseDB() })
 	if err := arsenal.DB.Create(&arsenal.Fingerprint{ProductName: product, RuleExpr: `body="` + product + `"`, Enabled: true}).Error; err != nil {
 		t.Fatalf("create fingerprint: %v", err)
 	}
@@ -719,6 +900,13 @@ func testHTTPResponseBytes(body []byte, headers map[string]string) *http.Respons
 	return resp
 }
 
+func arsenalDownloadHeaders(body []byte, legacyHash string) map[string]string {
+	return map[string]string{
+		"X-Arsenal-Hash":   legacyHash,
+		"X-Arsenal-SHA256": fmt.Sprintf("%x", sha256.Sum256(body)),
+	}
+}
+
 func prepareUsableAgentConfig(t *testing.T) {
 	t.Helper()
 	t.Chdir(t.TempDir())
@@ -728,6 +916,24 @@ func prepareUsableAgentConfig(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join("config", "pocs"), 0o755); err != nil {
 		t.Fatalf("mkdir test pocs: %v", err)
 	}
+	dbBytes := testAgentPackageBytes()
+	mustWriteAgentFile(t, filepath.Join("data", "arsenal.db"), dbBytes)
+	manifest := arsenal.RulePackageManifest{
+		SchemaVersion: arsenal.RulePackageSchemaVersion,
+		Hash:          "test-rule-hash",
+		RuleVersion:   "rules-v1",
+		PackageSHA256: fmt.Sprintf("%x", sha256.Sum256(dbBytes)),
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal test rule manifest: %v", err)
+	}
+	mustWriteAgentFile(t, filepath.Join("config", ".argus-arsenal.json"), data)
+	mustWriteAgentFile(t, filepath.Join("data", ".arsenal_hash"), []byte(manifest.Hash))
+}
+
+func testAgentPackageBytes() []byte {
+	return append([]byte("SQLite format 3\x00"), []byte("g35-agent-test-package")...)
 }
 
 func TestShouldMirrorAgentOutput(t *testing.T) {
@@ -797,6 +1003,29 @@ func TestFingerprintDebugCustomOnlyUsesSingleCustomRule(t *testing.T) {
 	}
 	if !slices.Equal(scannedProducts, []string{"OnlyOne"}) {
 		t.Fatalf("expected only custom fingerprint to be scanned, got %#v", scannedProducts)
+	}
+}
+
+func TestFingerprintDebugDetachesKnowledgeBeforeCustomWorkflowMutation(t *testing.T) {
+	origNewScanContext := newScanContext
+	origRunScanTask := runScanTask
+	t.Cleanup(func() {
+		newScanContext = origNewScanContext
+		runScanTask = origRunScanTask
+	})
+	sharedWorkflow := map[string]structs.WorkFlowEntity{"existing": {}}
+	newScanContext = func(cfg engine.Config) (*engine.ScanContext, error) {
+		ctx, cancel := context.WithCancel(context.Background())
+		return &engine.ScanContext{Config: cfg, Ctx: ctx, Cancel: cancel, WorkFlowDB: sharedWorkflow}, nil
+	}
+	runScanTask = func(*engine.ScanContext) error { return nil }
+	worker := NewWorker("agent-debug-detach", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	worker.runFingerprintDebugSession(context.Background(), &pb.DebugCommand{
+		Action: "start_fingerprint_debug", SessionId: "debug-detach", TargetUrl: "https://target.local",
+		PocContent: `{"custom_wf_product":"custom","custom_wf_pocs":"custom.yaml"}`,
+	}, time.Second, func(*pb.DebugEvent) {}, func(string) {})
+	if _, exists := sharedWorkflow["custom"]; exists {
+		t.Fatal("debug workflow mutation leaked into the original knowledge map")
 	}
 }
 
@@ -1047,6 +1276,7 @@ type fakeAgentClient struct {
 	emergencyDumpAcks   []*pb.Ack
 	emergencyDumpErrs   []error
 	emergencyDumpTokens []string
+	streamResultCtx     context.Context
 }
 
 func (c *fakeAgentClient) Register(ctx context.Context, in *pb.RegisterReq, opts ...grpc.CallOption) (*pb.RegisterResp, error) {
@@ -1062,6 +1292,7 @@ func (c *fakeAgentClient) FetchTask(ctx context.Context, in *pb.FetchTaskReq, op
 }
 
 func (c *fakeAgentClient) StreamResult(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[pb.ScanResult, pb.Ack], error) {
+	c.streamResultCtx = ctx
 	if c.streamErr != nil {
 		return nil, c.streamErr
 	}
@@ -1137,10 +1368,25 @@ type fakeResultStream struct {
 	sendErr  error
 	closeErr error
 	ack      *pb.Ack
+	mu       sync.Mutex
+	sent     []*pb.ScanResult
 }
 
-func (s *fakeResultStream) Send(*pb.ScanResult) error {
-	return s.sendErr
+func (s *fakeResultStream) Send(result *pb.ScanResult) error {
+	if s.sendErr != nil {
+		return s.sendErr
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	copyResult := proto.Clone(result).(*pb.ScanResult)
+	s.sent = append(s.sent, copyResult)
+	return nil
+}
+
+func (s *fakeResultStream) results() []*pb.ScanResult {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*pb.ScanResult(nil), s.sent...)
 }
 
 func (s *fakeResultStream) CloseAndRecv() (*pb.Ack, error) {
@@ -1224,7 +1470,8 @@ func (s *fakeSubscribeClientStream) RecvMsg(m any) error {
 		return err
 	}
 	if notify, ok := m.(*pb.TaskNotify); ok {
-		*notify = *msg
+		proto.Reset(notify)
+		proto.Merge(notify, msg)
 	}
 	return nil
 }

@@ -24,3 +24,19 @@ func TestReadConfigWAFBypassHeaders(t *testing.T) {
 		t.Fatalf("expected no WAF bypass headers when disabled, got %v", disabled.CustomHeaders)
 	}
 }
+
+func TestApplyPresentationLeavesInteractiveDefaults(t *testing.T) {
+	options := &types.Options{NoColor: false, EnableProgressBar: true}
+	applyPresentation(options, nil)
+	if options.NoColor || !options.EnableProgressBar {
+		t.Fatalf("interactive presentation changed options: %+v", options)
+	}
+}
+
+func TestApplyPresentationConfiguresMachineOutput(t *testing.T) {
+	options := &types.Options{NoColor: false, EnableProgressBar: true}
+	applyPresentation(options, []Presentation{{MachineOutput: true}})
+	if !options.NoColor || options.EnableProgressBar {
+		t.Fatalf("machine presentation did not set no-color/progress options: %+v", options)
+	}
+}

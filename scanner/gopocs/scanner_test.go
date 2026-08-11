@@ -5,6 +5,22 @@ import (
 	"testing"
 )
 
+func TestPresentationDefaultsToInteractive(t *testing.T) {
+	if !shouldRenderProgress(nil) {
+		t.Fatal("zero presentation must retain interactive progress")
+	}
+}
+
+func TestPresentationSuppressesRegisteredHostProgress(t *testing.T) {
+	info := &structs.HostInfo{}
+	presentations.Store(info, Presentation{MachineOutput: true})
+	defer presentations.Delete(info)
+
+	if shouldRenderProgress(info) {
+		t.Fatal("machine output must suppress direct GoPoc progress")
+	}
+}
+
 func TestBuildScanPlanSkipsWebServices(t *testing.T) {
 	plan := buildScanPlan(map[string]string{
 		"127.0.0.1:80":   "http",

@@ -35,7 +35,11 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 		return portErr
 	}
 
-	defer fmt.Printf("\r\033[K") // Clear progress line
+	defer func() {
+		if shouldRenderProgress(info) {
+			fmt.Printf("\r\033[K") // Clear progress line
+		}
+	}()
 	defer gologger.AuditTimeLogger("[Go] [TelnetScan] TelnetScan return %s:%v", info.Host, info.Ports)
 
 	// Telnet 未授权检测
@@ -104,7 +108,9 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 	for i, userPasswd := range upList {
 		// Update progress
 		percent := float64(i+1) / float64(total) * 100
-		fmt.Printf("\r\033[K[GoPoc] Telnet Cracking %s:%s Progress: %.0f%%", info.Host, info.Ports, percent)
+		if shouldRenderProgress(info) {
+			fmt.Printf("\r\033[K[GoPoc] Telnet Cracking %s:%s Progress: %.0f%%", info.Host, info.Ports, percent)
+		}
 
 		user, oriPass := splitUserPass(userPasswd)
 		var passList []string
@@ -156,7 +162,9 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 					return err
 				} else if serverType == telnetlib.UsernameAndPassword {
 					result := fmt.Sprintf("Telnet://%v:%v %s %s", info.Host, info.Ports, user, pass)
-					gologger.Silent().Msg("[GoPoc] " + result)
+					if shouldRenderProgress(info) {
+						gologger.Silent().Msg("[GoPoc] " + result)
+					}
 
 					showData := fmt.Sprintf("Host: %v:%v\nUser: %v\nPass: %v\n", info.Host, info.Ports, user, pass)
 

@@ -32,6 +32,27 @@ func Call(targetAndPocsName map[string][]string,
 		excludeTags, severities)
 }
 
+// CallMachine executes the same templates while reserving stdout for the
+// standalone CLI's structured output contract.
+func CallMachine(targetAndPocsName map[string][]string,
+	httpProxy string,
+	addResult func(result output.ResultEvent),
+	pocNameForSearch string,
+	noInteractsh bool,
+	wafBypassHeaders bool,
+	embedPocs embed.FS,
+	nucleiTemplate string,
+	excludeTags []string,
+	severities []string,
+) []output.ResultEvent {
+	callMu.Lock()
+	defer callMu.Unlock()
+
+	return callnuclei.CallNuclei(targetAndPocsName, httpProxy, addResult,
+		pocNameForSearch, noInteractsh, wafBypassHeaders, embedPocs, nucleiTemplate,
+		excludeTags, severities, callnuclei.Presentation{MachineOutput: true})
+}
+
 // CallDebug 调用 Nuclei 并启用 MatcherStatus，确保未命中时也能
 // 通过 WriteFailure 回调获取 request/response 数据。用于 POC 调试场景。
 func CallDebug(targetAndPocsName map[string][]string,

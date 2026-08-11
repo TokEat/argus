@@ -1,9 +1,9 @@
 package gopocs
 
 import (
-	"dddd/scanner/utils"
 	"dddd/scanner/ddout"
 	"dddd/scanner/structs"
+	"dddd/scanner/utils"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -92,7 +92,7 @@ func MS17010Scan(info *structs.HostInfo) error {
 		// find byte count
 		byteCount := binary.LittleEndian.Uint16(sessionSetupResponse[7:9])
 		if n != int(byteCount)+45 {
-			fmt.Println("[-]", ip+":445", "ms17010 invalid session setup AndX response")
+			printDiagnostic(info, "[-]", ip+":445", "ms17010 invalid session setup AndX response")
 		} else {
 			// two continous null bytes indicates end of a unicode string
 			for i := 10; i < len(sessionSetupResponse)-1; i++ {

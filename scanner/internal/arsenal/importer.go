@@ -153,6 +153,10 @@ func ImportPocsFromFS(pocFS embed.FS, source string) (added, skipped int, err er
 		}
 
 		meta := parsePocMeta(content)
+		if governanceErr := validatePocGovernanceMeta(meta); governanceErr != nil {
+			skipped++
+			return nil
+		}
 		name := meta.id
 		if name == "" {
 			name = strings.TrimSuffix(d.Name(), ".yaml")
@@ -161,16 +165,18 @@ func ImportPocsFromFS(pocFS embed.FS, source string) (added, skipped int, err er
 		hash := fmt.Sprintf("%x", md5.Sum(content))
 
 		p := &Poc{
-			Name:        name,
-			FileName:    d.Name(),
-			Content:     string(content),
-			ContentHash: hash,
-			Severity:    meta.severity,
-			Tags:        meta.tags,
-			Author:      meta.author,
-			Description: meta.description,
-			Source:      source,
-			Enabled:     true,
+			Name:           name,
+			FileName:       d.Name(),
+			Content:        string(content),
+			ContentHash:    hash,
+			Severity:       meta.severity,
+			ExecutionClass: meta.executionClass,
+			RiskLevel:      meta.riskLevel,
+			Tags:           meta.tags,
+			Author:         meta.author,
+			Description:    meta.description,
+			Source:         source,
+			Enabled:        true,
 		}
 
 		created, addErr := AddPoc(p)
@@ -195,6 +201,9 @@ func ImportPocFile(content []byte, fileName, source string) (name string, create
 	}
 
 	meta := parsePocMeta(content)
+	if err := validatePocGovernanceMeta(meta); err != nil {
+		return "", false, err
+	}
 	name = meta.id
 	if name == "" {
 		name = strings.TrimSuffix(filepath.Base(fileName), ".yaml")
@@ -203,16 +212,18 @@ func ImportPocFile(content []byte, fileName, source string) (name string, create
 	hash := fmt.Sprintf("%x", md5.Sum(content))
 
 	p := &Poc{
-		Name:        name,
-		FileName:    filepath.Base(fileName),
-		Content:     string(content),
-		ContentHash: hash,
-		Severity:    meta.severity,
-		Tags:        meta.tags,
-		Author:      meta.author,
-		Description: meta.description,
-		Source:      source,
-		Enabled:     true,
+		Name:           name,
+		FileName:       filepath.Base(fileName),
+		Content:        string(content),
+		ContentHash:    hash,
+		Severity:       meta.severity,
+		ExecutionClass: meta.executionClass,
+		RiskLevel:      meta.riskLevel,
+		Tags:           meta.tags,
+		Author:         meta.author,
+		Description:    meta.description,
+		Source:         source,
+		Enabled:        true,
 	}
 
 	created, err = AddPoc(p)
@@ -221,16 +232,34 @@ func ImportPocFile(content []byte, fileName, source string) (name string, create
 
 // pocMeta 从 YAML 模板提取的基础元数据。
 type pocMeta struct {
-	id          string
-	severity    string
-	tags        string
-	author      string
-	description string
+	id             string
+	severity       string
+	tags           string
+	author         string
+	description    string
+	executionClass string
+	riskLevel      string
 }
 
 // parsePocMeta 快速从 Nuclei 模板提取元数据（避免完整 YAML 解析）。
 func parsePocMeta(content []byte) pocMeta {
-	m := pocMeta{severity: "info"}
+	m := pocMeta{severity: "info", executionClass: "detection", riskLevel: "unknown"}
+	var parsed struct {
+		Info struct {
+			Metadata map[string]interface{} `yaml:"metadata"`
+		} `yaml:"info"`
+	}
+	if err := yaml.Unmarshal(content, &parsed); err == nil {
+		for key, value := range parsed.Info.Metadata {
+			normalizedKey := strings.ToLower(strings.ReplaceAll(key, "_", "-"))
+			switch normalizedKey {
+			case "argus-execution-class", "execution-class":
+				m.executionClass = strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
+			case "argus-risk-level", "risk-level":
+				m.riskLevel = strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
+			}
+		}
+	}
 	// 简易行解析，提取 id/severity/tags/author/description
 	for _, line := range strings.Split(string(content), "\n") {
 		line = strings.TrimSpace(line)
@@ -251,4 +280,20 @@ func parsePocMeta(content []byte) pocMeta {
 		}
 	}
 	return m
+}
+
+func validatePocGovernanceMeta(meta pocMeta) error {
+	switch meta.executionClass {
+	case "detection", "verification":
+	case "exploit", "exp":
+		return fmt.Errorf("POC execution_class %q is not allowed; use a separate EXP package", meta.executionClass)
+	default:
+		return fmt.Errorf("POC execution_class must be detection or verification")
+	}
+	switch meta.riskLevel {
+	case "unknown", "low", "medium", "high":
+		return nil
+	default:
+		return fmt.Errorf("POC risk_level must be unknown, low, medium, or high")
+	}
 }

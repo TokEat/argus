@@ -29,6 +29,7 @@ func NewScanContextFromLegacyGlobals(taskID string) (*ScanContext, error) {
 		IPPortMap:            structs.GlobalIPPortMap,
 		IPDomainMap:          structs.GlobalIPDomainMap,
 		URLMap:               toEngineURLMap(structs.GlobalURLMap),
+		httpURLVisits:        make(map[string]struct{}),
 		ResultMap:            structs.GlobalResultMap,
 		DirFallbackResultMap: structs.DirFallbackResultMap,
 		GoPocsResults:        toEngineGoPocResults(structs.GoPocsResults),

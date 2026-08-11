@@ -287,7 +287,6 @@ func (w *Worker) runFingerprintDebugSession(
 ) {
 	options := fingerprintDebugOptions{}
 	_ = json.Unmarshal([]byte(cmd.PocContent), &options)
-
 	cfg := structs.DefaultConfig()
 	cfg.Targets = []string{cmd.TargetUrl}
 	cfg.HTTPProxy = cmd.Proxy
@@ -300,12 +299,14 @@ func (w *Worker) runFingerprintDebugSession(
 		cfg.WebTimeout = int(defaultAgentDebugTimeout.Seconds())
 	}
 	cfg.WebThreads = 8
-
 	sc, err := newScanContext(engine.Config(cfg))
 	if err != nil {
 		sendComplete(fmt.Sprintf("create scan context: %v", err))
 		return
 	}
+	// Debug may replace or append rules below. Never mutate a shared knowledge
+	// snapshot retained by normal Agent tasks.
+	sc.DetachKnowledge()
 	originalCancel := sc.Cancel
 	defer sc.Close()
 	if originalCancel != nil {
@@ -314,7 +315,6 @@ func (w *Worker) runFingerprintDebugSession(
 	sc.TaskID = cmd.SessionId
 	sc.Ctx = ctx
 	sc.Cancel = func() {}
-
 	// --- 注入自定义指纹规则 ---
 	customProducts := make(map[string]bool)
 	if options.CustomOnly {

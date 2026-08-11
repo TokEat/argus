@@ -7,19 +7,15 @@ package engine
 import (
 	"context"
 	"dddd/scanner/ddout"
-	"dddd/scanner/internal/finger"
 	"dddd/scanner/internal/output"
 	"dddd/scanner/internal/scanner/cdn"
 	"dddd/scanner/internal/scanner/discovery"
 	"dddd/scanner/internal/scanner/portscan"
-	"dddd/scanner/internal/scanner/protocol"
 	"dddd/scanner/internal/scanner/subdomain"
 	"dddd/scanner/internal/scanner/web"
-	"dddd/scanner/internal/uncover"
 	gopoc "dddd/scanner/internal/vuln/gopoc"
 	"dddd/scanner/structs"
 	"dddd/scanner/utils"
-	"embed"
 	"errors"
 	"fmt"
 	"net"
@@ -28,20 +24,46 @@ import (
 	"github.com/logrusorgru/aurora"
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/httpx"
+	"github.com/projectdiscovery/httpx/runner"
+	"github.com/user/dddd-proto/go/scanplan"
 )
 
 // Pipeline 扫描流水线编排器。
 type Pipeline struct{}
 
+// httpProbeSession keeps all probe passes for a Pipeline HTTP stage in the
+// same target-budgeted session.  The narrow interface makes redirect handling
+// testable without reaching the network.
+type httpProbeSession interface {
+	CallHTTPx(urls []string, callback func(runner.Result), proxy string, threads int)
+	CallHTTPxFollowHostRedirects(urls []string, callback func(runner.Result), proxy string, threads int)
+	Err() error
+	Close()
+}
+
+var newHTTPProbeSession = func(parent context.Context, timeout int, visits httpx.URLVisitSet) httpProbeSession {
+	return httpx.NewProbeSessionWithURLVisits(parent, timeout, visits)
+}
+
+func pipelineHTTPProbeContext(ctx *ScanContext) context.Context {
+	if ctx != nil && ctx.Ctx != nil {
+		return ctx.Ctx
+	}
+	return context.Background()
+}
+
+func pipelineHTTPURLVisits(ctx *ScanContext) httpx.URLVisitSet {
+	if ctx == nil {
+		return nil
+	}
+	return ctx
+}
+
 // Run 执行完整的扫描流水线。
 func (p *Pipeline) Run(ctx *ScanContext) error {
 	var domains []string
 	emit := func(msg structs.OutputMessage) {
-		if ctx != nil && ctx.OutputHook != nil {
-			ctx.OutputHook(toEngineOutputMessage(msg))
-		} else {
-			ddout.FormatOutput(msg)
-		}
+		dispatchPipelineOutput(ctx, msg)
 	}
 	var urls []string
 	var domainPort []string
@@ -75,12 +97,14 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
 	}
-
-	emitPhase(ctx, PhaseSearchEngine, "start", "")
-	if err := p.searchEngine(ctx, &cfg); err != nil {
+	if strings.TrimSpace(cfg.ExecutionMode) != "" {
+		if !strings.EqualFold(strings.TrimSpace(cfg.ExecutionMode), "risk_validation") {
+			return fmt.Errorf("unsupported internal execution mode %q", cfg.ExecutionMode)
+		}
+		_, err := runRiskValidationPhase(ctx, &cfg, enableLocalReports)
 		return err
 	}
-	emitPhase(ctx, PhaseSearchEngine, "end", "")
+
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
 	}
@@ -111,7 +135,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	}
 
 	// 子域名枚举
-	if cfg.Subdomain && len(domains) > 0 {
+	if cfg.Subdomain && len(domains) > 0 && resumeStageEnabled(ctx, scanplan.StageSubdomainDiscovery) {
 		emitPhase(ctx, PhaseSubdomain, "start", fmt.Sprintf("%d domains", len(domains)))
 		subdomains := subdomain.Enumerate(domains, currentSubdomainConfig(ctx, emit))
 		for _, each := range subdomains {
@@ -127,7 +151,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	// CDN 检测
 	var cdnDomains []string
 	var tIPs []string
-	if len(domains) > 0 {
+	if len(domains) > 0 && resumeStageEnabled(ctx, scanplan.StageCDNClassification) {
 		emitPhase(ctx, PhaseCDN, "start", fmt.Sprintf("%d domains", len(domains)))
 		cdnDomains, _, tIPs = cdn.CheckCDNs(
 			domains,
@@ -166,15 +190,15 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 			return err
 		}
 		if !cfg.SkipHostDiscovery {
-			var ICMPAlive []string
-			if !cfg.NoICMPPing {
+			ICMPAlive := checkpointAliveHosts(ctx, scanplan.StageICMPDiscovery)
+			if !cfg.NoICMPPing && resumeStageEnabled(ctx, scanplan.StageICMPDiscovery) {
 				emitPhase(ctx, PhaseICMP, "start", fmt.Sprintf("%d ips", len(ips)))
 				ICMPAlive = discovery.CheckLive(ips, false, emit)
 				emitPhase(ctx, PhaseICMP, "end", fmt.Sprintf("%d alive", len(ICMPAlive)))
 			}
 
-			var TCPAlive []string
-			if cfg.TCPPing {
+			TCPAlive := checkpointAliveHosts(ctx, scanplan.StageTCPLiveness)
+			if cfg.TCPPing && resumeStageEnabled(ctx, scanplan.StageTCPLiveness) {
 				var uncheck []string
 				for _, ip := range ips {
 					index := utils.GetItemInArray(ICMPAlive, ip)
@@ -199,28 +223,32 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 				ips = utils.RemoveDuplicateElement(ips)
 			}
 		}
-		var tmpIPPort []string
+		if resumeStageEnabled(ctx, scanplan.StagePortScan) {
+			var tmpIPPort []string
 
-		if cfg.PortScanType == "syn" {
-			if !portscan.CheckMasscan(cfg.MasscanPath) {
-				gologger.Error().Msg("降级TCP扫描")
-				cfg.PortScanType = "tcp"
-				setPipelineConfig(ctx, cfg)
+			if cfg.PortScanType == "syn" {
+				if !portscan.CheckMasscan(cfg.MasscanPath) {
+					gologger.Error().Msg("降级TCP扫描")
+					cfg.PortScanType = "tcp"
+					setPipelineConfig(ctx, cfg)
+				}
 			}
-		}
 
-		emitPhase(ctx, PhasePortScan, "start", fmt.Sprintf("%d ips, type=%s", len(ips), cfg.PortScanType))
-		if cfg.PortScanType == "syn" {
-			tmpIPPort = portscan.ScanSYN(ips, cfg.MasscanPath, cfg.SYNPortScanThreads, emit)
-		} else {
-			tmpIPPort = portscan.ScanTCP(ips, cfg.Ports, cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, true, emit)
-		}
+			emitPhase(ctx, PhasePortScan, "start", fmt.Sprintf("%d ips, type=%s", len(ips), cfg.PortScanType))
+			if cfg.PortScanType == "syn" {
+				tmpIPPort = portscan.ScanSYN(ips, cfg.MasscanPath, cfg.SYNPortScanThreads, emit)
+			} else {
+				tmpIPPort = portscan.ScanTCP(ips, cfg.Ports, cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, true, emit)
+			}
 
-		tmpIPPort = portscan.RemoveFirewall(tmpIPPort, cfg.PortsThreshold)
-		emitPhase(ctx, PhasePortScan, "end", fmt.Sprintf("%d open ports", len(tmpIPPort)))
+			tmpIPPort = portscan.RemoveFirewall(tmpIPPort, cfg.PortsThreshold)
+			emitPhase(ctx, PhasePortScan, "end", fmt.Sprintf("%d open ports", len(tmpIPPort)))
 
-		for _, each := range tmpIPPort {
-			ipPort = append(ipPort, each)
+			for _, each := range tmpIPPort {
+				ipPort = append(ipPort, each)
+			}
+		} else if checkpoint := resumeCheckpoint(ctx, scanplan.StagePortScan); checkpoint != nil {
+			ipPort = append(ipPort, checkpoint.OpenPorts...)
 		}
 		ipPort = utils.RemoveDuplicateElement(ipPort)
 	}
@@ -233,7 +261,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	for _, each := range domainPort {
 		getProtocalInput = append(getProtocalInput, each)
 	}
-	if len(getProtocalInput) > 0 {
+	if resumeStageEnabled(ctx, scanplan.StageProtocolIdentify) && (len(getProtocalInput) > 0 || ctx.ResumePlan != nil) {
 		emitPhase(ctx, PhaseProtocol, "start", fmt.Sprintf("%d targets", len(getProtocalInput)))
 		currentProtocolRuntime(ctx, emit).Identify(getProtocalInput, cfg.GetBannerThreads, cfg.GetBannerTimeout)
 		emitPhase(ctx, PhaseProtocol, "end", "")
@@ -243,6 +271,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	}
 
 	cfg = currentPipelineConfig(ctx)
+	if !resumeStageEnabled(ctx, scanplan.StageProtocolIdentify) {
+		restoreResumeProtocolServices(ctx)
+	}
 
 	// HTTP 探测
 	for hostPort, service := range currentPipelineIPPortMap(ctx) {
@@ -253,26 +284,26 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		}
 	}
 	urls = utils.RemoveDuplicateElement(urls)
+	httpProbeComplete := true
 
-	emitPhase(ctx, PhaseHTTPProbe, "start", fmt.Sprintf("%d urls", len(urls)))
-	webRuntime := currentWebRuntime(ctx, emit)
-	httpx.CallHTTPx(urls, webRuntime.URLCallback,
-		cfg.HTTPProxy,
-		cfg.WebThreads,
-		cfg.WebTimeout)
-	if err := p.probeRedirectLocations(ctx, &cfg, webRuntime); err != nil {
-		return err
+	if resumeStageEnabled(ctx, scanplan.StageHTTPProbe) {
+		emitPhase(ctx, PhaseHTTPProbe, "start", fmt.Sprintf("%d urls", len(urls)))
+		webRuntime := currentWebRuntime(ctx, emit)
+		var err error
+		httpProbeComplete, err = completeHTTPProbePhase(ctx, p.runHTTPProbe(ctx, &cfg, urls, webRuntime))
+		if err != nil {
+			return err
+		}
 	}
-	emitPhase(ctx, PhaseHTTPProbe, "end", "")
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
 	}
 
 	// 域名绑定资产探测
-	if !cfg.NoHostBind {
+	if !cfg.NoHostBind && resumeStageEnabled(ctx, scanplan.StageHostBinding) {
 		emitPhase(ctx, PhaseHostBind, "start", "")
 		currentWebRuntime(ctx, emit).HostBindCheck(cfg.HTTPProxy, cfg.WebThreads, cfg.WebTimeout)
-		emitPhase(ctx, PhaseHostBind, "end", "")
+		completeHTTPDependentPhase(ctx, PhaseHostBind, httpProbeComplete)
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
@@ -285,6 +316,10 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 	// 模糊搜索 Poc
 	if cfg.PocNameForSearch != "" {
+		if !httpProbeComplete {
+			gologger.Warning().Msg("HTTP probe incomplete; skipping explicit POC search")
+			return nil
+		}
 		gologger.AuditTimeLogger("模糊搜索Poc: %v", cfg.PocNameForSearch)
 		if _, err := runPocSearch(ctx, &cfg, aliveURLs, enableLocalReports); err != nil {
 			return err
@@ -296,7 +331,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	}
 
 	// 目录爆破
-	if !cfg.NoDirSearch {
+	if !cfg.NoDirSearch && resumeStageEnabled(ctx, scanplan.StageDirectoryProbe) {
 		var checkURLs []string
 		for path := range currentPipelineDirDB(ctx) {
 			for _, u := range aliveURLs {
@@ -318,16 +353,18 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 			cfg.WebThreads,
 			cfg.WebTimeout)
 		gologger.AuditTimeLogger("主动指纹探测结束")
-		emitPhase(ctx, PhaseDirBrute, "end", "")
+		completeHTTPDependentPhase(ctx, PhaseDirBrute, httpProbeComplete)
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
 	}
 
 	// 指纹识别
-	emitPhase(ctx, PhaseFingerprint, "start", "")
-	currentFingerRuntime(ctx, emit).Identify()
-	emitPhase(ctx, PhaseFingerprint, "end", "")
+	if resumeStageEnabled(ctx, scanplan.StageFingerprint) {
+		emitPhase(ctx, PhaseFingerprint, "start", "")
+		currentFingerRuntime(ctx, emit).Identify()
+		completeHTTPDependentPhase(ctx, PhaseFingerprint, httpProbeComplete)
+	}
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
 	}
@@ -368,6 +405,10 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		gologger.Info().Msg("跳过漏洞探测")
 		return nil
 	}
+	if !httpProbeComplete {
+		gologger.Warning().Msg("HTTP probe incomplete; skipping risk validation stages")
+		return nil
+	}
 
 	// 漏洞检测
 	if enableLocalReports {
@@ -404,14 +445,12 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 	if cfg.GolangPoc {
 		emitPhase(ctx, "gopoc_dispatch", "start", fmt.Sprintf("%d services", len(ipPortMap)))
-		dispatchResults := gopoc.Dispatch(
-			ipPortMap,
-			cfg.GoPocThreads,
-			cfg.Password,
-			cfg.PasswordFile,
-			nucleiResults,
-			emit,
-		)
+		var dispatchResults []structs.GoPocsResultType
+		if cfg.MachineOutput {
+			dispatchResults = gopoc.DispatchMachine(ipPortMap, cfg.GoPocThreads, cfg.Password, cfg.PasswordFile, nucleiResults, emit)
+		} else {
+			dispatchResults = gopoc.Dispatch(ipPortMap, cfg.GoPocThreads, cfg.Password, cfg.PasswordFile, nucleiResults, emit)
+		}
 		goPocResults = append(goPocResults, dispatchResults...)
 		emitPhase(ctx, "gopoc_dispatch", "end", fmt.Sprintf("%d results", len(dispatchResults)))
 	}
@@ -432,50 +471,47 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	return nil
 }
 
-// searchEngine 调用网络空间搜索引擎获取资产。
-func (p *Pipeline) searchEngine(ctx *ScanContext, cfg *Config) error {
-	if err := checkPipelineCancelled(ctx); err != nil {
+func (p *Pipeline) runHTTPProbe(ctx *ScanContext, cfg *Config, urls []string, webRuntime *web.Runtime) error {
+	session := newHTTPProbeSession(pipelineHTTPProbeContext(ctx), cfg.WebTimeout, pipelineHTTPURLVisits(ctx))
+	if session == nil {
+		return errors.New("http probe session factory returned nil")
+	}
+	defer session.Close()
+
+	session.CallHTTPx(urls, webRuntime.URLCallback, cfg.HTTPProxy, cfg.WebThreads)
+	if err := p.probeRedirectLocations(ctx, cfg, webRuntime, session); err != nil {
 		return err
 	}
-
-	searchCfg := currentUncoverConfig(ctx)
-	searchState, syncBack := newPipelineUncoverState(ctx)
-	defer syncBack()
-
-	if cfg.Hunter && !cfg.Fofa {
-		cfg.Targets, _ = uncover.HunterSearch(cfg.Targets, searchCfg, searchState)
-		setPipelineConfig(ctx, *cfg)
-		return checkPipelineCancelled(ctx)
-	}
-	if cfg.Fofa && !cfg.Hunter {
-		cfg.Targets = uncover.FOFASearch(cfg.Targets, searchCfg, searchState)
-		setPipelineConfig(ctx, *cfg)
-		return checkPipelineCancelled(ctx)
-	}
-	if cfg.Fofa && cfg.Hunter {
-		targets, tIPs := uncover.HunterSearch(cfg.Targets, searchCfg, searchState)
-		var querys []string
-		for _, i := range tIPs {
-			querys = append(querys, "ip=\""+i+"\"")
-		}
-		querys = utils.RemoveDuplicateElement(querys)
-		cfg.Targets = uncover.FOFASearch(querys, searchCfg, searchState)
-		cfg.Targets = append(cfg.Targets, targets...)
-		cfg.Targets = utils.RemoveDuplicateElement(cfg.Targets)
-		setPipelineConfig(ctx, *cfg)
-		return checkPipelineCancelled(ctx)
-	}
-	if cfg.Quake {
-		cfg.Targets = uncover.QuakeSearch(cfg.Targets, searchCfg, searchState)
-		setPipelineConfig(ctx, *cfg)
-		if len(cfg.Targets) == 0 {
-			return fmt.Errorf("Quake 搜索返回 0 条结果，请检查: 1) API Key 是否已配置 2) 搜索语法是否正确")
-		}
-	}
-	return checkPipelineCancelled(ctx)
+	return session.Err()
 }
 
-func (p *Pipeline) probeRedirectLocations(ctx *ScanContext, cfg *Config, webRuntime *web.Runtime) error {
+func completeHTTPProbePhase(ctx *ScanContext, probeErr error) (bool, error) {
+	if probeErr == nil {
+		if err := checkPipelineCancelled(ctx); err != nil {
+			return false, err
+		}
+		emitPhase(ctx, PhaseHTTPProbe, "end", "")
+		return true, nil
+	}
+	if ctx != nil && ctx.Ctx != nil && ctx.Ctx.Err() != nil {
+		return false, probeErr
+	}
+	if errors.Is(probeErr, context.DeadlineExceeded) {
+		emitPhase(ctx, PhaseHTTPProbe, "failed", "target HTTP budget exhausted")
+		return false, nil
+	}
+	return false, probeErr
+}
+
+func completeHTTPDependentPhase(ctx *ScanContext, phase string, httpProbeComplete bool) {
+	if httpProbeComplete {
+		emitPhase(ctx, phase, "end", "")
+		return
+	}
+	emitPhase(ctx, phase, "failed", "upstream HTTP probe incomplete")
+}
+
+func (p *Pipeline) probeRedirectLocations(ctx *ScanContext, cfg *Config, webRuntime *web.Runtime, session httpProbeSession) error {
 	const maxRedirectLocationPasses = 4
 
 	for pass := 0; pass < maxRedirectLocationPasses; pass++ {
@@ -489,10 +525,7 @@ func (p *Pipeline) probeRedirectLocations(ctx *ScanContext, cfg *Config, webRunt
 		}
 
 		gologger.Info().Msgf("[HTTPProbe] redirect pass=%d targets=%d follow_host_redirects=true", pass+1, len(redirectURLs))
-		httpx.CallHTTPxFollowHostRedirects(redirectURLs, webRuntime.URLCallback,
-			cfg.HTTPProxy,
-			cfg.WebThreads,
-			cfg.WebTimeout)
+		session.CallHTTPxFollowHostRedirects(redirectURLs, webRuntime.URLCallback, cfg.HTTPProxy, cfg.WebThreads)
 	}
 	return nil
 }
@@ -512,14 +545,20 @@ func checkPipelineCancelled(ctx *ScanContext) error {
 
 // emitPhase 安全地触发阶段进度回调。
 func emitPhase(ctx *ScanContext, phase, status, message string) {
-	if ctx == nil || ctx.PhaseHook == nil {
+	if ctx == nil {
 		return
 	}
-	ctx.PhaseHook(PhaseEvent{
+	event := PhaseEvent{
 		Phase:   phase,
 		Status:  status,
 		Message: message,
-	})
+	}
+	if ctx.PhaseObserver != nil {
+		ctx.PhaseObserver(event)
+	}
+	if ctx.PhaseHook != nil {
+		ctx.PhaseHook(event)
+	}
 }
 
 func currentSubdomainConfig(ctx *ScanContext, emit func(structs.OutputMessage)) subdomain.Config {
@@ -529,64 +568,22 @@ func currentSubdomainConfig(ctx *ScanContext, emit func(structs.OutputMessage)) 
 		NoSubFinder:                cfg.NoSubFinder,
 		SubdomainBruteForceThreads: cfg.SubdomainBruteForceThreads,
 		SubdomainWordListFile:      cfg.SubdomainWordListFile,
-		APIConfigFilePath:          cfg.APIConfigFilePath,
 		EmitFunc: func(msg ddout.OutputMessage) {
 			emit(msg)
 		},
 	}
 }
 
-func currentUncoverConfig(ctx *ScanContext) uncover.Config {
-	cfg := currentPipelineConfig(ctx)
-	return uncover.Config{
-		APIConfigFilePath:          cfg.APIConfigFilePath,
-		SubdomainBruteForceThreads: cfg.SubdomainBruteForceThreads,
-		HunterPageSize:             cfg.HunterPageSize,
-		HunterMaxPageCount:         cfg.HunterMaxPageCount,
-		FofaMaxCount:               cfg.FofaMaxCount,
-		QuakeSize:                  cfg.QuakeSize,
-		LowPerceptionMode:          cfg.LowPerceptionMode,
-		OnlyIPPort:                 cfg.OnlyIPPort,
-		AllowCDNAssets:             cfg.AllowCDNAssets,
+func dispatchPipelineOutput(ctx *ScanContext, msg structs.OutputMessage) {
+	converted := toEngineOutputMessage(msg)
+	if ctx != nil && ctx.OutputObserver != nil {
+		ctx.OutputObserver(converted)
 	}
-}
-
-func newPipelineUncoverState(ctx *ScanContext) (*uncover.State, func()) {
-	if ctx == nil {
-		return &uncover.State{
-			IPPortMap:       structs.GlobalIPPortMap,
-			IPPortMapLock:   &structs.GlobalIPPortMapLock,
-			IPDomainMap:     structs.GlobalIPDomainMap,
-			IPDomainMapLock: &structs.GlobalIPDomainMapLock,
-			URLMap:          structs.GlobalURLMap,
-			URLMapLock:      &structs.GlobalURLMapLock,
-			BannerHMap:      structs.GlobalBannerHMap,
-			BodyHMap:        structs.GlobalHttpBodyHMap,
-			HeaderHMap:      structs.GlobalHttpHeaderHMap,
-		}, func() {}
+	if ctx != nil && ctx.OutputHook != nil {
+		ctx.OutputHook(converted)
+		return
 	}
-
-	state := &uncover.State{
-		IPPortMap:       ctx.IPPortMap,
-		IPPortMapLock:   &ctx.IPPortMapLock,
-		IPDomainMap:     ctx.IPDomainMap,
-		IPDomainMapLock: &ctx.IPDomainMapLock,
-		URLMap:          toStructURLMap(ctx.URLMap),
-		BannerHMap:      ctx.BannerHMap,
-		BodyHMap:        ctx.BodyHMap,
-		HeaderHMap:      ctx.HeaderHMap,
-	}
-
-	// 如果有 OutputHook，将 uncover 的输出路由到当前任务的 Hook。
-	if ctx.OutputHook != nil {
-		state.EmitFunc = func(msg ddout.OutputMessage) {
-			ctx.OutputHook(toEngineOutputMessage(msg))
-		}
-	}
-
-	return state, func() {
-		ctx.URLMap = toEngineURLMap(state.URLMap)
-	}
+	ddout.FormatOutput(msg)
 }
 
 func currentPipelineConfig(ctx *ScanContext) Config {
@@ -622,74 +619,4 @@ func estimateIPCount(targets []string) int {
 		count++
 	}
 	return count
-}
-
-func currentPipelineIPPortMap(ctx *ScanContext) map[string]string {
-	return ctx.IPPortMap
-}
-
-func currentWebRuntime(ctx *ScanContext, emit func(structs.OutputMessage)) *web.Runtime {
-	return web.NewRuntime(
-		ctx.URLMap,
-		&ctx.URLMapLock,
-		ctx.IPDomainMap,
-		ctx.BodyHMap,
-		ctx.HeaderHMap,
-		ctx.DirDB,
-		ctx.FingerprintDB,
-		ctx.WorkFlowDB,
-		ctx.DirFallbackResultMap,
-		&ctx.DirFallbackResultMapLock,
-		emit,
-	)
-}
-
-func currentFingerRuntime(ctx *ScanContext, emit func(structs.OutputMessage)) *finger.Runtime {
-	return finger.NewRuntime(
-		ctx.IPPortMap,
-		ctx.URLMap,
-		ctx.ResultMap,
-		ctx.BannerHMap,
-		ctx.BodyHMap,
-		ctx.HeaderHMap,
-		ctx.FingerprintDB,
-		emit,
-	)
-}
-
-func currentProtocolRuntime(ctx *ScanContext, emit func(structs.OutputMessage)) *protocol.Runtime {
-	return protocol.NewRuntime(
-		ctx.IPPortMap,
-		&ctx.IPPortMapLock,
-		ctx.BannerHMap,
-		emit,
-	)
-}
-
-func currentPipelineURLMap(ctx *ScanContext) map[string]URLEntity {
-	return ctx.URLMap
-}
-
-func currentPipelineDirDB(ctx *ScanContext) map[string][]string {
-	return ctx.DirDB
-}
-
-func currentPipelineResultMap(ctx *ScanContext) map[string][]string {
-	return ctx.ResultMap
-}
-
-func setPipelineResultMap(ctx *ScanContext, resultMap map[string][]string) {
-	ctx.ResultMap = resultMap
-}
-
-func currentPipelineDirFallbackResultMap(ctx *ScanContext) map[string][]string {
-	return ctx.DirFallbackResultMap
-}
-
-func currentPipelineWorkflowDB(ctx *ScanContext) map[string]structs.WorkFlowEntity {
-	return ctx.WorkFlowDB
-}
-
-func currentPipelineEmbedPocs(ctx *ScanContext) embed.FS {
-	return ctx.EmbedPocs
 }

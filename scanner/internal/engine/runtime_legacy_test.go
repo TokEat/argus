@@ -38,7 +38,7 @@ func TestNewScanContextRuleFilesOnlyIgnoresArsenalDB(t *testing.T) {
 	if err := arsenal.OpenDB(dbPath); err != nil {
 		t.Fatalf("open test arsenal db: %v", err)
 	}
-	t.Cleanup(func() { arsenal.DB = nil })
+	t.Cleanup(func() { _ = arsenal.CloseDB() })
 	if err := arsenal.DB.Create(&arsenal.Fingerprint{ProductName: "DBProduct", RuleExpr: `body="db-product"`, Enabled: true}).Error; err != nil {
 		t.Fatalf("create db fingerprint: %v", err)
 	}

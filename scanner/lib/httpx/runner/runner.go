@@ -67,18 +67,26 @@ import (
 
 // Runner is a client for running the enumeration process.
 type Runner struct {
-	options         *Options
-	hp              *httpx.HTTPX
-	wappalyzer      *wappalyzer.Wappalyze
-	fastdialer      *fastdialer.Dialer
-	scanopts        ScanOptions
-	hm              *hybrid.HybridMap
-	stats           clistats.StatisticsClient
-	ratelimiter     ratelimit.Limiter
-	HostErrorsCache gcache.Cache[string, int]
-	browser         *Browser
-	NextCheckUrl    []string
-	CallBack        func(resp Result)
+	options          *Options
+	hp               *httpx.HTTPX
+	wappalyzer       *wappalyzer.Wappalyze
+	fastdialer       *fastdialer.Dialer
+	scanopts         ScanOptions
+	hm               *hybrid.HybridMap
+	stats            clistats.StatisticsClient
+	ratelimiter      *ratelimit.Limiter
+	HostErrorsCache  gcache.Cache[string, int]
+	browser          *Browser
+	NextCheckUrl     []string
+	NextCheckTargets []NextCheckTarget
+	CallBack         func(resp Result)
+}
+
+// NextCheckTarget associates a discovered follow-up URL with the original
+// scanner input that produced it.
+type NextCheckTarget struct {
+	URL         string
+	SourceInput string
 }
 
 // New creates a new client for running enumeration process.
@@ -311,11 +319,11 @@ func New(options *Options) (*Runner, error) {
 	runner.hm = hm
 
 	if options.RateLimitMinute > 0 {
-		runner.ratelimiter = *ratelimit.New(context.Background(), uint(options.RateLimitMinute), time.Minute)
+		runner.ratelimiter = ratelimit.New(context.Background(), uint(options.RateLimitMinute), time.Minute)
 	} else if options.RateLimit > 0 {
-		runner.ratelimiter = *ratelimit.New(context.Background(), uint(options.RateLimit), time.Second)
+		runner.ratelimiter = ratelimit.New(context.Background(), uint(options.RateLimit), time.Second)
 	} else {
-		runner.ratelimiter = *ratelimit.NewUnlimited(context.Background())
+		runner.ratelimiter = ratelimit.NewUnlimited(context.Background())
 	}
 
 	if options.HostMaxErrors >= 0 {
@@ -553,6 +561,9 @@ func makePrintCallback() func(stats clistats.StatisticsClient) {
 
 // Close closes the httpx scan instance
 func (r *Runner) Close() {
+	if r.ratelimiter != nil {
+		r.ratelimiter.Stop()
+	}
 	// nolint:errcheck // ignore
 	r.hm.Close()
 	r.hp.Dialer.Close()
@@ -891,12 +902,19 @@ func (r *Runner) RunEnumeration() {
 
 			newPath := getJumpPath(resp.Raw)
 			if newPath != "" {
+				appendNextCheckTarget := func(nextURL string) {
+					r.NextCheckUrl = append(r.NextCheckUrl, nextURL)
+					r.NextCheckTargets = append(r.NextCheckTargets, NextCheckTarget{
+						URL:         nextURL,
+						SourceInput: resp.Input,
+					})
+				}
 				newPath = strings.Trim(newPath, " ")
 				newPath = strings.Trim(newPath, "'")
 				newPath = strings.Trim(newPath, "\"")
 				if strings.HasPrefix(newPath, "https://") || strings.HasPrefix(newPath, "http://") {
 					if strings.Contains(newPath, URL.Host) {
-						r.NextCheckUrl = append(r.NextCheckUrl, newPath)
+						appendNextCheckTarget(newPath)
 					}
 				} else {
 					if len(newPath) > 0 {
@@ -904,7 +922,7 @@ func (r *Runner) RunEnumeration() {
 							newPath = newPath[1:]
 						}
 					}
-					r.NextCheckUrl = append(r.NextCheckUrl, getRealPath(rootURL)+"/"+newPath)
+					appendNextCheckTarget(getRealPath(rootURL) + "/" + newPath)
 
 				}
 
@@ -1134,12 +1152,22 @@ func (r *Runner) targets(hp *httpx.HTTPX, target string) chan httpx.Target {
 }
 
 func (r *Runner) analyze(hp *httpx.HTTPX, protocol string, target httpx.Target, method, origInput string, scanopts *ScanOptions) Result {
+	ctx := context.Background()
+	if r.options.TargetContext != nil {
+		ctx = r.options.TargetContext(origInput)
+		if ctx == nil {
+			ctx = context.Background()
+		}
+	}
 	origProtocol := protocol
 	if protocol == httpx.HTTPorHTTPS || protocol == httpx.HTTPandHTTPS {
 		protocol = httpx.HTTPS
 	}
 	retried := false
 retry:
+	if err := ctx.Err(); err != nil {
+		return Result{URL: target.Host, Input: origInput, Err: err}
+	}
 	if scanopts.VHostInput && target.CustomHost == "" {
 		return Result{Input: origInput}
 	}
@@ -1182,10 +1210,10 @@ retry:
 		} else {
 			requestIP = target.CustomIP
 		}
-		ctx := context.WithValue(context.Background(), "ip", requestIP) //nolint
-		req, err = hp.NewRequestWithContext(ctx, method, URL.String())
+		requestCtx := context.WithValue(ctx, "ip", requestIP) //nolint
+		req, err = hp.NewRequestWithContext(requestCtx, method, URL.String())
 	} else {
-		req, err = hp.NewRequest(method, URL.String())
+		req, err = hp.NewRequestWithContext(ctx, method, URL.String())
 	}
 	if err != nil {
 		return Result{URL: URL.String(), Input: origInput, Err: err}

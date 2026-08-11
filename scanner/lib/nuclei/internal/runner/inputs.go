@@ -19,6 +19,10 @@ const probeBulkSize = 50
 // initializeTemplatesHTTPInput initializes the http form of input
 // for any loaded http templates if input is in non-standard format.
 func (r *Runner) initializeTemplatesHTTPInput() (*hybrid.HybridMap, error) {
+	return r.initializeTemplatesHTTPInputWithHTTPXFactory(httpx.New)
+}
+
+func (r *Runner) initializeTemplatesHTTPInputWithHTTPXFactory(newHTTPX func(*httpx.Options) (*httpx.HTTPX, error)) (*hybrid.HybridMap, error) {
 	hm, err := hybrid.New(hybrid.DefaultDiskOptions)
 	if err != nil {
 		return nil, errors.Wrap(err, "could not create temporary input file")
@@ -33,8 +37,9 @@ func (r *Runner) initializeTemplatesHTTPInput() (*hybrid.HybridMap, error) {
 	httpxOptions := httpx.DefaultOptions
 	httpxOptions.RetryMax = r.options.Retries
 	httpxOptions.Timeout = time.Duration(r.options.Timeout) * time.Second
-	httpxClient, err := httpx.New(&httpxOptions)
+	httpxClient, err := newHTTPX(&httpxOptions)
 	if err != nil {
+		_ = hm.Close()
 		return nil, errors.Wrap(err, "could not create httpx client")
 	}
 

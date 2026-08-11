@@ -43,15 +43,15 @@ func PrintRow(colsdata []interface{}) (err error, result string) {
 	for _, val := range colsdata {
 		switch v := (*(val.(*interface{}))).(type) {
 		case nil:
-			//fmt.Print("NULL")
+			result += "NULL\n"
 		case bool:
 			if v {
-				fmt.Print("True")
+				result += "True\n"
 			} else {
-				fmt.Print("False")
+				result += "False\n"
 			}
 		case []byte:
-			fmt.Print(string(v))
+			result += string(v) + "\n"
 		default:
 			result += fmt.Sprintf("%v\n", v)
 		}

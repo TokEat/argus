@@ -37,7 +37,9 @@ func HandleWorkflowCommand(args []string) {
 }
 
 func workflowUsage() {
-	fmt.Println(`用法: dddd workflow <子命令>
+	fmt.Println(`Argus CLI 规则库管理
+
+用法: dddd workflow <子命令>
 
 子命令:
   list      列出映射 (--product 过滤)

@@ -1,13 +1,17 @@
 package httpx
 
 import (
-	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/httpx/runner"
-	errorutil "github.com/projectdiscovery/utils/errors"
+	"context"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/projectdiscovery/gologger"
+	"github.com/projectdiscovery/httpx/runner"
+	errorutil "github.com/projectdiscovery/utils/errors"
 )
+
+var newProbeRunner = runner.New
 
 func RemoveDuplicateElement(input []string) []string {
 	temp := map[string]struct{}{}
@@ -20,25 +24,6 @@ func RemoveDuplicateElement(input []string) []string {
 	}
 	return result
 }
-
-func RemoveUsedUrl(urls []string) []string {
-	var result []string
-	for _, u := range urls {
-		flag := false
-		for _, gu := range GlobalUsedUrl {
-			if gu == u {
-				flag = true
-				break
-			}
-		}
-		if !flag {
-			result = append(result, u)
-		}
-	}
-	return RemoveDuplicateElement(result)
-}
-
-var GlobalUsedUrl []string
 
 func sanitizeTimeout(timeout int) int {
 	if timeout <= 0 {
@@ -88,20 +73,35 @@ func runEnumerationWithGuard(httpxRunner *runner.Runner, stage string, timeoutSe
 }
 
 func CallHTTPx(urls []string, callBack func(resp runner.Result), proxy string, threads int, timeout int) {
-	callHTTPx(urls, callBack, proxy, threads, timeout, false)
+	session := NewProbeSession(context.Background(), timeout)
+	defer session.Close()
+	session.CallHTTPx(urls, callBack, proxy, threads)
 }
 
 func CallHTTPxFollowHostRedirects(urls []string, callBack func(resp runner.Result), proxy string, threads int, timeout int) {
-	callHTTPx(urls, callBack, proxy, threads, timeout, true)
+	session := NewProbeSession(context.Background(), timeout)
+	defer session.Close()
+	session.CallHTTPxFollowHostRedirects(urls, callBack, proxy, threads)
 }
 
-func callHTTPx(urls []string, callBack func(resp runner.Result), proxy string, threads int, timeout int, followHostRedirects bool) {
+func (s *ProbeSession) CallHTTPx(urls []string, callBack func(resp runner.Result), proxy string, threads int) {
+	s.callHTTPx(urls, callBack, proxy, threads, false)
+}
+
+func (s *ProbeSession) CallHTTPxFollowHostRedirects(urls []string, callBack func(resp runner.Result), proxy string, threads int) {
+	s.callHTTPx(urls, callBack, proxy, threads, true)
+}
+
+func (s *ProbeSession) callHTTPx(urls []string, callBack func(resp runner.Result), proxy string, threads int, followHostRedirects bool) {
 	gologger.Info().Msg("获取Web响应中")
 
-	timeout = sanitizeTimeout(timeout)
+	timeout := int(s.timeout / time.Second)
+	if timeout <= 0 {
+		timeout = sanitizeTimeout(timeout)
+	}
 	threads = sanitizeThreads(threads)
 
-	nextUrls := RemoveDuplicateElement(urls)
+	nextUrls := s.reserveInputs(urls)
 	if len(nextUrls) == 0 {
 		return
 	}
@@ -110,6 +110,10 @@ func callHTTPx(urls []string, callBack func(resp runner.Result), proxy string, t
 
 	times := 0
 	for len(nextUrls) > 0 && times < 3 {
+		nextUrls = filterActiveTargets(s, nextUrls)
+		if len(nextUrls) == 0 {
+			break
+		}
 		gologger.Info().Msgf("[HTTPProbe] pass=%d targets=%d threads=%d timeout=%ds", times+1, len(nextUrls), threads, timeout)
 		maxRedirects := 3
 		if followHostRedirects {
@@ -135,6 +139,7 @@ func callHTTPx(urls []string, callBack func(resp runner.Result), proxy string, t
 			NoFallbackScheme:          true,
 			RandomAgent:               true,
 			Threads:                   threads,
+			TargetContext:             s.TargetContext,
 		}
 
 		if err := options.ValidateOptions(); err != nil {
@@ -142,32 +147,47 @@ func callHTTPx(urls []string, callBack func(resp runner.Result), proxy string, t
 		}
 
 		gologger.Info().Msgf("[HTTPProbe] 创建httpx runner...")
-		httpxRunner, err := runner.New(&options)
+		httpxRunner, err := newProbeRunner(&options)
 		if err != nil {
 			gologger.Error().Msgf("[HTTPProbe] runner.New 失败: %v", err)
 			break
 		}
-		gologger.Info().Msgf("[HTTPProbe] runner创建耗时: %v", time.Since(t0))
-		httpxRunner.CallBack = callBack
-
-		for _, u := range nextUrls {
-			GlobalUsedUrl = append(GlobalUsedUrl, u)
-		}
-		GlobalUsedUrl = RemoveDuplicateElement(GlobalUsedUrl)
-
-		gologger.Info().Msgf("[HTTPProbe] 开始RunEnumeration...")
-		if ok := runEnumerationWithGuard(httpxRunner, "http_probe", timeout, len(nextUrls)); !ok {
-			gologger.Error().Msgf("[HTTPProbe] RunEnumeration超时! 总耗时: %v", time.Since(t0))
+		// Build the Runner before claiming visits so a construction failure does
+		// not permanently suppress a later attempt in the same scan. Runner keeps
+		// the options pointer and consumes inputs only in RunEnumeration.
+		nextUrls = s.reserveUnvisitedURLs(nextUrls)
+		if len(nextUrls) == 0 {
+			httpxRunner.Close()
 			break
 		}
+		options.InputTargetHost = nextUrls
+		gologger.Info().Msgf("[HTTPProbe] runner创建耗时: %v", time.Since(t0))
+		httpxRunner.CallBack = s.wrapCallback(callBack)
+
+		gologger.Info().Msgf("[HTTPProbe] 开始RunEnumeration...")
+		// Request cancellation is supplied through TargetContext. Run synchronously
+		// so Runner resources are not closed concurrently with callbacks.
+		httpxRunner.RunEnumeration()
 		gologger.Info().Msgf("[HTTPProbe] RunEnumeration完成, 耗时: %v", time.Since(t0))
-		nextUrls = RemoveUsedUrl(httpxRunner.NextCheckUrl)
 		httpxRunner.Close()
+		nextUrls = s.registerNextCheckTargets(httpxRunner.NextCheckTargets)
 		times += 1
 
 	}
 	gologger.AuditTimeLogger("响应探测结束")
 
+}
+
+func filterActiveTargets(session *ProbeSession, urls []string) []string {
+	active := make([]string, 0, len(urls))
+	for _, raw := range urls {
+		if session.isActive(raw) {
+			active = append(active, raw)
+		} else {
+			session.markExpiredFollowUp(raw)
+		}
+	}
+	return active
 }
 
 func init() {

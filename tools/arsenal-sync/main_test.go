@@ -1,10 +1,13 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -185,9 +188,7 @@ func TestDiffSeedDBWithConfigDirRejectsSymlinks(t *testing.T) {
 			name: "managed scalar symlink",
 			setup: func(t *testing.T, configDir string) {
 				mustWriteFile(t, filepath.Join(configDir, "real-finger.yaml"), []byte("Demo:\n  - ok\n"))
-				if err := os.Symlink(filepath.Join(configDir, "real-finger.yaml"), filepath.Join(configDir, "finger.yaml")); err != nil {
-					t.Fatalf("symlink finger.yaml: %v", err)
-				}
+				mustSymlink(t, filepath.Join(configDir, "real-finger.yaml"), filepath.Join(configDir, "finger.yaml"))
 			},
 		},
 		{
@@ -197,18 +198,14 @@ func TestDiffSeedDBWithConfigDirRejectsSymlinks(t *testing.T) {
 				if err := os.MkdirAll(realPocs, 0o755); err != nil {
 					t.Fatalf("mkdir real pocs: %v", err)
 				}
-				if err := os.Symlink(realPocs, filepath.Join(configDir, "pocs")); err != nil {
-					t.Fatalf("symlink pocs: %v", err)
-				}
+				mustSymlink(t, realPocs, filepath.Join(configDir, "pocs"))
 			},
 		},
 		{
 			name: "nested pocs symlink",
 			setup: func(t *testing.T, configDir string) {
 				mustWriteFile(t, filepath.Join(configDir, "pocs", "real.txt"), []byte("payload\n"))
-				if err := os.Symlink(filepath.Join(configDir, "pocs", "real.txt"), filepath.Join(configDir, "pocs", "link.txt")); err != nil {
-					t.Fatalf("symlink nested poc asset: %v", err)
-				}
+				mustSymlink(t, filepath.Join(configDir, "pocs", "real.txt"), filepath.Join(configDir, "pocs", "link.txt"))
 			},
 		},
 	}
@@ -311,6 +308,15 @@ func createSeedDB(t *testing.T, path string, rows []arsenalRow) {
 	if err != nil {
 		t.Fatalf("open seed db: %v", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get seed db handle: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := sqlDB.Close(); err != nil {
+			t.Errorf("close seed db: %v", err)
+		}
+	})
 	if err := db.AutoMigrate(&arsenalRow{}); err != nil {
 		t.Fatalf("migrate seed db: %v", err)
 	}
@@ -327,6 +333,16 @@ func createSeedDB(t *testing.T, path string, rows []arsenalRow) {
 	}
 	if err := db.Create(&rows).Error; err != nil {
 		t.Fatalf("seed rows: %v", err)
+	}
+}
+
+func mustSymlink(t *testing.T, oldname, newname string) {
+	t.Helper()
+	if err := os.Symlink(oldname, newname); err != nil {
+		if runtime.GOOS == "windows" && errors.Is(err, syscall.ERROR_PRIVILEGE_NOT_HELD) {
+			t.Skipf("symlink creation requires Windows privilege: %v", err)
+		}
+		t.Fatalf("symlink %s: %v", newname, err)
 	}
 }
 
