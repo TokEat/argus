@@ -3,7 +3,7 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/dev-env.sh"
 
-server_bin="$(argus_require_binary dddd-server server)"
+server_bin="$(argus_require_binary argus-server server)"
 
 server_args=(--dev)
 if [[ -n "${ARGUS_DB_DSN:-}" ]]; then

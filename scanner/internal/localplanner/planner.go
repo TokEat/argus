@@ -16,13 +16,13 @@ import (
 	"sync"
 	"time"
 
-	"dddd/scanner/internal/engine"
-	"dddd/scanner/internal/localstate"
-	"dddd/scanner/internal/timing"
-	"dddd/scanner/structs"
-	"dddd/scanner/utils"
+	"github.com/P0lar1ght/argus/scanner/internal/engine"
+	"github.com/P0lar1ght/argus/scanner/internal/localstate"
+	"github.com/P0lar1ght/argus/scanner/internal/timing"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/utils"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 	"github.com/projectdiscovery/gologger"
-	"github.com/user/dddd-proto/go/scanplan"
 )
 
 var probeTCP = func(endpoint string, timeout time.Duration) bool {

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"dddd/scanner/utils"
+	"github.com/P0lar1ght/argus/scanner/utils"
 )
 
 // DeltaKind describes a local, immutable observation made while comparing a

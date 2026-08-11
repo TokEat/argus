@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/user/dddd-proto/go/scanplan"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 )
 
 func TestValidateResumePlanRestoresPortDependency(t *testing.T) {

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	pb "github.com/user/dddd-proto/go/scan"
-	"github.com/user/dddd-proto/go/scanplan"
-	"github.com/user/dddd-server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/db"
+	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

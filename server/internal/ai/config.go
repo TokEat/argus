@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/user/dddd-server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"gorm.io/gorm"
 )
 

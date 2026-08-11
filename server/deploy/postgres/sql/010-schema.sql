@@ -1,5 +1,5 @@
 -- Historical schema snapshot kept for legacy reproduction and upgrade testing.
--- New environments should use dddd-server migrations instead of executing this file directly.
+-- New environments should use argus-server migrations instead of executing this file directly.
 
 BEGIN;
 

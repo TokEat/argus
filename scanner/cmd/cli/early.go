@@ -1,8 +1,8 @@
 package main
 
 import (
-	"dddd/scanner/common"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/common"
 	"io"
 	"strings"
 )

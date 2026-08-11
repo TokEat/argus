@@ -1,10 +1,10 @@
 package report
 
 import (
-	"dddd/scanner/ddout"
-	"dddd/scanner/structs"
 	"encoding/json"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/severity"
 	"github.com/projectdiscovery/nuclei/v3/pkg/output"
 	"os"

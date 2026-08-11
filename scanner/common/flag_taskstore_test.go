@@ -3,7 +3,7 @@ package common
 import (
 	"testing"
 
-	"dddd/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/structs"
 )
 
 func TestInitializeLegacyResponseStoresUsesSharedFactory(t *testing.T) {

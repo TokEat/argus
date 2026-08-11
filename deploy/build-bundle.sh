@@ -48,9 +48,9 @@ echo ""
 echo -e "${YELLOW}[1/3] 编译项目二进制文件...${NC}"
 cd "${ROOT_DIR}"
 # 调用全平台构建脚本，只构建服务端和Agent的 linux/amd64 架构
-./build.sh --pack --require-upx --component dddd-server,dddd-agent --target linux/amd64
+./build.sh --pack --require-upx --component argus-server,argus-agent --target linux/amd64
 
-if [[ ! -f "${ROOT_DIR}/release/dddd-server-linux-amd64" ]] || [[ ! -f "${ROOT_DIR}/release/dddd-agent-linux-amd64" ]]; then
+if [[ ! -f "${ROOT_DIR}/release/argus-server-linux-amd64" ]] || [[ ! -f "${ROOT_DIR}/release/argus-agent-linux-amd64" ]]; then
     echo -e "${RED}[!] 编译失败或未找到产物，请检查构建日志。${NC}"
     exit 1
 fi
@@ -70,8 +70,8 @@ mkdir -p "${BUNDLE_DIR}/deploy/postgres"
 
 # 拷贝二进制
 echo "  -> 拷贝服务端和 Agent..."
-cp "${ROOT_DIR}/release/dddd-server-linux-amd64" "${BUNDLE_DIR}/bin/"
-cp "${ROOT_DIR}/release/dddd-agent-linux-amd64" "${BUNDLE_DIR}/bin/"
+cp "${ROOT_DIR}/release/argus-server-linux-amd64" "${BUNDLE_DIR}/bin/"
+cp "${ROOT_DIR}/release/argus-agent-linux-amd64" "${BUNDLE_DIR}/bin/"
 
 # 拷贝前端产物
 echo "  -> 拷贝前端控制台..."
@@ -109,8 +109,8 @@ if [[ -d "${ROOT_DIR}/server/deploy/postgres" ]]; then
 fi
 
 required_paths=(
-    "bin/dddd-server-linux-amd64"
-    "bin/dddd-agent-linux-amd64"
+    "bin/argus-server-linux-amd64"
+    "bin/argus-agent-linux-amd64"
     "server-ui/dist"
     "deploy/docker-compose.yml"
     "deploy/setup-server.sh"

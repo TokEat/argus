@@ -2,11 +2,11 @@
 package web
 
 import (
-	"dddd/scanner/ddout"
-	"dddd/scanner/lib/ddfinger"
-	"dddd/scanner/structs"
-	"dddd/scanner/utils"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/lib/ddfinger"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	"net/url"
 	"strconv"
 	"strings"

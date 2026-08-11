@@ -3,11 +3,11 @@ package gopocs
 import (
 	"bufio"
 	"crypto/md5"
-	"dddd/scanner/ddout"
-	"dddd/scanner/structs"
-	"dddd/scanner/utils"
 	"encoding/base64"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	"github.com/projectdiscovery/gologger"
 	"strings"
 	"time"
@@ -36,7 +36,7 @@ func maskPassword(p string) string {
 	return p
 }
 
-// RsyncScan 主入口函数，符合 dddd gopoc 规范
+// RsyncScan 主入口函数，符合 Argus Go POC 规范。
 func RsyncScan(info *structs.HostInfo) (err error) {
 	address := fmt.Sprintf("%s:%s", info.Host, info.Ports)
 	gologger.AuditTimeLogger("[Go] [Rsync] Starting scan on %s", address)

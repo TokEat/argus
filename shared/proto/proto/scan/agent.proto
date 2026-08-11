@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package scan;
 
-option go_package = "github.com/user/dddd-proto/go/scan";
+option go_package = "github.com/P0lar1ght/argus/shared/proto/go/scan";
 
 // AgentService 定义了扫描节点(Agent)与服务端(Server)之间的通信接口
 service AgentService {
@@ -49,7 +49,7 @@ message Ack {
 
 message RegisterReq {
   string agent_id = 1;       // 节点唯一ID (可以由云主机的 instance_id 充当)
-  string version = 2;        // dddd-agent 版本
+  string version = 2;        // Argus Agent 版本
   map<string, string> tags = 3; // 节点标签能力
   string os = 4;             // 节点操作系统
   string arch = 5;           // 节点架构

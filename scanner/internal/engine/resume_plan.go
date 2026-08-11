@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"dddd/scanner/utils"
-	"github.com/user/dddd-proto/go/scanplan"
+	"github.com/P0lar1ght/argus/scanner/utils"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 )
 
 // ValidateResumePlan independently reconstructs the stages implied by the

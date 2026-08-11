@@ -3,7 +3,7 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/dev-env.sh"
 
-agent_bin="$(argus_require_binary dddd-agent agent)"
+agent_bin="$(argus_require_binary argus-agent agent)"
 
 agent_args=(
     --server "${ARGUS_GRPC_ADDR}"

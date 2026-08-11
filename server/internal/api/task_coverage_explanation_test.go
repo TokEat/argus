@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 	"github.com/gin-gonic/gin"
-	"github.com/user/dddd-proto/go/scanplan"
-	"github.com/user/dddd-server/internal/db"
 )
 
 func TestTaskDetailExplainsExecutionReuseAndInvalidationWithinProject(t *testing.T) {

@@ -19,11 +19,11 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: argus_ci
-          POSTGRES_DB: dddd
+          POSTGRES_DB: argus
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d dddd"
+          --health-cmd "pg_isready -U postgres -d argus"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -50,6 +50,9 @@ jobs:
       - name: Source size ratchet
         run: make source-size-check
 
+      - name: Argus brand contract
+        run: make brand-check
+
       - name: Go tests
         run: go test ./...
 
@@ -59,7 +62,7 @@ jobs:
 
       - name: PostgreSQL migration apply and schema verify
         env:
-          DB_DSN: host=127.0.0.1 user=postgres password=argus_ci dbname=dddd port=5432 sslmode=disable
+          DB_DSN: host=127.0.0.1 user=postgres password=argus_ci dbname=argus port=5432 sslmode=disable
         run: |
           make db-migrate DB_MIGRATION_MODE=apply
           make db-verify

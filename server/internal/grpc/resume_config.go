@@ -7,7 +7,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/user/dddd-proto/go/scanplan"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 )
 
 func configWithResumePlan(raw string, plan *scanplan.ResumePlan, planHash string) ([]byte, error) {

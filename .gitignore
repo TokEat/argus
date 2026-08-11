@@ -8,7 +8,7 @@
 bin/
 bin-*
 scanner/agent
-server/dddd-server
+server/argus-server
 **/.gocache/
 
 # Output files

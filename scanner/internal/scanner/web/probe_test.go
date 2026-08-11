@@ -1,8 +1,8 @@
 package web
 
 import (
-	"dddd/scanner/lib/ddfinger"
-	"dddd/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/lib/ddfinger"
+	"github.com/P0lar1ght/argus/scanner/structs"
 	"reflect"
 	"sync"
 	"testing"

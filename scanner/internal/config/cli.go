@@ -5,14 +5,14 @@
 package config
 
 import (
-	"dddd/scanner/common"
-	"dddd/scanner/internal/arsenal"
-	"dddd/scanner/internal/engine"
-	"dddd/scanner/internal/localarsenal"
-	"dddd/scanner/internal/localstate"
-	"dddd/scanner/internal/timing"
 	"fmt"
-	"github.com/user/dddd-proto/go/scanplan"
+	"github.com/P0lar1ght/argus/scanner/common"
+	"github.com/P0lar1ght/argus/scanner/internal/arsenal"
+	"github.com/P0lar1ght/argus/scanner/internal/engine"
+	"github.com/P0lar1ght/argus/scanner/internal/localarsenal"
+	"github.com/P0lar1ght/argus/scanner/internal/localstate"
+	"github.com/P0lar1ght/argus/scanner/internal/timing"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 	"os"
 )
 

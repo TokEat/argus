@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"dddd/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/structs"
 	nucleiOutput "github.com/projectdiscovery/nuclei/v3/pkg/output"
 )
 

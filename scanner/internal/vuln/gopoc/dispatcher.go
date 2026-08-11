@@ -3,8 +3,8 @@
 package gopoc
 
 import (
-	"dddd/scanner/gopocs"
-	"dddd/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/gopocs"
+	"github.com/P0lar1ght/argus/scanner/structs"
 )
 
 // Dispatch GoPoc 主调度器。

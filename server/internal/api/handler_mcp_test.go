@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
+	grpcpkg "github.com/P0lar1ght/argus/server/internal/grpc"
+	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	pb "github.com/user/dddd-proto/go/scan"
-	"github.com/user/dddd-server/internal/db"
-	grpcpkg "github.com/user/dddd-server/internal/grpc"
 )
 
 const testMCPPythonExpContent = `ARGUS_EXP = {

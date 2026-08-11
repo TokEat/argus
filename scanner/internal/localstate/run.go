@@ -15,10 +15,10 @@ import (
 	"sync"
 	"time"
 
-	"dddd/scanner/internal/engine"
-	"dddd/scanner/structs"
-	"dddd/scanner/utils"
-	"github.com/user/dddd-proto/go/scanplan"
+	"github.com/P0lar1ght/argus/scanner/internal/engine"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/utils"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 )
 
 type Layout struct {

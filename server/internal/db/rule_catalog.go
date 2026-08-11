@@ -15,7 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/user/dddd-proto/pyexp"
+	"github.com/P0lar1ght/argus/shared/proto/pyexp"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"

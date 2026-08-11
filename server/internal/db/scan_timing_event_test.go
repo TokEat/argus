@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 	"github.com/glebarez/sqlite"
-	"github.com/user/dddd-proto/go/scanplan"
 	"gorm.io/gorm"
 )
 

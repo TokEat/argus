@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"dddd/scanner/internal/localstate"
+	"github.com/P0lar1ght/argus/scanner/internal/localstate"
 )
 
 func TestFormatRunDifferenceSummaryKeepsJSONOutputClean(t *testing.T) {

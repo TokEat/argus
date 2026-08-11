@@ -3,9 +3,9 @@ package grpcagent
 import (
 	"context"
 
-	pb "github.com/user/dddd-proto/go/scan"
-	"github.com/user/dddd-server/internal/adapters/ws"
-	"github.com/user/dddd-server/internal/core/usecase"
+	"github.com/P0lar1ght/argus/server/internal/adapters/ws"
+	"github.com/P0lar1ght/argus/server/internal/core/usecase"
+	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

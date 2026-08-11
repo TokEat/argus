@@ -5,8 +5,8 @@ import (
 	"io"
 	"testing"
 
-	pb "github.com/user/dddd-proto/go/scan"
-	grpcpkg "github.com/user/dddd-server/internal/grpc"
+	grpcpkg "github.com/P0lar1ght/argus/server/internal/grpc"
+	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 	"google.golang.org/grpc/metadata"
 )
 

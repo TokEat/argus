@@ -1,6 +1,6 @@
 # ScanPlan 与覆盖契约
 
-Argus 的 Server、Agent 与离线 CLI 共享 `github.com/user/dddd-proto/go/scanplan`。当前契约版本是 `argus.scanplan/v1`；它只定义规划、覆盖和观测语义，不负责数据库持久化，也不改变现有 Scanner 流水线。
+Argus 的 Server、Agent 与离线 CLI 共享 `github.com/P0lar1ght/argus/shared/proto/go/scanplan`。当前契约版本是 `argus.scanplan/v1`；它只定义规划、覆盖和观测语义，不负责数据库持久化，也不改变现有 Scanner 流水线。
 
 ## 场景
 

@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/P0lar1ght/argus/server/internal/assetdiscovery"
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/user/dddd-server/internal/assetdiscovery"
-	"github.com/user/dddd-server/internal/db"
 	"gorm.io/gorm"
 )
 

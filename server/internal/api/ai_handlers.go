@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	aipkg "github.com/P0lar1ght/argus/server/internal/ai"
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
-	aipkg "github.com/user/dddd-server/internal/ai"
-	"github.com/user/dddd-server/internal/db"
 )
 
 func getAIConfig(c *gin.Context) {

@@ -1,9 +1,9 @@
 package httpapi
 
 import (
+	"github.com/P0lar1ght/argus/server/internal/adapters/ws"
+	"github.com/P0lar1ght/argus/server/internal/core/usecase"
 	"github.com/gin-gonic/gin"
-	"github.com/user/dddd-server/internal/adapters/ws"
-	"github.com/user/dddd-server/internal/core/usecase"
 )
 
 // Router 作为 HTTP 适配层入口，未来用于替换当前平铺式 api 包。

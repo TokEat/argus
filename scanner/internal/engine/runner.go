@@ -2,8 +2,8 @@ package engine
 
 import (
 	"context"
-	"dddd/scanner/structs"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/structs"
 )
 
 // RunTask executes the unified scan entrypoint for both CLI and agent modes.

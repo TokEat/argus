@@ -2,9 +2,9 @@
 package mapper
 
 import (
-	"dddd/scanner/structs"
-	"dddd/scanner/utils"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	"net/url"
 	"strings"
 

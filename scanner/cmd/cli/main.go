@@ -9,14 +9,14 @@ import (
 	"strings"
 	"time"
 
-	"dddd/scanner/common"
-	"dddd/scanner/ddout"
-	"dddd/scanner/internal/arsenal"
-	"dddd/scanner/internal/config"
-	"dddd/scanner/internal/localplanner"
-	"dddd/scanner/internal/localstate"
-	"dddd/scanner/internal/timing"
-	"github.com/user/dddd-proto/go/scanplan"
+	"github.com/P0lar1ght/argus/scanner/common"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/internal/arsenal"
+	"github.com/P0lar1ght/argus/scanner/internal/config"
+	"github.com/P0lar1ght/argus/scanner/internal/localplanner"
+	"github.com/P0lar1ght/argus/scanner/internal/localstate"
+	"github.com/P0lar1ght/argus/scanner/internal/timing"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 )
 
 const (

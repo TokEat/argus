@@ -1,6 +1,6 @@
 package engine
 
-import "github.com/user/dddd-proto/go/scanplan"
+import "github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 
 // CanonicalStageForPhase bridges legacy Pipeline phase names to the stable
 // cross-component ScanPlan contract. Multiple legacy POC phase names collapse

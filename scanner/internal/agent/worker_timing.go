@@ -5,10 +5,10 @@ import (
 	"sync"
 	"time"
 
-	"dddd/scanner/internal/engine"
-	"dddd/scanner/internal/timing"
+	"github.com/P0lar1ght/argus/scanner/internal/engine"
+	"github.com/P0lar1ght/argus/scanner/internal/timing"
 
-	"github.com/user/dddd-proto/go/scanplan"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 )
 
 // stageTimingTracker keeps the monotonic component from time.Now for actual

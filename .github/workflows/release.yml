@@ -32,11 +32,11 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: argus_release_ci
-          POSTGRES_DB: dddd
+          POSTGRES_DB: argus
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d dddd"
+          --health-cmd "pg_isready -U postgres -d argus"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -65,7 +65,7 @@ jobs:
 
       - name: PostgreSQL migration apply and schema verify
         env:
-          DB_DSN: host=127.0.0.1 user=postgres password=argus_release_ci dbname=dddd port=5432 sslmode=disable
+          DB_DSN: host=127.0.0.1 user=postgres password=argus_release_ci dbname=argus port=5432 sslmode=disable
         run: |
           make db-migrate DB_MIGRATION_MODE=apply
           make db-verify
@@ -112,7 +112,7 @@ jobs:
         run: ./deploy/build-bundle.sh "${{ steps.version.outputs.version }}"
 
       - name: Build Linux CLI offline package
-        run: ./build.sh --pack --component dddd --target linux/amd64
+        run: ./build.sh --pack --component argus --target linux/amd64
 
       - name: Package frontend dist
         run: tar -czf release/server-ui-dist.tar.gz -C server-ui dist
@@ -130,10 +130,10 @@ jobs:
           name: argus-components-${{ steps.version.outputs.version }}
           if-no-files-found: error
           path: |
-            release/dddd-linux-amd64
-            release/dddd-linux-amd64.tar.gz
-            release/dddd-server-linux-amd64
-            release/dddd-agent-linux-amd64
+            release/argus-linux-amd64
+            release/argus-linux-amd64.tar.gz
+            release/argus-server-linux-amd64
+            release/argus-agent-linux-amd64
             release/server-ui-dist.tar.gz
             server-ui/dist/**
 
@@ -172,14 +172,14 @@ jobs:
         # UPX 压缩为尽力而为：windows/amd64 压缩；
         # darwin 目标不压缩（Mach-O 压缩产物在 macOS 上无法运行），
         # windows/arm64 目前 UPX 不支持，均保留未压缩产物。
-        run: ./build.sh --pack --component dddd,dddd-agent,dddd-server --target ${{ matrix.goos }}/${{ matrix.goarch }}
+        run: ./build.sh --pack --component argus,argus-agent,argus-server --target ${{ matrix.goos }}/${{ matrix.goarch }}
 
       - name: Upload ${{ matrix.name }} binaries
         uses: actions/upload-artifact@v4
         with:
           name: argus-${{ matrix.name }}
           if-no-files-found: error
-          path: release/dddd*
+          path: release/argus*
 
   draft-release:
     name: Draft GitHub Release
@@ -199,4 +199,4 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             release-artifacts/**/*.tar.gz
-            release-artifacts/**/dddd-*
+            release-artifacts/**/argus-*

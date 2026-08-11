@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/user/dddd-server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/db"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -353,7 +353,7 @@ func buildArsenalSQLiteDB(tenantID string) (filePath string, md5Hash string, sha
 
 // buildArsenalSeedSQLiteDB 从 PostgreSQL 的 arsenals 原始表导出安装/迁移用 seed DB。
 // 文件结构与 server/scripts/build_seed_db.go 生成的 deploy/arsenal_seed.db 一致，
-// 可直接通过 dddd-server --seed-from-db 导入。
+// 可直接通过 argus-server --seed-from-db 导入。
 func buildArsenalSeedSQLiteDB(tenantID string) (filePath string, hash string, count int, err error) {
 	tmpFile, err := os.CreateTemp("", "arsenal-seed-export-*.db")
 	if err != nil {

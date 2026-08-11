@@ -16,7 +16,7 @@
 *(版本号为可选参数，默认不传即为 `v0.1.0`)*
 
 **构建脚本将自动执行：**
-1. 构建最新版本的后端 `dddd-server` 与节点守护进程 `dddd-agent`（Linux amd64）。
+1. 构建最新版本的后端 `argus-server` 与节点守护进程 `argus-agent`（Linux amd64）。
 2. 构建最新版本的前端控制台（基于 Node + Vite，生成 `server-ui/dist`）。
 3. 预编译数千个散乱的 YAML 漏洞模板，生成紧凑的单文件本地库 `arsenal_seed.db`。
 4. 附带 `production.env.example`、部署/卸载脚本和 Docker 编排文件。
@@ -36,7 +36,7 @@ cd argus-release-v0.1.0
 ```
 
 ### 3. 一键安装
-部署脚本采用**就地绿色安装**模式，即你在哪个目录执行它，它就会以当前目录为基础构建运行环境，**不会**把二进制文件散落到系统中（如 `/opt` 等）。
+部署脚本采用**就地绿色安装**模式：安装目录固定为发布包根目录（`deploy/` 的父目录），并以规范化后的绝对路径写入 `argus-server.service` 的 `WorkingDirectory`。脚本**不会**默认把文件复制到 `/opt/argus` 等固定目录。
 
 执行以下命令（需具备 `sudo` 或 `root` 权限）：
 
@@ -49,7 +49,7 @@ sudo ./deploy/setup-server.sh
 2. 使用 `docker-compose.yml` 启动内置的 PostgreSQL 14 和 RabbitMQ 3。
 3. 等待数据库启动并执行结构表迁移。
 4. 从 `arsenal_seed.db` 导入所有核心规则资产；该文件是必需部署资产，导入失败会终止安装。
-5. 将 `dddd-server` 注册为系统级守护进程 (`systemd`)。
+5. 将 `argus-server` 注册为系统级守护进程 (`systemd`)。
 
 #### 可选：自定义安装参数
 如果您需要固定各种密钥与配置以配合现有基建，可携带以下参数覆盖默认生成的随机值：
@@ -111,4 +111,12 @@ CloudManagement、OSS 自动弹容和真实云资源回收在未完成真实云�
 sudo ./deploy/uninstall-server.sh
 ```
 
-卸载脚本将停止 systemd 服务、停止并清理所有配套的 docker 容器和挂载卷，彻底恢复系统原貌。
+卸载脚本会先从 `argus-server.service` 的 `WorkingDirectory` 解析真实安装目录，并校验该服务的 `ExecStart` 位于同一目录，然后才显示确认提示并执行清理。它不会使用 `/opt/argus` 等默认回退路径；无法确认目录时会直接退出，不会删除任何目录。
+
+如果 systemd 服务文件已丢失，但安装目录仍完整，可显式指定目录。该目录必须是绝对路径，且至少包含 `bin/argus-server` 和 `deploy/docker-compose.yml`，否则脚本会 fail closed：
+
+```bash
+sudo ./deploy/uninstall-server.sh --install-dir /path/to/argus-release-v0.1.0
+```
+
+当 service 仍存在时，`--install-dir` 必须与其 `WorkingDirectory` 完全一致。卸载脚本将停止 systemd 服务、停止并清理配套 Docker 容器和数据卷，并仅删除上述已验证的安装目录。

@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/P0lar1ght/argus/server/internal/cloud/aliyun"
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
-	"github.com/user/dddd-server/internal/cloud/aliyun"
-	"github.com/user/dddd-server/internal/db"
 )
 
 // listCloudRegions 通过 AK/SK 自动获取所有可用地域列表

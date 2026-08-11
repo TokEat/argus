@@ -843,7 +843,7 @@ Argus 早期结果入库以 `task_id` 为主要关联键，适合一次性扫描
 - `arsenals`：原始规则文件仓库，直接服务于 Agent 的增量/全量同步。
 - 结构化规则表：由 `arsenals` 物化生成，便于统计、检索、审批、AI 工具理解和后续治理。
 
-启动 `dddd-server` 时的初始化流程：
+启动 `argus-server` 时的初始化流程：
 
 1. 规范化历史 `arsenals.type`，将 `fingerprint -> finger`、`dirprobe -> dir` 等旧别名迁移到标准类型。
 2. 如果 `arsenals` 为空，则从 `scanner/common/config` 首次导入 `finger.yaml`、`workflow.yaml`、`dir.yaml`、`pocs/*.yaml`。

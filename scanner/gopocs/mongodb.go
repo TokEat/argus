@@ -1,11 +1,11 @@
 package gopocs
 
 import (
-	"dddd/scanner/utils"
-	"dddd/scanner/ddout"
-	"dddd/scanner/structs"
 	"encoding/hex"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	_ "github.com/denisenkom/go-mssqldb"
 	"github.com/projectdiscovery/gologger"
 	"strings"

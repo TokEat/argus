@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/user/dddd-server/internal/core/domain/node"
-	"github.com/user/dddd-server/internal/shared/apperr"
+	"github.com/P0lar1ght/argus/server/internal/core/domain/node"
+	"github.com/P0lar1ght/argus/server/internal/shared/apperr"
 )
 
 type RegisterNodeCommand struct {

@@ -1,6 +1,6 @@
 package engine
 
-import "dddd/scanner/structs"
+import "github.com/P0lar1ght/argus/scanner/structs"
 
 // --- 输入类型常量 ---
 
@@ -97,17 +97,17 @@ type PhaseEvent struct {
 
 // Pipeline 扫描阶段常量
 const (
-	PhaseSearchEngine    = "search_engine"
-	PhaseSubdomain       = "subdomain"
-	PhaseCDN             = "cdn_check"
-	PhaseICMP            = "icmp_discovery"
-	PhaseTCPPing         = "tcp_ping"
-	PhasePortScan        = "port_scan"
-	PhaseProtocol        = "protocol_identify"
-	PhaseHTTPProbe       = "http_probe"
-	PhaseHostBind        = "host_bind"
-	PhaseDirBrute        = "dir_brute"
-	PhaseFingerprint     = "fingerprint"
-	PhaseNuclei          = "nuclei_scan"
-	PhaseGoPoc           = "gopoc_scan"
+	PhaseSearchEngine = "search_engine"
+	PhaseSubdomain    = "subdomain"
+	PhaseCDN          = "cdn_check"
+	PhaseICMP         = "icmp_discovery"
+	PhaseTCPPing      = "tcp_ping"
+	PhasePortScan     = "port_scan"
+	PhaseProtocol     = "protocol_identify"
+	PhaseHTTPProbe    = "http_probe"
+	PhaseHostBind     = "host_bind"
+	PhaseDirBrute     = "dir_brute"
+	PhaseFingerprint  = "fingerprint"
+	PhaseNuclei       = "nuclei_scan"
+	PhaseGoPoc        = "gopoc_scan"
 )

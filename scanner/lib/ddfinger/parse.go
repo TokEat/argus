@@ -2,8 +2,8 @@ package ddfinger
 
 import (
 	"container/list"
-	"dddd/scanner/structs"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/projectdiscovery/gologger"
 	"regexp"
 	"strconv"

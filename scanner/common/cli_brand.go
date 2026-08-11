@@ -17,27 +17,27 @@ const cliHelpText = `
   workflow    管理指纹到 POC 的映射关系
 
 帮助:
-  dddd help
-  dddd help finger
-  dddd help poc
-  dddd help workflow
-  dddd finger --help
-  dddd poc --help
-  dddd workflow --help
-  dddd --version
+  argus help
+  argus help finger
+  argus help poc
+  argus help workflow
+  argus finger --help
+  argus poc --help
+  argus workflow --help
+  argus --version
 
 资产测绘:
   FOFA、Hunter、Quake 查询已迁移到 Argus Server 的项目“资产测绘”页面。
   Standalone CLI 只扫描显式授权目标；旧 Provider 参数仅返回迁移提示，不再执行查询。
 
 示例:
-  dddd -t https://example.com
-  dddd finger list --product nginx
-  dddd poc list --severity high
-  dddd workflow list --product ruoyi`
+  argus -t https://example.com
+  argus finger list --product nginx
+  argus poc list --severity high
+  argus workflow list --product ruoyi`
 
 // CLIVersionString is the stable user-facing version text used by both the
-// banner and the early --version path. The executable name remains dddd.
+// banner and the early --version path.
 func CLIVersionString() string {
 	return fmt.Sprintf("Argus CLI v%s", version)
 }
@@ -54,7 +54,7 @@ func writeBanner(w io.Writer) {
  / ___ \|  _ <| |_| | |_| |___) |
 /_/   \_\_| \_\\____|\___/|____/
 %s
-Command: dddd
+Command: argus
 
 `, CLIVersionString())
 }

@@ -12,7 +12,7 @@ func TestResolveHomeDefaultsBesideExecutable(t *testing.T) {
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("create bin dir: %v", err)
 	}
-	executable := filepath.Join(binDir, "dddd.exe")
+	executable := filepath.Join(binDir, "argus.exe")
 	if err := os.WriteFile(executable, []byte("test"), 0o755); err != nil {
 		t.Fatalf("write executable placeholder: %v", err)
 	}
@@ -29,7 +29,7 @@ func TestResolveHomeDefaultsBesideExecutable(t *testing.T) {
 
 func TestResolveHomeHonorsAbsoluteAndRelativeOverride(t *testing.T) {
 	root := t.TempDir()
-	executable := filepath.Join(root, "bin", "dddd")
+	executable := filepath.Join(root, "bin", "argus")
 
 	absolute := filepath.Join(root, "external-state")
 	got, err := resolveHome(executable, "  "+absolute+"  ", root)
@@ -51,7 +51,7 @@ func TestResolveHomeHonorsAbsoluteAndRelativeOverride(t *testing.T) {
 }
 
 func TestResolveHomeRejectsMissingBasePaths(t *testing.T) {
-	if _, err := resolveHome("dddd", "", ""); err == nil {
+	if _, err := resolveHome("argus", "", ""); err == nil {
 		t.Fatal("empty working directory was accepted")
 	}
 	if _, err := resolveHome("", "", t.TempDir()); err == nil {
@@ -65,7 +65,7 @@ func TestResolveHomeDoesNotNeedWorkingDirectoryForAbsolutePaths(t *testing.T) {
 	if got, err := resolveHome("", absoluteOverride, ""); err != nil || got != absoluteOverride {
 		t.Fatalf("absolute override with unavailable cwd = %q, %v", got, err)
 	}
-	absoluteExecutable := filepath.Join(root, "bin", "dddd")
+	absoluteExecutable := filepath.Join(root, "bin", "argus")
 	want := filepath.Join(filepath.Dir(absoluteExecutable), DefaultHomeName)
 	if got, err := resolveHome(absoluteExecutable, "", ""); err != nil || got != want {
 		t.Fatalf("absolute executable with unavailable cwd = %q, %v, want %q", got, err, want)

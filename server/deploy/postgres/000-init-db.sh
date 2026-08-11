@@ -10,7 +10,7 @@ DB_SUPERDB="${DB_SUPERDB:-${PGSUPERDB:-postgres}}"
 DB_SUPERUSER="${DB_SUPERUSER:-${PGSUPERUSER:-${POSTGRES_USER:-postgres}}}"
 DB_SUPERPASSWORD="${DB_SUPERPASSWORD:-${PGSUPERPASSWORD:-${POSTGRES_PASSWORD:-argus_dev_pg_S7m9Q4r2L8xP6nV3}}}"
 
-APP_DB_NAME="${APP_DB_NAME:-${POSTGRES_DB:-dddd}}"
+APP_DB_NAME="${APP_DB_NAME:-${POSTGRES_DB:-argus}}"
 APP_DB_USER="${APP_DB_USER:-${POSTGRES_USER:-postgres}}"
 APP_DB_PASSWORD="${APP_DB_PASSWORD:-${POSTGRES_PASSWORD:-argus_dev_pg_S7m9Q4r2L8xP6nV3}}"
 
@@ -50,4 +50,4 @@ PGPASSWORD="${DB_SUPERPASSWORD}" psql \
   -f "${BOOTSTRAP_SQL}"
 
 echo "[postgres-init] bootstrap complete"
-echo "[postgres-init] next step: run dddd-server --migrate-only (or start dddd-server normally) to apply schema migrations"
+echo "[postgres-init] next step: run argus-server --migrate-only (or start argus-server normally) to apply schema migrations"

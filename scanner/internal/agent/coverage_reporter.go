@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"dddd/scanner/internal/engine"
-	"github.com/user/dddd-proto/go/scanplan"
+	"github.com/P0lar1ght/argus/scanner/internal/engine"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 )
 
 var assetObservationStages = []scanplan.Stage{

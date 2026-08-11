@@ -13,15 +13,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 	amqp "github.com/rabbitmq/amqp091-go"
-	pb "github.com/user/dddd-proto/go/scan"
 )
 
 // ============================================================================
 // 多优先级 RabbitMQ 任务队列
 //
 // 架构设计:
-//   - 三级优先级队列: dddd.tasks.urgent / dddd.tasks.normal / dddd.tasks.low
+//   - 三级优先级队列: argus.tasks.urgent / argus.tasks.normal / argus.tasks.low
 //   - 使用 basic.get (pull 模式) 按优先级降序消费，高优先级先消费
 //   - 手动 ACK 保证任务可靠投递（Server 崩溃时 RabbitMQ 自动 requeue）
 //   - 仅未配置 AMQP URL 时使用内存队列；显式 RabbitMQ 模式故障时保持失败可见
@@ -43,9 +43,9 @@ var queueEpochCounter atomic.Uint64
 
 // priorityQueues 按优先级从高到低的 Queue 名
 var priorityQueues = []string{
-	"dddd.tasks.urgent", // P0: 回收任务、紧急任务
-	"dddd.tasks.normal", // P1: 普通任务
-	"dddd.tasks.low",    // P2: 低优先级
+	"argus.tasks.urgent", // P0: 回收任务、紧急任务
+	"argus.tasks.normal", // P1: 普通任务
+	"argus.tasks.low",    // P2: 低优先级
 }
 
 // pendingDelivery 记录一次未确认的消息投递

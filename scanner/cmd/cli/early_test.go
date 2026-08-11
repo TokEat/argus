@@ -119,9 +119,9 @@ func TestCLIProcessHelper(t *testing.T) {
 	case "":
 		return
 	case "version":
-		os.Args = []string{"dddd", "--version"}
+		os.Args = []string{"argus", "--version"}
 	case "provider":
-		os.Args = []string{"dddd", "-t", "harmless", "--fofa=true"}
+		os.Args = []string{"argus", "-t", "harmless", "--fofa=true"}
 	default:
 		t.Fatalf("unknown helper mode")
 	}

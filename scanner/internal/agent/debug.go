@@ -12,15 +12,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"dddd/scanner/common"
-	"dddd/scanner/internal/engine"
-	"dddd/scanner/internal/exploit"
-	"dddd/scanner/internal/vuln/nuclei"
-	"dddd/scanner/lib/ddfinger"
-	"dddd/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/common"
+	"github.com/P0lar1ght/argus/scanner/internal/engine"
+	"github.com/P0lar1ght/argus/scanner/internal/exploit"
+	"github.com/P0lar1ght/argus/scanner/internal/vuln/nuclei"
+	"github.com/P0lar1ght/argus/scanner/lib/ddfinger"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
+	"github.com/P0lar1ght/argus/shared/proto/pyexp"
 	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	pb "github.com/user/dddd-proto/go/scan"
-	"github.com/user/dddd-proto/pyexp"
 	"google.golang.org/grpc"
 )
 

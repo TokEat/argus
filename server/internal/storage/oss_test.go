@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/user/dddd-server/internal/cloud"
+	"github.com/P0lar1ght/argus/server/internal/cloud"
 )
 
 type fakeStorageOSSUploader struct {

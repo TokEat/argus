@@ -8,8 +8,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/P0lar1ght/argus/server/internal/assetdiscovery"
 	"github.com/gin-gonic/gin"
-	"github.com/user/dddd-server/internal/assetdiscovery"
 )
 
 var errHunterCredentialUnavailable = errors.New("hunter credential unavailable")

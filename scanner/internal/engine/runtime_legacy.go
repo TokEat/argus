@@ -1,13 +1,13 @@
 package engine
 
 import (
-	commoncfg "dddd/scanner/common"
-	"dddd/scanner/ddout"
-	"dddd/scanner/lib/ddfinger"
-	"dddd/scanner/structs"
-	"dddd/scanner/utils"
 	"embed"
 	"fmt"
+	commoncfg "github.com/P0lar1ght/argus/scanner/common"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/lib/ddfinger"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	"os"
 	"runtime"
 	"strings"

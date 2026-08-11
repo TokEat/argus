@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/user/dddd-server/internal/db"
 )
 
 var (

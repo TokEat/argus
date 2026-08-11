@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/user/dddd-server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/db"
 )
 
 // ============================================================================
@@ -83,7 +83,7 @@ func GenerateAgentDownloadURL(account *db.CloudAccount, platform, arch string) (
 		return "", err
 	}
 
-	objectKey := fmt.Sprintf("argus/agent/dddd-agent-%s-%s", platform, arch)
+	objectKey := fmt.Sprintf("argus/agent/argus-agent-%s-%s", platform, arch)
 	url, err := uploader.GeneratePresignedURL(objectKey, 1*time.Hour)
 	if err != nil {
 		return "", fmt.Errorf("generate presigned URL: %w", err)

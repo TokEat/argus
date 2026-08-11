@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	pb "github.com/user/dddd-proto/go/scan"
-	"github.com/user/dddd-server/internal/api"
-	"github.com/user/dddd-server/internal/cloud"
-	_ "github.com/user/dddd-server/internal/cloud/aliyun" // 注册阿里云 ECS Provider
-	"github.com/user/dddd-server/internal/db"
-	"github.com/user/dddd-server/internal/grpc"
-	"github.com/user/dddd-server/internal/scheduler"
+	"github.com/P0lar1ght/argus/server/internal/api"
+	"github.com/P0lar1ght/argus/server/internal/cloud"
+	_ "github.com/P0lar1ght/argus/server/internal/cloud/aliyun" // 注册阿里云 ECS Provider
+	"github.com/P0lar1ght/argus/server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/grpc"
+	"github.com/P0lar1ght/argus/server/internal/scheduler"
+	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 )
 
 func resolveOutboundHost() (string, error) {

@@ -6,10 +6,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/user/dddd-server/internal/assetdiscovery"
-	"github.com/user/dddd-server/internal/db"
-	grpcpkg "github.com/user/dddd-server/internal/grpc"
-	"github.com/user/dddd-server/internal/scheduler"
+	"github.com/P0lar1ght/argus/server/internal/assetdiscovery"
+	"github.com/P0lar1ght/argus/server/internal/db"
+	grpcpkg "github.com/P0lar1ght/argus/server/internal/grpc"
+	"github.com/P0lar1ght/argus/server/internal/scheduler"
 )
 
 // FOFAQueryProvider is the bounded Server-side provider used by the project

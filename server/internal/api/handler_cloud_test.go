@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/P0lar1ght/argus/server/internal/cloud"
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
-	"github.com/user/dddd-server/internal/cloud"
-	"github.com/user/dddd-server/internal/db"
 	"gorm.io/gorm"
 )
 
@@ -460,7 +460,7 @@ func TestCloudProviderMockSmoke(t *testing.T) {
 	if err := os.MkdirAll("release", 0o755); err != nil {
 		t.Fatalf("create release dir: %v", err)
 	}
-	if err := os.WriteFile("release/dddd-agent-linux-amd64", []byte("agent"), 0o644); err != nil {
+	if err := os.WriteFile("release/argus-agent-linux-amd64", []byte("agent"), 0o644); err != nil {
 		t.Fatalf("seed release artifact: %v", err)
 	}
 
@@ -625,17 +625,17 @@ func TestOneClickSetupPersistsPreferred2C2GInstanceType(t *testing.T) {
 
 func TestSanitizeReleaseFilenameRejectsUnsafeUploads(t *testing.T) {
 	badNames := []string{
-		"../../release/dddd-agent-linux-amd64",
-		"dddd-server-linux-amd64",
+		"../../release/argus-agent-linux-amd64",
+		"argus-server-linux-amd64",
 		"notes.txt",
-		"nested/dddd-agent-linux-amd64",
+		"nested/argus-agent-linux-amd64",
 	}
 	for _, name := range badNames {
 		if _, err := sanitizeReleaseFilename(name); err == nil {
 			t.Fatalf("expected %q to be rejected", name)
 		}
 	}
-	if got, err := sanitizeReleaseFilename("dddd-agent-linux-amd64"); err != nil || got != "dddd-agent-linux-amd64" {
+	if got, err := sanitizeReleaseFilename("argus-agent-linux-amd64"); err != nil || got != "argus-agent-linux-amd64" {
 		t.Fatalf("expected valid agent filename, got %q err=%v", got, err)
 	}
 }
@@ -697,8 +697,8 @@ func TestUploadAgentToOSSFailsWhenRequiredArtifactMissing(t *testing.T) {
 	fakeUploader = &fakeOSSUploader{
 		uploadResults: []cloud.OSSUploadResult{
 			{
-				Filename:  "dddd-agent-linux-arm64",
-				ObjectKey: "argus/agent/dddd-agent-linux-arm64",
+				Filename:  "argus-agent-linux-arm64",
+				ObjectKey: "argus/agent/argus-agent-linux-arm64",
 				Success:   true,
 			},
 		},
@@ -745,13 +745,13 @@ func TestUploadAgentToOSSSucceedsWhenRequiredArtifactUploadedWithNonCriticalFail
 	fakeUploader = &fakeOSSUploader{
 		uploadResults: []cloud.OSSUploadResult{
 			{
-				Filename:  "dddd-agent-linux-amd64",
+				Filename:  "argus-agent-linux-amd64",
 				ObjectKey: requiredAgentObjectKey,
 				Success:   true,
 			},
 			{
-				Filename:  "dddd-agent-darwin-arm64",
-				ObjectKey: "argus/agent/dddd-agent-darwin-arm64",
+				Filename:  "argus-agent-darwin-arm64",
+				ObjectKey: "argus/agent/argus-agent-darwin-arm64",
 				Success:   false,
 				Error:     "not supported in this release",
 			},

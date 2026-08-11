@@ -14,8 +14,8 @@
 - [ ] 执行 `make release-artifacts VERSION=vX.Y.Z`（或等价的 `./deploy/build-bundle.sh vX.Y.Z`）。
 - [ ] 发行包生成在 `deploy/argus-release-vX.Y.Z-linux-amd64.tar.gz`，且版本与 tag、Release Notes 一致。
 - [ ] 解包后确认以下文件存在：
-  - `bin/dddd-server-linux-amd64`
-  - `bin/dddd-agent-linux-amd64`
+  - `bin/argus-server-linux-amd64`
+  - `bin/argus-agent-linux-amd64`
   - `server-ui/dist`
   - `deploy/docker-compose.yml`
   - `deploy/setup-server.sh`
@@ -25,6 +25,10 @@
 
 ## 3. 部署 smoke
 
+- [ ] 升级既有环境时保留原有显式 `DATABASE_URL`/DSN；默认数据库名变更只适用于新安装，禁止在升级时静默连接到空库。
+- [ ] 使用 `deploy/upgrade-server.sh` 验证原地升级；在新服务启动前注入一次失败，确认脚本恢复原 systemd unit、重新加载 unit 并启动升级前二进制；已成功应用的数据库 migration 不会由该应用回滚自动逆转。
+- [ ] 升级前暂停新任务并排空旧队列，升级后确认 `argus.tasks.*` 队列正常消费；不要依赖新版本消费旧命名空间中的遗留消息。
+- [ ] 启用云端自动扩容前，确认 OSS 中已存在与当前版本匹配的 `argus/agent/argus-agent-linux-amd64`，再恢复调度。
 - [ ] 在干净 Linux 目录解包并运行 `sudo ./deploy/setup-server.sh --public-ip <ip>`。
 - [ ] Server 启动成功，数据库 migration 完成。
 - [ ] `deploy/arsenal_seed.db` 导入成功；导入失败必须终止安装。

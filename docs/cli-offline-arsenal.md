@@ -3,7 +3,7 @@
 Argus CLI 的正式离线发行包同时包含可执行文件与版本化 `arsenal.db`：
 
 ```text
-dddd.exe
+argus.exe
 argus-data/
   arsenal/
     arsenal.db
@@ -29,10 +29,10 @@ argus-data/arsenal/packages/<file-sha256>/arsenal.db
 
 ## 构建发行包
 
-`build.sh` 在构建 `dddd` 组件时，从仓库审查基线 `scanner/common/config` 生成与 Server/Agent 同源的运行时数据库，并用 `noembed` 构建正式 CLI，避免在可执行文件和数据库中重复携带大批 POC。输出压缩包包含可执行文件和固定目录：
+`build.sh` 在构建 `argus` 组件时，从仓库审查基线 `scanner/common/config` 生成与 Server/Agent 同源的运行时数据库，并用 `noembed` 构建正式 CLI，避免在可执行文件和数据库中重复携带大批 POC。输出压缩包包含可执行文件和固定目录：
 
 ```bash
-./build.sh --component dddd --target windows/amd64
+./build.sh --component argus --target windows/amd64
 ```
 
-输出包括原二进制和 `release/dddd-windows-amd64.tar.gz`。运行时数据库是生成物，不提交到 Git。
+输出包括原二进制和 `release/argus-windows-amd64.tar.gz`。运行时数据库是生成物，不提交到 Git。

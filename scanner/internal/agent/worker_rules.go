@@ -2,8 +2,8 @@ package agent
 
 import (
 	"crypto/sha256"
-	"dddd/scanner/internal/arsenal"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/internal/arsenal"
 	"path/filepath"
 	"strings"
 	"sync"

@@ -110,6 +110,17 @@ find_first_file() {
     return 1
 }
 
+# Migration-only compatibility boundary. A pre-Argus service can keep its
+# legacy executable path in ExecStart; normalize that reference only after the
+# newly packaged Argus binary is installed. The old executable stays in place,
+# so restoring the saved unit reactivates it on failure. No legacy artifact is
+# accepted from the release bundle and no legacy binary is installed.
+migrate_legacy_service_identity() {
+    if [[ -f "$SERVICE_FILE" ]] && grep -q '/bin/dddd-server' "$SERVICE_FILE"; then
+        sed -i 's#/bin/dddd-server#/bin/argus-server#g' "$SERVICE_FILE"
+    fi
+}
+
 SERVICE_CMD="$(service_execstart || true)"
 if [[ -z "$INSTALL_DIR" ]]; then
     INSTALL_DIR="$(service_workdir || true)"
@@ -141,22 +152,22 @@ POSTGRES_USER="${POSTGRES_USER:-postgres}"
 if [[ -z "${POSTGRES_PASSWORD}" ]]; then
     die "数据库 DSN 缺少 password 字段，请使用 --db 或 ARGUS_DB_DSN 显式指定完整 DSN"
 fi
-POSTGRES_DB="${POSTGRES_DB:-dddd}"
+POSTGRES_DB="${POSTGRES_DB:-argus}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 
 shopt -s nullglob
 server_candidates=(
-    "${ROOT_DIR}/bin/dddd-server-linux-amd64"
-    "${ROOT_DIR}/bin/dddd-server"
-    "${ROOT_DIR}/release/dddd-server-linux-amd64"
-    "${ROOT_DIR}/dddd-server-linux-amd64"
-    "${ROOT_DIR}"/argus-release-*/bin/dddd-server-linux-amd64
+    "${ROOT_DIR}/bin/argus-server-linux-amd64"
+    "${ROOT_DIR}/bin/argus-server"
+    "${ROOT_DIR}/release/argus-server-linux-amd64"
+    "${ROOT_DIR}/argus-server-linux-amd64"
+    "${ROOT_DIR}"/argus-release-*/bin/argus-server-linux-amd64
 )
 agent_candidates=(
-    "${ROOT_DIR}/bin/dddd-agent-linux-amd64"
-    "${ROOT_DIR}/release/dddd-agent-linux-amd64"
-    "${ROOT_DIR}/dddd-agent-linux-amd64"
-    "${ROOT_DIR}"/argus-release-*/bin/dddd-agent-linux-amd64
+    "${ROOT_DIR}/bin/argus-agent-linux-amd64"
+    "${ROOT_DIR}/release/argus-agent-linux-amd64"
+    "${ROOT_DIR}/argus-agent-linux-amd64"
+    "${ROOT_DIR}"/argus-release-*/bin/argus-agent-linux-amd64
 )
 frontend_candidates=(
     "${ROOT_DIR}/server-ui/dist"
@@ -164,7 +175,7 @@ frontend_candidates=(
 )
 shopt -u nullglob
 
-SERVER_BIN="$(find_first_file "${server_candidates[@]}")" || die "新版发布包中找不到 dddd-server 二进制"
+SERVER_BIN="$(find_first_file "${server_candidates[@]}")" || die "新版发布包中找不到 argus-server 二进制"
 AGENT_BIN="$(find_first_file "${agent_candidates[@]}" || true)"
 FRONTEND_SRC=""
 for candidate in "${frontend_candidates[@]}"; do
@@ -195,11 +206,18 @@ mkdir -p "$BACKUP_DIR"
 rollback_ready=false
 rollback_on_error() {
     local exit_code=$?
+    trap - ERR
     if [[ "$rollback_ready" == "true" ]]; then
-        echo -e "${RED}[!] 升级失败，正在尝试恢复旧二进制并重启服务...${NC}" >&2
-        if [[ -f "${BACKUP_DIR}/dddd-server" ]]; then
-            install -m 0755 "${BACKUP_DIR}/dddd-server" "${INSTALL_DIR}/bin/dddd-server" || true
+        echo -e "${RED}[!] 升级失败，正在尝试恢复升级前的服务与二进制...${NC}" >&2
+        if [[ -f "${BACKUP_DIR}/argus-server" ]]; then
+            install -m 0755 "${BACKUP_DIR}/argus-server" "${INSTALL_DIR}/bin/argus-server" || true
+        elif [[ -f "${BACKUP_DIR}/argus-server.absent" ]]; then
+            rm -f "${INSTALL_DIR}/bin/argus-server" || true
         fi
+        if [[ -f "${BACKUP_DIR}/argus-server.service" ]]; then
+            cp -a "${BACKUP_DIR}/argus-server.service" "$SERVICE_FILE" || true
+        fi
+        systemctl daemon-reload 2>/dev/null || true
         systemctl start "$SERVICE_NAME" 2>/dev/null || true
         echo -e "${YELLOW}    备份目录: ${BACKUP_DIR}${NC}" >&2
     fi
@@ -235,11 +253,13 @@ else
 fi
 
 echo -e "${YELLOW}[2/6] 创建升级备份...${NC}"
-if [[ -f "${INSTALL_DIR}/bin/dddd-server" ]]; then
-    cp -a "${INSTALL_DIR}/bin/dddd-server" "${BACKUP_DIR}/dddd-server"
+if [[ -f "${INSTALL_DIR}/bin/argus-server" ]]; then
+    cp -a "${INSTALL_DIR}/bin/argus-server" "${BACKUP_DIR}/argus-server"
+else
+    touch "${BACKUP_DIR}/argus-server.absent"
 fi
-if [[ -f "${INSTALL_DIR}/release/dddd-agent-linux-amd64" ]]; then
-    cp -a "${INSTALL_DIR}/release/dddd-agent-linux-amd64" "${BACKUP_DIR}/dddd-agent-linux-amd64"
+if [[ -f "${INSTALL_DIR}/release/argus-agent-linux-amd64" ]]; then
+    cp -a "${INSTALL_DIR}/release/argus-agent-linux-amd64" "${BACKUP_DIR}/argus-agent-linux-amd64"
 fi
 if [[ -d "${INSTALL_DIR}/server-ui/dist" ]]; then
     cp -a "${INSTALL_DIR}/server-ui/dist" "${BACKUP_DIR}/server-ui-dist"
@@ -268,12 +288,13 @@ echo -e "${YELLOW}[3/6] 停止应用服务...${NC}"
 systemctl stop "$SERVICE_NAME" 2>/dev/null || true
 
 echo -e "${YELLOW}[4/6] 替换应用文件...${NC}"
-install -m 0755 "$SERVER_BIN" "${INSTALL_DIR}/bin/dddd-server"
-echo -e "  Server: ${GREEN}${SERVER_BIN} -> ${INSTALL_DIR}/bin/dddd-server${NC}"
+install -m 0755 "$SERVER_BIN" "${INSTALL_DIR}/bin/argus-server"
+echo -e "  Server: ${GREEN}${SERVER_BIN} -> ${INSTALL_DIR}/bin/argus-server${NC}"
+migrate_legacy_service_identity
 
 if [[ -n "$AGENT_BIN" ]]; then
-    install -m 0755 "$AGENT_BIN" "${INSTALL_DIR}/release/dddd-agent-linux-amd64"
-    echo -e "  Agent:  ${GREEN}${AGENT_BIN} -> ${INSTALL_DIR}/release/dddd-agent-linux-amd64${NC}"
+    install -m 0755 "$AGENT_BIN" "${INSTALL_DIR}/release/argus-agent-linux-amd64"
+    echo -e "  Agent:  ${GREEN}${AGENT_BIN} -> ${INSTALL_DIR}/release/argus-agent-linux-amd64${NC}"
 fi
 
 if [[ -n "$FRONTEND_SRC" ]]; then
@@ -303,10 +324,10 @@ if [[ -d "${SCRIPT_DIR}/postgres" ]]; then
 fi
 
 echo -e "${YELLOW}[5/6] 执行数据库迁移与规则同步...${NC}"
-"${INSTALL_DIR}/bin/dddd-server" --db "$DB_DSN" --migrate-only --db-migration-mode apply --config-dir "${INSTALL_DIR}/config"
+"${INSTALL_DIR}/bin/argus-server" --db "$DB_DSN" --migrate-only --db-migration-mode apply --config-dir "${INSTALL_DIR}/config"
 
 if [[ -f "${SCRIPT_DIR}/arsenal_seed.db" ]]; then
-    "${INSTALL_DIR}/bin/dddd-server" --db "$DB_DSN" --seed-from-db "${SCRIPT_DIR}/arsenal_seed.db"
+    "${INSTALL_DIR}/bin/argus-server" --db "$DB_DSN" --seed-from-db "${SCRIPT_DIR}/arsenal_seed.db"
 else
     echo -e "${YELLOW}  [!] 未找到 deploy/arsenal_seed.db，跳过规则资产同步${NC}"
 fi
@@ -317,7 +338,8 @@ systemctl start "$SERVICE_NAME"
 sleep 3
 
 if ! systemctl is-active --quiet "$SERVICE_NAME"; then
-    die "服务启动失败，请查看 ${INSTALL_DIR}/logs/server.log"
+    echo -e "${RED}[!] 服务启动失败，请查看 ${INSTALL_DIR}/logs/server.log${NC}" >&2
+    false
 fi
 
 rollback_ready=false

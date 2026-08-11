@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"dddd/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/structs"
 
 	"github.com/projectdiscovery/hmap/store/hybrid"
 )

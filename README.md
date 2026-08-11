@@ -129,9 +129,9 @@ Argus 支持三种运行模式：
 
 | 模式 | 组件 | 适用场景 |
 |------|------|----------|
-| **单机 CLI** | `dddd` | 红队打点、安服测试、快速验证 |
-| **分布式集群** | `dddd-server` + N × `dddd-agent` | 企业级 ASM 巡航、大规模资产扫描 |
-| **Agent 单节点** | `dddd-agent` (对接远端 Server) | 云端弹性扩展节点 |
+| **单机 CLI** | `argus` | 红队打点、安服测试、快速验证 |
+| **分布式集群** | `argus-server` + N × `argus-agent` | 企业级 ASM 巡航、大规模资产扫描 |
+| **Agent 单节点** | `argus-agent` (对接远端 Server) | 云端弹性扩展节点 |
 
 ---
 
@@ -170,29 +170,29 @@ make mcp        # MCP 代理
 
 ```bash
 # 查看 Argus CLI 版本和帮助
-dddd --version
-dddd -h
+argus --version
+argus -h
 
 # 扫描 IP
-dddd -t 192.168.0.1
+argus -t 192.168.0.1
 
 # 扫描网段
-dddd -t 192.168.0.1/24
-dddd -t 192.168.0.0-192.168.0.12
+argus -t 192.168.0.1/24
+argus -t 192.168.0.0-192.168.0.12
 
 # 扫描网站
-dddd -t http://test.com
+argus -t http://test.com
 ```
 
 单机 CLI 首次进入扫描流程时，会在可执行文件同级创建私有的 `argus-data/` 目录，作为后续离线扫描历史、增量覆盖和本地策略的根目录；其中的数据不会上传到 Server。便携目录不可写或希望把历史放到其他磁盘时，可设置 `ARGUS_HOME`，不需要增加任何扫描参数：
 
 ```powershell
 $env:ARGUS_HOME = 'D:\argus-data'
-dddd -t 192.168.0.1
+argus -t 192.168.0.1
 ```
 
 ```bash
-ARGUS_HOME=/data/argus-data dddd -t 192.168.0.1
+ARGUS_HOME=/data/argus-data argus -t 192.168.0.1
 ```
 
 每次实际扫描都会建立独立的 `runs/<run-id>/`，保存 `summary.txt`、`targets.tsv`、`findings.tsv`、`coverage.tsv` 和版本化的 `delta.tsv`；长期状态表位于 `state/assets.tsv` 与 `state/coverage.tsv`。TSV 使用 `argus-tsv/v1` 表头并把制表符、换行和反斜线转义为单行文本；以 `= + - @` 开头的字段也会可逆转义，避免表格软件把目标可控内容当作公式执行。
@@ -232,7 +232,7 @@ revalidation:
 需要忽略未过期历史并重新执行完整资产流水线时，只增加可选 `-force`：
 
 ```bash
-dddd -t 192.168.0.1 -force
+argus -t 192.168.0.1 -force
 ```
 
 `-force` 不会扩大目标或端口范围，不会开启 POC/GoPoc，也不会删除或覆盖旧 Run；本次完整执行仍追加新证据并成为相同 WorkKey 的最新覆盖。默认命令和其他现有参数保持不变。
@@ -291,7 +291,7 @@ cd "argus-release-${VERSION}"
 sudo ./deploy/setup-server.sh --public-ip <ip>
 ```
 
-发布包会包含 `dddd-server`、`dddd-agent`、`server-ui/dist`、Docker 编排、部署/卸载脚本、生产配置模板和必需规则资产库 `deploy/arsenal_seed.db`。规则资产导入失败会终止安装。
+发布包会包含 `argus-server`、`argus-agent`、`server-ui/dist`、Docker 编排、部署/卸载脚本、生产配置模板和必需规则资产库 `deploy/arsenal_seed.db`。规则资产导入失败会终止安装。
 
 生产环境必须按 `deploy/production.env.example` 显式设置数据库、RabbitMQ、`ARGUS_AGENT_PSK`、`ARGUS_JWT_SECRET`、`ARGUS_ENCRYPT_KEY`、管理员账号、AI Key 和云 AK/SK。默认密码或开发密钥只允许本地开发使用。
 
@@ -313,8 +313,8 @@ sudo ./deploy/upgrade-server.sh
 
 ```bash
 # 跳过安全检查（仅限开发/测试）
-./dddd-server --dev
-./dddd-agent --server 127.0.0.1:50051
+./argus-server --dev
+./argus-agent --server 127.0.0.1:50051
 ```
 
 #### Server 命令行参数
@@ -347,24 +347,24 @@ sudo ./deploy/upgrade-server.sh
 
 ```bash
 # 红队外网 - 子域名枚举
-dddd -t xxx.com -sd
+argus -t xxx.com -sd
 
 # 红队内网
-dddd -t 172.16.100.0/24
+argus -t 172.16.100.0/24
 
 # 绕过本地增量覆盖，完整复测授权范围
-dddd -t 172.16.100.0/24 -force
+argus -t 172.16.100.0/24 -force
 
 # 安服测试 - 开启审计日志
-dddd -t 172.16.100.1 -a
+argus -t 172.16.100.1 -a
 
 # 显式声明仅做资产发现（当前也是普通扫描默认值）
-dddd -t http://www.xxx.com -npoc
-dddd -t 172.16.100.11 -npoc
-dddd -t 172.16.120.11:3307 -npoc
+argus -t http://www.xxx.com -npoc
+argus -t 172.16.100.11 -npoc
+argus -t 172.16.120.11:3307 -npoc
 ```
 
-Hunter、FOFA 和 Quake 查询请在 Server 端当前项目的“资产测绘”页面发起；该页面负责租户凭据、权限、审计、历史、导出、标签/备注/软移除和笔记本分发。`dddd` 只执行显式目标的本地扫描；Scanner/Agent 不读取或同步 Provider 凭据，也不发起 Provider 请求。
+Hunter、FOFA 和 Quake 查询请在 Server 端当前项目的“资产测绘”页面发起；该页面负责租户凭据、权限、审计、历史、导出、标签/备注/软移除和笔记本分发。`argus` 只执行显式目标的本地扫描；Scanner/Agent 不读取或同步 Provider 凭据，也不发起 Provider 请求。
 
 ### 输出文件
 
@@ -384,8 +384,8 @@ Hunter、FOFA 和 Quake 查询请在 Server 端当前项目的“资产测绘”
 argus/
 ├── scanner/                   # 数据面 - 扫描引擎核心
 │   ├── cmd/
-│   │   ├── cli/               # dddd 单机 CLI 入口
-│   │   └── agent/             # dddd-agent 分布式探针入口
+│   │   ├── cli/               # argus 单机 CLI 入口
+│   │   └── agent/             # argus-agent 分布式探针入口
 │   ├── internal/              # 引擎运行时 (module-private)
 │   │   ├── agent/             # Agent 生命周期管理
 │   │   ├── engine/            # 扫描流水线编排
@@ -404,7 +404,7 @@ argus/
 │   └── utils/                 # 工具函数
 │
 ├── server/                    # 控制面 - 调度与管理服务
-│   ├── cmd/dddd-server/       # Server 入口
+│   ├── cmd/argus-server/       # Server 入口
 │   ├── internal/
 │   │   ├── api/               # REST API (Gin)
 │   │   ├── grpc/              # gRPC Agent 通信服务

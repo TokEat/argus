@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"dddd/scanner/structs"
-	"dddd/scanner/utils"
-	"github.com/user/dddd-proto/go/scanplan"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/utils"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 )
 
 type comparisonEvidence struct {

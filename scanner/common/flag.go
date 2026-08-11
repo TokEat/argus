@@ -1,13 +1,13 @@
 package common
 
 import (
-	"dddd/scanner/ddout"
-	"dddd/scanner/internal/taskstore"
-	"dddd/scanner/lib/ddfinger"
-	"dddd/scanner/structs"
-	"dddd/scanner/utils"
 	"embed"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/internal/taskstore"
+	"github.com/P0lar1ght/argus/scanner/lib/ddfinger"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	"net/http"
 	"net/url"
 	"os"
@@ -586,7 +586,7 @@ func FlagWithError() error {
 	flagSet.SetCustomHelpText(cliHelpText)
 
 	flagSet.CreateGroup("input", "扫描目标",
-		flagSet.StringVarP(&TargetString, "target", "t", "", "被扫描的目标。 192.168.0.1 192.168.0.0/16 192.168.0.1:80 baidu.com:80 file.txt(一行一个) result.txt(fscan/dddd)"),
+		flagSet.StringVarP(&TargetString, "target", "t", "", "被扫描的目标。 192.168.0.1 192.168.0.0/16 192.168.0.1:80 baidu.com:80 file.txt(一行一个) result.txt(fscan/argus)"),
 		flagSet.BoolVar(&CLIForceFullScan, "force", false, "忽略本地增量覆盖并执行完整扫描"),
 	)
 
@@ -696,7 +696,7 @@ func FlagWithError() error {
 }
 
 func flagAudit() {
-	gologger.AuditTimeLogger("dddd启动")
+	gologger.AuditTimeLogger("Argus 启动")
 	gologger.AuditLogger("本次启动参数如下:")
 	gologger.AuditLogger("Target: %s", strings.Join(structs.GlobalConfig.Targets, ","))
 	gologger.AuditLogger("Subdomain: %v", structs.GlobalConfig.Subdomain)

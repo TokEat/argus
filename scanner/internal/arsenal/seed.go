@@ -1,7 +1,7 @@
 package arsenal
 
 import (
-	commoncfg "dddd/scanner/common"
+	commoncfg "github.com/P0lar1ght/argus/scanner/common"
 	"log"
 )
 

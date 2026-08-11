@@ -19,7 +19,7 @@ func defaultHeader() string {
 		<meta charset="UTF-8">
 		<meta http-equiv="X-UA-Compatible" content="IE=edge">
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
-		<title>dddd report</title>
+		<title>Argus report</title>
 		<style>
 			html,body,div,span,h1,h2,h3,h4,h5,h6,p,pre,a,code,em,img,small,strong,sub,sup,u,i,center,dl,dt,dd,ol,ul,li,fieldset,form,label{margin:0;padding:0;border:0;outline:0;font-size:100%;vertical-align:baseline;background:transparent;}
 			a{color:#FEFEFF/*#424242*/; text-decoration:none;outline: none;}
@@ -226,7 +226,7 @@ func defaultHeader() string {
 		</script>
 	</head>
 	<body>
-	<div class="top">&nbsp;&nbsp;dddd-report&nbsp;&nbsp;&nbsp;<span style="font-size:12px;font-weight:normal;color:darkgrey">` + time.Now().Format("2006-01-02 15:04:05") + `</span></div>
+	<div class="top">&nbsp;&nbsp;argus-report&nbsp;&nbsp;&nbsp;<span style="font-size:12px;font-weight:normal;color:darkgrey">` + time.Now().Format("2006-01-02 15:04:05") + `</span></div>
 	<div class="filter-bar">
 		<span class="filter-btn active" data-severity="all">ALL <span class="badge" id="cnt-all">0</span></span>
 		<span class="filter-btn sev-critical" data-severity="critical">CRITICAL <span class="badge" id="cnt-critical">0</span></span>

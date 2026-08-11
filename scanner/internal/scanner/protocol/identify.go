@@ -2,8 +2,8 @@
 package protocol
 
 import (
-	"dddd/scanner/structs"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/structs"
 	"strconv"
 	"strings"
 	"sync"

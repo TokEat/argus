@@ -1,11 +1,11 @@
 package engine
 
 import (
-	"dddd/scanner/internal/finger"
-	"dddd/scanner/internal/scanner/protocol"
-	"dddd/scanner/internal/scanner/web"
-	"dddd/scanner/structs"
 	"embed"
+	"github.com/P0lar1ght/argus/scanner/internal/finger"
+	"github.com/P0lar1ght/argus/scanner/internal/scanner/protocol"
+	"github.com/P0lar1ght/argus/scanner/internal/scanner/web"
+	"github.com/P0lar1ght/argus/scanner/structs"
 )
 
 func currentPipelineIPPortMap(ctx *ScanContext) map[string]string {

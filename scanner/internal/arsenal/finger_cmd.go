@@ -9,7 +9,7 @@ import (
 	"github.com/olekukonko/tablewriter"
 )
 
-// HandleFingerCommand 处理 `dddd finger <subcommand>` 命令。
+// HandleFingerCommand 处理 `argus finger <subcommand>` 命令。
 func HandleFingerCommand(args []string) {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		fingerUsage()
@@ -46,16 +46,16 @@ func HandleFingerCommand(args []string) {
 func fingerUsage() {
 	fmt.Println(`Argus CLI 规则库管理
 
-用法: dddd finger <子命令>
+用法: argus finger <子命令>
 
 子命令:
   list     列出指纹规则 (--product, --category, --source 过滤)
   count    统计指纹数量
   stats    显示统计信息
-  add      添加指纹规则: dddd finger add <产品名> <规则表达式>
-  del      删除指纹规则: dddd finger del <产品名> <规则表达式>
-  test     校验规则语法: dddd finger test <规则表达式>
-  import   从 YAML 导入: dddd finger import <文件路径>
+  add      添加指纹规则: argus finger add <产品名> <规则表达式>
+  del      删除指纹规则: argus finger del <产品名> <规则表达式>
+  test     校验规则语法: argus finger test <规则表达式>
+  import   从 YAML 导入: argus finger import <文件路径>
   export   导出为 YAML 格式`)
 }
 
@@ -125,7 +125,7 @@ func fingerStats() {
 
 func fingerAdd(args []string) {
 	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "用法: dddd finger add <产品名> <规则表达式>")
+		fmt.Fprintln(os.Stderr, "用法: argus finger add <产品名> <规则表达式>")
 		os.Exit(1)
 	}
 	product := args[0]
@@ -162,7 +162,7 @@ func fingerAdd(args []string) {
 
 func fingerDel(args []string) {
 	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "用法: dddd finger del <产品名> <规则表达式>")
+		fmt.Fprintln(os.Stderr, "用法: argus finger del <产品名> <规则表达式>")
 		os.Exit(1)
 	}
 	product := args[0]
@@ -182,7 +182,7 @@ func fingerDel(args []string) {
 
 func fingerTest(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "用法: dddd finger test <规则表达式>")
+		fmt.Fprintln(os.Stderr, "用法: argus finger test <规则表达式>")
 		os.Exit(1)
 	}
 	rule := strings.Join(args, " ")
@@ -196,7 +196,7 @@ func fingerTest(args []string) {
 
 func fingerImport(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "用法: dddd finger import <yaml文件路径>")
+		fmt.Fprintln(os.Stderr, "用法: argus finger import <yaml文件路径>")
 		os.Exit(1)
 	}
 	data, err := os.ReadFile(args[0])

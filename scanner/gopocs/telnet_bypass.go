@@ -2,9 +2,9 @@ package gopocs
 
 import (
 	"bytes"
-	"dddd/scanner/ddout"
-	"dddd/scanner/structs"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/structs"
 	"net"
 	"strings"
 	"time"

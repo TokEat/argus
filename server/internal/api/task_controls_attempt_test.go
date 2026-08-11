@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
-	"github.com/user/dddd-server/internal/db"
 	"gorm.io/gorm"
 )
 

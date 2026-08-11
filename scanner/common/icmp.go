@@ -2,8 +2,8 @@ package common
 
 import (
 	"bytes"
-	"dddd/scanner/ddout"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/ddout"
 	"github.com/projectdiscovery/gologger"
 	"golang.org/x/net/icmp"
 	"net"

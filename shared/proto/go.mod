@@ -1,4 +1,4 @@
-module github.com/user/dddd-proto
+module github.com/P0lar1ght/argus/shared/proto
 
 go 1.25.4
 

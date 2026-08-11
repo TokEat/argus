@@ -13,9 +13,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/user/dddd-server/internal/db"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )

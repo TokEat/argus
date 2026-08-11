@@ -3,8 +3,8 @@
 package nuclei
 
 import (
-	"dddd/scanner/common/callnuclei"
 	"embed"
+	"github.com/P0lar1ght/argus/scanner/common/callnuclei"
 	"sync"
 
 	"github.com/projectdiscovery/nuclei/v3/pkg/output"

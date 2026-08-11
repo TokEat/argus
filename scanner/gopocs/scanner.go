@@ -1,10 +1,10 @@
 package gopocs
 
 import (
-	"dddd/scanner/common/report"
-	"dddd/scanner/ddout"
-	"dddd/scanner/structs"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/common/report"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/structs"
 	"reflect"
 	"strings"
 	"sync"

@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"sync"
 
-	"dddd/scanner/internal/taskstore"
-	"dddd/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/internal/taskstore"
+	"github.com/P0lar1ght/argus/scanner/structs"
 
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 	"github.com/projectdiscovery/hmap/store/hybrid"
-	"github.com/user/dddd-proto/go/scanplan"
 )
 
 // ScanContext 替代所有 structs.GlobalXXX 全局变量。

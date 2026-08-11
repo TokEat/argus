@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"dddd/scanner/utils"
+	"github.com/P0lar1ght/argus/scanner/utils"
 )
 
 const localNetworkZone = "_local"

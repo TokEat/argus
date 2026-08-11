@@ -6,26 +6,26 @@ package engine
 
 import (
 	"context"
-	"dddd/scanner/ddout"
-	"dddd/scanner/internal/output"
-	"dddd/scanner/internal/scanner/cdn"
-	"dddd/scanner/internal/scanner/discovery"
-	"dddd/scanner/internal/scanner/portscan"
-	"dddd/scanner/internal/scanner/subdomain"
-	"dddd/scanner/internal/scanner/web"
-	gopoc "dddd/scanner/internal/vuln/gopoc"
-	"dddd/scanner/structs"
-	"dddd/scanner/utils"
 	"errors"
 	"fmt"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/internal/output"
+	"github.com/P0lar1ght/argus/scanner/internal/scanner/cdn"
+	"github.com/P0lar1ght/argus/scanner/internal/scanner/discovery"
+	"github.com/P0lar1ght/argus/scanner/internal/scanner/portscan"
+	"github.com/P0lar1ght/argus/scanner/internal/scanner/subdomain"
+	"github.com/P0lar1ght/argus/scanner/internal/scanner/web"
+	gopoc "github.com/P0lar1ght/argus/scanner/internal/vuln/gopoc"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	"net"
 	"strings"
 
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 	"github.com/logrusorgru/aurora"
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/httpx"
 	"github.com/projectdiscovery/httpx/runner"
-	"github.com/user/dddd-proto/go/scanplan"
 )
 
 // Pipeline 扫描流水线编排器。

@@ -10,25 +10,24 @@ func TestCLIBannerUsesArgusBrandAndKeepsCommandName(t *testing.T) {
 	var output bytes.Buffer
 	writeBanner(&output)
 	text := output.String()
-	for _, want := range []string{"Argus CLI v2.0.1", "Command: dddd"} {
+	for _, want := range []string{"Argus CLI v2.0.1", "Command: argus"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("banner %q does not contain %q", text, want)
 		}
 	}
-	for _, legacy := range []string{"dddd.version", "dddd是一款"} {
-		if strings.Contains(text, legacy) {
-			t.Fatalf("banner still contains legacy brand %q: %q", legacy, text)
-		}
+	legacyName := "dd" + "dd"
+	if strings.Contains(strings.ToLower(text), legacyName) {
+		t.Fatalf("banner still contains the legacy brand: %q", text)
 	}
 }
 
 func TestCLIHelpKeepsCommandsAndMovesProviderDiscoveryToServer(t *testing.T) {
 	for _, want := range []string{
-		"dddd help finger",
-		"dddd finger --help",
-		"dddd poc list --severity high",
-		"dddd workflow list --product ruoyi",
-		"dddd --version",
+		"argus help finger",
+		"argus finger --help",
+		"argus poc list --severity high",
+		"argus workflow list --product ruoyi",
+		"argus --version",
 		"Argus Server",
 		"资产测绘",
 	} {

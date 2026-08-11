@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	pb "github.com/user/dddd-proto/go/scan"
-	aipkg "github.com/user/dddd-server/internal/ai"
-	"github.com/user/dddd-server/internal/db"
+	aipkg "github.com/P0lar1ght/argus/server/internal/ai"
+	"github.com/P0lar1ght/argus/server/internal/db"
+	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 )
 
 const generalPOCWorkflowPrefix = "General-Poc-"

@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"dddd/scanner/internal/engine"
-	pb "github.com/user/dddd-proto/go/scan"
-	"github.com/user/dddd-proto/go/scanplan"
+	"github.com/P0lar1ght/argus/scanner/internal/engine"
+	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 	"google.golang.org/grpc/metadata"
 )
 

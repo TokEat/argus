@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"os"
 
+	argusmcp "github.com/P0lar1ght/argus/mcp/internal/mcp"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
-	argusmcp "github.com/user/argus-mcp/internal/mcp"
 )
 
 func main() {

@@ -10,15 +10,15 @@ import (
 
 var usageOutputMu sync.Mutex
 
-func TestRuleCommandUsageKeepsArgusBrandAndDDDDSyntax(t *testing.T) {
+func TestRuleCommandUsageUsesArgusExecutable(t *testing.T) {
 	tests := []struct {
 		name  string
 		usage func()
 		want  string
 	}{
-		{name: "finger", usage: fingerUsage, want: "dddd finger"},
-		{name: "poc", usage: pocUsage, want: "dddd poc"},
-		{name: "workflow", usage: workflowUsage, want: "dddd workflow"},
+		{name: "finger", usage: fingerUsage, want: "argus finger"},
+		{name: "poc", usage: pocUsage, want: "argus poc"},
+		{name: "workflow", usage: workflowUsage, want: "argus workflow"},
 	}
 
 	for _, tt := range tests {
@@ -28,7 +28,10 @@ func TestRuleCommandUsageKeepsArgusBrandAndDDDDSyntax(t *testing.T) {
 				t.Fatalf("usage is missing Argus CLI branding: %q", output)
 			}
 			if !strings.Contains(output, tt.want) {
-				t.Fatalf("usage is missing compatible command syntax %q: %q", tt.want, output)
+				t.Fatalf("usage is missing Argus command syntax %q: %q", tt.want, output)
+			}
+			if strings.Contains(strings.ToLower(output), "dd"+"dd") {
+				t.Fatalf("usage still contains the legacy executable name: %q", output)
 			}
 		})
 	}

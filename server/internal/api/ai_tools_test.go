@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
+	aipkg "github.com/P0lar1ght/argus/server/internal/ai"
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
-	aipkg "github.com/user/dddd-server/internal/ai"
-	"github.com/user/dddd-server/internal/db"
 	"gorm.io/gorm"
 )
 

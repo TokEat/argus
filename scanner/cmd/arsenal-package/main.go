@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"log"
 
-	"dddd/scanner/internal/arsenal"
+	"github.com/P0lar1ght/argus/scanner/internal/arsenal"
 )
 
 func main() {

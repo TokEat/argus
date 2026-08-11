@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"dddd/scanner/internal/arsenal"
+	"github.com/P0lar1ght/argus/scanner/internal/arsenal"
 )
 
 func TestPrepareMaterializesAndReusesFixedPackage(t *testing.T) {

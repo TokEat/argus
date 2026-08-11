@@ -1,8 +1,8 @@
 package engine
 
 import (
-	"dddd/scanner/ddout"
-	"dddd/scanner/internal/arsenal"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/internal/arsenal"
 	"os"
 	"path/filepath"
 	"testing"

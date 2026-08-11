@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/user/dddd-server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"gorm.io/gorm"
 )
 
@@ -69,15 +69,15 @@ func (rm *ResourceManager) ProvisionInstance(
 
 	// 渲染 Cloud-Init 脚本
 	tmpl := policy.UserDataTemplate
-		userData, err := RenderCloudInitBase64(tmpl, CloudInitVars{
-			ServerAddr:  grpcAddr,
-			APIURL:      apiURL,
-			AgentID:     agentID,
-			TenantID:    account.TenantID,
-			Tags:        "cloud=true,auto_scaled=true,target_type=all",
-			PSK:         psk,
-			DownloadURL: downloadURL,
-		})
+	userData, err := RenderCloudInitBase64(tmpl, CloudInitVars{
+		ServerAddr:  grpcAddr,
+		APIURL:      apiURL,
+		AgentID:     agentID,
+		TenantID:    account.TenantID,
+		Tags:        "cloud=true,auto_scaled=true,target_type=all",
+		PSK:         psk,
+		DownloadURL: downloadURL,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("render cloud-init: %w", err)
 	}

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"dddd/scanner/structs"
-	"dddd/scanner/utils"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/utils"
 
 	"github.com/projectdiscovery/hmap/store/hybrid"
 )

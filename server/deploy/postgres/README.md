@@ -11,7 +11,7 @@
 
 ## 默认约定
 
-- 数据库名：`dddd`
+- 数据库名：`argus`
 - 用户名：`postgres`
 - 密码：`root`
 - 端口：`5432`
@@ -43,7 +43,7 @@ make smoke-local
 
 ```bash
 bash server/deploy/postgres/000-init-db.sh
-./dddd-server --migrate-only
+./argus-server --migrate-only
 ```
 
 也可以通过环境变量覆盖：
@@ -53,7 +53,7 @@ DB_HOST=127.0.0.1 \
 DB_PORT=5432 \
 DB_SUPERUSER=postgres \
 DB_SUPERPASSWORD=root \
-APP_DB_NAME=dddd \
+APP_DB_NAME=argus \
 APP_DB_USER=postgres \
 APP_DB_PASSWORD=root \
 bash server/deploy/postgres/000-init-db.sh
@@ -64,15 +64,15 @@ bash server/deploy/postgres/000-init-db.sh
 `server/deploy/docker-compose.yml` 已将 `server/deploy/postgres` 挂载到 `/docker-entrypoint-initdb.d`。
 当 PostgreSQL 数据目录是全新目录时，容器启动会自动执行初始化脚本。
 
-如果 `server/deploy/data/postgres/` 已经存在旧数据，官方镜像不会重复执行这些初始化脚本。此时直接运行 `dddd-server` 即可自动完成增量迁移；如果数据库或角色尚未创建，再手工执行 `000-init-db.sh`。
+如果 `server/deploy/data/postgres/` 已经存在旧数据，官方镜像不会重复执行这些初始化脚本。此时直接运行 `argus-server` 即可自动完成增量迁移；如果数据库或角色尚未创建，再手工执行 `000-init-db.sh`。
 
 ## 现行初始化职责
 
 - `000-init-db.sh`
   只负责建库和建用户。
-- `dddd-server --migrate-only`
+- `argus-server --migrate-only`
   负责创建 / 升级业务表、列、索引，并执行 schema 校验。
-- 正常启动 `dddd-server`
+- 正常启动 `argus-server`
   会执行 migrations、schema verify，然后再做规则 bootstrap。
 
 ## 历史 schema 文件

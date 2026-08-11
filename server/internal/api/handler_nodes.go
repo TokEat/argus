@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
-	"github.com/user/dddd-server/internal/db"
 )
 
 // 提供给 Agent 轮询其需强制退出的指令以及规则重载指令

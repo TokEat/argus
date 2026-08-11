@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"dddd/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/ddout"
 )
 
 const cliMachineHelperMode = "ARGUS_CLI_MACHINE_HELPER"
@@ -129,18 +129,18 @@ func TestCLIMachineProcessHelper(t *testing.T) {
 		return
 	}
 	target := os.Getenv("ARGUS_CLI_MACHINE_TARGET")
-	base := []string{"dddd", "-t", target, "-Pn", "-nd", "-npoc", "-force", "-wto", "1", "-wt", "1"}
+	base := []string{"argus", "-t", target, "-Pn", "-nd", "-npoc", "-force", "-wto", "1", "-wt", "1"}
 	switch mode {
 	case "json":
 		os.Args = append(base, "-ot", "json")
 	case "text":
 		os.Args = base
 	case "invalid-output":
-		os.Args = []string{"dddd", "-t", "http://127.0.0.1", "-ot", "yaml"}
+		os.Args = []string{"argus", "-t", "http://127.0.0.1", "-ot", "yaml"}
 	case "unknown-flag":
-		os.Args = []string{"dddd", "-t", "http://127.0.0.1", "-ot", "json", "--does-not-exist"}
+		os.Args = []string{"argus", "-t", "http://127.0.0.1", "-ot", "json", "--does-not-exist"}
 	case "no-target":
-		os.Args = []string{"dddd"}
+		os.Args = []string{"argus"}
 	default:
 		t.Fatalf("unknown helper mode %q", mode)
 	}

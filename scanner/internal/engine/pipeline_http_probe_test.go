@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"dddd/scanner/internal/scanner/web"
-	"dddd/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/internal/scanner/web"
+	"github.com/P0lar1ght/argus/scanner/structs"
 
 	"github.com/projectdiscovery/httpx"
 	"github.com/projectdiscovery/httpx/runner"

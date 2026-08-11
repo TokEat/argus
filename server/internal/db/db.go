@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	pb "github.com/user/dddd-proto/go/scan"
+	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )

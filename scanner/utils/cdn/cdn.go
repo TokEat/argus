@@ -1,9 +1,9 @@
 package cdn
 
 import (
-	"dddd/scanner/ddout"
-	"dddd/scanner/structs"
-	"dddd/scanner/utils"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	"net"
 	"strings"
 	"sync"

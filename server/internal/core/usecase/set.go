@@ -1,10 +1,10 @@
 package usecase
 
 import (
-	"github.com/user/dddd-server/internal/core/domain/node"
-	"github.com/user/dddd-server/internal/core/domain/result"
-	"github.com/user/dddd-server/internal/core/domain/rule"
-	"github.com/user/dddd-server/internal/core/domain/task"
+	"github.com/P0lar1ght/argus/server/internal/core/domain/node"
+	"github.com/P0lar1ght/argus/server/internal/core/domain/result"
+	"github.com/P0lar1ght/argus/server/internal/core/domain/rule"
+	"github.com/P0lar1ght/argus/server/internal/core/domain/task"
 )
 
 // Set 汇总控制面的核心用例，供 HTTP/gRPC/定时任务统一依赖。

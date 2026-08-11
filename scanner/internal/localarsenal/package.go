@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"dddd/scanner/internal/arsenal"
-	"dddd/scanner/internal/localstate"
+	"github.com/P0lar1ght/argus/scanner/internal/arsenal"
+	"github.com/P0lar1ght/argus/scanner/internal/localstate"
 )
 
 const BackupLimit = 3

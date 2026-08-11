@@ -15,9 +15,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/user/dddd-server/internal/db"
 	"gorm.io/gorm"
 )
 

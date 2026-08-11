@@ -2,7 +2,7 @@
 
 ## NDJSON 契约
 
-`dddd -ot json` 输出 UTF-8 NDJSON。每一行都是完整 JSON 记录，适合边扫描边消费；stdout 不包含 Banner、颜色、进度和普通运行日志。
+`argus -ot json` 输出 UTF-8 NDJSON。每一行都是完整 JSON 记录，适合边扫描边消费；stdout 不包含 Banner、颜色、进度和普通运行日志。
 
 Schema 固定为 `argus.cli-output/v1`。记录公共字段：
 

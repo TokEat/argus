@@ -18,10 +18,10 @@ import (
 	"testing"
 	"time"
 
+	aipkg "github.com/P0lar1ght/argus/server/internal/ai"
+	"github.com/P0lar1ght/argus/server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/scheduler"
 	"github.com/gin-gonic/gin"
-	aipkg "github.com/user/dddd-server/internal/ai"
-	"github.com/user/dddd-server/internal/db"
-	"github.com/user/dddd-server/internal/scheduler"
 )
 
 func ptrTime(v time.Time) *time.Time {
@@ -1775,21 +1775,21 @@ func TestBuildJobHelpers(t *testing.T) {
 	if !isSupportedBuildTarget("linux", "arm64") || isSupportedBuildTarget("linux", "386") {
 		t.Fatalf("unexpected linux build target validation")
 	}
-	if got := expectedBuildArtifact("windows", "amd64"); got != "dddd-agent-windows-amd64.exe" {
+	if got := expectedBuildArtifact("windows", "amd64"); got != "argus-agent-windows-amd64.exe" {
 		t.Fatalf("unexpected windows artifact name: %s", got)
 	}
 	if got := truncateBuildLog("abcdef", 3); got != "def" {
 		t.Fatalf("unexpected truncated log: %s", got)
 	}
-	components, err := normalizeBuildComponents([]string{"server-ui", "dddd-server", "dddd-server"})
+	components, err := normalizeBuildComponents([]string{"server-ui", "argus-server", "argus-server"})
 	if err != nil {
 		t.Fatalf("normalize components: %v", err)
 	}
-	if strings.Join(components, ",") != "server-ui,dddd-server" {
+	if strings.Join(components, ",") != "server-ui,argus-server" {
 		t.Fatalf("unexpected normalized components: %+v", components)
 	}
-	artifacts := expectedBuildArtifacts([]string{"dddd-agent", "server-ui"}, "linux", "amd64")
-	if strings.Join(artifacts, ",") != "dddd-agent-linux-amd64,server-ui-dist.tar.gz" {
+	artifacts := expectedBuildArtifacts([]string{"argus-agent", "server-ui"}, "linux", "amd64")
+	if strings.Join(artifacts, ",") != "argus-agent-linux-amd64,server-ui-dist.tar.gz" {
 		t.Fatalf("unexpected multi-component artifacts: %+v", artifacts)
 	}
 }
@@ -1892,7 +1892,7 @@ func TestRetryBuildJobCreatesNewQueuedJob(t *testing.T) {
 	}
 	setupAITestDB(t)
 	t.Chdir(t.TempDir())
-	if err := os.WriteFile("build.sh", []byte("#!/bin/sh\nmkdir -p release\ntouch release/dddd-agent-linux-amd64\n"), 0o755); err != nil {
+	if err := os.WriteFile("build.sh", []byte("#!/bin/sh\nmkdir -p release\ntouch release/argus-agent-linux-amd64\n"), 0o755); err != nil {
 		t.Fatalf("write build script: %v", err)
 	}
 	oldRunner := routerRuntime().Build.runner
@@ -1925,7 +1925,7 @@ func TestRunBuildJobStoresFullLogAndArtifact(t *testing.T) {
 	}
 	setupAITestDB(t)
 	t.Chdir(t.TempDir())
-	if err := os.WriteFile("build.sh", []byte("#!/bin/sh\necho full-build-log\nmkdir -p release\ntouch release/dddd-agent-linux-amd64\n"), 0o755); err != nil {
+	if err := os.WriteFile("build.sh", []byte("#!/bin/sh\necho full-build-log\nmkdir -p release\ntouch release/argus-agent-linux-amd64\n"), 0o755); err != nil {
 		t.Fatalf("write build script: %v", err)
 	}
 	job, err := createBuildJobIfIdle("linux", "amd64", false)
@@ -1939,7 +1939,7 @@ func TestRunBuildJobStoresFullLogAndArtifact(t *testing.T) {
 	if err := db.DB.First(&updated, job.ID).Error; err != nil {
 		t.Fatalf("load updated job: %v", err)
 	}
-	if updated.Status != "success" || updated.Artifact != "dddd-agent-linux-amd64" {
+	if updated.Status != "success" || updated.Artifact != "argus-agent-linux-amd64" {
 		t.Fatalf("expected successful build artifact, got %+v", updated)
 	}
 	if !strings.Contains(updated.LogText, "full-build-log") || !strings.Contains(updated.LogTail, "full-build-log") {

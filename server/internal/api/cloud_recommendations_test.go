@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/P0lar1ght/argus/server/internal/cloud"
+	"github.com/P0lar1ght/argus/server/internal/cloud/aliyun"
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
-	"github.com/user/dddd-server/internal/cloud"
-	"github.com/user/dddd-server/internal/cloud/aliyun"
-	"github.com/user/dddd-server/internal/db"
 )
 
 type fakeCatalogProvider struct {

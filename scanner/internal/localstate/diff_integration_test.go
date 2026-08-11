@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"dddd/scanner/internal/engine"
+	"github.com/P0lar1ght/argus/scanner/internal/engine"
 )
 
 func TestRunDeltaConfirmsDisappearanceAndReappearance(t *testing.T) {

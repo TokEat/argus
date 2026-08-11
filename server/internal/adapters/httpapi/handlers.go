@@ -3,9 +3,9 @@ package httpapi
 import (
 	"net/http"
 
+	"github.com/P0lar1ght/argus/server/internal/adapters/ws"
+	"github.com/P0lar1ght/argus/server/internal/core/usecase"
 	"github.com/gin-gonic/gin"
-	"github.com/user/dddd-server/internal/adapters/ws"
-	"github.com/user/dddd-server/internal/core/usecase"
 )
 
 type Handlers struct {

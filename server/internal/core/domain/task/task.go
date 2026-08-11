@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/user/dddd-server/internal/core/domain/common"
+	"github.com/P0lar1ght/argus/server/internal/core/domain/common"
 )
 
 type RootTaskStatus string
@@ -31,21 +31,21 @@ const (
 )
 
 type RootTask struct {
-	ID              string
-	TenantID        string
-	Name            string
-	Status          RootTaskStatus
-	OriginalTargets []string
-	ConfigJSON      string
-	RuleVersion     string
-	Priority        int
-	TimeoutSeconds  int
-	TotalChunks     int
-	CompletedChunks int
-	TotalTargets     int  // 原始目标总数
-	CompletedTargets int  // 已完成目标数
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID               string
+	TenantID         string
+	Name             string
+	Status           RootTaskStatus
+	OriginalTargets  []string
+	ConfigJSON       string
+	RuleVersion      string
+	Priority         int
+	TimeoutSeconds   int
+	TotalChunks      int
+	CompletedChunks  int
+	TotalTargets     int // 原始目标总数
+	CompletedTargets int // 已完成目标数
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type SubTask struct {

@@ -3,9 +3,9 @@ package subdomain
 
 import (
 	"bytes"
-	"dddd/scanner/ddout"
-	"dddd/scanner/utils"
 	_ "embed"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	"io"
 	"strings"
 

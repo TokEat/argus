@@ -3,7 +3,7 @@ package db
 import (
 	"encoding/json"
 
-	pb "github.com/user/dddd-proto/go/scan"
+	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 )
 
 func SubTaskToProto(task *SubTask) (*pb.Task, error) {

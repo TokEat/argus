@@ -210,7 +210,7 @@ network zone 由 Server 使用数据库中的 Agent 标签和每个规范目标�
 
 补充链路：
 
-- 死节点恢复：由 `server/cmd/dddd-server/main.go` 周期扫描掉线节点并重入队
+- 死节点恢复：由 `server/cmd/argus-server/main.go` 周期扫描掉线节点并重入队
 - 超时重试：由 `StartTaskTimeoutDaemon` 扫描 `timeout_sec`，可重试则重入队，不可重试则标记 `Timeout`
 - 批次暂停保护：TaskComplete、超时、死节点和 Spot 恢复在追加新 Attempt 前校验 `control_state`，暂停批次只收敛当前执行证据
 

@@ -3,8 +3,8 @@
 package discovery
 
 import (
-	"dddd/scanner/common"
-	"dddd/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/common"
+	"github.com/P0lar1ght/argus/scanner/ddout"
 )
 
 // CheckLive ICMP 存活探测。

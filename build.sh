@@ -1,18 +1,18 @@
 #!/bin/bash
 
 # ==============================================================================
-# dddd 全平台自动构建脚本
+# Argus 全平台自动构建脚本
 # 支持交叉编译：Linux (amd64/arm64), macOS (amd64/arm64), Windows (amd64/arm64/386)
 #
 # 新增能力：
-# 1) 可按组件类型编译（dddd / dddd-agent / dddd-server）
+# 1) 可按组件类型编译（argus / argus-agent / argus-server）
 # 2) 可按平台版本编译（darwin/arm64, linux:amd64, windows-amd64 等）
 #
 # 用法示例：
 #   ./build.sh
 #   ./build.sh pack
-#   ./build.sh --component dddd-agent --target darwin/arm64
-#   ./build.sh --component dddd,dddd-server --target linux/amd64,linux/arm64
+#   ./build.sh --component argus-agent --target darwin/arm64
+#   ./build.sh --component argus,argus-server --target linux/amd64,linux/arm64
 #   ./build.sh --list
 # ==============================================================================
 
@@ -22,9 +22,9 @@ OUTPUT_DIR="release"
 
 # 格式: "name:main_path:windows_has_exe"
 declare -a COMPONENTS=(
-    "dddd:./scanner/cmd/cli:true"
-    "dddd-agent:./scanner/cmd/agent:true"
-    "dddd-server:./server/cmd/dddd-server:true"
+    "argus:./scanner/cmd/cli:true"
+    "argus-agent:./scanner/cmd/agent:true"
+    "argus-server:./server/cmd/argus-server:true"
 )
 
 # 格式: "goos:goarch"
@@ -46,7 +46,7 @@ NC='\033[0m'
 
 show_help() {
     cat <<'EOF'
-dddd build script
+Argus build script
 
 Usage:
   ./build.sh [pack] [--require-upx] [--component <name[,name...]>] [--target <os/arch[,os/arch...]>]
@@ -56,7 +56,7 @@ Options:
   pack, --pack            启用 UPX 压缩（需本机安装 upx）
   --require-upx           UPX 缺失、压缩失败或压缩后自检失败时直接终止
   -c, --component         指定组件类型，支持多个逗号分隔：
-                          dddd, dddd-agent, dddd-server
+                          argus, argus-agent, argus-server
   -t, --target            指定平台版本，支持多个逗号分隔：
                           darwin/arm64, linux:amd64, windows-amd64
   --list                  仅展示可用组件和平台
@@ -166,7 +166,7 @@ if [[ "$LIST_ONLY" == "true" ]]; then
 fi
 
 echo -e "${BLUE}=======================================${NC}"
-echo -e "${BLUE}       dddd 全平台交叉编译构建         ${NC}"
+echo -e "${BLUE}       Argus 全平台交叉编译构建         ${NC}"
 echo -e "${BLUE}=======================================${NC}"
 
 USE_UPX=false
@@ -260,7 +260,7 @@ echo -e "${GREEN}[✔] 依赖校验通过${NC}"
 CLI_PACKAGE_DB=""
 for component in "${SELECTED_COMPONENTS[@]}"; do
     IFS=":" read -r name _path _win_exe <<< "$component"
-    if [[ "$name" == "dddd" ]]; then
+    if [[ "$name" == "argus" ]]; then
         CLI_PACKAGE_DB="${OUTPUT_DIR}/.arsenal-package/arsenal.db"
         mkdir -p "$(dirname "$CLI_PACKAGE_DB")"
         rm -f "$CLI_PACKAGE_DB"
@@ -295,7 +295,7 @@ for target in "${SELECTED_TARGETS[@]}"; do
             rm -f "$out_file"
         fi
 
-        if [[ "$name" == "dddd-agent" || "$name" == "dddd" ]]; then
+        if [[ "$name" == "argus-agent" || "$name" == "argus" ]]; then
             if CGO_ENABLED=0 GOOS="${os}" GOARCH="${arch}" go build \
                 -tags noembed \
                 -ldflags="-s -w" \
@@ -349,12 +349,12 @@ for target in "${SELECTED_TARGETS[@]}"; do
             fi
         fi
 
-        if [[ "$name" == "dddd" ]]; then
-            package_stage="$(mktemp -d "${OUTPUT_DIR}/.dddd-${os}-${arch}.XXXXXX")"
+        if [[ "$name" == "argus" ]]; then
+            package_stage="$(mktemp -d "${OUTPUT_DIR}/.argus-${os}-${arch}.XXXXXX")"
             cp "$out_file" "$package_stage/"
             mkdir -p "$package_stage/argus-data/arsenal"
             cp "$CLI_PACKAGE_DB" "$package_stage/argus-data/arsenal/arsenal.db"
-            package_file="${OUTPUT_DIR}/dddd-${os}-${arch}.tar.gz"
+            package_file="${OUTPUT_DIR}/argus-${os}-${arch}.tar.gz"
             rm -f "$package_file"
             tar -czf "$package_file" -C "$package_stage" .
             rm -rf "$package_stage"

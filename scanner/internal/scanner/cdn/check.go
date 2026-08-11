@@ -3,8 +3,8 @@
 package cdn
 
 import (
-	"dddd/scanner/ddout"
-	utlcdn "dddd/scanner/utils/cdn"
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	utlcdn "github.com/P0lar1ght/argus/scanner/utils/cdn"
 	"sync"
 )
 
