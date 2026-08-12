@@ -111,7 +111,7 @@ func tools() []*sdkmcp.Tool {
 		{Name: "argus_rule_debug", Description: "Debug a fingerprint, POC, or Python EXP through Argus Server before saving. Fingerprint/POC require agent_id and target_url. For pyexp source-level dry-run use rule_type=pyexp, source, target_url, action=dry_run; it does not require Agent and never saves. For pyexp source-level debug use source + action=run + agent_id + target_url. Saved pyexp cleanup/install should use stable_ref fields from argus_rule_save. For workflow injection, workflow_product may be a real fingerprint product or a reserved General-Poc-* general POC group.", InputSchema: objectSchema(map[string]interface{}{"rule_type": enumSchema([]string{"fingerprint", "poc", "pyexp"}), "agent_id": stringSchema("Agent ID; required for live debug, not required for pyexp action=dry_run"), "target_url": stringSchema("Target URL"), "source": stringSchema("Python EXP source for source-level dry-run/debug before saving"), "proxy": stringSchema("Proxy"), "timeout_sec": map[string]interface{}{"type": "integer"}, "product_name": stringSchema("Fingerprint product name"), "rule": stringSchema("Fingerprint rule expression"), "include_dir": map[string]interface{}{"type": "boolean"}, "include_poc": map[string]interface{}{"type": "boolean"}, "workflow_product": stringSchema("Workflow product for injected debug mapping; General-Poc-* means a general POC workflow, not a real fingerprint product"), "workflow_types": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}, "workflow_pocs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}, "poc_content": stringSchema("POC YAML source"), "artifact_id": stringSchema("Stable DB artifact id from argus_rule_save"), "rule_id": stringSchema("Stable EXP rule id from ARGUS_EXP.id"), "file_name": stringSchema("Artifact display file name"), "params": map[string]interface{}{"type": "object"}, "action": stringSchema("pyexp action: dry_run, run or cleanup")}, []string{"rule_type", "target_url"})},
 		{Name: "argus_rule_save", Description: "Save fingerprint, POC, Workflow, or Python EXP source into the Argus database as a Draft artifact and return stable_ref {artifact_id, rule_id, file_name, hash, version}. Optional intent=test_only|production_candidate|approved_reusable only affects guidance; it never auto-deletes or auto-publishes. Workflow product_name may use the reserved General-Poc-* prefix for general POC groups whose YAML performs its own matching.", InputSchema: objectSchema(map[string]interface{}{"rule_type": enumSchema([]string{"fingerprint", "poc", "workflow", "pyexp"}), "intent": enumSchema([]string{"test_only", "production_candidate", "approved_reusable"}), "file_name": stringSchema("Draft artifact display file name"), "content": stringSchema("Rule source content"), "product_name": stringSchema("Fingerprint product or Workflow product; General-Poc-* means a general POC workflow and should not be merged into a real product alias"), "rules": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}, "workflow_types": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}, "workflow_pocs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}}, []string{"rule_type"})},
 		{Name: "argus_rule_apply", Description: "Admin-only controlled action. action=publish activates a Draft artifact and should use stable_ref fields from argus_rule_save; action=install_requirements only supports saved pyexp rules and also uses stable_ref fields.", InputSchema: objectSchema(map[string]interface{}{"action": enumSchema([]string{"publish", "install_requirements"}), "rule_type": enumSchema([]string{"fingerprint", "poc", "workflow", "pyexp"}), "artifact_id": stringSchema("Stable DB artifact id from argus_rule_save"), "rule_id": stringSchema("Stable EXP rule id from ARGUS_EXP.id"), "file_name": stringSchema("Draft artifact display file name"), "hash": stringSchema("Expected draft hash"), "version": map[string]interface{}{"type": "integer"}, "agent_id": stringSchema("Agent ID for install_requirements")}, []string{"action", "rule_type"})},
-		{Name: "argus_yaksha_exp", Title: "Yaksha EXP Runtime", Description: "Operate one sealed single-file Yaklang EXP through the persistent independent Yaksha runtime. inspect derives the official cli.* UI plus literal yaksha.call/yaksha.asset references; validate checks source, params, dependencies, assets, exact network targets, and egress shape; test is fixture-only and always offline; debug returns complete unredacted HTTP/TCP Trace; run executes once. exp_id + revision + source_sha256 bind an immutable source identity; dependencies are pinned child revisions, assets are hash-bound content, and egress explicitly selects disabled, direct, or a per-call write-only SOCKS5 route. Agent-native egress is a future trusted relay integration and is not exposed by this MCP tool. This tool does not persist or publish revisions, access Argus Server, or expose any filesystem path.", Meta: sdkmcp.Meta{"ui": map[string]interface{}{"resourceUri": expConsoleURI, "visibility": []string{"model", "app"}}}, InputSchema: yakshaInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
+		{Name: "argus_yaksha_exp", Title: "Yaksha EXP Runtime", Description: "Operate one sealed single-file Yaklang EXP through the persistent independent Yaksha runtime. inspect derives the official cli.* UI plus literal yaksha.call/yaksha.asset references; validate checks source, params, dependencies, assets, exact network targets, and egress shape; test is fixture-only and always offline; debug returns complete unredacted HTTP/TCP Trace; run executes once. exp_id + revision + source_sha256 bind an immutable source identity; dependencies are pinned child revisions and assets are hash-bound content. Egress explicitly selects disabled, direct, a per-call write-only SOCKS5 route, or an authorized Agent using agent_id plus risk_confirmed=true. Agent mode creates a single-use Server Route and never exposes route_id or Gateway credentials. This tool does not expose filesystem or object-storage paths.", Meta: sdkmcp.Meta{"ui": map[string]interface{}{"resourceUri": expConsoleURI, "visibility": []string{"model", "app"}}}, InputSchema: yakshaInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
 	}
 }
 
@@ -152,8 +152,27 @@ func yakshaInputSchema() map[string]interface{} {
 		"test_cases": map[string]interface{}{
 			"type":        "array",
 			"description": "Fixture-backed Yaksha test cases; required only for action=test",
-			"items":       map[string]interface{}{"type": "object"},
-			"maxItems":    32,
+			"items": objectSchema(map[string]interface{}{
+				"id":     stringSchema("Unique test case id"),
+				"params": map[string]interface{}{"type": "object"},
+				"fixture": objectSchema(map[string]interface{}{
+					"http": map[string]interface{}{"type": "array", "items": objectSchema(map[string]interface{}{
+						"method": stringSchema("Exact HTTP method"), "url": stringSchema("Exact fixture URL"),
+						"status_code": map[string]interface{}{"type": "integer", "minimum": 100, "maximum": 599},
+						"body":        map[string]interface{}{"type": "string"}, "fail": map[string]interface{}{"type": "boolean"},
+					}, []string{"method", "url"})},
+					"tcp": map[string]interface{}{"type": "array", "items": objectSchema(map[string]interface{}{
+						"address": stringSchema("Exact host:port fixture address"), "success": map[string]interface{}{"type": "boolean"},
+						"remote_address": map[string]interface{}{"type": "string"},
+					}, []string{"address", "success"})},
+				}, nil),
+				"expect": objectSchema(map[string]interface{}{
+					"status": enumSchema([]string{"Succeeded", "Failed", "Timeout", "Canceled"}), "result": map[string]interface{}{},
+					"evidence": map[string]interface{}{"type": "object"}, "logs_contain": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+					"error_contains": map[string]interface{}{"type": "string"},
+				}, nil),
+			}, []string{"id", "expect"}),
+			"maxItems": 32,
 		},
 		"exp_id": map[string]interface{}{
 			"type":        "string",
@@ -203,7 +222,7 @@ func yakshaInputSchema() map[string]interface{} {
 			"mode": map[string]interface{}{
 				"type":        "string",
 				"description": "Per-call outbound mode; omitted egress defaults to disabled",
-				"enum":        []string{"disabled", "direct", "socks5"},
+				"enum":        []string{"disabled", "direct", "socks5", "agent"},
 			},
 			"socks5_proxy": map[string]interface{}{
 				"type":        "string",
@@ -211,6 +230,8 @@ func yakshaInputSchema() map[string]interface{} {
 				"maxLength":   2048,
 				"writeOnly":   true,
 			},
+			"agent_id":       stringSchema("Explicit Agent id for mode=agent"),
+			"risk_confirmed": map[string]interface{}{"type": "boolean", "description": "Must be true for mode=agent"},
 		}, []string{"mode"}),
 	}, []string{"action", "script"})
 	for _, name := range []string{"dependencies", "assets", "egress"} {

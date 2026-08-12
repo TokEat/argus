@@ -61,6 +61,14 @@ GRPC_PORT="${ARGUS_GRPC_PORT:-50051}"
 AGENT_PSK="${ARGUS_AGENT_PSK:-$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | xxd -p)}"
 JWT_SECRET="${ARGUS_JWT_SECRET:-$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | xxd -p)}"
 ENCRYPT_KEY="${ARGUS_ENCRYPT_KEY:-$(gen_encrypt_key)}"
+EGRESS_GATEWAY_LISTEN="${ARGUS_EGRESS_GATEWAY_LISTEN:-}"
+EGRESS_GATEWAY_TOKEN="${ARGUS_EGRESS_GATEWAY_TOKEN:-}"
+if [[ -n "$EGRESS_GATEWAY_LISTEN" || -n "$EGRESS_GATEWAY_TOKEN" ]]; then
+    if [[ -z "$EGRESS_GATEWAY_LISTEN" || -z "$EGRESS_GATEWAY_TOKEN" ]]; then
+        echo -e "${RED}[!] ARGUS_EGRESS_GATEWAY_LISTEN 与 ARGUS_EGRESS_GATEWAY_TOKEN 必须成对配置${NC}"
+        exit 1
+    fi
+fi
 PUBLIC_IP=""
 
 # 自动定位项目根目录（脚本在 deploy/ 目录下）
@@ -346,6 +354,8 @@ Environment=ARGUS_PUBLIC_IP=${PUBLIC_IP}
 Environment=ARGUS_AGENT_PSK=${AGENT_PSK}
 Environment=ARGUS_JWT_SECRET=${JWT_SECRET}
 Environment=ARGUS_ENCRYPT_KEY=${ENCRYPT_KEY}
+Environment=ARGUS_EGRESS_GATEWAY_LISTEN=${EGRESS_GATEWAY_LISTEN}
+Environment=ARGUS_EGRESS_GATEWAY_TOKEN=${EGRESS_GATEWAY_TOKEN}
 ExecStart=${INSTALL_DIR}/bin/argus-server \\
     -db "${DB_DSN}" \\
     -amqp "${AMQP_URL}" \\
@@ -388,6 +398,27 @@ else
     echo -e "${RED}[!] 启动失败，查看日志:${NC}"
     tail -30 "$INSTALL_DIR/logs/server.log"
     exit 1
+fi
+
+YAKSHA_COMPOSE="${SCRIPT_DIR}/yaksha-compose.yaml"
+YAKSHA_IMAGE="${SCRIPT_DIR}/images/argus-yaksha-linux-amd64.tar"
+if [[ -f "$YAKSHA_COMPOSE" && -f "$YAKSHA_IMAGE" ]]; then
+    docker load -i "$YAKSHA_IMAGE" >/dev/null
+    export YAKSHA_RELAY_ADDR="${EGRESS_GATEWAY_LISTEN}"
+    export YAKSHA_RELAY_TOKEN="${EGRESS_GATEWAY_TOKEN}"
+    docker compose -f "$YAKSHA_COMPOSE" up -d --no-build
+    yaksha_ready=false
+    for _ in $(seq 1 30); do
+        if docker compose -f "$YAKSHA_COMPOSE" exec -T yaksha /usr/local/bin/yaksha healthcheck >/dev/null 2>&1; then
+            yaksha_ready=true
+            break
+        fi
+        sleep 2
+    done
+    if [[ "$yaksha_ready" != "true" ]]; then
+        echo -e "${RED}[!] Yaksha Runtime 未就绪${NC}"
+        exit 1
+    fi
 fi
 
 echo ""

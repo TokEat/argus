@@ -203,7 +203,7 @@ var (
 	runScanTask    = engine.RunTask
 )
 
-const agentVersion = "v2.7.0"
+const agentVersion = "v2.8.0"
 
 type dispatchedTaskEnvelope struct {
 	ResumePlan            *scanplan.ResumePlan
@@ -246,8 +246,9 @@ type Worker struct {
 	// draining prevents new claims after a Spot termination notice.
 	draining atomic.Bool
 
-	logTee *grpcTeeWriter
-	stopCh chan struct{}
+	logTee   *grpcTeeWriter
+	stopCh   chan struct{}
+	stopOnce sync.Once
 
 	// reconnectCh 用于心跳连续失败时通知主循环重建 Subscribe 流
 	reconnectCh chan struct{}
@@ -257,6 +258,10 @@ type Worker struct {
 	debugSession string
 	expMu        sync.Mutex
 	expCancels   map[string]context.CancelFunc
+}
+
+func (w *Worker) requestStop() {
+	w.stopOnce.Do(func() { close(w.stopCh) })
 }
 
 func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[string]string) *Worker {
@@ -287,6 +292,7 @@ func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[stri
 		tags["python_exp"] = "false"
 		tags["pyexp_install"] = "false"
 	}
+	tags["native_egress"] = "v1"
 	return &Worker{
 		agentID:      agentID,
 		serverAddr:   serverAddr,
@@ -371,6 +377,8 @@ func (w *Worker) Start() error {
 		return fmt.Errorf("server returned empty agent session token")
 	}
 	log.Printf("Agent %s successfully registered to %s", w.agentID, w.serverAddr)
+	w.wg.Add(1)
+	go w.runEgressTunnel()
 
 	w.logTee = w.installGlobalLogTeeWriter()
 	defer func() {
@@ -407,7 +415,7 @@ func (w *Worker) Start() error {
 	go func() {
 		<-sigCh
 		log.Println("Received termination signal, waiting for running tasks to drain...")
-		close(w.stopCh)
+		w.requestStop()
 		close(quit)
 	}()
 
@@ -443,91 +451,6 @@ func (w *Worker) Start() error {
 		case <-time.After(2 * time.Second):
 			log.Println("[Subscribe] Reconnecting to server...")
 		}
-	}
-}
-
-// subscribeAndClaim 建立 Subscribe 流并监听任务通知，收到通知后 ClaimTask 认领
-func (w *Worker) subscribeAndClaim(quit chan struct{}) {
-	if w.draining.Load() {
-		return
-	}
-	stream, err := w.client.Subscribe(context.Background())
-	if err != nil {
-		log.Printf("[Subscribe] Failed to connect: %v", err)
-		return
-	}
-
-	// 发送初始 AgentSignal（携带 agent_id 和初始空闲容量）
-	freeSlots := w.freeSlots.Load()
-	if w.draining.Load() {
-		freeSlots = 0
-	}
-	if err := stream.Send(&pb.AgentSignal{
-		AgentId:    w.agentID,
-		FreeSlots:  freeSlots,
-		SignalType: "ready",
-	}); err != nil {
-		log.Printf("[Subscribe] Failed to send initial signal: %v", err)
-		return
-	}
-
-	log.Printf("[Subscribe] Stream established, listening for task notifications...")
-
-	// 启动后台定期上报容量变化
-	stopCapacity := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stopCapacity:
-				return
-			case <-ticker.C:
-				freeSlots := w.freeSlots.Load()
-				if w.draining.Load() {
-					freeSlots = 0
-				}
-				_ = stream.Send(&pb.AgentSignal{
-					AgentId:    w.agentID,
-					FreeSlots:  freeSlots,
-					SignalType: "capacity_update",
-				})
-			}
-		}
-	}()
-	defer close(stopCapacity)
-
-	for {
-		select {
-		case <-quit:
-			return
-		case <-w.reconnectCh:
-			// 心跳连续失败触发 Subscribe 流重建
-			log.Println("[Subscribe] Heartbeat detected connection failure, forcing stream reconnect...")
-			return
-		default:
-		}
-
-		// 接收 Server 推送的 TaskNotify
-		notify, err := stream.Recv()
-		if err == io.EOF {
-			log.Println("[Subscribe] Server closed the stream (EOF)")
-			return
-		}
-		if err != nil {
-			log.Printf("[Subscribe] Stream error: %v", err)
-			return
-		}
-
-		log.Printf("[Subscribe] Received notification: type=%s, available=%d, priority=%d",
-			notify.NotifyType, notify.AvailableTasks, notify.Priority)
-
-		if notify.DebugCommand != nil {
-			w.handleDebugCommand(notify.DebugCommand)
-			continue
-		}
-		// 有空闲 worker 就立即去认领任务
-		w.claimAvailableTasks()
 	}
 }
 
@@ -655,6 +578,13 @@ func (w *Worker) heartbeatLoop() {
 
 			// 心跳成功，重置失败计数
 			consecutiveFailures = 0
+			if resp.ShouldTerminate {
+				log.Printf("[Heartbeat] Server requested Agent termination")
+				w.draining.Store(true)
+				w.cancelActiveExecutions()
+				w.requestStop()
+				return
+			}
 
 			if resp.ShouldSyncRules {
 				log.Println("[Heartbeat] Server signaled rule sync needed via gRPC!")

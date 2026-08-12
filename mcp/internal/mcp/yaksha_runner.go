@@ -57,7 +57,15 @@ func (r *yakshaRunner) ready(ctx context.Context) error {
 }
 
 func (r *yakshaRunner) call(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
-	requestValue, timeout, err := buildYakshaRequest(args)
+	return r.callWithPolicy(ctx, args, false)
+}
+
+func (r *yakshaRunner) callInternal(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+	return r.callWithPolicy(ctx, args, true)
+}
+
+func (r *yakshaRunner) callWithPolicy(ctx context.Context, args map[string]interface{}, allowRelay bool) (map[string]interface{}, error) {
+	requestValue, timeout, err := buildYakshaRequestWithPolicy(args, allowRelay)
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +165,10 @@ func decodeYakshaResponse(raw []byte) (map[string]interface{}, error) {
 }
 
 func buildYakshaRequest(args map[string]interface{}) (map[string]interface{}, time.Duration, error) {
+	return buildYakshaRequestWithPolicy(args, false)
+}
+
+func buildYakshaRequestWithPolicy(args map[string]interface{}, allowRelay bool) (map[string]interface{}, time.Duration, error) {
 	allowed := map[string]bool{
 		"action": true, "script": true, "params": true, "timeout_ms": true, "test_cases": true,
 		"exp_id": true, "revision": true, "source_sha256": true, "dependencies": true, "assets": true,
@@ -178,7 +190,11 @@ func buildYakshaRequest(args map[string]interface{}) (map[string]interface{}, ti
 
 	timeout := yakshaDefaultTimeout
 	timeoutMS := 0
-	if value, ok := numberArg(args, "timeout_ms"); ok {
+	if _, present := args["timeout_ms"]; present {
+		value, ok := numberArg(args, "timeout_ms")
+		if !ok {
+			return nil, 0, fmt.Errorf("timeout_ms must be an integer")
+		}
 		if value < 0 || time.Duration(value)*time.Millisecond > yakshaMaxTimeout {
 			return nil, 0, fmt.Errorf("timeout_ms must be between 0 and %d", yakshaMaxTimeout.Milliseconds())
 		}
@@ -236,7 +252,7 @@ func buildYakshaRequest(args map[string]interface{}) (map[string]interface{}, ti
 		if !ok {
 			return nil, 0, fmt.Errorf("egress must be an object")
 		}
-		if err := validateMCPEgress(config); err != nil {
+		if err := validateMCPEgress(config, allowRelay); err != nil {
 			return nil, 0, err
 		}
 		request["egress"] = config
@@ -251,9 +267,9 @@ func buildYakshaRequest(args map[string]interface{}) (map[string]interface{}, ti
 	return request, timeout, nil
 }
 
-func validateMCPEgress(config map[string]interface{}) error {
+func validateMCPEgress(config map[string]interface{}, allowRelay bool) error {
 	for key := range config {
-		if key != "mode" && key != "socks5_proxy" {
+		if key != "mode" && key != "socks5_proxy" && key != "route_id" {
 			return fmt.Errorf("egress contains unsupported field %q", key)
 		}
 	}
@@ -263,17 +279,26 @@ func validateMCPEgress(config map[string]interface{}) error {
 	}
 	proxyValue, hasProxy := config["socks5_proxy"]
 	proxyURL, proxyIsString := proxyValue.(string)
+	_, hasRoute := config["route_id"]
 	switch mode {
 	case "disabled", "direct":
-		if hasProxy {
-			return fmt.Errorf("egress mode %s does not accept socks5_proxy", mode)
+		if hasProxy || hasRoute {
+			return fmt.Errorf("egress mode %s does not accept socks5_proxy or route_id", mode)
 		}
 	case "socks5":
+		if hasRoute {
+			return fmt.Errorf("egress mode socks5 does not accept route_id")
+		}
 		if !hasProxy || !proxyIsString || !validSOCKS5URL(proxyURL) {
 			return fmt.Errorf("egress.socks5_proxy must be a valid write-only socks5 URL")
 		}
+	case "relay":
+		routeID, routeOK := config["route_id"].(string)
+		if !allowRelay || !routeOK || strings.TrimSpace(routeID) == "" || hasProxy {
+			return fmt.Errorf("egress mode relay is reserved for the trusted Server control plane")
+		}
 	default:
-		return fmt.Errorf("egress.mode must be one of disabled, direct, socks5")
+		return fmt.Errorf("egress.mode must be one of disabled, direct, socks5, agent")
 	}
 	return nil
 }

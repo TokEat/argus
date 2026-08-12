@@ -1326,6 +1326,9 @@ func (c *fakeAgentClient) EmergencyDump(ctx context.Context, in *pb.EmergencyReq
 
 func (c *fakeAgentClient) Subscribe(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[pb.AgentSignal, pb.TaskNotify], error) {
 	c.subscribeCalls++
+	if stream, ok := c.subscribeStream.(interface{ setContext(context.Context) }); ok {
+		stream.setContext(ctx)
+	}
 	return c.subscribeStream, nil
 }
 
@@ -1417,47 +1420,6 @@ func (s *fakeResultStream) RecvMsg(m any) error {
 		return nil
 	}
 	return io.EOF
-}
-
-type fakeSubscribeClientStream struct {
-	recv        []*pb.TaskNotify
-	sentSignals int
-}
-
-func (s *fakeSubscribeClientStream) Send(*pb.AgentSignal) error {
-	s.sentSignals++
-	return nil
-}
-
-func (s *fakeSubscribeClientStream) Recv() (*pb.TaskNotify, error) {
-	if len(s.recv) == 0 {
-		return nil, io.EOF
-	}
-	msg := s.recv[0]
-	s.recv = s.recv[1:]
-	return msg, nil
-}
-
-func (s *fakeSubscribeClientStream) Header() (metadata.MD, error) { return nil, nil }
-func (s *fakeSubscribeClientStream) Trailer() metadata.MD         { return nil }
-func (s *fakeSubscribeClientStream) CloseSend() error             { return nil }
-func (s *fakeSubscribeClientStream) Context() context.Context     { return context.Background() }
-func (s *fakeSubscribeClientStream) SendMsg(m any) error {
-	if signal, ok := m.(*pb.AgentSignal); ok {
-		return s.Send(signal)
-	}
-	return nil
-}
-func (s *fakeSubscribeClientStream) RecvMsg(m any) error {
-	msg, err := s.Recv()
-	if err != nil {
-		return err
-	}
-	if notify, ok := m.(*pb.TaskNotify); ok {
-		proto.Reset(notify)
-		proto.Merge(notify, msg)
-	}
-	return nil
 }
 
 type fakeLogStream struct {

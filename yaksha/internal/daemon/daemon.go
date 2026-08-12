@@ -33,6 +33,8 @@ type Config struct {
 	Queue        int
 	RecycleAfter int
 	WorkerEnv    []string
+	RelayAddress string
+	RelayToken   string
 }
 
 func DefaultConfig(workerPath string) Config {
@@ -105,7 +107,7 @@ func (s *Server) execute(w http.ResponseWriter, request *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout+workerGrace)
 	defer cancel()
-	outbound, err := selectedEgress(req)
+	outbound, err := selectedEgressWithConfig(ctx, req, s.pool.config)
 	if err != nil {
 		writeProtocolError(w, http.StatusBadRequest, err.Error())
 		return
@@ -259,7 +261,10 @@ func (p *pool) startWorker() (*worker, error) {
 		stdin.Close()
 		return nil, err
 	}
-	cmd.Stderr = os.Stderr
+	// VM errors are returned through the bounded JSON response. Never attach
+	// script-controlled stderr to the long-lived daemon log because Yaklang
+	// async panic text can contain parameters or target secrets.
+	cmd.Stderr = io.Discard
 	cmd.ExtraFiles = []*os.File{child}
 	cmd.Env = append([]string{"YAKSHA_EGRESS_FD=3"}, p.config.WorkerEnv...)
 	if err := cmd.Start(); err != nil {
@@ -379,10 +384,19 @@ func ConfigFromEnv(workerPath string) (Config, error) {
 		return Config{}, err
 	}
 	config.WorkerEnv = workerEnv()
+	config.RelayAddress = strings.TrimSpace(os.Getenv("YAKSHA_RELAY_ADDR"))
+	config.RelayToken = strings.TrimSpace(os.Getenv("YAKSHA_RELAY_TOKEN"))
+	if (config.RelayAddress == "") != (config.RelayToken == "") {
+		return Config{}, fmt.Errorf("YAKSHA_RELAY_ADDR and YAKSHA_RELAY_TOKEN are required together")
+	}
 	return config, nil
 }
 
 func selectedEgress(req protocol.Request) (egress.Client, error) {
+	return selectedEgressWithConfig(context.Background(), req, Config{})
+}
+
+func selectedEgressWithConfig(ctx context.Context, req protocol.Request, config Config) (egress.Client, error) {
 	// Static validation and fixture tests never establish real connections.
 	if req.Action == protocol.ActionValidate || req.Action == protocol.ActionTest {
 		return egress.DisabledClient{}, nil
@@ -397,7 +411,8 @@ func selectedEgress(req protocol.Request) (egress.Client, error) {
 		client, err := egress.NewSOCKS5Client(req.Egress.SOCKS5Proxy)
 		return egress.WithConnectionBudget(client, egress.MaxConnectionsPerRun), err
 	case protocol.EgressRelay:
-		return egress.WithConnectionBudget(egress.NewRelayUnavailableClient(), egress.MaxConnectionsPerRun), nil
+		client, err := egress.NewRelayClient(ctx, config.RelayAddress, config.RelayToken, req.Egress.RouteID)
+		return egress.WithConnectionBudget(client, egress.MaxConnectionsPerRun), err
 	default:
 		return nil, fmt.Errorf("unsupported Yaksha egress mode")
 	}

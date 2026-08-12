@@ -98,8 +98,9 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
 	        <label>依赖闭包 JSON<textarea id="dependencies" spellcheck="false">[]</textarea></label>
 	        <label>Asset JSON<textarea id="assets" spellcheck="false">[]</textarea></label>
 	        <label>精确网络目标 JSON<textarea id="targets" spellcheck="false">[]</textarea></label>
-	        <label>本次出口模式<select id="egress-mode"><option value="disabled">disabled</option><option value="direct">direct</option><option value="socks5">socks5</option></select></label>
+	        <label>本次出口模式<select id="egress-mode"><option value="disabled">disabled</option><option value="direct">direct</option><option value="socks5">socks5</option><option value="agent">agent</option></select></label>
 	        <label id="proxy-wrap" hidden>本次 SOCKS5 出口（仅本次写入，不回填）<input id="proxy" type="password" autocomplete="new-password" placeholder="socks5://user:password@proxy.example:1080"></label>
+	        <div id="agent-wrap" hidden><label>Agent ID<input id="agent-id" autocomplete="off" placeholder="明确指定在线 Agent"></label><label><input id="risk-confirmed" type="checkbox"> 我已确认本次 Agent 出口及目标风险</label></div>
 	      </details>
     </aside>
   </div>
@@ -120,6 +121,9 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
 	  var egressMode = document.getElementById('egress-mode');
 	  var proxyWrap = document.getElementById('proxy-wrap');
 	  var proxy = document.getElementById('proxy');
+	  var agentWrap = document.getElementById('agent-wrap');
+	  var agentID = document.getElementById('agent-id');
+	  var riskConfirmed = document.getElementById('risk-confirmed');
 	  var refs = document.getElementById('refs');
   var timeout = document.getElementById('timeout');
   var execute = document.getElementById('execute');
@@ -131,8 +135,11 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
 
 	function syncEgressMode() {
 	  var socks5 = egressMode.value === 'socks5';
+	  var agent = egressMode.value === 'agent';
 	  proxyWrap.hidden = !socks5;
+	  agentWrap.hidden = !agent;
 	  if (!socks5) proxy.value = '';
+	  if (!agent) { agentID.value = ''; riskConfirmed.checked = false; }
 	}
 
   function sendRequest(method, value) {
@@ -271,7 +278,8 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
 	    if (a.dependencies) dependencies.value = JSON.stringify(a.dependencies, null, 2);
 	    if (a.assets) assets.value = JSON.stringify(a.assets, null, 2);
 	    if (a.network_targets) targets.value = JSON.stringify(a.network_targets, null, 2);
-	    if (a.egress && ['disabled', 'direct', 'socks5'].indexOf(a.egress.mode) >= 0) egressMode.value = a.egress.mode;
+	    if (a.egress && ['disabled', 'direct', 'socks5', 'agent'].indexOf(a.egress.mode) >= 0) egressMode.value = a.egress.mode;
+	    if (a.egress && a.egress.mode === 'agent') { agentID.value = a.egress.agent_id || ''; riskConfirmed.checked = Boolean(a.egress.risk_confirmed); }
 	    proxy.value = '';
 	    syncEgressMode();
     if (a.timeout_ms) timeout.value = String(a.timeout_ms);
@@ -327,6 +335,11 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
 	        if (egressMode.value === 'socks5') {
 	          if (!proxy.value.trim()) throw new Error('SOCKS5 模式需要填写本次代理地址');
 	          args.egress.socks5_proxy = proxy.value.trim();
+	        }
+	        if (egressMode.value === 'agent') {
+	          if (!agentID.value.trim() || !riskConfirmed.checked) throw new Error('Agent 模式需要明确 Agent ID 并确认风险');
+	          args.egress.agent_id = agentID.value.trim();
+	          args.egress.risk_confirmed = true;
 	        }
 	      }
       var result = await sendRequest('tools/call', {name: 'argus_yaksha_exp', arguments: args});

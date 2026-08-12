@@ -31,6 +31,8 @@ SERVICE_NAME="${ARGUS_SERVICE_NAME:-argus-server}"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 INSTALL_DIR="${INSTALL_DIR:-}"
 DB_DSN="${ARGUS_DB_DSN:-}"
+EGRESS_GATEWAY_LISTEN="${ARGUS_EGRESS_GATEWAY_LISTEN:-}"
+EGRESS_GATEWAY_TOKEN="${ARGUS_EGRESS_GATEWAY_TOKEN:-}"
 SKIP_BACKUP=false
 ASSUME_YES=false
 
@@ -45,6 +47,12 @@ die() {
     echo -e "${RED}[!] $*${NC}" >&2
     exit 1
 }
+
+if [[ -n "$EGRESS_GATEWAY_LISTEN" || -n "$EGRESS_GATEWAY_TOKEN" ]]; then
+    if [[ -z "$EGRESS_GATEWAY_LISTEN" || -z "$EGRESS_GATEWAY_TOKEN" ]]; then
+        die "ARGUS_EGRESS_GATEWAY_LISTEN 与 ARGUS_EGRESS_GATEWAY_TOKEN 必须成对配置"
+    fi
+fi
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -87,6 +95,12 @@ service_workdir() {
     awk -F= '/^WorkingDirectory=/{print $2; exit}' "$SERVICE_FILE"
 }
 
+service_environment() {
+    local key="$1"
+    [[ -f "$SERVICE_FILE" ]] || return 0
+    sed -nE "s/^Environment=${key}=(.*)$/\1/p" "$SERVICE_FILE" | tail -n 1
+}
+
 extract_quoted_arg() {
     local flag="$1"
     local command_line="$2"
@@ -121,7 +135,41 @@ migrate_legacy_service_identity() {
     fi
 }
 
+set_service_environment() {
+    local key="$1"
+    local value="$2"
+    local temporary="${SERVICE_FILE}.tmp.$$"
+    awk -v key="$key" -v value="$value" '
+        BEGIN { replaced=0 }
+        $0 ~ "^Environment=" key "=" {
+            if (!replaced) print "Environment=" key "=" value
+            replaced=1
+            next
+        }
+        /^ExecStart=/ && !replaced {
+            print "Environment=" key "=" value
+            replaced=1
+        }
+        { print }
+        END {
+            if (!replaced) print "Environment=" key "=" value
+        }
+    ' "$SERVICE_FILE" > "$temporary"
+    chmod --reference="$SERVICE_FILE" "$temporary"
+    chown --reference="$SERVICE_FILE" "$temporary"
+    mv "$temporary" "$SERVICE_FILE"
+}
+
 SERVICE_CMD="$(service_execstart || true)"
+if [[ -z "$EGRESS_GATEWAY_LISTEN" && -z "$EGRESS_GATEWAY_TOKEN" ]]; then
+    EGRESS_GATEWAY_LISTEN="$(service_environment ARGUS_EGRESS_GATEWAY_LISTEN || true)"
+    EGRESS_GATEWAY_TOKEN="$(service_environment ARGUS_EGRESS_GATEWAY_TOKEN || true)"
+fi
+if [[ -n "$EGRESS_GATEWAY_LISTEN" || -n "$EGRESS_GATEWAY_TOKEN" ]]; then
+    if [[ -z "$EGRESS_GATEWAY_LISTEN" || -z "$EGRESS_GATEWAY_TOKEN" ]]; then
+        die "现有 Gateway 配置不完整，请成对设置 ARGUS_EGRESS_GATEWAY_LISTEN/TOKEN"
+    fi
+fi
 if [[ -z "$INSTALL_DIR" ]]; then
     INSTALL_DIR="$(service_workdir || true)"
 fi
@@ -204,6 +252,11 @@ BACKUP_DIR="${INSTALL_DIR}/backups/upgrade-$(date +%Y%m%d%H%M%S)"
 mkdir -p "$BACKUP_DIR"
 
 rollback_ready=false
+yaksha_rollback_tag=""
+yaksha_had_compose=false
+yaksha_had_image_asset=false
+yaksha_had_local_image=false
+yaksha_was_running=false
 rollback_on_error() {
     local exit_code=$?
     trap - ERR
@@ -216,6 +269,31 @@ rollback_on_error() {
         fi
         if [[ -f "${BACKUP_DIR}/argus-server.service" ]]; then
             cp -a "${BACKUP_DIR}/argus-server.service" "$SERVICE_FILE" || true
+        fi
+        current_yaksha_compose="${INSTALL_DIR}/deploy/yaksha-compose.yaml"
+        if [[ -f "$current_yaksha_compose" ]]; then
+            docker compose -f "$current_yaksha_compose" down --remove-orphans 2>/dev/null || true
+        fi
+        if [[ "$yaksha_had_compose" == "true" ]]; then
+            cp -a "${BACKUP_DIR}/yaksha-compose.yaml" "$current_yaksha_compose" || true
+        else
+            rm -f "$current_yaksha_compose" || true
+        fi
+        if [[ "$yaksha_had_image_asset" == "true" ]]; then
+            mkdir -p "${INSTALL_DIR}/deploy/images"
+            cp -a "${BACKUP_DIR}/argus-yaksha-linux-amd64.tar" "${INSTALL_DIR}/deploy/images/" || true
+        else
+            rm -f "${INSTALL_DIR}/deploy/images/argus-yaksha-linux-amd64.tar" || true
+        fi
+        if [[ -n "$yaksha_rollback_tag" ]]; then
+            docker tag "$yaksha_rollback_tag" argus-yaksha:local 2>/dev/null || true
+        elif [[ "$yaksha_had_local_image" != "true" ]]; then
+            docker image rm argus-yaksha:local >/dev/null 2>&1 || true
+        fi
+        if [[ "$yaksha_was_running" == "true" && -f "$current_yaksha_compose" ]]; then
+            export YAKSHA_RELAY_ADDR="$(sed -nE 's/^Environment=ARGUS_EGRESS_GATEWAY_LISTEN=(.*)$/\1/p' "${BACKUP_DIR}/argus-server.service" | tail -n 1)"
+            export YAKSHA_RELAY_TOKEN="$(sed -nE 's/^Environment=ARGUS_EGRESS_GATEWAY_TOKEN=(.*)$/\1/p' "${BACKUP_DIR}/argus-server.service" | tail -n 1)"
+            docker compose -f "$current_yaksha_compose" up -d --no-build 2>/dev/null || true
         fi
         systemctl daemon-reload 2>/dev/null || true
         systemctl start "$SERVICE_NAME" 2>/dev/null || true
@@ -267,6 +345,24 @@ fi
 if [[ -f "$SERVICE_FILE" ]]; then
     cp -a "$SERVICE_FILE" "${BACKUP_DIR}/argus-server.service"
 fi
+if [[ -f "${INSTALL_DIR}/deploy/yaksha-compose.yaml" ]]; then
+    yaksha_had_compose=true
+    cp -a "${INSTALL_DIR}/deploy/yaksha-compose.yaml" "${BACKUP_DIR}/yaksha-compose.yaml"
+    export YAKSHA_RELAY_ADDR="${EGRESS_GATEWAY_LISTEN}"
+    export YAKSHA_RELAY_TOKEN="${EGRESS_GATEWAY_TOKEN}"
+    if [[ -n "$(docker compose -f "${INSTALL_DIR}/deploy/yaksha-compose.yaml" ps --status running -q yaksha 2>/dev/null || true)" ]]; then
+        yaksha_was_running=true
+    fi
+fi
+if [[ -f "${INSTALL_DIR}/deploy/images/argus-yaksha-linux-amd64.tar" ]]; then
+    yaksha_had_image_asset=true
+    cp -a "${INSTALL_DIR}/deploy/images/argus-yaksha-linux-amd64.tar" "${BACKUP_DIR}/argus-yaksha-linux-amd64.tar"
+fi
+if docker image inspect argus-yaksha:local >/dev/null 2>&1; then
+    yaksha_had_local_image=true
+    yaksha_rollback_tag="argus-yaksha:rollback-$(date +%Y%m%d%H%M%S)"
+    docker tag argus-yaksha:local "$yaksha_rollback_tag"
+fi
 
 if [[ "$SKIP_BACKUP" == "false" ]]; then
     if command -v docker &>/dev/null && docker ps --format '{{.Names}}' | grep -qx "argus-postgres"; then
@@ -291,6 +387,10 @@ echo -e "${YELLOW}[4/6] 替换应用文件...${NC}"
 install -m 0755 "$SERVER_BIN" "${INSTALL_DIR}/bin/argus-server"
 echo -e "  Server: ${GREEN}${SERVER_BIN} -> ${INSTALL_DIR}/bin/argus-server${NC}"
 migrate_legacy_service_identity
+if [[ -n "$EGRESS_GATEWAY_LISTEN" ]]; then
+    set_service_environment ARGUS_EGRESS_GATEWAY_LISTEN "$EGRESS_GATEWAY_LISTEN"
+    set_service_environment ARGUS_EGRESS_GATEWAY_TOKEN "$EGRESS_GATEWAY_TOKEN"
+fi
 
 if [[ -n "$AGENT_BIN" ]]; then
     install -m 0755 "$AGENT_BIN" "${INSTALL_DIR}/release/argus-agent-linux-amd64"
@@ -318,6 +418,13 @@ fi
 if [[ -f "${SCRIPT_DIR}/uninstall-server.sh" ]]; then
     cp -a "${SCRIPT_DIR}/uninstall-server.sh" "${INSTALL_DIR}/deploy/uninstall-server.sh"
 fi
+if [[ -f "${SCRIPT_DIR}/yaksha-compose.yaml" ]]; then
+    cp -a "${SCRIPT_DIR}/yaksha-compose.yaml" "${INSTALL_DIR}/deploy/yaksha-compose.yaml"
+fi
+if [[ -f "${SCRIPT_DIR}/images/argus-yaksha-linux-amd64.tar" ]]; then
+    mkdir -p "${INSTALL_DIR}/deploy/images"
+    cp -a "${SCRIPT_DIR}/images/argus-yaksha-linux-amd64.tar" "${INSTALL_DIR}/deploy/images/"
+fi
 if [[ -d "${SCRIPT_DIR}/postgres" ]]; then
     mkdir -p "${INSTALL_DIR}/deploy/postgres"
     cp -a "${SCRIPT_DIR}/postgres/." "${INSTALL_DIR}/deploy/postgres/"
@@ -342,8 +449,29 @@ if ! systemctl is-active --quiet "$SERVICE_NAME"; then
     false
 fi
 
+YAKSHA_COMPOSE="${INSTALL_DIR}/deploy/yaksha-compose.yaml"
+YAKSHA_IMAGE="${INSTALL_DIR}/deploy/images/argus-yaksha-linux-amd64.tar"
+if [[ -f "$YAKSHA_COMPOSE" && -f "$YAKSHA_IMAGE" ]]; then
+    docker load -i "$YAKSHA_IMAGE" >/dev/null
+    export YAKSHA_RELAY_ADDR="${EGRESS_GATEWAY_LISTEN}"
+    export YAKSHA_RELAY_TOKEN="${EGRESS_GATEWAY_TOKEN}"
+    docker compose -f "$YAKSHA_COMPOSE" up -d --no-build
+    yaksha_ready=false
+    for _ in $(seq 1 30); do
+        if docker compose -f "$YAKSHA_COMPOSE" exec -T yaksha /usr/local/bin/yaksha healthcheck >/dev/null 2>&1; then
+            yaksha_ready=true
+            break
+        fi
+        sleep 2
+    done
+    [[ "$yaksha_ready" == "true" ]] || die "Yaksha Runtime 未就绪"
+fi
+
 rollback_ready=false
 trap - ERR
+if [[ -n "$yaksha_rollback_tag" ]]; then
+    docker image rm "$yaksha_rollback_tag" >/dev/null 2>&1 || true
+fi
 
 echo ""
 echo -e "${BLUE}================================================${NC}"

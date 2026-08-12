@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/P0lar1ght/argus/server/internal/db"
+	egressbroker "github.com/P0lar1ght/argus/server/internal/egress"
 	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 	"google.golang.org/grpc"
@@ -89,11 +90,12 @@ func taskRequestsUnconfirmedPOC(task *pb.Task) bool {
 // Server 封装了对 Agent 通信的 gRPC 服务端
 type Server struct {
 	pb.UnimplementedAgentServiceServer
+	pb.UnimplementedAgentEgressServiceServer
 	port int
 	psk  string // Agent 预共享密钥，为空则跳过鉴权（开发模式）
-
 	// NotifyHub 管理所有在线 Agent 的 Subscribe 流连接
-	Hub *NotifyHub
+	Hub    *NotifyHub
+	Egress *egressbroker.Broker
 
 	// queue hooks — 通过回调与任务队列解耦（RabbitMQ / Memory）
 	claimTaskHook     func(agentID string) (*pb.Task, string, error) // 原子认领
@@ -126,10 +128,7 @@ var (
 
 // NewServer 初始化 gRPC Server
 func NewServer(port int) *Server {
-	return &Server{
-		port: port,
-		Hub:  NewNotifyHub(),
-	}
+	return &Server{port: port, Hub: NewNotifyHub(), Egress: egressbroker.NewBroker()}
 }
 
 // ---- Hook 注入接口 ----
@@ -201,6 +200,7 @@ func (s *Server) Serve() error {
 
 	grpcServer := grpc.NewServer(opts...)
 	pb.RegisterAgentServiceServer(grpcServer, s)
+	pb.RegisterAgentEgressServiceServer(grpcServer, s)
 
 	log.Printf("gRPC server listening at %v", lis.Addr())
 	return grpcServer.Serve(lis)

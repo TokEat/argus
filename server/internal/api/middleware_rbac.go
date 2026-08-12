@@ -68,6 +68,10 @@ var permissionRules = map[string]string{
 	"POST:/exploits/*/dry-run":         "operator",
 	"DELETE:/exploits/*":               "admin",
 	"GET:/exploit-artifacts/*":         "viewer",
+	"POST:/exp-egress-routes":          "operator",
+	"DELETE:/exp-egress-routes/*":      "operator",
+	"GET:/exp-egress-audits":           "admin",
+	"GET:/exp-egress-audits/*":         "admin",
 	"GET:/stats":                       "viewer",
 	"GET:/stats/trends":                "viewer",
 	"GET:/stats/severity":              "viewer",
@@ -320,7 +324,8 @@ func isExploitEndpoint(path string) bool {
 		strings.HasPrefix(cleanPath, "/exploits/") ||
 		cleanPath == "/exploit-runs" ||
 		strings.HasPrefix(cleanPath, "/exploit-runs/") ||
-		strings.HasPrefix(cleanPath, "/exploit-artifacts/")
+		strings.HasPrefix(cleanPath, "/exploit-artifacts/") ||
+		strings.HasPrefix(cleanPath, "/exp-egress-")
 }
 
 func currentUserHasEXPAuthorization(c *gin.Context) bool {

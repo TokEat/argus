@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -41,11 +40,7 @@ func TestSelectedEgress(t *testing.T) {
 	})
 
 	t.Run("relay is reserved without fallback", func(t *testing.T) {
-		client, err := selectedEgress(protocol.Request{Egress: &protocol.EgressConfig{Mode: protocol.EgressRelay, RouteID: "route-1"}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = client.Dial(context.Background(), "192.0.2.10:443", []string{"tcp://192.0.2.10:443"})
+		_, err := selectedEgress(protocol.Request{Egress: &protocol.EgressConfig{Mode: protocol.EgressRelay, RouteID: "route-1"}})
 		if err == nil || !strings.Contains(err.Error(), "Agent Egress Unavailable") {
 			t.Fatalf("error=%v", err)
 		}

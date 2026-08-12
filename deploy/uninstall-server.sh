@@ -154,7 +154,7 @@ main() {
     local force=false
     local explicit_install_dir=""
     local confirm
-    local install_dir compose_file
+    local install_dir compose_file yaksha_compose_file
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -174,6 +174,7 @@ main() {
     # 所有破坏性操作之前先解析并校验目录。没有可验证来源时绝不使用默认路径。
     install_dir="$(resolve_install_dir "$explicit_install_dir")"
     compose_file="${install_dir}/deploy/docker-compose.yml"
+    yaksha_compose_file="${install_dir}/deploy/yaksha-compose.yaml"
 
     echo -e "${RED}================================================${NC}"
     echo -e "${RED}       ⚠️  Argus Server 卸载向导  ⚠️              ${NC}"
@@ -204,6 +205,9 @@ main() {
     fi
 
     echo -e "\n${YELLOW}[2/4] 停止并清理 Docker 容器...${NC}"
+    if [[ -f "$yaksha_compose_file" ]]; then
+        docker compose -f "$yaksha_compose_file" down --remove-orphans 2>/dev/null || true
+    fi
     if [[ -f "$compose_file" ]]; then
         # 提供假变量避免 docker compose 警告；bind mount 必须使用已验证安装目录。
         export POSTGRES_USER=postgres POSTGRES_PASSWORD=unused-uninstall-password POSTGRES_DB=argus POSTGRES_PORT=5432

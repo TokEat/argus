@@ -120,6 +120,7 @@ func TestYakshaRunnerRejectsInvalidArguments(t *testing.T) {
 		{"action": "run", "script": "cli.check()", "egress": map[string]interface{}{"mode": "direct", "socks5_proxy": "socks5://proxy.example:1080"}},
 		{"action": "run", "script": "cli.check()", "egress": map[string]interface{}{"mode": "socks5"}},
 		{"action": "run", "script": "cli.check()", "egress": map[string]interface{}{"mode": "socks5", "socks5_proxy": "socks5://user:secret@proxy.example:1080", "route_id": "not-public"}},
+		{"action": "run", "script": "cli.check()", "timeout_ms": 1.5},
 		{"action": "test", "script": "cli.check()"},
 		{"action": "shell", "script": "cli.check()"},
 		{"action": "run", "script": "cli.check()", "exp_id": "exp-demo"},
@@ -145,5 +146,23 @@ func TestYakshaRunnerEgressModesAndWriteOnlyErrors(t *testing.T) {
 	})
 	if err == nil || strings.Contains(err.Error(), secret) {
 		t.Fatalf("error must reject without echoing credentials: %v", err)
+	}
+}
+
+func TestBuildYakshaRequestKeepsRelayPrivate(t *testing.T) {
+	args := map[string]interface{}{
+		"action": "run", "script": "cli.check()",
+		"egress": map[string]interface{}{"mode": "relay", "route_id": "route-1"},
+	}
+	if _, _, err := buildYakshaRequest(args); err == nil || !strings.Contains(err.Error(), "trusted Server") {
+		t.Fatalf("public relay error=%v", err)
+	}
+	request, _, err := buildYakshaRequestWithPolicy(args, true)
+	if err != nil {
+		t.Fatalf("internal relay: %v", err)
+	}
+	egressConfig := request["egress"].(map[string]interface{})
+	if egressConfig["route_id"] != "route-1" {
+		t.Fatalf("egress=%v", egressConfig)
 	}
 }

@@ -133,7 +133,7 @@ func TestExpConsoleUsesYakshaCanonicalParameterTypes(t *testing.T) {
 			t.Fatalf("EXP console still contains stale CLI type check %q", stale)
 		}
 	}
-	for _, want := range []string{"ui/notifications/tool-cancelled", "ui/resource-teardown", "value.isError", "event.source !== window.parent", "boundContext.exp_id", "boundContext.revision", "boundContext.source_sha256", "内存源码", "egress-mode", "['disabled', 'direct', 'socks5']", "proxy.value = ''", "autocomplete=\"new-password\""} {
+	for _, want := range []string{"ui/notifications/tool-cancelled", "ui/resource-teardown", "value.isError", "event.source !== window.parent", "boundContext.exp_id", "boundContext.revision", "boundContext.source_sha256", "内存源码", "egress-mode", "['disabled', 'direct', 'socks5', 'agent']", "risk-confirmed", "proxy.value = ''", "autocomplete=\"new-password\""} {
 		if !strings.Contains(expConsoleHTML, want) {
 			t.Fatalf("EXP console is missing MCP App lifecycle behavior %q", want)
 		}
@@ -143,7 +143,7 @@ func TestExpConsoleUsesYakshaCanonicalParameterTypes(t *testing.T) {
 	}
 }
 
-func TestYakshaPublicEgressSchemaExcludesRelayAndMarksProxyWriteOnly(t *testing.T) {
+func TestYakshaPublicEgressSchemaExposesAgentButExcludesRelay(t *testing.T) {
 	schema := yakshaInputSchema()
 	properties := schema["properties"].(map[string]interface{})
 	egress := properties["egress"].(map[string]interface{})
@@ -153,12 +153,15 @@ func TestYakshaPublicEgressSchemaExcludesRelayAndMarksProxyWriteOnly(t *testing.
 	egressProperties := egress["properties"].(map[string]interface{})
 	mode := egressProperties["mode"].(map[string]interface{})
 	values := mode["enum"].([]string)
-	if strings.Join(values, ",") != "disabled,direct,socks5" {
+	if strings.Join(values, ",") != "disabled,direct,socks5,agent" {
 		t.Fatalf("public modes=%v", values)
 	}
 	proxy := egressProperties["socks5_proxy"].(map[string]interface{})
 	if proxy["writeOnly"] != true {
 		t.Fatalf("SOCKS5 URL is not write-only: %#v", proxy)
+	}
+	if _, exists := egressProperties["route_id"]; exists {
+		t.Fatal("trusted relay route_id is exposed in the public MCP schema")
 	}
 }
 

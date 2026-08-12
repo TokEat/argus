@@ -2,7 +2,12 @@ module github.com/P0lar1ght/argus/yaksha
 
 go 1.25.4
 
-require github.com/yaklang/yaklang v1.4.8-beta9
+require (
+	github.com/P0lar1ght/argus/shared/proto v0.0.0
+	github.com/yaklang/yaklang v1.4.8-beta9
+)
+
+replace github.com/P0lar1ght/argus/shared/proto => ../shared/proto
 
 require (
 	github.com/DataDog/mmh3 v0.0.0-20210722141835-012dc69a9e49 // indirect

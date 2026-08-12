@@ -87,7 +87,7 @@ yaksha.result({
 - `asset`：通过受控 Resolver 读取 Asset 内容，不向脚本暴露宿主路径。
 - `exp_id`、Revision 和源码哈希仅作为执行上下文与 Trace 标识传入；其存储、状态、权限和发布由 Server 管理。
 
-当前闭环已完成：常驻 HTTP Daemon、预热 Worker、每请求全新 VM/CLI/Session、密封依赖与 Asset Resolver、调用树、Fixture-only test、未脱敏 debug Trace、精确目标授权、统一原始 TCP Connector、每请求 disabled/direct/SOCKS5 出口、预留 relay 契约、Worker 回收和 OCI 运行隔离。默认禁网、出口故障不回退、SOCKS5 Raw URL 不进入 Worker 或输出。Server 中的 Revision 存储、权限、审计和发布仍未接入。
+当前 Runtime 闭环已完成：常驻 HTTP Daemon、预热 Worker、每请求全新 VM/CLI/Session、密封依赖与 Asset Resolver、调用树、Fixture-only test、未脱敏 debug Trace、精确目标授权、统一原始 TCP Connector、每请求 disabled/direct/SOCKS5/Agent relay 出口、Worker 回收和 OCI 运行隔离。Agent Route 具备租户与权限检查、单次认领、预算、取消、会话失效和控制面审计；默认禁网、出口故障不回退、SOCKS5 Raw URL 不进入 Worker 或输出。Server 的 EXP Revision 存储、Asset、Fixture、发布与运行产物仍未接入。
 
 ## 第二条纵向闭环：MCP EXP Workspace
 
@@ -101,7 +101,7 @@ yaksha.result({
 - 不支持 MCP Apps 的客户端仍通过 Tool 的文本与 `structuredContent` 完成相同闭环；MCP App 只增强交互，不成为执行和治理的权威来源。
 - MCP 层保留租户隔离、对象级授权、草稿优先、发布确认和审计；Yaksha 只负责语言运行时，不承担用户身份与治理状态。
 - MCP Tool 与 EXP Console 可携带密封依赖、Asset、精确网络目标和本次 `disabled/direct/socks5` 出口；SOCKS5 Raw URL 为 write-only，只用于 Daemon 连接，不进入 Yaklang Worker、调用树或调试输出，也不由 App 回填。
-- 后续 Agent 原生出口使用独立多路复用 gRPC 双向流，不复用任务 `Subscribe`，也不套 SOCKS5。Server 绑定租户、Agent、deadline、目标和预算后签发单次 `route_id`；Yaksha 只接收内部 `relay + route_id`，Agent 在自己的网络环境解析并固定目标 IP。当前切片不修改 Server、Agent 或 shared proto。
+- Agent 原生出口已使用独立多路复用 gRPC 双向流实现，不复用任务 `Subscribe`，也不套 SOCKS5。Server 绑定租户、操作者、Agent、deadline、目标和预算后签发单次 `route_id`；Yaksha 只接收内部 `relay + route_id`，Agent 在自己的网络环境解析并固定目标 IP。出口审计只保存控制面元数据与流量计数，不保存 Payload。
 
 ## 验收目标
 

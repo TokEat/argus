@@ -94,6 +94,10 @@ func registerAPIV1Routes(api *gin.RouterGroup) {
 	api.POST("/exploit-runs/:id/cancel", cancelExploitRun)
 	api.POST("/exploit-runs/:id/cleanup", cleanupExploitRun)
 	api.GET("/exploit-artifacts/:id", getExploitArtifact)
+	api.POST("/exp-egress-routes", createExpEgressRoute)
+	api.DELETE("/exp-egress-routes/:route_id", revokeExpEgressRoute)
+	api.GET("/exp-egress-audits", listExpEgressAudits)
+	api.GET("/exp-egress-audits/:route_id", getExpEgressAudit)
 
 	// 战报输出引擎
 	api.GET("/reports/export/vulns", exportVulns)

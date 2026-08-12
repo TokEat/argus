@@ -5,7 +5,7 @@
 # 该脚本用于将 Argus 项目打包为一键部署的产物 (tar.gz)
 # 默认版本: v0.1.0
 # 产物包含：
-# 1. 预编译的 server 和 agent 二进制文件
+# 1. 预编译的 server 和 agent 二进制文件、Yaksha OCI 镜像
 # 2. server-ui/dist 前端静态资源
 # 3. docker-compose.yml、生产配置模板和部署/卸载脚本
 # 4. 必需规则资产库 deploy/arsenal_seed.db
@@ -55,6 +55,12 @@ if [[ ! -f "${ROOT_DIR}/release/argus-server-linux-amd64" ]] || [[ ! -f "${ROOT_
     exit 1
 fi
 
+if ! command -v docker >/dev/null 2>&1; then
+    echo -e "${RED}[!] 构建 Yaksha 生产镜像需要 Docker${NC}"
+    exit 1
+fi
+docker build --platform linux/amd64 -f "${ROOT_DIR}/yaksha/Dockerfile" -t argus-yaksha:local "${ROOT_DIR}"
+
 # 1.5 编译前端控制台
 echo -e "${YELLOW}[1.5/3] 编译前端页面...${NC}"
 cd "${ROOT_DIR}/server-ui"
@@ -67,11 +73,13 @@ echo -e "${YELLOW}[2/3] 整理部署文件与资源...${NC}"
 rm -rf "${BUNDLE_DIR}"
 mkdir -p "${BUNDLE_DIR}/bin"
 mkdir -p "${BUNDLE_DIR}/deploy/postgres"
+mkdir -p "${BUNDLE_DIR}/deploy/images"
 
 # 拷贝二进制
 echo "  -> 拷贝服务端和 Agent..."
 cp "${ROOT_DIR}/release/argus-server-linux-amd64" "${BUNDLE_DIR}/bin/"
 cp "${ROOT_DIR}/release/argus-agent-linux-amd64" "${BUNDLE_DIR}/bin/"
+docker save -o "${BUNDLE_DIR}/deploy/images/argus-yaksha-linux-amd64.tar" argus-yaksha:local
 
 # 拷贝前端产物
 echo "  -> 拷贝前端控制台..."
@@ -89,6 +97,7 @@ cp "${SCRIPT_DIR}/upgrade-server.sh" "${BUNDLE_DIR}/deploy/"
 cp "${SCRIPT_DIR}/uninstall-server.sh" "${BUNDLE_DIR}/deploy/"
 cp "${SCRIPT_DIR}/docker-compose.yml" "${BUNDLE_DIR}/deploy/"
 cp "${SCRIPT_DIR}/production.env.example" "${BUNDLE_DIR}/deploy/"
+cp "${ROOT_DIR}/yaksha/compose.yaml" "${BUNDLE_DIR}/deploy/yaksha-compose.yaml"
 
 # 生成并拷贝预编译的规则数据库
 echo "  -> 编译规则资产库为单文件 DB..."
@@ -117,6 +126,8 @@ required_paths=(
     "deploy/upgrade-server.sh"
     "deploy/uninstall-server.sh"
     "deploy/production.env.example"
+    "deploy/yaksha-compose.yaml"
+    "deploy/images/argus-yaksha-linux-amd64.tar"
     "deploy/arsenal_seed.db"
 )
 

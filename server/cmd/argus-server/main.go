@@ -14,6 +14,7 @@ import (
 	"github.com/P0lar1ght/argus/server/internal/cloud"
 	_ "github.com/P0lar1ght/argus/server/internal/cloud/aliyun" // 注册阿里云 ECS Provider
 	"github.com/P0lar1ght/argus/server/internal/db"
+	egresspkg "github.com/P0lar1ght/argus/server/internal/egress"
 	"github.com/P0lar1ght/argus/server/internal/grpc"
 	"github.com/P0lar1ght/argus/server/internal/scheduler"
 	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
@@ -191,6 +192,9 @@ func main() {
 		log.Println("Database migrations and schema verification completed successfully.")
 		return
 	}
+	if err := egresspkg.ReconcileStaleAudits(context.Background()); err != nil {
+		log.Fatalf("Failed to reconcile EXP egress audits: %v", err)
+	}
 
 	if configDir == "" {
 		if _, err := os.Stat("scanner/common/config"); err == nil {
@@ -284,7 +288,23 @@ func main() {
 	// ★ 将 gRPC Server 的 NotifyHub 暴露给 API 层
 	// 当 createTask 完成入队后，API 层通过此引用广播通知所有在线 Agent
 	routerDeps := api.NewRouterDependencies(queue, srv.Hub, agentPSK)
+	routerDeps.EgressBroker = srv.Egress
 	api.ConfigureRouterDependencies(routerDeps)
+
+	gatewayAddress := strings.TrimSpace(os.Getenv("ARGUS_EGRESS_GATEWAY_LISTEN"))
+	gatewayToken := strings.TrimSpace(os.Getenv("ARGUS_EGRESS_GATEWAY_TOKEN"))
+	if (gatewayAddress == "") != (gatewayToken == "") {
+		log.Fatal("[SECURITY] ARGUS_EGRESS_GATEWAY_LISTEN and ARGUS_EGRESS_GATEWAY_TOKEN must be configured together")
+	}
+	if gatewayAddress != "" {
+		gateway := &egresspkg.Gateway{Broker: srv.Egress, Token: gatewayToken}
+		go func() {
+			log.Printf("Yaksha egress gateway listening on %s", gatewayAddress)
+			if err := gateway.Serve(gatewayAddress); err != nil {
+				log.Fatalf("Yaksha egress gateway failed: %v", err)
+			}
+		}()
+	}
 
 	// 注册 UI 动画广播 Hook
 	srv.SetOnTaskClaimedHook(func(agentID, taskID string) {

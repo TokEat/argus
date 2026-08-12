@@ -1,4 +1,4 @@
-.PHONY: cli agent server yaksha yaksha-image yaksha-up yaksha-down mcp legacy all clean docker infra-up infra-down infra-logs db-init db-migrate db-verify setup-local smoke-local test coverage frontend-smoke cloud-smoke source-size-check brand-check release-artifacts lint ci
+.PHONY: cli agent server yaksha yaksha-image yaksha-up yaksha-down mcp proto-egress legacy all clean docker infra-up infra-down infra-logs db-init db-migrate db-verify setup-local smoke-local test coverage frontend-smoke cloud-smoke source-size-check brand-check release-artifacts lint ci
 
 COMPOSE_FILE := server/deploy/docker-compose.yml
 DOCKER_COMPOSE := docker compose -f $(COMPOSE_FILE)
@@ -28,6 +28,17 @@ server:
 # argus-mcp 独立 MCP 代理
 mcp:
 	cd mcp && go build -o ../bin/argus-mcp ./cmd/argus-mcp
+
+# Generate the shared Agent/Yaksha egress contract with pinned generators.
+proto-egress:
+	@tool_dir=$$(mktemp -d); \
+	GOBIN=$$tool_dir go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11; \
+	GOBIN=$$tool_dir go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1; \
+	PATH=$$tool_dir:$$PATH protoc -I shared/proto \
+		--go_out=shared/proto --go_opt=module=github.com/P0lar1ght/argus/shared/proto \
+		--go-grpc_out=shared/proto --go-grpc_opt=module=github.com/P0lar1ght/argus/shared/proto \
+		shared/proto/proto/scan/egress.proto; \
+	rm -rf $$tool_dir
 
 # Yaksha 独立 Yaklang EXP runtime；保持独立 module 依赖边界。
 yaksha:
@@ -80,14 +91,20 @@ smoke-local:
 test:
 	go test ./...
 	cd server && go test ./...
+	cd mcp && go test ./...
+	cd yaksha && GOWORK=off go test ./...
 	npm --prefix server-ui run test -- --run
 
 coverage:
 	mkdir -p $(COVERAGE_DIR)
 	go test -coverprofile=$(COVERAGE_DIR)/root.out ./...
 	cd server && go test -coverprofile=$(COVERAGE_DIR)/server.out ./...
+	cd mcp && go test -coverprofile=$(COVERAGE_DIR)/mcp.out ./...
+	cd yaksha && GOWORK=off go test -coverprofile=$(COVERAGE_DIR)/yaksha.out ./...
 	go tool cover -func=$(COVERAGE_DIR)/root.out | tail -n 1
 	cd server && go tool cover -func=$(COVERAGE_DIR)/server.out | tail -n 1
+	cd mcp && go tool cover -func=$(COVERAGE_DIR)/mcp.out | tail -n 1
+	cd yaksha && go tool cover -func=$(COVERAGE_DIR)/yaksha.out | tail -n 1
 
 frontend-smoke:
 	npm --prefix server-ui run test:smoke

@@ -45,14 +45,15 @@ func (w *Worker) runSpotTerminationListener(ctx context.Context, client *http.Cl
 			log.Printf("[Spot] Metadata check failed: %v", err)
 		} else if terminationTime != "" {
 			w.draining.Store(true)
+			w.requestStop()
 			log.Printf("[EMERGENCY] Spot instance is scheduled for termination at %s. Draining worker and releasing leases.", terminationTime)
 			for {
 				if w.sendEmergencyDump(ctx) {
-					w.cancelRunningTasks()
+					w.cancelActiveExecutions()
 					log.Println("[Spot] Emergency dump accepted; local running tasks cancelled")
 					return
 				}
-				if !w.waitSpotListener(ctx, retryInterval) {
+				if !waitSpotRetry(ctx, retryInterval) {
 					return
 				}
 			}
@@ -61,6 +62,17 @@ func (w *Worker) runSpotTerminationListener(ctx context.Context, client *http.Cl
 		if !w.waitSpotListener(ctx, pollInterval) {
 			return
 		}
+	}
+}
+
+func waitSpotRetry(ctx context.Context, wait time.Duration) bool {
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 

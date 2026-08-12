@@ -2,9 +2,9 @@
 
 Yaksha 是致敬并基于 Yaklang 语言核心构建的独立 EXP Runtime。它以内嵌 `antlr4yak` 解析器和 `yakvm` 虚拟机的常驻 Daemon 运行，预热 Worker 并为每次请求创建全新的 Engine、CliApp、Session 和 Resolver 上下文，同时通过 `yaksha.*` 扩展产品侧 EXP 能力。
 
-Yaksha 不在语言层主动封禁 `include`、`go`、`eval`、格式化或作用域能力。Docker 运行配置提供非 root、只读根文件系统、无宿主挂载和资源限制；脚本网络能力只通过 Daemon Egress Connector，并同时要求精确目标授权与本次请求显式选择的出口。当前不接入 Argus Server。
+Yaksha 不在语言层主动封禁 `include`、`go`、`eval`、格式化或作用域能力。Docker 运行配置提供非 root、只读根文件系统、无宿主挂载和资源限制；脚本网络能力只通过 Daemon Egress Connector，并同时要求精确目标授权与本次请求显式选择的出口。Agent 原生出口通过 Server 签发的单次 Route 和私有 Gateway 接入。
 
-本模块为独立 Go module，**不加入 go.work**，避免 Yaklang 依赖图污染 Server/Scanner 模块（工作区会统一 `quic-go` 等共享依赖版本，导致 Yaklang 内部 HTTP/3 代码编译失败）。构建与测试需在 `GOWORK=off` 下进行。构建产物独立分发，不打包进 Argus 主发行包。
+本模块为独立 Go module，**不加入 go.work**，避免 Yaklang 依赖图污染 Server/Scanner 模块（工作区会统一 `quic-go` 等共享依赖版本，导致 Yaklang 内部 HTTP/3 代码编译失败）。构建与测试需在 `GOWORK=off` 下进行。源码保持独立，生产发布包将 Yaksha 构建成独立 OCI 镜像并随 Compose 分发，不链接进 Server 或 Agent 二进制。
 
 ## 命名约定
 
@@ -46,7 +46,11 @@ docker compose -f yaksha/compose.yaml up -d --build
 curl -fsS http://127.0.0.1:8790/readyz
 ```
 
-容器只把 `8790` 发布到宿主回环，默认预热 2 个 Worker、队列 32，每个 Worker 处理 100 次请求后先补充新 Worker 再平滑退出。容器使用非 root、只读根文件系统、`cap-drop=ALL`、`no-new-privileges`、64 PIDs、2 CPUs、1 GiB 内存、128 文件描述符和 32 MiB `noexec/nosuid/nodev` tmpfs，且没有宿主目录挂载。
+官方 Compose 使用 host network，但 Yaksha 仍只监听 `127.0.0.1:8790`。这样容器可访问同机
+Server 仅监听回环的 Egress Gateway，同时 Yaksha 和 Gateway 都不会发布到公网；非 Linux
+Docker Desktop 环境只用于本地 Runtime smoke，Agent relay 的生产拓扑应使用 Linux 主机。
+
+容器使用 host network，但进程只监听宿主回环的 `8790`；默认预热 2 个 Worker、队列 32，每个 Worker 处理 100 次请求后先补充新 Worker 再平滑退出。容器使用非 root、只读根文件系统、`cap-drop=ALL`、`no-new-privileges`、64 PIDs、2 CPUs、1 GiB 内存、128 文件描述符和 32 MiB `noexec/nosuid/nodev` tmpfs，且没有宿主目录挂载。
 
 已验证语法、运行时、协议和待补能力见 [COMPATIBILITY.md](./COMPATIBILITY.md)。该矩阵以当前锁定的 Yaklang 版本和 Yaksha 测试为准，不把 Yaklang 文档声明直接等同于当前依赖版本已经实现。
 
@@ -81,7 +85,7 @@ curl -fsS http://127.0.0.1:8790/readyz
 {"egress":{"mode":"socks5","socks5_proxy":"socks5://user:password@proxy.example:1080"}}
 ```
 
-`relay + route_id` 是为后续可信控制面保留的 Yaksha 内部契约，当前未配置 Provider 时明确返回 `Agent Egress Unavailable`，MCP/MCP App 不暴露该模式。不同模式互斥，出口失败不自动回退到 direct、SOCKS5 或其他节点，也不存在 Daemon 默认代理环境变量。
+`relay + route_id` 是可信控制面专用的 Yaksha 内部契约；未配置 Provider 时明确返回 `Agent Egress Unavailable`，MCP/MCP App 不直接暴露该模式。不同模式互斥，出口失败不自动回退到 direct、SOCKS5 或其他节点，也不存在 Daemon 默认代理环境变量。
 
 Daemon 的统一原始 TCP Connector 为 direct 与 SOCKS5 解析目标 DNS、拒绝 unspecified、multicast、loopback、link-local 和已知云元数据地址，并把允许的解析 IP 固定到本次连接；精确声明的普通私网地址可用。HTTP、TLS、重定向复检、正文边界和未脱敏 Trace 仍由 Yaksha 管理。每次 HTTP 重定向都重新检查 `network_targets` 并建立连接；子 EXP 共享顶层出口、目标、deadline 和连接预算。
 
@@ -159,8 +163,10 @@ test 始终启用 Fixture 模式：没有匹配 Fixture 的 HTTP/TCP 调用直�
 
 ## Argus MCP 直连
 
-部署侧通过 `ARGUS_YAKSHA_URL` 指向 Yaksha Daemon，默认 `http://127.0.0.1:8790`。MCP 启动时检查 `/readyz`，运行时直接 POST `/v1/execute`，不启动子进程也不自动重试。`argus_yaksha_exp` Tool 接收 `script`、`params`、`test_cases`、密封 Resolver、网络目标与本次 `disabled|direct|socks5` 出口；可选携带必须成组出现的 `exp_id`、`revision`、`source_sha256`。SOCKS5 密码输入不会由 MCP App 回填。
-Tool 不接受二进制路径、命令参数或宿主文件路径，也不通过 Server API。
+部署侧通过 `ARGUS_YAKSHA_URL` 指向 Yaksha Daemon，默认 `http://127.0.0.1:8790`。MCP 启动时检查 `/readyz`，运行时直接 POST `/v1/execute`，不启动子进程也不自动重试。`argus_yaksha_exp` Tool 接收 `script`、`params`、`test_cases`、密封 Resolver、网络目标与本次 `disabled|direct|socks5|agent` 出口；可选携带必须成组出现的 `exp_id`、`revision`、`source_sha256`。SOCKS5 密码输入不会由 MCP App 回填。
+Tool 不接受二进制路径、命令参数或宿主文件路径。`agent` 模式只允许 `run/debug`，要求明确 `agent_id` 与 `risk_confirmed=true`；MCP 向 Server 申请单次 Route 后只把内部 `relay + route_id` 交给 Yaksha，结束时撤销 Route，不自动重试或回退。
+
+Agent 原生出口使用独立 `EgressTunnel` 双向流，不复用任务 `Subscribe`，也不运行 SOCKS5 服务。Server 私有 Gateway 通过 `ARGUS_EGRESS_GATEWAY_LISTEN` 与必填 `ARGUS_EGRESS_GATEWAY_TOKEN` 启用；Yaksha 使用 `YAKSHA_RELAY_ADDR` 与 `YAKSHA_RELAY_TOKEN` 连接。Token 仅存在于 Server/Yaksha Daemon，不进入 Worker、脚本、日志或 Trace。
 
 支持 MCP Apps 的 Host 可读取 `ui://argus/exp-console`；不支持的 Host 仍能从
 Tool 的文本结果和 `structuredContent` 获得相同数据。debug 的完整 Trace 原样
@@ -188,5 +194,6 @@ Tool 的文本结果和 `structuredContent` 获得相同数据。debug 的完整
 
 - 切片 A：语言核心、五动作、Resolver、Compose、Asset、调用树和 Fixture test 已完成。
 - 切片 B：常驻 Daemon、预热 Worker、HTTP MCP/MCP App、统一 Egress Connector、disabled/direct/SOCKS5 与 OCI 隔离已完成，不改 Server。
-- 切片 C：Server Revision 存储、权限、审计、发布，以及独立多路复用 gRPC 双向流的 Agent 原生 TCP Egress 仍待后续接入。Agent 不提供 SOCKS5；Server 校验租户和权限后签发单次 `route_id`，Yaksha 只消费内部 relay 契约。
+- 切片 C1：Agent 原生 TCP Egress 已接入。Server 校验租户、EXP 权限、风险确认和在线 Tunnel 后签发单次 `route_id`；Yaksha 只消费内部 relay 契约，出口无自动回退。
+- 切片 C2：Server Revision 存储、Asset、Fixture、权限、审计和发布仍待后续接入。
 - 切片 D：移除 pyexp 链路，Yaksha 接入 exploit-runs / MCP 路由，AI 生成 Yaklang EXP。

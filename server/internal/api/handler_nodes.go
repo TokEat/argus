@@ -93,6 +93,9 @@ func deleteNode(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Node not found or already deleted"})
 		return
 	}
+	if broker := routerRuntime().EgressBroker; broker != nil {
+		broker.DetachAgent(agentID, "agent_deleted")
+	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }
@@ -122,6 +125,9 @@ func revokeNodeToken(c *gin.Context) {
 		OperatorID: currentUserID(c),
 		CreatedAt:  now,
 	}).Error
+	if broker := routerRuntime().EgressBroker; broker != nil {
+		broker.DetachAgent(agentID, "agent_session_revoked")
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "revoked", "agent_id": agentID, "token_revoked_at": now})
 }
 

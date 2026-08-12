@@ -20,6 +20,18 @@ func schemaTableSpecs() []schemaTableSpec {
 			Columns: []string{"version", "name", "checksum", "applied_at"},
 		},
 		{
+			Table: "exp_egress_audits",
+			Columns: []string{
+				"route_id", "tenant_id", "operator_id", "agent_id", "targets", "resolved_ips", "status", "error_code",
+				"connection_count", "bytes_to_agent", "bytes_from_agent", "issued_at", "claimed_at", "finished_at", "expires_at", "created_at", "updated_at",
+			},
+			Indexes: []string{
+				"idx_exp_egress_audits_route_id", "idx_exp_egress_audits_tenant_id", "idx_exp_egress_audits_operator_id",
+				"idx_exp_egress_audits_agent_id", "idx_exp_egress_audits_status", "idx_exp_egress_audits_error_code",
+				"idx_exp_egress_audits_issued_at", "idx_exp_egress_audits_finished_at", "idx_exp_egress_audits_expires_at",
+			},
+		},
+		{
 			Table:   "projects",
 			Columns: []string{"tenant_id", "owner_user_id", "name", "status", "deleted_at"},
 			Indexes: []string{"idx_projects_tenant_id", "idx_projects_owner_user_id", "idx_projects_status", "idx_projects_deleted_at", "idx_projects_scope_id"},

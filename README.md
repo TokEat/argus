@@ -238,8 +238,13 @@ make smoke-local
 | `ARGUS_AGENT_PSK` | Agent 接入认证预共享密钥 | `openssl rand -hex 32` |
 | `ARGUS_JWT_SECRET` | Web API JWT 签名密钥 | `openssl rand -hex 32` |
 | `ARGUS_ENCRYPT_KEY` | 云账号等敏感配置的 AES-256 加密密钥 | `openssl rand -base64 32` |
+| `ARGUS_EGRESS_GATEWAY_LISTEN` | Yaksha 私有 Egress Gateway 监听地址，不得发布公网 | `127.0.0.1:50052` |
+| `ARGUS_EGRESS_GATEWAY_TOKEN` | Yaksha Gateway 独立共享密钥 | `openssl rand -hex 32` |
+| `YAKSHA_RELAY_ADDR` | Yaksha 连接的私有 Gateway 地址 | `127.0.0.1:50052` |
+| `YAKSHA_RELAY_TOKEN` | 与 Gateway Token 相同，仅注入 Yaksha Daemon | `openssl rand -hex 32` |
+| `ARGUS_MCP_AUTH_TOKEN` | MCP HTTP/SSE 入站 Bearer Token，与 Server API Token 分离 | `openssl rand -hex 32` |
 
-> **安全约束**：生产模式下以上三个环境变量必须设置，否则 Server 会直接退出。开发环境可通过 `--dev` flag 跳过这些启动检查；`--dev` 不得用于生产环境。
+> **安全约束**：生产模式下前三个基础密钥必须设置，否则 Server 会直接退出。Agent 原生 Egress 启用时，Gateway 地址和 Token 必须成对配置；Gateway 与 Yaksha Token 必须一致，监听端口不得发布公网。MCP 使用 HTTP/SSE 时必须配置独立入站 Token，否则拒绝启动；stdio 不需要该 Token。开发环境可通过 `--dev` flag 跳过基础启动检查；`--dev` 不得用于生产环境。
 
 #### 生产部署
 

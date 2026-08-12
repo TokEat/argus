@@ -16,11 +16,12 @@
 *(版本号为可选参数，默认不传即为 `v0.1.0`)*
 
 **构建脚本将自动执行：**
-1. 构建最新版本的后端 `argus-server` 与节点守护进程 `argus-agent`（Linux amd64）。
+1. 构建最新版本的后端 `argus-server`、节点守护进程 `argus-agent` 与独立 Yaksha OCI 镜像（Linux amd64）。
 2. 构建最新版本的前端控制台（基于 Node + Vite，生成 `server-ui/dist`）。
 3. 预编译数千个散乱的 YAML 漏洞模板，生成紧凑的单文件本地库 `arsenal_seed.db`。
 4. 附带 `production.env.example`、部署/卸载脚本和 Docker 编排文件。
-5. 将所有必要文件打包为 `argus-release-[版本号]-linux-amd64.tar.gz`。
+5. 附带 Yaksha host-network Compose；Runtime 只监听 `127.0.0.1:8790`，私有 Egress Gateway 只监听配置的可信地址。
+6. 将所有必要文件打包为 `argus-release-[版本号]-linux-amd64.tar.gz`。
 
 ---
 

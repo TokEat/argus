@@ -39,7 +39,7 @@ type nucleiDebugResult struct {
 }
 
 func (w *Worker) handleDebugCommand(cmd *pb.DebugCommand) {
-	if cmd == nil || strings.TrimSpace(cmd.SessionId) == "" {
+	if cmd == nil || strings.TrimSpace(cmd.SessionId) == "" || w.draining.Load() {
 		return
 	}
 
