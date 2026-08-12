@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -20,10 +19,6 @@ import (
 const cliMachineHelperMode = "ARGUS_CLI_MACHINE_HELPER"
 
 func TestCLIProcessMachineAndNonTTYOutputContracts(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("vendored httpx loopback probing is unstable in Windows subprocess tests; see #186")
-	}
-
 	home := filepath.Join(t.TempDir(), "argus-data")
 	jsonRun := runMachineHelper(t, "json", "", home)
 	if jsonRun.exitCode != exitSuccess || jsonRun.stderr != "" {

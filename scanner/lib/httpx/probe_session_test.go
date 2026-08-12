@@ -439,6 +439,23 @@ func TestProbeSessionExplicitSchemesNeverProbeAlternateProtocol(t *testing.T) {
 	}
 }
 
+func TestProbeSessionExplicitHTTPLoopbackReturnsResult(t *testing.T) {
+	fixture := newSchemeFixture(t, true)
+	session := NewProbeSession(context.Background(), 3)
+	var callbacks atomic.Int32
+	session.CallHTTPx([]string{"http://" + fixture.listener.Addr().String()}, func(result runner.Result) {
+		if result.StatusCode == http.StatusOK {
+			callbacks.Add(1)
+		}
+	}, "", 1)
+	session.Close()
+	observed := fixture.close()
+
+	require.Contains(t, observed, byte('G'), "explicit HTTP loopback target should be requested")
+	require.EqualValues(t, 1, callbacks.Load())
+	require.NoError(t, session.Err())
+}
+
 func TestProbeSessionUnschemedTargetRetainsBudgetedFallback(t *testing.T) {
 	fixture := newSchemeFixture(t, true)
 	session := NewProbeSession(context.Background(), 3)

@@ -1557,7 +1557,7 @@ retry:
 		builder.WriteString(fmt.Sprintf(" [%s]", ip))
 	}
 
-	ips, cnames, err := getDNSData(hp, URL.Host)
+	ips, cnames, err := getDNSData(hp, hostnameForDNS(URL.Host))
 	if err != nil {
 		ips = append(ips, ip)
 	}
@@ -2074,6 +2074,13 @@ func getDNSData(hp *httpx.HTTPX, hostname string) (ips, cnames []string, err err
 	ips = append(ips, dnsData.AAAA...)
 	cnames = dnsData.CNAME
 	return
+}
+
+func hostnameForDNS(host string) string {
+	if hostname, _, err := net.SplitHostPort(host); err == nil {
+		return strings.Trim(hostname, "[]")
+	}
+	return strings.Trim(host, "[]")
 }
 
 func normalizeHeaders(headers map[string][]string) map[string]interface{} {
