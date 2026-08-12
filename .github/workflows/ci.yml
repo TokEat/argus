@@ -60,6 +60,14 @@ jobs:
         run: go test ./...
         working-directory: server
 
+      - name: MCP Go tests
+        run: go test ./...
+        working-directory: mcp
+
+      - name: Yaksha Go tests
+        run: GOWORK=off go test ./...
+        working-directory: yaksha
+
       - name: PostgreSQL migration apply and schema verify
         env:
           DB_DSN: host=127.0.0.1 user=postgres password=argus_ci dbname=argus port=5432 sslmode=disable
@@ -73,9 +81,15 @@ jobs:
           go test -coverprofile=/tmp/argus-coverage/root.out ./...
           cd server
           go test -coverprofile=/tmp/argus-coverage/server.out ./...
+          cd ../mcp
+          go test -coverprofile=/tmp/argus-coverage/mcp.out ./...
+          cd ../yaksha
+          GOWORK=off go test -coverprofile=/tmp/argus-coverage/yaksha.out ./...
           cd ..
           go tool cover -func=/tmp/argus-coverage/root.out | tail -n 1
           go tool cover -func=/tmp/argus-coverage/server.out | tail -n 1
+          go tool cover -func=/tmp/argus-coverage/mcp.out | tail -n 1
+          go tool cover -func=/tmp/argus-coverage/yaksha.out | tail -n 1
 
       - name: Cloud provider mock smoke
         run: go test ./internal/api -run TestCloudProviderMockSmoke -count=1

@@ -25,6 +25,11 @@ var resourceEndpoints = map[string]string{
 func NewServer(client *Client) *sdkmcp.Server {
 	server := sdkmcp.NewServer(&sdkmcp.Implementation{Name: "argus-mcp", Version: "0.1.0"}, &sdkmcp.ServerOptions{
 		Capabilities: &sdkmcp.ServerCapabilities{
+			Extensions: map[string]interface{}{
+				"io.modelcontextprotocol/ui": map[string]interface{}{
+					"mimeTypes": []string{expConsoleMIMEType},
+				},
+			},
 			Resources: &sdkmcp.ResourceCapabilities{},
 			Tools:     &sdkmcp.ToolCapabilities{},
 		},
@@ -46,6 +51,7 @@ func RegisterArgusMCP(server *sdkmcp.Server, client *Client) {
 					URI:      payload.URI,
 					MIMEType: payload.MIMEType,
 					Text:     payload.Text,
+					Meta:     sdkmcp.Meta(payload.Meta),
 				}},
 			}, nil
 		})
@@ -61,12 +67,22 @@ func RegisterArgusMCP(server *sdkmcp.Server, client *Client) {
 			}
 			result, err := client.CallTool(ctx, tool.Name, args)
 			if err != nil {
+				if tool.Name == "argus_yaksha_exp" {
+					return &sdkmcp.CallToolResult{
+						Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: err.Error()}},
+						IsError: true,
+					}, nil
+				}
 				return nil, err
 			}
 			data, _ := json.MarshalIndent(result, "", "  ")
-			return &sdkmcp.CallToolResult{
+			response := &sdkmcp.CallToolResult{
 				Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: string(data)}},
-			}, nil
+			}
+			if tool.Name == "argus_yaksha_exp" {
+				response.StructuredContent = result
+			}
+			return response, nil
 		})
 	}
 }
@@ -84,6 +100,7 @@ func resources() []*sdkmcp.Resource {
 		{URI: "argus://pyexp/spec", Name: "Argus Python EXP Spec", Description: "Current Argus Python EXP source format.", MIMEType: "text/markdown"},
 		{URI: "argus://pyexp/template", Name: "Argus Python EXP Template", Description: "Minimal Python EXP template.", MIMEType: "text/x-python"},
 		{URI: "argus://poc/template", Name: "Argus POC Template", Description: "Minimal POC YAML template.", MIMEType: "text/yaml"},
+		{URI: expConsoleURI, Name: "yaksha_exp_console", Title: "Yaksha EXP Console", Description: "Interactive single-file Yaklang EXP inspect, validate, test, debug, and run console.", MIMEType: expConsoleMIMEType, Meta: sdkmcp.Meta(expConsoleMeta)},
 	}
 }
 
@@ -94,6 +111,7 @@ func tools() []*sdkmcp.Tool {
 		{Name: "argus_rule_debug", Description: "Debug a fingerprint, POC, or Python EXP through Argus Server before saving. Fingerprint/POC require agent_id and target_url. For pyexp source-level dry-run use rule_type=pyexp, source, target_url, action=dry_run; it does not require Agent and never saves. For pyexp source-level debug use source + action=run + agent_id + target_url. Saved pyexp cleanup/install should use stable_ref fields from argus_rule_save. For workflow injection, workflow_product may be a real fingerprint product or a reserved General-Poc-* general POC group.", InputSchema: objectSchema(map[string]interface{}{"rule_type": enumSchema([]string{"fingerprint", "poc", "pyexp"}), "agent_id": stringSchema("Agent ID; required for live debug, not required for pyexp action=dry_run"), "target_url": stringSchema("Target URL"), "source": stringSchema("Python EXP source for source-level dry-run/debug before saving"), "proxy": stringSchema("Proxy"), "timeout_sec": map[string]interface{}{"type": "integer"}, "product_name": stringSchema("Fingerprint product name"), "rule": stringSchema("Fingerprint rule expression"), "include_dir": map[string]interface{}{"type": "boolean"}, "include_poc": map[string]interface{}{"type": "boolean"}, "workflow_product": stringSchema("Workflow product for injected debug mapping; General-Poc-* means a general POC workflow, not a real fingerprint product"), "workflow_types": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}, "workflow_pocs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}, "poc_content": stringSchema("POC YAML source"), "artifact_id": stringSchema("Stable DB artifact id from argus_rule_save"), "rule_id": stringSchema("Stable EXP rule id from ARGUS_EXP.id"), "file_name": stringSchema("Artifact display file name"), "params": map[string]interface{}{"type": "object"}, "action": stringSchema("pyexp action: dry_run, run or cleanup")}, []string{"rule_type", "target_url"})},
 		{Name: "argus_rule_save", Description: "Save fingerprint, POC, Workflow, or Python EXP source into the Argus database as a Draft artifact and return stable_ref {artifact_id, rule_id, file_name, hash, version}. Optional intent=test_only|production_candidate|approved_reusable only affects guidance; it never auto-deletes or auto-publishes. Workflow product_name may use the reserved General-Poc-* prefix for general POC groups whose YAML performs its own matching.", InputSchema: objectSchema(map[string]interface{}{"rule_type": enumSchema([]string{"fingerprint", "poc", "workflow", "pyexp"}), "intent": enumSchema([]string{"test_only", "production_candidate", "approved_reusable"}), "file_name": stringSchema("Draft artifact display file name"), "content": stringSchema("Rule source content"), "product_name": stringSchema("Fingerprint product or Workflow product; General-Poc-* means a general POC workflow and should not be merged into a real product alias"), "rules": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}, "workflow_types": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}, "workflow_pocs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}}, []string{"rule_type"})},
 		{Name: "argus_rule_apply", Description: "Admin-only controlled action. action=publish activates a Draft artifact and should use stable_ref fields from argus_rule_save; action=install_requirements only supports saved pyexp rules and also uses stable_ref fields.", InputSchema: objectSchema(map[string]interface{}{"action": enumSchema([]string{"publish", "install_requirements"}), "rule_type": enumSchema([]string{"fingerprint", "poc", "workflow", "pyexp"}), "artifact_id": stringSchema("Stable DB artifact id from argus_rule_save"), "rule_id": stringSchema("Stable EXP rule id from ARGUS_EXP.id"), "file_name": stringSchema("Draft artifact display file name"), "hash": stringSchema("Expected draft hash"), "version": map[string]interface{}{"type": "integer"}, "agent_id": stringSchema("Agent ID for install_requirements")}, []string{"action", "rule_type"})},
+		{Name: "argus_yaksha_exp", Title: "Yaksha EXP Runtime", Description: "Operate one sealed single-file Yaklang EXP through the persistent independent Yaksha runtime. inspect derives the official cli.* UI plus literal yaksha.call/yaksha.asset references; validate checks source, params, dependencies, assets, exact network targets, and egress shape; test is fixture-only and always offline; debug returns complete unredacted HTTP/TCP Trace; run executes once. exp_id + revision + source_sha256 bind an immutable source identity; dependencies are pinned child revisions, assets are hash-bound content, and egress explicitly selects disabled, direct, or a per-call write-only SOCKS5 route. Agent-native egress is a future trusted relay integration and is not exposed by this MCP tool. This tool does not persist or publish revisions, access Argus Server, or expose any filesystem path.", Meta: sdkmcp.Meta{"ui": map[string]interface{}{"resourceUri": expConsoleURI, "visibility": []string{"model", "app"}}}, InputSchema: yakshaInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
 	}
 }
 
@@ -111,4 +129,100 @@ func stringSchema(description string) map[string]interface{} {
 
 func enumSchema(values []string) map[string]interface{} {
 	return map[string]interface{}{"type": "string", "enum": values}
+}
+
+func yakshaInputSchema() map[string]interface{} {
+	schema := objectSchema(map[string]interface{}{
+		"action": enumSchema([]string{"inspect", "validate", "test", "debug", "run"}),
+		"script": map[string]interface{}{
+			"type":        "string",
+			"description": "Complete main.yak source; this is the only authoritative source for this call",
+			"minLength":   1,
+			"maxLength":   1 << 20,
+		},
+		"params": map[string]interface{}{
+			"type":        "object",
+			"description": "Values for declared cli.* parameters",
+		},
+		"timeout_ms": map[string]interface{}{
+			"type":    "integer",
+			"minimum": 0,
+			"maximum": 120000,
+		},
+		"test_cases": map[string]interface{}{
+			"type":        "array",
+			"description": "Fixture-backed Yaksha test cases; required only for action=test",
+			"items":       map[string]interface{}{"type": "object"},
+			"maxItems":    32,
+		},
+		"exp_id": map[string]interface{}{
+			"type":        "string",
+			"description": "Optional logical EXP id; requires revision and source_sha256",
+			"minLength":   1,
+			"maxLength":   128,
+		},
+		"revision": map[string]interface{}{
+			"type":        "integer",
+			"description": "Optional immutable EXP revision; requires exp_id and source_sha256",
+			"minimum":     1,
+		},
+		"source_sha256": map[string]interface{}{
+			"type":        "string",
+			"description": "Expected lowercase SHA-256 of script for revision binding",
+			"pattern":     "^[0-9a-f]{64}$",
+		},
+		"dependencies": map[string]interface{}{
+			"type":        "array",
+			"description": "Flattened transitive closure of literal yaksha.call references, pinned to exact revisions and source hashes",
+			"maxItems":    16,
+			"items": objectSchema(map[string]interface{}{
+				"exp_id":        stringSchema("Referenced EXP id"),
+				"revision":      map[string]interface{}{"type": "integer", "minimum": 1},
+				"source_sha256": map[string]interface{}{"type": "string", "pattern": "^[0-9a-f]{64}$"},
+				"script":        map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 1 << 20},
+			}, []string{"exp_id", "revision", "source_sha256", "script"}),
+		},
+		"assets": map[string]interface{}{
+			"type":        "array",
+			"description": "Hash-bound logical assets referenced by yaksha.asset",
+			"maxItems":    32,
+			"items": objectSchema(map[string]interface{}{
+				"asset_id": stringSchema("Logical asset id"),
+				"sha256":   map[string]interface{}{"type": "string", "pattern": "^[0-9a-f]{64}$"},
+				"encoding": enumSchema([]string{"utf8", "base64"}),
+				"content":  map[string]interface{}{"type": "string", "maxLength": 2 << 20},
+			}, []string{"asset_id", "sha256", "encoding", "content"}),
+		},
+		"network_targets": map[string]interface{}{
+			"type":        "array",
+			"description": "Exact authorized http://host:port, https://host:port, or tcp://host:port origins",
+			"maxItems":    32,
+			"items":       map[string]interface{}{"type": "string"},
+		},
+		"egress": objectSchema(map[string]interface{}{
+			"mode": map[string]interface{}{
+				"type":        "string",
+				"description": "Per-call outbound mode; omitted egress defaults to disabled",
+				"enum":        []string{"disabled", "direct", "socks5"},
+			},
+			"socks5_proxy": map[string]interface{}{
+				"type":        "string",
+				"description": "Write-only per-call socks5://[user:password@]host:port route; valid only when mode=socks5",
+				"maxLength":   2048,
+				"writeOnly":   true,
+			},
+		}, []string{"mode"}),
+	}, []string{"action", "script"})
+	for _, name := range []string{"dependencies", "assets", "egress"} {
+		if value, ok := schema["properties"].(map[string]interface{})[name].(map[string]interface{}); ok {
+			if items, ok := value["items"].(map[string]interface{}); ok {
+				items["additionalProperties"] = false
+			}
+			if name == "egress" {
+				value["additionalProperties"] = false
+			}
+		}
+	}
+	schema["additionalProperties"] = false
+	return schema
 }

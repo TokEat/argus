@@ -18,6 +18,7 @@
 ├── server/                  # controller/api/grpc service (module: github.com/P0lar1ght/argus/server)
 ├── server-ui/               # React/Vite management console
 ├── mcp/                     # standalone MCP proxy and typed protocol clients
+├── yaksha/                  # persistent isolated Yaklang EXP runtime daemon
 ├── deploy/                  # production/local deployment templates and release scripts
 ├── tools/                   # repository maintenance and Arsenal sync tools
 ├── scripts/                 # local development, MCP and release helpers
@@ -33,6 +34,7 @@
 - `server` is the independent control-plane/runtime concern.
 - `server-ui` is the React/Vite management console and consumes the `/api/v1` control-plane API.
 - `mcp` is the standalone MCP proxy; its protocol clients are kept separate from the server HTTP handlers.
+- `yaksha` is an independent language runtime. Its Docker daemon supervises pre-warmed JSON-lines workers, while MCP calls the bounded loopback HTTP API; it is not embedded in Server.
 - `deploy` contains deployment templates, production configuration examples and release packaging scripts; it is not the runtime source of truth for business logic.
 - `tools` contains repository-side utilities such as `tools/arsenal-sync`, which writes source rule baselines only through an explicit local workflow and Git review.
 - `shared/proto` is the protocol contract shared by scanner agent and server.

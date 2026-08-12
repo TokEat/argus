@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -109,12 +110,18 @@ func intFromAny(value interface{}) (int, bool) {
 	case int:
 		return v, true
 	case int64:
-		return int(v), true
+		converted := int(v)
+		return converted, int64(converted) == v
 	case float64:
-		return int(v), true
+		if math.IsNaN(v) || math.IsInf(v, 0) || math.Trunc(v) != v {
+			return 0, false
+		}
+		converted := int(v)
+		return converted, float64(converted) == v
 	case json.Number:
 		i, err := v.Int64()
-		return int(i), err == nil
+		converted := int(i)
+		return converted, err == nil && int64(converted) == i
 	default:
 		return 0, false
 	}

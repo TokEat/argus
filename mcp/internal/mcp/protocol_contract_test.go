@@ -9,29 +9,35 @@ import (
 
 func TestMCPProtocolContractSnapshot(t *testing.T) {
 	type resourceContract struct {
-		URI         string `json:"uri"`
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		MIMEType    string `json:"mime_type"`
-		Endpoint    string `json:"endpoint"`
+		URI         string      `json:"uri"`
+		Name        string      `json:"name"`
+		Title       string      `json:"title,omitempty"`
+		Description string      `json:"description"`
+		MIMEType    string      `json:"mime_type"`
+		Endpoint    string      `json:"endpoint"`
+		Meta        interface{} `json:"meta,omitempty"`
 	}
 	type toolContract struct {
-		Name        string      `json:"name"`
-		Description string      `json:"description"`
-		InputSchema interface{} `json:"input_schema"`
+		Name         string      `json:"name"`
+		Title        string      `json:"title,omitempty"`
+		Description  string      `json:"description"`
+		InputSchema  interface{} `json:"input_schema"`
+		OutputSchema interface{} `json:"output_schema,omitempty"`
+		Meta         interface{} `json:"meta,omitempty"`
 	}
 
 	resourceSnapshot := make([]resourceContract, 0, len(resources()))
 	for _, resource := range resources() {
 		resourceSnapshot = append(resourceSnapshot, resourceContract{
-			URI: resource.URI, Name: resource.Name, Description: resource.Description,
-			MIMEType: resource.MIMEType, Endpoint: resourceEndpoints[resource.URI],
+			URI: resource.URI, Name: resource.Name, Title: resource.Title, Description: resource.Description,
+			MIMEType: resource.MIMEType, Endpoint: resourceEndpoints[resource.URI], Meta: resource.Meta,
 		})
 	}
 	toolSnapshot := make([]toolContract, 0, len(tools()))
 	for _, tool := range tools() {
 		toolSnapshot = append(toolSnapshot, toolContract{
-			Name: tool.Name, Description: tool.Description, InputSchema: tool.InputSchema,
+			Name: tool.Name, Title: tool.Title, Description: tool.Description, InputSchema: tool.InputSchema,
+			OutputSchema: tool.OutputSchema, Meta: tool.Meta,
 		})
 	}
 
@@ -44,7 +50,7 @@ func TestMCPProtocolContractSnapshot(t *testing.T) {
 	}
 	digest := sha256.Sum256(data)
 	got := hex.EncodeToString(digest[:])
-	const want = "6965973c98c3ce22ea672951e7cf33f4de63c1aa73aa129c19f7d4f8fd60bd11"
+	const want = "bb6e4cec4e2d3e9badea255018a52ffb907003b960a0749ac6445d094e65b468"
 	if got != want {
 		t.Fatalf("MCP protocol contract changed: got %s want %s", got, want)
 	}

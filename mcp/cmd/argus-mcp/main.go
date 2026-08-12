@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	argusmcp "github.com/P0lar1ght/argus/mcp/internal/mcp"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -16,7 +17,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	server := argusmcp.NewServer(argusmcp.NewClient(cfg.BaseURL, cfg.Token))
+	client := argusmcp.NewClientWithYakshaURL(cfg.BaseURL, cfg.Token, cfg.YakshaURL)
+	readyCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := client.CheckYaksha(readyCtx); err != nil {
+		cancel()
+		log.Fatal(err)
+	}
+	cancel()
+	server := argusmcp.NewServer(client)
 
 	switch cfg.Transport {
 	case "stdio":
@@ -27,8 +35,8 @@ func main() {
 		log.Printf("argus-mcp listening on %s", cfg.HTTPAddr)
 		handler := sdkmcp.NewStreamableHTTPHandler(func(*http.Request) *sdkmcp.Server {
 			return server
-		}, nil)
-		if err := http.ListenAndServe(cfg.HTTPAddr, handler); err != nil {
+		}, &sdkmcp.StreamableHTTPOptions{Stateless: true})
+		if err := http.ListenAndServe(cfg.HTTPAddr, argusmcp.AuthenticateHTTP(cfg.MCPAuthToken, handler)); err != nil {
 			log.Fatal(err)
 		}
 	default:

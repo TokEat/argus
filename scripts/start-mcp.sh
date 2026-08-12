@@ -34,8 +34,12 @@ if [[ -z "${ARGUS_TOKEN:-}" && -z "${ARGUS_TOKEN_FILE:-}" && "${ARGUS_MCP_AUTO_L
 fi
 
 export ARGUS_BASE_URL="${ARGUS_BASE_URL:-"${ARGUS_API_URL}"}"
+export ARGUS_YAKSHA_URL="${ARGUS_YAKSHA_URL:-http://127.0.0.1:8790}"
+if ! curl -fsS --max-time 3 "${ARGUS_YAKSHA_URL}/readyz" >/dev/null; then
+    echo "[argus-dev] Yaksha runtime unavailable at ${ARGUS_YAKSHA_URL}; run ./scripts/start-yaksha.sh first" >&2
+    exit 1
+fi
 export ARGUS_MCP_TRANSPORT="${ARGUS_MCP_TRANSPORT:-http}"
 export ARGUS_MCP_HTTP_ADDR
 
 argus_start_process mcp "${mcp_bin}"
-

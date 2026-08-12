@@ -59,6 +59,10 @@ test/
 !server-ui/src/test/
 test-env
 
+# Yaksha sidecar build artifacts
+yaksha/bin/
+yaksha/.DS_Store
+
 # ai 参考
 
 _ref_claude_code

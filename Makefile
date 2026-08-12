@@ -1,4 +1,4 @@
-.PHONY: cli agent server mcp legacy all clean docker infra-up infra-down infra-logs db-init db-migrate db-verify setup-local smoke-local test coverage frontend-smoke cloud-smoke source-size-check brand-check release-artifacts lint ci
+.PHONY: cli agent server yaksha yaksha-image yaksha-up yaksha-down mcp legacy all clean docker infra-up infra-down infra-logs db-init db-migrate db-verify setup-local smoke-local test coverage frontend-smoke cloud-smoke source-size-check brand-check release-artifacts lint ci
 
 COMPOSE_FILE := server/deploy/docker-compose.yml
 DOCKER_COMPOSE := docker compose -f $(COMPOSE_FILE)
@@ -29,12 +29,25 @@ server:
 mcp:
 	cd mcp && go build -o ../bin/argus-mcp ./cmd/argus-mcp
 
+# Yaksha 独立 Yaklang EXP runtime；保持独立 module 依赖边界。
+yaksha:
+	cd yaksha && GOWORK=off go build -o ../bin/yaksha ./cmd/yaksha
+
+yaksha-image:
+	docker compose -f yaksha/compose.yaml build
+
+yaksha-up:
+	docker compose -f yaksha/compose.yaml up -d --build
+
+yaksha-down:
+	docker compose -f yaksha/compose.yaml down
+
 # 向后兼容：根目录编译
 legacy:
 	go build -o bin/argus ./scanner/cmd/cli
 
 # 全部编译
-all: cli agent server mcp
+all: cli agent server yaksha mcp
 
 # 清理
 clean:

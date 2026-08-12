@@ -45,7 +45,7 @@ func TestSDKServerListsOnlyAggregateTools(t *testing.T) {
 	for _, tool := range result.Tools {
 		got = append(got, tool.Name)
 	}
-	want := map[string]bool{"argus_context": true, "argus_product_search": true, "argus_rule_debug": true, "argus_rule_save": true, "argus_rule_apply": true}
+	want := map[string]bool{"argus_context": true, "argus_product_search": true, "argus_rule_debug": true, "argus_rule_save": true, "argus_rule_apply": true, "argus_yaksha_exp": true}
 	if len(got) != len(want) {
 		t.Fatalf("unexpected tool count: got %v want %v", got, want)
 	}
@@ -54,8 +54,14 @@ func TestSDKServerListsOnlyAggregateTools(t *testing.T) {
 			t.Fatalf("unexpected tool %q in %v", name, got)
 		}
 	}
+	capabilities, _ := json.Marshal(session.InitializeResult().Capabilities.Extensions)
+	for _, wantText := range []string{"io.modelcontextprotocol/ui", expConsoleMIMEType} {
+		if !strings.Contains(string(capabilities), wantText) {
+			t.Fatalf("server capabilities missing %q: %s", wantText, capabilities)
+		}
+	}
 	data, _ := json.Marshal(result.Tools)
-	for _, wantText := range []string{"intent", "test_only", "workflow_links", "stable_ref", "argus_product_search", "rule_get", "rule_list", "drafts", "relationship_stats", "relationship_list", "unlinked_fingerprints", "missing_poc_refs", "range_start", "range_end", "product_search for fuzzy", "General-Poc-*"} {
+	for _, wantText := range []string{"intent", "test_only", "workflow_links", "stable_ref", "argus_product_search", "rule_get", "rule_list", "drafts", "relationship_stats", "relationship_list", "unlinked_fingerprints", "missing_poc_refs", "range_start", "range_end", "product_search for fuzzy", "General-Poc-*", "argus_yaksha_exp", "exp_id", "revision", "source_sha256", "immutable source identity", expConsoleURI} {
 		if !strings.Contains(string(data), wantText) {
 			t.Fatalf("tool schema/description missing %q: %s", wantText, data)
 		}
@@ -78,8 +84,8 @@ func TestSDKServerListsAndReadsResources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list resources: %v", err)
 	}
-	if len(list.Resources) != 11 {
-		t.Fatalf("expected 11 resources, got %d", len(list.Resources))
+	if len(list.Resources) != 12 {
+		t.Fatalf("expected 12 resources, got %d", len(list.Resources))
 	}
 	listData, _ := json.Marshal(list.Resources)
 	for _, want := range []string{"argus://argus-mcp/quickstart", "argus://fingerprint/spec", "argus://workflow/template", "argus://examples/fingerprint-poc-workflow"} {
@@ -97,6 +103,91 @@ func TestSDKServerListsAndReadsResources(t *testing.T) {
 	data, _ := json.Marshal(read.Contents)
 	if !strings.Contains(string(data), "fingerprint spec") || !strings.Contains(string(data), "text/markdown") {
 		t.Fatalf("unexpected resource contents: %s", data)
+	}
+	app, err := session.ReadResource(context.Background(), &sdkmcp.ReadResourceParams{URI: expConsoleURI})
+	if err != nil {
+		t.Fatalf("read EXP console resource: %v", err)
+	}
+	appData, _ := json.Marshal(app.Contents)
+	for _, want := range []string{expConsoleMIMEType, "Yaksha EXP Console", "argus_yaksha_exp", "ui/initialize", "tools/call", "prefersBorder"} {
+		if !strings.Contains(string(appData), want) {
+			t.Fatalf("EXP console resource missing %q: %s", want, appData)
+		}
+	}
+}
+
+func TestExpConsoleUsesYakshaCanonicalParameterTypes(t *testing.T) {
+	for _, want := range []string{
+		"type === 'boolean'",
+		"type === 'text'",
+		"type === 'string_array'",
+		"type === 'integer'",
+		"type === 'number'",
+	} {
+		if !strings.Contains(expConsoleHTML, want) {
+			t.Fatalf("EXP console does not handle Yaksha parameter type %q", want)
+		}
+	}
+	for _, stale := range []string{"item.type === 'Bool'", "item.type === 'Integer'", "item.type === 'StringSlice'"} {
+		if strings.Contains(expConsoleHTML, stale) {
+			t.Fatalf("EXP console still contains stale CLI type check %q", stale)
+		}
+	}
+	for _, want := range []string{"ui/notifications/tool-cancelled", "ui/resource-teardown", "value.isError", "event.source !== window.parent", "boundContext.exp_id", "boundContext.revision", "boundContext.source_sha256", "内存源码", "egress-mode", "['disabled', 'direct', 'socks5']", "proxy.value = ''", "autocomplete=\"new-password\""} {
+		if !strings.Contains(expConsoleHTML, want) {
+			t.Fatalf("EXP console is missing MCP App lifecycle behavior %q", want)
+		}
+	}
+	if strings.Contains(expConsoleHTML, "proxy.value = a.egress.socks5_proxy") {
+		t.Fatal("EXP console must never refill the write-only SOCKS5 URL")
+	}
+}
+
+func TestYakshaPublicEgressSchemaExcludesRelayAndMarksProxyWriteOnly(t *testing.T) {
+	schema := yakshaInputSchema()
+	properties := schema["properties"].(map[string]interface{})
+	egress := properties["egress"].(map[string]interface{})
+	if egress["additionalProperties"] != false {
+		t.Fatalf("egress schema is not closed: %#v", egress)
+	}
+	egressProperties := egress["properties"].(map[string]interface{})
+	mode := egressProperties["mode"].(map[string]interface{})
+	values := mode["enum"].([]string)
+	if strings.Join(values, ",") != "disabled,direct,socks5" {
+		t.Fatalf("public modes=%v", values)
+	}
+	proxy := egressProperties["socks5_proxy"].(map[string]interface{})
+	if proxy["writeOnly"] != true {
+		t.Fatalf("SOCKS5 URL is not write-only: %#v", proxy)
+	}
+}
+
+func TestSDKYakshaToolReturnsStructuredContentAndCompleteDebugTrace(t *testing.T) {
+	client := NewClient("", "")
+	runner, closeServer := helperYakshaRunner()
+	defer closeServer()
+	client.yaksha = runner
+	session, cleanup := connectTestSession(t, NewServer(client))
+	defer cleanup()
+
+	result, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{
+		Name: "argus_yaksha_exp",
+		Arguments: map[string]interface{}{
+			"action": "debug",
+			"script": "cli.check()",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(argus_yaksha_exp): %v", err)
+	}
+	if result.IsError || result.StructuredContent == nil {
+		t.Fatalf("result=%#v", result)
+	}
+	raw, _ := json.Marshal(result.StructuredContent)
+	for _, want := range []string{"Succeeded", "token=full-detail", "192.0.2.10:443", "exact diagnostic detail"} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("structuredContent missing %q: %s", want, raw)
+		}
 	}
 }
 
@@ -707,13 +798,16 @@ func TestSDKStreamableHTTPHandlerListsTools(t *testing.T) {
 		t.Fatalf("connect streamable http client: %v", err)
 	}
 	defer session.Close()
+	if got := session.InitializeResult().ProtocolVersion; got != "2026-07-28" {
+		t.Fatalf("negotiated protocol version = %q, want 2026-07-28", got)
+	}
 
 	result, err := session.ListTools(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("list tools over streamable http: %v", err)
 	}
-	if len(result.Tools) != 5 {
-		t.Fatalf("expected 5 tools over streamable http, got %d", len(result.Tools))
+	if len(result.Tools) != 6 {
+		t.Fatalf("expected 6 tools over streamable http, got %d", len(result.Tools))
 	}
 }
 
@@ -751,6 +845,7 @@ func TestConfigLoadsTokenFileWhenTokenEnvIsEmpty(t *testing.T) {
 		t.Fatalf("write token file: %v", err)
 	}
 	t.Setenv("ARGUS_TOKEN_FILE", tokenPath)
+	t.Setenv("ARGUS_YAKSHA_URL", "http://127.0.0.1:18790")
 
 	cfg, err := ConfigFromEnv()
 	if err != nil {
@@ -758,5 +853,8 @@ func TestConfigLoadsTokenFileWhenTokenEnvIsEmpty(t *testing.T) {
 	}
 	if cfg.Token != "file-token" {
 		t.Fatalf("expected token from file, got %q", cfg.Token)
+	}
+	if cfg.YakshaURL != "http://127.0.0.1:18790" {
+		t.Fatalf("expected configured Yaksha URL, got %q", cfg.YakshaURL)
 	}
 }
