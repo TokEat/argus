@@ -22,10 +22,12 @@ Schema 固定为 `argus.cli-output/v1`。记录公共字段：
 扫描开始后，无论发现数量是否为零，stdout 最后一行都是唯一的终端记录：
 
 ```json
-{"schema_version":"argus.cli-output/v1","record_type":"run_summary","sequence":2,"run_id":"20260810T030901Z-example","summary":{"status":"completed","exit_code":0,"counts":{"targets":1,"findings":1,"coverage":2,"assets_new":1,"services_changed":0,"assets_disappeared":0,"assets_not_assessed":0,"stages_executed":2,"stages_reused":0,"targets_full":1,"targets_incremental":0}}}
+{"schema_version":"argus.cli-output/v1","record_type":"run_summary","sequence":2,"run_id":"20260810T030901Z-example","summary":{"status":"completed","exit_code":0,"counts":{"targets":1,"findings":1,"coverage":2,"assets_new":0,"services_changed":0,"assets_disappeared":0,"assets_not_assessed":0,"stages_executed":2,"stages_reused":0,"targets_full":0,"targets_incremental":0,"targets_partial":1,"targets_skipped":0,"assets_planned":253,"assets_history_skipped":3}}}
 ```
 
 `finding` 的稳定字段为 `type`、`ip`、`ips`、`port`、`protocol`、`web`、`finger`、`domain`、`go_poc`、`uri`、`city`、`am` 和 `nuclei`；空的 `web`、`go_poc` 不输出。发现由并发阶段产生，不承诺目标排序；`sequence` 只表示实际写出顺序。
+
+`run_summary.counts` 中的 `targets_full`、`targets_partial`、`targets_skipped` 描述原始输入的 datas 历史差集决策；`assets_planned` 与 `assets_history_skipped` 描述 CIDR/IP 范围展开后的地址数量。扫描记忆只读取已完成目录的 `result.txt`，不依赖 TSV；因此历史中没有 finding 的地址仍会再次扫描。
 
 JSON 模式下，默认 `result.txt` 与 stdout 使用相同 NDJSON 记录。新版 `finding` 和旧版顶层 Finger JSON 均可继续作为 CLI 的历史指纹输入；`run_summary` 会被安全忽略。
 

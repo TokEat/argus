@@ -23,6 +23,7 @@ type runSummary struct {
 	FindingCount   int
 	CoverageCount  int
 	Difference     DifferenceSummary
+	Plan           PlanSummary
 	Error          string
 }
 
@@ -47,6 +48,11 @@ func writeRunSummary(path string, summary runSummary) error {
 		{"reused_stage_count", strconv.Itoa(summary.Difference.StageReused)},
 		{"full_target_count", strconv.Itoa(summary.Difference.FullTargets)},
 		{"incremental_target_count", strconv.Itoa(summary.Difference.IncrementalTargets)},
+		{"full_input_count", strconv.Itoa(summary.Plan.InputsFull)},
+		{"partial_input_count", strconv.Itoa(summary.Plan.InputsPartial)},
+		{"skipped_input_count", strconv.Itoa(summary.Plan.InputsSkipped)},
+		{"planned_asset_count", strconv.Itoa(summary.Plan.AssetsPlanned)},
+		{"history_skipped_asset_count", strconv.Itoa(summary.Plan.AssetsSkipped)},
 		{"error", escapeSummaryValue(summary.Error)},
 	}
 	var builder strings.Builder
@@ -132,6 +138,24 @@ func readRunSummary(path string) (runSummary, error) {
 		{"incremental_target_count", &summary.Difference.IncrementalTargets},
 	}
 	for _, count := range counts {
+		if *count.to, err = parseSummaryCount(values[count.key], count.key); err != nil {
+			return runSummary{}, err
+		}
+	}
+	optionalCounts := []struct {
+		key string
+		to  *int
+	}{
+		{"full_input_count", &summary.Plan.InputsFull},
+		{"partial_input_count", &summary.Plan.InputsPartial},
+		{"skipped_input_count", &summary.Plan.InputsSkipped},
+		{"planned_asset_count", &summary.Plan.AssetsPlanned},
+		{"history_skipped_asset_count", &summary.Plan.AssetsSkipped},
+	}
+	for _, count := range optionalCounts {
+		if strings.TrimSpace(values[count.key]) == "" {
+			continue
+		}
 		if *count.to, err = parseSummaryCount(values[count.key], count.key); err != nil {
 			return runSummary{}, err
 		}

@@ -169,8 +169,8 @@ func TestRunRecordsFailureWithoutPhysicalNewlines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read summary: %v", err)
 	}
-	if lines := strings.Split(strings.TrimSuffix(string(contents), "\n"), "\n"); len(lines) != 20 {
-		t.Fatalf("summary has %d physical lines, want 20: %q", len(lines), contents)
+	if lines := strings.Split(strings.TrimSuffix(string(contents), "\n"), "\n"); len(lines) != 25 {
+		t.Fatalf("summary has %d physical lines, want 25: %q", len(lines), contents)
 	}
 }
 

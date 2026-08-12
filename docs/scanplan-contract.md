@@ -25,13 +25,13 @@ project_id  = _default
 network_zone = _local
 ```
 
-CLI 扫描结果统一写入当前工作目录的 `datas/<目标_时间>/`。每个 Run 保留 `result.txt`、一份权威 HTML 报告，以及同目录的 `summary.txt`、`targets.tsv`、`findings.tsv`、`coverage.tsv`、`timing.tsv` 等轻量证据；普通扫描不会再为了“扫描记忆”创建或合并 `argus-data/state`、`argus-data/runs` 这套长期状态目录。`ARGUS_HOME/argus-data` 仅作为显式离线规则包管理的兼容位置保留。
+CLI 扫描结果统一写入当前工作目录的 `datas/<目标_时间>/`。普通 Run 只保留 `result.txt`、一份权威 HTML 报告和小型 `summary.txt`；不会再为了“扫描记忆”创建 targets/findings/coverage/timing TSV，也不会创建或合并 `argus-data/state`、`argus-data/runs`。`ARGUS_HOME/argus-data` 仅作为显式离线规则包管理的兼容位置保留。
 
-`argus-tsv/v1` TSV 使用两行表头固定声明 schema 和列名，字段中的反斜线、制表符与换行会被可逆转义；以 `= + - @` 开头的字段也会转义，避免目标可控内容形成表格公式。CLI 只旁路观察输出，不把 CLI 切换为 Agent 模式。
+CLI 只旁路观察输出，不把 CLI 切换为 Agent 模式。旧 localstate TSV 读写代码仅为兼容既有库内测试和显式工具保留，不进入普通扫描路径。
 
-普通 CLI 仍默认关闭 POC、通用 POC 和 GoPoc；只有 `-poc` 或 `-gp` 等显式风险参数保持原执行语义，并强制完整扫描。Planner 启动时只扫描 `datas/` 下已完成的历史目录：带 `summary.txt` 的 Run 必须同时满足 `status=completed` 与 `terminal_status=completed`；老格式目录只有在 `result.txt` 非空时才作为已有发现使用。历史来源包括 `targets.tsv` 中已完成的 `full/incremental` 目标，以及 `result.txt` 中的资产、端口、Web、指纹和风险验证记录。
+普通 CLI 仍默认关闭 POC、通用 POC 和 GoPoc；只有 `-poc` 或 `-gp` 等显式风险参数保持原执行语义，并强制完整扫描。Planner 启动时只扫描 `datas/` 下已完成历史目录的 `result.txt`：带 `summary.txt` 的 Run 必须同时满足 `status=completed` 与 `terminal_status=completed`；老格式目录只有在 `result.txt` 非空时才作为已有发现使用。`targets.tsv` 不参与扫描记忆，也不会把零 finding 的旧扫描作为跳过依据。
 
-跳过粒度是保守的目标/资产身份匹配，而不是阶段级恢复：命中历史时，当前 Run 的 `targets.tsv` 写入 `skipped/history_asset_match:<历史目录>`，该目标不再进入扫描流水线；未命中的目标合并执行完整发现流程。CLI 不再读取 TTL 策略、不生成 `ResumePlan`、不做端口前缀复核，也不维护长期资产差异表。显式风险参数和 `-force` 永远绕过 `datas` 历史跳过，避免复用旧发现掩盖用户明确要求的新验证。
+跳过粒度是资产差集，而不是阶段级恢复：单 IP 命中历史时直接跳过；CIDR/IP 范围会展开并剔除已有资产 IP，只扫描剩余地址；域名、URL 和显式服务目标按规范化身份精确匹配。交互终端打印跳过地址及来源目录，HTML 与 JSON `run_summary` 记录完整、部分、全跳过输入及计划/跳过资产计数。CLI 不再读取 TTL 策略、不生成 `ResumePlan`、不做端口前缀复核，也不维护长期资产差异表。显式风险参数和 `-force` 永远绕过 `datas` 历史跳过。
 
 G28 只为 CLI 增加可选 `-force`。该开关保存在 CLI-only ScanContext 字段中，不进入 Server/Agent Config，也不改变目标、端口、规则或风险策略；Planner 读取历史后直接为所有目标生成 `full/force_full_scan` 决策。
 
@@ -43,13 +43,13 @@ G31 新增独立的 `argus.timing/v1` 契约，用于保存性能测量证据，
 
 `duration_ns` 是生产者在进程内以单调时钟计算的权威耗时；UTC 时间戳仅用于传输、排序和展示。`0` 是合法值，表示计时分辨率下无法测得更长间隔，不能当作“没有计时”或失败。各事件可能重叠，因此准备项和 Stage 的总和不是进程墙钟，也不应用作 wall time。
 
-CLI 在 `main` 中最早可观测位置开始记录 startup，覆盖离线 Arsenal/旧运行时规则准备、`ScanContext` 初始化和实际执行的 Stage 终态。Run 建立后将事件绑定本地 Run ID 与 `cli-local`，并严格写入 `runs/<run-id>/timing.tsv`；该文件使用版本化 TSV 表头和完整契约字段，损坏、无效或不兼容表头失败关闭。仅 text 输出分别显示 bootstrap、规则、上下文、Stage 分段合计及最慢 Stage，不把可能重叠的分段相加冒充 wall time；JSON 或其他非 text stdout 不增加人类日志。旧 Run 不含 `timing.tsv` 时为 `unavailable`，不能伪造为零耗时。
+CLI 在 `main` 中最早可观测位置开始记录 startup，覆盖离线 Arsenal/旧运行时规则准备、`ScanContext` 初始化和实际执行的 Stage 终态。普通 datas Run 将这些事件保存在当前进程内，仅用于 text 模式显示 bootstrap、规则、上下文、Stage 分段合计及最慢 Stage，不再额外持久化 `timing.tsv`；JSON 或其他非 text stdout 不增加人类日志。Agent 侧仍使用版本化 timing 契约上报 Server。
 
 Agent v2.7.0 起对活动 Attempt 记录规则准备、`NewScanContext` 与已真实开始的 Stage 终态，并通过既有 `StreamResult` 以 `attempt_timing_event` payload 上报；未开始或复用的阶段不会伪装为执行。payload 是单一严格 JSON 对象，最大 16 KiB。Agent 使用已注册会话的 `x-agent-token` 发送该流；Server 不信任事件声明的租户或项目，而是以活动 Attempt、已分配 Agent、会话和 Task 的 tenant/project 归属重新绑定并校验。实时接收仅允许完成时间位于过去 24 小时至未来 10 分钟的事件。相同 tenant + event ID 且内容相同为幂等重放；相同 ID 内容不同为冲突并拒绝。旧 Agent 不上报时任务仍可完成，任务详情将该 Attempt 标为 `available: false`，即 unavailable，而不是 0。
 
 Server 将通过校验的事件追加保存，不使用会被后续 WorkKey 更新的 `ScanCoverage` 当前视图。授权后的 `GET /api/v1/tasks/:id` 仅投影当前 tenant、project 和 task 作用域中的 Attempt、受限事件字段与 `truncated` 状态；单个任务最多返回 5000 条事件。UI 按 Attempt 展示准备项、Stage、结果和 unavailable，且不暴露 target、WorkKey、配置/规则哈希、会话令牌或原始日志。
 
-G31 只建立测量、保存、授权展示和基线；不包含 G32–G36 的 gonmap 懒加载、HTTP 预算/Scheme、URL 去重、规则共享、HybridMap 或 Nuclei 缓存优化。该能力全部为 additive：移除新表/投影和 `timing.tsv` 消费即可回滚，不改变扫描阶段、结果、目标范围、Coverage、任务状态机或 POC/EXP 的安全默认。
+G31 只建立测量、授权展示和基线；不包含 G32–G36 的 gonmap 懒加载、HTTP 预算/Scheme、URL 去重、规则共享、HybridMap 或 Nuclei 缓存优化。CLI 计时为进程内展示，Server/Agent timing 表与投影保持原契约；不改变扫描阶段、结果、目标范围、Coverage、任务状态机或 POC/EXP 的安全默认。
 
 ## WorkKey
 

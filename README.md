@@ -184,13 +184,13 @@ argus -t 192.168.0.0-192.168.0.12
 argus -t http://test.com
 ```
 
-单机 CLI 的扫描结果统一保存在当前工作目录的 `datas/<目标_时间>/` 下。每次运行都会保留 `result.txt`、一份权威 HTML 报告，以及同目录的 `summary.txt`、`targets.tsv`、`findings.tsv`、`coverage.tsv`、`timing.tsv` 等轻量运行证据；不会再为了扫描记忆额外创建 `argus-data/state` 或 `argus-data/runs` 这套长期状态目录。TSV 使用 `argus-tsv/v1` 表头并把制表符、换行和反斜线转义为单行文本；以 `= + - @` 开头的字段也会可逆转义，避免表格软件把目标可控内容当作公式执行。
+单机 CLI 的扫描结果统一保存在当前工作目录的 `datas/<目标_时间>/` 下。普通运行只保留实时 `result.txt`、一份权威 HTML 报告和小型 `summary.txt`；不会再为了扫描记忆额外创建 `argus-data/state`、`argus-data/runs` 或 targets/findings/coverage/timing TSV。
 
-扫描开始时，CLI 会自动读取 `datas` 下已完成的历史结果作为“扫描记忆”。旧目录如果只有 `result.txt`，Argus 会从其中的 `[Alive]`、`[Port]`、`[Web]`、`[Finger]`、`[Active-Finger]`、JSON finding 等记录抽取已发现资产；新目录如果包含已完成的 `targets.tsv`，即使某个目标没有 finding，也能证明这个目标曾完整执行过。当前输入目标与历史资产精确匹配时，本次会在 `targets.tsv` 记录 `skipped/history_asset_match:<来源目录>` 并直接进入下一个目标；没有命中的目标仍执行完整资产发现流水线。
+扫描开始时，CLI 会自动读取 `datas` 下已完成运行的 `result.txt` 作为“扫描记忆”，从 `[Alive]`、`[Port]`、`[Protocol]`、`[Web]`、`[Finger]`、`[Active-Finger]`、`[Domain]` 和 JSON finding 中抽取已经发现的资产；`targets.tsv` 不参与跳过判断。输入单个 IP 时，历史已出现该 IP 就跳过；输入 CIDR 或 IP 范围时，Argus 会展开地址集合、剔除历史已有资产的 IP，只把剩余 IP 交给完整发现流水线。终端会打印被跳过的 IP、来源结果目录以及本次计划/跳过数量。域名、URL 和显式 `IP:Port` 继续采用保守的精确匹配，历史没有 finding 的地址会重新扫描。
 
-历史跳过只对普通信息收集扫描生效。用户显式传入 `-poc <name>` 或 `-gp` 时，Argus 会认为这是一次新的风险验证意图，不会因为 `datas` 中已有资产而跳过；`-force` 也会忽略历史并强制完整重扫。历史结果损坏、仍在运行、失败或与当前目标无法精确匹配时会被忽略，不会阻断本次扫描。
+历史跳过只对普通信息收集扫描生效。用户显式传入 `-poc <name>` 或 `-gp` 时，Argus 会认为这是一次新的风险验证意图，不会因为 `datas` 中已有资产而跳过；`-force` 也会忽略历史并强制完整重扫。历史结果损坏、仍在运行、失败或无法提取资产时会被忽略，不会阻断本次扫描。该模型有意不把“过去扫描过但没有结果”等同于“当前无需扫描”：只有 `result.txt` 中确实出现过的资产才会被剔除。
 
-成功完成时，交互文本输出会给出新增、变化、消失、未评估、执行和复用的简洁摘要。`-ot json` 使用版本化 UTF-8 NDJSON：每个 finding 独占一行，最后一行是唯一 `run_summary`；stdout 不包含 Banner、ANSI、进度或普通日志。重定向的文本模式同样只保留扫描结果和必要错误。完整 Schema、退出码和迁移示例见 [Argus CLI 结构化输出](docs/cli-output.md)。
+成功完成时，交互文本输出会给出执行阶段数、完整/部分/全跳过输入数，以及本次计划与历史跳过资产数。`-ot json` 使用版本化 UTF-8 NDJSON：每个 finding 独占一行，最后一行是唯一 `run_summary`；stdout 不包含 Banner、ANSI、进度或普通日志。重定向的文本模式同样只保留扫描结果和必要错误。完整 Schema、退出码和迁移示例见 [Argus CLI 结构化输出](docs/cli-output.md)。
 
 普通 CLI 扫描现在默认只执行资产发现，不自动启动 Nuclei POC、通用 POC 或 GoPoc/弱口令探测；已有 `-poc <name>` 或 `-gp` 仍代表用户显式请求风险操作，并固定绕过 `datas` 历史跳过。`-npoc` 保留兼容，可继续用于脚本中明确表达“只做资产发现”；它与 `-poc`、`-gp` 同时出现时会按参数冲突退出，不会静默执行风险阶段。
 

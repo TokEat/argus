@@ -44,6 +44,9 @@ func TestCLIProcessMachineAndNonTTYOutputContracts(t *testing.T) {
 	if summary.RecordType != "run_summary" || summary.Summary == nil || summary.Summary.Status != "completed" || summary.Summary.ExitCode != 0 || summary.Summary.Counts.Findings != 1 {
 		t.Fatalf("unexpected summary: %#v", summary)
 	}
+	if summary.Summary.Counts.TargetsFull != 1 || summary.Summary.Counts.TargetsPartial != 0 || summary.Summary.Counts.TargetsSkipped != 0 || summary.Summary.Counts.AssetsPlanned != 1 || summary.Summary.Counts.AssetsSkipped != 0 {
+		t.Fatalf("unexpected plan counters: %#v", summary.Summary.Counts)
+	}
 	assertResultFileMatchesStdout(t, jsonRun.workDir, jsonRun.stdout)
 	assertUnifiedHTMLReport(t, jsonRun.workDir, finding.Finding.URI)
 

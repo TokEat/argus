@@ -59,6 +59,7 @@ type Options struct {
 type Summary struct {
 	Status     string
 	FinishedAt time.Time
+	Plan       PlanSummary
 }
 
 type Counts struct {
@@ -346,6 +347,7 @@ func (s *Session) renderLocked(summary Summary) (result error) {
 		Status:        summary.Status,
 		StatusLabel:   statusLabel(summary.Status),
 		Counts:        s.counts,
+		Plan:          summary.Plan,
 		Nonce:         s.nonce,
 	}
 	if err := pageHeaderTemplate.Execute(temp, view); err != nil {

@@ -18,6 +18,7 @@ import (
 
 type dataResultHistory struct {
 	targetSources map[string]string
+	ipSources     map[string]string
 }
 
 func (history dataResultHistory) MatchTarget(target string) (string, bool) {
@@ -32,6 +33,14 @@ func (history dataResultHistory) MatchTarget(target string) (string, bool) {
 	return source, ok
 }
 
+func (history dataResultHistory) MatchIP(ip string) (string, bool) {
+	if history.ipSources == nil {
+		return "", false
+	}
+	source, ok := history.ipSources[strings.TrimSpace(ip)]
+	return source, ok
+}
+
 func dataResultRoot(outputFile string) string {
 	dir := filepath.Dir(filepath.Clean(outputFile))
 	parent := filepath.Dir(dir)
@@ -42,7 +51,7 @@ func dataResultRoot(outputFile string) string {
 }
 
 func loadDataResultHistory(root, currentOutputFile string) (dataResultHistory, []string) {
-	history := dataResultHistory{targetSources: map[string]string{}}
+	history := dataResultHistory{targetSources: map[string]string{}, ipSources: map[string]string{}}
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return history, nil
@@ -66,7 +75,6 @@ func loadDataResultHistory(root, currentOutputFile string) (dataResultHistory, [
 		if trusted := completedDataRun(runDir); !trusted {
 			continue
 		}
-		history.addTargetsTSV(filepath.Join(runDir, "targets.tsv"), entry.Name())
 		history.addResultTXT(filepath.Join(runDir, "result.txt"), entry.Name())
 	}
 	return history, nil
@@ -104,32 +112,6 @@ func completedDataRun(runDir string) bool {
 	return values["status"] == "completed" && values["terminal_status"] == "completed"
 }
 
-func (history dataResultHistory) addTargetsTSV(path, source string) {
-	file, err := os.Open(path)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 4096), 16*1024*1024)
-	lineNumber := 0
-	for scanner.Scan() {
-		lineNumber++
-		if lineNumber <= 2 || strings.TrimSpace(scanner.Text()) == "" {
-			continue
-		}
-		fields := splitSimpleTSV(scanner.Text())
-		if len(fields) < 6 {
-			continue
-		}
-		action := strings.ToLower(strings.TrimSpace(fields[4]))
-		if action != "full" && action != "incremental" {
-			continue
-		}
-		history.addTarget(fields[2], source)
-	}
-}
-
 func (history dataResultHistory) addResultTXT(path, source string) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -139,8 +121,59 @@ func (history dataResultHistory) addResultTXT(path, source string) {
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
-		if target := targetFromResultLine(scanner.Text()); target != "" {
-			history.addTarget(target, source)
+		history.addResultLine(scanner.Text(), source)
+	}
+}
+
+func (history dataResultHistory) addResultLine(line, source string) {
+	if message, ok, err := ddout.DecodeFindingLine(line); err == nil && ok {
+		history.addFinding(message, source)
+		return
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+	var target string
+	switch {
+	case strings.HasPrefix(line, "[Alive] "):
+		target = firstField(strings.TrimPrefix(line, "[Alive] "))
+	case strings.HasPrefix(line, "[Port] "):
+		target = firstField(strings.TrimPrefix(line, "[Port] "))
+	case strings.HasPrefix(line, "[Protocol] "):
+		target = firstField(strings.TrimPrefix(line, "[Protocol] "))
+	case strings.HasPrefix(line, "[Web] "):
+		target = firstField(strings.TrimPrefix(line, "[Web] "))
+	case strings.HasPrefix(line, "[Finger] "):
+		target = firstField(strings.TrimPrefix(line, "[Finger] "))
+	case strings.HasPrefix(line, "[Active-Finger] "):
+		target = firstField(strings.TrimPrefix(line, "[Active-Finger] "))
+	case strings.HasPrefix(line, "[Domain] "):
+		rest := strings.TrimSpace(strings.TrimPrefix(line, "[Domain] "))
+		if before, after, ok := strings.Cut(rest, " -> "); ok {
+			history.addTarget(before, source)
+			for _, ip := range strings.Split(after, ",") {
+				history.addIP(ip, source)
+			}
+		}
+		return
+	}
+	if target != "" {
+		history.addTarget(target, source)
+	}
+}
+
+func (history dataResultHistory) addFinding(message ddout.OutputMessage, source string) {
+	for _, target := range []string{message.URI, message.GoPoc.Target, message.Domain} {
+		history.addTarget(target, source)
+	}
+	for _, ip := range message.IPs {
+		history.addIP(ip, source)
+	}
+	if ip := strings.TrimSpace(message.IP); ip != "" {
+		history.addIP(ip, source)
+		if port := strings.TrimSpace(message.Port); port != "" {
+			history.addTarget(net.JoinHostPort(ip, port), source)
 		}
 	}
 }
@@ -154,31 +187,36 @@ func (history dataResultHistory) addTarget(target, source string) {
 		return
 	}
 	history.targetSources[key] = source
+	if ip := targetIP(target); ip != "" {
+		history.addIP(ip, source)
+	}
 }
 
-func targetFromResultLine(line string) string {
-	if message, ok, err := ddout.DecodeFindingLine(line); err == nil && ok {
-		return targetFromFinding(message)
+func (history dataResultHistory) addIP(value, source string) {
+	ip := net.ParseIP(strings.TrimSpace(strings.Trim(value, "[]")))
+	if ip == nil || ip.To4() == nil {
+		return
 	}
-	line = strings.TrimSpace(line)
-	if line == "" {
-		return ""
+	key := ip.String()
+	if existing, ok := history.ipSources[key]; ok && existing <= source {
+		return
 	}
-	switch {
-	case strings.HasPrefix(line, "[Alive] "):
-		return firstField(strings.TrimPrefix(line, "[Alive] "))
-	case strings.HasPrefix(line, "[Port] "):
-		return firstField(strings.TrimPrefix(line, "[Port] "))
-	case strings.HasPrefix(line, "[Web] "):
-		return firstField(strings.TrimPrefix(line, "[Web] "))
-	case strings.HasPrefix(line, "[Finger] "):
-		return firstField(strings.TrimPrefix(line, "[Finger] "))
-	case strings.HasPrefix(line, "[Active-Finger] "):
-		return firstField(strings.TrimPrefix(line, "[Active-Finger] "))
-	case strings.HasPrefix(line, "[Domain] "):
-		rest := strings.TrimSpace(strings.TrimPrefix(line, "[Domain] "))
-		if before, _, ok := strings.Cut(rest, " -> "); ok {
-			return before
+	history.ipSources[key] = source
+}
+
+func targetIP(target string) string {
+	target = strings.TrimSpace(target)
+	if ip := net.ParseIP(target); ip != nil && ip.To4() != nil {
+		return ip.String()
+	}
+	if host, _, err := net.SplitHostPort(target); err == nil {
+		if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil && ip.To4() != nil {
+			return ip.String()
+		}
+	}
+	if parsed, err := url.Parse(target); err == nil && parsed.Host != "" {
+		if ip := net.ParseIP(parsed.Hostname()); ip != nil && ip.To4() != nil {
+			return ip.String()
 		}
 	}
 	return ""
@@ -190,25 +228,6 @@ func firstField(value string) string {
 		return ""
 	}
 	return fields[0]
-}
-
-func targetFromFinding(message ddout.OutputMessage) string {
-	if value := strings.TrimSpace(message.URI); value != "" {
-		return value
-	}
-	if value := strings.TrimSpace(message.GoPoc.Target); value != "" {
-		return value
-	}
-	if value := strings.TrimSpace(message.Domain); value != "" {
-		return value
-	}
-	if value := strings.TrimSpace(message.IP); value != "" {
-		if port := strings.TrimSpace(message.Port); port != "" {
-			return net.JoinHostPort(value, port)
-		}
-		return value
-	}
-	return ""
 }
 
 func historyTargetKey(target string) string {
@@ -226,17 +245,6 @@ func historyTargetKey(target string) string {
 		return parsed.String()
 	}
 	return strings.ToLower(target)
-}
-
-func splitSimpleTSV(line string) []string {
-	parts := strings.Split(strings.TrimRight(line, "\r\n"), "\t")
-	for index := range parts {
-		parts[index] = strings.ReplaceAll(parts[index], `\t`, "\t")
-		parts[index] = strings.ReplaceAll(parts[index], `\n`, "\n")
-		parts[index] = strings.ReplaceAll(parts[index], `\r`, "\r")
-		parts[index] = strings.ReplaceAll(parts[index], `\\`, `\`)
-	}
-	return parts
 }
 
 func sameHistoryPath(left, right string) bool {

@@ -8,12 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 
 	"github.com/P0lar1ght/argus/scanner/internal/engine"
 	"github.com/P0lar1ght/argus/scanner/internal/localstate"
 	"github.com/P0lar1ght/argus/scanner/internal/timing"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	"github.com/projectdiscovery/gologger"
 )
 
@@ -24,6 +26,20 @@ type execution struct {
 	decision    localstate.TargetDecision
 	ruleVersion string
 	configHash  string
+}
+
+type historySkip struct {
+	ip     string
+	source string
+}
+
+type historyPlanSummary struct {
+	inputsFull       int
+	inputsPartial    int
+	inputsSkipped    int
+	assetsPlanned    int
+	assetsSkipped    int
+	skippedAddresses []historySkip
 }
 
 // Execute applies safe local defaults, skips targets already present in datas
@@ -45,10 +61,15 @@ func ExecuteWithTiming(ctx *engine.ScanContext, run *localstate.Run, recorder *t
 	configHash := localConfigHash(cfg, policy)
 	history, historyWarnings := loadDataResultHistory(dataResultRoot(cfg.OutputFile), cfg.OutputFile)
 	run.AddWarnings(historyWarnings...)
-	executions, decisions := buildExecutions(cfg, history, ruleVersion, configHash, explicitRisk, ctx.LocalForceFullScan)
+	executions, decisions, planSummary := buildExecutions(cfg, history, ruleVersion, configHash, explicitRisk, ctx.LocalForceFullScan)
 	if err := run.SetTargetDecisions(decisions); err != nil {
 		return fmt.Errorf("record CLI target decisions: %w", err)
 	}
+	run.SetPlanSummary(localstate.PlanSummary{
+		InputsFull: planSummary.inputsFull, InputsPartial: planSummary.inputsPartial, InputsSkipped: planSummary.inputsSkipped,
+		AssetsPlanned: planSummary.assetsPlanned, AssetsSkipped: planSummary.assetsSkipped,
+	})
+	logHistorySkips(planSummary)
 
 	var scanErrors []error
 	for _, item := range executions {
@@ -95,28 +116,53 @@ func applyCLISafetyDefaults(cfg engine.Config) (engine.Config, bool) {
 	return cfg, false
 }
 
-func buildExecutions(cfg engine.Config, history dataResultHistory, ruleVersion, configHash string, explicitRisk, force bool) ([]execution, map[string]localstate.TargetDecision) {
+func buildExecutions(cfg engine.Config, history dataResultHistory, ruleVersion, configHash string, explicitRisk, force bool) ([]execution, map[string]localstate.TargetDecision, historyPlanSummary) {
 	decisions := make(map[string]localstate.TargetDecision, len(cfg.Targets))
 	fullTargets := make([]string, 0, len(cfg.Targets))
 	seenTargets := make(map[string]struct{}, len(cfg.Targets))
+	summary := historyPlanSummary{}
 	for _, rawTarget := range cfg.Targets {
 		target := strings.TrimSpace(rawTarget)
 		stateTarget := localstate.NormalizeTargetForState(target)
-		if _, duplicate := seenTargets[target]; duplicate {
+		if _, duplicate := seenTargets[stateTarget]; duplicate {
 			continue
 		}
-		seenTargets[target] = struct{}{}
+		seenTargets[stateTarget] = struct{}{}
 		decision := localstate.TargetDecision{Action: "full", Reason: "history_asset_missing"}
 		if force {
 			decision.Reason = "force_full_scan"
 		} else if explicitRisk {
 			decision.Reason = "explicit_risk_operation"
-		} else if source, ok := history.MatchTarget(target); ok {
-			decision = localstate.TargetDecision{Action: "skipped", Reason: "history_asset_match:" + source}
-			decisions[stateTarget] = decision
-			continue
+		} else {
+			planned, skipped := subtractHistoryAssets(target, history)
+			if len(skipped) > 0 {
+				summary.assetsSkipped += len(skipped)
+				summary.skippedAddresses = append(summary.skippedAddresses, skipped...)
+			}
+			switch {
+			case len(planned) == 0 && len(skipped) > 0:
+				summary.inputsSkipped++
+				decision = localstate.TargetDecision{Action: "skipped", Reason: "history_asset_match:" + skipped[0].source}
+				decisions[stateTarget] = decision
+				continue
+			case len(skipped) > 0:
+				summary.inputsPartial++
+				decision = localstate.TargetDecision{Action: "partial", Reason: "history_asset_difference"}
+				for _, item := range planned {
+					if _, duplicate := seenTargets[item]; duplicate {
+						continue
+					}
+					seenTargets[item] = struct{}{}
+					fullTargets = append(fullTargets, item)
+					summary.assetsPlanned++
+				}
+				decisions[stateTarget] = decision
+				continue
+			}
 		}
 		fullTargets = append(fullTargets, target)
+		summary.inputsFull++
+		summary.assetsPlanned += targetAssetCount(target)
 		decisions[stateTarget] = decision
 	}
 	executions := make([]execution, 0, 1)
@@ -126,7 +172,108 @@ func buildExecutions(cfg engine.Config, history dataResultHistory, ruleVersion, 
 			ruleVersion: ruleVersion, configHash: configHash,
 		})
 	}
-	return executions, decisions
+	return executions, decisions, summary
+}
+
+func subtractHistoryAssets(target string, history dataResultHistory) ([]string, []historySkip) {
+	switch utils.GetInputType(target) {
+	case engine.TypeIP:
+		if source, ok := history.MatchIP(target); ok {
+			return nil, []historySkip{{ip: target, source: source}}
+		}
+	case engine.TypeCIDR:
+		if !cidrContainsHistory(target, history) {
+			return []string{target}, nil
+		}
+		return subtractExpandedIPs(utils.CIDRToIP(target), history)
+	case engine.TypeIPRange:
+		return subtractExpandedIPs(utils.RangerToIP(target), history)
+	default:
+		if source, ok := history.MatchTarget(target); ok {
+			return nil, []historySkip{{ip: firstNonEmpty(targetIP(target), target), source: source}}
+		}
+	}
+	return []string{target}, nil
+}
+
+func subtractExpandedIPs(values []net.IP, history dataResultHistory) ([]string, []historySkip) {
+	planned := make([]string, 0, len(values))
+	skipped := make([]historySkip, 0)
+	for _, value := range values {
+		ip := value.String()
+		if source, ok := history.MatchIP(ip); ok {
+			skipped = append(skipped, historySkip{ip: ip, source: source})
+			continue
+		}
+		planned = append(planned, ip)
+	}
+	return planned, skipped
+}
+
+func targetAssetCount(target string) int {
+	switch utils.GetInputType(target) {
+	case engine.TypeCIDR:
+		if _, network, err := net.ParseCIDR(target); err == nil {
+			ones, bits := network.Mask.Size()
+			if ones >= 0 && bits == 32 {
+				return int(uint64(1) << uint(bits-ones))
+			}
+		}
+		return len(utils.CIDRToIP(target))
+	case engine.TypeIPRange:
+		return len(utils.RangerToIP(target))
+	default:
+		return 1
+	}
+}
+
+func cidrContainsHistory(target string, history dataResultHistory) bool {
+	_, network, err := net.ParseCIDR(target)
+	if err != nil {
+		return false
+	}
+	for value := range history.ipSources {
+		if ip := net.ParseIP(value); ip != nil && network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func logHistorySkips(summary historyPlanSummary) {
+	for _, message := range historySkipMessages(summary) {
+		gologger.Info().Msg(message)
+	}
+}
+
+func historySkipMessages(summary historyPlanSummary) []string {
+	if len(summary.skippedAddresses) == 0 {
+		return nil
+	}
+	messages := make([]string, 0, len(summary.skippedAddresses)/24+2)
+	const perLine = 24
+	for start := 0; start < len(summary.skippedAddresses); start += perLine {
+		end := start + perLine
+		if end > len(summary.skippedAddresses) {
+			end = len(summary.skippedAddresses)
+		}
+		items := make([]string, 0, end-start)
+		for _, skipped := range summary.skippedAddresses[start:end] {
+			items = append(items, skipped.ip+" ("+skipped.source+")")
+		}
+		messages = append(messages, "[Argus] 跳过 datas 历史 IP: "+strings.Join(items, ", "))
+	}
+	messages = append(messages, fmt.Sprintf("[Argus] datas 历史差集: 跳过=%d, 待扫描=%d", summary.assetsSkipped, summary.assetsPlanned))
+	return messages
 }
 
 func localRuleVersion(ctx *engine.ScanContext) string {

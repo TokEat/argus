@@ -53,11 +53,24 @@ type Run struct {
 	writeErr      error
 	finished      bool
 	mergeState    bool
+	persistTables bool
+	planSummary   PlanSummary
+	timingEvents  []scanplan.TimingEvent
 }
 
 type TargetDecision struct {
 	Action string
 	Reason string
+}
+
+// PlanSummary is the bounded run-level projection of datas history pruning.
+// It contains counts only; skipped addresses remain terminal-only diagnostics.
+type PlanSummary struct {
+	InputsFull    int
+	InputsPartial int
+	InputsSkipped int
+	AssetsPlanned int
+	AssetsSkipped int
 }
 
 func EnsureLayout(home Home) (Layout, error) {
@@ -130,15 +143,16 @@ func startRun(layout Layout, targets []string, startedAt time.Time, random io.Re
 	}
 	run := &Run{
 		ID: runID, Dir: runDir, startedAt: startedAt.UTC(), targetCount: len(targets),
-		SummaryPath:  filepath.Join(runDir, "summary.txt"),
-		TargetsPath:  filepath.Join(runDir, "targets.tsv"),
-		FindingsPath: filepath.Join(runDir, "findings.tsv"),
-		CoveragePath: filepath.Join(runDir, "coverage.tsv"),
-		DeltaPath:    filepath.Join(runDir, "delta.tsv"),
-		TimingPath:   filepath.Join(runDir, "timing.tsv"),
-		activeLock:   activeLock,
-		layout:       layout,
-		mergeState:   true,
+		SummaryPath:   filepath.Join(runDir, "summary.txt"),
+		TargetsPath:   filepath.Join(runDir, "targets.tsv"),
+		FindingsPath:  filepath.Join(runDir, "findings.tsv"),
+		CoveragePath:  filepath.Join(runDir, "coverage.tsv"),
+		DeltaPath:     filepath.Join(runDir, "delta.tsv"),
+		TimingPath:    filepath.Join(runDir, "timing.tsv"),
+		activeLock:    activeLock,
+		layout:        layout,
+		mergeState:    true,
+		persistTables: true,
 	}
 	if err := run.writeInitialFiles(targets); err != nil {
 		run.releaseActiveLock(false)
@@ -182,14 +196,10 @@ func StartRunInDirectory(runDir string, targets []string) (*Run, error) {
 	}
 	run := &Run{
 		ID: runID, Dir: absolute, startedAt: time.Now().UTC(), targetCount: len(targets),
-		SummaryPath:  filepath.Join(absolute, "summary.txt"),
-		TargetsPath:  filepath.Join(absolute, "targets.tsv"),
-		FindingsPath: filepath.Join(absolute, "findings.tsv"),
-		CoveragePath: filepath.Join(absolute, "coverage.tsv"),
-		DeltaPath:    filepath.Join(absolute, "delta.tsv"),
-		TimingPath:   filepath.Join(absolute, "timing.tsv"),
-		activeLock:   activeLock,
-		mergeState:   false,
+		SummaryPath:   filepath.Join(absolute, "summary.txt"),
+		activeLock:    activeLock,
+		mergeState:    false,
+		persistTables: false,
 	}
 	if err := run.writeInitialFiles(targets); err != nil {
 		run.releaseActiveLock(false)
@@ -234,6 +244,9 @@ func (run *Run) writeInitialFiles(targets []string) error {
 	}); err != nil {
 		return err
 	}
+	if !run.persistTables {
+		return nil
+	}
 	targetFile, err := createRunTable(run.TargetsPath, targetsSchema)
 	if err != nil {
 		return err
@@ -274,7 +287,7 @@ func (run *Run) writeInitialFiles(targets []string) error {
 func (run *Run) ObserveTiming(event scanplan.TimingEvent) {
 	run.mu.Lock()
 	defer run.mu.Unlock()
-	if run.finished || run.writeErr != nil || run.timingFile == nil {
+	if run.finished || run.writeErr != nil {
 		return
 	}
 	if event.AttemptID != run.ID {
@@ -285,6 +298,13 @@ func (run *Run) ObserveTiming(event scanplan.TimingEvent) {
 		run.writeErr = fmt.Errorf("validate timing event: %w", err)
 		return
 	}
+	if !run.persistTables {
+		run.timingEvents = append(run.timingEvents, event)
+		return
+	}
+	if run.timingFile == nil {
+		return
+	}
 	if _, err := io.WriteString(run.timingFile, encodeTSVRow(event.EventID, event.AttemptID, event.AgentID, string(event.Kind), string(event.Stage), string(event.Outcome), event.StartedAt.UTC().Format(time.RFC3339Nano), event.FinishedAt.UTC().Format(time.RFC3339Nano), strconv.FormatInt(event.DurationNS, 10))); err != nil {
 		run.writeErr = fmt.Errorf("write run timing: %w", err)
 	}
@@ -293,7 +313,14 @@ func (run *Run) ObserveTiming(event scanplan.TimingEvent) {
 func (run *Run) ObserveOutput(message engine.OutputMessage) {
 	run.mu.Lock()
 	defer run.mu.Unlock()
-	if run.finished || run.writeErr != nil || run.findingsFile == nil {
+	if run.finished || run.writeErr != nil {
+		return
+	}
+	if !run.persistTables {
+		run.findingCount++
+		return
+	}
+	if run.findingsFile == nil {
 		return
 	}
 	fingerprints, err := json.Marshal(message.Finger)
@@ -317,7 +344,7 @@ func (run *Run) ObserveOutput(message engine.OutputMessage) {
 func (run *Run) ObserveCoverage(action, reason string, record CoverageRecord) {
 	run.mu.Lock()
 	defer run.mu.Unlock()
-	if run.finished || run.writeErr != nil || run.coverageFile == nil {
+	if run.finished || run.writeErr != nil {
 		return
 	}
 	action = strings.ToLower(strings.TrimSpace(action))
@@ -338,6 +365,13 @@ func (run *Run) ObserveCoverage(action, reason string, record CoverageRecord) {
 		run.writeErr = err
 		return
 	}
+	if !run.persistTables {
+		run.coverageCount++
+		return
+	}
+	if run.coverageFile == nil {
+		return
+	}
 	row := append([]string{action, strings.TrimSpace(reason)}, record.row()...)
 	if _, err := io.WriteString(run.coverageFile, encodeTSVRow(row...)); err != nil {
 		run.writeErr = fmt.Errorf("write run coverage: %w", err)
@@ -354,6 +388,9 @@ func (run *Run) SetTargetDecisions(decisions map[string]TargetDecision) error {
 	if run.finished {
 		return errors.New("run is already finished")
 	}
+	if !run.persistTables {
+		return nil
+	}
 	rows, warnings, err := readTable(run.TargetsPath, targetsSchema)
 	run.warnings = append(run.warnings, warnings...)
 	if err != nil {
@@ -365,13 +402,28 @@ func (run *Run) SetTargetDecisions(decisions map[string]TargetDecision) error {
 			continue
 		}
 		action := strings.ToLower(strings.TrimSpace(decision.Action))
-		if action != "full" && action != "incremental" && action != "skipped" {
+		if action != "full" && action != "incremental" && action != "partial" && action != "skipped" {
 			return fmt.Errorf("target decision action %q is unsupported", action)
 		}
 		rows[index][4] = action
 		rows[index][5] = strings.TrimSpace(decision.Reason)
 	}
 	return writeTableAtomic(run.TargetsPath, targetsSchema, rows)
+}
+
+func (run *Run) SetPlanSummary(summary PlanSummary) {
+	run.mu.Lock()
+	defer run.mu.Unlock()
+	if run.finished {
+		return
+	}
+	run.planSummary = summary
+}
+
+func (run *Run) PlanSummary() PlanSummary {
+	run.mu.Lock()
+	defer run.mu.Unlock()
+	return run.planSummary
 }
 
 func (run *Run) AddWarnings(warnings ...string) {
@@ -426,7 +478,8 @@ func (run *Run) Finish(scanErr error) error {
 	finishedAt := time.Now().UTC()
 	baseSummary := runSummary{
 		RunID: run.ID, TerminalStatus: terminalStatus, StartedAt: run.startedAt, FinishedAt: finishedAt,
-		TargetCount: run.targetCount, FindingCount: run.findingCount, CoverageCount: run.coverageCount, Error: errorText,
+		TargetCount: run.targetCount, FindingCount: run.findingCount, CoverageCount: run.coverageCount,
+		Plan: run.planSummary, Error: errorText,
 	}
 	if run.writeErr != nil {
 		baseSummary.Status = "failed"
@@ -441,8 +494,7 @@ func (run *Run) Finish(scanErr error) error {
 	}
 	if !run.mergeState {
 		baseSummary.Status = terminalStatus
-		baseSummary.MergeStatus = "merged"
-		baseSummary.MergedAt = time.Now().UTC()
+		baseSummary.MergeStatus = "not_applicable"
 		if err := writeRunSummary(run.SummaryPath, baseSummary); err != nil {
 			run.writeErr = err
 		}
@@ -485,6 +537,9 @@ func (run *Run) DifferenceSummary() (DifferenceSummary, error) {
 	defer run.mu.Unlock()
 	if !run.finished {
 		return DifferenceSummary{}, errors.New("run is not finished")
+	}
+	if !run.mergeState {
+		return DifferenceSummary{StageExecuted: run.coverageCount, FullTargets: run.planSummary.InputsFull}, nil
 	}
 	summary, err := readRunSummary(run.SummaryPath)
 	if err != nil {

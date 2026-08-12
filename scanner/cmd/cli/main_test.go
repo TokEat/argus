@@ -10,7 +10,7 @@ import (
 
 func TestFormatRunDifferenceSummaryKeepsJSONOutputClean(t *testing.T) {
 	summary := localstate.DifferenceSummary{AssetNew: 1, StageExecuted: 2}
-	if line, ok := formatRunDifferenceSummary("json", "run-1", summary); ok || line != "" {
+	if line, ok := formatRunDifferenceSummary("json", "run-1", summary, localstate.PlanSummary{}); ok || line != "" {
 		t.Fatalf("json output received human summary %q", line)
 	}
 }
@@ -35,17 +35,15 @@ func TestFormatTimingSummarySeparatesBootstrapAndStageSum(t *testing.T) {
 }
 
 func TestFormatRunDifferenceSummaryIsConciseAndComplete(t *testing.T) {
-	summary := localstate.DifferenceSummary{
-		AssetNew: 1, ServiceChanged: 2, AssetDisappeared: 3, AssetNotAssessed: 4,
-		StageExecuted: 5, StageReused: 6, FullTargets: 7, IncrementalTargets: 8,
-	}
-	line, ok := formatRunDifferenceSummary("text", "run-1", summary)
+	summary := localstate.DifferenceSummary{StageExecuted: 5}
+	plan := localstate.PlanSummary{InputsFull: 1, InputsPartial: 2, InputsSkipped: 3, AssetsPlanned: 250, AssetsSkipped: 6}
+	line, ok := formatRunDifferenceSummary("text", "run-1", summary, plan)
 	if !ok {
 		t.Fatal("text summary was suppressed")
 	}
 	for _, want := range []string{
-		"Argus Run run-1", "new=1", "changed=2", "disappeared=3", "not_assessed=4",
-		"executed=5", "reused=6", "full=7", "incremental=8",
+		"Argus Run run-1", "executed=5", "full=1", "partial=2", "skipped=3",
+		"scheduled=250", "history_skipped=6",
 	} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("summary %q does not contain %q", line, want)

@@ -109,17 +109,21 @@ func runCLI() int {
 	}
 
 	difference := localstate.DifferenceSummary{}
+	planSummary := run.PlanSummary()
 	var summaryErr error
 	if historyErr == nil {
 		difference, summaryErr = run.DifferenceSummary()
 	}
 	if presentation.Interactive && scanErr == nil && historyErr == nil {
-		writeInteractiveSummaries(ctx.Config.OutputType, run, difference, summaryErr)
+		writeInteractiveSummaries(ctx.Config.OutputType, run, difference, planSummary, summaryErr)
 	}
 
 	outputErr := ddout.RunError()
 	_, scanStatus := terminalOutcome(scanErr, errors.Join(historyErr, summaryErr, outputErr))
-	reportErr := reportSession.Finish(report.Summary{Status: scanStatus, FinishedAt: time.Now()})
+	reportErr := reportSession.Finish(report.Summary{Status: scanStatus, FinishedAt: time.Now(), Plan: report.PlanSummary{
+		InputsFull: planSummary.InputsFull, InputsPartial: planSummary.InputsPartial, InputsSkipped: planSummary.InputsSkipped,
+		AssetsPlanned: planSummary.AssetsPlanned, AssetsSkipped: planSummary.AssetsSkipped,
+	}})
 	exitCode, status := terminalOutcome(scanErr, errors.Join(historyErr, summaryErr, outputErr, reportErr))
 	targets, _, coverage := run.Counts()
 	endErr := ddout.EndRun(ddout.RunSummary{
@@ -131,6 +135,8 @@ func runCLI() int {
 			AssetsDisappeared: int64(difference.AssetDisappeared), AssetsNotAssessed: int64(difference.AssetNotAssessed),
 			StagesExecuted: int64(difference.StageExecuted), StagesReused: int64(difference.StageReused),
 			TargetsFull: int64(difference.FullTargets), TargetsIncremental: int64(difference.IncrementalTargets),
+			TargetsPartial: int64(planSummary.InputsPartial), TargetsSkipped: int64(planSummary.InputsSkipped),
+			AssetsPlanned: int64(planSummary.AssetsPlanned), AssetsSkipped: int64(planSummary.AssetsSkipped),
 		},
 	})
 	if endErr != nil {
@@ -245,10 +251,10 @@ func writeCLIError(label string, err error) {
 	}
 }
 
-func writeInteractiveSummaries(outputType string, run *localstate.Run, difference localstate.DifferenceSummary, summaryErr error) {
+func writeInteractiveSummaries(outputType string, run *localstate.Run, difference localstate.DifferenceSummary, plan localstate.PlanSummary, summaryErr error) {
 	if summaryErr != nil {
 		writeCLIError("cli history summary failed", summaryErr)
-	} else if line, ok := formatRunDifferenceSummary(outputType, run.ID, difference); ok {
+	} else if line, ok := formatRunDifferenceSummary(outputType, run.ID, difference, plan); ok {
 		fmt.Fprintln(os.Stderr, line)
 	}
 	if summary, err := run.TimingSummary(); err != nil {
@@ -276,14 +282,14 @@ func formatTimingDuration(value time.Duration) string {
 	return value.Round(time.Millisecond).String()
 }
 
-func formatRunDifferenceSummary(outputType, runID string, summary localstate.DifferenceSummary) (string, bool) {
+func formatRunDifferenceSummary(outputType, runID string, summary localstate.DifferenceSummary, plan localstate.PlanSummary) (string, bool) {
 	if !strings.EqualFold(strings.TrimSpace(outputType), "text") {
 		return "", false
 	}
 	return fmt.Sprintf(
-		"Argus Run %s: assets new=%d changed=%d disappeared=%d not_assessed=%d; stages executed=%d reused=%d; targets full=%d incremental=%d",
-		runID, summary.AssetNew, summary.ServiceChanged, summary.AssetDisappeared, summary.AssetNotAssessed,
-		summary.StageExecuted, summary.StageReused, summary.FullTargets, summary.IncrementalTargets,
+		"Argus Run %s: stages executed=%d; inputs full=%d partial=%d skipped=%d; assets scheduled=%d history_skipped=%d",
+		runID, summary.StageExecuted, plan.InputsFull, plan.InputsPartial, plan.InputsSkipped,
+		plan.AssetsPlanned, plan.AssetsSkipped,
 	), true
 }
 

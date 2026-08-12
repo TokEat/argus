@@ -31,11 +31,11 @@ func TestApplyCLISafetyDefaultsDisablesImplicitRiskExecution(t *testing.T) {
 }
 
 func TestBuildExecutionsSkipsTargetsFoundInDatasHistory(t *testing.T) {
-	history := dataResultHistory{targetSources: map[string]string{}}
+	history := dataResultHistory{targetSources: map[string]string{}, ipSources: map[string]string{}}
 	history.addTarget("192.0.2.10", "run-a")
 	history.addTarget("https://app.example.test/login", "run-b")
 	cfg := engine.Config{Targets: []string{"192.0.2.10", "192.0.2.11", "https://APP.example.test/login"}}
-	executions, decisions := buildExecutions(cfg, history, "rules", "config", false, false)
+	executions, decisions, summary := buildExecutions(cfg, history, "rules", "config", false, false)
 
 	if len(executions) != 1 || len(executions[0].targets) != 1 || executions[0].targets[0] != "192.0.2.11" {
 		t.Fatalf("executions = %#v, want only the unseen target", executions)
@@ -49,10 +49,51 @@ func TestBuildExecutionsSkipsTargetsFoundInDatasHistory(t *testing.T) {
 	if got := decisions["192.0.2.11"]; got.Action != "full" || got.Reason != "history_asset_missing" {
 		t.Fatalf("full decision = %#v", got)
 	}
+	if summary.inputsFull != 1 || summary.inputsSkipped != 2 || summary.assetsPlanned != 1 || summary.assetsSkipped != 2 {
+		t.Fatalf("summary = %#v", summary)
+	}
+}
+
+func TestBuildExecutionsSubtractsKnownIPsFromCIDR(t *testing.T) {
+	history := dataResultHistory{targetSources: map[string]string{}, ipSources: map[string]string{}}
+	history.addTarget("192.0.2.1:80", "run-a")
+	history.addTarget("http://192.0.2.2/admin", "run-b")
+	cfg := engine.Config{Targets: []string{"192.0.2.0/30"}}
+	executions, decisions, summary := buildExecutions(cfg, history, "rules", "config", false, false)
+	if len(executions) != 1 || strings.Join(executions[0].targets, ",") != "192.0.2.0,192.0.2.3" {
+		t.Fatalf("executions = %#v", executions)
+	}
+	if got := decisions["192.0.2.0/30"]; got.Action != "partial" || got.Reason != "history_asset_difference" {
+		t.Fatalf("decision = %#v", got)
+	}
+	if summary.inputsPartial != 1 || summary.assetsPlanned != 2 || summary.assetsSkipped != 2 {
+		t.Fatalf("summary = %#v", summary)
+	}
+	if len(summary.skippedAddresses) != 2 || summary.skippedAddresses[0].ip != "192.0.2.1" || summary.skippedAddresses[1].ip != "192.0.2.2" {
+		t.Fatalf("skipped = %#v", summary.skippedAddresses)
+	}
+	messages := strings.Join(historySkipMessages(summary), "\n")
+	for _, want := range []string{"跳过 datas 历史 IP", "192.0.2.1 (run-a)", "192.0.2.2 (run-b)", "跳过=2", "待扫描=2"} {
+		if !strings.Contains(messages, want) {
+			t.Fatalf("history messages %q do not contain %q", messages, want)
+		}
+	}
+}
+
+func TestBuildExecutionsKeepsCIDRWhenHistoryDoesNotOverlap(t *testing.T) {
+	history := dataResultHistory{targetSources: map[string]string{}, ipSources: map[string]string{}}
+	history.addTarget("198.51.100.10", "run-a")
+	executions, _, summary := buildExecutions(engine.Config{Targets: []string{"192.0.2.0/30"}}, history, "rules", "config", false, false)
+	if len(executions) != 1 || len(executions[0].targets) != 1 || executions[0].targets[0] != "192.0.2.0/30" {
+		t.Fatalf("executions = %#v, want the original non-overlapping CIDR", executions)
+	}
+	if summary.inputsFull != 1 || summary.assetsPlanned != 4 || summary.assetsSkipped != 0 {
+		t.Fatalf("summary = %#v", summary)
+	}
 }
 
 func TestBuildExecutionsDoesNotSkipExplicitRiskOrForce(t *testing.T) {
-	history := dataResultHistory{targetSources: map[string]string{}}
+	history := dataResultHistory{targetSources: map[string]string{}, ipSources: map[string]string{}}
 	history.addTarget("192.0.2.10", "run-a")
 	cfg := engine.Config{Targets: []string{"192.0.2.10"}}
 	for name, test := range map[string]struct {
@@ -64,7 +105,7 @@ func TestBuildExecutionsDoesNotSkipExplicitRiskOrForce(t *testing.T) {
 		"force":         {force: true, reason: "force_full_scan"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			executions, decisions := buildExecutions(cfg, history, "rules", "config", test.explicitRisk, test.force)
+			executions, decisions, _ := buildExecutions(cfg, history, "rules", "config", test.explicitRisk, test.force)
 			if len(executions) != 1 || len(executions[0].targets) != 1 {
 				t.Fatalf("executions = %#v, want full execution", executions)
 			}
@@ -75,7 +116,7 @@ func TestBuildExecutionsDoesNotSkipExplicitRiskOrForce(t *testing.T) {
 	}
 }
 
-func TestLoadDataResultHistoryReadsLegacyResultsAndCompletedTargets(t *testing.T) {
+func TestLoadDataResultHistoryReadsOnlyCompletedResultFiles(t *testing.T) {
 	root := t.TempDir()
 	legacy := filepath.Join(root, "legacy")
 	if err := os.Mkdir(legacy, 0o700); err != nil {
@@ -97,6 +138,9 @@ func TestLoadDataResultHistoryReadsLegacyResultsAndCompletedTargets(t *testing.T
 	if err := os.WriteFile(filepath.Join(completed, "targets.tsv"), []byte(targets), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(completed, "result.txt"), []byte("[Alive] 192.0.2.31\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	current := filepath.Join(root, "current")
 	if err := os.Mkdir(current, 0o700); err != nil {
 		t.Fatal(err)
@@ -109,10 +153,13 @@ func TestLoadDataResultHistoryReadsLegacyResultsAndCompletedTargets(t *testing.T
 	if len(warnings) != 0 {
 		t.Fatalf("warnings = %v", warnings)
 	}
-	for _, target := range []string{"192.0.2.20:443", "192.0.2.30"} {
+	for _, target := range []string{"192.0.2.20:443", "192.0.2.31"} {
 		if _, ok := history.MatchTarget(target); !ok {
 			t.Fatalf("history did not match %s; keys=%v", target, sortedHistoryTargets(history))
 		}
+	}
+	if _, ok := history.MatchTarget("192.0.2.30"); ok {
+		t.Fatal("targets.tsv was used as scan memory")
 	}
 	if _, ok := history.MatchTarget("192.0.2.40:443"); ok {
 		t.Fatal("current run result was treated as previous history")
@@ -226,8 +273,20 @@ func TestRunInDatasDirectoryDoesNotMergeArgusDataState(t *testing.T) {
 	if err := run.Finish(nil); err != nil {
 		t.Fatal(err)
 	}
+	contents, err := os.ReadFile(run.SummaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(contents), "merge_status=not_applicable") {
+		t.Fatalf("datas run claimed a state merge:\n%s", contents)
+	}
 	if _, err := os.Stat(filepath.Join(run.Dir, "summary.txt")); err != nil {
 		t.Fatal(err)
+	}
+	for _, name := range []string{"targets.tsv", "findings.tsv", "coverage.tsv", "timing.tsv", "delta.tsv"} {
+		if _, err := os.Stat(filepath.Join(run.Dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("ordinary datas run created %s: %v", name, err)
+		}
 	}
 }
 
@@ -261,12 +320,16 @@ func TestExecuteWithTimingSkipsDatasHistoryWithoutRunningPipeline(t *testing.T) 
 	if err := run.Finish(nil); err != nil {
 		t.Fatal(err)
 	}
-	contents, err := os.ReadFile(run.TargetsPath)
+	plan := run.PlanSummary()
+	if plan.InputsSkipped != 1 || plan.AssetsSkipped != 1 || plan.AssetsPlanned != 0 {
+		t.Fatalf("plan summary = %#v", plan)
+	}
+	contents, err := os.ReadFile(run.SummaryPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(contents), "skipped") || !strings.Contains(string(contents), "history_asset_match:old") {
-		t.Fatalf("targets.tsv did not record history skip:\n%s", contents)
+	if !strings.Contains(string(contents), "skipped_input_count=1") || !strings.Contains(string(contents), "history_skipped_asset_count=1") {
+		t.Fatalf("summary did not record history skip:\n%s", contents)
 	}
 }
 

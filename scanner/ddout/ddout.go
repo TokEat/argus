@@ -40,6 +40,10 @@ type RunCounts struct {
 	StagesReused       int64 `json:"stages_reused"`
 	TargetsFull        int64 `json:"targets_full"`
 	TargetsIncremental int64 `json:"targets_incremental"`
+	TargetsPartial     int64 `json:"targets_partial"`
+	TargetsSkipped     int64 `json:"targets_skipped"`
+	AssetsPlanned      int64 `json:"assets_planned"`
+	AssetsSkipped      int64 `json:"assets_history_skipped"`
 }
 
 // RunSummary is emitted once by EndRun in JSON mode. Findings always reflects
@@ -177,7 +181,8 @@ func (summary RunSummary) validate() error {
 		summary.Counts.Targets, summary.Counts.Findings, summary.Counts.Coverage,
 		summary.Counts.AssetsNew, summary.Counts.ServicesChanged, summary.Counts.AssetsDisappeared,
 		summary.Counts.AssetsNotAssessed, summary.Counts.StagesExecuted, summary.Counts.StagesReused,
-		summary.Counts.TargetsFull, summary.Counts.TargetsIncremental,
+		summary.Counts.TargetsFull, summary.Counts.TargetsIncremental, summary.Counts.TargetsPartial,
+		summary.Counts.TargetsSkipped, summary.Counts.AssetsPlanned, summary.Counts.AssetsSkipped,
 	}
 	for _, count := range counts {
 		if count < 0 {

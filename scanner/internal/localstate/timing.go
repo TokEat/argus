@@ -20,7 +20,14 @@ type TimingSummary struct {
 	SlowestStageDuration time.Duration
 }
 
-func (run *Run) TimingSummary() (TimingSummary, error) { return ReadTimingSummary(run.TimingPath) }
+func (run *Run) TimingSummary() (TimingSummary, error) {
+	run.mu.Lock()
+	defer run.mu.Unlock()
+	if !run.persistTables {
+		return summarizeTimingEvents(run.timingEvents)
+	}
+	return ReadTimingSummary(run.TimingPath)
+}
 
 func ReadTimingSummary(path string) (TimingSummary, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -32,7 +39,7 @@ func ReadTimingSummary(path string) (TimingSummary, error) {
 	if err != nil {
 		return TimingSummary{}, err
 	}
-	result := TimingSummary{Available: true}
+	events := make([]scanplan.TimingEvent, 0, len(rows))
 	for _, row := range rows {
 		if len(row) != len(timingSchema.Columns) {
 			return TimingSummary{}, fmt.Errorf("timing row has invalid column count")
@@ -53,7 +60,18 @@ func ReadTimingSummary(path string) (TimingSummary, error) {
 		if err := event.Validate(); err != nil {
 			return TimingSummary{}, fmt.Errorf("invalid timing evidence: %w", err)
 		}
-		d := time.Duration(duration)
+		events = append(events, event)
+	}
+	return summarizeTimingEvents(events)
+}
+
+func summarizeTimingEvents(events []scanplan.TimingEvent) (TimingSummary, error) {
+	result := TimingSummary{Available: len(events) > 0}
+	for _, event := range events {
+		if err := event.Validate(); err != nil {
+			return TimingSummary{}, fmt.Errorf("invalid timing evidence: %w", err)
+		}
+		d := time.Duration(event.DurationNS)
 		result.EventCount++
 		switch event.Kind {
 		case scanplan.TimingProcessStartup:

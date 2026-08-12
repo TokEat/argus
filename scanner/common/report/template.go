@@ -2,6 +2,14 @@ package report
 
 import "html/template"
 
+type PlanSummary struct {
+	InputsFull    int
+	InputsPartial int
+	InputsSkipped int
+	AssetsPlanned int
+	AssetsSkipped int
+}
+
 type pageView struct {
 	SchemaVersion string
 	RunID         string
@@ -13,6 +21,7 @@ type pageView struct {
 	Status        string
 	StatusLabel   string
 	Counts        Counts
+	Plan          PlanSummary
 	Nonce         string
 }
 
@@ -98,6 +107,7 @@ a{color:#0369a1;text-decoration:none}a:hover{text-decoration:underline}a:focus-v
       <div class="meta-card"><div class="meta-label">扫描执行状态</div><div class="meta-value status-{{.Status}}">{{.StatusLabel}}</div></div>
       <div class="meta-card"><div class="meta-label">开始 / 完成</div><div class="meta-value">{{.StartedAt}}<br>{{.FinishedAt}}</div></div>
       <div class="meta-card"><div class="meta-label">耗时</div><div class="meta-value">{{.Duration}}</div></div>
+      <div class="meta-card"><div class="meta-label">datas 历史差集</div><div class="meta-value">计划 {{.Plan.AssetsPlanned}} / 跳过 {{.Plan.AssetsSkipped}}</div><div class="stat-detail">完整 {{.Plan.InputsFull}} · 部分 {{.Plan.InputsPartial}} · 全跳过 {{.Plan.InputsSkipped}}</div></div>
     </div>
     <ul class="targets" aria-label="扫描目标">{{range .Targets}}<li class="target">{{.}}</li>{{else}}<li class="targets-empty">未记录目标</li>{{end}}</ul>
   </section>

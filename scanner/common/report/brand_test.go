@@ -18,7 +18,9 @@ func TestReportsUseArgusBrand(t *testing.T) {
 		t.Fatalf("create report session: %v", err)
 	}
 	t.Cleanup(func() { _ = session.Abort() })
-	if err := session.Finish(Summary{Status: "completed", FinishedAt: startedAt.Add(time.Second)}); err != nil {
+	if err := session.Finish(Summary{Status: "completed", FinishedAt: startedAt.Add(time.Second), Plan: PlanSummary{
+		InputsPartial: 1, AssetsPlanned: 253, AssetsSkipped: 3,
+	}}); err != nil {
 		t.Fatalf("finish report session: %v", err)
 	}
 	contentBytes, err := os.ReadFile(path)
@@ -32,5 +34,10 @@ func TestReportsUseArgusBrand(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(content), legacyName) {
 		t.Fatalf("unified report still contains the legacy brand %q", legacyName)
+	}
+	for _, want := range []string{"datas 历史差集", "计划 253 / 跳过 3", "部分 1"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("unified report is missing plan summary %q", want)
+		}
 	}
 }
