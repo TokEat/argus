@@ -67,7 +67,7 @@ func RegisterArgusMCP(server *sdkmcp.Server, client *Client) {
 			}
 			result, err := client.CallTool(ctx, tool.Name, args)
 			if err != nil {
-				if tool.Name == "argus_yaksha_exp" {
+				if tool.Name == "argus_yaksha_exp" || tool.Name == "argus_exp_workspace" {
 					return &sdkmcp.CallToolResult{
 						Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: err.Error()}},
 						IsError: true,
@@ -79,7 +79,7 @@ func RegisterArgusMCP(server *sdkmcp.Server, client *Client) {
 			response := &sdkmcp.CallToolResult{
 				Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: string(data)}},
 			}
-			if tool.Name == "argus_yaksha_exp" {
+			if tool.Name == "argus_yaksha_exp" || tool.Name == "argus_exp_workspace" {
 				response.StructuredContent = result
 			}
 			return response, nil
@@ -112,6 +112,7 @@ func tools() []*sdkmcp.Tool {
 		{Name: "argus_rule_save", Description: "Save fingerprint, POC, Workflow, or Python EXP source into the Argus database as a Draft artifact and return stable_ref {artifact_id, rule_id, file_name, hash, version}. Optional intent=test_only|production_candidate|approved_reusable only affects guidance; it never auto-deletes or auto-publishes. Workflow product_name may use the reserved General-Poc-* prefix for general POC groups whose YAML performs its own matching.", InputSchema: objectSchema(map[string]interface{}{"rule_type": enumSchema([]string{"fingerprint", "poc", "workflow", "pyexp"}), "intent": enumSchema([]string{"test_only", "production_candidate", "approved_reusable"}), "file_name": stringSchema("Draft artifact display file name"), "content": stringSchema("Rule source content"), "product_name": stringSchema("Fingerprint product or Workflow product; General-Poc-* means a general POC workflow and should not be merged into a real product alias"), "rules": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}, "workflow_types": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}, "workflow_pocs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}}, []string{"rule_type"})},
 		{Name: "argus_rule_apply", Description: "Admin-only controlled action. action=publish activates a Draft artifact and should use stable_ref fields from argus_rule_save; action=install_requirements only supports saved pyexp rules and also uses stable_ref fields.", InputSchema: objectSchema(map[string]interface{}{"action": enumSchema([]string{"publish", "install_requirements"}), "rule_type": enumSchema([]string{"fingerprint", "poc", "workflow", "pyexp"}), "artifact_id": stringSchema("Stable DB artifact id from argus_rule_save"), "rule_id": stringSchema("Stable EXP rule id from ARGUS_EXP.id"), "file_name": stringSchema("Draft artifact display file name"), "hash": stringSchema("Expected draft hash"), "version": map[string]interface{}{"type": "integer"}, "agent_id": stringSchema("Agent ID for install_requirements")}, []string{"action", "rule_type"})},
 		{Name: "argus_yaksha_exp", Title: "Yaksha EXP Runtime", Description: "Operate one sealed single-file Yaklang EXP through the persistent independent Yaksha runtime. inspect derives the official cli.* UI plus literal yaksha.call/yaksha.asset references; validate checks source, params, dependencies, assets, exact network targets, and egress shape; test is fixture-only and always offline; debug returns complete unredacted HTTP/TCP Trace; run executes once. exp_id + revision + source_sha256 bind an immutable source identity; dependencies are pinned child revisions and assets are hash-bound content. Egress explicitly selects disabled, direct, a per-call write-only SOCKS5 route, or an authorized Agent using agent_id plus risk_confirmed=true. Agent mode creates a single-use Server Route and never exposes route_id or Gateway credentials. This tool does not expose filesystem or object-storage paths.", Meta: sdkmcp.Meta{"ui": map[string]interface{}{"resourceUri": expConsoleURI, "visibility": []string{"model", "app"}}}, InputSchema: yakshaInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
+		{Name: "argus_exp_workspace", Title: "Yaksha EXP Workspace", Description: "Manage the Server-authoritative Yaksha EXP workspace: EXP metadata, immutable revisions, hash-bound Assets, Fixture acceptance cases, publication, rollback pointers and run history. All operations are tenant-scoped and require EXP authorization; publication/deprecation/rollback remain Admin-only. Source, Asset content and full run artifacts are stored in private MinIO and no object key, credential or host path is exposed.", InputSchema: expWorkspaceInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
 	}
 }
 
@@ -148,6 +149,10 @@ func yakshaInputSchema() map[string]interface{} {
 			"type":    "integer",
 			"minimum": 0,
 			"maximum": 120000,
+		},
+		"risk_confirmed": map[string]interface{}{
+			"type":        "boolean",
+			"description": "Explicit per-call confirmation required for high/critical saved EXP debug or run when no active Server risk waiver exists",
 		},
 		"test_cases": map[string]interface{}{
 			"type":        "array",
@@ -233,7 +238,11 @@ func yakshaInputSchema() map[string]interface{} {
 			"agent_id":       stringSchema("Explicit Agent id for mode=agent"),
 			"risk_confirmed": map[string]interface{}{"type": "boolean", "description": "Must be true for mode=agent"},
 		}, []string{"mode"}),
-	}, []string{"action", "script"})
+	}, []string{"action"})
+	schema["anyOf"] = []interface{}{
+		map[string]interface{}{"required": []string{"script"}, "not": map[string]interface{}{"anyOf": []interface{}{map[string]interface{}{"required": []string{"exp_id"}}, map[string]interface{}{"required": []string{"revision"}}}}},
+		map[string]interface{}{"required": []string{"exp_id", "revision"}, "not": map[string]interface{}{"required": []string{"script"}}},
+	}
 	for _, name := range []string{"dependencies", "assets", "egress"} {
 		if value, ok := schema["properties"].(map[string]interface{})[name].(map[string]interface{}); ok {
 			if items, ok := value["items"].(map[string]interface{}); ok {
@@ -244,6 +253,47 @@ func yakshaInputSchema() map[string]interface{} {
 			}
 		}
 	}
+	schema["additionalProperties"] = false
+	return schema
+}
+
+func expWorkspaceInputSchema() map[string]interface{} {
+	actions := []string{
+		"exp_list", "exp_create", "exp_get", "exp_update", "exp_deprecate",
+		"audit_list", "risk_waiver_get", "risk_waiver_upsert", "risk_waiver_delete",
+		"revision_list", "revision_create", "revision_get", "revision_inspect", "revision_validate", "revision_publish", "revision_set_active", "revision_sealed",
+		"asset_list", "asset_create", "asset_get", "asset_delete",
+		"test_case_list", "test_case_create", "test_case_update", "test_case_delete",
+		"run_list", "run_get", "run_cancel",
+	}
+	schema := objectSchema(map[string]interface{}{
+		"action":        enumSchema(actions),
+		"exp_id":        stringSchema("Tenant-scoped EXP UUID"),
+		"name":          stringSchema("EXP or Fixture test case name"),
+		"description":   stringSchema("EXP description"),
+		"risk_level":    enumSchema([]string{"low", "medium", "high", "critical"}),
+		"revision":      map[string]interface{}{"type": "integer", "minimum": 1},
+		"source":        map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 1 << 20},
+		"source_sha256": map[string]interface{}{"type": "string", "pattern": "^[0-9a-f]{64}$"},
+		"dependencies":  map[string]interface{}{"type": "array", "maxItems": 16, "items": objectSchema(map[string]interface{}{"exp_id": stringSchema("Pinned child EXP id"), "revision": map[string]interface{}{"type": "integer", "minimum": 1}, "source_sha256": map[string]interface{}{"type": "string", "pattern": "^[0-9a-f]{64}$"}}, []string{"exp_id", "revision", "source_sha256"})},
+		"assets":        map[string]interface{}{"type": "array", "maxItems": 32, "items": objectSchema(map[string]interface{}{"asset_id": stringSchema("Logical Asset id"), "version": map[string]interface{}{"type": "integer", "minimum": 1}, "sha256": map[string]interface{}{"type": "string", "pattern": "^[0-9a-f]{64}$"}}, []string{"asset_id", "version", "sha256"})},
+		"asset_id":      stringSchema("Logical Asset id"),
+		"asset_version": map[string]interface{}{"type": "integer", "minimum": 1},
+		"media_type":    stringSchema("Asset media type"),
+		"encoding":      enumSchema([]string{"utf8", "base64"}),
+		"content":       map[string]interface{}{"type": "string", "maxLength": 2 << 20},
+		"reason":        stringSchema("Administrative risk waiver reason"),
+		"expires_at":    map[string]interface{}{"type": "string", "format": "date-time"},
+		"case_id":       stringSchema("Fixture test case UUID"),
+		"params":        map[string]interface{}{"type": "object"},
+		"fixture":       map[string]interface{}{"type": "object"},
+		"expect":        map[string]interface{}{"type": "object"},
+		"enabled":       map[string]interface{}{"type": "boolean"},
+		"include_tests": map[string]interface{}{"type": "boolean"},
+		"run_id":        stringSchema("EXP run UUID"),
+		"page":          map[string]interface{}{"type": "integer", "minimum": 1},
+		"page_size":     map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 200},
+	}, []string{"action"})
 	schema["additionalProperties"] = false
 	return schema
 }

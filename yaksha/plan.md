@@ -87,14 +87,17 @@ yaksha.result({
 - `asset`：通过受控 Resolver 读取 Asset 内容，不向脚本暴露宿主路径。
 - `exp_id`、Revision 和源码哈希仅作为执行上下文与 Trace 标识传入；其存储、状态、权限和发布由 Server 管理。
 
-当前 Runtime 闭环已完成：常驻 HTTP Daemon、预热 Worker、每请求全新 VM/CLI/Session、密封依赖与 Asset Resolver、调用树、Fixture-only test、未脱敏 debug Trace、精确目标授权、统一原始 TCP Connector、每请求 disabled/direct/SOCKS5/Agent relay 出口、Worker 回收和 OCI 运行隔离。Agent Route 具备租户与权限检查、单次认领、预算、取消、会话失效和控制面审计；默认禁网、出口故障不回退、SOCKS5 Raw URL 不进入 Worker 或输出。Server 的 EXP Revision 存储、Asset、Fixture、发布与运行产物仍未接入。
+当前 Runtime 闭环已完成：常驻 HTTP Daemon、预热 Worker、每请求全新 VM/CLI/Session、密封依赖与 Asset Resolver、调用树、Fixture-only test、未脱敏 debug Trace、精确目标授权、统一原始 TCP Connector、每请求 disabled/direct/SOCKS5/Agent relay 出口、Worker 回收和 OCI 运行隔离。Agent Route 具备租户与权限检查、单次认领、预算、取消、会话失效和控制面审计；默认禁网、出口故障不回退、SOCKS5 Raw URL 不进入 Worker 或输出。
+
+Server 权威模型已接入：EXP、不可变 Revision、锁定依赖、版本化 Asset、Fixture、发布/回滚指针、运行记录、风险豁免和审计均按租户管理。生产对象存储固定为私有 MinIO，PostgreSQL 只保存治理数据、对象键、大小和哈希；LocalStore 仅允许显式开发模式。完整 Debug Trace 保持未脱敏并按保留期删除正文，摘要和审计永久保留。
 
 ## 第二条纵向闭环：MCP EXP Workspace
 
 - Argus MCP 使用 Go SDK `v1.7.0` 和 MCP `2026-07-28` Stateless/Sessionless 协议，对外提供 EXP 的读取、创建 Revision、inspect、Fixture 测试、debug、run 和发布工具。
-- 第一阶段由 MCP 通过 `ARGUS_YAKSHA_URL` 调用常驻 Yaksha HTTP Daemon；Daemon 复用 Worker，但每次执行创建全新 VM。MCP 不改 Server，也不把宿主路径暴露给 AI。
+- 临时 Draft 源码仍由 MCP 通过 `ARGUS_YAKSHA_URL` 调用常驻 Yaksha HTTP Daemon；Daemon 复用 Worker，但每次执行创建全新 VM。MCP 不把宿主路径暴露给 AI。
 - 第一阶段已支持可选的 `exp_id + Revision + source_sha256` 成组绑定；Yaksha 按实际源码复算哈希并在全部响应中返回执行上下文，防止 MCP App 把已编辑源码误当作原 Revision 执行。
-- 第二阶段再把相同 Tool 契约绑定到 Server 管理的 EXP、Revision、TestCase 和 Run；发布仍只针对确定 Revision 并要求人工确认。
+- Server 权威阶段已提供 `argus_exp_workspace`，绑定 EXP、Revision、Asset、TestCase、Run、审计与风险豁免；发布只针对确定 Revision 和预期源码哈希，并要求 Admin 人工确认。
+- 已保存 Revision 的可信 Fixture 验收由 Server 编排 Yaksha，避免调用方伪造回报绕过发布门禁；本地 MCP debug/run 可回报完整运行历史，但外部回报不具备发布验收权。
 - 提供一个通用 `ui://argus/exp-console` MCP App，不为每个 EXP 创建独立 App；它根据 Yaksha 返回的 CLI Schema 渲染参数表单，并展示源码、诊断、日志、Evidence、Trace 和结构化结果。
 - AI 通过 MCP Tool 读写 EXP 逻辑对象，MCP App 通过同一组受控 Tool 完成交互；两者都不获得 Server/Yaksha 文件路径或任意文件系统能力。
 - 每次修改生成新的 Draft Revision；测试、调试、比较和发布都携带 `exp_id`、Revision 与源码哈希，避免覆盖已发布源码或调试错版本。
@@ -102,6 +105,8 @@ yaksha.result({
 - MCP 层保留租户隔离、对象级授权、草稿优先、发布确认和审计；Yaksha 只负责语言运行时，不承担用户身份与治理状态。
 - MCP Tool 与 EXP Console 可携带密封依赖、Asset、精确网络目标和本次 `disabled/direct/socks5` 出口；SOCKS5 Raw URL 为 write-only，只用于 Daemon 连接，不进入 Yaklang Worker、调用树或调试输出，也不由 App 回填。
 - Agent 原生出口已使用独立多路复用 gRPC 双向流实现，不复用任务 `Subscribe`，也不套 SOCKS5。Server 绑定租户、操作者、Agent、deadline、目标和预算后签发单次 `route_id`；Yaksha 只接收内部 `relay + route_id`，Agent 在自己的网络环境解析并固定目标 IP。出口审计只保存控制面元数据与流量计数，不保存 Payload。
+
+当前剩余产品切换项是 Server Web UI 与 MCP App 的完整 Workspace 交互，以及确认旧 Python EXP 数据为空后的原子移除；在该切片完成前，旧入口保持不变，不与新模型混合发布。
 
 ## 验收目标
 

@@ -33,6 +33,18 @@ INSTALL_DIR="${INSTALL_DIR:-}"
 DB_DSN="${ARGUS_DB_DSN:-}"
 EGRESS_GATEWAY_LISTEN="${ARGUS_EGRESS_GATEWAY_LISTEN:-}"
 EGRESS_GATEWAY_TOKEN="${ARGUS_EGRESS_GATEWAY_TOKEN:-}"
+MINIO_ROOT_USER="${MINIO_ROOT_USER:-}"
+MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-}"
+MINIO_API_PORT="${MINIO_API_PORT:-}"
+MINIO_CONSOLE_PORT="${MINIO_CONSOLE_PORT:-}"
+EXP_MINIO_ACCESS_KEY="${ARGUS_EXP_MINIO_ACCESS_KEY:-}"
+EXP_MINIO_SECRET_KEY="${ARGUS_EXP_MINIO_SECRET_KEY:-}"
+EXP_MINIO_ENDPOINT="${ARGUS_EXP_MINIO_ENDPOINT:-}"
+EXP_MINIO_REGION="${ARGUS_EXP_MINIO_REGION:-}"
+EXP_MINIO_BUCKET="${ARGUS_EXP_MINIO_BUCKET:-}"
+EXP_MINIO_USE_SSL="${ARGUS_EXP_MINIO_USE_SSL:-}"
+EXP_TRACE_RETENTION="${ARGUS_EXP_TRACE_RETENTION:-}"
+YAKSHA_URL="${ARGUS_YAKSHA_URL:-}"
 SKIP_BACKUP=false
 ASSUME_YES=false
 
@@ -46,6 +58,10 @@ usage() {
 die() {
     echo -e "${RED}[!] $*${NC}" >&2
     exit 1
+}
+
+gen_hex_secret() {
+    openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | xxd -p
 }
 
 if [[ -n "$EGRESS_GATEWAY_LISTEN" || -n "$EGRESS_GATEWAY_TOKEN" ]]; then
@@ -160,6 +176,29 @@ set_service_environment() {
     mv "$temporary" "$SERVICE_FILE"
 }
 
+ensure_service_environment_file() {
+    local file_path="$1"
+    if grep -Fqx "EnvironmentFile=-${file_path}" "$SERVICE_FILE"; then
+        return 0
+    fi
+    local temporary="${SERVICE_FILE}.tmp.$$"
+    awk -v line="EnvironmentFile=-${file_path}" '
+        /^ExecStart=/ && !inserted { print line; inserted=1 }
+        { print }
+        END { if (!inserted) print line }
+    ' "$SERVICE_FILE" > "$temporary"
+    chmod --reference="$SERVICE_FILE" "$temporary"
+    chown --reference="$SERVICE_FILE" "$temporary"
+    mv "$temporary" "$SERVICE_FILE"
+}
+
+env_file_value() {
+    local file_path="$1"
+    local key="$2"
+    [[ -f "$file_path" ]] || return 0
+    sed -nE "s/^${key}=(.*)$/\1/p" "$file_path" | tail -n 1
+}
+
 SERVICE_CMD="$(service_execstart || true)"
 if [[ -z "$EGRESS_GATEWAY_LISTEN" && -z "$EGRESS_GATEWAY_TOKEN" ]]; then
     EGRESS_GATEWAY_LISTEN="$(service_environment ARGUS_EGRESS_GATEWAY_LISTEN || true)"
@@ -174,6 +213,36 @@ if [[ -z "$INSTALL_DIR" ]]; then
     INSTALL_DIR="$(service_workdir || true)"
 fi
 INSTALL_DIR="${INSTALL_DIR:-/opt/argus}"
+
+MINIO_ENV_FILE="${INSTALL_DIR}/config/minio.env"
+EXP_STORAGE_ENV_FILE="${INSTALL_DIR}/config/exp-storage.env"
+MINIO_ROOT_USER="${MINIO_ROOT_USER:-$(env_file_value "$MINIO_ENV_FILE" MINIO_ROOT_USER)}"
+MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-$(env_file_value "$MINIO_ENV_FILE" MINIO_ROOT_PASSWORD)}"
+MINIO_API_PORT="${MINIO_API_PORT:-$(env_file_value "$MINIO_ENV_FILE" MINIO_API_PORT)}"
+MINIO_CONSOLE_PORT="${MINIO_CONSOLE_PORT:-$(env_file_value "$MINIO_ENV_FILE" MINIO_CONSOLE_PORT)}"
+EXP_MINIO_ACCESS_KEY="${EXP_MINIO_ACCESS_KEY:-$(env_file_value "$EXP_STORAGE_ENV_FILE" ARGUS_EXP_MINIO_ACCESS_KEY)}"
+EXP_MINIO_SECRET_KEY="${EXP_MINIO_SECRET_KEY:-$(env_file_value "$EXP_STORAGE_ENV_FILE" ARGUS_EXP_MINIO_SECRET_KEY)}"
+EXP_MINIO_ENDPOINT="${EXP_MINIO_ENDPOINT:-$(env_file_value "$EXP_STORAGE_ENV_FILE" ARGUS_EXP_MINIO_ENDPOINT)}"
+EXP_MINIO_REGION="${EXP_MINIO_REGION:-$(env_file_value "$EXP_STORAGE_ENV_FILE" ARGUS_EXP_MINIO_REGION)}"
+EXP_MINIO_BUCKET="${EXP_MINIO_BUCKET:-$(env_file_value "$EXP_STORAGE_ENV_FILE" ARGUS_EXP_MINIO_BUCKET)}"
+EXP_MINIO_USE_SSL="${EXP_MINIO_USE_SSL:-$(env_file_value "$EXP_STORAGE_ENV_FILE" ARGUS_EXP_MINIO_USE_SSL)}"
+EXP_TRACE_RETENTION="${EXP_TRACE_RETENTION:-$(env_file_value "$EXP_STORAGE_ENV_FILE" ARGUS_EXP_TRACE_RETENTION)}"
+YAKSHA_URL="${YAKSHA_URL:-$(env_file_value "$EXP_STORAGE_ENV_FILE" ARGUS_YAKSHA_URL)}"
+if command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Names}}' | grep -qx "argus-minio" && { [[ -z "$MINIO_ROOT_USER" ]] || [[ -z "$MINIO_ROOT_PASSWORD" ]]; }; then
+    die "现有 MinIO 缺少 ${MINIO_ENV_FILE}；请显式提供 MINIO_ROOT_USER/MINIO_ROOT_PASSWORD 后再升级"
+fi
+MINIO_ROOT_USER="${MINIO_ROOT_USER:-argus-minio-root}"
+MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-$(gen_hex_secret)}"
+MINIO_API_PORT="${MINIO_API_PORT:-9000}"
+MINIO_CONSOLE_PORT="${MINIO_CONSOLE_PORT:-9001}"
+EXP_MINIO_ACCESS_KEY="${EXP_MINIO_ACCESS_KEY:-exp$(gen_hex_secret | cut -c1-20)}"
+EXP_MINIO_SECRET_KEY="${EXP_MINIO_SECRET_KEY:-$(gen_hex_secret)}"
+EXP_MINIO_ENDPOINT="${EXP_MINIO_ENDPOINT:-http://127.0.0.1:${MINIO_API_PORT}}"
+EXP_MINIO_REGION="${EXP_MINIO_REGION:-us-east-1}"
+EXP_MINIO_BUCKET="${EXP_MINIO_BUCKET:-argus-exp}"
+EXP_MINIO_USE_SSL="${EXP_MINIO_USE_SSL:-false}"
+EXP_TRACE_RETENTION="${EXP_TRACE_RETENTION:-168h}"
+YAKSHA_URL="${YAKSHA_URL:-http://127.0.0.1:8790}"
 
 if [[ -z "$DB_DSN" && -n "$SERVICE_CMD" ]]; then
     DB_DSN="$(extract_quoted_arg "-db" "$SERVICE_CMD" || true)"
@@ -270,6 +339,16 @@ rollback_on_error() {
         if [[ -f "${BACKUP_DIR}/argus-server.service" ]]; then
             cp -a "${BACKUP_DIR}/argus-server.service" "$SERVICE_FILE" || true
         fi
+		if [[ -f "${BACKUP_DIR}/minio.env" ]]; then
+			cp -a "${BACKUP_DIR}/minio.env" "$MINIO_ENV_FILE" || true
+		elif [[ -f "${BACKUP_DIR}/minio.env.absent" ]]; then
+			rm -f "$MINIO_ENV_FILE" || true
+		fi
+		if [[ -f "${BACKUP_DIR}/exp-storage.env" ]]; then
+			cp -a "${BACKUP_DIR}/exp-storage.env" "$EXP_STORAGE_ENV_FILE" || true
+		elif [[ -f "${BACKUP_DIR}/exp-storage.env.absent" ]]; then
+			rm -f "$EXP_STORAGE_ENV_FILE" || true
+		fi
         current_yaksha_compose="${INSTALL_DIR}/deploy/yaksha-compose.yaml"
         if [[ -f "$current_yaksha_compose" ]]; then
             docker compose -f "$current_yaksha_compose" down --remove-orphans 2>/dev/null || true
@@ -326,6 +405,25 @@ if command -v docker &>/dev/null; then
         sleep 2
     done
     [[ "$postgres_ready" == "true" ]] || die "PostgreSQL 未在预期时间内就绪"
+
+	export INSTALL_DIR POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_PORT
+	export MINIO_ROOT_USER MINIO_ROOT_PASSWORD MINIO_API_PORT MINIO_CONSOLE_PORT
+	export ARGUS_EXP_MINIO_ACCESS_KEY="$EXP_MINIO_ACCESS_KEY"
+	export ARGUS_EXP_MINIO_SECRET_KEY="$EXP_MINIO_SECRET_KEY"
+	export ARGUS_EXP_MINIO_BUCKET="$EXP_MINIO_BUCKET"
+	export RABBITMQ_DEFAULT_PASS="${RABBITMQ_DEFAULT_PASS:-upgrade-unused}"
+	docker compose -f "${SCRIPT_DIR}/docker-compose.yml" up -d minio
+	minio_ready=false
+	for _ in $(seq 1 30); do
+		if docker compose -f "${SCRIPT_DIR}/docker-compose.yml" exec -T minio curl -fsS http://127.0.0.1:9000/minio/health/ready &>/dev/null; then
+			minio_ready=true
+			break
+		fi
+		sleep 2
+	done
+	[[ "$minio_ready" == "true" ]] || die "MinIO 未在预期时间内就绪"
+	docker compose -f "${SCRIPT_DIR}/docker-compose.yml" up --no-deps minio-init
+	[[ "$(docker inspect -f '{{.State.ExitCode}}' argus-minio-init 2>/dev/null || echo 1)" == "0" ]] || die "MinIO 私有 Bucket 或应用用户初始化失败"
 else
     echo -e "${YELLOW}  [!] 未找到 docker，跳过基础设施检查${NC}"
 fi
@@ -344,6 +442,16 @@ if [[ -d "${INSTALL_DIR}/server-ui/dist" ]]; then
 fi
 if [[ -f "$SERVICE_FILE" ]]; then
     cp -a "$SERVICE_FILE" "${BACKUP_DIR}/argus-server.service"
+fi
+if [[ -f "$MINIO_ENV_FILE" ]]; then
+	cp -a "$MINIO_ENV_FILE" "${BACKUP_DIR}/minio.env"
+else
+	touch "${BACKUP_DIR}/minio.env.absent"
+fi
+if [[ -f "$EXP_STORAGE_ENV_FILE" ]]; then
+	cp -a "$EXP_STORAGE_ENV_FILE" "${BACKUP_DIR}/exp-storage.env"
+else
+	touch "${BACKUP_DIR}/exp-storage.env.absent"
 fi
 if [[ -f "${INSTALL_DIR}/deploy/yaksha-compose.yaml" ]]; then
     yaksha_had_compose=true
@@ -387,6 +495,27 @@ echo -e "${YELLOW}[4/6] 替换应用文件...${NC}"
 install -m 0755 "$SERVER_BIN" "${INSTALL_DIR}/bin/argus-server"
 echo -e "  Server: ${GREEN}${SERVER_BIN} -> ${INSTALL_DIR}/bin/argus-server${NC}"
 migrate_legacy_service_identity
+mkdir -p "${INSTALL_DIR}/config"
+umask 077
+cat > "$MINIO_ENV_FILE" <<EOF
+MINIO_ROOT_USER=${MINIO_ROOT_USER}
+MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+MINIO_API_PORT=${MINIO_API_PORT}
+MINIO_CONSOLE_PORT=${MINIO_CONSOLE_PORT}
+EOF
+cat > "$EXP_STORAGE_ENV_FILE" <<EOF
+ARGUS_EXP_STORE_MODE=minio
+ARGUS_EXP_MINIO_ENDPOINT=${EXP_MINIO_ENDPOINT}
+ARGUS_EXP_MINIO_REGION=${EXP_MINIO_REGION}
+ARGUS_EXP_MINIO_BUCKET=${EXP_MINIO_BUCKET}
+ARGUS_EXP_MINIO_ACCESS_KEY=${EXP_MINIO_ACCESS_KEY}
+ARGUS_EXP_MINIO_SECRET_KEY=${EXP_MINIO_SECRET_KEY}
+ARGUS_EXP_MINIO_USE_SSL=${EXP_MINIO_USE_SSL}
+ARGUS_EXP_TRACE_RETENTION=${EXP_TRACE_RETENTION}
+ARGUS_YAKSHA_URL=${YAKSHA_URL}
+EOF
+chmod 0600 "$MINIO_ENV_FILE" "$EXP_STORAGE_ENV_FILE"
+ensure_service_environment_file "$EXP_STORAGE_ENV_FILE"
 if [[ -n "$EGRESS_GATEWAY_LISTEN" ]]; then
     set_service_environment ARGUS_EGRESS_GATEWAY_LISTEN "$EGRESS_GATEWAY_LISTEN"
     set_service_environment ARGUS_EGRESS_GATEWAY_TOKEN "$EGRESS_GATEWAY_TOKEN"
@@ -441,14 +570,6 @@ fi
 
 echo -e "${YELLOW}[6/6] 重启应用服务并检查状态...${NC}"
 systemctl daemon-reload
-systemctl start "$SERVICE_NAME"
-sleep 3
-
-if ! systemctl is-active --quiet "$SERVICE_NAME"; then
-    echo -e "${RED}[!] 服务启动失败，请查看 ${INSTALL_DIR}/logs/server.log${NC}" >&2
-    false
-fi
-
 YAKSHA_COMPOSE="${INSTALL_DIR}/deploy/yaksha-compose.yaml"
 YAKSHA_IMAGE="${INSTALL_DIR}/deploy/images/argus-yaksha-linux-amd64.tar"
 if [[ -f "$YAKSHA_COMPOSE" && -f "$YAKSHA_IMAGE" ]]; then
@@ -465,6 +586,15 @@ if [[ -f "$YAKSHA_COMPOSE" && -f "$YAKSHA_IMAGE" ]]; then
         sleep 2
     done
     [[ "$yaksha_ready" == "true" ]] || die "Yaksha Runtime 未就绪"
+fi
+
+# The production Server deliberately refuses to start without ready MinIO and
+# Yaksha dependencies. Start Yaksha first, then bring up the Server.
+systemctl start "$SERVICE_NAME"
+sleep 3
+if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+    echo -e "${RED}[!] 服务启动失败，请查看 ${INSTALL_DIR}/logs/server.log${NC}" >&2
+    false
 fi
 
 rollback_ready=false

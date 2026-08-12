@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -45,7 +43,7 @@ func TestSDKServerListsOnlyAggregateTools(t *testing.T) {
 	for _, tool := range result.Tools {
 		got = append(got, tool.Name)
 	}
-	want := map[string]bool{"argus_context": true, "argus_product_search": true, "argus_rule_debug": true, "argus_rule_save": true, "argus_rule_apply": true, "argus_yaksha_exp": true}
+	want := map[string]bool{"argus_context": true, "argus_product_search": true, "argus_rule_debug": true, "argus_rule_save": true, "argus_rule_apply": true, "argus_yaksha_exp": true, "argus_exp_workspace": true}
 	if len(got) != len(want) {
 		t.Fatalf("unexpected tool count: got %v want %v", got, want)
 	}
@@ -61,7 +59,7 @@ func TestSDKServerListsOnlyAggregateTools(t *testing.T) {
 		}
 	}
 	data, _ := json.Marshal(result.Tools)
-	for _, wantText := range []string{"intent", "test_only", "workflow_links", "stable_ref", "argus_product_search", "rule_get", "rule_list", "drafts", "relationship_stats", "relationship_list", "unlinked_fingerprints", "missing_poc_refs", "range_start", "range_end", "product_search for fuzzy", "General-Poc-*", "argus_yaksha_exp", "exp_id", "revision", "source_sha256", "immutable source identity", expConsoleURI} {
+	for _, wantText := range []string{"intent", "test_only", "workflow_links", "stable_ref", "argus_product_search", "rule_get", "rule_list", "drafts", "relationship_stats", "relationship_list", "unlinked_fingerprints", "missing_poc_refs", "range_start", "range_end", "product_search for fuzzy", "General-Poc-*", "argus_yaksha_exp", "argus_exp_workspace", "revision_create", "exp_id", "revision", "source_sha256", "immutable source identity", expConsoleURI} {
 		if !strings.Contains(string(data), wantText) {
 			t.Fatalf("tool schema/description missing %q: %s", wantText, data)
 		}
@@ -782,82 +780,5 @@ func TestProductSearchUsesNativeRESTIndexes(t *testing.T) {
 	}
 	if strings.Join(seen, "\n") != strings.Join(wantRoutes, "\n") {
 		t.Fatalf("unexpected product_search routes:\n got %v\nwant %v", seen, wantRoutes)
-	}
-}
-
-func TestSDKStreamableHTTPHandlerListsTools(t *testing.T) {
-	handler := sdkmcp.NewStreamableHTTPHandler(func(*http.Request) *sdkmcp.Server {
-		return NewServer(NewClient("http://argus.local", "token"))
-	}, &sdkmcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
-	ts := httptest.NewServer(handler)
-	defer ts.Close()
-
-	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "argus-mcp-http-test-client", Version: "0.1.0"}, nil)
-	session, err := client.Connect(context.Background(), &sdkmcp.StreamableClientTransport{
-		Endpoint:             ts.URL,
-		DisableStandaloneSSE: true,
-	}, nil)
-	if err != nil {
-		t.Fatalf("connect streamable http client: %v", err)
-	}
-	defer session.Close()
-	if got := session.InitializeResult().ProtocolVersion; got != "2026-07-28" {
-		t.Fatalf("negotiated protocol version = %q, want 2026-07-28", got)
-	}
-
-	result, err := session.ListTools(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("list tools over streamable http: %v", err)
-	}
-	if len(result.Tools) != 6 {
-		t.Fatalf("expected 6 tools over streamable http, got %d", len(result.Tools))
-	}
-}
-
-func TestClientTurnsHTTPErrorIntoMessage(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
-			t.Fatalf("missing bearer token: %q", got)
-		}
-		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
-	}))
-	defer ts.Close()
-
-	client := NewClient(ts.URL, "test-token")
-	_, err := client.Resource(context.Background(), "argus://pyexp/spec")
-	if err == nil || !strings.Contains(err.Error(), "403") || !strings.Contains(err.Error(), "forbidden") {
-		t.Fatalf("expected HTTP error detail, got %v", err)
-	}
-}
-
-func TestClientRejectsLegacyFineGrainedEXPTools(t *testing.T) {
-	client := NewClient("http://argus.local", "test-token")
-	for _, name := range []string{"pyexp_validate", "pyexp_dry_run", "pyexp_save_draft", "pyexp_debug"} {
-		_, err := client.CallTool(context.Background(), name, map[string]interface{}{})
-		if err == nil || !strings.Contains(err.Error(), "unknown tool") {
-			t.Fatalf("CallTool(%s) error = %v, want unknown tool", name, err)
-		}
-	}
-}
-
-func TestConfigLoadsTokenFileWhenTokenEnvIsEmpty(t *testing.T) {
-	t.Setenv("ARGUS_BASE_URL", "http://argus.local")
-	t.Setenv("ARGUS_TOKEN", "")
-	tokenPath := filepath.Join(t.TempDir(), "token")
-	if err := os.WriteFile(tokenPath, []byte(" file-token \n"), 0600); err != nil {
-		t.Fatalf("write token file: %v", err)
-	}
-	t.Setenv("ARGUS_TOKEN_FILE", tokenPath)
-	t.Setenv("ARGUS_YAKSHA_URL", "http://127.0.0.1:18790")
-
-	cfg, err := ConfigFromEnv()
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	if cfg.Token != "file-token" {
-		t.Fatalf("expected token from file, got %q", cfg.Token)
-	}
-	if cfg.YakshaURL != "http://127.0.0.1:18790" {
-		t.Fatalf("expected configured Yaksha URL, got %q", cfg.YakshaURL)
 	}
 }

@@ -63,6 +63,18 @@ JWT_SECRET="${ARGUS_JWT_SECRET:-$(openssl rand -hex 32 2>/dev/null || head -c 32
 ENCRYPT_KEY="${ARGUS_ENCRYPT_KEY:-$(gen_encrypt_key)}"
 EGRESS_GATEWAY_LISTEN="${ARGUS_EGRESS_GATEWAY_LISTEN:-}"
 EGRESS_GATEWAY_TOKEN="${ARGUS_EGRESS_GATEWAY_TOKEN:-}"
+MINIO_API_PORT="${MINIO_API_PORT:-9000}"
+MINIO_CONSOLE_PORT="${MINIO_CONSOLE_PORT:-9001}"
+MINIO_ROOT_USER="${MINIO_ROOT_USER:-argus-minio-root}"
+MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-$(gen_hex_secret)}"
+ARGUS_EXP_MINIO_ACCESS_KEY="${ARGUS_EXP_MINIO_ACCESS_KEY:-exp$(gen_hex_secret | cut -c1-20)}"
+ARGUS_EXP_MINIO_SECRET_KEY="${ARGUS_EXP_MINIO_SECRET_KEY:-$(gen_hex_secret)}"
+ARGUS_EXP_MINIO_ENDPOINT="${ARGUS_EXP_MINIO_ENDPOINT:-http://127.0.0.1:${MINIO_API_PORT}}"
+ARGUS_EXP_MINIO_REGION="${ARGUS_EXP_MINIO_REGION:-us-east-1}"
+ARGUS_EXP_MINIO_BUCKET="${ARGUS_EXP_MINIO_BUCKET:-argus-exp}"
+ARGUS_EXP_MINIO_USE_SSL="${ARGUS_EXP_MINIO_USE_SSL:-false}"
+ARGUS_EXP_TRACE_RETENTION="${ARGUS_EXP_TRACE_RETENTION:-168h}"
+ARGUS_YAKSHA_URL="${ARGUS_YAKSHA_URL:-http://127.0.0.1:8790}"
 if [[ -n "$EGRESS_GATEWAY_LISTEN" || -n "$EGRESS_GATEWAY_TOKEN" ]]; then
     if [[ -z "$EGRESS_GATEWAY_LISTEN" || -z "$EGRESS_GATEWAY_TOKEN" ]]; then
         echo -e "${RED}[!] ARGUS_EGRESS_GATEWAY_LISTEN 与 ARGUS_EGRESS_GATEWAY_TOKEN 必须成对配置${NC}"
@@ -104,6 +116,26 @@ fi
 DB_DSN="host=127.0.0.1 user=${POSTGRES_USER} password=${POSTGRES_PASSWORD} dbname=${POSTGRES_DB} port=${POSTGRES_PORT} sslmode=disable"
 AMQP_URL="amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@127.0.0.1:${RABBITMQ_PORT}/"
 INSTALL_DIR="${ROOT_DIR}"
+mkdir -p "${INSTALL_DIR}/config"
+umask 077
+cat > "${INSTALL_DIR}/config/minio.env" <<EOF
+MINIO_ROOT_USER=${MINIO_ROOT_USER}
+MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+MINIO_API_PORT=${MINIO_API_PORT}
+MINIO_CONSOLE_PORT=${MINIO_CONSOLE_PORT}
+EOF
+cat > "${INSTALL_DIR}/config/exp-storage.env" <<EOF
+ARGUS_EXP_STORE_MODE=minio
+ARGUS_EXP_MINIO_ENDPOINT=${ARGUS_EXP_MINIO_ENDPOINT}
+ARGUS_EXP_MINIO_REGION=${ARGUS_EXP_MINIO_REGION}
+ARGUS_EXP_MINIO_BUCKET=${ARGUS_EXP_MINIO_BUCKET}
+ARGUS_EXP_MINIO_ACCESS_KEY=${ARGUS_EXP_MINIO_ACCESS_KEY}
+ARGUS_EXP_MINIO_SECRET_KEY=${ARGUS_EXP_MINIO_SECRET_KEY}
+ARGUS_EXP_MINIO_USE_SSL=${ARGUS_EXP_MINIO_USE_SSL}
+ARGUS_EXP_TRACE_RETENTION=${ARGUS_EXP_TRACE_RETENTION}
+ARGUS_YAKSHA_URL=${ARGUS_YAKSHA_URL}
+EOF
+chmod 0600 "${INSTALL_DIR}/config/minio.env" "${INSTALL_DIR}/config/exp-storage.env"
 
 echo -e "${BLUE}================================================${NC}"
 echo -e "${BLUE}       Argus Server 一键部署                    ${NC}"
@@ -142,9 +174,9 @@ systemctl enable --now docker
 echo -e "${GREEN}[✔] Docker 就绪$(docker --version | grep -oP 'Docker version \K[^,]+')${NC}"
 
 # ============================================================
-# Step 2: 通过 docker-compose 启动 PostgreSQL + RabbitMQ
+# Step 2: 通过 docker-compose 启动 PostgreSQL、RabbitMQ 与私有 MinIO
 # ============================================================
-echo -e "${YELLOW}[2/6] 启动基础设施 (PostgreSQL + RabbitMQ)...${NC}"
+echo -e "${YELLOW}[2/6] 启动基础设施 (PostgreSQL + RabbitMQ + MinIO)...${NC}"
 
 if [[ ! -f "$COMPOSE_FILE" ]]; then
     echo -e "${RED}[!] 找不到 ${COMPOSE_FILE}${NC}"
@@ -155,9 +187,11 @@ fi
 # 导出环境变量供 docker-compose 使用
 export POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_PORT
 export RABBITMQ_DEFAULT_USER RABBITMQ_DEFAULT_PASS RABBITMQ_PORT RABBITMQ_MANAGEMENT_PORT
+export MINIO_ROOT_USER MINIO_ROOT_PASSWORD MINIO_API_PORT MINIO_CONSOLE_PORT
+export ARGUS_EXP_MINIO_ACCESS_KEY ARGUS_EXP_MINIO_SECRET_KEY ARGUS_EXP_MINIO_BUCKET
 export INSTALL_DIR
 
-docker compose -f "$COMPOSE_FILE" up -d --remove-orphans rabbitmq postgres
+docker compose -f "$COMPOSE_FILE" up -d --remove-orphans minio rabbitmq postgres
 
 # 等待服务健康
 echo -ne "  等待 PostgreSQL 就绪..."
@@ -179,6 +213,25 @@ for i in $(seq 1 30); do
     echo -n "."
     sleep 2
 done
+
+echo -ne "  等待 MinIO 就绪..."
+minio_ready=false
+for i in $(seq 1 30); do
+    if docker compose -f "$COMPOSE_FILE" exec -T minio curl -fsS http://127.0.0.1:9000/minio/health/ready &>/dev/null; then
+        echo -e " ${GREEN}OK${NC}"
+        minio_ready=true
+        break
+    fi
+    echo -n "."
+    sleep 2
+done
+[[ "$minio_ready" == "true" ]] || { echo -e " ${RED}FAILED${NC}"; exit 1; }
+
+docker compose -f "$COMPOSE_FILE" up --no-deps minio-init
+if [[ "$(docker inspect -f '{{.State.ExitCode}}' argus-minio-init 2>/dev/null || echo 1)" != "0" ]]; then
+    echo -e "${RED}[!] MinIO 私有 Bucket 或应用用户初始化失败${NC}"
+    exit 1
+fi
 
 # 初始化数据库（执行 init 脚本）
 echo -e "  初始化数据库..."
@@ -356,6 +409,7 @@ Environment=ARGUS_JWT_SECRET=${JWT_SECRET}
 Environment=ARGUS_ENCRYPT_KEY=${ENCRYPT_KEY}
 Environment=ARGUS_EGRESS_GATEWAY_LISTEN=${EGRESS_GATEWAY_LISTEN}
 Environment=ARGUS_EGRESS_GATEWAY_TOKEN=${EGRESS_GATEWAY_TOKEN}
+EnvironmentFile=-${INSTALL_DIR}/config/exp-storage.env
 ExecStart=${INSTALL_DIR}/bin/argus-server \\
     -db "${DB_DSN}" \\
     -amqp "${AMQP_URL}" \\
@@ -388,18 +442,6 @@ if command -v ufw &>/dev/null; then
     ufw allow "${GRPC_PORT}/tcp" comment "Argus gRPC" 2>/dev/null || true
 fi
 
-systemctl restart argus-server
-sleep 3
-
-# 检查状态
-if systemctl is-active --quiet argus-server; then
-    echo -e "${GREEN}[✔] Argus Server 启动成功！${NC}"
-else
-    echo -e "${RED}[!] 启动失败，查看日志:${NC}"
-    tail -30 "$INSTALL_DIR/logs/server.log"
-    exit 1
-fi
-
 YAKSHA_COMPOSE="${SCRIPT_DIR}/yaksha-compose.yaml"
 YAKSHA_IMAGE="${SCRIPT_DIR}/images/argus-yaksha-linux-amd64.tar"
 if [[ -f "$YAKSHA_COMPOSE" && -f "$YAKSHA_IMAGE" ]]; then
@@ -419,6 +461,18 @@ if [[ -f "$YAKSHA_COMPOSE" && -f "$YAKSHA_IMAGE" ]]; then
         echo -e "${RED}[!] Yaksha Runtime 未就绪${NC}"
         exit 1
     fi
+fi
+
+# Production startup is fail-closed when Yaksha or MinIO is unavailable, so
+# start and verify both dependencies before starting the Server.
+systemctl restart argus-server
+sleep 3
+if systemctl is-active --quiet argus-server; then
+    echo -e "${GREEN}[✔] Argus Server 启动成功！${NC}"
+else
+    echo -e "${RED}[!] 启动失败，查看日志:${NC}"
+    tail -30 "$INSTALL_DIR/logs/server.log"
+    exit 1
 fi
 
 echo ""

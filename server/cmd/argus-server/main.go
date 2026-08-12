@@ -195,6 +195,11 @@ func main() {
 	if err := egresspkg.ReconcileStaleAudits(context.Background()); err != nil {
 		log.Fatalf("Failed to reconcile EXP egress audits: %v", err)
 	}
+	expWorkspace, err := initializeEXPWorkspace(context.Background(), conn, devMode)
+	if err != nil {
+		log.Fatalf("Failed to initialize MinIO-backed EXP workspace: %v", err)
+	}
+	go expWorkspace.StartMaintenance(context.Background())
 
 	if configDir == "" {
 		if _, err := os.Stat("scanner/common/config"); err == nil {
@@ -289,6 +294,7 @@ func main() {
 	// 当 createTask 完成入队后，API 层通过此引用广播通知所有在线 Agent
 	routerDeps := api.NewRouterDependencies(queue, srv.Hub, agentPSK)
 	routerDeps.EgressBroker = srv.Egress
+	routerDeps.EXPWorkspace = expWorkspace
 	api.ConfigureRouterDependencies(routerDeps)
 
 	gatewayAddress := strings.TrimSpace(os.Getenv("ARGUS_EGRESS_GATEWAY_LISTEN"))

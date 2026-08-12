@@ -9,6 +9,7 @@ import (
 	"github.com/P0lar1ght/argus/server/internal/assetdiscovery"
 	"github.com/P0lar1ght/argus/server/internal/db"
 	egresspkg "github.com/P0lar1ght/argus/server/internal/egress"
+	"github.com/P0lar1ght/argus/server/internal/expworkspace"
 	grpcpkg "github.com/P0lar1ght/argus/server/internal/grpc"
 	"github.com/P0lar1ght/argus/server/internal/scheduler"
 )
@@ -47,6 +48,7 @@ type RouterDependencies struct {
 	Cloud                *CloudHandler
 	ObjectStorageRoot    string
 	EgressBroker         *egresspkg.Broker
+	EXPWorkspace         *expworkspace.Service
 }
 
 // BuildService owns mutable build execution and cancellation state.
