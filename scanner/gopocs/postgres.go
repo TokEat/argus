@@ -47,10 +47,11 @@ func PostgresScan(info *structs.HostInfo) (tmperr error) {
 }
 
 func PostgresConn(info *structs.HostInfo, user string, pass string) (flag bool, err error) {
+	waitCredentialAttempt(info)
 	flag = false
 	Host, Port, Username, Password := info.Host, info.Ports, user, pass
 	dataSourceName := fmt.Sprintf("postgres://%v:%v@%v:%v/%v?sslmode=%v", url.QueryEscape(Username), url.QueryEscape(Password), Host, Port, "postgres", "disable")
-	gologger.AuditTimeLogger("[Go] [PostgreSQL-Brute] start try %s:%s %s/%s", Host, Port, Username, maskPassword(Password))
+	gologger.AuditTimeLogger("[Go] [PostgreSQL-Brute] start try %s:%s %s/%s", Host, Port, maskUsername(Username), maskPassword(Password))
 	db, err := sql.Open("postgres", dataSourceName)
 	if err == nil {
 		db.SetConnMaxLifetime(time.Duration(5) * time.Second)

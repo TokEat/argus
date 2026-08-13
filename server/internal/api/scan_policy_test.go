@@ -1,0 +1,162 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/P0lar1ght/argus/server/internal/credentialvault"
+	"github.com/P0lar1ght/argus/server/internal/db"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
+)
+
+func TestCompileTaskScanPolicyPresetsAndSafeDiscoveryConfig(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Project{ID: "policy-project", TenantID: "default", OwnerUserID: "1", Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	ctx, _ := newTenantContextWithRole(http.MethodPost, "/tasks/plan-preview", "admin", "1")
+	for _, tc := range []struct {
+		preset scanpolicy.Preset
+		ports  int
+	}{
+		{scanpolicy.PresetQuick, 100},
+		{scanpolicy.PresetStandard, 1000},
+		{scanpolicy.PresetDeep, 65535},
+	} {
+		policy, err := scanpolicy.PresetPolicy(tc.preset)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if policy.Capabilities.RiskValidation {
+			policy.Authorization.ValidationConfirmed = true
+		}
+		plan, err := compileTaskScanPolicy(ctx, scanPolicyPlanRequest{ProjectID: "policy-project", Targets: json.RawMessage(`"example.com"`), Policy: policy})
+		if err != nil {
+			t.Fatalf("compile %s: %v", tc.preset, err)
+		}
+		if plan.PortCount != tc.ports {
+			t.Fatalf("%s port count=%d want=%d", tc.preset, plan.PortCount, tc.ports)
+		}
+		if plan.ValidationBudget.TargetConcurrency < 1 || plan.ValidationBudget.RateLimit < 1 || plan.ValidationBudget.CredentialMaxPerTarget != scanpolicy.DefaultCredentialPairLimit {
+			t.Fatalf("%s validation budget is incomplete: %+v", tc.preset, plan.ValidationBudget)
+		}
+		var config taskScanConfig
+		if err := json.Unmarshal([]byte(plan.ScannerConfig), &config); err != nil {
+			t.Fatal(err)
+		}
+		if !config.NoPoc || config.GolangPoc || config.Password != "" || config.PasswordFile != "" {
+			t.Fatalf("discovery config can execute validation or expose credential paths: %+v", config)
+		}
+	}
+}
+
+func TestCompileTaskScanPolicyUsesDeduplicatedDictionaryUnion(t *testing.T) {
+	store := setupAITestDB(t)
+	project := db.Project{ID: "dictionary-project", TenantID: "default", OwnerUserID: "1", Status: "active"}
+	if err := store.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+	vault, err := credentialvault.NewFromEnvironment(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := func(id, kind string, values []string) scanpolicy.DictionaryRef {
+		t.Helper()
+		dictionary := db.CredentialDictionary{ID: id, TenantID: "default", ProjectID: project.ID, Kind: kind, Name: id, CreatedBy: "1"}
+		revision, err := sealDictionaryRevision(vault, "default", project.ID, id, 1, values, "1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Create(&dictionary).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Create(&revision).Error; err != nil {
+			t.Fatal(err)
+		}
+		return scanpolicy.DictionaryRef{ID: id, Revision: 1, SHA256: revision.SHA256, Count: revision.ItemCount}
+	}
+	u1 := seed("u1", "username", []string{"admin", "root"})
+	u2 := seed("u2", "username", []string{"root", "service"})
+	p1 := seed("p1", "password", []string{"secret"})
+	policy, _ := scanpolicy.PresetPolicy(scanpolicy.PresetQuick)
+	policy.Capabilities.CredentialValidation = true
+	policy.Authorization.ValidationConfirmed = true
+	policy.Credentials.UsernameBooks = []scanpolicy.DictionaryRef{u1, u2}
+	policy.Credentials.PasswordBooks = []scanpolicy.DictionaryRef{p1}
+	policy.Credentials.PairLimit = 3
+	ctx, _ := newTenantContextWithRole(http.MethodPost, "/tasks/plan-preview", "admin", "1")
+	plan, err := compileTaskScanPolicy(ctx, scanPolicyPlanRequest{ProjectID: project.ID, Targets: json.RawMessage(`"example.com"`), Policy: policy})
+	if err != nil {
+		t.Fatalf("compile deduplicated policy: %v", err)
+	}
+	if plan.CustomPairs != 3 {
+		t.Fatalf("custom pairs=%d want=3", plan.CustomPairs)
+	}
+}
+
+func TestCreateTaskRejectsStaleSemanticPlanHash(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Project{ID: "stale-project", TenantID: "default", OwnerUserID: "1", Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	policy, _ := scanpolicy.PresetPolicy(scanpolicy.PresetQuick)
+	body, _ := json.Marshal(map[string]interface{}{
+		"project_id": "stale-project",
+		"name":       "stale",
+		"targets":    "example.com",
+		"policy":     policy,
+		"plan_hash":  strings.Repeat("0", 64),
+	})
+	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/tasks", "admin", "1")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/tasks", strings.NewReader(string(body)))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	createTask(ctx)
+	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "scan_plan_changed") {
+		t.Fatalf("stale plan status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestCompileTaskScanPolicySkipsUnsupportedOnlyWhenRequested(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Project{ID: "skip-project", TenantID: "default", OwnerUserID: "1", Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	policy, _ := scanpolicy.PresetPolicy(scanpolicy.PresetQuick)
+	ctx, _ := newTenantContextWithRole(http.MethodPost, "/tasks/plan-preview", "admin", "1")
+	targets := json.RawMessage(`["example.com","bad target with spaces"]`)
+	if _, err := compileTaskScanPolicy(ctx, scanPolicyPlanRequest{ProjectID: "skip-project", Targets: targets, Policy: policy}); err == nil {
+		t.Fatal("unsupported target was accepted without skip_unsupported")
+	}
+	plan, err := compileTaskScanPolicy(ctx, scanPolicyPlanRequest{ProjectID: "skip-project", Targets: targets, Policy: policy, SkipUnsupported: true})
+	if err != nil {
+		t.Fatalf("compile skip_unsupported: %v", err)
+	}
+	if len(plan.TargetsNormalized) != 1 || len(plan.SkippedTargets) != 1 {
+		t.Fatalf("unexpected target classification: accepted=%v skipped=%v", plan.TargetsNormalized, plan.SkippedTargets)
+	}
+}
+
+func TestCompileTaskScanPolicyPairLimitRequiresAdmin(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Project{ID: "limit-project", TenantID: "default", OwnerUserID: "7", Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	policy, _ := scanpolicy.PresetPolicy(scanpolicy.PresetQuick)
+	policy.Credentials.PairLimit = 10_000
+	ctx, _ := newTenantContextWithRole(http.MethodPost, "/tasks/plan-preview", "operator", "7")
+	if _, err := compileTaskScanPolicy(ctx, scanPolicyPlanRequest{ProjectID: "limit-project", Targets: json.RawMessage(`"example.com"`), Policy: policy}); err == nil || !strings.Contains(err.Error(), "tenant admin") {
+		t.Fatalf("operator pair limit error=%v", err)
+	}
+}
+
+func TestCheckedCredentialPairCountRejectsBeforeCartesianAllocation(t *testing.T) {
+	if _, err := checkedCredentialPairCount(100_000, 100_000, scanpolicy.MaximumCredentialPairLimit); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized cartesian product error=%v", err)
+	}
+	if got, err := checkedCredentialPairCount(250, 200, scanpolicy.DefaultCredentialPairLimit); err != nil || got != 50_000 {
+		t.Fatalf("boundary pair count=%d err=%v", got, err)
+	}
+}

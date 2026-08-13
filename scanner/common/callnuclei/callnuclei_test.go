@@ -40,3 +40,11 @@ func TestApplyPresentationConfiguresMachineOutput(t *testing.T) {
 		t.Fatalf("machine presentation did not set no-color/progress options: %+v", options)
 	}
 }
+
+func TestApplyPresentationAppliesSealedExecutionLimits(t *testing.T) {
+	options := &types.Options{RateLimit: 150, BulkSize: 64, TemplateThreads: 64, HeadlessBulkSize: 10, HeadlessTemplateThreads: 10, Retries: 2}
+	applyPresentation(options, []Presentation{{RateLimit: 12, BulkSize: 3, TemplateThreads: 2, RequestLimit: 25}})
+	if options.RateLimit != 12 || options.BulkSize != 3 || options.HeadlessBulkSize != 3 || options.TemplateThreads != 2 || options.HeadlessTemplateThreads != 2 || options.RequestLimit != 25 || options.Retries != 0 {
+		t.Fatalf("sealed execution limits were not applied: %+v", options)
+	}
+}

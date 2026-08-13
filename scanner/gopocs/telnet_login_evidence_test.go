@@ -55,6 +55,41 @@ func (capture *telnetFindingCapture) assertFinding(t *testing.T, expected []teln
 	}
 }
 
+func (capture *telnetFindingCapture) assertFindingEvents(t *testing.T, expected []telnetlib.RawExchange) {
+	t.Helper()
+	if len(capture.emitted) != 1 || len(capture.stored) != 1 {
+		t.Fatalf("finding copies = emitted:%d stored:%d, want one each", len(capture.emitted), len(capture.stored))
+	}
+	if !reflect.DeepEqual(capture.emitted[0].GoPoc, capture.stored[0]) {
+		t.Fatalf("OutputMessage and writeResult differ:\nemitted: %#v\nstored:  %#v", capture.emitted[0].GoPoc, capture.stored[0])
+	}
+	actual := capture.stored[0].Exchanges
+	if len(actual) != len(expected) {
+		t.Fatalf("Telnet exchange count = %d, want %d: %#v", len(actual), len(expected), actual)
+	}
+	matched := make([]bool, len(actual))
+	for _, raw := range expected {
+		want := binaryGoPocExchange("", raw.Request, raw.Response)
+		found := false
+		for index, exchange := range actual {
+			if matched[index] || exchange.Request != want.Request || exchange.Response != want.Response {
+				continue
+			}
+			matched[index] = true
+			found = true
+			break
+		}
+		if !found {
+			t.Fatalf("Telnet evidence is missing request=%q response=%q: %#v", want.Request, want.Response, actual)
+		}
+	}
+	for _, exchange := range actual {
+		if exchange.Encoding != "hex-dump" {
+			t.Fatalf("Telnet evidence encoding = %q, want hex-dump", exchange.Encoding)
+		}
+	}
+}
+
 func TestTelnetUnauthorizedPublishesConnectionReadsAndAutomaticNegotiationWrite(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -116,7 +151,11 @@ func TestTelnetUsernamePasswordPublishesOnlyFinalSuccessfulConnection(t *testing
 		t.Fatal(err)
 	}
 	waitTelnetScript(t, done)
-	capture.assertFinding(t, []telnetlib.RawExchange{
+	// Reads and writes are recorded after their respective socket operation
+	// completes. A peer response can therefore be recorded before the write
+	// goroutine records the request that triggered it. Assert the complete
+	// successful-session evidence without depending on scheduler ordering.
+	capture.assertFindingEvents(t, []telnetlib.RawExchange{
 		{Response: loginPrompt},
 		{Request: username},
 		{Response: passwordPrompt},
@@ -164,7 +203,7 @@ func TestTelnetOnlyPasswordPublishesSuccessfulConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitTelnetScript(t, done)
-	capture.assertFinding(t, []telnetlib.RawExchange{
+	capture.assertFindingEvents(t, []telnetlib.RawExchange{
 		{Response: passwordPrompt},
 		{Request: password},
 		{Response: successResponse},

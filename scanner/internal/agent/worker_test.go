@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -108,46 +107,6 @@ func TestNewWorkerPublishesCapabilitiesWithoutTrustingTransportTag(t *testing.T)
 	}
 	if worker.tags["zone"] != "private-a" {
 		t.Fatalf("ordinary tag was lost: %#v", worker.tags)
-	}
-}
-
-func TestWorkerTLSAndCredentialValidationFailClosed(t *testing.T) {
-	worker := NewWorker("agent-tls", "127.0.0.1:50053", "http://127.0.0.1:8085", 1, nil)
-	cfg := engine.Config(structs.DefaultConfig())
-	cfg.ExecutionMode = "credential_validation"
-	if err := worker.prepareCredentialValidationConfig(&cfg, "attempt-a"); err == nil || !strings.Contains(err.Error(), "CA-verified") {
-		t.Fatalf("plaintext credential validation error=%v", err)
-	}
-
-	tlsServer := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	defer tlsServer.Close()
-	certificate := tlsServer.TLS.Certificates[0].Certificate[0]
-	caFile := filepath.Join(t.TempDir(), "agent-ca.pem")
-	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate}), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := worker.SetTLS(caFile, "example.test"); err != nil {
-		t.Fatalf("SetTLS: %v", err)
-	}
-	if !worker.transportTLS || worker.transportCredentials == nil {
-		t.Fatal("SetTLS did not activate verified transport credentials")
-	}
-
-	cfg.CredentialBundleRef = "sealed-ref"
-	if err := worker.prepareCredentialValidationConfig(&cfg, "attempt-a"); err == nil || !strings.Contains(err.Error(), "provider is unavailable") {
-		t.Fatalf("missing bundle provider error=%v", err)
-	}
-	worker.credentialBundleProvider = func(ctx context.Context, taskID, ref string) ([]structs.UserPasswd, error) {
-		if taskID != "attempt-a" || ref != "sealed-ref" {
-			t.Fatalf("unexpected bundle request task=%q ref=%q", taskID, ref)
-		}
-		return []structs.UserPasswd{{UserName: "incremental-user", Password: "incremental-password"}}, nil
-	}
-	if err := worker.prepareCredentialValidationConfig(&cfg, "attempt-a"); err != nil {
-		t.Fatalf("prepare credential config: %v", err)
-	}
-	if len(cfg.CredentialBundle) != 1 {
-		t.Fatalf("credential bundle count=%d, want 1", len(cfg.CredentialBundle))
 	}
 }
 
@@ -1302,24 +1261,26 @@ func TestWorkerPythonScratchpadRunStreamsCompletion(t *testing.T) {
 }
 
 type fakeAgentClient struct {
-	stream              grpc.ClientStreamingClient[pb.ScanResult, pb.Ack]
-	streamErr           error
-	subscribeStream     grpc.BidiStreamingClient[pb.AgentSignal, pb.TaskNotify]
-	debugStream         grpc.ClientStreamingClient[pb.DebugEvent, pb.Ack]
-	debugErr            error
-	logStream           grpc.ClientStreamingClient[pb.LogPayload, pb.Ack]
-	taskCompleteReqs    []*pb.TaskCompleteReq
-	taskCompleteReqsM   sync.Mutex
-	taskCompleteErrs    []error
-	taskCompleteAck     *pb.Ack
-	claimTaskCalls      int
-	claimTaskHook       func() *pb.Task
-	subscribeCalls      int
-	emergencyDumpReqs   []*pb.EmergencyReq
-	emergencyDumpAcks   []*pb.Ack
-	emergencyDumpErrs   []error
-	emergencyDumpTokens []string
-	streamResultCtx     context.Context
+	stream               grpc.ClientStreamingClient[pb.ScanResult, pb.Ack]
+	streamErr            error
+	subscribeStream      grpc.BidiStreamingClient[pb.AgentSignal, pb.TaskNotify]
+	debugStream          grpc.ClientStreamingClient[pb.DebugEvent, pb.Ack]
+	debugErr             error
+	logStream            grpc.ClientStreamingClient[pb.LogPayload, pb.Ack]
+	taskCompleteReqs     []*pb.TaskCompleteReq
+	taskCompleteReqsM    sync.Mutex
+	taskCompleteErrs     []error
+	taskCompleteAck      *pb.Ack
+	claimTaskCalls       int
+	claimTaskHook        func() *pb.Task
+	subscribeCalls       int
+	emergencyDumpReqs    []*pb.EmergencyReq
+	emergencyDumpAcks    []*pb.Ack
+	emergencyDumpErrs    []error
+	emergencyDumpTokens  []string
+	streamResultCtx      context.Context
+	credentialBundleResp *pb.FetchCredentialBundleResp
+	credentialBundleErr  error
 }
 
 func (c *fakeAgentClient) Register(ctx context.Context, in *pb.RegisterReq, opts ...grpc.CallOption) (*pb.RegisterResp, error) {
@@ -1332,6 +1293,16 @@ func (c *fakeAgentClient) Heartbeat(ctx context.Context, in *pb.HeartbeatReq, op
 
 func (c *fakeAgentClient) FetchTask(ctx context.Context, in *pb.FetchTaskReq, opts ...grpc.CallOption) (*pb.Task, error) {
 	return &pb.Task{}, nil
+}
+
+func (c *fakeAgentClient) FetchCredentialBundle(ctx context.Context, in *pb.FetchCredentialBundleReq, opts ...grpc.CallOption) (*pb.FetchCredentialBundleResp, error) {
+	if c.credentialBundleErr != nil {
+		return nil, c.credentialBundleErr
+	}
+	if c.credentialBundleResp != nil {
+		return c.credentialBundleResp, nil
+	}
+	return &pb.FetchCredentialBundleResp{}, nil
 }
 
 func (c *fakeAgentClient) StreamResult(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[pb.ScanResult, pb.Ack], error) {

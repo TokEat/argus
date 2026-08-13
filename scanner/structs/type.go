@@ -54,7 +54,18 @@ type Config struct {
 	RiskValidationPocHashes     map[string]string
 	CredentialValidationTargets []CredentialValidationTarget
 	CredentialBundleRef         string
+	CredentialBundleSHA256      string
+	CredentialBundleCount       int
 	CredentialPairLimit         int
+	PreferredAgentID            string
+	PreferredNetworkZone        string
+	PreferredAgentUntilUnix     int64
+	PreferredNetworkUntilUnix   int64
+	ValidationBudgetID          string
+	ValidationTargetConcurrency int
+	ValidationRateLimit         int
+	ValidationRequestBudget     int64
+	ValidationEstimatedRequests int64
 	// CredentialBundle is resolved over the authenticated Agent channel after
 	// an Attempt is claimed. It must never be serialized into task JSON.
 	CredentialBundle           []UserPasswd `json:"-"`
@@ -269,6 +280,7 @@ type HostInfo struct {
 	UserPass            []string
 	UserPassPairs       []UserPasswd
 	CredentialPairLimit int
+	CredentialAttempt   func()
 	Password            string
 	PasswordFile        string
 	WriteResult         func(GoPocsResultType)

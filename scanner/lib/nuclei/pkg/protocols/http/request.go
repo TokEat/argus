@@ -155,7 +155,12 @@ func (request *Request) executeParallelHTTP(input *contextargs.Context, dynamicV
 		go func(httpRequest *generatedRequest) {
 			defer swg.Done()
 
-			request.options.RateLimiter.Take()
+			if err := request.options.TakeRateLimitedRequest(); err != nil {
+				mutex.Lock()
+				requestErr = multierr.Append(requestErr, err)
+				mutex.Unlock()
+				return
+			}
 
 			previous := make(map[string]interface{})
 			err := request.executeRequest(input, httpRequest, previous, false, callback, 0)
@@ -249,7 +254,9 @@ func (request *Request) executeFuzzingRule(input *contextargs.Context, previous 
 		if request.options.HostErrorsCache != nil && request.options.HostErrorsCache.Check(input.MetaInput.Input) {
 			return false
 		}
-		request.options.RateLimiter.Take()
+		if request.options.TakeRateLimitedRequest() != nil {
+			return false
+		}
 		req := &generatedRequest{
 			request:        gr.Request,
 			dynamicValues:  gr.DynamicValues,
@@ -362,7 +369,9 @@ func (request *Request) ExecuteWithResults(input *contextargs.Context, dynamicVa
 		executeFunc := func(data string, payloads, dynamicValue map[string]interface{}) (bool, error) {
 			hasInteractMatchers := interactsh.HasMatchers(request.CompiledOperators)
 
-			request.options.RateLimiter.Take()
+			if err := request.options.TakeRateLimitedRequest(); err != nil {
+				return true, err
+			}
 
 			ctx := request.newContext(input)
 			ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(request.options.Options.Timeout)*time.Second)

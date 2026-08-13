@@ -39,10 +39,11 @@ func MysqlScan(info *structs.HostInfo) (tmperr error) {
 }
 
 func MysqlConn(info *structs.HostInfo, user string, pass string) (flag bool, err error) {
+	waitCredentialAttempt(info)
 	flag = false
 	Host, Port, Username, Password := info.Host, info.Ports, user, pass
 	dataSourceName := fmt.Sprintf("%v:%v@tcp(%v:%v)/mysql?charset=utf8&timeout=%v", Username, Password, Host, Port, time.Duration(6)*time.Second)
-	gologger.AuditTimeLogger("[Go] [MYSQL-Brute] start try %s:%s %s/%s", Host, Port, Username, maskPassword(Password))
+	gologger.AuditTimeLogger("[Go] [MYSQL-Brute] start try %s:%s %s/%s", Host, Port, maskUsername(Username), maskPassword(Password))
 	db, err := sql.Open("mysql", dataSourceName)
 	if err == nil {
 		db.SetConnMaxLifetime(time.Duration(6) * time.Second)
@@ -94,7 +95,7 @@ func MysqlConn(info *structs.HostInfo, user string, pass string) (flag bool, err
 			if tables := dbTableListStr(db, "mysql"); tables != "" {
 				msg += "\nTables(sample): " + tables + "\n"
 			}
-			gologger.AuditLogger("[Go] [MYSQL-Brute] %s Result:\n%s", showData, msg)
+			gologger.AuditLogger("[Go] [MYSQL-Brute] login succeeded for %s:%s %s/%s", Host, Port, maskUsername(Username), maskPassword(Password))
 
 			emitOutput(info, ddout.OutputMessage{
 				Type:     "GoPoc",

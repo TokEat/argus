@@ -23,7 +23,7 @@ func SshScan(info *structs.HostInfo) (tmperr error) {
 	userPasswdList := sortUserPassword(info, sshUserPasswdDict, []string{"ssh"})
 
 	for _, userPass := range userPasswdList {
-		gologger.AuditTimeLogger("[Go] [SSH-Brute] start try %s:%v %v %v", info.Host, info.Ports, userPass.UserName, maskPassword(userPass.Password))
+		gologger.AuditTimeLogger("[Go] [SSH-Brute] start try %s:%v %v %v", info.Host, info.Ports, maskUsername(userPass.UserName), maskPassword(userPass.Password))
 		flag, err := SshConn(info, userPass.UserName, userPass.Password)
 		if flag == true && err == nil {
 			return err
@@ -46,6 +46,7 @@ func SshScan(info *structs.HostInfo) (tmperr error) {
 }
 
 func SshConn(info *structs.HostInfo, user string, pass string) (flag bool, err error) {
+	waitCredentialAttempt(info)
 	flag = false
 	Host, Port, Username, Password := info.Host, info.Ports, user, pass
 	Auth := []ssh.AuthMethod{ssh.Password(Password)}

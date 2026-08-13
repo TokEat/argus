@@ -58,7 +58,7 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 		result := fmt.Sprintf("Telnet://%v:%v Unauthorized", info.Host, info.Ports)
 		// gologger.Silent().Msg("[GoPoc] " + result)
 
-		showData := fmt.Sprintf("Host: %v:%v\nUnauthorized\n", info.Host, info.Ports)
+		showData := fmt.Sprintf("Host: %v:%v\nUser: <empty>\nPass: <empty>\nUnauthorized\n", info.Host, info.Ports)
 
 		publishTelnetFinding(info, showData, result, unauthorizedEvidence)
 
@@ -116,7 +116,8 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 		}
 
 		for _, pass := range passList {
-			gologger.AuditTimeLogger("[Go] [Telnet-Brute] start try %s:%v %v %v", info.Host, info.Ports, user, maskPassword(pass))
+			gologger.AuditTimeLogger("[Go] [Telnet-Brute] start try %s:%v %v %v", info.Host, info.Ports, maskUsername(user), maskPassword(pass))
+			waitCredentialAttempt(info)
 			err, successfulEvidence := telnetCheckWithEvidence(info.Host, user, pass, portInt, serverType)
 			if err == nil {
 				if serverType == telnetlib.OnlyPassword {
@@ -131,7 +132,7 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 				} else if serverType == telnetlib.UsernameAndPassword {
 					result := fmt.Sprintf("Telnet://%v:%v %s %s", info.Host, info.Ports, user, pass)
 					if shouldRenderProgress(info) {
-						gologger.Silent().Msg("[GoPoc] " + result)
+						gologger.Silent().Msgf("[GoPoc] Telnet credential verified for %s:%v user=%s password=%s", info.Host, info.Ports, maskUsername(user), maskPassword(pass))
 					}
 
 					showData := fmt.Sprintf("Host: %v:%v\nUser: %v\nPass: %v\n", info.Host, info.Ports, user, pass)

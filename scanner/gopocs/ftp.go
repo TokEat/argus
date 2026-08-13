@@ -32,7 +32,7 @@ func FtpScan(info *structs.HostInfo) (tmperr error) {
 
 	// 暴力破解
 	for _, userPass := range userPasswdList {
-		gologger.AuditTimeLogger("[Go] [FTP-Brute] start try %s:%v User:%s Pass:%s", info.Host, info.Ports, userPass.UserName, maskPassword(userPass.Password))
+		gologger.AuditTimeLogger("[Go] [FTP-Brute] start try %s:%v User:%s Pass:%s", info.Host, info.Ports, maskUsername(userPass.UserName), maskPassword(userPass.Password))
 		ftpFlag, ftpErr := FtpConn(info, userPass.UserName, userPass.Password)
 		if ftpFlag == true && ftpErr == nil {
 			return ftpErr
@@ -52,6 +52,7 @@ func FtpScan(info *structs.HostInfo) (tmperr error) {
 }
 
 func FtpConn(info *structs.HostInfo, user string, pass string) (flag bool, err error) {
+	waitCredentialAttempt(info)
 	flag = false
 	Host, Port, Username, Password := info.Host, info.Ports, user, pass
 	conn, err := ftp.DialTimeout(fmt.Sprintf("%v:%v", Host, Port), time.Duration(6)*time.Second)
@@ -61,15 +62,17 @@ func FtpConn(info *structs.HostInfo, user string, pass string) (flag bool, err e
 			flag = true
 
 			result := fmt.Sprintf("FTP://%v:%v:%v %v", Host, Port, Username, Password)
+			showData := fmt.Sprintf("Host: %v:%v\nUsername: %v\nPassword: %v\n", Host, Port, Username, Password)
+			listing := ""
 			dirs, err := conn.List("")
 			//defer conn.Logout()
 			if err == nil {
 				if len(dirs) > 0 {
 					for i := 0; i < len(dirs); i++ {
 						if len(dirs[i].Name) > 50 {
-							result += "\n      - " + dirs[i].Name[:50]
+							listing += "\n      - " + dirs[i].Name[:50]
 						} else {
-							result += "\n      - " + dirs[i].Name
+							listing += "\n      - " + dirs[i].Name
 						}
 						if i == 5 {
 							break
@@ -90,7 +93,8 @@ func FtpConn(info *structs.HostInfo, user string, pass string) (flag bool, err e
 				GoPoc: ddout.GoPocsResultType{PocName: "FTP-Login",
 					Security:    "HIGH",
 					Target:      fmt.Sprintf("%v:%v", Host, Port),
-					InfoLeft:    result,
+					InfoLeft:    showData,
+					InfoRight:   listing,
 					Description: "FTP未授权访问或弱口令",
 					ShowMsg:     result},
 				AdditionalMsg: "",
@@ -100,7 +104,8 @@ func FtpConn(info *structs.HostInfo, user string, pass string) (flag bool, err e
 				PocName:     "FTP-Login",
 				Security:    "HIGH",
 				Target:      fmt.Sprintf("%v:%v", Host, Port),
-				InfoLeft:    result,
+				InfoLeft:    showData,
+				InfoRight:   listing,
 				Description: "FTP未授权访问或弱口令",
 			})
 

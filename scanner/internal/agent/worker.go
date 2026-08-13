@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/P0lar1ght/argus/scanner/ddout"
 	"io"
 	"log"
 	"net"
@@ -431,6 +430,7 @@ func (w *Worker) Start() error {
 	if w.sessionToken == "" {
 		return fmt.Errorf("server returned empty agent session token")
 	}
+	w.credentialBundleProvider = w.fetchCredentialBundle
 	log.Printf("Agent %s successfully registered to %s (tls=%t)", w.agentID, w.serverAddr, w.transportTLS)
 	w.wg.Add(1)
 	go w.runEgressTunnel()
@@ -935,33 +935,6 @@ func applyAgentRuleFileConfig(cfg *engine.Config) {
 	cfg.NucleiTemplate = filepath.Join("config", "pocs")
 }
 
-func (w *Worker) prepareCredentialValidationConfig(cfg *engine.Config, taskID string) error {
-	if !strings.EqualFold(strings.TrimSpace(cfg.ExecutionMode), "credential_validation") {
-		return nil
-	}
-	if !w.transportTLS {
-		return errors.New("credential validation requires a CA-verified Agent gRPC TLS transport")
-	}
-	ref := strings.TrimSpace(cfg.CredentialBundleRef)
-	if ref == "" {
-		return nil
-	}
-	if w.credentialBundleProvider == nil {
-		return errors.New("credential bundle provider is unavailable")
-	}
-	fetchCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	bundle, err := w.credentialBundleProvider(fetchCtx, taskID, ref)
-	if err != nil {
-		return fmt.Errorf("fetch sealed credential bundle: %w", err)
-	}
-	if len(bundle) == 0 {
-		return errors.New("sealed credential bundle is empty")
-	}
-	cfg.CredentialBundle = bundle
-	return nil
-}
-
 func (w *Worker) executeTask(task *pb.Task) {
 	log.Printf("Received Task: %s with targets: %v", task.TaskId, task.Targets)
 
@@ -1211,7 +1184,7 @@ func (w *Worker) executeTask(task *pb.Task) {
 		}
 	}
 	ctx.OutputHook = func(msg engine.OutputMessage) {
-		mirrorAgentConsoleOutput(msg)
+		mirrorAgentConsoleOutputForMode(msg, cfg.ExecutionMode)
 
 		streamMu.Lock()
 		defer streamMu.Unlock()
@@ -1469,25 +1442,4 @@ func (w *Worker) installGlobalLogTeeWriter() *grpcTeeWriter {
 	log.Printf("[LogTee] Streaming agent logs to Server")
 
 	return tee
-}
-
-func mirrorAgentConsoleOutput(msg engine.OutputMessage) {
-	if !shouldMirrorAgentOutput(msg.Type) {
-		return
-	}
-
-	line := ddout.Render(toDDOutOutputMessage(msg))
-	if line == "" {
-		return
-	}
-	fmt.Println(line)
-}
-
-func shouldMirrorAgentOutput(messageType string) bool {
-	switch messageType {
-	case "Finger", "Active-Finger", "GoPoc", "Domain-Bind":
-		return true
-	default:
-		return false
-	}
 }

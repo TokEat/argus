@@ -103,6 +103,7 @@ func RedisScan(info *structs.HostInfo) (tmperr error) {
 }
 
 func RedisConn(info *structs.HostInfo, pass string) (flag bool, err error) {
+	waitCredentialAttempt(info)
 	flag = false
 	realhost := fmt.Sprintf("%s:%v", info.Host, info.Ports)
 	conn, err := utils.WrapperTcpWithTimeout("tcp", realhost, time.Duration(6)*time.Second)
@@ -207,7 +208,7 @@ func RedisUnauth(info *structs.HostInfo) (flag bool, err error) {
 		result := fmt.Sprintf("Redis:%s %s", realhost, "Unauthorized")
 		// gologger.Silent().Msg("[GoPoc] " + result)
 
-		showData := fmt.Sprintf("Host: %v\nUnauthorized\n", realhost)
+		showData := fmt.Sprintf("Host: %v\nPassword: <empty>\nUnauthorized\n", realhost)
 
 		info.Emit(ddout.OutputMessage{
 			Type:     "GoPoc",

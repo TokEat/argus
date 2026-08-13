@@ -49,7 +49,7 @@ func TestDispatchCredentialTargetsRejectsHTTPAndNonCredentialPlugins(t *testing.
 		{Endpoint: "https://example.test", Service: "http", Plugin: "SSH-Crack", Eligibility: "protocol"},
 		{Endpoint: "192.0.2.1:445", Service: "smb", Plugin: "SMB-MS17-010", Eligibility: "protocol"},
 	} {
-		if _, err := DispatchCredentialTargets([]structs.CredentialValidationTarget{target}, nil, 50_000, 1, nil); err == nil {
+		if _, err := DispatchCredentialTargets([]structs.CredentialValidationTarget{target}, nil, 50_000, 1, 10, nil); err == nil {
 			t.Fatalf("unexpected credential dispatch acceptance: %+v", target)
 		}
 	}
@@ -59,10 +59,10 @@ func TestDispatchCredentialTargetsEnforcesPairLimitAtBoundary(t *testing.T) {
 	target := structs.CredentialValidationTarget{
 		Endpoint: "192.0.2.1:22", Service: "ssh", Plugin: "SSH-Crack", Eligibility: "protocol",
 	}
-	if _, err := DispatchCredentialTargets([]structs.CredentialValidationTarget{target}, []structs.UserPasswd{{}, {}}, 1, 1, nil); err == nil {
+	if _, err := DispatchCredentialTargets([]structs.CredentialValidationTarget{target}, []structs.UserPasswd{{}, {}}, 1, 1, 10, nil); err == nil {
 		t.Fatal("oversized credential bundle was accepted")
 	}
-	if _, err := DispatchCredentialTargets([]structs.CredentialValidationTarget{target}, nil, 0, 1, nil); err == nil {
+	if _, err := DispatchCredentialTargets([]structs.CredentialValidationTarget{target}, nil, 0, 1, 10, nil); err == nil {
 		t.Fatal("zero credential pair limit was accepted")
 	}
 }

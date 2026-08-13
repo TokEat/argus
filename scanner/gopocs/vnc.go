@@ -29,6 +29,7 @@ func vncScanWithConnector(info *structs.HostInfo, connect vncConnector) (tmperr 
 
 	// 1. 尝试空密码
 	gologger.AuditTimeLogger("[Go] [VNC-Unauth] Try %s:%v with empty password", info.Host, info.Ports)
+	waitCredentialAttempt(info)
 	flagA, errA := connect(info, "")
 	if flagA && errA == nil {
 		gologger.AuditTimeLogger("[Go] ✅ VNC 空密码登录成功: %s:%v", info.Host, info.Ports)
@@ -100,6 +101,7 @@ func vncScanWithConnector(info *structs.HostInfo, connect vncConnector) (tmperr 
 	for i, pass := range expandedPassList {
 		gologger.AuditTimeLogger("[Go] [VNC-Brute] Trying %s:%v Pass:%s (%d/%d)", info.Host, info.Ports, maskPassword(pass), i+1, len(expandedPassList))
 
+		waitCredentialAttempt(info)
 		flag, err := connect(info, pass)
 
 		if flag && err == nil {

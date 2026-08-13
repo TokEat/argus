@@ -19,16 +19,17 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AgentService_Register_FullMethodName      = "/scan.AgentService/Register"
-	AgentService_Heartbeat_FullMethodName     = "/scan.AgentService/Heartbeat"
-	AgentService_Subscribe_FullMethodName     = "/scan.AgentService/Subscribe"
-	AgentService_ClaimTask_FullMethodName     = "/scan.AgentService/ClaimTask"
-	AgentService_FetchTask_FullMethodName     = "/scan.AgentService/FetchTask"
-	AgentService_StreamResult_FullMethodName  = "/scan.AgentService/StreamResult"
-	AgentService_TaskComplete_FullMethodName  = "/scan.AgentService/TaskComplete"
-	AgentService_EmergencyDump_FullMethodName = "/scan.AgentService/EmergencyDump"
-	AgentService_StreamLogs_FullMethodName    = "/scan.AgentService/StreamLogs"
-	AgentService_StreamDebug_FullMethodName   = "/scan.AgentService/StreamDebug"
+	AgentService_Register_FullMethodName              = "/scan.AgentService/Register"
+	AgentService_Heartbeat_FullMethodName             = "/scan.AgentService/Heartbeat"
+	AgentService_Subscribe_FullMethodName             = "/scan.AgentService/Subscribe"
+	AgentService_ClaimTask_FullMethodName             = "/scan.AgentService/ClaimTask"
+	AgentService_FetchTask_FullMethodName             = "/scan.AgentService/FetchTask"
+	AgentService_StreamResult_FullMethodName          = "/scan.AgentService/StreamResult"
+	AgentService_TaskComplete_FullMethodName          = "/scan.AgentService/TaskComplete"
+	AgentService_FetchCredentialBundle_FullMethodName = "/scan.AgentService/FetchCredentialBundle"
+	AgentService_EmergencyDump_FullMethodName         = "/scan.AgentService/EmergencyDump"
+	AgentService_StreamLogs_FullMethodName            = "/scan.AgentService/StreamLogs"
+	AgentService_StreamDebug_FullMethodName           = "/scan.AgentService/StreamDebug"
 )
 
 // AgentServiceClient is the client API for AgentService service.
@@ -54,6 +55,9 @@ type AgentServiceClient interface {
 	StreamResult(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ScanResult, Ack], error)
 	// TaskComplete 任务完成通知
 	TaskComplete(ctx context.Context, in *TaskCompleteReq, opts ...grpc.CallOption) (*Ack, error)
+	// FetchCredentialBundle returns a short-lived, one-time credential package
+	// bound to the currently leased Attempt and authenticated Agent session.
+	FetchCredentialBundle(ctx context.Context, in *FetchCredentialBundleReq, opts ...grpc.CallOption) (*FetchCredentialBundleResp, error)
 	// EmergencyDump 紧急数据下刷（竞价实例回收前调用）
 	EmergencyDump(ctx context.Context, in *EmergencyReq, opts ...grpc.CallOption) (*Ack, error)
 	// StreamLogs 节点流水日志黑匣子上传
@@ -146,6 +150,16 @@ func (c *agentServiceClient) TaskComplete(ctx context.Context, in *TaskCompleteR
 	return out, nil
 }
 
+func (c *agentServiceClient) FetchCredentialBundle(ctx context.Context, in *FetchCredentialBundleReq, opts ...grpc.CallOption) (*FetchCredentialBundleResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FetchCredentialBundleResp)
+	err := c.cc.Invoke(ctx, AgentService_FetchCredentialBundle_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *agentServiceClient) EmergencyDump(ctx context.Context, in *EmergencyReq, opts ...grpc.CallOption) (*Ack, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Ack)
@@ -205,6 +219,9 @@ type AgentServiceServer interface {
 	StreamResult(grpc.ClientStreamingServer[ScanResult, Ack]) error
 	// TaskComplete 任务完成通知
 	TaskComplete(context.Context, *TaskCompleteReq) (*Ack, error)
+	// FetchCredentialBundle returns a short-lived, one-time credential package
+	// bound to the currently leased Attempt and authenticated Agent session.
+	FetchCredentialBundle(context.Context, *FetchCredentialBundleReq) (*FetchCredentialBundleResp, error)
 	// EmergencyDump 紧急数据下刷（竞价实例回收前调用）
 	EmergencyDump(context.Context, *EmergencyReq) (*Ack, error)
 	// StreamLogs 节点流水日志黑匣子上传
@@ -241,6 +258,9 @@ func (UnimplementedAgentServiceServer) StreamResult(grpc.ClientStreamingServer[S
 }
 func (UnimplementedAgentServiceServer) TaskComplete(context.Context, *TaskCompleteReq) (*Ack, error) {
 	return nil, status.Error(codes.Unimplemented, "method TaskComplete not implemented")
+}
+func (UnimplementedAgentServiceServer) FetchCredentialBundle(context.Context, *FetchCredentialBundleReq) (*FetchCredentialBundleResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method FetchCredentialBundle not implemented")
 }
 func (UnimplementedAgentServiceServer) EmergencyDump(context.Context, *EmergencyReq) (*Ack, error) {
 	return nil, status.Error(codes.Unimplemented, "method EmergencyDump not implemented")
@@ -376,6 +396,24 @@ func _AgentService_TaskComplete_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentService_FetchCredentialBundle_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FetchCredentialBundleReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).FetchCredentialBundle(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_FetchCredentialBundle_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).FetchCredentialBundle(ctx, req.(*FetchCredentialBundleReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _AgentService_EmergencyDump_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(EmergencyReq)
 	if err := dec(in); err != nil {
@@ -434,6 +472,10 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TaskComplete",
 			Handler:    _AgentService_TaskComplete_Handler,
+		},
+		{
+			MethodName: "FetchCredentialBundle",
+			Handler:    _AgentService_FetchCredentialBundle_Handler,
 		},
 		{
 			MethodName: "EmergencyDump",

@@ -24,6 +24,7 @@
 #   ARGUS_AGENT_PSK      Agent 认证预共享密钥（默认: 自动生成）
 #   ARGUS_JWT_SECRET     API JWT 签名密钥（默认: 自动生成）
 #   ARGUS_ENCRYPT_KEY    凭证加密密钥（默认: 自动生成，Base64 32字节）
+#   ARGUS_CREDENTIAL_ENCRYPT_KEY 弱口令字典/命中凭据专用密钥（默认: 独立自动生成）
 #   ARGUS_API_PORT       HTTP API 端口（默认: 8085）
 #   ARGUS_GRPC_PORT      gRPC 端口（默认: 50051）
 #   ARGUS_GRPC_TLS_PORT  Agent TLS gRPC 端口（与证书/私钥成组配置）
@@ -67,6 +68,7 @@ GRPC_TLS_KEY="${ARGUS_GRPC_TLS_KEY:-}"
 AGENT_PSK="${ARGUS_AGENT_PSK:-$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | xxd -p)}"
 JWT_SECRET="${ARGUS_JWT_SECRET:-$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | xxd -p)}"
 ENCRYPT_KEY="${ARGUS_ENCRYPT_KEY:-$(gen_encrypt_key)}"
+CREDENTIAL_ENCRYPT_KEY="${ARGUS_CREDENTIAL_ENCRYPT_KEY:-$(gen_encrypt_key)}"
 EGRESS_GATEWAY_LISTEN="${ARGUS_EGRESS_GATEWAY_LISTEN:-}"
 EGRESS_GATEWAY_TOKEN="${ARGUS_EGRESS_GATEWAY_TOKEN:-}"
 MINIO_API_PORT="${MINIO_API_PORT:-9000}"
@@ -420,6 +422,7 @@ Environment=ARGUS_PUBLIC_IP=${PUBLIC_IP}
 Environment=ARGUS_AGENT_PSK=${AGENT_PSK}
 Environment=ARGUS_JWT_SECRET=${JWT_SECRET}
 Environment=ARGUS_ENCRYPT_KEY=${ENCRYPT_KEY}
+Environment=ARGUS_CREDENTIAL_ENCRYPT_KEY=${CREDENTIAL_ENCRYPT_KEY}
 Environment=ARGUS_EGRESS_GATEWAY_LISTEN=${EGRESS_GATEWAY_LISTEN}
 Environment=ARGUS_EGRESS_GATEWAY_TOKEN=${EGRESS_GATEWAY_TOKEN}
 Environment=ARGUS_GRPC_TLS_PORT=${GRPC_TLS_PORT}

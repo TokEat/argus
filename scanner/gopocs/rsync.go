@@ -38,6 +38,14 @@ func maskPassword(p string) string {
 	return "[REDACTED]"
 }
 
+func maskUsername(username string) string {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return "<empty>"
+	}
+	return "[REDACTED]"
+}
+
 // RsyncScan 主入口函数，符合 Argus Go POC 规范。
 func RsyncScan(info *structs.HostInfo) (err error) {
 	address := fmt.Sprintf("%s:%s", info.Host, info.Ports)
@@ -61,6 +69,7 @@ func RsyncScan(info *structs.HostInfo) (err error) {
 		gologger.AuditTimeLogger("[Go] [Rsync] Testing module: %s", module)
 
 		// 先测试是否未授权访问（空用户空密码）
+		waitCredentialAttempt(info)
 		success, msg, exchanges := tryLoginWithEvidence(address, module, "", "")
 		if success {
 			gologger.AuditTimeLogger("[Go] ✅ %s", msg)
@@ -140,15 +149,16 @@ func RsyncScan(info *structs.HostInfo) (err error) {
 				}
 				attempts++
 				maskedPass := maskPassword(pass)
-				gologger.AuditTimeLogger("[Go] [Rsync] Trying %s:%s on module %s", user, maskedPass, module)
+				gologger.AuditTimeLogger("[Go] [Rsync] Trying %s:%s on module %s", maskUsername(user), maskedPass, module)
 
+				waitCredentialAttempt(info)
 				success, msg, exchanges := tryLoginWithEvidence(address, module, user, pass)
 				if success {
 					gologger.AuditTimeLogger("[Go] ✅ %s", msg)
 
 					// 输出暴力破解成功的结果
 					result := fmt.Sprintf("Rsync://%s/%s", address, module)
-					showData := fmt.Sprintf("Module: %s\nUsername: %s\nPassword: %s\n", module, user, maskedPass)
+					showData := fmt.Sprintf("Module: %s\nUsername: %s\nPassword: %s\n", module, user, pass)
 
 					pocResult := structs.GoPocsResultType{
 						PocName:     "Rsync-Brute",
@@ -323,7 +333,7 @@ func tryLoginWithEvidence(address, module, username, password string) (bool, str
 				authWritten,
 				[]byte(authResponse),
 			))
-			return true, fmt.Sprintf("✅ Auth Success! Module=[%s] User=[%s] Pass=[%s]", module, username, maskPassword(password)), exchanges
+			return true, fmt.Sprintf("✅ Auth Success! Module=[%s] User=[%s] Pass=[%s]", module, maskUsername(username), maskPassword(password)), exchanges
 		}
 		return false, "auth failed", nil
 	}

@@ -100,11 +100,12 @@ func verifyMssql(conn *sql.DB) string {
 }
 
 func MssqlConn(info *structs.HostInfo, user string, pass string) (flag bool, err error) {
+	waitCredentialAttempt(info)
 	flag = false
 	Host, Port, Username, Password := info.Host, info.Ports, user, pass
 	dataSourceName := fmt.Sprintf("server=%s;user id=%s;password=%s;port=%v;encrypt=disable;timeout=%v",
 		Host, Username, Password, Port, time.Duration(6)*time.Second)
-	gologger.AuditTimeLogger("[Go] [MSSQL-Brute] start try %s", dataSourceName)
+	gologger.AuditTimeLogger("[Go] [MSSQL-Brute] start try %s:%s %s/%s", Host, Port, maskUsername(Username), maskPassword(Password))
 	db, err := sql.Open("mssql", dataSourceName)
 	if err == nil {
 		db.SetConnMaxLifetime(time.Duration(6) * time.Second)
@@ -118,7 +119,7 @@ func MssqlConn(info *structs.HostInfo, user string, pass string) (flag bool, err
 
 			showData := fmt.Sprintf("Host: %v:%v\nUsername: %v\nPassword: %v\n", Host, Port, Username, Password)
 			r := verifyMssql(db)
-			gologger.AuditLogger("[Go] [MSSQL-Brute] %s Result:\n%s", showData, r)
+			gologger.AuditLogger("[Go] [MSSQL-Brute] login succeeded for %s:%s %s/%s", Host, Port, maskUsername(Username), maskPassword(Password))
 
 			info.Emit(ddout.OutputMessage{
 				Type:     "GoPoc",

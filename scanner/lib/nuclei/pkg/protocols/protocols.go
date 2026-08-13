@@ -3,6 +3,7 @@ package protocols
 import (
 	"embed"
 	"encoding/base64"
+	"errors"
 	"sync/atomic"
 
 	"github.com/projectdiscovery/ratelimit"
@@ -32,6 +33,34 @@ import (
 	templateTypes "github.com/projectdiscovery/nuclei/v3/pkg/templates/types"
 	"github.com/projectdiscovery/nuclei/v3/pkg/types"
 )
+
+var ErrRequestBudgetExceeded = errors.New("nuclei request budget exceeded")
+
+type RequestBudget struct {
+	limit    int64
+	used     atomic.Int64
+	exceeded atomic.Bool
+}
+
+func NewRequestBudget(limit int64) *RequestBudget {
+	if limit <= 0 {
+		return nil
+	}
+	return &RequestBudget{limit: limit}
+}
+
+func (b *RequestBudget) Take() error {
+	if b == nil {
+		return nil
+	}
+	if b.used.Add(1) <= b.limit {
+		return nil
+	}
+	b.exceeded.Store(true)
+	return ErrRequestBudgetExceeded
+}
+
+func (b *RequestBudget) Exceeded() bool { return b != nil && b.exceeded.Load() }
 
 var MaxTemplateFileSizeForEncoding = 1024 * 1024
 
@@ -67,6 +96,8 @@ type ExecutorOptions struct {
 	Progress progress.Progress
 	// RateLimiter is a rate-limiter for limiting sent number of requests.
 	RateLimiter *ratelimit.Limiter
+	// RequestBudget is shared by every template in one embedded execution.
+	RequestBudget *RequestBudget
 	// Catalog is a template catalog implementation for nuclei
 	Catalog catalog.Catalog
 	// ProjectFile is the project file for nuclei
@@ -111,6 +142,14 @@ type ExecutorOptions struct {
 	TargetAndPocsName map[string][]string
 	EmbedPocs         embed.FS
 	EnableSeverities  []string
+}
+
+func (options *ExecutorOptions) TakeRateLimitedRequest() error {
+	if err := options.RequestBudget.Take(); err != nil {
+		return err
+	}
+	options.RateLimiter.Take()
+	return nil
 }
 
 // CreateTemplateCtxStore creates template context store (which contains templateCtx for every scan)

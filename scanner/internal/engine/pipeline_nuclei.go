@@ -22,9 +22,12 @@ import (
 
 type nucleiCaller func(map[string][]string, string, func(nucleiOutput.ResultEvent), string, bool, bool, embed.FS, string, []string, []string) ([]nucleiOutput.ResultEvent, error)
 
+type limitedNucleiCaller func(map[string][]string, string, func(nucleiOutput.ResultEvent), string, bool, bool, embed.FS, string, []string, []string, nuclei.ExecutionLimits, bool) ([]nucleiOutput.ResultEvent, error)
+
 var (
-	callNuclei        nucleiCaller = nuclei.Call
-	callNucleiMachine nucleiCaller = nuclei.CallMachine
+	callNuclei        nucleiCaller        = nuclei.Call
+	callNucleiMachine nucleiCaller        = nuclei.CallMachine
+	callNucleiLimited limitedNucleiCaller = nuclei.CallLimited
 )
 
 func configuredNucleiCaller(cfg *Config) nucleiCaller {
@@ -127,9 +130,15 @@ func runRiskValidationPhase(ctx *ScanContext, cfg *Config, enableLocalReports bo
 	if err := validateRiskValidationPocFiles(cfg, targets); err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(cfg.ValidationBudgetID) == "" || cfg.ValidationTargetConcurrency < 1 || cfg.ValidationRateLimit < 1 || cfg.ValidationRequestBudget < 1 || cfg.ValidationEstimatedRequests < 1 {
+		return nil, fmt.Errorf("risk validation requires a positive sealed execution budget")
+	}
+	if cfg.ValidationEstimatedRequests > cfg.ValidationRequestBudget {
+		return nil, fmt.Errorf("risk validation estimate exceeds the sealed request budget")
+	}
 	emitPhase(ctx, PhaseNuclei, "start", fmt.Sprintf("%d explicitly confirmed pocs", count))
 	addResult, collector := buildNucleiResultHandler(ctx, enableLocalReports)
-	results, callErr := configuredNucleiCaller(cfg)(
+	results, callErr := callNucleiLimited(
 		targets,
 		cfg.HTTPProxy,
 		addResult,
@@ -140,6 +149,8 @@ func runRiskValidationPhase(ctx *ScanContext, cfg *Config, enableLocalReports bo
 		cfg.NucleiTemplate,
 		strings.Split(cfg.ExcludeTags, ","),
 		strings.Split(cfg.Severities, ","),
+		nuclei.ExecutionLimits{RateLimit: cfg.ValidationRateLimit, TargetConcurrency: cfg.ValidationTargetConcurrency, RequestBudget: cfg.ValidationRequestBudget},
+		cfg.MachineOutput,
 	)
 	results = authoritativeNucleiResults(results, collector.snapshot())
 	if callErr != nil {

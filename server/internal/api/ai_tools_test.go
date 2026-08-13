@@ -70,6 +70,13 @@ func setupAITestDB(t *testing.T) *gorm.DB {
 		&db.ScanWorkClaim{},
 		&db.TaskCoverageLink{},
 		&db.ScanTimingEvent{},
+		&db.ScanPolicyIntent{},
+		&db.ScanStageDerivation{},
+		&db.CredentialDictionary{},
+		&db.CredentialDictionaryRevision{},
+		&db.CredentialBundle{},
+		&db.CredentialFindingSecret{},
+		&db.CredentialRevealAudit{},
 		&db.AIToolInvocation{},
 	); err != nil {
 		t.Fatalf("automigrate: %v", err)

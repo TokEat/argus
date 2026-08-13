@@ -309,6 +309,39 @@ func TestUnifiedReportRendersCompleteNucleiEvidenceWithUniqueIDs(t *testing.T) {
 	assertUniqueEvidenceIDs(t, reportHTML, 2)
 }
 
+func TestCLIReportRetainsSuccessfulCredentialEvidence(t *testing.T) {
+	const (
+		username = "report-admin"
+		password = "report-secret-value"
+	)
+	reportPath := filepath.Join(t.TempDir(), "credential-report.html")
+	startedAt := time.Date(2026, time.August, 13, 10, 0, 0, 0, time.UTC)
+	session, finished := newUnifiedReportTestSession(t, Options{
+		Path: reportPath, RunID: "credential-report-contract", Targets: []string{"192.0.2.10:22"}, StartedAt: startedAt,
+	})
+	result := structs.GoPocsResultType{
+		PocName:  "SSH-Login",
+		Security: "CRITICAL",
+		Target:   "192.0.2.10:22",
+		InfoLeft: "Username: " + username + "\nPassword: " + password + "\n",
+		ShowMsg:  "SSH credential verified",
+	}
+	item := normalizeGoPoc(result)
+	if item.Vulnerability == nil || len(item.Vulnerability.Exchanges) != 1 {
+		t.Fatalf("credential evidence missing from report model: %+v", item)
+	}
+	evidence := item.Vulnerability.Exchanges[0].Request
+	if !strings.Contains(evidence, username) || !strings.Contains(evidence, password) {
+		t.Fatalf("CLI report redacted successful credential evidence: %q", evidence)
+	}
+	session.Observe(structs.OutputMessage{Type: "GoPoc", GoPoc: result})
+	finishUnifiedReportTestSession(t, session, finished, Summary{Status: "completed", FinishedAt: startedAt.Add(time.Second)})
+	reportHTML := readReportFile(t, reportPath)
+	if !strings.Contains(reportHTML, username) || !strings.Contains(reportHTML, password) {
+		t.Fatalf("rendered CLI HTML report omitted successful credential evidence")
+	}
+}
+
 func TestUnifiedReportPreservesEscapedNucleiInteractionEvidence(t *testing.T) {
 	testDir := t.TempDir()
 	reportPath := filepath.Join(testDir, "nuclei-oast-evidence.html")

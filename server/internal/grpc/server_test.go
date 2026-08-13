@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -55,7 +54,7 @@ func setupRegisterTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := store.AutoMigrate(&db.SystemConfig{}, &db.Node{}, &db.CloudInstance{}, &db.Project{}, &db.RootTask{}, &db.TaskBatch{}, &db.SubTask{}, &db.TaskConfigRevision{}, &db.TenantQuota{}, &db.ScanObservation{}, &db.ScanCoverage{}, &db.ScanWorkClaim{}, &db.TaskCoverageLink{}, &db.ScanTimingEvent{}); err != nil {
+	if err := store.AutoMigrate(&db.SystemConfig{}, &db.Node{}, &db.CloudInstance{}, &db.Project{}, &db.RootTask{}, &db.TaskBatch{}, &db.SubTask{}, &db.TaskConfigRevision{}, &db.TenantQuota{}, &db.ScanObservation{}, &db.ScanCoverage{}, &db.ScanWorkClaim{}, &db.TaskCoverageLink{}, &db.ScanTimingEvent{}, &db.CredentialBundle{}, &db.CredentialFindingSecret{}); err != nil {
 		t.Fatalf("automigrate: %v", err)
 	}
 	old := db.DB
@@ -1621,144 +1620,5 @@ func TestRegisterPromotesWaitingCloudInstanceToRunning(t *testing.T) {
 	}
 	if node.Token != secondResp.Token || node.Version != "1.0.1" {
 		t.Fatalf("expected node to store rotated token and latest version, got %+v", node)
-	}
-}
-
-func TestHeartbeatDoesNotOverwriteServerConfirmedRunningTasks(t *testing.T) {
-	store := setupRegisterTestDB(t)
-	if err := store.Create(&db.Node{
-		TenantID:       "default",
-		AgentID:        "agent-heartbeat",
-		Status:         "Alive",
-		RunningTasks:   3,
-		RunningTaskIDs: `["server-confirmed"]`,
-		LastBeat:       1,
-	}).Error; err != nil {
-		t.Fatalf("seed node: %v", err)
-	}
-
-	server := NewServer(50051)
-	if _, err := server.Heartbeat(context.Background(), &pb.HeartbeatReq{
-		AgentId:      "agent-heartbeat",
-		RunningTasks: 0,
-	}); err != nil {
-		t.Fatalf("heartbeat with empty running task report: %v", err)
-	}
-
-	var node db.Node
-	if err := store.First(&node, "agent_id = ?", "agent-heartbeat").Error; err != nil {
-		t.Fatalf("load node: %v", err)
-	}
-	if node.RunningTasks != 3 {
-		t.Fatalf("expected server-confirmed running task count to be preserved, got %d", node.RunningTasks)
-	}
-	if node.RunningTaskIDs != `["server-confirmed"]` {
-		t.Fatalf("expected empty heartbeat to preserve task ids, got %s", node.RunningTaskIDs)
-	}
-
-	if _, err := server.Heartbeat(context.Background(), &pb.HeartbeatReq{
-		AgentId:        "agent-heartbeat",
-		RunningTasks:   4,
-		RunningTaskIds: []string{"agent-task-1", "agent-task-2"},
-	}); err != nil {
-		t.Fatalf("heartbeat with running task ids: %v", err)
-	}
-	if err := store.First(&node, "agent_id = ?", "agent-heartbeat").Error; err != nil {
-		t.Fatalf("reload node: %v", err)
-	}
-	if node.RunningTasks != 4 {
-		t.Fatalf("expected heartbeat to raise running task count, got %d", node.RunningTasks)
-	}
-	var ids []string
-	if err := json.Unmarshal([]byte(node.RunningTaskIDs), &ids); err != nil {
-		t.Fatalf("decode running task ids: %v", err)
-	}
-	if len(ids) != 2 || ids[0] != "agent-task-1" || ids[1] != "agent-task-2" {
-		t.Fatalf("expected non-empty heartbeat to refresh task ids, got %v", ids)
-	}
-}
-
-func TestSubscribeMarksExistingOfflineNodeAlive(t *testing.T) {
-	store := setupRegisterTestDB(t)
-	if err := store.Create(&db.Node{
-		TenantID: "default",
-		AgentID:  "agent-subscribe",
-		Status:   "Offline",
-		Capacity: 1,
-		LastBeat: 1,
-		Tags:     `{"target_type":"all"}`,
-		Version:  "v2.3.0",
-	}).Error; err != nil {
-		t.Fatalf("seed node: %v", err)
-	}
-
-	server := NewServer(50051)
-	stream := &subscribeTestStream{
-		recv: []*pb.AgentSignal{{AgentId: "agent-subscribe", FreeSlots: 3, SignalType: "ready"}},
-	}
-	if err := server.Subscribe(stream); err != nil {
-		t.Fatalf("subscribe: %v", err)
-	}
-
-	var node db.Node
-	if err := store.First(&node, "agent_id = ?", "agent-subscribe").Error; err != nil {
-		t.Fatalf("load node: %v", err)
-	}
-	if node.Status != "Alive" || node.LastBeat <= 1 || node.Capacity != 1 {
-		t.Fatalf("expected subscribe to revive node, got %+v", node)
-	}
-	if node.Tags != `{"target_type":"all"}` || node.Version != "v2.3.0" {
-		t.Fatalf("subscribe should preserve existing node metadata, got %+v", node)
-	}
-}
-
-type subscribeTestStream struct {
-	recv     []*pb.AgentSignal
-	sent     []*pb.TaskNotify
-	blockCh  chan struct{}
-	closeErr error
-}
-
-func (s *subscribeTestStream) Recv() (*pb.AgentSignal, error) {
-	if len(s.recv) == 0 {
-		if s.blockCh != nil {
-			<-s.blockCh
-		}
-		if s.closeErr != nil {
-			return nil, s.closeErr
-		}
-		return nil, io.EOF
-	}
-	msg := s.recv[0]
-	s.recv = s.recv[1:]
-	return msg, nil
-}
-
-func (s *subscribeTestStream) Send(msg *pb.TaskNotify) error {
-	s.sent = append(s.sent, msg)
-	return nil
-}
-
-func (s *subscribeTestStream) SetHeader(metadata.MD) error  { return nil }
-func (s *subscribeTestStream) SendHeader(metadata.MD) error { return nil }
-func (s *subscribeTestStream) SetTrailer(metadata.MD)       {}
-func (s *subscribeTestStream) Context() context.Context     { return context.Background() }
-func (s *subscribeTestStream) SendMsg(interface{}) error    { return nil }
-func (s *subscribeTestStream) RecvMsg(interface{}) error    { return io.EOF }
-
-func waitForAgentOnline(t *testing.T, hub *NotifyHub, agentID string) {
-	t.Helper()
-	deadline := time.After(2 * time.Second)
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-deadline:
-			t.Fatalf("timed out waiting for agent %s to subscribe", agentID)
-		case <-ticker.C:
-			if hub.IsAgentOnline(agentID) {
-				return
-			}
-		}
 	}
 }

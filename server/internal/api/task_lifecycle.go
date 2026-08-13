@@ -473,7 +473,7 @@ func resumeTask(c *gin.Context) {
 		}
 		resumeAttempt := func(attempt db.SubTask, batch *db.TaskBatch) error {
 			attemptState := db.CanonicalAttemptState(attempt.Status)
-			isRiskValidation := batch != nil && strings.EqualFold(strings.TrimSpace(batch.Kind), "risk_validation")
+			retryOptions, isRiskValidation, _ := automaticValidationRetryOptions(db.AttemptTriggerResume, batch, false)
 			if isRiskValidation && attemptState != db.AttemptStateRunning && attemptState != db.AttemptStateCompleted && currentRuleVersionTx(tx) != attempt.RuleVersion {
 				return errRiskBatchRuleDrift
 			}
@@ -503,17 +503,15 @@ func resumeTask(c *gin.Context) {
 				prepared = append(prepared, attempt)
 				reusedAttempts++
 			case db.AttemptStateFailed, db.AttemptStateTimeout, db.AttemptStateStopped:
-				next, appended, err := db.AppendSubTaskAttemptTx(tx, &attempt, db.AttemptRetryOptions{
-					Trigger: db.AttemptTriggerResume, UseCurrentTaskConfig: !isRiskValidation,
-					PreserveRuleVersion: isRiskValidation,
-					AllowTerminalRoot:   true, PreparedStatus: subTaskStatusDispatching,
-					PreparedControlState: db.BatchControlActive,
-				})
+				next, appended, err := db.AppendSubTaskAttemptTx(tx, &attempt, retryOptions)
 				if err != nil {
 					return err
 				}
 				if !appended {
 					return errTaskStateChanged
+				}
+				if err := prepareRetriedAutomaticValidation(tx, current, batch, attempt, &next); err != nil {
+					return err
 				}
 				prepared = append(prepared, next)
 				appendedAttempts++
@@ -672,7 +670,7 @@ func retryTask(c *gin.Context) {
 			return err
 		}
 		retryAttempt := func(attempt db.SubTask, batch *db.TaskBatch) error {
-			isRiskValidation := batch != nil && strings.EqualFold(strings.TrimSpace(batch.Kind), "risk_validation")
+			retryOptions, isRiskValidation, _ := automaticValidationRetryOptions(db.AttemptTriggerManualRetry, batch, true)
 			switch db.CanonicalAttemptState(attempt.Status) {
 			case db.AttemptStateCompleted:
 				skippedCompleted++
@@ -681,17 +679,15 @@ func retryTask(c *gin.Context) {
 				if isRiskValidation && currentRuleVersionTx(tx) != attempt.RuleVersion {
 					return errRiskBatchRuleDrift
 				}
-				next, appended, err := db.AppendSubTaskAttemptTx(tx, &attempt, db.AttemptRetryOptions{
-					Trigger: db.AttemptTriggerManualRetry, UseCurrentTaskConfig: !isRiskValidation,
-					PreserveRuleVersion: isRiskValidation,
-					AllowTerminalRoot:   true, AllowControlledBatch: true,
-					PreparedStatus: subTaskStatusDispatching, PreparedControlState: db.BatchControlActive,
-				})
+				next, appended, err := db.AppendSubTaskAttemptTx(tx, &attempt, retryOptions)
 				if err != nil {
 					return err
 				}
 				if !appended {
 					return errTaskStateChanged
+				}
+				if err := prepareRetriedAutomaticValidation(tx, current, batch, attempt, &next); err != nil {
+					return err
 				}
 				prepared = append(prepared, next)
 			}

@@ -34,7 +34,11 @@ var (
 // Argus always owns the finding sink through its callback; MachineOutput also
 // disables color and progress for a structured CLI stream.
 type Presentation struct {
-	MachineOutput bool
+	MachineOutput   bool
+	RateLimit       int
+	BulkSize        int
+	TemplateThreads int
+	RequestLimit    int64
 }
 
 func applyPresentation(options *types.Options, presentation []Presentation) {
@@ -42,11 +46,31 @@ func applyPresentation(options *types.Options, presentation []Presentation) {
 	// embedded writer enabled duplicates interactive findings and corrupts the
 	// CLI NDJSON stream with Nuclei screen output.
 	options.DisableStdout = true
-	if len(presentation) == 0 || !presentation[0].MachineOutput {
+	if len(presentation) == 0 {
 		return
 	}
-	options.NoColor = true
-	options.EnableProgressBar = false
+	current := presentation[0]
+	if current.RateLimit > 0 {
+		options.RateLimit = current.RateLimit
+	}
+	if current.BulkSize > 0 {
+		options.BulkSize = current.BulkSize
+		options.HeadlessBulkSize = current.BulkSize
+	}
+	if current.TemplateThreads > 0 {
+		options.TemplateThreads = current.TemplateThreads
+		options.HeadlessTemplateThreads = current.TemplateThreads
+	}
+	if current.RequestLimit > 0 {
+		options.RequestLimit = current.RequestLimit
+		// A logical request may otherwise fan out into transport retries that the
+		// shared budget cannot observe. Validation uses fail-closed single tries.
+		options.Retries = 0
+	}
+	if current.MachineOutput {
+		options.NoColor = true
+		options.EnableProgressBar = false
+	}
 }
 
 func CallNuclei(TargetAndPocsName map[string][]string,

@@ -132,6 +132,9 @@ type Options struct {
 	Retries int
 	// Rate-Limit is the maximum number of requests per specified target
 	RateLimit int
+	// RequestLimit is an Argus embedding safety bound. Zero keeps upstream
+	// Nuclei behavior; a positive value caps actual HTTP/DNS requests.
+	RequestLimit int64
 	// Rate-Limit is the maximum number of requests per minute for specified target
 	RateLimitMinute int
 	// PageTimeout is the maximum time to wait for a page in seconds

@@ -4,28 +4,23 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
-	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/P0lar1ght/argus/server/internal/credentialbundle"
 	"github.com/P0lar1ght/argus/server/internal/db"
 	egressbroker "github.com/P0lar1ght/argus/server/internal/egress"
 	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -61,30 +56,6 @@ func agentSupportsVersion(version string, requiredMajor, requiredMinor, required
 		return minor > requiredMinor
 	}
 	return patch >= requiredPatch
-}
-
-func isRiskValidationTask(task *pb.Task) bool {
-	if task == nil || len(task.Config) == 0 {
-		return false
-	}
-	var internal struct {
-		ExecutionMode string
-	}
-	return json.Unmarshal(task.Config, &internal) == nil && strings.EqualFold(strings.TrimSpace(internal.ExecutionMode), "risk_validation")
-}
-
-func isCredentialValidationTask(task *pb.Task) bool {
-	if task == nil || len(task.Config) == 0 {
-		return false
-	}
-	var internal struct {
-		ExecutionMode string
-	}
-	return json.Unmarshal(task.Config, &internal) == nil && strings.EqualFold(strings.TrimSpace(internal.ExecutionMode), "credential_validation")
-}
-
-func agentSupportsCredentialValidation(nodeTagsJSON string) bool {
-	return agentHasCapabilities(nodeTagsJSON, "credential_validation", "transport_tls")
 }
 
 func agentHasCapabilities(nodeTagsJSON string, capabilities ...string) bool {
@@ -142,13 +113,14 @@ type Server struct {
 	Egress *egressbroker.Broker
 
 	// queue hooks — 通过回调与任务队列解耦（RabbitMQ / Memory）
-	claimTaskHook     func(agentID string) (*pb.Task, string, error) // 原子认领
-	fetchTaskHook     func(agentID string) (*pb.Task, string, error) // 兼容旧版
-	ackTaskHook       func(msgID string) error                       // ACK 确认
-	returnTaskHook    func(task *pb.Task, msgID string) error        // 退回队列
-	requeueTaskHook   func(task *pb.Task) error                      // 重新入队（用于重试/拆分）
-	queueDepthHook    func() int32                                   // 获取队列深度
-	onTaskClaimedHook func(agentID, taskID string)                   // UI 广播 Hook
+	claimTaskHook      func(agentID string) (*pb.Task, string, error) // 原子认领
+	fetchTaskHook      func(agentID string) (*pb.Task, string, error) // 兼容旧版
+	ackTaskHook        func(msgID string) error                       // ACK 确认
+	returnTaskHook     func(task *pb.Task, msgID string) error        // 退回队列
+	requeueTaskHook    func(task *pb.Task) error                      // 重新入队（用于重试/拆分）
+	queueDepthHook     func() int32                                   // 获取队列深度
+	onTaskClaimedHook  func(agentID, taskID string)                   // UI 广播 Hook
+	onTaskTerminalHook func(context.Context, db.SubTask) error
 }
 
 func heartbeatRunningTasksExpr(reported int) interface{} {
@@ -205,100 +177,13 @@ func (s *Server) SetOnTaskClaimedHook(fn func(agentID, taskID string)) {
 	s.onTaskClaimedHook = fn
 }
 
+func (s *Server) SetOnTaskTerminalHook(fn func(context.Context, db.SubTask) error) {
+	s.onTaskTerminalHook = fn
+}
+
 // SetPSK 设置 Agent 预共享密钥（为空则跳过鉴权，适用于开发环境）
 func (s *Server) SetPSK(psk string) {
 	s.psk = psk
-}
-
-// Serve 启动 gRPC 监听
-func (s *Server) Serve() error {
-	return s.serve(s.port, nil)
-}
-
-// ServeTLS starts a second, authenticated transport for Agents that may claim
-// credential-validation work. The legacy plaintext listener remains available
-// for asset-only Agents during the upgrade window.
-func (s *Server) ServeTLS(port int, certFile, keyFile string) error {
-	certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		return fmt.Errorf("load Agent gRPC TLS certificate: %w", err)
-	}
-	transport := credentials.NewTLS(&tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		Certificates: []tls.Certificate{certificate},
-	})
-	return s.serve(port, transport)
-}
-
-func (s *Server) serve(port int, transport credentials.TransportCredentials) error {
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		return fmt.Errorf("failed to listen: %w", err)
-	}
-
-	opts := []grpc.ServerOption{
-		// Server 端 Keepalive 参数：主动检测死连接
-		grpc.KeepaliveParams(keepalive.ServerParameters{
-			MaxConnectionIdle:     5 * time.Minute,  // 空闲 5 分钟后发送 GOAWAY 让客户端重连
-			MaxConnectionAge:      2 * time.Hour,    // 连接存活上限，到期后优雅关闭让客户端重连
-			MaxConnectionAgeGrace: 30 * time.Second, // GOAWAY 后给予 30 秒完成正在进行的 RPC
-			Time:                  30 * time.Second, // 每 30 秒向客户端发送 keepalive ping
-			Timeout:               10 * time.Second, // 10 秒无 ping 回复判定连接死亡
-		}),
-		// 允许客户端以较高频率发送 keepalive ping（配合 Agent 端的 30 秒间隔）
-		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             10 * time.Second, // 允许客户端最短 10 秒发一次 ping
-			PermitWithoutStream: true,             // 允许无活跃流时也发 ping
-		}),
-	}
-	if transport != nil {
-		opts = append(opts, grpc.Creds(transport))
-	}
-	if s.psk != "" {
-		opts = append(opts,
-			grpc.UnaryInterceptor(s.unaryPSKInterceptor),
-			grpc.StreamInterceptor(s.streamPSKInterceptor),
-		)
-		log.Printf("[Auth] Agent PSK authentication enabled")
-	} else {
-		log.Printf("[Auth] WARNING: Agent PSK not set, running in open mode (dev only)")
-	}
-
-	grpcServer := grpc.NewServer(opts...)
-	pb.RegisterAgentServiceServer(grpcServer, s)
-	pb.RegisterAgentEgressServiceServer(grpcServer, s)
-
-	log.Printf("gRPC server listening at %v (tls=%t)", lis.Addr(), transport != nil)
-	return grpcServer.Serve(lis)
-}
-
-// unaryPSKInterceptor 校验 Agent 的预共享密钥（Unary RPC）
-func (s *Server) unaryPSKInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-	if err := s.validatePSK(ctx); err != nil {
-		return nil, err
-	}
-	return handler(ctx, req)
-}
-
-// streamPSKInterceptor 校验 Agent 的预共享密钥（Stream RPC）
-func (s *Server) streamPSKInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-	if err := s.validatePSK(ss.Context()); err != nil {
-		return err
-	}
-	return handler(srv, ss)
-}
-
-// validatePSK 从 gRPC metadata 中提取并校验 x-agent-psk
-func (s *Server) validatePSK(ctx context.Context) error {
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return status.Error(codes.Unauthenticated, "missing metadata")
-	}
-	tokens := md.Get("x-agent-psk")
-	if len(tokens) == 0 || tokens[0] != s.psk {
-		return status.Error(codes.Unauthenticated, "invalid agent pre-shared key")
-	}
-	return nil
 }
 
 // generateSessionToken 生成随机 session token
@@ -379,32 +264,6 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterReq) (*pb.Registe
 		Success: true,
 		Token:   token,
 	}, nil
-}
-
-func agentTransportTLS(ctx context.Context) bool {
-	remote, ok := peer.FromContext(ctx)
-	if !ok || remote.AuthInfo == nil {
-		return false
-	}
-	switch remote.AuthInfo.(type) {
-	case credentials.TLSInfo, *credentials.TLSInfo:
-		return true
-	default:
-		return false
-	}
-}
-
-func attestedAgentTags(ctx context.Context, supplied map[string]string) map[string]string {
-	tags := make(map[string]string, len(supplied)+1)
-	for key, value := range supplied {
-		if key != "transport_tls" {
-			tags[key] = value
-		}
-	}
-	if agentTransportTLS(ctx) {
-		tags["transport_tls"] = "verified"
-	}
-	return tags
 }
 
 // ============================================================================
@@ -705,6 +564,15 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 				log.Printf("[ClaimTask] Returned credential validation task %s: Agent %s lacks Server-attested TLS credential capability on the current RPC", task.TaskId, req.AgentId)
 				return &pb.Task{}, credentialErr
 			}
+		}
+		if !validationAffinityAllows(sub.Config, req.AgentId, nodeTagsJSON, time.Now()) {
+			if s.returnTaskHook == nil {
+				return &pb.Task{}, fmt.Errorf("return validation task %s for preferred Agent: queue return hook is unavailable", task.TaskId)
+			}
+			if err := s.returnTaskHook(task, msgID); err != nil {
+				return &pb.Task{}, fmt.Errorf("return validation task %s for preferred Agent: %w", task.TaskId, err)
+			}
+			return &pb.Task{}, nil
 		}
 
 		// 标签路由检查
@@ -1230,7 +1098,7 @@ func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb
 	}
 
 	// 失败批次拆分重试：对多目标失败批次执行二分拆分
-	if (status == "FAILED" || status == "TIMEOUT") && sub.RootTaskID != "" {
+	if (status == "FAILED" || status == "TIMEOUT") && sub.RootTaskID != "" && !isCredentialValidationConfig(sub.Config) {
 		splitSubs, didSplit, _ := db.SplitFailedSubTask(&sub, false)
 		if didSplit && len(splitSubs) > 0 {
 			// 拆分成功，将两个子批次推入 urgent 队列优先调度。
@@ -1265,6 +1133,11 @@ func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb
 		db.DB.Exec("UPDATE root_tasks SET completed_chunks = completed_chunks + 1 WHERE id = ?", sub.RootTaskID)
 	}
 	if sub.RootTaskID != "" {
+		if s.onTaskTerminalHook != nil {
+			if err := s.onTaskTerminalHook(ctx, sub); err != nil {
+				log.Printf("[ScanStageOrchestrator] Failed to derive validation stages for %s: %v", sub.RootTaskID, err)
+			}
+		}
 		db.RefreshRootTaskStatus(sub.RootTaskID)
 	}
 
@@ -1401,6 +1274,12 @@ func (s *Server) StreamResult(stream pb.AgentService_StreamResultServer) error {
 			}
 			continue
 		}
+		if handled, err := persistCredentialValidationResult(stream.Context(), res); handled {
+			if err != nil {
+				return status.Error(codes.PermissionDenied, err.Error())
+			}
+			continue
+		}
 		db.AddResultAsync(res.TaskId, res.PayloadType, string(res.Payload))
 	}
 }
@@ -1534,13 +1413,17 @@ func (s *Server) EmergencyDump(ctx context.Context, req *pb.EmergencyReq) (*pb.A
 			_ = db.SettleStoppedTaskBatch(db.DB, sub.TenantID, sub.BatchID, sub.ID)
 			_ = db.SyncTaskBatchStatuses(db.DB, sub.TenantID, sub.RootTaskID)
 		} else {
-			prepared, appended := db.AppendSubTaskAttempt(&sub, db.AttemptRetryOptions{
+			prepared, appended, appendErr := credentialbundle.AppendRetry(db.DB, &sub, db.AttemptRetryOptions{
 				Trigger:              db.AttemptTriggerSpotRecovery,
 				TerminalStatus:       "Failed",
 				FailureReason:        "Agent lease interrupted by Spot instance termination",
 				ConsumeRetryBudget:   false,
 				UseCurrentTaskConfig: true,
 			})
+			if appendErr != nil {
+				log.Printf("[EmergencyDump] Failed to prepare replacement attempt for %s: %v", sub.ID, appendErr)
+				continue
+			}
 			if !appended {
 				if db.SettlePausedTaskBatchAttempt(&sub, "Failed", "Agent lease interrupted while batch was paused") {
 					released++

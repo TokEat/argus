@@ -241,43 +241,16 @@ func getTaskDetail(c *gin.Context) {
 		return
 	}
 
-	// 结果统计（通过 root_task_id 直接关联到 RootTask，不受 upsert 改写 task_id 影响）
-	var assetCount, fpCount, vulnCount int64
-	db.DB.Model(&db.Asset{}).Where("root_task_id = ? AND tenant_id = ?", taskID, tenantID).Count(&assetCount)
-	db.DB.Model(&db.FingerprintHit{}).Where("root_task_id = ? AND tenant_id = ?", taskID, tenantID).Count(&fpCount)
-	db.DB.Model(&db.Vulnerability{}).Where("root_task_id = ? AND tenant_id = ?", taskID, tenantID).Count(&vulnCount)
-
-	// Fallback: 如果 root_task_id 为空（旧数据），用 task_id IN subTaskIDs 兜底
-	if assetCount == 0 && fpCount == 0 && vulnCount == 0 && len(subTasks) > 0 {
-		subTaskIDs := make([]string, len(subTasks))
-		for i, st := range subTasks {
-			subTaskIDs[i] = st.ID
-		}
-		db.DB.Model(&db.Asset{}).Where("task_id IN ? AND tenant_id = ?", subTaskIDs, tenantID).Count(&assetCount)
-		db.DB.Model(&db.FingerprintHit{}).Where("task_id IN ? AND tenant_id = ?", subTaskIDs, tenantID).Count(&fpCount)
-		db.DB.Model(&db.Vulnerability{}).Where("task_id IN ? AND tenant_id = ?", subTaskIDs, tenantID).Count(&vulnCount)
-	}
-
-	// 漏洞严重度分布
-	type sevCount struct {
-		Severity string
-		Cnt      int64
-	}
-	var sevDist []sevCount
-	db.DB.Model(&db.Vulnerability{}).
-		Select("severity, count(*) as cnt").
-		Where("root_task_id = ? AND tenant_id = ?", taskID, tenantID).
-		Group("severity").Scan(&sevDist)
-	severityMap := make(map[string]int64)
-	for _, s := range sevDist {
-		severityMap[s.Severity] = s.Cnt
-	}
+	resultStats := loadTaskResultStats(taskID, tenantID, subTasks)
 
 	// 解析原始配置为 JSON 对象返回
 	var configObj interface{}
 	if json.Unmarshal([]byte(rootTask.Config), &configObj) != nil {
 		configObj = rootTask.Config
 	}
+
+	// This projection contains immutable references and hashes, never dictionary contents.
+	scanPolicy, stageDerivations := loadTaskScanPolicyView(tenantID, taskID)
 
 	type TaskAuditResponse struct {
 		ID           uint            `json:"id"`
@@ -344,27 +317,19 @@ func getTaskDetail(c *gin.Context) {
 		"audits":               audits,
 		"coverage_explanation": coverageExplanation,
 		"timing":               timingProjection,
+		"scan_policy":          scanPolicy,
+		"stage_derivations":    stageDerivations,
 		"result_stats": gin.H{
-			"assets":       assetCount,
-			"fingerprints": fpCount,
-			"vulns":        vulnCount,
-			"severity":     severityMap,
+			"assets":       resultStats.AssetCount,
+			"fingerprints": resultStats.FingerprintCount,
+			"vulns":        resultStats.VulnerabilityCount,
+			"severity":     resultStats.Severity,
 		},
 	})
 }
 
 func createTask(c *gin.Context) {
-	var req struct {
-		ProjectID          string          `json:"project_id"`
-		Name               string          `json:"name"`
-		Targets            json.RawMessage `json:"targets"`
-		Config             json.RawMessage `json:"config"`
-		Priority           *int            `json:"priority"`
-		TimeoutSec         *int            `json:"timeout_sec"`
-		AgentSelector      json.RawMessage `json:"agent_selector"`
-		AgentSelectorRules json.RawMessage `json:"agent_selector_rules"`
-		SkipUnsupported    bool            `json:"skip_unsupported"`
-	}
+	var req taskCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -388,20 +353,13 @@ func createTask(c *gin.Context) {
 		return
 	}
 
-	priority := 1
-	if req.Priority != nil {
-		priority = *req.Priority
-	}
-	timeoutSec := 3600
-	if req.TimeoutSec != nil {
-		timeoutSec = *req.TimeoutSec
-	}
-	if priority < 0 || priority > 2 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "priority must be 0 (urgent), 1 (normal), or 2 (low)"})
+	priority, timeoutSec, err := normalizeTaskScheduling(req.Priority, req.TimeoutSec)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if timeoutSec < 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "timeout_sec must be greater than or equal to 0"})
+	if req.Policy != nil && (len(req.Config) > 0 || len(req.AgentSelector) > 0 || len(req.AgentSelectorRules) > 0) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "policy cannot be combined with raw config or legacy agent selectors"})
 		return
 	}
 	userSelector, err := parseAgentSelector(req.AgentSelector)
@@ -415,15 +373,20 @@ func createTask(c *gin.Context) {
 		return
 	}
 
-	configJSON, targetMode, err := normalizeTaskConfigPayload(req.Config)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
+	configJSON := ""
+	targetMode := taskTargetModeDirect
 	var effectiveConfig taskScanConfig
-	if err := json.Unmarshal([]byte(configJSON), &effectiveConfig); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	var semanticPlan *scanPolicyPlan
+	if req.Policy == nil {
+		configJSON, targetMode, err = normalizeTaskConfigPayload(req.Config)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if err := json.Unmarshal([]byte(configJSON), &effectiveConfig); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 	}
 	targetSource := "request"
 	if len(strings.TrimSpace(string(req.Targets))) == 0 || strings.TrimSpace(string(req.Targets)) == "null" || strings.TrimSpace(string(req.Targets)) == `""` {
@@ -444,6 +407,24 @@ func createTask(c *gin.Context) {
 			}
 			targetSource = "project_scope"
 		}
+	}
+	if req.Policy != nil {
+		plan, compileErr := compileTaskScanPolicy(c, scanPolicyPlanRequest{ProjectID: req.ProjectID, Targets: req.Targets, Policy: *req.Policy, Priority: req.Priority, TimeoutSec: req.TimeoutSec, SkipUnsupported: req.SkipUnsupported})
+		if compileErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": compileErr.Error()})
+			return
+		}
+		if strings.TrimSpace(req.PlanHash) == "" || !strings.EqualFold(strings.TrimSpace(req.PlanHash), plan.PlanHash) {
+			c.JSON(http.StatusConflict, gin.H{"code": "scan_plan_changed", "error": "plan_hash does not match the current normalized plan", "current_plan_hash": plan.PlanHash})
+			return
+		}
+		semanticPlan = &plan
+		configJSON = plan.ScannerConfig
+		if err := json.Unmarshal([]byte(configJSON), &effectiveConfig); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "compiled scanner configuration is invalid"})
+			return
+		}
+		userRules = db.ParseSelectorRulesJSON(plan.SelectorRules)
 	}
 
 	var skippedTargets []invalidTarget
@@ -498,7 +479,7 @@ func createTask(c *gin.Context) {
 	// ================================================================
 
 	batches := groupAndBatchTargets(targets, targetMode)
-	ruleVersion := currentRuleVersion()
+	ruleVersion := currentRuleVersionValue()
 	operatorID := currentUserID(c)
 	selectorJSON := mergeAgentSelector("{}", userSelector)
 	selectorRulesJSON := db.SelectorRulesToJSON(userRules)
@@ -613,6 +594,14 @@ func createTask(c *gin.Context) {
 		CurrentConfigVersion: 1,
 	}
 	configRevision := db.NewTaskConfigRevision(rootTask, 1, selectorJSON, selectorRulesJSON, operatorID, "initial configuration")
+	var policyIntent *db.ScanPolicyIntent
+	if semanticPlan != nil {
+		policyIntent, err = newScanPolicyIntent(*semanticPlan, tenantID, req.ProjectID, rootTaskID, operatorID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to persist normalized scan policy"})
+			return
+		}
+	}
 
 	// 2. Transaction for Root and SubTasks
 	var projectScopeAdded, projectSeedsAdded int
@@ -705,6 +694,11 @@ func createTask(c *gin.Context) {
 		if err := tx.Create(&configRevision).Error; err != nil {
 			return err
 		}
+		if policyIntent != nil {
+			if err := tx.Create(policyIntent).Error; err != nil {
+				return err
+			}
+		}
 		if len(taskBatches) > 0 {
 			if err := tx.CreateInBatches(taskBatches, 100).Error; err != nil {
 				return err
@@ -724,6 +718,18 @@ func createTask(c *gin.Context) {
 			"project_scope_after_count": scopeTotal,
 			"project_seeds_added_count": len(seedAdded),
 			"poc_enabled":               !effectiveConfig.NoPoc,
+			"scan_policy_hash": func() string {
+				if semanticPlan != nil {
+					return semanticPlan.PolicyHash
+				}
+				return ""
+			}(),
+			"scan_plan_hash": func() string {
+				if semanticPlan != nil {
+					return semanticPlan.PlanHash
+				}
+				return ""
+			}(),
 		})
 	})
 
@@ -743,7 +749,7 @@ func createTask(c *gin.Context) {
 		return
 	}
 	if replayed {
-		c.JSON(http.StatusOK, buildTaskCreateResponse(taskCreateResponseInput{
+		response := buildTaskCreateResponse(taskCreateResponseInput{
 			TaskID:            rootTask.ID,
 			ConfigVersion:     rootTask.CurrentConfigVersion,
 			TargetSummary:     replayTargetSummary,
@@ -755,7 +761,9 @@ func createTask(c *gin.Context) {
 			ProjectSeedsAdded: projectSeedsAdded,
 			SkippedTargets:    skippedTargets,
 			Replayed:          true,
-		}))
+		})
+		decorateTaskCreateResponse(response, semanticPlan)
+		c.JSON(http.StatusOK, response)
 		return
 	}
 
@@ -770,7 +778,7 @@ func createTask(c *gin.Context) {
 	log.Printf("[CreateTask] RootTask %s: %d targets → %d batches (profile: %v)",
 		rootTask.ID, len(targets), len(subTasks), profile.BatchesByType)
 
-	c.JSON(http.StatusOK, buildTaskCreateResponse(taskCreateResponseInput{
+	response := buildTaskCreateResponse(taskCreateResponseInput{
 		TaskID:            rootTask.ID,
 		ConfigVersion:     rootTask.CurrentConfigVersion,
 		TargetSummary:     targetSummary,
@@ -781,5 +789,7 @@ func createTask(c *gin.Context) {
 		ProjectScopeAdded: projectScopeAdded,
 		ProjectSeedsAdded: projectSeedsAdded,
 		SkippedTargets:    skippedTargets,
-	}))
+	})
+	decorateTaskCreateResponse(response, semanticPlan)
+	c.JSON(http.StatusOK, response)
 }

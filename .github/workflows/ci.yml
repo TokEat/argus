@@ -56,6 +56,10 @@ jobs:
       - name: Go tests
         run: go test ./...
 
+      - name: Embedded Nuclei request-budget tests
+        run: GOWORK=off go test ./pkg/protocols ./pkg/protocols/http ./pkg/protocols/dns ./internal/runner -run '^TestRequestBudget' -count=1
+        working-directory: scanner/lib/nuclei
+
       - name: Server Go tests
         run: go test ./...
         working-directory: server

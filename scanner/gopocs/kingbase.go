@@ -62,6 +62,7 @@ func KingbaseScan(info *structs.HostInfo) (tmperr error) {
 
 // KingbaseConn 尝试连接 Kingbase 并返回是否成功
 func KingbaseConn(info *structs.HostInfo, user, pass string) (success bool, err error) {
+	waitCredentialAttempt(info)
 	rawUser := user
 	rawPass := pass
 
@@ -70,7 +71,7 @@ func KingbaseConn(info *structs.HostInfo, user, pass string) (success bool, err 
 		url.QueryEscape(user), url.QueryEscape(pass), info.Host, info.Ports,
 	)
 
-	gologger.AuditTimeLogger("[Go] [Kingbase-Brute] Trying: %s:%s %s/%s", info.Host, info.Ports, rawUser, maskPassword(rawPass))
+	gologger.AuditTimeLogger("[Go] [Kingbase-Brute] Trying: %s:%s %s/%s", info.Host, info.Ports, maskUsername(rawUser), maskPassword(rawPass))
 
 	db, err := sql.Open("postgres", dataSourceName)
 	if err != nil {

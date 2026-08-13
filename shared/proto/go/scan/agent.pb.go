@@ -920,6 +920,186 @@ func (x *TaskCompleteReq) GetErrorMessage() string {
 	return ""
 }
 
+type FetchCredentialBundleReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	TaskId        string                 `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	BundleRef     string                 `protobuf:"bytes,3,opt,name=bundle_ref,json=bundleRef,proto3" json:"bundle_ref,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FetchCredentialBundleReq) Reset() {
+	*x = FetchCredentialBundleReq{}
+	mi := &file_proto_scan_agent_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FetchCredentialBundleReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetchCredentialBundleReq) ProtoMessage() {}
+
+func (x *FetchCredentialBundleReq) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_scan_agent_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetchCredentialBundleReq.ProtoReflect.Descriptor instead.
+func (*FetchCredentialBundleReq) Descriptor() ([]byte, []int) {
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *FetchCredentialBundleReq) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *FetchCredentialBundleReq) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *FetchCredentialBundleReq) GetBundleRef() string {
+	if x != nil {
+		return x.BundleRef
+	}
+	return ""
+}
+
+type CredentialPair struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	Password      string                 `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CredentialPair) Reset() {
+	*x = CredentialPair{}
+	mi := &file_proto_scan_agent_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CredentialPair) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CredentialPair) ProtoMessage() {}
+
+func (x *CredentialPair) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_scan_agent_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CredentialPair.ProtoReflect.Descriptor instead.
+func (*CredentialPair) Descriptor() ([]byte, []int) {
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *CredentialPair) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *CredentialPair) GetPassword() string {
+	if x != nil {
+		return x.Password
+	}
+	return ""
+}
+
+type FetchCredentialBundleResp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Pairs         []*CredentialPair      `protobuf:"bytes,1,rep,name=pairs,proto3" json:"pairs,omitempty"`
+	Sha256        string                 `protobuf:"bytes,2,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	PairCount     int32                  `protobuf:"varint,3,opt,name=pair_count,json=pairCount,proto3" json:"pair_count,omitempty"`
+	ExpiresAtUnix int64                  `protobuf:"varint,4,opt,name=expires_at_unix,json=expiresAtUnix,proto3" json:"expires_at_unix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FetchCredentialBundleResp) Reset() {
+	*x = FetchCredentialBundleResp{}
+	mi := &file_proto_scan_agent_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FetchCredentialBundleResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetchCredentialBundleResp) ProtoMessage() {}
+
+func (x *FetchCredentialBundleResp) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_scan_agent_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetchCredentialBundleResp.ProtoReflect.Descriptor instead.
+func (*FetchCredentialBundleResp) Descriptor() ([]byte, []int) {
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *FetchCredentialBundleResp) GetPairs() []*CredentialPair {
+	if x != nil {
+		return x.Pairs
+	}
+	return nil
+}
+
+func (x *FetchCredentialBundleResp) GetSha256() string {
+	if x != nil {
+		return x.Sha256
+	}
+	return ""
+}
+
+func (x *FetchCredentialBundleResp) GetPairCount() int32 {
+	if x != nil {
+		return x.PairCount
+	}
+	return 0
+}
+
+func (x *FetchCredentialBundleResp) GetExpiresAtUnix() int64 {
+	if x != nil {
+		return x.ExpiresAtUnix
+	}
+	return 0
+}
+
 type EmergencyReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
@@ -929,7 +1109,7 @@ type EmergencyReq struct {
 
 func (x *EmergencyReq) Reset() {
 	*x = EmergencyReq{}
-	mi := &file_proto_scan_agent_proto_msgTypes[13]
+	mi := &file_proto_scan_agent_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -941,7 +1121,7 @@ func (x *EmergencyReq) String() string {
 func (*EmergencyReq) ProtoMessage() {}
 
 func (x *EmergencyReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[13]
+	mi := &file_proto_scan_agent_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -954,7 +1134,7 @@ func (x *EmergencyReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EmergencyReq.ProtoReflect.Descriptor instead.
 func (*EmergencyReq) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{13}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *EmergencyReq) GetAgentId() string {
@@ -976,7 +1156,7 @@ type LogPayload struct {
 
 func (x *LogPayload) Reset() {
 	*x = LogPayload{}
-	mi := &file_proto_scan_agent_proto_msgTypes[14]
+	mi := &file_proto_scan_agent_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -988,7 +1168,7 @@ func (x *LogPayload) String() string {
 func (*LogPayload) ProtoMessage() {}
 
 func (x *LogPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[14]
+	mi := &file_proto_scan_agent_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1001,7 +1181,7 @@ func (x *LogPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogPayload.ProtoReflect.Descriptor instead.
 func (*LogPayload) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{14}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *LogPayload) GetAgentId() string {
@@ -1057,7 +1237,7 @@ type DebugEvent struct {
 
 func (x *DebugEvent) Reset() {
 	*x = DebugEvent{}
-	mi := &file_proto_scan_agent_proto_msgTypes[15]
+	mi := &file_proto_scan_agent_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1069,7 +1249,7 @@ func (x *DebugEvent) String() string {
 func (*DebugEvent) ProtoMessage() {}
 
 func (x *DebugEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[15]
+	mi := &file_proto_scan_agent_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1082,7 +1262,7 @@ func (x *DebugEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DebugEvent.ProtoReflect.Descriptor instead.
 func (*DebugEvent) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{15}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *DebugEvent) GetAgentId() string {
@@ -1284,7 +1464,21 @@ const file_proto_scan_agent_proto_rawDesc = "" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x17\n" +
 	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x16\n" +
 	"\x06status\x18\x03 \x01(\tR\x06status\x12#\n" +
-	"\rerror_message\x18\x04 \x01(\tR\ferrorMessage\")\n" +
+	"\rerror_message\x18\x04 \x01(\tR\ferrorMessage\"m\n" +
+	"\x18FetchCredentialBundleReq\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x17\n" +
+	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x1d\n" +
+	"\n" +
+	"bundle_ref\x18\x03 \x01(\tR\tbundleRef\"H\n" +
+	"\x0eCredentialPair\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\x12\x1a\n" +
+	"\bpassword\x18\x02 \x01(\tR\bpassword\"\xa6\x01\n" +
+	"\x19FetchCredentialBundleResp\x12*\n" +
+	"\x05pairs\x18\x01 \x03(\v2\x14.scan.CredentialPairR\x05pairs\x12\x16\n" +
+	"\x06sha256\x18\x02 \x01(\tR\x06sha256\x12\x1d\n" +
+	"\n" +
+	"pair_count\x18\x03 \x01(\x05R\tpairCount\x12&\n" +
+	"\x0fexpires_at_unix\x18\x04 \x01(\x03R\rexpiresAtUnix\")\n" +
 	"\fEmergencyReq\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\"u\n" +
 	"\n" +
@@ -1315,7 +1509,7 @@ const file_proto_scan_agent_proto_rawDesc = "" +
 	"\textracted\x18\x0e \x03(\tR\textracted\x12\x1f\n" +
 	"\vduration_ms\x18\x0f \x01(\x03R\n" +
 	"durationMs\x12\x14\n" +
-	"\x05error\x18\x10 \x01(\tR\x05error2\xf3\x03\n" +
+	"\x05error\x18\x10 \x01(\tR\x05error2\xcd\x04\n" +
 	"\fAgentService\x121\n" +
 	"\bRegister\x12\x11.scan.RegisterReq\x1a\x12.scan.RegisterResp\x124\n" +
 	"\tHeartbeat\x12\x12.scan.HeartbeatReq\x1a\x13.scan.HeartbeatResp\x124\n" +
@@ -1325,7 +1519,8 @@ const file_proto_scan_agent_proto_rawDesc = "" +
 	"\tFetchTask\x12\x12.scan.FetchTaskReq\x1a\n" +
 	".scan.Task\x12-\n" +
 	"\fStreamResult\x12\x10.scan.ScanResult\x1a\t.scan.Ack(\x01\x120\n" +
-	"\fTaskComplete\x12\x15.scan.TaskCompleteReq\x1a\t.scan.Ack\x12.\n" +
+	"\fTaskComplete\x12\x15.scan.TaskCompleteReq\x1a\t.scan.Ack\x12X\n" +
+	"\x15FetchCredentialBundle\x12\x1e.scan.FetchCredentialBundleReq\x1a\x1f.scan.FetchCredentialBundleResp\x12.\n" +
 	"\rEmergencyDump\x12\x12.scan.EmergencyReq\x1a\t.scan.Ack\x12+\n" +
 	"\n" +
 	"StreamLogs\x12\x10.scan.LogPayload\x1a\t.scan.Ack(\x01\x12,\n" +
@@ -1343,56 +1538,62 @@ func file_proto_scan_agent_proto_rawDescGZIP() []byte {
 	return file_proto_scan_agent_proto_rawDescData
 }
 
-var file_proto_scan_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_proto_scan_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_proto_scan_agent_proto_goTypes = []any{
-	(*Ack)(nil),             // 0: scan.Ack
-	(*RegisterReq)(nil),     // 1: scan.RegisterReq
-	(*RegisterResp)(nil),    // 2: scan.RegisterResp
-	(*HeartbeatReq)(nil),    // 3: scan.HeartbeatReq
-	(*HeartbeatResp)(nil),   // 4: scan.HeartbeatResp
-	(*FetchTaskReq)(nil),    // 5: scan.FetchTaskReq
-	(*AgentSignal)(nil),     // 6: scan.AgentSignal
-	(*TaskNotify)(nil),      // 7: scan.TaskNotify
-	(*DebugCommand)(nil),    // 8: scan.DebugCommand
-	(*ClaimTaskReq)(nil),    // 9: scan.ClaimTaskReq
-	(*Task)(nil),            // 10: scan.Task
-	(*ScanResult)(nil),      // 11: scan.ScanResult
-	(*TaskCompleteReq)(nil), // 12: scan.TaskCompleteReq
-	(*EmergencyReq)(nil),    // 13: scan.EmergencyReq
-	(*LogPayload)(nil),      // 14: scan.LogPayload
-	(*DebugEvent)(nil),      // 15: scan.DebugEvent
-	nil,                     // 16: scan.RegisterReq.TagsEntry
-	nil,                     // 17: scan.ClaimTaskReq.TagsEntry
+	(*Ack)(nil),                       // 0: scan.Ack
+	(*RegisterReq)(nil),               // 1: scan.RegisterReq
+	(*RegisterResp)(nil),              // 2: scan.RegisterResp
+	(*HeartbeatReq)(nil),              // 3: scan.HeartbeatReq
+	(*HeartbeatResp)(nil),             // 4: scan.HeartbeatResp
+	(*FetchTaskReq)(nil),              // 5: scan.FetchTaskReq
+	(*AgentSignal)(nil),               // 6: scan.AgentSignal
+	(*TaskNotify)(nil),                // 7: scan.TaskNotify
+	(*DebugCommand)(nil),              // 8: scan.DebugCommand
+	(*ClaimTaskReq)(nil),              // 9: scan.ClaimTaskReq
+	(*Task)(nil),                      // 10: scan.Task
+	(*ScanResult)(nil),                // 11: scan.ScanResult
+	(*TaskCompleteReq)(nil),           // 12: scan.TaskCompleteReq
+	(*FetchCredentialBundleReq)(nil),  // 13: scan.FetchCredentialBundleReq
+	(*CredentialPair)(nil),            // 14: scan.CredentialPair
+	(*FetchCredentialBundleResp)(nil), // 15: scan.FetchCredentialBundleResp
+	(*EmergencyReq)(nil),              // 16: scan.EmergencyReq
+	(*LogPayload)(nil),                // 17: scan.LogPayload
+	(*DebugEvent)(nil),                // 18: scan.DebugEvent
+	nil,                               // 19: scan.RegisterReq.TagsEntry
+	nil,                               // 20: scan.ClaimTaskReq.TagsEntry
 }
 var file_proto_scan_agent_proto_depIdxs = []int32{
-	16, // 0: scan.RegisterReq.tags:type_name -> scan.RegisterReq.TagsEntry
+	19, // 0: scan.RegisterReq.tags:type_name -> scan.RegisterReq.TagsEntry
 	8,  // 1: scan.TaskNotify.debug_command:type_name -> scan.DebugCommand
-	17, // 2: scan.ClaimTaskReq.tags:type_name -> scan.ClaimTaskReq.TagsEntry
-	1,  // 3: scan.AgentService.Register:input_type -> scan.RegisterReq
-	3,  // 4: scan.AgentService.Heartbeat:input_type -> scan.HeartbeatReq
-	6,  // 5: scan.AgentService.Subscribe:input_type -> scan.AgentSignal
-	9,  // 6: scan.AgentService.ClaimTask:input_type -> scan.ClaimTaskReq
-	5,  // 7: scan.AgentService.FetchTask:input_type -> scan.FetchTaskReq
-	11, // 8: scan.AgentService.StreamResult:input_type -> scan.ScanResult
-	12, // 9: scan.AgentService.TaskComplete:input_type -> scan.TaskCompleteReq
-	13, // 10: scan.AgentService.EmergencyDump:input_type -> scan.EmergencyReq
-	14, // 11: scan.AgentService.StreamLogs:input_type -> scan.LogPayload
-	15, // 12: scan.AgentService.StreamDebug:input_type -> scan.DebugEvent
-	2,  // 13: scan.AgentService.Register:output_type -> scan.RegisterResp
-	4,  // 14: scan.AgentService.Heartbeat:output_type -> scan.HeartbeatResp
-	7,  // 15: scan.AgentService.Subscribe:output_type -> scan.TaskNotify
-	10, // 16: scan.AgentService.ClaimTask:output_type -> scan.Task
-	10, // 17: scan.AgentService.FetchTask:output_type -> scan.Task
-	0,  // 18: scan.AgentService.StreamResult:output_type -> scan.Ack
-	0,  // 19: scan.AgentService.TaskComplete:output_type -> scan.Ack
-	0,  // 20: scan.AgentService.EmergencyDump:output_type -> scan.Ack
-	0,  // 21: scan.AgentService.StreamLogs:output_type -> scan.Ack
-	0,  // 22: scan.AgentService.StreamDebug:output_type -> scan.Ack
-	13, // [13:23] is the sub-list for method output_type
-	3,  // [3:13] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	20, // 2: scan.ClaimTaskReq.tags:type_name -> scan.ClaimTaskReq.TagsEntry
+	14, // 3: scan.FetchCredentialBundleResp.pairs:type_name -> scan.CredentialPair
+	1,  // 4: scan.AgentService.Register:input_type -> scan.RegisterReq
+	3,  // 5: scan.AgentService.Heartbeat:input_type -> scan.HeartbeatReq
+	6,  // 6: scan.AgentService.Subscribe:input_type -> scan.AgentSignal
+	9,  // 7: scan.AgentService.ClaimTask:input_type -> scan.ClaimTaskReq
+	5,  // 8: scan.AgentService.FetchTask:input_type -> scan.FetchTaskReq
+	11, // 9: scan.AgentService.StreamResult:input_type -> scan.ScanResult
+	12, // 10: scan.AgentService.TaskComplete:input_type -> scan.TaskCompleteReq
+	13, // 11: scan.AgentService.FetchCredentialBundle:input_type -> scan.FetchCredentialBundleReq
+	16, // 12: scan.AgentService.EmergencyDump:input_type -> scan.EmergencyReq
+	17, // 13: scan.AgentService.StreamLogs:input_type -> scan.LogPayload
+	18, // 14: scan.AgentService.StreamDebug:input_type -> scan.DebugEvent
+	2,  // 15: scan.AgentService.Register:output_type -> scan.RegisterResp
+	4,  // 16: scan.AgentService.Heartbeat:output_type -> scan.HeartbeatResp
+	7,  // 17: scan.AgentService.Subscribe:output_type -> scan.TaskNotify
+	10, // 18: scan.AgentService.ClaimTask:output_type -> scan.Task
+	10, // 19: scan.AgentService.FetchTask:output_type -> scan.Task
+	0,  // 20: scan.AgentService.StreamResult:output_type -> scan.Ack
+	0,  // 21: scan.AgentService.TaskComplete:output_type -> scan.Ack
+	15, // 22: scan.AgentService.FetchCredentialBundle:output_type -> scan.FetchCredentialBundleResp
+	0,  // 23: scan.AgentService.EmergencyDump:output_type -> scan.Ack
+	0,  // 24: scan.AgentService.StreamLogs:output_type -> scan.Ack
+	0,  // 25: scan.AgentService.StreamDebug:output_type -> scan.Ack
+	15, // [15:26] is the sub-list for method output_type
+	4,  // [4:15] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_proto_scan_agent_proto_init() }
@@ -1406,7 +1607,7 @@ func file_proto_scan_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_scan_agent_proto_rawDesc), len(file_proto_scan_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   18,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -406,6 +406,7 @@ func (r *Runner) RunEnumeration(TargetAndPocsName map[string][]string) error {
 
 	// Create the executor options which will be used throughout the execution
 	// stage by the nuclei engine modules.
+	requestBudget := protocols.NewRequestBudget(r.options.RequestLimit)
 	executorOpts := protocols.ExecutorOptions{
 		Output:            r.output,
 		Options:           r.options,
@@ -413,6 +414,7 @@ func (r *Runner) RunEnumeration(TargetAndPocsName map[string][]string) error {
 		Catalog:           r.catalog,
 		IssuesClient:      r.issuesClient,
 		RateLimiter:       r.rateLimiter,
+		RequestBudget:     requestBudget,
 		Interactsh:        r.interactsh,
 		ProjectFile:       r.projectFile,
 		Browser:           r.browser,
@@ -524,6 +526,9 @@ func (r *Runner) RunEnumeration(TargetAndPocsName map[string][]string) error {
 		return errors.Wrap(err, "missing required input (http response) to run passive templates")
 	}
 
+	if requestBudget.Exceeded() {
+		return protocols.ErrRequestBudgetExceeded
+	}
 	return err
 }
 

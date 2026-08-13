@@ -124,7 +124,9 @@ func (request *Request) execute(input *contextargs.Context, domain string, metad
 		}
 	}
 
-	request.options.RateLimiter.Take()
+	if err := request.options.TakeRateLimitedRequest(); err != nil {
+		return err
+	}
 
 	// Send the request to the target servers
 	response, err := dnsClient.Do(compiledRequest)

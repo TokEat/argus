@@ -360,6 +360,7 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 		c.Next()
 	})
 	r.Use(assetDiscoveryRequestBodyLimitMiddleware())
+	r.Use(scanPolicyRequestBodyLimitMiddleware())
 	r.Use(validateUTF8TextBodyMiddleware())
 	r.Use(gzipMiddleware())
 

@@ -1,4 +1,4 @@
-.PHONY: cli agent server yaksha yaksha-image yaksha-up yaksha-down mcp proto-egress legacy all clean docker infra-up infra-down infra-logs db-init db-migrate db-verify setup-local smoke-local test coverage frontend-smoke cloud-smoke source-size-check brand-check release-artifacts lint ci
+.PHONY: cli agent server yaksha yaksha-image yaksha-up yaksha-down mcp proto-scan proto-egress nuclei-embed-test legacy all clean docker infra-up infra-down infra-logs db-init db-migrate db-verify setup-local smoke-local test coverage frontend-smoke cloud-smoke source-size-check brand-check release-artifacts lint ci
 
 COMPOSE_FILE := server/deploy/docker-compose.yml
 DOCKER_COMPOSE := docker compose -f $(COMPOSE_FILE)
@@ -29,16 +29,23 @@ server:
 mcp:
 	cd mcp && go build -o ../bin/argus-mcp ./cmd/argus-mcp
 
-# Generate the shared Agent/Yaksha egress contract with pinned generators.
-proto-egress:
+# Generate shared Agent and Yaksha egress contracts with pinned generators.
+proto-scan:
 	@tool_dir=$$(mktemp -d); \
 	GOBIN=$$tool_dir go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11; \
 	GOBIN=$$tool_dir go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1; \
 	PATH=$$tool_dir:$$PATH protoc -I shared/proto \
 		--go_out=shared/proto --go_opt=module=github.com/P0lar1ght/argus/shared/proto \
 		--go-grpc_out=shared/proto --go-grpc_opt=module=github.com/P0lar1ght/argus/shared/proto \
-		shared/proto/proto/scan/egress.proto; \
+		shared/proto/proto/scan/agent.proto shared/proto/proto/scan/egress.proto; \
 	rm -rf $$tool_dir
+
+proto-egress: proto-scan
+
+# Vendored Nuclei is a nested module; root `go test ./...` does not discover
+# its request-budget contract tests.
+nuclei-embed-test:
+	cd scanner/lib/nuclei && GOWORK=off go test ./pkg/protocols ./pkg/protocols/http ./pkg/protocols/dns ./internal/runner -run '^TestRequestBudget' -count=1
 
 # Yaksha 独立 Yaklang EXP runtime；保持独立 module 依赖边界。
 yaksha:
@@ -90,6 +97,7 @@ smoke-local:
 
 test:
 	go test ./...
+	$(MAKE) nuclei-embed-test
 	cd server && go test ./...
 	cd mcp && go test ./...
 	cd yaksha && GOWORK=off go test ./...

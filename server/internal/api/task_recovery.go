@@ -7,6 +7,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/P0lar1ght/argus/server/internal/credentialbundle"
 	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/P0lar1ght/argus/server/internal/scheduler"
 )
@@ -297,13 +298,17 @@ func handleTimeoutTasks(q *scheduler.TaskQueue) {
 		leaseStreamMsgID := sub.StreamMsgID
 		log.Printf("[TimeoutDaemon] SubTask %s timed out (timeout=%ds)", sub.ID, sub.TimeoutSec)
 		if sub.RetryCount < sub.MaxRetry {
-			prepared, retryPrepared := db.AppendSubTaskAttempt(&sub, db.AttemptRetryOptions{
+			prepared, retryPrepared, retryErr := credentialbundle.AppendRetry(db.DB, &sub, db.AttemptRetryOptions{
 				Trigger:              db.AttemptTriggerTimeoutRetry,
 				TerminalStatus:       "Timeout",
 				FailureReason:        fmt.Sprintf("attempt exceeded %d second timeout", sub.TimeoutSec),
 				ConsumeRetryBudget:   true,
 				UseCurrentTaskConfig: true,
 			})
+			if retryErr != nil {
+				log.Printf("[TimeoutDaemon] SubTask %s retry preparation failed: %v", sub.ID, retryErr)
+				continue
+			}
 			if !retryPrepared {
 				var batch db.TaskBatch
 				batchPaused := sub.BatchID != "" && db.DB.Select("id", "control_state").

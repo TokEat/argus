@@ -117,14 +117,14 @@ func DmScan(info *structs.HostInfo) (tmperr error) {
 		password := cred.Pass
 
 		gologger.AuditTimeLogger("[Go] [DM-Brute] Trying %s:%s | User: %s | Pass: %s (%d/%d)",
-			info.Host, info.Ports, username, maskPassword(password), i+1, len(expandedList))
+			info.Host, info.Ports, maskUsername(username), maskPassword(password), i+1, len(expandedList))
 
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		flag, err := DmConnWithContext(ctx, info, username, password)
 		cancel()
 
 		if flag && err == nil {
-			gologger.AuditTimeLogger("[Go] ✅ DM 登录成功: %s:%s | %s/%s", info.Host, info.Ports, username, maskPassword(password))
+			gologger.AuditTimeLogger("[Go] ✅ DM 登录成功: %s:%s | %s/%s", info.Host, info.Ports, maskUsername(username), maskPassword(password))
 			return nil
 		}
 
@@ -147,6 +147,7 @@ func DmScan(info *structs.HostInfo) (tmperr error) {
 
 // DmConnWithContext 使用 context 控制超时
 func DmConnWithContext(ctx context.Context, info *structs.HostInfo, user, pass string) (flag bool, err error) {
+	waitCredentialAttempt(info)
 	host, portStr := info.Host, info.Ports
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
@@ -154,7 +155,7 @@ func DmConnWithContext(ctx context.Context, info *structs.HostInfo, user, pass s
 	}
 
 	dataSourceName := fmt.Sprintf("dm://%s:%s@%s:%d", url.QueryEscape(user), url.QueryEscape(pass), host, port)
-	gologger.AuditTimeLogger("[Go] [DM-Conn] Connecting: %s:%d %s/%s", host, port, user, maskPassword(pass))
+	gologger.AuditTimeLogger("[Go] [DM-Conn] Connecting: %s:%d %s/%s", host, port, maskUsername(user), maskPassword(pass))
 
 	db, err := sql.Open("dm", dataSourceName)
 	if err != nil {

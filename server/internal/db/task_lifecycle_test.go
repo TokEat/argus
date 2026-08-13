@@ -17,7 +17,7 @@ func setupTaskLifecycleTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := store.AutoMigrate(&SystemConfig{}, &RootTask{}, &SubTask{}, &TaskBatch{}, &TaskConfigRevision{}); err != nil {
+	if err := store.AutoMigrate(&SystemConfig{}, &RootTask{}, &SubTask{}, &TaskBatch{}, &TaskConfigRevision{}, &ScanPolicyIntent{}); err != nil {
 		t.Fatalf("automigrate: %v", err)
 	}
 	old := DB
@@ -26,6 +26,44 @@ func setupTaskLifecycleTestDB(t *testing.T) *gorm.DB {
 		DB = old
 	})
 	return store
+}
+
+func TestRefreshSemanticRootWaitsForPendingStagesAndReportsPartialCoverage(t *testing.T) {
+	store := setupTaskLifecycleTestDB(t)
+	root := RootTask{ID: "semantic-lifecycle", TenantID: "tenant-a", ProjectID: "project-a", Status: "Running"}
+	batch := TaskBatch{ID: "semantic-asset", TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Kind: "asset_scan", TargetCount: 1, LatestAttemptID: "semantic-asset-attempt"}
+	attempt := SubTask{ID: batch.LatestAttemptID, TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, BatchID: batch.ID, Status: "Done", ChunkTargets: `["example.com"]`}
+	intent := ScanPolicyIntent{TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, RiskStatus: ScanStageIntentPending, CredentialStatus: ScanStageIntentSkipped}
+	for _, row := range []interface{}{&root, &batch, &attempt, &intent} {
+		if err := store.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	RefreshRootTaskStatus(root.ID)
+	if err := store.First(&root, "id = ?", root.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Status != "Running" {
+		t.Fatalf("semantic root completed before validation derivation: %s", root.Status)
+	}
+	if err := store.Model(&ScanPolicyIntent{}).Where("root_task_id = ?", root.ID).Update("risk_status", ScanStageIntentDerived).Error; err != nil {
+		t.Fatal(err)
+	}
+	failedBatch := TaskBatch{ID: "semantic-risk", TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Sequence: 1, Kind: "risk_validation", TargetCount: 1, LatestAttemptID: "semantic-risk-attempt"}
+	failedAttempt := SubTask{ID: failedBatch.LatestAttemptID, TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, BatchID: failedBatch.ID, Status: "Failed", ChunkTargets: `["https://example.com"]`}
+	if err := store.Create(&failedBatch).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(&failedAttempt).Error; err != nil {
+		t.Fatal(err)
+	}
+	RefreshRootTaskStatus(root.ID)
+	if err := store.First(&root, "id = ?", root.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Status != "PartialDone" {
+		t.Fatalf("semantic partial coverage status=%s want PartialDone", root.Status)
+	}
 }
 
 func TestRefreshRootTaskStatusTerminalConvergence(t *testing.T) {

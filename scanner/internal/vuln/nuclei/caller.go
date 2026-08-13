@@ -12,6 +12,12 @@ import (
 
 var callMu sync.Mutex
 
+type ExecutionLimits struct {
+	RateLimit         int
+	TargetConcurrency int
+	RequestBudget     int64
+}
+
 // Call 调用 Nuclei 进行漏洞扫描。
 func Call(targetAndPocsName map[string][]string,
 	httpProxy string,
@@ -51,6 +57,33 @@ func CallMachine(targetAndPocsName map[string][]string,
 	return callnuclei.CallNuclei(targetAndPocsName, httpProxy, addResult,
 		pocNameForSearch, noInteractsh, wafBypassHeaders, embedPocs, nucleiTemplate,
 		excludeTags, severities, callnuclei.Presentation{MachineOutput: true})
+}
+
+// CallLimited applies the Server-sealed validation allocation. The target and
+// template concurrency share the same allocation so parallel validation
+// stages cannot each expand back to Nuclei's much larger defaults.
+func CallLimited(targetAndPocsName map[string][]string,
+	httpProxy string,
+	addResult func(result output.ResultEvent),
+	pocNameForSearch string,
+	noInteractsh bool,
+	wafBypassHeaders bool,
+	embedPocs embed.FS,
+	nucleiTemplate string,
+	excludeTags []string,
+	severities []string,
+	limits ExecutionLimits,
+	machineOutput bool,
+) ([]output.ResultEvent, error) {
+	callMu.Lock()
+	defer callMu.Unlock()
+
+	return callnuclei.CallNuclei(targetAndPocsName, httpProxy, addResult,
+		pocNameForSearch, noInteractsh, wafBypassHeaders, embedPocs, nucleiTemplate,
+		excludeTags, severities, callnuclei.Presentation{
+			MachineOutput: machineOutput, RateLimit: limits.RateLimit,
+			BulkSize: limits.TargetConcurrency, TemplateThreads: limits.TargetConcurrency, RequestLimit: limits.RequestBudget,
+		})
 }
 
 // CallDebug 调用 Nuclei 并启用 MatcherStatus，确保未命中时也能

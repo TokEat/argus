@@ -33,6 +33,7 @@ INSTALL_DIR="${INSTALL_DIR:-}"
 DB_DSN="${ARGUS_DB_DSN:-}"
 EGRESS_GATEWAY_LISTEN="${ARGUS_EGRESS_GATEWAY_LISTEN:-}"
 EGRESS_GATEWAY_TOKEN="${ARGUS_EGRESS_GATEWAY_TOKEN:-}"
+CREDENTIAL_ENCRYPT_KEY="${ARGUS_CREDENTIAL_ENCRYPT_KEY:-}"
 GRPC_TLS_PORT="${ARGUS_GRPC_TLS_PORT:-}"
 GRPC_TLS_CERT="${ARGUS_GRPC_TLS_CERT:-}"
 GRPC_TLS_KEY="${ARGUS_GRPC_TLS_KEY:-}"
@@ -65,6 +66,11 @@ die() {
 
 gen_hex_secret() {
     openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | xxd -p
+}
+
+gen_encrypt_key() {
+    openssl rand -base64 32 2>/dev/null | tr -d '\n' || \
+    head -c 32 /dev/urandom | base64 | tr -d '\n'
 }
 
 if [[ -n "$EGRESS_GATEWAY_LISTEN" || -n "$EGRESS_GATEWAY_TOKEN" ]]; then
@@ -208,6 +214,12 @@ env_file_value() {
 }
 
 SERVICE_CMD="$(service_execstart || true)"
+if [[ -z "$CREDENTIAL_ENCRYPT_KEY" ]]; then
+    CREDENTIAL_ENCRYPT_KEY="$(service_environment ARGUS_CREDENTIAL_ENCRYPT_KEY || true)"
+fi
+if [[ -z "$CREDENTIAL_ENCRYPT_KEY" ]]; then
+    CREDENTIAL_ENCRYPT_KEY="$(gen_encrypt_key)"
+fi
 if [[ -z "$EGRESS_GATEWAY_LISTEN" && -z "$EGRESS_GATEWAY_TOKEN" ]]; then
     EGRESS_GATEWAY_LISTEN="$(service_environment ARGUS_EGRESS_GATEWAY_LISTEN || true)"
     EGRESS_GATEWAY_TOKEN="$(service_environment ARGUS_EGRESS_GATEWAY_TOKEN || true)"
@@ -524,6 +536,7 @@ ARGUS_YAKSHA_URL=${YAKSHA_URL}
 EOF
 chmod 0600 "$MINIO_ENV_FILE" "$EXP_STORAGE_ENV_FILE"
 ensure_service_environment_file "$EXP_STORAGE_ENV_FILE"
+set_service_environment ARGUS_CREDENTIAL_ENCRYPT_KEY "$CREDENTIAL_ENCRYPT_KEY"
 if [[ -n "$EGRESS_GATEWAY_LISTEN" ]]; then
     set_service_environment ARGUS_EGRESS_GATEWAY_LISTEN "$EGRESS_GATEWAY_LISTEN"
     set_service_environment ARGUS_EGRESS_GATEWAY_TOKEN "$EGRESS_GATEWAY_TOKEN"

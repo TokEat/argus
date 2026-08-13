@@ -1,79 +1,112 @@
 package db
 
 import (
+	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
 	"gorm.io/gorm/schema"
 )
 
+func TestScanPolicyMigrationUsesCiphertextOnlyCredentialStorage(t *testing.T) {
+	contents, err := os.ReadFile("migrations/510_add_scan_policy_orchestration.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToLower(string(contents))
+	for _, required := range []string{
+		"create table if not exists scan_policy_intents",
+		"create table if not exists scan_stage_derivations",
+		"create table if not exists credential_dictionary_revisions",
+		"create table if not exists credential_bundles",
+		"create table if not exists credential_finding_secrets",
+		"ciphertext bytea not null",
+		"unique index if not exists idx_scan_stage_derivation",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("migration is missing %q", required)
+		}
+	}
+	if strings.Contains(sql, "password text") || strings.Contains(sql, "password varchar") || strings.Contains(sql, "username text") {
+		t.Fatal("migration contains plaintext credential columns")
+	}
+}
+
 func TestSchemaModelTableNames(t *testing.T) {
 	expected := map[string]string{
-		"SchemaMigration":        "schema_migrations",
-		"Project":                "projects",
-		"ProjectMember":          "project_members",
-		"CronTask":               "cron_tasks",
-		"RootTask":               "root_tasks",
-		"SubTask":                "sub_tasks",
-		"TaskBatch":              "task_batches",
-		"TaskConfigRevision":     "task_config_revisions",
-		"TaskAudit":              "task_audits",
-		"AssetDiscoveryAudit":    "asset_discovery_audits",
-		"ScanObservation":        "scan_observations",
-		"ScanCoverage":           "scan_coverages",
-		"ScanWorkClaim":          "scan_work_claims",
-		"TaskCoverageLink":       "task_coverage_links",
-		"ScanTimingEvent":        "scan_timing_events",
-		"NotificationRule":       "notification_rules",
-		"Domain":                 "domains",
-		"Asset":                  "assets",
-		"Credential":             "credentials",
-		"FingerprintHit":         "fingerprint_hits",
-		"Vulnerability":          "vulnerabilities",
-		"AssetChangeLog":         "asset_change_logs",
-		"Report":                 "reports",
-		"Node":                   "nodes",
-		"AgentSessionAudit":      "agent_session_audits",
-		"WSEventLog":             "ws_event_logs",
-		"Arsenal":                "arsenals",
-		"ArsenalAIReview":        "arsenal_ai_reviews",
-		"AIToolInvocation":       "ai_tool_invocations",
-		"User":                   "users",
-		"CustomRole":             "custom_roles",
-		"TenantQuota":            "tenant_quotas",
-		"SystemConfig":           "system_configs",
-		"AgentLog":               "agent_logs",
-		"AgentLogAlertRule":      "agent_log_alert_rules",
-		"AgentLogAlertEvent":     "agent_log_alert_events",
-		"AgentLogArchive":        "agent_log_archives",
-		"BuildJob":               "build_jobs",
-		"RuleCatalogBootstrap":   "rule_catalog_bootstraps",
-		"FingerprintRule":        "fingerprint_rules",
-		"PocRule":                "poc_rules",
-		"WorkflowRule":           "workflow_rules",
-		"WorkflowProductSummary": "workflow_product_summaries",
-		"DirRule":                "dir_rules",
-		"ExploitRule":            "exploit_rules",
-		"ExploitAudit":           "exploit_audits",
-		"ExploitRiskWaiver":      "exploit_risk_waivers",
-		"ExploitRun":             "exploit_runs",
-		"ExploitArtifact":        "exploit_artifacts",
-		"ExpEgressAudit":         "exp_egress_audits",
-		"Exp":                    "exps",
-		"ExpRevision":            "exp_revisions",
-		"ExpDependency":          "exp_dependencies",
-		"ExpAsset":               "exp_assets",
-		"ExpAssetRef":            "exp_asset_refs",
-		"ExpTestCase":            "exp_test_cases",
-		"ExpRun":                 "exp_runs",
-		"ExpAudit":               "exp_audits",
-		"ExpRiskWaiver":          "exp_risk_waivers",
-		"AgentPyenvJob":          "agent_pyenv_jobs",
-		"CloudAccount":           "cloud_accounts",
-		"CloudAccountBinding":    "cloud_account_bindings",
-		"CloudScalingPolicy":     "cloud_scaling_policies",
-		"CloudInstance":          "cloud_instances",
+		"SchemaMigration":              "schema_migrations",
+		"Project":                      "projects",
+		"ProjectMember":                "project_members",
+		"CronTask":                     "cron_tasks",
+		"RootTask":                     "root_tasks",
+		"SubTask":                      "sub_tasks",
+		"TaskBatch":                    "task_batches",
+		"TaskConfigRevision":           "task_config_revisions",
+		"TaskAudit":                    "task_audits",
+		"ScanPolicyIntent":             "scan_policy_intents",
+		"ScanStageDerivation":          "scan_stage_derivations",
+		"CredentialDictionary":         "credential_dictionaries",
+		"CredentialDictionaryRevision": "credential_dictionary_revisions",
+		"CredentialBundle":             "credential_bundles",
+		"CredentialFindingSecret":      "credential_finding_secrets",
+		"CredentialRevealAudit":        "credential_reveal_audits",
+		"AssetDiscoveryAudit":          "asset_discovery_audits",
+		"ScanObservation":              "scan_observations",
+		"ScanCoverage":                 "scan_coverages",
+		"ScanWorkClaim":                "scan_work_claims",
+		"TaskCoverageLink":             "task_coverage_links",
+		"ScanTimingEvent":              "scan_timing_events",
+		"NotificationRule":             "notification_rules",
+		"Domain":                       "domains",
+		"Asset":                        "assets",
+		"Credential":                   "credentials",
+		"FingerprintHit":               "fingerprint_hits",
+		"Vulnerability":                "vulnerabilities",
+		"AssetChangeLog":               "asset_change_logs",
+		"Report":                       "reports",
+		"Node":                         "nodes",
+		"AgentSessionAudit":            "agent_session_audits",
+		"WSEventLog":                   "ws_event_logs",
+		"Arsenal":                      "arsenals",
+		"ArsenalAIReview":              "arsenal_ai_reviews",
+		"AIToolInvocation":             "ai_tool_invocations",
+		"User":                         "users",
+		"CustomRole":                   "custom_roles",
+		"TenantQuota":                  "tenant_quotas",
+		"SystemConfig":                 "system_configs",
+		"AgentLog":                     "agent_logs",
+		"AgentLogAlertRule":            "agent_log_alert_rules",
+		"AgentLogAlertEvent":           "agent_log_alert_events",
+		"AgentLogArchive":              "agent_log_archives",
+		"BuildJob":                     "build_jobs",
+		"RuleCatalogBootstrap":         "rule_catalog_bootstraps",
+		"FingerprintRule":              "fingerprint_rules",
+		"PocRule":                      "poc_rules",
+		"WorkflowRule":                 "workflow_rules",
+		"WorkflowProductSummary":       "workflow_product_summaries",
+		"DirRule":                      "dir_rules",
+		"ExploitRule":                  "exploit_rules",
+		"ExploitAudit":                 "exploit_audits",
+		"ExploitRiskWaiver":            "exploit_risk_waivers",
+		"ExploitRun":                   "exploit_runs",
+		"ExploitArtifact":              "exploit_artifacts",
+		"ExpEgressAudit":               "exp_egress_audits",
+		"Exp":                          "exps",
+		"ExpRevision":                  "exp_revisions",
+		"ExpDependency":                "exp_dependencies",
+		"ExpAsset":                     "exp_assets",
+		"ExpAssetRef":                  "exp_asset_refs",
+		"ExpTestCase":                  "exp_test_cases",
+		"ExpRun":                       "exp_runs",
+		"ExpAudit":                     "exp_audits",
+		"ExpRiskWaiver":                "exp_risk_waivers",
+		"AgentPyenvJob":                "agent_pyenv_jobs",
+		"CloudAccount":                 "cloud_accounts",
+		"CloudAccountBinding":          "cloud_account_bindings",
+		"CloudScalingPolicy":           "cloud_scaling_policies",
+		"CloudInstance":                "cloud_instances",
 	}
 	expected["AssetDiscoverySnapshot"] = "asset_discovery_snapshots"
 	expected["AssetDiscoverySnapshotItem"] = "asset_discovery_snapshot_items"

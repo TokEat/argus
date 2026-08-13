@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
@@ -77,6 +78,19 @@ var PluginDescriptors = map[string]PluginDescriptor{
 	"SAP-P4-Scan":         {Capability: CapabilityProtocolCheck},
 }
 
+func init() {
+	// The shared semantic catalog is the authority for credential targets. Keep
+	// the local descriptor shape only because dispatch also classifies legacy
+	// non-credential plugins.
+	for _, descriptor := range scanpolicy.CredentialServices {
+		ports := make([]string, len(descriptor.Ports))
+		for i, port := range descriptor.Ports {
+			ports[i] = strconv.Itoa(port)
+		}
+		PluginDescriptors[descriptor.Plugin] = credentialDescriptor(descriptor.Services, ports...)
+	}
+}
+
 func credentialDescriptor(services []string, ports ...string) PluginDescriptor {
 	return PluginDescriptor{Capability: CapabilityCredential, Services: services, Ports: ports}
 }
@@ -117,13 +131,16 @@ func CredentialPluginEligible(plugin, service, port, eligibility string) error {
 // DispatchCredentialTargets executes an already sealed target-to-plugin plan.
 // It does no discovery, protocol identification, fingerprinting, or generic
 // GoPoc dispatch.
-func DispatchCredentialTargets(targets []structs.CredentialValidationTarget, bundle []structs.UserPasswd, pairLimit, threads int, emit func(structs.OutputMessage)) ([]structs.GoPocsResultType, error) {
+func DispatchCredentialTargets(targets []structs.CredentialValidationTarget, bundle []structs.UserPasswd, pairLimit, threads, rateLimit int, emit func(structs.OutputMessage)) ([]structs.GoPocsResultType, error) {
 	InitDictionaries()
 	if pairLimit < 1 || pairLimit > scanpolicy.MaximumCredentialPairLimit {
 		return nil, fmt.Errorf("credential pair limit must be between 1 and %d", scanpolicy.MaximumCredentialPairLimit)
 	}
 	if len(bundle) > pairLimit {
 		return nil, fmt.Errorf("credential bundle contains %d pairs, exceeding limit %d", len(bundle), pairLimit)
+	}
+	if rateLimit < 1 {
+		return nil, fmt.Errorf("credential validation rate limit must be positive")
 	}
 	if emit == nil {
 		emit = func(msg structs.OutputMessage) {}
@@ -132,6 +149,7 @@ func DispatchCredentialTargets(targets []structs.CredentialValidationTarget, bun
 		threads = 1
 	}
 	dispatcher := &dispatcher{emit: emit, presentation: Presentation{MachineOutput: true}}
+	limiter := newCredentialAttemptLimiter(rateLimit)
 	plan := make([]scanTask, 0, len(targets))
 	seen := make(map[string]struct{}, len(targets))
 	for _, target := range targets {
@@ -150,7 +168,7 @@ func DispatchCredentialTargets(targets []structs.CredentialValidationTarget, bun
 		pairs := append([]structs.UserPasswd(nil), bundle...)
 		plan = append(plan, scanTask{Name: target.Plugin, Info: structs.HostInfo{
 			Host: host, Ports: port, InfoStr: []string{target.Service},
-			UserPassPairs: pairs, CredentialPairLimit: pairLimit,
+			UserPassPairs: pairs, CredentialPairLimit: pairLimit, CredentialAttempt: limiter.Wait,
 		}})
 	}
 	sort.Slice(plan, func(i, j int) bool {
@@ -166,6 +184,33 @@ func DispatchCredentialTargets(targets []structs.CredentialValidationTarget, bun
 	}
 	wg.Wait()
 	return dispatcher.snapshotResults(), dispatcher.executionError()
+}
+
+type credentialAttemptLimiter struct {
+	mu       sync.Mutex
+	interval time.Duration
+	next     time.Time
+}
+
+func newCredentialAttemptLimiter(rateLimit int) *credentialAttemptLimiter {
+	return &credentialAttemptLimiter{interval: time.Second / time.Duration(rateLimit)}
+}
+
+func (l *credentialAttemptLimiter) Wait() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	if now.Before(l.next) {
+		time.Sleep(l.next.Sub(now))
+		now = time.Now()
+	}
+	l.next = now.Add(l.interval)
+}
+
+func waitCredentialAttempt(info *structs.HostInfo) {
+	if info != nil && info.CredentialAttempt != nil {
+		info.CredentialAttempt()
+	}
 }
 
 func splitCredentialEndpoint(endpoint string) (string, string, error) {

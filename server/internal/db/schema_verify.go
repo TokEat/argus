@@ -19,6 +19,13 @@ func schemaTableSpecs() []schemaTableSpec {
 			Table:   "schema_migrations",
 			Columns: []string{"version", "name", "checksum", "applied_at"},
 		},
+		{Table: "scan_policy_intents", Columns: []string{"tenant_id", "project_id", "root_task_id", "schema_version", "policy_json", "policy_hash", "plan_hash", "risk_status", "credential_status", "authorization_actor_id", "authorized_at", "created_at", "updated_at"}, Indexes: []string{"idx_scan_policy_intent_root", "idx_scan_policy_intents_project_id", "idx_scan_policy_intents_policy_hash", "idx_scan_policy_intents_plan_hash"}},
+		{Table: "scan_stage_derivations", Columns: []string{"tenant_id", "project_id", "root_task_id", "stage", "status", "plan_hash", "observation_hash", "batch_id", "attempt_id", "item_count", "summary", "created_at", "updated_at"}, Indexes: []string{"idx_scan_stage_derivation", "idx_scan_stage_derivations_batch_id"}},
+		{Table: "credential_dictionaries", Columns: []string{"id", "tenant_id", "project_id", "kind", "name", "created_by", "created_at", "updated_at", "deleted_at"}, Indexes: []string{"idx_credential_dictionary_name", "idx_credential_dictionaries_project_id"}},
+		{Table: "credential_dictionary_revisions", Columns: []string{"tenant_id", "project_id", "dictionary_id", "revision", "sha256", "item_count", "ciphertext", "nonce", "created_by", "created_at"}, Indexes: []string{"idx_credential_dictionary_revision", "idx_credential_dictionary_revisions_tenant_id"}},
+		{Table: "credential_bundles", Columns: []string{"ref", "tenant_id", "project_id", "root_task_id", "batch_id", "attempt_id", "agent_id", "sha256", "pair_count", "ciphertext", "nonce", "expires_at", "claimed_at", "consumed_at", "created_at"}, Indexes: []string{"idx_credential_bundles_attempt_id", "idx_credential_bundles_expires_at"}},
+		{Table: "credential_finding_secrets", Columns: []string{"id", "tenant_id", "project_id", "root_task_id", "attempt_id", "endpoint", "service", "plugin", "masked_username", "ciphertext", "nonce", "created_at"}, Indexes: []string{"idx_credential_finding_secrets_tenant_id", "idx_credential_finding_secrets_root_task_id"}},
+		{Table: "credential_reveal_audits", Columns: []string{"tenant_id", "project_id", "finding_id", "actor_id", "action", "created_at"}, Indexes: []string{"idx_credential_reveal_audits_tenant_id", "idx_credential_reveal_audits_finding_id"}},
 		{
 			Table: "exp_egress_audits",
 			Columns: []string{

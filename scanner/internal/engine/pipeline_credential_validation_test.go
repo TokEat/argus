@@ -17,9 +17,14 @@ func validCredentialConfig() Config {
 			Endpoint: "192.0.2.10:22", Service: "ssh", Plugin: "SSH-Crack",
 			Eligibility: "protocol", ObservationSHA256: strings.Repeat("a", 64),
 		}},
-		CredentialPairLimit: 50_000,
-		CredentialBundle:    []structs.UserPasswd{{UserName: "incremental", Password: "secret"}},
-		GoPocThreads:        1,
+		CredentialPairLimit:         50_000,
+		CredentialBundle:            []structs.UserPasswd{{UserName: "incremental", Password: "secret"}},
+		GoPocThreads:                1,
+		ValidationBudgetID:          "root-budget",
+		ValidationTargetConcurrency: 1,
+		ValidationRateLimit:         10,
+		ValidationRequestBudget:     50_000,
+		ValidationEstimatedRequests: 50_000,
 	}
 }
 
@@ -27,10 +32,10 @@ func TestPipelineCredentialValidationRunsOnlySealedCredentialPhase(t *testing.T)
 	original := dispatchCredentialTargets
 	t.Cleanup(func() { dispatchCredentialTargets = original })
 	called := false
-	dispatchCredentialTargets = func(targets []structs.CredentialValidationTarget, bundle []structs.UserPasswd, pairLimit, threads int, emit func(structs.OutputMessage)) ([]structs.GoPocsResultType, error) {
+	dispatchCredentialTargets = func(targets []structs.CredentialValidationTarget, bundle []structs.UserPasswd, pairLimit, threads, rateLimit int, emit func(structs.OutputMessage)) ([]structs.GoPocsResultType, error) {
 		called = true
-		if len(targets) != 1 || targets[0].Plugin != "SSH-Crack" || len(bundle) != 1 || pairLimit != 50_000 {
-			t.Fatalf("unexpected sealed credential dispatch: targets=%+v bundle=%+v limit=%d", targets, bundle, pairLimit)
+		if len(targets) != 1 || targets[0].Plugin != "SSH-Crack" || len(bundle) != 1 || pairLimit != 50_000 || rateLimit != 10 {
+			t.Fatalf("unexpected sealed credential dispatch: targets=%+v bundle=%+v limit=%d rate=%d", targets, bundle, pairLimit, rateLimit)
 		}
 		return nil, nil
 	}
@@ -79,7 +84,7 @@ func TestCredentialValidationPropagatesDispatcherFailure(t *testing.T) {
 	original := dispatchCredentialTargets
 	t.Cleanup(func() { dispatchCredentialTargets = original })
 	want := errors.New("credential runner failed")
-	dispatchCredentialTargets = func([]structs.CredentialValidationTarget, []structs.UserPasswd, int, int, func(structs.OutputMessage)) ([]structs.GoPocsResultType, error) {
+	dispatchCredentialTargets = func([]structs.CredentialValidationTarget, []structs.UserPasswd, int, int, int, func(structs.OutputMessage)) ([]structs.GoPocsResultType, error) {
 		return nil, want
 	}
 	ctx := &ScanContext{Config: validCredentialConfig(), Ctx: context.Background()}

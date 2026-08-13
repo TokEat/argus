@@ -30,6 +30,10 @@ service AgentService {
   // TaskComplete 任务完成通知
   rpc TaskComplete(TaskCompleteReq) returns (Ack);
 
+  // FetchCredentialBundle returns a short-lived, one-time credential package
+  // bound to the currently leased Attempt and authenticated Agent session.
+  rpc FetchCredentialBundle(FetchCredentialBundleReq) returns (FetchCredentialBundleResp);
+
   // EmergencyDump 紧急数据下刷（竞价实例回收前调用）
   rpc EmergencyDump(EmergencyReq) returns (Ack);
 
@@ -145,6 +149,24 @@ message TaskCompleteReq {
   string task_id = 2;
   string status = 3;         // DONE, FAILED, CANCELLED
   string error_message = 4;
+}
+
+message FetchCredentialBundleReq {
+  string agent_id = 1;
+  string task_id = 2;
+  string bundle_ref = 3;
+}
+
+message CredentialPair {
+  string username = 1;
+  string password = 2;
+}
+
+message FetchCredentialBundleResp {
+  repeated CredentialPair pairs = 1;
+  string sha256 = 2;
+  int32 pair_count = 3;
+  int64 expires_at_unix = 4;
 }
 
 message EmergencyReq {

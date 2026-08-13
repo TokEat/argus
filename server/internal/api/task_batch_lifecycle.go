@@ -328,6 +328,7 @@ func resumeTaskBatch(c *gin.Context) {
 
 		beforeStatus := attempt.Status
 		isRiskValidation := strings.EqualFold(strings.TrimSpace(currentBatch.Kind), "risk_validation")
+		isCredentialValidation := strings.EqualFold(strings.TrimSpace(currentBatch.Kind), "credential_validation")
 		attemptState := db.CanonicalAttemptState(attempt.Status)
 		if isRiskValidation && attemptState != db.AttemptStateRunning && attemptState != db.AttemptStateCompleted && currentRuleVersionTx(tx) != attempt.RuleVersion {
 			return errRiskBatchRuleDrift
@@ -363,8 +364,8 @@ func resumeTaskBatch(c *gin.Context) {
 			prepared = &attempt
 		case db.AttemptStateFailed, db.AttemptStateTimeout, db.AttemptStateStopped:
 			next, appended, err := db.AppendSubTaskAttemptTx(tx, &attempt, db.AttemptRetryOptions{
-				Trigger: db.AttemptTriggerResume, UseCurrentTaskConfig: !isRiskValidation,
-				PreserveRuleVersion: isRiskValidation,
+				Trigger: db.AttemptTriggerResume, UseCurrentTaskConfig: !isRiskValidation && !isCredentialValidation,
+				PreserveRuleVersion: isRiskValidation || isCredentialValidation,
 				AllowTerminalRoot:   true, AllowControlledBatch: true,
 				PreparedStatus: subTaskStatusDispatching, PreparedControlState: db.BatchControlActive,
 			})
@@ -373,6 +374,14 @@ func resumeTaskBatch(c *gin.Context) {
 			}
 			if !appended {
 				return errBatchStateChanged
+			}
+			if isCredentialValidation {
+				if err := reissueCredentialBundle(tx, currentRoot, currentBatch, attempt, &next); err != nil {
+					return err
+				}
+			}
+			if err := db.MarkAutomaticValidationStageDerived(tx, currentRoot, currentBatch, next.ID); err != nil {
+				return err
 			}
 			prepared = &next
 		case db.AttemptStateCompleted:
@@ -592,12 +601,13 @@ func retryTaskBatch(c *gin.Context) {
 		}
 		beforeStatus := attempt.Status
 		isRiskValidation := strings.EqualFold(strings.TrimSpace(currentBatch.Kind), "risk_validation")
+		isCredentialValidation := strings.EqualFold(strings.TrimSpace(currentBatch.Kind), "credential_validation")
 		if isRiskValidation && currentRuleVersionTx(tx) != attempt.RuleVersion {
 			return errRiskBatchRuleDrift
 		}
 		next, appended, err := db.AppendSubTaskAttemptTx(tx, &attempt, db.AttemptRetryOptions{
-			Trigger: db.AttemptTriggerManualRetry, UseCurrentTaskConfig: !isRiskValidation,
-			PreserveRuleVersion: isRiskValidation,
+			Trigger: db.AttemptTriggerManualRetry, UseCurrentTaskConfig: !isRiskValidation && !isCredentialValidation,
+			PreserveRuleVersion: isRiskValidation || isCredentialValidation,
 			AllowTerminalRoot:   true, AllowControlledBatch: true, PreparedStatus: subTaskStatusDispatching,
 			PreparedControlState: db.BatchControlActive,
 		})
@@ -608,6 +618,16 @@ func retryTaskBatch(c *gin.Context) {
 			return errBatchStateChanged
 		}
 		prepared = next
+		if isCredentialValidation {
+			if err := reissueCredentialBundle(tx, currentRoot, currentBatch, attempt, &prepared); err != nil {
+				return err
+			}
+		}
+		if isRiskValidation || isCredentialValidation {
+			if err := db.MarkAutomaticValidationStageDerived(tx, currentRoot, currentBatch, prepared.ID); err != nil {
+				return err
+			}
+		}
 		if db.IsTerminalTaskStatus(currentRoot.Status) {
 			update := tx.Model(&db.RootTask{}).
 				Where("id = ? AND tenant_id = ? AND status = ? AND archived_at IS NULL", currentRoot.ID, currentRoot.TenantID, currentRoot.Status).

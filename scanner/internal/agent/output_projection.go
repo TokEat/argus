@@ -1,10 +1,47 @@
 package agent
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/P0lar1ght/argus/scanner/ddout"
 	"github.com/P0lar1ght/argus/scanner/internal/engine"
 	"github.com/P0lar1ght/argus/scanner/structs"
 )
+
+func mirrorAgentConsoleOutput(msg engine.OutputMessage) {
+	mirrorAgentConsoleOutputForMode(msg, "")
+}
+
+func mirrorAgentConsoleOutputForMode(msg engine.OutputMessage, executionMode string) {
+	// Credential findings contain the raw successful secret until the Server
+	// seals them. They may travel only on the authenticated TLS result stream,
+	// never through the Agent console or persistent log tee.
+	if !shouldMirrorAgentOutputForMode(msg.Type, executionMode) {
+		return
+	}
+
+	line := ddout.Render(toDDOutOutputMessage(msg))
+	if line != "" {
+		fmt.Println(line)
+	}
+}
+
+func shouldMirrorAgentOutputForMode(messageType, executionMode string) bool {
+	if strings.EqualFold(strings.TrimSpace(executionMode), "credential_validation") {
+		return false
+	}
+	return shouldMirrorAgentOutput(messageType)
+}
+
+func shouldMirrorAgentOutput(messageType string) bool {
+	switch messageType {
+	case "Finger", "Active-Finger", "GoPoc", "Domain-Bind":
+		return true
+	default:
+		return false
+	}
+}
 
 func toDDOutOutputMessage(msg engine.OutputMessage) ddout.OutputMessage {
 	return ddout.OutputMessage{

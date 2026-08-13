@@ -39,10 +39,11 @@ func OracleScan(info *structs.HostInfo) (tmperr error) {
 }
 
 func OracleConn(info *structs.HostInfo, user string, pass string) (flag bool, err error) {
+	waitCredentialAttempt(info)
 	flag = false
 	Host, Port, Username, Password := info.Host, info.Ports, user, pass
 	dataSourceName := fmt.Sprintf("oracle://%s:%s@%s:%s/orcl", Username, Password, Host, Port)
-	gologger.AuditTimeLogger("[Go] [Oracle-Brute] start try %s", dataSourceName)
+	gologger.AuditTimeLogger("[Go] [Oracle-Brute] start try %s:%s %s/%s", Host, Port, maskUsername(Username), maskPassword(Password))
 	db, err := sql.Open("oracle", dataSourceName)
 	if err == nil {
 		db.SetConnMaxLifetime(time.Duration(6) * time.Second)

@@ -31,6 +31,15 @@ func normalizedCredentialValidationTargets(cfg *Config) ([]structs.CredentialVal
 	if len(cfg.CredentialBundle) > limit {
 		return nil, 0, fmt.Errorf("credential bundle contains %d pairs, exceeding limit %d", len(cfg.CredentialBundle), limit)
 	}
+	if strings.TrimSpace(cfg.ValidationBudgetID) == "" || cfg.ValidationTargetConcurrency < 1 || cfg.ValidationRateLimit < 1 || cfg.ValidationRequestBudget < 1 || cfg.ValidationEstimatedRequests < 1 {
+		return nil, 0, errors.New("credential validation requires a positive sealed execution budget")
+	}
+	if cfg.ValidationEstimatedRequests > cfg.ValidationRequestBudget {
+		return nil, 0, errors.New("credential validation estimate exceeds the sealed request budget")
+	}
+	if cfg.GoPocThreads < 1 || cfg.GoPocThreads > cfg.ValidationTargetConcurrency {
+		return nil, 0, errors.New("credential validation concurrency exceeds the sealed allocation")
+	}
 	allowedTargets := make(map[string]struct{}, len(cfg.Targets))
 	for _, target := range cfg.Targets {
 		target = strings.TrimSpace(target)
@@ -44,6 +53,9 @@ func normalizedCredentialValidationTargets(cfg *Config) ([]structs.CredentialVal
 	}
 	seen := make(map[string]struct{}, len(cfg.CredentialValidationTargets))
 	targets := append([]structs.CredentialValidationTarget(nil), cfg.CredentialValidationTargets...)
+	if int64(len(targets)) > cfg.ValidationRequestBudget/int64(limit) {
+		return nil, 0, errors.New("credential validation target plan exceeds the sealed request budget")
+	}
 	for i := range targets {
 		target := &targets[i]
 		target.Endpoint = strings.TrimSpace(target.Endpoint)
@@ -102,7 +114,7 @@ func runCredentialValidationPhase(ctx *ScanContext, cfg *Config) error {
 		return err
 	}
 	emitPhase(ctx, PhaseCredentialValidation, "start", fmt.Sprintf("%d authorized service checks", len(targets)))
-	results, dispatchErr := dispatchCredentialTargets(targets, cfg.CredentialBundle, limit, cfg.GoPocThreads, func(message structs.OutputMessage) {
+	results, dispatchErr := dispatchCredentialTargets(targets, cfg.CredentialBundle, limit, cfg.GoPocThreads, cfg.ValidationRateLimit, func(message structs.OutputMessage) {
 		dispatchPipelineOutput(ctx, message)
 	})
 	ctx.GoPocsResults = toEngineGoPocResults(results)

@@ -14,6 +14,7 @@ import (
 	"github.com/P0lar1ght/argus/server/internal/api"
 	"github.com/P0lar1ght/argus/server/internal/cloud"
 	_ "github.com/P0lar1ght/argus/server/internal/cloud/aliyun" // 注册阿里云 ECS Provider
+	"github.com/P0lar1ght/argus/server/internal/credentialvault"
 	"github.com/P0lar1ght/argus/server/internal/db"
 	egresspkg "github.com/P0lar1ght/argus/server/internal/egress"
 	"github.com/P0lar1ght/argus/server/internal/grpc"
@@ -169,6 +170,9 @@ func main() {
 			log.Fatalf("[SECURITY] ARGUS_JWT_SECRET is required in production mode. Use --dev to skip.")
 		}
 		if err := cloud.ValidateEncryptKeyEnv(); err != nil {
+			log.Fatalf("[SECURITY] %v. Use --dev to skip.", err)
+		}
+		if err := credentialvault.ValidateEnvironment(); err != nil {
 			log.Fatalf("[SECURITY] %v. Use --dev to skip.", err)
 		}
 	}
@@ -331,6 +335,20 @@ func main() {
 	routerDeps.EgressBroker = srv.Egress
 	routerDeps.EXPWorkspace = expWorkspace
 	api.ConfigureRouterDependencies(routerDeps)
+	scanOrchestrator := api.NewScanStageOrchestrator()
+	srv.SetOnTaskTerminalHook(scanOrchestrator.HandleAttemptTerminal)
+	go func() {
+		if err := scanOrchestrator.Reconcile(context.Background()); err != nil {
+			log.Printf("[ScanStageOrchestrator] startup reconciliation failed: %v", err)
+		}
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := scanOrchestrator.Reconcile(context.Background()); err != nil {
+				log.Printf("[ScanStageOrchestrator] reconciliation failed: %v", err)
+			}
+		}
+	}()
 
 	gatewayAddress := strings.TrimSpace(os.Getenv("ARGUS_EGRESS_GATEWAY_LISTEN"))
 	gatewayToken := strings.TrimSpace(os.Getenv("ARGUS_EGRESS_GATEWAY_TOKEN"))

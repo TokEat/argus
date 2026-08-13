@@ -97,6 +97,17 @@ func refreshRootTaskStatus(rootTaskID string, attempt int) {
 			cancelled += c.Cnt
 		}
 	}
+	semanticTask := false
+	semanticPending := false
+	var pendingIntents int64
+	if err := DB.Model(&ScanPolicyIntent{}).Where("tenant_id = ? AND root_task_id = ?", root.TenantID, rootTaskID).Count(&pendingIntents).Error; err == nil && pendingIntents > 0 {
+		semanticTask = true
+		var pendingStages int64
+		DB.Model(&ScanPolicyIntent{}).Where("tenant_id = ? AND root_task_id = ? AND (risk_status = ? OR credential_status = ?)", root.TenantID, rootTaskID, ScanStageIntentPending, ScanStageIntentPending).Count(&pendingStages)
+		if pendingStages > 0 {
+			semanticPending = true
+		}
+	}
 
 	if total == 0 && batchBacked {
 		DB.Model(&RootTask{}).
@@ -118,12 +129,18 @@ func refreshRootTaskStatus(rootTaskID string, attempt int) {
 		nextStatus = root.Status
 	case currentPaused && done < total:
 		nextStatus = root.Status
+	case semanticPending:
+		nextStatus = "Running"
+	case semanticTask && active > 0:
+		nextStatus = "Running"
 	case active > 0:
 		if done > 0 {
 			nextStatus = "PartialDone"
 		} else {
 			nextStatus = "Running"
 		}
+	case semanticTask && done > 0 && (timeout > 0 || failed > 0 || cancelled > 0):
+		nextStatus = "PartialDone"
 	case timeout > 0:
 		nextStatus = "Timeout"
 	case failed > 0:

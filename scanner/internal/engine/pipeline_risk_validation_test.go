@@ -11,14 +11,15 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/P0lar1ght/argus/scanner/internal/vuln/nuclei"
 	nucleiOutput "github.com/projectdiscovery/nuclei/v3/pkg/output"
 )
 
 func TestPipelineRiskValidationRunsOnlyExactNucleiPhase(t *testing.T) {
-	originalCall := callNuclei
-	t.Cleanup(func() { callNuclei = originalCall })
+	originalCall := callNucleiLimited
+	t.Cleanup(func() { callNucleiLimited = originalCall })
 	var received map[string][]string
-	callNuclei = func(
+	callNucleiLimited = func(
 		targets map[string][]string,
 		_ string,
 		_ func(nucleiOutput.ResultEvent),
@@ -29,11 +30,16 @@ func TestPipelineRiskValidationRunsOnlyExactNucleiPhase(t *testing.T) {
 		_ string,
 		_ []string,
 		_ []string,
+		limits nuclei.ExecutionLimits,
+		_ bool,
 	) ([]nucleiOutput.ResultEvent, error) {
 		if nameForSearch != "" {
 			t.Fatalf("risk validation used fuzzy POC search: %q", nameForSearch)
 		}
 		received = targets
+		if limits.RateLimit != 10 || limits.TargetConcurrency != 1 || limits.RequestBudget != 2 {
+			t.Fatalf("unexpected sealed Nuclei limits: %+v", limits)
+		}
 		return nil, nil
 	}
 
@@ -57,7 +63,12 @@ func TestPipelineRiskValidationRunsOnlyExactNucleiPhase(t *testing.T) {
 			RiskValidationTargets: map[string][]string{
 				"https://risk.example": {"one.yaml", "two.yml"},
 			},
-			RuleFilesOnly: true,
+			RuleFilesOnly:               true,
+			ValidationBudgetID:          "root-budget",
+			ValidationTargetConcurrency: 1,
+			ValidationRateLimit:         10,
+			ValidationRequestBudget:     2,
+			ValidationEstimatedRequests: 2,
 		},
 		FingerprintDB: []FingerPEntity{{ProductName: "loaded"}},
 		WorkFlowDB:    map[string]WorkFlowEntity{"loaded": {}},
