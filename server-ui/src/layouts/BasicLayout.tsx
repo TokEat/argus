@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
 import { Layout, Menu, Avatar, Dropdown, Space, Typography, ConfigProvider, theme, message, Select } from 'antd';
 import type { MenuProps } from 'antd';
@@ -45,8 +45,39 @@ const BasicLayout: React.FC = () => {
     const [role, setRole] = useState<UserRole>('viewer');
     const [projects, setProjects] = useState<API.Project[]>([]);
     const [selectedProject, setSelectedProject] = useState<string>('');
+    const projectRefreshSequence = useRef(0);
     const navigate = useNavigate();
     const location = useLocation();
+
+    const refreshProjects = useCallback(async (preferredProjectId = '') => {
+        const refreshSequence = ++projectRefreshSequence.current;
+        try {
+            const list = await listProjects();
+            if (refreshSequence !== projectRefreshSequence.current) return;
+            const activeProjects = (list || []).filter(p => p.Status !== 'archived');
+            setProjects(activeProjects);
+            setSelectedProject((currentProject) => {
+                const savedProject = localStorage.getItem('active_project_id');
+                const preferredProject = preferredProjectId || savedProject || currentProject;
+                if (preferredProject && activeProjects.some(p => p.ID === preferredProject)) {
+                    if (savedProject !== preferredProject) {
+                        localStorage.setItem('active_project_id', preferredProject);
+                    }
+                    return preferredProject;
+                }
+                if (activeProjects.length > 0) {
+                    localStorage.setItem('active_project_id', activeProjects[0].ID);
+                    return activeProjects[0].ID;
+                }
+                localStorage.removeItem('active_project_id');
+                return '';
+            });
+        } catch (error) {
+            if (refreshSequence === projectRefreshSequence.current) {
+                console.error('Failed to fetch projects', error);
+            }
+        }
+    }, []);
 
     // Auto Route Context Injection
     useEffect(() => {
@@ -86,30 +117,16 @@ const BasicLayout: React.FC = () => {
         const tid = localStorage.getItem('tenant_id') || 'default';
         setTenantId(tid);
 
-        const refreshProjects = (preferredProjectId = '') => listProjects().then(res => {
-            const list = res || [];
-            const activeProjects = list.filter(p => p.Status !== 'archived');
-            setProjects(activeProjects);
-            const savedProj = preferredProjectId || localStorage.getItem('active_project_id');
-            if (savedProj && activeProjects.some(p => p.ID === savedProj)) {
-                setSelectedProject(savedProj);
-            } else if (activeProjects.length > 0) {
-                setSelectedProject(activeProjects[0].ID);
-                localStorage.setItem('active_project_id', activeProjects[0].ID);
-            } else {
-                setSelectedProject('');
-                localStorage.removeItem('active_project_id');
-            }
-        }).catch(err => {
-            console.error('Failed to fetch projects', err);
-        });
         void refreshProjects();
         const handleProjectsChanged = (event: Event) => {
             void refreshProjects(projectChangePreference(event));
         };
         window.addEventListener(PROJECTS_CHANGED_EVENT, handleProjectsChanged);
-        return () => window.removeEventListener(PROJECTS_CHANGED_EVENT, handleProjectsChanged);
-    }, [navigate]);
+        return () => {
+            window.removeEventListener(PROJECTS_CHANGED_EVENT, handleProjectsChanged);
+            projectRefreshSequence.current += 1;
+        };
+    }, [navigate, refreshProjects]);
 
     // Inject identity context for Copilot
     useEffect(() => {

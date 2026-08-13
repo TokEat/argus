@@ -1,5 +1,6 @@
 import axios from 'axios';
 import request from './request';
+import { notifyProjectsChanged } from '../utils/projectSelection';
 
 // ===========================
 // Auth API
@@ -26,15 +27,21 @@ export async function listProjects(): Promise<API.Project[]> {
 }
 
 export async function createProject(data: { name: string; description?: string; member_user_ids?: string[] }): Promise<API.Project> {
-    return request.post('/projects', data);
+    const project = await request.post<never, API.Project>('/projects', data);
+    notifyProjectsChanged(project.ID);
+    return project;
 }
 
 export async function updateProject(id: string, data: { name?: string; description?: string; status?: string }): Promise<API.Project> {
-    return request.put(`/projects/${id}`, data);
+    const project = await request.put<never, API.Project>(`/projects/${id}`, data);
+    notifyProjectsChanged();
+    return project;
 }
 
 export async function deleteProject(id: string): Promise<API.MessageResponse> {
-    return request.delete(`/projects/${id}`);
+    const response = await request.delete<never, API.MessageResponse>(`/projects/${id}`);
+    notifyProjectsChanged();
+    return response;
 }
 
 export async function getProjectStats(id: string): Promise<{ project_id: string; project_name: string; tasks: number; assets: number; fingerprints: number; vulns: number }> {

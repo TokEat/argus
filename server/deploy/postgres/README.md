@@ -2,9 +2,9 @@
 
 当前目录只负责集群级建库，不负责业务表。
 
-- `sql/001-bootstrap.sql`  
+- `sql/001-bootstrap.sql`
   创建或更新应用数据库用户，并确保目标数据库存在。
-- `000-init-db.sh`  
+- `000-init-db.sh`
   统一 bootstrap 入口脚本，可直接手工执行，也可由 Docker 官方 `postgres` 镜像在首次初始化时自动执行。
 
 业务 schema 由 `argus-server --migrate-only` 负责：
@@ -82,11 +82,11 @@ bash server/deploy/postgres/000-init-db.sh
 
 ## 现行初始化职责
 
-- `000-init-db.sh`  
+- `000-init-db.sh`
   只负责建库和建用户。
-- `argus-server --migrate-only`  
+- `argus-server --migrate-only`
   负责创建 / 升级业务表、列、索引，并执行 schema 校验。空库走 baseline，已有库走 incremental。
-- 正常启动 `argus-server`  
+- 正常启动 `argus-server`
   会执行 migrations、schema verify，然后再做规则 bootstrap。
-- `--seed-from-db`  
+- `--seed-from-db`
   导入预编译弹药库，不是 schema 的一部分。

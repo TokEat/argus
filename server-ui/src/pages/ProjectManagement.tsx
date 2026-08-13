@@ -22,7 +22,6 @@ import {
 import { canAccessRole, getCurrentUserRole } from '../utils/auth';
 import dayjs from 'dayjs';
 import NetworkCanvas from '../components/NetworkCanvas';
-import { notifyProjectsChanged } from '../utils/projectSelection';
 
 const { Title, Text } = Typography;
 
@@ -103,10 +102,9 @@ const ProjectManagement: React.FC = () => {
 
             message.success('项目创建成功');
             localStorage.setItem('active_project_id', created.ID);
-            notifyProjectsChanged(created.ID);
             setCreateOpen(false);
             form.resetFields();
-            fetchProjects();
+            await fetchProjects();
         } catch (error: unknown) {
             if (typeof error === 'string') {
                 message.error(error);
@@ -133,8 +131,7 @@ const ProjectManagement: React.FC = () => {
                     localStorage.removeItem('active_project_id');
                 }
             }
-            notifyProjectsChanged();
-            fetchProjects();
+            await fetchProjects();
         } catch (error) {
             message.error(`${actionLabel}失败`);
         }
@@ -172,10 +169,9 @@ const ProjectManagement: React.FC = () => {
             if (activeProjectId === deleteTarget.ID) {
                 localStorage.removeItem('active_project_id');
             }
-            notifyProjectsChanged();
             setDeleteModalOpen(false);
             setDeleteTarget(null);
-            fetchProjects();
+            await fetchProjects();
         } catch (error) {
             message.error('删除失败');
         } finally {

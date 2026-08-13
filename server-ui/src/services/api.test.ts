@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { postMock, requestInterceptors, responseInterceptors } = vi.hoisted(() => ({
+const { postMock, putMock, deleteMock, requestInterceptors, responseInterceptors } = vi.hoisted(() => ({
     postMock: vi.fn(),
+    putMock: vi.fn(),
+    deleteMock: vi.fn(),
     requestInterceptors: { use: vi.fn() },
     responseInterceptors: { use: vi.fn() },
 }));
@@ -10,6 +12,8 @@ vi.mock('axios', () => ({
     default: {
         create: vi.fn(() => ({
             post: postMock,
+            put: putMock,
+            delete: deleteMock,
             interceptors: {
                 request: requestInterceptors,
                 response: responseInterceptors,
@@ -18,7 +22,54 @@ vi.mock('axios', () => ({
     },
 }));
 
-import { appendTargets, connectWebSocket, createTask, executeTaskRiskValidation, retryTask, retryTaskBatch } from './api';
+import {
+    appendTargets,
+    connectWebSocket,
+    createProject,
+    createTask,
+    deleteProject,
+    executeTaskRiskValidation,
+    retryTask,
+    retryTaskBatch,
+    updateProject,
+} from './api';
+import { PROJECTS_CHANGED_EVENT, projectChangePreference } from '../utils/projectSelection';
+
+describe('project mutation API', () => {
+    beforeEach(() => {
+        postMock.mockReset();
+        putMock.mockReset();
+        deleteMock.mockReset();
+    });
+
+    it('invalidates the global project selector after successful create, update and delete', async () => {
+        const listener = vi.fn();
+        window.addEventListener(PROJECTS_CHANGED_EVENT, listener);
+        postMock.mockResolvedValue({ ID: 'project-1' });
+        putMock.mockResolvedValue({ ID: 'project-1' });
+        deleteMock.mockResolvedValue({ message: 'deleted' });
+
+        await createProject({ name: '项目' });
+        await updateProject('project-1', { status: 'archived' });
+        await updateProject('project-1', { status: 'active' });
+        await deleteProject('project-1');
+
+        expect(listener).toHaveBeenCalledTimes(4);
+        expect(projectChangePreference(listener.mock.calls[0][0] as Event)).toBe('project-1');
+        window.removeEventListener(PROJECTS_CHANGED_EVENT, listener);
+    });
+
+    it('does not invalidate projects when a mutation fails', async () => {
+        const listener = vi.fn();
+        window.addEventListener(PROJECTS_CHANGED_EVENT, listener);
+        postMock.mockRejectedValue(new Error('create failed'));
+
+        await expect(createProject({ name: '项目' })).rejects.toThrow('create failed');
+
+        expect(listener).not.toHaveBeenCalled();
+        window.removeEventListener(PROJECTS_CHANGED_EVENT, listener);
+    });
+});
 
 describe('createTask API', () => {
     beforeEach(() => postMock.mockReset());
