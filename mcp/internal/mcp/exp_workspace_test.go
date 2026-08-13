@@ -41,50 +41,36 @@ func TestExpWorkspaceRoutesRevisionCreateThroughServer(t *testing.T) {
 
 func TestSavedYakshaExecutionLoadsSealedPackageAndReportsResult(t *testing.T) {
 	const hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	var reports atomic.Int32
+	var runs atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/exps/exp-1/revisions/3/sealed-package":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"exp_id":"exp-1","exp_status":"draft","risk_level":"high","risk_waiver_active":false,"revision":3,"source_sha256":"` + hash + `","script":"cli.check(); yaksha.result(true)","dependencies":[],"assets":[]}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/exps/exp-1/revisions/3/run-reports":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/exps/exp-1/revisions/3/runs":
 			var body map[string]interface{}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
-			response, _ := body["response"].(map[string]interface{})
-			if body["egress_mode"] != "disabled" || body["risk_confirmed"] != true || response["status"] != "Succeeded" {
-				t.Fatalf("unexpected report: %#v", body)
+			if body["source_sha256"] != hash || body["risk_confirmed"] != true || !strings.Contains(toJSON(body["egress"]), `"disabled"`) {
+				t.Fatalf("unexpected trusted run: %#v", body)
 			}
-			reports.Add(1)
-			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":"run-1"}`))
+			runs.Add(1)
+			_, _ = w.Write([]byte(`{"run_id":"run-1","response":{"id":"req","action":"debug","status":"Succeeded","context":{"exp_id":"exp-1","revision":3,"source_sha256":"` + hash + `"},"result":true,"debug":{"events":[{"kind":"tcp","target":"example.invalid:443"}]}}}`))
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	defer server.Close()
 
-	yaksha := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]interface{}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		if body["script"] != "cli.check(); yaksha.result(true)" || body["source_sha256"] != hash {
-			t.Fatalf("Yaksha did not receive sealed package: %#v", body)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"req","action":"debug","status":"Succeeded","context":{"exp_id":"exp-1","revision":3,"source_sha256":"` + hash + `"},"result":true,"debug":{"events":[{"kind":"tcp","target":"example.invalid:443"}]}}`))
-	}))
-	defer yaksha.Close()
-
-	client := NewClientWithYakshaURL(server.URL, "token", yaksha.URL)
-	result, err := client.CallTool(context.Background(), "argus_yaksha_exp", map[string]interface{}{"action": "debug", "exp_id": "exp-1", "revision": 3, "risk_confirmed": true, "egress": map[string]interface{}{"mode": "disabled"}})
+	client := NewClientWithYakshaURL(server.URL, "token", "http://127.0.0.1:2")
+	result, err := client.CallTool(context.Background(), "argus_yaksha_exp", map[string]interface{}{"action": "debug", "exp_id": "exp-1", "revision": 3, "source_sha256": hash, "risk_confirmed": true, "egress": map[string]interface{}{"mode": "disabled"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.(map[string]interface{})["status"] != "Succeeded" || reports.Load() != 1 {
-		t.Fatalf("unexpected result/report count: %#v %d", result, reports.Load())
+	response := result.(map[string]interface{})
+	if response["status"] != "Succeeded" || response["server_run_id"] != "run-1" || runs.Load() != 1 {
+		t.Fatalf("unexpected result/run count: %#v %d", result, runs.Load())
 	}
 }
 
@@ -99,17 +85,28 @@ func TestSavedHighRiskYakshaExecutionRequiresConfirmationBeforeRuntime(t *testin
 	defer yaksha.Close()
 
 	client := NewClientWithYakshaURL(server.URL, "token", yaksha.URL)
-	_, err := client.CallTool(context.Background(), "argus_yaksha_exp", map[string]interface{}{"action": "debug", "exp_id": "exp-risk", "revision": 1})
+	_, err := client.CallTool(context.Background(), "argus_yaksha_exp", map[string]interface{}{"action": "debug", "exp_id": "exp-risk", "revision": 1, "source_sha256": hash})
 	if err == nil || !strings.Contains(err.Error(), "risk_confirmed") || yakshaCalls.Load() != 0 {
 		t.Fatalf("high-risk execution should fail before Runtime: err=%v calls=%d", err, yakshaCalls.Load())
 	}
 }
 
 func TestSavedYakshaExecutionRejectsCallerScriptOverride(t *testing.T) {
+	const hash = "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
 	client := NewClientWithYakshaURL("http://127.0.0.1:1", "token", "http://127.0.0.1:2")
-	_, err := client.CallTool(context.Background(), "argus_yaksha_exp", map[string]interface{}{"action": "debug", "exp_id": "exp-1", "revision": 1, "script": "cli.check()"})
+	_, err := client.CallTool(context.Background(), "argus_yaksha_exp", map[string]interface{}{"action": "debug", "exp_id": "exp-1", "revision": 1, "source_sha256": hash, "script": "cli.check()"})
 	if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
 		t.Fatalf("saved identity plus script must fail closed: %v", err)
+	}
+}
+
+func TestTransientYakshaExecutionRejectsRunAndDebugBeforeRuntime(t *testing.T) {
+	client := NewClientWithYakshaURL("http://127.0.0.1:1", "token", "http://127.0.0.1:2")
+	for _, action := range []string{"debug", "run"} {
+		_, err := client.CallTool(context.Background(), "argus_yaksha_exp", map[string]interface{}{"action": action, "script": "cli.check()", "egress": map[string]interface{}{"mode": "direct"}})
+		if err == nil || !strings.Contains(err.Error(), "saved Server EXP Revision") {
+			t.Fatalf("transient %s should require saved Revision: %v", action, err)
+		}
 	}
 }
 
@@ -142,7 +139,7 @@ func TestSavedYakshaTestUsesTrustedServerExecution(t *testing.T) {
 	defer yaksha.Close()
 
 	client := NewClientWithYakshaURL(server.URL, "token", yaksha.URL)
-	result, err := client.CallTool(context.Background(), "argus_yaksha_exp", map[string]interface{}{"action": "test", "exp_id": "exp-2", "revision": 4})
+	result, err := client.CallTool(context.Background(), "argus_yaksha_exp", map[string]interface{}{"action": "test", "exp_id": "exp-2", "revision": 4, "source_sha256": hash})
 	if err != nil {
 		t.Fatal(err)
 	}

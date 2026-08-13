@@ -103,7 +103,8 @@
 | 规则同步 | 通过 `x-agent-id` + `x-agent-token` 拉取 Arsenal DB Hash，变更后下载完整 SQLite DB 到 `data/arsenal.db`，再物化为 CLI 形态 `config/finger.yaml`、`config/workflow.yaml`、`config/dir.yaml`、`config/pocs/`、`config/dict/` 和 `config/subdomains.txt`；扫描任务读取本地 `config/`，不在扫描期从 DB 导出 POC | `scanner/internal/agent/worker.go` `scanner/internal/arsenal/materialize.go` |
 | 规则同步边界 | DB 同步包只托管 Finger / Workflow / Dir / POC YAML / POC helper assets、GoPoc 字典和子域名字典；`socket.yaml` 当前没有接入扫描加载链路，不纳入同步。Provider 凭据只存在于 Server 租户配置，不进入 Scanner 发行包、Arsenal 或 Agent 通知/命令协议 | `scanner/common/config` `scanner/gopocs` `scanner/internal/scanner/subdomain` |
 | 仓库规则基线回写 | Web/DB 治理结果需要进入源码规则基线时，先下载或生成 `arsenal_seed.db`，再用 `tools/arsenal-sync` 将 Approved 规则导出/对比/覆盖到 `scanner/common/config`，通过 Git diff 和 PR 审查后合并；Server 不自动写源码目录 | `tools/arsenal-sync` `scanner/common/config` |
-| POC / EXP 调试拦截 | POC 拦截 Nuclei/GoPoc 调试请求响应；EXP Python 以原生 Python 执行，请求/响应调试信息由脚本主动写入 `ctx.evidence` 摘要 | `scanner/internal/agent/debug.go` `scanner/internal/exploit/python_executor.go` |
+| POC 调试拦截 | POC 拦截 Nuclei/GoPoc 调试请求响应；Agent 不再解析或执行 Python EXP | `scanner/internal/agent/debug.go` |
+| Agent 原生 EXP 出口 | Agent 通过独立多路复用 EgressTunnel 提供原始 TCP 出口，Yaksha 继续负责 TLS、HTTP、目标复检与完整 Trace | `scanner/internal/agent/egress.go` `server/internal/egress/` `yaksha/internal/egress/relay.go` |
 | 遥测日志 | gologger 全局 TeeWriter 通过 gRPC `StreamLogs` 持续上报 Agent 日志 | `scanner/internal/agent/worker.go` |
 | Spot 回收监听 | 云厂商竞价实例中断检测、紧急数据回传 | `scanner/internal/agent/signal.go` |
 
@@ -238,7 +239,7 @@ Clean Architecture 迁移不再作为用户功能链路验收项，降级到长�
 | 统计、结果与画像 | `/stats*`、`/vulns`、`/assets`、`/fingerprints`、`/profiles`、`/reports/export/vulns` | 统计聚合、结果查询、画像聚合、漏洞 CSV 导出 |
 | 节点与 Agent 指令 | `GET /nodes`、`POST /nodes/:id/revoke-token`、`GET /agents/:id/commands`、`GET /agents/:id/logs` | 节点列表、Agent session 主动吊销、Agent session 绑定命令轮询、Agent 日志筛选查询 |
 | Arsenal 与规则 | `/arsenals/:type`、`/arsenals/manifest`、`/arsenals/db*`、审批/回滚/删除接口 | 原始规则 CRUD、审批、回滚、Manifest、`rule_version`、Agent SQLite DB 同步 |
-| EXP 验证与执行 | `/exploits*`、`/exploits/:id/risk-waiver`、`/exploits/batch/*`、`/exploits/audits`、`/exploit-runs*`、`/exploit-artifacts/*` | EXP 规则列表、单条/批量审核与废弃、风险豁免、审计查询、删除、dry-run、Agent 调试、正式执行、凭据引用记录、取消、cleanup、制品查询 |
+| Yaksha EXP Workspace | `/exps*`、`/exp-assets*`、`/exp-runs*`、`/exp-egress-routes*` | 单文件 Yaklang EXP、不可变 Revision、依赖闭包、版本化 Asset、Fixture 验收、inspect/validate/test/debug/run、按哈希发布、活动版本回滚、Agent 原生出口与完整运行审计；生产对象存储为私有 MinIO |
 | 字典 | `/dictionaries/workflow`、`/dictionaries/fingerprint` | Workflow / Fingerprint 结构化 CRUD，并回写 Arsenal |
 | 用户、角色、租户与系统配置 | `/users`、`/roles`、`/tenants/:id/quotas`、`/mcp/keys`、`/agent-logs/alert-rules`、`/agent-logs/alerts`、`/agent-logs/archive`、`/ai/config`、`/ai/models`、`/ai/test` | 用户管理、自定义角色 CRUD、权限矩阵返回、租户任务配额管理、MCP Key、Agent 日志告警/归档、AI 配置与模型连通性测试 |
 | AI Copilot / POC 元数据 | `GET /poc-rules`、`POST /ai/chat`、`POST /ai/actions/confirm`、`GET /ai/copilot/prompts`、`GET /ai/tool-invocations`、`POST /ai/arsenal/analyze`、`POST /ai/arsenal/analyze/stream` | POC 元数据检索、全局 Copilot SSE、草稿动作确认、Prompt/动作白名单展示、工具审计、POC AI 审查同步/流式入口 |

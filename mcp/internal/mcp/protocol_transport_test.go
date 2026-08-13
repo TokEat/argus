@@ -46,19 +46,9 @@ func TestClientTurnsHTTPErrorIntoMessage(t *testing.T) {
 	}))
 	defer ts.Close()
 	client := NewClient(ts.URL, "test-token")
-	_, err := client.Resource(context.Background(), "argus://pyexp/spec")
+	_, err := client.Resource(context.Background(), "argus://argus-mcp/quickstart")
 	if err == nil || !strings.Contains(err.Error(), "403") || !strings.Contains(err.Error(), "forbidden") {
 		t.Fatalf("expected HTTP error detail, got %v", err)
-	}
-}
-
-func TestClientRejectsLegacyFineGrainedEXPTools(t *testing.T) {
-	client := NewClient("http://argus.local", "test-token")
-	for _, name := range []string{"pyexp_validate", "pyexp_dry_run", "pyexp_save_draft", "pyexp_debug"} {
-		_, err := client.CallTool(context.Background(), name, map[string]interface{}{})
-		if err == nil || !strings.Contains(err.Error(), "unknown tool") {
-			t.Fatalf("CallTool(%s) error = %v, want unknown tool", name, err)
-		}
 	}
 }
 

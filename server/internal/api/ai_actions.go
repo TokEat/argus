@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -14,8 +15,8 @@ import (
 	"time"
 
 	"github.com/P0lar1ght/argus/server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/expworkspace"
 	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
-	"github.com/P0lar1ght/argus/shared/proto/pyexp"
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
@@ -29,6 +30,8 @@ const (
 	copilotActionCreateExpDraft    = "create_exp_draft"
 	maxCopilotDraftContentSizeByte = 512 * 1024
 )
+
+var errEXPUserAuthorization = errors.New("EXP access requires user-level authorization")
 
 type CopilotPendingAction struct {
 	ActionType   string                 `json:"action_type"`
@@ -77,7 +80,11 @@ func confirmCopilotAction(c *gin.Context) {
 	}
 	recordAIToolInvocation(audit, "CopilotAction:"+actionType, summarizeCopilotAction(req.Action), "", "", time.Since(startedAt), status, truncateString(errorSummary, 1000))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		statusCode := http.StatusBadRequest
+		if errors.Is(err, errEXPUserAuthorization) {
+			statusCode = http.StatusForbidden
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -102,7 +109,10 @@ func executeCopilotAction(c *gin.Context, actionType string, action CopilotPendi
 	case copilotActionUpsertDirDraft:
 		return executeUpsertDirDraft(currentTenantID(c), action.Params)
 	case copilotActionCreateExpDraft:
-		return executeCreateExpDraft(currentTenantID(c), action.Params)
+		if !currentUserHasEXPAuthorization(c) {
+			return copilotActionResult{}, errEXPUserAuthorization
+		}
+		return executeCreateExpDraft(c, action.Params)
 	default:
 		return copilotActionResult{}, fmt.Errorf("unsupported copilot action_type %q", actionType)
 	}
@@ -300,63 +310,51 @@ func executeUpsertDirDraft(tenantID string, params map[string]interface{}) (copi
 	}, nil
 }
 
-func executeCreateExpDraft(tenantID string, params map[string]interface{}) (copilotActionResult, error) {
-	fileName := strings.TrimSpace(stringParam(params, "file_name"))
-	content := stringParam(params, "content")
-	if fileName == "" || content == "" {
-		return copilotActionResult{}, fmt.Errorf("file_name and content are required")
-	}
-	if err := validateDraftFileName(fileName, false); err != nil {
-		return copilotActionResult{}, err
-	}
-	if !strings.HasSuffix(strings.ToLower(fileName), ".py") {
-		return copilotActionResult{}, fmt.Errorf("EXP file name must end with .py")
+func executeCreateExpDraft(c *gin.Context, params map[string]interface{}) (copilotActionResult, error) {
+	content := strings.TrimSpace(stringParam(params, "content"))
+	if content == "" {
+		return copilotActionResult{}, fmt.Errorf("content is required")
 	}
 	if len(content) > maxCopilotDraftContentSizeByte {
 		return copilotActionResult{}, fmt.Errorf("content is too large")
 	}
-	if err := pyexp.Validate([]byte(content), false); err != nil {
-		return copilotActionResult{}, fmt.Errorf("content is not a valid Python EXP: %w", err)
+	service := routerRuntime().EXPWorkspace
+	if service == nil {
+		return copilotActionResult{}, fmt.Errorf("EXP Workspace Unavailable")
 	}
-
-	hash := fmt.Sprintf("%x", md5.Sum([]byte(content)))
-	var existing db.Arsenal
-	previousHash := ""
-	previousContent := ""
-	version := 1
-	if err := db.DB.Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, "exp", fileName).First(&existing).Error; err == nil {
-		previousHash = existing.Hash
-		previousContent = existing.Content
-		version = existing.Version + 1
+	tenantID, actorID := currentTenantID(c), currentUserID(c)
+	expID := strings.TrimSpace(stringParam(params, "exp_id"))
+	name := strings.TrimSpace(stringParam(params, "name"))
+	if name == "" {
+		name = strings.TrimSuffix(strings.TrimSpace(stringParam(params, "file_name")), ".yak")
 	}
-	arsenal := db.Arsenal{
-		ID:              db.BuildTenantArsenalID(tenantID, "exp", fileName),
-		TenantID:        tenantID,
-		Type:            "exp",
-		FileName:        fileName,
-		Content:         content,
-		Hash:            hash,
-		PreviousHash:    previousHash,
-		PreviousContent: previousContent,
-		Version:         version,
-		State:           "Draft",
+	if expID == "" {
+		if name == "" {
+			return copilotActionResult{}, fmt.Errorf("name is required when creating a new EXP")
+		}
+		riskLevel := strings.ToLower(strings.TrimSpace(stringParam(params, "risk_level")))
+		if riskLevel == "" {
+			riskLevel = "high"
+		}
+		created, err := service.CreateExp(c.Request.Context(), tenantID, actorID, name, stringParam(params, "description"), riskLevel)
+		if err != nil {
+			return copilotActionResult{}, err
+		}
+		expID = created.ID
 	}
-	if err := db.DB.Save(&arsenal).Error; err != nil {
-		return copilotActionResult{}, err
-	}
-	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+	revision, err := service.CreateRevision(c.Request.Context(), tenantID, actorID, expID, expworkspace.CreateRevisionInput{Source: content})
+	if err != nil {
 		return copilotActionResult{}, err
 	}
 	return copilotActionResult{
 		Status:     "saved",
-		Message:    "EXP draft saved. Approval still requires the existing arsenal review flow.",
+		Message:    "Yaksha EXP Draft Revision saved. Inspect, validate and trusted Fixture tests are still required before Admin publication.",
 		ActionType: copilotActionCreateExpDraft,
 		Object: map[string]interface{}{
-			"type":      "exp",
-			"file_name": fileName,
-			"state":     "Draft",
-			"hash":      hash,
-			"version":   version,
+			"exp_id":        expID,
+			"revision":      revision.Revision,
+			"state":         revision.Status,
+			"source_sha256": revision.SourceSHA256,
 		},
 	}, nil
 }

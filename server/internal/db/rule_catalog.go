@@ -15,7 +15,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/P0lar1ght/argus/shared/proto/pyexp"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -23,7 +22,7 @@ import (
 
 const (
 	RuleCatalogBootstrapKey    = "rule_catalog_v1"
-	RuleCatalogSchemaVersion   = 4
+	RuleCatalogSchemaVersion   = 5
 	RuleCatalogStatusReady     = "ready"
 	RuleCatalogStatusPartial   = "partial"
 	RuleCatalogStatusEmpty     = "empty"
@@ -58,7 +57,6 @@ type RuleCatalogBootstrap struct {
 	WorkflowCount    int
 	DirProbeCount    int
 	PocCount         int
-	ExploitCount     int
 	LastError        string `gorm:"type:text"`
 	LastSeededAt     *time.Time
 	CreatedAt        time.Time
@@ -196,40 +194,6 @@ type DirRule struct {
 	UpdatedAt   time.Time
 }
 
-// ExploitRule stores searchable metadata for one Python EXP package. The raw
-// script content stays in arsenals so migration and rollback use one truth source.
-type ExploitRule struct {
-	ID               uint   `gorm:"primaryKey;autoIncrement"`
-	TenantID         string `gorm:"default:'default';index;uniqueIndex:idx_exploit_rule_unique"`
-	ArtifactID       string `gorm:"index"`
-	SourceFile       string `gorm:"index"`
-	RuleID           string `gorm:"index;not null;uniqueIndex:idx_exploit_rule_unique"`
-	Name             string `gorm:"index;not null"`
-	Description      string `gorm:"type:text"`
-	TargetProduct    string `gorm:"index"`
-	CVE              string `gorm:"index"`
-	RiskLevel        string `gorm:"index;default:'medium'"`
-	RequiresAuth     bool   `gorm:"default:false;index"`
-	SideEffects      string `gorm:"type:text"`
-	CleanupSupported bool   `gorm:"default:false;index"`
-	CleanupRequired  bool   `gorm:"default:false;index"`
-	DryRunSupported  bool   `gorm:"default:false;index"`
-	Capabilities     string `gorm:"type:jsonb"`
-	LinkedPocs       string `gorm:"type:jsonb"`
-	ParamsSchema     string `gorm:"type:jsonb"`
-	Requirements     string `gorm:"type:jsonb"`
-	RequirementsHash string `gorm:"index"`
-	SandboxProfile   string `gorm:"index;default:'local-python'"`
-	TimeoutSec       int
-	RuntimeEngine    string `gorm:"index"`
-	ContentHash      string `gorm:"index"`
-	Version          int    `gorm:"default:1"`
-	State            string `gorm:"index"`
-	Enabled          bool   `gorm:"default:true;index"`
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-}
-
 func CanonicalArsenalType(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "finger", "fingerprint":
@@ -244,8 +208,6 @@ func CanonicalArsenalType(raw string) string {
 		return "poc_asset"
 	case "config_asset", "configasset", "dict_asset", "dictasset":
 		return "config_asset"
-	case "exp", "exploit":
-		return "exp"
 	case "apiconfig":
 		return "apiconfig"
 	default:
@@ -267,8 +229,6 @@ func ArsenalTypeAliases(raw string) []string {
 		return []string{"poc_asset", "pocasset"}
 	case "config_asset":
 		return []string{"config_asset", "configasset", "dict_asset", "dictasset"}
-	case "exp":
-		return []string{"exp", "exploit"}
 	case "apiconfig":
 		return []string{"apiconfig"}
 	default:
@@ -357,7 +317,6 @@ func syncRuleCatalogFromArsenalLocked() error {
 		WorkflowCount:    len(materialized.workflows),
 		DirProbeCount:    len(materialized.dirs),
 		PocCount:         len(materialized.pocs),
-		ExploitCount:     len(materialized.exploits),
 		LastError:        summarizeRuleCatalogErrors(materialized.errors),
 		LastSeededAt:     &now,
 	}
@@ -375,9 +334,6 @@ func syncRuleCatalogFromArsenalLocked() error {
 		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&PocRule{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&ExploitRule{}).Error; err != nil {
-			return err
-		}
 
 		if err := createInBatches(tx, materialized.fingerprints); err != nil {
 			return err
@@ -389,9 +345,6 @@ func syncRuleCatalogFromArsenalLocked() error {
 			return err
 		}
 		if err := createInBatches(tx, materialized.pocs); err != nil {
-			return err
-		}
-		if err := createInBatches(tx, materialized.exploits); err != nil {
 			return err
 		}
 		if err := disableNonApprovedCatalogRows(tx); err != nil {
@@ -411,11 +364,10 @@ func syncRuleCatalogFromArsenalLocked() error {
 	}
 
 	log.Printf(
-		"[RuleCatalog] bootstrap=%s arsenals=%d pocs=%d exploits=%d fingerprints=%d workflows=%d dirs=%d errors=%d",
+		"[RuleCatalog] bootstrap=%s arsenals=%d pocs=%d fingerprints=%d workflows=%d dirs=%d errors=%d",
 		status,
 		len(arsenals),
 		len(materialized.pocs),
-		len(materialized.exploits),
 		len(materialized.fingerprints),
 		len(materialized.workflows),
 		len(materialized.dirs),
@@ -460,7 +412,6 @@ func normalizeLegacyArsenalTypes() error {
 	legacyMappings := map[string]string{
 		"fingerprint": "finger",
 		"dirprobe":    "dir",
-		"exploit":     "exp",
 	}
 
 	return DB.Transaction(func(tx *gorm.DB) error {
@@ -518,7 +469,6 @@ type materializedRuleCatalog struct {
 	workflows    []WorkflowRule
 	dirs         []DirRule
 	pocs         []PocRule
-	exploits     []ExploitRule
 	errors       []string
 }
 
@@ -556,13 +506,6 @@ func materializeRuleCatalog(arsenals []Arsenal) materializedRuleCatalog {
 				continue
 			}
 			out.pocs = append(out.pocs, rule)
-		case "exp":
-			rule, err := materializeExploitRule(arsenal)
-			if err != nil {
-				out.errors = append(out.errors, err.Error())
-				continue
-			}
-			out.exploits = append(out.exploits, rule)
 		}
 	}
 
@@ -782,55 +725,6 @@ func materializePocRule(arsenal Arsenal) (PocRule, error) {
 	}, nil
 }
 
-func materializeExploitRule(arsenal Arsenal) (ExploitRule, error) {
-	meta, err := parseExploitMeta([]byte(arsenal.Content))
-	if err != nil {
-		return ExploitRule{}, fmt.Errorf("exp python parse failed for %s: %w", arsenal.FileName, err)
-	}
-	if meta.RuleID == "" {
-		ext := filepath.Ext(arsenal.FileName)
-		meta.RuleID = strings.TrimSuffix(arsenal.FileName, ext)
-	}
-	if meta.Name == "" {
-		meta.Name = meta.RuleID
-	}
-	if meta.RiskLevel == "" {
-		meta.RiskLevel = "medium"
-	}
-	if meta.TimeoutSec <= 0 {
-		meta.TimeoutSec = 60
-	}
-
-	return ExploitRule{
-		TenantID:         arsenal.TenantID,
-		ArtifactID:       arsenal.ID,
-		SourceFile:       arsenal.FileName,
-		RuleID:           meta.RuleID,
-		Name:             meta.Name,
-		Description:      meta.Description,
-		TargetProduct:    meta.TargetProduct,
-		CVE:              meta.CVE,
-		RiskLevel:        meta.RiskLevel,
-		RequiresAuth:     meta.RequiresAuth,
-		SideEffects:      strings.Join(meta.SideEffects, "\n"),
-		CleanupSupported: meta.CleanupSupported,
-		CleanupRequired:  meta.CleanupRequired,
-		DryRunSupported:  meta.DryRunSupported,
-		Capabilities:     marshalJSONText(meta.Capabilities),
-		LinkedPocs:       marshalJSONText(meta.LinkedPocs),
-		ParamsSchema:     marshalJSONText(meta.ParamsSchema),
-		Requirements:     marshalJSONText(meta.Requirements),
-		RequirementsHash: meta.RequirementsHash,
-		SandboxProfile:   meta.SandboxProfile,
-		TimeoutSec:       meta.TimeoutSec,
-		RuntimeEngine:    meta.RuntimeEngine,
-		ContentHash:      arsenal.Hash,
-		Version:          arsenal.Version,
-		State:            arsenal.State,
-		Enabled:          arsenal.State == "Approved",
-	}, nil
-}
-
 type pocMeta struct {
 	id                  string
 	severity            string
@@ -843,57 +737,6 @@ type pocMeta struct {
 	sourceVersion       string
 	executionClass      string
 	riskLevel           string
-}
-
-type exploitMeta struct {
-	RuleID           string
-	Name             string
-	Description      string
-	TargetProduct    string
-	CVE              string
-	RiskLevel        string
-	RequiresAuth     bool
-	SideEffects      []string
-	CleanupSupported bool
-	CleanupRequired  bool
-	DryRunSupported  bool
-	Capabilities     []string
-	LinkedPocs       []string
-	ParamsSchema     map[string]interface{}
-	Requirements     []string
-	RequirementsHash string
-	SandboxProfile   string
-	TimeoutSec       int
-	RuntimeEngine    string
-}
-
-func parseExploitMeta(content []byte) (exploitMeta, error) {
-	content = sanitizePostgresTextBytes(content)
-	raw, err := pyexp.ParseTemplate(content)
-	if err != nil {
-		return exploitMeta{}, err
-	}
-	return exploitMeta{
-		RuleID:           strings.TrimSpace(raw.ID),
-		Name:             strings.TrimSpace(raw.Name),
-		Description:      strings.TrimSpace(raw.Description),
-		TargetProduct:    strings.TrimSpace(raw.TargetProduct),
-		CVE:              strings.TrimSpace(raw.CVE),
-		RiskLevel:        raw.RiskLevel,
-		RequiresAuth:     raw.Policy.RequiresAuth,
-		SideEffects:      normalizeStringSlice(raw.Policy.SideEffects),
-		CleanupSupported: raw.Policy.CleanupSupported,
-		CleanupRequired:  raw.Policy.CleanupRequired,
-		DryRunSupported:  raw.Policy.DryRunSupported,
-		Capabilities:     normalizeStringSlice(raw.Policy.Capabilities),
-		LinkedPocs:       normalizeStringSlice(raw.LinkedPocs),
-		ParamsSchema:     pyexp.ParamSchema(raw.Params),
-		Requirements:     normalizeStringSlice(raw.Requirements),
-		RequirementsHash: raw.RequirementsHash,
-		SandboxProfile:   "local-python",
-		TimeoutSec:       raw.Policy.TimeoutSec,
-		RuntimeEngine:    pyexp.RuntimeEngine,
-	}, nil
 }
 
 func parsePocMeta(content []byte) pocMeta {
@@ -1113,7 +956,7 @@ func createInBatches[T any](tx *gorm.DB, items []T) error {
 }
 
 func disableNonApprovedCatalogRows(tx *gorm.DB) error {
-	for _, model := range []interface{}{&FingerprintRule{}, &WorkflowRule{}, &DirRule{}, &PocRule{}, &ExploitRule{}} {
+	for _, model := range []interface{}{&FingerprintRule{}, &WorkflowRule{}, &DirRule{}, &PocRule{}} {
 		if err := tx.Model(model).Where("state <> ?", "Approved").Update("enabled", false).Error; err != nil {
 			return err
 		}

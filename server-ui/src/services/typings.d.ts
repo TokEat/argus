@@ -1261,212 +1261,80 @@ declare namespace API {
     created_at: string;
   }
 
-  // ======================== EXP 规则 ========================
+  // ======================== Yaksha EXP ========================
 
-  interface DryRunResponse {
-    exploit_id: string;
-    target: string;
-    risk_level: string;
-    requires_auth: boolean;
-    side_effects: string[];
-    cleanup_supported: boolean;
-    cleanup_required: boolean;
-    timeout_sec: number;
-    capabilities: string[];
-    execution_plan: {
-      mode: string;
-      engine?: string;
-      entry?: string;
-      script_preview?: string;
-      cleanup_preview?: string;
-      steps?: unknown[];
-      cleanup?: unknown[];
-      requirements?: string[];
-      requirements_hash?: string;
-      sandbox_profile?: string;
-    };
-    params_valid: boolean;
-    params_errors: string[];
-    normalized_params?: Record<string, unknown>;
-  }
-
-  interface ExploitDebugRequest {
-    agent_id: string;
-    target_url: string;
-    params?: Record<string, unknown>;
-    proxy?: string;
-    timeout_sec?: number;
-    action?: 'run' | 'cleanup';
-  }
-
-  interface ExploitDebugPayload {
-    run_id?: string;
-    status: string;
-    evidence?: Record<string, unknown>;
-    side_effects?: string[];
-    duration_ms?: number;
-    error_message?: string;
-  }
-
-  interface SourceExploitValidateResponse {
-    valid: boolean;
-    error?: string;
-    id?: string;
-    rule_id?: string;
-    name?: string;
-    description?: string;
-    target_product?: string;
-    cve?: string;
-    linked_pocs?: string[];
-    risk_level?: string;
-    params_schema?: Record<string, unknown>;
-    requirements?: string[];
-    requirements_hash?: string;
-    has_run?: boolean;
-    has_main?: boolean;
-    has_cleanup?: boolean;
-    policy?: Record<string, unknown>;
-  }
-
-  interface SourceExploitDebugRequest extends ExploitDebugRequest {
-    source: string;
-    action?: 'run';
-  }
-
-  interface SourceExploitDebugResponse {
-    status: string;
-    matched?: boolean;
-    error?: string;
-    execution_result?: ExploitDebugPayload;
-    logs?: Record<string, unknown>[];
-    result?: Record<string, unknown>;
-    complete?: Record<string, unknown>;
-  }
-
-  interface ExploitRun {
-    id: number;
-    tenant_id: string;
-    project_id: string;
-    asset_id: string;
-    target: string;
-    exploit_id: string;
-    operator_id: string;
-    agent_id: string;
-    risk_level: string;
-    status: 'Pending' | 'Running' | 'CancelPending' | 'Cancelled' | 'CleanupRequired' | 'CleanupFailed' | 'Succeeded' | 'Failed';
-    credential_ref: string;
-    started_at: string;
-    finished_at: string;
-    evidence: string;
-    side_effects: string;
-    cleanup_status: '' | 'Pending' | 'CleanupRunning' | 'CleanupSucceeded' | 'CleanupFailed' | 'NotRequired';
-    cleanup_evidence: string;
-    error_message: string;
-    created_at: string;
-    updated_at: string;
-  }
-
-  interface ExploitRiskWaiver {
-    id: number;
-    tenant_id: string;
-    rule_id: string;
-    reason: string;
-    created_by: string;
-    expires_at: string;
-    active: boolean;
-    created_at: string;
-    updated_at: string;
-  }
-
-  interface ExploitRule {
-    id: number;
-    tenant_id: string;
-    artifact_id: string;
-    source_file: string;
-    rule_id: string;
+  interface Exp {
+    id: string;
     name: string;
     description: string;
-    target_product: string;
-    cve: string;
-    risk_level: string;
-    requires_auth: boolean;
-    side_effects: string[];
-    cleanup_supported: boolean;
-    cleanup_required: boolean;
-    dry_run_supported: boolean;
-    capabilities: string[];
-    linked_pocs: string[];
-    params_schema: Record<string, unknown>;
-    requirements: string[];
-    requirements_hash: string;
-    sandbox_profile: string;
-    timeout_sec: number;
-    runtime_engine: string;
-    content_hash: string;
+    risk_level: 'low' | 'medium' | 'high' | 'critical';
+    status: 'draft' | 'published' | 'deprecated';
+    active_revision?: number;
+    created_by: string;
+    created_at: string;
+    updated_at: string;
+  }
+
+  interface ExpList { items: Exp[]; total: number; page: number; page_size: number; }
+  interface CreateExpRequest { name: string; description?: string; risk_level: Exp['risk_level']; }
+  interface ExpDependencyRef { exp_id: string; revision: number; source_sha256: string; }
+  interface ExpAssetRef { asset_id: string; version: number; sha256: string; }
+  interface CreateExpRevisionRequest { source: string; dependencies: ExpDependencyRef[]; assets: ExpAssetRef[]; }
+
+  interface ExpCLIParam {
+    name: string;
+    type?: string;
+    required?: boolean;
+    default?: unknown;
+	has_default?: boolean;
+    help?: string;
+	verbose_name?: string;
+	group?: string;
+	multiple_select?: boolean;
+	options?: Array<{ label: string; value: string }>;
+  }
+
+  interface ExpRevision {
+    exp_id: string;
+    revision: number;
+    status: string;
+    source_sha256: string;
+    source_size: number;
+    cli_schema: ExpCLIParam[];
+    inspect_summary: Record<string, unknown>;
+    validate_summary: Record<string, unknown>;
+    test_cases_sha256?: string;
+    tests_passed_at?: string;
+    published_at?: string;
+    created_at: string;
+  }
+
+  interface ExpSealedPackage {
+    exp_id: string;
+    revision: number;
+    source_sha256: string;
+    script: string;
+	dependency_refs: ExpDependencyRef[];
+	asset_refs: ExpAssetRef[];
+    dependencies: Array<ExpDependencyRef & { script: string }>;
+    assets: Array<{ asset_id: string; sha256: string; encoding: string; content: string }>;
+  }
+
+  interface ExpAsset {
+    asset_id: string;
     version: number;
-    state: string;
-    enabled: boolean;
-    risk_waiver?: ExploitRiskWaiver;
-    created_at: string;
-    updated_at: string;
-  }
-
-  interface AgentPyenvJob {
-    id: string;
-    tenant_id: string;
-    agent_id: string;
-    operator_id: string;
-    exploit_rule_id: number;
-    requirements: string[];
-    requirements_hash: string;
-    status: string;
-    logs: string;
-    error: string;
-    started_at?: string;
-    finished_at?: string;
-    created_at: string;
-    updated_at: string;
-  }
-
-  interface AgentPyenv {
-    agent_id: string;
-    status: string;
-    python_path: string;
-    python_version: string;
-    pip_available: boolean;
-    install_available: boolean;
-    last_job?: AgentPyenvJob;
-    tags: Record<string, string>;
-  }
-
-  interface AgentPyenvNoopResponse {
-    status: 'no_op';
-    message: string;
-    agent_id: string;
-    exploit_rule_id: number;
-  }
-
-  interface ExploitBatchReviewResult {
-    id: number;
-    status: string;
-    error?: string;
-  }
-
-  interface ExploitBatchReviewResponse {
-    status: string;
-    changed: number;
-    results: ExploitBatchReviewResult[];
-  }
-
-  interface ExploitAudit {
-    id: number;
-    tenant_id: string;
-    exploit_rule_id: number;
-    rule_id: string;
-    action: string;
-    reason: string;
-    operator_id: string;
-    metadata: string;
+    sha256: string;
+    size: number;
+    media_type: string;
     created_at: string;
   }
+
+  interface CreateExpAssetRequest { asset_id: string; media_type?: string; encoding: 'utf8' | 'base64'; content: string; }
+  interface ExpTestCase { id: string; exp_id: string; revision: number; name: string; params: Record<string, unknown>; fixture: Record<string, unknown>; expect: Record<string, unknown>; enabled: boolean; }
+  interface ExpTestCaseInput { name: string; params: Record<string, unknown>; fixture: Record<string, unknown>; expect: Record<string, unknown>; enabled: boolean; }
+  interface ExpEgress { mode: 'disabled' | 'direct' | 'socks5' | 'agent'; socks5_proxy?: string; agent_id?: string; risk_confirmed?: boolean; }
+  interface ExpRunRequest { action: 'test' | 'debug' | 'run'; source_sha256: string; params?: Record<string, unknown>; timeout_ms?: number; network_targets?: string[]; egress: ExpEgress; risk_confirmed?: boolean; }
+  interface YakshaResult { status?: string; result?: unknown; logs?: unknown[]; evidence?: unknown[]; trace?: unknown; calls?: unknown[]; [key: string]: unknown; }
+  interface ExpRun { id: string; exp_id: string; revision: number; action: string; status: string; egress_mode: string; agent_id?: string; result_summary: Record<string, unknown>; artifact_sha256?: string; artifact_expires_at?: string; error_code?: string; created_at: string; }
+  interface ExpRunList { items: ExpRun[]; total: number; page: number; page_size: number; }
 }

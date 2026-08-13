@@ -195,5 +195,5 @@ Tool 的文本结果和 `structuredContent` 获得相同数据。debug 的完整
 - 切片 A：语言核心、五动作、Resolver、Compose、Asset、调用树和 Fixture test 已完成。
 - 切片 B：常驻 Daemon、预热 Worker、HTTP MCP/MCP App、统一 Egress Connector、disabled/direct/SOCKS5 与 OCI 隔离已完成，不改 Server。
 - 切片 C1：Agent 原生 TCP Egress 已接入。Server 校验租户、EXP 权限、风险确认和在线 Tunnel 后签发单次 `route_id`；Yaksha 只消费内部 relay 契约，出口无自动回退。
-- 切片 C2：Server Revision 存储、Asset、Fixture、权限、审计和发布仍待后续接入。
-- 切片 D：移除 pyexp 链路，Yaksha 接入 exploit-runs / MCP 路由，AI 生成 Yaklang EXP。
+- 切片 C2：Server Revision 存储、Asset、Fixture、权限、审计和发布已完成，生产对象存储为私有 MinIO。
+- 切片 D：Server Web UI 与 MCP App Workspace 已完成，旧 EXP 双栈产品路径已原子移除，AI 生成单文件 Yaklang EXP。

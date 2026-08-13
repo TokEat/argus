@@ -106,7 +106,7 @@ message TaskNotify {
 
 // DebugCommand Server→Agent 的临时 POC 调试命令。
 message DebugCommand {
-  string action = 1;       // "start_debug" | "cancel_debug" | "start_exp" | "cleanup_exp"
+  string action = 1;       // "start_debug" | "start_fingerprint_debug" | "cancel_debug"
   string session_id = 2;
   string tenant_id = 3;
   string poc_content = 4;

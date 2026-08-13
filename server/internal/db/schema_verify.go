@@ -359,31 +359,6 @@ func schemaTableSpecs() []schemaTableSpec {
 			Indexes: []string{"idx_build_jobs_platform", "idx_build_jobs_arch", "idx_build_jobs_status"},
 		},
 		{
-			Table:   "exploit_audits",
-			Columns: []string{"tenant_id", "exploit_rule_id", "rule_id", "action", "reason", "operator_id", "metadata", "created_at"},
-			Indexes: []string{"idx_exploit_audits_tenant_id", "idx_exploit_audits_exploit_rule_id", "idx_exploit_audits_rule_id", "idx_exploit_audits_action", "idx_exploit_audits_operator_id"},
-		},
-		{
-			Table:   "exploit_risk_waivers",
-			Columns: []string{"tenant_id", "rule_id", "reason", "created_by", "expires_at", "created_at", "updated_at"},
-			Indexes: []string{"idx_exploit_risk_waiver_rule", "idx_exploit_risk_waivers_created_by", "idx_exploit_risk_waivers_expires_at"},
-		},
-		{
-			Table:   "exploit_runs",
-			Columns: []string{"tenant_id", "project_id", "target", "exploit_id", "agent_id", "risk_level", "status", "credential_ref", "params_digest", "params_ciphertext", "cleanup_status"},
-			Indexes: []string{"idx_exploit_runs_tenant_id", "idx_exploit_runs_project_id", "idx_exploit_runs_exploit_id", "idx_exploit_runs_status", "idx_exploit_runs_credential_ref"},
-		},
-		{
-			Table:   "exploit_artifacts",
-			Columns: []string{"tenant_id", "run_id", "artifact_type", "file_name", "content", "content_hash", "size_bytes", "created_at"},
-			Indexes: []string{"idx_exploit_artifacts_tenant_id", "idx_exploit_artifacts_run_id", "idx_exploit_artifacts_type"},
-		},
-		{
-			Table:   "agent_pyenv_jobs",
-			Columns: []string{"tenant_id", "agent_id", "operator_id", "exploit_rule_id", "requirements", "requirements_hash", "status", "logs", "error", "started_at", "finished_at"},
-			Indexes: []string{"idx_agent_pyenv_jobs_tenant_id", "idx_agent_pyenv_jobs_agent_id", "idx_agent_pyenv_jobs_operator_id", "idx_agent_pyenv_jobs_exploit_rule_id", "idx_agent_pyenv_jobs_requirements_hash", "idx_agent_pyenv_jobs_status"},
-		},
-		{
 			Table:   "notification_rules",
 			Columns: []string{"project_id", "event", "channel", "config", "status"},
 			Indexes: []string{"idx_notification_rules_project_id", "idx_notification_rules_event"},
@@ -447,11 +422,6 @@ func schemaTableSpecs() []schemaTableSpec {
 			Table:   "dir_rules",
 			Columns: []string{"artifact_id", "source_file", "path", "product_name", "enabled"},
 			Indexes: []string{"idx_dir_rule_unique", "idx_dir_rules_enabled"},
-		},
-		{
-			Table:   "exploit_rules",
-			Columns: []string{"artifact_id", "source_file", "rule_id", "name", "description", "target_product", "cve", "risk_level", "requires_auth", "side_effects", "cleanup_supported", "cleanup_required", "dry_run_supported", "capabilities", "linked_pocs", "params_schema", "requirements", "requirements_hash", "sandbox_profile", "timeout_sec", "runtime_engine", "enabled"},
-			Indexes: []string{"idx_exploit_rule_unique", "idx_exploit_rules_enabled", "idx_exploit_rules_runtime_engine", "idx_exploit_rules_requirements_hash", "idx_exploit_rules_sandbox_profile", "idx_exploit_rules_tenant_enabled_updated", "idx_exploit_rules_rule_id_trgm", "idx_exploit_rules_name_trgm"},
 		},
 	}
 }

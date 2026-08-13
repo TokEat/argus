@@ -94,10 +94,10 @@ Server 权威模型已接入：EXP、不可变 Revision、锁定依赖、版本�
 ## 第二条纵向闭环：MCP EXP Workspace
 
 - Argus MCP 使用 Go SDK `v1.7.0` 和 MCP `2026-07-28` Stateless/Sessionless 协议，对外提供 EXP 的读取、创建 Revision、inspect、Fixture 测试、debug、run 和发布工具。
-- 临时 Draft 源码仍由 MCP 通过 `ARGUS_YAKSHA_URL` 调用常驻 Yaksha HTTP Daemon；Daemon 复用 Worker，但每次执行创建全新 VM。MCP 不把宿主路径暴露给 AI。
-- 第一阶段已支持可选的 `exp_id + Revision + source_sha256` 成组绑定；Yaksha 按实际源码复算哈希并在全部响应中返回执行上下文，防止 MCP App 把已编辑源码误当作原 Revision 执行。
+- 临时 Draft 源码仅允许通过 MCP 执行 `inspect`、`validate` 和永久离线的 Fixture `test`；具备真实副作用的 `debug/run` 必须先创建 Server Draft Revision，并携带 `exp_id + Revision + source_sha256`。Daemon 复用 Worker，但每次执行创建全新 VM；MCP 不把宿主路径暴露给 AI。
+- `exp_id + Revision + source_sha256` 组成不可变源码身份；Yaksha 按实际源码复算哈希并在全部响应中返回执行上下文，防止 MCP App 把已编辑源码误当作原 Revision 执行。源码、依赖或 Asset 引用一旦编辑，App 立即解除绑定并要求先保存新 Revision。
 - Server 权威阶段已提供 `argus_exp_workspace`，绑定 EXP、Revision、Asset、TestCase、Run、审计与风险豁免；发布只针对确定 Revision 和预期源码哈希，并要求 Admin 人工确认。
-- 已保存 Revision 的可信 Fixture 验收由 Server 编排 Yaksha，避免调用方伪造回报绕过发布门禁；本地 MCP debug/run 可回报完整运行历史，但外部回报不具备发布验收权。
+- 已保存 Revision 的 `test/debug/run` 全部由 Server 在执行前创建 Run 审计并编排 Yaksha；可信 Fixture 验收因此不能由调用方伪造，MCP 不再使用执行后回报作为审计边界。
 - 提供一个通用 `ui://argus/exp-console` MCP App，不为每个 EXP 创建独立 App；它根据 Yaksha 返回的 CLI Schema 渲染参数表单，并展示源码、诊断、日志、Evidence、Trace 和结构化结果。
 - AI 通过 MCP Tool 读写 EXP 逻辑对象，MCP App 通过同一组受控 Tool 完成交互；两者都不获得 Server/Yaksha 文件路径或任意文件系统能力。
 - 每次修改生成新的 Draft Revision；测试、调试、比较和发布都携带 `exp_id`、Revision 与源码哈希，避免覆盖已发布源码或调试错版本。
@@ -106,7 +106,7 @@ Server 权威模型已接入：EXP、不可变 Revision、锁定依赖、版本�
 - MCP Tool 与 EXP Console 可携带密封依赖、Asset、精确网络目标和本次 `disabled/direct/socks5` 出口；SOCKS5 Raw URL 为 write-only，只用于 Daemon 连接，不进入 Yaklang Worker、调用树或调试输出，也不由 App 回填。
 - Agent 原生出口已使用独立多路复用 gRPC 双向流实现，不复用任务 `Subscribe`，也不套 SOCKS5。Server 绑定租户、操作者、Agent、deadline、目标和预算后签发单次 `route_id`；Yaksha 只接收内部 `relay + route_id`，Agent 在自己的网络环境解析并固定目标 IP。出口审计只保存控制面元数据与流量计数，不保存 Payload。
 
-当前剩余产品切换项是 Server Web UI 与 MCP App 的完整 Workspace 交互，以及确认旧 Python EXP 数据为空后的原子移除；在该切片完成前，旧入口保持不变，不与新模型混合发布。
+Server Web UI 与 MCP App 已接入完整 Workspace 交互。旧 EXP 数据在 migration 中执行 fail-closed 空表检查；确认无数据后原子删除旧表、协议、Agent 执行器、API、MCP 和 UI 产品入口，不保留双栈运行路径。
 
 ## 验收目标
 

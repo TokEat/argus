@@ -23,14 +23,6 @@ type TestCaseInput struct {
 	Enabled *bool           `json:"enabled,omitempty"`
 }
 
-type ExternalRunReport struct {
-	Action        string          `json:"action"`
-	EgressMode    string          `json:"egress_mode"`
-	AgentID       string          `json:"agent_id,omitempty"`
-	Response      RuntimeResponse `json:"response"`
-	RiskConfirmed bool            `json:"risk_confirmed,omitempty"`
-}
-
 func (s *Service) CreateTestCase(ctx context.Context, tenantID, actorID, expID string, revision int, input TestCaseInput) (db.ExpTestCase, error) {
 	params, err := normalizeJSONObject(input.Params, "params")
 	if err != nil {
@@ -206,9 +198,6 @@ func (s *Service) Validate(ctx context.Context, tenantID, actorID, expID string,
 }
 
 func (s *Service) Execute(ctx context.Context, tenantID, actorID, expID string, revision int, input RunInput, internalEgress map[string]any) (RunResult, error) {
-	if s.runtime == nil {
-		return RunResult{}, errors.New("Yaksha Runtime Unavailable")
-	}
 	action := strings.ToLower(strings.TrimSpace(input.Action))
 	if action != "test" && action != "debug" && action != "run" {
 		return RunResult{}, errors.New("action must be test, debug or run")
@@ -220,6 +209,12 @@ func (s *Service) Execute(ctx context.Context, tenantID, actorID, expID string, 
 	sealed, err := s.BuildSealedPackage(ctx, tenantID, expID, revision, action == "test")
 	if err != nil {
 		return RunResult{}, err
+	}
+	if expectedHash := strings.TrimSpace(input.SourceSHA256); expectedHash == "" || expectedHash != sealed.SourceSHA256 {
+		return RunResult{}, errors.New("source_sha256 confirmation does not match the Server Revision")
+	}
+	if s.runtime == nil {
+		return RunResult{}, errors.New("Yaksha Runtime Unavailable")
 	}
 	if action == "test" && len(sealed.TestCases) == 0 {
 		return RunResult{}, errors.New("at least one enabled Fixture test case is required")
@@ -436,68 +431,6 @@ func (s *Service) CancelRun(ctx context.Context, tenantID, runID string) error {
 	}
 	cancel()
 	return nil
-}
-
-func (s *Service) RecordExternalRun(ctx context.Context, tenantID, actorID, expID string, revision int, report ExternalRunReport) (db.ExpRun, error) {
-	revisionRow, err := s.GetRevision(ctx, tenantID, expID, revision)
-	if err != nil {
-		return db.ExpRun{}, err
-	}
-	action := strings.ToLower(strings.TrimSpace(report.Action))
-	if action != "test" && action != "debug" && action != "run" {
-		return db.ExpRun{}, errors.New("external run action must be test, debug or run")
-	}
-	if _, err := s.CheckExecutionAllowed(ctx, tenantID, expID, revision, action, report.RiskConfirmed); err != nil {
-		return db.ExpRun{}, err
-	}
-	reportedEgress := strings.ToLower(strings.TrimSpace(report.EgressMode))
-	if reportedEgress == "" {
-		reportedEgress = "disabled"
-	}
-	switch reportedEgress {
-	case "disabled", "direct", "socks5", "agent":
-	default:
-		return db.ExpRun{}, errors.New("external run egress_mode is invalid")
-	}
-	if reportedEgress != "agent" && strings.TrimSpace(report.AgentID) != "" {
-		return db.ExpRun{}, errors.New("external run agent_id is only valid for Agent egress")
-	}
-	responseContext := mapValue(report.Response, "context")
-	if fmt.Sprint(responseContext["exp_id"]) != expID || fmt.Sprint(responseContext["revision"]) != fmt.Sprint(revision) || fmt.Sprint(responseContext["source_sha256"]) != revisionRow.SourceSHA256 {
-		return db.ExpRun{}, errors.New("external run response does not match the sealed revision identity")
-	}
-	raw, err := json.Marshal(report.Response)
-	if err != nil {
-		return db.ExpRun{}, err
-	}
-	now := time.Now().UTC()
-	run := db.ExpRun{ID: uuid.NewString(), TenantID: tenantID, ExpID: expID, Revision: revision, SourceSHA256: revisionRow.SourceSHA256, Action: action, OperatorID: actorID, EgressMode: reportedEgress, AgentID: strings.TrimSpace(report.AgentID), Status: stringValue(report.Response, "status"), Provenance: "mcp_report", Attested: false, ResultSummary: "{}", StartedAt: now, FinishedAt: &now}
-	artifactHash := contentHash(raw)
-	run.ArtifactObjectKey = artifactObjectKey(tenantID, run.ID, artifactHash)
-	run.ArtifactSHA256 = artifactHash
-	expires := now.Add(s.retention)
-	run.ArtifactExpiresAt = &expires
-	summary, _ := json.Marshal(statusDetails(report.Response))
-	run.ResultSummary = string(summary)
-	if err := s.putImmutable(ctx, run.ArtifactObjectKey, raw, artifactHash); err != nil {
-		return db.ExpRun{}, err
-	}
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&run).Error; err != nil {
-			return err
-		}
-		// External MCP reports are useful execution/audit records but are not an
-		// attestation boundary: an authenticated caller can construct the JSON.
-		// Only a Server-orchestrated Fixture run may satisfy the publish gate.
-		details := statusDetails(report.Response)
-		details["provenance"] = "mcp_report"
-		details["attested"] = false
-		details["risk_confirmed"] = report.RiskConfirmed
-		return createAudit(tx, tenantID, expID, revision, actorID, "external_"+action, details)
-	}); err != nil {
-		return db.ExpRun{}, err
-	}
-	return run, nil
 }
 
 func (s *Service) finishFailedRun(ctx context.Context, run db.ExpRun, finished time.Time, runErr error) error {

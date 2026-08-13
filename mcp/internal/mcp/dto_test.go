@@ -68,10 +68,6 @@ func TestCatalogFileNameFallbackReachesProductSearchOutput(t *testing.T) {
 	if item["source_file"] != "file-only.yaml" || item["name"] != "file-only.yaml" {
 		t.Fatalf("product search fallback missing: %#v", item)
 	}
-	expItem := productSearchEXPItem(record)
-	if expItem["source_file"] != "file-only.yaml" || expItem["name"] != "file-only.yaml" {
-		t.Fatalf("EXP search fallback missing: %#v", expItem)
-	}
 }
 
 func TestRelationshipSortingIsStableAndMissingSearchFieldsAreSafe(t *testing.T) {

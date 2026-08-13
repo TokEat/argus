@@ -50,7 +50,7 @@ func TestYakshaAgentEgressOrchestration(t *testing.T) {
 	defer yaksha.Close()
 
 	client := NewClientWithYakshaURL(server.URL, "test-token", yaksha.URL)
-	result, err := client.yakshaExp(context.Background(), map[string]interface{}{
+	result, err := client.executeYakshaExp(context.Background(), map[string]interface{}{
 		"action": "debug", "script": "cli.check()", "network_targets": []interface{}{"tcp://example.test:443"},
 		"egress": map[string]interface{}{"mode": "agent", "agent_id": "agent-a", "risk_confirmed": true},
 	})
@@ -76,7 +76,7 @@ func TestYakshaAgentEgressReportsRunAndCleanupFailures(t *testing.T) {
 	}))
 	defer yaksha.Close()
 	client := NewClientWithYakshaURL(server.URL, "test-token", yaksha.URL)
-	_, err := client.yakshaExp(context.Background(), map[string]interface{}{
+	_, err := client.executeYakshaExp(context.Background(), map[string]interface{}{
 		"action": "run", "script": "cli.check()", "network_targets": []interface{}{"tcp://example.test:443"},
 		"egress": map[string]interface{}{"mode": "agent", "agent_id": "agent-a", "risk_confirmed": true},
 	})

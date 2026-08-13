@@ -20,6 +20,9 @@ var GlobalArsenalReloadCounter int64 = 0
 func getArsenals(c *gin.Context) {
 	var arsenals []db.Arsenal
 	typ := db.CanonicalArsenalType(c.Param("type"))
+	if rejectRetiredEXPArsenal(c, typ) {
+		return
+	}
 	query := db.DB.Where("tenant_id = ? AND type IN ?", currentTenantID(c), db.ArsenalTypeAliases(typ))
 
 	// 如果没有 ?all=1 参数，默认只下发已审核武器给 Agent
@@ -68,6 +71,9 @@ func getArsenals(c *gin.Context) {
 
 func getArsenal(c *gin.Context) {
 	typ := db.CanonicalArsenalType(c.Param("type"))
+	if rejectRetiredEXPArsenal(c, typ) {
+		return
+	}
 	fn := c.Param("filename")
 	tenantID := currentTenantID(c)
 	arsenal, err := db.FindTenantArsenalByTypeAndFile(tenantID, typ, fn)
@@ -87,6 +93,9 @@ func clearArsenalLargeFields(arsenals []db.Arsenal) {
 
 func saveArsenal(c *gin.Context) {
 	typ := db.CanonicalArsenalType(c.Param("type"))
+	if rejectRetiredEXPArsenal(c, typ) {
+		return
+	}
 	fn := c.Param("filename")
 	tenantID := currentTenantID(c)
 
@@ -96,18 +105,6 @@ func saveArsenal(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
-	}
-
-	// EXP 包基础校验
-	if typ == "exp" {
-		if !strings.HasSuffix(strings.ToLower(fn), ".py") {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "EXP filename must end with .py"})
-			return
-		}
-		if err := validateExpPackage(req.Content, false); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("EXP validation failed: %v", err)})
-			return
-		}
 	}
 
 	hash := fmt.Sprintf("%x", md5.Sum([]byte(req.Content)))
@@ -160,6 +157,9 @@ func saveArsenal(c *gin.Context) {
 
 func approveArsenal(c *gin.Context) {
 	typ := db.CanonicalArsenalType(c.Param("type"))
+	if rejectRetiredEXPArsenal(c, typ) {
+		return
+	}
 	fn := c.Param("filename")
 	tenantID := currentTenantID(c)
 	if typ == "poc" {
@@ -172,19 +172,6 @@ func approveArsenal(c *gin.Context) {
 		candidate.State = "Approved"
 		if err := db.ValidateRuleCatalogCandidate(candidate); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("POC governance validation failed: %v", err)})
-			return
-		}
-	}
-
-	// EXP 包严格校验
-	if typ == "exp" {
-		var existing db.Arsenal
-		if err := db.DB.Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).First(&existing).Error; err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
-			return
-		}
-		if err := validateExpPackage(existing.Content, true); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("EXP validation failed: %v", err)})
 			return
 		}
 	}
@@ -212,6 +199,9 @@ func approveArsenal(c *gin.Context) {
 
 func deleteArsenal(c *gin.Context) {
 	typ := db.CanonicalArsenalType(c.Param("type"))
+	if rejectRetiredEXPArsenal(c, typ) {
+		return
+	}
 	fn := c.Param("filename")
 	tenantID := currentTenantID(c)
 	var arsenal db.Arsenal
@@ -336,6 +326,9 @@ func BumpRuleVersion() string {
 
 func rollbackArsenal(c *gin.Context) {
 	typ := db.CanonicalArsenalType(c.Param("type"))
+	if rejectRetiredEXPArsenal(c, typ) {
+		return
+	}
 	fn := c.Param("filename")
 	tenantID := currentTenantID(c)
 
@@ -372,4 +365,12 @@ func rollbackArsenal(c *gin.Context) {
 	log.Printf("[Arsenal Hub] Rule %s/%s rolled back. Rule version: %s", typ, fn, newVersion)
 
 	c.JSON(http.StatusOK, gin.H{"status": "rolled_back", "rule_version": newVersion})
+}
+
+func rejectRetiredEXPArsenal(c *gin.Context, typ string) bool {
+	if typ != "exp" && typ != "exploit" {
+		return false
+	}
+	c.JSON(http.StatusGone, gin.H{"error": "legacy EXP Arsenal path was removed; use /api/v1/exps"})
+	return true
 }

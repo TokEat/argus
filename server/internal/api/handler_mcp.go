@@ -10,7 +10,6 @@ import (
 
 	"github.com/P0lar1ght/argus/server/internal/db"
 	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
-	"github.com/P0lar1ght/argus/shared/proto/pyexp"
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
 )
@@ -19,17 +18,6 @@ const (
 	defaultMCPSyncTimeoutSec = 60
 	maxMCPSyncTimeoutSec     = 300
 )
-
-var mcpPythonScratchpadCommands = map[string]bool{
-	"python_version": true,
-	"py_compile":     true,
-	"script_help":    true,
-	"import_probe":   true,
-	"pip_version":    true,
-	"pip_list":       true,
-	"pip_show":       true,
-	"pip_check":      true,
-}
 
 type mcpResourceResponse struct {
 	URI      string `json:"uri"`
@@ -55,8 +43,6 @@ var mcpResourceDocs = []mcpResourceDoc{
 	{URI: "argus://workflow/spec", Name: "Argus Workflow Spec", Description: "Workflow rule format linking products to POC files.", MIMEType: "text/markdown", Text: workflowSpecText},
 	{URI: "argus://workflow/template", Name: "Argus Workflow Template", Description: "Minimal workflow YAML snippet.", MIMEType: "text/yaml", Text: workflowTemplateText},
 	{URI: "argus://examples/fingerprint-poc-workflow", Name: "Argus Full Chain Example", Description: "End-to-end fingerprint, POC, workflow, debug/save/publish example.", MIMEType: "text/markdown", Text: fullChainExampleText},
-	{URI: "argus://pyexp/spec", Name: "Argus Python EXP Spec", Description: "Python EXP source format, dependency policy, migration guidance, and debug flow.", MIMEType: "text/markdown", Text: pyexpSpecText},
-	{URI: "argus://pyexp/template", Name: "Argus Python EXP Template", Description: "Minimal Python EXP template.", MIMEType: "text/x-python", Text: pyexpTemplateText},
 }
 
 func mcpResourceByURI(uri string) (mcpResourceDoc, bool) {
@@ -74,30 +60,12 @@ type mcpSaveDraftRequest struct {
 	Content  string `json:"content"`
 }
 
-type mcpDebugExploitRequest struct {
-	ExploitRuleID uint                   `json:"exploit_rule_id"`
-	AgentID       string                 `json:"agent_id"`
-	TargetURL     string                 `json:"target_url"`
-	Source        string                 `json:"source"`
-	Params        map[string]interface{} `json:"params"`
-	Proxy         string                 `json:"proxy"`
-	TimeoutSec    int32                  `json:"timeout_sec"`
-	Action        string                 `json:"action"`
-}
-
 type mcpPOCDebugRequest struct {
 	AgentID    string `json:"agent_id"`
 	TargetURL  string `json:"target_url"`
 	PocContent string `json:"poc_content"`
 	Proxy      string `json:"proxy"`
 	TimeoutSec int32  `json:"timeout_sec"`
-}
-
-type mcpAgentPythonRunRequest struct {
-	AgentID    string          `json:"agent_id"`
-	Command    string          `json:"command"`
-	Params     json.RawMessage `json:"params"`
-	TimeoutSec int32           `json:"timeout_sec"`
 }
 
 type mcpDebugWaitResult struct {
@@ -108,14 +76,6 @@ type mcpDebugWaitResult struct {
 	Logs            []map[string]interface{} `json:"logs,omitempty"`
 	Result          map[string]interface{}   `json:"result,omitempty"`
 	Complete        map[string]interface{}   `json:"complete,omitempty"`
-}
-
-func mcpPyexpSpec(c *gin.Context) {
-	writeMCPResource(c, "argus://pyexp/spec")
-}
-
-func mcpPyexpTemplate(c *gin.Context) {
-	writeMCPResource(c, "argus://pyexp/template")
 }
 
 func mcpPOCTemplate(c *gin.Context) {
@@ -177,143 +137,6 @@ func mcpPOCSaveDraft(c *gin.Context) {
 	c.JSON(http.StatusOK, result.Object)
 }
 
-func mcpPyexpDebug(c *gin.Context) {
-	tenantID := currentTenantID(c)
-	var req mcpDebugExploitRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
-		return
-	}
-	req.AgentID = strings.TrimSpace(req.AgentID)
-	req.TargetURL = strings.TrimSpace(req.TargetURL)
-	req.Proxy = strings.TrimSpace(req.Proxy)
-	req.Action = strings.ToLower(strings.TrimSpace(req.Action))
-	if req.Action == "" {
-		req.Action = "run"
-	}
-	source := strings.TrimSpace(req.Source)
-	if req.Action == "dry_run" {
-		req.TargetURL = strings.TrimSpace(req.TargetURL)
-		if req.TargetURL == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "target_url is required"})
-			return
-		}
-		tmpl, err := parsePyexpSource(source, false)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		normalizedParams, paramErrors := normalizeExpParamsForTarget(pyexp.ParamSchema(tmpl.Params), req.Params, req.TargetURL)
-		resp := sourceLevelPyexpDryRunResponse(tmpl, req.TargetURL, normalizedParams, paramErrors)
-		resp["mcp_guidance"] = mcpPyexpSourceDebugGuidance("dry_run")
-		c.JSON(http.StatusOK, resp)
-		return
-	}
-	if routerRuntime().NotifyHub == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent notify hub is not ready"})
-		return
-	}
-	if req.AgentID == "" || req.TargetURL == "" || (req.ExploitRuleID == 0 && source == "") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id, target_url and either exploit_rule_id or source are required"})
-		return
-	}
-	if req.Action != "run" && req.Action != "cleanup" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "action must be run, cleanup or dry_run"})
-		return
-	}
-	if err := validateDebugTargetURL(req.TargetURL); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if err := validateDebugProxy(req.Proxy); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	var expContent string
-	var paramsSchema map[string]interface{}
-	sourceLevel := source != ""
-	var ruleID string
-	if sourceLevel {
-		tmpl, err := parsePyexpSource(source, false)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("EXP validation failed: %v", err)})
-			return
-		}
-		if req.Action == "cleanup" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "cleanup requires a saved pyexp rule; source-level debug only supports run and dry_run"})
-			return
-		}
-		expContent = source
-		paramsSchema = pyexp.ParamSchema(tmpl.Params)
-		ruleID = tmpl.ID
-	} else {
-		rule, arsenal, ok := loadDebuggableMCPExpRule(c, tenantID, req.ExploitRuleID)
-		if !ok {
-			return
-		}
-		expContent = arsenal.Content
-		paramsSchema = decodeJSONMap(rule.ParamsSchema)
-		ruleID = rule.RuleID
-	}
-	normalizedParams, paramErrors := normalizeExpParamsForTarget(paramsSchema, req.Params, req.TargetURL)
-	if len(paramErrors) > 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": strings.Join(paramErrors, "; "), "params_errors": paramErrors})
-		return
-	}
-	if !mcpValidateDebugAgent(c, tenantID, req.AgentID, true) {
-		return
-	}
-
-	timeoutSec := normalizeMCPSyncTimeout(req.TimeoutSec)
-	resultChan := make(chan map[string]interface{}, 10)
-	session, ok := pocDebugSessions.start(tenantID, req.AgentID, time.Duration(timeoutSec)*time.Second, resultChan)
-	if !ok {
-		c.JSON(http.StatusConflict, gin.H{"error": "tenant already has a running debug session"})
-		return
-	}
-	paramsJSON, _ := json.Marshal(normalizedParams)
-	action := "start_exp_debug"
-	if req.Action == "cleanup" {
-		action = "cleanup_exp_debug"
-	}
-	cmd := &pb.DebugCommand{
-		Action:     action,
-		SessionId:  session.SessionID,
-		TenantId:   tenantID,
-		PocContent: expContent,
-		TargetUrl:  req.TargetURL,
-		Proxy:      req.Proxy,
-		TimeoutSec: timeoutSec,
-		Params:     string(paramsJSON),
-	}
-	if err := routerRuntime().NotifyHub.SendDebugCommand(req.AgentID, cmd); err != nil {
-		pocDebugSessions.finish(session.SessionID)
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "failed to send EXP debug command to agent"})
-		return
-	}
-	go expireDebugSession(session)
-	waited, err := waitMCPDebugResult(resultChan, time.Duration(timeoutSec+15)*time.Second)
-	if err != nil {
-		pocDebugSessions.finish(session.SessionID)
-		c.JSON(http.StatusGatewayTimeout, gin.H{"error": err.Error()})
-		return
-	}
-	waited.Result = enrichMCPPyexpDebugResult(waited.Result, sourceLevel, ruleID)
-	if waited.Result == nil {
-		waited.Result = map[string]interface{}{"source_level": sourceLevel, "rule_id": ruleID}
-	}
-	waited.Result["mcp_guidance"] = mcpPyexpSourceDebugGuidance(req.Action)
-	if waited.ExecutionResult != nil {
-		waited.ExecutionResult["rule_type"] = "pyexp"
-		waited.ExecutionResult["source_level"] = sourceLevel
-		if ruleID != "" {
-			waited.ExecutionResult["rule_id"] = ruleID
-		}
-	}
-	c.JSON(http.StatusOK, waited)
-}
-
 func mcpPOCDebug(c *gin.Context) {
 	if routerRuntime().NotifyHub == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent notify hub is not ready"})
@@ -349,7 +172,7 @@ func mcpPOCDebug(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if !mcpValidateDebugAgent(c, tenantID, req.AgentID, false) {
+	if !mcpValidateDebugAgent(c, tenantID, req.AgentID) {
 		return
 	}
 	timeoutSec := normalizeMCPSyncTimeout(req.TimeoutSec)
@@ -383,141 +206,10 @@ func mcpPOCDebug(c *gin.Context) {
 	c.JSON(http.StatusOK, waited)
 }
 
-func mcpAgentPythonRun(c *gin.Context) {
-	if routerRuntime().NotifyHub == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent notify hub is not ready"})
-		return
-	}
-	tenantID := currentTenantID(c)
-	var req mcpAgentPythonRunRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
-		return
-	}
-	req.AgentID = strings.TrimSpace(req.AgentID)
-	req.Command = strings.ToLower(strings.TrimSpace(req.Command))
-	if req.AgentID == "" || req.Command == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id and command are required"})
-		return
-	}
-	if !mcpPythonScratchpadCommands[req.Command] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unsupported python scratchpad command %q", req.Command)})
-		return
-	}
-	if !mcpValidateDebugAgent(c, tenantID, req.AgentID, true) {
-		return
-	}
-	timeoutSec := normalizeMCPSyncTimeout(req.TimeoutSec)
-	params, err := mcpScratchpadParams(req.Command, req.Params, timeoutSec)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	resultChan := make(chan map[string]interface{}, 10)
-	session, ok := pocDebugSessions.start(tenantID, req.AgentID, time.Duration(timeoutSec)*time.Second, resultChan)
-	if !ok {
-		c.JSON(http.StatusConflict, gin.H{"error": "tenant already has a running debug session"})
-		return
-	}
-	cmd := &pb.DebugCommand{
-		Action:     "python_scratchpad_run",
-		SessionId:  session.SessionID,
-		TenantId:   tenantID,
-		TimeoutSec: timeoutSec,
-		Params:     params,
-	}
-	if err := routerRuntime().NotifyHub.SendDebugCommand(req.AgentID, cmd); err != nil {
-		pocDebugSessions.finish(session.SessionID)
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "failed to send Python scratchpad command to agent"})
-		return
-	}
-	go expireDebugSession(session)
-	waited, err := waitMCPDebugResult(resultChan, time.Duration(timeoutSec+15)*time.Second)
-	if err != nil {
-		pocDebugSessions.finish(session.SessionID)
-		c.JSON(http.StatusGatewayTimeout, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, waited)
-}
-
-func parsePyexpSource(source string, strict bool) (*pyexp.Template, error) {
-	source = strings.TrimSpace(source)
-	if source == "" {
-		return nil, fmt.Errorf("source is required")
-	}
-	if len(source) > maxCopilotDraftContentSizeByte {
-		return nil, fmt.Errorf("source is too large")
-	}
-	tmpl, err := pyexp.ParseTemplate([]byte(source))
-	if err != nil {
-		return nil, err
-	}
-	if err := pyexp.Validate([]byte(source), strict); err != nil {
-		return nil, err
-	}
-	return tmpl, nil
-}
-
-func mcpSavedExpDraftResponse(tenantID, fileName string, result copilotActionResult) (gin.H, error) {
-	fileName = strings.TrimSpace(fileName)
-	var arsenal db.Arsenal
-	if err := db.DB.Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, "exp", fileName).First(&arsenal).Error; err != nil {
-		return nil, fmt.Errorf("load saved EXP draft: %w", err)
-	}
-	var rule db.ExploitRule
-	if err := db.DB.Where("tenant_id = ? AND artifact_id = ?", tenantID, arsenal.ID).First(&rule).Error; err != nil {
-		return nil, fmt.Errorf("load synced EXP rule: %w", err)
-	}
-	tmpl, err := pyexp.ParseTemplate([]byte(arsenal.Content))
-	if err != nil {
-		return nil, err
-	}
-	resp := gin.H{
-		"status":            result.Status,
-		"message":           result.Message,
-		"artifact_id":       arsenal.ID,
-		"rule_id":           rule.RuleID,
-		"file_name":         arsenal.FileName,
-		"state":             arsenal.State,
-		"hash":              arsenal.Hash,
-		"version":           arsenal.Version,
-		"requirements":      tmpl.Requirements,
-		"requirements_hash": tmpl.RequirementsHash,
-	}
-	return resp, nil
-}
-
-func loadDebuggableMCPExpRule(c *gin.Context, tenantID string, ruleID uint) (db.ExploitRule, db.Arsenal, bool) {
-	var rule db.ExploitRule
-	if err := db.DB.Where("id = ? AND tenant_id = ?", ruleID, tenantID).First(&rule).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Exploit rule not found"})
-		return db.ExploitRule{}, db.Arsenal{}, false
-	}
-	if rule.State == "Deprecated" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Deprecated EXP rule cannot be debugged"})
-		return db.ExploitRule{}, db.Arsenal{}, false
-	}
-	var arsenal db.Arsenal
-	if err := db.DB.Where("id = ? AND tenant_id = ?", rule.ArtifactID, tenantID).First(&arsenal).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "EXP source package not found"})
-		return db.ExploitRule{}, db.Arsenal{}, false
-	}
-	if err := validateExpPackage(arsenal.Content, false); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("EXP validation failed: %v", err)})
-		return db.ExploitRule{}, db.Arsenal{}, false
-	}
-	return rule, arsenal, true
-}
-
-func mcpValidateDebugAgent(c *gin.Context, tenantID, agentID string, requirePython bool) bool {
+func mcpValidateDebugAgent(c *gin.Context, tenantID, agentID string) bool {
 	var node db.Node
 	if err := scopedNodeQuery(tenantID).Where("agent_id = ? AND status = ?", agentID, "Alive").First(&node).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "agent is not alive in this tenant"})
-		return false
-	}
-	if requirePython && !agentSupportsPythonEXP(node) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "agent does not support local Python execution"})
 		return false
 	}
 	if !isDebugCapableAgent(node.Version) {
@@ -529,19 +221,6 @@ func mcpValidateDebugAgent(c *gin.Context, tenantID, agentID string, requirePyth
 		return false
 	}
 	return true
-}
-
-func mcpScratchpadParams(command string, paramsRaw json.RawMessage, timeoutSec int32) (string, error) {
-	params := map[string]interface{}{}
-	if len(paramsRaw) > 0 && string(paramsRaw) != "null" {
-		if err := json.Unmarshal(paramsRaw, &params); err != nil {
-			return "", fmt.Errorf("params must be an object")
-		}
-	}
-	params["command"] = command
-	params["timeout_sec"] = timeoutSec
-	data, _ := json.Marshal(params)
-	return string(data), nil
 }
 
 func normalizeMCPSyncTimeout(timeoutSec int32) int32 {
@@ -800,63 +479,6 @@ func firstPresentMCPValue(first, second map[string]interface{}, key string) inte
 	return nil
 }
 
-func sourceLevelPyexpDryRunResponse(tmpl *pyexp.Template, target string, normalizedParams map[string]interface{}, paramErrors []string) gin.H {
-	return gin.H{
-		"status":            "validated",
-		"source_level":      true,
-		"dry_run":           true,
-		"rule_type":         "pyexp",
-		"exploit_id":        tmpl.ID,
-		"rule_id":           tmpl.ID,
-		"target":            target,
-		"risk_level":        tmpl.RiskLevel,
-		"policy":            tmpl.Policy,
-		"params_valid":      len(paramErrors) == 0,
-		"params_errors":     paramErrors,
-		"normalized_params": normalizedParams,
-		"execution_plan": gin.H{
-			"mode":              "python",
-			"engine":            pyexp.RuntimeEngine,
-			"entry":             "run(ctx)",
-			"cleanup_entry":     "cleanup(ctx)",
-			"cleanup_defined":   tmpl.HasCleanup,
-			"requirements":      tmpl.Requirements,
-			"requirements_hash": tmpl.RequirementsHash,
-			"sandbox_profile":   "local-python",
-			"will_execute":      false,
-		},
-		"requirements":      tmpl.Requirements,
-		"requirements_hash": tmpl.RequirementsHash,
-	}
-}
-
-func enrichMCPPyexpDebugResult(result map[string]interface{}, sourceLevel bool, ruleID string) map[string]interface{} {
-	if result == nil {
-		result = map[string]interface{}{}
-	}
-	result["source_level"] = sourceLevel
-	if ruleID != "" {
-		result["rule_id"] = ruleID
-	}
-	result["rule_type"] = "pyexp"
-	return result
-}
-
-func mcpPyexpSourceDebugGuidance(action string) gin.H {
-	if action == "dry_run" {
-		return gin.H{
-			"next_steps":     []string{"if params_valid is true, run source-level debug against an online Agent", "save a Draft only after source-level debug succeeds"},
-			"requires_admin": false,
-			"warnings":       []string{"dry_run does not execute Python and does not check installed Agent dependencies", "dry_run does not save or publish any artifact"},
-		}
-	}
-	return gin.H{
-		"next_steps":     []string{"if status/result is successful, save the source with argus_rule_save", "if dependency check fails, install requirements only after saving a Draft and reviewing hashes"},
-		"requires_admin": false,
-		"warnings":       []string{"source-level debug does not create or update Draft artifacts", "failed debug output should be fixed before saving"},
-	}
-}
-
 func isMCPDebugErrorLog(msg map[string]interface{}) bool {
 	level := strings.ToUpper(strings.TrimSpace(fmt.Sprint(msg["level"])))
 	text := strings.ToLower(strings.TrimSpace(fmt.Sprint(msg["message"])))
@@ -877,39 +499,6 @@ func isMCPDebugErrorLog(msg map[string]interface{}) bool {
 	return false
 }
 
-const pyexpSpecText = `# Argus Python EXP format
-
-Argus Python EXP files are normal Python scripts plus an ARGUS_EXP metadata contract. They must define an ARGUS_EXP dict literal at top level and either run(ctx) or main().
-
-Required ARGUS_EXP fields:
-- id: stable EXP id.
-- name: display name.
-- risk_level: low, medium, high, or destructive.
-- policy: capabilities, timeout_sec, dry_run_supported, cleanup_supported, cleanup_required, side_effects.
-- params: runtime parameter schema. Argparse usage can also be inferred into params.
-- requirements: Agent environment requirements. This is a declaration, not an automatic install instruction.
-
-Requirements must pin exact versions and include sha256 hashes, for example:
-requests==2.32.3 --hash=sha256:<64 hex>
-
-Execution boundaries:
-- Server validates and stores EXP drafts as database artifacts in arsenals.
-- Rule catalog rows are derived indexes from arsenals, not the source of truth.
-- Agent executes against its configured Python runtime.
-- EXP execution does not auto-install dependencies. Run the pyenv install flow first.
-- Approval, publication, official runs, and risk waivers remain in the normal Argus UI/API flow.
-
-Migration guidance:
-- Use native Python for network, crypto, filesystem and process logic. There are no HTTP/TCP helper attributes on ctx.
-- Keep argparse usable so "python exp.py --help" remains meaningful during local migration.
-- Treat argparse.add_argument as the primary parameter contract; ARGUS_EXP.params is only for extra validation/display hints.
-- In run(ctx), use ctx.params, ctx.target, ctx.evidence, ctx.result and ctx.cleanup for Argus integration.
-- Record request/response proof explicitly with ctx.evidence.add, keeping each evidence item concise and redacted.
-- Use argus_rule_save with rule_type=pyexp to create a Draft database artifact, then argus_rule_apply action=install_requirements after the Draft exists.
-- Prefer stable_ref fields artifact_id, rule_id, file_name, hash and version.
-- Use argus_rule_debug with stable_ref, agent_id, target_url and params to validate behavior before publishing.
-`
-
 const argusMCPQuickstartText = `# Argus MCP quickstart
 
 Use this sequence when the client has no Argus source code:
@@ -917,7 +506,7 @@ Use this sequence when the client has no Argus source code:
 1. Read argus://argus-mcp/tool-guide.
 2. Read the relevant spec and template resources.
 3. Call argus_context with action=agents and select an Alive Agent.
-4. Call argus_rule_debug to validate generated fingerprint, POC, or pyexp behavior.
+4. Call argus_rule_debug to validate generated fingerprint or POC behavior; use argus_yaksha_exp for Yaksha EXP.
 5. Call argus_rule_save to create a Draft database artifact and capture stable_ref.
 6. Call argus_rule_apply with action=publish as admin, passing the exact stable_ref hash/version returned by save.
 7. Call argus_context with action=workflow_links to verify fingerprint -> POC linkage.
@@ -925,8 +514,8 @@ Use this sequence when the client has no Argus source code:
 Publishing is protected by hash/version guards. A 409 means the Draft changed; re-read/save before retrying.
 
 Storage model:
-- POC, workflow, fingerprint and EXP source content is stored in the Argus database arsenals table.
-- FingerprintRule, PocRule, WorkflowRule and ExploitRule catalog tables are derived indexes for lookup/execution.
+- POC, workflow and fingerprint source content is stored in the Argus database arsenals table; Yaksha EXP source and artifacts are stored through the Server Workspace in private MinIO.
+- FingerprintRule, PocRule and WorkflowRule catalog tables are derived indexes for lookup/execution.
 - MCP is a thin orchestration layer over Argus native APIs; it should preserve tenant/RBAC/approval semantics instead of bypassing Server control.
 
 Lifecycle intents:
@@ -938,10 +527,10 @@ Lifecycle intents:
 const argusMCPToolGuideText = `# Argus MCP tool guide
 Argus exposes aggregate tools with Server-enforced governance boundaries:
 
-- argus_context: read specs/templates, list Agents, inspect Agent pyenv, query workflow_links, workflow_recommend and workflow_conflicts.
-- argus_rule_debug: validate fingerprint, POC or pyexp behavior through Argus Server and an online Agent.
-- argus_rule_save: save fingerprint, POC, workflow or pyexp into the Argus database as a Draft artifact. Optional intent: test_only, production_candidate, approved_reusable.
-- argus_rule_apply: admin-only controlled actions. action=publish uses stable_ref hash/version. action=install_requirements only supports pyexp.
+- argus_context: read specs/templates, list Agents, query workflow_links, workflow_recommend and workflow_conflicts.
+- argus_rule_debug: validate fingerprint or POC behavior through Argus Server and an online Agent.
+- argus_rule_save: save fingerprint, POC or workflow into the Argus database as a Draft artifact. Optional intent: test_only, production_candidate, approved_reusable.
+- argus_rule_apply: admin-only publication using stable_ref hash/version. Yaksha EXP governance uses argus_exp_workspace.
 - argus_scan_task: preview and create argus.scan-policy/v1 tasks through one Server-authoritative compiler. Call preview first, then create with the exact plan_hash and a stable idempotency_key. It does not accept Scanner raw config, Agent paths, or a separate manual POC phase.
 
 Reference model:
@@ -1104,110 +693,6 @@ argus_context({"action":"workflow_links","product_name":"ExampleProduct"})
 
 Cleanup guidance:
 For test_only work, cleanup is situational. Remove temporary rules when the goal was only to prove the MCP flow. Do not delete rules that passed validation and should remain reusable.
-`
-
-const pyexpTemplateText = `"""
-Argus Python EXP minimal CLI-first template.
-
-Local usage:
-  python3 exp_example.py -h
-  python3 exp_example.py --target http://127.0.0.1:8080 --path / --expect-status 200 --contains Welcome
-"""
-
-import argparse
-import sys
-import urllib.error
-import urllib.parse
-import urllib.request
-
-
-ARGUS_EXP = {
-    "id": "exp-example",
-    "name": "Example Python EXP",
-    "description": "Minimal native Python EXP template.",
-    "risk_level": "low",
-    "target_product": "ExampleProduct",
-    "cve": "",
-    "linked_pocs": [],
-    "policy": {
-        "requires_auth": False,
-        "cleanup_supported": True,
-        "cleanup_required": False,
-        "dry_run_supported": True,
-        "timeout_sec": 60,
-        "capabilities": ["evidence.write", "result.write"],
-        "side_effects": [],
-    },
-    "params": {},
-    "requirements": [],
-}
-
-
-def build_arg_parser():
-    parser = argparse.ArgumentParser(description=ARGUS_EXP["description"])
-    parser.add_argument("--target", required=True, help="Target base URL")
-    parser.add_argument("--path", default="/", help="HTTP path to request")
-    parser.add_argument("--expect-status", type=int, default=200, help="Expected HTTP status")
-    parser.add_argument("--contains", default="", help="Optional response body text matcher")
-    return parser
-
-
-def _join_url(target, path):
-    path = path or "/"
-    if not path.startswith("/"):
-        path = "/" + path
-    return urllib.parse.urljoin(target.rstrip("/") + "/", path.lstrip("/"))
-
-
-def _request(args):
-    req = urllib.request.Request(_join_url(args.target, args.path), headers={"Accept": "*/*"})
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            body = resp.read().decode("utf-8", "replace")
-            return resp.status, body
-    except urllib.error.HTTPError as err:
-        body = err.read().decode("utf-8", "replace")
-        return err.code, body
-
-
-def run(ctx):
-    args = argparse.Namespace(
-        target=getattr(ctx.params, "target", "") or ctx.target.url,
-        path=ctx.params.path,
-        expect_status=int(ctx.params.expect_status),
-        contains=ctx.params.contains,
-    )
-    status, body = _request(args)
-    ctx.evidence.add("request", f"GET {args.path}")
-    ctx.evidence.add("status_code", status)
-    ctx.evidence.add("response_snippet", body[:2048])
-    if status != args.expect_status:
-        return ctx.result.failure(f"unexpected status: {status}")
-    if args.contains and args.contains not in body:
-        return ctx.result.failure("response text matcher not found")
-    return ctx.result.success("verified")
-
-
-def cleanup(ctx):
-    return ctx.result.success("cleanup complete")
-
-
-def main():
-    args = build_arg_parser().parse_args()
-    status, body = _request(args)
-    print(f"status_code={status}")
-    if status != args.expect_status:
-        print(f"unexpected status: {status}", file=sys.stderr)
-        return 1
-    if args.contains and args.contains not in body:
-        print("response text matcher not found", file=sys.stderr)
-        return 1
-    print("verified")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
 `
 
 const pocTemplateText = `id: argus-example-poc

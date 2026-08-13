@@ -493,6 +493,15 @@ func runYakshaExpRevision(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid EXP run request"})
 		return
 	}
+	revisionRow, err := service.GetRevision(c.Request.Context(), currentTenantID(c), c.Param("id"), revision)
+	if err != nil {
+		writeEXPWorkspaceError(c, err)
+		return
+	}
+	if strings.TrimSpace(input.SourceSHA256) == "" || input.SourceSHA256 != revisionRow.SourceSHA256 {
+		c.JSON(http.StatusConflict, gin.H{"error": "source_sha256 confirmation does not match the Server Revision"})
+		return
+	}
 	input.RiskConfirmed = input.RiskConfirmed || input.Egress.RiskConfirmed
 	if _, err := service.CheckExecutionAllowed(c.Request.Context(), currentTenantID(c), c.Param("id"), revision, input.Action, input.RiskConfirmed); err != nil {
 		writeEXPWorkspaceError(c, err)
@@ -512,24 +521,6 @@ func runYakshaExpRevision(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, result)
-}
-
-func reportYakshaExpRun(c *gin.Context) {
-	service, revision, ok := workspaceRevision(c)
-	if !ok {
-		return
-	}
-	var report expworkspace.ExternalRunReport
-	if err := c.ShouldBindJSON(&report); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid EXP run report"})
-		return
-	}
-	run, err := service.RecordExternalRun(c.Request.Context(), currentTenantID(c), currentUserID(c), c.Param("id"), revision, report)
-	if err != nil {
-		writeEXPWorkspaceError(c, err)
-		return
-	}
-	c.JSON(http.StatusCreated, expRunResponse(run))
 }
 
 func listYakshaExpRuns(c *gin.Context) {

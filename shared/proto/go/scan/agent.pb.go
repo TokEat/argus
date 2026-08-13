@@ -547,7 +547,7 @@ func (x *TaskNotify) GetDebugCommand() *DebugCommand {
 // DebugCommand Server→Agent 的临时 POC 调试命令。
 type DebugCommand struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Action        string                 `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"` // "start_debug" | "cancel_debug" | "start_exp" | "cleanup_exp"
+	Action        string                 `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"` // "start_debug" | "start_fingerprint_debug" | "cancel_debug"
 	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	TenantId      string                 `protobuf:"bytes,3,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
 	PocContent    string                 `protobuf:"bytes,4,opt,name=poc_content,json=pocContent,proto3" json:"poc_content,omitempty"`

@@ -50,7 +50,7 @@ const ConfigLayout: React.FC<ConfigLayoutProps> = ({ children }) => {
         { key: '/config/poc', label: 'POC 弹药库', icon: <BugOutlined /> },
         { key: '/config/active-finger', label: '指纹弹药库', icon: <ScanOutlined /> },
         { key: '/config/dir', label: 'Dir 探测规则', icon: <FolderOpenOutlined /> },
-        { key: '/config/exploit', label: 'EXP 验证库', icon: <ThunderboltOutlined /> },
+        { key: '/config/exploit', label: 'Yaksha EXP Workspace', icon: <ThunderboltOutlined /> },
         ...(canAccessRole('operator') ? [{ key: '/config/debug', label: '调试', icon: <ExperimentOutlined /> }] : []),
     ];
 

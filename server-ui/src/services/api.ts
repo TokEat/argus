@@ -1149,124 +1149,91 @@ export async function rollbackArsenal(type: string, filename: string): Promise<A
 }
 
 // ===========================
-// EXP Rule API
+// Yaksha EXP Workspace API
 // ===========================
 
-export async function listExploitRules(params?: {
-    all?: string;
-    risk_level?: string;
-    product?: string;
-    cve?: string;
-    q?: string;
-}): Promise<API.ExploitRule[]> {
-    return request.get('/exploits', { params });
+export async function listExps(): Promise<API.ExpList> {
+    return request.get('/exps');
 }
 
-export async function approveExploitRule(id: number): Promise<API.MessageResponse> {
-    return request.post(`/exploits/${id}/approve`);
+export async function createExp(data: API.CreateExpRequest): Promise<API.Exp> {
+    return request.post('/exps', data);
 }
 
-export async function deprecateExploitRule(id: number): Promise<API.MessageResponse> {
-    return request.post(`/exploits/${id}/deprecate`);
+export async function updateExp(id: string, data: Partial<API.CreateExpRequest>): Promise<API.Exp> {
+    return request.patch(`/exps/${encodeURIComponent(id)}`, data);
 }
 
-export async function batchApproveExploitRules(ids: number[], reason?: string): Promise<API.ExploitBatchReviewResponse> {
-    return request.post('/exploits/batch/approve', { ids, reason });
+export async function deprecateExp(id: string): Promise<void> {
+    await request.delete(`/exps/${encodeURIComponent(id)}`);
 }
 
-export async function batchDeprecateExploitRules(ids: number[], reason?: string): Promise<API.ExploitBatchReviewResponse> {
-    return request.post('/exploits/batch/deprecate', { ids, reason });
+export async function listExpRevisions(id: string): Promise<{ items: API.ExpRevision[] }> {
+    return request.get(`/exps/${encodeURIComponent(id)}/revisions`);
 }
 
-export async function listExploitAudits(params?: { rule_id?: string; action?: string; limit?: number }): Promise<API.ExploitAudit[]> {
-    return request.get('/exploits/audits', { params });
+export async function createExpRevision(id: string, data: API.CreateExpRevisionRequest): Promise<API.ExpRevision> {
+    return request.post(`/exps/${encodeURIComponent(id)}/revisions`, data);
 }
 
-export async function getExploitRiskWaiver(id: number): Promise<API.ExploitRiskWaiver> {
-    return request.get(`/exploits/${id}/risk-waiver`);
+export async function getExpSealedPackage(id: string, revision: number, includeTests = false): Promise<API.ExpSealedPackage> {
+    return request.get(`/exps/${encodeURIComponent(id)}/revisions/${revision}/sealed-package`, { params: { include_tests: includeTests } });
 }
 
-export async function setExploitRiskWaiver(id: number, data: { reason: string; expires_at?: string }): Promise<API.ExploitRiskWaiver> {
-    return request.post(`/exploits/${id}/risk-waiver`, data);
+export async function inspectExpRevision(id: string, revision: number): Promise<API.YakshaResult> {
+    return request.post(`/exps/${encodeURIComponent(id)}/revisions/${revision}/inspect`);
 }
 
-export async function deleteExploitRiskWaiver(id: number): Promise<API.MessageResponse> {
-    return request.delete(`/exploits/${id}/risk-waiver`);
+export async function validateExpRevision(id: string, revision: number): Promise<API.YakshaResult> {
+    return request.post(`/exps/${encodeURIComponent(id)}/revisions/${revision}/validate`);
 }
 
-export async function deleteExploitRule(id: number): Promise<API.MessageResponse> {
-    return request.delete(`/exploits/${id}`);
+export async function publishExpRevision(id: string, revision: number, sourceSha256: string): Promise<API.MessageResponse> {
+    return request.post(`/exps/${encodeURIComponent(id)}/revisions/${revision}/publish`, { source_sha256: sourceSha256 });
 }
 
-export async function dryRunExploit(id: number, target: string, params?: Record<string, unknown>): Promise<API.DryRunResponse> {
-    return request.post(`/exploits/${id}/dry-run`, { target, params: params || {} });
+export async function setExpActiveRevision(id: string, revision: number): Promise<{ active_revision: number }> {
+    return request.post(`/exps/${encodeURIComponent(id)}/active-revision`, { revision });
 }
 
-export async function debugExploit(id: number, data: API.ExploitDebugRequest): Promise<{ session_id: string; status: string }> {
-    return request.post(`/exploits/${id}/debug`, data);
+export async function listExpAssets(): Promise<{ items: API.ExpAsset[] }> {
+    return request.get('/exp-assets');
 }
 
-export async function validateSourceExploit(source: string): Promise<API.SourceExploitValidateResponse> {
-    return request.post('/exploits/source/validate', { source });
+export async function createExpAsset(data: API.CreateExpAssetRequest): Promise<API.ExpAsset> {
+    return request.post('/exp-assets', data);
 }
 
-export async function dryRunSourceExploit(source: string, target: string, params?: Record<string, unknown>): Promise<API.DryRunResponse> {
-    return request.post('/exploits/source/dry-run', { source, target, params: params || {} });
+export async function deleteExpAsset(assetId: string, version: number): Promise<void> {
+    await request.delete(`/exp-assets/${encodeURIComponent(assetId)}/versions/${version}`);
 }
 
-export async function debugSourceExploit(data: API.SourceExploitDebugRequest): Promise<API.SourceExploitDebugResponse> {
-    return request.post('/exploits/source/debug', data);
+export async function listExpTestCases(id: string, revision: number): Promise<{ items: API.ExpTestCase[] }> {
+    return request.get(`/exps/${encodeURIComponent(id)}/revisions/${revision}/test-cases`);
 }
 
-export async function getAgentPyenv(agentId: string): Promise<API.AgentPyenv> {
-    return request.get(`/agents/${agentId}/pyenv`);
+export async function createExpTestCase(id: string, revision: number, data: API.ExpTestCaseInput): Promise<API.ExpTestCase> {
+    return request.post(`/exps/${encodeURIComponent(id)}/revisions/${revision}/test-cases`, data);
 }
 
-export async function installAgentPyenvRequirements(agentId: string, exploitRuleId: number): Promise<API.AgentPyenvJob | API.AgentPyenvNoopResponse> {
-    return request.post(`/agents/${agentId}/pyenv/install`, { exploit_rule_id: exploitRuleId });
+export async function deleteExpTestCase(id: string, caseId: string): Promise<void> {
+    await request.delete(`/exps/${encodeURIComponent(id)}/test-cases/${encodeURIComponent(caseId)}`);
 }
 
-export async function getAgentPyenvJob(agentId: string, jobId: string): Promise<API.AgentPyenvJob> {
-    return request.get(`/agents/${agentId}/pyenv/jobs/${jobId}`);
+export async function runExpRevision(id: string, revision: number, data: API.ExpRunRequest): Promise<API.YakshaResult> {
+    return request.post(`/exps/${encodeURIComponent(id)}/revisions/${revision}/runs`, data);
 }
 
-// ===========================
-// EXP Run API
-// ===========================
-
-export async function createExploitRun(data: {
-    exploit_id: number;
-    target: string;
-    project_id?: string;
-    credential_ref?: string;
-    params?: Record<string, unknown>;
-    risk_confirmed?: boolean;
-}): Promise<API.ExploitRun> {
-    return request.post('/exploit-runs', data);
+export async function listExpRuns(expId?: string): Promise<API.ExpRunList> {
+    return request.get('/exp-runs', { params: expId ? { exp_id: expId } : undefined });
 }
 
-export async function listExploitRuns(params?: {
-    exploit_id?: string;
-    status?: string;
-    target?: string;
-}): Promise<API.ExploitRun[]> {
-    return request.get('/exploit-runs', { params });
+export async function getExpRun(runId: string): Promise<{ run: API.ExpRun; artifact: API.YakshaResult }> {
+    return request.get(`/exp-runs/${encodeURIComponent(runId)}`);
 }
 
-export async function getExploitRun(id: number): Promise<API.ExploitRun> {
-    return request.get(`/exploit-runs/${id}`);
-}
-
-export async function cancelExploitRun(id: number): Promise<API.MessageResponse> {
-    return request.post(`/exploit-runs/${id}/cancel`);
-}
-
-export async function cleanupExploitRun(id: number): Promise<API.MessageResponse> {
-    return request.post(`/exploit-runs/${id}/cleanup`);
-}
-
-export async function getExploitCandidatesForVuln(vulnId: number): Promise<API.ExploitRule[]> {
-    return request.get(`/vulns/${vulnId}/exploit-candidates`);
+export async function cancelExpRun(runId: string): Promise<API.MessageResponse> {
+    return request.post(`/exp-runs/${encodeURIComponent(runId)}/cancel`);
 }
 
 export default request;

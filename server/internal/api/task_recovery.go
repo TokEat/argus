@@ -48,7 +48,6 @@ func (s *TaskRecoveryService) Run(ctx context.Context) {
 			}
 			handleTimeoutTasks(s.queue)
 			recoverScanWorkClaimWaiters(s.queue)
-			db.AutoDispatchCleanup()
 		}
 	}
 }

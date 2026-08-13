@@ -116,7 +116,7 @@ func (c *Client) argusRuleList(ctx context.Context, args map[string]interface{},
 	if raw := normalizeRuleType(stringArg(args, "rule_type")); raw != "" {
 		ruleTypes = append(ruleTypes, raw)
 	} else {
-		ruleTypes = []string{"finger", "poc", "workflow", "exp"}
+		ruleTypes = []string{"finger", "poc", "workflow"}
 	}
 	state := stringArg(args, "state")
 	if draftsOnly {
@@ -220,9 +220,6 @@ func (c *Client) loadRuleCatalog(ctx context.Context, ruleType string) ([]catalo
 	case "poc":
 		var rows []catalogRecord
 		return rows, c.do(ctx, http.MethodGet, "/api/v1/poc-rules?all=1", nil, &rows)
-	case "exp":
-		var rows []catalogRecord
-		return rows, c.do(ctx, http.MethodGet, "/api/v1/exploits?all=1", nil, &rows)
 	case "finger":
 		var rows []catalogRecord
 		return rows, c.do(ctx, http.MethodGet, "/api/v1/dictionaries/fingerprint", nil, &rows)
@@ -320,8 +317,6 @@ func catalogRowMatchesRuleID(row catalogRecord, ruleType, ruleID string) bool {
 		return true
 	}
 	switch ruleType {
-	case "exp":
-		return row.RuleID == ruleID
 	case "poc":
 		return row.Name == ruleID || row.SourceFile == ruleID
 	case "finger", "workflow":
@@ -418,9 +413,6 @@ func (c *Client) ruleReferences(ctx context.Context, ruleType, fileName, product
 				refs["workflows"] = matches
 			}
 		}
-	}
-	if ruleType == "exp" && len(catalog) > 0 {
-		refs["linked_pocs"] = catalog[0].LinkedPOCs
 	}
 	return refs
 }

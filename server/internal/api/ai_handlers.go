@@ -453,16 +453,16 @@ func truncateMapValues(m map[string]interface{}, maxLen int) map[string]interfac
 	return result
 }
 
-func isExpPythonGenerationContext(data map[string]interface{}) bool {
+func isYakshaEXPGenerationContext(data map[string]interface{}) bool {
 	if data == nil {
 		return false
 	}
 	if strings.EqualFold(strings.TrimSpace(stringParam(data, "module")), "exp_builder") ||
-		strings.EqualFold(strings.TrimSpace(stringParam(data, "action")), "generate_exp_python") {
+		strings.EqualFold(strings.TrimSpace(stringParam(data, "action")), "generate_exp_yaksha") {
 		return true
 	}
 	if nested, ok := data["builder_context"].(map[string]interface{}); ok && len(nested) > 0 {
-		return strings.EqualFold(strings.TrimSpace(stringParam(nested, "action")), "generate_exp_python")
+		return strings.EqualFold(strings.TrimSpace(stringParam(nested, "action")), "generate_exp_yaksha")
 	}
 	return false
 }
@@ -520,10 +520,10 @@ func injectCopilotContext(messages *[]aipkg.ChatMessage, pageContext map[string]
 				}
 			}
 		}
-		if isExpPythonGenerationContext(dataLayer) {
+		if isYakshaEXPGenerationContext(dataLayer) {
 			*messages = append(*messages, aipkg.ChatMessage{
 				Role:    "system",
-				Content: "【EXP Python 专用约束】你是 EXP Python 草稿助手。请根据 raw HTTP 请求包、响应片段、判断线索和 cleanup 要求输出完整 fenced python EXP；采用 CLI-first 标准脚本结构：文件头 CLI 用法说明、import argparse、ARGUS_EXP、build_arg_parser()、run(ctx)、cleanup(ctx)、main() 和 if __name__ == \"__main__\"；argparse.add_argument 是参数主合同，让脚本本地可通过 -h/--help 查看参数，ARGUS_EXP.params 默认可为空，仅用于 pattern/sensitive/min/max/enum/example 等额外校验/展示；flag 使用 kebab-case 时参数名使用 snake_case；run(ctx) 可通过 ctx.params.<name> 读取平台参数，也可以按普通 Python 脚本方式使用 urllib、requests、socket、subprocess、os、ctypes 和已声明依赖；ctx 不提供 HTTP/TCP helper 属性；请求、响应、状态码、matcher、关键错误等调试信息需要脚本主动通过 ctx.evidence.add 写入摘要并注意脱敏；不要设置执行目标、用户授权、agent_id、project_id、risk_confirmed 等执行字段。若缺少成功判断或参数化依据，先说明需要用户补充什么，再给最小可用 Python。",
+				Content: "【Yaksha EXP 专用约束】你是 Yaklang EXP 草稿助手。输出单个 fenced yak 的 main.yak 权威源码；在顶层直接以 target = cli.String(\"target\", cli.setRequired(true), cli.setHelp(\"...\")) 这类声明定义参数，并在全部参数声明后仅调用一次 cli.check()，供 Server 解析渲染；通过 yaksha.call 组合确定 Revision 的子 EXP，通过 yaksha.asset 读取逻辑 Asset；网络只使用 Yaksha 提供的 HTTP/TCP 能力并由运行上下文授权出口和精确目标；debug 必须保留完整未脱敏 Trace、调用树和 Evidence；不要设置执行目标、用户授权、agent_id、route_id、risk_confirmed、对象键或存储凭据。若缺少成功判断或参数化依据，先说明需要用户补充什么，再给最小可用 Yaklang。",
 			})
 		}
 		if len(dataLayer) > 0 {
@@ -553,10 +553,10 @@ func injectCopilotContext(messages *[]aipkg.ChatMessage, pageContext map[string]
 			}
 		}
 		if len(pageOnly) > 0 {
-			if isExpPythonGenerationContext(pageOnly) {
+			if isYakshaEXPGenerationContext(pageOnly) {
 				*messages = append(*messages, aipkg.ChatMessage{
 					Role:    "system",
-					Content: "【EXP Python 专用约束】优先根据用户提供的请求包和判断线索输出 fenced python；采用 CLI-first 标准脚本结构：文件头 CLI 用法说明、import argparse、ARGUS_EXP、build_arg_parser()、run(ctx)、cleanup(ctx)、main() 和 if __name__ == \"__main__\"；以 argparse.add_argument 作为参数主合同，ARGUS_EXP.params 默认可为空；不要编造事实，不要设置执行/授权字段。缺少依据时先说明需要用户补充什么。",
+					Content: "【Yaksha EXP 专用约束】优先根据用户提供的请求包和判断线索输出单个 fenced yak main.yak；在顶层直接以 name = cli.String(\"name\", ...) 这类声明定义参数，并在全部参数声明后仅调用一次 cli.check()；通过 yaksha.call 和 yaksha.asset 组合复杂场景；不要编造事实，不要设置执行、授权、Route 或对象存储字段。缺少依据时先说明需要用户补充什么。",
 				})
 			}
 			ctxBytes, _ := json.MarshalIndent(pageOnly, "", "  ")

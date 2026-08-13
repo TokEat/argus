@@ -6,16 +6,6 @@ import (
 	"unicode/utf8"
 )
 
-func TestCanonicalArsenalTypeEXP(t *testing.T) {
-	if got := CanonicalArsenalType("exploit"); got != "exp" {
-		t.Fatalf("CanonicalArsenalType(exploit) = %q, want exp", got)
-	}
-	aliases := ArsenalTypeAliases("exp")
-	if len(aliases) != 2 || aliases[0] != "exp" || aliases[1] != "exploit" {
-		t.Fatalf("ArsenalTypeAliases(exp) = %#v, want [exp exploit]", aliases)
-	}
-}
-
 func TestCanonicalArsenalTypePocAsset(t *testing.T) {
 	if got := CanonicalArsenalType("pocasset"); got != "poc_asset" {
 		t.Fatalf("CanonicalArsenalType(pocasset) = %q, want poc_asset", got)
@@ -39,86 +29,6 @@ func TestCanonicalArsenalTypeConfigAsset(t *testing.T) {
 		if aliases[i] != want[i] {
 			t.Fatalf("ArsenalTypeAliases(config_asset) = %#v, want %#v", aliases, want)
 		}
-	}
-}
-
-func TestMaterializeExploitRule(t *testing.T) {
-	arsenal := Arsenal{
-		ID:       "exp_demo.py",
-		TenantID: "default",
-		Type:     "exp",
-		FileName: "demo.py",
-		Content: `ARGUS_EXP = {
-    "id": "exp-demo",
-    "name": "Demo EXP",
-    "description": "Demo description",
-    "risk_level": "high",
-    "target_product": "DemoProduct",
-    "cve": "CVE-2026-0001",
-    "linked_pocs": ["demo-poc.yaml"],
-    "policy": {
-        "requires_auth": True,
-        "cleanup_supported": True,
-        "cleanup_required": True,
-        "timeout_sec": 90,
-        "capabilities": ["evidence.write", "result.write"],
-        "side_effects": ["creates proof marker"],
-    },
-    "params": {
-        "marker": {"type": "string", "required": True}
-    },
-    "requirements": ["beautifulsoup4==4.12.3 --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
-}
-
-def run(ctx):
-    ctx.evidence.add("request", "GET /")
-    ctx.evidence.add("status_code", 200)
-    return ctx.result.success("ok")
-
-def cleanup(ctx):
-    return ctx.result.success("cleanup complete")
-`,
-		Hash:    "hash",
-		Version: 2,
-		State:   "Approved",
-	}
-
-	rule, err := materializeExploitRule(arsenal)
-	if err != nil {
-		t.Fatalf("materializeExploitRule returned error: %v", err)
-	}
-	if rule.RuleID != "exp-demo" || rule.Name != "Demo EXP" || rule.TargetProduct != "DemoProduct" {
-		t.Fatalf("unexpected materialized identity: %#v", rule)
-	}
-	if rule.RiskLevel != "high" || !rule.RequiresAuth || !rule.CleanupRequired || !rule.CleanupSupported {
-		t.Fatalf("unexpected risk/policy fields: %#v", rule)
-	}
-	if rule.Capabilities != `["evidence.write","result.write"]` {
-		t.Fatalf("Capabilities = %q", rule.Capabilities)
-	}
-	if rule.LinkedPocs != `["demo-poc.yaml"]` {
-		t.Fatalf("LinkedPocs = %q", rule.LinkedPocs)
-	}
-	if rule.TimeoutSec != 90 || rule.RuntimeEngine != "python" || !rule.Enabled {
-		t.Fatalf("unexpected runtime fields: %#v", rule)
-	}
-	if rule.Requirements != `["beautifulsoup4==4.12.3 --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]` || rule.RequirementsHash == "" || rule.SandboxProfile != "local-python" {
-		t.Fatalf("unexpected python runtime metadata: %#v", rule)
-	}
-}
-
-func TestMaterializeRuleCatalogRejectsInvalidPythonExploit(t *testing.T) {
-	out := materializeRuleCatalog([]Arsenal{{
-		ID:       "legacy_exp.yaml",
-		TenantID: "default",
-		Type:     "exp",
-		FileName: "legacy.yaml",
-		Content:  "kind: argus-exp/v1\nid: legacy-exp\n",
-		Hash:     "hash",
-		State:    "Approved",
-	}})
-	if len(out.exploits) != 0 || len(out.errors) != 1 || !strings.Contains(out.errors[0], "ARGUS_EXP dict literal is required") {
-		t.Fatalf("invalid Python EXP should be rejected without executable rule, got %#v", out)
 	}
 }
 

@@ -1,101 +1,29 @@
-# Argus EXP 能力规划
+# Yaksha EXP 能力边界
 
-Argus EXP 当前采用 Python-only 实现。旧的 EXP YAML 包、Nuclei runtime、Starlark runtime 和声明式 HTTP EXP 路径已经退役，后续开发以 Python EXP 为唯一主线。
+Argus EXP 的唯一产品实现是 Yaksha。每个 EXP 的唯一权威源码是单个 `main.yak`；复杂逻辑通过锁定 Revision 的子 EXP 组合，Payload、字典和样本通过哈希绑定的 Asset 引用，不引入多文件源码包。
 
-## 能力边界
+## 权威模型
 
-EXP 用于授权范围内的受控利用验证，和 POC 扫描链路分离：
+```text
+Exp
+├── metadata
+├── revisions/<revision>/main.yak
+├── dependencies
+├── asset_refs
+├── test_cases
+└── runs
+```
 
-- POC 负责发现和验证漏洞信号。
-- EXP 负责在人工授权、风险确认和 Agent 能力约束下做更强的利用验证。
-- EXP 可关联 POC，但不复用 POC 的执行器。
+- 修改源码只创建递增 Draft Revision，不覆盖旧版本。
+- Published Revision 不可变，发布要求 inspect、validate 和 Fixture 验收通过。
+- 发布由 Admin 使用预期源码哈希人工确认；回滚只切换活动版本并写审计。
+- 生产对象存储为私有 MinIO；LocalStore 只允许显式开发模式。
+- Debug Trace 完整未脱敏，正文按保留期删除，摘要和审计永久保留。
 
-## Python EXP 格式
+## 运行与出口
 
-每个 EXP 是一个 `.py` 文件，内容保存于 `arsenals(type=exp).content`。
+Yaksha 是容器中的常驻 Daemon，Worker 长期复用，但每个请求创建全新 Engine、CLI、Session 和 Resolver 上下文。默认禁网；`test` 永久离线；`run/debug` 可显式选择 direct、单次 write-only SOCKS5 或指定 Agent 的原生 TCP relay。网络目标必须精确声明，失败不自动回退或重试。
 
-必须包含：
+## 控制面
 
-- `ARGUS_EXP` dict 元数据。
-- `run(ctx)` 或 `main()` 执行入口。
-
-推荐包含：
-
-- `argparse` 参数定义，作为本地 CLI 和平台参数推断的主合同。
-- `cleanup(ctx)`，用于清理写入、创建或状态修改类副作用。
-- `requirements`，所有第三方依赖必须固定版本并携带 hash。
-- `policy.capabilities`，仅作为 UI 展示和审核辅助元数据；不作为运行时能力管控边界。
-
-## 执行器
-
-核心实现位于：
-
-- `shared/proto/pyexp`：Python EXP 解析、校验、参数推断和 requirements 规则校验。
-- `scanner/internal/exploit`：Python-only EXP engine、Python runner、兼容 ctx SDK 和 HTTP trace。
-- `scanner/cmd/exp-debug`：本地 Python EXP 调试 CLI。
-
-Agent 通过本地 Python 子进程执行 EXP。运行时会写入临时工作目录，注入 `argus_sdk.py`、`runner.py`、`context.json` 和 EXP 脚本。脚本可以直接使用原生 Python 标准库、系统 API 和已声明依赖；`ctx` 只保留 `params`、`target`、`evidence`、`result`、`cleanup` 作为结构化回传入口。
-
-## Capability 展示元数据
-
-`policy.capabilities` 保留给 UI 展示和审核讨论，常见取值包括：
-
-- `evidence.write`
-- `cleanup.defer`
-- `result.write`
-
-执行器不再根据该字段拦截能力，也不限制原生 Python 网络或系统调用。运行时仍保留 timeout guard：按 EXP policy 或调用方 timeout 截断。
-
-## Server 管理链路
-
-- `saveArsenal(type=exp)`：只接受 `.py` 文件，并做基础 Python EXP 校验。
-- `approveArsenal` / EXP 审核：执行严格元数据校验，包括 requirements 规则；不再做 Python 符号 deny-list 或 capability 扫描拦截。
-- `materializeExploitRule`：从 Python EXP 解析元数据并写入 `exploit_rules`。
-- `dry-run`：解析 Python EXP 并返回执行计划、参数归一化结果和 requirements 信息。
-- `debug`：将 Python EXP 下发到支持 `python_exp=true` 的在线 Agent。
-- `exploit-runs`：正式执行仍受审批状态、风险确认、Agent 能力、requirements 预检和并发控制约束。
-
-## 数据模型
-
-`exploit_rules` 是 Python EXP 的可检索物化表，关键字段包括：
-
-- `artifact_id`
-- `source_file`
-- `rule_id`
-- `name`
-- `description`
-- `target_product`
-- `risk_level`
-- `requires_auth`
-- `side_effects`
-- `cleanup_supported`
-- `cleanup_required`
-- `dry_run_supported`
-- `capabilities`
-- `linked_pocs`
-- `params_schema`
-- `requirements`
-- `requirements_hash`
-- `sandbox_profile`
-- `timeout_sec`
-- `runtime_engine`
-
-`runtime_engine` 固定为 `python`，`sandbox_profile` 默认 `local-python`。
-
-## AI 与 Builder
-
-AI Copilot 和前端 Builder 只生成 Python EXP：
-
-- 输出必须是 fenced `python`。
-- 前端应用前做轻量 Python EXP 结构校验。
-- 后端保存和审核继续以 `pyexp.Validate` 为准。
-- 不再生成或应用 EXP YAML。
-- 不再使用 EXP 专属结构化补丁。
-
-## 后续方向
-
-- 保持 Python EXP 的原生自由度，持续改进 ctx SDK 的兼容便利能力。
-- 增强 requirements 安装、缓存和哈希治理。
-- 增强 HTTP trace、证据脱敏和执行审计。
-- 完善 Agent 能力上报和 Python runtime 健康检查。
-- 持续补充 Python EXP fixture 和端到端调试用例。
+Server Web UI 与 `argus_exp_workspace` 管理 EXP、Revision、Asset、Fixture、发布、回滚和历史；`argus_yaksha_exp` 允许临时 Draft 做 inspect、validate 和离线 Fixture test，debug/run 只执行绑定 `exp_id + revision + source_sha256` 的 Server 密封 Revision。MCP App 使用相同 Tool，不接触文件系统或对象存储内部信息。

@@ -32,5 +32,4 @@ server/internal/db/rule_catalog.go 1381
 server/internal/grpc/server.go 1654
 server/internal/grpc/server_test.go 1678
 shared/proto/go/scanplan/contract.go 978
-shared/proto/pyexp/pyexp.go 1643
 tools/arsenal-sync/main.go 888

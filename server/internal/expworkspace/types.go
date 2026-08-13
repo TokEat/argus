@@ -54,6 +54,8 @@ type SealedPackage struct {
 	Revision                 int                `json:"revision"`
 	SourceSHA256             string             `json:"source_sha256"`
 	Script                   string             `json:"script"`
+	DependencyRefs           []DependencyInput  `json:"dependency_refs"`
+	AssetRefs                []AssetRefInput    `json:"asset_refs"`
 	Dependencies             []SealedDependency `json:"dependencies"`
 	Assets                   []SealedAsset      `json:"assets"`
 	TestCases                []json.RawMessage  `json:"test_cases,omitempty"`
@@ -80,6 +82,7 @@ type RuntimeResponse map[string]any
 
 type RunInput struct {
 	Action         string         `json:"action"`
+	SourceSHA256   string         `json:"source_sha256"`
 	Params         map[string]any `json:"params,omitempty"`
 	TimeoutMS      int            `json:"timeout_ms,omitempty"`
 	NetworkTargets []string       `json:"network_targets,omitempty"`

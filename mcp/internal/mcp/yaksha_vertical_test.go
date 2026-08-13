@@ -49,9 +49,9 @@ func startYakshaDaemon(t *testing.T, binary string) string {
 	return ""
 }
 
-// This opt-in acceptance test proves MCP calls a persistent Yaksha daemon over
-// HTTP. Network execution is covered separately with an explicit SOCKS5 test
-// proxy; this loop intentionally remains offline.
+// This opt-in acceptance test proves transient inspect/validate/Fixture test
+// calls use a persistent Yaksha daemon over HTTP. Saved debug/run are
+// Server-orchestrated and covered by the Workspace vertical acceptance path.
 func TestMCPToRealYakshaVerticalLoop(t *testing.T) {
 	binary := strings.TrimSpace(os.Getenv("ARGUS_YAKSHA_TEST_BIN"))
 	if binary == "" {
@@ -87,12 +87,6 @@ func TestMCPToRealYakshaVerticalLoop(t *testing.T) {
 	}
 	params := map[string]interface{}{"params": map[string]interface{}{"name": "yaksha"}, "dependencies": []interface{}{}, "assets": []interface{}{}, "network_targets": []interface{}{}}
 	call("validate", simple, params)
-	run := call("run", simple, params)
-	raw, _ := json.Marshal(run)
-	if !strings.Contains(string(raw), `"hello":"yaksha"`) {
-		t.Fatalf("run=%s", raw)
-	}
-	call("debug", simple, params)
 	call("test", simple, map[string]interface{}{"dependencies": []interface{}{}, "assets": []interface{}{}, "network_targets": []interface{}{}, "test_cases": []interface{}{map[string]interface{}{"id": "simple", "params": map[string]interface{}{"name": "yaksha"}, "expect": map[string]interface{}{"result": map[string]interface{}{"hello": "yaksha"}}}}})
 }
 

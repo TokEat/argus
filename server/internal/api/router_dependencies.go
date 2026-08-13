@@ -120,7 +120,4 @@ func routerRuntime() *RouterDependencies {
 func ConfigureRouterDependencies(deps RouterDependencies) {
 	activeRouterDependencies = normalizeRouterDependencies(deps)
 	db.DebugEventHook = handleAgentDebugEvent
-	db.ExploitCleanupDispatchHook = func(run db.ExploitRun) error {
-		return dispatchExploitCleanup(run, run.TenantID)
-	}
 }

@@ -86,39 +86,47 @@ func (c *Client) yakshaExp(ctx context.Context, args map[string]interface{}) (ma
 		return nil, err
 	}
 	action := strings.ToLower(strings.TrimSpace(rawStringArg(prepared, "action")))
-	if saved && action == "test" {
-		return c.testSavedYakshaExp(ctx, prepared)
+	if (action == "debug" || action == "run") && !saved {
+		return nil, fmt.Errorf("%s requires a saved Server EXP Revision bound by exp_id, revision, and source_sha256; save the Draft Revision before execution", action)
+	}
+	if saved && isRecordedYakshaAction(action) {
+		return c.executeSavedYakshaExp(ctx, prepared)
 	}
 	result, err := c.executeYakshaExp(ctx, prepared)
 	if err != nil {
 		return nil, err
 	}
-	if saved && isRecordedYakshaAction(action) {
-		if err := c.reportSavedYakshaRun(ctx, prepared, result); err != nil {
-			return nil, err
-		}
-	}
 	return result, nil
 }
 
-func (c *Client) testSavedYakshaExp(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
+func (c *Client) executeSavedYakshaExp(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
 	expID := strings.TrimSpace(rawStringArg(args, "exp_id"))
 	revision, ok := workspaceInt(args["revision"])
 	if expID == "" || !ok || revision < 1 {
-		return nil, fmt.Errorf("saved EXP test requires exp_id and positive revision")
+		return nil, fmt.Errorf("saved EXP execution requires exp_id and positive revision")
 	}
-	body := map[string]interface{}{"action": "test", "egress": map[string]interface{}{"mode": "disabled"}}
-	if timeout, exists := args["timeout_ms"]; exists {
-		body["timeout_ms"] = timeout
+	action := strings.ToLower(strings.TrimSpace(rawStringArg(args, "action")))
+	body := map[string]interface{}{
+		"action":        action,
+		"source_sha256": strings.TrimSpace(rawStringArg(args, "source_sha256")),
+	}
+	for _, key := range []string{"params", "timeout_ms", "network_targets", "egress", "risk_confirmed"} {
+		if value, exists := args[key]; exists {
+			body[key] = value
+		}
+	}
+	if action == "test" {
+		body["egress"] = map[string]interface{}{"mode": "disabled"}
+		delete(body, "network_targets")
 	}
 	path := fmt.Sprintf("/api/v1/exps/%s/revisions/%d/runs", url.PathEscape(expID), revision)
 	var recorded map[string]interface{}
 	if err := c.do(ctx, http.MethodPost, path, body, &recorded); err != nil {
-		return nil, fmt.Errorf("run trusted Server Fixture test: %w", err)
+		return nil, fmt.Errorf("execute trusted Server EXP Revision: %w", err)
 	}
 	response, ok := recorded["response"].(map[string]interface{})
 	if !ok {
-		return nil, fmt.Errorf("run trusted Server Fixture test: response is missing")
+		return nil, fmt.Errorf("execute trusted Server EXP Revision: response is missing")
 	}
 	response["server_run_id"] = strings.TrimSpace(rawStringArg(recorded, "run_id"))
 	return response, nil
@@ -178,10 +186,11 @@ func (c *Client) executeYakshaExp(ctx context.Context, args map[string]interface
 func (c *Client) prepareSavedYakshaExp(ctx context.Context, args map[string]interface{}) (map[string]interface{}, bool, error) {
 	expID := strings.TrimSpace(rawStringArg(args, "exp_id"))
 	revision, ok := workspaceInt(args["revision"])
+	expectedHash := strings.TrimSpace(rawStringArg(args, "source_sha256"))
 	hasScript := strings.TrimSpace(rawStringArg(args, "script")) != ""
-	if expID != "" || ok {
-		if expID == "" || !ok || revision < 1 {
-			return nil, false, fmt.Errorf("saved EXP execution requires exp_id and positive revision together")
+	if expID != "" || ok || expectedHash != "" {
+		if expID == "" || !ok || revision < 1 || expectedHash == "" {
+			return nil, false, fmt.Errorf("saved EXP execution requires exp_id, positive revision, and source_sha256 together")
 		}
 		if hasScript {
 			return nil, false, fmt.Errorf("script cannot be combined with saved exp_id and revision")
@@ -203,7 +212,7 @@ func (c *Client) prepareSavedYakshaExp(ctx context.Context, args map[string]inte
 		return nil, false, fmt.Errorf("load sealed EXP revision: %w", err)
 	}
 	sealedHash := strings.TrimSpace(rawStringArg(sealed, "source_sha256"))
-	if expected := strings.TrimSpace(rawStringArg(args, "source_sha256")); expected != "" && expected != sealedHash {
+	if expectedHash != sealedHash {
 		return nil, false, fmt.Errorf("saved EXP source_sha256 confirmation does not match Server revision")
 	}
 	if strings.EqualFold(strings.TrimSpace(rawStringArg(sealed, "exp_status")), "deprecated") {
@@ -235,33 +244,6 @@ func (c *Client) prepareSavedYakshaExp(ctx context.Context, args map[string]inte
 		prepared["test_cases"] = sealed["test_cases"]
 	}
 	return prepared, true, nil
-}
-
-func (c *Client) reportSavedYakshaRun(ctx context.Context, args map[string]interface{}, result map[string]interface{}) error {
-	expID := strings.TrimSpace(rawStringArg(args, "exp_id"))
-	revision, _ := workspaceInt(args["revision"])
-	egress, _ := args["egress"].(map[string]interface{})
-	mode := strings.TrimSpace(rawStringArg(egress, "mode"))
-	if mode == "" {
-		mode = "disabled"
-	}
-	report := map[string]interface{}{"action": args["action"], "egress_mode": mode, "response": result}
-	confirmed, _ := args["risk_confirmed"].(bool)
-	if nestedConfirmed, _ := egress["risk_confirmed"].(bool); nestedConfirmed {
-		confirmed = true
-	}
-	if confirmed {
-		report["risk_confirmed"] = true
-	}
-	if mode == "agent" {
-		report["agent_id"] = strings.TrimSpace(rawStringArg(egress, "agent_id"))
-	}
-	path := fmt.Sprintf("/api/v1/exps/%s/revisions/%d/run-reports", url.PathEscape(expID), revision)
-	var recorded map[string]interface{}
-	if err := c.do(ctx, http.MethodPost, path, report, &recorded); err != nil {
-		return fmt.Errorf("record saved EXP run: %w", err)
-	}
-	return nil
 }
 
 func isRecordedYakshaAction(action string) bool {

@@ -132,7 +132,10 @@ func (s *Service) BuildSealedPackage(ctx context.Context, tenantID, expID string
 	if err != nil {
 		return SealedPackage{}, fmt.Errorf("read EXP revision: %w", err)
 	}
-	sealed := SealedPackage{ExpID: root.ExpID, ExpStatus: exp.Status, RiskLevel: exp.RiskLevel, RiskWaiverActive: waiverActive, Revision: root.Revision, SourceSHA256: root.SourceSHA256, Script: string(script), Dependencies: []SealedDependency{}, Assets: []SealedAsset{}}
+	sealed := SealedPackage{ExpID: root.ExpID, ExpStatus: exp.Status, RiskLevel: exp.RiskLevel, RiskWaiverActive: waiverActive, Revision: root.Revision, SourceSHA256: root.SourceSHA256, Script: string(script), DependencyRefs: []DependencyInput{}, AssetRefs: []AssetRefInput{}, Dependencies: []SealedDependency{}, Assets: []SealedAsset{}}
+	if err := s.collectRevisionRefs(ctx, tenantID, root, &sealed); err != nil {
+		return SealedPackage{}, err
+	}
 	if err := s.collectDependencies(ctx, tenantID, root, &sealed); err != nil {
 		return SealedPackage{}, err
 	}
@@ -165,6 +168,32 @@ func (s *Service) BuildSealedPackage(ctx context.Context, tenantID, expID string
 		}
 	}
 	return sealed, nil
+}
+
+// collectRevisionRefs preserves only the root Revision's direct resolver
+// declarations. The flattened sealed closure below is an execution artifact
+// and must not be reused when authoring the next immutable Revision.
+func (s *Service) collectRevisionRefs(ctx context.Context, tenantID string, root db.ExpRevision, sealed *SealedPackage) error {
+	var dependencies []db.ExpDependency
+	if err := s.db.WithContext(ctx).
+		Where("tenant_id = ? AND parent_exp_id = ? AND parent_revision = ?", tenantID, root.ExpID, root.Revision).
+		Order("dependency_exp_id ASC, dependency_revision ASC").Find(&dependencies).Error; err != nil {
+		return err
+	}
+	for _, item := range dependencies {
+		sealed.DependencyRefs = append(sealed.DependencyRefs, DependencyInput{ExpID: item.DependencyExpID, Revision: item.DependencyRevision, SourceSHA256: item.SourceSHA256})
+	}
+
+	var assets []db.ExpAssetRef
+	if err := s.db.WithContext(ctx).
+		Where("tenant_id = ? AND exp_id = ? AND revision = ?", tenantID, root.ExpID, root.Revision).
+		Order("asset_id ASC").Find(&assets).Error; err != nil {
+		return err
+	}
+	for _, item := range assets {
+		sealed.AssetRefs = append(sealed.AssetRefs, AssetRefInput{AssetID: item.AssetID, Version: item.AssetVersion, SHA256: item.SHA256})
+	}
+	return nil
 }
 
 func (s *Service) collectDependencies(ctx context.Context, tenantID string, root db.ExpRevision, sealed *SealedPackage) error {

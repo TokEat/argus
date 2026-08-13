@@ -13,7 +13,6 @@ const apiMocks = vi.hoisted(() => ({
     exportVulns: vi.fn(),
     exportAssets: vi.fn(),
     exportFingerprints: vi.fn(),
-    getExploitCandidatesForVuln: vi.fn(),
 }));
 
 vi.mock('../contexts/GlobalAIContext', () => ({

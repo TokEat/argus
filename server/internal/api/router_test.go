@@ -432,22 +432,9 @@ func TestTenantRolePermissionMatrix(t *testing.T) {
 		{method: "POST", path: "/api/v1/arsenals/ai/analyze", want: "admin"},
 		{method: "POST", path: "/api/v1/ai/arsenal/analyze", want: "admin"},
 		{method: "POST", path: "/api/v1/ai/arsenal/analyze/stream", want: "admin"},
-		{method: "GET", path: "/api/v1/exploits", want: "viewer"},
-		{method: "POST", path: "/api/v1/exploits/source/validate", want: "operator"},
-		{method: "POST", path: "/api/v1/exploits/source/dry-run", want: "operator"},
-		{method: "POST", path: "/api/v1/exploits/source/debug", want: "operator"},
-		{method: "POST", path: "/api/v1/exploits/12/dry-run", want: "operator"},
-		{method: "POST", path: "/api/v1/exploits/12/approve", want: "admin"},
-		{method: "POST", path: "/api/v1/exploits/12/risk-waiver", want: "admin"},
-		{method: "POST", path: "/api/v1/exploit-runs", want: "operator"},
-		{method: "GET", path: "/api/v1/agents/agent-1/pyenv", want: "operator"},
-		{method: "POST", path: "/api/v1/agents/agent-1/pyenv/install", want: "admin"},
-		{method: "GET", path: "/api/v1/agents/agent-1/pyenv/jobs/job-1", want: "operator"},
 		{method: "GET", path: "/api/v1/reports/export/assets", want: "viewer"},
 		{method: "GET", path: "/api/v1/reports/export/fingerprints", want: "viewer"},
-		{method: "GET", path: "/api/v1/mcp/resources/pyexp/spec", want: "operator"},
 		{method: "POST", path: "/api/v1/mcp/tools/poc/debug", want: "operator"},
-		{method: "POST", path: "/api/v1/mcp/tools/agent/python-run", want: "admin"},
 		{method: "POST", path: "/api/v1/mcp/tools/rule/context", want: "operator"},
 		{method: "POST", path: "/api/v1/mcp/tools/rule/debug", want: "operator"},
 		{method: "POST", path: "/api/v1/mcp/tools/rule/save", want: "operator"},
@@ -1024,12 +1011,12 @@ func TestRBACRequiresUserEXPAuthorization(t *testing.T) {
 				c.Next()
 			})
 			r.Use(RBACMiddleware())
-			r.GET("/api/v1/exploits", func(c *gin.Context) {
+			r.GET("/api/v1/exps", func(c *gin.Context) {
 				c.JSON(http.StatusOK, gin.H{"status": "ok"})
 			})
 
 			w := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/exploits", nil)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/exps", nil)
 			r.ServeHTTP(w, req)
 			if w.Code != tt.want {
 				t.Fatalf("expected status %d, got %d body=%s", tt.want, w.Code, w.Body.String())
@@ -2333,8 +2320,11 @@ func TestCopilotProfileAndContextCompaction(t *testing.T) {
 	if expBuilderProfile.MaxTurns <= 4 {
 		t.Fatalf("expected exp_builder profile to allow extended turns, got %+v", expBuilderProfile)
 	}
-	if !strings.Contains(expBuilderProfile.SystemPrompt, "EXP Python 生成模式") || !strings.Contains(expBuilderProfile.SystemPrompt, "fenced python") || !strings.Contains(expBuilderProfile.SystemPrompt, "ARGUS_EXP") {
-		t.Fatalf("expected exp_builder prompt to enforce complete Python output, got %s", expBuilderProfile.SystemPrompt)
+	if !strings.Contains(expBuilderProfile.SystemPrompt, "Yaksha EXP 生成模式") || !strings.Contains(expBuilderProfile.SystemPrompt, "fenced yak") || !strings.Contains(expBuilderProfile.SystemPrompt, "main.yak") || !strings.Contains(expBuilderProfile.SystemPrompt, "cli.String") || !strings.Contains(expBuilderProfile.SystemPrompt, "cli.check()") {
+		t.Fatalf("expected exp_builder prompt to enforce complete Yaklang output, got %s", expBuilderProfile.SystemPrompt)
+	}
+	if strings.Contains(expBuilderProfile.SystemPrompt, "cli.App") || strings.Contains(expBuilderProfile.SystemPrompt, "cli.Get") {
+		t.Fatalf("exp_builder prompt contains unsupported Yaksha CLI APIs: %s", expBuilderProfile.SystemPrompt)
 	}
 
 	compact := compactPageContext(map[string]interface{}{
@@ -2400,7 +2390,7 @@ func TestCopilotPromptRegistryEndpoint(t *testing.T) {
 	foundExpAction := false
 	for _, action := range resp.Actions {
 		if action.ActionType == "create_exp_draft" {
-			foundExpAction = action.RiskLevel == "low" && action.RequiredRole == "operator" && len(action.Params) == 2
+			foundExpAction = action.RiskLevel == "low" && action.RequiredRole == "operator" && len(action.Params) == 3
 			break
 		}
 	}

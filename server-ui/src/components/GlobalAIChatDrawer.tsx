@@ -339,10 +339,10 @@ const extractPocEdit = (content: string, editableTarget?: AIEditableTarget): Pro
 
 const extractExpEdit = (content: string, editableTarget?: AIEditableTarget): ProposedEdit | undefined => {
     if (editableTarget?.type !== 'exp') return undefined;
-    const fence = /```(?:python|py)\s*\n([\s\S]*?)```/i.exec(content);
+    const fence = /```(?:yak|yaklang)\s*\n([\s\S]*?)```/i.exec(content);
     const candidate = (fence?.[1] || '').trim();
     if (!candidate) return undefined;
-    if (!/\bARGUS_EXP\s*=/.test(candidate) || !/\bdef\s+run\s*\(\s*ctx\s*\)\s*:/.test(candidate)) {
+    if (!/\bcli\./.test(candidate) || !/\byaksha\.result\s*\(/.test(candidate)) {
         return undefined;
     }
     return { type: 'exp', content: candidate.endsWith('\n') ? candidate : `${candidate}\n` };

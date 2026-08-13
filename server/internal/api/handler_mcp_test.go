@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,202 +16,29 @@ import (
 	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"google.golang.org/grpc/metadata"
 )
 
-const testMCPPythonExpContent = `ARGUS_EXP = {
-    "id": "exp-mcp-demo",
-    "name": "MCP Demo",
-    "risk_level": "medium",
-    "policy": {
-        "capabilities": ["result.write"],
-        "dry_run_supported": True,
-        "timeout_sec": 30,
-    },
-    "params": {
-        "marker": {"type": "string", "required": True, "default": "argus"}
-    },
-    "requirements": [],
+type fakeSubscribeStream struct {
+	sent   []*pb.TaskNotify
+	sentCh chan *pb.TaskNotify
 }
 
-def run(ctx):
-    ctx.evidence.add("marker", ctx.params.marker)
-    return ctx.result.success("ok")
-`
-
-func TestSourcePyexpValidateReturnsMetadata(t *testing.T) {
-	setupAITestDB(t)
-	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/exploits/source/validate", "operator", "9")
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/exploits/source/validate", strings.NewReader(`{"source":`+strconvQuote(testMCPPythonExpContent)+`}`))
-	ctx.Request.Header.Set("Content-Type", "application/json")
-
-	validateSourceExploit(ctx)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
+func (s *fakeSubscribeStream) Recv() (*pb.AgentSignal, error) { return nil, io.EOF }
+func (s *fakeSubscribeStream) Send(msg *pb.TaskNotify) error {
+	if s.sentCh != nil {
+		s.sentCh <- msg
+	} else {
+		s.sent = append(s.sent, msg)
 	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp["valid"] != true || resp["id"] != "exp-mcp-demo" || resp["requirements_hash"] != "" {
-		t.Fatalf("unexpected validate response: %#v", resp)
-	}
+	return nil
 }
-
-func TestSourcePyexpDryRunNormalizesParams(t *testing.T) {
-	setupAITestDB(t)
-	body := `{"source":` + strconvQuote(testMCPPythonExpContent) + `,"target":"https://example.com","params":{}}`
-	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/exploits/source/dry-run", "operator", "9")
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/exploits/source/dry-run", strings.NewReader(body))
-	ctx.Request.Header.Set("Content-Type", "application/json")
-
-	dryRunSourceExploit(ctx)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
-	}
-	var resp dryRunExploitResponse
-	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if !resp.ParamsValid || resp.NormalizedParams["marker"] != "argus" || resp.ExploitID != "exp-mcp-demo" {
-		t.Fatalf("unexpected dry-run response: %#v", resp)
-	}
-}
-
-func TestMCPRuleDebugPyexpSourceDryRunDoesNotPersist(t *testing.T) {
-	store := setupAITestDB(t)
-	body := `{"rule_type":"pyexp","action":"dry_run","source":` + strconvQuote(testMCPPythonExpContent) + `,"target_url":"https://example.com","params":{}}`
-	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/mcp/tools/rule/debug", "operator", "9")
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/rule/debug", strings.NewReader(body))
-	ctx.Request.Header.Set("Content-Type", "application/json")
-
-	mcpRuleDebug(ctx)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
-	}
-	if !strings.Contains(recorder.Body.String(), `"source_level":true`) || !strings.Contains(recorder.Body.String(), `"dry_run":true`) {
-		t.Fatalf("unexpected dry-run response: %s", recorder.Body.String())
-	}
-	var count int64
-	if err := store.Model(&db.Arsenal{}).Where("tenant_id = ? AND type = ?", "default", "exp").Count(&count).Error; err != nil {
-		t.Fatalf("count arsenals: %v", err)
-	}
-	if count != 0 {
-		t.Fatalf("source dry-run should not persist EXP artifacts, got %d", count)
-	}
-}
-
-func TestMCPRuleDebugPyexpSourceDispatchesWithoutSavedRule(t *testing.T) {
-	store := setupAITestDB(t)
-	if err := store.Create(&db.Node{TenantID: "default", AgentID: "agent-1", Status: "Alive", Version: "v2.3.0", Tags: `{"python_exp":"true","pyexp_python":"/usr/bin/python3"}`}).Error; err != nil {
-		t.Fatalf("seed node: %v", err)
-	}
-	oldHub := routerRuntime().NotifyHub
-	hub := grpcpkg.NewNotifyHub()
-	stream := &fakeSubscribeStream{sentCh: make(chan *pb.TaskNotify, 1)}
-	routerRuntime().NotifyHub = hub
-	oldWSHub := Hub
-	Hub = &WebSocketHub{clients: make(map[*websocket.Conn]string), broadcast: make(chan wsEnvelope, 16)}
-	t.Cleanup(func() {
-		routerRuntime().NotifyHub = oldHub
-		Hub = oldWSHub
-	})
-	hub.Register("agent-1", stream, 1, nil)
-
-	body := `{"rule_type":"pyexp","action":"run","agent_id":"agent-1","target_url":"https://example.com","source":` + strconvQuote(testMCPPythonExpContent) + `,"params":{},"timeout_sec":1}`
-	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/mcp/tools/rule/debug", "operator", "9")
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/rule/debug", strings.NewReader(body))
-	ctx.Request.Header.Set("Content-Type", "application/json")
-
-	done := make(chan struct{})
-	go func() {
-		mcpRuleDebug(ctx)
-		close(done)
-	}()
-	var cmd *pb.DebugCommand
-	select {
-	case notify := <-stream.sentCh:
-		cmd = notify.DebugCommand
-	case <-done:
-		t.Fatalf("EXP source debug returned before dispatch: status=%d body=%s", recorder.Code, recorder.Body.String())
-	case <-time.After(2 * time.Second):
-		t.Fatalf("EXP source debug command was not dispatched")
-	}
-	if cmd.Action != "start_exp_debug" || !strings.Contains(cmd.PocContent, `"id": "exp-mcp-demo"`) {
-		t.Fatalf("unexpected EXP debug command: %#v", cmd)
-	}
-	if got := cmd.Params; !strings.Contains(got, `"marker":"argus"`) {
-		t.Fatalf("expected normalized default params, got %q", got)
-	}
-	handleAgentDebugEvent(&pb.DebugEvent{AgentId: "agent-1", TenantId: "default", SessionId: cmd.SessionId, Type: "debug_result", Matched: true, Message: `{"status":"Succeeded"}`})
-	handleAgentDebugEvent(&pb.DebugEvent{AgentId: "agent-1", TenantId: "default", SessionId: cmd.SessionId, Type: "debug_complete", Matched: true})
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatalf("source pyexp debug did not return after debug_complete")
-	}
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
-	}
-	if !strings.Contains(recorder.Body.String(), `"source_level":true`) || strings.Contains(recorder.Body.String(), `"artifact_id"`) {
-		t.Fatalf("unexpected source debug response: %s", recorder.Body.String())
-	}
-}
-
-func TestMCPRuleSavePyexpReturnsStableRefsAndRequirementsHash(t *testing.T) {
-	store := setupAITestDB(t)
-	body := `{"rule_type":"pyexp","file_name":"mcp-demo.py","content":` + strconvQuote(testMCPPythonExpContent) + `}`
-	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/mcp/tools/rule/save", "operator", "9")
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/rule/save", strings.NewReader(body))
-	ctx.Request.Header.Set("Content-Type", "application/json")
-
-	mcpRuleSave(ctx)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
-	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp["artifact_id"] != db.BuildTenantArsenalID("default", "exp", "mcp-demo.py") || resp["requirements_hash"] != "" {
-		t.Fatalf("unexpected save response: %#v", resp)
-	}
-	if _, ok := resp["exploit_rule_id"]; ok {
-		t.Fatalf("response must not expose exploit_rule_id: %#v", resp)
-	}
-	var rule db.ExploitRule
-	if err := store.Where("tenant_id = ? AND rule_id = ?", "default", "exp-mcp-demo").First(&rule).Error; err != nil {
-		t.Fatalf("expected synced exploit rule: %v", err)
-	}
-}
-
-func TestMCPAgentPythonRunRejectsUnknownCommandBeforeDispatch(t *testing.T) {
-	store := setupAITestDB(t)
-	if err := store.Create(&db.Node{TenantID: "default", AgentID: "agent-1", Status: "Alive", Version: "v2.3.0", Tags: `{"python_exp":"true","pyexp_python":"/usr/bin/python3"}`}).Error; err != nil {
-		t.Fatalf("seed node: %v", err)
-	}
-	oldHub := routerRuntime().NotifyHub
-	hub := grpcpkg.NewNotifyHub()
-	routerRuntime().NotifyHub = hub
-	t.Cleanup(func() { routerRuntime().NotifyHub = oldHub })
-
-	body := `{"agent_id":"agent-1","command":"shell","params":{"argv":["sh","-c","id"]}}`
-	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/mcp/tools/agent/python-run", "admin", "9")
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/agent/python-run", strings.NewReader(body))
-	ctx.Request.Header.Set("Content-Type", "application/json")
-
-	mcpAgentPythonRun(ctx)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d (%s)", recorder.Code, recorder.Body.String())
-	}
-	if strings.Contains(recorder.Body.String(), "dispatched") {
-		t.Fatalf("unknown command should not dispatch: %s", recorder.Body.String())
-	}
-}
+func (s *fakeSubscribeStream) SetHeader(metadata.MD) error  { return nil }
+func (s *fakeSubscribeStream) SendHeader(metadata.MD) error { return nil }
+func (s *fakeSubscribeStream) SetTrailer(metadata.MD)       {}
+func (s *fakeSubscribeStream) Context() context.Context     { return context.Background() }
+func (s *fakeSubscribeStream) SendMsg(interface{}) error    { return nil }
+func (s *fakeSubscribeStream) RecvMsg(interface{}) error    { return io.EOF }
 
 func TestMCPRuleSaveFingerprintDraftDoesNotPublish(t *testing.T) {
 	store := setupAITestDB(t)
@@ -478,7 +307,7 @@ func TestMCPRuleDebugFingerprintDispatchesPayloadAndCollectsResult(t *testing.T)
 	}
 	oldHub := routerRuntime().NotifyHub
 	hub := grpcpkg.NewNotifyHub()
-	stream := &fakeSubscribeStream{}
+	stream := &fakeSubscribeStream{sentCh: make(chan *pb.TaskNotify, 1)}
 	routerRuntime().NotifyHub = hub
 	oldWSHub := Hub
 	Hub = &WebSocketHub{clients: make(map[*websocket.Conn]string), broadcast: make(chan wsEnvelope, 16)}
@@ -499,17 +328,11 @@ func TestMCPRuleDebugFingerprintDispatchesPayloadAndCollectsResult(t *testing.T)
 		close(done)
 	}()
 	var cmd *pb.DebugCommand
-	deadline := time.After(2 * time.Second)
-	for cmd == nil {
-		select {
-		case <-deadline:
-			t.Fatalf("debug command was not dispatched")
-		default:
-			if len(stream.sent) > 0 {
-				cmd = stream.sent[0].DebugCommand
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
+	select {
+	case notify := <-stream.sentCh:
+		cmd = notify.DebugCommand
+	case <-time.After(2 * time.Second):
+		t.Fatalf("debug command was not dispatched")
 	}
 	if cmd.Action != "start_fingerprint_debug" {
 		t.Fatalf("unexpected debug action: %#v", cmd)
@@ -546,7 +369,7 @@ func TestMCPRuleDebugFingerprintRuleOnlyDispatchesCustomOnly(t *testing.T) {
 	}
 	oldHub := routerRuntime().NotifyHub
 	hub := grpcpkg.NewNotifyHub()
-	stream := &fakeSubscribeStream{}
+	stream := &fakeSubscribeStream{sentCh: make(chan *pb.TaskNotify, 1)}
 	routerRuntime().NotifyHub = hub
 	oldWSHub := Hub
 	Hub = &WebSocketHub{clients: make(map[*websocket.Conn]string), broadcast: make(chan wsEnvelope, 16)}
@@ -567,17 +390,11 @@ func TestMCPRuleDebugFingerprintRuleOnlyDispatchesCustomOnly(t *testing.T) {
 		close(done)
 	}()
 	var cmd *pb.DebugCommand
-	deadline := time.After(2 * time.Second)
-	for cmd == nil {
-		select {
-		case <-deadline:
-			t.Fatalf("debug command was not dispatched")
-		default:
-			if len(stream.sent) > 0 {
-				cmd = stream.sent[0].DebugCommand
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
+	select {
+	case notify := <-stream.sentCh:
+		cmd = notify.DebugCommand
+	case <-time.After(2 * time.Second):
+		t.Fatalf("debug command was not dispatched")
 	}
 	var payload map[string]interface{}
 	if err := json.Unmarshal([]byte(cmd.PocContent), &payload); err != nil {
@@ -650,57 +467,6 @@ func TestDebugFingerprintDispatchesCustomRules(t *testing.T) {
 	}
 	if payload["custom_rule"] != nil {
 		t.Fatalf("custom_rule should not be required when custom_rules are provided: %#v", payload)
-	}
-}
-
-func TestDeleteFingerprintDictReturnsCatalogSyncError(t *testing.T) {
-	store := setupAITestDB(t)
-	if err := store.Create(&db.Arsenal{
-		ID:       db.BuildTenantArsenalID("default", "finger", "finger.yaml"),
-		TenantID: "default",
-		Type:     "finger",
-		FileName: "finger.yaml",
-		Content:  "ArgusMCPDeleteError:\n  - body=\"delete-error\"\n",
-		Hash:     "old",
-		Version:  1,
-		State:    "Approved",
-	}).Error; err != nil {
-		t.Fatalf("seed finger arsenal: %v", err)
-	}
-	if err := store.Create(&db.Arsenal{
-		ID:       db.BuildTenantArsenalID("default", "exp", "broken.py"),
-		TenantID: "default",
-		Type:     "exp",
-		FileName: "broken.py",
-		Content:  "ARGUS_EXP = {",
-		Hash:     "broken",
-		Version:  1,
-		State:    "Approved",
-	}).Error; err != nil {
-		t.Fatalf("seed invalid exp arsenal: %v", err)
-	}
-
-	ctx, recorder := newTenantContextWithRole(http.MethodDelete, "/dictionaries/fingerprint/ArgusMCPDeleteError", "operator", "9")
-	ctx.Params = gin.Params{{Key: "product", Value: "ArgusMCPDeleteError"}}
-	ctx.Request = httptest.NewRequest(http.MethodDelete, "/dictionaries/fingerprint/ArgusMCPDeleteError", nil)
-
-	deleteFingerprintDict(ctx)
-
-	if recorder.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500, got %d (%s)", recorder.Code, recorder.Body.String())
-	}
-	if !strings.Contains(recorder.Body.String(), "rule catalog materialized") || !strings.Contains(recorder.Body.String(), "broken.py") {
-		t.Fatalf("expected raw catalog sync error, got %s", recorder.Body.String())
-	}
-	if strings.Contains(recorder.Body.String(), "failed to save to database") {
-		t.Fatalf("generic database error hides root cause: %s", recorder.Body.String())
-	}
-	var arsenal db.Arsenal
-	if err := store.Where("tenant_id = ? AND type = ? AND file_name = ?", "default", "finger", "finger.yaml").First(&arsenal).Error; err != nil {
-		t.Fatalf("reload finger arsenal: %v", err)
-	}
-	if !strings.Contains(arsenal.Content, "ArgusMCPDeleteError") {
-		t.Fatalf("fingerprint source changed even though catalog sync failed: %q", arsenal.Content)
 	}
 }
 

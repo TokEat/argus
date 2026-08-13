@@ -23,7 +23,6 @@ func setupRuleCatalogSyncTestDB(t *testing.T) *gorm.DB {
 		&PocRule{},
 		&WorkflowRule{},
 		&DirRule{},
-		&ExploitRule{},
 	); err != nil {
 		t.Fatalf("automigrate: %v", err)
 	}

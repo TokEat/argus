@@ -27,26 +27,19 @@ type mcpRuleContextRequest struct {
 }
 
 type mcpRuleDebugRequest struct {
-	RuleType        string                 `json:"rule_type"`
-	AgentID         string                 `json:"agent_id"`
-	TargetURL       string                 `json:"target_url"`
-	Proxy           string                 `json:"proxy"`
-	TimeoutSec      int32                  `json:"timeout_sec"`
-	ProductName     string                 `json:"product_name"`
-	Rule            string                 `json:"rule"`
-	IncludeDir      bool                   `json:"include_dir"`
-	IncludePoc      bool                   `json:"include_poc"`
-	WorkflowProduct string                 `json:"workflow_product"`
-	WorkflowTypes   []string               `json:"workflow_types"`
-	WorkflowPocs    []string               `json:"workflow_pocs"`
-	PocContent      string                 `json:"poc_content"`
-	Source          string                 `json:"source"`
-	ExploitRuleID   uint                   `json:"exploit_rule_id"`
-	ArtifactID      string                 `json:"artifact_id"`
-	StableRuleID    string                 `json:"rule_id"`
-	FileName        string                 `json:"file_name"`
-	Params          map[string]interface{} `json:"params"`
-	Action          string                 `json:"action"`
+	RuleType        string   `json:"rule_type"`
+	AgentID         string   `json:"agent_id"`
+	TargetURL       string   `json:"target_url"`
+	Proxy           string   `json:"proxy"`
+	TimeoutSec      int32    `json:"timeout_sec"`
+	ProductName     string   `json:"product_name"`
+	Rule            string   `json:"rule"`
+	IncludeDir      bool     `json:"include_dir"`
+	IncludePoc      bool     `json:"include_poc"`
+	WorkflowProduct string   `json:"workflow_product"`
+	WorkflowTypes   []string `json:"workflow_types"`
+	WorkflowPocs    []string `json:"workflow_pocs"`
+	PocContent      string   `json:"poc_content"`
 }
 
 type mcpRuleSaveRequest struct {
@@ -63,15 +56,11 @@ type mcpRuleSaveRequest struct {
 }
 
 type mcpRuleApplyRequest struct {
-	Action        string `json:"action"`
-	RuleType      string `json:"rule_type"`
-	FileName      string `json:"file_name"`
-	Hash          string `json:"hash"`
-	Version       int    `json:"version"`
-	ExploitRuleID uint   `json:"exploit_rule_id"`
-	ArtifactID    string `json:"artifact_id"`
-	StableRuleID  string `json:"rule_id"`
-	AgentID       string `json:"agent_id"`
+	Action   string `json:"action"`
+	RuleType string `json:"rule_type"`
+	FileName string `json:"file_name"`
+	Hash     string `json:"hash"`
+	Version  int    `json:"version"`
 }
 
 type mcpDebugTranscript struct {
@@ -103,8 +92,6 @@ func mcpRuleContext(c *gin.Context) {
 		mcpContextResource(c, req.URI)
 	case "agents":
 		mcpContextAgents(c, tenantID)
-	case "agent_pyenv":
-		mcpContextAgentPyenv(c, tenantID, req.AgentID)
 	case "workflow_links":
 		mcpContextWorkflowLinks(c, tenantID, req.ProductName, req.PocName, req.Limit)
 	case "workflow_recommend":
@@ -135,59 +122,8 @@ func mcpRuleDebug(c *gin.Context) {
 		})
 		resetJSONBody(c, body)
 		mcpPOCDebug(c)
-	case "exp":
-		action := strings.ToLower(strings.TrimSpace(req.Action))
-		source := strings.TrimSpace(req.Source)
-		if source == "" {
-			source = strings.TrimSpace(req.PocContent)
-		}
-		if action == "dry_run" && source != "" {
-			body, _ := json.Marshal(sourceExploitDryRunRequest{
-				Source: source,
-				Target: req.TargetURL,
-				Params: req.Params,
-			})
-			resetJSONBody(c, body)
-			dryRunSourceExploit(c)
-			return
-		}
-		if source != "" {
-			body, _ := json.Marshal(sourceExploitDebugRequest{
-				AgentID:    req.AgentID,
-				TargetURL:  req.TargetURL,
-				Source:     source,
-				Params:     req.Params,
-				Proxy:      req.Proxy,
-				TimeoutSec: req.TimeoutSec,
-				Action:     req.Action,
-			})
-			resetJSONBody(c, body)
-			debugSourceExploit(c)
-			return
-		}
-		ruleID := req.ExploitRuleID
-		if ruleID == 0 {
-			resolved, err := resolveMCPExploitRuleID(currentTenantID(c), req.ArtifactID, req.StableRuleID, req.FileName)
-			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-			ruleID = resolved
-		}
-		body, _ := json.Marshal(mcpDebugExploitRequest{
-			ExploitRuleID: ruleID,
-			AgentID:       req.AgentID,
-			TargetURL:     req.TargetURL,
-			Source:        source,
-			Params:        req.Params,
-			Proxy:         req.Proxy,
-			TimeoutSec:    req.TimeoutSec,
-			Action:        req.Action,
-		})
-		resetJSONBody(c, body)
-		mcpPyexpDebug(c)
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "rule_type must be fingerprint, poc or pyexp"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "rule_type must be fingerprint or poc"})
 	}
 }
 
@@ -209,10 +145,8 @@ func mcpRuleSave(c *gin.Context) {
 		resp, err = saveMCPWorkflowDraft(tenantID, req)
 	case "poc":
 		resp, err = saveMCPPOCDraft(tenantID, req)
-	case "exp":
-		resp, err = saveMCPPyexpDraft(tenantID, req)
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "rule_type must be fingerprint, poc, workflow or pyexp"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "rule_type must be fingerprint, poc or workflow"})
 		return
 	}
 	if err != nil {
@@ -240,58 +174,9 @@ func mcpRuleApply(c *gin.Context) {
 	switch req.Action {
 	case "publish":
 		mcpRulePublish(c, tenantID, req)
-	case "install_requirements":
-		if normalizeMCPRuleType(req.RuleType) != "exp" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "install_requirements only supports pyexp"})
-			return
-		}
-		if strings.TrimSpace(req.AgentID) == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id is required"})
-			return
-		}
-		ruleID := req.ExploitRuleID
-		if ruleID == 0 {
-			resolved, err := resolveMCPExploitRuleID(tenantID, req.ArtifactID, req.StableRuleID, req.FileName)
-			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-			ruleID = resolved
-		}
-		if ruleID == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "stable pyexp reference is required"})
-			return
-		}
-		body, _ := json.Marshal(agentPyenvInstallRequest{ExploitRuleID: ruleID})
-		resetJSONBody(c, body)
-		c.Params = append(c.Params, gin.Param{Key: "id", Value: strings.TrimSpace(req.AgentID)})
-		installAgentPyenvRequirements(c)
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "action must be publish or install_requirements"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "action must be publish"})
 	}
-}
-
-func resolveMCPExploitRuleID(tenantID, artifactID, ruleID, fileName string) (uint, error) {
-	artifactID = strings.TrimSpace(artifactID)
-	ruleID = strings.TrimSpace(ruleID)
-	fileName = strings.TrimSpace(fileName)
-	if artifactID == "" && ruleID == "" && fileName == "" {
-		return 0, fmt.Errorf("artifact_id, rule_id or file_name is required for pyexp")
-	}
-	query := db.DB.Where("tenant_id = ?", tenantID)
-	switch {
-	case artifactID != "":
-		query = query.Where("artifact_id = ?", artifactID)
-	case ruleID != "":
-		query = query.Where("rule_id = ?", ruleID)
-	default:
-		query = query.Where("source_file = ?", fileName)
-	}
-	var rule db.ExploitRule
-	if err := query.First(&rule).Error; err != nil {
-		return 0, fmt.Errorf("EXP rule not found for stable reference")
-	}
-	return rule.ID, nil
 }
 
 func saveMCPFingerprintDraft(tenantID string, req mcpRuleSaveRequest) (gin.H, error) {
@@ -396,19 +281,6 @@ func saveMCPPOCDraft(tenantID string, req mcpRuleSaveRequest) (gin.H, error) {
 	return resp, nil
 }
 
-func saveMCPPyexpDraft(tenantID string, req mcpRuleSaveRequest) (gin.H, error) {
-	result, err := executeCreateExpDraft(tenantID, map[string]interface{}{"file_name": req.FileName, "content": req.Content})
-	if err != nil {
-		return nil, err
-	}
-	resp, err := mcpSavedExpDraftResponse(tenantID, req.FileName, result)
-	if err != nil {
-		return nil, err
-	}
-	resp["rule_type"] = "pyexp"
-	return resp, nil
-}
-
 func saveMCPYAMLDraft(arsenal *db.Arsenal, data interface{}, ruleType string) (gin.H, error) {
 	out, err := yaml.Marshal(data)
 	if err != nil {
@@ -452,8 +324,6 @@ func mcpRulePublish(c *gin.Context, tenantID string, req mcpRuleApplyRequest) {
 		return
 	}
 	switch normalizeMCPRuleType(req.RuleType) {
-	case "exp":
-		mcpPublishPyexp(c, tenantID, req)
 	case "finger", "poc", "workflow":
 		typ := normalizeMCPRuleType(req.RuleType)
 		fileName := strings.TrimSpace(req.FileName)
@@ -462,47 +332,8 @@ func mcpRulePublish(c *gin.Context, tenantID string, req mcpRuleApplyRequest) {
 		}
 		mcpPublishArsenal(c, tenantID, typ, fileName, req.Hash, req.Version)
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "rule_type must be fingerprint, poc, workflow or pyexp"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "rule_type must be fingerprint, poc or workflow"})
 	}
-}
-
-func mcpPublishPyexp(c *gin.Context, tenantID string, req mcpRuleApplyRequest) {
-	ruleID := req.ExploitRuleID
-	if ruleID == 0 {
-		resolved, err := resolveMCPExploitRuleID(tenantID, req.ArtifactID, req.StableRuleID, req.FileName)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		ruleID = resolved
-	}
-	var rule db.ExploitRule
-	if err := db.DB.Where("id = ? AND tenant_id = ?", ruleID, tenantID).First(&rule).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Exploit rule not found"})
-		return
-	}
-	var arsenal db.Arsenal
-	if err := db.DB.Where("id = ? AND tenant_id = ?", rule.ArtifactID, tenantID).First(&arsenal).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "EXP source package not found"})
-		return
-	}
-	if !mcpDraftGuardMatches(c, arsenal, req.Hash, req.Version) {
-		return
-	}
-	updated, _, err := updateExploitRuleReviewState(tenantID, fmt.Sprint(ruleID), "Approved", true)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"status":       "approved",
-		"rule_type":    "pyexp",
-		"artifact_id":  updated.ArtifactID,
-		"rule_id":      updated.RuleID,
-		"file_name":    updated.SourceFile,
-		"state":        updated.State,
-		"mcp_guidance": mcpPublishGuidance("pyexp"),
-	})
 }
 
 func mcpPublishArsenal(c *gin.Context, tenantID, typ, fileName, expectedHash string, expectedVersion int) {
@@ -603,47 +434,21 @@ func mcpContextAgents(c *gin.Context, tenantID string) {
 	scopedNodeQuery(tenantID).Order("agent_id asc").Find(&nodes)
 	out := make([]gin.H, 0, len(nodes))
 	for _, node := range nodes {
-		tags := decodeTagMap(node.Tags)
+		tags := map[string]string{}
+		_ = json.Unmarshal([]byte(node.Tags), &tags)
 		out = append(out, gin.H{
-			"agent_id":          node.AgentID,
-			"status":            node.Status,
-			"version":           node.Version,
-			"os":                node.OS,
-			"arch":              node.Arch,
-			"running_tasks":     node.RunningTasks,
-			"capacity":          node.Capacity,
-			"rule_version":      node.RuleVersion,
-			"python_exp":        tags["python_exp"],
-			"pyexp_python":      tags["pyexp_python"],
-			"pyexp_pip":         tags["pyexp_pip"],
-			"pyexp_installable": tags["pyexp_install"],
+			"agent_id":      node.AgentID,
+			"status":        node.Status,
+			"version":       node.Version,
+			"os":            node.OS,
+			"arch":          node.Arch,
+			"running_tasks": node.RunningTasks,
+			"capacity":      node.Capacity,
+			"rule_version":  node.RuleVersion,
+			"native_egress": tags["native_egress"],
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "success", "agents": out})
-}
-
-func mcpContextAgentPyenv(c *gin.Context, tenantID, agentID string) {
-	agentID = strings.TrimSpace(agentID)
-	if agentID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id is required"})
-		return
-	}
-	var node db.Node
-	if err := scopedNodeQuery(tenantID).Where("agent_id = ?", agentID).First(&node).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Agent not found"})
-		return
-	}
-	tags := decodeTagMap(node.Tags)
-	resp := agentPyenvResponse{
-		AgentID:          node.AgentID,
-		Status:           node.Status,
-		PythonPath:       tags["pyexp_python"],
-		PythonVersion:    tags["pyexp_python_version"],
-		PipAvailable:     strings.EqualFold(tags["pyexp_pip"], "true"),
-		InstallAvailable: agentPyexpInstallAvailable(tags),
-		Tags:             tags,
-	}
-	c.JSON(http.StatusOK, resp)
 }
 
 func mcpContextWorkflowLinks(c *gin.Context, tenantID, productName, pocName string, limit int) {
@@ -873,8 +678,6 @@ func normalizeMCPRuleType(raw string) string {
 		return "poc"
 	case "workflow":
 		return "workflow"
-	case "exp", "exploit", "pyexp":
-		return "exp"
 	default:
 		return strings.ToLower(strings.TrimSpace(raw))
 	}
@@ -883,9 +686,6 @@ func normalizeMCPRuleType(raw string) string {
 func publicMCPRuleType(typ string) string {
 	if typ == "finger" {
 		return "fingerprint"
-	}
-	if typ == "exp" {
-		return "pyexp"
 	}
 	return typ
 }

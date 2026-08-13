@@ -26,7 +26,6 @@ type productSearchBucket struct {
 	Fingerprint []map[string]interface{}
 	Workflows   []map[string]interface{}
 	POCs        []map[string]interface{}
-	EXPs        []map[string]interface{}
 	SearchText  []string
 	Evidence    map[string]bool
 }
@@ -57,10 +56,6 @@ func (c *Client) argusProductSearch(ctx context.Context, args map[string]interfa
 	}
 	var pocs []catalogRecord
 	if err := c.do(ctx, http.MethodGet, "/api/v1/poc-rules?all=1", nil, &pocs); err != nil {
-		return nil, err
-	}
-	var exps []catalogRecord
-	if err := c.do(ctx, http.MethodGet, "/api/v1/exploits?all=1", nil, &exps); err != nil {
 		return nil, err
 	}
 
@@ -140,18 +135,6 @@ func (c *Client) argusProductSearch(ctx context.Context, args map[string]interfa
 		}
 	}
 
-	for _, exp := range exps {
-		product := exp.TargetProduct
-		if product == "" {
-			continue
-		}
-		item := productSearchEXPItem(exp)
-		b := bucket(product)
-		b.EXPs = appendLimited(b.EXPs, item, 50)
-		b.SearchText = append(b.SearchText, product, exp.RuleID, exp.Name, exp.EffectiveSourceFile(), exp.Description)
-		b.Evidence["exp_target_product"] = true
-	}
-
 	type scoredBucket struct {
 		bucket *productSearchBucket
 		score  float64
@@ -191,11 +174,9 @@ func (c *Client) argusProductSearch(ctx context.Context, args map[string]interfa
 			"fingerprint_count": len(b.Fingerprint),
 			"workflow_count":    len(b.Workflows),
 			"poc_count":         len(b.POCs),
-			"exp_count":         len(b.EXPs),
 			"fingerprints":      b.Fingerprint,
 			"workflows":         b.Workflows,
 			"pocs":              b.POCs,
-			"exps":              b.EXPs,
 			"evidence":          uniqueStrings(evidence),
 			"canonical_hint":    b.Name,
 			"merge_safety_hint": mergeSafetyHint(b.Name),
@@ -215,22 +196,6 @@ func productSearchPOCItem(poc catalogRecord) map[string]interface{} {
 		"enabled":        poc.Enabled,
 		"tags":           poc.Tags,
 		"cve":            poc.CVE,
-	}
-}
-
-func productSearchEXPItem(exp catalogRecord) map[string]interface{} {
-	sourceFile := exp.EffectiveSourceFile()
-	return map[string]interface{}{
-		"rule_id":      exp.RuleID,
-		"name":         firstNonEmpty(exp.Name, sourceFile),
-		"source_file":  sourceFile,
-		"risk_level":   exp.RiskLevel,
-		"state":        exp.State,
-		"enabled":      exp.Enabled,
-		"linked_pocs":  exp.LinkedPOCs,
-		"artifact_id":  exp.ArtifactID,
-		"content_hash": exp.Hash,
-		"requirements": exp.Requirements,
 	}
 }
 
@@ -281,9 +246,6 @@ func scoreProductSearchBucket(query string, b *productSearchBucket) (float64, []
 	}
 	if len(b.Fingerprint) > 0 {
 		reasons = append(reasons, "has_fingerprint")
-	}
-	if len(b.EXPs) > 0 {
-		reasons = append(reasons, "has_pyexp")
 	}
 	if best < 0.35 {
 		return 0, nil
@@ -415,9 +377,6 @@ func productSearchSources(b *productSearchBucket) []string {
 	}
 	if len(b.POCs) > 0 {
 		sources = append(sources, "poc")
-	}
-	if len(b.EXPs) > 0 {
-		sources = append(sources, "pyexp")
 	}
 	return sources
 }

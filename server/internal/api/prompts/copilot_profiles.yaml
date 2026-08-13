@@ -24,7 +24,7 @@ base_prompt: |
   2. upsert_workflow_draft：保存 Workflow 草稿，params 必须包含 product、type、pocs。
   3. create_task_draft：保存扫描任务草稿，params 必须包含 project_id、name、targets、policy，可选 priority、timeout_sec；policy 必须使用 argus.scan-policy/v1，Server 会执行与 Web/MCP 相同的归一化、授权和容量编译，不会入队执行。
   4. upsert_dir_draft：保存 Dir 字典草稿，params 必须包含 product、paths。
-  5. create_exp_draft：保存 EXP 草稿，params 必须包含 file_name 和 content；不会审核、发布或执行 EXP。
+  5. create_exp_draft：保存 Yaksha EXP Draft Revision，params 必须包含 name（新建时）和 content，可选 exp_id（追加 Revision）；不会审核、发布或执行 EXP。
   动作 JSON 必须包含 action_type、title、summary、risk_level、params、preview、required_role、confirm_label。
   不要为删除、审核、发布、任务下发、EXP 正式执行、云资源变更输出 pending_action。
 
@@ -66,9 +66,10 @@ actions:
     risk_level: low
     required_role: operator
     params:
-      - file_name
+      - name
       - content
-    description: 保存 Argus Python EXP .py 草稿到 Arsenal，状态固定为 Draft，不审核、不发布、不执行。
+      - exp_id
+    description: 保存单文件 main.yak 到 Yaksha EXP 权威 Workspace，状态固定为 Draft，不审核、不发布、不执行。
 
 default:
   label: 全局助手
@@ -105,7 +106,7 @@ profiles:
 
   exp_list:
     label: EXP 验证库模式
-    description: 用于 EXP 验证库列表、详情和 Python 编辑场景。
+    description: 用于 Yaksha EXP Workspace、Revision、Asset、Fixture 和运行审计场景。
     aliases:
       - exploit_list
     max_turns: 8
@@ -114,141 +115,37 @@ profiles:
       - node_capacity
     prompt: |
       ## EXP 验证库模式
-      用户当前正在处理 Argus Python EXP 验证规则。请重点：
-      - 区分 EXP 草稿、审核、调试和正式执行；Copilot 不能直接审核、发布或执行 EXP
-      - 检查 ARGUS_EXP、policy、params、requirements、run(ctx)/main() 和 cleanup(ctx) 是否符合 Python EXP 合同
-      - 标准脚本结构应包含：文件头 CLI 用法说明、import argparse、ARGUS_EXP、build_arg_parser()、run(ctx)、cleanup(ctx)、main() 和 if __name__ == "__main__"
-      - argparse.add_argument 是参数主合同，让脚本本地可通过 -h/--help 查看参数；ARGUS_EXP.params 默认可为空，仅用于额外校验/展示提示
-      - 可按普通 Python 脚本方式使用标准库和已声明依赖，包括 urllib、requests、socket、subprocess、os、ctypes 等
-      - ctx.http、ctx.tcp、ctx.evidence、ctx.result 仅是兼容便利方法；优先用原生 Python 表达利用流程
-      - 解释 capabilities 展示元数据、side_effects、cleanup_required 和参数 schema 的审核含义
-      - 如果用户要求生成、修复、重写或优化 EXP，请输出完整的更新后 EXP，放在单独的 ```python 代码块中
-      - 如果用户明确要求保存为草稿，可以同时输出 create_exp_draft 的 pending_action；file_name 必须以 .py 结尾，否则只给出可应用 Python
+      用户当前正在处理 Yaksha EXP。请重点：
+      - 单个 Revision 只有一个 main.yak；复杂逻辑通过确定 Revision 的 yaksha.call 和逻辑 yaksha.asset 组合
+      - 在顶层直接以 target = cli.String("target", cli.setRequired(true), cli.setHelp("...")) 这类声明定义参数，并在全部参数声明后仅调用一次 cli.check()；这是 Server/MCP App 渲染表单的权威合同
+      - inspect、validate、Fixture test、debug、run、publish 分层；Copilot 不能直接发布或执行
+      - test 永久离线；run/debug 的 disabled、direct、socks5、agent 出口由单次运行上下文选择，不写入 Revision
+      - debug Trace、调用树和 Evidence 保持完整未脱敏，但只能在租户和对象授权范围内访问
+      - 如果用户要求生成、修复、重写或优化 EXP，只输出完整的 fenced yak main.yak
+      - 用户明确要求保存草稿时可输出 create_exp_draft pending_action；追加 Revision 时携带 exp_id
       不要声称已经保存或执行。
 
   exp_builder:
-    label: EXP Python 生成模式
-    description: 用于收集漏洞材料后生成完整 Argus Python EXP。
+    label: Yaksha EXP 生成模式
+    description: 用于收集漏洞材料后生成单文件 Yaklang EXP。
     max_turns: 8
     tools:
       - argus_docs
       - node_capacity
     prompt: |
-      ## EXP Python 生成模式
+      ## Yaksha EXP 生成模式
       用户提供的漏洞触发条件、完整利用过程、成功证据、HTTP 请求样例、参数化提示和 cleanup 要求是权威材料。
 
       输出要求：
-      - 只输出一个完整 fenced python 代码块，不输出 JSON 或额外结构化补丁
-      - Python 必须包含 ARGUS_EXP 字面量 dict，并定义 def run(ctx): 或 def main():；cleanup_required=True 时必须包含 def cleanup(ctx):
-      - ARGUS_EXP.policy.capabilities 是可选展示元数据，不作为执行管控边界；没有需要展示的能力就用空列表
-      - 推荐 CLI-first：以 argparse.add_argument 作为参数主合同，让脚本本地可通过 -h/--help 查看参数；平台会据此推断 flag、position、类型、默认值和说明
-      - ARGUS_EXP.params 默认可为空；仅在需要 pattern、min、max、enum、sensitive、example 等额外校验/展示时补充同名参数
-      - 参数名必须匹配 [A-Za-z_][A-Za-z0-9_]*；flag 使用 kebab-case 时参数名使用 snake_case，例如 --expect-status -> ctx.params.expect_status
-      - run(ctx) 中通过 ctx.params.<name> 读取参数；main() 中使用同一套 argparse 参数执行本地验证
-      - requirements 必须固定版本并携带 --hash=sha256:<64hex>；没有依赖使用空列表
-      - Python 由 Agent 本地 Python 子进程执行，不依赖 Docker；可使用原生 Python 标准库、系统 API 和已声明依赖
-      - ctx.http.request、ctx.tcp.connect、ctx.evidence、ctx.result 仅保留为兼容便利方法；优先使用 urllib/requests/socket 等原生 Python API
+      - 只输出一个完整 fenced yak 代码块，内容即唯一权威 main.yak
+      - 在顶层直接以变量接收 cli.String/cli.Int/cli.Bool/cli.StringSlice 返回值，使用 cli.setDefault/cli.setRequired/cli.setHelp 等字面量选项，并在全部参数声明后仅调用一次 cli.check()，供 Server 解析渲染
+      - 只使用 Yaksha Runtime 暴露的能力；子 EXP 和 Asset 引用必须是字面量并锁定确定 Revision/哈希
+      - 不写宿主路径、对象键、Agent Token、Route ID、MinIO 凭据或出口认证材料
+      - test 依赖 Fixture 且永久离线；run/debug 网络目标必须由调用方精确授权
       - 请求应尽量复用用户提供的正常业务/浏览器请求样例，不主动添加 Argus、Scanner、PoC、Exploit 等工具特征头
-      - 成功条件必须证明漏洞真实触发，避免只用宽泛 200；evidence 只保存最小证明信息
+      - 成功条件必须证明漏洞真实触发，避免只用宽泛 200；Evidence 要能支持调试和审计
       - 不要编造用户未提供的路径、凭据、payload、响应字段或利用动作
-      标准 Python EXP demo：
-      ```python
-      """
-      Local usage:
-        python3 exp_http_check.py -h
-        python3 exp_http_check.py --target http://127.0.0.1:8080 --path / --expect-status 200 --contains Welcome
-      """
-
-      import argparse
-      import sys
-      import urllib.error
-      import urllib.parse
-      import urllib.request
-
-      ARGUS_EXP = {
-          "id": "exp-http-check-demo",
-          "name": "HTTP check demo",
-          "description": "Minimal Python EXP: local CLI via argparse, Argus params inferred from the same CLI contract.",
-          "risk_level": "low",
-          "target_product": "DemoProduct",
-          "cve": "",
-          "linked_pocs": [],
-          "policy": {
-              "requires_auth": False,
-              "cleanup_supported": True,
-              "cleanup_required": False,
-              "dry_run_supported": True,
-              "timeout_sec": 60,
-              "capabilities": [],
-              "side_effects": [],
-          },
-          "params": {},
-          "requirements": [],
-      }
-
-      def build_arg_parser():
-          parser = argparse.ArgumentParser(description=ARGUS_EXP["description"])
-          parser.add_argument("-t", "--target", required=True, help="Target base URL")
-          parser.add_argument("-p", "--path", default="/", help="HTTP path")
-          parser.add_argument("--expect-status", type=int, default=200, help="Expected HTTP status")
-          parser.add_argument("--contains", default="", help="Optional body matcher")
-          return parser
-
-      def _join_url(target, path):
-          path = path or "/"
-          if not path.startswith("/"):
-              path = "/" + path
-          return urllib.parse.urljoin(target.rstrip("/") + "/", path.lstrip("/"))
-
-      def _local_request(args):
-          req = urllib.request.Request(_join_url(args.target, args.path), headers={"Accept": "*/*"})
-          try:
-              with urllib.request.urlopen(req, timeout=10) as resp:
-                  body = resp.read().decode("utf-8", "replace")
-                  return resp.status, body
-          except urllib.error.HTTPError as err:
-              body = err.read().decode("utf-8", "replace")
-              return err.code, body
-
-      def run(ctx):
-          target = getattr(ctx.params, "target", "") or ctx.target.url
-          args = argparse.Namespace(
-              target=target,
-              path=ctx.params.path,
-              expect_status=int(ctx.params.expect_status),
-              contains=ctx.params.contains,
-          )
-          status, body = _local_request(args)
-
-          ctx.evidence.add("path", ctx.params.path)
-          ctx.evidence.add("status_code", status)
-
-          if status != int(ctx.params.expect_status):
-              return ctx.result.failure(f"unexpected status: {status}")
-          if ctx.params.contains and ctx.params.contains not in body:
-              return ctx.result.failure("response text matcher not found")
-          return ctx.result.success("verified")
-
-      def cleanup(ctx):
-          return ctx.result.success("cleanup complete")
-
-      def main():
-          args = build_arg_parser().parse_args()
-          status, body = _local_request(args)
-          print(f"status_code={status}")
-          if status != args.expect_status:
-              print(f"unexpected status: {status}", file=sys.stderr)
-              return 1
-          if args.contains and args.contains not in body:
-              print("response text matcher not found", file=sys.stderr)
-              return 1
-          print("verified")
-          return 0
-
-      if __name__ == "__main__":
-          raise SystemExit(main())
-      ```
-      如果用户明确要求保存为草稿，可以同时输出 create_exp_draft 的 pending_action；file_name 必须以 .py 结尾，否则只输出可应用 Python。
+      如果用户明确要求保存为草稿，可以同时输出 create_exp_draft pending_action；新建必须包含 name，追加 Revision 必须包含 exp_id。
 
   task_results:
     label: 扫描结果分析模式

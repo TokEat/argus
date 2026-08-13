@@ -16,6 +16,8 @@ import (
 
 	aipkg "github.com/P0lar1ght/argus/server/internal/ai"
 	"github.com/P0lar1ght/argus/server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/expworkspace"
+	"github.com/P0lar1ght/argus/server/internal/storage"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -50,12 +52,15 @@ func setupAITestDB(t *testing.T) *gorm.DB {
 		&db.PocRule{},
 		&db.WorkflowRule{},
 		&db.DirRule{},
-		&db.ExploitRule{},
-		&db.ExploitAudit{},
-		&db.ExploitRiskWaiver{},
-		&db.ExploitRun{},
-		&db.ExploitArtifact{},
-		&db.AgentPyenvJob{},
+		&db.Exp{},
+		&db.ExpRevision{},
+		&db.ExpDependency{},
+		&db.ExpAsset{},
+		&db.ExpAssetRef{},
+		&db.ExpTestCase{},
+		&db.ExpRun{},
+		&db.ExpAudit{},
+		&db.ExpRiskWaiver{},
 		&db.BuildJob{},
 		&db.AgentSessionAudit{},
 		&db.WSEventLog{},
@@ -91,25 +96,9 @@ func setupAITestDB(t *testing.T) *gorm.DB {
 	return store
 }
 
-const testPythonExpContent = `ARGUS_EXP = {
-    "id": "exp-demo",
-    "name": "Demo EXP",
-    "risk_level": "low",
-    "target_product": "Demo",
-    "linked_pocs": [],
-    "policy": {
-        "dry_run_supported": True,
-        "timeout_sec": 30,
-        "capabilities": ["evidence.write", "result.write"],
-    },
-    "params": {},
-    "requirements": [],
-}
-
-def run(ctx):
-    ctx.evidence.add("request", "GET /")
-    ctx.evidence.add("status_code", 200)
-    return ctx.result.success("verified")
+const testYakshaExpContent = `target = cli.String("target", cli.setRequired(true), cli.setHelp("authorized target"))
+cli.check()
+yaksha.result({"target": target})
 `
 
 func TestExtractPendingActionsNormalizesAllowedSchemas(t *testing.T) {
@@ -121,7 +110,7 @@ func TestExtractPendingActionsNormalizesAllowedSchemas(t *testing.T) {
 		t.Fatalf("expected normalized defaults, got %+v", actions[0])
 	}
 
-	expActions := extractPendingActions(fmt.Sprintf("```pending_action\n{\"action_type\":\"create_exp_draft\",\"params\":{\"file_name\":\"exp-demo.py\",\"content\":%q}}\n```", testPythonExpContent))
+	expActions := extractPendingActions(fmt.Sprintf("```pending_action\n{\"action_type\":\"create_exp_draft\",\"params\":{\"name\":\"exp-demo\",\"content\":%q}}\n```", testYakshaExpContent))
 	if len(expActions) != 1 || expActions[0].RiskLevel != "low" || expActions[0].ConfirmLabel != "保存草稿" {
 		t.Fatalf("expected create_exp_draft to normalize as low-risk draft action, got %+v", expActions)
 	}
@@ -175,12 +164,24 @@ func TestConfirmCopilotActionCreatesPOCDraftAndAudits(t *testing.T) {
 
 func TestConfirmCopilotActionCreatesExpDraftAndAudits(t *testing.T) {
 	store := setupAITestDB(t)
+	objects, err := storage.NewLocalStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := expworkspace.NewService(store, objects, nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldWorkspace := routerRuntime().EXPWorkspace
+	routerRuntime().EXPWorkspace = service
+	t.Cleanup(func() { routerRuntime().EXPWorkspace = oldWorkspace })
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.POST("/api/v1/ai/actions/confirm", func(c *gin.Context) {
 		c.Set("tenant", "default")
 		c.Set("user_id", "u1")
 		c.Set("role", "operator")
+		c.Set("exp_authorized", true)
 		confirmCopilotAction(c)
 	})
 
@@ -189,8 +190,8 @@ func TestConfirmCopilotActionCreatesExpDraftAndAudits(t *testing.T) {
 			"action_type":   "create_exp_draft",
 			"required_role": "operator",
 			"params": map[string]interface{}{
-				"file_name": "exp-demo.py",
-				"content":   testPythonExpContent,
+				"name":    "exp-demo",
+				"content": testYakshaExpContent,
 			},
 		},
 		"page_context": map[string]interface{}{"_focus": map[string]interface{}{"module": "exp_builder", "route": "/config/exploit"}},
@@ -204,19 +205,16 @@ func TestConfirmCopilotActionCreatesExpDraftAndAudits(t *testing.T) {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	var arsenal db.Arsenal
-	if err := store.Where("tenant_id = ? AND type = ? AND file_name = ?", "default", "exp", "exp-demo.py").First(&arsenal).Error; err != nil {
-		t.Fatalf("expected draft exp arsenal: %v", err)
+	var item db.Exp
+	if err := store.Where("tenant_id = ? AND name = ?", "default", "exp-demo").First(&item).Error; err != nil {
+		t.Fatalf("expected Yaksha EXP: %v", err)
 	}
-	if arsenal.State != "Draft" || !strings.Contains(arsenal.Content, "ARGUS_EXP") {
-		t.Fatalf("unexpected exp arsenal %+v", arsenal)
+	var revision db.ExpRevision
+	if err := store.Where("tenant_id = ? AND exp_id = ?", "default", item.ID).First(&revision).Error; err != nil {
+		t.Fatalf("expected Draft Revision: %v", err)
 	}
-	var rule db.ExploitRule
-	if err := store.Where("tenant_id = ? AND source_file = ?", "default", "exp-demo.py").First(&rule).Error; err != nil {
-		t.Fatalf("expected materialized exp rule: %v", err)
-	}
-	if rule.State != "Draft" {
-		t.Fatalf("expected materialized exp rule to remain draft, got %+v", rule)
+	if revision.Status != db.ExpStatusDraft || revision.SourceSHA256 == "" {
+		t.Fatalf("unexpected Draft Revision %+v", revision)
 	}
 	var audit db.AIToolInvocation
 	if err := store.Where("tool_name = ?", "CopilotAction:create_exp_draft").First(&audit).Error; err != nil {
@@ -225,7 +223,7 @@ func TestConfirmCopilotActionCreatesExpDraftAndAudits(t *testing.T) {
 	if audit.Module != "exp_builder" {
 		t.Fatalf("expected exp_builder module audit, got %+v", audit)
 	}
-	if strings.Contains(audit.ArgsSummary, "ARGUS_EXP") || !strings.Contains(audit.ArgsSummary, "sha256") {
+	if strings.Contains(audit.ArgsSummary, "authorized target") || !strings.Contains(audit.ArgsSummary, "sha256") {
 		t.Fatalf("expected content hash in exp audit summary, got %s", audit.ArgsSummary)
 	}
 }

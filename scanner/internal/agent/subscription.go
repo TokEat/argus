@@ -17,15 +17,6 @@ func (w *Worker) cancelActiveExecutions() {
 	if debugCancel != nil {
 		debugCancel()
 	}
-	w.expMu.Lock()
-	expCancels := make([]context.CancelFunc, 0, len(w.expCancels))
-	for _, cancel := range w.expCancels {
-		expCancels = append(expCancels, cancel)
-	}
-	w.expMu.Unlock()
-	for _, cancel := range expCancels {
-		cancel()
-	}
 }
 
 // subscribeAndClaim 建立 Subscribe 流并监听任务通知，收到通知后 ClaimTask 认领。

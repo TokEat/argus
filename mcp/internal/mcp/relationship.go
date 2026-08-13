@@ -13,7 +13,6 @@ type relationshipSnapshot struct {
 	Fingerprints []catalogRecord
 	Workflows    []catalogRecord
 	POCs         []catalogRecord
-	Exploits     []catalogRecord
 }
 
 type workflowRef struct {
@@ -35,9 +34,6 @@ func (c *Client) loadRelationshipSnapshot(ctx context.Context) (relationshipSnap
 	if err := c.do(ctx, http.MethodGet, "/api/v1/poc-rules?all=1", nil, &snap.POCs); err != nil {
 		return snap, err
 	}
-	// EXP catalog is useful context for governance, but older deployments may
-	// disable it. Keep relationship stats available when that endpoint fails.
-	_ = c.do(ctx, http.MethodGet, "/api/v1/exploits?all=1", nil, &snap.Exploits)
 	return snap, nil
 }
 
@@ -88,7 +84,6 @@ func (c *Client) argusRelationshipStats(ctx context.Context, args map[string]int
 			"workflow_products":               len(workflowProducts),
 			"workflow_edges":                  len(refs),
 			"pocs":                            len(snap.POCs),
-			"pyexp_rules":                     len(snap.Exploits),
 			"fingerprint_with_workflow":       len(linked),
 			"fingerprint_without_workflow":    len(unlinked),
 			"workflow_without_fingerprint":    len(workflowMissingFP),

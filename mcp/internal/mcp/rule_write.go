@@ -16,7 +16,7 @@ func (c *Client) argusRuleSave(ctx context.Context, args map[string]interface{})
 		return nil, fmt.Errorf("rule_type is required")
 	}
 	switch ruleType {
-	case "poc", "exp", "finger", "workflow":
+	case "poc", "finger", "workflow":
 	default:
 		return nil, fmt.Errorf("unsupported rule_type %q", stringArg(args, "rule_type"))
 	}
@@ -48,34 +48,7 @@ func (c *Client) argusRuleSave(ctx context.Context, args map[string]interface{})
 	if err := c.do(ctx, http.MethodPost, "/api/v1/arsenals/"+url.PathEscape(ruleType)+"/"+url.PathEscape(fileName), map[string]interface{}{"content": content}, &out); err != nil {
 		return nil, err
 	}
-	if ruleType == "exp" {
-		c.enrichSavedPyexp(ctx, out, fileName)
-	}
 	return withStableRef(out, ruleType, fileName), nil
-}
-
-func (c *Client) enrichSavedPyexp(ctx context.Context, out map[string]interface{}, fileName string) {
-	var rules []catalogRecord
-	if err := c.do(ctx, http.MethodGet, "/api/v1/exploits?all=1", nil, &rules); err != nil {
-		return
-	}
-	for _, rule := range rules {
-		if firstNonEmpty(rule.SourceFile, rule.FileName) != fileName {
-			continue
-		}
-		for _, key := range []string{"artifact_id", "rule_id", "requirements_hash", "requirements", "state"} {
-			if value := mapAny(rule.Raw, key); value != nil {
-				out[key] = value
-			}
-		}
-		if value := mapAny(rule.Raw, "content_hash"); value != nil {
-			out["hash"] = value
-		}
-		if value := mapAny(rule.Raw, "version"); value != nil {
-			out["version"] = value
-		}
-		return
-	}
 }
 
 func (c *Client) argusRuleApply(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -84,26 +57,6 @@ func (c *Client) argusRuleApply(ctx context.Context, args map[string]interface{}
 	switch action {
 	case "publish":
 		return c.argusRulePublish(ctx, ruleType, args)
-	case "install_requirements":
-		if ruleType != "exp" {
-			return nil, fmt.Errorf("install_requirements only supports pyexp")
-		}
-		agentID := stringArg(args, "agent_id")
-		if agentID == "" {
-			return nil, fmt.Errorf("agent_id is required")
-		}
-		ruleID, err := c.resolveExploitRuleID(ctx, args)
-		if err != nil {
-			return nil, err
-		}
-		out, err := c.postTool(ctx, "/api/v1/agents/"+url.PathEscape(agentID)+"/pyenv/install", map[string]interface{}{"exploit_rule_id": ruleID})
-		if err != nil {
-			return nil, err
-		}
-		if mapped, ok := out.(map[string]interface{}); ok {
-			return stripLegacyExploitRef(mapped), nil
-		}
-		return out, nil
 	default:
 		return nil, fmt.Errorf("unsupported argus_rule_apply action %q", action)
 	}
@@ -112,18 +65,6 @@ func (c *Client) argusRuleApply(ctx context.Context, args map[string]interface{}
 func (c *Client) argusRulePublish(ctx context.Context, ruleType string, args map[string]interface{}) (interface{}, error) {
 	if ruleType == "" {
 		return nil, fmt.Errorf("rule_type is required")
-	}
-	if ruleType == "exp" {
-		ruleID, err := c.resolveExploitRuleID(ctx, args)
-		if err != nil {
-			return nil, err
-		}
-		var out map[string]interface{}
-		if err := c.do(ctx, http.MethodPost, "/api/v1/exploits/"+url.PathEscape(fmt.Sprint(ruleID))+"/approve", nil, &out); err != nil {
-			return nil, err
-		}
-		out["rule_type"] = "pyexp"
-		return stripLegacyExploitRef(withStableRef(out, ruleType, stringArg(args, "file_name"))), nil
 	}
 	fileName := stringArg(args, "file_name")
 	if fileName == "" {

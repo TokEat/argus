@@ -47,11 +47,22 @@ func TestRevisionAndAssetBuildSealedPackage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	grandchild, err := service.CreateExp(ctx, "tenant-a", "actor", "grandchild", "", "low")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grandchildRevision, err := service.CreateRevision(ctx, "tenant-a", "actor", grandchild.ID, CreateRevisionInput{Source: "cli.check(); yaksha.result(1)"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	child, err := service.CreateExp(ctx, "tenant-a", "actor", "child", "", "low")
 	if err != nil {
 		t.Fatal(err)
 	}
-	childRevision, err := service.CreateRevision(ctx, "tenant-a", "actor", child.ID, CreateRevisionInput{Source: "cli.check(); yaksha.result(1)"})
+	childRevision, err := service.CreateRevision(ctx, "tenant-a", "actor", child.ID, CreateRevisionInput{
+		Source:       "cli.check(); yaksha.call(\"" + grandchild.ID + "\", 1, {})",
+		Dependencies: []DependencyInput{{ExpID: grandchild.ID, Revision: 1, SourceSHA256: grandchildRevision.SourceSHA256}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,11 +82,17 @@ func TestRevisionAndAssetBuildSealedPackage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sealed.Dependencies) != 1 || sealed.Dependencies[0].SourceSHA256 != childRevision.SourceSHA256 {
+	if len(sealed.Dependencies) != 2 {
 		t.Fatalf("unexpected dependencies: %#v", sealed.Dependencies)
+	}
+	if len(sealed.DependencyRefs) != 1 || sealed.DependencyRefs[0].ExpID != child.ID || sealed.DependencyRefs[0].SourceSHA256 != childRevision.SourceSHA256 {
+		t.Fatalf("unexpected direct dependency refs: %#v", sealed.DependencyRefs)
 	}
 	if len(sealed.Assets) != 1 || sealed.Assets[0].Encoding != "base64" || sealed.Assets[0].Content != "AAEC" {
 		t.Fatalf("unexpected assets: %#v", sealed.Assets)
+	}
+	if len(sealed.AssetRefs) != 1 || sealed.AssetRefs[0].AssetID != asset.AssetID || sealed.AssetRefs[0].Version != asset.Version || sealed.AssetRefs[0].SHA256 != asset.SHA256 {
+		t.Fatalf("unexpected direct asset refs: %#v", sealed.AssetRefs)
 	}
 	if _, err := service.BuildSealedPackage(ctx, "tenant-b", root.ID, 1, false); err == nil {
 		t.Fatal("cross-tenant sealed package should fail")
@@ -322,8 +339,8 @@ func TestStatusDetailsTreatsMissingErrorAsEmpty(t *testing.T) {
 	}
 }
 
-func TestExternalFixtureReportCannotSatisfyPublishGate(t *testing.T) {
-	service, database := newTestService(t)
+func TestExecutionRejectsMismatchedSourceIdentity(t *testing.T) {
+	service, _ := newTestService(t)
 	ctx := context.Background()
 	exp, err := service.CreateExp(ctx, "tenant-a", "operator", "untrusted-report", "", "high")
 	if err != nil {
@@ -333,26 +350,37 @@ func TestExternalFixtureReportCannotSatisfyPublishGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reported, err := service.RecordExternalRun(ctx, "tenant-a", "operator", exp.ID, revision.Revision, ExternalRunReport{
-		Action: "test", RiskConfirmed: true,
-		Response: RuntimeResponse{
-			"status":  "Succeeded",
-			"context": map[string]any{"exp_id": exp.ID, "revision": json.Number("1"), "source_sha256": revision.SourceSHA256},
-			"test":    map[string]any{"failed": json.Number("0")},
-		},
-	})
+	if _, err := service.Execute(ctx, "tenant-a", "operator", exp.ID, revision.Revision, RunInput{Action: "debug", SourceSHA256: "wrong", RiskConfirmed: true}, map[string]any{"mode": "disabled"}); err == nil || !strings.Contains(err.Error(), "source_sha256") {
+		t.Fatalf("mismatched execution identity should fail before Runtime: %v", err)
+	}
+}
+
+func TestExecutionCreatesRunBeforeCallingRuntime(t *testing.T) {
+	service, database := newTestService(t)
+	runtime, err := NewRuntimeClient("http://127.0.0.1:1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reported.Attested || reported.Provenance != "mcp_report" {
-		t.Fatalf("external report must be explicitly untrusted: %#v", reported)
-	}
-	var refreshed db.ExpRevision
-	if err := database.Where("exp_id = ? AND revision = ?", exp.ID, revision.Revision).First(&refreshed).Error; err != nil {
+	service.runtime = runtime
+	ctx := context.Background()
+	exp, err := service.CreateExp(ctx, "tenant-a", "operator", "pre-audited-run", "", "low")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if refreshed.TestsPassedAt != nil {
-		t.Fatal("externally reported Fixture result must not satisfy the publish gate")
+	revision, err := service.CreateRevision(ctx, "tenant-a", "operator", exp.ID, CreateRevisionInput{Source: "cli.check()"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := service.Execute(ctx, "tenant-a", "operator", exp.ID, revision.Revision, RunInput{Action: "run", SourceSHA256: revision.SourceSHA256}, map[string]any{"mode": "disabled"})
+	if runErr == nil {
+		t.Fatal("unavailable Runtime should fail execution")
+	}
+	var runs []db.ExpRun
+	if err := database.Where("tenant_id = ? AND exp_id = ?", "tenant-a", exp.ID).Find(&runs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].Status == "running" || runs[0].FinishedAt == nil {
+		t.Fatalf("Runtime failure must leave a terminal pre-created run record: %+v", runs)
 	}
 }
 
@@ -396,7 +424,7 @@ func TestServerOrchestratedTestAndDebugPersistTrustedUnredactedArtifacts(t *test
 	if _, err := service.CreateTestCase(ctx, "tenant-a", "operator", exp.ID, revision.Revision, TestCaseInput{Name: "offline", Params: json.RawMessage(`{}`), Fixture: json.RawMessage(`{}`), Expect: json.RawMessage(`{}`)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Execute(ctx, "tenant-a", "operator", exp.ID, revision.Revision, RunInput{Action: "test", Egress: EgressInput{Mode: "disabled"}}, map[string]any{"mode": "disabled"}); err != nil {
+	if _, err := service.Execute(ctx, "tenant-a", "operator", exp.ID, revision.Revision, RunInput{Action: "test", SourceSHA256: revision.SourceSHA256, Egress: EgressInput{Mode: "disabled"}}, map[string]any{"mode": "disabled"}); err != nil {
 		t.Fatal(err)
 	}
 	var refreshed db.ExpRevision
@@ -407,7 +435,7 @@ func TestServerOrchestratedTestAndDebugPersistTrustedUnredactedArtifacts(t *test
 		t.Fatal("Server-orchestrated Fixture test should satisfy the publish gate")
 	}
 
-	debug, err := service.Execute(ctx, "tenant-a", "operator", exp.ID, revision.Revision, RunInput{Action: "debug", RiskConfirmed: true, Egress: EgressInput{Mode: "disabled"}}, map[string]any{"mode": "disabled"})
+	debug, err := service.Execute(ctx, "tenant-a", "operator", exp.ID, revision.Revision, RunInput{Action: "debug", SourceSHA256: revision.SourceSHA256, RiskConfirmed: true, Egress: EgressInput{Mode: "disabled"}}, map[string]any{"mode": "disabled"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -527,7 +555,7 @@ func TestFixtureAcceptanceIsBoundToExactCaseSnapshot(t *testing.T) {
 	}
 	executeErr := make(chan error, 1)
 	go func() {
-		_, runErr := service.Execute(ctx, "tenant-a", "operator", exp.ID, revision.Revision, RunInput{Action: "test"}, map[string]any{"mode": "disabled"})
+		_, runErr := service.Execute(ctx, "tenant-a", "operator", exp.ID, revision.Revision, RunInput{Action: "test", SourceSHA256: revision.SourceSHA256}, map[string]any{"mode": "disabled"})
 		executeErr <- runErr
 	}()
 	<-started

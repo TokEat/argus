@@ -378,7 +378,6 @@ func buildArsenalSeedSQLiteDB(tenantID string) (filePath string, hash string, co
 
 	var arsenals []db.Arsenal
 	exportTypes := agentSyncArsenalTypes()
-	exportTypes = append(exportTypes, db.ArsenalTypeAliases("exp")...)
 	if err := db.DB.
 		Where("tenant_id = ? AND type IN ?", tenantID, exportTypes).
 		Order("type, file_name").

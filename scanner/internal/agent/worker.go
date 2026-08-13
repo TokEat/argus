@@ -29,7 +29,6 @@ import (
 
 	"github.com/P0lar1ght/argus/scanner/internal/arsenal"
 	"github.com/P0lar1ght/argus/scanner/internal/engine"
-	"github.com/P0lar1ght/argus/scanner/internal/exploit"
 	"github.com/P0lar1ght/argus/scanner/internal/timing"
 	"github.com/P0lar1ght/argus/scanner/structs"
 	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
@@ -265,8 +264,6 @@ type Worker struct {
 	debugMu      sync.Mutex
 	debugCancel  context.CancelFunc
 	debugSession string
-	expMu        sync.Mutex
-	expCancels   map[string]context.CancelFunc
 }
 
 func (w *Worker) requestStop() {
@@ -284,27 +281,6 @@ func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[stri
 		}
 	}
 	tags = cleanTags
-	pyenv := exploit.PythonRuntimeStatus()
-	if pyenv.PythonPath != "" {
-		tags["python_exp"] = "true"
-		tags["pyexp_python"] = pyenv.PythonPath
-		if pyenv.PythonVersion != "" {
-			tags["pyexp_python_version"] = pyenv.PythonVersion
-		}
-		if pyenv.PipAvailable {
-			tags["pyexp_pip"] = "true"
-		} else {
-			tags["pyexp_pip"] = "false"
-		}
-		if pyenv.InstallReady {
-			tags["pyexp_install"] = "true"
-		} else {
-			tags["pyexp_install"] = "false"
-		}
-	} else if _, exists := tags["python_exp"]; !exists {
-		tags["python_exp"] = "false"
-		tags["pyexp_install"] = "false"
-	}
 	tags["native_egress"] = "v1"
 	tags["scan_tcp"] = "v1"
 	tags["risk_validation"] = "v1"
@@ -324,7 +300,6 @@ func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[stri
 		tags:         tags,
 		stopCh:       make(chan struct{}),
 		reconnectCh:  make(chan struct{}, 1),
-		expCancels:   make(map[string]context.CancelFunc),
 	}
 }
 

@@ -21,7 +21,6 @@ const (
 	ArtifactTypeWorkflow ArtifactType = "workflow"
 	ArtifactTypeDir      ArtifactType = "dir"
 	ArtifactTypePOC      ArtifactType = "poc"
-	ArtifactTypeEXP      ArtifactType = "exp"
 )
 
 type Bundle struct {

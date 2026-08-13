@@ -82,8 +82,8 @@ func TestSDKServerListsAndReadsResources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list resources: %v", err)
 	}
-	if len(list.Resources) != 12 {
-		t.Fatalf("expected 12 resources, got %d", len(list.Resources))
+	if len(list.Resources) != 10 {
+		t.Fatalf("expected 10 resources, got %d", len(list.Resources))
 	}
 	listData, _ := json.Marshal(list.Resources)
 	for _, want := range []string{"argus://argus-mcp/quickstart", "argus://fingerprint/spec", "argus://workflow/template", "argus://examples/fingerprint-poc-workflow"} {
@@ -107,7 +107,7 @@ func TestSDKServerListsAndReadsResources(t *testing.T) {
 		t.Fatalf("read EXP console resource: %v", err)
 	}
 	appData, _ := json.Marshal(app.Contents)
-	for _, want := range []string{expConsoleMIMEType, "Yaksha EXP Console", "argus_yaksha_exp", "ui/initialize", "tools/call", "prefersBorder"} {
+	for _, want := range []string{expConsoleMIMEType, "Yaksha EXP Workspace", "argus_yaksha_exp", "ui/initialize", "tools/call", "prefersBorder"} {
 		if !strings.Contains(string(appData), want) {
 			t.Fatalf("EXP console resource missing %q: %s", want, appData)
 		}
@@ -131,7 +131,7 @@ func TestExpConsoleUsesYakshaCanonicalParameterTypes(t *testing.T) {
 			t.Fatalf("EXP console still contains stale CLI type check %q", stale)
 		}
 	}
-	for _, want := range []string{"ui/notifications/tool-cancelled", "ui/resource-teardown", "value.isError", "event.source !== window.parent", "boundContext.exp_id", "boundContext.revision", "boundContext.source_sha256", "内存源码", "egress-mode", "['disabled', 'direct', 'socks5', 'agent']", "risk-confirmed", "proxy.value = ''", "autocomplete=\"new-password\""} {
+	for _, want := range []string{"ui/notifications/tool-cancelled", "ui/resource-teardown", "value.isError", "event.source !== window.parent", "boundContext.exp_id", "boundContext.revision", "boundContext.source_sha256", "workspaceRevision.addEventListener('change'", "value.dependency_refs", "value.asset_refs", "action.value === 'test' ? 'disabled'", "action.value === 'test' && !isBound", "if (!isBound)", "run/debug 必须先保存并绑定 Server EXP Revision", "args.script = source.value", "[source, dependencies, assets]", "内存源码", "egress-mode", "['disabled', 'direct', 'socks5', 'agent']", "risk-confirmed", "proxy.value = ''", "autocomplete=\"new-password\""} {
 		if !strings.Contains(expConsoleHTML, want) {
 			t.Fatalf("EXP console is missing MCP App lifecycle behavior %q", want)
 		}
@@ -164,7 +164,19 @@ func TestYakshaPublicEgressSchemaExposesAgentButExcludesRelay(t *testing.T) {
 }
 
 func TestSDKYakshaToolReturnsStructuredContentAndCompleteDebugTrace(t *testing.T) {
-	client := NewClient("", "")
+	const hash = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/exps/exp-debug/revisions/1/sealed-package":
+			_, _ = w.Write([]byte(`{"exp_id":"exp-debug","revision":1,"source_sha256":"` + hash + `","script":"cli.check()","dependencies":[],"assets":[]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/exps/exp-debug/revisions/1/runs":
+			_, _ = w.Write([]byte(`{"run_id":"run-1","response":{"status":"Succeeded","debug":{"events":[{"kind":"http","target":"https://authorized.invalid/path?token=full-detail","error":"dial tcp 192.0.2.10:443: exact diagnostic detail"}]}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "token")
 	runner, closeServer := helperYakshaRunner()
 	defer closeServer()
 	client.yaksha = runner
@@ -174,8 +186,11 @@ func TestSDKYakshaToolReturnsStructuredContentAndCompleteDebugTrace(t *testing.T
 	result, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{
 		Name: "argus_yaksha_exp",
 		Arguments: map[string]interface{}{
-			"action": "debug",
-			"script": "cli.check()",
+			"action":         "debug",
+			"exp_id":         "exp-debug",
+			"revision":       1,
+			"source_sha256":  hash,
+			"risk_confirmed": true,
 		},
 	})
 	if err != nil {
@@ -333,206 +348,6 @@ func TestContextRuleListRangeAndDrafts(t *testing.T) {
 	}
 }
 
-func TestContextRuleGetReturnsExactContentAndPyexpRuleID(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/arsenals/poc":
-			_, _ = w.Write([]byte(`[{"ID":"poc_exact.yaml","Type":"poc","FileName":"exact.yaml","Content":"id: exact\ninfo:\n  name: Exact\n","Hash":"hp","Version":5,"State":"Draft","UpdatedAt":"2026-06-18T10:00:00Z"}]`))
-		case "/api/v1/poc-rules":
-			_, _ = w.Write([]byte(`[
-				{"artifact_id":"poc_other.yaml","source_file":"other.yaml","name":"other","severity":"low"},
-				{"artifact_id":"poc_exact.yaml","source_file":"exact.yaml","name":"exact","severity":"info"}
-			]`))
-		case "/api/v1/dictionaries/workflow":
-			_, _ = w.Write([]byte(`[{"product":"ExactProduct","pocs":["exact.yaml"],"type":["root"]}]`))
-		case "/api/v1/arsenals/exp":
-			_, _ = w.Write([]byte(`[{"ID":"exp_demo.py","Type":"exp","FileName":"demo.py","Content":"ARGUS_EXP = {\"id\":\"exp-demo\"}\n","Hash":"he","Version":7,"State":"Approved","UpdatedAt":"2026-06-18T09:00:00Z"}]`))
-		case "/api/v1/exploits":
-			_, _ = w.Write([]byte(`[{"artifact_id":"exp_demo.py","source_file":"demo.py","rule_id":"exp-demo","name":"Demo EXP","linked_pocs":["exact.yaml"]}]`))
-		default:
-			t.Fatalf("unexpected route %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer ts.Close()
-
-	session, cleanup := connectTestSession(t, NewServer(NewClient(ts.URL, "test-token")))
-	defer cleanup()
-
-	result, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name:      "argus_context",
-		Arguments: map[string]any{"action": "rule_get", "rule_type": "poc", "file_name": "exact.yaml"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(rule_get poc): %v", err)
-	}
-	var poc map[string]interface{}
-	if err := json.Unmarshal([]byte(result.Content[0].(*sdkmcp.TextContent).Text), &poc); err != nil {
-		t.Fatalf("decode poc rule_get: %v", err)
-	}
-	if poc["content"] == "" || poc["hash"] != "hp" || poc["version"].(float64) != 5 || poc["state"] != "Draft" {
-		t.Fatalf("unexpected poc rule_get: %#v", poc)
-	}
-	refs := poc["references"].(map[string]interface{})
-	if len(refs["workflows"].([]interface{})) != 1 {
-		t.Fatalf("expected workflow reference for POC: %#v", poc)
-	}
-
-	result, err = session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name:      "argus_context",
-		Arguments: map[string]any{"action": "rule_get", "rule_type": "pyexp", "rule_id": "exp-demo"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(rule_get pyexp): %v", err)
-	}
-	var exp map[string]interface{}
-	if err := json.Unmarshal([]byte(result.Content[0].(*sdkmcp.TextContent).Text), &exp); err != nil {
-		t.Fatalf("decode exp rule_get: %v", err)
-	}
-	if exp["file_name"] != "demo.py" || !strings.Contains(exp["content"].(string), "ARGUS_EXP") || exp["hash"] != "he" {
-		t.Fatalf("unexpected pyexp rule_get: %#v", exp)
-	}
-}
-
-func TestPyexpDebugResolvesCurrentExploitIDThroughNativeList(t *testing.T) {
-	seen := make([]string, 0, 2)
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = append(seen, r.Method+" "+r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/exploits":
-			if r.URL.RawQuery != "all=1" {
-				t.Fatalf("expected pyexp resolve to include all=1, got %q", r.URL.RawQuery)
-			}
-			_, _ = w.Write([]byte(`[{"id":42,"artifact_id":"exp_demo.py","source_file":"demo.py","rule_id":"exp-demo"}]`))
-		case "/api/v1/exploits/42/debug":
-			_, _ = w.Write([]byte(`{"status":"started","session_id":"debug-1"}`))
-		default:
-			t.Fatalf("unexpected route %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer ts.Close()
-
-	session, cleanup := connectTestSession(t, NewServer(NewClient(ts.URL, "test-token")))
-	defer cleanup()
-
-	result, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name: "argus_rule_debug",
-		Arguments: map[string]any{
-			"rule_type":  "pyexp",
-			"file_name":  "demo.py",
-			"agent_id":   "agent-1",
-			"target_url": "http://target.local",
-			"params":     map[string]any{"marker": "argus"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(argus_rule_debug): %v", err)
-	}
-	text := result.Content[0].(*sdkmcp.TextContent).Text
-	if !strings.Contains(text, `"session_id": "debug-1"`) || strings.Contains(text, `"exploit_rule_id"`) {
-		t.Fatalf("unexpected pyexp debug result: %s", text)
-	}
-	want := []string{"GET /api/v1/exploits", "POST /api/v1/exploits/42/debug"}
-	if strings.Join(seen, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("unexpected pyexp debug routes:\n got %v\nwant %v", seen, want)
-	}
-}
-
-func TestPyexpSourceDryRunUsesSourceEndpointWithoutResolve(t *testing.T) {
-	seen := make([]string, 0, 1)
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = append(seen, r.Method+" "+r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/exploits/source/dry-run":
-			var body map[string]interface{}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode dry-run body: %v", err)
-			}
-			if body["source"] == "" || body["target"] != "http://target.local" {
-				t.Fatalf("unexpected dry-run body: %#v", body)
-			}
-			_, _ = w.Write([]byte(`{"status":"validated","exploit_id":"exp-source","params_valid":true}`))
-		default:
-			t.Fatalf("unexpected route %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer ts.Close()
-
-	session, cleanup := connectTestSession(t, NewServer(NewClient(ts.URL, "test-token")))
-	defer cleanup()
-
-	result, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name: "argus_rule_debug",
-		Arguments: map[string]any{
-			"rule_type":  "pyexp",
-			"action":     "dry_run",
-			"source":     "ARGUS_EXP = {}",
-			"target_url": "http://target.local",
-			"params":     map[string]any{},
-		},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(argus_rule_debug source dry-run): %v", err)
-	}
-	text := result.Content[0].(*sdkmcp.TextContent).Text
-	if !strings.Contains(text, `"source_level": true`) || !strings.Contains(text, `"params_valid": true`) {
-		t.Fatalf("unexpected source dry-run result: %s", text)
-	}
-	want := []string{"POST /api/v1/exploits/source/dry-run"}
-	if strings.Join(seen, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("unexpected source dry-run routes:\n got %v\nwant %v", seen, want)
-	}
-}
-
-func TestPyexpSourceDebugUsesMCPDebugEndpointWithoutResolve(t *testing.T) {
-	seen := make([]string, 0, 1)
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = append(seen, r.Method+" "+r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/exploits/source/debug":
-			var body map[string]interface{}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode debug body: %v", err)
-			}
-			if body["source"] == "" || body["agent_id"] != "agent-1" {
-				t.Fatalf("unexpected debug body: %#v", body)
-			}
-			_, _ = w.Write([]byte(`{"status":"completed","result":{"status":"Succeeded"}}`))
-		default:
-			t.Fatalf("unexpected route %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer ts.Close()
-
-	session, cleanup := connectTestSession(t, NewServer(NewClient(ts.URL, "test-token")))
-	defer cleanup()
-
-	result, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name: "argus_rule_debug",
-		Arguments: map[string]any{
-			"rule_type":  "pyexp",
-			"action":     "run",
-			"source":     "ARGUS_EXP = {}",
-			"agent_id":   "agent-1",
-			"target_url": "http://target.local",
-		},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(argus_rule_debug source debug): %v", err)
-	}
-	text := result.Content[0].(*sdkmcp.TextContent).Text
-	if !strings.Contains(text, `"source_level": true`) || !strings.Contains(text, `"Succeeded"`) {
-		t.Fatalf("unexpected source debug result: %s", text)
-	}
-	want := []string{"POST /api/v1/exploits/source/debug"}
-	if strings.Join(seen, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("unexpected source debug routes:\n got %v\nwant %v", seen, want)
-	}
-}
-
 func TestFingerprintAndWorkflowSaveComposeNativeArsenalDrafts(t *testing.T) {
 	seen := make([]string, 0, 4)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -673,8 +488,6 @@ func TestRelationshipStatsAndListUseNativeRESTEndpoints(t *testing.T) {
 				{"name":"linked-poc","source_file":"linked-poc.yaml","state":"Approved","enabled":true},
 				{"name":"general-poc","source_file":"general-poc.yaml","state":"Approved","enabled":true}
 			]`))
-		case "/api/v1/exploits":
-			_, _ = w.Write([]byte(`[{"rule_id":"exp-linked","target_product":"LinkedProduct"}]`))
 		default:
 			t.Fatalf("unexpected route %s %s", r.Method, r.URL.String())
 		}
@@ -725,11 +538,9 @@ func TestRelationshipStatsAndListUseNativeRESTEndpoints(t *testing.T) {
 		"GET /api/v1/dictionaries/fingerprint?",
 		"GET /api/v1/dictionaries/workflow?",
 		"GET /api/v1/poc-rules?all=1",
-		"GET /api/v1/exploits?all=1",
 		"GET /api/v1/dictionaries/fingerprint?",
 		"GET /api/v1/dictionaries/workflow?",
 		"GET /api/v1/poc-rules?all=1",
-		"GET /api/v1/exploits?all=1",
 	}
 	if strings.Join(seen, "\n") != strings.Join(wantRoutes, "\n") {
 		t.Fatalf("unexpected relationship routes:\n got %v\nwant %v", seen, wantRoutes)
@@ -748,8 +559,6 @@ func TestProductSearchUsesNativeRESTIndexes(t *testing.T) {
 			_, _ = w.Write([]byte(`[{"product":"Spring-Framework","type":["root"],"pocs":["springboot-env.yaml"]}]`))
 		case "/api/v1/poc-rules":
 			_, _ = w.Write([]byte(`[{"name":"springboot-env","source_file":"springboot-env.yaml","target_product":"Spring Boot Actuator","severity":"high","state":"Approved","enabled":true,"tags":"springboot,actuator","description":"Spring actuator env disclosure"}]`))
-		case "/api/v1/exploits":
-			_, _ = w.Write([]byte(`[{"id":7,"artifact_id":"exp_spring.py","rule_id":"exp-spring","name":"Spring EXP","source_file":"spring.py","target_product":"Spring-Framework","risk_level":"low","state":"Approved","enabled":true}]`))
 		default:
 			t.Fatalf("unexpected route %s %s", r.Method, r.URL.String())
 		}
@@ -767,7 +576,7 @@ func TestProductSearchUsesNativeRESTIndexes(t *testing.T) {
 		t.Fatalf("CallTool product_search: %v", err)
 	}
 	text := result.Content[0].(*sdkmcp.TextContent).Text
-	for _, want := range []string{`"source": "native_api"`, "Spring-Framework", "springboot-env.yaml", "exp-spring", "workflow_linked_poc"} {
+	for _, want := range []string{`"source": "native_api"`, "Spring-Framework", "springboot-env.yaml", "workflow_linked_poc"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("product_search missing %q: %s", want, text)
 		}
@@ -776,7 +585,6 @@ func TestProductSearchUsesNativeRESTIndexes(t *testing.T) {
 		"GET /api/v1/dictionaries/fingerprint?",
 		"GET /api/v1/dictionaries/workflow?",
 		"GET /api/v1/poc-rules?all=1",
-		"GET /api/v1/exploits?all=1",
 	}
 	if strings.Join(seen, "\n") != strings.Join(wantRoutes, "\n") {
 		t.Fatalf("unexpected product_search routes:\n got %v\nwant %v", seen, wantRoutes)

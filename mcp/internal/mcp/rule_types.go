@@ -13,8 +13,6 @@ func normalizeRuleType(ruleType string) string {
 		return "workflow"
 	case "poc":
 		return "poc"
-	case "pyexp", "exp", "exploit":
-		return "exp"
 	default:
 		return strings.ToLower(strings.TrimSpace(ruleType))
 	}
@@ -23,9 +21,6 @@ func normalizeRuleType(ruleType string) string {
 func publicRuleType(ruleType string) string {
 	if ruleType == "finger" {
 		return "fingerprint"
-	}
-	if ruleType == "exp" {
-		return "pyexp"
 	}
 	return ruleType
 }
@@ -48,14 +43,5 @@ func withStableRef(out map[string]interface{}, ruleType, fileName string) map[st
 		}
 	}
 	out["stable_ref"] = stable
-	return out
-}
-
-func stripLegacyExploitRef(out map[string]interface{}) map[string]interface{} {
-	if out == nil {
-		return out
-	}
-	delete(out, "exploit_rule_id")
-	delete(out, "legacy_ref")
 	return out
 }
