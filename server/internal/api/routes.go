@@ -38,6 +38,10 @@ func registerAPIV1Routes(api *gin.RouterGroup) {
 	api.POST("/projects/:id/credential-dictionaries", createCredentialDictionary)
 	api.POST("/projects/:id/credential-dictionaries/:dictionary_id/revisions", addCredentialDictionaryRevision)
 	api.DELETE("/projects/:id/credential-dictionaries/:dictionary_id", deleteCredentialDictionary)
+	api.GET("/projects/:id/subdomain-dictionaries", listSubdomainDictionaries)
+	api.POST("/projects/:id/subdomain-dictionaries", createSubdomainDictionary)
+	api.POST("/projects/:id/subdomain-dictionaries/:dictionary_id/revisions", addSubdomainDictionaryRevision)
+	api.DELETE("/projects/:id/subdomain-dictionaries/:dictionary_id", deleteSubdomainDictionary)
 
 	// 任务 CRUD
 	api.GET("/tasks", getTasks)

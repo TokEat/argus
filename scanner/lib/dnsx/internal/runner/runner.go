@@ -314,24 +314,12 @@ func (r *Runner) prepareInput() error {
 			}
 			numHosts += r.addHostsToHMapFromList(hosts)
 		case r.options.WordList != "":
-			// prepare wordlist
-			if fileutil.FileExists(r.options.WordList) {
-				prefixes, err := r.preProcessArgument(r.options.WordList)
-				if err == nil {
-					for prefix := range prefixes {
-						// domains Cartesian product with wordlist
-						subdomain := strings.TrimSpace(prefix) + "." + item
-						hosts = append(hosts, subdomain)
-					}
-				}
-			} else {
-				for _, prefix := range r.DefaultDict {
-					// domains Cartesian product with wordlist
-					subdomain := strings.TrimSpace(prefix) + "." + item
-					hosts = append(hosts, subdomain)
-				}
-			}
-
+			// Built-in and Server-resolved words are always retained. A managed
+			// Agent file can only add to this set, never replace it.
+			hosts = r.bruteforceHosts(item)
+			numHosts += r.addHostsToHMapFromList(hosts)
+		case len(r.DefaultDict) > 0:
+			hosts = r.bruteforceHosts(item)
 			numHosts += r.addHostsToHMapFromList(hosts)
 		case iputil.IsCIDR(item):
 			hostC, err := mapcidr.IPAddressesAsStream(item)
@@ -351,6 +339,37 @@ func (r *Runner) prepareInput() error {
 		}
 	}
 	return nil
+}
+
+func (r *Runner) bruteforceHosts(domain string) []string {
+	hosts := make([]string, 0, len(r.DefaultDict))
+	seen := make(map[string]struct{}, len(r.DefaultDict))
+	appendHost := func(prefix string) {
+		prefix = strings.TrimSpace(prefix)
+		if prefix == "" {
+			return
+		}
+		key := strings.ToLower(prefix)
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		hosts = append(hosts, prefix+"."+domain)
+	}
+	for _, prefix := range r.DefaultDict {
+		appendHost(prefix)
+	}
+	if r.options == nil || !fileutil.FileExists(r.options.WordList) {
+		return hosts
+	}
+	prefixes, err := r.preProcessArgument(r.options.WordList)
+	if err != nil {
+		return hosts
+	}
+	for prefix := range prefixes {
+		appendHost(prefix)
+	}
+	return hosts
 }
 
 func (r *Runner) addHostsToHMapFromList(hosts []string) (numHosts int) {

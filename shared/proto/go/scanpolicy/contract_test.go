@@ -31,6 +31,41 @@ func TestPresetPolicies(t *testing.T) {
 		if normalized.Capabilities.CredentialValidation {
 			t.Fatalf("credential validation must default off for %s", test.preset)
 		}
+		if test.preset == PresetDeep && normalized.Subdomains.BruteforceDepth != 2 {
+			t.Fatalf("deep preset bruteforce depth = %d, want 2", normalized.Subdomains.BruteforceDepth)
+		}
+	}
+}
+
+func TestSubdomainBruteforceDepthValidation(t *testing.T) {
+	base := Policy{
+		SchemaVersion: SchemaVersion, Preset: PresetCustom,
+		PortProfile: PortProfileCommon100, ScanMethod: ScanMethodTCP, Intensity: IntensityLow,
+		Capabilities: Capabilities{SubdomainDiscovery: true, SubdomainBruteforce: true},
+		Subdomains: SubdomainPolicy{
+			BruteforceDepth: 4,
+			Wordlists:       []DictionaryRef{{ID: "words", Revision: 1, SHA256: strings.Repeat("a", 64), Count: 3}},
+		},
+		Credentials: CredentialPolicy{PairLimit: 1},
+	}
+	normalized, err := Normalize(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized.Subdomains.BruteforceDepth != 4 {
+		t.Fatalf("bruteforce depth = %d, want 4", normalized.Subdomains.BruteforceDepth)
+	}
+
+	base.Subdomains.BruteforceDepth = 5
+	if _, err := Normalize(base); err == nil || !strings.Contains(err.Error(), "between 1 and 4") {
+		t.Fatalf("expected excessive depth rejection, got %v", err)
+	}
+
+	base.Capabilities.SubdomainBruteforce = false
+	base.Subdomains.Wordlists = nil
+	base.Subdomains.BruteforceDepth = 1
+	if _, err := Normalize(base); err == nil || !strings.Contains(err.Error(), "requires subdomain bruteforce") {
+		t.Fatalf("expected disabled bruteforce depth rejection, got %v", err)
 	}
 }
 

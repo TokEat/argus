@@ -4,11 +4,12 @@ package subdomain
 import (
 	"bytes"
 	_ "embed"
-	"github.com/P0lar1ght/argus/scanner/ddout"
-	"github.com/P0lar1ght/argus/scanner/utils"
 	"io"
+	"sort"
 	"strings"
 
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	"github.com/projectdiscovery/dnsx/calldnsx"
 	"github.com/projectdiscovery/goflags"
 	"github.com/projectdiscovery/gologger"
@@ -16,12 +17,16 @@ import (
 	"github.com/projectdiscovery/subfinder/v2/pkg/runner"
 )
 
+var runDNSBruteforce = calldnsx.CallDNSx
+
 // Config captures the task-scoped options used by subdomain enumeration.
 type Config struct {
 	NoSubdomainBruteForce      bool
 	NoSubFinder                bool
 	SubdomainBruteForceThreads int
+	SubdomainBruteforceDepth   int
 	SubdomainWordListFile      string
+	SubdomainDictionaryWords   []string
 	EmitFunc                   func(ddout.OutputMessage)
 }
 
@@ -29,7 +34,7 @@ type Config struct {
 // process-wide globals.
 func Enumerate(domains []string, cfg Config) []string {
 	var results []string
-	dict := embeddedWordlist()
+	dict := mergeWordlists(embeddedWordlist(), cfg.SubdomainDictionaryWords)
 
 	for _, domain := range domains {
 		if domain == "" {
@@ -37,13 +42,23 @@ func Enumerate(domains []string, cfg Config) []string {
 		}
 
 		if !cfg.NoSubdomainBruteForce {
-			results = append(results, calldnsx.CallDNSx(
-				domain,
-				cfg.SubdomainBruteForceThreads,
-				dnsCallback(cfg.EmitFunc),
-				dict,
-				cfg.SubdomainWordListFile,
-			)...)
+			depth := cfg.SubdomainBruteforceDepth
+			if depth < 1 {
+				depth = 1
+			}
+			if depth > 4 {
+				depth = 4
+			}
+			frontier := []string{domain}
+			for level := 0; level < depth && len(frontier) > 0; level++ {
+				next := make([]string, 0)
+				for _, parent := range frontier {
+					found := runDNSBruteforce(parent, cfg.SubdomainBruteForceThreads, dnsCallback(cfg.EmitFunc), dict, cfg.SubdomainWordListFile)
+					results = append(results, found...)
+					next = append(next, found...)
+				}
+				frontier = removeEmpty(utils.RemoveDuplicateElement(next))
+			}
 		}
 
 		if !cfg.NoSubFinder {
@@ -133,5 +148,23 @@ func removeEmpty(input []string) []string {
 		}
 		result = append(result, item)
 	}
+	return result
+}
+
+func mergeWordlists(inputs ...[]string) []string {
+	seen := make(map[string]struct{})
+	for _, input := range inputs {
+		for _, raw := range input {
+			value := strings.ToLower(strings.Trim(strings.TrimSpace(raw), "."))
+			if value != "" {
+				seen[value] = struct{}{}
+			}
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for value := range seen {
+		result = append(result, value)
+	}
+	sort.Strings(result)
 	return result
 }

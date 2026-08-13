@@ -144,3 +144,19 @@ func TestNormalizeTaskConfigRejectsLegacyProviderSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeTaskConfigRejectsUnmanagedSubdomainInputs(t *testing.T) {
+	for _, test := range []struct {
+		payload string
+		want    string
+	}{
+		{`{"SubdomainBruteforceDepth":5}`, "between 1 and 4"},
+		{`{"SubdomainWordListFile":"/tmp/custom.txt"}`, "Agent-managed"},
+		{`{"SubdomainDictionaryWords":["dev"]}`, "Server-only"},
+		{`{"SubdomainDictionaryRefs":[{"id":"dict","revision":1}]}`, "Server-only"},
+	} {
+		if _, _, err := normalizeTaskConfigPayload(json.RawMessage(test.payload)); err == nil || !strings.Contains(err.Error(), test.want) {
+			t.Fatalf("payload %s err = %v, want %q rejection", test.payload, err, test.want)
+		}
+	}
+}

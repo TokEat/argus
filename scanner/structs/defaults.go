@@ -21,6 +21,7 @@ func DefaultConfig() Config {
 		GetBannerThreads:           500,
 		GetBannerTimeout:           5,
 		SubdomainBruteForceThreads: 150,
+		SubdomainBruteforceDepth:   1,
 		WebThreads:                 200,
 		WebTimeout:                 10,
 		HTTPProxyTest:              true,

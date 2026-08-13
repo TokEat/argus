@@ -669,3 +669,37 @@ func TestAssetDiscoveryNotebookOperationsMigrationIsAdditiveAndScoped(t *testing
 	}
 	t.Fatal("expected asset discovery notebook operations migration 480")
 }
+
+func TestSubdomainDictionaryMigrationIsAdditiveAndScoped(t *testing.T) {
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations: %v", err)
+	}
+	for _, migration := range migrations {
+		if migration.Version != "520" {
+			continue
+		}
+		for _, required := range []string{
+			"CREATE TABLE IF NOT EXISTS subdomain_dictionaries",
+			"tenant_id VARCHAR(128) NOT NULL",
+			"project_id VARCHAR(255) NOT NULL",
+			"CREATE TABLE IF NOT EXISTS subdomain_dictionary_revisions",
+			"values_json JSONB NOT NULL",
+			"REFERENCES subdomain_dictionaries(id) ON DELETE RESTRICT",
+			"idx_subdomain_dictionary_name",
+			"idx_subdomain_dictionary_revision",
+		} {
+			if !strings.Contains(migration.SQL, required) {
+				t.Fatalf("subdomain dictionary migration missing %q", required)
+			}
+		}
+		upperSQL := strings.ToUpper(migration.SQL)
+		for _, forbidden := range []string{"DROP TABLE", "DELETE FROM", "TRUNCATE ", "PASSWORD", "TOKEN", "API_KEY", "FILE_PATH"} {
+			if strings.Contains(upperSQL, forbidden) {
+				t.Fatalf("subdomain dictionary migration contains forbidden term %q", forbidden)
+			}
+		}
+		return
+	}
+	t.Fatal("expected subdomain dictionary migration 520")
+}

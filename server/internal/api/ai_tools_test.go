@@ -74,6 +74,8 @@ func setupAITestDB(t *testing.T) *gorm.DB {
 		&db.ScanStageDerivation{},
 		&db.CredentialDictionary{},
 		&db.CredentialDictionaryRevision{},
+		&db.SubdomainDictionary{},
+		&db.SubdomainDictionaryRevision{},
 		&db.CredentialBundle{},
 		&db.CredentialFindingSecret{},
 		&db.CredentialRevealAudit{},

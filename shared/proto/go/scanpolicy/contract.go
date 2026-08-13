@@ -113,6 +113,13 @@ type CredentialPolicy struct {
 	PairLimit     int             `json:"pair_limit"`
 }
 
+// SubdomainPolicy binds project-scoped immutable wordlist revisions. The
+// referenced values are always additive to Scanner's built-in wordlist.
+type SubdomainPolicy struct {
+	Wordlists       []DictionaryRef `json:"wordlists,omitempty"`
+	BruteforceDepth int             `json:"bruteforce_depth,omitempty"`
+}
+
 type Authorization struct {
 	ValidationConfirmed bool `json:"validation_confirmed"`
 }
@@ -126,6 +133,7 @@ type Policy struct {
 	Intensity     Intensity        `json:"intensity"`
 	Capabilities  Capabilities     `json:"capabilities"`
 	Selector      Selector         `json:"selector,omitempty"`
+	Subdomains    SubdomainPolicy  `json:"subdomains"`
 	Credentials   CredentialPolicy `json:"credentials"`
 	Authorization Authorization    `json:"authorization"`
 }
@@ -152,6 +160,7 @@ func PresetPolicy(preset Preset) (Policy, error) {
 		policy.Intensity = IntensityHigh
 		policy.Capabilities.SubdomainDiscovery = true
 		policy.Capabilities.SubdomainBruteforce = true
+		policy.Subdomains.BruteforceDepth = 2
 		policy.Capabilities.HostBinding = true
 		policy.Capabilities.DirectoryProbe = true
 		policy.Capabilities.RiskValidation = true
@@ -181,6 +190,10 @@ func Normalize(input Policy) (Policy, error) {
 		expected, _ := PresetPolicy(input.Preset)
 		expected.Selector = input.Selector
 		expected.Authorization = input.Authorization
+		expected.Subdomains.Wordlists = input.Subdomains.Wordlists
+		if input.Subdomains.BruteforceDepth != 0 {
+			expected.Subdomains.BruteforceDepth = input.Subdomains.BruteforceDepth
+		}
 		expected.Credentials = input.Credentials
 		if input.Capabilities != (Capabilities{}) {
 			expected.Capabilities = input.Capabilities
@@ -217,6 +230,22 @@ func Normalize(input Policy) (Policy, error) {
 	if input.Capabilities.SubdomainBruteforce && !input.Capabilities.SubdomainDiscovery {
 		return Policy{}, errors.New("subdomain bruteforce requires subdomain discovery")
 	}
+	if !input.Capabilities.SubdomainBruteforce && len(input.Subdomains.Wordlists) > 0 {
+		return Policy{}, errors.New("subdomain dictionary references require subdomain bruteforce")
+	}
+	if input.Capabilities.SubdomainBruteforce {
+		if input.Subdomains.BruteforceDepth == 0 {
+			input.Subdomains.BruteforceDepth = 1
+		}
+		if input.Subdomains.BruteforceDepth < 1 || input.Subdomains.BruteforceDepth > 4 {
+			return Policy{}, errors.New("subdomain bruteforce depth must be between 1 and 4")
+		}
+	} else if input.Subdomains.BruteforceDepth != 0 {
+		return Policy{}, errors.New("subdomain bruteforce depth requires subdomain bruteforce")
+	}
+	if len(input.Subdomains.Wordlists) > MaximumDictionaryReferences {
+		return Policy{}, fmt.Errorf("subdomain policy allows at most %d dictionary references", MaximumDictionaryReferences)
+	}
 	if (input.Capabilities.RiskValidation || input.Capabilities.CredentialValidation) && !input.Authorization.ValidationConfirmed {
 		return Policy{}, errors.New("POC or credential validation requires one explicit authorization confirmation")
 	}
@@ -243,6 +272,11 @@ func Normalize(input Policy) (Policy, error) {
 	}
 	input.Credentials.UsernameBooks = append([]DictionaryRef(nil), input.Credentials.UsernameBooks...)
 	input.Credentials.PasswordBooks = append([]DictionaryRef(nil), input.Credentials.PasswordBooks...)
+	input.Subdomains.Wordlists = append([]DictionaryRef(nil), input.Subdomains.Wordlists...)
+	input.Subdomains.Wordlists, err = normalizeDictionaryRefs(input.Subdomains.Wordlists)
+	if err != nil {
+		return Policy{}, fmt.Errorf("normalize subdomain wordlists: %w", err)
+	}
 	input.Credentials.UsernameBooks, err = normalizeDictionaryRefs(input.Credentials.UsernameBooks)
 	if err != nil {
 		return Policy{}, fmt.Errorf("normalize username books: %w", err)

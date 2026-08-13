@@ -63,12 +63,22 @@ func scanPolicyRequestBodyLimitMiddleware() gin.HandlerFunc {
 			limit = maximumScanPolicyRequestBytes
 		case isCredentialDictionaryWritePath(path):
 			limit = maximumDictionaryRequestBytes
+		case isSubdomainDictionaryWritePath(path):
+			limit = maximumDictionaryRequestBytes
 		}
 		if limit > 0 {
 			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 		}
 		c.Next()
 	}
+}
+
+func isSubdomainDictionaryWritePath(path string) bool {
+	if !strings.HasPrefix(path, "/api/v1/projects/") {
+		return false
+	}
+	return strings.HasSuffix(path, "/subdomain-dictionaries") ||
+		(strings.Contains(path, "/subdomain-dictionaries/") && strings.HasSuffix(path, "/revisions"))
 }
 
 func isCredentialDictionaryWritePath(path string) bool {

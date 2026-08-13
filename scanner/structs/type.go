@@ -75,6 +75,7 @@ type Config struct {
 	NoSubFinder                bool
 	Subdomain                  bool
 	SubdomainBruteForceThreads int
+	SubdomainBruteforceDepth   int
 	SkipHostDiscovery          bool
 	PortScanType               string
 	GetBannerThreads           int
@@ -88,42 +89,45 @@ type Config struct {
 	AllowCDNAssets             bool
 	NoHostBind                 bool
 	SubdomainWordListFile      string
-	HTTPProxy                  string
-	HTTPProxyTest              bool
-	HTTPProxyTestURL           string
-	Hunter                     bool
-	HunterPageSize             int
-	HunterMaxPageCount         int
-	Fofa                       bool
-	FofaMaxCount               int
-	NoDirSearch                bool
-	DirSearchYaml              string
-	GolangPoc                  bool
-	DisableGeneralPoc          bool
-	WAFBypassHeaders           bool
-	WAFSkipOnManyFingerprints  bool
-	NucleiTemplate             string
-	ExcludeTags                string
-	Severities                 string
-	WorkflowYamlPath           string
-	ReportName                 string
-	GoPocThreads               int
-	WebThreads                 int
-	WebTimeout                 int
-	PocNameForSearch           string
-	NoPoc                      bool
-	LowPerceptionMode          bool
-	Quake                      bool
-	QuakeSize                  int
-	NoICMPPing                 bool
-	TCPPing                    bool
-	NoInteractsh               bool
-	OnlyIPPort                 bool
-	OutputFile                 string
-	OutputType                 string
-	APIConfigFilePath          string
-	FingerConfigFilePath       string
-	RuleFilesOnly              bool
+	// SubdomainDictionaryWords is a Server-resolved, revision-bound additive
+	// list. Scanner always unions it with built-in and managed Agent words.
+	SubdomainDictionaryWords  []string
+	HTTPProxy                 string
+	HTTPProxyTest             bool
+	HTTPProxyTestURL          string
+	Hunter                    bool
+	HunterPageSize            int
+	HunterMaxPageCount        int
+	Fofa                      bool
+	FofaMaxCount              int
+	NoDirSearch               bool
+	DirSearchYaml             string
+	GolangPoc                 bool
+	DisableGeneralPoc         bool
+	WAFBypassHeaders          bool
+	WAFSkipOnManyFingerprints bool
+	NucleiTemplate            string
+	ExcludeTags               string
+	Severities                string
+	WorkflowYamlPath          string
+	ReportName                string
+	GoPocThreads              int
+	WebThreads                int
+	WebTimeout                int
+	PocNameForSearch          string
+	NoPoc                     bool
+	LowPerceptionMode         bool
+	Quake                     bool
+	QuakeSize                 int
+	NoICMPPing                bool
+	TCPPing                   bool
+	NoInteractsh              bool
+	OnlyIPPort                bool
+	OutputFile                string
+	OutputType                string
+	APIConfigFilePath         string
+	FingerConfigFilePath      string
+	RuleFilesOnly             bool
 	// KnowledgePackageHash and KnowledgeRuleVersion are verified Agent rule
 	// identities. They are internal-only and must never enter task JSON.
 	KnowledgePackageHash string `json:"-"`

@@ -81,6 +81,33 @@ type CredentialDictionaryRevision struct {
 	CreatedAt    time.Time
 }
 
+// SubdomainDictionary stores project-scoped additive DNS labels. Deletion is
+// soft so already-bound task policies can still resolve immutable revisions.
+type SubdomainDictionary struct {
+	ID        string `gorm:"primaryKey"`
+	TenantID  string `gorm:"default:'default';index;uniqueIndex:idx_subdomain_dictionary_name,priority:1"`
+	ProjectID string `gorm:"index;uniqueIndex:idx_subdomain_dictionary_name,priority:2"`
+	Name      string `gorm:"size:160;uniqueIndex:idx_subdomain_dictionary_name,priority:3"`
+	CreatedBy string `gorm:"index"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt `gorm:"index"`
+}
+
+// SubdomainDictionaryRevision is immutable canonical JSON plus its hash.
+type SubdomainDictionaryRevision struct {
+	ID           uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID     string `gorm:"default:'default';index"`
+	ProjectID    string `gorm:"index"`
+	DictionaryID string `gorm:"index;uniqueIndex:idx_subdomain_dictionary_revision,priority:1"`
+	Revision     int    `gorm:"uniqueIndex:idx_subdomain_dictionary_revision,priority:2"`
+	SHA256       string `gorm:"size:64;index"`
+	ItemCount    int
+	ValuesJSON   string `gorm:"type:jsonb"`
+	CreatedBy    string `gorm:"index"`
+	CreatedAt    time.Time
+}
+
 // CredentialBundle is a short-lived one-time capability. Task configuration
 // stores only Ref, SHA256 and PairCount.
 type CredentialBundle struct {

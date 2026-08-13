@@ -11,7 +11,74 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify:
+  static:
+    name: Static contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Source size ratchet
+        run: make source-size-check
+
+      - name: Argus brand contract
+        run: make brand-check
+
+  go-tests:
+    name: Go tests (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: root
+            directory: .
+            gowork: auto
+          - name: server
+            directory: server
+            gowork: auto
+          - name: mcp
+            directory: mcp
+            gowork: auto
+          - name: yaksha
+            directory: yaksha
+            gowork: 'off'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            server/go.sum
+            mcp/go.sum
+            yaksha/go.sum
+
+      - name: Test once with coverage
+        working-directory: ${{ matrix.directory }}
+        env:
+          GOWORK: ${{ matrix.gowork }}
+        run: |
+          go test -coverprofile="$RUNNER_TEMP/${{ matrix.name }}.out" ./...
+          go tool cover -func="$RUNNER_TEMP/${{ matrix.name }}.out" | tail -n 1
+
+      - name: Embedded Nuclei request-budget tests
+        if: matrix.name == 'root'
+        working-directory: scanner/lib/nuclei
+        env:
+          GOWORK: 'off'
+        run: go test ./pkg/protocols ./pkg/protocols/http ./pkg/protocols/dns ./internal/runner -run '^TestRequestBudget' -count=1
+
+      - name: Cloud provider mock smoke
+        if: matrix.name == 'server'
+        working-directory: server
+        run: go test ./internal/api -run TestCloudProviderMockSmoke -count=1
+
+  database:
+    name: Database schema
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -36,6 +103,20 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: PostgreSQL migration apply and schema verify
+        env:
+          DB_DSN: host=127.0.0.1 user=postgres password=argus_ci dbname=argus port=5432 sslmode=disable
+        run: |
+          make db-migrate DB_MIGRATION_MODE=apply
+          make db-verify
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -46,58 +127,6 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
         working-directory: server-ui
-
-      - name: Source size ratchet
-        run: make source-size-check
-
-      - name: Argus brand contract
-        run: make brand-check
-
-      - name: Go tests
-        run: go test ./...
-
-      - name: Embedded Nuclei request-budget tests
-        run: GOWORK=off go test ./pkg/protocols ./pkg/protocols/http ./pkg/protocols/dns ./internal/runner -run '^TestRequestBudget' -count=1
-        working-directory: scanner/lib/nuclei
-
-      - name: Server Go tests
-        run: go test ./...
-        working-directory: server
-
-      - name: MCP Go tests
-        run: go test ./...
-        working-directory: mcp
-
-      - name: Yaksha Go tests
-        run: GOWORK=off go test ./...
-        working-directory: yaksha
-
-      - name: PostgreSQL migration apply and schema verify
-        env:
-          DB_DSN: host=127.0.0.1 user=postgres password=argus_ci dbname=argus port=5432 sslmode=disable
-        run: |
-          make db-migrate DB_MIGRATION_MODE=apply
-          make db-verify
-
-      - name: Go coverage
-        run: |
-          mkdir -p /tmp/argus-coverage
-          go test -coverprofile=/tmp/argus-coverage/root.out ./...
-          cd server
-          go test -coverprofile=/tmp/argus-coverage/server.out ./...
-          cd ../mcp
-          go test -coverprofile=/tmp/argus-coverage/mcp.out ./...
-          cd ../yaksha
-          GOWORK=off go test -coverprofile=/tmp/argus-coverage/yaksha.out ./...
-          cd ..
-          go tool cover -func=/tmp/argus-coverage/root.out | tail -n 1
-          go tool cover -func=/tmp/argus-coverage/server.out | tail -n 1
-          go tool cover -func=/tmp/argus-coverage/mcp.out | tail -n 1
-          go tool cover -func=/tmp/argus-coverage/yaksha.out | tail -n 1
-
-      - name: Cloud provider mock smoke
-        run: go test ./internal/api -run TestCloudProviderMockSmoke -count=1
-        working-directory: server
 
       - name: Frontend lint
         run: npm run lint
@@ -114,3 +143,21 @@ jobs:
       - name: Frontend build
         run: npm run build
         working-directory: server-ui
+
+  verify:
+    name: Verify
+    if: always()
+    needs: [static, go-tests, database, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every CI shard
+        env:
+          STATIC_RESULT: ${{ needs.static.result }}
+          GO_RESULT: ${{ needs.go-tests.result }}
+          DATABASE_RESULT: ${{ needs.database.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+        run: |
+          test "$STATIC_RESULT" = success
+          test "$GO_RESULT" = success
+          test "$DATABASE_RESULT" = success
+          test "$FRONTEND_RESULT" = success

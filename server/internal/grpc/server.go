@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"strconv"
 	"strings"
 	"time"
 
@@ -28,35 +27,6 @@ import (
 
 const agentSessionTTL = 7 * 24 * time.Hour
 const retryQueuedMarker = "queued"
-
-func agentSupportsRiskValidation(version string) bool {
-	return agentSupportsVersion(version, 2, 4, 0)
-}
-
-func agentSupportsCheckpointResume(version string) bool {
-	return agentSupportsVersion(version, 2, 6, 0)
-}
-
-func agentSupportsVersion(version string, requiredMajor, requiredMinor, requiredPatch int) bool {
-	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
-	parts := strings.Split(version, ".")
-	if len(parts) != 3 {
-		return false
-	}
-	major, majorErr := strconv.Atoi(parts[0])
-	minor, minorErr := strconv.Atoi(parts[1])
-	patch, patchErr := strconv.Atoi(parts[2])
-	if majorErr != nil || minorErr != nil || patchErr != nil || major < 0 || minor < 0 || patch < 0 {
-		return false
-	}
-	if major != requiredMajor {
-		return major > requiredMajor
-	}
-	if minor != requiredMinor {
-		return minor > requiredMinor
-	}
-	return patch >= requiredPatch
-}
 
 func agentHasCapabilities(nodeTagsJSON string, capabilities ...string) bool {
 	var tags map[string]string
@@ -737,6 +707,13 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 				continue
 			}
 		}
+		claimConfig, deferred, err := s.resolveClaimSubdomainConfig(tx, task, sub, resumeConfig, msgID)
+		if err != nil {
+			return &pb.Task{}, err
+		}
+		if deferred {
+			continue
+		}
 		acquiredClaims, err := db.AcquireScanWorkClaimsAtLease(tx, workClaimPlan)
 		if err != nil {
 			tx.Rollback()
@@ -871,8 +848,8 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 			task.Targets = append([]string(nil), reuse.RemainingTargets...)
 			log.Printf("[ClaimTask] Reused project coverage for task %s (targets=%d stages=%d remaining=%d)", task.TaskId, reuse.ReusedTargets, reuse.ReusedStages, len(task.Targets))
 		}
+		task.Config = claimConfig
 		if len(resumeConfig) > 0 {
-			task.Config = resumeConfig
 			log.Printf("[ClaimTask] Applied checkpoint resume for task %s (reused_stages=%d execute_stages=%d)", task.TaskId, len(reuse.ResumePlan.ReusedStages), len(reuse.ResumePlan.ExecutionStages))
 		}
 

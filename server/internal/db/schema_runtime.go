@@ -20,6 +20,8 @@ func schemaModels() []interface{} {
 		&ScanStageDerivation{},
 		&CredentialDictionary{},
 		&CredentialDictionaryRevision{},
+		&SubdomainDictionary{},
+		&SubdomainDictionaryRevision{},
 		&CredentialBundle{},
 		&CredentialFindingSecret{},
 		&CredentialRevealAudit{},

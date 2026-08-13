@@ -54,6 +54,20 @@ func TestRunner_domainWildCard_prepareInput(t *testing.T) {
 	require.ElementsMatch(t, expected, got, "could not match expected output")
 }
 
+func TestRunner_bruteforceHostsKeepsAndDeduplicatesBuiltInAndManagedWords(t *testing.T) {
+	wordlist := t.TempDir() + "/subdomains.txt"
+	require.NoError(t, os.WriteFile(wordlist, []byte("project\nduplicate\n"), 0o600))
+	r := Runner{
+		options:     &Options{WordList: wordlist},
+		DefaultDict: []string{"built-in", "duplicate"},
+	}
+	require.ElementsMatch(t, []string{
+		"built-in.example.test",
+		"duplicate.example.test",
+		"project.example.test",
+	}, r.bruteforceHosts("example.test"))
+}
+
 func TestRunner_cidrInput_prepareInput(t *testing.T) {
 	options := &Options{
 		Domains: "173.0.84.0/30",

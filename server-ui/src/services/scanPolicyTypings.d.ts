@@ -14,6 +14,7 @@ declare namespace API {
       risk_validation: boolean; credential_validation: boolean;
     };
     selector?: { match?: Record<string, string[]>; not_match?: Record<string, string[]> };
+	 subdomains: { wordlists?: ScanDictionaryRef[]; bruteforce_depth: number };
     credentials: { username_books?: ScanDictionaryRef[]; password_books?: ScanDictionaryRef[]; pair_limit: number };
     authorization: { validation_confirmed: boolean };
   }
@@ -29,7 +30,7 @@ declare namespace API {
     policy: ScanPolicy; policy_hash: string; plan_hash: string; rule_version: string; port_count: number;
     target_summary: Record<string, number>; stages: ScanPlanStage[]; matched_agents: number;
     available_slots: number; agent_reasons?: string[]; estimated_requests: number;
-    custom_credential_pairs: number; credential_pair_limit: number;
+    custom_credential_pairs: number; credential_pair_limit: number; custom_subdomain_words: number;
     validation_budget: { target_concurrency: number; rate_limit: number; credential_max_per_target: number; risk_budget_basis: string };
     skipped_targets?: InvalidTarget[];
   }
@@ -37,6 +38,10 @@ declare namespace API {
     id: string; project_id: string; name: string; kind: 'username' | 'password'; revision: number;
     sha256: string; count: number; created_at: string;
   }
+	interface SubdomainDictionary {
+		id: string; project_id: string; name: string; revision: number;
+		sha256: string; count: number; created_at: string;
+	}
   interface CredentialFinding {
     id: string; endpoint: string; service: string; plugin: string; masked_username: string; created_at: string;
   }

@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 )
 
 type taskTargetMode string
@@ -34,6 +36,7 @@ type taskScanConfig struct {
 	NoSubFinder                bool
 	Subdomain                  bool
 	SubdomainBruteForceThreads int
+	SubdomainBruteforceDepth   int
 	SkipHostDiscovery          bool
 	PortScanType               string
 	GetBannerThreads           int
@@ -47,6 +50,8 @@ type taskScanConfig struct {
 	AllowCDNAssets             bool
 	NoHostBind                 bool
 	SubdomainWordListFile      string
+	SubdomainDictionaryWords   []string
+	SubdomainDictionaryRefs    []scanpolicy.DictionaryRef
 	HTTPProxy                  string
 	HTTPProxyTest              bool
 	HTTPProxyTestURL           string
@@ -98,6 +103,7 @@ func defaultTaskScanConfig() taskScanConfig {
 		GetBannerThreads:           500,
 		GetBannerTimeout:           5,
 		SubdomainBruteForceThreads: 150,
+		SubdomainBruteforceDepth:   1,
 		WebThreads:                 200,
 		WebTimeout:                 10,
 		HTTPProxyTest:              true,
@@ -195,6 +201,18 @@ func normalizeJSONObjectPayload(raw json.RawMessage) ([]byte, error) {
 }
 
 func validateTaskScanConfig(cfg *taskScanConfig) error {
+	if cfg.SubdomainBruteforceDepth < 1 || cfg.SubdomainBruteforceDepth > 4 {
+		return fmt.Errorf("SubdomainBruteforceDepth must be between 1 and 4")
+	}
+	if cfg.SubdomainWordListFile != "" && cfg.SubdomainWordListFile != "config/subdomains.txt" {
+		return fmt.Errorf("SubdomainWordListFile is Agent-managed; use project subdomain dictionary revisions")
+	}
+	if len(cfg.SubdomainDictionaryWords) > 0 {
+		return fmt.Errorf("SubdomainDictionaryWords is Server-only; use project subdomain dictionary revisions")
+	}
+	if len(cfg.SubdomainDictionaryRefs) > 0 {
+		return fmt.Errorf("SubdomainDictionaryRefs is Server-only; use semantic scan policy")
+	}
 	if !cfg.NoPoc || cfg.GolangPoc || !cfg.DisableGeneralPoc || strings.TrimSpace(cfg.PocNameForSearch) != "" {
 		return fmt.Errorf("POC execution is isolated from asset discovery; use task risk validation")
 	}

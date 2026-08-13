@@ -13,6 +13,7 @@ import (
 
 	"github.com/P0lar1ght/argus/server/internal/credentialbundle"
 	"github.com/P0lar1ght/argus/server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/subdomaindictionary"
 	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 	"github.com/gin-gonic/gin"
 )
@@ -64,6 +65,7 @@ type scanPolicyPlan struct {
 	AgentReasons      []string                   `json:"agent_reasons,omitempty"`
 	EstimatedRequests int64                      `json:"estimated_requests"`
 	CustomPairs       int                        `json:"custom_credential_pairs"`
+	CustomSubdomains  int                        `json:"custom_subdomain_words"`
 	CredentialLimit   int                        `json:"credential_pair_limit"`
 	ValidationBudget  scanPolicyValidationBudget `json:"validation_budget"`
 	SkippedTargets    []invalidTarget            `json:"skipped_targets,omitempty"`
@@ -217,6 +219,8 @@ func compileTaskScanPolicy(c *gin.Context, req scanPolicyPlanRequest) (scanPolic
 	config.Subdomain = normalized.Capabilities.SubdomainDiscovery
 	config.NoSubFinder = !normalized.Capabilities.SubdomainDiscovery
 	config.NoSubdomainBruteForce = !normalized.Capabilities.SubdomainBruteforce
+	config.SubdomainBruteforceDepth = normalized.Subdomains.BruteforceDepth
+	config.SubdomainDictionaryRefs = append([]scanpolicy.DictionaryRef(nil), normalized.Subdomains.Wordlists...)
 	config.NoHostBind = !normalized.Capabilities.HostBinding
 	config.NoDirSearch = !normalized.Capabilities.DirectoryProbe
 	config.AllowCDNAssets = normalized.Capabilities.AllowCDNAssets
@@ -246,6 +250,12 @@ func compileTaskScanPolicy(c *gin.Context, req scanPolicyPlanRequest) (scanPolic
 	} else {
 		selectorRules.Match["scan_tcp"] = []string{"v1"}
 	}
+	if len(normalized.Subdomains.Wordlists) > 0 {
+		selectorRules.Match["subdomain_dictionary"] = []string{"v1"}
+	}
+	if normalized.Subdomains.BruteforceDepth > 1 {
+		selectorRules.Match["subdomain_depth"] = []string{"v1"}
+	}
 	if len(selectorRules.NotMatch) == 0 {
 		selectorRules.NotMatch = nil
 	}
@@ -269,18 +279,25 @@ func compileTaskScanPolicy(c *gin.Context, req scanPolicyPlanRequest) (scanPolic
 	validationConcurrency, validationRate := validationBudgetLimits(normalized.Intensity)
 	stages := []scanPolicyStagePreview{
 		{ID: "host_discovery", Enabled: true, Targets: len(targets)},
+		{ID: "subdomain_discovery", Enabled: normalized.Capabilities.SubdomainDiscovery, Targets: summary.Domains + summary.DomainPorts + summary.URLs, Reason: "被动来源收集；深度模式可叠加 Revision 绑定的字典爆破"},
 		{ID: "port_scan", DependsOn: []string{"host_discovery"}, Enabled: true, Targets: len(targets)},
 		{ID: "protocol_identification", DependsOn: []string{"port_scan"}, Enabled: true},
 		{ID: "http_probe", DependsOn: []string{"protocol_identification"}, Enabled: true},
+		{ID: "directory_probe", DependsOn: []string{"http_probe"}, Enabled: normalized.Capabilities.DirectoryProbe, Reason: "请求规则定义的产品特征路径，不执行通用目录扫描"},
 		{ID: "fingerprint", DependsOn: []string{"http_probe", "protocol_identification"}, Enabled: true},
-		{ID: "risk_validation", DependsOn: []string{"fingerprint"}, Enabled: normalized.Capabilities.RiskValidation, Reason: "only approved enabled Workflow matches are sealed", MatchedAgents: riskMatched, AvailableSlots: riskSlots, AgentReasons: riskReasons},
-		{ID: "credential_validation", DependsOn: []string{"protocol_identification"}, Enabled: normalized.Capabilities.CredentialValidation, Reason: "built-in service dictionary is always retained", MatchedAgents: credentialMatched, AvailableSlots: credentialSlots, AgentReasons: credentialReasons},
+		{ID: "risk_validation", DependsOn: []string{"fingerprint"}, Enabled: normalized.Capabilities.RiskValidation, Reason: "仅密封已审核、已启用且由指纹 Workflow 命中的规则", MatchedAgents: riskMatched, AvailableSlots: riskSlots, AgentReasons: riskReasons},
+		{ID: "credential_validation", DependsOn: []string{"protocol_identification"}, Enabled: normalized.Capabilities.CredentialValidation, Reason: "内置服务凭据字典始终保留", MatchedAgents: credentialMatched, AvailableSlots: credentialSlots, AgentReasons: credentialReasons},
+	}
+	subdomainWords, err := subdomaindictionary.LoadValues(db.DB, normalized, currentTenantID(c), req.ProjectID, true)
+	if err != nil {
+		return scanPolicyPlan{}, err
 	}
 	return scanPolicyPlan{
 		Policy: normalized, PolicyHash: policyHash, PlanHash: planHash, RuleVersion: ruleVersion,
 		PortCount: portCount, TargetSummary: summary, Stages: stages,
 		MatchedAgents: matched, AvailableSlots: slots, AgentReasons: reasons,
 		EstimatedRequests: estimated, CustomPairs: customPairs,
+		CustomSubdomains: len(subdomainWords),
 		CredentialLimit:  normalized.Credentials.PairLimit,
 		ValidationBudget: scanPolicyValidationBudget{TargetConcurrency: validationConcurrency, RateLimit: validationRate, CredentialMaxPerTarget: normalized.Credentials.PairLimit, RiskBudgetBasis: "sealed workflow estimate after discovery"},
 		SkippedTargets:   skipped,
@@ -333,7 +350,8 @@ func verifyPolicyDictionaryRefs(tenantID, projectID string, policy scanpolicy.Po
 			return fmt.Errorf("dictionary %q revision %d metadata changed", ref.ID, ref.Revision)
 		}
 	}
-	return nil
+	_, err := subdomaindictionary.LoadValues(db.DB, policy, tenantID, projectID, true)
+	return err
 }
 
 func estimatedCustomCredentialPairs(policy scanpolicy.Policy, tenantID, projectID string) (int, error) {

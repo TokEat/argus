@@ -47,6 +47,9 @@ func ApplyConfigDefaults(cfg *Config) {
 	if cfg.SubdomainBruteForceThreads == 0 {
 		cfg.SubdomainBruteForceThreads = 150
 	}
+	if cfg.SubdomainBruteforceDepth == 0 {
+		cfg.SubdomainBruteforceDepth = 1
+	}
 	if cfg.GoPocThreads == 0 {
 		cfg.GoPocThreads = 50
 	}

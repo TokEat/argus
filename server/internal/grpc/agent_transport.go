@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strconv"
+	"strings"
 	"time"
 
 	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
@@ -17,6 +19,35 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
+
+func agentSupportsRiskValidation(version string) bool {
+	return agentSupportsVersion(version, 2, 4, 0)
+}
+
+func agentSupportsCheckpointResume(version string) bool {
+	return agentSupportsVersion(version, 2, 6, 0)
+}
+
+func agentSupportsVersion(version string, requiredMajor, requiredMinor, requiredPatch int) bool {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	parts := strings.Split(version, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	major, majorErr := strconv.Atoi(parts[0])
+	minor, minorErr := strconv.Atoi(parts[1])
+	patch, patchErr := strconv.Atoi(parts[2])
+	if majorErr != nil || minorErr != nil || patchErr != nil || major < 0 || minor < 0 || patch < 0 {
+		return false
+	}
+	if major != requiredMajor {
+		return major > requiredMajor
+	}
+	if minor != requiredMinor {
+		return minor > requiredMinor
+	}
+	return patch >= requiredPatch
+}
 
 // Serve starts the legacy Agent listener. Credential-validation work is never
 // claimable on this plaintext transport.

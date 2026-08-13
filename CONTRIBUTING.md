@@ -155,7 +155,7 @@ type(scope): summary
 | 跨模块或合并前完整验证 | `make ci` |
 | 文档-only | 手动检查链接、路径、命令、代码块和 README 索引；命令示例变化时执行对应命令 |
 
-CI 当前执行 Go 测试、Server 测试、覆盖率、云资源 mock smoke、前端 lint/test/smoke/build。PR 中的验证记录应与 CI 结果互相印证，而不是只写“已验证”。
+CI 当前并行执行根模块、Server、MCP、Yaksha 的 Go 测试与覆盖率、数据库验证、静态契约和前端 lint/test/smoke/build；每个 Go 模块只执行一次带覆盖率的完整测试，避免重复运行同一测试集。PR 中的验证记录应与 CI 结果互相印证，而不是只写“已验证”。
 
 ## 安全与合规要求
 

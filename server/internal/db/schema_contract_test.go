@@ -49,6 +49,8 @@ func TestSchemaModelTableNames(t *testing.T) {
 		"ScanStageDerivation":          "scan_stage_derivations",
 		"CredentialDictionary":         "credential_dictionaries",
 		"CredentialDictionaryRevision": "credential_dictionary_revisions",
+		"SubdomainDictionary":          "subdomain_dictionaries",
+		"SubdomainDictionaryRevision":  "subdomain_dictionary_revisions",
 		"CredentialBundle":             "credential_bundles",
 		"CredentialFindingSecret":      "credential_finding_secrets",
 		"CredentialRevealAudit":        "credential_reveal_audits",

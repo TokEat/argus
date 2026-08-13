@@ -119,6 +119,23 @@ export async function deleteCredentialDictionary(projectId: string, dictionaryId
     await request.delete(`/projects/${encodeURIComponent(projectId)}/credential-dictionaries/${encodeURIComponent(dictionaryId)}`);
 }
 
+export async function listSubdomainDictionaries(projectId: string): Promise<API.SubdomainDictionary[]> {
+	const result = await request.get(`/projects/${encodeURIComponent(projectId)}/subdomain-dictionaries`) as unknown as { items?: API.SubdomainDictionary[] };
+	return result.items || [];
+}
+
+export async function createSubdomainDictionary(projectId: string, data: { name: string; values: string[] }): Promise<API.SubdomainDictionary> {
+	return request.post(`/projects/${encodeURIComponent(projectId)}/subdomain-dictionaries`, data);
+}
+
+export async function addSubdomainDictionaryRevision(projectId: string, dictionaryId: string, values: string[]): Promise<API.SubdomainDictionary> {
+	return request.post(`/projects/${encodeURIComponent(projectId)}/subdomain-dictionaries/${encodeURIComponent(dictionaryId)}/revisions`, { values });
+}
+
+export async function deleteSubdomainDictionary(projectId: string, dictionaryId: string): Promise<void> {
+	await request.delete(`/projects/${encodeURIComponent(projectId)}/subdomain-dictionaries/${encodeURIComponent(dictionaryId)}`);
+}
+
 export async function listTaskCredentialFindings(taskId: string): Promise<API.CredentialFinding[]> {
     const result = await request.get(`/tasks/${encodeURIComponent(taskId)}/credential-findings`) as unknown as { items?: API.CredentialFinding[] };
     return result.items || [];
