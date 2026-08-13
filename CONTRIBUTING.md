@@ -149,7 +149,7 @@ type(scope): summary
 | MCP 代理 | `cd mcp && go test ./...` |
 | 前端代码 | `npm --prefix server-ui run lint`、`npm --prefix server-ui run test -- --run`、`npm --prefix server-ui run build` |
 | 前端 smoke | `npm --prefix server-ui run test:smoke` |
-| 数据库 migration、schema、部署数据库路径 | `make db-verify`，必要时补充 `make db-migrate` |
+| 数据库 migration、schema、部署数据库路径 | `make db-verify`，必要时补充 `make db-migrate`。新增表/列后若需要更新空库 baseline，再跑 `make db-schema-dump` |
 | 云资源调度 | `make cloud-smoke`，涉及真实云账号时补充人工 smoke 记录 |
 | 发布脚本、发行包、部署脚本 | `make release-artifacts`，并按 `docs/release-checklist.md` 验收 |
 | 跨模块或合并前完整验证 | `make ci` |

@@ -4,13 +4,17 @@
 
 当前以以下实现为准：
 
+- `server/internal/db/schema/000_current_schema.sql`：空库当前态 DDL
+- `server/internal/db/schema_verify.go`：启动后表/列/索引契约
+- `server/internal/db/migrations/`：已有库增量升级历史（文件不可改 checksum）
 - `server/internal/db/db.go`
 - `server/internal/db/rule_catalog.go`
 - `server/internal/db/task_lifecycle.go`
 
 > 注：
 > - 本文描述的是“当前主链路实际需要的完整 schema”。
-> - `server/deploy/postgres/sql/010-schema.sql` 仍保留部分历史初始化结构，字段完整性已落后于 GORM 模型；若重新梳理初始化脚本，应以本文和 `db.go` 为准。
+> - 空库由 `argus-server --migrate-only` 应用 baseline；已有库继续按 `migrations/*.sql` 增量升级。
+> - 规则资产不在 SQL 里，使用 `deploy/arsenal_seed.db` 和 `--seed-from-db`。
 
 ---
 

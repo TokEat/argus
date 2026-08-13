@@ -292,7 +292,7 @@ sudo ./deploy/upgrade-server.sh
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--db` | 空（内置 PostgreSQL 默认 DSN） | PostgreSQL 数据库 DSN |
-| `--migrate-only` | `false` | 只执行数据库 migration 和 schema verify，然后退出 |
+| `--migrate-only` | `false` | 只执行数据库 migration 和 schema verify，然后退出。空库应用 `server/internal/db/schema` baseline，已有库继续增量升级 |
 | `--db-migration-mode` | `apply` | 数据库迁移模式：`apply` / `verify` / `dev-auto` |
 | `--amqp` | `amqp://guest:guest@localhost:5672/` | RabbitMQ 地址，空则回退内存队列 |
 | `--grpc` | `50051` | gRPC 监听端口 |

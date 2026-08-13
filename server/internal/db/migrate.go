@@ -5,6 +5,8 @@ import (
 	"embed"
 	"encoding/hex"
 	"fmt"
+	"log"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -15,6 +17,16 @@ import (
 
 //go:embed migrations/*.sql
 var migrationFS embed.FS
+
+//go:embed schema/000_current_schema.sql schema/000_current_schema.versions schema/001_dev_seed.sql
+var schemaFS embed.FS
+
+const (
+	forceIncrementalEnv   = "ARGUS_DB_FORCE_INCREMENTAL"
+	currentSchemaSQLFile  = "schema/000_current_schema.sql"
+	currentSchemaVersions = "schema/000_current_schema.versions"
+	currentSchemaSeedFile = "schema/001_dev_seed.sql"
+)
 
 type MigrationMode string
 
@@ -79,6 +91,26 @@ func ApplyMigrations(db *gorm.DB, mode MigrationMode) error {
 		return err
 	}
 
+	if len(applied) == 0 && !forceIncrementalMigrations() {
+		tables, err := listApplicationTables(db)
+		if err != nil {
+			return err
+		}
+		if len(tables) > 0 {
+			return fmt.Errorf(
+				"refusing to apply schema baseline: database already has application tables (%s) but schema_migrations is empty",
+				strings.Join(tables, ", "),
+			)
+		}
+		if err := applyBaselineSchema(db, migrations); err != nil {
+			return err
+		}
+		applied, err = loadAppliedMigrations(db)
+		if err != nil {
+			return err
+		}
+	}
+
 	for _, migration := range migrations {
 		if prev, ok := applied[migration.Version]; ok {
 			if prev.Checksum != migration.Checksum {
@@ -108,6 +140,136 @@ func ApplyMigrations(db *gorm.DB, mode MigrationMode) error {
 		return err
 	}
 
+	return nil
+}
+
+func forceIncrementalMigrations() bool {
+	raw := strings.TrimSpace(os.Getenv(forceIncrementalEnv))
+	switch strings.ToLower(raw) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+func listApplicationTables(db *gorm.DB) ([]string, error) {
+	var names []string
+	err := db.Raw(`
+		SELECT tablename
+		FROM pg_tables
+		WHERE schemaname = current_schema()
+		  AND tablename <> 'schema_migrations'
+		ORDER BY tablename
+	`).Scan(&names).Error
+	if err != nil {
+		return nil, fmt.Errorf("list application tables failed: %w", err)
+	}
+	return names, nil
+}
+
+func loadBaselineVersions() ([]string, error) {
+	raw, err := schemaFS.ReadFile(currentSchemaVersions)
+	if err != nil {
+		return nil, fmt.Errorf("read %s failed: %w", currentSchemaVersions, err)
+	}
+
+	var versions []string
+	seen := make(map[string]struct{})
+	for _, line := range strings.Split(string(raw), "\n") {
+		version := strings.TrimSpace(line)
+		if version == "" || strings.HasPrefix(version, "#") {
+			continue
+		}
+		if _, ok := seen[version]; ok {
+			return nil, fmt.Errorf("duplicate baseline version %s", version)
+		}
+		seen[version] = struct{}{}
+		versions = append(versions, version)
+	}
+	if len(versions) == 0 {
+		return nil, fmt.Errorf("%s does not list any versions", currentSchemaVersions)
+	}
+	return versions, nil
+}
+
+func applyBaselineSchema(db *gorm.DB, migrations []migrationFile) error {
+	schemaSQL, err := schemaFS.ReadFile(currentSchemaSQLFile)
+	if err != nil {
+		return fmt.Errorf("read %s failed: %w", currentSchemaSQLFile, err)
+	}
+	seedSQL, err := schemaFS.ReadFile(currentSchemaSeedFile)
+	if err != nil {
+		return fmt.Errorf("read %s failed: %w", currentSchemaSeedFile, err)
+	}
+	versions, err := loadBaselineVersions()
+	if err != nil {
+		return err
+	}
+
+	byVersion := make(map[string]migrationFile, len(migrations))
+	for _, migration := range migrations {
+		if _, exists := byVersion[migration.Version]; exists {
+			return fmt.Errorf("duplicate incremental migration version %s", migration.Version)
+		}
+		byVersion[migration.Version] = migration
+	}
+
+	stamps := make([]migrationFile, 0, len(versions))
+	for _, version := range versions {
+		migration, ok := byVersion[version]
+		if !ok {
+			return fmt.Errorf("baseline version %s is missing from incremental migrations", version)
+		}
+		stamps = append(stamps, migration)
+	}
+
+	log.Printf("Empty database detected; applying current schema baseline (%d stamped versions)", len(stamps))
+
+	tx := db.Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("begin schema baseline failed: %w", tx.Error)
+	}
+
+	if err := applySQLScript(tx, currentSchemaSQLFile, string(schemaSQL)); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err := tx.Exec("SET search_path TO public").Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("reset search_path after schema baseline failed: %w", err)
+	}
+	if err := applySQLScript(tx, currentSchemaSeedFile, string(seedSQL)); err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	appliedAt := time.Now()
+	for _, migration := range stamps {
+		record := SchemaMigration{
+			Version:   migration.Version,
+			Name:      migration.Name,
+			Checksum:  migration.Checksum,
+			AppliedAt: appliedAt,
+		}
+		if err := tx.Create(&record).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("stamp baseline version %s failed: %w", migration.Version, err)
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("commit schema baseline failed: %w", err)
+	}
+	return nil
+}
+
+func applySQLScript(db *gorm.DB, name, sql string) error {
+	for _, stmt := range splitSQLStatements(sql) {
+		if err := db.Exec(stmt).Error; err != nil {
+			return fmt.Errorf("apply %s failed: %w", name, err)
+		}
+	}
 	return nil
 }
 
@@ -244,6 +406,14 @@ func splitSQLStatements(sql string) []string {
 		}
 		if inSingleQuote {
 			current.WriteRune(ch)
+			continue
+		}
+
+		if ch == '-' && i+1 < len(runes) && runes[i+1] == '-' {
+			i++
+			for i+1 < len(runes) && runes[i+1] != '\n' {
+				i++
+			}
 			continue
 		}
 

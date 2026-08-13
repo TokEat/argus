@@ -1,4 +1,4 @@
-.PHONY: cli agent server yaksha yaksha-image yaksha-up yaksha-down mcp proto-scan proto-egress nuclei-embed-test legacy all clean docker infra-up infra-down infra-logs db-init db-migrate db-verify setup-local smoke-local test coverage frontend-smoke cloud-smoke source-size-check brand-check release-artifacts lint ci
+.PHONY: cli agent server yaksha yaksha-image yaksha-up yaksha-down mcp proto-scan proto-egress nuclei-embed-test legacy all clean docker infra-up infra-down infra-logs db-init db-migrate db-verify db-schema-dump setup-local smoke-local test coverage frontend-smoke cloud-smoke source-size-check brand-check release-artifacts lint ci
 
 COMPOSE_FILE := server/deploy/docker-compose.yml
 DOCKER_COMPOSE := docker compose -f $(COMPOSE_FILE)
@@ -88,6 +88,9 @@ db-migrate:
 
 db-verify:
 	go run ./server/cmd/argus-server --db "$(DB_DSN)" --migrate-only --db-migration-mode verify
+
+db-schema-dump:
+	bash server/scripts/dump_current_schema.sh
 
 setup-local:
 	bash server/deploy/setup-local.sh
