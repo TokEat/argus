@@ -116,6 +116,7 @@ type Client struct {
 	conn         net.Conn
 	LastResponse string
 	ServerType   int
+	responseMu   sync.Mutex
 	evidenceMu   sync.Mutex
 	exchanges    []RawExchange
 }
@@ -162,10 +163,14 @@ func (c *Client) Connect() error {
 			displayBuf, commandList := c.SerializationResponse(buf)
 			if len(commandList) > 0 {
 				replyBuf := c.MakeReplyFromList(commandList)
+				c.responseMu.Lock()
 				c.LastResponse += string(displayBuf)
+				c.responseMu.Unlock()
 				_ = c.write(replyBuf)
 			} else {
+				c.responseMu.Lock()
 				c.LastResponse += string(displayBuf)
+				c.responseMu.Unlock()
 			}
 		}
 	}()
@@ -179,14 +184,20 @@ func (c *Client) WriteContext(s string) {
 }
 
 func (c *Client) ReadContext() string {
-	defer func() { c.Clear() }() //结束时，清空输出内容
-	if c.LastResponse == "" {
+	c.responseMu.Lock()
+	empty := c.LastResponse == ""
+	c.responseMu.Unlock()
+	if empty {
 		time.Sleep(200 * time.Millisecond)
 	}
-	c.LastResponse = strings.ReplaceAll(c.LastResponse, "\x0d\x00", "")
-	c.LastResponse = strings.ReplaceAll(c.LastResponse, "\x0d\x0a", "\n")
-	//c.LastResponse = chinese.ToUTF8(c.LastResponse)
-	return c.LastResponse
+	c.responseMu.Lock()
+	response := c.LastResponse
+	c.LastResponse = ""
+	c.responseMu.Unlock()
+	response = strings.ReplaceAll(response, "\x0d\x00", "")
+	response = strings.ReplaceAll(response, "\x0d\x0a", "\n")
+	//response = chinese.ToUTF8(response)
+	return response
 }
 
 func (c *Client) Netloc() string {
@@ -461,6 +472,8 @@ func (c *Client) loginForUsernameAndPassword() error {
 }
 
 func (c *Client) Clear() {
+	c.responseMu.Lock()
+	defer c.responseMu.Unlock()
 	c.LastResponse = ""
 }
 

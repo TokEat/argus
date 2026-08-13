@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -21,8 +22,10 @@ import (
 	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -68,6 +71,47 @@ func isRiskValidationTask(task *pb.Task) bool {
 		ExecutionMode string
 	}
 	return json.Unmarshal(task.Config, &internal) == nil && strings.EqualFold(strings.TrimSpace(internal.ExecutionMode), "risk_validation")
+}
+
+func isCredentialValidationTask(task *pb.Task) bool {
+	if task == nil || len(task.Config) == 0 {
+		return false
+	}
+	var internal struct {
+		ExecutionMode string
+	}
+	return json.Unmarshal(task.Config, &internal) == nil && strings.EqualFold(strings.TrimSpace(internal.ExecutionMode), "credential_validation")
+}
+
+func agentSupportsCredentialValidation(nodeTagsJSON string) bool {
+	return agentHasCapabilities(nodeTagsJSON, "credential_validation", "transport_tls")
+}
+
+func agentHasCapabilities(nodeTagsJSON string, capabilities ...string) bool {
+	var tags map[string]string
+	if json.Unmarshal([]byte(nodeTagsJSON), &tags) != nil {
+		return false
+	}
+	for _, capability := range capabilities {
+		expected := "v1"
+		if capability == "transport_tls" {
+			expected = "verified"
+		}
+		if tags[capability] != expected {
+			return false
+		}
+	}
+	return true
+}
+
+func taskRequestsSYN(task *pb.Task) bool {
+	if task == nil || len(task.Config) == 0 {
+		return false
+	}
+	var config struct {
+		PortScanType string
+	}
+	return json.Unmarshal(task.Config, &config) == nil && strings.EqualFold(strings.TrimSpace(config.PortScanType), "syn")
 }
 
 func taskRequestsUnconfirmedPOC(task *pb.Task) bool {
@@ -168,7 +212,26 @@ func (s *Server) SetPSK(psk string) {
 
 // Serve 启动 gRPC 监听
 func (s *Server) Serve() error {
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", s.port))
+	return s.serve(s.port, nil)
+}
+
+// ServeTLS starts a second, authenticated transport for Agents that may claim
+// credential-validation work. The legacy plaintext listener remains available
+// for asset-only Agents during the upgrade window.
+func (s *Server) ServeTLS(port int, certFile, keyFile string) error {
+	certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return fmt.Errorf("load Agent gRPC TLS certificate: %w", err)
+	}
+	transport := credentials.NewTLS(&tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		Certificates: []tls.Certificate{certificate},
+	})
+	return s.serve(port, transport)
+}
+
+func (s *Server) serve(port int, transport credentials.TransportCredentials) error {
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return fmt.Errorf("failed to listen: %w", err)
 	}
@@ -188,6 +251,9 @@ func (s *Server) Serve() error {
 			PermitWithoutStream: true,             // 允许无活跃流时也发 ping
 		}),
 	}
+	if transport != nil {
+		opts = append(opts, grpc.Creds(transport))
+	}
 	if s.psk != "" {
 		opts = append(opts,
 			grpc.UnaryInterceptor(s.unaryPSKInterceptor),
@@ -202,7 +268,7 @@ func (s *Server) Serve() error {
 	pb.RegisterAgentServiceServer(grpcServer, s)
 	pb.RegisterAgentEgressServiceServer(grpcServer, s)
 
-	log.Printf("gRPC server listening at %v", lis.Addr())
+	log.Printf("gRPC server listening at %v (tls=%t)", lis.Addr(), transport != nil)
 	return grpcServer.Serve(lis)
 }
 
@@ -249,9 +315,10 @@ func generateSessionToken() string {
 func (s *Server) Register(ctx context.Context, req *pb.RegisterReq) (*pb.RegisterResp, error) {
 	log.Printf("[Register] Agent %s connected, version: %s", req.AgentId, req.Version)
 
+	tags := attestedAgentTags(ctx, req.Tags)
 	tagsJSON := "{}"
-	if len(req.Tags) > 0 {
-		if data, err := json.Marshal(req.Tags); err == nil {
+	if len(tags) > 0 {
+		if data, err := json.Marshal(tags); err == nil {
 			tagsJSON = string(data)
 		}
 	}
@@ -259,7 +326,7 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterReq) (*pb.Registe
 	// 多租户：从 Agent 标签中提取 tenant_id（Cloud-Init 会注入），
 	// 回退到关联 CloudInstance 的 tenant_id，最终兜底 "default"。
 	tenantID := "default"
-	if tid, ok := req.Tags["tenant_id"]; ok && strings.TrimSpace(tid) != "" {
+	if tid, ok := tags["tenant_id"]; ok && strings.TrimSpace(tid) != "" {
 		tenantID = strings.TrimSpace(tid)
 	} else {
 		// 尝试从已有的 CloudInstance 记录中继承 tenant_id
@@ -312,6 +379,32 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterReq) (*pb.Registe
 		Success: true,
 		Token:   token,
 	}, nil
+}
+
+func agentTransportTLS(ctx context.Context) bool {
+	remote, ok := peer.FromContext(ctx)
+	if !ok || remote.AuthInfo == nil {
+		return false
+	}
+	switch remote.AuthInfo.(type) {
+	case credentials.TLSInfo, *credentials.TLSInfo:
+		return true
+	default:
+		return false
+	}
+}
+
+func attestedAgentTags(ctx context.Context, supplied map[string]string) map[string]string {
+	tags := make(map[string]string, len(supplied)+1)
+	for key, value := range supplied {
+		if key != "transport_tls" {
+			tags[key] = value
+		}
+	}
+	if agentTransportTLS(ctx) {
+		tags["transport_tls"] = "verified"
+	}
+	return tags
 }
 
 // ============================================================================
@@ -418,7 +511,7 @@ func (s *Server) markSubscribedAgentAlive(agentID string, freeSlots int32) {
 
 func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task, error) {
 	var claimCandidate db.Node
-	if err := db.DB.Select("status", "version", "rule_version").Where("agent_id = ?", req.AgentId).First(&claimCandidate).Error; err == nil && claimCandidate.Status != "" && !strings.EqualFold(claimCandidate.Status, "Alive") {
+	if err := db.DB.Select("status", "version", "rule_version", "tags").Where("agent_id = ?", req.AgentId).First(&claimCandidate).Error; err == nil && claimCandidate.Status != "" && !strings.EqualFold(claimCandidate.Status, "Alive") {
 		log.Printf("[ClaimTask] Agent %s is %s; skipping task claim", req.AgentId, claimCandidate.Status)
 		return &pb.Task{}, nil
 	}
@@ -431,18 +524,10 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 		return &pb.Task{}, nil
 	}
 
-	// 优先使用请求中携带的标签（避免重复查库），回退到 DB 查询
-	var nodeTagsJSON string
-	if len(req.Tags) > 0 {
-		if data, err := json.Marshal(req.Tags); err == nil {
-			nodeTagsJSON = string(data)
-		}
-	}
-	if nodeTagsJSON == "" {
-		var node db.Node
-		db.DB.Select("tags").Where("agent_id = ?", req.AgentId).First(&node)
-		nodeTagsJSON = node.Tags
-	}
+	// Agent capabilities are read only from the Server-attested registration
+	// record. ClaimTask request tags are untrusted routing hints and cannot grant
+	// TLS or credential-validation authority.
+	nodeTagsJSON := claimCandidate.Tags
 
 	const maxRetries = 3
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -582,7 +667,7 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 			continue
 		}
 
-		if isRiskValidationTask(task) && (!agentSupportsRiskValidation(claimCandidate.Version) || strings.TrimSpace(claimCandidate.RuleVersion) != strings.TrimSpace(sub.RuleVersion)) {
+		if isRiskValidationTask(task) && (!agentSupportsRiskValidation(claimCandidate.Version) || !agentHasCapabilities(nodeTagsJSON, "risk_validation") || strings.TrimSpace(claimCandidate.RuleVersion) != strings.TrimSpace(sub.RuleVersion)) {
 			if s.returnTaskHook == nil {
 				return &pb.Task{}, fmt.Errorf("return risk validation task %s for incompatible Agent: queue return hook is unavailable", task.TaskId)
 			}
@@ -592,6 +677,34 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 			log.Printf("[ClaimTask] Returned risk validation task %s: Agent %s version=%q rules=%q requires version>=v2.4.0 rules=%q",
 				task.TaskId, req.AgentId, claimCandidate.Version, claimCandidate.RuleVersion, sub.RuleVersion)
 			return &pb.Task{}, nil
+		}
+		if taskRequestsSYN(task) && !agentHasCapabilities(nodeTagsJSON, "scan_syn") {
+			if s.returnTaskHook == nil {
+				return &pb.Task{}, fmt.Errorf("return SYN task %s for incompatible Agent: queue return hook is unavailable", task.TaskId)
+			}
+			if err := s.returnTaskHook(task, msgID); err != nil {
+				return &pb.Task{}, fmt.Errorf("return SYN task %s for incompatible Agent: %w", task.TaskId, err)
+			}
+			log.Printf("[ClaimTask] Returned SYN task %s: Agent %s lacks scan_syn=v1", task.TaskId, req.AgentId)
+			return &pb.Task{}, nil
+		}
+		if isCredentialValidationTask(task) {
+			credentialErr := error(nil)
+			if !agentTransportTLS(ctx) || !agentSupportsCredentialValidation(nodeTagsJSON) {
+				credentialErr = status.Error(codes.FailedPrecondition, "credential validation requires a Server-attested TLS Agent session")
+			} else if _, sessionErr := validateEmergencyAgentSession(ctx, req.AgentId); sessionErr != nil {
+				credentialErr = sessionErr
+			}
+			if credentialErr != nil {
+				if s.returnTaskHook == nil {
+					return &pb.Task{}, fmt.Errorf("return credential validation task %s for incompatible Agent: queue return hook is unavailable", task.TaskId)
+				}
+				if err := s.returnTaskHook(task, msgID); err != nil {
+					return &pb.Task{}, fmt.Errorf("return credential validation task %s for incompatible Agent: %w", task.TaskId, err)
+				}
+				log.Printf("[ClaimTask] Returned credential validation task %s: Agent %s lacks Server-attested TLS credential capability on the current RPC", task.TaskId, req.AgentId)
+				return &pb.Task{}, credentialErr
+			}
 		}
 
 		// 标签路由检查

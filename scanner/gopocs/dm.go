@@ -63,7 +63,6 @@ func DmScan(info *structs.HostInfo) (tmperr error) {
 			userPassList = append(userPassList, struct{ User, Pass string }{user, pass})
 		}
 	}
-
 	// ===== 4. 来源：内置字典 dm.txt（格式：user:pass）=====
 	lines := strings.Split(strings.ReplaceAll(dmUserPassDict, "\r\n", "\n"), "\n")
 	for _, line := range lines {
@@ -73,6 +72,10 @@ func DmScan(info *structs.HostInfo) (tmperr error) {
 		}
 		user, pass := splitUserPass(line)
 		userPassList = append(userPassList, struct{ User, Pass string }{user, pass})
+	}
+	// 项目凭据只做增量补充，内置字典始终排在其前面。
+	for _, pair := range info.UserPassPairs {
+		userPassList = append(userPassList, struct{ User, Pass string }{pair.UserName, pair.Password})
 	}
 
 	// ===== 去重 =====
@@ -102,6 +105,9 @@ func DmScan(info *structs.HostInfo) (tmperr error) {
 	}
 
 	expandedList = dedupUserPass(expandedList)
+	if info.CredentialPairLimit > 0 && len(expandedList) > info.CredentialPairLimit {
+		expandedList = expandedList[:info.CredentialPairLimit]
+	}
 
 	// ===== 开始爆破 =====
 	gologger.AuditTimeLogger("[Go] [DM-Brute] Starting brute force on %s:%s, total %d credentials", info.Host, info.Ports, len(expandedList))

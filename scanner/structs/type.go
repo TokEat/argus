@@ -45,13 +45,19 @@ type OutputMessage struct {
 }
 
 type Config struct {
-	// ExecutionMode and RiskValidationTargets are internal Server-to-Agent
+	// ExecutionMode and validation plans are internal Server-to-Agent
 	// fields. Public task creation deliberately does not accept them; they are
-	// populated only after a version-bound risk-validation confirmation.
-	ExecutionMode              string
-	RequiredRuleVersion        string
-	RiskValidationTargets      map[string][]string
-	RiskValidationPocHashes    map[string]string
+	// populated only after a version-bound validation authorization.
+	ExecutionMode               string
+	RequiredRuleVersion         string
+	RiskValidationTargets       map[string][]string
+	RiskValidationPocHashes     map[string]string
+	CredentialValidationTargets []CredentialValidationTarget
+	CredentialBundleRef         string
+	CredentialPairLimit         int
+	// CredentialBundle is resolved over the authenticated Agent channel after
+	// an Attempt is claimed. It must never be serialized into task JSON.
+	CredentialBundle           []UserPasswd `json:"-"`
 	Targets                    []string
 	Ports                      string
 	NoSubdomainBruteForce      bool
@@ -247,16 +253,26 @@ type UserPasswd struct {
 	Password string
 }
 
+type CredentialValidationTarget struct {
+	Endpoint          string `json:"endpoint"`
+	Service           string `json:"service"`
+	Plugin            string `json:"plugin"`
+	Eligibility       string `json:"eligibility"`
+	ObservationSHA256 string `json:"observation_sha256"`
+}
+
 type HostInfo struct {
-	Host         string
-	Ports        string
-	Url          string
-	InfoStr      []string
-	UserPass     []string
-	Password     string
-	PasswordFile string
-	WriteResult  func(GoPocsResultType)
-	Emit         func(OutputMessage)
+	Host                string
+	Ports               string
+	Url                 string
+	InfoStr             []string
+	UserPass            []string
+	UserPassPairs       []UserPasswd
+	CredentialPairLimit int
+	Password            string
+	PasswordFile        string
+	WriteResult         func(GoPocsResultType)
+	Emit                func(OutputMessage)
 }
 
 var AddScanNum int

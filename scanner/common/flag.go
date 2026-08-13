@@ -8,6 +8,7 @@ import (
 	"github.com/P0lar1ght/argus/scanner/lib/ddfinger"
 	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/P0lar1ght/argus/scanner/utils"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 	"net/http"
 	"net/url"
 	"os"
@@ -451,8 +452,9 @@ func prepare() error {
 	ddout.OutputFileName = structs.GlobalConfig.OutputFile
 
 	if PortString == "" {
-		// 默认端口Top1000
-		structs.GlobalConfig.Ports = PortTOP100
+		// 默认使用 Argus 精选常用 100 端口；Server 的标准预设使用
+		// scanpolicy.Top1000TCPPorts。
+		structs.GlobalConfig.Ports = PortCommon100
 	} else {
 		structs.GlobalConfig.Ports = PortString
 	}
@@ -589,7 +591,7 @@ func FlagWithError() error {
 	)
 
 	flagSet.CreateGroup("portscan", "端口扫描",
-		flagSet.StringVarP(&PortString, "port", "p", "", "端口设置。 默认扫描Top1000"),
+		flagSet.StringVarP(&PortString, "port", "p", "", "端口设置。默认扫描常用100端口"),
 		flagSet.StringVarP(&structs.GlobalConfig.PortScanType, "scan-type", "st", "tcp", "端口扫描方式 | \"-st tcp\"设置TCP扫描 | \"-st syn\"设置SYN扫描"),
 		flagSet.IntVarP(&structs.GlobalConfig.TCPPortScanThreads, "tcp-scan-threads", "tst", 1000, "TCP扫描线程 | Windows/Mac默认1000线程 Linux默认4000"),
 		flagSet.IntVarP(&structs.GlobalConfig.SYNPortScanThreads, "syn-scan-threads", "sst", 10000, "SYN扫描线程"),
@@ -747,4 +749,8 @@ func flagAudit() {
 
 }
 
-var PortTOP100 = "21,22,23,25,53,69,80,81,88,110,111,135,137,139,143,161,179,389,443,445,465,500,514,548,554,587,636,873,993,995,1025,1080,1099,1194,1433,1521,1723,1900,2049,2082,2083,2121,2181,2222,2375,2379,2601,3000,3128,3306,3389,3690,4443,4848,5000,5236,5432,5555,5601,5632,5800,5900,5901,5984,5985,6000,6379,7001,7002,7080,8000,8001,8008,8009,8080,8081,8088,8089,8090,8161,8443,8848,8888,9000,9001,9043,9090,9091,9200,9300,9418,10000,11211,27017,27018,50000,50070,54321"
+var PortCommon100 = scanpolicy.Common100Ports
+
+// PortTOP100 is retained for source compatibility with older callers.
+// Deprecated: use PortCommon100 or scanpolicy.Top1000TCPPorts.
+var PortTOP100 = PortCommon100

@@ -35,15 +35,16 @@ const (
 type Scenario string
 
 const (
-	ScenarioExternalMap    Scenario = "external-map"
-	ScenarioInternalFast   Scenario = "internal-fast"
-	ScenarioInternalServer Scenario = "internal-server"
-	ScenarioRiskValidation Scenario = "risk-validation"
+	ScenarioExternalMap          Scenario = "external-map"
+	ScenarioInternalFast         Scenario = "internal-fast"
+	ScenarioInternalServer       Scenario = "internal-server"
+	ScenarioRiskValidation       Scenario = "risk-validation"
+	ScenarioCredentialValidation Scenario = "credential-validation"
 )
 
 func (s Scenario) Valid() bool {
 	switch s {
-	case ScenarioExternalMap, ScenarioInternalFast, ScenarioInternalServer, ScenarioRiskValidation:
+	case ScenarioExternalMap, ScenarioInternalFast, ScenarioInternalServer, ScenarioRiskValidation, ScenarioCredentialValidation:
 		return true
 	default:
 		return false
@@ -53,18 +54,19 @@ func (s Scenario) Valid() bool {
 type Stage string
 
 const (
-	StageSearchEngine       Stage = "search_engine"
-	StageSubdomainDiscovery Stage = "subdomain_discovery"
-	StageCDNClassification  Stage = "cdn_classification"
-	StageICMPDiscovery      Stage = "icmp_discovery"
-	StageTCPLiveness        Stage = "tcp_liveness"
-	StagePortScan           Stage = "port_scan"
-	StageProtocolIdentify   Stage = "protocol_identification"
-	StageHTTPProbe          Stage = "http_probe"
-	StageHostBinding        Stage = "host_binding"
-	StageDirectoryProbe     Stage = "directory_probe"
-	StageFingerprint        Stage = "fingerprint"
-	StageRiskValidation     Stage = "risk_validation"
+	StageSearchEngine         Stage = "search_engine"
+	StageSubdomainDiscovery   Stage = "subdomain_discovery"
+	StageCDNClassification    Stage = "cdn_classification"
+	StageICMPDiscovery        Stage = "icmp_discovery"
+	StageTCPLiveness          Stage = "tcp_liveness"
+	StagePortScan             Stage = "port_scan"
+	StageProtocolIdentify     Stage = "protocol_identification"
+	StageHTTPProbe            Stage = "http_probe"
+	StageHostBinding          Stage = "host_binding"
+	StageDirectoryProbe       Stage = "directory_probe"
+	StageFingerprint          Stage = "fingerprint"
+	StageRiskValidation       Stage = "risk_validation"
+	StageCredentialValidation Stage = "credential_validation"
 )
 
 func (s Stage) Valid() bool {
@@ -72,7 +74,7 @@ func (s Stage) Valid() bool {
 	case StageSearchEngine, StageSubdomainDiscovery, StageCDNClassification,
 		StageICMPDiscovery, StageTCPLiveness, StagePortScan,
 		StageProtocolIdentify, StageHTTPProbe, StageHostBinding,
-		StageDirectoryProbe, StageFingerprint, StageRiskValidation:
+		StageDirectoryProbe, StageFingerprint, StageRiskValidation, StageCredentialValidation:
 		return true
 	default:
 		return false
@@ -146,15 +148,21 @@ func (p Plan) Validate() error {
 		}
 		stages[planned.Stage] = planned
 	}
-	if p.Scenario == ScenarioRiskValidation {
-		if len(p.Stages) != 1 || p.Stages[0].Stage != StageRiskValidation {
-			return errors.New("risk-validation plans may contain only the risk_validation stage")
+	if p.Scenario == ScenarioRiskValidation || p.Scenario == ScenarioCredentialValidation {
+		expected := StageRiskValidation
+		if p.Scenario == ScenarioCredentialValidation {
+			expected = StageCredentialValidation
+		}
+		if len(p.Stages) != 1 || p.Stages[0].Stage != expected {
+			return fmt.Errorf("%s plans may contain only the %s stage", p.Scenario, expected)
 		}
 		if !p.Stages[0].Force {
-			return errors.New("risk-validation plans must force the confirmed risk_validation stage")
+			return fmt.Errorf("%s plans must force the authorized stage", p.Scenario)
 		}
 	} else if _, unsafe := stages[StageRiskValidation]; unsafe {
 		return errors.New("asset discovery plans cannot include risk_validation")
+	} else if _, unsafe := stages[StageCredentialValidation]; unsafe {
+		return errors.New("asset discovery plans cannot include credential_validation")
 	}
 	for _, planned := range p.Stages {
 		seenDependencies := make(map[Stage]struct{}, len(planned.DependsOn))
@@ -210,16 +218,18 @@ func hasStageCycle(stages map[Stage]StagePlan) bool {
 }
 
 type WorkKey struct {
-	TenantID            string `json:"tenant_id"`
-	ProjectID           string `json:"project_id"`
-	NetworkZone         string `json:"network_zone"`
-	NormalizedTarget    string `json:"normalized_target"`
-	Stage               Stage  `json:"stage"`
-	ScopeHash           string `json:"scope_hash"`
-	ConfigHash          string `json:"config_hash"`
-	RuleVersion         string `json:"rule_version"`
-	POCSetHash          string `json:"poc_set_hash,omitempty"`
-	EndpointContentHash string `json:"endpoint_content_hash,omitempty"`
+	TenantID               string `json:"tenant_id"`
+	ProjectID              string `json:"project_id"`
+	NetworkZone            string `json:"network_zone"`
+	NormalizedTarget       string `json:"normalized_target"`
+	Stage                  Stage  `json:"stage"`
+	ScopeHash              string `json:"scope_hash"`
+	ConfigHash             string `json:"config_hash"`
+	RuleVersion            string `json:"rule_version"`
+	POCSetHash             string `json:"poc_set_hash,omitempty"`
+	EndpointContentHash    string `json:"endpoint_content_hash,omitempty"`
+	CredentialSetHash      string `json:"credential_set_hash,omitempty"`
+	ServiceObservationHash string `json:"service_observation_hash,omitempty"`
 }
 
 func (k WorkKey) Validate() error {
@@ -251,6 +261,16 @@ func (k WorkKey) Validate() error {
 		}
 	} else if k.POCSetHash != "" || k.EndpointContentHash != "" {
 		return errors.New("POC dimensions are valid only for risk_validation work")
+	}
+	if k.Stage == StageCredentialValidation {
+		if err := validateDimension("credential_set_hash", k.CredentialSetHash); err != nil {
+			return err
+		}
+		if err := validateDimension("service_observation_hash", k.ServiceObservationHash); err != nil {
+			return err
+		}
+	} else if k.CredentialSetHash != "" || k.ServiceObservationHash != "" {
+		return errors.New("credential dimensions are valid only for credential_validation work")
 	}
 	return nil
 }

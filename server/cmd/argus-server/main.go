@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -106,6 +107,9 @@ func main() {
 		dbDSN           string
 		amqpURL         string
 		grpcPort        int
+		grpcTLSPort     int
+		grpcTLSCert     string
+		grpcTLSKey      string
 		apiAddr         string
 		configDir       string
 		agentPSK        string
@@ -118,6 +122,9 @@ func main() {
 	flag.StringVar(&dbDSN, "db", "", "PostgreSQL DSN. Empty uses the built-in local PostgreSQL default.")
 	flag.StringVar(&amqpURL, "amqp", "amqp://guest:guest@localhost:5672/", "RabbitMQ AMQP URL. Empty falls back to in-memory queue")
 	flag.IntVar(&grpcPort, "grpc", 50051, "gRPC listen port")
+	flag.IntVar(&grpcTLSPort, "grpc-tls-port", 0, "TLS gRPC listen port for credential-capable Agents (0=disabled)")
+	flag.StringVar(&grpcTLSCert, "grpc-tls-cert", "", "Server certificate for the TLS Agent listener")
+	flag.StringVar(&grpcTLSKey, "grpc-tls-key", "", "Server private key for the TLS Agent listener")
 	flag.StringVar(&apiAddr, "api", ":8085", "HTTP API listen address")
 	flag.StringVar(&configDir, "config-dir", "", "Path to the directory containing finger.yaml, dir.yaml, workflow.yaml, and pocs/")
 	flag.StringVar(&agentPSK, "agent-psk", "", "Pre-shared key for Agent authentication (env: ARGUS_AGENT_PSK)")
@@ -130,6 +137,26 @@ func main() {
 	// 环境变量优先级高于 flag
 	if envPSK := os.Getenv("ARGUS_AGENT_PSK"); envPSK != "" {
 		agentPSK = envPSK
+	}
+	if value := strings.TrimSpace(os.Getenv("ARGUS_GRPC_TLS_PORT")); value != "" {
+		parsed, parseErr := strconv.Atoi(value)
+		if parseErr != nil {
+			log.Fatalf("Invalid ARGUS_GRPC_TLS_PORT: %v", parseErr)
+		}
+		grpcTLSPort = parsed
+	}
+	if value := strings.TrimSpace(os.Getenv("ARGUS_GRPC_TLS_CERT")); value != "" {
+		grpcTLSCert = value
+	}
+	if value := strings.TrimSpace(os.Getenv("ARGUS_GRPC_TLS_KEY")); value != "" {
+		grpcTLSKey = value
+	}
+	tlsConfigured := grpcTLSPort != 0 || grpcTLSCert != "" || grpcTLSKey != ""
+	if tlsConfigured && (grpcTLSPort < 1 || grpcTLSPort > 65535 || grpcTLSCert == "" || grpcTLSKey == "") {
+		log.Fatal("ARGUS_GRPC_TLS_PORT, ARGUS_GRPC_TLS_CERT and ARGUS_GRPC_TLS_KEY must be configured together")
+	}
+	if grpcTLSPort == grpcPort && grpcTLSPort != 0 {
+		log.Fatal("Agent plaintext and TLS gRPC listeners must use different ports")
 	}
 
 	// 生产模式安全强制检查。
@@ -235,6 +262,14 @@ func main() {
 	log.Printf("Initializing gRPC server on :%d...", grpcPort)
 	srv := grpc.NewServer(grpcPort)
 	srv.SetPSK(agentPSK)
+	if grpcTLSPort != 0 {
+		go func() {
+			log.Printf("Initializing TLS Agent gRPC server on :%d...", grpcTLSPort)
+			if err := srv.ServeTLS(grpcTLSPort, grpcTLSCert, grpcTLSKey); err != nil {
+				log.Fatalf("Failed to serve TLS Agent gRPC: %v", err)
+			}
+		}()
+	}
 
 	// ---- 挂载 RabbitMQ 队列 Hooks ----
 

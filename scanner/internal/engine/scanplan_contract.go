@@ -31,6 +31,8 @@ func CanonicalStageForPhase(phase string) (scanplan.Stage, bool) {
 		return scanplan.StageFingerprint, true
 	case PhaseNuclei, PhaseGoPoc, "gopoc_telnet_cve", "gopoc_dispatch":
 		return scanplan.StageRiskValidation, true
+	case PhaseCredentialValidation:
+		return scanplan.StageCredentialValidation, true
 	default:
 		return "", false
 	}

@@ -70,6 +70,11 @@ func vncScanWithConnector(info *structs.HostInfo, connect vncConnector) (tmperr 
 			passwdList = append(passwdList, pass)
 		}
 	}
+	for _, pair := range info.UserPassPairs {
+		if pair.Password != "" {
+			passwdList = append(passwdList, pair.Password)
+		}
+	}
 
 	passwdList = utils.RemoveDuplicateElement(passwdList)
 
@@ -87,6 +92,9 @@ func vncScanWithConnector(info *structs.HostInfo, connect vncConnector) (tmperr 
 		}
 	}
 	expandedPassList = utils.RemoveDuplicateElement(expandedPassList)
+	if info.CredentialPairLimit > 0 && len(expandedPassList) > info.CredentialPairLimit {
+		expandedPassList = expandedPassList[:info.CredentialPairLimit]
+	}
 
 	// 2. 开始爆破
 	for i, pass := range expandedPassList {

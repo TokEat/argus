@@ -32,7 +32,7 @@ func FtpScan(info *structs.HostInfo) (tmperr error) {
 
 	// 暴力破解
 	for _, userPass := range userPasswdList {
-		gologger.AuditTimeLogger("[Go] [FTP-Brute] start try %s:%v User:%s Pass:%s", info.Host, info.Ports, userPass.UserName, userPass.Password)
+		gologger.AuditTimeLogger("[Go] [FTP-Brute] start try %s:%v User:%s Pass:%s", info.Host, info.Ports, userPass.UserName, maskPassword(userPass.Password))
 		ftpFlag, ftpErr := FtpConn(info, userPass.UserName, userPass.Password)
 		if ftpFlag == true && ftpErr == nil {
 			return ftpErr

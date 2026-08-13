@@ -29,7 +29,7 @@ func smbScanWithConnector(info *structs.HostInfo, connect smbConnector) (tmperr 
 	userPasswdList := sortUserPassword(info, smbUserPasswdDict, []string{})
 
 	for _, userPass := range userPasswdList {
-		gologger.AuditTimeLogger("[Go] [SMB-Brute] start try %s %v %v", info.Host, userPass.UserName, userPass.Password)
+		gologger.AuditTimeLogger("[Go] [SMB-Brute] start try %s %v %v", info.Host, userPass.UserName, maskPassword(userPass.Password))
 		flag, err := connect(info, userPass.UserName, userPass.Password)
 		if flag == true && err == nil {
 			return err

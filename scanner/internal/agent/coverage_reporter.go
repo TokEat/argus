@@ -66,6 +66,8 @@ func newStageObservationReporter(taskID, agentID string, targets []string, confi
 	planned := append([]scanplan.Stage(nil), assetObservationStages...)
 	if strings.EqualFold(strings.TrimSpace(executionMode), "risk_validation") {
 		planned = []scanplan.Stage{scanplan.StageRiskValidation}
+	} else if strings.EqualFold(strings.TrimSpace(executionMode), "credential_validation") {
+		planned = []scanplan.Stage{scanplan.StageCredentialValidation}
 	}
 	configHash := hex.EncodeToString(configDigest[:])
 	if len(resume) > 0 {

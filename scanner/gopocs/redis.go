@@ -47,6 +47,9 @@ func RedisScan(info *structs.HostInfo) (tmperr error) {
 		for _, v := range strings.Split(strings.ReplaceAll(redisUserPasswdDict, "\r\n", "\n"), "\n") {
 			upList = append(upList, v)
 		}
+		for _, pair := range info.UserPassPairs {
+			upList = append(upList, pair.Password)
+		}
 	}
 
 	upList = utils.RemoveDuplicateElement(upList)
@@ -74,9 +77,12 @@ func RedisScan(info *structs.HostInfo) (tmperr error) {
 		}
 	}
 	passwdList = utils.RemoveDuplicateElement(passwdList)
+	if info.CredentialPairLimit > 0 && len(passwdList) > info.CredentialPairLimit {
+		passwdList = passwdList[:info.CredentialPairLimit]
+	}
 
 	for _, pass := range passwdList {
-		gologger.AuditTimeLogger("[Go] [Redis-Brute] try %s:%v Pass:%s", info.Host, info.Ports, pass)
+		gologger.AuditTimeLogger("[Go] [Redis-Brute] try %s:%v Pass:%s", info.Host, info.Ports, maskPassword(pass))
 		flag, err := RedisConn(info, pass)
 		if flag == true && err == nil {
 			return err

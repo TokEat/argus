@@ -219,7 +219,18 @@ func sortUserPassword(info *structs.HostInfo, UserPasswdDict string, DefaultKeys
 			userPasswdList = append(userPasswdList, structs.UserPasswd{UserName: user, Password: oriPass})
 		}
 	}
-	return RemoveDuplicateUserPass(userPasswdList)
+	// Project-supplied credentials are strictly additive. Appending them after
+	// the built-in service dictionary prevents a low limit from replacing the
+	// platform defaults with user input.
+	userPasswdList = append(userPasswdList, info.UserPassPairs...)
+	return limitUserPasswd(info, RemoveDuplicateUserPass(userPasswdList))
+}
+
+func limitUserPasswd(info *structs.HostInfo, values []structs.UserPasswd) []structs.UserPasswd {
+	if info == nil || info.CredentialPairLimit <= 0 || len(values) <= info.CredentialPairLimit {
+		return values
+	}
+	return values[:info.CredentialPairLimit]
 }
 
 func RemoveDuplicateUserPass(input []structs.UserPasswd) []structs.UserPasswd {

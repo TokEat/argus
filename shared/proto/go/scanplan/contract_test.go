@@ -51,6 +51,7 @@ func TestAllScenariosHaveValidPlans(t *testing.T) {
 			{Stage: StageFingerprint, DependsOn: []Stage{StageHostBinding, StageDirectoryProbe}},
 		}),
 		validPlan(ScenarioRiskValidation, []StagePlan{{Stage: StageRiskValidation, Force: true}}),
+		validPlan(ScenarioCredentialValidation, []StagePlan{{Stage: StageCredentialValidation, Force: true}}),
 	}
 	for _, plan := range tests {
 		if err := plan.Validate(); err != nil {
@@ -158,6 +159,29 @@ func TestRiskValidationWorkKeyRequiresPocAndEndpointHashes(t *testing.T) {
 	key.Stage = StageHTTPProbe
 	if _, err := key.Digest(); err == nil {
 		t.Fatal("POC dimensions were accepted for a non-POC stage")
+	}
+}
+
+func TestCredentialValidationWorkKeyRequiresCredentialAndObservationHashes(t *testing.T) {
+	key := validWorkKey()
+	key.Stage = StageCredentialValidation
+	if _, err := key.Digest(); err == nil {
+		t.Fatal("credential validation WorkKey without credential dimensions was accepted")
+	}
+	key.CredentialSetHash = "credentials-v1"
+	key.ServiceObservationHash = "service-v1"
+	digest, err := key.Digest()
+	if err != nil {
+		t.Fatalf("valid credential validation WorkKey rejected: %v", err)
+	}
+	key.ServiceObservationHash = "service-v2"
+	changedDigest, err := key.Digest()
+	if err != nil || changedDigest == digest {
+		t.Fatalf("service observation change did not change digest: before=%q after=%q err=%v", digest, changedDigest, err)
+	}
+	key.Stage = StageProtocolIdentify
+	if _, err := key.Digest(); err == nil {
+		t.Fatal("credential dimensions were accepted for a non-credential stage")
 	}
 }
 

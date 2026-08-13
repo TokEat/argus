@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,12 +18,35 @@ import (
 	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 	"github.com/glebarez/sqlite"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"gorm.io/gorm"
 )
 
 const grpcReusableTestConfig = `{"Hunter":false,"Fofa":false,"Quake":false,"OnlyIPPort":false,"Subdomain":true,"SkipHostDiscovery":false,"NoICMPPing":false,"TCPPing":false,"NoHostBind":true,"NoDirSearch":true,"NoPoc":true,"GolangPoc":false,"DisableGeneralPoc":true,"PocNameForSearch":""}`
+
+func TestAttestedAgentTagsCannotSpoofTransportTLS(t *testing.T) {
+	plain := attestedAgentTags(context.Background(), map[string]string{
+		"transport_tls": "verified",
+		"zone":          "private-a",
+	})
+	if _, exists := plain["transport_tls"]; exists {
+		t.Fatal("plaintext Agent was allowed to self-assert transport_tls")
+	}
+	if plain["zone"] != "private-a" {
+		t.Fatalf("ordinary Agent tag was lost: %#v", plain)
+	}
+
+	tlsContext := peer.NewContext(context.Background(), &peer.Peer{AuthInfo: credentials.TLSInfo{
+		State: tls.ConnectionState{Version: tls.VersionTLS13},
+	}})
+	attested := attestedAgentTags(tlsContext, map[string]string{"transport_tls": "spoofed"})
+	if attested["transport_tls"] != "verified" {
+		t.Fatalf("TLS transport was not server-attested: %#v", attested)
+	}
+}
 
 func setupRegisterTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -878,6 +902,68 @@ func TestAgentSupportsRiskValidation(t *testing.T) {
 		if got := agentSupportsRiskValidation(version); got != want {
 			t.Fatalf("agentSupportsRiskValidation(%q)=%v want=%v", version, got, want)
 		}
+	}
+}
+
+func TestClaimTaskRejectsCredentialValidationWhenTLSCapabilityIsOnlyRequestSupplied(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	if err := store.Create(&db.Node{
+		AgentID: "agent-credential", TenantID: "default", Status: "Alive",
+		Tags: `{"credential_validation":"v1"}`,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	attempt := db.SubTask{ID: "credential-attempt", TenantID: "default", Status: "Dispatching"}
+	if err := store.Create(&attempt).Error; err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(50051)
+	server.SetClaimTaskHook(func(string) (*pb.Task, string, error) {
+		return &pb.Task{TaskId: attempt.ID, Config: []byte(`{"ExecutionMode":"credential_validation"}`)}, "credential-msg", nil
+	})
+	returned := 0
+	server.SetReturnTaskHook(func(*pb.Task, string) error { returned++; return nil })
+	claimed, err := server.ClaimTask(context.Background(), &pb.ClaimTaskReq{
+		AgentId: "agent-credential", FreeSlots: 1,
+		Tags: map[string]string{"credential_validation": "v1", "transport_tls": "verified"},
+	})
+	if status.Code(err) != codes.FailedPrecondition || claimed.GetTaskId() != "" || returned != 1 {
+		t.Fatalf("credential claim=%+v returned=%d err=%v", claimed, returned, err)
+	}
+	if err := store.First(&attempt, "id = ?", attempt.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if attempt.Status != "Dispatching" || attempt.AgentID != "" {
+		t.Fatalf("plaintext Agent acquired credential attempt: %+v", attempt)
+	}
+}
+
+func TestAgentSupportsCredentialValidationRequiresAttestedTLS(t *testing.T) {
+	for tags, want := range map[string]bool{
+		`{"credential_validation":"v1","transport_tls":"verified"}`: true,
+		`{"credential_validation":"v1"}`:                            false,
+		`{"transport_tls":"verified"}`:                              false,
+		`{"credential_validation":"v1","transport_tls":"spoofed"}`:  false,
+		`not-json`: false,
+	} {
+		if got := agentSupportsCredentialValidation(tags); got != want {
+			t.Fatalf("agentSupportsCredentialValidation(%q)=%v want=%v", tags, got, want)
+		}
+	}
+}
+
+func TestSYNCapabilityUsesRegisteredTagsAndStructuredConfig(t *testing.T) {
+	if !taskRequestsSYN(&pb.Task{Config: []byte(`{"PortScanType":"syn"}`)}) {
+		t.Fatal("structured SYN task was not detected")
+	}
+	if taskRequestsSYN(&pb.Task{Config: []byte(`{"PortScanType":"tcp"}`)}) || taskRequestsSYN(&pb.Task{Config: []byte(`not-json`)}) {
+		t.Fatal("non-SYN task was treated as SYN")
+	}
+	if !agentHasCapabilities(`{"scan_syn":"v1"}`, "scan_syn") {
+		t.Fatal("registered scan_syn capability was rejected")
+	}
+	if agentHasCapabilities(`{"scan_syn":"true"}`, "scan_syn") || agentHasCapabilities(`not-json`, "scan_syn") {
+		t.Fatal("invalid scan_syn capability was accepted")
 	}
 }
 

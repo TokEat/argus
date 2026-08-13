@@ -78,7 +78,7 @@ func ApplyConfigDefaults(cfg *Config) {
 		cfg.SubdomainWordListFile = "config/subdomains.txt"
 	}
 	if cfg.Ports == "" {
-		cfg.Ports = commoncfg.PortTOP100
+		cfg.Ports = commoncfg.PortCommon100
 	}
 	if !cfg.SkipHostDiscovery && !cfg.TCPPing && cfg.NoICMPPing {
 		cfg.SkipHostDiscovery = true

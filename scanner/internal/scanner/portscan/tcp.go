@@ -168,7 +168,7 @@ func portConnect(item addr, respondingHosts chan<- string, adjustedTimeout int, 
 	respondingHosts <- item.ip + ":" + strconv.Itoa(item.port)
 }
 
-func ScanSYN(ips []string, masscanPath string, synThreads int, emit func(ddout.OutputMessage)) []string {
+func ScanSYN(ips []string, ports string, masscanPath string, synThreads int, emit func(ddout.OutputMessage)) []string {
 	ipsPayload := strings.Join(utils.RemoveDuplicateElement(ips), "\n")
 	tmpFile, err := os.CreateTemp("", "masscan-targets-*.txt")
 	if err != nil {
@@ -185,7 +185,7 @@ func ScanSYN(ips []string, masscanPath string, synThreads int, emit func(ddout.O
 
 	ms := masscan.New(masscanPath)
 	ms.SetFileName(tmpFileName)
-	ms.SetPorts("1-65535")
+	ms.SetPorts(ports)
 	ms.SetRate(strconv.Itoa(synThreads))
 	gologger.Info().Msgf("调用masscan进行SYN端口扫描")
 	if err := ms.Run(); err != nil {

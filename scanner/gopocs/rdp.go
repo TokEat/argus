@@ -79,7 +79,7 @@ func worker(info *structs.HostInfo, host, domain string, port int, wg *sync.Wait
 		}
 		go incrNum(num, mutex)
 		user, pass := one.user, one.pass
-		gologger.AuditTimeLogger("[Go] [RDP-Brute] start try %s:%v %v %v", host, port, user, pass)
+		gologger.AuditTimeLogger("[Go] [RDP-Brute] start try %s:%v %v %v", host, port, user, maskPassword(pass))
 
 		flag, exchanges, err := connect(host, domain, user, pass, port, timeout)
 		if isSuccessfulSessionEvidenceError(err) {

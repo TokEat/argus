@@ -14,6 +14,20 @@ func TestDefaultConfigIncludesDatabaseGoPocPorts(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigHasExactlyCommon100Ports(t *testing.T) {
+	ports := strings.Split(DefaultConfig().Ports, ",")
+	seen := make(map[string]struct{}, len(ports))
+	for _, port := range ports {
+		if _, duplicate := seen[port]; duplicate {
+			t.Fatalf("duplicate default port %s", port)
+		}
+		seen[port] = struct{}{}
+	}
+	if len(seen) != 100 {
+		t.Fatalf("default port count = %d, want 100", len(seen))
+	}
+}
+
 func TestDefaultConfigEnablesWAFSkipOnManyFingerprints(t *testing.T) {
 	if !DefaultConfig().WAFSkipOnManyFingerprints {
 		t.Fatal("expected WAFSkipOnManyFingerprints to default to true")

@@ -86,18 +86,25 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 	}
 
 	upList = utils.RemoveDuplicateElement(upList)
+	var credentialList []structs.UserPasswd
+	for _, raw := range upList {
+		user, password := splitUserPass(raw)
+		credentialList = append(credentialList, structs.UserPasswd{UserName: user, Password: password})
+	}
+	credentialList = append(credentialList, info.UserPassPairs...)
+	credentialList = limitUserPasswd(info, RemoveDuplicateUserPass(credentialList))
 
 	// Telnet爆破
 	starttime := time.Now().Unix()
-	total := len(upList)
-	for i, userPasswd := range upList {
+	total := len(credentialList)
+	for i, credential := range credentialList {
 		// Update progress
 		percent := float64(i+1) / float64(total) * 100
 		if shouldRenderProgress(info) {
 			fmt.Printf("\r\033[K[GoPoc] Telnet Cracking %s:%s Progress: %.0f%%", info.Host, info.Ports, percent)
 		}
 
-		user, oriPass := splitUserPass(userPasswd)
+		user, oriPass := credential.UserName, credential.Password
 		var passList []string
 		if strings.Contains(oriPass, "{{key}}") {
 			for _, sKey := range info.InfoStr {
@@ -109,7 +116,7 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 		}
 
 		for _, pass := range passList {
-			gologger.AuditTimeLogger("[Go] [Telnet-Brute] start try %s:%v %v %v", info.Host, info.Ports, user, pass)
+			gologger.AuditTimeLogger("[Go] [Telnet-Brute] start try %s:%v %v %v", info.Host, info.Ports, user, maskPassword(pass))
 			err, successfulEvidence := telnetCheckWithEvidence(info.Host, user, pass, portInt, serverType)
 			if err == nil {
 				if serverType == telnetlib.OnlyPassword {

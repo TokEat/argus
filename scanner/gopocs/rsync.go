@@ -29,12 +29,13 @@ func getPassList() []string {
 	return []string{"", "123456", "12345678", "password", "admin123", "root", "toor", "test", "admin", "P@ssw0rd", "1qaz@WSX"}
 }
 
-// maskPassword keeps empty credentials readable while preserving successful brute-force evidence.
+// maskPassword is for logs and default presentation only. Raw successful
+// credentials are handled by the sealed Server result path, never by logs.
 func maskPassword(p string) string {
 	if p == "" {
 		return "<empty>"
 	}
-	return p
+	return "[REDACTED]"
 }
 
 // RsyncScan 主入口函数，符合 Argus Go POC 规范。
@@ -120,9 +121,24 @@ func RsyncScan(info *structs.HostInfo) (err error) {
 			users = utils.RemoveDuplicateElement(append(users, customUsers...))
 			passes = utils.RemoveDuplicateElement(append(passes, customPasses...))
 		}
+		for _, pair := range info.UserPassPairs {
+			if pair.UserName != "" {
+				users = append(users, pair.UserName)
+			}
+			if pair.Password != "" {
+				passes = append(passes, pair.Password)
+			}
+		}
+		users = utils.RemoveDuplicateElement(users)
+		passes = utils.RemoveDuplicateElement(passes)
 
+		attempts := 0
 		for _, user := range users {
 			for _, pass := range passes {
+				if info.CredentialPairLimit > 0 && attempts >= info.CredentialPairLimit {
+					return nil
+				}
+				attempts++
 				maskedPass := maskPassword(pass)
 				gologger.AuditTimeLogger("[Go] [Rsync] Trying %s:%s on module %s", user, maskedPass, module)
 

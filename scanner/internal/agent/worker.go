@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -10,8 +12,10 @@ import (
 	"github.com/P0lar1ght/argus/scanner/ddout"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -37,6 +41,7 @@ import (
 	gologgerWriter "github.com/projectdiscovery/gologger/writer"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
@@ -195,7 +200,9 @@ func (p *perRPCPSK) GetRequestMetadata(ctx context.Context, uri ...string) (map[
 }
 
 func (p *perRPCPSK) RequireTransportSecurity() bool {
-	return false // 当前使用 insecure，生产环境应开启 TLS
+	// Asset-only legacy Agents still use the upgrade-window plaintext listener.
+	// Credential validation is independently gated on a CA-verified transport.
+	return false
 }
 
 var (
@@ -213,22 +220,25 @@ type dispatchedTaskEnvelope struct {
 
 // Worker 是扫描节点的核心
 type Worker struct {
-	agentID      string
-	serverAddr   string
-	apiURL       string
-	psk          string // 预共享密钥，空则不发送鉴权信息
-	sessionToken string
-	client       pb.AgentServiceClient
-	apiGetFn     func(string) (*http.Response, error)
-	conn         *grpc.ClientConn
-	wg           sync.WaitGroup
-	mu           sync.Mutex
-	runningTasks map[string]context.CancelFunc
-	maxWorkers   int
-	ruleVersion  string
-	tags         map[string]string
-	rulesMu      sync.Mutex
-	pendingRules *arsenal.PreparedRulePackage
+	agentID                  string
+	serverAddr               string
+	apiURL                   string
+	psk                      string // 预共享密钥，空则不发送鉴权信息
+	sessionToken             string
+	client                   pb.AgentServiceClient
+	apiGetFn                 func(string) (*http.Response, error)
+	conn                     *grpc.ClientConn
+	transportCredentials     credentials.TransportCredentials
+	transportTLS             bool
+	credentialBundleProvider func(context.Context, string, string) ([]structs.UserPasswd, error)
+	wg                       sync.WaitGroup
+	mu                       sync.Mutex
+	runningTasks             map[string]context.CancelFunc
+	maxWorkers               int
+	ruleVersion              string
+	tags                     map[string]string
+	rulesMu                  sync.Mutex
+	pendingRules             *arsenal.PreparedRulePackage
 	// activePackageSHA256 is the verified byte identity of the SQLite package
 	// that produced the currently materialized config directory. It is guarded
 	// by rulesMu and is never supplied by a dispatched task.
@@ -268,9 +278,13 @@ func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[stri
 	if maxWorkers <= 0 {
 		maxWorkers = 1
 	}
-	if tags == nil {
-		tags = make(map[string]string)
+	cleanTags := make(map[string]string, len(tags)+6)
+	for key, value := range tags {
+		if key != "transport_tls" {
+			cleanTags[key] = value
+		}
 	}
+	tags = cleanTags
 	pyenv := exploit.PythonRuntimeStatus()
 	if pyenv.PythonPath != "" {
 		tags["python_exp"] = "true"
@@ -293,6 +307,12 @@ func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[stri
 		tags["pyexp_install"] = "false"
 	}
 	tags["native_egress"] = "v1"
+	tags["scan_tcp"] = "v1"
+	tags["risk_validation"] = "v1"
+	tags["credential_validation"] = "v1"
+	if _, err := exec.LookPath("masscan"); err == nil {
+		tags["scan_syn"] = "v1"
+	}
 	return &Worker{
 		agentID:      agentID,
 		serverAddr:   serverAddr,
@@ -309,6 +329,37 @@ func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[stri
 // SetPSK 设置 Agent 预共享密钥
 func (w *Worker) SetPSK(psk string) {
 	w.psk = psk
+}
+
+// SetTLS configures a CA-pinned TLS 1.3 transport for Agent gRPC. Credential
+// validation is rejected locally unless this transport is active.
+func (w *Worker) SetTLS(caFile, serverName string) error {
+	caPEM, err := os.ReadFile(caFile)
+	if err != nil {
+		return fmt.Errorf("read Agent gRPC CA: %w", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caPEM) {
+		return errors.New("Agent gRPC CA file contains no valid certificates")
+	}
+	serverName = strings.TrimSpace(serverName)
+	if serverName == "" {
+		host, _, splitErr := net.SplitHostPort(w.serverAddr)
+		if splitErr != nil {
+			return fmt.Errorf("derive Agent gRPC TLS server name from %q: %w", w.serverAddr, splitErr)
+		}
+		serverName = strings.Trim(host, "[]")
+	}
+	if serverName == "" {
+		return errors.New("Agent gRPC TLS server name is required")
+	}
+	w.transportCredentials = credentials.NewTLS(&tls.Config{
+		MinVersion: tls.VersionTLS13,
+		RootCAs:    roots,
+		ServerName: serverName,
+	})
+	w.transportTLS = true
+	return nil
 }
 
 // apiGet 统一执行 Agent -> Server 的内部 HTTP GET，并附加注册会话头。
@@ -338,8 +389,12 @@ func (w *Worker) apiGet(url string) (*http.Response, error) {
 }
 
 func (w *Worker) Start() error {
+	transport := w.transportCredentials
+	if transport == nil {
+		transport = insecure.NewCredentials()
+	}
 	dialOpts := []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(transport),
 		// TCP Keepalive：防止空闲连接被 NAT/防火墙/LB 静默丢弃
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                30 * time.Second, // 每 30 秒发送一次 keepalive ping
@@ -376,7 +431,7 @@ func (w *Worker) Start() error {
 	if w.sessionToken == "" {
 		return fmt.Errorf("server returned empty agent session token")
 	}
-	log.Printf("Agent %s successfully registered to %s", w.agentID, w.serverAddr)
+	log.Printf("Agent %s successfully registered to %s (tls=%t)", w.agentID, w.serverAddr, w.transportTLS)
 	w.wg.Add(1)
 	go w.runEgressTunnel()
 
@@ -478,7 +533,11 @@ func (w *Worker) claimAvailableTasks() {
 		}
 
 		// 向 Server 认领任务
-		task, err := w.client.ClaimTask(context.Background(), &pb.ClaimTaskReq{
+		claimCtx := context.Background()
+		if w.sessionToken != "" {
+			claimCtx = metadata.AppendToOutgoingContext(claimCtx, "x-agent-token", w.sessionToken)
+		}
+		task, err := w.client.ClaimTask(claimCtx, &pb.ClaimTaskReq{
 			AgentId:   w.agentID,
 			FreeSlots: w.freeSlots.Load(),
 			Tags:      w.tags,
@@ -876,6 +935,33 @@ func applyAgentRuleFileConfig(cfg *engine.Config) {
 	cfg.NucleiTemplate = filepath.Join("config", "pocs")
 }
 
+func (w *Worker) prepareCredentialValidationConfig(cfg *engine.Config, taskID string) error {
+	if !strings.EqualFold(strings.TrimSpace(cfg.ExecutionMode), "credential_validation") {
+		return nil
+	}
+	if !w.transportTLS {
+		return errors.New("credential validation requires a CA-verified Agent gRPC TLS transport")
+	}
+	ref := strings.TrimSpace(cfg.CredentialBundleRef)
+	if ref == "" {
+		return nil
+	}
+	if w.credentialBundleProvider == nil {
+		return errors.New("credential bundle provider is unavailable")
+	}
+	fetchCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	bundle, err := w.credentialBundleProvider(fetchCtx, taskID, ref)
+	if err != nil {
+		return fmt.Errorf("fetch sealed credential bundle: %w", err)
+	}
+	if len(bundle) == 0 {
+		return errors.New("sealed credential bundle is empty")
+	}
+	cfg.CredentialBundle = bundle
+	return nil
+}
+
 func (w *Worker) executeTask(task *pb.Task) {
 	log.Printf("Received Task: %s with targets: %v", task.TaskId, task.Targets)
 
@@ -911,6 +997,12 @@ func (w *Worker) executeTask(task *pb.Task) {
 	if strings.TrimSpace(cfg.ExecutionMode) == "" && (!cfg.NoPoc || cfg.GolangPoc || !cfg.DisableGeneralPoc || strings.TrimSpace(cfg.PocNameForSearch) != "") {
 		err := errors.New("ordinary Agent tasks cannot execute POCs; use a confirmed risk-validation batch")
 		log.Printf("Rejected unconfirmed POC task %s: %v", task.TaskId, err)
+		w.reportTaskCompletion(task.TaskId, "FAILED", err.Error())
+		return
+	}
+	if err := w.prepareCredentialValidationConfig(&cfg, task.TaskId); err != nil {
+		err = fmt.Errorf("reject credential-validation task: %w", err)
+		log.Printf("Rejected credential-validation task %s: %v", task.TaskId, err)
 		w.reportTaskCompletion(task.TaskId, "FAILED", err.Error())
 		return
 	}

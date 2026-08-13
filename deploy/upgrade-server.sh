@@ -33,6 +33,9 @@ INSTALL_DIR="${INSTALL_DIR:-}"
 DB_DSN="${ARGUS_DB_DSN:-}"
 EGRESS_GATEWAY_LISTEN="${ARGUS_EGRESS_GATEWAY_LISTEN:-}"
 EGRESS_GATEWAY_TOKEN="${ARGUS_EGRESS_GATEWAY_TOKEN:-}"
+GRPC_TLS_PORT="${ARGUS_GRPC_TLS_PORT:-}"
+GRPC_TLS_CERT="${ARGUS_GRPC_TLS_CERT:-}"
+GRPC_TLS_KEY="${ARGUS_GRPC_TLS_KEY:-}"
 MINIO_ROOT_USER="${MINIO_ROOT_USER:-}"
 MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-}"
 MINIO_API_PORT="${MINIO_API_PORT:-}"
@@ -67,6 +70,11 @@ gen_hex_secret() {
 if [[ -n "$EGRESS_GATEWAY_LISTEN" || -n "$EGRESS_GATEWAY_TOKEN" ]]; then
     if [[ -z "$EGRESS_GATEWAY_LISTEN" || -z "$EGRESS_GATEWAY_TOKEN" ]]; then
         die "ARGUS_EGRESS_GATEWAY_LISTEN 与 ARGUS_EGRESS_GATEWAY_TOKEN 必须成对配置"
+    fi
+fi
+if [[ -n "$GRPC_TLS_PORT" || -n "$GRPC_TLS_CERT" || -n "$GRPC_TLS_KEY" ]]; then
+    if [[ -z "$GRPC_TLS_PORT" || -z "$GRPC_TLS_CERT" || -z "$GRPC_TLS_KEY" ]]; then
+        die "ARGUS_GRPC_TLS_PORT、ARGUS_GRPC_TLS_CERT、ARGUS_GRPC_TLS_KEY 必须成组配置"
     fi
 fi
 
@@ -519,6 +527,11 @@ ensure_service_environment_file "$EXP_STORAGE_ENV_FILE"
 if [[ -n "$EGRESS_GATEWAY_LISTEN" ]]; then
     set_service_environment ARGUS_EGRESS_GATEWAY_LISTEN "$EGRESS_GATEWAY_LISTEN"
     set_service_environment ARGUS_EGRESS_GATEWAY_TOKEN "$EGRESS_GATEWAY_TOKEN"
+fi
+if [[ -n "$GRPC_TLS_PORT" ]]; then
+    set_service_environment ARGUS_GRPC_TLS_PORT "$GRPC_TLS_PORT"
+    set_service_environment ARGUS_GRPC_TLS_CERT "$GRPC_TLS_CERT"
+    set_service_environment ARGUS_GRPC_TLS_KEY "$GRPC_TLS_KEY"
 fi
 
 if [[ -n "$AGENT_BIN" ]]; then

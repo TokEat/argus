@@ -20,11 +20,22 @@ func main() {
 	workers := flag.Int("workers", 0, "Number of concurrent worker goroutines (0=auto-detect from CPU cores)")
 	tagsStr := flag.String("tags", "", "Node tags in key1=val1,key2=val2 format")
 	psk := flag.String("psk", "", "Pre-shared key for Server authentication (env: ARGUS_AGENT_PSK)")
+	grpcCA := flag.String("grpc-ca", "", "CA certificate for Server gRPC TLS (env: ARGUS_AGENT_GRPC_CA)")
+	grpcServerName := flag.String("grpc-server-name", "", "Expected Server certificate name (env: ARGUS_AGENT_GRPC_SERVER_NAME)")
 	flag.Parse()
 
 	// 环境变量优先级高于 flag
 	if envPSK := os.Getenv("ARGUS_AGENT_PSK"); envPSK != "" {
 		*psk = envPSK
+	}
+	if value := os.Getenv("ARGUS_AGENT_GRPC_CA"); value != "" {
+		*grpcCA = value
+	}
+	if value := os.Getenv("ARGUS_AGENT_GRPC_SERVER_NAME"); value != "" {
+		*grpcServerName = value
+	}
+	if *grpcCA == "" && *grpcServerName != "" {
+		log.Fatal("--grpc-server-name requires --grpc-ca")
 	}
 
 	// workers=0 时自动按 CPU 核心数计算并发容量
@@ -50,10 +61,15 @@ func main() {
 		tags["target_type"] = "all"
 	}
 
-	log.Printf("Starting argus-agent: ID=%s, Server=%s, API=%s, Workers=%d, Tags=%v", *agentID, *serverAddr, *apiURL, effectiveWorkers, tags)
+	log.Printf("Starting argus-agent: ID=%s, Server=%s, API=%s, Workers=%d, Tags=%v, TLS=%t", *agentID, *serverAddr, *apiURL, effectiveWorkers, tags, *grpcCA != "")
 
 	worker := agent.NewWorker(*agentID, *serverAddr, *apiURL, effectiveWorkers, tags)
 	worker.SetPSK(*psk)
+	if *grpcCA != "" {
+		if err := worker.SetTLS(*grpcCA, *grpcServerName); err != nil {
+			log.Fatalf("Configure Agent gRPC TLS: %v", err)
+		}
+	}
 	if err := worker.Start(); err != nil {
 		log.Fatalf("Agent worker failed to start: %v", err)
 	}

@@ -26,6 +26,9 @@
 #   ARGUS_ENCRYPT_KEY    凭证加密密钥（默认: 自动生成，Base64 32字节）
 #   ARGUS_API_PORT       HTTP API 端口（默认: 8085）
 #   ARGUS_GRPC_PORT      gRPC 端口（默认: 50051）
+#   ARGUS_GRPC_TLS_PORT  Agent TLS gRPC 端口（与证书/私钥成组配置）
+#   ARGUS_GRPC_TLS_CERT  Agent TLS 服务端证书路径
+#   ARGUS_GRPC_TLS_KEY   Agent TLS 服务端私钥路径
 # ==============================================================================
 
 set -euo pipefail
@@ -58,6 +61,9 @@ RABBITMQ_DEFAULT_PASS="${RABBITMQ_DEFAULT_PASS:-$(gen_hex_secret)}"
 
 API_PORT="${ARGUS_API_PORT:-8085}"
 GRPC_PORT="${ARGUS_GRPC_PORT:-50051}"
+GRPC_TLS_PORT="${ARGUS_GRPC_TLS_PORT:-}"
+GRPC_TLS_CERT="${ARGUS_GRPC_TLS_CERT:-}"
+GRPC_TLS_KEY="${ARGUS_GRPC_TLS_KEY:-}"
 AGENT_PSK="${ARGUS_AGENT_PSK:-$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | xxd -p)}"
 JWT_SECRET="${ARGUS_JWT_SECRET:-$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | xxd -p)}"
 ENCRYPT_KEY="${ARGUS_ENCRYPT_KEY:-$(gen_encrypt_key)}"
@@ -73,6 +79,13 @@ ARGUS_EXP_MINIO_ENDPOINT="${ARGUS_EXP_MINIO_ENDPOINT:-http://127.0.0.1:${MINIO_A
 ARGUS_EXP_MINIO_REGION="${ARGUS_EXP_MINIO_REGION:-us-east-1}"
 ARGUS_EXP_MINIO_BUCKET="${ARGUS_EXP_MINIO_BUCKET:-argus-exp}"
 ARGUS_EXP_MINIO_USE_SSL="${ARGUS_EXP_MINIO_USE_SSL:-false}"
+
+if [[ -n "$GRPC_TLS_PORT" || -n "$GRPC_TLS_CERT" || -n "$GRPC_TLS_KEY" ]]; then
+    if [[ -z "$GRPC_TLS_PORT" || -z "$GRPC_TLS_CERT" || -z "$GRPC_TLS_KEY" ]]; then
+        echo -e "${RED}[!] ARGUS_GRPC_TLS_PORT、ARGUS_GRPC_TLS_CERT、ARGUS_GRPC_TLS_KEY 必须成组配置${NC}" >&2
+        exit 1
+    fi
+fi
 ARGUS_EXP_TRACE_RETENTION="${ARGUS_EXP_TRACE_RETENTION:-168h}"
 ARGUS_YAKSHA_URL="${ARGUS_YAKSHA_URL:-http://127.0.0.1:8790}"
 if [[ -n "$EGRESS_GATEWAY_LISTEN" || -n "$EGRESS_GATEWAY_TOKEN" ]]; then
@@ -409,6 +422,9 @@ Environment=ARGUS_JWT_SECRET=${JWT_SECRET}
 Environment=ARGUS_ENCRYPT_KEY=${ENCRYPT_KEY}
 Environment=ARGUS_EGRESS_GATEWAY_LISTEN=${EGRESS_GATEWAY_LISTEN}
 Environment=ARGUS_EGRESS_GATEWAY_TOKEN=${EGRESS_GATEWAY_TOKEN}
+Environment=ARGUS_GRPC_TLS_PORT=${GRPC_TLS_PORT}
+Environment=ARGUS_GRPC_TLS_CERT=${GRPC_TLS_CERT}
+Environment=ARGUS_GRPC_TLS_KEY=${GRPC_TLS_KEY}
 EnvironmentFile=-${INSTALL_DIR}/config/exp-storage.env
 ExecStart=${INSTALL_DIR}/bin/argus-server \\
     -db "${DB_DSN}" \\

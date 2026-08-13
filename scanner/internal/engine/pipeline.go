@@ -97,11 +97,15 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		return err
 	}
 	if strings.TrimSpace(cfg.ExecutionMode) != "" {
-		if !strings.EqualFold(strings.TrimSpace(cfg.ExecutionMode), "risk_validation") {
+		switch strings.ToLower(strings.TrimSpace(cfg.ExecutionMode)) {
+		case "risk_validation":
+			_, err := runRiskValidationPhase(ctx, &cfg, enableLocalReports)
+			return err
+		case "credential_validation":
+			return runCredentialValidationPhase(ctx, &cfg)
+		default:
 			return fmt.Errorf("unsupported internal execution mode %q", cfg.ExecutionMode)
 		}
-		_, err := runRiskValidationPhase(ctx, &cfg, enableLocalReports)
-		return err
 	}
 
 	if err := checkPipelineCancelled(ctx); err != nil {
@@ -235,7 +239,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 			emitPhase(ctx, PhasePortScan, "start", fmt.Sprintf("%d ips, type=%s", len(ips), cfg.PortScanType))
 			if cfg.PortScanType == "syn" {
-				tmpIPPort = portscan.ScanSYN(ips, cfg.MasscanPath, cfg.SYNPortScanThreads, emit)
+				tmpIPPort = portscan.ScanSYN(ips, cfg.Ports, cfg.MasscanPath, cfg.SYNPortScanThreads, emit)
 			} else {
 				tmpIPPort = portscan.ScanTCP(ips, cfg.Ports, cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, true, emit)
 			}
