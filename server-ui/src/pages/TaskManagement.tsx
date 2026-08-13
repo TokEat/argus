@@ -61,6 +61,10 @@ import { canAccessRole } from '../utils/auth';
 import { useAutoContext } from '../contexts/GlobalAIContext';
 import NetworkCanvas from '../components/NetworkCanvas';
 import TaskTimingPanel from '../components/TaskTimingPanel';
+import { scanPolicyInitialValues, type ScanPolicyFormValues } from '../components/tasks/ScanPolicyComposer';
+import ScanTaskCreateModal from '../components/tasks/ScanTaskCreateModal';
+import TaskStageOverview from '../components/tasks/TaskStageOverview';
+import CredentialFindingsPanel from '../components/tasks/CredentialFindingsPanel';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -223,6 +227,7 @@ const excludedRiskReasonLabels: Record<string, string> = {
 
 const terminalBatchStatuses = new Set(['COMPLETED', 'FINISHED', 'DONE', 'SUCCESS', 'SUCCEEDED', 'FAILED', 'TIMEOUT', 'STOPPED', 'CANCELLED', 'CANCELED']);
 const activeBatchStatuses = new Set(['QUEUED', 'PENDING', 'DISPATCHING', 'RUNNING', 'RECOVERED']);
+const legacyScanUIEnabled = false;
 
 function availableBatchActions(batch: API.TaskBatchSummary): BatchAction[] {
     if (batch.archived_at) return [];
@@ -424,6 +429,7 @@ const TaskManagement: React.FC = () => {
     const [appendSaving, setAppendSaving] = useState(false);
     const [selectorPreview, setSelectorPreview] = useState<API.TaskSelectorPreview | null>(null);
     const [selectorPreviewLoading, setSelectorPreviewLoading] = useState(false);
+    const [scanPlan, setScanPlan] = useState<API.ScanPlanPreview | null>(null);
     const [targetValidationOpen, setTargetValidationOpen] = useState(false);
     const [validTargets, setValidTargets] = useState<string[]>([]);
     const [invalidTargets, setInvalidTargets] = useState<API.InvalidTarget[]>([]);
@@ -538,6 +544,7 @@ const TaskManagement: React.FC = () => {
         setInvalidTargets([]);
         setInvalidTargetEdits([]);
         setCreateOpen(false);
+        setScanPlan(null);
     };
 
     const invalidateCreateDraft = () => {
@@ -570,48 +577,34 @@ const TaskManagement: React.FC = () => {
         setTargetValidationOpen(false);
         pendingCreateRef.current = null;
         form.resetFields();
-        form.setFieldsValue(createInitialValues);
+        form.setFieldsValue(scanPolicyInitialValues);
         fetchTasks(1, taskPaginationRef.current.pageSize);
     };
 
     const handleCreate = async () => {
         if (!canManageTasks) return;
         try {
-            const values = await form.validateFields();
+            const values = await form.validateFields() as ScanPolicyFormValues;
             setCreating(true);
-
-            const advancedConfig = parseAdvancedConfig(values.advanced_config_json);
-            const configObj = {
-                ...buildTaskConfig(values),
-                ...advancedConfig,
-            };
-
             const selectedProjectId = values.project_id;
             if (!selectedProjectId) {
                 message.error('请选择所属项目');
                 return;
             }
-
+            if (!scanPlan) {
+                message.error('请先完成有效的实时执行计划');
+                return;
+            }
             const request: API.CreateTaskRequest = {
                 project_id: selectedProjectId,
                 name: typeof values.name === 'string' && values.name.trim() ? values.name.trim() : undefined,
-                targets: values.targets,
-                config: configObj,
+                targets: values.targets || '',
                 priority: values.priority ?? 1,
                 timeout_sec: values.timeout_sec ?? 3600,
-                agent_selector: selectorFromPairs(values.agent_selector_pairs),
-                agent_selector_rules: selectorRulesFromJSON(values.agent_selector_rules_json),
+                policy: scanPlan.policy,
+                plan_hash: scanPlan.plan_hash,
             };
-            const validation = await validateTargets({ targets: request.targets, config: request.config });
-            if ((validation.invalid || []).length === 0) {
-                await finishCreate({ ...request, skip_unsupported: false });
-                return;
-            }
-            pendingCreateRef.current = request;
-            setValidTargets(validation.valid || []);
-            setInvalidTargets(validation.invalid || []);
-            setInvalidTargetEdits((validation.invalid || []).map((item) => item.target));
-            setTargetValidationOpen(true);
+            await finishCreate(request);
         } catch (error: unknown) {
             if (isIdempotencyConflict(error)) {
                 invalidateCreateDraft();
@@ -760,10 +753,11 @@ const TaskManagement: React.FC = () => {
         const projectTargets = projectDefaultTargets(selectedProject);
         form.resetFields();
         form.setFieldsValue({
-            ...createInitialValues,
+            ...scanPolicyInitialValues,
             project_id: projectId || undefined,
             targets: projectTargets.length > 0 ? projectTargets.join('\n') : undefined,
         });
+        setScanPlan(null);
         setCreateOpen(true);
     };
 
@@ -1055,7 +1049,7 @@ const TaskManagement: React.FC = () => {
         }
     };
 
-	const openRiskValidationPreview = async () => {
+	const _openRiskValidationPreview = async () => {
 		setRiskSpecifiedPocs([]);
 		setRiskPocOptions([]);
 		setRiskPocOptionsLoading(true);
@@ -1074,6 +1068,7 @@ const TaskManagement: React.FC = () => {
 			setRiskPocOptionsLoading(false);
 		}
 	};
+	if (legacyScanUIEnabled) void _openRiskValidationPreview;
 
 	const closeRiskValidationPreview = () => {
 		if (riskInFlightRef.current) return;
@@ -1499,7 +1494,11 @@ const TaskManagement: React.FC = () => {
                 )}
             </ProCard>
 
-            {canManageTasks && (
+            {canManageTasks && <ScanTaskCreateModal open={createOpen} creating={creating} form={form} projects={projects}
+                activeProjectId={globalProjectId} plan={scanPlan} onPlanChange={setScanPlan}
+                onCancel={cancelCreate} onCreate={handleCreate} onDraftChange={invalidateCreateDraft} />}
+
+            {legacyScanUIEnabled && canManageTasks && (
                 <Modal
                     title="创建扫描任务"
                     open={createOpen}
@@ -1898,7 +1897,7 @@ const TaskManagement: React.FC = () => {
                 </Modal>
             )}
 
-            <Modal
+            {legacyScanUIEnabled && <Modal
                 title="目标预校验"
                 open={targetValidationOpen}
 				onCancel={returnToCreateDraft}
@@ -1929,7 +1928,7 @@ const TaskManagement: React.FC = () => {
                         </div>
                     ))}
                 </Space>
-            </Modal>
+            </Modal>}
 
             {/* 任务详情 Drawer */}
             <Drawer
@@ -1945,9 +1944,6 @@ const TaskManagement: React.FC = () => {
                 open={detailOpen}
                 extra={taskDetail ? (
                     <Space>
-						<Button icon={<ExperimentOutlined />} onClick={openRiskValidationPreview}>
-							风险验证预览
-						</Button>
 						{canManageTasks && !taskDetail.task.archived_at && (
 							<Space size={8}>
 								<Button icon={<PlusOutlined />} onClick={openAppendTargets}>增加批次</Button>
@@ -1979,6 +1975,7 @@ const TaskManagement: React.FC = () => {
                     </div>
                 ) : taskDetail ? (
                     <div>
+                        <TaskStageOverview detail={taskDetail} />
                         {/* 概况统计卡片 */}
                         <Row gutter={16} style={{ marginBottom: 24 }}>
                             <Col span={6}>
@@ -2476,11 +2473,12 @@ const TaskManagement: React.FC = () => {
                         )}
 
                         {taskDetail.timing && <TaskTimingPanel timing={taskDetail.timing} stageLabels={scanStageLabels} />}
+                        <CredentialFindingsPanel taskId={taskDetail.task.id} />
                     </div>
                 ) : null}
             </Drawer>
 
-			<Modal
+			{legacyScanUIEnabled && riskPreview && <Modal
 				title="风险验证预览"
 				open={riskPreviewOpen}
 				onCancel={closeRiskValidationPreview}
@@ -2666,7 +2664,7 @@ const TaskManagement: React.FC = () => {
 						)}
 					</>
 				) : null}
-			</Modal>
+			</Modal>}
 
             <Modal
                 title="增加扫描批次"

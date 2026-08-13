@@ -22,6 +22,7 @@ import {
 import { canAccessRole, getCurrentUserRole } from '../utils/auth';
 import dayjs from 'dayjs';
 import NetworkCanvas from '../components/NetworkCanvas';
+import { notifyProjectsChanged } from '../utils/projectSelection';
 
 const { Title, Text } = Typography;
 
@@ -94,13 +95,15 @@ const ProjectManagement: React.FC = () => {
             const values = await form.validateFields();
             setCreating(true);
 
-            await createProject({
+            const created = await createProject({
                 name: values.name,
                 description: values.description,
                 member_user_ids: isAdmin ? values.member_user_ids : undefined,
             });
 
             message.success('项目创建成功');
+            localStorage.setItem('active_project_id', created.ID);
+            notifyProjectsChanged(created.ID);
             setCreateOpen(false);
             form.resetFields();
             fetchProjects();
@@ -130,6 +133,7 @@ const ProjectManagement: React.FC = () => {
                     localStorage.removeItem('active_project_id');
                 }
             }
+            notifyProjectsChanged();
             fetchProjects();
         } catch (error) {
             message.error(`${actionLabel}失败`);
@@ -168,6 +172,7 @@ const ProjectManagement: React.FC = () => {
             if (activeProjectId === deleteTarget.ID) {
                 localStorage.removeItem('active_project_id');
             }
+            notifyProjectsChanged();
             setDeleteModalOpen(false);
             setDeleteTarget(null);
             fetchProjects();

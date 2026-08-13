@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { App } from 'antd';
 import { MemoryRouter } from 'react-router-dom';
 import TaskManagement from './TaskManagement';
-import { appendTargets, archiveTaskBatch, createTask, deleteTask, executeTaskRiskValidation, getTaskConfigRevisions, getTaskDetail, listPocRulesPage, listProjects, listTasks, pauseTaskBatch, previewTaskRiskValidation, resumeTaskBatch, retryTask, retryTaskBatch, stopTaskBatch, updateTaskConfig, validateTargets } from '../services/api';
+import { appendTargets, archiveTaskBatch, createTask, deleteTask, executeTaskRiskValidation, getTaskConfigRevisions, getTaskDetail, listPocRulesPage, listProjects, listTasks, pauseTaskBatch, previewScanPlan, previewTaskRiskValidation, resumeTaskBatch, retryTask, retryTaskBatch, stopTaskBatch, updateTaskConfig, validateTargets } from '../services/api';
 
 const { canAccessRoleMock } = vi.hoisted(() => ({
     canAccessRoleMock: vi.fn(() => true),
@@ -20,6 +20,7 @@ vi.mock('../contexts/GlobalAIContext', () => ({
 
 vi.mock('../utils/auth', () => ({
     canAccessRole: canAccessRoleMock,
+    getCurrentUserRole: vi.fn(() => 'admin'),
 }));
 
 vi.mock('../services/api', () => ({
@@ -42,6 +43,10 @@ vi.mock('../services/api', () => ({
         reasons: [],
         effective_selectors: [{ cloud: 'aliyun', target_type: 'all' }],
     }),
+    previewScanPlan: vi.fn(),
+    listCredentialDictionaries: vi.fn().mockResolvedValue([]),
+    listTaskCredentialFindings: vi.fn().mockResolvedValue([]),
+    revealCredentialFinding: vi.fn(),
     connectWebSocket: vi.fn(() => ({ close: vi.fn() })),
     deleteTask: vi.fn(),
     cancelTask: vi.fn(),
@@ -69,6 +74,7 @@ describe('TaskManagement', () => {
     const createTaskMock = createTask as unknown as Mock;
     const deleteTaskMock = deleteTask as unknown as Mock;
     const validateTargetsMock = validateTargets as unknown as Mock;
+    const previewScanPlanMock = previewScanPlan as unknown as Mock;
     const getTaskDetailMock = getTaskDetail as unknown as Mock;
 	const previewTaskRiskValidationMock = previewTaskRiskValidation as unknown as Mock;
 	const executeTaskRiskValidationMock = executeTaskRiskValidation as unknown as Mock;
@@ -91,6 +97,7 @@ describe('TaskManagement', () => {
         createTaskMock.mockClear();
         deleteTaskMock.mockClear();
         validateTargetsMock.mockReset();
+        previewScanPlanMock.mockReset();
         getTaskDetailMock.mockReset();
 		previewTaskRiskValidationMock.mockReset();
 		executeTaskRiskValidationMock.mockReset();
@@ -106,6 +113,25 @@ describe('TaskManagement', () => {
         archiveTaskBatchMock.mockReset();
         canAccessRoleMock.mockReturnValue(true);
         validateTargetsMock.mockResolvedValue({ valid: [], invalid: [], summary: {} });
+        previewScanPlanMock.mockImplementation(async (request: API.ScanPlanPreviewRequest) => {
+            if ((request.policy.capabilities.risk_validation || request.policy.capabilities.credential_validation) && !request.policy.authorization.validation_confirmed) {
+                throw 'POC or credential validation requires one explicit authorization confirmation';
+            }
+            return ({
+            policy: request.policy,
+            policy_hash: 'policy-hash', plan_hash: 'plan-hash', rule_version: 'rules-v1',
+            port_count: request.policy.port_profile === 'common-100' ? 100 : request.policy.port_profile === 'all' ? 65535 : 1000,
+            target_summary: { total: 1 }, stages: [
+                { id: 'host_discovery', enabled: true }, { id: 'port_scan', enabled: true },
+                { id: 'protocol_identification', enabled: true }, { id: 'fingerprint', enabled: true },
+                { id: 'risk_validation', enabled: request.policy.capabilities.risk_validation },
+                { id: 'credential_validation', enabled: request.policy.capabilities.credential_validation },
+            ],
+            matched_agents: 1, available_slots: 3, estimated_requests: 1000,
+            custom_credential_pairs: 0, credential_pair_limit: 50000,
+            validation_budget: { target_concurrency: 2, rate_limit: 10, credential_max_per_target: 50000, risk_budget_basis: 'sealed' },
+            });
+        });
         appendTargetsMock.mockResolvedValue({
             status: 'appended', new_subtasks: 1, new_batches: 1, new_targets: 1,
             duplicate_targets: 0, config_version: 1, total_chunks: 2, total_targets: 2,
@@ -131,187 +157,51 @@ describe('TaskManagement', () => {
         });
     });
 
-    it('keeps manual agent selector controls inside advanced settings', async () => {
+    it('shows a semantic two-column scan plan without host paths or raw scanner JSON', async () => {
         const user = userEvent.setup();
-        render(
-            <MemoryRouter>
-                <App>
-                    <TaskManagement />
-                </App>
-            </MemoryRouter>
-        );
+        render(<MemoryRouter><App><TaskManagement /></App></MemoryRouter>);
 
         await user.click(await screen.findByRole('button', { name: /创建任务/i }));
-
-        expect(screen.getByText(/匹配在线节点/)).toBeInTheDocument();
-        expect(screen.queryByRole('button', { name: /添加标签条件/i })).not.toBeInTheDocument();
-        await user.click(screen.getByRole('button', { name: /高级设置/i }));
-        expect(screen.getByRole('button', { name: /添加标签条件/i })).toBeInTheDocument();
+        expect(screen.getByText('项目与目标')).toBeInTheDocument();
+        expect(screen.getByText('实时执行计划')).toBeInTheDocument();
+        expect(screen.getByRole('radio', { name: /标准 · Top1000/ })).toBeChecked();
+        expect(screen.queryByText('弱口令文件')).not.toBeInTheDocument();
+        expect(screen.queryByText('额外 Agent 配置 JSON')).not.toBeInTheDocument();
+        expect(screen.queryByText('POC 已与普通资产扫描隔离')).not.toBeInTheDocument();
     });
 
-    it('creates a safe external map task with only a target', async () => {
+    it('creates the task with the exact Server plan hash after one authorization confirmation', async () => {
         const user = userEvent.setup();
-        render(
-            <MemoryRouter>
-                <App>
-                    <TaskManagement />
-                </App>
-            </MemoryRouter>
-        );
+        render(<MemoryRouter><App><TaskManagement /></App></MemoryRouter>);
 
         await user.click(await screen.findByRole('button', { name: /创建任务/i }));
-        expect(screen.getByText(/自动安全测绘/)).toBeInTheDocument();
         await user.type(screen.getByPlaceholderText(/192\.168\.1\.10/), 'https://example.test');
-        await user.click(within(screen.getByRole('dialog', { name: '创建扫描任务' })).getByRole('button', { name: /创\s*建/ }));
+        expect(await screen.findByText(/requires one explicit authorization confirmation/)).toBeInTheDocument();
+        await user.click(screen.getByRole('checkbox', { name: /我确认全部目标/ }));
+        await waitFor(() => expect(screen.getByText('plan-hash'.slice(0, 16) + '…')).toBeInTheDocument());
+        await user.click(screen.getByRole('button', { name: '按此计划创建' }));
 
         await waitFor(() => expect(createTaskMock).toHaveBeenCalledWith(expect.objectContaining({
-            project_id: 'project-1',
-            name: undefined,
-            targets: 'https://example.test',
-            priority: 1,
-            timeout_sec: 3600,
-            config: expect.objectContaining({
-                Subdomain: true,
-                NoSubdomainBruteForce: true,
-                NoSubFinder: false,
-                NoDirSearch: true,
-                NoPoc: true,
-                GolangPoc: false,
-                DisableGeneralPoc: true,
+            project_id: 'project-1', targets: 'https://example.test', plan_hash: 'plan-hash',
+            policy: expect.objectContaining({
+                schema_version: 'argus.scan-policy/v1', preset: 'standard', port_profile: 'top-1000',
+                capabilities: expect.objectContaining({ risk_validation: true, credential_validation: false }),
+                authorization: { validation_confirmed: true },
             }),
         }), expect.any(String)));
     });
 
-    it('uses positive wording for negative scan config switches', async () => {
+    it('keeps weak credentials opt-in and always explains built-in dictionary union', async () => {
         const user = userEvent.setup();
-        render(
-            <MemoryRouter>
-                <App>
-                    <TaskManagement />
-                </App>
-            </MemoryRouter>
-        );
+        render(<MemoryRouter><App><TaskManagement /></App></MemoryRouter>);
 
         await user.click(await screen.findByRole('button', { name: /创建任务/i }));
-        await user.click(screen.getByRole('button', { name: /高级设置/i }));
-        await user.click(screen.getByText('主机发现'));
-        await user.click(screen.getByText('子域名探测'));
-        await user.click(screen.getByText('Web 探针'));
-        await user.click(screen.getByText('风险验证'));
-
-        expect(getFormItemByLabel('主机发现')).toBeInTheDocument();
-        expect(getFormItemByLabel('ICMP 探测')).toBeInTheDocument();
-        expect(getFormItemByLabel('子域爆破')).toBeInTheDocument();
-        expect(getFormItemByLabel('被动枚举')).toBeInTheDocument();
-        expect(getFormItemByLabel('域名绑定探测')).toBeInTheDocument();
-        expect(getFormItemByLabel('主动目录指纹')).toBeInTheDocument();
-        expect(screen.getByText('POC 已与普通资产扫描隔离')).toBeInTheDocument();
-        expect(screen.queryByLabelText('漏洞探测')).not.toBeInTheDocument();
-        expect(screen.queryByLabelText('通用 POC')).not.toBeInTheDocument();
-        expect(screen.queryByText('跳过主机发现')).not.toBeInTheDocument();
-        expect(screen.queryByText('禁用 ICMP 探测')).not.toBeInTheDocument();
-        expect(screen.queryByText('关闭漏洞探测')).not.toBeInTheDocument();
-        expect(screen.queryByText('禁用通用 POC')).not.toBeInTheDocument();
+        expect(screen.queryByText('增量凭据字典')).not.toBeInTheDocument();
+        await user.click(getSwitchByFormLabel('弱口令验证'));
+        expect(await screen.findByText('内置服务字典始终参与验证')).toBeInTheDocument();
+        expect(screen.getByText(/只做增量补充/)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: '管理字典' })).toBeInTheDocument();
     });
-
-    it('submits negative config fields when positive scan switches are turned off', async () => {
-        const user = userEvent.setup();
-        render(
-            <MemoryRouter>
-                <App>
-                    <TaskManagement />
-                </App>
-            </MemoryRouter>
-        );
-
-        await user.click(await screen.findByRole('button', { name: /创建任务/i }));
-        await user.type(screen.getByPlaceholderText('自动生成任务名称'), '分页与开关回归任务');
-        await user.type(screen.getByPlaceholderText(/192\.168\.1\.10/), '127.0.0.1');
-        await user.click(screen.getByRole('button', { name: /高级设置/i }));
-        await user.click(screen.getByText('主机发现'));
-        await user.click(getSwitchByFormLabel('主机发现'));
-        await user.click(getSwitchByFormLabel('ICMP 探测'));
-        const dialog = screen.getByRole('dialog', { name: '创建扫描任务' });
-        await user.click(within(dialog).getByRole('button', { name: /创\s*建/ }));
-
-        await waitFor(() => expect(createTaskMock).toHaveBeenCalledWith(expect.objectContaining({
-            config: expect.objectContaining({
-                SkipHostDiscovery: true,
-                NoICMPPing: true,
-                NoPoc: true,
-                DisableGeneralPoc: true,
-            }),
-        }), expect.any(String)));
-    });
-
-    it('shows invalid targets and explicitly skips them before creating', async () => {
-		const user = userEvent.setup();
-		validateTargetsMock.mockResolvedValue({
-			valid: ['http://127.0.0.1:18080'],
-			invalid: [{ target: 'invalid target', reason: '无法识别的目标格式' }],
-			summary: { mode: 'direct', total: 2, urls: 1 },
-		});
-		render(
-			<MemoryRouter>
-				<App>
-					<TaskManagement />
-				</App>
-			</MemoryRouter>
-		);
-
-		await user.click(await screen.findByRole('button', { name: /创建任务/i }));
-		await user.type(screen.getByPlaceholderText('自动生成任务名称'), '目标预校验任务');
-		await user.type(screen.getByPlaceholderText(/192\.168\.1\.10/), 'http://127.0.0.1:18080{enter}invalid target');
-		const createDialog = screen.getByRole('dialog', { name: '创建扫描任务' });
-		await user.click(within(createDialog).getByRole('button', { name: /创\s*建/ }));
-
-		expect(await screen.findByText('目标预校验')).toBeInTheDocument();
-		expect(await screen.findByDisplayValue('invalid target')).toBeInTheDocument();
-		await user.click(screen.getByRole('button', { name: '跳过无效项并创建' }));
-
-		await waitFor(() => expect(createTaskMock).toHaveBeenCalledWith(expect.objectContaining({
-			skip_unsupported: true,
-			targets: expect.stringContaining('invalid target'),
-		}), expect.any(String)));
-	});
-
-	it('revalidates corrected invalid targets before creating', async () => {
-		const user = userEvent.setup();
-		validateTargetsMock
-			.mockResolvedValueOnce({
-				valid: ['http://127.0.0.1:18080'],
-				invalid: [{ target: 'bad target', reason: '无法识别的目标格式' }],
-				summary: { mode: 'direct', total: 2, urls: 1 },
-			})
-			.mockResolvedValueOnce({
-				valid: ['http://127.0.0.1:18080', 'https://example.test'],
-				invalid: [],
-				summary: { mode: 'direct', total: 2, urls: 2 },
-			});
-		render(
-			<MemoryRouter>
-				<App>
-					<TaskManagement />
-				</App>
-			</MemoryRouter>
-		);
-
-		await user.click(await screen.findByRole('button', { name: /创建任务/i }));
-		await user.type(screen.getByPlaceholderText('自动生成任务名称'), '目标修正任务');
-		await user.type(screen.getByPlaceholderText(/192\.168\.1\.10/), 'http://127.0.0.1:18080{enter}bad target');
-		await user.click(within(screen.getByRole('dialog', { name: '创建扫描任务' })).getByRole('button', { name: /创\s*建/ }));
-
-		const invalidInput = await screen.findByDisplayValue('bad target');
-		await user.clear(invalidInput);
-		await user.type(invalidInput, 'https://example.test');
-		await user.click(screen.getByRole('button', { name: '重新校验并创建' }));
-
-		await waitFor(() => expect(validateTargetsMock).toHaveBeenCalledTimes(2));
-		await waitFor(() => expect(createTaskMock).toHaveBeenCalledWith(expect.objectContaining({
-			skip_unsupported: false,
-			targets: 'http://127.0.0.1:18080\nhttps://example.test',
-		}), expect.any(String)));
-	});
 
     it('requests the next page from the server when table pagination changes', async () => {
         const user = userEvent.setup();
@@ -734,68 +624,6 @@ describe('TaskManagement', () => {
         expect(screen.getByText('上游内容变化（端口扫描）')).toBeInTheDocument();
     });
 
-	it('lets viewers preview fingerprint-matched POCs without exposing execution', async () => {
-		const user = userEvent.setup();
-		canAccessRoleMock.mockReturnValue(false);
-		listTasksMock.mockResolvedValue({
-			items: [{
-				ID: 'task-risk-preview', Name: 'Risk Preview Task', Status: 'FINISHED', TotalTargets: 1, CompletedTargets: 1,
-				TotalChunks: 1, CompletedChunks: 1, Priority: 1, CreatedAt: '2026-08-09T01:00:00Z',
-			} as API.RootTask],
-			total: 1, page: 1, page_size: 20, has_more: false,
-		});
-		getTaskDetailMock.mockResolvedValue({
-			task: {
-				id: 'task-risk-preview', name: 'Risk Preview Task', status: 'FINISHED', priority: 1,
-				total_chunks: 1, completed_chunks: 1, total_targets: 1, completed_targets: 1,
-				timeout_sec: 60, original_targets: '["https://risk.example"]', config: { NoPoc: true },
-				rule_version: 'rules-task-v1', current_config_version: 2,
-				created_at: '2026-08-09T01:00:00Z', updated_at: '2026-08-09T01:01:00Z',
-			},
-			sub_tasks: [], attempts: [], status_distribution: {}, reason_stats: [], audits: [],
-			result_stats: { assets: 1, fingerprints: 1, vulns: 0, severity: {} },
-		} satisfies API.TaskDetailResponse);
-		getTaskConfigRevisionsMock.mockResolvedValue({ task_id: 'task-risk-preview', current_config_version: 2, items: [] });
-		previewTaskRiskValidationMock.mockResolvedValue({
-			task: { id: 'task-risk-preview', name: 'Risk Preview Task', project_id: 'project-1' },
-			task_rule_version: 'rules-task-v1', rule_version: 'rules-current-v2', config_version: 2,
-			generated_at: '2026-08-09T02:00:00Z', plan_hash: 'a'.repeat(64),
-			summary: {
-				fingerprint_hits: 1, unique_assets: 1, products: 1, workflow_rules: 1, poc_rules: 1,
-				candidates: 1, estimated_requests: 4, second_confirmation_required: true,
-				second_confirmation_items: 1, unmatched_products: 0, excluded_mappings: 0,
-			},
-			items: [{
-				asset: { target: 'https://risk.example:443', url: 'https://risk.example:443', protocol: 'Web', port: 443, title: 'Risk App', service: 'https' },
-				endpoint: 'https://risk.example:443', products: ['nginx'], match_types: ['root'], workflow_sources: ['workflow.yaml'],
-				poc_name: 'nginx-risk', poc_file: 'nginx-risk.yaml', severity: 'high', execution_class: 'verification',
-				risk_level: 'high', requires_second_confirmation: true, poc_content_hash: 'poc-hash',
-				template_request_estimate: 4, estimated_requests: 4, estimate_basis: 'template_upper_bound',
-			}],
-			unmatched_products: [], excluded: [], page: 1, page_size: 50, total: 1, has_more: false,
-		} satisfies API.RiskValidationPreviewResponse);
-
-		render(
-			<MemoryRouter>
-				<App><TaskManagement /></App>
-			</MemoryRouter>
-		);
-
-		expect(await screen.findByText('Risk Preview Task')).toBeInTheDocument();
-		await user.click(screen.getByRole('button', { name: /详情/ }));
-		await user.click(await screen.findByRole('button', { name: /风险验证预览/ }));
-		await waitFor(() => expect(previewTaskRiskValidationMock).toHaveBeenCalledWith('task-risk-preview', 1, 50, { specified_pocs: [] }));
-		const previewNotice = await screen.findByText('此页面只生成预览，不会执行任何 POC');
-		const dialog = previewNotice.closest('[role="dialog"]') as HTMLElement | null;
-		if (!dialog) throw new Error('risk validation preview dialog not found');
-		expect(within(dialog).getByText('此页面只生成预览，不会执行任何 POC')).toBeInTheDocument();
-		expect(within(dialog).getByText('rules-current-v2')).toBeInTheDocument();
-		expect(within(dialog).getByText('https://risk.example:443')).toBeInTheDocument();
-		expect(within(dialog).getByText('nginx')).toBeInTheDocument();
-		expect(within(dialog).getByText('nginx-risk')).toBeInTheDocument();
-		expect(within(dialog).getByText('HIGH')).toBeInTheDocument();
-		expect(within(dialog).queryByRole('button', { name: /执行|确认验证/ })).not.toBeInTheDocument();
-	});
 
     it('reuses one idempotency key after a network failure, then creates a fresh intent after success', async () => {
         const user = userEvent.setup();
@@ -806,6 +634,8 @@ describe('TaskManagement', () => {
 
         await user.click(await screen.findByRole('button', { name: /创建任务/i }));
         await user.type(screen.getByPlaceholderText(/192\.168\.1\.10/), 'https://retry.example.test');
+        await user.click(screen.getByRole('checkbox', { name: /我确认全部目标/ }));
+        await screen.findByText('plan-hash'.slice(0, 16) + '…');
         const create = within(screen.getByRole('dialog', { name: '创建扫描任务' })).getByRole('button', { name: /创\s*建/ });
         await user.click(create);
         await waitFor(() => expect(createTaskMock).toHaveBeenCalledTimes(1));
@@ -817,6 +647,8 @@ describe('TaskManagement', () => {
 
         await user.click(await screen.findByRole('button', { name: /创建任务/i }));
         await user.type(screen.getByPlaceholderText(/192\.168\.1\.10/), 'https://new-intent.example.test');
+        await user.click(screen.getByRole('checkbox', { name: /我确认全部目标/ }));
+        await screen.findByText('plan-hash'.slice(0, 16) + '…');
         await user.click(within(screen.getByRole('dialog', { name: '创建扫描任务' })).getByRole('button', { name: /创\s*建/ }));
         await waitFor(() => expect(createTaskMock).toHaveBeenCalledTimes(3));
         expect(createTaskMock.mock.calls[2][1]).not.toBe(firstKey);
@@ -831,6 +663,8 @@ describe('TaskManagement', () => {
 
         await user.click(await screen.findByRole('button', { name: /创建任务/i }));
         await user.type(screen.getByPlaceholderText(/192\.168\.1\.10/), 'https://conflict.example.test');
+        await user.click(screen.getByRole('checkbox', { name: /我确认全部目标/ }));
+        await screen.findByText('plan-hash'.slice(0, 16) + '…');
         const create = within(screen.getByRole('dialog', { name: '创建扫描任务' })).getByRole('button', { name: /创\s*建/ });
         await user.click(create);
         await waitFor(() => expect(createTaskMock).toHaveBeenCalledTimes(1));
@@ -842,103 +676,25 @@ describe('TaskManagement', () => {
         expect(createTaskMock.mock.calls[1][1]).not.toBe(conflictKey);
     });
 
-    it('invalidates a pending unsupported-target payload when the project changes', async () => {
+    it('recompiles the pending Server plan when the project changes', async () => {
         const user = userEvent.setup();
         listProjectsMock.mockResolvedValue([
             { ID: 'project-1', Name: '项目一', Status: 'active' },
             { ID: 'project-2', Name: '项目二', Status: 'active' },
         ]);
-        validateTargetsMock.mockResolvedValue({
-            valid: ['https://valid.example.test'],
-            invalid: [{ target: 'bad target', reason: 'invalid' }],
-            summary: {},
-        });
         render(<MemoryRouter><App><TaskManagement /></App></MemoryRouter>);
 
         await user.click(await screen.findByRole('button', { name: /创建任务/i }));
-        await user.type(screen.getByPlaceholderText(/192\.168\.1\.10/), 'https://valid.example.test{enter}bad target');
-        await user.click(within(screen.getByRole('dialog', { name: '创建扫描任务' })).getByRole('button', { name: /创\s*建/ }));
-        expect(await screen.findByText('目标预校验')).toBeInTheDocument();
-
-		await user.click(screen.getByRole('button', { name: '返回修改' }));
-		const projectSelect = screen.getByRole('combobox', { name: '所属项目' });
-		fireEvent.mouseDown(projectSelect);
-		await user.click(await screen.findByText('项目二'));
-		expect(createTaskMock).not.toHaveBeenCalled();
+        await user.type(screen.getByPlaceholderText(/192\.168\.1\.10/), 'https://valid.example.test');
+        await user.click(screen.getByRole('checkbox', { name: /我确认全部目标/ }));
+        await waitFor(() => expect(previewScanPlanMock).toHaveBeenCalledWith(expect.objectContaining({ project_id: 'project-1' })));
+        const projectSelect = screen.getByRole('combobox', { name: '所属项目' });
+        fireEvent.mouseDown(projectSelect);
+        await user.click(await screen.findByText('项目二'));
+        await waitFor(() => expect(previewScanPlanMock).toHaveBeenLastCalledWith(expect.objectContaining({ project_id: 'project-2' })));
+        expect(createTaskMock).not.toHaveBeenCalled();
     });
 
-	it('requires explicit double confirmation before an operator creates a high-risk validation batch', async () => {
-		const user = userEvent.setup();
-		listTasksMock.mockResolvedValue({
-			items: [{
-				ID: 'task-risk-preview', Name: 'Risk Execute Task', Status: 'FINISHED', TotalTargets: 1, CompletedTargets: 1,
-				TotalChunks: 1, CompletedChunks: 1, Priority: 1, CreatedAt: '2026-08-09T01:00:00Z',
-			} as API.RootTask],
-			total: 1, page: 1, page_size: 20, has_more: false,
-		});
-		const detail = {
-			task: {
-				id: 'task-risk-preview', name: 'Risk Execute Task', status: 'FINISHED', priority: 1,
-				total_chunks: 1, completed_chunks: 1, total_targets: 1, completed_targets: 1,
-				timeout_sec: 60, original_targets: '["https://risk.example"]', config: { NoPoc: true },
-				rule_version: 'rules-task-v1', current_config_version: 2,
-				created_at: '2026-08-09T01:00:00Z', updated_at: '2026-08-09T01:01:00Z',
-			},
-			sub_tasks: [], attempts: [], status_distribution: {}, reason_stats: [], audits: [],
-			result_stats: { assets: 1, fingerprints: 1, vulns: 0, severity: {} },
-		} satisfies API.TaskDetailResponse;
-		getTaskDetailMock.mockResolvedValue(detail);
-		getTaskConfigRevisionsMock.mockResolvedValue({ task_id: 'task-risk-preview', current_config_version: 2, items: [] });
-		previewTaskRiskValidationMock.mockResolvedValue({
-			task: { id: 'task-risk-preview', name: 'Risk Execute Task', project_id: 'project-1' },
-			task_rule_version: 'rules-task-v1', rule_version: 'rules-current-v2', config_version: 2,
-			generated_at: '2026-08-09T02:00:00Z', plan_hash: 'b'.repeat(64),
-			summary: {
-				fingerprint_hits: 1, unique_assets: 1, products: 1, workflow_rules: 1, poc_rules: 1,
-				candidates: 1, estimated_requests: 4, second_confirmation_required: true,
-				second_confirmation_items: 1, unmatched_products: 0, excluded_mappings: 0,
-			},
-			items: [{
-				asset: { target: 'https://risk.example', url: 'https://risk.example', protocol: 'Web', port: 443, title: 'Risk App', service: 'https' },
-				endpoint: 'https://risk.example', products: ['nginx'], match_types: ['root'], workflow_sources: ['workflow.yaml'],
-				poc_name: 'nginx-risk', poc_file: 'nginx-risk.yaml', severity: 'high', execution_class: 'verification',
-				risk_level: 'high', requires_second_confirmation: true, poc_content_hash: 'poc-hash',
-				template_request_estimate: 4, estimated_requests: 4, estimate_basis: 'template_upper_bound',
-			}],
-			unmatched_products: [], excluded: [], page: 1, page_size: 50, total: 1, has_more: false,
-		} satisfies API.RiskValidationPreviewResponse);
-
-		render(<MemoryRouter><App><TaskManagement /></App></MemoryRouter>);
-		expect(await screen.findByText('Risk Execute Task')).toBeInTheDocument();
-		await user.click(screen.getByRole('button', { name: /详情/ }));
-		await user.click(await screen.findByRole('button', { name: /风险验证预览/ }));
-		const executeButton = await screen.findByRole('button', { name: '确认并创建风险验证批次' });
-		expect(executeButton).toBeDisabled();
-		await user.click(screen.getByRole('checkbox', { name: /我确认这些目标均在当前项目授权范围内/ }));
-		expect(executeButton).toBeDisabled();
-		await user.click(screen.getByRole('checkbox', { name: /我已复核高风险或风险未分类规则/ }));
-		expect(executeButton).toBeEnabled();
-		let resolvePending!: (response: API.ExecuteRiskValidationResponse) => void;
-		executeTaskRiskValidationMock
-			.mockRejectedValueOnce({ status: 409, message: 'Idempotency-Key conflict' })
-			.mockImplementationOnce(() => new Promise<API.ExecuteRiskValidationResponse>((resolve) => { resolvePending = resolve; }));
-		await user.click(executeButton);
-		await waitFor(() => expect(executeTaskRiskValidationMock).toHaveBeenCalledTimes(1));
-		const conflictKey = executeTaskRiskValidationMock.mock.calls[0][2];
-		expect(await screen.findByText(/风险验证请求冲突/)).toBeInTheDocument();
-		fireEvent.click(executeButton);
-		fireEvent.click(executeButton);
-		await waitFor(() => expect(executeTaskRiskValidationMock).toHaveBeenCalledTimes(2));
-		expect(executeTaskRiskValidationMock.mock.calls[1][2]).not.toBe(conflictKey);
-		await waitFor(() => expect(executeTaskRiskValidationMock).toHaveBeenCalledWith('task-risk-preview', {
-			plan_hash: 'b'.repeat(64), specified_pocs: [], selected: [],
-			confirmed: true, second_confirmation: true,
-		}, expect.any(String)));
-		resolvePending({ status: 'scheduled', replayed: true, task_id: 'task-risk-preview', batch_id: 'batch-risk', attempt_id: 'attempt-risk', candidate_count: 1, target_count: 1, poc_count: 1, estimated_requests: 4, config_version: 2, rule_version: 'rules-current-v2', dispatch_pending: 1 });
-		expect(await screen.findByText(/风险验证已确认，已复用此前结果，等待队列恢复/)).toBeInTheDocument();
-		await waitFor(() => expect(screen.queryByRole('dialog', { name: '风险验证预览' })).not.toBeInTheDocument());
-		expect(getTaskDetailMock.mock.calls.filter(([taskId]) => taskId === 'task-risk-preview').length).toBeGreaterThanOrEqual(2);
-	});
 
     it('adds a normalized batch from task details and refreshes the task', async () => {
         const user = userEvent.setup();

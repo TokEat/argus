@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
@@ -141,6 +142,56 @@ http:
 		if count != 0 {
 			t.Fatalf("preview must not create %s, count=%d", name, count)
 		}
+	}
+}
+
+func TestBuildTaskRiskValidationPreviewUsesAuditedReusedFingerprintSource(t *testing.T) {
+	store := setupAITestDB(t)
+	project := db.Project{ID: "project-reused-risk", TenantID: "default", OwnerUserID: "1", Name: "Reused", Status: "active"}
+	source := db.RootTask{ID: "task-reused-source", TenantID: "default", ProjectID: project.ID, UserID: "1", Name: "Source", Status: "FINISHED", RuleVersion: "rules-reused", CurrentConfigVersion: 1}
+	destination := db.RootTask{ID: "task-reused-destination", TenantID: "default", ProjectID: project.ID, UserID: "1", Name: "Destination", Status: "RUNNING", RuleVersion: "rules-reused", CurrentConfigVersion: 1}
+	sourceAttempt := db.SubTask{ID: "attempt-reused-source", TenantID: "default", ProjectID: project.ID, RootTaskID: source.ID, Status: "Done"}
+	destinationAttempt := db.SubTask{ID: "attempt-reused-destination", TenantID: "default", ProjectID: project.ID, RootTaskID: destination.ID, Status: "Done"}
+	target := "http://127.0.0.1:8082"
+	for _, value := range []interface{}{&project, &source, &destination, &sourceAttempt, &destinationAttempt, &db.SystemConfig{Key: "rule_version", Value: "rules-reused"}} {
+		if err := store.Create(value).Error; err != nil {
+			t.Fatalf("seed reused scope: %v", err)
+		}
+	}
+	if err := store.Create(&db.Asset{TenantID: "default", ProjectID: project.ID, TaskID: sourceAttempt.ID, RootTaskID: source.ID, Target: target, Protocol: "Web", Port: 8082, URL: target, Title: "Tomcat"}).Error; err != nil {
+		t.Fatalf("seed reused asset: %v", err)
+	}
+	if err := store.Create(&db.FingerprintHit{TenantID: "default", ProjectID: project.ID, TaskID: sourceAttempt.ID, RootTaskID: source.ID, Target: target, ProductName: "Apache-Tomcat"}).Error; err != nil {
+		t.Fatalf("seed reused hit: %v", err)
+	}
+	validUntil := time.Now().UTC().Add(time.Hour)
+	coverage := db.ScanCoverage{TenantID: "default", ProjectID: project.ID, NormalizedTarget: target, Stage: "fingerprint", Status: "complete", SourceTaskID: source.ID, SourceAttemptID: sourceAttempt.ID, ValidUntil: &validUntil}
+	if err := store.Create(&coverage).Error; err != nil {
+		t.Fatalf("seed reused coverage: %v", err)
+	}
+	if err := store.Create(&db.TaskCoverageLink{TenantID: "default", ProjectID: project.ID, RootTaskID: destination.ID, BatchID: "batch-reused", AttemptID: destinationAttempt.ID, WorkKeyHash: "work-reused", LinkType: "reused", Status: "active", CoverageID: coverage.ID, SourceTaskID: source.ID, SourceAttemptID: sourceAttempt.ID}).Error; err != nil {
+		t.Fatalf("seed reused link: %v", err)
+	}
+	arsenal := db.Arsenal{ID: "poc-reused", TenantID: "default", Type: "poc", FileName: "tomcat-safe.yaml", State: "Approved", Content: "id: tomcat-safe\ninfo:\n  name: safe\n  severity: low\nhttp:\n  - path: ['{{BaseURL}}/']\n"}
+	if err := store.Create(&arsenal).Error; err != nil {
+		t.Fatalf("seed reused arsenal: %v", err)
+	}
+	if err := store.Create(&db.PocRule{TenantID: "default", ArtifactID: arsenal.ID, SourceFile: arsenal.FileName, Name: "tomcat-safe", Severity: "low", ExecutionClass: db.PocExecutionClassDetection, RiskLevel: db.PocRiskLevelLow, ContentHash: "tomcat-safe-hash", State: "Approved", Enabled: true}).Error; err != nil {
+		t.Fatalf("seed reused POC: %v", err)
+	}
+	if err := store.Create(&db.WorkflowRule{TenantID: "default", ProductName: "Apache-Tomcat", PocName: arsenal.FileName, MatchType: "root", SourceFile: "workflow.yaml", State: "Approved", Enabled: true}).Error; err != nil {
+		t.Fatalf("seed reused workflow: %v", err)
+	}
+
+	preview, err := buildTaskRiskValidationPreview(t.Context(), "default", destination, riskValidationPreviewOptions{})
+	if err != nil {
+		t.Fatalf("build reused preview: %v", err)
+	}
+	if preview.Summary.FingerprintHits != 1 || preview.Summary.Candidates != 1 || len(preview.Candidates) != 1 {
+		t.Fatalf("reused fingerprint was not projected into validation: %+v", preview.Summary)
+	}
+	if preview.Candidates[0].Endpoint != target || preview.Candidates[0].Asset.Title != "Tomcat" {
+		t.Fatalf("unexpected reused candidate: %+v", preview.Candidates[0])
 	}
 }
 

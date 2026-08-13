@@ -1,53 +1,5 @@
 import axios from 'axios';
-import type { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
-
-// 创建 axios 实例 — 对齐 Server 端路由前缀 /api/v1
-const request: AxiosInstance = axios.create({
-    baseURL: '/api/v1',
-    timeout: 30000,
-    headers: {
-        'Content-Type': 'application/json',
-    },
-});
-
-// 请求拦截器
-request.interceptors.request.use(
-    (config) => {
-        const token = localStorage.getItem('token');
-        (config as AxiosRequestConfig & { __authTokenSnapshot?: string }).__authTokenSnapshot = token || '';
-        if (token) {
-            config.headers.Authorization = `Bearer ${token}`;
-        }
-        return config;
-    },
-    (error) => {
-        return Promise.reject(error);
-    }
-);
-
-// 响应拦截器
-request.interceptors.response.use(
-    (response: AxiosResponse) => {
-        return response.data;
-    },
-    (error) => {
-        if (error.response?.status === 401) {
-            // 防止竞态：
-            // 某些旧请求（例如登录前发出的请求）晚到 401，不应清掉新登录后的 token。
-            const currentToken = localStorage.getItem('token') || '';
-            const snapshotToken = ((error.config as AxiosRequestConfig & { __authTokenSnapshot?: string })?.__authTokenSnapshot || '') as string;
-            const isStale401 = snapshotToken !== '' && currentToken !== '' && snapshotToken !== currentToken;
-
-            if (!isStale401 && !window.location.pathname.includes('/login')) {
-                localStorage.removeItem('token');
-                window.location.href = '/login';
-            }
-        }
-        const data = error.response?.data;
-        const msg = typeof data === 'string' ? data.trim() : data?.error || data?.message || error.message;
-        return Promise.reject(msg);
-    }
-);
+import request from './request';
 
 // ===========================
 // Auth API
@@ -144,6 +96,36 @@ export async function createTask(data: API.CreateTaskRequest, idempotencyKey?: s
     // Older servers do not include this field; keep their response compatible
     // while exposing a stable boolean to the page.
     return { ...result, replayed: result.replayed ?? false };
+}
+
+export async function previewScanPlan(data: API.ScanPlanPreviewRequest): Promise<API.ScanPlanPreview> {
+    return request.post('/tasks/plan-preview', data);
+}
+
+export async function listCredentialDictionaries(projectId: string): Promise<API.CredentialDictionary[]> {
+    const result = await request.get(`/projects/${encodeURIComponent(projectId)}/credential-dictionaries`) as unknown as { items?: API.CredentialDictionary[] };
+    return result.items || [];
+}
+
+export async function createCredentialDictionary(projectId: string, data: { name: string; kind: 'username' | 'password'; values: string[] }): Promise<API.CredentialDictionary> {
+    return request.post(`/projects/${encodeURIComponent(projectId)}/credential-dictionaries`, data);
+}
+
+export async function addCredentialDictionaryRevision(projectId: string, dictionaryId: string, values: string[]): Promise<API.CredentialDictionary> {
+    return request.post(`/projects/${encodeURIComponent(projectId)}/credential-dictionaries/${encodeURIComponent(dictionaryId)}/revisions`, { values });
+}
+
+export async function deleteCredentialDictionary(projectId: string, dictionaryId: string): Promise<void> {
+    await request.delete(`/projects/${encodeURIComponent(projectId)}/credential-dictionaries/${encodeURIComponent(dictionaryId)}`);
+}
+
+export async function listTaskCredentialFindings(taskId: string): Promise<API.CredentialFinding[]> {
+    const result = await request.get(`/tasks/${encodeURIComponent(taskId)}/credential-findings`) as unknown as { items?: API.CredentialFinding[] };
+    return result.items || [];
+}
+
+export async function revealCredentialFinding(findingId: string): Promise<API.RevealedCredentialFinding> {
+    return request.post(`/credential-findings/${encodeURIComponent(findingId)}/reveal`);
 }
 
 export async function previewTaskSelector(data: API.TaskSelectorPreviewRequest): Promise<API.TaskSelectorPreview> {

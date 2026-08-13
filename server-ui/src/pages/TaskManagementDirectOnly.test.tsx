@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from 'antd';
 import { MemoryRouter } from 'react-router-dom';
 import TaskManagement from './TaskManagement';
-import { createTask, listProjects, listTasks, validateTargets } from '../services/api';
+import { createTask, listProjects, listTasks, previewScanPlan, validateTargets } from '../services/api';
 
 const { canAccessRoleMock } = vi.hoisted(() => ({
     canAccessRoleMock: vi.fn(() => true),
@@ -27,6 +27,8 @@ vi.mock('../services/api', () => ({
     listProjects: vi.fn(),
     getNodes: vi.fn().mockResolvedValue([]),
     createTask: vi.fn().mockResolvedValue({ status: 'ok' }),
+    previewScanPlan: vi.fn(),
+    listCredentialDictionaries: vi.fn().mockResolvedValue([]),
     validateTargets: vi.fn().mockResolvedValue({ valid: [], invalid: [], summary: {} }),
     previewTaskSelector: vi.fn().mockResolvedValue({
         matched_nodes: 0,
@@ -59,6 +61,7 @@ describe('TaskManagement direct-only task creation', () => {
     const createTaskMock = createTask as unknown as Mock;
     const listProjectsMock = listProjects as unknown as Mock;
     const listTasksMock = listTasks as unknown as Mock;
+    const previewScanPlanMock = previewScanPlan as unknown as Mock;
     const validateTargetsMock = validateTargets as unknown as Mock;
 
     beforeEach(() => {
@@ -68,6 +71,24 @@ describe('TaskManagement direct-only task creation', () => {
         listProjectsMock.mockResolvedValue([{ ID: 'project-1', Name: '默认项目', Status: 'active' }]);
         listTasksMock.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, has_more: false });
         validateTargetsMock.mockResolvedValue({ valid: [], invalid: [], summary: {} });
+        previewScanPlanMock.mockImplementation(async (request) => ({
+            policy: request.policy,
+            policy_hash: 'a'.repeat(64),
+            plan_hash: 'b'.repeat(64),
+            rule_version: 'test-rules',
+            port_count: 1000,
+            target_summary: { url: 1 },
+            stages: [
+                { id: 'host_discovery', enabled: true, reason: '自动依赖' },
+                { id: 'risk_validation', enabled: true, reason: '标准预设' },
+            ],
+            matched_agents: 1,
+            available_slots: 1,
+            estimated_requests: 1000,
+            custom_credential_pairs: 0,
+            credential_pair_limit: 50000,
+            validation_budget: { target_concurrency: 2, rate_limit: 10, credential_max_per_target: 50000, risk_budget_basis: 'workflow' },
+        }));
     });
 
     it('only exposes direct targets and strips legacy provider configuration', async () => {
@@ -83,21 +104,31 @@ describe('TaskManagement direct-only task creation', () => {
         expect(within(dialog).queryByText(/Quake 最大数量/)).not.toBeInTheDocument();
         expect(within(dialog).queryByPlaceholderText(/APIConfigFilePath/)).not.toBeInTheDocument();
 
+        expect(within(dialog).queryByLabelText('额外 Agent 配置 JSON')).not.toBeInTheDocument();
+        expect(within(dialog).queryByText(/PasswordFile/)).not.toBeInTheDocument();
+        expect(within(dialog).getByText('结构化专家配置')).toBeInTheDocument();
+
         await user.type(screen.getByPlaceholderText(/192\.168\.1\.10/), 'https://example.test');
-        await user.click(within(dialog).getByRole('button', { name: /高级设置/ }));
-        await user.click(within(dialog).getByRole('button', { name: /高级配置/ }));
-        fireEvent.change(screen.getByLabelText('额外 Agent 配置 JSON'), {
-            target: { value: '{"hunter":true,"Fofa":true,"Quake":true,"OnlyIPPort":true,"APIConfigFilePath":"config/api-config.yaml"}' },
-        });
-        await user.click(within(dialog).getByRole('button', { name: /创\s*建/ }));
+        await user.click(within(dialog).getByRole('checkbox'));
+        await waitFor(() => expect(previewScanPlanMock).toHaveBeenCalled());
+        await waitFor(() => expect(within(dialog).getByText(/bbbbbbbbbbbbbbbb/)).toBeInTheDocument());
+        await user.click(within(dialog).getByRole('button', { name: /按此计划创建/ }));
 
         await waitFor(() => expect(createTaskMock).toHaveBeenCalled());
-        const config = createTaskMock.mock.calls[0][0].config;
-        [
-            'Hunter', 'HunterPageSize', 'HunterMaxPageCount',
-            'Fofa', 'FofaMaxCount', 'Quake', 'QuakeSize',
-            'OnlyIPPort', 'LowPerceptionMode',
-            'hunter', 'APIConfigFilePath',
-        ].forEach((key) => expect(config).not.toHaveProperty(key));
+        const request = createTaskMock.mock.calls[0][0];
+        expect(request).toMatchObject({
+            project_id: 'project-1',
+            targets: 'https://example.test',
+            plan_hash: 'b'.repeat(64),
+            policy: {
+                schema_version: 'argus.scan-policy/v1',
+                preset: 'standard',
+                port_profile: 'top-1000',
+                scan_method: 'tcp',
+                authorization: { validation_confirmed: true },
+            },
+        });
+        expect(request).not.toHaveProperty('config');
+        expect(JSON.stringify(request)).not.toMatch(/Hunter|Fofa|Quake|OnlyIPPort|APIConfigFilePath/);
     });
 });

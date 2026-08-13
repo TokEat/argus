@@ -17,6 +17,7 @@ import { listProjects } from '../services/api';
 import { canAccessRole, getCurrentUserRole, roleLabel } from '../utils/auth';
 import type { UserRole } from '../utils/auth';
 import argusLogoIcon from '../assets/brand/argus-logo-icon.svg';
+import { PROJECTS_CHANGED_EVENT, projectChangePreference } from '../utils/projectSelection';
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -85,11 +86,11 @@ const BasicLayout: React.FC = () => {
         const tid = localStorage.getItem('tenant_id') || 'default';
         setTenantId(tid);
 
-        listProjects().then(res => {
+        const refreshProjects = (preferredProjectId = '') => listProjects().then(res => {
             const list = res || [];
             const activeProjects = list.filter(p => p.Status !== 'archived');
             setProjects(activeProjects);
-            const savedProj = localStorage.getItem('active_project_id');
+            const savedProj = preferredProjectId || localStorage.getItem('active_project_id');
             if (savedProj && activeProjects.some(p => p.ID === savedProj)) {
                 setSelectedProject(savedProj);
             } else if (activeProjects.length > 0) {
@@ -102,6 +103,12 @@ const BasicLayout: React.FC = () => {
         }).catch(err => {
             console.error('Failed to fetch projects', err);
         });
+        void refreshProjects();
+        const handleProjectsChanged = (event: Event) => {
+            void refreshProjects(projectChangePreference(event));
+        };
+        window.addEventListener(PROJECTS_CHANGED_EVENT, handleProjectsChanged);
+        return () => window.removeEventListener(PROJECTS_CHANGED_EVENT, handleProjectsChanged);
     }, [navigate]);
 
     // Inject identity context for Copilot

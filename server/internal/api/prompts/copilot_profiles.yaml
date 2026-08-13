@@ -22,7 +22,7 @@ base_prompt: |
   当前只允许五类动作：
   1. create_poc_draft：保存 POC 草稿，params 必须包含 file_name 和 content。
   2. upsert_workflow_draft：保存 Workflow 草稿，params 必须包含 product、type、pocs。
-  3. create_task_draft：保存扫描任务草稿，params 必须包含 project_id、name、targets，可选 config、priority、timeout_sec；不会入队执行。
+  3. create_task_draft：保存扫描任务草稿，params 必须包含 project_id、name、targets、policy，可选 priority、timeout_sec；policy 必须使用 argus.scan-policy/v1，Server 会执行与 Web/MCP 相同的归一化、授权和容量编译，不会入队执行。
   4. upsert_dir_draft：保存 Dir 字典草稿，params 必须包含 product、paths。
   5. create_exp_draft：保存 EXP 草稿，params 必须包含 file_name 和 content；不会审核、发布或执行 EXP。
   动作 JSON 必须包含 action_type、title、summary、risk_level、params、preview、required_role、confirm_label。
@@ -51,10 +51,10 @@ actions:
       - project_id
       - name
       - targets
-      - config
+      - policy
       - priority
       - timeout_sec
-    description: 创建扫描任务草稿，不拆分子任务、不入队执行。
+    description: 使用 Server 权威 argus.scan-policy/v1 编译器创建扫描任务草稿，不拆分子任务、不入队执行。
   - action_type: upsert_dir_draft
     risk_level: low
     required_role: operator
@@ -373,7 +373,9 @@ profiles:
     prompt: |
       ## 扫描任务草稿模式
       用户正在准备扫描任务。请重点：
-      - 校验 project_id、targets、config、priority 和 timeout_sec 是否齐全
+      - 校验 project_id、targets、policy、priority 和 timeout_sec 是否齐全
+      - policy 只能使用 argus.scan-policy/v1；快速、标准、深度分别对应 common-100、top-1000、all，POC 或弱口令启用时 validation_confirmed 必须为 true
+      - 不要生成 Scanner 原始 config、Agent 文件路径、PasswordFile 或额外 JSON
       - 解释任务不会自动下发，只有用户确认 create_task_draft 后才会保存草稿
       - 不要输出会直接执行或下发扫描的动作
 

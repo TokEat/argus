@@ -69,6 +69,8 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]inte
 		return c.yakshaExp(ctx, args)
 	case "argus_exp_workspace":
 		return c.expWorkspace(ctx, args)
+	case "argus_scan_task":
+		return c.scanTask(ctx, args)
 	default:
 		return nil, fmt.Errorf("unknown tool %q", name)
 	}

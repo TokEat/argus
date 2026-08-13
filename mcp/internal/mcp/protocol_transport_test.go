@@ -32,8 +32,8 @@ func TestSDKStreamableHTTPHandlerListsTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools over streamable http: %v", err)
 	}
-	if len(result.Tools) != 7 {
-		t.Fatalf("expected 7 tools over streamable http, got %d", len(result.Tools))
+	if len(result.Tools) != 8 {
+		t.Fatalf("expected 8 tools over streamable http, got %d", len(result.Tools))
 	}
 }
 

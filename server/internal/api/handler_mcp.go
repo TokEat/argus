@@ -47,7 +47,7 @@ type mcpResourceDoc struct {
 
 var mcpResourceDocs = []mcpResourceDoc{
 	{URI: "argus://argus-mcp/quickstart", Name: "Argus MCP Quickstart", Description: "How a source-less MCP client should read specs, debug, save, publish, and verify rules.", MIMEType: "text/markdown", Text: argusMCPQuickstartText},
-	{URI: "argus://argus-mcp/tool-guide", Name: "Argus MCP Tool Guide", Description: "Field combinations and expected sequencing for the four aggregate MCP tools.", MIMEType: "text/markdown", Text: argusMCPToolGuideText},
+	{URI: "argus://argus-mcp/tool-guide", Name: "Argus MCP Tool Guide", Description: "Field combinations and expected sequencing for the aggregate MCP tools.", MIMEType: "text/markdown", Text: argusMCPToolGuideText},
 	{URI: "argus://fingerprint/spec", Name: "Argus Fingerprint Spec", Description: "Fingerprint dictionary format and expression examples.", MIMEType: "text/markdown", Text: fingerprintSpecText},
 	{URI: "argus://fingerprint/template", Name: "Argus Fingerprint Template", Description: "Minimal fingerprint YAML snippet.", MIMEType: "text/yaml", Text: fingerprintTemplateText},
 	{URI: "argus://poc/spec", Name: "Argus POC Spec", Description: "POC YAML format accepted by Argus debug and draft flows.", MIMEType: "text/markdown", Text: pocSpecText},
@@ -936,13 +936,13 @@ Lifecycle intents:
 `
 
 const argusMCPToolGuideText = `# Argus MCP tool guide
-
-Argus intentionally exposes four aggregate tools:
+Argus exposes aggregate tools with Server-enforced governance boundaries:
 
 - argus_context: read specs/templates, list Agents, inspect Agent pyenv, query workflow_links, workflow_recommend and workflow_conflicts.
 - argus_rule_debug: validate fingerprint, POC or pyexp behavior through Argus Server and an online Agent.
 - argus_rule_save: save fingerprint, POC, workflow or pyexp into the Argus database as a Draft artifact. Optional intent: test_only, production_candidate, approved_reusable.
 - argus_rule_apply: admin-only controlled actions. action=publish uses stable_ref hash/version. action=install_requirements only supports pyexp.
+- argus_scan_task: preview and create argus.scan-policy/v1 tasks through one Server-authoritative compiler. Call preview first, then create with the exact plan_hash and a stable idempotency_key. It does not accept Scanner raw config, Agent paths, or a separate manual POC phase.
 
 Reference model:
 - stable_ref.artifact_id, rule_id, file_name, hash and version are the preferred references.

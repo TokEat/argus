@@ -293,7 +293,7 @@ func TestConfirmCopilotActionCreatesTaskDraftWithoutDispatch(t *testing.T) {
 		"action":{
 			"action_type":"create_task_draft",
 			"required_role":"operator",
-			"params":{"project_id":"proj-1","name":"AI draft","targets":["example.com"],"config":{},"priority":1}
+			"params":{"project_id":"proj-1","name":"AI draft","targets":["example.com"],"priority":1,"policy":{"schema_version":"argus.scan-policy/v1","preset":"quick","port_profile":"common-100","scan_method":"tcp","intensity":"low","capabilities":{"subdomain_discovery":true},"credentials":{"pair_limit":50000},"authorization":{"validation_confirmed":false}}}
 		},
 		"page_context":{"module":"task_list"}
 	}`
@@ -319,6 +319,13 @@ func TestConfirmCopilotActionCreatesTaskDraftWithoutDispatch(t *testing.T) {
 	}
 	if root.CurrentConfigVersion != 1 || revision.ConfigHash == "" || revision.CreatedBy != "u1" {
 		t.Fatalf("unexpected draft config version: root=%+v revision=%+v", root, revision)
+	}
+	var intent db.ScanPolicyIntent
+	if err := store.First(&intent, "root_task_id = ?", root.ID).Error; err != nil {
+		t.Fatalf("expected Server-compiled scan policy intent: %v", err)
+	}
+	if intent.SchemaVersion != "argus.scan-policy/v1" || intent.PolicyHash == "" || intent.PlanHash == "" {
+		t.Fatalf("unexpected semantic scan policy intent: %+v", intent)
 	}
 }
 

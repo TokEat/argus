@@ -222,6 +222,10 @@ func buildTaskRiskValidationPreview(ctx context.Context, tenantID string, task d
 	if err != nil {
 		return preview, err
 	}
+	reuseSources, err := taskFingerprintReuseSources(ctx, tenantID, task)
+	if err != nil {
+		return preview, err
+	}
 
 	var hits []db.FingerprintHit
 	hitQuery := db.DB.WithContext(ctx).Where("tenant_id = ? AND project_id = ?", tenantID, task.ProjectID)
@@ -233,6 +237,11 @@ func buildTaskRiskValidationPreview(ctx context.Context, tenantID string, task d
 	if err := hitQuery.Order("target asc, product_name asc").Find(&hits).Error; err != nil {
 		return preview, fmt.Errorf("load task fingerprints: %w", err)
 	}
+	reusedHits, err := loadReusedFingerprintHits(ctx, tenantID, task.ProjectID, reuseSources)
+	if err != nil {
+		return preview, err
+	}
+	hits = append(hits, reusedHits...)
 	hits = uniqueRiskValidationHits(hits)
 	preview.Summary.FingerprintHits = len(hits)
 
@@ -252,7 +261,7 @@ func buildTaskRiskValidationPreview(ctx context.Context, tenantID string, task d
 	}
 	preview.Summary.Products = len(productLookup)
 
-	assets, assetsByTarget, err := loadRiskValidationAssets(ctx, tenantID, task, subTaskIDs)
+	assets, assetsByTarget, err := loadRiskValidationAssets(ctx, tenantID, task, subTaskIDs, reuseSources)
 	if err != nil {
 		return preview, err
 	}
@@ -534,46 +543,6 @@ func uniqueRiskValidationHits(hits []db.FingerprintHit) []db.FingerprintHit {
 		out = append(out, hit)
 	}
 	return out
-}
-
-func loadRiskValidationAssets(ctx context.Context, tenantID string, task db.RootTask, subTaskIDs []string) ([]riskValidationAssetPreview, map[string]riskValidationAssetPreview, error) {
-	byTarget := make(map[string]riskValidationAssetPreview)
-	var assets []db.Asset
-	query := db.DB.WithContext(ctx).Where("tenant_id = ? AND project_id = ?", tenantID, task.ProjectID)
-	if len(subTaskIDs) > 0 {
-		query = query.Where("(root_task_id = ? OR task_id IN ?)", task.ID, subTaskIDs)
-	} else {
-		query = query.Where("root_task_id = ?", task.ID)
-	}
-	if err := query.Order("target asc, updated_at desc").Find(&assets).Error; err != nil {
-		return nil, nil, fmt.Errorf("load task assets: %w", err)
-	}
-	out := make([]riskValidationAssetPreview, 0, len(assets))
-	seenEndpoint := make(map[string]struct{}, len(assets))
-	for _, asset := range assets {
-		candidate := riskValidationAssetPreview{
-			Target: asset.Target, URL: asset.URL, Protocol: asset.Protocol,
-			Port: asset.Port, Title: asset.Title, Service: asset.Service,
-		}
-		current, exists := byTarget[asset.Target]
-		if !exists || (current.URL == "" && candidate.URL != "") {
-			byTarget[asset.Target] = candidate
-		}
-		endpoint := strings.TrimSpace(candidate.URL)
-		if endpoint == "" {
-			endpoint = strings.TrimSpace(candidate.Target)
-		}
-		key := strings.ToLower(endpoint) + "\x00" + strings.ToLower(strings.TrimSpace(candidate.Target))
-		if endpoint == "" {
-			continue
-		}
-		if _, duplicate := seenEndpoint[key]; duplicate {
-			continue
-		}
-		seenEndpoint[key] = struct{}{}
-		out = append(out, candidate)
-	}
-	return out, byTarget, nil
 }
 
 func pocReferenceAliases(raw string) []string {

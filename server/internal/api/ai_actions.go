@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/P0lar1ght/argus/server/internal/db"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 	"github.com/P0lar1ght/argus/shared/proto/pyexp"
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
@@ -178,41 +179,35 @@ func executeCreateTaskDraft(c *gin.Context, params map[string]interface{}) (copi
 		return copilotActionResult{}, fmt.Errorf("project is not active")
 	}
 
-	configRaw, err := rawJSONParam(params, "config")
-	if err != nil {
-		return copilotActionResult{}, err
-	}
-	configJSON, targetMode, err := normalizeTaskConfigPayload(configRaw)
-	if err != nil {
-		return copilotActionResult{}, err
-	}
 	targetsRaw, err := rawJSONParam(params, "targets")
 	if err != nil {
 		return copilotActionResult{}, err
 	}
-	targets, targetSummary, err := parseAndValidateTargetsForMode(targetsRaw, targetMode)
+	policyRaw, err := rawJSONParam(params, "policy")
 	if err != nil {
-		return copilotActionResult{}, err
+		return copilotActionResult{}, fmt.Errorf("policy is required: %w", err)
 	}
-	if len(targets) == 0 {
-		return copilotActionResult{}, fmt.Errorf("targets is empty")
-	}
-	targetsJSON, err := json.Marshal(targets)
-	if err != nil {
-		return copilotActionResult{}, err
+	var policy scanpolicy.Policy
+	if err := json.Unmarshal(policyRaw, &policy); err != nil {
+		return copilotActionResult{}, fmt.Errorf("policy is invalid: %w", err)
 	}
 
 	priority := intParam(params, "priority", 1)
-	if priority < 0 || priority > 2 {
-		return copilotActionResult{}, fmt.Errorf("priority must be 0, 1, or 2")
+	timeoutSec := intParam(params, "timeout_sec", 3600)
+	plan, err := compileTaskScanPolicy(c, scanPolicyPlanRequest{
+		ProjectID: projectID, Targets: targetsRaw, Policy: policy,
+		Priority: &priority, TimeoutSec: &timeoutSec,
+	})
+	if err != nil {
+		return copilotActionResult{}, fmt.Errorf("compile Server scan policy: %w", err)
 	}
-	timeoutSec := intParam(params, "timeout_sec", 0)
-	if timeoutSec < 0 {
-		return copilotActionResult{}, fmt.Errorf("timeout_sec must be greater than or equal to 0")
+	targetsJSON, err := json.Marshal(plan.TargetsNormalized)
+	if err != nil {
+		return copilotActionResult{}, err
 	}
 	name := strings.TrimSpace(stringParam(params, "name"))
 	if name == "" {
-		name = targets[0]
+		name = plan.TargetsNormalized[0]
 	}
 
 	taskID := fmt.Sprintf("task-draft-%d", time.Now().UnixNano())
@@ -224,21 +219,28 @@ func executeCreateTaskDraft(c *gin.Context, params map[string]interface{}) (copi
 		Name:                 name,
 		Status:               "Draft",
 		OriginalTargets:      string(targetsJSON),
-		Config:               configJSON,
+		Config:               plan.ScannerConfig,
 		TotalChunks:          0,
 		CompletedChunks:      0,
-		TotalTargets:         len(targets),
+		TotalTargets:         len(plan.TargetsNormalized),
 		CompletedTargets:     0,
 		Priority:             priority,
 		TimeoutSec:           timeoutSec,
 		CurrentConfigVersion: 1,
 	}
-	revision := db.NewTaskConfigRevision(rootTask, 1, "{}", "{}", currentUserID(c), "initial draft configuration")
+	revision := db.NewTaskConfigRevision(rootTask, 1, "{}", plan.SelectorRules, currentUserID(c), "initial semantic scan policy draft")
+	policyIntent, err := newScanPolicyIntent(plan, currentTenantID(c), projectID, taskID, currentUserID(c))
+	if err != nil {
+		return copilotActionResult{}, err
+	}
 	if err := db.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&rootTask).Error; err != nil {
 			return err
 		}
-		return tx.Create(&revision).Error
+		if err := tx.Create(&revision).Error; err != nil {
+			return err
+		}
+		return tx.Create(policyIntent).Error
 	}); err != nil {
 		return copilotActionResult{}, err
 	}
@@ -252,7 +254,10 @@ func executeCreateTaskDraft(c *gin.Context, params map[string]interface{}) (copi
 			"project_id":     projectID,
 			"state":          "Draft",
 			"config_version": 1,
-			"target_summary": targetSummary,
+			"target_summary": plan.TargetSummary,
+			"policy_hash":    plan.PolicyHash,
+			"plan_hash":      plan.PlanHash,
+			"stages":         plan.Stages,
 		},
 	}, nil
 }

@@ -67,7 +67,7 @@ func RegisterArgusMCP(server *sdkmcp.Server, client *Client) {
 			}
 			result, err := client.CallTool(ctx, tool.Name, args)
 			if err != nil {
-				if tool.Name == "argus_yaksha_exp" || tool.Name == "argus_exp_workspace" {
+				if tool.Name == "argus_yaksha_exp" || tool.Name == "argus_exp_workspace" || tool.Name == "argus_scan_task" {
 					return &sdkmcp.CallToolResult{
 						Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: err.Error()}},
 						IsError: true,
@@ -79,7 +79,7 @@ func RegisterArgusMCP(server *sdkmcp.Server, client *Client) {
 			response := &sdkmcp.CallToolResult{
 				Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: string(data)}},
 			}
-			if tool.Name == "argus_yaksha_exp" || tool.Name == "argus_exp_workspace" {
+			if tool.Name == "argus_yaksha_exp" || tool.Name == "argus_exp_workspace" || tool.Name == "argus_scan_task" {
 				response.StructuredContent = result
 			}
 			return response, nil
@@ -90,7 +90,7 @@ func RegisterArgusMCP(server *sdkmcp.Server, client *Client) {
 func resources() []*sdkmcp.Resource {
 	return []*sdkmcp.Resource{
 		{URI: "argus://argus-mcp/quickstart", Name: "Argus MCP Quickstart", Description: "Start here when the client has no Argus source code.", MIMEType: "text/markdown"},
-		{URI: "argus://argus-mcp/tool-guide", Name: "Argus MCP Tool Guide", Description: "How to use the four aggregate MCP tools and their required field combinations.", MIMEType: "text/markdown"},
+		{URI: "argus://argus-mcp/tool-guide", Name: "Argus MCP Tool Guide", Description: "How to use the aggregate MCP tools and their required field combinations.", MIMEType: "text/markdown"},
 		{URI: "argus://fingerprint/spec", Name: "Argus Fingerprint Spec", Description: "Fingerprint YAML format and rule expression examples.", MIMEType: "text/markdown"},
 		{URI: "argus://fingerprint/template", Name: "Argus Fingerprint Template", Description: "Minimal fingerprint YAML snippet.", MIMEType: "text/yaml"},
 		{URI: "argus://poc/spec", Name: "Argus POC Spec", Description: "POC YAML format and debug/save boundaries.", MIMEType: "text/markdown"},
@@ -113,7 +113,22 @@ func tools() []*sdkmcp.Tool {
 		{Name: "argus_rule_apply", Description: "Admin-only controlled action. action=publish activates a Draft artifact and should use stable_ref fields from argus_rule_save; action=install_requirements only supports saved pyexp rules and also uses stable_ref fields.", InputSchema: objectSchema(map[string]interface{}{"action": enumSchema([]string{"publish", "install_requirements"}), "rule_type": enumSchema([]string{"fingerprint", "poc", "workflow", "pyexp"}), "artifact_id": stringSchema("Stable DB artifact id from argus_rule_save"), "rule_id": stringSchema("Stable EXP rule id from ARGUS_EXP.id"), "file_name": stringSchema("Draft artifact display file name"), "hash": stringSchema("Expected draft hash"), "version": map[string]interface{}{"type": "integer"}, "agent_id": stringSchema("Agent ID for install_requirements")}, []string{"action", "rule_type"})},
 		{Name: "argus_yaksha_exp", Title: "Yaksha EXP Runtime", Description: "Operate one sealed single-file Yaklang EXP through the persistent independent Yaksha runtime. inspect derives the official cli.* UI plus literal yaksha.call/yaksha.asset references; validate checks source, params, dependencies, assets, exact network targets, and egress shape; test is fixture-only and always offline; debug returns complete unredacted HTTP/TCP Trace; run executes once. exp_id + revision + source_sha256 bind an immutable source identity; dependencies are pinned child revisions and assets are hash-bound content. Egress explicitly selects disabled, direct, a per-call write-only SOCKS5 route, or an authorized Agent using agent_id plus risk_confirmed=true. Agent mode creates a single-use Server Route and never exposes route_id or Gateway credentials. This tool does not expose filesystem or object-storage paths.", Meta: sdkmcp.Meta{"ui": map[string]interface{}{"resourceUri": expConsoleURI, "visibility": []string{"model", "app"}}}, InputSchema: yakshaInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
 		{Name: "argus_exp_workspace", Title: "Yaksha EXP Workspace", Description: "Manage the Server-authoritative Yaksha EXP workspace: EXP metadata, immutable revisions, hash-bound Assets, Fixture acceptance cases, publication, rollback pointers and run history. All operations are tenant-scoped and require EXP authorization; publication/deprecation/rollback remain Admin-only. Source, Asset content and full run artifacts are stored in private MinIO and no object key, credential or host path is exposed.", InputSchema: expWorkspaceInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
+		{Name: "argus_scan_task", Title: "Argus Scan Plan", Description: "Preview or create one authorized scan through the Server-authoritative argus.scan-policy/v1 compiler. Always call action=preview first, show its stages, port count, Agent capacity, POC scope and credential budget to the user, then pass the exact returned plan_hash to action=create. POC and credential validation share one explicit authorization confirmation. This tool never accepts Scanner raw config, Agent file paths or an independent manual POC phase.", InputSchema: scanTaskInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
 	}
+}
+
+func scanTaskInputSchema() map[string]interface{} {
+	return objectSchema(map[string]interface{}{
+		"action":          enumSchema([]string{"preview", "create"}),
+		"project_id":      stringSchema("Tenant-scoped project ID"),
+		"name":            stringSchema("Optional task name"),
+		"targets":         map[string]interface{}{"oneOf": []interface{}{map[string]interface{}{"type": "string"}, map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}}, "description": "Authorized targets as newline text or a string array"},
+		"policy":          map[string]interface{}{"type": "object", "description": "Complete argus.scan-policy/v1 policy; Server normalizes it and verifies dictionary revisions, authorization and Agent capacity"},
+		"priority":        map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 2},
+		"timeout_sec":     map[string]interface{}{"type": "integer", "minimum": 0},
+		"plan_hash":       stringSchema("Exact plan_hash returned by preview; required for create"),
+		"idempotency_key": stringSchema("Stable UUID-like key for this create intent; required for create and reused only when retrying the identical request"),
+	}, []string{"action", "project_id", "targets", "policy"})
 }
 
 func objectSchema(properties map[string]interface{}, required []string) map[string]interface{} {

@@ -35,7 +35,15 @@ func (c *Client) do(ctx context.Context, method, path string, body interface{}, 
 	return c.transport.doJSON(ctx, method, path, body, out)
 }
 
+func (c *Client) doWithHeaders(ctx context.Context, method, path string, body interface{}, out interface{}, headers map[string]string) error {
+	return c.transport.doJSONWithHeaders(ctx, method, path, body, out, headers)
+}
+
 func (t *httpTransport) doJSON(ctx context.Context, method, path string, body interface{}, out interface{}) error {
+	return t.doJSONWithHeaders(ctx, method, path, body, out, nil)
+}
+
+func (t *httpTransport) doJSONWithHeaders(ctx context.Context, method, path string, body interface{}, out interface{}, headers map[string]string) error {
 	if t.baseURL == "" {
 		return fmt.Errorf("ARGUS_BASE_URL is required")
 	}
@@ -56,6 +64,11 @@ func (t *httpTransport) doJSON(ctx context.Context, method, path string, body in
 	}
 	if t.token != "" {
 		req.Header.Set("Authorization", "Bearer "+t.token)
+	}
+	for key, value := range headers {
+		if strings.TrimSpace(key) != "" && strings.TrimSpace(value) != "" {
+			req.Header.Set(key, value)
+		}
 	}
 	resp, err := t.client.Do(req)
 	if err != nil {
