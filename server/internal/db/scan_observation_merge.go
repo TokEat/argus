@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
@@ -313,32 +312,6 @@ func sha256Hex(value []byte) string {
 
 func targetObservationEventID(event scanplan.StageObservationEvent, target string) string {
 	return sha256Hex([]byte(strings.Join([]string{event.EventID, event.AttemptID, string(event.Stage), target}, "\x00")))
-}
-
-func riskValidationPOCSetHash(config, target string) (string, bool) {
-	var internal struct {
-		ExecutionMode           string
-		RiskValidationTargets   map[string][]string
-		RiskValidationPocHashes map[string]string
-	}
-	if json.Unmarshal([]byte(config), &internal) != nil || !strings.EqualFold(strings.TrimSpace(internal.ExecutionMode), "risk_validation") {
-		return "", false
-	}
-	pocs := append([]string(nil), internal.RiskValidationTargets[target]...)
-	if len(pocs) == 0 {
-		return "", false
-	}
-	sort.Strings(pocs)
-	parts := make([]string, 0, len(pocs)*2)
-	for _, poc := range pocs {
-		poc = strings.TrimSpace(poc)
-		hash := strings.ToLower(strings.TrimSpace(internal.RiskValidationPocHashes[poc]))
-		if poc == "" || hash == "" {
-			return "", false
-		}
-		parts = append(parts, poc, hash)
-	}
-	return sha256Hex([]byte(strings.Join(parts, "\x00"))), true
 }
 
 func latestEndpointContentHash(tx *gorm.DB, tenantID, projectID, networkZone, targetHash string) (string, bool) {

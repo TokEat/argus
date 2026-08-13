@@ -233,6 +233,20 @@ func compileTaskScanPolicy(c *gin.Context, req scanPolicyPlanRequest) (scanPolic
 	config.Password = ""
 	config.PasswordFile = ""
 	applyPolicyIntensity(&config, normalized.Intensity)
+	portCount := scanpolicy.PortCount(ports)
+	protocolLimit := portCount * len(targets)
+	if protocolLimit < 1 {
+		protocolLimit = 1
+	}
+	if protocolLimit > scanpolicy.MaximumGoPocTargets {
+		protocolLimit = scanpolicy.MaximumGoPocTargets
+	}
+	_, protocolRate := validationBudgetLimits(normalized.Intensity)
+	config.GoPocCatalogSHA256 = scanpolicy.GoPocCatalogSHA256()
+	config.ProtocolCheckEnabled = true
+	config.ProtocolCheckTargetLimit = protocolLimit
+	config.ProtocolCheckRateLimit = protocolRate
+	config.ProtocolCheckRequestBudget = int64(protocolLimit)
 	configJSON, err := json.Marshal(config)
 	if err != nil {
 		return scanPolicyPlan{}, err
@@ -256,6 +270,7 @@ func compileTaskScanPolicy(c *gin.Context, req scanPolicyPlanRequest) (scanPolic
 	if normalized.Subdomains.BruteforceDepth > 1 {
 		selectorRules.Match["subdomain_depth"] = []string{"v1"}
 	}
+	selectorRules.Match["gopoc_scoped"] = []string{"v1"}
 	if len(selectorRules.NotMatch) == 0 {
 		selectorRules.NotMatch = nil
 	}
@@ -274,18 +289,17 @@ func compileTaskScanPolicy(c *gin.Context, req scanPolicyPlanRequest) (scanPolic
 	if err != nil {
 		return scanPolicyPlan{}, err
 	}
-	portCount := scanpolicy.PortCount(ports)
-	estimated := int64(portCount) * int64(len(targets))
+	estimated := int64(portCount)*int64(len(targets)) + int64(protocolLimit)
 	validationConcurrency, validationRate := validationBudgetLimits(normalized.Intensity)
 	stages := []scanPolicyStagePreview{
 		{ID: "host_discovery", Enabled: true, Targets: len(targets)},
 		{ID: "subdomain_discovery", Enabled: normalized.Capabilities.SubdomainDiscovery, Targets: summary.Domains + summary.DomainPorts + summary.URLs, Reason: "被动来源收集；深度模式可叠加 Revision 绑定的字典爆破"},
 		{ID: "port_scan", DependsOn: []string{"host_discovery"}, Enabled: true, Targets: len(targets)},
-		{ID: "protocol_identification", DependsOn: []string{"port_scan"}, Enabled: true},
+		{ID: "protocol_identification", DependsOn: []string{"port_scan"}, Enabled: true, Reason: "响应识别后执行受审核的 GoPoc 协议检查；只形成资产证据，不计为漏洞"},
 		{ID: "http_probe", DependsOn: []string{"protocol_identification"}, Enabled: true},
 		{ID: "directory_probe", DependsOn: []string{"http_probe"}, Enabled: normalized.Capabilities.DirectoryProbe, Reason: "请求规则定义的产品特征路径，不执行通用目录扫描"},
 		{ID: "fingerprint", DependsOn: []string{"http_probe", "protocol_identification"}, Enabled: true},
-		{ID: "risk_validation", DependsOn: []string{"fingerprint"}, Enabled: normalized.Capabilities.RiskValidation, Reason: "仅密封已审核、已启用且由指纹 Workflow 命中的规则", MatchedAgents: riskMatched, AvailableSlots: riskSlots, AgentReasons: riskReasons},
+		{ID: "risk_validation", DependsOn: []string{"fingerprint"}, Enabled: normalized.Capabilities.RiskValidation, Reason: "执行 Workflow 命中的 Nuclei 与精确服务命中的受审核 GoPoc 漏洞检查", MatchedAgents: riskMatched, AvailableSlots: riskSlots, AgentReasons: riskReasons},
 		{ID: "credential_validation", DependsOn: []string{"protocol_identification"}, Enabled: normalized.Capabilities.CredentialValidation, Reason: "内置服务凭据字典始终保留", MatchedAgents: credentialMatched, AvailableSlots: credentialSlots, AgentReasons: credentialReasons},
 	}
 	subdomainWords, err := subdomaindictionary.LoadValues(db.DB, normalized, currentTenantID(c), req.ProjectID, true)

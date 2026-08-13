@@ -168,6 +168,8 @@ describe('TaskManagement', () => {
         expect(screen.queryByText('弱口令文件')).not.toBeInTheDocument();
         expect(screen.queryByText('额外 Agent 配置 JSON')).not.toBeInTheDocument();
         expect(screen.queryByText('POC 已与普通资产扫描隔离')).not.toBeInTheDocument();
+		expect(screen.getByText('GoPoc 是内部执行框架，不是第三个扫描开关')).toBeInTheDocument();
+		expect(screen.getByText(/漏洞类 GoPoc 与 Nuclei 统一归入自动 POC/)).toBeInTheDocument();
     });
 
     it('creates the task with the exact Server plan hash after one authorization confirmation', async () => {

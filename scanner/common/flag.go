@@ -644,7 +644,7 @@ func FlagWithError() error {
 		flagSet.StringVarP(&structs.GlobalConfig.PocNameForSearch, "poc-name", "poc", "", "模糊匹配Poc名称"),
 		flagSet.BoolVarP(&structs.GlobalConfig.NoInteractsh, "no-interactsh", "ni", true, "禁用Interactsh服务器，排除反连模版"),
 		flagSet.IntVarP(&structs.GlobalConfig.GoPocThreads, "golang-poc-threads", "gpt", 50, "GoPoc运行线程"),
-		flagSet.BoolVarP(&structs.GlobalConfig.GolangPoc, "golang-poc", "gp", false, "开启弱口令/Golang Poc探测"),
+		flagSet.BoolVarP(&structs.GlobalConfig.GolangPoc, "golang-poc", "gp", false, "兼容模式：混合执行 GoPoc 协议、漏洞与凭据插件（Server 不使用）"),
 		flagSet.BoolVarP(&structs.GlobalConfig.DisableGeneralPoc, "disable-general-poc", "dgp", false, "禁用无视指纹的漏洞映射"),
 		flagSet.BoolVar(&structs.GlobalConfig.WAFBypassHeaders, "waf-bypass-headers", true, "启用WAF绕过请求头，默认开启"),
 		flagSet.BoolVar(&disableWAFBypassHeaders, "no-waf-bypass-headers", false, "关闭默认WAF绕过请求头"),

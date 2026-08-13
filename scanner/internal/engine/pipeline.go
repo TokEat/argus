@@ -267,6 +267,10 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	if resumeStageEnabled(ctx, scanplan.StageProtocolIdentify) && (len(getProtocalInput) > 0 || ctx.ResumePlan != nil) {
 		emitPhase(ctx, PhaseProtocol, "start", fmt.Sprintf("%d targets", len(getProtocalInput)))
 		currentProtocolRuntime(ctx, emit).Identify(getProtocalInput, cfg.GetBannerThreads, cfg.GetBannerTimeout)
+		if err := runProtocolCheckPhase(ctx, &cfg, currentPipelineIPPortMap(ctx)); err != nil {
+			emitPhase(ctx, PhaseProtocol, "failed", "scoped GoPoc protocol checks failed")
+			return err
+		}
 		emitPhase(ctx, PhaseProtocol, "end", "")
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {

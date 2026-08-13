@@ -5,6 +5,8 @@ import (
 	"net"
 	"sync"
 
+	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
+
 	"github.com/lcvvvv/gonmap"
 	"github.com/projectdiscovery/hmap/store/hybrid"
 )
@@ -52,6 +54,12 @@ type Config struct {
 	RequiredRuleVersion         string
 	RiskValidationTargets       map[string][]string
 	RiskValidationPocHashes     map[string]string
+	RiskValidationGoPocTargets  []scanpolicy.GoPocTarget
+	GoPocCatalogSHA256          string
+	ProtocolCheckEnabled        bool
+	ProtocolCheckTargetLimit    int
+	ProtocolCheckRateLimit      int
+	ProtocolCheckRequestBudget  int64
 	CredentialValidationTargets []CredentialValidationTarget
 	CredentialBundleRef         string
 	CredentialBundleSHA256      string
@@ -289,6 +297,9 @@ type HostInfo struct {
 	PasswordFile        string
 	WriteResult         func(GoPocsResultType)
 	Emit                func(OutputMessage)
+	OutputType          string
+	ObservedService     string
+	BeforeExecute       func()
 }
 
 var AddScanNum int

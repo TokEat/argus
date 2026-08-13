@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -199,17 +200,33 @@ func (o *ScanStageOrchestrator) deriveRiskValidation(ctx context.Context, tx *go
 			estimatedRequests = saturatingAdd(estimatedRequests, candidate.EstimatedRequests)
 		}
 	}
-	if len(selected) == 0 {
+	var assets []db.Asset
+	if err := tx.WithContext(ctx).Where("tenant_id = ? AND project_id = ? AND root_task_id = ?", root.TenantID, root.ProjectID, root.ID).Order("target, port").Find(&assets).Error; err != nil {
+		return nil, err
+	}
+	goPocTargets, goPocEstimated := riskGoPocTargetsFromAssets(assets, selected)
+	if len(selected) == 0 && len(goPocTargets) == 0 {
 		return nil, recordSkippedDerivation(tx, intent, automaticRiskStage, "no_approved_workflow_matches")
 	}
 	revision, err := db.CurrentTaskConfigRevision(tx, root)
 	if err != nil {
 		return nil, err
 	}
-	config, targets, _, _, err := buildRiskValidationAttemptConfig(revision, root.RuleVersion, selected)
+	var config string
+	var targets []string
+	if len(selected) > 0 {
+		config, targets, _, _, err = buildRiskValidationAttemptConfig(revision, root.RuleVersion, selected)
+	} else {
+		config, err = buildGoPocOnlyRiskValidationAttemptConfig(revision, root.RuleVersion)
+	}
 	if err != nil {
 		return nil, err
 	}
+	config, targets, err = configWithRiskGoPocTargets(config, targets, goPocTargets)
+	if err != nil {
+		return nil, err
+	}
+	estimatedRequests = saturatingAdd(estimatedRequests, goPocEstimated)
 	allocation, err := validationAllocation(*intent, root.ID, automaticRiskStage, estimatedRequests)
 	if err != nil {
 		return nil, err
@@ -228,8 +245,116 @@ func (o *ScanStageOrchestrator) deriveRiskValidation(ctx context.Context, tx *go
 		rules.Match = db.SelectorValues{}
 	}
 	rules.Match["risk_validation"] = []string{"v1"}
-	observationHash := hashJSON(selected)
-	return createAutomaticStageBatch(tx, intent, root, automaticRiskStage, config, targets, observationHash, preview.PlanHash, revision, rules, len(selected), map[string]interface{}{"candidate_count": len(selected), "workflow_only": true, "affinity": affinity, "execution_allocation": allocation})
+	rules.Match["gopoc_scoped"] = []string{"v1"}
+	observationHash := hashJSON(struct {
+		Nuclei []riskValidationCandidate `json:"nuclei"`
+		GoPoc  []scanpolicy.GoPocTarget  `json:"gopoc"`
+	}{selected, goPocTargets})
+	planHash := hashJSON(struct {
+		NucleiPlan string                   `json:"nuclei_plan"`
+		Catalog    string                   `json:"gopoc_catalog"`
+		Targets    []scanpolicy.GoPocTarget `json:"gopoc_targets"`
+	}{preview.PlanHash, scanpolicy.GoPocCatalogSHA256(), goPocTargets})
+	return createAutomaticStageBatch(tx, intent, root, automaticRiskStage, config, targets, observationHash, planHash, revision, rules, len(selected)+len(goPocTargets), map[string]interface{}{"nuclei_candidate_count": len(selected), "gopoc_candidate_count": len(goPocTargets), "workflow_scoped": true, "affinity": affinity, "execution_allocation": allocation})
+}
+
+func buildGoPocOnlyRiskValidationAttemptConfig(revision db.TaskConfigRevision, ruleVersion string) (string, error) {
+	config := make(map[string]interface{})
+	if strings.TrimSpace(revision.Config) != "" {
+		if err := json.Unmarshal([]byte(revision.Config), &config); err != nil {
+			return "", fmt.Errorf("decode current task config: %w", err)
+		}
+	}
+	config["ExecutionMode"] = automaticRiskStage
+	config["RequiredRuleVersion"] = strings.TrimSpace(ruleVersion)
+	config["RiskValidationTargets"] = map[string][]string{}
+	config["RiskValidationPocHashes"] = map[string]string{}
+	config["NoPoc"] = false
+	config["GolangPoc"] = false
+	config["PocNameForSearch"] = ""
+	config["Hunter"], config["Fofa"], config["Quake"] = false, false, false
+	encoded, err := json.Marshal(config)
+	return string(encoded), err
+}
+
+func riskGoPocTargetsFromAssets(assets []db.Asset, selected []riskValidationCandidate) ([]scanpolicy.GoPocTarget, int64) {
+	items := make([]scanpolicy.GoPocTarget, 0)
+	for _, asset := range assets {
+		host := assetHost(asset)
+		if host == "" || asset.Port < 1 || asset.Port > 65535 {
+			continue
+		}
+		service := strings.ToLower(strings.TrimSpace(firstNonEmpty(asset.Service, asset.Protocol)))
+		switch service {
+		case "tcp", "protocol", "portscan", "unknown protocol", "":
+			service = "unknown"
+		}
+		observation := sha256.Sum256([]byte(strings.Join([]string{asset.Target, asset.URL, asset.Protocol, asset.Service, strconv.Itoa(asset.Port)}, "\x00")))
+		items = append(items, scanpolicy.GoPocTargetsForEndpoint(net.JoinHostPort(host, strconv.Itoa(asset.Port)), service, asset.Port, hex.EncodeToString(observation[:]), scanpolicy.GoPocVulnerabilityCheck)...)
+	}
+	for _, candidate := range selected {
+		pocID := strings.TrimSuffix(strings.ToLower(filepath.Base(candidate.PocFile)), strings.ToLower(filepath.Ext(candidate.PocFile)))
+		plugin := ""
+		switch pocID {
+		case "shiro-detect":
+			plugin = "Shiro-Key-Crack"
+		case "yongyou_u9_viewstate":
+			plugin = "ViewState-Key-Crack"
+		}
+		if plugin == "" {
+			continue
+		}
+		observation := sha256.Sum256([]byte(hashJSON(candidate)))
+		item, err := scanpolicy.GoPocTargetForSignal(candidate.Endpoint, plugin, "nuclei", pocID, hex.EncodeToString(observation[:]))
+		if err == nil {
+			items = append(items, item)
+		}
+	}
+	seen := make(map[string]struct{}, len(items))
+	result := make([]scanpolicy.GoPocTarget, 0, len(items))
+	var estimated int64
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Target == items[j].Target {
+			return items[i].Plugin < items[j].Plugin
+		}
+		return items[i].Target < items[j].Target
+	})
+	for _, item := range items {
+		key := strings.ToLower(item.Target) + "\x00" + item.Plugin
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, item)
+		estimated = saturatingAdd(estimated, int64(item.RequestCost))
+	}
+	return result, estimated
+}
+
+func configWithRiskGoPocTargets(raw string, targets []string, goPocTargets []scanpolicy.GoPocTarget) (string, []string, error) {
+	var config map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &config); err != nil {
+		return "", nil, err
+	}
+	config["RiskValidationGoPocTargets"] = goPocTargets
+	config["GoPocCatalogSHA256"] = scanpolicy.GoPocCatalogSHA256()
+	seen := make(map[string]struct{}, len(targets)+len(goPocTargets))
+	merged := make([]string, 0, len(targets)+len(goPocTargets))
+	for _, target := range targets {
+		if _, ok := seen[target]; !ok {
+			seen[target] = struct{}{}
+			merged = append(merged, target)
+		}
+	}
+	for _, item := range goPocTargets {
+		if _, ok := seen[item.Target]; !ok {
+			seen[item.Target] = struct{}{}
+			merged = append(merged, item.Target)
+		}
+	}
+	sort.Strings(merged)
+	encoded, err := json.Marshal(config)
+	return string(encoded), merged, err
 }
 
 type credentialTargetEnvelope struct {

@@ -225,6 +225,17 @@ func TestManualRetestAppendsEvidenceAndBecomesCurrentCoverage(t *testing.T) {
 	}
 }
 
+func TestRiskValidationPOCSetHashIncludesSealedGoPocPlan(t *testing.T) {
+	config := `{"ExecutionMode":"risk_validation","RiskValidationTargets":{},"RiskValidationPocHashes":{},"GoPocCatalogSHA256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","RiskValidationGoPocTargets":[{"Target":"192.0.2.10:445","Plugin":"SMB-MS17-010","Capability":"vulnerability_check","Trigger":"protocol","ObservationSHA256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","PluginRevision":1,"RequestCost":1}]}`
+	hash, ok := riskValidationPOCSetHash(config, "192.0.2.10:445")
+	if !ok || len(hash) != 64 || hash == "_unknown" {
+		t.Fatalf("sealed GoPoc plan hash=%q ok=%v", hash, ok)
+	}
+	if _, ok := riskValidationPOCSetHash(config, "192.0.2.20:445"); ok {
+		t.Fatal("unplanned endpoint received a POC set hash")
+	}
+}
+
 func TestMergeStageObservationPersistsCheckpointAndRejectsMutatedReplay(t *testing.T) {
 	store := openObservationMergeTestDB(t)
 	project := Project{ID: "project-checkpoint", TenantID: "tenant-checkpoint", Scope: `{}`}

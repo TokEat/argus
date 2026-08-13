@@ -168,6 +168,8 @@ POC 与普通资产发现链路隔离。POC YAML 通过 `info.metadata.argus-exe
 
 `POST /api/v1/tasks/:id/risk-validation` 是 operator 才能调用的执行入口。Server 会重新生成完整预览并校验 `plan_hash`、当前配置版本、当前规则版本、租户/项目归属和任务终态，只接受预览内的端点、POC 文件与内容哈希；所有候选项都要求授权确认，`high/unknown` 还要求独立二次确认。成功后在原 Task 下追加 `risk_validation` TaskBatch 和不可变 Attempt，关闭自动重试并写入操作者、版本、请求量和确认信息审计。执行接口可选接收 `Idempotency-Key`：同一 tenant/project/task/operator/Key 的规范确认请求只提交一次账本、Batch、Attempt 和审计，并且只在首次提交后派发；响应丢失后的同请求重放直接读取已提交结果，不因任务已进入 Running、规则随后变化或队列暂不可用而再次解释或执行计划，同 Key 改变 plan、候选/指定 POC 或任一确认字段固定返回 409。Key 不是授权凭证；无已提交账本的新请求仍须重新生成当前 preview 并对陈旧配置、规则或 POC 内容失败关闭。只有版本不低于 v2.4.0 且已经同步到该 Attempt 规则版本的 Agent 才能领取风险验证；Agent 执行前还会复核规则版本和每个 POC 文件的实际 MD5，任一不一致都安全失败。通过校验后只运行精确的 Nuclei `端点 → POC 文件` 映射，不执行搜索引擎、子域、存活、端口、协议、HTTP 探测、目录、指纹或 GoPoc。显式重试只在规则版本未变化时复用该确认快照；规则变化必须重新预览确认。
 
+语义化扫描策略的自动闭环另使用共享 `argus.gopoc-catalog/v1`：协议识别阶段只能执行目录中已审核、已启用且由观测服务或安全端口兜底精确命中的 `protocol_check`，回传 `ProtocolCheck` 资产证据，不写漏洞表；自动 `risk_validation` 子批次把 Workflow 命中的 Nuclei 与服务命中的 `vulnerability_check` 一起密封，Nuclei 联动插件还必须等对应模板产生阳性结果后才会执行；`credential` 仍只能进入独立弱口令阶段。目录 SHA-256、插件 Revision、观测哈希、精确目标和请求成本均进入 Attempt 快照，Agent 不匹配或目录漂移时失败关闭。用户界面不暴露独立 GoPoc 开关。
+
 普通任务创建/配置更新固定要求 `NoPoc=true`、`GolangPoc=false`、`DisableGeneralPoc=true` 且 `PocNameForSearch` 为空；前端不再展示普通扫描 POC 开关。为覆盖修复前的旧任务和旧 Agent，Server 在 Agent 领取前会消费并失败关闭任何未确认 POC 配置，当前 Agent 也会在 Scanner 初始化前再次拒绝。风险验证内部字段同样不被普通配置解析器接受，因此无法从常规创建、更新、重试或旧队列消息绕过确认。
 
 任务创建后可通过 `POST /api/v1/tasks/:id/append` 增加批次。追加链路在事务内锁定 RootTask/Project，规范化并去除本任务已有目标，使用当前配置修订与规则版本创建 TaskBatch/Attempt 1，同时扩展当前 Project 的 SeedTargets 与授权 Scope 并写审计。重复目标为无业务写入的 `unchanged`；跨任务覆盖不会在创建接口静默删除，而是在 Agent 领取时按 WorkKey 建立可解释的复用关联。
@@ -241,7 +243,7 @@ network zone 由 Server 使用数据库中的 Agent 标签和每个规范目标�
 当前问题：
 
 - AI 审查仍是 mock
-- GoPoc / EXP 还没有动态元数据中心
+- GoPoc 已有编译期共享治理目录与确定哈希，但还没有可由管理员动态发布的元数据中心；EXP 使用独立 Yaksha 权威模型
 
 ## 6. 云资源编排现状
 
@@ -384,5 +386,7 @@ graph TD
 - `General-Poc-*` 是通用主动探测规则，会追加到所有 HTTP 目标，不依赖指纹命中。
 - 模板按 URL 层级和文件名去重后交给 Nuclei 执行。
 - Nuclei 结果会通过 `nucleiResultCollector` 传给 GoPoc 调度器，实现如 Shiro 检测命中后触发 Key 爆破的联动。
+
+以上图示描述离线 CLI 的兼容流水线。Server 不调用广泛 `-gp` 派发，而是使用共享目录和精确目标契约；GoPoc 在产品层只作为 Nuclei、协议识别和弱口令阶段的内部执行来源展示。
 
 `General-Poc-*` 的设计价值是“反向指纹识别”：用主动 Probe 判定技术栈，补齐被动/目录指纹未识别的场景。以 Shiro 为例，通用模板对 HTTP 目标发送 `rememberMe` 探测请求，命中后可继续触发 GoPoc 的 Shiro Key 爆破链路。

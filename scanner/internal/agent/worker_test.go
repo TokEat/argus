@@ -100,7 +100,7 @@ func TestNewWorkerPublishesCapabilitiesWithoutTrustingTransportTag(t *testing.T)
 	if _, exists := worker.tags["transport_tls"]; exists {
 		t.Fatal("Worker retained caller-supplied transport_tls capability")
 	}
-	for _, capability := range []string{"scan_tcp", "risk_validation", "credential_validation", "subdomain_dictionary", "subdomain_depth"} {
+	for _, capability := range []string{"scan_tcp", "risk_validation", "credential_validation", "gopoc_scoped", "subdomain_dictionary", "subdomain_depth"} {
 		if worker.tags[capability] != "v1" {
 			t.Fatalf("missing capability %q: %#v", capability, worker.tags)
 		}

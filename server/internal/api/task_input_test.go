@@ -160,3 +160,17 @@ func TestNormalizeTaskConfigRejectsUnmanagedSubdomainInputs(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeTaskConfigRejectsCallerControlledGoPocProtocolChecks(t *testing.T) {
+	for _, payload := range []string{
+		`{"ProtocolCheckEnabled":true}`,
+		`{"ProtocolCheckTargetLimit":1}`,
+		`{"ProtocolCheckRateLimit":1}`,
+		`{"ProtocolCheckRequestBudget":1}`,
+		`{"GoPocCatalogSHA256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+	} {
+		if _, _, err := normalizeTaskConfigPayload(json.RawMessage(payload)); err == nil || !strings.Contains(err.Error(), "Server-only") {
+			t.Fatalf("caller-controlled GoPoc payload %s err = %v, want Server-only rejection", payload, err)
+		}
+	}
+}

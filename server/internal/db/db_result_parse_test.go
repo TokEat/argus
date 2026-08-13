@@ -182,6 +182,25 @@ func TestAddResultAsyncExplicitVulnerabilityTypesRemainSupported(t *testing.T) {
 	}
 }
 
+func TestAddResultAsyncProtocolCheckIsAssetEvidenceNotVulnerability(t *testing.T) {
+	drainResultBuffers(t)
+	taskOwnerCache.Store("task-protocol-check", &taskOwnerEntry{ProjectID: "project-a", TenantID: "tenant-a"})
+	AddResultAsync("task-protocol-check", "ProtocolCheck", `{"type":"ProtocolCheck","protocol":"dnp3","go_poc":{"PocName":"DNP3-Scan","Target":"192.0.2.10:20000"}}`)
+	select {
+	case vuln := <-vulnBuffer2:
+		t.Fatalf("protocol evidence became a vulnerability: %+v", vuln)
+	default:
+	}
+	select {
+	case asset := <-assetBuffer:
+		if asset.Target != "192.0.2.10:20000" || asset.Service != "dnp3" || asset.Protocol != "ProtocolCheck" {
+			t.Fatalf("unexpected protocol evidence asset: %+v", asset)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("protocol evidence was not routed to the asset buffer")
+	}
+}
+
 func drainResultBuffers(t *testing.T) {
 	t.Helper()
 	for {

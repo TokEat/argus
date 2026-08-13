@@ -72,6 +72,11 @@ type taskScanConfig struct {
 	WorkflowYamlPath           string
 	ReportName                 string
 	GoPocThreads               int
+	GoPocCatalogSHA256         string
+	ProtocolCheckEnabled       bool
+	ProtocolCheckTargetLimit   int
+	ProtocolCheckRateLimit     int
+	ProtocolCheckRequestBudget int64
 	WebThreads                 int
 	WebTimeout                 int
 	PocNameForSearch           string
@@ -215,6 +220,9 @@ func validateTaskScanConfig(cfg *taskScanConfig) error {
 	}
 	if !cfg.NoPoc || cfg.GolangPoc || !cfg.DisableGeneralPoc || strings.TrimSpace(cfg.PocNameForSearch) != "" {
 		return fmt.Errorf("POC execution is isolated from asset discovery; use task risk validation")
+	}
+	if cfg.ProtocolCheckEnabled || cfg.ProtocolCheckTargetLimit != 0 || cfg.ProtocolCheckRateLimit != 0 || cfg.ProtocolCheckRequestBudget != 0 || strings.TrimSpace(cfg.GoPocCatalogSHA256) != "" {
+		return fmt.Errorf("GoPoc protocol checks are Server-only; use semantic scan policy")
 	}
 
 	switch strings.ToLower(strings.TrimSpace(cfg.PortScanType)) {

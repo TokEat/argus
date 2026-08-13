@@ -10,6 +10,7 @@ import (
 	"github.com/P0lar1ght/argus/scanner/internal/vuln/mapper"
 	"github.com/P0lar1ght/argus/scanner/internal/vuln/nuclei"
 	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 	"os"
 	"path"
 	"path/filepath"
@@ -49,8 +50,11 @@ func normalizedRiskValidationTargets(cfg *Config) (map[string][]string, int, err
 		}
 		allowedTargets[target] = struct{}{}
 	}
-	if len(allowedTargets) == 0 || len(cfg.RiskValidationTargets) == 0 {
-		return nil, 0, fmt.Errorf("risk validation requires confirmed targets and POCs")
+	if len(allowedTargets) == 0 {
+		return nil, 0, fmt.Errorf("risk validation requires confirmed targets")
+	}
+	if len(cfg.RiskValidationTargets) == 0 {
+		return map[string][]string{}, 0, nil
 	}
 
 	normalized := make(map[string][]string, len(cfg.RiskValidationTargets))
@@ -79,15 +83,16 @@ func normalizedRiskValidationTargets(cfg *Config) (map[string][]string, int, err
 			return nil, 0, fmt.Errorf("risk validation target %q has no confirmed POC", target)
 		}
 	}
-	for target := range allowedTargets {
-		if len(normalized[target]) == 0 {
-			return nil, 0, fmt.Errorf("dispatched target %q is missing from the risk validation plan", target)
-		}
-	}
 	return normalized, total, nil
 }
 
 func validateRiskValidationPocFiles(cfg *Config, targets map[string][]string) error {
+	if len(targets) == 0 {
+		if len(cfg.RiskValidationPocHashes) != 0 {
+			return fmt.Errorf("risk validation contains POC hashes without a Nuclei plan")
+		}
+		return nil
+	}
 	if cfg == nil || strings.TrimSpace(cfg.NucleiTemplate) == "" {
 		return fmt.Errorf("risk validation requires a materialized POC directory")
 	}
@@ -130,34 +135,66 @@ func runRiskValidationPhase(ctx *ScanContext, cfg *Config, enableLocalReports bo
 	if err := validateRiskValidationPocFiles(cfg, targets); err != nil {
 		return nil, err
 	}
+	goPocTargets, goPocCost, err := normalizedRiskValidationGoPocTargets(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if count == 0 && len(goPocTargets) == 0 {
+		return nil, fmt.Errorf("risk validation requires a sealed Nuclei or GoPoc plan")
+	}
 	if strings.TrimSpace(cfg.ValidationBudgetID) == "" || cfg.ValidationTargetConcurrency < 1 || cfg.ValidationRateLimit < 1 || cfg.ValidationRequestBudget < 1 || cfg.ValidationEstimatedRequests < 1 {
 		return nil, fmt.Errorf("risk validation requires a positive sealed execution budget")
 	}
 	if cfg.ValidationEstimatedRequests > cfg.ValidationRequestBudget {
 		return nil, fmt.Errorf("risk validation estimate exceeds the sealed request budget")
 	}
-	emitPhase(ctx, PhaseNuclei, "start", fmt.Sprintf("%d explicitly confirmed pocs", count))
-	addResult, collector := buildNucleiResultHandler(ctx, enableLocalReports)
-	results, callErr := callNucleiLimited(
-		targets,
-		cfg.HTTPProxy,
-		addResult,
-		"",
-		cfg.NoInteractsh,
-		cfg.WAFBypassHeaders,
-		currentPipelineEmbedPocs(ctx),
-		cfg.NucleiTemplate,
-		strings.Split(cfg.ExcludeTags, ","),
-		strings.Split(cfg.Severities, ","),
-		nuclei.ExecutionLimits{RateLimit: cfg.ValidationRateLimit, TargetConcurrency: cfg.ValidationTargetConcurrency, RequestBudget: cfg.ValidationRequestBudget},
-		cfg.MachineOutput,
-	)
-	results = authoritativeNucleiResults(results, collector.snapshot())
-	if callErr != nil {
-		emitPhase(ctx, PhaseNuclei, "failed", "nuclei execution failed")
-		return nil, callErr
+	var results []nucleiOutput.ResultEvent
+	if count > 0 {
+		nucleiBudget := cfg.ValidationRequestBudget - goPocCost
+		if nucleiBudget < 1 {
+			return nil, fmt.Errorf("risk validation leaves no request budget for the sealed Nuclei plan")
+		}
+		emitPhase(ctx, PhaseNuclei, "start", fmt.Sprintf("%d explicitly confirmed pocs", count))
+		addResult, collector := buildNucleiResultHandler(ctx, enableLocalReports)
+		var callErr error
+		results, callErr = callNucleiLimited(
+			targets,
+			cfg.HTTPProxy,
+			addResult,
+			"",
+			cfg.NoInteractsh,
+			cfg.WAFBypassHeaders,
+			currentPipelineEmbedPocs(ctx),
+			cfg.NucleiTemplate,
+			strings.Split(cfg.ExcludeTags, ","),
+			strings.Split(cfg.Severities, ","),
+			nuclei.ExecutionLimits{RateLimit: cfg.ValidationRateLimit, TargetConcurrency: cfg.ValidationTargetConcurrency, RequestBudget: nucleiBudget},
+			cfg.MachineOutput,
+		)
+		results = authoritativeNucleiResults(results, collector.snapshot())
+		if callErr != nil {
+			emitPhase(ctx, PhaseNuclei, "failed", "nuclei execution failed")
+			return nil, callErr
+		}
+		emitPhase(ctx, PhaseNuclei, "end", "")
 	}
-	emitPhase(ctx, PhaseNuclei, "end", "")
+	if len(goPocTargets) > 0 {
+		goPocTargets = activatedRiskGoPocTargets(goPocTargets, results)
+	}
+	if len(goPocTargets) > 0 {
+		emitPhase(ctx, PhaseGoPoc, "start", fmt.Sprintf("%d explicitly confirmed checks", len(goPocTargets)))
+		goResults, dispatchErr := gopocs.DispatchGoPocTargets(goPocTargets, cfg.GoPocCatalogSHA256, scanpolicy.GoPocVulnerabilityCheck, cfg.ValidationTargetConcurrency, cfg.ValidationRateLimit, goPocCost, func(message structs.OutputMessage) {
+			dispatchPipelineOutput(ctx, message)
+		})
+		if ctx != nil {
+			ctx.GoPocsResults = toEngineGoPocResults(goResults)
+		}
+		if dispatchErr != nil {
+			emitPhase(ctx, PhaseGoPoc, "failed", "scoped GoPoc vulnerability checks failed")
+			return nil, dispatchErr
+		}
+		emitPhase(ctx, PhaseGoPoc, "end", fmt.Sprintf("%d findings", len(goResults)))
+	}
 	converted := make([]gopocs.NucleiResult, len(results))
 	for i, result := range results {
 		converted[i] = gopocs.NucleiResult{TemplateID: result.TemplateID, Matched: result.Matched, URL: result.URL}

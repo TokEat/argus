@@ -50,11 +50,17 @@ func TestCompileTaskScanPolicyPresetsAndSafeDiscoveryConfig(t *testing.T) {
 		if !config.NoPoc || config.GolangPoc || config.Password != "" || config.PasswordFile != "" {
 			t.Fatalf("discovery config can execute validation or expose credential paths: %+v", config)
 		}
+		if !config.ProtocolCheckEnabled || config.GoPocCatalogSHA256 != scanpolicy.GoPocCatalogSHA256() || config.ProtocolCheckTargetLimit < 1 || config.ProtocolCheckRequestBudget < 1 {
+			t.Fatalf("%s protocol-check contract is incomplete: %+v", tc.preset, config)
+		}
+		var selector db.AgentSelectorRules
+		if err := json.Unmarshal([]byte(plan.SelectorRules), &selector); err != nil {
+			t.Fatal(err)
+		}
+		if got := selector.Match["gopoc_scoped"]; len(got) != 1 || got[0] != "v1" {
+			t.Fatalf("%s policy did not require scoped GoPoc Agent: %+v", tc.preset, selector)
+		}
 		if tc.preset == scanpolicy.PresetDeep {
-			var selector db.AgentSelectorRules
-			if err := json.Unmarshal([]byte(plan.SelectorRules), &selector); err != nil {
-				t.Fatal(err)
-			}
 			if got := selector.Match["subdomain_depth"]; len(got) != 1 || got[0] != "v1" {
 				t.Fatalf("deep policy did not require recursive-capable Agent: %+v", selector)
 			}

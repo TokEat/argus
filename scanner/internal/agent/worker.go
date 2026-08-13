@@ -309,6 +309,7 @@ func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[stri
 	tags["scan_tcp"] = "v1"
 	tags["risk_validation"] = "v1"
 	tags["credential_validation"] = "v1"
+	tags["gopoc_scoped"] = "v1"
 	tags["subdomain_dictionary"] = "v1"
 	tags["subdomain_depth"] = "v1"
 	if _, err := exec.LookPath("masscan"); err == nil {

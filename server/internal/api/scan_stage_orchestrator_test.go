@@ -35,6 +35,64 @@ func TestCredentialTargetsFromAssetsUsesProtocolThenSafePortFallback(t *testing.
 	}
 }
 
+func TestRiskGoPocTargetsFromAssetsOnlyIncludesVulnerabilityChecks(t *testing.T) {
+	items, estimated := riskGoPocTargetsFromAssets([]db.Asset{
+		{Target: "192.0.2.10", Port: 445, Protocol: "smb", Service: "smb"},
+		{Target: "192.0.2.20", Port: 22, Protocol: "ssh", Service: "ssh"},
+	}, nil)
+	if len(items) != 1 || items[0].Plugin != "SMB-MS17-010" || items[0].Capability != scanpolicy.GoPocVulnerabilityCheck || estimated != 1 {
+		t.Fatalf("unexpected risk GoPoc plan: items=%+v estimated=%d", items, estimated)
+	}
+}
+
+func TestManualRiskConfigStillRejectsEmptySelection(t *testing.T) {
+	if _, _, _, _, err := buildRiskValidationAttemptConfig(db.TaskConfigRevision{Config: `{}`}, "rules-a", nil); err != errRiskValidationEmptyPlan {
+		t.Fatalf("empty manual risk selection err=%v, want %v", err, errRiskValidationEmptyPlan)
+	}
+}
+
+func TestScanStageOrchestratorDerivesGoPocOnlyRiskBatch(t *testing.T) {
+	store := setupAITestDB(t)
+	queue := scheduler.NewTaskQueue("")
+	oldQueue := routerRuntime().TaskQueue
+	routerRuntime().TaskQueue = queue
+	t.Cleanup(func() { queue.Close(); routerRuntime().TaskQueue = oldQueue })
+
+	root := db.RootTask{ID: "gopoc-risk-root", TenantID: "default", ProjectID: "gopoc-risk-project", UserID: "1", Status: "Running", Config: `{}`, RuleVersion: "unknown", CurrentConfigVersion: 1, TimeoutSec: 3600}
+	batch := db.TaskBatch{ID: "gopoc-risk-asset", TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Kind: "asset_scan", Status: "Done", LatestAttemptID: "gopoc-risk-discovery"}
+	attempt := db.SubTask{ID: batch.LatestAttemptID, TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, BatchID: batch.ID, Status: "Done", Config: `{}`, RuleVersion: root.RuleVersion}
+	revision := db.NewTaskConfigRevision(root, 1, `{}`, `{}`, "1", "initial")
+	policy, _ := scanpolicy.PresetPolicy(scanpolicy.PresetStandard)
+	policy.Authorization.ValidationConfirmed = true
+	policyJSON, _ := json.Marshal(policy)
+	intent := db.ScanPolicyIntent{TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, SchemaVersion: scanpolicy.SchemaVersion, PolicyJSON: string(policyJSON), PolicyHash: "policy-hash", PlanHash: "plan-hash", RiskStatus: db.ScanStageIntentPending, CredentialStatus: db.ScanStageIntentSkipped, AuthorizationActorID: "1"}
+	asset := db.Asset{TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Target: "192.0.2.10", Protocol: "smb", Service: "smb", Port: 445}
+	for _, row := range []interface{}{&db.Project{ID: root.ProjectID, TenantID: root.TenantID, OwnerUserID: "1", Status: "active"}, &root, &batch, &attempt, &revision, &intent, &asset} {
+		if err := store.Create(row).Error; err != nil {
+			t.Fatalf("seed %T: %v", row, err)
+		}
+	}
+	if err := NewScanStageOrchestrator().DeriveRoot(context.Background(), root.TenantID, root.ID); err != nil {
+		t.Fatalf("derive GoPoc risk stage: %v", err)
+	}
+	var child db.SubTask
+	if err := store.Where("root_task_id = ? AND trigger = ?", root.ID, "automatic_risk_validation").First(&child).Error; err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		ExecutionMode               string                   `json:"ExecutionMode"`
+		RiskValidationGoPocTargets  []scanpolicy.GoPocTarget `json:"RiskValidationGoPocTargets"`
+		GoPocCatalogSHA256          string                   `json:"GoPocCatalogSHA256"`
+		ValidationEstimatedRequests int64                    `json:"ValidationEstimatedRequests"`
+	}
+	if err := json.Unmarshal([]byte(child.Config), &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.ExecutionMode != automaticRiskStage || len(config.RiskValidationGoPocTargets) != 1 || config.RiskValidationGoPocTargets[0].Plugin != "SMB-MS17-010" || config.GoPocCatalogSHA256 != scanpolicy.GoPocCatalogSHA256() || config.ValidationEstimatedRequests != 1 {
+		t.Fatalf("unexpected GoPoc-only risk config: %+v", config)
+	}
+}
+
 func TestDeriveValidationAffinityUsesSuccessfulDiscoveryAgentAndZone(t *testing.T) {
 	store := setupAITestDB(t)
 	root := db.RootTask{ID: "affinity-root", TenantID: "default", ProjectID: "affinity-project"}

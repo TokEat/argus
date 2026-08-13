@@ -86,8 +86,22 @@ func (d *dispatcher) addScan(name string, info structs.HostInfo, ch chan struct{
 	go func() {
 		defer wg.Done()
 		defer func() { <-ch }()
+		if info.BeforeExecute != nil {
+			info.BeforeExecute()
+		}
 		info.WriteResult = d.writeResult
 		info.Emit = d.emit
+		if outputType := strings.TrimSpace(info.OutputType); outputType != "" {
+			baseEmit := d.emit
+			observedService := strings.TrimSpace(info.ObservedService)
+			info.Emit = func(message structs.OutputMessage) {
+				message.Type = outputType
+				if message.Protocol == "" {
+					message.Protocol = observedService
+				}
+				baseEmit(message)
+			}
+		}
 		presentations.Store(&info, d.presentation)
 		defer presentations.Delete(&info)
 		d.scanFunc(name, &info)

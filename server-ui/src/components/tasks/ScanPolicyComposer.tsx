@@ -213,6 +213,13 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
 						</Card>
 
 						<Card size="small" title="自动验证">
+							<Alert
+								type="info"
+								showIcon
+								message="GoPoc 是内部执行框架，不是第三个扫描开关"
+								description="协议类 GoPoc 随协议识别形成资产证据；漏洞类 GoPoc 与 Nuclei 统一归入自动 POC；凭据类 GoPoc 只在弱口令阶段执行。"
+								style={{ marginBottom: 12 }}
+							/>
 							<Row gutter={[12, 8]}>
 								<Col span={12}><Form.Item name="risk_validation" valuePropName="checked" label="自动 POC 验证"><Switch /></Form.Item></Col>
 								<Col span={12}><Form.Item name="credential_validation" valuePropName="checked" label="弱口令验证"><Switch /></Form.Item></Col>

@@ -224,7 +224,6 @@ func buildRiskValidationAttemptConfig(revision db.TaskConfigRevision, ruleVersio
 	if len(targets) == 0 {
 		return "", nil, 0, false, errRiskValidationEmptyPlan
 	}
-
 	config := make(map[string]interface{})
 	if strings.TrimSpace(revision.Config) != "" {
 		if err := json.Unmarshal([]byte(revision.Config), &config); err != nil {

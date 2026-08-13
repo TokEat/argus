@@ -192,7 +192,7 @@ argus -t http://test.com
 
 成功完成时，交互文本输出会给出执行阶段数、完整/部分/全跳过输入数，以及本次计划与历史跳过资产数。`-ot json` 使用版本化 UTF-8 NDJSON：每个 finding 独占一行，最后一行是唯一 `run_summary`；stdout 不包含 Banner、ANSI、进度或普通日志。重定向的文本模式同样只保留扫描结果和必要错误。完整 Schema、退出码和迁移示例见 [Argus CLI 结构化输出](docs/cli-output.md)。
 
-普通 CLI 扫描现在默认只执行资产发现，不自动启动 Nuclei POC、通用 POC 或 GoPoc/弱口令探测；已有 `-poc <name>` 或 `-gp` 仍代表用户显式请求风险操作，并固定绕过 `datas` 历史跳过。`-npoc` 保留兼容，可继续用于脚本中明确表达“只做资产发现”；它与 `-poc`、`-gp` 同时出现时会按参数冲突退出，不会静默执行风险阶段。
+普通 CLI 扫描现在默认只执行资产发现，不自动启动 Nuclei POC、通用 POC 或 GoPoc/弱口令探测；已有 `-poc <name>` 或 `-gp` 仍代表用户显式请求风险操作，并固定绕过 `datas` 历史跳过。`-gp` 仅是离线 CLI 的兼容入口，会沿用旧的 GoPoc 混合派发，不是 Server 产品中的第三个开关；Server 会把 `protocol_check`、`vulnerability_check`、`credential` 分别收敛到协议识别、自动 POC 和弱口令阶段。`-npoc` 保留兼容，可继续用于脚本中明确表达“只做资产发现”；它与 `-poc`、`-gp` 同时出现时会按参数冲突退出，不会静默执行风险阶段。
 
 需要忽略未过期历史并重新执行完整资产流水线时，只增加可选 `-force`：
 
