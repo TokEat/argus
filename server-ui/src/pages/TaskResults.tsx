@@ -17,24 +17,10 @@ import type { ColumnsType } from 'antd/es/table';
 import { useNavigate, useParams } from 'react-router-dom';
 import { getVulns, getAssets, getFingerprintGroups, exportVulns, exportAssets, exportFingerprints, getExploitCandidatesForVuln } from '../services/api';
 import { useAutoContext } from '../contexts/GlobalAIContext';
+import { DEFAULT_RESULT_PAGE_SIZE, firstNonEmptyResultTab, initialResultPageState, type ResultPageState, type ResultTabKey } from './taskResultTabs';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
-const DEFAULT_RESULT_PAGE_SIZE = 20;
-
-type ResultPageState = {
-    current: number;
-    pageSize: number;
-    total: number;
-};
-
-type ResultTabKey = 'vulns' | 'assets' | 'fingerprints';
-
-const initialPageState: ResultPageState = {
-    current: 1,
-    pageSize: DEFAULT_RESULT_PAGE_SIZE,
-    total: 0,
-};
 
 const TaskResults: React.FC = () => {
     const { taskId } = useParams<{ taskId: string }>();
@@ -47,10 +33,10 @@ const TaskResults: React.FC = () => {
     const [vulns, setVulns] = useState<API.Vulnerability[]>([]);
     const [assets, setAssets] = useState<API.Asset[]>([]);
     const [fingerprints, setFingerprints] = useState<API.FingerprintGroup[]>([]);
-    const [vulnPagination, setVulnPagination] = useState<ResultPageState>(initialPageState);
-    const [assetPagination, setAssetPagination] = useState<ResultPageState>(initialPageState);
-    const [fingerprintPagination, setFingerprintPagination] = useState<ResultPageState>(initialPageState);
-    const [activeTab, setActiveTab] = useState('vulns');
+    const [vulnPagination, setVulnPagination] = useState<ResultPageState>(initialResultPageState);
+    const [assetPagination, setAssetPagination] = useState<ResultPageState>(initialResultPageState);
+    const [fingerprintPagination, setFingerprintPagination] = useState<ResultPageState>(initialResultPageState);
+    const [activeTab, setActiveTab] = useState<ResultTabKey>('vulns');
     const [selectedVuln, setSelectedVuln] = useState<API.Vulnerability | null>(null);
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [exploitCandidates, setExploitCandidates] = useState<API.ExploitRule[]>([]);
@@ -72,9 +58,11 @@ const TaskResults: React.FC = () => {
                 pageSize: res.page_size || pageSize,
                 total: res.total || 0,
             });
+            return res.total || 0;
         } catch (error) {
             console.error('Failed to fetch vulnerabilities:', error);
             setVulns([]);
+            return 0;
         } finally {
             setTabBusy('vulns', false);
         }
@@ -91,9 +79,11 @@ const TaskResults: React.FC = () => {
                 pageSize: res.page_size || pageSize,
                 total: res.total || 0,
             });
+            return res.total || 0;
         } catch (error) {
             console.error('Failed to fetch assets:', error);
             setAssets([]);
+            return 0;
         } finally {
             setTabBusy('assets', false);
         }
@@ -110,9 +100,11 @@ const TaskResults: React.FC = () => {
                 pageSize: res.page_size || pageSize,
                 total: res.total || 0,
             });
+            return res.total || 0;
         } catch (error) {
             console.error('Failed to fetch fingerprints:', error);
             setFingerprints([]);
+            return 0;
         } finally {
             setTabBusy('fingerprints', false);
         }
@@ -121,11 +113,12 @@ const TaskResults: React.FC = () => {
     const fetchFirstPages = useCallback(async () => {
         setLoading(true);
         try {
-            await Promise.all([
+            const [vulnerabilityTotal, assetTotal, fingerprintTotal] = await Promise.all([
                 fetchVulnsPage(1, DEFAULT_RESULT_PAGE_SIZE),
                 fetchAssetsPage(1, DEFAULT_RESULT_PAGE_SIZE),
                 fetchFingerprintsPage(1, DEFAULT_RESULT_PAGE_SIZE),
             ]);
+            setActiveTab(firstNonEmptyResultTab(vulnerabilityTotal, assetTotal, fingerprintTotal));
         } finally {
             setLoading(false);
         }
@@ -591,7 +584,7 @@ const TaskResults: React.FC = () => {
                 ) : (
                     <Tabs
                         activeKey={activeTab}
-                        onChange={setActiveTab}
+                        onChange={(key) => setActiveTab(key as ResultTabKey)}
                         items={[
                             {
                                 key: 'vulns',

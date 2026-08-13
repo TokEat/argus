@@ -15,6 +15,7 @@ import (
 
 	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/P0lar1ght/argus/server/internal/storage"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -221,7 +222,7 @@ func exportVulns(c *gin.Context) {
 	var vulns []db.Vulnerability
 	tenantID := currentTenantID(c)
 	query := db.DB.Model(&db.Vulnerability{}).Where("tenant_id = ?", tenantID)
-	query = applyReportResultScope(c, query)
+	query = applyReportResultScope(c, query, reportResultVulnerability)
 	query.Find(&vulns)
 
 	var buf bytes.Buffer
@@ -246,7 +247,7 @@ func exportAssets(c *gin.Context) {
 	var assets []db.Asset
 	tenantID := currentTenantID(c)
 	query := db.DB.Model(&db.Asset{}).Where("tenant_id = ?", tenantID)
-	query = applyReportResultScope(c, query)
+	query = applyReportResultScope(c, query, reportResultAsset)
 	query.Find(&assets)
 
 	var buf bytes.Buffer
@@ -271,7 +272,7 @@ func exportFingerprints(c *gin.Context) {
 	var fps []db.FingerprintHit
 	tenantID := currentTenantID(c)
 	query := db.DB.Model(&db.FingerprintHit{}).Where("tenant_id = ?", tenantID)
-	query = applyReportResultScope(c, query)
+	query = applyReportResultScope(c, query, reportResultFingerprint)
 	query.Find(&fps)
 
 	var buf bytes.Buffer
@@ -292,18 +293,85 @@ func exportFingerprints(c *gin.Context) {
 	c.Data(http.StatusOK, "text/csv", buf.Bytes())
 }
 
-func applyReportResultScope(c *gin.Context, query *gorm.DB) *gorm.DB {
+type reportResultKind uint8
+
+const (
+	reportResultVulnerability reportResultKind = iota
+	reportResultAsset
+	reportResultFingerprint
+)
+
+type reportResultReuseSource struct {
+	SourceAttemptID string
+	Target          string
+	AttemptStatus   string
+}
+
+func applyReportResultScope(c *gin.Context, query *gorm.DB, kind reportResultKind) *gorm.DB {
 	query, _ = applyProjectScope(c, query, "project_id")
 	if taskID := strings.TrimSpace(c.Query("task_id")); taskID != "" {
-		if scopedTaskIDs := resolveAccessibleTaskIDs(c, taskID); len(scopedTaskIDs) > 1 {
-			query = query.Where("task_id IN ?", scopedTaskIDs)
-		} else if len(scopedTaskIDs) == 1 {
-			query = query.Where("task_id = ?", scopedTaskIDs[0])
-		} else {
-			query = query.Where("1 = 0")
-		}
+		query = applyTaskResultScope(c, query, taskID, kind)
 	}
 	return query
+}
+
+func applyTaskResultScope(c *gin.Context, query *gorm.DB, taskID string, kind reportResultKind) *gorm.DB {
+	scopedTaskIDs := resolveAccessibleTaskIDs(c, taskID)
+	if len(scopedTaskIDs) == 0 {
+		return query.Where("1 = 0")
+	}
+	taskScope := db.DB.Where("task_id IN ?", scopedTaskIDs)
+	if kind == reportResultVulnerability {
+		return query.Where(taskScope)
+	}
+
+	tenantID := currentTenantID(c)
+	var root db.RootTask
+	if err := db.DB.Select("id", "project_id").Where("id = ? AND tenant_id = ?", taskID, tenantID).First(&root).Error; err != nil {
+		return query.Where(taskScope)
+	}
+
+	stages := []string{string(scanplan.StageFingerprint)}
+	if kind == reportResultAsset {
+		stages = []string{
+			string(scanplan.StageSearchEngine), string(scanplan.StageSubdomainDiscovery),
+			string(scanplan.StageCDNClassification), string(scanplan.StageICMPDiscovery),
+			string(scanplan.StageTCPLiveness), string(scanplan.StagePortScan),
+			string(scanplan.StageProtocolIdentify), string(scanplan.StageHTTPProbe),
+			string(scanplan.StageHostBinding), string(scanplan.StageDirectoryProbe),
+		}
+	}
+	var sources []reportResultReuseSource
+	if err := db.DB.WithContext(c.Request.Context()).Table("task_coverage_links AS l").Distinct().
+		Select("l.source_attempt_id, c.normalized_target AS target, source.status AS attempt_status").
+		Joins("JOIN scan_coverages AS c ON c.id = l.coverage_id AND c.tenant_id = l.tenant_id AND c.project_id = l.project_id").
+		Joins("JOIN sub_tasks AS source ON source.id = l.source_attempt_id AND source.tenant_id = l.tenant_id AND source.project_id = l.project_id AND source.root_task_id = l.source_task_id").
+		Where("l.tenant_id = ? AND l.project_id = ? AND l.root_task_id = ? AND l.link_type = ? AND l.status = ?", tenantID, root.ProjectID, root.ID, "reused", "active").
+		Where("c.stage IN ? AND c.status = ?", stages, string(scanplan.CoverageComplete)).
+		Where("c.source_task_id = l.source_task_id AND c.source_batch_id = l.source_batch_id AND c.source_attempt_id = l.source_attempt_id").
+		Where("c.valid_until IS NULL OR c.valid_until > ?", time.Now().UTC()).
+		Scan(&sources).Error; err != nil {
+		log.Printf("[Results] failed to load reusable result scope for task %s: %v", taskID, err)
+		return query.Where(taskScope)
+	}
+	seen := make(map[string]struct{}, len(sources))
+	for _, source := range sources {
+		if db.CanonicalAttemptState(source.AttemptStatus) != db.AttemptStateCompleted {
+			continue
+		}
+		source.SourceAttemptID = strings.TrimSpace(source.SourceAttemptID)
+		source.Target = strings.TrimSpace(source.Target)
+		if source.SourceAttemptID == "" || source.Target == "" {
+			continue
+		}
+		key := source.SourceAttemptID + "\x00" + source.Target
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		taskScope = taskScope.Or("task_id = ? AND target = ?", source.SourceAttemptID, source.Target)
+	}
+	return query.Where(taskScope)
 }
 
 func recordReportExport(c *gin.Context, tenantID, reportType, fileName string, content []byte) {
@@ -341,13 +409,7 @@ func getVulns(c *gin.Context) {
 	query := db.DB.Where("tenant_id = ?", tenantID).Order("created_at desc")
 	query, _ = applyProjectScope(c, query, "project_id")
 	if taskID := c.Query("task_id"); taskID != "" {
-		if scopedTaskIDs := resolveAccessibleTaskIDs(c, taskID); len(scopedTaskIDs) > 1 {
-			query = query.Where("task_id IN ?", scopedTaskIDs)
-		} else if len(scopedTaskIDs) == 1 {
-			query = query.Where("task_id = ?", scopedTaskIDs[0])
-		} else {
-			query = query.Where("1 = 0")
-		}
+		query = applyTaskResultScope(c, query, taskID, reportResultVulnerability)
 	}
 	page, pageSize, total, ok := paginateResultQuery(c, query, &db.Vulnerability{}, &vulns)
 	if !ok {
@@ -362,13 +424,7 @@ func getAssets(c *gin.Context) {
 	query := db.DB.Where("tenant_id = ?", tenantID).Order("created_at desc")
 	query, _ = applyProjectScope(c, query, "project_id")
 	if taskID := c.Query("task_id"); taskID != "" {
-		if scopedTaskIDs := resolveAccessibleTaskIDs(c, taskID); len(scopedTaskIDs) > 1 {
-			query = query.Where("task_id IN ?", scopedTaskIDs)
-		} else if len(scopedTaskIDs) == 1 {
-			query = query.Where("task_id = ?", scopedTaskIDs[0])
-		} else {
-			query = query.Where("1 = 0")
-		}
+		query = applyTaskResultScope(c, query, taskID, reportResultAsset)
 	}
 	page, pageSize, total, ok := paginateResultQuery(c, query, &db.Asset{}, &assets)
 	if !ok {
@@ -397,13 +453,7 @@ func fingerprintResultQuery(c *gin.Context) *gorm.DB {
 	query := db.DB.Model(&db.FingerprintHit{}).Where("tenant_id = ?", tenantID)
 	query, _ = applyProjectScope(c, query, "project_id")
 	if taskID := c.Query("task_id"); taskID != "" {
-		if scopedTaskIDs := resolveAccessibleTaskIDs(c, taskID); len(scopedTaskIDs) > 1 {
-			query = query.Where("task_id IN ?", scopedTaskIDs)
-		} else if len(scopedTaskIDs) == 1 {
-			query = query.Where("task_id = ?", scopedTaskIDs[0])
-		} else {
-			query = query.Where("1 = 0")
-		}
+		query = applyTaskResultScope(c, query, taskID, reportResultFingerprint)
 	}
 	return query
 }

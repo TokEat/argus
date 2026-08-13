@@ -168,6 +168,59 @@ describe('TaskResults', () => {
         expect(screen.getByText('https://b.example')).toBeInTheDocument();
     });
 
+    it('opens the first non-empty asset result instead of an empty vulnerability tab', async () => {
+		apiMocks.getVulns.mockResolvedValue(paged([], 0, 1));
+		apiMocks.getAssets.mockResolvedValue(paged([{
+			ID: 7,
+			TenantID: 'default',
+			TaskID: 'task-1',
+			Target: 'https://asset.example.invalid',
+			Protocol: 'Web',
+			Port: 443,
+			Title: 'Asset result',
+			Service: 'http/200',
+			CreatedAt: '2026-07-05T00:00:00Z',
+		}], 1, 1));
+
+		render(
+			<MemoryRouter initialEntries={['/tasks/task-1/results']}>
+				<App>
+					<Routes>
+						<Route path="/tasks/:taskId/results" element={<TaskResults />} />
+					</Routes>
+				</App>
+			</MemoryRouter>,
+		);
+
+		expect(await screen.findByText('Asset result')).toBeInTheDocument();
+		expect(screen.getByRole('tab', { name: /资产 \(1\)/ })).toHaveAttribute('aria-selected', 'true');
+    });
+
+	it('opens fingerprints when they are the only available result', async () => {
+		apiMocks.getVulns.mockResolvedValue(paged([], 0, 1));
+		apiMocks.getAssets.mockResolvedValue(paged([], 0, 1));
+		apiMocks.getFingerprintGroups.mockResolvedValue(paged([{
+			ProductName: 'Apache-Tomcat',
+			TargetCount: 1,
+			Targets: [{ Target: 'http://127.0.0.1:8082' }],
+			FirstSeen: '2026-07-05T00:00:00Z',
+			LastSeen: '2026-07-05T00:00:00Z',
+		}], 1, 1));
+
+		render(
+			<MemoryRouter initialEntries={['/tasks/task-1/results']}>
+				<App>
+					<Routes>
+						<Route path="/tasks/:taskId/results" element={<TaskResults />} />
+					</Routes>
+				</App>
+			</MemoryRouter>,
+		);
+
+		expect(await screen.findByText('Apache-Tomcat')).toBeInTheDocument();
+		expect(screen.getByRole('tab', { name: /指纹 \(1\)/ })).toHaveAttribute('aria-selected', 'true');
+	});
+
     it('exports assets for the active assets tab with the current task scope', async () => {
         const user = userEvent.setup();
         render(

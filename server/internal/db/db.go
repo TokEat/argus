@@ -1022,7 +1022,7 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 
 	switch payloadType {
 	case "asset", "port_scan", "subdomain",
-		"Web", "Protocol", "PortScan", "IPAlive", "Domain", "Domain-Bind", "Nmap",
+		"Web", "Protocol", "PortScan", "IPAlive", "Domain", "Domain-Bind", "Nmap", "DNS-SubFinder", "DNS-Brute", "CDN-Domain", "RealIP",
 		"Quake", "Hunter", "Fofa":
 		// Agent 通过 ddout.OutputMessage 发送的 Type 为大写开头（如 Web/Protocol/PortScan/IPAlive/Domain/Nmap）
 		// 统一归入资产表
@@ -1066,7 +1066,7 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 				service = proto
 			}
 		}
-		if payloadType == "Domain" {
+		if payloadType == "Domain" || payloadType == "DNS-SubFinder" || payloadType == "DNS-Brute" || payloadType == "CDN-Domain" || payloadType == "RealIP" {
 			if domain, ok := p["domain"].(string); ok {
 				target = domain
 			}
@@ -1135,7 +1135,7 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 			})
 		}
 		return
-	default: // nuclei, gopoc, GoPoc, Nuclei
+	case "nuclei", "gopoc", "GoPoc", "Nuclei", "vulnerability":
 		if severity == "" {
 			severity = "Unknown"
 		}

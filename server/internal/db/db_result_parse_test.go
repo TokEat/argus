@@ -118,6 +118,70 @@ func TestAddResultAsyncPrefersOSINTIPPortWhenURIAbsent(t *testing.T) {
 	}
 }
 
+func TestAddResultAsyncRoutesDiscoveryOutputsToAssets(t *testing.T) {
+	drainResultBuffers(t)
+	taskOwnerCache.Store("task-discovery", &taskOwnerEntry{
+		ProjectID:  "project-discovery",
+		TenantID:   "tenant-discovery",
+		RootTaskID: "root-discovery",
+	})
+
+	for _, payloadType := range []string{"DNS-SubFinder", "DNS-Brute", "CDN-Domain", "RealIP"} {
+		t.Run(payloadType, func(t *testing.T) {
+			drainResultBuffers(t)
+			AddResultAsync("task-discovery", payloadType, `{"domain":"api.example.invalid","ips":["192.0.2.10"]}`)
+
+			select {
+			case vuln := <-vulnBuffer2:
+				t.Fatalf("expected %s output to be routed as asset, got vulnerability %+v", payloadType, vuln)
+			default:
+			}
+
+			select {
+			case asset := <-assetBuffer:
+				if asset.Target != "api.example.invalid" || asset.Protocol != payloadType {
+					t.Fatalf("unexpected discovery asset: %+v", asset)
+				}
+			case <-time.After(100 * time.Millisecond):
+				t.Fatalf("expected %s output to be routed into asset buffer", payloadType)
+			}
+		})
+	}
+}
+
+func TestAddResultAsyncUnknownOutputDoesNotBecomeVulnerability(t *testing.T) {
+	drainResultBuffers(t)
+	taskOwnerCache.Store("task-unknown", &taskOwnerEntry{ProjectID: "project-a", TenantID: "tenant-a"})
+
+	AddResultAsync("task-unknown", "future-discovery-event", `{"target":"example.invalid"}`)
+
+	select {
+	case vuln := <-vulnBuffer2:
+		t.Fatalf("unknown event must not become vulnerability: %+v", vuln)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+func TestAddResultAsyncExplicitVulnerabilityTypesRemainSupported(t *testing.T) {
+	drainResultBuffers(t)
+	taskOwnerCache.Store("task-vuln", &taskOwnerEntry{ProjectID: "project-a", TenantID: "tenant-a"})
+
+	for _, payloadType := range []string{"Nuclei", "GoPoc", "nuclei", "gopoc", "vulnerability"} {
+		t.Run(payloadType, func(t *testing.T) {
+			drainResultBuffers(t)
+			AddResultAsync("task-vuln", payloadType, `{"target":"https://example.invalid","plugin":"explicit-test","severity":"high"}`)
+			select {
+			case vuln := <-vulnBuffer2:
+				if vuln.Plugin != "explicit-test" || vuln.Severity != "High" {
+					t.Fatalf("unexpected vulnerability: %+v", vuln)
+				}
+			case <-time.After(100 * time.Millisecond):
+				t.Fatalf("expected %s to create vulnerability", payloadType)
+			}
+		})
+	}
+}
+
 func drainResultBuffers(t *testing.T) {
 	t.Helper()
 	for {
