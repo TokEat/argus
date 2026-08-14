@@ -100,7 +100,7 @@ func TestNewWorkerPublishesCapabilitiesWithoutTrustingTransportTag(t *testing.T)
 	if _, exists := worker.tags["transport_tls"]; exists {
 		t.Fatal("Worker retained caller-supplied transport_tls capability")
 	}
-	for _, capability := range []string{"scan_tcp", "risk_validation", "credential_validation", "gopoc_scoped", "subdomain_dictionary", "subdomain_depth"} {
+	for _, capability := range []string{"scan_tcp", "risk_validation", "credential_validation", "gopoc_scoped", "subdomain_dictionary", "subdomain_depth", "behavior_probe"} {
 		if worker.tags[capability] != "v1" {
 			t.Fatalf("missing capability %q: %#v", capability, worker.tags)
 		}
@@ -933,6 +933,9 @@ func prepareUsableAgentConfig(t *testing.T) {
 	mustWriteAgentFile(t, filepath.Join("config", "dir.yaml"), []byte("TestProduct:\n  - /test\n"))
 	if err := os.MkdirAll(filepath.Join("config", "pocs"), 0o755); err != nil {
 		t.Fatalf("mkdir test pocs: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join("config", "active-fingerprints"), 0o755); err != nil {
+		t.Fatalf("mkdir test active fingerprints: %v", err)
 	}
 	dbBytes := testAgentPackageBytes()
 	mustWriteAgentFile(t, filepath.Join("data", "arsenal.db"), dbBytes)

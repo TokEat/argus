@@ -337,6 +337,18 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		return nil
 	}
 
+	if cfg.BehaviorProbe && resumeStageEnabled(ctx, scanplan.StageBehaviorProbe) {
+		emitPhase(ctx, PhaseBehaviorProbe, "start", fmt.Sprintf("%d http services", len(aliveURLs)))
+		if err := runActiveFingerprintPhase(ctx, &cfg, aliveURLs); err != nil {
+			emitPhase(ctx, PhaseBehaviorProbe, "failed", err.Error())
+			return err
+		}
+		completeHTTPDependentPhase(ctx, PhaseBehaviorProbe, httpProbeComplete)
+	}
+	if err := checkPipelineCancelled(ctx); err != nil {
+		return err
+	}
+
 	// 目录爆破
 	if !cfg.NoDirSearch && resumeStageEnabled(ctx, scanplan.StageDirectoryProbe) {
 		var checkURLs []string

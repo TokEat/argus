@@ -3,8 +3,11 @@ package arsenal
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/P0lar1ght/argus/shared/proto/go/activefingerprint"
 )
 
 func TestInspectRulePackageUsesStableSemanticVersion(t *testing.T) {
@@ -44,6 +47,7 @@ func TestBuildRulePackageFromConfigIncludesRuntimeAssets(t *testing.T) {
 	writePackageTestFile(t, filepath.Join(configDir, "workflow.yaml"), "Demo:\n  type: [root]\n  pocs: [demo.yaml]\n")
 	writePackageTestFile(t, filepath.Join(configDir, "dir.yaml"), "Demo:\n  - /demo\n")
 	writePackageTestFile(t, filepath.Join(configDir, "pocs", "demo.yaml"), "id: demo\ninfo:\n  name: demo\n  author: test\n  severity: info\nhttp: []\n")
+	writePackageTestFile(t, filepath.Join(configDir, "active-fingerprints", "demo-detect.yaml"), "id: demo-detect\ninfo:\n  name: demo detect\n  severity: info\n  metadata:\n    argus-rule-kind: active-fingerprint\n    argus-product: Demo\n    argus-auto-profile: safe\n    max-request: 1\nhttp:\n  - method: GET\n    path: ['{{BaseURL}}']\n    matchers:\n      - type: word\n        words: [demo]\n")
 	writePackageTestFile(t, filepath.Join(configDir, "pocs", "helpers", "payload.txt"), "payload\n")
 	writePackageTestFile(t, filepath.Join(configDir, "dict", "mysql.txt"), "root:root\n")
 	writePackageTestFile(t, filepath.Join(configDir, "subdomains.txt"), "www\n")
@@ -53,7 +57,7 @@ func TestBuildRulePackageFromConfigIncludesRuntimeAssets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build package: %v", err)
 	}
-	if inspection.Counts.Fingerprints != 1 || inspection.Counts.Pocs != 1 || inspection.Counts.PocAssets != 1 || inspection.Counts.ConfigAssets != 2 {
+	if inspection.Counts.Fingerprints != 1 || inspection.Counts.ActiveFingerprints != 1 || inspection.Counts.Pocs != 1 || inspection.Counts.PocAssets != 1 || inspection.Counts.ConfigAssets != 2 {
 		t.Fatalf("unexpected counts: %+v", inspection.Counts)
 	}
 	if _, err := os.Stat(output); err != nil {
@@ -66,6 +70,32 @@ func TestBuildRulePackageFromConfigIncludesRuntimeAssets(t *testing.T) {
 	}
 	if inspection.RuleVersion != secondInspection.RuleVersion || inspection.FileHash != secondInspection.FileHash {
 		t.Fatalf("release package is not reproducible: first=%+v second=%+v", inspection, secondInspection)
+	}
+}
+
+func TestReviewedShiroRuleIsAnIndependentActiveFingerprint(t *testing.T) {
+	configDir := filepath.Join("..", "..", "common", "config")
+	activePath := filepath.Join(configDir, "active-fingerprints", "shiro-detect.yaml")
+	content, err := os.ReadFile(activePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	classification, err := activefingerprint.Inspect("shiro-detect.yaml", content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !classification.AutoEligible || classification.Product != "APACHE-Shiro" || classification.MaxRequests != 1 {
+		t.Fatalf("unexpected Shiro behavior probe classification: %+v", classification)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "pocs", "shiro-detect.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("legacy Shiro POC must be absent, stat error=%v", err)
+	}
+	workflow, err := os.ReadFile(filepath.Join(configDir, "workflow.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(workflow), "General-Poc-Shiro") {
+		t.Fatal("legacy General-Poc-Shiro workflow remains enabled")
 	}
 }
 

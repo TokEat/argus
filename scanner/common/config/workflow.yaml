@@ -1795,12 +1795,6 @@ General-Poc-Log4j2:
   pocs:
   - CVE-2021-44228
   - CVE-2021-45046
-General-Poc-Shiro:
-  type:
-  - base
-  - root
-  pocs:
-  - shiro-detect
 GenieACS:
   type:
   - root

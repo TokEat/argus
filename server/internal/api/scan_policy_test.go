@@ -1,7 +1,10 @@
 package api
 
 import (
+	"crypto/md5"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -112,6 +115,54 @@ func TestCompileTaskScanPolicyUsesDeduplicatedDictionaryUnion(t *testing.T) {
 	}
 }
 
+func TestCompileTaskScanPolicySealsAutomaticBehaviorProbes(t *testing.T) {
+	store := setupAITestDB(t)
+	project := db.Project{ID: "behavior-project", TenantID: "default", OwnerUserID: "1", Status: "active"}
+	if err := store.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+	content := "id: shiro-detect\ninfo:\n  name: Detect Apache Shiro\n  severity: info\n  metadata:\n    argus-rule-kind: active-fingerprint\n    argus-product: APACHE-Shiro\n    argus-auto-profile: safe\n    max-request: 1\nhttp:\n  - method: GET\n    path: ['{{BaseURL}}']\n    matchers: [{type: status, status: [200]}]\n"
+	artifactHash := fmt.Sprintf("%x", md5.Sum([]byte(content)))
+	artifact := db.Arsenal{ID: db.BuildTenantArsenalID("default", "active_fingerprint", "shiro-detect.yaml"), TenantID: "default", Type: "active_fingerprint", FileName: "shiro-detect.yaml", Content: content, Hash: artifactHash, Version: 3, State: "Approved"}
+	if err := store.Create(&artifact).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(&db.ActiveFingerprintRule{TenantID: "default", ArtifactID: artifact.ID, SourceFile: artifact.FileName, Name: "shiro-detect", ProductName: "APACHE-Shiro", ContentHash: artifact.Hash, Version: 3, State: "Approved", Enabled: true, ComputedAutoProfile: "safe", AutoEligible: true, MaxRequests: 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(&db.SystemConfig{Key: "rule_version", Value: "rules-v3"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	policy, _ := scanpolicy.PresetPolicy(scanpolicy.PresetStandard)
+	policy.Authorization.ValidationConfirmed = true
+	ctx, _ := newTenantContextWithRole(http.MethodPost, "/tasks/plan-preview", "admin", "1")
+	plan, err := compileTaskScanPolicy(ctx, scanPolicyPlanRequest{ProjectID: project.ID, Targets: json.RawMessage(`"example.com"`), Policy: policy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config taskScanConfig
+	if err := json.Unmarshal([]byte(plan.ScannerConfig), &config); err != nil {
+		t.Fatal(err)
+	}
+	wantHash := fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+	if !config.BehaviorProbe || config.ActiveFingerprintHashes[artifact.FileName] != wantHash || config.ActiveFingerprintProducts[artifact.FileName] != "APACHE-Shiro" || config.RequiredRuleVersion != "rules-v3" {
+		t.Fatalf("behavior probe plan is not sealed: %+v", config)
+	}
+	var selector db.AgentSelectorRules
+	if err := json.Unmarshal([]byte(plan.SelectorRules), &selector); err != nil {
+		t.Fatal(err)
+	}
+	if got := selector.Match["behavior_probe"]; len(got) != 1 || got[0] != "v1" {
+		t.Fatalf("behavior-capable Agent was not required: %+v", selector)
+	}
+	if err := store.Model(&db.Arsenal{}).Where("id = ?", artifact.ID).Update("content", content+"# draft drift\n").Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadAutomaticActiveFingerprints("default"); err == nil || !strings.Contains(err.Error(), "no longer matches") {
+		t.Fatalf("changed source was accepted without a new approved catalog revision: %v", err)
+	}
+}
+
 func TestCreateTaskRejectsStaleSemanticPlanHash(t *testing.T) {
 	store := setupAITestDB(t)
 	if err := store.Create(&db.Project{ID: "stale-project", TenantID: "default", OwnerUserID: "1", Status: "active"}).Error; err != nil {
@@ -173,5 +224,19 @@ func TestCheckedCredentialPairCountRejectsBeforeCartesianAllocation(t *testing.T
 	}
 	if got, err := checkedCredentialPairCount(250, 200, scanpolicy.DefaultCredentialPairLimit); err != nil || got != 50_000 {
 		t.Fatalf("boundary pair count=%d err=%v", got, err)
+	}
+}
+
+func TestScanPolicyPlanHashBindsActiveFingerprintFiles(t *testing.T) {
+	first, err := hashScanPolicyPlan("project", []string{"example.com"}, strings.Repeat("a", 64), "rules-v1", map[string]string{"one.yaml": strings.Repeat("1", 64)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := hashScanPolicyPlan("project", []string{"example.com"}, strings.Repeat("a", 64), "rules-v1", map[string]string{"one.yaml": strings.Repeat("2", 64)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("active fingerprint hash drift did not change the task plan hash")
 	}
 }

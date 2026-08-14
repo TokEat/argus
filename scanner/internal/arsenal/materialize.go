@@ -16,6 +16,7 @@ var managedRuleFiles = []string{
 	"finger.yaml",
 	"workflow.yaml",
 	"dir.yaml",
+	"active-fingerprints/",
 	"pocs/",
 }
 
@@ -29,12 +30,13 @@ type MaterializeOptions struct {
 }
 
 type RulePackageCounts struct {
-	Fingerprints int `json:"fingerprints"`
-	Workflows    int `json:"workflows"`
-	DirProbes    int `json:"dir_probes"`
-	Pocs         int `json:"pocs"`
-	PocAssets    int `json:"poc_assets"`
-	ConfigAssets int `json:"config_assets"`
+	Fingerprints       int `json:"fingerprints"`
+	Workflows          int `json:"workflows"`
+	DirProbes          int `json:"dir_probes"`
+	ActiveFingerprints int `json:"active_fingerprints"`
+	Pocs               int `json:"pocs"`
+	PocAssets          int `json:"poc_assets"`
+	ConfigAssets       int `json:"config_assets"`
 }
 
 type RulePackageManifest struct {
@@ -92,6 +94,9 @@ func PrepareRulePackage(opts MaterializeOptions) (*PreparedRulePackage, error) {
 	if err := os.MkdirAll(filepath.Join(stagingConfigDir, "pocs"), 0o755); err != nil {
 		return nil, fmt.Errorf("create staging config: %w", err)
 	}
+	if err := os.MkdirAll(filepath.Join(stagingConfigDir, "active-fingerprints"), 0o755); err != nil {
+		return nil, fmt.Errorf("create active fingerprint staging config: %w", err)
+	}
 
 	fingerYAML, err := ExportFingerYAML()
 	if err != nil {
@@ -133,6 +138,25 @@ func PrepareRulePackage(opts MaterializeOptions) (*PreparedRulePackage, error) {
 			return nil, fmt.Errorf("write staging poc %s: %w", fileName, err)
 		}
 		writtenPocs++
+	}
+
+	activeFingerprints, err := GetAllEnabledActiveFingerprints()
+	if err != nil {
+		return nil, fmt.Errorf("query active fingerprints: %w", err)
+	}
+	writtenActiveFingerprints := 0
+	for _, rule := range activeFingerprints {
+		if strings.TrimSpace(rule.FileName) == "" || rule.Content == "" || !rule.AutoEligible {
+			continue
+		}
+		fileName, err := safePocFileName(rule.FileName)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(filepath.Join(stagingConfigDir, "active-fingerprints", fileName), []byte(rule.Content), 0o644); err != nil {
+			return nil, fmt.Errorf("write active fingerprint %s: %w", fileName, err)
+		}
+		writtenActiveFingerprints++
 	}
 
 	assets, err := GetAllEnabledPocAssets()
@@ -224,12 +248,13 @@ func PrepareRulePackage(opts MaterializeOptions) (*PreparedRulePackage, error) {
 			MaterializedAt: time.Now().UTC().Format(time.RFC3339Nano),
 			ManagedFiles:   managedFiles,
 			Counts: RulePackageCounts{
-				Fingerprints: len(fingers),
-				Workflows:    len(workflows),
-				DirProbes:    len(probes),
-				Pocs:         writtenPocs,
-				PocAssets:    writtenAssets,
-				ConfigAssets: writtenConfigAssets,
+				Fingerprints:       len(fingers),
+				Workflows:          len(workflows),
+				DirProbes:          len(probes),
+				ActiveFingerprints: writtenActiveFingerprints,
+				Pocs:               writtenPocs,
+				PocAssets:          writtenAssets,
+				ConfigAssets:       writtenConfigAssets,
 			},
 		},
 	}, nil
@@ -255,6 +280,9 @@ func ActivatePreparedRulePackage(prepared *PreparedRulePackage) error {
 		}
 	}
 	if err := replaceDir(filepath.Join(prepared.StagingConfigDir, "pocs"), filepath.Join(prepared.ConfigDir, "pocs")); err != nil {
+		return err
+	}
+	if err := replaceDir(filepath.Join(prepared.StagingConfigDir, "active-fingerprints"), filepath.Join(prepared.ConfigDir, "active-fingerprints")); err != nil {
 		return err
 	}
 	if info, err := os.Stat(filepath.Join(prepared.StagingConfigDir, "dict")); err == nil {
@@ -332,6 +360,10 @@ func HasUsableRuleFiles(configDir string) bool {
 		}
 	}
 	info, err := os.Stat(filepath.Join(configDir, "pocs"))
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	info, err = os.Stat(filepath.Join(configDir, "active-fingerprints"))
 	return err == nil && info.IsDir()
 }
 

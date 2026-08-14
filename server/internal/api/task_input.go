@@ -31,6 +31,7 @@ type taskTargetSummary struct {
 }
 
 type taskScanConfig struct {
+	RequiredRuleVersion        string
 	Ports                      string
 	NoSubdomainBruteForce      bool
 	NoSubFinder                bool
@@ -62,6 +63,11 @@ type taskScanConfig struct {
 	FofaMaxCount               int
 	NoDirSearch                bool
 	DirSearchYaml              string
+	BehaviorProbe              bool
+	ActiveFingerprintTemplate  string
+	ActiveFingerprintHashes    map[string]string
+	ActiveFingerprintProducts  map[string]string
+	BehaviorProbeRequestBudget int64
 	GolangPoc                  bool
 	DisableGeneralPoc          bool
 	WAFBypassHeaders           bool
@@ -135,6 +141,7 @@ func defaultTaskScanConfig() taskScanConfig {
 		WorkflowYamlPath:           "config/workflow.yaml",
 		FingerConfigFilePath:       "config/finger.yaml",
 		DirSearchYaml:              "config/dir.yaml",
+		ActiveFingerprintTemplate:  "config/active-fingerprints",
 		SubdomainWordListFile:      "config/subdomains.txt",
 	}
 }
@@ -142,6 +149,9 @@ func defaultTaskScanConfig() taskScanConfig {
 func normalizeTaskConfigPayload(raw json.RawMessage) (string, taskTargetMode, error) {
 	body, err := normalizeJSONObjectPayload(raw)
 	if err != nil {
+		return "", taskTargetModeDirect, err
+	}
+	if err := rejectServerOnlyTaskConfigFields(body); err != nil {
 		return "", taskTargetModeDirect, err
 	}
 
@@ -162,6 +172,27 @@ func normalizeTaskConfigPayload(raw json.RawMessage) (string, taskTargetMode, er
 	}
 
 	return string(configJSON), taskTargetModeDirect, nil
+}
+
+func rejectServerOnlyTaskConfigFields(body []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return err
+	}
+	serverOnly := map[string]string{
+		"requiredruleversion":        "RequiredRuleVersion",
+		"behaviorprobe":              "BehaviorProbe",
+		"activefingerprinttemplate":  "ActiveFingerprintTemplate",
+		"activefingerprinthashes":    "ActiveFingerprintHashes",
+		"activefingerprintproducts":  "ActiveFingerprintProducts",
+		"behaviorproberequestbudget": "BehaviorProbeRequestBudget",
+	}
+	for rawField := range fields {
+		if field, exists := serverOnly[strings.ToLower(rawField)]; exists {
+			return fmt.Errorf("%s is Server-only; use semantic scan policy", field)
+		}
+	}
+	return nil
 }
 
 func normalizeJSONObjectPayload(raw json.RawMessage) ([]byte, error) {

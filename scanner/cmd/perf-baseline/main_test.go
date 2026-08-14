@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/P0lar1ght/argus/scanner/internal/arsenal"
 )
 
 func TestParseCommandArgsIsBoundedAndStrict(t *testing.T) {
@@ -53,8 +55,13 @@ func TestAgentContextConfigRequiresMaterializedRuleFilesAndSafeDefaults(t *testi
 			t.Fatal(err)
 		}
 	}
+	for _, name := range []string{"pocs", "active-fingerprints"} {
+		if err := os.MkdirAll(filepath.Join(dir, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	writeAgentContextManifest(t, dir, map[string]any{
-		"schema_version": "argus-arsenal-package/v1",
+		"schema_version": arsenal.RulePackageSchemaVersion,
 		"hash":           "package-hash-v1",
 		"rule_version":   "v2026.08.10.1",
 		"package_sha256": strings.Repeat("a", 64),
@@ -73,11 +80,11 @@ func TestAgentContextConfigRejectsInvalidManifest(t *testing.T) {
 		"missing":         nil,
 		"empty":           "",
 		"wrong schema":    map[string]any{"schema_version": "other/v1", "hash": "package-hash", "rule_version": "rules-v1", "package_sha256": strings.Repeat("a", 64)},
-		"empty hash":      map[string]any{"schema_version": "argus-arsenal-package/v1", "hash": "", "rule_version": "rules-v1", "package_sha256": strings.Repeat("a", 64)},
-		"spaced version":  map[string]any{"schema_version": "argus-arsenal-package/v1", "hash": "package-hash", "rule_version": " rules-v1", "package_sha256": strings.Repeat("a", 64)},
-		"control hash":    map[string]any{"schema_version": "argus-arsenal-package/v1", "hash": "package\nhash", "rule_version": "rules-v1", "package_sha256": strings.Repeat("a", 64)},
-		"missing package": map[string]any{"schema_version": "argus-arsenal-package/v1", "hash": "package-hash", "rule_version": "rules-v1"},
-		"bad package":     map[string]any{"schema_version": "argus-arsenal-package/v1", "hash": "package-hash", "rule_version": "rules-v1", "package_sha256": strings.Repeat("A", 64)},
+		"empty hash":      map[string]any{"schema_version": arsenal.RulePackageSchemaVersion, "hash": "", "rule_version": "rules-v1", "package_sha256": strings.Repeat("a", 64)},
+		"spaced version":  map[string]any{"schema_version": arsenal.RulePackageSchemaVersion, "hash": "package-hash", "rule_version": " rules-v1", "package_sha256": strings.Repeat("a", 64)},
+		"control hash":    map[string]any{"schema_version": arsenal.RulePackageSchemaVersion, "hash": "package\nhash", "rule_version": "rules-v1", "package_sha256": strings.Repeat("a", 64)},
+		"missing package": map[string]any{"schema_version": arsenal.RulePackageSchemaVersion, "hash": "package-hash", "rule_version": "rules-v1"},
+		"bad package":     map[string]any{"schema_version": arsenal.RulePackageSchemaVersion, "hash": "package-hash", "rule_version": "rules-v1", "package_sha256": strings.Repeat("A", 64)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := writeAgentContextRules(t)
@@ -108,7 +115,7 @@ func TestVerifyAgentContextArsenalRequiresManifestPackageMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeAgentContextManifest(t, dir, map[string]any{
-		"schema_version": "argus-arsenal-package/v1",
+		"schema_version": arsenal.RulePackageSchemaVersion,
 		"hash":           "package-hash-v1",
 		"rule_version":   "v2026.08.10.1",
 		"package_sha256": packageHash,
@@ -136,6 +143,11 @@ func writeAgentContextRules(t *testing.T) string {
 	dir := t.TempDir()
 	for _, name := range []string{"finger.yaml", "workflow.yaml", "dir.yaml"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"pocs", "active-fingerprints"} {
+		if err := os.MkdirAll(filepath.Join(dir, name), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}

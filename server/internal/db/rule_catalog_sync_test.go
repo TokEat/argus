@@ -21,6 +21,7 @@ func setupRuleCatalogSyncTestDB(t *testing.T) *gorm.DB {
 		&RuleCatalogBootstrap{},
 		&FingerprintRule{},
 		&PocRule{},
+		&ActiveFingerprintRule{},
 		&WorkflowRule{},
 		&DirRule{},
 	); err != nil {

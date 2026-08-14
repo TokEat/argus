@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/P0lar1ght/argus/shared/proto/go/activefingerprint"
 	"gopkg.in/yaml.v3"
 )
 
@@ -180,6 +181,47 @@ func ImportPocsFromFS(pocFS embed.FS, source string) (added, skipped int, err er
 		}
 
 		created, addErr := AddPoc(p)
+		if addErr != nil {
+			skipped++
+			return nil
+		}
+		if created {
+			added++
+		} else {
+			skipped++
+		}
+		return nil
+	})
+	return
+}
+
+// ImportActiveFingerprintsFromFS imports one complete Nuclei HTTP template per
+// YAML file. Invalid or controlled templates are not silently promoted into
+// the automatic scanner package.
+func ImportActiveFingerprintsFromFS(ruleFS embed.FS, source string) (added, skipped int, err error) {
+	if source == "" {
+		source = "builtin"
+	}
+	err = fs.WalkDir(ruleFS, ".", func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() || (!strings.HasSuffix(strings.ToLower(d.Name()), ".yaml") && !strings.HasSuffix(strings.ToLower(d.Name()), ".yml")) {
+			return nil
+		}
+		content, readErr := fs.ReadFile(ruleFS, path)
+		if readErr != nil {
+			skipped++
+			return nil
+		}
+		classification, inspectErr := activefingerprint.Inspect(d.Name(), content)
+		if inspectErr != nil {
+			skipped++
+			return nil
+		}
+		rule := &ActiveFingerprint{
+			Name: classification.ID, FileName: d.Name(), ProductName: classification.Product,
+			Content: string(content), ContentHash: fmt.Sprintf("%x", md5.Sum(content)),
+			AutoEligible: classification.AutoEligible, Enabled: true, Source: source,
+		}
+		created, addErr := AddActiveFingerprint(rule)
 		if addErr != nil {
 			skipped++
 			return nil

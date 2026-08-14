@@ -409,6 +409,11 @@ func schemaTableSpecs() []schemaTableSpec {
 			Indexes: []string{"idx_poc_rule_unique", "idx_poc_rules_enabled", "idx_poc_rules_target_product", "idx_poc_rules_cve", "idx_poc_rules_compatibility_status", "idx_poc_rules_execution_class", "idx_poc_rules_risk_level", "idx_poc_rules_tenant_enabled_updated", "idx_poc_rules_name_trgm", "idx_poc_rules_source_file_trgm"},
 		},
 		{
+			Table:   "active_fingerprint_rules",
+			Columns: []string{"tenant_id", "artifact_id", "source_file", "name", "product_name", "content_hash", "version", "state", "enabled", "declared_auto_profile", "computed_auto_profile", "auto_eligible", "max_requests", "classification_reason"},
+			Indexes: []string{"idx_active_finger_rule_unique", "idx_active_fingerprint_rules_artifact_id", "idx_active_fingerprint_rules_product_name", "idx_active_fingerprint_rules_content_hash", "idx_active_fingerprint_rules_state", "idx_active_fingerprint_rules_enabled", "idx_active_fingerprint_rules_auto_eligible", "idx_active_fingerprint_rules_tenant_auto"},
+		},
+		{
 			Table:   "workflow_rules",
 			Columns: []string{"artifact_id", "source_file", "product_name", "poc_name", "match_type", "enabled"},
 			Indexes: []string{"idx_workflow_rule_unique", "idx_workflow_rules_enabled", "idx_workflow_rules_tenant_enabled_product", "idx_workflow_rules_tenant_poc", "idx_workflow_rules_product_trgm", "idx_workflow_rules_poc_trgm"},

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"github.com/P0lar1ght/argus/server/internal/credentialbundle"
 	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/P0lar1ght/argus/server/internal/subdomaindictionary"
+	"github.com/P0lar1ght/argus/shared/proto/go/activefingerprint"
 	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 	"github.com/gin-gonic/gin"
 )
@@ -79,6 +81,37 @@ type scanPolicyValidationBudget struct {
 	RateLimit              int    `json:"rate_limit"`
 	CredentialMaxPerTarget int    `json:"credential_max_per_target"`
 	RiskBudgetBasis        string `json:"risk_budget_basis"`
+}
+
+func loadAutomaticActiveFingerprints(tenantID string) (map[string]string, map[string]string, error) {
+	var rules []db.ActiveFingerprintRule
+	if err := db.DB.Where("tenant_id = ? AND enabled = ? AND auto_eligible = ? AND LOWER(state) = ?", tenantID, true, true, "approved").Order("source_file asc").Find(&rules).Error; err != nil {
+		return nil, nil, fmt.Errorf("load automatic active fingerprints: %w", err)
+	}
+	if len(rules) > activefingerprint.MaxAutoSafePerTenant {
+		return nil, nil, fmt.Errorf("automatic active fingerprints exceed tenant limit %d", activefingerprint.MaxAutoSafePerTenant)
+	}
+	hashes := make(map[string]string, len(rules))
+	products := make(map[string]string, len(rules))
+	for _, rule := range rules {
+		var arsenal db.Arsenal
+		if err := db.DB.Where("tenant_id = ? AND id = ?", tenantID, rule.ArtifactID).First(&arsenal).Error; err != nil {
+			return nil, nil, fmt.Errorf("load active fingerprint source %s: %w", rule.SourceFile, err)
+		}
+		actualArtifactHash := fmt.Sprintf("%x", md5.Sum([]byte(arsenal.Content)))
+		if !strings.EqualFold(strings.TrimSpace(arsenal.State), "approved") || arsenal.Version != rule.Version ||
+			!strings.EqualFold(strings.TrimSpace(arsenal.Hash), strings.TrimSpace(rule.ContentHash)) ||
+			!strings.EqualFold(strings.TrimSpace(arsenal.Hash), actualArtifactHash) {
+			return nil, nil, fmt.Errorf("active fingerprint %s source no longer matches its approved catalog revision", rule.SourceFile)
+		}
+		classification, err := activefingerprint.Inspect(rule.SourceFile, []byte(arsenal.Content))
+		if err != nil || !classification.AutoEligible || classification.Product != rule.ProductName {
+			return nil, nil, fmt.Errorf("active fingerprint %s failed sealed-plan validation", rule.SourceFile)
+		}
+		hashes[rule.SourceFile] = fmt.Sprintf("%x", sha256.Sum256([]byte(arsenal.Content)))
+		products[rule.SourceFile] = rule.ProductName
+	}
+	return hashes, products, nil
 }
 
 func normalizeTaskScheduling(priorityInput, timeoutInput *int) (int, int, error) {
@@ -222,6 +255,7 @@ func compileTaskScanPolicy(c *gin.Context, req scanPolicyPlanRequest) (scanPolic
 	config.SubdomainBruteforceDepth = normalized.Subdomains.BruteforceDepth
 	config.SubdomainDictionaryRefs = append([]scanpolicy.DictionaryRef(nil), normalized.Subdomains.Wordlists...)
 	config.NoHostBind = !normalized.Capabilities.HostBinding
+	config.BehaviorProbe = normalized.Capabilities.BehaviorProbe
 	config.NoDirSearch = !normalized.Capabilities.DirectoryProbe
 	config.AllowCDNAssets = normalized.Capabilities.AllowCDNAssets
 	config.AllowLocalAreaDomain = normalized.Capabilities.AllowPrivateResolvedDomains
@@ -247,6 +281,19 @@ func compileTaskScanPolicy(c *gin.Context, req scanPolicyPlanRequest) (scanPolic
 	config.ProtocolCheckTargetLimit = protocolLimit
 	config.ProtocolCheckRateLimit = protocolRate
 	config.ProtocolCheckRequestBudget = int64(protocolLimit)
+	var activeHashes, activeProducts map[string]string
+	if config.BehaviorProbe {
+		activeHashes, activeProducts, err = loadAutomaticActiveFingerprints(currentTenantID(c))
+		if err != nil {
+			return scanPolicyPlan{}, err
+		}
+		config.ActiveFingerprintHashes = activeHashes
+		config.ActiveFingerprintProducts = activeProducts
+		config.BehaviorProbeRequestBudget = int64(protocolLimit * len(activeHashes))
+		if len(activeHashes) > 0 {
+			config.RequiredRuleVersion = currentRuleVersionValue()
+		}
+	}
 	configJSON, err := json.Marshal(config)
 	if err != nil {
 		return scanPolicyPlan{}, err
@@ -270,6 +317,9 @@ func compileTaskScanPolicy(c *gin.Context, req scanPolicyPlanRequest) (scanPolic
 	if normalized.Subdomains.BruteforceDepth > 1 {
 		selectorRules.Match["subdomain_depth"] = []string{"v1"}
 	}
+	if normalized.Capabilities.BehaviorProbe && len(activeHashes) > 0 {
+		selectorRules.Match["behavior_probe"] = []string{"v1"}
+	}
 	selectorRules.Match["gopoc_scoped"] = []string{"v1"}
 	if len(selectorRules.NotMatch) == 0 {
 		selectorRules.NotMatch = nil
@@ -285,11 +335,11 @@ func compileTaskScanPolicy(c *gin.Context, req scanPolicyPlanRequest) (scanPolic
 	credentialMatched, credentialSlots, credentialReasons := previewPolicyAgents(currentTenantID(c), credentialRules)
 	policyHash, _ := scanpolicy.Hash(normalized)
 	ruleVersion := currentRuleVersionValue()
-	planHash, err := hashScanPolicyPlan(req.ProjectID, targets, policyHash, ruleVersion)
+	planHash, err := hashScanPolicyPlan(req.ProjectID, targets, policyHash, ruleVersion, activeHashes)
 	if err != nil {
 		return scanPolicyPlan{}, err
 	}
-	estimated := int64(portCount)*int64(len(targets)) + int64(protocolLimit)
+	estimated := int64(portCount)*int64(len(targets)) + int64(protocolLimit) + config.BehaviorProbeRequestBudget
 	validationConcurrency, validationRate := validationBudgetLimits(normalized.Intensity)
 	stages := []scanPolicyStagePreview{
 		{ID: "host_discovery", Enabled: true, Targets: len(targets)},
@@ -297,8 +347,9 @@ func compileTaskScanPolicy(c *gin.Context, req scanPolicyPlanRequest) (scanPolic
 		{ID: "port_scan", DependsOn: []string{"host_discovery"}, Enabled: true, Targets: len(targets)},
 		{ID: "protocol_identification", DependsOn: []string{"port_scan"}, Enabled: true, Reason: "响应识别后执行受审核的 GoPoc 协议检查；只形成资产证据，不计为漏洞"},
 		{ID: "http_probe", DependsOn: []string{"protocol_identification"}, Enabled: true},
+		{ID: "behavior_probe", DependsOn: []string{"http_probe"}, Enabled: normalized.Capabilities.BehaviorProbe, Reason: fmt.Sprintf("执行 %d 个已审核自动安全 Nuclei 行为探针，每 HTTP 服务每探针最多一次请求", len(activeHashes))},
 		{ID: "directory_probe", DependsOn: []string{"http_probe"}, Enabled: normalized.Capabilities.DirectoryProbe, Reason: "请求规则定义的产品特征路径，不执行通用目录扫描"},
-		{ID: "fingerprint", DependsOn: []string{"http_probe", "protocol_identification"}, Enabled: true},
+		{ID: "fingerprint", DependsOn: []string{"http_probe", "protocol_identification", "behavior_probe", "directory_probe"}, Enabled: true},
 		{ID: "risk_validation", DependsOn: []string{"fingerprint"}, Enabled: normalized.Capabilities.RiskValidation, Reason: "执行 Workflow 命中的 Nuclei 与精确服务命中的受审核 GoPoc 漏洞检查", MatchedAgents: riskMatched, AvailableSlots: riskSlots, AgentReasons: riskReasons},
 		{ID: "credential_validation", DependsOn: []string{"protocol_identification"}, Enabled: normalized.Capabilities.CredentialValidation, Reason: "内置服务凭据字典始终保留", MatchedAgents: credentialMatched, AvailableSlots: credentialSlots, AgentReasons: credentialReasons},
 	}
@@ -409,15 +460,16 @@ func previewPolicyAgents(tenantID string, rules db.AgentSelectorRules) (int, int
 	return matched, slots, reasons
 }
 
-func hashScanPolicyPlan(projectID string, targets []string, policyHash, ruleVersion string) (string, error) {
+func hashScanPolicyPlan(projectID string, targets []string, policyHash, ruleVersion string, activeFingerprintHashes map[string]string) (string, error) {
 	canonicalTargets := append([]string(nil), targets...)
 	sort.Strings(canonicalTargets)
 	encoded, err := json.Marshal(struct {
-		ProjectID   string   `json:"project_id"`
-		Targets     []string `json:"targets"`
-		PolicyHash  string   `json:"policy_hash"`
-		RuleVersion string   `json:"rule_version"`
-	}{projectID, canonicalTargets, policyHash, ruleVersion})
+		ProjectID               string            `json:"project_id"`
+		Targets                 []string          `json:"targets"`
+		PolicyHash              string            `json:"policy_hash"`
+		RuleVersion             string            `json:"rule_version"`
+		ActiveFingerprintHashes map[string]string `json:"active_fingerprint_hashes,omitempty"`
+	}{projectID, canonicalTargets, policyHash, ruleVersion, activeFingerprintHashes})
 	if err != nil {
 		return "", err
 	}

@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/P0lar1ght/argus/shared/proto/go/activefingerprint"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -22,7 +23,7 @@ import (
 
 const (
 	RuleCatalogBootstrapKey    = "rule_catalog_v1"
-	RuleCatalogSchemaVersion   = 5
+	RuleCatalogSchemaVersion   = 6
 	RuleCatalogStatusReady     = "ready"
 	RuleCatalogStatusPartial   = "partial"
 	RuleCatalogStatusEmpty     = "empty"
@@ -47,20 +48,21 @@ var (
 // RuleCatalogBootstrap tracks whether the structured rule catalog has been
 // materialized from the raw arsenals table for the current schema version.
 type RuleCatalogBootstrap struct {
-	Key              string `gorm:"primaryKey"`
-	SchemaVersion    int
-	Source           string
-	Status           string `gorm:"index"`
-	AggregateHash    string `gorm:"index"`
-	ArsenalCount     int
-	FingerprintCount int
-	WorkflowCount    int
-	DirProbeCount    int
-	PocCount         int
-	LastError        string `gorm:"type:text"`
-	LastSeededAt     *time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	Key               string `gorm:"primaryKey"`
+	SchemaVersion     int
+	Source            string
+	Status            string `gorm:"index"`
+	AggregateHash     string `gorm:"index"`
+	ArsenalCount      int
+	FingerprintCount  int
+	WorkflowCount     int
+	DirProbeCount     int
+	ActiveFingerCount int
+	PocCount          int
+	LastError         string `gorm:"type:text"`
+	LastSeededAt      *time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 // FingerprintRule stores one fingerprint expression per row for search,
@@ -105,6 +107,28 @@ type PocRule struct {
 	Enabled             bool   `gorm:"default:true;index"`
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+}
+
+// ActiveFingerprintRule is the derived, queryable index for one independently
+// versioned Nuclei behavior probe. Raw YAML remains authoritative in arsenals.
+type ActiveFingerprintRule struct {
+	ID                   uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID             string `gorm:"default:'default';index;uniqueIndex:idx_active_finger_rule_unique"`
+	ArtifactID           string `gorm:"index"`
+	SourceFile           string `gorm:"index;not null;uniqueIndex:idx_active_finger_rule_unique"`
+	Name                 string `gorm:"index;not null"`
+	ProductName          string `gorm:"index;not null"`
+	ContentHash          string `gorm:"index;not null"`
+	Version              int    `gorm:"default:1"`
+	State                string `gorm:"index"`
+	Enabled              bool   `gorm:"default:true;index"`
+	DeclaredAutoProfile  string `gorm:"index"`
+	ComputedAutoProfile  string `gorm:"index;not null"`
+	AutoEligible         bool   `gorm:"index"`
+	MaxRequests          int
+	ClassificationReason string `gorm:"type:text"`
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 func NormalizePocExecutionClass(raw string) (string, error) {
@@ -204,6 +228,8 @@ func CanonicalArsenalType(raw string) string {
 		return "dir"
 	case "poc":
 		return "poc"
+	case "active_fingerprint", "active-fingerprint", "behavior_probe", "behavior-probe":
+		return "active_fingerprint"
 	case "poc_asset", "pocasset":
 		return "poc_asset"
 	case "config_asset", "configasset", "dict_asset", "dictasset":
@@ -225,6 +251,8 @@ func ArsenalTypeAliases(raw string) []string {
 		return []string{"workflow"}
 	case "poc":
 		return []string{"poc"}
+	case "active_fingerprint":
+		return []string{"active_fingerprint", "active-fingerprint", "behavior_probe", "behavior-probe"}
 	case "poc_asset":
 		return []string{"poc_asset", "pocasset"}
 	case "config_asset":
@@ -307,18 +335,19 @@ func syncRuleCatalogFromArsenalLocked() error {
 	}
 
 	state := RuleCatalogBootstrap{
-		Key:              RuleCatalogBootstrapKey,
-		SchemaVersion:    RuleCatalogSchemaVersion,
-		Source:           "arsenals",
-		Status:           status,
-		AggregateHash:    aggregateHash,
-		ArsenalCount:     len(arsenals),
-		FingerprintCount: len(materialized.fingerprints),
-		WorkflowCount:    len(materialized.workflows),
-		DirProbeCount:    len(materialized.dirs),
-		PocCount:         len(materialized.pocs),
-		LastError:        summarizeRuleCatalogErrors(materialized.errors),
-		LastSeededAt:     &now,
+		Key:               RuleCatalogBootstrapKey,
+		SchemaVersion:     RuleCatalogSchemaVersion,
+		Source:            "arsenals",
+		Status:            status,
+		AggregateHash:     aggregateHash,
+		ArsenalCount:      len(arsenals),
+		FingerprintCount:  len(materialized.fingerprints),
+		WorkflowCount:     len(materialized.workflows),
+		DirProbeCount:     len(materialized.dirs),
+		ActiveFingerCount: len(materialized.activeFingers),
+		PocCount:          len(materialized.pocs),
+		LastError:         summarizeRuleCatalogErrors(materialized.errors),
+		LastSeededAt:      &now,
 	}
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
@@ -334,6 +363,9 @@ func syncRuleCatalogFromArsenalLocked() error {
 		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&PocRule{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&ActiveFingerprintRule{}).Error; err != nil {
+			return err
+		}
 
 		if err := createInBatches(tx, materialized.fingerprints); err != nil {
 			return err
@@ -345,6 +377,12 @@ func syncRuleCatalogFromArsenalLocked() error {
 			return err
 		}
 		if err := createInBatches(tx, materialized.pocs); err != nil {
+			return err
+		}
+		if err := createInBatches(tx, materialized.activeFingers); err != nil {
+			return err
+		}
+		if err := validateAutomaticActiveFingerprintLimit(materialized.activeFingers); err != nil {
 			return err
 		}
 		if err := disableNonApprovedCatalogRows(tx); err != nil {
@@ -364,17 +402,47 @@ func syncRuleCatalogFromArsenalLocked() error {
 	}
 
 	log.Printf(
-		"[RuleCatalog] bootstrap=%s arsenals=%d pocs=%d fingerprints=%d workflows=%d dirs=%d errors=%d",
+		"[RuleCatalog] bootstrap=%s arsenals=%d pocs=%d fingerprints=%d workflows=%d dirs=%d active_fingers=%d errors=%d",
 		status,
 		len(arsenals),
 		len(materialized.pocs),
 		len(materialized.fingerprints),
 		len(materialized.workflows),
 		len(materialized.dirs),
+		len(materialized.activeFingers),
 		len(materialized.errors),
 	)
 	if len(materialized.errors) > 0 {
 		return fmt.Errorf("rule catalog materialized with %d errors: %s", len(materialized.errors), summarizeRuleCatalogErrors(materialized.errors))
+	}
+	return nil
+}
+
+func activeFingerprintTenantSet(rules []ActiveFingerprintRule) map[string]struct{} {
+	out := make(map[string]struct{})
+	for _, rule := range rules {
+		out[rule.TenantID] = struct{}{}
+	}
+	return out
+}
+
+func validateAutomaticActiveFingerprintLimit(rules []ActiveFingerprintRule) error {
+	for tenantID := range activeFingerprintTenantSet(rules) {
+		enabled := 0
+		ids := make(map[string]string)
+		for _, rule := range rules {
+			if rule.TenantID == tenantID && rule.Enabled && rule.AutoEligible {
+				enabled++
+				id := strings.ToLower(strings.TrimSpace(rule.Name))
+				if other, duplicate := ids[id]; duplicate {
+					return fmt.Errorf("tenant %s active fingerprints %s and %s use duplicate template id %q", tenantID, other, rule.SourceFile, rule.Name)
+				}
+				ids[id] = rule.SourceFile
+			}
+		}
+		if enabled > activefingerprint.MaxAutoSafePerTenant {
+			return fmt.Errorf("tenant %s enables %d automatic active fingerprints; maximum is %d", tenantID, enabled, activefingerprint.MaxAutoSafePerTenant)
+		}
 	}
 	return nil
 }
@@ -405,7 +473,7 @@ func ValidateRuleCatalogCandidate(candidate Arsenal) error {
 	if len(materialized.errors) > 0 {
 		return fmt.Errorf("rule catalog materialized with %d errors: %s", len(materialized.errors), summarizeRuleCatalogErrors(materialized.errors))
 	}
-	return nil
+	return validateAutomaticActiveFingerprintLimit(materialized.activeFingers)
 }
 
 func normalizeLegacyArsenalTypes() error {
@@ -465,11 +533,12 @@ func errorsIsNotFound(err error) bool {
 }
 
 type materializedRuleCatalog struct {
-	fingerprints []FingerprintRule
-	workflows    []WorkflowRule
-	dirs         []DirRule
-	pocs         []PocRule
-	errors       []string
+	fingerprints  []FingerprintRule
+	workflows     []WorkflowRule
+	dirs          []DirRule
+	activeFingers []ActiveFingerprintRule
+	pocs          []PocRule
+	errors        []string
 }
 
 func materializeRuleCatalog(arsenals []Arsenal) materializedRuleCatalog {
@@ -506,10 +575,33 @@ func materializeRuleCatalog(arsenals []Arsenal) materializedRuleCatalog {
 				continue
 			}
 			out.pocs = append(out.pocs, rule)
+		case "active_fingerprint":
+			rule, err := materializeActiveFingerprintRule(arsenal)
+			if err != nil {
+				out.errors = append(out.errors, err.Error())
+				continue
+			}
+			out.activeFingers = append(out.activeFingers, rule)
 		}
 	}
 
 	return out
+}
+
+func materializeActiveFingerprintRule(arsenal Arsenal) (ActiveFingerprintRule, error) {
+	classification, err := activefingerprint.Inspect(arsenal.FileName, []byte(sanitizePostgresText(arsenal.Content)))
+	if err != nil {
+		return ActiveFingerprintRule{}, fmt.Errorf("active fingerprint %s is invalid: %w", arsenal.FileName, err)
+	}
+	reasons, _ := json.Marshal(classification.Reasons)
+	return ActiveFingerprintRule{
+		TenantID: arsenal.TenantID, ArtifactID: arsenal.ID, SourceFile: arsenal.FileName,
+		Name: classification.ID, ProductName: classification.Product, ContentHash: arsenal.Hash,
+		Version: arsenal.Version, State: arsenal.State, Enabled: arsenal.State == "Approved",
+		DeclaredAutoProfile: classification.DeclaredProfile, ComputedAutoProfile: classification.ComputedProfile,
+		AutoEligible: classification.AutoEligible, MaxRequests: classification.MaxRequests,
+		ClassificationReason: string(reasons),
+	}, nil
 }
 
 func materializeFingerprintRules(arsenal Arsenal) ([]FingerprintRule, error) {
@@ -956,7 +1048,7 @@ func createInBatches[T any](tx *gorm.DB, items []T) error {
 }
 
 func disableNonApprovedCatalogRows(tx *gorm.DB) error {
-	for _, model := range []interface{}{&FingerprintRule{}, &WorkflowRule{}, &DirRule{}, &PocRule{}} {
+	for _, model := range []interface{}{&FingerprintRule{}, &WorkflowRule{}, &DirRule{}, &PocRule{}, &ActiveFingerprintRule{}} {
 		if err := tx.Model(model).Where("state <> ?", "Approved").Update("enabled", false).Error; err != nil {
 			return err
 		}

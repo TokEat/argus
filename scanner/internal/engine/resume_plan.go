@@ -77,6 +77,9 @@ func resumeStagesForTarget(target string, cfg Config) ([]scanplan.Stage, bool) {
 	if !cfg.NoHostBind {
 		common = append(common, scanplan.StageHostBinding)
 	}
+	if cfg.BehaviorProbe {
+		common = append(common, scanplan.StageBehaviorProbe)
+	}
 	if !cfg.NoDirSearch {
 		common = append(common, scanplan.StageDirectoryProbe)
 	}

@@ -99,6 +99,9 @@ func TestIsRulePackageMaterializedRequiresLowercasePackageSHA256(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(configDir, "pocs"), 0o755); err != nil {
 		t.Fatalf("create pocs directory: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Join(configDir, "active-fingerprints"), 0o755); err != nil {
+		t.Fatalf("create active fingerprint directory: %v", err)
+	}
 
 	valid := strings.Repeat("a", 64)
 	tests := []struct {

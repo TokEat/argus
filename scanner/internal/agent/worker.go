@@ -288,6 +288,7 @@ func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[stri
 	tags["gopoc_scoped"] = "v1"
 	tags["subdomain_dictionary"] = "v1"
 	tags["subdomain_depth"] = "v1"
+	tags["behavior_probe"] = "v1"
 	if _, err := exec.LookPath("masscan"); err == nil {
 		tags["scan_syn"] = "v1"
 	}
@@ -910,6 +911,7 @@ func applyAgentRuleFileConfig(cfg *engine.Config) {
 	cfg.FingerConfigFilePath = filepath.Join("config", "finger.yaml")
 	cfg.WorkflowYamlPath = filepath.Join("config", "workflow.yaml")
 	cfg.DirSearchYaml = filepath.Join("config", "dir.yaml")
+	cfg.ActiveFingerprintTemplate = filepath.Join("config", "active-fingerprints")
 	cfg.NucleiTemplate = filepath.Join("config", "pocs")
 }
 
@@ -993,6 +995,16 @@ func (w *Worker) executeTask(task *pb.Task) {
 		if requiredRuleVersion == "" || taskRuleVersion != requiredRuleVersion {
 			err := fmt.Errorf("risk validation requires Agent rules %q, current version is %q", requiredRuleVersion, taskRuleVersion)
 			log.Printf("Rejected risk validation task %s: %v", task.TaskId, err)
+			w.reportTaskCompletion(task.TaskId, "FAILED", err.Error())
+			releaseRuleUse()
+			return
+		}
+	}
+	if cfg.BehaviorProbe && len(cfg.ActiveFingerprintHashes) > 0 {
+		requiredRuleVersion := strings.TrimSpace(cfg.RequiredRuleVersion)
+		if requiredRuleVersion == "" || taskRuleVersion != requiredRuleVersion {
+			err := fmt.Errorf("active fingerprint requires Agent rules %q, current version is %q", requiredRuleVersion, taskRuleVersion)
+			log.Printf("Rejected active fingerprint task %s: %v", task.TaskId, err)
 			w.reportTaskCompletion(task.TaskId, "FAILED", err.Error())
 			releaseRuleUse()
 			return

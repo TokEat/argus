@@ -1,0 +1,24 @@
+id: shiro-detect
+
+info:
+  name: Detect Apache Shiro
+  author: AresX
+  severity: info
+  metadata:
+    argus-rule-kind: active-fingerprint
+    argus-product: APACHE-Shiro
+    argus-auto-profile: safe
+    max-request: 1
+  tags: tech,shiro
+
+http:
+  - method: GET
+    path:
+      - '{{BaseURL}}'
+    headers:
+      Cookie: rememberMe={{randstr}}
+    matchers:
+      - type: word
+        part: header
+        words:
+          - "rememberMe=deleteMe"

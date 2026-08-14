@@ -174,3 +174,18 @@ func TestNormalizeTaskConfigRejectsCallerControlledGoPocProtocolChecks(t *testin
 		}
 	}
 }
+
+func TestNormalizeTaskConfigRejectsCallerControlledBehaviorProbes(t *testing.T) {
+	for _, payload := range []string{
+		`{"BehaviorProbe":true}`,
+		`{"behaviorprobe":true}`,
+		`{"ActiveFingerprintTemplate":"config/active-fingerprints"}`,
+		`{"ActiveFingerprintHashes":{"probe.yaml":"hash"}}`,
+		`{"ActiveFingerprintProducts":{"probe.yaml":"product"}}`,
+		`{"BehaviorProbeRequestBudget":1}`,
+	} {
+		if _, _, err := normalizeTaskConfigPayload(json.RawMessage(payload)); err == nil || !strings.Contains(err.Error(), "Server-only") {
+			t.Fatalf("caller-controlled behavior probe payload %s err = %v, want Server-only rejection", payload, err)
+		}
+	}
+}

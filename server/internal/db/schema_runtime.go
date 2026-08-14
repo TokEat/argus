@@ -70,6 +70,7 @@ func schemaModels() []interface{} {
 		&RuleCatalogBootstrap{},
 		&FingerprintRule{},
 		&PocRule{},
+		&ActiveFingerprintRule{},
 		&WorkflowRule{},
 		&WorkflowProductSummary{},
 		&DirRule{},

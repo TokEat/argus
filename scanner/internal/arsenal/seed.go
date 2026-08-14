@@ -38,7 +38,15 @@ func SeedFromEmbed() {
 		log.Printf("[Arsenal] Dir: 新增 %d, 跳过 %d", added, skipped)
 	}
 
-	// 4. 导入 Nuclei POC
+	// 4. 导入主动行为指纹（与 POC 独立）
+	added, skipped, err = ImportActiveFingerprintsFromFS(commoncfg.EmbedActiveFingerprints, "builtin")
+	if err != nil {
+		log.Printf("[Arsenal] 主动行为指纹导入失败: %v", err)
+	} else {
+		log.Printf("[Arsenal] 主动行为指纹: 新增 %d, 跳过 %d", added, skipped)
+	}
+
+	// 5. 导入 Nuclei POC
 	added, skipped, err = ImportPocsFromFS(commoncfg.EmbedNucleiPocs, "builtin")
 	if err != nil {
 		log.Printf("[Arsenal] POC 导入失败: %v", err)

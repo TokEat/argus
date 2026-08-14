@@ -86,6 +86,7 @@ func TestSchemaModelTableNames(t *testing.T) {
 		"RuleCatalogBootstrap":         "rule_catalog_bootstraps",
 		"FingerprintRule":              "fingerprint_rules",
 		"PocRule":                      "poc_rules",
+		"ActiveFingerprintRule":        "active_fingerprint_rules",
 		"WorkflowRule":                 "workflow_rules",
 		"WorkflowProductSummary":       "workflow_product_summaries",
 		"DirRule":                      "dir_rules",

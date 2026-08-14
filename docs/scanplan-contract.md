@@ -11,7 +11,7 @@ Argus 的 Server、Agent 与离线 CLI 共享 `github.com/P0lar1ght/argus/shared
 | `internal-server` | Server + Agent 内网扫描 | 必须使用 Agent 的实际 `network_zone`，不能按私网 IP 跨区域复用 |
 | `risk-validation` | 已确认的独立 POC 验证 | Plan 只能包含强制执行的 `risk_validation`，不能混入资产发现阶段 |
 
-稳定阶段包括搜索引擎、子域发现、CDN 分类、ICMP 发现、TCP 存活、端口扫描、协议识别、HTTP 探测、Host 绑定、目录探测、指纹和风险验证。Scanner 旧 `PhaseEvent` 通过显式适配器映射到这些阶段；未知阶段不会被静默当作已覆盖。
+稳定阶段包括搜索引擎、子域发现、CDN 分类、ICMP 发现、TCP 存活、端口扫描、协议识别、HTTP 探测、Host 绑定、安全行为探针、目录探测、指纹和风险验证。安全行为探针依赖 HTTP 探测，按规范化服务端点执行创建任务时密封的自动安全 Nuclei 文件集合；它只产生产品指纹。Scanner 旧 `PhaseEvent` 通过显式适配器映射到这些阶段；未知阶段不会被静默当作已覆盖。
 
 ## Plan
 

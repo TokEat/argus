@@ -88,6 +88,7 @@ const (
 	PhaseProtocol             = "protocol_identify"
 	PhaseHTTPProbe            = "http_probe"
 	PhaseHostBind             = "host_bind"
+	PhaseBehaviorProbe        = "behavior_probe"
 	PhaseDirBrute             = "dir_brute"
 	PhaseFingerprint          = "fingerprint"
 	PhaseNuclei               = "nuclei_scan"

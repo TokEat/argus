@@ -103,7 +103,8 @@ type ScanContext struct {
 	// --- 知识库（从 embed 或外部文件加载） ---
 
 	// EmbedPocs 嵌入的 Nuclei PoC 文件系统
-	EmbedPocs embed.FS
+	EmbedPocs               embed.FS
+	EmbedActiveFingerprints embed.FS
 
 	// FingerprintDB 指纹规则数据库
 	FingerprintDB []FingerPEntity
@@ -183,7 +184,8 @@ func NewScanContext(cfg Config) (*ScanContext, error) {
 		BodyHMap:   stores.Body,
 		HeaderHMap: stores.Header,
 
-		EmbedPocs: structs.GlobalEmbedPocs,
+		EmbedPocs:               structs.GlobalEmbedPocs,
+		EmbedActiveFingerprints: structs.GlobalEmbedActiveFingerprints,
 
 		Ctx:    ctx,
 		Cancel: cancel,

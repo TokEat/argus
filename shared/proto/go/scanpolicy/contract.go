@@ -90,6 +90,7 @@ type Capabilities struct {
 	AllowCDNAssets              bool `json:"allow_cdn_assets"`
 	AllowPrivateResolvedDomains bool `json:"allow_private_resolved_domains"`
 	HostBinding                 bool `json:"host_binding"`
+	BehaviorProbe               bool `json:"behavior_probe"`
 	DirectoryProbe              bool `json:"directory_probe"`
 	RiskValidation              bool `json:"risk_validation"`
 	CredentialValidation        bool `json:"credential_validation"`
@@ -154,6 +155,7 @@ func PresetPolicy(preset Preset) (Policy, error) {
 		policy.PortProfile = PortProfileTop1000
 		policy.Intensity = IntensityBalanced
 		policy.Capabilities.SubdomainDiscovery = true
+		policy.Capabilities.BehaviorProbe = true
 		policy.Capabilities.RiskValidation = true
 	case PresetDeep:
 		policy.PortProfile = PortProfileAll
@@ -162,6 +164,7 @@ func PresetPolicy(preset Preset) (Policy, error) {
 		policy.Capabilities.SubdomainBruteforce = true
 		policy.Subdomains.BruteforceDepth = 2
 		policy.Capabilities.HostBinding = true
+		policy.Capabilities.BehaviorProbe = true
 		policy.Capabilities.DirectoryProbe = true
 		policy.Capabilities.RiskValidation = true
 	case PresetCustom:

@@ -12,3 +12,7 @@ import "embed"
 //
 // 构建命令: go build -tags noembed ./cmd/agent/
 var EmbedNucleiPocs embed.FS
+
+// EmbedActiveFingerprints is materialized from the Server rule package in
+// noembed Agent builds.
+var EmbedActiveFingerprints embed.FS

@@ -20,6 +20,35 @@ SET default_tablespace = '';
 
 SET default_table_access_method = heap;
 
+CREATE TABLE public.active_fingerprint_rules (
+    id bigint NOT NULL,
+    tenant_id text DEFAULT 'default'::text NOT NULL,
+    artifact_id text,
+    source_file text NOT NULL,
+    name text NOT NULL,
+    product_name text NOT NULL,
+    content_hash text NOT NULL,
+    version integer DEFAULT 1 NOT NULL,
+    state text,
+    enabled boolean DEFAULT true NOT NULL,
+    declared_auto_profile text,
+    computed_auto_profile text NOT NULL,
+    auto_eligible boolean DEFAULT false NOT NULL,
+    max_requests integer DEFAULT 1 NOT NULL,
+    classification_reason text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE SEQUENCE public.active_fingerprint_rules_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.active_fingerprint_rules_id_seq OWNED BY public.active_fingerprint_rules.id;
+
 CREATE TABLE public.agent_log_alert_events (
     id bigint NOT NULL,
     tenant_id text DEFAULT 'default'::text NOT NULL,
@@ -1260,7 +1289,8 @@ CREATE TABLE public.rule_catalog_bootstraps (
     last_error text,
     last_seeded_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    active_finger_count integer
 );
 
 CREATE TABLE public.scan_coverages (
@@ -1919,6 +1949,8 @@ CREATE SEQUENCE public.ws_event_logs_id_seq
 
 ALTER SEQUENCE public.ws_event_logs_id_seq OWNED BY public.ws_event_logs.id;
 
+ALTER TABLE ONLY public.active_fingerprint_rules ALTER COLUMN id SET DEFAULT nextval('public.active_fingerprint_rules_id_seq'::regclass);
+
 ALTER TABLE ONLY public.agent_log_alert_events ALTER COLUMN id SET DEFAULT nextval('public.agent_log_alert_events_id_seq'::regclass);
 
 ALTER TABLE ONLY public.agent_log_alert_rules ALTER COLUMN id SET DEFAULT nextval('public.agent_log_alert_rules_id_seq'::regclass);
@@ -2030,6 +2062,9 @@ ALTER TABLE ONLY public.vulnerabilities ALTER COLUMN id SET DEFAULT nextval('pub
 ALTER TABLE ONLY public.workflow_rules ALTER COLUMN id SET DEFAULT nextval('public.workflow_rules_id_seq'::regclass);
 
 ALTER TABLE ONLY public.ws_event_logs ALTER COLUMN id SET DEFAULT nextval('public.ws_event_logs_id_seq'::regclass);
+
+ALTER TABLE ONLY public.active_fingerprint_rules
+    ADD CONSTRAINT active_fingerprint_rules_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.agent_log_alert_events
     ADD CONSTRAINT agent_log_alert_events_pkey PRIMARY KEY (id);
@@ -2276,6 +2311,22 @@ ALTER TABLE ONLY public.workflow_rules
 
 ALTER TABLE ONLY public.ws_event_logs
     ADD CONSTRAINT ws_event_logs_pkey PRIMARY KEY (id);
+
+CREATE UNIQUE INDEX idx_active_finger_rule_unique ON public.active_fingerprint_rules USING btree (tenant_id, source_file);
+
+CREATE INDEX idx_active_fingerprint_rules_artifact_id ON public.active_fingerprint_rules USING btree (artifact_id);
+
+CREATE INDEX idx_active_fingerprint_rules_auto_eligible ON public.active_fingerprint_rules USING btree (auto_eligible);
+
+CREATE INDEX idx_active_fingerprint_rules_content_hash ON public.active_fingerprint_rules USING btree (content_hash);
+
+CREATE INDEX idx_active_fingerprint_rules_enabled ON public.active_fingerprint_rules USING btree (enabled);
+
+CREATE INDEX idx_active_fingerprint_rules_product_name ON public.active_fingerprint_rules USING btree (product_name);
+
+CREATE INDEX idx_active_fingerprint_rules_state ON public.active_fingerprint_rules USING btree (state);
+
+CREATE INDEX idx_active_fingerprint_rules_tenant_auto ON public.active_fingerprint_rules USING btree (tenant_id, enabled, auto_eligible, source_file);
 
 CREATE UNIQUE INDEX idx_addi_idempotency ON public.asset_discovery_notebook_distribution_intents USING btree (tenant_id, project_id, operator_id, operation, idempotency_key_hash);
 

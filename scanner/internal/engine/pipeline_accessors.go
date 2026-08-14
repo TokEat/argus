@@ -90,3 +90,7 @@ func currentPipelineWorkflowDB(ctx *ScanContext) map[string]structs.WorkFlowEnti
 func currentPipelineEmbedPocs(ctx *ScanContext) embed.FS {
 	return ctx.EmbedPocs
 }
+
+func currentPipelineEmbedActiveFingerprints(ctx *ScanContext) embed.FS {
+	return ctx.EmbedActiveFingerprints
+}

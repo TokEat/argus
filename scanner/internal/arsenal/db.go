@@ -57,7 +57,7 @@ func OpenDB(dsn string) error {
 		return fmt.Errorf("打开数据库失败: %w", err)
 	}
 
-	if err := db.AutoMigrate(&Fingerprint{}, &Poc{}, &PocAsset{}, &ConfigAsset{}, &Workflow{}, &DirProbe{}); err != nil {
+	if err := db.AutoMigrate(&Fingerprint{}, &Poc{}, &ActiveFingerprint{}, &PocAsset{}, &ConfigAsset{}, &Workflow{}, &DirProbe{}); err != nil {
 		return fmt.Errorf("自动迁移表结构失败: %w", err)
 	}
 
@@ -312,6 +312,40 @@ func GetAllEnabledPocs() ([]Poc, error) {
 	var pocs []Poc
 	err := DB.Where("enabled = ?", true).Find(&pocs).Error
 	return pocs, err
+}
+
+func GetAllEnabledActiveFingerprints() ([]ActiveFingerprint, error) {
+	var rules []ActiveFingerprint
+	err := DB.Where("enabled = ?", true).Order("file_name").Find(&rules).Error
+	return rules, err
+}
+
+// AddActiveFingerprint adds or updates one independently versioned behavior
+// probe by file name. The Server remains authoritative for publication; this
+// helper is used by the built-in seed and package builder only.
+func AddActiveFingerprint(rule *ActiveFingerprint) (created bool, err error) {
+	var existing ActiveFingerprint
+	result := DB.Where("file_name = ?", rule.FileName).First(&existing)
+	if result.Error == nil {
+		if strings.EqualFold(strings.TrimSpace(rule.Source), "builtin") && !strings.EqualFold(strings.TrimSpace(existing.Source), "builtin") {
+			return false, nil
+		}
+		existing.Name = rule.Name
+		existing.ProductName = rule.ProductName
+		existing.Content = rule.Content
+		existing.ContentHash = rule.ContentHash
+		existing.AutoEligible = rule.AutoEligible
+		existing.Enabled = rule.Enabled
+		existing.Source = rule.Source
+		if err := DB.Save(&existing).Error; err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	if err := DB.Create(rule).Error; err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // GetAllEnabledPocAssets 获取所有启用的 POC 辅助文件资产（扫描物化时使用）。

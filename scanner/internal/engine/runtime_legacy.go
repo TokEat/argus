@@ -77,6 +77,9 @@ func ApplyConfigDefaults(cfg *Config) {
 	if cfg.DirSearchYaml == "" {
 		cfg.DirSearchYaml = "config/dir.yaml"
 	}
+	if cfg.ActiveFingerprintTemplate == "" {
+		cfg.ActiveFingerprintTemplate = "config/active-fingerprints"
+	}
 	if cfg.SubdomainWordListFile == "" {
 		cfg.SubdomainWordListFile = "config/subdomains.txt"
 	}
@@ -92,8 +95,10 @@ func (sc *ScanContext) loadKnowledgeBase() error {
 	ApplyConfigDefaults(&sc.Config)
 	if sc.Config.RuleFilesOnly {
 		sc.EmbedPocs = embed.FS{}
+		sc.EmbedActiveFingerprints = embed.FS{}
 	} else {
 		sc.EmbedPocs = commoncfg.EmbedNucleiPocs
+		sc.EmbedActiveFingerprints = commoncfg.EmbedActiveFingerprints
 	}
 
 	if err := ValidateLegacyProviderConfig(sc.Config); err != nil {

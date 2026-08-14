@@ -300,3 +300,51 @@ func TestSanitizeStringFieldsForPostgres(t *testing.T) {
 		t.Fatalf("unexpected sanitized rule: %#v", rule)
 	}
 }
+
+func TestMaterializeActiveFingerprintRecomputesAutomaticProfile(t *testing.T) {
+	rule, err := materializeActiveFingerprintRule(Arsenal{
+		ID: "active_fingerprint_shiro-detect.yaml", TenantID: "default", Type: "active_fingerprint",
+		FileName: "shiro-detect.yaml", Hash: "hash", Version: 2, State: "Approved",
+		Content: `id: shiro-detect
+info:
+  name: Detect Apache Shiro
+  severity: info
+  metadata:
+    argus-rule-kind: active-fingerprint
+    argus-product: APACHE-Shiro
+    argus-auto-profile: controlled
+    max-request: 1
+http:
+  - method: GET
+    path: ['{{BaseURL}}']
+    matchers: [{type: status, status: [200]}]
+`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rule.AutoEligible || rule.ComputedAutoProfile != "safe" || rule.DeclaredAutoProfile != "controlled" || rule.ProductName != "APACHE-Shiro" || !rule.Enabled {
+		t.Fatalf("unexpected materialized active fingerprint: %#v", rule)
+	}
+}
+
+func TestValidateAutomaticActiveFingerprintLimitPerTenant(t *testing.T) {
+	rules := make([]ActiveFingerprintRule, 0, 10)
+	for index := 0; index < 9; index++ {
+		name := "probe-" + string(rune('a'+index))
+		rules = append(rules, ActiveFingerprintRule{TenantID: "tenant-a", Name: name, SourceFile: name + ".yaml", Enabled: true, AutoEligible: true})
+	}
+	rules = append(rules, ActiveFingerprintRule{TenantID: "tenant-b", Name: "probe-a", SourceFile: "probe-a.yaml", Enabled: true, AutoEligible: true})
+	if err := validateAutomaticActiveFingerprintLimit(rules); err == nil || !strings.Contains(err.Error(), "maximum is 8") {
+		t.Fatalf("expected tenant automatic probe budget rejection, got %v", err)
+	}
+	rules[8].Enabled = false
+	if err := validateAutomaticActiveFingerprintLimit(rules); err != nil {
+		t.Fatalf("eight enabled automatic probes must be accepted: %v", err)
+	}
+	rules[0].Name, rules[0].SourceFile = "duplicate", "one.yaml"
+	rules[1].Name, rules[1].SourceFile = "Duplicate", "two.yaml"
+	if err := validateAutomaticActiveFingerprintLimit(rules); err == nil || !strings.Contains(err.Error(), "duplicate template id") {
+		t.Fatalf("expected duplicate Nuclei id rejection, got %v", err)
+	}
+}

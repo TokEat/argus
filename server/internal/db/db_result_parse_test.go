@@ -49,6 +49,26 @@ func TestExtractFingerprintProductNamesNoSignalForGenericType(t *testing.T) {
 	}
 }
 
+func TestAddResultAsyncRoutesActiveFingerprintWithoutCreatingVulnerability(t *testing.T) {
+	drainResultBuffers(t)
+	taskOwnerCache.Store("task-active-fingerprint", &taskOwnerEntry{ProjectID: "project-a", TenantID: "tenant-a", RootTaskID: "root-a"})
+	AddResultAsync("task-active-fingerprint", "Active-Finger", `{"uri":"http://127.0.0.1:8081","finger":["APACHE-Shiro"],"additional_msg":"[behavior-probe:shiro-detect]"}`)
+
+	select {
+	case vuln := <-vulnBuffer2:
+		t.Fatalf("active product fingerprint became a vulnerability: %+v", vuln)
+	default:
+	}
+	select {
+	case fingerprint := <-fpBuffer:
+		if fingerprint.ProductName != "APACHE-Shiro" || fingerprint.Target != "http://127.0.0.1:8081" || fingerprint.RootTaskID != "root-a" {
+			t.Fatalf("unexpected active fingerprint row: %+v", fingerprint)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("active fingerprint was not routed to fingerprint storage")
+	}
+}
+
 func TestAddResultAsyncRoutesOSINTOutputsToAssets(t *testing.T) {
 	drainResultBuffers(t)
 	taskOwnerCache.Store("task-osint", &taskOwnerEntry{

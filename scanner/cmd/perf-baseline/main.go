@@ -184,6 +184,12 @@ func agentContextConfig(configDir string) (engine.Config, error) {
 			return engine.Config{}, fmt.Errorf("required rule file is unavailable")
 		}
 	}
+	for _, directory := range []string{filepath.Join(absolute, "pocs"), filepath.Join(absolute, "active-fingerprints")} {
+		info, statErr := os.Stat(directory)
+		if statErr != nil || !info.IsDir() {
+			return engine.Config{}, fmt.Errorf("required rule directory is unavailable")
+		}
+	}
 	cfg := engine.Config(structs.DefaultConfig())
 	cfg.RuleFilesOnly = true
 	cfg.NoPoc = true
@@ -192,6 +198,7 @@ func agentContextConfig(configDir string) (engine.Config, error) {
 	cfg.FingerConfigFilePath = paths[0]
 	cfg.WorkflowYamlPath = paths[1]
 	cfg.DirSearchYaml = paths[2]
+	cfg.ActiveFingerprintTemplate = filepath.Join(absolute, "active-fingerprints")
 	cfg.NucleiTemplate = filepath.Join(absolute, "pocs")
 	cfg.Targets = nil
 	cfg.KnowledgePackageHash = manifest.PackageSHA256

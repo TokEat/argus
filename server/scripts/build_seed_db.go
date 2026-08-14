@@ -75,7 +75,31 @@ func main() {
 		}
 	}
 
-	// 4. pocs/ 目录：YAML 模板写入 poc，非 YAML 运行时资产写入 poc_asset 并保留相对路径。
+	// 4. active-fingerprints/：每个完整 Nuclei YAML 独立保存，不与 POC 聚合。
+	activeFingerprintDir := filepath.Join(configBaseDir, "active-fingerprints")
+	if stat, err := os.Stat(activeFingerprintDir); err == nil && stat.IsDir() {
+		filepath.Walk(activeFingerprintDir, func(path string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil || info.IsDir() || strings.HasPrefix(info.Name(), ".") {
+				return nil
+			}
+			if !strings.HasSuffix(strings.ToLower(info.Name()), ".yaml") && !strings.HasSuffix(strings.ToLower(info.Name()), ".yml") {
+				return nil
+			}
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				errs = append(errs, fmt.Errorf("read active fingerprint failed at %s: %w", path, readErr))
+				return nil
+			}
+			if err := writeToDB(sdb, "active_fingerprint", info.Name(), sanitizeSeedContent(path, data)); err != nil {
+				errs = append(errs, err)
+				return nil
+			}
+			total++
+			return nil
+		})
+	}
+
+	// 5. pocs/ 目录：YAML 模板写入 poc，非 YAML 运行时资产写入 poc_asset 并保留相对路径。
 	pocDir := filepath.Join(configBaseDir, "pocs")
 	if stat, err := os.Stat(pocDir); err == nil && stat.IsDir() {
 		filepath.Walk(pocDir, func(path string, info os.FileInfo, walkErr error) error {
@@ -110,7 +134,7 @@ func main() {
 		})
 	}
 
-	// 5. exps/ 目录（受控利用验证包，默认只随 seed DB 迁移，不进入 POC 自动扫描）
+	// 6. exps/ 目录（受控利用验证包，默认只随 seed DB 迁移，不进入 POC 自动扫描）
 	expDir := filepath.Join(configBaseDir, "exps")
 	if stat, err := os.Stat(expDir); err == nil && stat.IsDir() {
 		filepath.Walk(expDir, func(path string, info os.FileInfo, walkErr error) error {
@@ -134,7 +158,7 @@ func main() {
 		})
 	}
 
-	// 6. 运行时配置资产：只同步会影响扫描行为且不含凭据的本地覆盖文件。
+	// 7. 运行时配置资产：只同步会影响扫描行为且不含凭据的本地覆盖文件。
 	// socket.yaml 当前没有接入扫描加载链路；api-config.yaml 含外部查询凭据语义，均不打入 Agent 同步包。
 	dictDir := filepath.Join(configBaseDir, "dict")
 	if stat, err := os.Stat(dictDir); err == nil && stat.IsDir() {

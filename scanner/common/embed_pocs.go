@@ -9,3 +9,9 @@ import "embed"
 //
 //go:embed config/pocs/*
 var EmbedNucleiPocs embed.FS
+
+// EmbedActiveFingerprints contains independently governed Nuclei templates
+// whose successful match is projected as a product fingerprint, not a finding.
+//
+//go:embed config/active-fingerprints/*
+var EmbedActiveFingerprints embed.FS

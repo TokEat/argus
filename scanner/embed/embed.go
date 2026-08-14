@@ -12,6 +12,7 @@
 //   - dir.yaml         主动探测路径数据库
 //   - subdomains.txt   子域名字典
 //   - pocs/            内嵌 Nuclei PoC 模板
+//   - active-fingerprints/ 内嵌主动行为指纹模板
 package embed
 
 // 注意：当前阶段不在此包定义 //go:embed 变量。

@@ -62,6 +62,33 @@ func TestLoadMigrations(t *testing.T) {
 	}
 }
 
+func TestActiveFingerprintMigrationIsAdditive(t *testing.T) {
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, migration := range migrations {
+		if migration.Version != "540" {
+			continue
+		}
+		for _, required := range []string{
+			"CREATE TABLE IF NOT EXISTS active_fingerprint_rules",
+			"idx_active_finger_rule_unique",
+			"idx_active_fingerprint_rules_tenant_auto",
+			"ADD COLUMN IF NOT EXISTS active_finger_count",
+		} {
+			if !strings.Contains(migration.SQL, required) {
+				t.Fatalf("active fingerprint migration missing %q", required)
+			}
+		}
+		if strings.Contains(strings.ToUpper(migration.SQL), "DROP TABLE") {
+			t.Fatal("active fingerprint migration must be additive")
+		}
+		return
+	}
+	t.Fatal("expected active fingerprint migration 540")
+}
+
 func TestSplitSQLStatements(t *testing.T) {
 	sql := `
 CREATE TABLE foo (id INT);

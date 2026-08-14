@@ -63,6 +63,7 @@ const (
 	StageProtocolIdentify     Stage = "protocol_identification"
 	StageHTTPProbe            Stage = "http_probe"
 	StageHostBinding          Stage = "host_binding"
+	StageBehaviorProbe        Stage = "behavior_probe"
 	StageDirectoryProbe       Stage = "directory_probe"
 	StageFingerprint          Stage = "fingerprint"
 	StageRiskValidation       Stage = "risk_validation"
@@ -74,7 +75,7 @@ func (s Stage) Valid() bool {
 	case StageSearchEngine, StageSubdomainDiscovery, StageCDNClassification,
 		StageICMPDiscovery, StageTCPLiveness, StagePortScan,
 		StageProtocolIdentify, StageHTTPProbe, StageHostBinding,
-		StageDirectoryProbe, StageFingerprint, StageRiskValidation, StageCredentialValidation:
+		StageBehaviorProbe, StageDirectoryProbe, StageFingerprint, StageRiskValidation, StageCredentialValidation:
 		return true
 	default:
 		return false

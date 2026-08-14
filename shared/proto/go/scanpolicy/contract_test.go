@@ -7,13 +7,14 @@ import (
 
 func TestPresetPolicies(t *testing.T) {
 	tests := []struct {
-		preset Preset
-		ports  PortProfile
-		poc    bool
+		preset   Preset
+		ports    PortProfile
+		poc      bool
+		behavior bool
 	}{
-		{PresetQuick, PortProfileCommon100, false},
-		{PresetStandard, PortProfileTop1000, true},
-		{PresetDeep, PortProfileAll, true},
+		{PresetQuick, PortProfileCommon100, false, false},
+		{PresetStandard, PortProfileTop1000, true, true},
+		{PresetDeep, PortProfileAll, true, true},
 	}
 	for _, test := range tests {
 		policy, err := PresetPolicy(test.preset)
@@ -30,6 +31,9 @@ func TestPresetPolicies(t *testing.T) {
 		}
 		if normalized.Capabilities.CredentialValidation {
 			t.Fatalf("credential validation must default off for %s", test.preset)
+		}
+		if normalized.Capabilities.BehaviorProbe != test.behavior {
+			t.Fatalf("behavior probe default for %s = %t, want %t", test.preset, normalized.Capabilities.BehaviorProbe, test.behavior)
 		}
 		if test.preset == PresetDeep && normalized.Subdomains.BruteforceDepth != 2 {
 			t.Fatalf("deep preset bruteforce depth = %d, want 2", normalized.Subdomains.BruteforceDepth)

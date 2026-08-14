@@ -292,8 +292,10 @@ func prepare() error {
 	}
 	if structs.GlobalConfig.RuleFilesOnly {
 		structs.GlobalEmbedPocs = embed.FS{}
+		structs.GlobalEmbedActiveFingerprints = embed.FS{}
 	} else {
 		structs.GlobalEmbedPocs = EmbedNucleiPocs
+		structs.GlobalEmbedActiveFingerprints = EmbedActiveFingerprints
 	}
 
 	if !structs.GlobalConfig.SkipHostDiscovery && !structs.GlobalConfig.TCPPing && structs.GlobalConfig.NoICMPPing {

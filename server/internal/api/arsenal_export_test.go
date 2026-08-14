@@ -47,6 +47,18 @@ type exportedPoc struct {
 
 func (exportedPoc) TableName() string { return "pocs" }
 
+type exportedActiveFingerprint struct {
+	Name         string
+	FileName     string
+	ProductName  string
+	Content      string
+	ContentHash  string
+	AutoEligible bool
+	Enabled      bool
+}
+
+func (exportedActiveFingerprint) TableName() string { return "active_fingerprints" }
+
 func TestBuildArsenalSQLiteDBIncludesPocAssets(t *testing.T) {
 	store := setupAITestDB(t)
 	if err := store.Create(&db.Arsenal{
@@ -184,6 +196,13 @@ func TestArsenalDBEndpointsDownloadMaterializablePackage(t *testing.T) {
 	if poc.ExecutionClass != db.PocExecutionClassVerification || poc.RiskLevel != db.PocRiskLevelHigh {
 		t.Fatalf("expected POC governance metadata in exported arsenal: %+v", poc)
 	}
+	var active exportedActiveFingerprint
+	if err := sdb.Where("file_name = ?", "http-product-detect.yaml").First(&active).Error; err != nil {
+		t.Fatalf("expected exported active fingerprint in downloaded db: %v", err)
+	}
+	if active.ProductName != "HTTPProduct" || active.Content == "" || !active.AutoEligible || !active.Enabled {
+		t.Fatalf("unexpected exported active fingerprint: %+v", active)
+	}
 
 	var asset exportedPocAsset
 	if err := sdb.Where("relative_path = ?", "helpers/payloads/http-demo.txt").First(&asset).Error; err != nil {
@@ -213,6 +232,9 @@ func TestArsenalDBEndpointsDownloadMaterializablePackage(t *testing.T) {
 func seedArsenalExportRules(t *testing.T, store *gorm.DB) {
 	t.Helper()
 	pocID := db.BuildTenantArsenalID("default", "poc", "http-demo.yaml")
+	activeID := db.BuildTenantArsenalID("default", "active_fingerprint", "http-product-detect.yaml")
+	activeContent := "id: http-product-detect\ninfo:\n  name: HTTP Product Detect\n  severity: info\n  metadata:\n    argus-rule-kind: active-fingerprint\n    argus-product: HTTPProduct\n    argus-auto-profile: safe\n    max-request: 1\nhttp:\n  - method: GET\n    path: ['{{BaseURL}}']\n    matchers: [{type: status, status: [200]}]\n"
+	activeHash := fmt.Sprintf("%x", md5.Sum([]byte(activeContent)))
 	rows := []db.Arsenal{
 		{
 			ID:       db.BuildTenantArsenalID("default", "finger", "finger.yaml"),
@@ -241,6 +263,16 @@ func seedArsenalExportRules(t *testing.T, store *gorm.DB) {
 			FileName: "dir.yaml",
 			Content:  "HTTPProduct:\n  - /demo\n",
 			Hash:     "dir-hash",
+			State:    "Approved",
+			Version:  1,
+		},
+		{
+			ID:       activeID,
+			TenantID: "default",
+			Type:     "active_fingerprint",
+			FileName: "http-product-detect.yaml",
+			Content:  activeContent,
+			Hash:     activeHash,
 			State:    "Approved",
 			Version:  1,
 		},
@@ -328,5 +360,12 @@ func seedArsenalExportRules(t *testing.T, store *gorm.DB) {
 		Enabled:        true,
 	}).Error; err != nil {
 		t.Fatalf("seed poc rule: %v", err)
+	}
+	if err := store.Create(&db.ActiveFingerprintRule{
+		TenantID: "default", ArtifactID: activeID, SourceFile: "http-product-detect.yaml",
+		Name: "http-product-detect", ProductName: "HTTPProduct", ContentHash: activeHash,
+		State: "Approved", Enabled: true, ComputedAutoProfile: "safe", AutoEligible: true, MaxRequests: 1,
+	}).Error; err != nil {
+		t.Fatalf("seed active fingerprint rule: %v", err)
 	}
 }

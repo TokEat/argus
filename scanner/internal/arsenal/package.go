@@ -13,12 +13,13 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/P0lar1ght/argus/shared/proto/go/activefingerprint"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
 
 const (
-	RulePackageSchemaVersion = "argus-arsenal-package/v1"
+	RulePackageSchemaVersion = "argus-arsenal-package/v2"
 	MaxRulePackageSize       = int64(4 << 30)
 )
 
@@ -84,7 +85,7 @@ func InspectRulePackage(dbPath string) (inspection RulePackageInspection, err er
 		}
 	}()
 
-	required := []any{&Fingerprint{}, &Poc{}, &PocAsset{}, &ConfigAsset{}, &Workflow{}, &DirProbe{}}
+	required := []any{&Fingerprint{}, &Poc{}, &ActiveFingerprint{}, &PocAsset{}, &ConfigAsset{}, &Workflow{}, &DirProbe{}}
 	for _, model := range required {
 		if !DB.Migrator().HasTable(model) {
 			return inspection, fmt.Errorf("arsenal package is missing required table for %T", model)
@@ -93,6 +94,7 @@ func InspectRulePackage(dbPath string) (inspection RulePackageInspection, err er
 
 	var fingers []Fingerprint
 	var pocs []Poc
+	var activeFingerprints []ActiveFingerprint
 	var pocAssets []PocAsset
 	var configAssets []ConfigAsset
 	var workflows []Workflow
@@ -104,6 +106,7 @@ func InspectRulePackage(dbPath string) (inspection RulePackageInspection, err er
 	}{
 		{"fingerprints", &fingers, "product_name, rule_expr"},
 		{"pocs", &pocs, "name, file_name"},
+		{"active fingerprints", &activeFingerprints, "file_name"},
 		{"poc assets", &pocAssets, "relative_path"},
 		{"config assets", &configAssets, "relative_path"},
 		{"workflows", &workflows, "product_name, poc_name, match_type"},
@@ -120,7 +123,7 @@ func InspectRulePackage(dbPath string) (inspection RulePackageInspection, err er
 
 	inspection.Counts = RulePackageCounts{
 		Fingerprints: len(fingers), Workflows: len(workflows), DirProbes: len(probes),
-		Pocs: len(pocs), PocAssets: len(pocAssets), ConfigAssets: len(configAssets),
+		ActiveFingerprints: len(activeFingerprints), Pocs: len(pocs), PocAssets: len(pocAssets), ConfigAssets: len(configAssets),
 	}
 	digest := sha256.New()
 	writeSemantic := func(parts ...string) {
@@ -152,6 +155,20 @@ func InspectRulePackage(dbPath string) (inspection RulePackageInspection, err er
 			return inspection, pathErr
 		}
 		writeSemantic("poc", item.Name, item.FileName, item.Content, item.ContentHash, item.Severity, class, risk, item.Tags, item.Author, item.Description)
+	}
+	for _, item := range activeFingerprints {
+		classification, inspectErr := activefingerprint.Inspect(item.FileName, []byte(item.Content))
+		if inspectErr != nil {
+			return inspection, fmt.Errorf("active fingerprint %q: %w", item.FileName, inspectErr)
+		}
+		if classification.ID != item.Name || classification.Product != item.ProductName || classification.AutoEligible != item.AutoEligible {
+			return inspection, fmt.Errorf("active fingerprint %q metadata does not match its sealed package row", item.FileName)
+		}
+		actualHash := fmt.Sprintf("%x", md5.Sum([]byte(item.Content)))
+		if !strings.EqualFold(strings.TrimSpace(item.ContentHash), actualHash) {
+			return inspection, fmt.Errorf("active fingerprint %q content hash does not match its sealed package row", item.FileName)
+		}
+		writeSemantic("active_fingerprint", item.Name, item.FileName, item.ProductName, item.Content, item.ContentHash, fmt.Sprint(item.AutoEligible))
 	}
 	for _, item := range pocAssets {
 		if _, pathErr := safePocAssetPath(item.RelativePath); pathErr != nil {
@@ -362,6 +379,38 @@ func BuildRulePackageFromConfig(configDir, outputPath string) (RulePackageInspec
 		return RulePackageInspection{}, fmt.Errorf("import POC rules: %w", err)
 	}
 
+	activeRoot := filepath.Join(configDir, "active-fingerprints")
+	activeRows := make([]ActiveFingerprint, 0)
+	if err := filepath.Walk(activeRoot, func(filePath string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.IsDir() || strings.HasPrefix(info.Name(), ".") {
+			return nil
+		}
+		if !strings.HasSuffix(strings.ToLower(info.Name()), ".yaml") && !strings.HasSuffix(strings.ToLower(info.Name()), ".yml") {
+			return nil
+		}
+		data, readErr := os.ReadFile(filePath)
+		if readErr != nil {
+			return readErr
+		}
+		classification, inspectErr := activefingerprint.Inspect(info.Name(), data)
+		if inspectErr != nil {
+			return fmt.Errorf("%s: %w", filePath, inspectErr)
+		}
+		content := packageText(data)
+		activeRows = append(activeRows, ActiveFingerprint{
+			Name: classification.ID, FileName: info.Name(), ProductName: classification.Product,
+			Content: content, ContentHash: fmt.Sprintf("%x", md5.Sum([]byte(content))),
+			AutoEligible: classification.AutoEligible, Enabled: true, Source: "builtin", CreatedAt: packageTime, UpdatedAt: packageTime,
+		})
+		return nil
+	}); err != nil {
+		return RulePackageInspection{}, fmt.Errorf("import active fingerprint rules: %w", err)
+	}
+	sort.Slice(activeRows, func(i, j int) bool { return activeRows[i].FileName < activeRows[j].FileName })
+
 	dictRoot := filepath.Join(configDir, "dict")
 	configAssetRows := make([]ConfigAsset, 0)
 	if err := filepath.Walk(dictRoot, func(filePath string, info os.FileInfo, walkErr error) error {
@@ -412,7 +461,7 @@ func BuildRulePackageFromConfig(configDir, outputPath string) (RulePackageInspec
 			len  int
 		}{
 			{fingerRows, len(fingerRows)}, {workflowRows, len(workflowRows)}, {dirRows, len(dirRows)},
-			{pocs, len(pocs)}, {pocAssetRows, len(pocAssetRows)}, {configAssetRows, len(configAssetRows)},
+			{pocs, len(pocs)}, {activeRows, len(activeRows)}, {pocAssetRows, len(pocAssetRows)}, {configAssetRows, len(configAssetRows)},
 		}
 		for _, batch := range batches {
 			if batch.len > 0 {

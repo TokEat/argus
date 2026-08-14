@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/P0lar1ght/argus/server/internal/db"
@@ -58,6 +59,22 @@ type agentPoc struct {
 }
 
 func (agentPoc) TableName() string { return "pocs" }
+
+type agentActiveFingerprint struct {
+	ID           uint   `gorm:"primaryKey;autoIncrement"`
+	Name         string `gorm:"index;not null"`
+	FileName     string `gorm:"uniqueIndex;not null"`
+	ProductName  string `gorm:"index;not null"`
+	Content      string
+	ContentHash  string
+	AutoEligible bool   `gorm:"index"`
+	Enabled      bool   `gorm:"default:true"`
+	Source       string `gorm:"default:'server'"`
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+func (agentActiveFingerprint) TableName() string { return "active_fingerprints" }
 
 type agentPocAsset struct {
 	ID           uint      `gorm:"primaryKey;autoIncrement"`
@@ -113,6 +130,7 @@ func agentSyncArsenalTypes() []string {
 	types = append(types, db.ArsenalTypeAliases("workflow")...)
 	types = append(types, db.ArsenalTypeAliases("dir")...)
 	types = append(types, db.ArsenalTypeAliases("poc")...)
+	types = append(types, db.ArsenalTypeAliases("active_fingerprint")...)
 	types = append(types, db.ArsenalTypeAliases("poc_asset")...)
 	types = append(types, db.ArsenalTypeAliases("config_asset")...)
 	return types
@@ -146,6 +164,7 @@ func buildArsenalSQLiteDB(tenantID string) (filePath string, md5Hash string, sha
 	if err := sdb.AutoMigrate(
 		&agentFingerprint{},
 		&agentPoc{},
+		&agentActiveFingerprint{},
 		&agentPocAsset{},
 		&agentConfigAsset{},
 		&agentWorkflow{},
@@ -226,6 +245,49 @@ func buildArsenalSQLiteDB(tenantID string) (filePath string, md5Hash string, sha
 		}
 		if err := sdb.CreateInBatches(batch, 500).Error; err != nil {
 			log.Printf("[ArsenalExport] ⚠️ POC 批量写入 SQLite 失败: %v (count=%d)", err, len(batch))
+		}
+	}
+
+	var activeRules []db.ActiveFingerprintRule
+	if queryErr := db.DB.Where("tenant_id = ? AND enabled = ? AND auto_eligible = ? AND LOWER(state) = ?", tenantID, true, true, "approved").Order("source_file").Find(&activeRules).Error; queryErr != nil {
+		closeSQLite(sdb)
+		os.Remove(tmpPath)
+		return "", "", "", fmt.Errorf("读取主动行为指纹失败: %w", queryErr)
+	}
+	if len(activeRules) > 0 {
+		artifactIDs := make([]string, 0, len(activeRules))
+		for _, rule := range activeRules {
+			artifactIDs = append(artifactIDs, rule.ArtifactID)
+		}
+		var arsenals []db.Arsenal
+		if queryErr := db.DB.Where("tenant_id = ? AND id IN ?", tenantID, artifactIDs).Find(&arsenals).Error; queryErr != nil {
+			closeSQLite(sdb)
+			os.Remove(tmpPath)
+			return "", "", "", fmt.Errorf("读取主动行为指纹原文失败: %w", queryErr)
+		}
+		contents := make(map[string]db.Arsenal, len(arsenals))
+		for _, arsenal := range arsenals {
+			contents[arsenal.ID] = arsenal
+		}
+		batch := make([]agentActiveFingerprint, 0, len(activeRules))
+		for _, rule := range activeRules {
+			arsenal, exists := contents[rule.ArtifactID]
+			actualHash := fmt.Sprintf("%x", md5.Sum([]byte(arsenal.Content)))
+			if !exists || !strings.EqualFold(strings.TrimSpace(arsenal.State), "approved") || arsenal.Version != rule.Version ||
+				!strings.EqualFold(strings.TrimSpace(arsenal.Hash), strings.TrimSpace(rule.ContentHash)) ||
+				!strings.EqualFold(strings.TrimSpace(arsenal.Hash), actualHash) {
+				closeSQLite(sdb)
+				os.Remove(tmpPath)
+				return "", "", "", fmt.Errorf("主动行为指纹 %s 原文与已发布索引不一致", rule.SourceFile)
+			}
+			batch = append(batch, agentActiveFingerprint{Name: rule.Name, FileName: rule.SourceFile, ProductName: rule.ProductName,
+				Content: arsenal.Content, ContentHash: rule.ContentHash, AutoEligible: true, Enabled: true,
+				Source: "server", CreatedAt: now, UpdatedAt: now})
+		}
+		if err := sdb.CreateInBatches(batch, 500).Error; err != nil {
+			closeSQLite(sdb)
+			os.Remove(tmpPath)
+			return "", "", "", fmt.Errorf("主动行为指纹写入 SQLite 失败: %w", err)
 		}
 	}
 
@@ -345,8 +407,8 @@ func buildArsenalSQLiteDB(tenantID string) (filePath string, md5Hash string, sha
 	fileMD5Hash := fmt.Sprintf("%x", md5.Sum(fileData))
 	fileSHA256Hash := fmt.Sprintf("%x", sha256.Sum256(fileData))
 
-	log.Printf("[ArsenalExport] SQLite DB 构建完成: fingerprints=%d, pocs=%d, poc_assets=%d, config_assets=%d, workflows=%d, dirs=%d, size=%d bytes, md5=%s, sha256=%s",
-		len(fpRules), len(pocRules), len(pocAssets), len(configAssets), len(wfRules), len(dirRules), len(fileData), fileMD5Hash[:8], fileSHA256Hash[:8])
+	log.Printf("[ArsenalExport] SQLite DB 构建完成: fingerprints=%d, active_fingerprints=%d, pocs=%d, poc_assets=%d, config_assets=%d, workflows=%d, dirs=%d, size=%d bytes, md5=%s, sha256=%s",
+		len(fpRules), len(activeRules), len(pocRules), len(pocAssets), len(configAssets), len(wfRules), len(dirRules), len(fileData), fileMD5Hash[:8], fileSHA256Hash[:8])
 
 	return tmpPath, fileMD5Hash, fileSHA256Hash, nil
 }

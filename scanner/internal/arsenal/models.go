@@ -38,6 +38,21 @@ type Poc struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
+// ActiveFingerprint is one independently versioned Nuclei behavior probe.
+type ActiveFingerprint struct {
+	ID           uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name         string    `gorm:"index;not null" json:"name"`
+	FileName     string    `gorm:"uniqueIndex;not null" json:"file_name"`
+	ProductName  string    `gorm:"index;not null" json:"product_name"`
+	Content      string    `json:"-"`
+	ContentHash  string    `json:"content_hash"`
+	AutoEligible bool      `gorm:"index" json:"auto_eligible"`
+	Enabled      bool      `gorm:"default:true" json:"enabled"`
+	Source       string    `gorm:"default:'server'" json:"source"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 // PocAsset stores non-YAML files required by Nuclei templates, such as helpers payloads and wordlists.
 type PocAsset struct {
 	ID           uint      `gorm:"primaryKey;autoIncrement" json:"id"`
