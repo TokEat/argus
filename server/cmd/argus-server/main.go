@@ -230,6 +230,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize MinIO-backed EXP workspace: %v", err)
 	}
+	seededEXP, err := seedDevelopmentEXPWorkspace(context.Background(), expWorkspace, devMode)
+	if err != nil {
+		log.Fatalf("Failed to seed development EXP lab: %v", err)
+	}
+	for _, seeded := range seededEXP {
+		log.Printf("Development EXP lab ready: %s revision=%d sha256=%s reused=%t", seeded.Name, seeded.Revision, seeded.SourceSHA256, seeded.Reused)
+	}
 	go expWorkspace.StartMaintenance(context.Background())
 
 	if configDir == "" {

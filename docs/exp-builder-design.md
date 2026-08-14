@@ -18,6 +18,8 @@ yaksha.result({"vulnerable": false, "target": target})
 
 ## 工作流
 
-创建 EXP → 创建不可变 Draft Revision → inspect → validate → Fixture test → debug/run → Admin 按源码哈希发布 → 必要时切换到旧 Published Revision。
+创建 EXP → 编辑工作草稿 → Studio 自动保存不可变 Draft Revision → inspect → validate → Fixture test → debug/run → Admin 按源码哈希发布 → 必要时切换到旧 Published Revision。
+
+自动保存发生在 Inspect、Validate、Fixture、Debug 或 Run 之前，而不是每次按键都创建 Revision；这样既保持编辑流畅，也保留确定源码哈希、Fixture 快照和完整审计。发布与 Active 切换永远不会自动执行。
 
 Web UI 和 MCP App 都只是 Server 权威 API/Tool 的交互层。客户端不能覆盖 Published Revision、伪造 Fixture 验收、绕过租户/RBAC/EXP 授权或直接访问 MinIO/Yaksha/Agent。

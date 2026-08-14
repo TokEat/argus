@@ -1,0 +1,47 @@
+address = cli.String(
+    "address",
+    cli.setDefault("argus-exp-telnet:23"),
+    cli.setVerboseName("Telnet 实验靶机"),
+)
+marker = cli.String(
+    "marker",
+    cli.setRequired(true),
+    cli.setVerboseName("随机执行标记"),
+)
+
+cli.check()
+
+if address != "argus-exp-telnet:23" {
+    panic("lab EXP only accepts the isolated Telnet container")
+}
+marker_ok, marker_err = yaksha.regexMatch("^[A-Za-z0-9_-]{12,64}$", marker)
+if marker_err != nil || !marker_ok {
+    panic("invalid marker")
+}
+
+command = "id; echo " + marker + "; exit\n"
+exchange, exchange_err = yaksha.tcpExchange({
+    "address": address,
+    "max_response_bytes": 65536,
+    "steps": [
+        {"operation": "read", "until": "# ", "max_bytes": 512, "idle_timeout_ms": 3000},
+        {"operation": "write", "data": command, "encoding": "utf8", "idle_timeout_ms": 2000},
+        {"operation": "read", "until": marker + "\r\n", "max_bytes": 32768, "idle_timeout_ms": 5000},
+    ],
+})
+if exchange_err != nil { panic(exchange_err) }
+output = exchange["responses"][1]
+identity_found, identity_err = yaksha.regexMatch("uid=[0-9]+\\([^)]*\\)", output)
+marker_found, marker_match_err = yaksha.regexMatch(marker, output)
+if identity_err != nil || marker_match_err != nil || !identity_found || !marker_found {
+    panic("Telnet command output did not contain identity and marker")
+}
+
+yaksha.evidence("identity_found", true)
+yaksha.evidence("marker_found", true)
+yaksha.result({
+    "vulnerable": true,
+    "service": "telnet",
+    "remote_address": exchange["remote_address"],
+    "output": output,
+})

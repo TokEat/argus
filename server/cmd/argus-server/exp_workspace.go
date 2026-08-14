@@ -77,6 +77,24 @@ func initializeEXPWorkspace(ctx context.Context, database *gorm.DB, devMode bool
 	return expworkspace.NewService(database, objects, runtime, retention)
 }
 
+func seedDevelopmentEXPWorkspace(ctx context.Context, service *expworkspace.Service, devMode bool) ([]expworkspace.LabSeedResult, error) {
+	raw := strings.TrimSpace(os.Getenv("ARGUS_EXP_LAB_SEED"))
+	if raw == "" {
+		return nil, nil
+	}
+	enabled, err := strconv.ParseBool(raw)
+	if err != nil {
+		return nil, errors.New("ARGUS_EXP_LAB_SEED must be true or false")
+	}
+	if !enabled {
+		return nil, nil
+	}
+	if !devMode {
+		return nil, errors.New("ARGUS_EXP_LAB_SEED is only allowed with --dev")
+	}
+	return service.SeedDevelopmentLab(ctx, defaultString(os.Getenv("ARGUS_EXP_LAB_TENANT"), "default"), "argus-exp-lab-seed")
+}
+
 func defaultString(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback

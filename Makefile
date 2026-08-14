@@ -1,4 +1,4 @@
-.PHONY: cli agent server yaksha yaksha-image yaksha-up yaksha-down mcp proto-scan proto-egress nuclei-embed-test legacy all clean docker infra-up infra-down infra-logs db-init db-migrate db-verify db-schema-dump setup-local smoke-local test coverage frontend-smoke cloud-smoke source-size-check brand-check release-artifacts lint ci
+.PHONY: cli agent server yaksha yaksha-image yaksha-up yaksha-down exp-lab-up exp-lab-smoke exp-lab-down mcp proto-scan proto-egress nuclei-embed-test legacy all clean docker infra-up infra-down infra-logs db-init db-migrate db-verify db-schema-dump setup-local smoke-local test coverage frontend-smoke cloud-smoke source-size-check brand-check release-artifacts lint ci
 
 COMPOSE_FILE := server/deploy/docker-compose.yml
 DOCKER_COMPOSE := docker compose -f $(COMPOSE_FILE)
@@ -59,6 +59,18 @@ yaksha-up:
 
 yaksha-down:
 	docker compose -f yaksha/compose.yaml down
+
+# 本机授权 EXP 实验环境；生产 Compose 不引用该内部网络。
+exp-lab-up:
+	docker compose -f exp-lab/compose.yaml up -d --build
+	docker compose -f yaksha/compose.yaml -f exp-lab/yaksha.override.yaml up -d --build
+
+exp-lab-smoke:
+	bash exp-lab/smoke.sh
+
+exp-lab-down:
+	docker compose -f yaksha/compose.yaml -f exp-lab/yaksha.override.yaml down
+	docker compose -f exp-lab/compose.yaml down
 
 # 向后兼容：根目录编译
 legacy:

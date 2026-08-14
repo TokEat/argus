@@ -97,7 +97,7 @@ Server 权威模型已接入：EXP、不可变 Revision、锁定依赖、版本�
 
 - Argus MCP 使用 Go SDK `v1.7.0` 和 MCP `2026-07-28` Stateless/Sessionless 协议，对外提供 EXP 的读取、创建 Revision、inspect、Fixture 测试、debug、run 和发布工具。
 - 临时 Draft 源码仅允许通过 MCP 执行 `inspect`、`validate` 和永久离线的 Fixture `test`；具备真实副作用的 `debug/run` 必须先创建 Server Draft Revision，并携带 `exp_id + Revision + source_sha256`。Daemon 复用 Worker，但每次执行创建全新 VM；MCP 不把宿主路径暴露给 AI。
-- `exp_id + Revision + source_sha256` 组成不可变源码身份；Yaksha 按实际源码复算哈希并在全部响应中返回执行上下文，防止 MCP App 把已编辑源码误当作原 Revision 执行。源码、依赖或 Asset 引用一旦编辑，App 立即解除绑定并要求先保存新 Revision。
+- `exp_id + Revision + source_sha256` 组成不可变源码身份；Yaksha 按实际源码复算哈希并在全部响应中返回执行上下文，防止 MCP App 把已编辑源码误当作原 Revision 执行。源码、依赖或 Asset 引用一旦编辑，App 立即解除旧绑定，并在 Inspect、Validate、Fixture、Debug 或 Run 前自动保存新的不可变工作草稿；发布与 Active 切换仍要求显式门禁。
 - Server 权威阶段已提供 `argus_exp_workspace`，绑定 EXP、Revision、Asset、TestCase、Run、审计与风险豁免；发布只针对确定 Revision 和预期源码哈希，并要求 Admin 人工确认。
 - 已保存 Revision 的 `test/debug/run` 全部由 Server 在执行前创建 Run 审计并编排 Yaksha；可信 Fixture 验收因此不能由调用方伪造，MCP 不再使用执行后回报作为审计边界。
 - 提供一个通用 `ui://argus/exp-console` MCP App，不为每个 EXP 创建独立 App；它根据 Yaksha 返回的 CLI Schema 渲染参数表单，并展示源码、诊断、日志、Evidence、Trace 和结构化结果。

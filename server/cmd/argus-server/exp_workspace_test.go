@@ -52,3 +52,14 @@ func TestInitializeEXPWorkspaceProductionDefaultsToRequiredMinIO(t *testing.T) {
 		t.Fatalf("production should require MinIO configuration, got %v", err)
 	}
 }
+
+func TestDevelopmentEXPSeedIsExplicitAndDevelopmentOnly(t *testing.T) {
+	t.Setenv("ARGUS_EXP_LAB_SEED", "true")
+	if _, err := seedDevelopmentEXPWorkspace(context.Background(), nil, false); err == nil || !strings.Contains(err.Error(), "only allowed with --dev") {
+		t.Fatalf("production lab seed should fail closed, got %v", err)
+	}
+	t.Setenv("ARGUS_EXP_LAB_SEED", "false")
+	if result, err := seedDevelopmentEXPWorkspace(context.Background(), nil, true); err != nil || result != nil {
+		t.Fatalf("disabled lab seed result=%v err=%v", result, err)
+	}
+}

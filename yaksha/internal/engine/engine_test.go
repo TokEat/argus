@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"bytes"
+	"encoding/base64"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -253,9 +255,44 @@ yaksha.result(encoded)`, 5000)
 	}
 }
 
+func TestYSORuntimeExecTransletBuildsTemplatesImplCompatibleClass(t *testing.T) {
+	const marker = "ARGUS_RUNTIMEEXEC_TRANSLET_MARKER"
+	resp := execScript(t, `
+class_bytes, class_err = yso.GenerateRuntimeExecTransletBytes("`+marker+`")
+if class_err != nil { panic(class_err) }
+gadget, gadget_err = yso.GetCommonsBeanutils1JavaObject(yso.useBytesEvilClass(class_bytes))
+if gadget_err != nil { panic(gadget_err) }
+serialized, serialized_err = yso.ToBytes(gadget)
+if serialized_err != nil { panic(serialized_err) }
+yaksha.result(codec.EncodeBase64(serialized))`, 5000)
+	if resp.Status != protocol.StatusSucceeded {
+		t.Fatalf("response=%#v", resp)
+	}
+	serialized, err := base64.StdEncoding.DecodeString(resp.Result.(string))
+	if err != nil {
+		t.Fatalf("decode serialized gadget: %v", err)
+	}
+	for _, want := range [][]byte{[]byte(marker), []byte("transform"), []byte("AbstractTranslet")} {
+		if !bytes.Contains(serialized, want) {
+			t.Fatalf("serialized gadget is missing %q", want)
+		}
+	}
+}
+
 func TestYSOResourceBoundsAreEnforced(t *testing.T) {
 	resp := execScript(t, `yso.dirtyDataLength(70000)`, 5000)
 	if resp.Status != protocol.StatusFailed || !strings.Contains(resp.Error, "dirty data exceeds") {
+		t.Fatalf("response=%#v", resp)
+	}
+}
+
+func TestSleepIsBoundedAndContextAware(t *testing.T) {
+	resp := execScript(t, `err = yaksha.sleep(5.1); if err != nil { panic(err) }`, 5000)
+	if resp.Status != protocol.StatusFailed || !strings.Contains(resp.Error, "between 0 and 5 seconds") {
+		t.Fatalf("response=%#v", resp)
+	}
+	resp = execScript(t, `err = yaksha.sleep(1); if err != nil { panic(err) }`, 100)
+	if resp.Status != protocol.StatusTimeout {
 		t.Fatalf("response=%#v", resp)
 	}
 }

@@ -3,19 +3,23 @@ package mcp
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
 
 func TestDevAppHostServesStudioAndProtectsToolBridge(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
-	host := NewDevAppHost(NewClient("http://127.0.0.1:1", "server-token"), next)
+	host := NewDevAppHost(NewClient("http://127.0.0.1:1", "server-token"), next).(*devAppHost)
 
 	request := httptest.NewRequest(http.MethodGet, "/__dev/exp-studio", nil)
 	response := httptest.NewRecorder()
 	host.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Yaksha EXP Studio Dev Host") || strings.Contains(response.Body.String(), "server-token") {
 		t.Fatalf("host response=%d %s", response.Code, response.Body.String())
+	}
+	if want := "var nonce=" + strconv.Quote(host.nonce) + ";"; !strings.Contains(response.Body.String(), want) {
+		t.Fatalf("development nonce is not encoded as a JavaScript string")
 	}
 
 	appRequest := httptest.NewRequest(http.MethodGet, "/__dev/exp-studio/app", nil)

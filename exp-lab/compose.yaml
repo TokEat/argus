@@ -1,0 +1,45 @@
+name: argus-exp-lab
+
+services:
+  shiro:
+    image: vulhub/shiro:1.2.4
+    container_name: argus-exp-shiro
+    ports:
+      - "127.0.0.1:${ARGUS_EXP_SHIRO_PORT:-18081}:8080"
+    networks:
+      - exp-lab
+    restart: unless-stopped
+
+  telnet:
+    image: busybox:1.36.1
+    container_name: argus-exp-telnet
+    command: ["/bin/sh", "-c", "exec busybox telnetd -F -p 23 -l /bin/sh"]
+    ports:
+      - "127.0.0.1:${ARGUS_EXP_TELNET_PORT:-12323}:23"
+    networks:
+      - exp-lab
+    restart: unless-stopped
+
+  canary:
+    build:
+      context: ..
+      dockerfile: exp-lab/canary/Dockerfile
+    image: argus-exp-canary:local
+    container_name: argus-exp-canary
+    environment:
+      ARGUS_EXP_CANARY_TTL: "${ARGUS_EXP_CANARY_TTL:-5m}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 32
+    mem_limit: 64m
+    networks:
+      - exp-lab
+    restart: unless-stopped
+
+networks:
+  exp-lab:
+    name: argus-exp-lab
+    internal: true

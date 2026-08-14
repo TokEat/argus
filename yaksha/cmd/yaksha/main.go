@@ -33,7 +33,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "worker":
-		if err := runJSONLines(os.Stdin, os.Stdout, workerEgress()); err != nil {
+		if err := runJSONLines(os.Stdin, workerResponseWriter(), workerEgress()); err != nil {
 			fmt.Fprintln(os.Stderr, "yaksha:", err)
 			os.Exit(1)
 		}
@@ -46,6 +46,15 @@ func main() {
 		fmt.Fprintf(os.Stderr, "yaksha: unsupported mode %q\n", mode)
 		os.Exit(2)
 	}
+}
+
+func workerResponseWriter() io.Writer {
+	if os.Getenv("YAKSHA_RESPONSE_FD") == "4" {
+		if file := os.NewFile(4, "yaksha-response"); file != nil {
+			return file
+		}
+	}
+	return os.Stdout
 }
 
 func healthcheck() error {

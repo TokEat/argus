@@ -254,7 +254,7 @@ func (p *pool) startWorker() (*worker, error) {
 		child.Close()
 		return nil, err
 	}
-	stdout, err := cmd.StdoutPipe()
+	responseRead, responseWrite, err := os.Pipe()
 	if err != nil {
 		parent.Close()
 		child.Close()
@@ -264,20 +264,24 @@ func (p *pool) startWorker() (*worker, error) {
 	// VM errors are returned through the bounded JSON response. Never attach
 	// script-controlled stderr to the long-lived daemon log because Yaklang
 	// async panic text can contain parameters or target secrets.
+	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
-	cmd.ExtraFiles = []*os.File{child}
-	cmd.Env = append([]string{"YAKSHA_EGRESS_FD=3"}, p.config.WorkerEnv...)
+	cmd.ExtraFiles = []*os.File{child, responseWrite}
+	cmd.Env = append(append([]string{}, p.config.WorkerEnv...), "YAKSHA_EGRESS_FD=3", "YAKSHA_RESPONSE_FD=4")
 	if err := cmd.Start(); err != nil {
 		parent.Close()
 		child.Close()
 		stdin.Close()
+		responseRead.Close()
+		responseWrite.Close()
 		return nil, err
 	}
 	_ = child.Close()
+	_ = responseWrite.Close()
 	p.live.Add(1)
 	route := &egress.ScopedClient{}
 	route.Clear()
-	item := &worker{id: p.nextID.Add(1), cmd: cmd, stdin: stdin, stdout: bufio.NewScanner(stdout), egress: parent, route: route, owner: p}
+	item := &worker{id: p.nextID.Add(1), cmd: cmd, stdin: stdin, stdout: bufio.NewScanner(responseRead), response: responseRead, egress: parent, route: route, owner: p}
 	item.stdout.Buffer(make([]byte, 64*1024), protocol.MaxResponseLineBytes)
 	p.workersMu.Lock()
 	p.workers[item] = struct{}{}
@@ -306,6 +310,7 @@ type worker struct {
 	cmd        *exec.Cmd
 	stdin      io.WriteCloser
 	stdout     *bufio.Scanner
+	response   *os.File
 	egress     *os.File
 	route      *egress.ScopedClient
 	owner      *pool
@@ -340,8 +345,11 @@ func (w *worker) call(ctx context.Context, request []byte) ([]byte, error) {
 			return nil, scanned.err
 		}
 		var response protocol.Response
-		if err := json.Unmarshal(scanned.line, &response); err != nil || response.Status == "" {
-			return nil, fmt.Errorf("worker %d returned an invalid response", w.id)
+		if err := json.Unmarshal(scanned.line, &response); err != nil {
+			return nil, fmt.Errorf("worker %d returned invalid JSON: %w", w.id, err)
+		}
+		if response.Status == "" {
+			return nil, fmt.Errorf("worker %d returned a response without status", w.id)
 		}
 		w.lastStatus = response.Status
 		w.requests++
@@ -357,6 +365,7 @@ func (w *worker) close() {
 		return
 	}
 	_ = w.stdin.Close()
+	_ = w.response.Close()
 	_ = w.egress.Close()
 	if w.cmd.Process != nil {
 		_ = w.cmd.Process.Kill()

@@ -2,7 +2,7 @@
 
 Yaksha EXP 使用单个 `main.yak`，调试的目标是验证该 Yaklang 源码、声明式 CLI 参数、Fixture、依赖、Asset 和授权出口。调试不替代发布门禁；所有已保存执行都绑定 `exp_id + revision + source_sha256`。
 
-临时内存源码只能用于 inspect、validate 和永久离线的 Fixture test。真实 debug/run 必须先保存为 Server Draft Revision，并由 Server 在执行前创建 Run 审计后编排 Yaksha；源码、依赖或 Asset 引用修改后必须创建新 Revision，不能直接执行未审计的临时脚本。
+临时内存源码只能用于 inspect、validate 和永久离线的 Fixture test。真实 debug/run 必须绑定 Server Draft Revision，并由 Server 在执行前创建 Run 审计后编排 Yaksha。Studio 在源码、依赖或 Asset 引用变更后执行 Inspect、Validate、Fixture、Debug 或 Run 时，会自动保存新的不可变工作草稿并继承当前 Fixture；不会直接执行未审计的临时脚本。
 
 ## 五种动作
 
@@ -14,11 +14,11 @@ Yaksha EXP 使用单个 `main.yak`，调试的目标是验证该 Yaklang 源码�
 
 ## 推荐流程
 
-1. 在 Server Web UI 或 MCP App 创建 EXP 和 Draft Revision。
+1. 在 Server Web UI 或 MCP App 创建 EXP；可以直接开始编辑，首次操作时 Studio 自动保存 Draft Revision。
 2. 执行 inspect，根据 CLI Schema 渲染和补齐参数。
 3. 创建 Fixture 并运行 test；未通过不能发布。
 4. 对授权目标选择 `disabled/direct/socks5/agent` 之一进行 debug。
-5. 修复源码时创建新 Revision，重新执行 inspect、validate 和 test。
+5. 修复源码后直接继续 inspect、validate 或 test；Studio 自动生成新 Revision，发布与 Active 切换仍需显式确认。
 6. Admin 使用确定 Revision 的源码 SHA-256 人工确认发布；回滚只切换活动 Published Revision。
 
 SOCKS5 URL 为单次 write-only 输入，不回填、不进入 Worker、Trace 或日志。Agent 出口使用 Agent 原生 TCP relay，不套 SOCKS5。`test` 无论请求内容如何都不会联网。

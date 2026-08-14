@@ -333,10 +333,24 @@ func yakshaLibs(sess *session) map[string]interface{} {
 		"dial":        func(address string) (string, error) { return tracedDial(sess, address) },
 		"httpRequest": func(input map[string]any) (map[string]any, error) { return tracedHTTPRequest(sess, input) },
 		"tcpExchange": func(input map[string]any) (map[string]any, error) { return tracedTCPExchange(sess, input) },
-		"call":        sess.call, "asset": sess.asset,
+		"call":        sess.call, "asset": sess.asset, "sleep": sess.sleep,
 		"b64encode": b64encode, "b64decode": b64decode, "md5": md5Hex, "sha256": sha256Hex,
 		"jsonDumps": jsonDumps, "jsonLoads": jsonLoads, "regexMatch": regexMatch,
 	}}
+}
+
+func (s *session) sleep(seconds float64) error {
+	if seconds < 0 || seconds > 5 {
+		return fmt.Errorf("sleep duration must be between 0 and 5 seconds")
+	}
+	timer := time.NewTimer(time.Duration(seconds * float64(time.Second)))
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-s.ctx.Done():
+		return s.ctx.Err()
+	}
 }
 
 func ysoLibs() map[string]interface{} {
@@ -356,6 +370,7 @@ func ysoLibs() map[string]interface{} {
 		}
 		return yso.SetExecCommand(command)
 	}
+	out["GenerateRuntimeExecTransletBytes"] = runtimeExecTransletBytes
 	out["ToBytes"] = func(value interface{}, options ...yso.MarshalOptionFun) ([]byte, error) {
 		raw, err := yso.ToBytes(value, options...)
 		if err == nil && len(raw) > maxYSOBytes {

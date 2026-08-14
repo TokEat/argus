@@ -1,0 +1,18 @@
+services:
+  yaksha:
+    network_mode: !reset null
+    environment:
+      YAKSHA_LISTEN_ADDR: "0.0.0.0:8790"
+      YAKSHA_RELAY_ADDR: ""
+      YAKSHA_RELAY_TOKEN: ""
+    ports:
+      - "127.0.0.1:${YAKSHA_PORT:-8790}:8790"
+    networks:
+      - default
+      - exp-lab
+
+networks:
+  default:
+  exp-lab:
+    name: argus-exp-lab
+    external: true

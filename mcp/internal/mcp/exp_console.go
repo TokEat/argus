@@ -71,7 +71,7 @@ const expConsoleHTML = `<!doctype html>
 <body>
 <main>
   <header>
-    <div><h1>Yaksha EXP Studio</h1><div class="muted">Server 权威 Revision · 私有 MinIO · 单文件 Yaklang EXP · 不访问宿主文件系统</div><div id="identity" class="muted">未绑定 Revision</div><div id="dirty" class="dirty" hidden>源码或 Resolver 已修改，已解除 Revision 绑定；请先创建新 Revision。</div></div>
+    <div><h1>Yaksha EXP Studio</h1><div class="muted">Server 权威 Revision · 私有 MinIO · 单文件 Yaklang EXP · 不访问宿主文件系统</div><div id="identity" class="muted">未绑定 Revision</div><div id="dirty" class="dirty" hidden>当前为工作草稿；Debug / Run 会先自动保存不可变 Revision 并继承 Fixture。</div></div>
     <span id="status" class="status">等待输入</span>
   </header>
   <div class="lifecycle" aria-label="EXP 生命周期"><span>Draft</span><span>Inspect / Validate</span><span>Fixture</span><span>Published</span><span>Active</span></div>
@@ -85,7 +85,7 @@ const expConsoleHTML = `<!doctype html>
       <label>风险<select id="workspace-risk"><option>high</option><option>critical</option><option>medium</option><option>low</option></select></label>
       <button id="workspace-create" type="button">创建 EXP</button>
       <button id="workspace-load" type="button">加载密封 Revision</button>
-      <button id="workspace-save" type="button">创建新 Revision</button>
+      <button id="workspace-save" type="button">保存工作草稿</button>
       <button id="workspace-inspect" type="button">Inspect Revision</button>
       <button id="workspace-validate" type="button">Validate Revision</button>
       <button id="workspace-publish" type="button">按哈希发布</button>
@@ -292,6 +292,19 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
 	}
 	function clearBinding(showDirty) { boundContext = {}; dirty.hidden = !showDirty; renderIdentity(); }
 	function bindContext(value) { boundContext = value || {}; dirty.hidden = true; renderIdentity(); }
+	async function checkpointWorkspace() {
+	  if (boundContext.exp_id && boundContext.revision && boundContext.source_sha256) return boundContext;
+	  requireWorkspaceIdentity(false);
+	  var value = await callWorkspace({action: 'revision_create', exp_id: selectedExpID(), source: source.value, dependencies: parseJSON(dependencies.value || '[]', '依赖闭包'), assets: parseJSON(assets.value || '[]', 'Asset 引用')});
+	  var cases = parseJSON(tests.value || '[]', 'Fixture');
+	  for (var index = 0; index < cases.length; index++) {
+	    var testCase = cases[index] || {};
+	    await callWorkspace({action: 'test_case_create', exp_id: selectedExpID(), revision: value.revision, name: testCase.name || testCase.id || ('fixture-' + (index + 1)), params: testCase.params || {}, fixture: testCase.fixture || {}, expect: testCase.expect || {}, enabled: testCase.enabled !== false});
+	  }
+	  bindContext({exp_id: value.exp_id, revision: value.revision, source_sha256: value.source_sha256});
+	  await refreshWorkspaceRevisions(value.revision);
+	  return boundContext;
+	}
   function renderFields(items) {
 	fields.textContent = '';
     if (!items.length) {
@@ -428,7 +441,10 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
     setStatus('执行中', false);
     try {
 	      var isBound = Boolean(boundContext.exp_id && boundContext.revision && boundContext.source_sha256);
-	      if ((action.value === 'run' || action.value === 'debug') && !isBound) throw new Error('run/debug 必须先保存并绑定 Server EXP Revision');
+	      if ((action.value === 'run' || action.value === 'debug') && !isBound) {
+	        await checkpointWorkspace();
+	        isBound = true;
+	      }
 	      var args = {action: action.value, timeout_ms: Number(timeout.value || 0)};
 	      if (isBound) {
 		args.exp_id = boundContext.exp_id;
@@ -470,7 +486,12 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
 	    field.addEventListener('input', function () { clearBinding(true); });
 	  });
 	  workspaceExp.addEventListener('change', function () { clearBinding(false); refreshWorkspaceRevisions().catch(function (error) { renderResult({isError: true, error: error.message}); }); });
-	  workspaceRevision.addEventListener('change', function () { clearBinding(false); updateLifecycle(workspaceRevisions.find(function (item) { return item.revision === selectedRevisionNumber(); })); });
+	  workspaceRevision.addEventListener('change', function () {
+	    clearBinding(false);
+	    var current = workspaceRevisions.find(function (item) { return item.revision === selectedRevisionNumber(); });
+	    updateLifecycle(current);
+	    renderFields(current && current.cli_schema ? current.cli_schema : []);
+	  });
 	  document.getElementById('workspace-refresh').addEventListener('click', function () { Promise.all([refreshWorkspaceExps(selectedExpID()), refreshAgents()]).catch(function (error) { renderResult({isError: true, error: error.message}); }); });
 	  document.getElementById('workspace-create').addEventListener('click', async function () {
 	    try {
@@ -488,15 +509,14 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
 	      dependencies.value = JSON.stringify(value.dependency_refs || [], null, 2);
 	      assets.value = JSON.stringify(value.asset_refs || [], null, 2);
 	      tests.value = JSON.stringify(value.test_cases || [], null, 2);
+	      var current = workspaceRevisions.find(function (item) { return item.revision === selectedRevisionNumber(); });
+	      renderFields(current && current.cli_schema ? current.cli_schema : []);
 	      bindContext({exp_id: value.exp_id, revision: value.revision, source_sha256: value.source_sha256});
 	    } catch (error) { renderResult({isError: true, error: error.message}); }
 	  });
 	  document.getElementById('workspace-save').addEventListener('click', async function () {
 	    try {
-	      requireWorkspaceIdentity(false);
-	      var value = await callWorkspace({action: 'revision_create', exp_id: selectedExpID(), source: source.value, dependencies: parseJSON(dependencies.value || '[]', '依赖闭包'), assets: parseJSON(assets.value || '[]', 'Asset 引用')});
-	      bindContext({exp_id: value.exp_id, revision: value.revision, source_sha256: value.source_sha256});
-	      await refreshWorkspaceRevisions(value.revision);
+	      await checkpointWorkspace();
 	    } catch (error) { renderResult({isError: true, error: error.message}); }
 	  });
 	  ['inspect', 'validate'].forEach(function (name) {
