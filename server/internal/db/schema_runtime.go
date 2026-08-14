@@ -56,6 +56,7 @@ func schemaModels() []interface{} {
 		&AgentSessionAudit{},
 		&WSEventLog{},
 		&Arsenal{},
+		&ArsenalEvent{},
 		&ArsenalAIReview{},
 		&AIToolInvocation{},
 		&User{},

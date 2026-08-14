@@ -17,6 +17,7 @@ import (
 	"github.com/P0lar1ght/argus/scanner/internal/vuln/nuclei"
 	"github.com/P0lar1ght/argus/scanner/lib/ddfinger"
 	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/shared/proto/go/activefingerprint"
 	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 	"github.com/projectdiscovery/nuclei/v3/pkg/output"
 	"google.golang.org/grpc"
@@ -45,6 +46,8 @@ func (w *Worker) handleDebugCommand(cmd *pb.DebugCommand) {
 	case "start_debug":
 		w.startDebugSession(cmd)
 	case "start_fingerprint_debug":
+		w.startDebugSession(cmd)
+	case "start_active_fingerprint_debug":
 		w.startDebugSession(cmd)
 	case "cancel_debug":
 		w.cancelDebugSession(cmd.SessionId)
@@ -149,7 +152,19 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 		return
 	}
 
-	send(&pb.DebugEvent{Type: "debug_log", Level: "INFO", Message: "agent accepted poc debug session"})
+	activeProbe := cmd.Action == "start_active_fingerprint_debug"
+	var activeClassification activefingerprint.Classification
+	if activeProbe {
+		var err error
+		activeClassification, err = activefingerprint.Inspect("debug-active-fingerprint.yaml", []byte(cmd.PocContent))
+		if err != nil {
+			sendComplete(fmt.Sprintf("validate active fingerprint: %v", err))
+			return
+		}
+		send(&pb.DebugEvent{Type: "debug_log", Level: "INFO", Message: fmt.Sprintf("agent accepted %s active fingerprint debug session (%s)", activeClassification.ComputedProfile, activeClassification.ID)})
+	} else {
+		send(&pb.DebugEvent{Type: "debug_log", Level: "INFO", Message: "agent accepted poc debug session"})
+	}
 
 	tmpDir, err := os.MkdirTemp("", "argus-poc-debug-*")
 	if err != nil {
@@ -159,6 +174,9 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 	defer os.RemoveAll(tmpDir)
 
 	templateName := "debug-poc.yaml"
+	if activeProbe {
+		templateName = "debug-active-fingerprint.yaml"
+	}
 	templatePath := filepath.Join(tmpDir, templateName)
 	if err := os.WriteFile(templatePath, []byte(cmd.PocContent), 0600); err != nil {
 		sendComplete(fmt.Sprintf("write temp poc: %v", err))
@@ -211,15 +229,20 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 			reqData, respData = mergePacketPairs(result.Packet)
 		}
 
+		templateID := result.TemplateID
+		extracted := result.ExtractedResults
+		if activeProbe {
+			templateID, extracted = activeFingerprintDebugResult(result.MatcherStatus, activeClassification.Product)
+		}
 		send(&pb.DebugEvent{
 			Type:       "debug_result",
 			Matched:    result.MatcherStatus,
-			TemplateId: result.TemplateID,
+			TemplateId: templateID,
 			Severity:   result.Info.SeverityHolder.Severity.String(),
 			MatchedAt:  result.Matched,
 			Request:    reqData,
 			Response:   respData,
-			Extracted:  result.ExtractedResults,
+			Extracted:  extracted,
 		})
 	}, "", true, true, common.EmbedNucleiPocs, tmpDir, nil, nil)
 
@@ -227,6 +250,13 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 	if !completeSent.Load() {
 		completeNucleiDebug(sendComplete, nucleiErr)
 	}
+}
+
+func activeFingerprintDebugResult(matched bool, product string) (string, []string) {
+	if !matched {
+		return "Active-Finger", nil
+	}
+	return "Active-Finger", []string{product}
 }
 
 type fingerprintDebugOptions struct {

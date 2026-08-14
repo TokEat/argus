@@ -7,6 +7,11 @@ const subdomainDictionary: API.SubdomainDictionary = {
 };
 
 describe('scan policy subdomain discovery', () => {
+	it('keeps behavior probes independent from active paths across presets', () => {
+		expect(buildScanPolicy({ preset: 'quick' }, []).capabilities.behavior_probe).toBe(false);
+		expect(buildScanPolicy({ preset: 'standard' }, []).capabilities).toMatchObject({ behavior_probe: true, directory_probe: false });
+		expect(buildScanPolicy({ preset: 'deep' }, []).capabilities).toMatchObject({ behavior_probe: true, directory_probe: true });
+	});
 	it('uses depth two for the deep preset', () => {
 		expect(presetDefaults.deep.subdomain_bruteforce).toBe(true);
 		expect(presetDefaults.deep.subdomain_bruteforce_depth).toBe(2);

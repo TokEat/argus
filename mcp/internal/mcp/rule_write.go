@@ -16,7 +16,7 @@ func (c *Client) argusRuleSave(ctx context.Context, args map[string]interface{})
 		return nil, fmt.Errorf("rule_type is required")
 	}
 	switch ruleType {
-	case "poc", "finger", "workflow":
+	case "poc", "finger", "workflow", "active_fingerprint":
 	default:
 		return nil, fmt.Errorf("unsupported rule_type %q", stringArg(args, "rule_type"))
 	}
@@ -44,6 +44,17 @@ func (c *Client) argusRuleSave(ctx context.Context, args map[string]interface{})
 			return nil, err
 		}
 	}
+	if ruleType == "active_fingerprint" {
+		payload := map[string]interface{}{
+			"rule_type": "behavior_probe", "file_name": fileName, "content": content,
+			"intent": stringArg(args, "intent"),
+		}
+		var out map[string]interface{}
+		if err := c.do(ctx, http.MethodPost, "/api/v1/mcp/tools/rule/save", payload, &out); err != nil {
+			return nil, err
+		}
+		return withStableRef(out, ruleType, fileName), nil
+	}
 	var out map[string]interface{}
 	if err := c.do(ctx, http.MethodPost, "/api/v1/arsenals/"+url.PathEscape(ruleType)+"/"+url.PathEscape(fileName), map[string]interface{}{"content": content}, &out); err != nil {
 		return nil, err
@@ -55,11 +66,41 @@ func (c *Client) argusRuleApply(ctx context.Context, args map[string]interface{}
 	action := stringArg(args, "action")
 	ruleType := normalizeRuleType(stringArg(args, "rule_type"))
 	switch action {
-	case "publish":
-		return c.argusRulePublish(ctx, ruleType, args)
+	case "publish", "deprecate", "rollback":
+		if ruleType == "active_fingerprint" {
+			payload := map[string]interface{}{
+				"action": action, "rule_type": "behavior_probe", "artifact_id": stringArg(args, "artifact_id"),
+				"file_name": stringArg(args, "file_name"), "hash": stringArg(args, "hash"), "version": args["version"],
+			}
+			var out map[string]interface{}
+			if err := c.do(ctx, http.MethodPost, "/api/v1/mcp/tools/rule/apply", payload, &out); err != nil {
+				return nil, err
+			}
+			return withStableRef(out, ruleType, stringArg(args, "file_name")), nil
+		}
+		if action == "publish" {
+			return c.argusRulePublish(ctx, ruleType, args)
+		}
+		return c.argusRuleLifecycle(ctx, action, ruleType, args)
 	default:
 		return nil, fmt.Errorf("unsupported argus_rule_apply action %q", action)
 	}
+}
+
+func (c *Client) argusRuleLifecycle(ctx context.Context, action, ruleType string, args map[string]interface{}) (interface{}, error) {
+	fileName := stringArg(args, "file_name")
+	if fileName == "" {
+		return nil, fmt.Errorf("file_name is required for %s", action)
+	}
+	if err := c.ensureArtifactFresh(ctx, ruleType, fileName, stringArg(args, "artifact_id"), stringArg(args, "hash"), args["version"]); err != nil {
+		return nil, err
+	}
+	var out map[string]interface{}
+	guard := map[string]interface{}{"hash": stringArg(args, "hash"), "version": args["version"]}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/arsenals/"+url.PathEscape(ruleType)+"/"+url.PathEscape(fileName)+"/"+action, guard, &out); err != nil {
+		return nil, err
+	}
+	return withStableRef(out, ruleType, fileName), nil
 }
 
 func (c *Client) argusRulePublish(ctx context.Context, ruleType string, args map[string]interface{}) (interface{}, error) {
@@ -81,7 +122,8 @@ func (c *Client) argusRulePublish(ctx context.Context, ruleType string, args map
 		return nil, err
 	}
 	var out map[string]interface{}
-	if err := c.do(ctx, http.MethodPost, "/api/v1/arsenals/"+url.PathEscape(ruleType)+"/"+url.PathEscape(fileName)+"/approve", nil, &out); err != nil {
+	guard := map[string]interface{}{"hash": stringArg(args, "hash"), "version": args["version"]}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/arsenals/"+url.PathEscape(ruleType)+"/"+url.PathEscape(fileName)+"/approve", guard, &out); err != nil {
 		return nil, err
 	}
 	return withStableRef(out, ruleType, fileName), nil

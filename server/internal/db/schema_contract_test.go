@@ -72,6 +72,7 @@ func TestSchemaModelTableNames(t *testing.T) {
 		"AgentSessionAudit":            "agent_session_audits",
 		"WSEventLog":                   "ws_event_logs",
 		"Arsenal":                      "arsenals",
+		"ArsenalEvent":                 "arsenal_events",
 		"ArsenalAIReview":              "arsenal_ai_reviews",
 		"AIToolInvocation":             "ai_tool_invocations",
 		"User":                         "users",

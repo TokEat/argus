@@ -99,7 +99,8 @@ const scanStageLabels: Record<string, string> = {
     protocol_identify: '协议识别',
     http_probe: 'HTTP 探测',
     host_binding: 'Host 绑定',
-    directory_probe: '目录探测',
+    behavior_probe: '安全行为探针',
+    directory_probe: '主动路径指纹',
     fingerprint: '指纹识别',
     risk_validation: '风险验证',
 };

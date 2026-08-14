@@ -425,6 +425,25 @@ type Arsenal struct {
 	UpdatedAt       time.Time
 }
 
+// ArsenalEvent is the immutable revision and governance history for one
+// tenant-scoped arsenal artifact. Content is populated only for revision
+// snapshots; debug events keep metadata/result summaries in Details.
+type ArsenalEvent struct {
+	ID         uint      `gorm:"primaryKey;autoIncrement"`
+	TenantID   string    `gorm:"default:'default';index;index:idx_arsenal_event_artifact"`
+	ArtifactID string    `gorm:"index;index:idx_arsenal_event_artifact"`
+	Type       string    `gorm:"index"`
+	FileName   string    `gorm:"index"`
+	Version    int       `gorm:"index"`
+	Hash       string    `gorm:"index"`
+	State      string    `gorm:"index"`
+	Action     string    `gorm:"index"`
+	ActorID    string    `gorm:"index"`
+	Content    string    `gorm:"type:text"`
+	Details    string    `gorm:"type:jsonb"`
+	CreatedAt  time.Time `gorm:"index"`
+}
+
 // ArsenalAIReview stores AI-assisted review evidence for one arsenal content hash.
 type ArsenalAIReview struct {
 	ID                  uint   `gorm:"primaryKey;autoIncrement"`

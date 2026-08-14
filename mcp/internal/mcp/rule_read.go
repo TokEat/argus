@@ -116,7 +116,7 @@ func (c *Client) argusRuleList(ctx context.Context, args map[string]interface{},
 	if raw := normalizeRuleType(stringArg(args, "rule_type")); raw != "" {
 		ruleTypes = append(ruleTypes, raw)
 	} else {
-		ruleTypes = []string{"finger", "poc", "workflow"}
+		ruleTypes = []string{"finger", "active_fingerprint", "poc", "workflow"}
 	}
 	state := stringArg(args, "state")
 	if draftsOnly {
@@ -226,6 +226,9 @@ func (c *Client) loadRuleCatalog(ctx context.Context, ruleType string) ([]catalo
 	case "workflow":
 		var rows []catalogRecord
 		return rows, c.do(ctx, http.MethodGet, "/api/v1/dictionaries/workflow", nil, &rows)
+	case "active_fingerprint":
+		var rows []catalogRecord
+		return rows, c.do(ctx, http.MethodGet, "/api/v1/active-fingerprint-rules?all=1", nil, &rows)
 	default:
 		return nil, nil
 	}
@@ -319,7 +322,7 @@ func catalogRowMatchesRuleID(row catalogRecord, ruleType, ruleID string) bool {
 	switch ruleType {
 	case "poc":
 		return row.Name == ruleID || row.SourceFile == ruleID
-	case "finger", "workflow":
+	case "finger", "workflow", "active_fingerprint":
 		return row.Product == ruleID
 	default:
 		return false

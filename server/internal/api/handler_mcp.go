@@ -38,6 +38,8 @@ var mcpResourceDocs = []mcpResourceDoc{
 	{URI: "argus://argus-mcp/tool-guide", Name: "Argus MCP Tool Guide", Description: "Field combinations and expected sequencing for the aggregate MCP tools.", MIMEType: "text/markdown", Text: argusMCPToolGuideText},
 	{URI: "argus://fingerprint/spec", Name: "Argus Fingerprint Spec", Description: "Fingerprint dictionary format and expression examples.", MIMEType: "text/markdown", Text: fingerprintSpecText},
 	{URI: "argus://fingerprint/template", Name: "Argus Fingerprint Template", Description: "Minimal fingerprint YAML snippet.", MIMEType: "text/yaml", Text: fingerprintTemplateText},
+	{URI: "argus://behavior-probe/spec", Name: "Argus Behavior Probe Spec", Description: "Governed Nuclei HTTP/HTTPS active fingerprint format and safety classification.", MIMEType: "text/markdown", Text: behaviorProbeSpecText},
+	{URI: "argus://behavior-probe/template", Name: "Argus Behavior Probe Template", Description: "Minimal one-file Nuclei behavior probe.", MIMEType: "text/yaml", Text: behaviorProbeTemplateText},
 	{URI: "argus://poc/spec", Name: "Argus POC Spec", Description: "POC YAML format accepted by Argus debug and draft flows.", MIMEType: "text/markdown", Text: pocSpecText},
 	{URI: "argus://poc/template", Name: "Argus POC Template", Description: "Minimal POC YAML template.", MIMEType: "text/yaml", Text: pocTemplateText},
 	{URI: "argus://workflow/spec", Name: "Argus Workflow Spec", Description: "Workflow rule format linking products to POC files.", MIMEType: "text/markdown", Text: workflowSpecText},
@@ -96,6 +98,14 @@ func mcpFingerprintSpec(c *gin.Context) {
 
 func mcpFingerprintTemplate(c *gin.Context) {
 	writeMCPResource(c, "argus://fingerprint/template")
+}
+
+func mcpBehaviorProbeSpec(c *gin.Context) {
+	writeMCPResource(c, "argus://behavior-probe/spec")
+}
+
+func mcpBehaviorProbeTemplate(c *gin.Context) {
+	writeMCPResource(c, "argus://behavior-probe/template")
 }
 
 func mcpPOCSpec(c *gin.Context) {
@@ -506,7 +516,7 @@ Use this sequence when the client has no Argus source code:
 1. Read argus://argus-mcp/tool-guide.
 2. Read the relevant spec and template resources.
 3. Call argus_context with action=agents and select an Alive Agent.
-4. Call argus_rule_debug to validate generated fingerprint or POC behavior; use argus_yaksha_exp for Yaksha EXP.
+4. Call argus_rule_debug to validate generated fingerprint, behavior_probe or POC behavior; controlled behavior probes require risk_confirmed=true.
 5. Call argus_rule_save to create a Draft database artifact and capture stable_ref.
 6. Call argus_rule_apply with action=publish as admin, passing the exact stable_ref hash/version returned by save.
 7. Call argus_context with action=workflow_links to verify fingerprint -> POC linkage.
@@ -514,8 +524,8 @@ Use this sequence when the client has no Argus source code:
 Publishing is protected by hash/version guards. A 409 means the Draft changed; re-read/save before retrying.
 
 Storage model:
-- POC, workflow and fingerprint source content is stored in the Argus database arsenals table; Yaksha EXP source and artifacts are stored through the Server Workspace in private MinIO.
-- FingerprintRule, PocRule and WorkflowRule catalog tables are derived indexes for lookup/execution.
+- POC, workflow, passive fingerprint and behavior-probe source is stored in the Argus database arsenals table; Yaksha EXP source and artifacts are stored through the Server Workspace in private MinIO.
+- FingerprintRule, ActiveFingerprintRule, PocRule and WorkflowRule catalog tables are derived indexes for lookup/execution.
 - MCP is a thin orchestration layer over Argus native APIs; it should preserve tenant/RBAC/approval semantics instead of bypassing Server control.
 
 Lifecycle intents:
@@ -528,9 +538,9 @@ const argusMCPToolGuideText = `# Argus MCP tool guide
 Argus exposes aggregate tools with Server-enforced governance boundaries:
 
 - argus_context: read specs/templates, list Agents, query workflow_links, workflow_recommend and workflow_conflicts.
-- argus_rule_debug: validate fingerprint or POC behavior through Argus Server and an online Agent.
-- argus_rule_save: save fingerprint, POC or workflow into the Argus database as a Draft artifact. Optional intent: test_only, production_candidate, approved_reusable.
-- argus_rule_apply: admin-only publication using stable_ref hash/version. Yaksha EXP governance uses argus_exp_workspace.
+- argus_rule_debug: validate a passive fingerprint, behavior_probe or POC through Argus Server and an online Agent.
+- argus_rule_save: save fingerprint, behavior_probe, POC or workflow into the Argus database as a Draft artifact.
+- argus_rule_apply: admin-only publish, deprecate and rollback using stable_ref hash/version. Yaksha EXP governance uses argus_exp_workspace.
 - argus_scan_task: preview and create argus.scan-policy/v1 tasks through one Server-authoritative compiler. Call preview first, then create with the exact plan_hash and a stable idempotency_key. It does not accept Scanner raw config, Agent paths, or a separate manual POC phase.
 
 Reference model:
@@ -565,6 +575,41 @@ Debug shape:
 
 const fingerprintTemplateText = `ExampleProduct:
   - body="ExampleProduct"
+`
+
+const behaviorProbeSpecText = `# Argus behavior probe spec
+
+Each behavior probe is one complete Nuclei HTTP/HTTPS YAML file stored as an independently versioned active_fingerprint Arsenal artifact.
+
+Required metadata:
+- argus-rule-kind: active-fingerprint
+- argus-product: product name written as an Active-Finger result on matcher success
+- argus-auto-profile is informational; Server recomputes the effective classification
+- max-request: positive request count
+
+Safe automatic probes are limited to one GET/HEAD request, one same-origin BaseURL path, no body/raw/payload/fuzz/OAST/headless/code, and no dangerous headers. Other valid HTTP/HTTPS templates are classified controlled: they can be stored, published and individually debugged with risk_confirmed=true, but are never included in automatic scanning.
+
+Use rule_type=behavior_probe for read, debug, save, publish, deprecate and rollback. Debug requires file_name, content, agent_id and target_url. Save always creates a Draft; admin lifecycle actions require the exact stable_ref hash/version.
+`
+
+const behaviorProbeTemplateText = `id: example-product-detect
+info:
+  name: Detect Example Product
+  severity: info
+  metadata:
+    argus-rule-kind: active-fingerprint
+    argus-product: ExampleProduct
+    argus-auto-profile: safe
+    max-request: 1
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}"
+    matchers:
+      - type: word
+        part: header
+        words:
+          - "Example-Product"
 `
 
 const pocSpecText = `# Argus POC spec

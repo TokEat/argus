@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -144,6 +145,8 @@ func TestMCPResourceEndpointsReturnSelfDescribingDocs(t *testing.T) {
 	}{
 		{name: "quickstart", handler: mcpArgusMCPQuickstart, wantURI: "argus://argus-mcp/quickstart", want: []string{"argus_rule_debug", "argus_rule_save", "argus_rule_apply"}},
 		{name: "fingerprint spec", handler: mcpFingerprintSpec, wantURI: "argus://fingerprint/spec", want: []string{"body=", "product_name"}},
+		{name: "behavior probe spec", handler: mcpBehaviorProbeSpec, wantURI: "argus://behavior-probe/spec", want: []string{"active-fingerprint", "risk_confirmed", "HTTP/HTTPS"}},
+		{name: "behavior probe template", handler: mcpBehaviorProbeTemplate, wantURI: "argus://behavior-probe/template", want: []string{"example-product-detect", "Example-Product", "argus-product"}},
 		{name: "poc spec", handler: mcpPOCSpec, wantURI: "argus://poc/spec", want: []string{"id:", "requests:", "matchers:"}},
 		{name: "workflow spec", handler: mcpWorkflowSpec, wantURI: "argus://workflow/spec", want: []string{"root", "workflow_pocs", "General-Poc-*", "general POC workflow"}},
 		{name: "full chain example", handler: mcpFullChainExample, wantURI: "argus://examples/fingerprint-poc-workflow", want: []string{"fingerprint", "workflow_links", "test_only"}},
@@ -166,6 +169,83 @@ func TestMCPResourceEndpointsReturnSelfDescribingDocs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMCPBehaviorProbeDraftPublishAndDeprecate(t *testing.T) {
+	store := setupAITestDB(t)
+	content := `id: mcp-behavior
+info:
+  name: MCP Behavior Probe
+  severity: info
+  metadata:
+    argus-rule-kind: active-fingerprint
+    argus-product: MCP-Product
+    max-request: 1
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}"
+    matchers:
+      - type: status
+        status: [200]
+`
+	saveBody, err := json.Marshal(map[string]interface{}{
+		"rule_type": "behavior_probe", "file_name": "mcp-behavior.yaml", "content": content,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/mcp/tools/rule/save", "operator", "operator-1")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/rule/save", bytes.NewReader(saveBody))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	mcpRuleSave(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("save behavior probe: %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var saved map[string]interface{}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved["state"] != "Draft" || saved["rule_type"] != "behavior_probe" {
+		t.Fatalf("unexpected behavior draft response: %#v", saved)
+	}
+
+	apply := func(action, role string) *httptest.ResponseRecorder {
+		t.Helper()
+		body, marshalErr := json.Marshal(map[string]interface{}{
+			"action": action, "rule_type": "behavior_probe", "file_name": "mcp-behavior.yaml",
+			"artifact_id": saved["artifact_id"], "hash": saved["hash"], "version": saved["version"],
+		})
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		applyCtx, applyRecorder := newTenantContextWithRole(http.MethodPost, "/mcp/tools/rule/apply", role, "admin-1")
+		applyCtx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/rule/apply", bytes.NewReader(body))
+		applyCtx.Request.Header.Set("Content-Type", "application/json")
+		mcpRuleApply(applyCtx)
+		return applyRecorder
+	}
+
+	if publish := apply("publish", "admin"); publish.Code != http.StatusOK {
+		t.Fatalf("publish behavior probe: %d (%s)", publish.Code, publish.Body.String())
+	}
+	if deprecate := apply("deprecate", "admin"); deprecate.Code != http.StatusOK {
+		t.Fatalf("deprecate behavior probe: %d (%s)", deprecate.Code, deprecate.Body.String())
+	}
+	var artifact db.Arsenal
+	if err := store.Where("tenant_id = ? AND type = ? AND file_name = ?", "default", "active_fingerprint", "mcp-behavior.yaml").First(&artifact).Error; err != nil {
+		t.Fatal(err)
+	}
+	if artifact.State != "Deprecated" {
+		t.Fatalf("behavior probe state = %q, want Deprecated", artifact.State)
+	}
+	var actions []string
+	if err := store.Model(&db.ArsenalEvent{}).Where("tenant_id = ? AND artifact_id = ?", "default", artifact.ID).Order("id").Pluck("action", &actions).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(actions, ","), "saved,published,deprecated"; got != want {
+		t.Fatalf("behavior probe audit actions = %q, want %q", got, want)
 	}
 }
 

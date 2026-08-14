@@ -453,7 +453,10 @@ func validateAutomaticActiveFingerprintLimit(rules []ActiveFingerprintRule) erro
 func ValidateRuleCatalogCandidate(candidate Arsenal) error {
 	ruleCatalogSyncMu.Lock()
 	defer ruleCatalogSyncMu.Unlock()
+	return validateRuleCatalogCandidateLocked(candidate)
+}
 
+func validateRuleCatalogCandidateLocked(candidate Arsenal) error {
 	var arsenals []Arsenal
 	if err := DB.Order("tenant_id, type, file_name").Find(&arsenals).Error; err != nil {
 		return err
@@ -474,6 +477,21 @@ func ValidateRuleCatalogCandidate(candidate Arsenal) error {
 		return fmt.Errorf("rule catalog materialized with %d errors: %s", len(materialized.errors), summarizeRuleCatalogErrors(materialized.errors))
 	}
 	return validateAutomaticActiveFingerprintLimit(materialized.activeFingers)
+}
+
+// ApplyRuleCatalogCandidate serializes a validated governance mutation with
+// catalog materialization. This prevents concurrent publication of two safe
+// probes from both passing the per-tenant budget against stale state.
+func ApplyRuleCatalogCandidate(candidate Arsenal, mutate func(*gorm.DB) error) error {
+	ruleCatalogSyncMu.Lock()
+	defer ruleCatalogSyncMu.Unlock()
+	if err := validateRuleCatalogCandidateLocked(candidate); err != nil {
+		return err
+	}
+	if err := DB.Transaction(mutate); err != nil {
+		return err
+	}
+	return syncRuleCatalogFromArsenalLocked()
 }
 
 func normalizeLegacyArsenalTypes() error {

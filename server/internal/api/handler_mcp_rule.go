@@ -15,6 +15,7 @@ import (
 	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
+	"gorm.io/gorm"
 )
 
 type mcpRuleContextRequest struct {
@@ -40,6 +41,9 @@ type mcpRuleDebugRequest struct {
 	WorkflowTypes   []string `json:"workflow_types"`
 	WorkflowPocs    []string `json:"workflow_pocs"`
 	PocContent      string   `json:"poc_content"`
+	FileName        string   `json:"file_name"`
+	Content         string   `json:"content"`
+	RiskConfirmed   bool     `json:"risk_confirmed"`
 }
 
 type mcpRuleSaveRequest struct {
@@ -56,11 +60,12 @@ type mcpRuleSaveRequest struct {
 }
 
 type mcpRuleApplyRequest struct {
-	Action   string `json:"action"`
-	RuleType string `json:"rule_type"`
-	FileName string `json:"file_name"`
-	Hash     string `json:"hash"`
-	Version  int    `json:"version"`
+	Action     string `json:"action"`
+	RuleType   string `json:"rule_type"`
+	FileName   string `json:"file_name"`
+	Hash       string `json:"hash"`
+	Version    int    `json:"version"`
+	ArtifactID string `json:"artifact_id"`
 }
 
 type mcpDebugTranscript struct {
@@ -122,8 +127,10 @@ func mcpRuleDebug(c *gin.Context) {
 		})
 		resetJSONBody(c, body)
 		mcpPOCDebug(c)
+	case "active_fingerprint":
+		mcpRuleDebugActiveFingerprint(c, req)
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "rule_type must be fingerprint or poc"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "rule_type must be fingerprint, behavior_probe or poc"})
 	}
 }
 
@@ -145,8 +152,10 @@ func mcpRuleSave(c *gin.Context) {
 		resp, err = saveMCPWorkflowDraft(tenantID, req)
 	case "poc":
 		resp, err = saveMCPPOCDraft(tenantID, req)
+	case "active_fingerprint":
+		resp, err = saveMCPActiveFingerprintDraft(tenantID, req, c.GetString("user_id"))
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "rule_type must be fingerprint, poc or workflow"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "rule_type must be fingerprint, behavior_probe, poc or workflow"})
 		return
 	}
 	if err != nil {
@@ -171,11 +180,19 @@ func mcpRuleApply(c *gin.Context) {
 		return
 	}
 	req.Action = strings.ToLower(strings.TrimSpace(req.Action))
+	if strings.TrimSpace(req.Hash) == "" || req.Version <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "hash and version are required for lifecycle actions"})
+		return
+	}
 	switch req.Action {
 	case "publish":
 		mcpRulePublish(c, tenantID, req)
+	case "deprecate":
+		mcpRuleDeprecate(c, tenantID, req)
+	case "rollback":
+		mcpRuleRollback(c, tenantID, req)
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "action must be publish"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "action must be publish, deprecate or rollback"})
 	}
 }
 
@@ -324,19 +341,19 @@ func mcpRulePublish(c *gin.Context, tenantID string, req mcpRuleApplyRequest) {
 		return
 	}
 	switch normalizeMCPRuleType(req.RuleType) {
-	case "finger", "poc", "workflow":
+	case "finger", "poc", "workflow", "active_fingerprint":
 		typ := normalizeMCPRuleType(req.RuleType)
 		fileName := strings.TrimSpace(req.FileName)
 		if fileName == "" {
 			fileName = defaultMCPRuleFileName(typ)
 		}
-		mcpPublishArsenal(c, tenantID, typ, fileName, req.Hash, req.Version)
+		mcpPublishArsenal(c, tenantID, typ, fileName, req.ArtifactID, req.Hash, req.Version)
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "rule_type must be fingerprint, poc or workflow"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "rule_type must be fingerprint, behavior_probe, poc or workflow"})
 	}
 }
 
-func mcpPublishArsenal(c *gin.Context, tenantID, typ, fileName, expectedHash string, expectedVersion int) {
+func mcpPublishArsenal(c *gin.Context, tenantID, typ, fileName, expectedArtifactID, expectedHash string, expectedVersion int) {
 	if err := validateDraftFileName(fileName, true); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -346,10 +363,71 @@ func mcpPublishArsenal(c *gin.Context, tenantID, typ, fileName, expectedHash str
 		c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
 		return
 	}
+	if !mcpArtifactGuardMatches(c, *arsenal, expectedArtifactID) {
+		return
+	}
 	if !mcpDraftGuardMatches(c, *arsenal, expectedHash, expectedVersion) {
 		return
 	}
-	if err := db.DB.Model(&db.Arsenal{}).Where("tenant_id = ? AND type IN ? AND file_name = ?", tenantID, db.ArsenalTypeAliases(typ), fileName).Update("state", "Approved").Error; err != nil {
+	if typ == "poc" {
+		candidate := *arsenal
+		candidate.State = "Approved"
+		if err := db.ValidateRuleCatalogCandidate(candidate); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	arsenal.State = "Approved"
+	persistApproval := func(tx *gorm.DB) error {
+		if err := tx.Model(&db.Arsenal{}).Where("tenant_id = ? AND type IN ? AND file_name = ?", tenantID, db.ArsenalTypeAliases(typ), fileName).Update("state", "Approved").Error; err != nil {
+			return err
+		}
+		return createArsenalEvent(tx, *arsenal, "published", c.GetString("user_id"), "", nil)
+	}
+	var approvalErr error
+	if typ == "active_fingerprint" {
+		approvalErr = db.ApplyRuleCatalogCandidate(*arsenal, persistApproval)
+	} else {
+		approvalErr = db.DB.Transaction(persistApproval)
+	}
+	if approvalErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": approvalErr.Error()})
+		return
+	}
+	if typ != "active_fingerprint" {
+		if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	ruleVersion := BumpRuleVersion()
+	c.JSON(http.StatusOK, gin.H{"status": "approved", "rule_type": publicMCPRuleType(typ), "file_name": fileName, "hash": expectedHash, "version": expectedVersion, "rule_version": ruleVersion, "mcp_guidance": mcpPublishGuidance(publicMCPRuleType(typ))})
+}
+
+func mcpRuleDeprecate(c *gin.Context, tenantID string, req mcpRuleApplyRequest) {
+	typ := normalizeMCPRuleType(req.RuleType)
+	if typ != "finger" && typ != "poc" && typ != "workflow" && typ != "active_fingerprint" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported rule_type"})
+		return
+	}
+	arsenal, err := db.FindTenantArsenalByTypeAndFile(tenantID, typ, strings.TrimSpace(req.FileName))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
+		return
+	}
+	if !mcpDraftGuardMatches(c, *arsenal, req.Hash, req.Version) {
+		return
+	}
+	if !mcpArtifactGuardMatches(c, *arsenal, req.ArtifactID) {
+		return
+	}
+	arsenal.State = "Deprecated"
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(arsenal).Update("state", "Deprecated").Error; err != nil {
+			return err
+		}
+		return createArsenalEvent(tx, *arsenal, "deprecated", c.GetString("user_id"), "", nil)
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -357,8 +435,50 @@ func mcpPublishArsenal(c *gin.Context, tenantID, typ, fileName, expectedHash str
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	ruleVersion := BumpRuleVersion()
-	c.JSON(http.StatusOK, gin.H{"status": "approved", "rule_type": publicMCPRuleType(typ), "file_name": fileName, "hash": expectedHash, "version": expectedVersion, "rule_version": ruleVersion, "mcp_guidance": mcpPublishGuidance(publicMCPRuleType(typ))})
+	c.JSON(http.StatusOK, gin.H{"status": "deprecated", "rule_type": publicMCPRuleType(typ), "file_name": arsenal.FileName, "hash": arsenal.Hash, "version": arsenal.Version, "rule_version": BumpRuleVersion()})
+}
+
+func mcpRuleRollback(c *gin.Context, tenantID string, req mcpRuleApplyRequest) {
+	typ := normalizeMCPRuleType(req.RuleType)
+	arsenal, err := db.FindTenantArsenalByTypeAndFile(tenantID, typ, strings.TrimSpace(req.FileName))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
+		return
+	}
+	if !mcpDraftGuardMatches(c, *arsenal, req.Hash, req.Version) {
+		return
+	}
+	if !mcpArtifactGuardMatches(c, *arsenal, req.ArtifactID) {
+		return
+	}
+	if arsenal.PreviousHash == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No previous version available for rollback"})
+		return
+	}
+	arsenal.Content, arsenal.PreviousContent = arsenal.PreviousContent, arsenal.Content
+	arsenal.Hash, arsenal.PreviousHash = arsenal.PreviousHash, arsenal.Hash
+	arsenal.Version++
+	arsenal.State = "Draft"
+	if typ == "poc" || typ == "active_fingerprint" {
+		if err := db.ValidateRuleCatalogCandidate(*arsenal); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(arsenal).Error; err != nil {
+			return err
+		}
+		return createArsenalEvent(tx, *arsenal, "rolled_back", c.GetString("user_id"), arsenal.Content, nil)
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "rolled_back", "rule_type": publicMCPRuleType(typ), "file_name": arsenal.FileName, "hash": arsenal.Hash, "version": arsenal.Version, "rule_version": BumpRuleVersion()})
 }
 
 func mcpDraftGuardMatches(c *gin.Context, arsenal db.Arsenal, expectedHash string, expectedVersion int) bool {
@@ -369,6 +489,14 @@ func mcpDraftGuardMatches(c *gin.Context, arsenal db.Arsenal, expectedHash strin
 			"current_version": arsenal.Version,
 			"state":           arsenal.State,
 		})
+		return false
+	}
+	return true
+}
+
+func mcpArtifactGuardMatches(c *gin.Context, arsenal db.Arsenal, expectedArtifactID string) bool {
+	if expectedArtifactID != "" && expectedArtifactID != arsenal.ID {
+		c.JSON(http.StatusConflict, gin.H{"error": "artifact_id mismatch"})
 		return false
 	}
 	return true
@@ -396,7 +524,7 @@ func mcpContextResources(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":                    "success",
 		"resources":                 resources,
-		"recommended_reading_order": []string{"argus://argus-mcp/quickstart", "argus://argus-mcp/tool-guide", "argus://fingerprint/spec", "argus://poc/spec", "argus://workflow/spec", "argus://examples/fingerprint-poc-workflow"},
+		"recommended_reading_order": []string{"argus://argus-mcp/quickstart", "argus://argus-mcp/tool-guide", "argus://fingerprint/spec", "argus://behavior-probe/spec", "argus://poc/spec", "argus://workflow/spec", "argus://examples/fingerprint-poc-workflow"},
 	})
 }
 
@@ -437,15 +565,16 @@ func mcpContextAgents(c *gin.Context, tenantID string) {
 		tags := map[string]string{}
 		_ = json.Unmarshal([]byte(node.Tags), &tags)
 		out = append(out, gin.H{
-			"agent_id":      node.AgentID,
-			"status":        node.Status,
-			"version":       node.Version,
-			"os":            node.OS,
-			"arch":          node.Arch,
-			"running_tasks": node.RunningTasks,
-			"capacity":      node.Capacity,
-			"rule_version":  node.RuleVersion,
-			"native_egress": tags["native_egress"],
+			"agent_id":       node.AgentID,
+			"status":         node.Status,
+			"version":        node.Version,
+			"os":             node.OS,
+			"arch":           node.Arch,
+			"running_tasks":  node.RunningTasks,
+			"capacity":       node.Capacity,
+			"rule_version":   node.RuleVersion,
+			"native_egress":  tags["native_egress"],
+			"behavior_probe": tags["behavior_probe"],
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "success", "agents": out})
@@ -678,6 +807,8 @@ func normalizeMCPRuleType(raw string) string {
 		return "poc"
 	case "workflow":
 		return "workflow"
+	case "behavior_probe", "active_fingerprint", "active-fingerprint":
+		return "active_fingerprint"
 	default:
 		return strings.ToLower(strings.TrimSpace(raw))
 	}
@@ -686,6 +817,9 @@ func normalizeMCPRuleType(raw string) string {
 func publicMCPRuleType(typ string) string {
 	if typ == "finger" {
 		return "fingerprint"
+	}
+	if typ == "active_fingerprint" {
+		return "behavior_probe"
 	}
 	return typ
 }

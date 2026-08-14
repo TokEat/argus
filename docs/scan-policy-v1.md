@@ -22,6 +22,8 @@ Web 指纹分为响应指纹、安全行为探针和主动路径指纹。行为�
 
 只有 Server 重新分类为自动安全的 HTTP/HTTPS 单请求 GET/HEAD 模板能进入普通任务：无 Body、Raw、Payload/Fuzz、OAST、Headless/Code、跨源跳转或危险 Header。任务绑定规则版本、文件 SHA-256 和产品名；Agent 在执行前重新解析并核对，任何漂移都会失败关闭。每租户最多启用 8 条自动安全探针，Agent 必须声明 `behavior_probe=v1`。行为探针与 POC 开关相互独立，不会触发旧的通用 Shiro POC Workflow。
 
+弹药库的“产品规则”页把 `finger.yaml`、`active-fingerprints/*.yaml`、`dir.yaml` 和 Workflow/POC 关联分开维护。每个行为探针是独立 Artifact，保存后进入 Draft；发布、废弃和回滚由 Admin 执行并记录精确版本、哈希和操作者。完整 HTTP/HTTPS Nuclei YAML 可以保存并在授权目标上调试，但分类为 `controlled` 的模板必须显式确认风险，且永远不会因普通任务开启行为探针而被批量执行。MCP 使用 `rule_type=behavior_probe` 走同一套读取、调试、保存和生命周期边界。
+
 ## 验证阶段
 
 资产发现、风险验证和弱口令验证是同一 Root Task 下的独立阶段。后两者只消费资产发现产生的精确端点，不重新执行端口、协议或指纹扫描。

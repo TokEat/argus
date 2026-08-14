@@ -27,6 +27,7 @@ export interface ScanPolicyFormValues {
     allow_private_resolved_domains?: boolean;
     host_binding?: boolean;
     directory_probe?: boolean;
+	behavior_probe?: boolean;
     risk_validation?: boolean;
     credential_validation?: boolean;
     username_books?: string[];
@@ -36,9 +37,9 @@ export interface ScanPolicyFormValues {
 }
 
 export const presetDefaults: Record<Exclude<API.ScanPreset, 'custom'>, Partial<ScanPolicyFormValues>> = {
-    quick: { port_profile: 'common-100', scan_method: 'tcp', intensity: 'low', subdomain_discovery: true, subdomain_bruteforce: false, subdomain_bruteforce_depth: 1, host_binding: false, directory_probe: false, risk_validation: false },
-    standard: { port_profile: 'top-1000', scan_method: 'tcp', intensity: 'balanced', subdomain_discovery: true, subdomain_bruteforce: false, subdomain_bruteforce_depth: 1, host_binding: false, directory_probe: false, risk_validation: true },
-    deep: { port_profile: 'all', scan_method: 'tcp', intensity: 'high', subdomain_discovery: true, subdomain_bruteforce: true, subdomain_bruteforce_depth: 2, host_binding: true, directory_probe: true, risk_validation: true },
+    quick: { port_profile: 'common-100', scan_method: 'tcp', intensity: 'low', subdomain_discovery: true, subdomain_bruteforce: false, subdomain_bruteforce_depth: 1, host_binding: false, behavior_probe: false, directory_probe: false, risk_validation: false },
+    standard: { port_profile: 'top-1000', scan_method: 'tcp', intensity: 'balanced', subdomain_discovery: true, subdomain_bruteforce: false, subdomain_bruteforce_depth: 1, host_binding: false, behavior_probe: true, directory_probe: false, risk_validation: true },
+    deep: { port_profile: 'all', scan_method: 'tcp', intensity: 'high', subdomain_discovery: true, subdomain_bruteforce: true, subdomain_bruteforce_depth: 2, host_binding: true, behavior_probe: true, directory_probe: true, risk_validation: true },
 };
 
 export const scanPolicyInitialValues: ScanPolicyFormValues = {
@@ -70,7 +71,7 @@ export function buildScanPolicy(values: ScanPolicyFormValues, dictionaries: API.
             subdomain_bruteforce: Boolean(merged.subdomain_bruteforce),
             allow_cdn_assets: Boolean(merged.allow_cdn_assets),
             allow_private_resolved_domains: Boolean(merged.allow_private_resolved_domains),
-            host_binding: Boolean(merged.host_binding), directory_probe: Boolean(merged.directory_probe),
+            host_binding: Boolean(merged.host_binding), behavior_probe: Boolean(merged.behavior_probe), directory_probe: Boolean(merged.directory_probe),
             risk_validation: Boolean(merged.risk_validation), credential_validation: Boolean(merged.credential_validation),
         },
 		subdomains: {
@@ -87,7 +88,7 @@ export function buildScanPolicy(values: ScanPolicyFormValues, dictionaries: API.
 
 const stageNames: Record<string, string> = {
     host_discovery: '资产发现', port_scan: '端口扫描', protocol_identification: '协议识别',
-	subdomain_discovery: '子域发现', http_probe: 'HTTP 探测', directory_probe: '主动路径指纹',
+	subdomain_discovery: '子域发现', http_probe: 'HTTP 探测', behavior_probe: '安全行为探针', directory_probe: '主动路径指纹',
 	fingerprint: '响应指纹识别', risk_validation: 'POC 验证', credential_validation: '弱口令验证',
 };
 
@@ -130,7 +131,7 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
         priority: values?.priority, timeout_sec: values?.timeout_sec,
         port_profile: values?.port_profile, custom_ports: values?.custom_ports,
         scan_method: values?.scan_method, intensity: values?.intensity,
-        capabilities: [values?.subdomain_discovery, values?.subdomain_bruteforce, values?.subdomain_bruteforce_depth, values?.allow_cdn_assets, values?.allow_private_resolved_domains, values?.host_binding, values?.directory_probe, values?.risk_validation, values?.credential_validation],
+        capabilities: [values?.subdomain_discovery, values?.subdomain_bruteforce, values?.subdomain_bruteforce_depth, values?.allow_cdn_assets, values?.allow_private_resolved_domains, values?.host_binding, values?.behavior_probe, values?.directory_probe, values?.risk_validation, values?.credential_validation],
         books: [values?.subdomain_books, values?.username_books, values?.password_books], pair_limit: values?.credential_pair_limit,
         confirmed: values?.validation_confirmed, dictionaries: dictionaries.map((item) => [item.id, item.revision, item.sha256]),
 		subdomain_dictionaries: subdomainDictionaries.map((item) => [item.id, item.revision, item.sha256]),
@@ -209,6 +210,7 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
 
 						<Card size="small" title="Web 指纹识别">
 							<Alert type="success" showIcon message="响应指纹识别（默认）" description="复用 HTTP 探测响应完成基础指纹识别，作为后续 Workflow 与 POC 匹配依据。" style={{ marginBottom: 12 }} />
+							<Form.Item name="behavior_probe" valuePropName="checked" label="安全行为探针" extra="标准、深度默认开启；仅执行 Server 重新分类为自动安全的单请求 Nuclei 探针。"><Switch /></Form.Item>
 							<Form.Item name="directory_probe" valuePropName="checked" label="主动路径指纹" extra="可选；请求产品特征路径并产出 Active-Finger，不执行通用目录扫描。"><Switch /></Form.Item>
 						</Card>
 

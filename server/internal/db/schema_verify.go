@@ -315,6 +315,11 @@ func schemaTableSpecs() []schemaTableSpec {
 			Indexes: []string{"idx_arsenals_type", "idx_arsenals_state", "idx_arsenals_tenant_type_file", "idx_arsenals_tenant_type_state_updated"},
 		},
 		{
+			Table:   "arsenal_events",
+			Columns: []string{"tenant_id", "artifact_id", "type", "file_name", "version", "hash", "state", "action", "actor_id", "content", "details", "created_at"},
+			Indexes: []string{"idx_arsenal_event_artifact", "idx_arsenal_events_type", "idx_arsenal_events_file_name", "idx_arsenal_events_version", "idx_arsenal_events_hash", "idx_arsenal_events_state", "idx_arsenal_events_action", "idx_arsenal_events_actor_id", "idx_arsenal_events_created_at"},
+		},
+		{
 			Table:   "arsenal_ai_reviews",
 			Columns: []string{"tenant_id", "type", "file_name", "content_hash", "suggestion", "confidence", "issues", "duplicate_candidates", "raw_response"},
 			Indexes: []string{"idx_arsenal_ai_reviews_cache", "idx_arsenal_ai_reviews_content_hash", "idx_arsenal_ai_reviews_suggestion"},

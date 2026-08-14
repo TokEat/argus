@@ -450,8 +450,31 @@ export async function saveArsenal(type: string, filename: string, content: strin
     return request.post(`/arsenals/${type}/${filename}`, { content });
 }
 
-export async function approveArsenal(type: string, filename: string): Promise<API.MessageResponse> {
-    return request.post(`/arsenals/${type}/${filename}/approve`);
+export async function approveArsenal(type: string, filename: string, guard?: { hash: string; version: number }): Promise<API.MessageResponse> {
+    return request.post(`/arsenals/${type}/${filename}/approve`, guard);
+}
+
+export async function deprecateArsenal(type: string, filename: string, guard?: { hash: string; version: number }): Promise<API.MessageResponse> {
+    return request.post(`/arsenals/${encodeURIComponent(type)}/${encodeURIComponent(filename)}/deprecate`, guard);
+}
+
+export async function getArsenalHistory(type: string, filename: string): Promise<{ items: API.ArsenalEvent[] }> {
+    return request.get(`/arsenals/${encodeURIComponent(type)}/${encodeURIComponent(filename)}/history`);
+}
+
+export async function listActiveFingerprintRules(): Promise<API.ActiveFingerprintRule[]> {
+    return request.get('/active-fingerprint-rules', { params: { all: '1' } });
+}
+
+export async function inspectActiveFingerprint(fileName: string, content: string): Promise<API.ActiveFingerprintClassification> {
+    return request.post('/active-fingerprint-rules/inspect', { file_name: fileName, content });
+}
+
+export async function debugBehaviorProbe(data: {
+    agent_id: string; target_url: string; file_name: string; content: string;
+    proxy?: string; timeout_sec?: number; risk_confirmed?: boolean;
+}): Promise<API.BehaviorProbeDebugResponse> {
+    return request.post('/mcp/tools/rule/debug', { rule_type: 'behavior_probe', ...data }, { timeout: 90000 });
 }
 
 export async function deleteArsenal(type: string, filename: string): Promise<API.MessageResponse> {
@@ -1151,8 +1174,8 @@ export async function archiveAgentLogs(day?: string): Promise<API.AgentLogArchiv
 // Arsenal Rollback API
 // ===========================
 
-export async function rollbackArsenal(type: string, filename: string): Promise<API.MessageResponse> {
-    return request.post(`/arsenals/${type}/${filename}/rollback`);
+export async function rollbackArsenal(type: string, filename: string, guard?: { hash: string; version: number }): Promise<API.MessageResponse> {
+    return request.post(`/arsenals/${type}/${filename}/rollback`, guard);
 }
 
 // ===========================

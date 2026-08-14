@@ -13,6 +13,8 @@ func normalizeRuleType(ruleType string) string {
 		return "workflow"
 	case "poc":
 		return "poc"
+	case "behavior_probe", "active_fingerprint", "active-fingerprint":
+		return "active_fingerprint"
 	default:
 		return strings.ToLower(strings.TrimSpace(ruleType))
 	}
@@ -21,6 +23,9 @@ func normalizeRuleType(ruleType string) string {
 func publicRuleType(ruleType string) string {
 	if ruleType == "finger" {
 		return "fingerprint"
+	}
+	if ruleType == "active_fingerprint" {
+		return "behavior_probe"
 	}
 	return ruleType
 }

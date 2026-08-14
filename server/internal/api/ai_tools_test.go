@@ -36,6 +36,7 @@ func setupAITestDB(t *testing.T) *gorm.DB {
 		&db.ProjectMember{},
 		&db.Report{},
 		&db.Arsenal{},
+		&db.ArsenalEvent{},
 		&db.RuleCatalogBootstrap{},
 		&db.Asset{},
 		&db.Credential{},

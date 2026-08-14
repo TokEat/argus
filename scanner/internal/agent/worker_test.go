@@ -1027,6 +1027,17 @@ func TestFingerprintDebugCustomOnlyUsesSingleCustomRule(t *testing.T) {
 	}
 }
 
+func TestActiveFingerprintDebugResultOnlyEmitsProductOnMatch(t *testing.T) {
+	templateID, extracted := activeFingerprintDebugResult(false, "APACHE-Shiro")
+	if templateID != "Active-Finger" || len(extracted) != 0 {
+		t.Fatalf("unmatched probe produced a fingerprint: %q %#v", templateID, extracted)
+	}
+	templateID, extracted = activeFingerprintDebugResult(true, "APACHE-Shiro")
+	if templateID != "Active-Finger" || !slices.Equal(extracted, []string{"APACHE-Shiro"}) {
+		t.Fatalf("matched probe result mismatch: %q %#v", templateID, extracted)
+	}
+}
+
 func TestFingerprintDebugDetachesKnowledgeBeforeCustomWorkflowMutation(t *testing.T) {
 	origNewScanContext := newScanContext
 	origRunScanTask := runScanTask

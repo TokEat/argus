@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -51,5 +52,40 @@ func TestSaveLegacyPocMaterializesSafeGovernanceDefaults(t *testing.T) {
 	}
 	if rule.ExecutionClass != db.PocExecutionClassDetection || rule.RiskLevel != db.PocRiskLevelUnknown || rule.Enabled {
 		t.Fatalf("unexpected legacy POC governance defaults: %+v", rule)
+	}
+}
+
+func TestSaveActiveFingerprintValidatesBeforePersistAndRecordsRevision(t *testing.T) {
+	store := setupAITestDB(t)
+	invalid := "id: dns-probe\ninfo:\n  metadata:\n    argus-rule-kind: active-fingerprint\n    argus-product: DNS\ndns:\n  - name: '{{FQDN}}'\n"
+	c, w := newTenantContextWithRole(http.MethodPost, "/arsenals/active_fingerprint/dns.yaml", "admin", "user-1")
+	c.Params = gin.Params{{Key: "type", Value: "active_fingerprint"}, {Key: "filename", Value: "dns.yaml"}}
+	c.Request = httptest.NewRequest(http.MethodPost, c.Request.URL.Path, strings.NewReader(`{"content":`+fmt.Sprintf("%q", invalid)+`}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	saveArsenal(c)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected non-HTTP behavior probe rejection, got %d (%s)", w.Code, w.Body.String())
+	}
+	var count int64
+	store.Model(&db.Arsenal{}).Where("type = ?", "active_fingerprint").Count(&count)
+	if count != 0 {
+		t.Fatalf("invalid behavior probe persisted, count=%d", count)
+	}
+
+	valid := "id: safe-probe\ninfo:\n  name: Safe\n  severity: info\n  metadata:\n    argus-rule-kind: active-fingerprint\n    argus-product: SafeProduct\n    max-request: 1\nhttp:\n  - method: GET\n    path: ['{{BaseURL}}']\n    matchers:\n      - type: status\n        status: [200]\n"
+	c, w = newTenantContextWithRole(http.MethodPost, "/arsenals/active_fingerprint/safe.yaml", "admin", "user-1")
+	c.Params = gin.Params{{Key: "type", Value: "active_fingerprint"}, {Key: "filename", Value: "safe.yaml"}}
+	c.Request = httptest.NewRequest(http.MethodPost, c.Request.URL.Path, strings.NewReader(`{"content":`+fmt.Sprintf("%q", valid)+`}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	saveArsenal(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected valid behavior probe draft, got %d (%s)", w.Code, w.Body.String())
+	}
+	var event db.ArsenalEvent
+	if err := store.Where("action = ? AND actor_id = ?", "saved", "user-1").First(&event).Error; err != nil {
+		t.Fatalf("expected immutable revision event: %v", err)
+	}
+	if event.Content != valid || event.State != "Draft" || event.Version != 1 {
+		t.Fatalf("unexpected revision event: %+v", event)
 	}
 }

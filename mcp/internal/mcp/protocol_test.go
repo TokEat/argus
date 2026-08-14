@@ -82,11 +82,11 @@ func TestSDKServerListsAndReadsResources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list resources: %v", err)
 	}
-	if len(list.Resources) != 10 {
-		t.Fatalf("expected 10 resources, got %d", len(list.Resources))
+	if len(list.Resources) != 12 {
+		t.Fatalf("expected 12 resources, got %d", len(list.Resources))
 	}
 	listData, _ := json.Marshal(list.Resources)
-	for _, want := range []string{"argus://argus-mcp/quickstart", "argus://fingerprint/spec", "argus://workflow/template", "argus://examples/fingerprint-poc-workflow"} {
+	for _, want := range []string{"argus://argus-mcp/quickstart", "argus://fingerprint/spec", "argus://behavior-probe/spec", "argus://behavior-probe/template", "argus://workflow/template", "argus://examples/fingerprint-poc-workflow"} {
 		if !strings.Contains(string(listData), want) {
 			t.Fatalf("resource list missing %q: %s", want, listData)
 		}
@@ -557,6 +557,8 @@ func TestProductSearchUsesNativeRESTIndexes(t *testing.T) {
 			_, _ = w.Write([]byte(`[{"product":"Spring-Framework","rules":["title=\"Spring Boot\""]}]`))
 		case "/api/v1/dictionaries/workflow":
 			_, _ = w.Write([]byte(`[{"product":"Spring-Framework","type":["root"],"pocs":["springboot-env.yaml"]}]`))
+		case "/api/v1/active-fingerprint-rules":
+			_, _ = w.Write([]byte(`[{"name":"spring-behavior","source_file":"spring-behavior.yaml","product_name":"Spring-Framework","state":"Approved","enabled":true,"computed_auto_profile":"safe","auto_eligible":true}]`))
 		case "/api/v1/poc-rules":
 			_, _ = w.Write([]byte(`[{"name":"springboot-env","source_file":"springboot-env.yaml","target_product":"Spring Boot Actuator","severity":"high","state":"Approved","enabled":true,"tags":"springboot,actuator","description":"Spring actuator env disclosure"}]`))
 		default:
@@ -576,7 +578,7 @@ func TestProductSearchUsesNativeRESTIndexes(t *testing.T) {
 		t.Fatalf("CallTool product_search: %v", err)
 	}
 	text := result.Content[0].(*sdkmcp.TextContent).Text
-	for _, want := range []string{`"source": "native_api"`, "Spring-Framework", "springboot-env.yaml", "workflow_linked_poc"} {
+	for _, want := range []string{`"source": "native_api"`, "Spring-Framework", "springboot-env.yaml", "spring-behavior.yaml", "workflow_linked_poc"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("product_search missing %q: %s", want, text)
 		}
@@ -584,6 +586,7 @@ func TestProductSearchUsesNativeRESTIndexes(t *testing.T) {
 	wantRoutes := []string{
 		"GET /api/v1/dictionaries/fingerprint?",
 		"GET /api/v1/dictionaries/workflow?",
+		"GET /api/v1/active-fingerprint-rules?all=1",
 		"GET /api/v1/poc-rules?all=1",
 	}
 	if strings.Join(seen, "\n") != strings.Join(wantRoutes, "\n") {

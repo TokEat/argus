@@ -22,12 +22,13 @@ type productSearchAsset struct {
 }
 
 type productSearchBucket struct {
-	Name        string
-	Fingerprint []map[string]interface{}
-	Workflows   []map[string]interface{}
-	POCs        []map[string]interface{}
-	SearchText  []string
-	Evidence    map[string]bool
+	Name           string
+	Fingerprint    []map[string]interface{}
+	BehaviorProbes []map[string]interface{}
+	Workflows      []map[string]interface{}
+	POCs           []map[string]interface{}
+	SearchText     []string
+	Evidence       map[string]bool
 }
 
 func (c *Client) argusProductSearch(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -52,6 +53,10 @@ func (c *Client) argusProductSearch(ctx context.Context, args map[string]interfa
 	}
 	var workflows []catalogRecord
 	if err := c.do(ctx, http.MethodGet, "/api/v1/dictionaries/workflow", nil, &workflows); err != nil {
+		return nil, err
+	}
+	var behaviorProbes []catalogRecord
+	if err := c.do(ctx, http.MethodGet, "/api/v1/active-fingerprint-rules?all=1", nil, &behaviorProbes); err != nil {
 		return nil, err
 	}
 	var pocs []catalogRecord
@@ -82,6 +87,21 @@ func (c *Client) argusProductSearch(ctx context.Context, args map[string]interfa
 		b.Fingerprint = append(b.Fingerprint, map[string]interface{}{"product_name": product, "rules": rules})
 		b.SearchText = append(b.SearchText, product)
 		b.SearchText = append(b.SearchText, rules...)
+	}
+
+	for _, probe := range behaviorProbes {
+		product := probe.Product
+		if product == "" {
+			continue
+		}
+		b := bucket(product)
+		b.BehaviorProbes = append(b.BehaviorProbes, map[string]interface{}{
+			"name": probe.Name, "source_file": probe.EffectiveSourceFile(), "state": probe.State,
+			"enabled": probe.Enabled, "classification": firstPresent(probe.Raw, "ComputedAutoProfile", "computed_auto_profile"),
+			"auto_eligible": firstPresent(probe.Raw, "AutoEligible", "auto_eligible"),
+		})
+		b.SearchText = append(b.SearchText, product, probe.Name, probe.EffectiveSourceFile())
+		b.Evidence["behavior_probe"] = true
 	}
 
 	pocByName := map[string]catalogRecord{}
@@ -167,19 +187,21 @@ func (c *Client) argusProductSearch(ctx context.Context, args map[string]interfa
 		}
 		sort.Strings(evidence)
 		matches = append(matches, map[string]interface{}{
-			"name":              b.Name,
-			"workflow_kind":     workflowKind(b.Name),
-			"score":             math.Round(item.score*1000) / 1000,
-			"sources":           productSearchSources(b),
-			"fingerprint_count": len(b.Fingerprint),
-			"workflow_count":    len(b.Workflows),
-			"poc_count":         len(b.POCs),
-			"fingerprints":      b.Fingerprint,
-			"workflows":         b.Workflows,
-			"pocs":              b.POCs,
-			"evidence":          uniqueStrings(evidence),
-			"canonical_hint":    b.Name,
-			"merge_safety_hint": mergeSafetyHint(b.Name),
+			"name":                 b.Name,
+			"workflow_kind":        workflowKind(b.Name),
+			"score":                math.Round(item.score*1000) / 1000,
+			"sources":              productSearchSources(b),
+			"fingerprint_count":    len(b.Fingerprint),
+			"behavior_probe_count": len(b.BehaviorProbes),
+			"workflow_count":       len(b.Workflows),
+			"poc_count":            len(b.POCs),
+			"fingerprints":         b.Fingerprint,
+			"behavior_probes":      b.BehaviorProbes,
+			"workflows":            b.Workflows,
+			"pocs":                 b.POCs,
+			"evidence":             uniqueStrings(evidence),
+			"canonical_hint":       b.Name,
+			"merge_safety_hint":    mergeSafetyHint(b.Name),
 		})
 	}
 	return map[string]interface{}{"status": "success", "source": "native_api", "query": query, "limit": limit, "matches": matches}, nil
@@ -246,6 +268,9 @@ func scoreProductSearchBucket(query string, b *productSearchBucket) (float64, []
 	}
 	if len(b.Fingerprint) > 0 {
 		reasons = append(reasons, "has_fingerprint")
+	}
+	if len(b.BehaviorProbes) > 0 {
+		reasons = append(reasons, "has_behavior_probe")
 	}
 	if best < 0.35 {
 		return 0, nil
@@ -371,6 +396,9 @@ func productSearchSources(b *productSearchBucket) []string {
 	sources := []string{}
 	if len(b.Fingerprint) > 0 {
 		sources = append(sources, "fingerprint")
+	}
+	if len(b.BehaviorProbes) > 0 {
+		sources = append(sources, "behavior_probe")
 	}
 	if len(b.Workflows) > 0 {
 		sources = append(sources, "workflow")

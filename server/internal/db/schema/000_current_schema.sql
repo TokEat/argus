@@ -200,6 +200,31 @@ CREATE SEQUENCE public.arsenal_ai_reviews_id_seq
 
 ALTER SEQUENCE public.arsenal_ai_reviews_id_seq OWNED BY public.arsenal_ai_reviews.id;
 
+CREATE TABLE public.arsenal_events (
+    id bigint NOT NULL,
+    tenant_id text DEFAULT 'default'::text NOT NULL,
+    artifact_id text NOT NULL,
+    type text NOT NULL,
+    file_name text NOT NULL,
+    version integer NOT NULL,
+    hash text NOT NULL,
+    state text NOT NULL,
+    action text NOT NULL,
+    actor_id text,
+    content text,
+    details jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE SEQUENCE public.arsenal_events_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.arsenal_events_id_seq OWNED BY public.arsenal_events.id;
+
 CREATE TABLE public.arsenals (
     id text NOT NULL,
     tenant_id text DEFAULT 'default'::text NOT NULL,
@@ -1965,6 +1990,8 @@ ALTER TABLE ONLY public.ai_tool_invocations ALTER COLUMN id SET DEFAULT nextval(
 
 ALTER TABLE ONLY public.arsenal_ai_reviews ALTER COLUMN id SET DEFAULT nextval('public.arsenal_ai_reviews_id_seq'::regclass);
 
+ALTER TABLE ONLY public.arsenal_events ALTER COLUMN id SET DEFAULT nextval('public.arsenal_events_id_seq'::regclass);
+
 ALTER TABLE ONLY public.asset_change_logs ALTER COLUMN id SET DEFAULT nextval('public.asset_change_logs_id_seq'::regclass);
 
 ALTER TABLE ONLY public.asset_discovery_audits ALTER COLUMN id SET DEFAULT nextval('public.asset_discovery_audits_id_seq'::regclass);
@@ -2086,6 +2113,9 @@ ALTER TABLE ONLY public.ai_tool_invocations
 
 ALTER TABLE ONLY public.arsenal_ai_reviews
     ADD CONSTRAINT arsenal_ai_reviews_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.arsenal_events
+    ADD CONSTRAINT arsenal_events_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.arsenals
     ADD CONSTRAINT arsenals_pkey PRIMARY KEY (id);
@@ -2433,6 +2463,24 @@ CREATE INDEX idx_arsenal_ai_reviews_suggestion ON public.arsenal_ai_reviews USIN
 CREATE INDEX idx_arsenal_ai_reviews_tenant_id ON public.arsenal_ai_reviews USING btree (tenant_id);
 
 CREATE INDEX idx_arsenal_ai_reviews_type ON public.arsenal_ai_reviews USING btree (type);
+
+CREATE INDEX idx_arsenal_event_artifact ON public.arsenal_events USING btree (tenant_id, artifact_id, created_at DESC);
+
+CREATE INDEX idx_arsenal_events_action ON public.arsenal_events USING btree (action);
+
+CREATE INDEX idx_arsenal_events_actor_id ON public.arsenal_events USING btree (actor_id);
+
+CREATE INDEX idx_arsenal_events_created_at ON public.arsenal_events USING btree (created_at);
+
+CREATE INDEX idx_arsenal_events_file_name ON public.arsenal_events USING btree (file_name);
+
+CREATE INDEX idx_arsenal_events_hash ON public.arsenal_events USING btree (hash);
+
+CREATE INDEX idx_arsenal_events_state ON public.arsenal_events USING btree (state);
+
+CREATE INDEX idx_arsenal_events_type ON public.arsenal_events USING btree (type);
+
+CREATE INDEX idx_arsenal_events_version ON public.arsenal_events USING btree (version);
 
 CREATE INDEX idx_arsenals_file_name ON public.arsenals USING btree (file_name);
 

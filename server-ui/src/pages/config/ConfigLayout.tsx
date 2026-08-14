@@ -2,9 +2,7 @@ import React from 'react';
 import { App, Button, Tabs } from 'antd';
 import {
     BugOutlined,
-    ScanOutlined,
     ApartmentOutlined,
-    FolderOpenOutlined,
     ExperimentOutlined,
     DownloadOutlined,
     ThunderboltOutlined,
@@ -46,10 +44,8 @@ const ConfigLayout: React.FC<ConfigLayoutProps> = ({ children }) => {
     };
 
     const tabItems = [
-        { key: '/config/workflow', label: 'Workflow 编排', icon: <ApartmentOutlined /> },
+		{ key: '/config/product-rules', label: '产品规则', icon: <ApartmentOutlined /> },
         { key: '/config/poc', label: 'POC 弹药库', icon: <BugOutlined /> },
-        { key: '/config/active-finger', label: '指纹弹药库', icon: <ScanOutlined /> },
-        { key: '/config/dir', label: 'Dir 探测规则', icon: <FolderOpenOutlined /> },
         { key: '/config/exploit', label: 'Yaksha EXP Workspace', icon: <ThunderboltOutlined /> },
         ...(canAccessRole('operator') ? [{ key: '/config/debug', label: '调试', icon: <ExperimentOutlined /> }] : []),
     ];
@@ -66,8 +62,8 @@ const ConfigLayout: React.FC<ConfigLayoutProps> = ({ children }) => {
                 zIndex: 1,
             }}>
                 <Tabs
-                    activeKey={location.pathname}
-                    onChange={(key) => navigate(key)}
+					activeKey={['/config/workflow', '/config/active-finger', '/config/behavior-probe', '/config/dir'].includes(location.pathname) ? '/config/product-rules' : location.pathname}
+					onChange={(key) => navigate(key === '/config/product-rules' ? '/config/active-finger' : key)}
                     items={tabItems.map((item) => ({
                         key: item.key,
                         label: (

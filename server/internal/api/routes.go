@@ -79,6 +79,8 @@ func registerAPIV1Routes(api *gin.RouterGroup) {
 	api.GET("/profiles", getProfiles)
 	api.POST("/credential-findings/:id/reveal", revealCredentialFinding)
 	api.GET("/poc-rules", listPocRules)
+	api.GET("/active-fingerprint-rules", getActiveFingerprintRules)
+	api.POST("/active-fingerprint-rules/inspect", inspectActiveFingerprint)
 	// EXP 原生出口与审计。
 	api.POST("/exp-egress-routes", createExpEgressRoute)
 	api.DELETE("/exp-egress-routes/:route_id", revokeExpEgressRoute)
@@ -133,6 +135,8 @@ func registerAPIV1Routes(api *gin.RouterGroup) {
 	api.GET("/mcp/resources/argus-mcp/tool-guide", mcpArgusMCPToolGuide)
 	api.GET("/mcp/resources/fingerprint/spec", mcpFingerprintSpec)
 	api.GET("/mcp/resources/fingerprint/template", mcpFingerprintTemplate)
+	api.GET("/mcp/resources/behavior-probe/spec", mcpBehaviorProbeSpec)
+	api.GET("/mcp/resources/behavior-probe/template", mcpBehaviorProbeTemplate)
 	api.GET("/mcp/resources/poc/spec", mcpPOCSpec)
 	api.GET("/mcp/resources/poc/template", mcpPOCTemplate)
 	api.GET("/mcp/resources/workflow/spec", mcpWorkflowSpec)
@@ -165,6 +169,8 @@ func registerAPIV1Routes(api *gin.RouterGroup) {
 	api.POST("/arsenals/:type/:filename", saveArsenal)
 	api.POST("/arsenals/:type/:filename/cancel", cancelDebugSessionGateway)
 	api.POST("/arsenals/:type/:filename/approve", approveArsenal)
+	api.POST("/arsenals/:type/:filename/deprecate", deprecateArsenal)
+	api.GET("/arsenals/:type/:filename/history", getArsenalHistory)
 	api.DELETE("/arsenals/:type/:filename", deleteArsenal)
 
 	// Dictionary Parsing Gateway (for workflow etc)

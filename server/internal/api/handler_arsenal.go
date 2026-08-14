@@ -2,7 +2,9 @@ package api
 
 import (
 	"crypto/md5"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // Global variable acting as hot-reload trigger
@@ -134,13 +137,18 @@ func saveArsenal(c *gin.Context) {
 		Version:         version,
 		State:           "Draft",
 	}
-	if typ == "poc" {
+	if typ == "poc" || typ == "active_fingerprint" {
 		if err := db.ValidateRuleCatalogCandidate(arsenal); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("POC governance validation failed: %v", err)})
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("rule governance validation failed: %v", err)})
 			return
 		}
 	}
-	if err := db.DB.Save(&arsenal).Error; err != nil {
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(&arsenal).Error; err != nil {
+			return err
+		}
+		return createArsenalEvent(tx, arsenal, "saved", c.GetString("user_id"), arsenal.Content, nil)
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -162,27 +170,45 @@ func approveArsenal(c *gin.Context) {
 	}
 	fn := c.Param("filename")
 	tenantID := currentTenantID(c)
+	var existing db.Arsenal
+	if err := db.DB.Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).First(&existing).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
+		return
+	}
+	if !bindArsenalLifecycleGuard(c, existing) {
+		return
+	}
 	if typ == "poc" {
-		var existing db.Arsenal
-		if err := db.DB.Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).First(&existing).Error; err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
-			return
-		}
 		candidate := existing
 		candidate.State = "Approved"
 		if err := db.ValidateRuleCatalogCandidate(candidate); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("POC governance validation failed: %v", err)})
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("rule governance validation failed: %v", err)})
 			return
 		}
 	}
 
-	if err := db.DB.Model(&db.Arsenal{}).Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).Update("state", "Approved").Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	existing.State = "Approved"
+	persistApproval := func(tx *gorm.DB) error {
+		if err := tx.Model(&db.Arsenal{}).Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).Update("state", "Approved").Error; err != nil {
+			return err
+		}
+		return createArsenalEvent(tx, existing, "published", c.GetString("user_id"), "", nil)
+	}
+	var approvalErr error
+	if typ == "active_fingerprint" {
+		approvalErr = db.ApplyRuleCatalogCandidate(existing, persistApproval)
+	} else {
+		approvalErr = db.DB.Transaction(persistApproval)
+	}
+	if approvalErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": approvalErr.Error()})
 		return
 	}
-	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	if typ != "active_fingerprint" {
+		if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	if typ == "exp" {
@@ -231,6 +257,80 @@ func deleteArsenal(c *gin.Context) {
 		resp["rule_version"] = BumpRuleVersion()
 	}
 	c.JSON(http.StatusOK, resp)
+}
+
+func deprecateArsenal(c *gin.Context) {
+	typ := db.CanonicalArsenalType(c.Param("type"))
+	if rejectRetiredEXPArsenal(c, typ) {
+		return
+	}
+	fn := c.Param("filename")
+	tenantID := currentTenantID(c)
+	var arsenal db.Arsenal
+	if err := db.DB.Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).First(&arsenal).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
+		return
+	}
+	if !bindArsenalLifecycleGuard(c, arsenal) {
+		return
+	}
+	wasApproved := strings.EqualFold(arsenal.State, "Approved")
+	arsenal.State = "Deprecated"
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&db.Arsenal{}).Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).Update("state", "Deprecated").Error; err != nil {
+			return err
+		}
+		return createArsenalEvent(tx, arsenal, "deprecated", c.GetString("user_id"), "", nil)
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	resp := gin.H{"status": "deprecated", "hash": arsenal.Hash, "version": arsenal.Version}
+	if wasApproved && typ != "exp" {
+		resp["rule_version"] = BumpRuleVersion()
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+func getArsenalHistory(c *gin.Context) {
+	typ := db.CanonicalArsenalType(c.Param("type"))
+	if rejectRetiredEXPArsenal(c, typ) {
+		return
+	}
+	fn := c.Param("filename")
+	tenantID := currentTenantID(c)
+	arsenal, err := db.FindTenantArsenalByTypeAndFile(tenantID, typ, fn)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
+		return
+	}
+	var events []db.ArsenalEvent
+	if err := db.DB.Where("tenant_id = ? AND artifact_id = ?", tenantID, arsenal.ID).Order("created_at DESC, id DESC").Limit(200).Find(&events).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": events})
+}
+
+func createArsenalEvent(tx *gorm.DB, arsenal db.Arsenal, action, actorID, content string, details interface{}) error {
+	detailJSON := "{}"
+	if details != nil {
+		encoded, err := json.Marshal(details)
+		if err != nil {
+			return err
+		}
+		detailJSON = string(encoded)
+	}
+	return tx.Create(&db.ArsenalEvent{
+		TenantID: arsenal.TenantID, ArtifactID: arsenal.ID, Type: arsenal.Type,
+		FileName: arsenal.FileName, Version: arsenal.Version, Hash: arsenal.Hash,
+		State: arsenal.State, Action: action, ActorID: strings.TrimSpace(actorID),
+		Content: content, Details: detailJSON,
+	}).Error
 }
 
 func workflowReferencesForPOC(tenantID, fileName string) []gin.H {
@@ -337,6 +437,9 @@ func rollbackArsenal(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
 		return
 	}
+	if !bindArsenalLifecycleGuard(c, arsenal) {
+		return
+	}
 
 	if arsenal.PreviousHash == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "No previous version available for rollback"})
@@ -344,14 +447,24 @@ func rollbackArsenal(c *gin.Context) {
 	}
 
 	// 交换当前版本和上一版本（含 Content 内容回滚）
-	if err := db.DB.Model(&arsenal).Updates(map[string]interface{}{
-		"content":          arsenal.PreviousContent,
-		"previous_content": arsenal.Content,
-		"hash":             arsenal.PreviousHash,
-		"previous_hash":    arsenal.Hash,
-		"state":            "Draft", // 回滚后重新审批
-		"version":          arsenal.Version + 1,
-	}).Error; err != nil {
+	previousState := arsenal.State
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&arsenal).Updates(map[string]interface{}{
+			"content":          arsenal.PreviousContent,
+			"previous_content": arsenal.Content,
+			"hash":             arsenal.PreviousHash,
+			"previous_hash":    arsenal.Hash,
+			"state":            "Draft", // 回滚后重新审批
+			"version":          arsenal.Version + 1,
+		}).Error; err != nil {
+			return err
+		}
+		arsenal.Content, arsenal.PreviousContent = arsenal.PreviousContent, arsenal.Content
+		arsenal.Hash, arsenal.PreviousHash = arsenal.PreviousHash, arsenal.Hash
+		arsenal.Version++
+		arsenal.State = "Draft"
+		return createArsenalEvent(tx, arsenal, "rolled_back", c.GetString("user_id"), arsenal.Content, map[string]interface{}{"previous_state": previousState})
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -365,6 +478,29 @@ func rollbackArsenal(c *gin.Context) {
 	log.Printf("[Arsenal Hub] Rule %s/%s rolled back. Rule version: %s", typ, fn, newVersion)
 
 	c.JSON(http.StatusOK, gin.H{"status": "rolled_back", "rule_version": newVersion})
+}
+
+func bindArsenalLifecycleGuard(c *gin.Context, arsenal db.Arsenal) bool {
+	var req struct {
+		Hash    string `json:"hash"`
+		Version int    `json:"version"`
+	}
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil && err != io.EOF {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid lifecycle guard"})
+		return false
+	}
+	if req.Hash == "" && req.Version == 0 {
+		return true
+	}
+	if req.Hash == "" || req.Version <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "hash and version must be supplied together"})
+		return false
+	}
+	if req.Hash != arsenal.Hash || req.Version != arsenal.Version {
+		c.JSON(http.StatusConflict, gin.H{"error": "artifact hash or version changed", "current_hash": arsenal.Hash, "current_version": arsenal.Version})
+		return false
+	}
+	return true
 }
 
 func rejectRetiredEXPArsenal(c *gin.Context, typ string) bool {

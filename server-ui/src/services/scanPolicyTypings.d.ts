@@ -10,7 +10,7 @@ declare namespace API {
     custom_ports?: string; scan_method: ScanMethod; intensity: ScanIntensity;
     capabilities: {
       subdomain_discovery: boolean; subdomain_bruteforce: boolean; allow_cdn_assets: boolean;
-      allow_private_resolved_domains: boolean; host_binding: boolean; directory_probe: boolean;
+      allow_private_resolved_domains: boolean; host_binding: boolean; behavior_probe: boolean; directory_probe: boolean;
       risk_validation: boolean; credential_validation: boolean;
     };
     selector?: { match?: Record<string, string[]>; not_match?: Record<string, string[]> };

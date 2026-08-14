@@ -637,10 +637,64 @@ declare namespace API {
     Content: string;
     Hash: string;
     PreviousHash: string;
+	PreviousContent?: string;
     Version: number;  // 自增版本号
     State: string;    // Draft, Approved
     CreatedAt: string;
     UpdatedAt: string;
+  }
+
+  interface ActiveFingerprintClassification {
+    id: string;
+    product: string;
+    declared_profile?: string;
+    computed_profile: 'safe' | 'controlled';
+    auto_eligible: boolean;
+    max_requests: number;
+    reasons?: string[];
+  }
+
+  interface ActiveFingerprintRule {
+    ArtifactID: string;
+    SourceFile: string;
+    Name: string;
+    ProductName: string;
+    ContentHash: string;
+    Version: number;
+    State: string;
+    Enabled: boolean;
+    DeclaredAutoProfile: string;
+    ComputedAutoProfile: 'safe' | 'controlled';
+    AutoEligible: boolean;
+    MaxRequests: number;
+    ClassificationReason: string;
+    UpdatedAt: string;
+  }
+
+  interface ArsenalEvent {
+    ID: number;
+    ArtifactID: string;
+    Type: string;
+    FileName: string;
+    Version: number;
+    Hash: string;
+    State: string;
+    Action: string;
+    ActorID: string;
+    Content: string;
+    Details: string;
+    CreatedAt: string;
+  }
+
+  interface BehaviorProbeDebugResponse {
+    classification: ActiveFingerprintClassification;
+    transcript: {
+      status: string;
+      logs?: Record<string, unknown>[];
+      results?: Record<string, unknown>[];
+      complete?: Record<string, unknown>;
+      matched_products?: string[];
+    };
   }
 
   interface PagedResponse<T> {

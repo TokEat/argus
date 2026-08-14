@@ -17,7 +17,7 @@ const detail = {
             authorization: { validation_confirmed: true },
             capabilities: {
                 subdomain_discovery: true, subdomain_bruteforce: false, allow_cdn_assets: false,
-                allow_private_resolved_domains: false, host_binding: false, directory_probe: false,
+                allow_private_resolved_domains: false, host_binding: false, behavior_probe: false, directory_probe: false,
                 risk_validation: true, credential_validation: false,
             },
         },

@@ -33,9 +33,7 @@ import ProjectManagement from './pages/ProjectManagement';
 import AssetDiscovery from './pages/AssetDiscovery';
 import ConfigLayout from './pages/config/ConfigLayout';
 import PocConfig from './pages/config/PocConfig';
-import ActiveFingerConfig from './pages/config/DirConfig';
-import DirProbeConfig from './pages/config/DirProbeConfig';
-import WorkflowConfig from './pages/config/WorkflowConfig';
+import ProductRulesConfig from './pages/config/ProductRulesConfig';
 import ExploitConfig from './pages/config/ExploitConfig';
 import DebugConfig from './pages/config/DebugConfig';
 import ClientBuild from './pages/ClientBuild';
@@ -143,7 +141,7 @@ export const menuRoutes: RouteConfig[] = [
                 path: '/config/workflow',
                 name: 'Workflow 编排',
                 icon: <ApartmentOutlined />,
-                element: <ConfigLayout><WorkflowConfig /></ConfigLayout>,
+                element: <ConfigLayout><ProductRulesConfig /></ConfigLayout>,
                 hideInMenu: true,
                 minRole: 'admin',
             },
@@ -159,7 +157,7 @@ export const menuRoutes: RouteConfig[] = [
                 path: '/config/active-finger',
                 name: '指纹弹药库',
                 icon: <ScanOutlined />,
-                element: <ConfigLayout><ActiveFingerConfig /></ConfigLayout>,
+                element: <ConfigLayout><ProductRulesConfig /></ConfigLayout>,
                 hideInMenu: true,
                 minRole: 'admin',
             },
@@ -167,10 +165,18 @@ export const menuRoutes: RouteConfig[] = [
                 path: '/config/dir',
                 name: 'Dir 探测规则',
                 icon: <ScanOutlined />,
-                element: <ConfigLayout><DirProbeConfig /></ConfigLayout>,
+                element: <ConfigLayout><ProductRulesConfig /></ConfigLayout>,
                 hideInMenu: true,
                 minRole: 'admin',
             },
+			{
+				path: '/config/behavior-probe',
+				name: '行为探针',
+				icon: <ScanOutlined />,
+				element: <ConfigLayout><ProductRulesConfig /></ConfigLayout>,
+				hideInMenu: true,
+				minRole: 'admin',
+			},
             {
                 path: '/config/exploit',
                 name: 'EXP 验证库',
