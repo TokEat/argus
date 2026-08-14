@@ -44,7 +44,7 @@ const ConfigLayout: React.FC<ConfigLayoutProps> = ({ children }) => {
     };
 
     const tabItems = [
-		{ key: '/config/product-rules', label: '产品规则', icon: <ApartmentOutlined /> },
+		...(canAccessRole('admin') ? [{ key: '/config/product-rules', label: '产品规则', icon: <ApartmentOutlined /> }] : []),
         { key: '/config/poc', label: 'POC 弹药库', icon: <BugOutlined /> },
         { key: '/config/exploit', label: 'Yaksha EXP Workspace', icon: <ThunderboltOutlined /> },
         ...(canAccessRole('operator') ? [{ key: '/config/debug', label: '调试', icon: <ExperimentOutlined /> }] : []),

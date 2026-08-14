@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Button, Space, Tag, Popconfirm, Modal, Input, Table, Empty, App, Form, Segmented, Tooltip } from 'antd';
+import { Alert, Button, Space, Tag, Popconfirm, Modal, Input, Table, Empty, App, Form, Segmented, Tooltip } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     PlusOutlined,
@@ -9,8 +9,10 @@ import {
     ScanOutlined,
     LinkOutlined,
     DisconnectOutlined,
+    FolderOpenOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import { useNavigate } from 'react-router-dom';
 import {
     getFingerprintDict,
     addFingerprintDict,
@@ -49,7 +51,8 @@ const DirConfig: React.FC = () => {
     const [currentProduct, setCurrentProduct] = useState<string>('');
     const [form] = Form.useForm();
     const { message } = App.useApp();
-    const canManageRules = canAccessRole('operator');
+    const navigate = useNavigate();
+    const canManageRules = canAccessRole('admin');
 
     const fetchData = async () => {
         setLoading(true);
@@ -171,6 +174,10 @@ const DirConfig: React.FC = () => {
         }
     };
 
+    const openDirPaths = (product: string) => {
+        navigate(`/config/dir?product=${encodeURIComponent(product)}`);
+    };
+
     const columns: ColumnsType<EnrichedFingerprint> = [
         {
             title: '指纹标识产品名 (Product)',
@@ -186,7 +193,7 @@ const DirConfig: React.FC = () => {
             ),
         },
         {
-            title: 'Workflow / Dir 关联',
+            title: '同产品规则关联',
             key: 'reference',
             width: 200,
             filters: [
@@ -203,12 +210,14 @@ const DirConfig: React.FC = () => {
                         </Tooltip>
                     ) : null}
                     {r._refDir ? (
-                        <Tooltip title="在 dir.yaml 中被引用，该指纹命中后会触发路径探测">
-                            <Tag color="blue" icon={<LinkOutlined />}>Dir</Tag>
+                        <Tooltip title="该产品在 dir.yaml 中配置了路径探针；启用主动路径指纹后，Scanner 会在 HTTP 探测后独立请求这些路径，再用该产品的被动规则复核响应。">
+                            <Button type="link" size="small" style={{ padding: 0 }} onClick={() => openDirPaths(r.product)} aria-label={`编辑 ${r.product} 路径探针`}>
+                                <Tag color="blue" icon={<LinkOutlined />} style={{ cursor: 'pointer', marginInlineEnd: 0 }}>Dir</Tag>
+                            </Button>
                         </Tooltip>
                     ) : null}
                     {!r._refWorkflow && !r._refDir ? (
-                        <Tooltip title="该指纹不被任何 Workflow 或 Dir 规则引用，扫描命中后什么也不会发生">
+                        <Tooltip title="扫描命中仍会记录被动指纹，但没有同产品的 Workflow 或路径探针用于后续验证。">
                             <Tag color="default" icon={<DisconnectOutlined />}>未关联</Tag>
                         </Tooltip>
                     ) : null}
@@ -236,10 +245,13 @@ const DirConfig: React.FC = () => {
         ...(canManageRules ? [{
             title: '操作',
             key: 'actions',
-            width: 140,
+            width: 220,
             align: 'center' as const,
             render: (_: unknown, record: EnrichedFingerprint) => (
                 <Space size={4}>
+                    <Button type="link" size="small" icon={<FolderOpenOutlined />} onClick={() => openDirPaths(record.product)}>
+                        {record._refDir ? '路径' : '配置路径'}
+                    </Button>
                     <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
                     <Popconfirm title="确认删除该产品的指纹规则？" onConfirm={() => handleDelete(record.product)}>
                         <Button type="link" danger size="small" icon={<DeleteOutlined />}>删除</Button>
@@ -251,6 +263,13 @@ const DirConfig: React.FC = () => {
 
     return (
         <>
+            <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message="被动识别与主动路径是两条互补链路"
+                description="被动规则分析已有响应；启用主动路径指纹后，Scanner 会在 HTTP 探测后独立请求 dir.yaml 中的路径，并用同产品的被动规则复核响应。Dir 不是被动命中后的条件触发器。"
+            />
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
                 <Space wrap>
                     <Input

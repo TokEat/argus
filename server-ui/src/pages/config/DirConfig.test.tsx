@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from 'antd';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import DirConfig from './DirConfig';
 import { getDirDict, getFingerprintDict, getWorkflowDict, updateFingerprintDict } from '../../services/api';
 
@@ -9,8 +10,10 @@ vi.mock('../../contexts/GlobalAIContext', () => ({
     useAutoContext: vi.fn(),
 }));
 
+const authState = vi.hoisted(() => ({ allowed: true }));
+
 vi.mock('../../utils/auth', () => ({
-    canAccessRole: () => true,
+    canAccessRole: (role: string) => role === 'admin' && authState.allowed,
 }));
 
 vi.mock('../../services/api', () => ({
@@ -35,15 +38,23 @@ describe('DirConfig', () => {
         vi.mocked(getFingerprintDict).mockResolvedValue(fingerprints);
         vi.mocked(getWorkflowDict).mockResolvedValue([]);
         vi.mocked(getDirDict).mockResolvedValue([]);
+        authState.allowed = true;
     });
+
+    const renderPage = () => render(
+        <MemoryRouter initialEntries={['/config/active-finger']}>
+            <App>
+                <Routes>
+                    <Route path="/config/active-finger" element={<DirConfig />} />
+                    <Route path="/config/dir" element={<div>路径探针目标页</div>} />
+                </Routes>
+            </App>
+        </MemoryRouter>,
+    );
 
     it('updates visible rows when the fingerprint page size changes', async () => {
         const user = userEvent.setup();
-        render(
-            <App>
-                <DirConfig />
-            </App>,
-        );
+        renderPage();
 
         expect(await screen.findByText('Product-15')).toBeInTheDocument();
         expect(screen.queryByText('Product-16')).not.toBeInTheDocument();
@@ -56,11 +67,7 @@ describe('DirConfig', () => {
 
     it('edits fingerprint rules in a multiline input and saves them as rule array', async () => {
         const user = userEvent.setup();
-        render(
-            <App>
-                <DirConfig />
-            </App>,
-        );
+        renderPage();
 
         expect(await screen.findByText('Product-01')).toBeInTheDocument();
 
@@ -79,4 +86,23 @@ describe('DirConfig', () => {
             rules: ['body="alpha"', 'header="beta" || cert="beta"'],
         });
     }, 15000);
+
+    it('opens the matching path-probe editor from the Dir association', async () => {
+        const user = userEvent.setup();
+        vi.mocked(getDirDict).mockResolvedValue([{ product: 'Product-01', paths: ['/admin'] }]);
+        renderPage();
+
+        await user.click(await screen.findByRole('button', { name: '编辑 Product-01 路径探针' }));
+        expect(await screen.findByText('路径探针目标页')).toBeInTheDocument();
+    });
+
+    it('does not expose dictionary write controls without Admin permission', async () => {
+        authState.allowed = false;
+        renderPage();
+
+        expect(await screen.findByText('Product-01')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: '新增特征指纹' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /编辑/ })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /配置路径/ })).not.toBeInTheDocument();
+    });
 });

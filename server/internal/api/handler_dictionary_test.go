@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,7 +10,140 @@ import (
 
 	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
+
+func seedDictionaryArsenal(t *testing.T, store *gorm.DB, tenantID, arsenalType, fileName, content string) {
+	t.Helper()
+	if err := store.Create(&db.Arsenal{
+		ID:       db.BuildTenantArsenalID(tenantID, arsenalType, fileName),
+		TenantID: tenantID,
+		Type:     arsenalType,
+		FileName: fileName,
+		Content:  content,
+		Hash:     "fixture-hash",
+		State:    "Approved",
+	}).Error; err != nil {
+		t.Fatalf("seed %s/%s: %v", arsenalType, fileName, err)
+	}
+}
+
+func TestNormalizeDirPaths(t *testing.T) {
+	t.Run("trims and deduplicates while preserving order", func(t *testing.T) {
+		got, err := normalizeDirPaths([]string{" /admin ", "/login?next=%2F", "/admin"})
+		if err != nil {
+			t.Fatalf("normalize paths: %v", err)
+		}
+		want := []string{"/admin", "/login?next=%2F"}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("normalized paths = %v, want %v", got, want)
+		}
+	})
+
+	invalid := map[string][]string{
+		"empty list":          nil,
+		"empty path":          {"/admin", "  "},
+		"relative path":       {"admin"},
+		"scheme relative URL": {"//example.test/admin"},
+		"absolute URL":        {"https://example.test/admin"},
+		"fragment":            {"/admin#secret"},
+		"control character":   {"/admin\nheader"},
+		"too long":            {"/" + strings.Repeat("a", maxDirPathLength)},
+	}
+	for name, paths := range invalid {
+		t.Run(name, func(t *testing.T) {
+			if _, err := normalizeDirPaths(paths); err == nil {
+				t.Fatalf("normalizeDirPaths(%q) unexpectedly succeeded", paths)
+			}
+		})
+	}
+
+	t.Run("enforces unique path limit", func(t *testing.T) {
+		paths := make([]string, 0, maxDirPathsPerProduct+1)
+		for i := 0; i <= maxDirPathsPerProduct; i++ {
+			paths = append(paths, fmt.Sprintf("/path-%d", i))
+		}
+		if _, err := normalizeDirPaths(paths); err == nil {
+			t.Fatal("expected per-product path limit error")
+		}
+	})
+}
+
+func TestAddDirDictNormalizesAndDeduplicatesPaths(t *testing.T) {
+	store := setupAITestDB(t)
+	seedDictionaryArsenal(t, store, "default", "dir", "dir.yaml", "{}\n")
+
+	ctx, recorder := newTenantContext(http.MethodPost, "/dictionaries/dir")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/dictionaries/dir", strings.NewReader(`{"product":" Demo ","paths":[" /admin ","/admin","/login?next=%2F"]}`))
+	addDirDict(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("add dir status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	data, _, err := fetchAndParseDir("default")
+	if err != nil {
+		t.Fatalf("load saved dir: %v", err)
+	}
+	want := []string{"/admin", "/login?next=%2F"}
+	if fmt.Sprint(data["Demo"]) != fmt.Sprint(want) {
+		t.Fatalf("saved paths = %v, want %v", data["Demo"], want)
+	}
+}
+
+func TestFingerprintRenameAndDeleteRejectReferencedProduct(t *testing.T) {
+	for _, action := range []string{"rename", "delete"} {
+		t.Run(action, func(t *testing.T) {
+			store := setupAITestDB(t)
+			seedDictionaryArsenal(t, store, "default", "finger", "finger.yaml", "Referenced:\n  - body=referenced\n")
+			seedDictionaryArsenal(t, store, "default", "dir", "dir.yaml", "Referenced:\n  - /admin\n")
+			seedDictionaryArsenal(t, store, "default", "workflow", "workflow.yaml", "Referenced:\n  type: [root]\n  pocs: []\n")
+
+			var ctx *gin.Context
+			var recorder *httptest.ResponseRecorder
+			if action == "rename" {
+				ctx, recorder = newTenantContext(http.MethodPut, "/dictionaries/fingerprint/Referenced")
+				ctx.Request = httptest.NewRequest(http.MethodPut, "/dictionaries/fingerprint/Referenced", strings.NewReader(`{"product":"Renamed","rules":["body=referenced"]}`))
+				ctx.Params = gin.Params{{Key: "product", Value: "Referenced"}}
+				updateFingerprintDict(ctx)
+			} else {
+				ctx, recorder = newTenantContext(http.MethodDelete, "/dictionaries/fingerprint/Referenced")
+				ctx.Params = gin.Params{{Key: "product", Value: "Referenced"}}
+				deleteFingerprintDict(ctx)
+			}
+
+			if recorder.Code != http.StatusConflict {
+				t.Fatalf("%s status=%d body=%s", action, recorder.Code, recorder.Body.String())
+			}
+			if body := recorder.Body.String(); !strings.Contains(body, "dir.yaml") || !strings.Contains(body, "workflow.yaml") {
+				t.Fatalf("expected both reference sources, got %s", body)
+			}
+			data, _, err := fetchAndParseFingerprint("default")
+			if err != nil {
+				t.Fatalf("load fingerprint: %v", err)
+			}
+			if _, exists := data["Referenced"]; !exists {
+				t.Fatalf("referenced product changed after rejected %s", action)
+			}
+		})
+	}
+}
+
+func TestFingerprintReferenceCheckIsTenantScoped(t *testing.T) {
+	store := setupAITestDB(t)
+	seedDictionaryArsenal(t, store, "default", "finger", "finger.yaml", "Shared:\n  - body=shared\n")
+	seedDictionaryArsenal(t, store, "default", "dir", "dir.yaml", "{}\n")
+	seedDictionaryArsenal(t, store, "default", "workflow", "workflow.yaml", "{}\n")
+	seedDictionaryArsenal(t, store, "other", "dir", "dir.yaml", "Shared:\n  - /admin\n")
+	seedDictionaryArsenal(t, store, "other", "workflow", "workflow.yaml", "Shared:\n  type: [root]\n  pocs: []\n")
+
+	ctx, recorder := newTenantContext(http.MethodPut, "/dictionaries/fingerprint/Shared")
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/dictionaries/fingerprint/Shared", strings.NewReader(`{"product":"Renamed","rules":["body=shared"]}`))
+	ctx.Params = gin.Params{{Key: "product", Value: "Shared"}}
+	updateFingerprintDict(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("tenant-scoped rename status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
 
 func TestDictionaryListEmptyReturnsArray(t *testing.T) {
 	store := setupAITestDB(t)

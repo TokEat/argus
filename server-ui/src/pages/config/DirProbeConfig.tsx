@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Button, Space, Tag, Popconfirm, Modal, Input, Table, Empty, App, Form, Select, AutoComplete, Tooltip } from 'antd';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Alert, Button, Space, Tag, Popconfirm, Modal, Input, Table, Empty, App, Form, Select, AutoComplete, Tooltip } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     PlusOutlined,
@@ -9,6 +9,7 @@ import {
     ScanOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import { useSearchParams } from 'react-router-dom';
 import { getDirDict, addDirDict, updateDirDict, deleteDirDict, getFingerprintDict } from '../../services/api';
 import { useAutoContext } from '../../contexts/GlobalAIContext';
 import { canAccessRole } from '../../utils/auth';
@@ -24,7 +25,9 @@ const DirProbeConfig: React.FC = () => {
     const [fingerprintProducts, setFingerprintProducts] = useState<Set<string>>(new Set());
     const [form] = Form.useForm();
     const { message } = App.useApp();
-    const canManageRules = canAccessRole('operator');
+    const [searchParams] = useSearchParams();
+    const handledProduct = useRef<string>('');
+    const canManageRules = canAccessRole('admin');
 
     const fetchData = async () => {
         setLoading(true);
@@ -73,7 +76,7 @@ const DirProbeConfig: React.FC = () => {
         setModalVisible(true);
     };
 
-    const handleEdit = (record: API.DirItem) => {
+    const handleEdit = useCallback((record: API.DirItem) => {
         if (!canManageRules) return;
         setIsNew(false);
         setCurrentProduct(record.product);
@@ -82,7 +85,28 @@ const DirProbeConfig: React.FC = () => {
             paths: record.paths || [],
         });
         setModalVisible(true);
-    };
+    }, [canManageRules, form]);
+
+    useEffect(() => {
+        const product = (searchParams.get('product') || '').trim();
+        if (loading || !product || handledProduct.current === product) return;
+
+        handledProduct.current = product;
+        setSearchKeyword(product);
+        if (!canManageRules) return;
+
+        const existing = dictionaries.find((item) => item.product === product);
+        if (existing) {
+            handleEdit(existing);
+            return;
+        }
+
+        setIsNew(true);
+        setCurrentProduct(product);
+        form.resetFields();
+        form.setFieldsValue({ product, paths: [] });
+        setModalVisible(true);
+    }, [canManageRules, dictionaries, form, handleEdit, loading, searchParams]);
 
     const handleSave = async () => {
         if (!canManageRules) return;
@@ -173,6 +197,13 @@ const DirProbeConfig: React.FC = () => {
 
     return (
         <>
+            <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message="路径探针会独立发现产品"
+                description="启用主动路径指纹后，Scanner 会在 HTTP 探测后请求每个产品的路径，并用同产品被动规则复核响应；无需先命中首页指纹。仅当 Workflow 明确配置 dir-fallback 时，HTTP 200 才可作为回退命中。深度预设默认开启该阶段。"
+            />
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
                 <Input
                     placeholder="搜索产品或探测路径..."
@@ -215,14 +246,14 @@ const DirProbeConfig: React.FC = () => {
                             label={
                                 <Space>
                                     <span>产品名 (Product Name)</span>
-                                    <Tooltip title="下拉可选择「指纹库中已存在」的 product 名，在与 Workflow / Fingerprint 统一名称后，扫描器识别到资产才会触发对应的 Dir 探测路径。">
+                                    <Tooltip title="下拉可选择被动指纹库中的 product 名。主动路径请求完成后，Scanner 会用这个同名产品的被动规则复核路径响应。">
                                         <Tag color="blue" style={{ cursor: 'help' }}>联动指纹库</Tag>
                                     </Tooltip>
                                 </Space>
                             }
                             name="product"
                             rules={[{ required: true, message: '请填写产品名' }]}
-                            extra={`指纹库当前共 ${fingerprintProducts.size} 个 product，选中已有 product 可保证识别后能触发该 Dir 探测规则。`}
+                            extra={`指纹库当前共 ${fingerprintProducts.size} 个 product。优先选择已有 product，路径响应通常需由同名被动规则确认后写入 Active-Finger。`}
                         >
                             <AutoComplete
                                 placeholder="例：Tomcat、Spring-Boot（输入后下拉可选指纹库已有 product）"
@@ -246,8 +277,20 @@ const DirProbeConfig: React.FC = () => {
                         <Form.Item
                             label="探测路径列表 (Paths)"
                             name="paths"
-                            rules={[{ required: true, message: '请提供至少 1 条路径' }]}
-                            extra="按回车键确认为一条路径，例如 `/manager/html`、`/actuator`"
+                            rules={[
+                                { required: true, message: '请提供至少 1 条路径' },
+                                {
+                                    validator: (_, value?: string[]) => {
+                                        const paths = value || [];
+                                        if (paths.length > 128) return Promise.reject(new Error('每个产品最多 128 条路径'));
+                                        if (paths.some((path) => !path.trim().startsWith('/') || path.trim().startsWith('//'))) {
+                                            return Promise.reject(new Error('路径必须以单个 / 开头'));
+                                        }
+                                        return Promise.resolve();
+                                    },
+                                },
+                            ]}
+                            extra="按回车确认为一条根相对路径，例如 `/manager/html`、`/actuator`；保存时 Server 会 trim 并去重。"
                         >
                             <Select
                                 mode="tags"

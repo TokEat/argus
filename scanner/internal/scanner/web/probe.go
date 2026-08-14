@@ -8,6 +8,7 @@ import (
 	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/P0lar1ght/argus/scanner/utils"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -257,10 +258,11 @@ func (rt *Runtime) HostBindCallback(resp runner.Result) {
 func (rt *Runtime) matchingDirPaths(respPath string) []string {
 	var paths []string
 	for dbPath := range rt.DirDB {
-		if strings.HasSuffix(respPath, dbPath) {
+		if respPath == dbPath {
 			paths = append(paths, dbPath)
 		}
 	}
+	sort.Strings(paths)
 	return paths
 }
 

@@ -442,6 +442,24 @@ func TestDirBruteCallbackRecordsDirFallback(t *testing.T) {
 	}
 }
 
+func TestMatchingDirPathsRequiresExactRequestURI(t *testing.T) {
+	rt := &Runtime{DirDB: map[string][]string{
+		"/login":               {"Login"},
+		"/admin/login":         {"Admin"},
+		"/search?source=argus": {"Search"},
+	}}
+
+	if got := rt.matchingDirPaths("/admin/login"); !reflect.DeepEqual(got, []string{"/admin/login"}) {
+		t.Fatalf("overlapping path match = %v, want exact path only", got)
+	}
+	if got := rt.matchingDirPaths("/search?source=argus"); !reflect.DeepEqual(got, []string{"/search?source=argus"}) {
+		t.Fatalf("query path match = %v, want exact request URI", got)
+	}
+	if got := rt.matchingDirPaths("/prefix/login"); len(got) != 0 {
+		t.Fatalf("suffix-only path unexpectedly matched: %v", got)
+	}
+}
+
 func TestDirBruteCallbackSkipsUnmatchedPathInsert(t *testing.T) {
 	urlMap := map[string]structs.URLEntity{
 		"http://example.com": {

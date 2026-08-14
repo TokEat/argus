@@ -351,19 +351,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 	// 目录爆破
 	if !cfg.NoDirSearch && resumeStageEnabled(ctx, scanplan.StageDirectoryProbe) {
-		var checkURLs []string
-		for path := range currentPipelineDirDB(ctx) {
-			for _, u := range aliveURLs {
-				Url := ""
-				if u[len(u)-1:] == "/" && path[0:1] == "/" {
-					Url = u[:len(u)-1] + path
-				} else {
-					Url = u + path
-				}
-				checkURLs = append(checkURLs, Url)
-			}
-		}
-		checkURLs = utils.RemoveDuplicateElement(checkURLs)
+		checkURLs := buildDirProbeURLs(aliveURLs, currentPipelineDirDB(ctx))
 		emitPhase(ctx, PhaseDirBrute, "start", fmt.Sprintf("%d urls", len(checkURLs)))
 		gologger.Info().Msg("开始主动指纹探测")
 		httpx.DirBrute(checkURLs,
@@ -496,6 +484,24 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	}
 
 	return nil
+}
+
+func buildDirProbeURLs(aliveURLs []string, dirDB map[string][]string) []string {
+	checkURLs := make([]string, 0, len(aliveURLs)*len(dirDB))
+	for rawPath := range dirDB {
+		path := strings.TrimSpace(rawPath)
+		if path == "" || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
+			continue
+		}
+		for _, rawBaseURL := range aliveURLs {
+			baseURL := strings.TrimSpace(rawBaseURL)
+			if baseURL == "" {
+				continue
+			}
+			checkURLs = append(checkURLs, strings.TrimRight(baseURL, "/")+path)
+		}
+	}
+	return utils.RemoveDuplicateElement(checkURLs)
 }
 
 func (p *Pipeline) runHTTPProbe(ctx *ScanContext, cfg *Config, urls []string, webRuntime *web.Runtime) error {

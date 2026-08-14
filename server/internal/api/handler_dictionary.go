@@ -578,6 +578,15 @@ func updateFingerprintDict(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": "New Product Name already exists"})
 			return
 		}
+		references, err := fingerprintProductReferences(currentTenantID(c), product)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if len(references) > 0 {
+			c.JSON(http.StatusConflict, gin.H{"error": fingerprintReferenceConflict(product, references).Error()})
+			return
+		}
 		delete(data, product)
 		product = req.Product
 	}
@@ -600,6 +609,15 @@ func deleteFingerprintDict(c *gin.Context) {
 
 	if _, exists := data[product]; !exists {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+		return
+	}
+	references, err := fingerprintProductReferences(currentTenantID(c), product)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if len(references) > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": fingerprintReferenceConflict(product, references).Error()})
 		return
 	}
 
@@ -642,8 +660,17 @@ func saveDir(data map[string][]string, arsenal *db.Arsenal) error {
 	}
 
 	contentStr := string(out)
+	hash := fmt.Sprintf("%x", md5.Sum(out))
+	candidate := *arsenal
+	candidate.Content = contentStr
+	candidate.Hash = hash
+	candidate.Version++
+	if err := db.ValidateRuleCatalogCandidate(candidate); err != nil {
+		return err
+	}
+
 	arsenal.Content = contentStr
-	arsenal.Hash = fmt.Sprintf("%x", md5.Sum(out))
+	arsenal.Hash = hash
 	arsenal.Version++
 
 	if err := db.DB.Save(arsenal).Error; err != nil {
@@ -681,6 +708,12 @@ func addDirDict(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Product Name is required"})
 		return
 	}
+	paths, err := normalizeDirPaths(req.Paths)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	req.Paths = paths
 
 	data, arsenal, err := fetchAndParseDir(currentTenantID(c))
 	if err != nil {
@@ -719,6 +752,12 @@ func updateDirDict(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
 		return
 	}
+	paths, err := normalizeDirPaths(req.Paths)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	req.Paths = paths
 
 	req.Product = strings.TrimSpace(req.Product)
 	if req.Product != "" && req.Product != product {
