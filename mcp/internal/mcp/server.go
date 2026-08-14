@@ -100,7 +100,7 @@ func resources() []*sdkmcp.Resource {
 		{URI: "argus://workflow/template", Name: "Argus Workflow Template", Description: "Minimal workflow YAML snippet.", MIMEType: "text/yaml"},
 		{URI: "argus://examples/fingerprint-poc-workflow", Name: "Argus Fingerprint POC Workflow Example", Description: "Full debug/save/publish/verify example including test_only lifecycle guidance.", MIMEType: "text/markdown"},
 		{URI: "argus://poc/template", Name: "Argus POC Template", Description: "Minimal POC YAML template.", MIMEType: "text/yaml"},
-		{URI: expConsoleURI, Name: "yaksha_exp_workspace", Title: "Yaksha EXP Workspace", Description: "Interactive Server-authoritative Yaklang EXP workspace and sealed runtime console.", MIMEType: expConsoleMIMEType, Meta: sdkmcp.Meta(expConsoleMeta)},
+		{URI: expConsoleURI, Name: "yaksha_exp_studio", Title: "Yaksha EXP Studio", Description: "Interactive Server-authoritative Yaklang EXP Studio for revisions, fixtures, execution and audit.", MIMEType: expConsoleMIMEType, Meta: sdkmcp.Meta(expConsoleMeta)},
 	}
 }
 
@@ -112,7 +112,7 @@ func tools() []*sdkmcp.Tool {
 		{Name: "argus_rule_save", Description: "Save fingerprint, behavior probe, POC or Workflow source as a Draft and return stable_ref.", InputSchema: objectSchema(map[string]interface{}{"rule_type": enumSchema([]string{"fingerprint", "behavior_probe", "poc", "workflow"}), "intent": enumSchema([]string{"test_only", "production_candidate", "approved_reusable"}), "file_name": stringSchema("Draft file name"), "content": stringSchema("Complete rule source"), "product_name": stringSchema("Product or General-Poc-* group"), "rules": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}, "workflow_types": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}, "workflow_pocs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}}, []string{"rule_type"})},
 		{Name: "argus_rule_apply", Description: "Admin-only publish, deprecate or rollback using exact stable_ref hash/version guards.", InputSchema: objectSchema(map[string]interface{}{"action": enumSchema([]string{"publish", "deprecate", "rollback"}), "rule_type": enumSchema([]string{"fingerprint", "behavior_probe", "poc", "workflow"}), "artifact_id": stringSchema("Stable DB artifact id from stable_ref"), "file_name": stringSchema("Draft file name"), "hash": stringSchema("Expected artifact hash"), "version": map[string]interface{}{"type": "integer"}}, []string{"action", "rule_type"})},
 		{Name: "argus_yaksha_exp", Title: "Yaksha EXP Runtime", Description: "Operate one sealed single-file Yaklang EXP through the persistent independent Yaksha runtime. Transient script is limited to inspect, validate, and offline Fixture test. Network-capable debug/run require a Server-saved Revision bound by exp_id + revision + source_sha256 as an immutable source identity, so tenant authorization, risk confirmation, and run audit cannot be bypassed. inspect derives the official cli.* UI plus literal yaksha.call/yaksha.asset references; validate checks source, params, dependencies, assets, exact network targets, and egress shape; test is fixture-only and always offline; debug returns complete unredacted HTTP/TCP Trace; run executes once. Dependencies are pinned child revisions and assets are hash-bound content. Egress explicitly selects disabled, direct, a per-call write-only SOCKS5 route, or an authorized Agent using agent_id plus risk_confirmed=true. Agent mode creates a single-use Server Route and never exposes route_id or Gateway credentials. This tool does not expose filesystem or object-storage paths.", Meta: sdkmcp.Meta{"ui": map[string]interface{}{"resourceUri": expConsoleURI, "visibility": []string{"model", "app"}}}, InputSchema: yakshaInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
-		{Name: "argus_exp_workspace", Title: "Yaksha EXP Workspace", Description: "Manage the Server-authoritative Yaksha EXP workspace: EXP metadata, immutable revisions, hash-bound Assets, Fixture acceptance cases, publication, rollback pointers and run history. All operations are tenant-scoped and require EXP authorization; publication/deprecation/rollback remain Admin-only. Source, Asset content and full run artifacts are stored in private MinIO and no object key, credential or host path is exposed.", Meta: sdkmcp.Meta{"ui": map[string]interface{}{"resourceUri": expConsoleURI, "visibility": []string{"model", "app"}}}, InputSchema: expWorkspaceInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
+		{Name: "argus_exp_workspace", Title: "Yaksha EXP Studio Workspace", Description: "Manage the Server-authoritative Yaksha EXP Studio workspace: EXP metadata, immutable revisions, hash-bound Assets, Fixture acceptance cases, publication, rollback pointers and run history. All operations are tenant-scoped and require EXP authorization; publication/deprecation/rollback remain Admin-only. Source, Asset content and full run artifacts are stored in private MinIO and no object key, credential or host path is exposed.", Meta: sdkmcp.Meta{"ui": map[string]interface{}{"resourceUri": expConsoleURI, "visibility": []string{"model", "app"}}}, InputSchema: expWorkspaceInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
 		{Name: "argus_scan_task", Title: "Argus Scan Plan", Description: "Preview or create one authorized scan through the Server-authoritative argus.scan-policy/v1 compiler. Always call action=preview first, show its stages, port count, Agent capacity, POC scope and credential budget to the user, then pass the exact returned plan_hash to action=create. POC and credential validation share one explicit authorization confirmation. This tool never accepts Scanner raw config, Agent file paths or an independent manual POC phase.", InputSchema: scanTaskInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
 	}
 }
@@ -178,12 +178,16 @@ func yakshaInputSchema() map[string]interface{} {
 				"fixture": objectSchema(map[string]interface{}{
 					"http": map[string]interface{}{"type": "array", "items": objectSchema(map[string]interface{}{
 						"method": stringSchema("Exact HTTP method"), "url": stringSchema("Exact fixture URL"),
-						"status_code": map[string]interface{}{"type": "integer", "minimum": 100, "maximum": 599},
-						"body":        map[string]interface{}{"type": "string"}, "fail": map[string]interface{}{"type": "boolean"},
+						"status_code":      map[string]interface{}{"type": "integer", "minimum": 100, "maximum": 599},
+						"request_headers":  map[string]interface{}{"type": "object", "additionalProperties": fixtureMatcherSchema()},
+						"request_body":     fixtureMatcherSchema(),
+						"response_headers": map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string"}},
+						"body":             map[string]interface{}{"type": "string"}, "body_encoding": enumSchema([]string{"utf8", "base64"}), "fail": map[string]interface{}{"type": "boolean"},
 					}, []string{"method", "url"})},
 					"tcp": map[string]interface{}{"type": "array", "items": objectSchema(map[string]interface{}{
 						"address": stringSchema("Exact host:port fixture address"), "success": map[string]interface{}{"type": "boolean"},
 						"remote_address": map[string]interface{}{"type": "string"},
+						"steps":          map[string]interface{}{"type": "array", "maxItems": 16, "items": objectSchema(map[string]interface{}{"operation": enumSchema([]string{"write", "read", "half_close"}), "data": fixtureMatcherSchema(), "response": map[string]interface{}{"type": "string"}, "encoding": enumSchema([]string{"utf8", "base64"})}, []string{"operation"})},
 					}, []string{"address", "success"})},
 				}, nil),
 				"expect": objectSchema(map[string]interface{}{
@@ -282,6 +286,10 @@ func yakshaInputSchema() map[string]interface{} {
 	}
 	schema["additionalProperties"] = false
 	return schema
+}
+
+func fixtureMatcherSchema() map[string]interface{} {
+	return map[string]interface{}{"type": "object", "properties": map[string]interface{}{"exact": map[string]interface{}{"type": "string"}, "contains": map[string]interface{}{"type": "string"}, "regex": map[string]interface{}{"type": "string"}}, "additionalProperties": false, "minProperties": 1, "maxProperties": 1}
 }
 
 func expWorkspaceInputSchema() map[string]interface{} {

@@ -107,7 +107,7 @@ func TestSDKServerListsAndReadsResources(t *testing.T) {
 		t.Fatalf("read EXP console resource: %v", err)
 	}
 	appData, _ := json.Marshal(app.Contents)
-	for _, want := range []string{expConsoleMIMEType, "Yaksha EXP Workspace", "argus_yaksha_exp", "ui/initialize", "tools/call", "prefersBorder"} {
+	for _, want := range []string{expConsoleMIMEType, "Yaksha EXP Studio", "argus_yaksha_exp", "ui/initialize", "tools/call", "prefersBorder"} {
 		if !strings.Contains(string(appData), want) {
 			t.Fatalf("EXP console resource missing %q: %s", want, appData)
 		}
@@ -131,7 +131,7 @@ func TestExpConsoleUsesYakshaCanonicalParameterTypes(t *testing.T) {
 			t.Fatalf("EXP console still contains stale CLI type check %q", stale)
 		}
 	}
-	for _, want := range []string{"ui/notifications/tool-cancelled", "ui/resource-teardown", "value.isError", "event.source !== window.parent", "boundContext.exp_id", "boundContext.revision", "boundContext.source_sha256", "workspaceRevision.addEventListener('change'", "value.dependency_refs", "value.asset_refs", "action.value === 'test' ? 'disabled'", "action.value === 'test' && !isBound", "if (!isBound)", "run/debug 必须先保存并绑定 Server EXP Revision", "args.script = source.value", "[source, dependencies, assets]", "内存源码", "egress-mode", "['disabled', 'direct', 'socks5', 'agent']", "risk-confirmed", "proxy.value = ''", "autocomplete=\"new-password\""} {
+	for _, want := range []string{"ui/notifications/tool-cancelled", "ui/resource-teardown", "value.isError", "event.source !== window.parent", "boundContext.exp_id", "boundContext.revision", "boundContext.source_sha256", "workspaceRevision.addEventListener('change'", "value.dependency_refs", "value.asset_refs", "action.value === 'test' ? 'disabled'", "action.value === 'test' && !isBound", "if (!isBound)", "run/debug 必须先保存并绑定 Server EXP Revision", "args.script = source.value", "[source, dependencies, assets]", "内存源码", "egress-mode", "['disabled', 'direct', 'socks5', 'agent']", "risk-confirmed", "proxy.value = ''", "autocomplete=\"new-password\"", "EXP 生命周期", "clearBinding(true)", "result-tabs", "parseTargets"} {
 		if !strings.Contains(expConsoleHTML, want) {
 			t.Fatalf("EXP console is missing MCP App lifecycle behavior %q", want)
 		}

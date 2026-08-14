@@ -36,7 +36,12 @@ func main() {
 		handler := sdkmcp.NewStreamableHTTPHandler(func(*http.Request) *sdkmcp.Server {
 			return server
 		}, &sdkmcp.StreamableHTTPOptions{Stateless: true})
-		if err := http.ListenAndServe(cfg.HTTPAddr, argusmcp.AuthenticateHTTP(cfg.MCPAuthToken, handler)); err != nil {
+		var root http.Handler = argusmcp.AuthenticateHTTP(cfg.MCPAuthToken, handler)
+		if cfg.AppDevHost {
+			root = argusmcp.NewDevAppHost(client, root)
+			log.Printf("EXP Studio development host: http://%s/__dev/exp-studio", cfg.HTTPAddr)
+		}
+		if err := http.ListenAndServe(cfg.HTTPAddr, root); err != nil {
 			log.Fatal(err)
 		}
 	default:
