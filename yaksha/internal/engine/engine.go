@@ -10,11 +10,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/yaklang/yaklang/common/gmsm/sm4"
 	"github.com/yaklang/yaklang/common/utils/cli"
 	"github.com/yaklang/yaklang/common/yak/antlr4yak"
+	yakcodec "github.com/yaklang/yaklang/common/yak/yaklib/codec"
+	"github.com/yaklang/yaklang/common/yso"
 
 	"github.com/P0lar1ght/argus/yaksha/internal/egress"
 	"github.com/P0lar1ght/argus/yaksha/internal/protocol"
@@ -28,6 +32,9 @@ const (
 	maxEvidenceEntries  = 128
 	maxEvidenceKeyBytes = 128
 	maxHTTPBodyBytes    = egress.MaxHTTPBodyBytes
+	maxYSOBytes         = 1 << 20
+	maxYSODirtyBytes    = 64 << 10
+	maxYSOCommandBytes  = 8 << 10
 )
 
 func Execute(req protocol.Request) protocol.Response {
@@ -70,6 +77,7 @@ func execute(req protocol.Request, fixture *protocol.Fixture, diagnostic bool, o
 	state := executionState{
 		ctx: ctx, bundle: validation.Bundle, fixture: fixture, diagnostic: diagnostic,
 		outbound: outbound, budget: &callBudget{}, networkTargets: append([]string(nil), req.NetworkTargets...),
+		fixtureCursor: &fixtureCursor{},
 	}
 	return executeValidated(req, validation, state)
 }
@@ -98,6 +106,13 @@ type executionState struct {
 	budget         *callBudget
 	path           []resolver.DependencyKey
 	networkTargets []string
+	fixtureCursor  *fixtureCursor
+}
+
+type fixtureCursor struct {
+	mu   sync.Mutex
+	http int
+	tcp  int
 }
 
 func executeValidated(req protocol.Request, validation validator.Result, state executionState) protocol.Response {
@@ -109,6 +124,7 @@ func executeValidated(req protocol.Request, validation validator.Result, state e
 		ctx: state.ctx, evidence: map[string]any{}, debug: collector, fixture: state.fixture,
 		bundle: state.bundle, outbound: state.outbound, budget: state.budget, path: state.path,
 		diagnostic: state.diagnostic, networkTargets: state.networkTargets,
+		fixtureCursor: state.fixtureCursor,
 	}
 	eng := antlr4yak.New()
 	eng.SetSandboxMode(true)
@@ -118,6 +134,8 @@ func executeValidated(req protocol.Request, validation validator.Result, state e
 	cliApp.SetCliCheckCallback(func() { panic("cli.check failed after Yaksha validation") })
 	libs := yakshaLibs(sess)
 	libs["cli"] = cliLibs(cliApp)
+	libs["codec"] = codecLibs()
+	libs["yso"] = ysoLibs()
 	eng.ImportLibs(libs)
 	if len(req.Params) > 0 {
 		eng.ImportLibs(map[string]interface{}{"params": req.Params})
@@ -135,6 +153,9 @@ func executeValidated(req protocol.Request, validation validator.Result, state e
 		if err == nil {
 			err = state.ctx.Err()
 		}
+	}
+	if err == nil && collector != nil && collector.exceeded() {
+		err = fmt.Errorf("debug trace exceeds protocol limits")
 	}
 	result, evidence, logs, calls := sess.snapshot()
 	if err != nil {
@@ -197,6 +218,7 @@ type session struct {
 	path           []resolver.DependencyKey
 	diagnostic     bool
 	networkTargets []string
+	fixtureCursor  *fixtureCursor
 }
 
 func (s *session) log(msg any) {
@@ -289,6 +311,7 @@ func (s *session) call(expID string, revision int, params map[string]any) (any, 
 		childState := executionState{
 			ctx: s.ctx, bundle: s.bundle, fixture: s.fixture, diagnostic: s.diagnostic, outbound: s.outbound,
 			budget: s.budget, path: append(append([]resolver.DependencyKey(nil), s.path...), key), networkTargets: s.networkTargets,
+			fixtureCursor: s.fixtureCursor,
 		}
 		response = executeValidated(childReq, childValidation, childState)
 	}
@@ -306,12 +329,138 @@ func yakshaLibs(sess *session) map[string]interface{} {
 	return map[string]interface{}{"yaksha": map[string]interface{}{
 		"log": sess.log, "result": sess.setResult, "evidence": sess.addEvidence,
 		"toString": func(value any) string { return fmt.Sprint(value) }, "echo": func(value any) any { return value },
-		"httpGet": func(target string) (string, error) { return tracedHTTPGet(sess, target) },
-		"dial":    func(address string) (string, error) { return tracedDial(sess, address) },
-		"call":    sess.call, "asset": sess.asset,
+		"httpGet":     func(target string) (string, error) { return tracedHTTPGet(sess, target) },
+		"dial":        func(address string) (string, error) { return tracedDial(sess, address) },
+		"httpRequest": func(input map[string]any) (map[string]any, error) { return tracedHTTPRequest(sess, input) },
+		"tcpExchange": func(input map[string]any) (map[string]any, error) { return tracedTCPExchange(sess, input) },
+		"call":        sess.call, "asset": sess.asset,
 		"b64encode": b64encode, "b64decode": b64decode, "md5": md5Hex, "sha256": sha256Hex,
 		"jsonDumps": jsonDumps, "jsonLoads": jsonLoads, "regexMatch": regexMatch,
 	}}
+}
+
+func ysoLibs() map[string]interface{} {
+	out := make(map[string]interface{}, len(yso.Exports))
+	for k, v := range yso.Exports {
+		out[k] = v
+	}
+	out["dirtyDataLength"] = func(length int) yso.MarshalOptionFun {
+		if length < 0 || length > maxYSODirtyBytes {
+			panic(fmt.Sprintf("YSO dirty data exceeds %d bytes", maxYSODirtyBytes))
+		}
+		return yso.SetToBytesDirtyDataLength(length)
+	}
+	out["command"] = func(command string) yso.GenClassOptionFun {
+		if len(command) > maxYSOCommandBytes {
+			panic(fmt.Sprintf("YSO command exceeds %d bytes", maxYSOCommandBytes))
+		}
+		return yso.SetExecCommand(command)
+	}
+	out["ToBytes"] = func(value interface{}, options ...yso.MarshalOptionFun) ([]byte, error) {
+		raw, err := yso.ToBytes(value, options...)
+		if err == nil && len(raw) > maxYSOBytes {
+			return nil, fmt.Errorf("YSO output exceeds %d bytes", maxYSOBytes)
+		}
+		return raw, err
+	}
+	return out
+}
+func codecLibs() map[string]interface{} {
+	return map[string]interface{}{
+		"EncodeToHex": yakcodec.EncodeToHex, "DecodeHex": yakcodec.DecodeHex,
+		"EncodeBase64": yakcodec.EncodeBase64, "DecodeBase64": yakcodec.DecodeBase64,
+		"EncodeBase64Url": yakcodec.EncodeBase64Url, "DecodeBase64Url": yakcodec.DecodeBase64Url,
+		"EncodeUrl": yakcodec.EncodeUrlCode, "DecodeUrl": yakcodec.QueryUnescape,
+		"EscapePathUrl": yakcodec.PathEscape, "UnescapePathUrl": yakcodec.PathUnescape,
+		"PKCS5Padding": yakcodec.PKCS5Padding, "PKCS5UnPadding": yakcodec.PKCS5UnPadding,
+		"PKCS7Padding": sm4.PKCS7Padding, "PKCS7UnPadding": sm4.PKCS7UnPadding,
+		"AESCBCEncrypt": yakcodec.AESEncryptCBCWithPKCSPadding, "AESCBCDecrypt": yakcodec.AESDecryptCBCWithPKCSPadding,
+		"AESGCMEncrypt": yakcodec.AESGCMEncrypt, "AESGCMDecrypt": yakcodec.AESGCMDecrypt,
+		"AESGCMEncryptWithNonceSize12": yakcodec.AESGCMEncryptWithNonceSize12, "AESGCMDecryptWithNonceSize12": yakcodec.AESGCMDecryptWithNonceSize12,
+		"AESGCMEncryptWithNonceSize16": yakcodec.AESGCMEncryptWithNonceSize16, "AESGCMDecryptWithNonceSize16": yakcodec.AESGCMDecryptWithNonceSize16,
+		"HmacSha256": yakcodec.HmacSha256, "RandBytes": yakcodec.RandBytes, "CryptoRandBytes": yakcodec.RandBytes,
+	}
+}
+
+func decodeMap(input map[string]any, target any) error {
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(target)
+}
+
+func tracedHTTPRequest(sess *session, input map[string]any) (map[string]any, error) {
+	var request egress.HTTPRequest
+	if err := decodeMap(input, &request); err != nil {
+		return nil, fmt.Errorf("invalid httpRequest input: %w", err)
+	}
+	started := time.Now()
+	var response egress.HTTPResult
+	var err error
+	if sess.fixture != nil {
+		response, err = fixtureHTTPRequest(sess, request)
+	} else if sess.outbound == nil {
+		err = fmt.Errorf("Yaksha egress is unavailable")
+	} else if extended, ok := sess.outbound.(egress.ExtendedClient); !ok {
+		err = fmt.Errorf("Yaksha HTTP request capability is unavailable")
+	} else {
+		response, err = extended.HTTPRequest(sess.ctx, request, sess.networkTargets)
+	}
+	if sess.debug != nil {
+		event := protocol.DebugEvent{Kind: "http", Operation: strings.ToUpper(request.Method), Target: request.URL, DurationMS: time.Since(started).Milliseconds(), Request: request}
+		if err != nil {
+			event.Error = err.Error()
+		} else {
+			event.StatusCode = response.StatusCode
+			event.Response = response
+		}
+		sess.debug.addEvent(event)
+	}
+	if err != nil {
+		return nil, err
+	}
+	raw, _ := json.Marshal(response)
+	var result map[string]any
+	_ = json.Unmarshal(raw, &result)
+	return result, nil
+}
+
+func tracedTCPExchange(sess *session, input map[string]any) (map[string]any, error) {
+	var request egress.TCPExchangeRequest
+	if err := decodeMap(input, &request); err != nil {
+		return nil, fmt.Errorf("invalid tcpExchange input: %w", err)
+	}
+	started := time.Now()
+	var response egress.TCPExchangeResult
+	var err error
+	if sess.fixture != nil {
+		response, err = fixtureTCPExchange(sess, request)
+	} else if sess.outbound == nil {
+		err = fmt.Errorf("Yaksha egress is unavailable")
+	} else if extended, ok := sess.outbound.(egress.ExtendedClient); !ok {
+		err = fmt.Errorf("Yaksha TCP exchange capability is unavailable")
+	} else {
+		response, err = extended.TCPExchange(sess.ctx, request, sess.networkTargets)
+	}
+	if sess.debug != nil {
+		event := protocol.DebugEvent{Kind: "tcp", Operation: "exchange", Target: request.Address, DurationMS: time.Since(started).Milliseconds(), Request: request}
+		if err != nil {
+			event.Error = err.Error()
+		} else {
+			event.Response = response
+		}
+		sess.debug.addEvent(event)
+	}
+	if err != nil {
+		return nil, err
+	}
+	raw, _ := json.Marshal(response)
+	var result map[string]any
+	_ = json.Unmarshal(raw, &result)
+	return result, nil
 }
 
 func tracedHTTPGet(sess *session, target string) (string, error) {
@@ -331,11 +480,12 @@ func tracedHTTPGet(sess *session, target string) (string, error) {
 		}
 	}
 	if sess.debug != nil {
-		event := protocol.DebugEvent{Kind: "http", Operation: "GET", Target: target, DurationMS: time.Since(started).Milliseconds()}
+		event := protocol.DebugEvent{Kind: "http", Operation: "GET", Target: target, DurationMS: time.Since(started).Milliseconds(), Request: egress.HTTPRequest{Method: "GET", URL: target, FollowRedirects: true}}
 		if err != nil {
 			event.Error = err.Error()
 		} else {
 			fmt.Sscanf(result, "%d", &event.StatusCode)
+			event.Response = result
 		}
 		sess.debug.addEvent(event)
 	}
@@ -354,9 +504,11 @@ func tracedDial(sess *session, address string) (string, error) {
 		result, err = sess.outbound.Dial(sess.ctx, address, sess.networkTargets)
 	}
 	if sess.debug != nil {
-		event := protocol.DebugEvent{Kind: "tcp", Operation: "connect", Target: address, DurationMS: time.Since(started).Milliseconds()}
+		event := protocol.DebugEvent{Kind: "tcp", Operation: "connect", Target: address, DurationMS: time.Since(started).Milliseconds(), Request: map[string]any{"address": address}}
 		if err != nil {
 			event.Error = err.Error()
+		} else {
+			event.Response = map[string]any{"remote_address": result}
 		}
 		sess.debug.addEvent(event)
 	}
@@ -374,6 +526,121 @@ func fixtureHTTPGet(fixture *protocol.Fixture, target string) (string, error) {
 		return fmt.Sprintf("%d %s", item.StatusCode, item.Body), nil
 	}
 	return "", fmt.Errorf("no matching HTTP fixture for GET %s", target)
+}
+
+func fixtureHTTPRequest(sess *session, request egress.HTTPRequest) (egress.HTTPResult, error) {
+	sess.fixtureCursor.mu.Lock()
+	defer sess.fixtureCursor.mu.Unlock()
+	if sess.fixtureCursor.http >= len(sess.fixture.HTTP) {
+		return egress.HTTPResult{}, fmt.Errorf("no remaining HTTP fixture for %s %s", request.Method, request.URL)
+	}
+	item := sess.fixture.HTTP[sess.fixtureCursor.http]
+	if strings.ToUpper(item.Method) != strings.ToUpper(request.Method) || item.URL != request.URL {
+		return egress.HTTPResult{}, fmt.Errorf("next HTTP fixture expected %s %s", item.Method, item.URL)
+	}
+	for name, matcher := range item.RequestHeaders {
+		if !matchFixture(matcher, headerValue(request.Headers, name)) {
+			return egress.HTTPResult{}, fmt.Errorf("HTTP fixture header %s did not match", name)
+		}
+	}
+	body, decodeErr := decodeFixturePayload(request.Body, request.BodyEncoding)
+	if decodeErr != nil {
+		return egress.HTTPResult{}, decodeErr
+	}
+	if item.RequestBody != nil && !matchFixture(*item.RequestBody, string(body)) {
+		return egress.HTTPResult{}, fmt.Errorf("HTTP fixture body did not match")
+	}
+	sess.fixtureCursor.http++
+	if item.Fail {
+		return egress.HTTPResult{}, fmt.Errorf("HTTP fixture failure for %s %s", request.Method, request.URL)
+	}
+	encoding := item.BodyEncoding
+	if encoding == "" {
+		encoding = "utf8"
+	}
+	return egress.HTTPResult{StatusCode: item.StatusCode, FinalURL: item.URL, Headers: httpHeaders(item.ResponseHeaders), Body: item.Body, BodyEncoding: encoding}, nil
+}
+
+func fixtureTCPExchange(sess *session, request egress.TCPExchangeRequest) (egress.TCPExchangeResult, error) {
+	sess.fixtureCursor.mu.Lock()
+	defer sess.fixtureCursor.mu.Unlock()
+	if sess.fixtureCursor.tcp >= len(sess.fixture.TCP) {
+		return egress.TCPExchangeResult{}, fmt.Errorf("no remaining TCP fixture for %s", request.Address)
+	}
+	item := sess.fixture.TCP[sess.fixtureCursor.tcp]
+	if item.Address != request.Address {
+		return egress.TCPExchangeResult{}, fmt.Errorf("next TCP fixture expected %s", item.Address)
+	}
+	sess.fixtureCursor.tcp++
+	if !item.Success {
+		return egress.TCPExchangeResult{}, fmt.Errorf("TCP fixture failure for %s", request.Address)
+	}
+	if len(item.Steps) > 0 && len(item.Steps) != len(request.Steps) {
+		return egress.TCPExchangeResult{}, fmt.Errorf("TCP fixture step count did not match")
+	}
+	result := egress.TCPExchangeResult{RemoteAddress: item.RemoteAddress, Responses: []string{}, Encodings: []string{}}
+	if result.RemoteAddress == "" {
+		result.RemoteAddress = request.Address
+	}
+	for index, step := range request.Steps {
+		if len(item.Steps) == 0 {
+			continue
+		}
+		expected := item.Steps[index]
+		if expected.Operation != step.Operation {
+			return egress.TCPExchangeResult{}, fmt.Errorf("TCP fixture step %d operation did not match", index+1)
+		}
+		if expected.Data != nil && !matchFixture(*expected.Data, step.Data) {
+			return egress.TCPExchangeResult{}, fmt.Errorf("TCP fixture step %d data did not match", index+1)
+		}
+		if expected.Operation == "read" {
+			encoding := expected.Encoding
+			if encoding == "" {
+				encoding = "utf8"
+			}
+			result.Responses = append(result.Responses, expected.Response)
+			result.Encodings = append(result.Encodings, encoding)
+		}
+	}
+	return result, nil
+}
+
+func matchFixture(m protocol.FixtureMatcher, value string) bool {
+	if m.Exact != "" {
+		return value == m.Exact
+	}
+	if m.Contains != "" {
+		return strings.Contains(value, m.Contains)
+	}
+	if m.Regex != "" {
+		ok, _ := regexp.MatchString(m.Regex, value)
+		return ok
+	}
+	return false
+}
+func decodeFixturePayload(value, encoding string) ([]byte, error) {
+	if encoding == "" || encoding == "utf8" {
+		return []byte(value), nil
+	}
+	if encoding == "base64" {
+		return base64.StdEncoding.DecodeString(value)
+	}
+	return nil, fmt.Errorf("unsupported encoding")
+}
+func httpHeaders(values map[string]string) map[string][]string {
+	out := map[string][]string{}
+	for k, v := range values {
+		out[k] = []string{v}
+	}
+	return out
+}
+func headerValue(values map[string]string, name string) string {
+	for key, value := range values {
+		if strings.EqualFold(key, name) {
+			return value
+		}
+	}
+	return ""
 }
 
 func fixtureDial(fixture *protocol.Fixture, address string) (string, error) {

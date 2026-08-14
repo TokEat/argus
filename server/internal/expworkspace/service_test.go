@@ -339,6 +339,19 @@ func TestStatusDetailsTreatsMissingErrorAsEmpty(t *testing.T) {
 	}
 }
 
+func TestRuntimeRequestUsesContractValidationOnlyForPublicationGate(t *testing.T) {
+	sealed := SealedPackage{ExpID: "exp", Revision: 1, SourceSHA256: strings.Repeat("a", 64), Script: "cli.check()"}
+	validate := runtimeRequestFromSealed(sealed, "validate")
+	if validate.ValidationMode != "contract" {
+		t.Fatalf("validate mode=%q", validate.ValidationMode)
+	}
+	for _, action := range []string{"test", "debug", "run"} {
+		if got := runtimeRequestFromSealed(sealed, action).ValidationMode; got != "" {
+			t.Fatalf("%s mode=%q", action, got)
+		}
+	}
+}
+
 func TestExecutionRejectsMismatchedSourceIdentity(t *testing.T) {
 	service, _ := newTestService(t)
 	ctx := context.Background()

@@ -76,6 +76,7 @@ type RuntimeRequest struct {
 	Assets         []SealedAsset      `json:"assets,omitempty"`
 	NetworkTargets []string           `json:"network_targets,omitempty"`
 	Egress         map[string]any     `json:"egress,omitempty"`
+	ValidationMode string             `json:"validation_mode,omitempty"`
 }
 
 type RuntimeResponse map[string]any

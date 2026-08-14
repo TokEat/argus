@@ -79,7 +79,7 @@ func validate(req protocol.Request, validateResolver bool) Result {
 	for _, parameter := range inspection.Parameters {
 		value, provided := req.Params[parameter.Name]
 		if !provided {
-			if parameter.Required && !parameter.HasDefault {
+			if parameter.Required && !parameter.HasDefault && req.ValidationMode != protocol.ValidationContract {
 				addParameterError(&result, parameter.Name, "missing_required_parameter", fmt.Sprintf("required parameter %q is missing", parameter.Name))
 				continue
 			}

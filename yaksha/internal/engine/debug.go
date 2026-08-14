@@ -1,18 +1,22 @@
 package engine
 
 import (
+	"encoding/json"
 	"sync"
 
 	"github.com/P0lar1ght/argus/yaksha/internal/protocol"
 )
 
 const maxDebugEvents = 128
+const maxDebugBytes = 1 << 20
 
 // debugCollector records EXP-facing diagnostic events during one debug run.
 // It intentionally does not expose or retain Yaklang VM debugger state.
 type debugCollector struct {
-	mu     sync.Mutex
-	report protocol.DebugReport
+	mu       sync.Mutex
+	report   protocol.DebugReport
+	bytes    int
+	overflow bool
 }
 
 func newDebugCollector() *debugCollector {
@@ -22,12 +26,17 @@ func newDebugCollector() *debugCollector {
 func (c *debugCollector) addEvent(event protocol.DebugEvent) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.report.Events) >= maxDebugEvents {
+	raw, _ := json.Marshal(event)
+	if len(c.report.Events) >= maxDebugEvents || c.bytes+len(raw) > maxDebugBytes {
 		c.report.Truncated = true
+		c.overflow = true
 		return
 	}
 	c.report.Events = append(c.report.Events, event)
+	c.bytes += len(raw)
 }
+
+func (c *debugCollector) exceeded() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.overflow }
 
 func (c *debugCollector) result() protocol.DebugReport {
 	c.mu.Lock()

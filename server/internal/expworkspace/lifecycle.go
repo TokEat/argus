@@ -445,7 +445,11 @@ func (s *Service) finishFailedRun(ctx context.Context, run db.ExpRun, finished t
 }
 
 func runtimeRequestFromSealed(sealed SealedPackage, action string) RuntimeRequest {
-	return RuntimeRequest{ID: uuid.NewString(), Action: action, Script: sealed.Script, ExpID: sealed.ExpID, Revision: sealed.Revision, SourceSHA256: sealed.SourceSHA256, Dependencies: sealed.Dependencies, Assets: sealed.Assets, TestCases: sealed.TestCases, Egress: map[string]any{"mode": "disabled"}}
+	request := RuntimeRequest{ID: uuid.NewString(), Action: action, Script: sealed.Script, ExpID: sealed.ExpID, Revision: sealed.Revision, SourceSHA256: sealed.SourceSHA256, Dependencies: sealed.Dependencies, Assets: sealed.Assets, TestCases: sealed.TestCases, Egress: map[string]any{"mode": "disabled"}}
+	if action == "validate" {
+		request.ValidationMode = "contract"
+	}
+	return request
 }
 
 func normalizeJSONObject(raw json.RawMessage, field string) ([]byte, error) {

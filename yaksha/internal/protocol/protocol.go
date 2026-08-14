@@ -37,6 +37,8 @@ const (
 	MaxProxyURLBytes           = 2 << 10
 	MaxCallDepth               = 8
 	MaxCalls                   = 32
+	MaxExchangeSteps           = 16
+	MaxExchangeBytes           = 1 << 20
 )
 
 // Request is a single EXP runtime request. Action defaults to run for
@@ -55,7 +57,13 @@ type Request struct {
 	Assets         []Asset        `json:"assets,omitempty"`
 	NetworkTargets []string       `json:"network_targets,omitempty"`
 	Egress         *EgressConfig  `json:"egress,omitempty"`
+	ValidationMode string         `json:"validation_mode,omitempty"`
 }
+
+const (
+	ValidationExecution = "execution"
+	ValidationContract  = "contract"
+)
 
 // EgressConfig selects the network path for one top-level execution. The
 // daemon consumes this field before forwarding the request to a worker, so
@@ -235,6 +243,8 @@ type DebugEvent struct {
 	StatusCode int    `json:"status_code,omitempty"`
 	DurationMS int64  `json:"duration_ms"`
 	Error      string `json:"error,omitempty"`
+	Request    any    `json:"request,omitempty"`
+	Response   any    `json:"response,omitempty"`
 }
 
 type TestCase struct {
@@ -250,17 +260,35 @@ type Fixture struct {
 }
 
 type HTTPFixture struct {
-	Method     string `json:"method"`
-	URL        string `json:"url"`
-	StatusCode int    `json:"status_code,omitempty"`
-	Body       string `json:"body,omitempty"`
-	Fail       bool   `json:"fail,omitempty"`
+	Method          string                    `json:"method"`
+	URL             string                    `json:"url"`
+	RequestHeaders  map[string]FixtureMatcher `json:"request_headers,omitempty"`
+	RequestBody     *FixtureMatcher           `json:"request_body,omitempty"`
+	StatusCode      int                       `json:"status_code,omitempty"`
+	ResponseHeaders map[string]string         `json:"response_headers,omitempty"`
+	Body            string                    `json:"body,omitempty"`
+	BodyEncoding    string                    `json:"body_encoding,omitempty"`
+	Fail            bool                      `json:"fail,omitempty"`
 }
 
 type TCPFixture struct {
-	Address       string `json:"address"`
-	Success       bool   `json:"success"`
-	RemoteAddress string `json:"remote_address,omitempty"`
+	Address       string           `json:"address"`
+	Success       bool             `json:"success"`
+	RemoteAddress string           `json:"remote_address,omitempty"`
+	Steps         []TCPFixtureStep `json:"steps,omitempty"`
+}
+
+type FixtureMatcher struct {
+	Exact    string `json:"exact,omitempty"`
+	Contains string `json:"contains,omitempty"`
+	Regex    string `json:"regex,omitempty"`
+}
+
+type TCPFixtureStep struct {
+	Operation string          `json:"operation"`
+	Data      *FixtureMatcher `json:"data,omitempty"`
+	Response  string          `json:"response,omitempty"`
+	Encoding  string          `json:"encoding,omitempty"`
 }
 
 type TestExpectation struct {
@@ -347,6 +375,12 @@ func ValidateRequest(req Request) error {
 		if err := validateEgress(*req.Egress); err != nil {
 			return err
 		}
+	}
+	if req.ValidationMode != "" && req.ValidationMode != ValidationContract && req.ValidationMode != ValidationExecution {
+		return fmt.Errorf("validation_mode must be contract or execution")
+	}
+	if action != ActionValidate && req.ValidationMode != "" && req.ValidationMode != ValidationExecution {
+		return fmt.Errorf("validation_mode contract is only valid for validate")
 	}
 	for _, dependency := range req.Dependencies {
 		if !expIDPattern.MatchString(dependency.ExpID) || dependency.Revision < 1 {
@@ -477,10 +511,9 @@ func validateFixture(caseID string, fixture *Fixture) error {
 	if len(fixture.HTTP) > MaxFixturesPerCase || len(fixture.TCP) > MaxFixturesPerCase {
 		return fmt.Errorf("test case %q fixtures exceed %d entries per protocol", caseID, MaxFixturesPerCase)
 	}
-	httpRoutes := make(map[string]struct{}, len(fixture.HTTP))
 	for _, item := range fixture.HTTP {
-		if item.Method != http.MethodGet || item.URL == "" {
-			return fmt.Errorf("test case %q HTTP fixtures require method GET and a URL", caseID)
+		if !allowedHTTPMethod(item.Method) || item.URL == "" {
+			return fmt.Errorf("test case %q HTTP fixture has an unsupported method or missing URL", caseID)
 		}
 		if !item.Fail && (item.StatusCode < 100 || item.StatusCode > 599) {
 			return fmt.Errorf("test case %q HTTP fixture status_code must be between 100 and 599", caseID)
@@ -488,21 +521,69 @@ func validateFixture(caseID string, fixture *Fixture) error {
 		if len(item.Body) > MaxScriptBytes {
 			return fmt.Errorf("test case %q HTTP fixture body exceeds %d bytes", caseID, MaxScriptBytes)
 		}
-		key := item.Method + " " + item.URL
-		if _, exists := httpRoutes[key]; exists {
-			return fmt.Errorf("test case %q contains duplicate HTTP fixture %s", caseID, key)
+		if item.BodyEncoding != "" && item.BodyEncoding != "utf8" && item.BodyEncoding != "base64" {
+			return fmt.Errorf("test case %q HTTP fixture body_encoding must be utf8 or base64", caseID)
 		}
-		httpRoutes[key] = struct{}{}
+		for _, matcher := range item.RequestHeaders {
+			if err := validateMatcher(matcher); err != nil {
+				return fmt.Errorf("test case %q: %w", caseID, err)
+			}
+		}
+		if item.RequestBody != nil {
+			if err := validateMatcher(*item.RequestBody); err != nil {
+				return fmt.Errorf("test case %q: %w", caseID, err)
+			}
+		}
 	}
-	tcpRoutes := make(map[string]struct{}, len(fixture.TCP))
 	for _, item := range fixture.TCP {
 		if item.Address == "" {
 			return fmt.Errorf("test case %q TCP fixture requires an address", caseID)
 		}
-		if _, exists := tcpRoutes[item.Address]; exists {
-			return fmt.Errorf("test case %q contains duplicate TCP fixture %s", caseID, item.Address)
+		if len(item.Steps) > MaxExchangeSteps {
+			return fmt.Errorf("test case %q TCP fixture exceeds %d steps", caseID, MaxExchangeSteps)
 		}
-		tcpRoutes[item.Address] = struct{}{}
+		for _, step := range item.Steps {
+			if step.Operation != "write" && step.Operation != "read" && step.Operation != "half_close" {
+				return fmt.Errorf("test case %q TCP fixture has unsupported operation %q", caseID, step.Operation)
+			}
+			if step.Encoding != "" && step.Encoding != "utf8" && step.Encoding != "base64" {
+				return fmt.Errorf("test case %q TCP fixture encoding must be utf8 or base64", caseID)
+			}
+			if step.Data != nil {
+				if err := validateMatcher(*step.Data); err != nil {
+					return fmt.Errorf("test case %q: %w", caseID, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func allowedHTTPMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions:
+		return true
+	default:
+		return false
+	}
+}
+
+func validateMatcher(m FixtureMatcher) error {
+	count := 0
+	if m.Exact != "" {
+		count++
+	}
+	if m.Contains != "" {
+		count++
+	}
+	if m.Regex != "" {
+		count++
+		if _, err := regexp.Compile(m.Regex); err != nil {
+			return fmt.Errorf("invalid fixture regex")
+		}
+	}
+	if count != 1 {
+		return fmt.Errorf("fixture matcher must set exactly one of exact, contains, regex")
 	}
 	return nil
 }

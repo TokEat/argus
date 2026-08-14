@@ -89,6 +89,8 @@ yaksha.result({
 
 当前 Runtime 闭环已完成：常驻 HTTP Daemon、预热 Worker、每请求全新 VM/CLI/Session、密封依赖与 Asset Resolver、调用树、Fixture-only test、未脱敏 debug Trace、精确目标授权、统一原始 TCP Connector、每请求 disabled/direct/SOCKS5/Agent relay 出口、Worker 回收和 OCI 运行隔离。Agent Route 具备租户与权限检查、单次认领、预算、取消、会话失效和控制面审计；默认禁网、出口故障不回退、SOCKS5 Raw URL 不进入 Worker 或输出。
 
+复杂 EXP 的运行时能力已统一：`yaksha.httpRequest` 负责多方法 HTTP、Header/Body、逐跳目标复检和完整响应；`yaksha.tcpExchange` 负责单连接内的有序读写、read-until、超时与半关闭。Fixture 使用相同的有序交互模型且永久离线。当前 Yaklang 完整 `yso` 与场景所需 `codec` 核心可直接使用；发布门禁使用无副作用的 `contract` 校验，test/debug/run 使用严格 `execution` 校验。
+
 Server 权威模型已接入：EXP、不可变 Revision、锁定依赖、版本化 Asset、Fixture、发布/回滚指针、运行记录、风险豁免和审计均按租户管理。生产对象存储固定为私有 MinIO，PostgreSQL 只保存治理数据、对象键、大小和哈希；LocalStore 仅允许显式开发模式。完整 Debug Trace 保持未脱敏并按保留期删除正文，摘要和审计永久保留。
 
 ## 第二条纵向闭环：MCP EXP Workspace

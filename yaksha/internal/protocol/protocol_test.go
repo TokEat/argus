@@ -28,7 +28,7 @@ func TestParseRequest(t *testing.T) {
 		{name: "test without cases", line: `{"action":"test","script":"cli.check()"}`, wantErr: "test_cases"},
 		{name: "cases on run", line: `{"script":"cli.check()","test_cases":[{"id":"case-1","expect":{}}]}`, wantErr: "test_cases require action"},
 		{name: "duplicate cases", line: `{"action":"test","script":"cli.check()","test_cases":[{"id":"same","expect":{}},{"id":"same","expect":{}}]}`, wantErr: "duplicate test case"},
-		{name: "invalid fixture", line: `{"action":"test","script":"cli.check()","test_cases":[{"id":"case-1","fixture":{"http":[{"method":"POST","url":"http://fixture.invalid","status_code":200}]},"expect":{}}]}`, wantErr: "fixtures require method GET"},
+		{name: "invalid fixture", line: `{"action":"test","script":"cli.check()","test_cases":[{"id":"case-1","fixture":{"http":[{"method":"CONNECT","url":"http://fixture.invalid","status_code":200}]},"expect":{}}]}`, wantErr: "unsupported method"},
 		{name: "negative timeout", line: `{"script":"x","timeout_ms":-1}`, wantErr: "timeout_ms"},
 		{name: "excessive timeout", line: `{"script":"x","timeout_ms":120001}`, wantErr: "timeout_ms"},
 		{name: "disabled egress", line: `{"script":"x","egress":{"mode":"disabled"}}`, wantID: "anon", wantAct: ActionRun},

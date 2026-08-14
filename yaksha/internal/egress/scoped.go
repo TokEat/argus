@@ -54,3 +54,21 @@ func (c *ScopedClient) Dial(_ context.Context, target string, allowed []string) 
 	ctx, client := c.selected()
 	return client.Dial(ctx, target, allowed)
 }
+
+func (c *ScopedClient) HTTPRequest(_ context.Context, input HTTPRequest, allowed []string) (HTTPResult, error) {
+	ctx, client := c.selected()
+	extended, ok := client.(ExtendedClient)
+	if !ok {
+		return HTTPResult{}, context.Canceled
+	}
+	return extended.HTTPRequest(ctx, input, allowed)
+}
+
+func (c *ScopedClient) TCPExchange(_ context.Context, input TCPExchangeRequest, allowed []string) (TCPExchangeResult, error) {
+	ctx, client := c.selected()
+	extended, ok := client.(ExtendedClient)
+	if !ok {
+		return TCPExchangeResult{}, context.Canceled
+	}
+	return extended.TCPExchange(ctx, input, allowed)
+}

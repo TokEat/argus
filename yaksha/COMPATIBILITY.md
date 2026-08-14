@@ -22,8 +22,9 @@
 
 | 能力 | 已覆盖场景 |
 | --- | --- |
-| HTTP GET | 状态码、响应正文、执行超时取消、1 MiB 正文上限 |
-| TCP dial | 本地成功连接、连接失败返回脚本可处理的错误 |
+| HTTP | `httpGet` 兼容接口；`httpRequest` 的七种方法、Header/Body、UTF-8/Base64、重定向逐跳授权、完整响应与 1 MiB 上限 |
+| TCP | `dial` 兼容接口；`tcpExchange` 的有序读写、UTF-8/Base64、read-until、空闲超时和半关闭 |
+| EXP 库 | 完整当前 Yaklang `yso`；Base64/Hex/URL、AES-CBC/GCM、PKCS5/7、HMAC-SHA256 和安全随机 `codec` 核心 |
 | Base64 | 编解码、非法输入错误 |
 | 摘要 | MD5、SHA-256 十六进制输出 |
 | JSON | 编解码和非法 JSON 错误 |
@@ -55,7 +56,7 @@ V1 有意不解析上游所有 CLI 控件。未列出的参数类型、`cli.UI` 
 
 ## 已验证的 validate 与 run 绑定
 
-- `validate` 不执行源码，校验必填参数、未知参数、字符串、文本、整数、浮点数、布尔值、字符串列表和选择项范围。
+- `validate` 不执行源码；`contract` 模式允许缺少运行期必填参数，供 Revision 发布门禁使用，`execution` 模式仍严格校验必填参数。两种模式都会校验已提供参数、未知参数、Resolver、目标和协议限制。
 - 校验诊断关联参数字段，但不回显参数值；源码诊断继续保留行列位置。
 - `run` 在启动 VM 前强制执行相同校验，校验失败的脚本逻辑不会运行。
 - 每次 `run` 创建独立的上游 `CliApp`，只暴露 V1 参数和 UI 选项，不使用 Yaklang 全局默认 CLI 实例。
@@ -74,7 +75,7 @@ V1 有意不解析上游所有 CLI 控件。未列出的参数类型、`cli.UI` 
 
 - 单次请求可针对同一份源码顺序执行多组参数，每个用例返回状态、结果、日志、Evidence、Trace 和断言失败列表。
 - 断言支持预期状态、完整 JSON 结果、Evidence 指定字段、日志子串和错误子串；数字比较经过 JSON 归一化。
-- HTTP GET Fixture 可模拟状态码、正文和失败；TCP Fixture 可模拟连接成功、远端地址和失败。
+- HTTP Fixture 按声明顺序消费，支持连续同 URL 响应、请求 Header/Body 的 exact/contains/regex 匹配、完整响应 Header/Body 和失败；TCP Fixture 支持有序读写、匹配、响应和半关闭。
 - test 一律 fail closed：Fixture 缺失或目标不匹配时返回明确错误，不会访问真实网络。
 - 用例 ID、数量、参数大小、Fixture 数量/正文、重复路由和期望状态均在执行前校验。
 - 整批用例共享 `timeout_ms` 总预算，后续用例只能使用剩余时间。
@@ -99,9 +100,8 @@ Yaksha 不在源码入口对 Yaklang 原生语法和上下文内建函数做主�
 
 - OCI 配置已覆盖内存、CPU、文件描述符、PID、capabilities、只读根文件系统、无宿主挂载和临时目录；仍需在目标 Linux amd64/arm64 发布环境持续验证实际 seccomp 与 cgroup 行为。
 - 当前每请求 `disabled/direct/socks5`、write-only SOCKS5 URL 和内部 `relay` 占位契约已完成；Agent 原生多路复用 TCP Egress、Server 单次 Route 授权、租户绑定和 Agent 在线状态仍待后续切片接入。Agent 不提供 SOCKS5 服务。
-- 完整 HTTP 请求：方法、Header、Body、Cookie、重定向策略、TLS 策略和原始报文证据。
-- TCP 收发、二进制载荷、分段读取、半关闭和 UDP；当前 `dial` 只验证连接可达性。
-- AES/RSA/HMAC、Hex、URL 编解码、字节数组转换等常见 EXP 辅助能力。
+- UDP、HTTP/2 原始帧和可复用脚本连接句柄不属于 V1；TCP 连接始终封装在一次 `tcpExchange` 中。
+- RSA 等尚未进入受控 `codec` 核心的算法按真实 EXP 场景增量验证；不直接注入整个系统/网络标准库。
 - Server 适配和治理审计仍未完成；HTTP Context 取消已能回收 Worker，但尚无独立业务 Cancel ID API。
 - V1 不提供语言级断点、step-in、step-over、变量修改或长期暂停 VM；这些不属于当前 EXP 调试目标。
 - Worker 池、进程级 kill、100 次复用上限和健康检查已完成；多租户公平调度与持续失败指数退避仍待 Server 接入阶段设计。

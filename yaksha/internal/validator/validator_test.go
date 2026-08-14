@@ -78,6 +78,17 @@ func TestValidateRejectsParameterErrors(t *testing.T) {
 	}
 }
 
+func TestContractValidationAllowsMissingRuntimeParameters(t *testing.T) {
+	result := Validate(protocol.Request{Action: protocol.ActionValidate, ValidationMode: protocol.ValidationContract, Script: contractSource})
+	if !result.Validation.Valid {
+		t.Fatalf("contract validation failed: %#v", result.Validation.Diagnostics)
+	}
+	execution := Validate(protocol.Request{Action: protocol.ActionValidate, ValidationMode: protocol.ValidationExecution, Script: contractSource})
+	if execution.Validation.Valid || !hasDiagnostic(execution.Validation.Diagnostics, "missing_required_parameter", "target") {
+		t.Fatalf("execution validation=%#v", execution.Validation)
+	}
+}
+
 func TestValidationDoesNotEchoParameterValues(t *testing.T) {
 	secret := "secret-value-must-not-be-returned"
 	result := Validate(protocol.Request{Script: contractSource, Params: map[string]any{"target": secret}})

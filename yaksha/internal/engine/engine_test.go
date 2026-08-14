@@ -219,6 +219,47 @@ yaksha.result(r)
 	}
 }
 
+func TestOrderedHTTPFixtureAndCompleteDebugEvent(t *testing.T) {
+	script := `
+cli.check()
+first, err1 = yaksha.httpRequest({"method": "POST", "url": "http://fixture.invalid/api", "headers": {"X-Step": "one"}, "body": "alpha"})
+second, err2 = yaksha.httpRequest({"method": "POST", "url": "http://fixture.invalid/api", "headers": {"X-Step": "two"}, "body": "beta"})
+if err1 != nil || err2 != nil { panic("fixture failed") }
+yaksha.result([first["body"], second["body"]])`
+	fixture := &protocol.Fixture{HTTP: []protocol.HTTPFixture{
+		{Method: "POST", URL: "http://fixture.invalid/api", RequestHeaders: map[string]protocol.FixtureMatcher{"X-Step": {Exact: "one"}}, RequestBody: &protocol.FixtureMatcher{Contains: "alpha"}, StatusCode: 200, Body: "first"},
+		{Method: "POST", URL: "http://fixture.invalid/api", RequestHeaders: map[string]protocol.FixtureMatcher{"X-Step": {Exact: "two"}}, RequestBody: &protocol.FixtureMatcher{Regex: "^beta$"}, StatusCode: 201, Body: "second"},
+	}}
+	resp := ExecuteTestCase(protocol.Request{ID: "fixture", Action: protocol.ActionRun, Script: script}, fixture)
+	if resp.Status != protocol.StatusSucceeded {
+		t.Fatalf("response=%#v", resp)
+	}
+	if resp.Debug == nil || len(resp.Debug.Events) != 2 || resp.Debug.Events[0].Request == nil || resp.Debug.Events[1].Response == nil {
+		t.Fatalf("debug=%#v", resp.Debug)
+	}
+}
+
+func TestCodecAndYSOLibrariesAreAvailable(t *testing.T) {
+	resp := execScript(t, `
+encoded = codec.EncodeBase64("yaksha")
+principal, err = yso.GetSimplePrincipalCollectionJavaObject()
+if err != nil { panic(err) }
+serialized, err = yso.ToBytes(principal)
+if err != nil { panic(err) }
+yaksha.evidence("serialized", serialized != nil)
+yaksha.result(encoded)`, 5000)
+	if resp.Status != protocol.StatusSucceeded || resp.Result != "eWFrc2hh" || resp.Evidence["serialized"] != true {
+		t.Fatalf("response=%#v", resp)
+	}
+}
+
+func TestYSOResourceBoundsAreEnforced(t *testing.T) {
+	resp := execScript(t, `yso.dirtyDataLength(70000)`, 5000)
+	if resp.Status != protocol.StatusFailed || !strings.Contains(resp.Error, "dirty data exceeds") {
+		t.Fatalf("response=%#v", resp)
+	}
+}
+
 func TestTimeoutKillsRunawayLoop(t *testing.T) {
 	resp := execScript(t, `for 1 == 1 {}`, 300)
 	if resp.Status != protocol.StatusTimeout {
