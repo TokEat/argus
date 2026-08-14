@@ -24,11 +24,11 @@ func TestAPIV1RouteContract(t *testing.T) {
 	}
 	sort.Strings(routes)
 
-	if len(routes) != 222 {
-		t.Fatalf("API v1 route count = %d, want 222\n%s", len(routes), strings.Join(routes, "\n"))
+	if len(routes) != 228 {
+		t.Fatalf("API v1 route count = %d, want 228\n%s", len(routes), strings.Join(routes, "\n"))
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(routes, "\n")+"\n")))
-	const expected = "b39f70ace0fd0dee04cfc423bd46ba256047393bb18f139dfd364505aad51846"
+	const expected = "48e0cd5d47a1cb0d4a2cace1e561fcd3ce174c5c759f30ca0e355aa034dc56ec"
 	if digest != expected {
 		t.Fatalf("API v1 route contract hash = %s, want %s\n%s", digest, expected, strings.Join(routes, "\n"))
 	}
