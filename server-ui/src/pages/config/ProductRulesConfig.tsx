@@ -6,9 +6,9 @@ import DirProbeConfig from './DirProbeConfig';
 import WorkflowConfig from './WorkflowConfig';
 
 const sections = [
-    { key: '/config/active-finger', label: '被动规则 · finger.yaml' },
-    { key: '/config/behavior-probe', label: '行为探针 · active-fingerprints/' },
-    { key: '/config/dir', label: '路径探针 · dir.yaml' },
+    { key: '/config/active-finger', label: '被动规则' },
+    { key: '/config/behavior-probe', label: '行为探针' },
+    { key: '/config/dir', label: '路径探针' },
     { key: '/config/workflow', label: 'Workflow / POC 关联' },
 ];
 

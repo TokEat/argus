@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Alert, Button, Space, Tag, Popconfirm, Modal, Input, Table, Empty, App, Form, Segmented, Tooltip } from 'antd';
+import { Alert, AutoComplete, Button, Space, Tag, Popconfirm, Modal, Input, Table, Empty, App, Form, Segmented, Tooltip } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     PlusOutlined,
@@ -42,6 +42,7 @@ const DirConfig: React.FC = () => {
     const [dictionaries, setDictionaries] = useState<API.FingerprintItem[]>([]);
     const [workflowProducts, setWorkflowProducts] = useState<Set<string>>(new Set());
     const [dirProducts, setDirProducts] = useState<Set<string>>(new Set());
+    const [dirDictionaries, setDirDictionaries] = useState<API.DirItem[]>([]);
     const [searchKeyword, setSearchKeyword] = useState('');
     const [refFilter, setRefFilter] = useState<'all' | 'linked' | 'orphan'>('all');
     const [page, setPage] = useState(1);
@@ -65,8 +66,9 @@ const DirConfig: React.FC = () => {
             setDictionaries(fps || []);
             setWorkflowProducts(new Set((wfs || []).map((w) => w.product)));
             setDirProducts(new Set((dirs || []).map((d) => d.product)));
+            setDirDictionaries(dirs || []);
         } catch {
-            message.error('加载 Fingerprint 指纹库失败');
+            message.error('加载被动规则失败');
         } finally {
             setLoading(false);
         }
@@ -193,12 +195,12 @@ const DirConfig: React.FC = () => {
             ),
         },
         {
-            title: '同产品规则关联',
+            title: '关联',
             key: 'reference',
             width: 200,
             filters: [
                 { text: '已关联 Workflow', value: 'wf' },
-                { text: '已关联 Dir', value: 'dir' },
+                { text: '已关联路径探针', value: 'dir' },
                 { text: '未关联', value: 'orphan' },
             ],
             onFilter: (v, r) => v === 'wf' ? r._refWorkflow : v === 'dir' ? r._refDir : !r._refWorkflow && !r._refDir,
@@ -210,9 +212,9 @@ const DirConfig: React.FC = () => {
                         </Tooltip>
                     ) : null}
                     {r._refDir ? (
-                        <Tooltip title="该产品在 dir.yaml 中配置了路径探针；启用主动路径指纹后，Scanner 会在 HTTP 探测后独立请求这些路径，再用该产品的被动规则复核响应。">
+                        <Tooltip title="该产品已关联路径探针；启用主动路径指纹后，Scanner 会请求这些路径，再用同产品被动规则复核响应。">
                             <Button type="link" size="small" style={{ padding: 0 }} onClick={() => openDirPaths(r.product)} aria-label={`编辑 ${r.product} 路径探针`}>
-                                <Tag color="blue" icon={<LinkOutlined />} style={{ cursor: 'pointer', marginInlineEnd: 0 }}>Dir</Tag>
+                                <Tag color="blue" icon={<LinkOutlined />} style={{ cursor: 'pointer', marginInlineEnd: 0 }}>路径探针</Tag>
                             </Button>
                         </Tooltip>
                     ) : null}
@@ -250,7 +252,7 @@ const DirConfig: React.FC = () => {
             render: (_: unknown, record: EnrichedFingerprint) => (
                 <Space size={4}>
                     <Button type="link" size="small" icon={<FolderOpenOutlined />} onClick={() => openDirPaths(record.product)}>
-                        {record._refDir ? '路径' : '配置路径'}
+                        {record._refDir ? '路径探针' : '关联路径探针'}
                     </Button>
                     <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
                     <Popconfirm title="确认删除该产品的指纹规则？" onConfirm={() => handleDelete(record.product)}>
@@ -268,7 +270,7 @@ const DirConfig: React.FC = () => {
                 showIcon
                 style={{ marginBottom: 16 }}
                 message="被动识别与主动路径是两条互补链路"
-                description="被动规则分析已有响应；启用主动路径指纹后，Scanner 会在 HTTP 探测后独立请求 dir.yaml 中的路径，并用同产品的被动规则复核响应。Dir 不是被动命中后的条件触发器。"
+                description="被动规则分析已有响应；启用主动路径指纹后，Scanner 会独立请求已配置路径，并用同产品被动规则复核响应。路径探针不是被动命中后的条件触发器。"
             />
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
                 <Space wrap>
@@ -339,13 +341,39 @@ const DirConfig: React.FC = () => {
                 >
                 <div style={{ padding: '16px 0 0 0' }}>
                     <Form form={form} layout="vertical">
-                        <Form.Item 
-                            label="提取指纹名称 (Product Name)" 
+                        <Form.Item
+                            label={
+                                <Space>
+                                    <span>产品名称 (Product)</span>
+                                    <Tooltip title="选择已有路径探针后，会使用相同 Product 建立运行时关联。">
+                                        <Tag color="blue" style={{ cursor: 'help' }}>联动路径探针</Tag>
+                                    </Tooltip>
+                                </Space>
+                            }
                             name="product" 
                             rules={[{ required: true, message: '请填写指纹名称' }]}
-                            extra="例如 `Liferay-Portal-System`"
+                            extra="可搜索并选择已有路径探针，也可直接输入新产品名。关联始终使用相同 Product。"
                         >
-                            <Input placeholder="输入该匹配规则对应的产品特征名" />
+                            <AutoComplete
+                                placeholder="输入产品名，或选择已有路径探针"
+                                allowClear
+                                showSearch
+                                filterOption={(input, option) =>
+                                    String(option?.value || '').toLowerCase().includes(input.toLowerCase())
+                                }
+                                options={dirDictionaries
+                                    .slice()
+                                    .sort((a, b) => a.product.localeCompare(b.product))
+                                    .map((item) => ({
+                                        value: item.product,
+                                        label: (
+                                            <Space>
+                                                <span>{item.product}</span>
+                                                <Tag color="geekblue">{item.paths?.length || 0} 条路径</Tag>
+                                            </Space>
+                                        ),
+                                    }))}
+                            />
                         </Form.Item>
 
                         <Form.Item 

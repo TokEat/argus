@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { App } from 'antd';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import DirConfig from './DirConfig';
-import { getDirDict, getFingerprintDict, getWorkflowDict, updateFingerprintDict } from '../../services/api';
+import { addFingerprintDict, getDirDict, getFingerprintDict, getWorkflowDict, updateFingerprintDict } from '../../services/api';
 
 vi.mock('../../contexts/GlobalAIContext', () => ({
     useAutoContext: vi.fn(),
@@ -35,6 +35,8 @@ describe('DirConfig', () => {
         vi.mocked(getFingerprintDict).mockReset();
         vi.mocked(getWorkflowDict).mockReset();
         vi.mocked(getDirDict).mockReset();
+        vi.mocked(addFingerprintDict).mockReset();
+        vi.mocked(updateFingerprintDict).mockReset();
         vi.mocked(getFingerprintDict).mockResolvedValue(fingerprints);
         vi.mocked(getWorkflowDict).mockResolvedValue([]);
         vi.mocked(getDirDict).mockResolvedValue([]);
@@ -86,6 +88,28 @@ describe('DirConfig', () => {
             rules: ['body="alpha"', 'header="beta" || cert="beta"'],
         });
     }, 15000);
+
+    it('selects an existing path probe when creating a passive rule', async () => {
+        const user = userEvent.setup();
+        vi.mocked(getDirDict).mockResolvedValue([{ product: 'Existing-Path-Probe', paths: ['/admin', '/login'] }]);
+        renderPage();
+
+        await user.click(await screen.findByRole('button', { name: /新增特征指纹/ }));
+        const productInput = await screen.findByRole('combobox', { name: /产品名称/ });
+        await user.click(productInput);
+        await user.type(productInput, 'Existing');
+        const matches = await screen.findAllByText('Existing-Path-Probe');
+        await user.click(matches[matches.length - 1]);
+        expect(productInput).toHaveValue('Existing-Path-Probe');
+
+        await user.type(screen.getByPlaceholderText('每行一条规则，规则之间按 OR 关系处理'), 'title="linked"');
+        await user.click(screen.getByRole('button', { name: 'OK' }));
+
+        expect(addFingerprintDict).toHaveBeenCalledWith({
+            product: 'Existing-Path-Probe',
+            rules: ['title="linked"'],
+        });
+    });
 
     it('opens the matching path-probe editor from the Dir association', async () => {
         const user = userEvent.setup();
