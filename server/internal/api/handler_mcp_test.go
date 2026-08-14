@@ -145,8 +145,8 @@ func TestMCPResourceEndpointsReturnSelfDescribingDocs(t *testing.T) {
 	}{
 		{name: "quickstart", handler: mcpArgusMCPQuickstart, wantURI: "argus://argus-mcp/quickstart", want: []string{"argus_rule_debug", "argus_rule_save", "argus_rule_apply"}},
 		{name: "fingerprint spec", handler: mcpFingerprintSpec, wantURI: "argus://fingerprint/spec", want: []string{"body=", "product_name"}},
-		{name: "behavior probe spec", handler: mcpBehaviorProbeSpec, wantURI: "argus://behavior-probe/spec", want: []string{"active-fingerprint", "risk_confirmed", "HTTP/HTTPS"}},
-		{name: "behavior probe template", handler: mcpBehaviorProbeTemplate, wantURI: "argus://behavior-probe/template", want: []string{"example-product-detect", "Example-Product", "argus-product"}},
+		{name: "behavior probe spec", handler: mcpBehaviorProbeSpec, wantURI: "argus://behavior-probe/spec", want: []string{"active-fingerprint", "argus-behavior-kind", "ordinary HTTP response", "risk_confirmed", "HTTP/HTTPS"}},
+		{name: "behavior probe template", handler: mcpBehaviorProbeTemplate, wantURI: "argus://behavior-probe/template", want: []string{"example-product-detect", "Example-Product", "argus-behavior-kind", "{{randstr}}"}},
 		{name: "poc spec", handler: mcpPOCSpec, wantURI: "argus://poc/spec", want: []string{"id:", "requests:", "matchers:"}},
 		{name: "workflow spec", handler: mcpWorkflowSpec, wantURI: "argus://workflow/spec", want: []string{"root", "workflow_pocs", "General-Poc-*", "general POC workflow"}},
 		{name: "full chain example", handler: mcpFullChainExample, wantURI: "argus://examples/fingerprint-poc-workflow", want: []string{"fingerprint", "workflow_links", "test_only"}},
@@ -181,11 +181,14 @@ info:
   metadata:
     argus-rule-kind: active-fingerprint
     argus-product: MCP-Product
+    argus-behavior-kind: header
     max-request: 1
 http:
   - method: GET
     path:
       - "{{BaseURL}}"
+    headers:
+      X-Argus-Probe: "{{randstr}}"
     matchers:
       - type: status
         status: [200]

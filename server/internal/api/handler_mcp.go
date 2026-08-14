@@ -584,10 +584,13 @@ Each behavior probe is one complete Nuclei HTTP/HTTPS YAML file stored as an ind
 Required metadata:
 - argus-rule-kind: active-fingerprint
 - argus-product: product name written as an Active-Finger result on matcher success
+- argus-behavior-kind: cookie, header or query
 - argus-auto-profile is informational; Server recomputes the effective classification
 - max-request: positive request count
 
-Safe automatic probes are limited to one GET/HEAD request, one same-origin BaseURL path, no body/raw/payload/fuzz/OAST/headless/code, and no dangerous headers. Other valid HTTP/HTTPS templates are classified controlled: they can be stored, published and individually debugged with risk_confirmed=true, but are never included in automatic scanning.
+This rule kind is reserved for products that cannot be identified from an ordinary HTTP response or a known static path. The request must actively stimulate a deterministic product behavior with a random value: a Cookie, a safe custom X-* header, or a query parameter containing {{randstr}}. Ordinary response matchers belong in passive fingerprint rules; ordinary path GETs belong in path probes; vulnerability checks belong in POC rules.
+
+Safe automatic probes are limited to one GET/HEAD request, one same-origin BaseURL path, no body/raw/payload/fuzz/OAST/headless/code, and no dangerous headers. A valid behavior probe outside that safety envelope is classified controlled: it can be stored, published and individually debugged with risk_confirmed=true, but is never included in automatic scanning.
 
 Use rule_type=behavior_probe for read, debug, save, publish, deprecate and rollback. Debug requires file_name, content, agent_id and target_url. Save always creates a Draft; admin lifecycle actions require the exact stable_ref hash/version.
 `
@@ -599,12 +602,15 @@ info:
   metadata:
     argus-rule-kind: active-fingerprint
     argus-product: ExampleProduct
+    argus-behavior-kind: header
     argus-auto-profile: safe
     max-request: 1
 http:
   - method: GET
     path:
       - "{{BaseURL}}"
+    headers:
+      X-Argus-Product-Probe: "{{randstr}}"
     matchers:
       - type: word
         part: header

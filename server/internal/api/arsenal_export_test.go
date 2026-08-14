@@ -233,7 +233,7 @@ func seedArsenalExportRules(t *testing.T, store *gorm.DB) {
 	t.Helper()
 	pocID := db.BuildTenantArsenalID("default", "poc", "http-demo.yaml")
 	activeID := db.BuildTenantArsenalID("default", "active_fingerprint", "http-product-detect.yaml")
-	activeContent := "id: http-product-detect\ninfo:\n  name: HTTP Product Detect\n  severity: info\n  metadata:\n    argus-rule-kind: active-fingerprint\n    argus-product: HTTPProduct\n    argus-auto-profile: safe\n    max-request: 1\nhttp:\n  - method: GET\n    path: ['{{BaseURL}}']\n    matchers: [{type: status, status: [200]}]\n"
+	activeContent := "id: http-product-detect\ninfo:\n  name: HTTP Product Detect\n  severity: info\n  metadata:\n    argus-rule-kind: active-fingerprint\n    argus-product: HTTPProduct\n    argus-behavior-kind: header\n    argus-auto-profile: safe\n    max-request: 1\nhttp:\n  - method: GET\n    path: ['{{BaseURL}}']\n    headers: {X-Argus-Probe: '{{randstr}}'}\n    matchers: [{type: status, status: [200]}]\n"
 	activeHash := fmt.Sprintf("%x", md5.Sum([]byte(activeContent)))
 	rows := []db.Arsenal{
 		{

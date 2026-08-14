@@ -647,6 +647,7 @@ declare namespace API {
   interface ActiveFingerprintClassification {
     id: string;
     product: string;
+    behavior_kind: 'cookie' | 'header' | 'query';
     declared_profile?: string;
     computed_profile: 'safe' | 'controlled';
     auto_eligible: boolean;

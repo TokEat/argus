@@ -81,7 +81,8 @@ const (
 	legacyShiroPOCMD5      = "7774baad68d35d51457514f81de51b53"
 	legacyShiroWorkflowMD5 = "02854e9cb1e8bcceb2779e6bf7507e1a"
 	activeShiroWorkflowMD5 = "93477c20f770d573528d7df5085f239e"
-	activeShiroProbeMD5    = "b17c2311ae032f502a4fc258129e50a4"
+	previousShiroProbeMD5  = "b17c2311ae032f502a4fc258129e50a4"
+	activeShiroProbeMD5    = "72e331ff053fc10956c73804502c6994"
 )
 
 // prepareShiroActiveFingerprintMigration applies the built-in Shiro move only
@@ -113,7 +114,8 @@ func prepareShiroActiveFingerprintMigration(tx *gorm.DB, incoming []Arsenal) ([]
 		conflicts := make([]string, 0, 3)
 		var existingActive Arsenal
 		if err := tx.Where("tenant_id = ? AND type IN ? AND file_name = ?", tenantID, ArsenalTypeAliases("active_fingerprint"), "shiro-detect.yaml").First(&existingActive).Error; err == nil {
-			if arsenalContentMD5(existingActive) != activeShiroProbeMD5 {
+			hash := arsenalContentMD5(existingActive)
+			if hash != activeShiroProbeMD5 && hash != previousShiroProbeMD5 {
 				conflicts = append(conflicts, "active-fingerprints/shiro-detect.yaml is tenant-customized")
 			}
 		} else if err != gorm.ErrRecordNotFound {

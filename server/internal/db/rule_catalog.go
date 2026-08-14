@@ -23,7 +23,7 @@ import (
 
 const (
 	RuleCatalogBootstrapKey    = "rule_catalog_v1"
-	RuleCatalogSchemaVersion   = 6
+	RuleCatalogSchemaVersion   = 7
 	RuleCatalogStatusReady     = "ready"
 	RuleCatalogStatusPartial   = "partial"
 	RuleCatalogStatusEmpty     = "empty"

@@ -72,7 +72,17 @@ func TestSaveActiveFingerprintValidatesBeforePersistAndRecordsRevision(t *testin
 		t.Fatalf("invalid behavior probe persisted, count=%d", count)
 	}
 
-	valid := "id: safe-probe\ninfo:\n  name: Safe\n  severity: info\n  metadata:\n    argus-rule-kind: active-fingerprint\n    argus-product: SafeProduct\n    max-request: 1\nhttp:\n  - method: GET\n    path: ['{{BaseURL}}']\n    matchers:\n      - type: status\n        status: [200]\n"
+	ordinary := "id: ordinary-response\ninfo:\n  name: Ordinary Response\n  severity: info\n  metadata:\n    argus-rule-kind: active-fingerprint\n    argus-product: OrdinaryProduct\n    max-request: 1\nhttp:\n  - method: GET\n    path: ['{{BaseURL}}']\n    matchers:\n      - type: status\n        status: [200]\n"
+	c, w = newTenantContextWithRole(http.MethodPost, "/arsenals/active_fingerprint/ordinary.yaml", "admin", "user-1")
+	c.Params = gin.Params{{Key: "type", Value: "active_fingerprint"}, {Key: "filename", Value: "ordinary.yaml"}}
+	c.Request = httptest.NewRequest(http.MethodPost, c.Request.URL.Path, strings.NewReader(`{"content":`+fmt.Sprintf("%q", ordinary)+`}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	saveArsenal(c)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "argus-behavior-kind") {
+		t.Fatalf("expected ordinary HTTP fingerprint rejection, got %d (%s)", w.Code, w.Body.String())
+	}
+
+	valid := "id: safe-probe\ninfo:\n  name: Safe\n  severity: info\n  metadata:\n    argus-rule-kind: active-fingerprint\n    argus-product: SafeProduct\n    argus-behavior-kind: header\n    max-request: 1\nhttp:\n  - method: GET\n    path: ['{{BaseURL}}']\n    headers: {X-Argus-Probe: '{{randstr}}'}\n    matchers:\n      - type: status\n        status: [200]\n"
 	c, w = newTenantContextWithRole(http.MethodPost, "/arsenals/active_fingerprint/safe.yaml", "admin", "user-1")
 	c.Params = gin.Params{{Key: "type", Value: "active_fingerprint"}, {Key: "filename", Value: "safe.yaml"}}
 	c.Request = httptest.NewRequest(http.MethodPost, c.Request.URL.Path, strings.NewReader(`{"content":`+fmt.Sprintf("%q", valid)+`}`))

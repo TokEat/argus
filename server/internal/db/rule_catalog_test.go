@@ -312,11 +312,13 @@ info:
   metadata:
     argus-rule-kind: active-fingerprint
     argus-product: APACHE-Shiro
+    argus-behavior-kind: cookie
     argus-auto-profile: controlled
     max-request: 1
 http:
   - method: GET
     path: ['{{BaseURL}}']
+    headers: {Cookie: 'rememberMe={{randstr}}'}
     matchers: [{type: status, status: [200]}]
 `,
 	})

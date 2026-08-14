@@ -2,6 +2,7 @@ package db
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -41,6 +42,34 @@ func TestPrepareShiroActiveFingerprintMigrationPreservesTenantConflict(t *testin
 	var preserved Arsenal
 	if err := store.First(&preserved, "id = ?", custom.ID).Error; err != nil || preserved.Content != custom.Content {
 		t.Fatalf("custom active fingerprint was not preserved: %+v err=%v", preserved, err)
+	}
+}
+
+func TestPrepareShiroActiveFingerprintMigrationUpgradesPreviousBuiltIn(t *testing.T) {
+	store, err := gorm.Open(sqlite.Open("file:seed-upgrade?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AutoMigrate(&Arsenal{}); err != nil {
+		t.Fatal(err)
+	}
+	active := readSeedFixture(t, "../../../scanner/common/config/active-fingerprints/shiro-detect.yaml", "active_fingerprint", "shiro-detect.yaml")
+	workflow := readSeedFixture(t, "../../../scanner/common/config/workflow.yaml", "workflow", "workflow.yaml")
+	previous := active
+	previous.ID = BuildTenantArsenalID("default", "active_fingerprint", previous.FileName)
+	previous.Content = strings.Replace(previous.Content, "    argus-behavior-kind: cookie\n", "", 1)
+	if got := arsenalContentMD5(previous); got != previousShiroProbeMD5 {
+		t.Fatalf("previous active Shiro built-in hash drifted: got %s", got)
+	}
+	if err := store.Create(&previous).Error; err != nil {
+		t.Fatal(err)
+	}
+	filtered, err := prepareShiroActiveFingerprintMigration(store, []Arsenal{active, workflow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered) != 2 {
+		t.Fatalf("expected previous built-in to be eligible for upgrade, got %+v", filtered)
 	}
 }
 

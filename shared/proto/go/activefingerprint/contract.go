@@ -22,6 +22,9 @@ const (
 	RuleKind               = "active-fingerprint"
 	AutoProfileSafe        = "safe"
 	AutoProfileControlled  = "controlled"
+	BehaviorKindCookie     = "cookie"
+	BehaviorKindHeader     = "header"
+	BehaviorKindQuery      = "query"
 	MaxAutoSafePerTenant   = 8
 	MaxSameOriginRedirects = 2
 	MaxTemplateBytes       = 1 << 20
@@ -32,6 +35,7 @@ var templateIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 type Classification struct {
 	ID              string   `json:"id"`
 	Product         string   `json:"product"`
+	BehaviorKind    string   `json:"behavior_kind"`
 	DeclaredProfile string   `json:"declared_profile,omitempty"`
 	ComputedProfile string   `json:"computed_profile"`
 	AutoEligible    bool     `json:"auto_eligible"`
@@ -127,6 +131,7 @@ func Inspect(fileName string, source []byte) (Classification, error) {
 	if kind := metadataString(doc.Info.Metadata, "argus-rule-kind", "argus_rule_kind"); kind != RuleKind {
 		return result, fmt.Errorf("active fingerprint info.metadata.argus-rule-kind must be %q", RuleKind)
 	}
+	result.BehaviorKind = strings.ToLower(metadataString(doc.Info.Metadata, "argus-behavior-kind", "argus_behavior_kind"))
 	result.DeclaredProfile = strings.ToLower(metadataString(doc.Info.Metadata, "argus-auto-profile", "argus_auto_profile"))
 	if rawMax := metadataString(doc.Info.Metadata, "max-request", "max_request"); rawMax != "" {
 		parsed, parseErr := strconv.Atoi(rawMax)
@@ -139,12 +144,129 @@ func Inspect(fileName string, source []byte) (Classification, error) {
 	if len(requests) == 0 {
 		return result, errors.New("active fingerprint requires an http request")
 	}
+	if err := validateBehaviorStimulus(result.BehaviorKind, requests); err != nil {
+		return result, err
+	}
 	result.Reasons = automaticSafetyReasons(requests, source, result.MaxRequests, topLevel)
 	result.AutoEligible = len(result.Reasons) == 0
 	if result.AutoEligible {
 		result.ComputedProfile = AutoProfileSafe
 	}
 	return result, nil
+}
+
+func validateBehaviorStimulus(kind string, requests []httpRequest) error {
+	switch kind {
+	case BehaviorKindCookie:
+		for _, request := range requests {
+			for name, value := range request.Headers {
+				if strings.EqualFold(strings.TrimSpace(name), "cookie") && cookieHasRandomValue(value) {
+					return nil
+				}
+			}
+			for _, raw := range request.Raw {
+				if rawHeaderHasRandomProbe(raw, "cookie", false) {
+					return nil
+				}
+			}
+		}
+		return errors.New("cookie behavior fingerprint requires a Cookie value containing {{randstr}}")
+	case BehaviorKindHeader:
+		for _, request := range requests {
+			for name, value := range request.Headers {
+				normalized := strings.ToLower(strings.TrimSpace(name))
+				if strings.HasPrefix(normalized, "x-") && containsRandomProbe(value) {
+					if _, forbidden := forbiddenAutomaticHeaders[normalized]; !forbidden {
+						return nil
+					}
+				}
+			}
+			for _, raw := range request.Raw {
+				if rawHeaderHasRandomProbe(raw, "", true) {
+					return nil
+				}
+			}
+		}
+		return errors.New("header behavior fingerprint requires a safe custom X-* header value containing {{randstr}}")
+	case BehaviorKindQuery:
+		for _, request := range requests {
+			for _, path := range request.Path {
+				if pathHasRandomQuery(path) {
+					return nil
+				}
+			}
+			for _, raw := range request.Raw {
+				firstLine, _, _ := strings.Cut(strings.ReplaceAll(raw, "\r\n", "\n"), "\n")
+				parts := strings.Fields(firstLine)
+				if len(parts) >= 2 && pathHasRandomQuery(parts[1]) {
+					return nil
+				}
+			}
+		}
+		return errors.New("query behavior fingerprint requires a query parameter value containing {{randstr}}")
+	case "":
+		return errors.New("active fingerprint info.metadata.argus-behavior-kind is required")
+	default:
+		return errors.New("active fingerprint info.metadata.argus-behavior-kind must be cookie, header, or query")
+	}
+}
+
+func containsRandomProbe(value string) bool {
+	return strings.Contains(strings.ToLower(value), "{{randstr}}")
+}
+
+func pathHasRandomQuery(path string) bool {
+	queryAt := strings.Index(path, "?")
+	if queryAt < 0 {
+		return false
+	}
+	query := path[queryAt+1:]
+	if fragmentAt := strings.Index(query, "#"); fragmentAt >= 0 {
+		query = query[:fragmentAt]
+	}
+	for _, pair := range strings.Split(query, "&") {
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && containsRandomProbe(parts[1]) {
+			return true
+		}
+	}
+	return false
+}
+
+func cookieHasRandomValue(header string) bool {
+	for _, pair := range strings.Split(header, ";") {
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && containsRandomProbe(parts[1]) {
+			return true
+		}
+	}
+	return false
+}
+
+func rawHeaderHasRandomProbe(raw, requiredName string, customHeader bool) bool {
+	lines := strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n")
+	for _, line := range lines[1:] {
+		if strings.TrimSpace(line) == "" {
+			break
+		}
+		name, value, present := strings.Cut(line, ":")
+		if !present || !containsRandomProbe(value) {
+			continue
+		}
+		normalized := strings.ToLower(strings.TrimSpace(name))
+		if requiredName == "cookie" && normalized == requiredName && cookieHasRandomValue(value) {
+			return true
+		}
+		if requiredName != "" && requiredName != "cookie" && normalized == requiredName {
+			return true
+		}
+		if customHeader && strings.HasPrefix(normalized, "x-") {
+			if _, forbidden := forbiddenAutomaticHeaders[normalized]; !forbidden {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func automaticSafetyReasons(requests []httpRequest, source []byte, maxRequests int, topLevel map[string]yaml.Node) []string {

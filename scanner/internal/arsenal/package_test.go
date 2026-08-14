@@ -47,7 +47,7 @@ func TestBuildRulePackageFromConfigIncludesRuntimeAssets(t *testing.T) {
 	writePackageTestFile(t, filepath.Join(configDir, "workflow.yaml"), "Demo:\n  type: [root]\n  pocs: [demo.yaml]\n")
 	writePackageTestFile(t, filepath.Join(configDir, "dir.yaml"), "Demo:\n  - /demo\n")
 	writePackageTestFile(t, filepath.Join(configDir, "pocs", "demo.yaml"), "id: demo\ninfo:\n  name: demo\n  author: test\n  severity: info\nhttp: []\n")
-	writePackageTestFile(t, filepath.Join(configDir, "active-fingerprints", "demo-detect.yaml"), "id: demo-detect\ninfo:\n  name: demo detect\n  severity: info\n  metadata:\n    argus-rule-kind: active-fingerprint\n    argus-product: Demo\n    argus-auto-profile: safe\n    max-request: 1\nhttp:\n  - method: GET\n    path: ['{{BaseURL}}']\n    matchers:\n      - type: word\n        words: [demo]\n")
+	writePackageTestFile(t, filepath.Join(configDir, "active-fingerprints", "demo-detect.yaml"), "id: demo-detect\ninfo:\n  name: demo detect\n  severity: info\n  metadata:\n    argus-rule-kind: active-fingerprint\n    argus-product: Demo\n    argus-behavior-kind: header\n    argus-auto-profile: safe\n    max-request: 1\nhttp:\n  - method: GET\n    path: ['{{BaseURL}}']\n    headers: {X-Argus-Probe: '{{randstr}}'}\n    matchers:\n      - type: word\n        words: [demo]\n")
 	writePackageTestFile(t, filepath.Join(configDir, "pocs", "helpers", "payload.txt"), "payload\n")
 	writePackageTestFile(t, filepath.Join(configDir, "dict", "mysql.txt"), "root:root\n")
 	writePackageTestFile(t, filepath.Join(configDir, "subdomains.txt"), "www\n")

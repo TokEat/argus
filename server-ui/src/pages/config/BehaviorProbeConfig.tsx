@@ -18,12 +18,15 @@ info:
   metadata:
     argus-rule-kind: active-fingerprint
     argus-product: ProductName
+    argus-behavior-kind: header
     argus-auto-profile: safe
     max-request: 1
 http:
   - method: GET
     path:
       - "{{BaseURL}}"
+    headers:
+      X-Argus-Product-Probe: "{{randstr}}"
     matchers:
       - type: word
         part: header
@@ -149,7 +152,7 @@ export default function BehaviorProbeConfig() {
 
     const profile = classification?.auto_eligible ? '自动安全' : '受控模板';
     return <>
-        <Alert type="info" showIcon style={{ marginBottom: 16 }} message="一条探针一个完整 Nuclei YAML" description="自动扫描仅执行 Server 重新分类为安全的 HTTP/HTTPS 单请求模板；受控模板只能在授权目标上单独调试。每租户最多启用 8 条自动安全探针。" />
+        <Alert type="info" showIcon style={{ marginBottom: 16 }} message="只用于普通 HTTP 指纹无法识别的行为特征" description="模板必须用随机 Cookie、自定义 X-* Header 或 Query 主动刺激可判定的产品行为。普通响应特征写入被动规则，固定路径特征写入路径探针，漏洞验证写入 POC。自动扫描仅执行 Server 重新分类为安全的单请求模板。" />
         <Space style={{ marginBottom: 16 }}><Button type="primary" onClick={openCreate}>新增行为探针</Button><Text type="secondary">{rows.length} 个独立 Artifact</Text></Space>
         <Table loading={loading} rowKey="ID" dataSource={rows} columns={columns} pagination={{ pageSize: 12 }} />
 
@@ -157,7 +160,7 @@ export default function BehaviorProbeConfig() {
             <Tabs items={[
                 { key: 'source', label: 'YAML 与元数据', children: <Space direction="vertical" style={{ width: '100%' }}>
                     <Input value={fileName} disabled={Boolean(current)} onChange={(event) => setFileName(event.target.value)} placeholder="product-detect.yaml" />
-                    {classification && <Alert type={classification.auto_eligible ? 'success' : 'warning'} showIcon message={`${profile} · ${classification.product} · ${classification.id}`} description={classification.reasons?.length ? classification.reasons.join('；') : '符合标准任务自动执行边界'} />}
+                    {classification && <Alert type={classification.auto_eligible ? 'success' : 'warning'} showIcon message={`${profile} · ${classification.behavior_kind} · ${classification.product} · ${classification.id}`} description={classification.reasons?.length ? classification.reasons.join('；') : '符合标准任务自动执行边界'} />}
                     {classificationError && <Alert type="error" showIcon message="模板无效" description={classificationError} />}
                     <Editor height="62vh" language="yaml" value={content} onChange={(value) => setContent(value || '')} options={{ minimap: { enabled: false }, wordWrap: 'on' }} />
                 </Space> },

@@ -18,13 +18,17 @@
 
 字典爆破深度为 1–4 层，深度预设默认 2 层。第 1 层对根域爆破；后续层只对上一层真实解析成功的子域继续爆破，不会预先生成完整笛卡尔树。深度大于 1 的任务只会调度给声明 `subdomain_depth=v1` 的 Agent；绑定项目字典时还要求 `subdomain_dictionary=v1`。
 
-Web 指纹分为响应指纹、安全行为探针和主动路径指纹。行为探针在 HTTP 探测后运行，每个规范化 HTTP 服务端点对每条密封规则最多发送一次请求；它使用独立的 `active-fingerprints/*.yaml` Nuclei 模板，命中后产出 `Active-Finger`，不会直接创建漏洞。快速预设默认关闭，标准与深度默认开启。主动路径指纹仍由 `dir.yaml` 定义产品特征路径，不等同于向站点广播通用目录字典。
+Web 指纹分为响应指纹、安全行为探针和主动路径指纹，三者不能因为都使用 HTTP 请求而混用：普通响应的 Header、Body、Title 或状态即可识别的产品必须写入被动规则；访问确定的静态特征路径即可识别的产品必须写入路径探针；只有普通响应和静态路径都无法识别、必须构造一个安全输入并观察产品特有行为时，才允许写入行为探针。漏洞是否存在的验证始终属于 POC，不属于指纹识别。
+
+行为探针在 HTTP 探测后运行，每个规范化 HTTP 服务端点对每条密封规则最多发送一次请求；它使用独立的 `active-fingerprints/*.yaml` Nuclei 模板，命中后产出 `Active-Finger`，不会直接创建漏洞。快速预设默认关闭，标准与深度默认开启。主动路径指纹仍由 `dir.yaml` 定义产品特征路径，不等同于向站点广播通用目录字典。
 
 行为探针可以作为后续受控验证的精确信号，但不能直接挂载任意 POC。只有共享 GoPoc 治理目录中已审核、已启用并明确声明该 Nuclei 模板 ID 的漏洞检查，才会在已授权的风险验证阶段生成密封目标。例如 `shiro-detect` 命中后只记录 `APACHE-Shiro` 产品指纹，并可触发 `Shiro-Key-Crack`；它不会把 RuoYi、EasyReport 或 OneBlog 等产品专用 POC 泛化绑定到所有 Shiro 站点。
 
-只有 Server 重新分类为自动安全的 HTTP/HTTPS 单请求 GET/HEAD 模板能进入普通任务：无 Body、Raw、Payload/Fuzz、OAST、Headless/Code、跨源跳转或危险 Header。任务绑定规则版本、文件 SHA-256 和产品名；Agent 在执行前重新解析并核对，任何漂移都会失败关闭。每租户最多启用 8 条自动安全探针，Agent 必须声明 `behavior_probe=v1`。行为探针与 POC 开关相互独立，不会触发旧的通用 Shiro POC Workflow。
+行为探针必须声明 `argus-behavior-kind: cookie|header|query`，并在对应 Cookie、自定义 `X-*` Header 或 Query 参数值中实际使用 `{{randstr}}`。缺少随机行为刺激的普通根路径或固定路径请求会被拒绝保存为行为探针，而不是降级为 `controlled`。这个机械校验只证明请求确实包含刺激；Admin 审核仍须确认该行为对识别产品是必要的，不能把已有被动或路径指纹重复搬入行为探针。
 
-弹药库的“产品规则”页把 `finger.yaml`、`active-fingerprints/*.yaml`、`dir.yaml` 和 Workflow/POC 关联分开维护。每个行为探针是独立 Artifact，保存后进入 Draft；发布、废弃和回滚由 Admin 执行并记录精确版本、哈希和操作者。完整 HTTP/HTTPS Nuclei YAML 可以保存并在授权目标上调试，但分类为 `controlled` 的模板必须显式确认风险，且永远不会因普通任务开启行为探针而被批量执行。MCP 使用 `rule_type=behavior_probe` 走同一套读取、调试、保存和生命周期边界。
+只有 Server 重新分类为自动安全的 HTTP/HTTPS 单请求 GET/HEAD 模板能进入普通任务：无 Body、Raw、Payload/Fuzz、OAST、Headless/Code、跨源跳转或危险 Header。具有有效行为刺激但超出自动安全范围的模板可以归类为 `controlled`，只允许在授权目标上显式调试。任务绑定规则版本、文件 SHA-256 和产品名；Agent 在执行前重新解析并核对，任何漂移都会失败关闭。每租户最多启用 8 条自动安全探针，Agent 必须声明 `behavior_probe=v1`。行为探针与 POC 开关相互独立，不会触发旧的通用 Shiro POC Workflow。
+
+弹药库的“产品规则”页把 `finger.yaml`、`active-fingerprints/*.yaml`、`dir.yaml` 和 Workflow/POC 关联分开维护。每个行为探针是独立 Artifact，保存后进入 Draft；发布、废弃和回滚由 Admin 执行并记录精确版本、哈希和操作者。符合上述行为语义的完整 HTTP/HTTPS Nuclei YAML 可以保存并在授权目标上调试，但分类为 `controlled` 的模板必须显式确认风险，且永远不会因普通任务开启行为探针而被批量执行。旧自定义 Artifact 若缺少行为类型或随机刺激，将从可执行目录中失败关闭，须由维护者重新归类或修订；未修改的内置 Shiro 探针会自动升级。MCP 使用 `rule_type=behavior_probe` 走同一套读取、调试、保存和生命周期边界。
 
 ## 验证阶段
 

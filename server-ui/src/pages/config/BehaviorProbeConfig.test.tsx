@@ -40,6 +40,7 @@ describe('BehaviorProbeConfig', () => {
         expect(await screen.findByText('shiro-detect.yaml')).toBeInTheDocument();
         expect(screen.getByText('APACHE-Shiro')).toBeInTheDocument();
         expect(screen.getByText('Shiro-Key-Crack')).toBeInTheDocument();
-        expect(screen.getByText('一条探针一个完整 Nuclei YAML')).toBeInTheDocument();
+        expect(screen.getByText('只用于普通 HTTP 指纹无法识别的行为特征')).toBeInTheDocument();
+        expect(screen.getByText(/普通响应特征写入被动规则，固定路径特征写入路径探针，漏洞验证写入 POC/)).toBeInTheDocument();
     });
 });

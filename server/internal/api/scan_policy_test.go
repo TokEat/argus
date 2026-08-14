@@ -121,7 +121,7 @@ func TestCompileTaskScanPolicySealsAutomaticBehaviorProbes(t *testing.T) {
 	if err := store.Create(&project).Error; err != nil {
 		t.Fatal(err)
 	}
-	content := "id: shiro-detect\ninfo:\n  name: Detect Apache Shiro\n  severity: info\n  metadata:\n    argus-rule-kind: active-fingerprint\n    argus-product: APACHE-Shiro\n    argus-auto-profile: safe\n    max-request: 1\nhttp:\n  - method: GET\n    path: ['{{BaseURL}}']\n    matchers: [{type: status, status: [200]}]\n"
+	content := "id: shiro-detect\ninfo:\n  name: Detect Apache Shiro\n  severity: info\n  metadata:\n    argus-rule-kind: active-fingerprint\n    argus-product: APACHE-Shiro\n    argus-behavior-kind: cookie\n    argus-auto-profile: safe\n    max-request: 1\nhttp:\n  - method: GET\n    path: ['{{BaseURL}}']\n    headers: {Cookie: 'rememberMe={{randstr}}'}\n    matchers: [{type: status, status: [200]}]\n"
 	artifactHash := fmt.Sprintf("%x", md5.Sum([]byte(content)))
 	artifact := db.Arsenal{ID: db.BuildTenantArsenalID("default", "active_fingerprint", "shiro-detect.yaml"), TenantID: "default", Type: "active_fingerprint", FileName: "shiro-detect.yaml", Content: content, Hash: artifactHash, Version: 3, State: "Approved"}
 	if err := store.Create(&artifact).Error; err != nil {
