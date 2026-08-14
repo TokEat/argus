@@ -62,6 +62,29 @@ func TestLoadMigrations(t *testing.T) {
 	}
 }
 
+func TestRetiredMigrationVersionIsNotReused(t *testing.T) {
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := retiredMigrationVersions["510"]; !ok {
+		t.Fatal("version 510 must remain retired for databases containing either historical checksum")
+	}
+
+	foundScanPolicy := false
+	for _, migration := range migrations {
+		if _, retired := retiredMigrationVersions[migration.Version]; retired {
+			t.Fatalf("retired migration version %s is reused by %s", migration.Version, migration.Path)
+		}
+		if migration.Version == "560" && migration.Name == "add_scan_policy_orchestration" {
+			foundScanPolicy = true
+		}
+	}
+	if !foundScanPolicy {
+		t.Fatal("scan policy orchestration migration must use version 560")
+	}
+}
+
 func TestActiveFingerprintMigrationIsAdditive(t *testing.T) {
 	migrations, err := loadMigrations()
 	if err != nil {

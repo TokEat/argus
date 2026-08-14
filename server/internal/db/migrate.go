@@ -28,6 +28,14 @@ const (
 	currentSchemaSeedFile = "schema/001_dev_seed.sql"
 )
 
+// retiredMigrationVersions are version numbers that appeared in more than one
+// development release and therefore cannot safely identify a single schema
+// change. Applied rows using these versions remain valid historical evidence,
+// but no embedded migration may reuse the number.
+var retiredMigrationVersions = map[string]string{
+	"510": "historically used by both remove_python_exp and add_scan_policy_orchestration",
+}
+
 type MigrationMode string
 
 const (
@@ -302,6 +310,9 @@ func loadMigrations() ([]migrationFile, error) {
 		version, name, err := parseMigrationFileName(entry.Name())
 		if err != nil {
 			return nil, err
+		}
+		if reason, retired := retiredMigrationVersions[version]; retired {
+			return nil, fmt.Errorf("migration version %s is retired (%s): %s", version, reason, entry.Name())
 		}
 
 		path := "migrations/" + entry.Name()

@@ -1,3 +1,6 @@
+-- Version 510 is permanently retired because two different migrations used it
+-- during development releases. Keep this migration at 560 for compatibility
+-- with databases that recorded either historical 510 checksum.
 CREATE TABLE IF NOT EXISTS scan_policy_intents (
     id BIGSERIAL PRIMARY KEY,
     tenant_id VARCHAR(128) NOT NULL,

@@ -11,7 +11,7 @@ import (
 )
 
 func TestScanPolicyMigrationUsesCiphertextOnlyCredentialStorage(t *testing.T) {
-	contents, err := os.ReadFile("migrations/510_add_scan_policy_orchestration.sql")
+	contents, err := os.ReadFile("migrations/560_add_scan_policy_orchestration.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

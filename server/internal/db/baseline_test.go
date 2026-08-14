@@ -4,9 +4,98 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"gorm.io/gorm"
 )
+
+func TestHistoricalVersion510RecordsCanAdvanceTo560(t *testing.T) {
+	adminDSN, admin := openTestPostgres(t)
+	cases := []struct {
+		name           string
+		migrationName  string
+		checksum       string
+		seedScanPolicy bool
+	}{
+		{
+			name:          "remove python EXP history",
+			migrationName: "remove_python_exp",
+			checksum:      "418f612bbe1f049e72898b07ce0ef1c481dd107ebd7c01012b16deddb97c2049",
+		},
+		{
+			name:           "scan policy orchestration history",
+			migrationName:  "add_scan_policy_orchestration",
+			checksum:       "a38db3ede5e22c02a17e33bbdc47328bd07f5fea8d709bd3cb1737e00c3f7e3e",
+			seedScanPolicy: true,
+		},
+	}
+
+	for index, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			name := "argus_it_legacy_510_" + string(rune('a'+index))
+			recreateTestDatabase(t, admin, name)
+			conn, err := OpenDB(withDSNDatabase(adminDSN, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { closeTestDB(t, conn) })
+
+			if err := ensureSchemaMigrationsTable(conn); err != nil {
+				t.Fatal(err)
+			}
+			if tc.seedScanPolicy {
+				sql, err := migrationFS.ReadFile("migrations/560_add_scan_policy_orchestration.sql")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := applySQLScript(conn, "historical-510-scan-policy", string(sql)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			legacy := SchemaMigration{
+				Version:   "510",
+				Name:      tc.migrationName,
+				Checksum:  tc.checksum,
+				AppliedAt: time.Now(),
+			}
+			if err := conn.Create(&legacy).Error; err != nil {
+				t.Fatal(err)
+			}
+
+			t.Setenv(forceIncrementalEnv, "1")
+			if err := ApplyMigrations(conn, MigrationModeApply); err != nil {
+				t.Fatalf("advance historical 510 database: %v", err)
+			}
+			if err := VerifySchema(conn); err != nil {
+				t.Fatalf("verify advanced schema: %v", err)
+			}
+
+			applied, err := loadAppliedMigrations(conn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := applied["510"]; got.Name != tc.migrationName || got.Checksum != tc.checksum {
+				t.Fatalf("historical 510 record was rewritten: %+v", got)
+			}
+			if got := applied["560"]; got.Name != "add_scan_policy_orchestration" || got.Checksum == "" {
+				t.Fatalf("migration 560 was not recorded: %+v", got)
+			}
+			for _, table := range []string{
+				"scan_policy_intents",
+				"scan_stage_derivations",
+				"credential_dictionaries",
+				"credential_dictionary_revisions",
+				"credential_bundles",
+				"credential_finding_secrets",
+				"credential_reveal_audits",
+			} {
+				if !conn.Migrator().HasTable(table) {
+					t.Fatalf("expected table %s after migration 560", table)
+				}
+			}
+		})
+	}
+}
 
 func TestForceIncrementalMigrations(t *testing.T) {
 	t.Setenv(forceIncrementalEnv, "")

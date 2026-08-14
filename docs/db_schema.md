@@ -14,6 +14,7 @@
 > 注：
 > - 本文描述的是“当前主链路实际需要的完整 schema”。
 > - 空库由 `argus-server --migrate-only` 应用 baseline；已有库继续按 `migrations/*.sql` 增量升级。
+> - 已发布的 migration 版本号和 checksum 都不可复用或改写；发生历史版本冲突时必须退休原编号，并以新的递增版本提供幂等迁移。版本 `510` 已永久退休，扫描策略编排使用 `560`。
 > - 规则资产不在 SQL 里，使用 `deploy/arsenal_seed.db` 和 `--seed-from-db`。
 
 ---
