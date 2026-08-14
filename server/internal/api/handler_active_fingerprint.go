@@ -6,8 +6,14 @@ import (
 
 	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/P0lar1ght/argus/shared/proto/go/activefingerprint"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 	"github.com/gin-gonic/gin"
 )
+
+type activeFingerprintRuleResponse struct {
+	db.ActiveFingerprintRule
+	DownstreamValidations []string `json:"DownstreamValidations"`
+}
 
 func getActiveFingerprintRules(c *gin.Context) {
 	query := db.DB.Where("tenant_id = ?", currentTenantID(c))
@@ -23,7 +29,24 @@ func getActiveFingerprintRules(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, rows)
+	responses := make([]activeFingerprintRuleResponse, 0, len(rows))
+	for _, row := range rows {
+		responses = append(responses, activeFingerprintRuleResponse{
+			ActiveFingerprintRule: row,
+			DownstreamValidations: activeFingerprintDownstreamValidations(row.Name),
+		})
+	}
+	c.JSON(http.StatusOK, responses)
+}
+
+func activeFingerprintDownstreamValidations(templateID string) []string {
+	result := make([]string, 0)
+	for _, descriptor := range scanpolicy.GoPocDescriptors() {
+		if descriptor.Capability == scanpolicy.GoPocVulnerabilityCheck && descriptor.Reviewed && descriptor.Enabled && containsFold(descriptor.NucleiTemplates, templateID) {
+			result = append(result, descriptor.Plugin)
+		}
+	}
+	return result
 }
 
 func inspectActiveFingerprint(c *gin.Context) {

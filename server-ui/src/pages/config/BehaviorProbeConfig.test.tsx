@@ -31,7 +31,7 @@ describe('BehaviorProbeConfig', () => {
         });
         vi.mocked(listActiveFingerprintRules).mockResolvedValue([{
             ArtifactID: 'active-1', SourceFile: 'shiro-detect.yaml', Name: 'shiro-detect', ProductName: 'APACHE-Shiro', ContentHash: 'hash', Version: 1,
-            State: 'Approved', Enabled: true, DeclaredAutoProfile: 'safe', ComputedAutoProfile: 'safe', AutoEligible: true, MaxRequests: 1, ClassificationReason: '[]', UpdatedAt: '',
+            State: 'Approved', Enabled: true, DeclaredAutoProfile: 'safe', ComputedAutoProfile: 'safe', AutoEligible: true, MaxRequests: 1, ClassificationReason: '[]', DownstreamValidations: ['Shiro-Key-Crack'], UpdatedAt: '',
         }]);
     });
 
@@ -39,6 +39,7 @@ describe('BehaviorProbeConfig', () => {
         render(<App><BehaviorProbeConfig /></App>);
         expect(await screen.findByText('shiro-detect.yaml')).toBeInTheDocument();
         expect(screen.getByText('APACHE-Shiro')).toBeInTheDocument();
+        expect(screen.getByText('Shiro-Key-Crack')).toBeInTheDocument();
         expect(screen.getByText('一条探针一个完整 Nuclei YAML')).toBeInTheDocument();
     });
 });

@@ -204,7 +204,17 @@ func (o *ScanStageOrchestrator) deriveRiskValidation(ctx context.Context, tx *go
 	if err := tx.WithContext(ctx).Where("tenant_id = ? AND project_id = ? AND root_task_id = ?", root.TenantID, root.ProjectID, root.ID).Order("target, port").Find(&assets).Error; err != nil {
 		return nil, err
 	}
-	goPocTargets, goPocEstimated := riskGoPocTargetsFromAssets(assets, selected)
+	var activeFingerprintHits []db.FingerprintHit
+	if err := tx.WithContext(ctx).Where("tenant_id = ? AND project_id = ? AND root_task_id = ?", root.TenantID, root.ProjectID, root.ID).Order("target, product_name").Find(&activeFingerprintHits).Error; err != nil {
+		return nil, err
+	}
+	var activeFingerprintRules []db.ActiveFingerprintRule
+	if err := tx.WithContext(ctx).
+		Where("tenant_id = ? AND enabled = ? AND auto_eligible = ? AND LOWER(state) = ?", root.TenantID, true, true, "approved").
+		Order("source_file").Find(&activeFingerprintRules).Error; err != nil {
+		return nil, err
+	}
+	goPocTargets, goPocEstimated := riskGoPocTargetsFromObservations(assets, selected, activeFingerprintHits, activeFingerprintRules)
 	if len(selected) == 0 && len(goPocTargets) == 0 {
 		return nil, recordSkippedDerivation(tx, intent, automaticRiskStage, "no_approved_workflow_matches")
 	}
@@ -277,7 +287,7 @@ func buildGoPocOnlyRiskValidationAttemptConfig(revision db.TaskConfigRevision, r
 	return string(encoded), err
 }
 
-func riskGoPocTargetsFromAssets(assets []db.Asset, selected []riskValidationCandidate) ([]scanpolicy.GoPocTarget, int64) {
+func riskGoPocTargetsFromObservations(assets []db.Asset, selected []riskValidationCandidate, activeHits []db.FingerprintHit, activeRules []db.ActiveFingerprintRule) ([]scanpolicy.GoPocTarget, int64) {
 	items := make([]scanpolicy.GoPocTarget, 0)
 	for _, asset := range assets {
 		host := assetHost(asset)
@@ -296,8 +306,6 @@ func riskGoPocTargetsFromAssets(assets []db.Asset, selected []riskValidationCand
 		pocID := strings.TrimSuffix(strings.ToLower(filepath.Base(candidate.PocFile)), strings.ToLower(filepath.Ext(candidate.PocFile)))
 		plugin := ""
 		switch pocID {
-		case "shiro-detect":
-			plugin = "Shiro-Key-Crack"
 		case "yongyou_u9_viewstate":
 			plugin = "ViewState-Key-Crack"
 		}
@@ -310,6 +318,7 @@ func riskGoPocTargetsFromAssets(assets []db.Asset, selected []riskValidationCand
 			items = append(items, item)
 		}
 	}
+	items = append(items, riskGoPocTargetsFromActiveFingerprints(activeHits, activeRules)...)
 	seen := make(map[string]struct{}, len(items))
 	result := make([]scanpolicy.GoPocTarget, 0, len(items))
 	var estimated int64
@@ -329,6 +338,83 @@ func riskGoPocTargetsFromAssets(assets []db.Asset, selected []riskValidationCand
 		estimated = saturatingAdd(estimated, int64(item.RequestCost))
 	}
 	return result, estimated
+}
+
+func riskGoPocTargetsFromActiveFingerprints(hits []db.FingerprintHit, rules []db.ActiveFingerprintRule) []scanpolicy.GoPocTarget {
+	rulesBySignal := make(map[string]db.ActiveFingerprintRule, len(rules))
+	ambiguousSignals := make(map[string]struct{})
+	for _, rule := range rules {
+		signal := strings.ToLower(strings.TrimSuffix(filepath.Base(strings.TrimSpace(rule.SourceFile)), filepath.Ext(rule.SourceFile)))
+		if signal == "" || strings.TrimSpace(rule.Name) == "" || strings.TrimSpace(rule.ContentHash) == "" {
+			continue
+		}
+		if _, ambiguous := ambiguousSignals[signal]; ambiguous {
+			continue
+		}
+		if _, duplicate := rulesBySignal[signal]; duplicate {
+			delete(rulesBySignal, signal)
+			ambiguousSignals[signal] = struct{}{}
+			continue
+		}
+		rulesBySignal[signal] = rule
+	}
+
+	descriptors := scanpolicy.GoPocDescriptors()
+	result := make([]scanpolicy.GoPocTarget, 0)
+	for _, hit := range hits {
+		signal := behaviorProbeSignal(hit.Evidence)
+		rule, ok := rulesBySignal[signal]
+		if !ok || !strings.EqualFold(strings.TrimSpace(hit.ProductName), strings.TrimSpace(rule.ProductName)) {
+			continue
+		}
+		observation := sha256.Sum256([]byte(strings.Join([]string{
+			strconv.FormatUint(uint64(hit.ID), 10), hit.Target, hit.ProductName, hit.Evidence,
+			rule.Name, rule.ContentHash, strconv.Itoa(rule.Version),
+		}, "\x00")))
+		for _, descriptor := range descriptors {
+			if descriptor.Capability != scanpolicy.GoPocVulnerabilityCheck || !containsFold(descriptor.NucleiTemplates, rule.Name) {
+				continue
+			}
+			item, err := scanpolicy.GoPocTargetForSignal(hit.Target, descriptor.Plugin, "nuclei", rule.Name, hex.EncodeToString(observation[:]))
+			if err == nil {
+				result = append(result, item)
+			}
+		}
+	}
+	return result
+}
+
+func behaviorProbeSignal(evidence string) string {
+	var payload struct {
+		AdditionalMsg string `json:"additional_msg"`
+	}
+	if json.Unmarshal([]byte(evidence), &payload) != nil {
+		return ""
+	}
+	const prefix = "[behavior-probe:"
+	message := strings.TrimSpace(payload.AdditionalMsg)
+	if !strings.HasPrefix(message, prefix) || !strings.HasSuffix(message, "]") || strings.Count(message, prefix) != 1 {
+		return ""
+	}
+	signal := strings.ToLower(strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(message, prefix), "]")))
+	if signal == "" || len(signal) > 128 {
+		return ""
+	}
+	for _, char := range signal {
+		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '.' && char != '_' && char != '-' {
+			return ""
+		}
+	}
+	return signal
+}
+
+func containsFold(values []string, expected string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(expected)) {
+			return true
+		}
+	}
+	return false
 }
 
 func configWithRiskGoPocTargets(raw string, targets []string, goPocTargets []scanpolicy.GoPocTarget) (string, []string, error) {

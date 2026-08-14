@@ -18,7 +18,9 @@
 
 字典爆破深度为 1–4 层，深度预设默认 2 层。第 1 层对根域爆破；后续层只对上一层真实解析成功的子域继续爆破，不会预先生成完整笛卡尔树。深度大于 1 的任务只会调度给声明 `subdomain_depth=v1` 的 Agent；绑定项目字典时还要求 `subdomain_dictionary=v1`。
 
-Web 指纹分为响应指纹、安全行为探针和主动路径指纹。行为探针在 HTTP 探测后运行，每个规范化 HTTP 服务端点对每条密封规则最多发送一次请求；它使用独立的 `active-fingerprints/*.yaml` Nuclei 模板，命中后产出 `Active-Finger`，不会创建漏洞。快速预设默认关闭，标准与深度默认开启。主动路径指纹仍由 `dir.yaml` 定义产品特征路径，不等同于向站点广播通用目录字典。
+Web 指纹分为响应指纹、安全行为探针和主动路径指纹。行为探针在 HTTP 探测后运行，每个规范化 HTTP 服务端点对每条密封规则最多发送一次请求；它使用独立的 `active-fingerprints/*.yaml` Nuclei 模板，命中后产出 `Active-Finger`，不会直接创建漏洞。快速预设默认关闭，标准与深度默认开启。主动路径指纹仍由 `dir.yaml` 定义产品特征路径，不等同于向站点广播通用目录字典。
+
+行为探针可以作为后续受控验证的精确信号，但不能直接挂载任意 POC。只有共享 GoPoc 治理目录中已审核、已启用并明确声明该 Nuclei 模板 ID 的漏洞检查，才会在已授权的风险验证阶段生成密封目标。例如 `shiro-detect` 命中后只记录 `APACHE-Shiro` 产品指纹，并可触发 `Shiro-Key-Crack`；它不会把 RuoYi、EasyReport 或 OneBlog 等产品专用 POC 泛化绑定到所有 Shiro 站点。
 
 只有 Server 重新分类为自动安全的 HTTP/HTTPS 单请求 GET/HEAD 模板能进入普通任务：无 Body、Raw、Payload/Fuzz、OAST、Headless/Code、跨源跳转或危险 Header。任务绑定规则版本、文件 SHA-256 和产品名；Agent 在执行前重新解析并核对，任何漂移都会失败关闭。每租户最多启用 8 条自动安全探针，Agent 必须声明 `behavior_probe=v1`。行为探针与 POC 开关相互独立，不会触发旧的通用 Shiro POC Workflow。
 

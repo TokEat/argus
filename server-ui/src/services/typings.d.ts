@@ -668,6 +668,7 @@ declare namespace API {
     AutoEligible: boolean;
     MaxRequests: number;
     ClassificationReason: string;
+    DownstreamValidations: string[];
     UpdatedAt: string;
   }
 

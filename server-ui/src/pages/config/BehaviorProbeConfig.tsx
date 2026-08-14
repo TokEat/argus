@@ -136,6 +136,7 @@ export default function BehaviorProbeConfig() {
         { title: '文件', dataIndex: 'FileName', render: (value: string) => <Text code>{value}</Text> },
         { title: '产品 / 模板', render: (_, row) => <Space direction="vertical" size={0}><Text strong>{catalog[row.FileName]?.ProductName || '待分类'}</Text><Text type="secondary">{catalog[row.FileName]?.Name || '-'}</Text></Space> },
         { title: '安全分类', render: (_, row) => { const rule = catalog[row.FileName]; return <Tag color={rule?.AutoEligible ? 'green' : 'orange'}>{rule?.ComputedAutoProfile || 'unknown'}</Tag>; } },
+        { title: '命中后验证', render: (_, row) => { const plugins = catalog[row.FileName]?.DownstreamValidations || []; return plugins.length > 0 ? <Space wrap>{plugins.map((plugin) => <Tag color="blue" key={plugin}>{plugin}</Tag>)}</Space> : <Text type="secondary">仅记录产品指纹</Text>; } },
         { title: '版本', render: (_, row) => <Space><Tag>v{row.Version}</Tag><Text type="secondary">{row.Hash?.slice(0, 10)}</Text></Space> },
         { title: '状态', dataIndex: 'State', render: (value: string) => <Tag color={value === 'Approved' ? 'green' : value === 'Deprecated' ? 'default' : 'gold'}>{value}</Tag> },
         { title: '操作', width: 300, render: (_, row) => <Space wrap>
