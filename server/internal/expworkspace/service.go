@@ -88,7 +88,7 @@ func (s *Service) CreateStructuredExp(ctx context.Context, tenantID, actorID, na
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if parentExpID != "" {
 			var parent db.Exp
-			if err := tx.Where("tenant_id = ? AND id = ?", tenantID, parentExpID).First(&parent).Error; err != nil {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("tenant_id = ? AND id = ?", tenantID, parentExpID).First(&parent).Error; err != nil {
 				return err
 			}
 			if parent.ParentExpID != nil {
@@ -219,14 +219,26 @@ func riskLevelRank(level string) int {
 func (s *Service) DeprecateExp(ctx context.Context, tenantID, actorID, expID string) error {
 	now := time.Now().UTC()
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&db.Exp{}).Where("tenant_id = ? AND id = ? AND status <> ?", tenantID, expID, db.ExpStatusDeprecated).Updates(map[string]any{"status": db.ExpStatusDeprecated, "deprecated_at": now})
-		if result.Error != nil {
-			return result.Error
+		var item db.Exp
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("tenant_id = ? AND id = ? AND status <> ?", tenantID, expID, db.ExpStatusDeprecated).First(&item).Error; err != nil {
+			return err
 		}
-		if result.RowsAffected != 1 {
-			return gorm.ErrRecordNotFound
+		childIDs := make([]string, 0)
+		if item.ParentExpID == nil {
+			if err := tx.Model(&db.Exp{}).Where("tenant_id = ? AND parent_exp_id = ? AND status <> ?", tenantID, expID, db.ExpStatusDeprecated).Pluck("id", &childIDs).Error; err != nil {
+				return err
+			}
 		}
-		return createAudit(tx, tenantID, expID, 0, actorID, "deprecate", map[string]any{})
+		ids := append([]string{expID}, childIDs...)
+		if err := tx.Model(&db.Exp{}).Where("tenant_id = ? AND id IN ?", tenantID, ids).Updates(map[string]any{"status": db.ExpStatusDeprecated, "deprecated_at": now}).Error; err != nil {
+			return err
+		}
+		for _, childID := range childIDs {
+			if err := createAudit(tx, tenantID, childID, 0, actorID, "deprecate_with_parent", map[string]any{"parent_exp_id": expID}); err != nil {
+				return err
+			}
+		}
+		return createAudit(tx, tenantID, expID, 0, actorID, "deprecate", map[string]any{"child_count": len(childIDs)})
 	})
 }
 

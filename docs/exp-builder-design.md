@@ -19,6 +19,7 @@ Apache Shiro
 - 每个子 Yak 在存储和执行模型中仍是独立 EXP，只是通过 `parent_exp_id + variant_key` 归入同一漏洞；它拥有独立 Revision、CLI Schema、Fixture、风险级别、发布状态和审计记录。
 - 根 Revision 使用确定 Revision 与源码哈希的 `yaksha.call` 锁定子 EXP。界面层级不是运行时授权，也不会自动发布或授权子分支。
 - 父子关系只允许两层且必须同租户、同产品；旧 EXP 自动归入“未分类”。
+- “删除 EXP”是保留治理证据的软删除：状态变为 `deprecated`，默认从产品库隐藏，但可通过“显示已删除”查看。删除根 EXP 会在同一事务内同步废弃全部利用分支并逐项记录审计。
 
 该结构保持“每个可执行单元只有一个权威 Yak 源码”的约束，不引入宿主文件路径、多文件 include 或可变源码包。
 

@@ -42,7 +42,7 @@ func newTestService(t *testing.T) (*Service, *gorm.DB) {
 }
 
 func TestStructuredEXPFamilyEnforcesTenantAndTwoLevelHierarchy(t *testing.T) {
-	service, _ := newTestService(t)
+	service, database := newTestService(t)
 	ctx := context.Background()
 	root, err := service.CreateStructuredExp(ctx, "tenant-a", "operator", "CVE-2016-4437", "", "critical", ExpStructureInput{ProductName: "Apache Shiro"})
 	if err != nil {
@@ -63,6 +63,20 @@ func TestStructuredEXPFamilyEnforcesTenantAndTwoLevelHierarchy(t *testing.T) {
 	}
 	if _, err := service.CreateStructuredExp(ctx, "tenant-a", "operator", "duplicate", "", "high", ExpStructureInput{ParentExpID: root.ID, VariantKey: "dnslog"}); err == nil {
 		t.Fatal("expected duplicate variant key rejection")
+	}
+	if err := service.DeprecateExp(ctx, "tenant-a", "admin", root.ID); err != nil {
+		t.Fatal(err)
+	}
+	var deprecated []db.Exp
+	if err := database.Where("tenant_id = ? AND id IN ?", "tenant-a", []string{root.ID, child.ID}).Order("id").Find(&deprecated).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(deprecated) != 2 || deprecated[0].Status != db.ExpStatusDeprecated || deprecated[1].Status != db.ExpStatusDeprecated {
+		t.Fatalf("root delete must deprecate its variants: %#v", deprecated)
+	}
+	var childAudit db.ExpAudit
+	if err := database.Where("tenant_id = ? AND exp_id = ? AND action = ?", "tenant-a", child.ID, "deprecate_with_parent").First(&childAudit).Error; err != nil {
+		t.Fatalf("child deprecation audit missing: %v", err)
 	}
 }
 
