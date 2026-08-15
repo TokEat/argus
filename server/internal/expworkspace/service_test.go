@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -38,6 +39,57 @@ func newTestService(t *testing.T) (*Service, *gorm.DB) {
 		t.Fatal(err)
 	}
 	return service, database
+}
+
+func TestStructuredEXPFamilyEnforcesTenantAndTwoLevelHierarchy(t *testing.T) {
+	service, _ := newTestService(t)
+	ctx := context.Background()
+	root, err := service.CreateStructuredExp(ctx, "tenant-a", "operator", "CVE-2016-4437", "", "critical", ExpStructureInput{ProductName: "Apache Shiro"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := service.CreateStructuredExp(ctx, "tenant-a", "operator", "DNSLog 回证", "", "high", ExpStructureInput{ProductName: "ignored", ParentExpID: root.ID, VariantKey: "dnslog"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.ParentExpID == nil || *child.ParentExpID != root.ID || child.ProductName != root.ProductName || child.VariantKey != "dnslog" {
+		t.Fatalf("unexpected child metadata: %#v", child)
+	}
+	if _, err := service.CreateStructuredExp(ctx, "tenant-a", "operator", "nested", "", "high", ExpStructureInput{ParentExpID: child.ID, VariantKey: "nested"}); err == nil || !strings.Contains(err.Error(), "cannot contain child") {
+		t.Fatalf("expected nested variant rejection, got %v", err)
+	}
+	if _, err := service.CreateStructuredExp(ctx, "tenant-b", "operator", "cross-tenant", "", "high", ExpStructureInput{ParentExpID: root.ID, VariantKey: "cross"}); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected tenant-scoped parent lookup, got %v", err)
+	}
+	if _, err := service.CreateStructuredExp(ctx, "tenant-a", "operator", "duplicate", "", "high", ExpStructureInput{ParentExpID: root.ID, VariantKey: "dnslog"}); err == nil {
+		t.Fatal("expected duplicate variant key rejection")
+	}
+}
+
+func TestListExpsFilteredSearchesProductVulnerabilityAndVariant(t *testing.T) {
+	service, _ := newTestService(t)
+	ctx := context.Background()
+	shiro, err := service.CreateStructuredExp(ctx, "tenant-a", "operator", "CVE-2016-4437", "", "critical", ExpStructureInput{ProductName: "Apache Shiro"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateStructuredExp(ctx, "tenant-a", "operator", "命令执行", "", "critical", ExpStructureInput{ParentExpID: shiro.ID, VariantKey: "command"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateStructuredExp(ctx, "tenant-a", "operator", "Telnet 未授权", "", "high", ExpStructureInput{ProductName: "Telnet"}); err != nil {
+		t.Fatal(err)
+	}
+	items, total, err := service.ListExpsFiltered(ctx, "tenant-a", "Apache Shiro", "command", 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(items) != 1 || items[0].VariantKey != "command" {
+		t.Fatalf("unexpected filtered EXPs: total=%d items=%#v", total, items)
+	}
+	items, total, err = service.ListExpsFiltered(ctx, "tenant-a", "", "cve-2016", 0, 50)
+	if err != nil || total != 1 || len(items) != 1 || items[0].ID != shiro.ID {
+		t.Fatalf("unexpected vulnerability search: total=%d items=%#v err=%v", total, items, err)
+	}
 }
 
 func TestRevisionAndAssetBuildSealedPackage(t *testing.T) {

@@ -14,6 +14,9 @@ type Exp struct {
 	ID             string     `gorm:"size:36;primaryKey" json:"id"`
 	TenantID       string     `gorm:"size:128;not null;uniqueIndex:idx_exps_tenant_name;index" json:"tenant_id"`
 	Name           string     `gorm:"size:160;not null;uniqueIndex:idx_exps_tenant_name" json:"name"`
+	ProductName    string     `gorm:"size:160;not null;default:'未分类';index" json:"product_name"`
+	ParentExpID    *string    `gorm:"size:36;index" json:"parent_exp_id,omitempty"`
+	VariantKey     string     `gorm:"size:64;not null;default:''" json:"variant_key,omitempty"`
 	Description    string     `gorm:"type:text" json:"description"`
 	RiskLevel      string     `gorm:"size:24;not null" json:"risk_level"`
 	Status         string     `gorm:"size:24;not null;index" json:"status"`

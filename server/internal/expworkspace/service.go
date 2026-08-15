@@ -22,6 +22,15 @@ import (
 )
 
 var logicalIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+var variantKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+
+const uncategorizedProduct = "未分类"
+
+type ExpStructureInput struct {
+	ProductName string
+	ParentExpID string
+	VariantKey  string
+}
 
 type Service struct {
 	db        *gorm.DB
@@ -43,6 +52,10 @@ func NewService(database *gorm.DB, objects storage.Store, runtime *RuntimeClient
 }
 
 func (s *Service) CreateExp(ctx context.Context, tenantID, actorID, name, description, riskLevel string) (db.Exp, error) {
+	return s.CreateStructuredExp(ctx, tenantID, actorID, name, description, riskLevel, ExpStructureInput{ProductName: uncategorizedProduct})
+}
+
+func (s *Service) CreateStructuredExp(ctx context.Context, tenantID, actorID, name, description, riskLevel string, structure ExpStructureInput) (db.Exp, error) {
 	tenantID, actorID, name = strings.TrimSpace(tenantID), strings.TrimSpace(actorID), strings.TrimSpace(name)
 	riskLevel = strings.ToLower(strings.TrimSpace(riskLevel))
 	if tenantID == "" || actorID == "" || name == "" {
@@ -53,16 +66,79 @@ func (s *Service) CreateExp(ctx context.Context, tenantID, actorID, name, descri
 	default:
 		return db.Exp{}, errors.New("risk_level must be low, medium, high or critical")
 	}
-	item := db.Exp{ID: uuid.NewString(), TenantID: tenantID, Name: name, Description: strings.TrimSpace(description), RiskLevel: riskLevel, Status: db.ExpStatusDraft, CreatedBy: actorID}
+	productName := strings.TrimSpace(structure.ProductName)
+	parentExpID := strings.TrimSpace(structure.ParentExpID)
+	variantKey := strings.ToLower(strings.TrimSpace(structure.VariantKey))
+	if len([]rune(productName)) > 160 || strings.ContainsAny(productName, "\r\n\x00") {
+		return db.Exp{}, errors.New("product_name is invalid")
+	}
+	if parentExpID == "" {
+		if productName == "" {
+			// Backward-compatible API callers stay visible in the product library
+			// without silently inventing a product classification.
+			productName = uncategorizedProduct
+		}
+		if variantKey != "" {
+			return db.Exp{}, errors.New("variant_key requires parent_exp_id")
+		}
+	} else if !variantKeyPattern.MatchString(variantKey) {
+		return db.Exp{}, errors.New("variant_key must be a lowercase file-safe identifier")
+	}
+	item := db.Exp{ID: uuid.NewString(), TenantID: tenantID, Name: name, ProductName: productName, VariantKey: variantKey, Description: strings.TrimSpace(description), RiskLevel: riskLevel, Status: db.ExpStatusDraft, CreatedBy: actorID}
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if parentExpID != "" {
+			var parent db.Exp
+			if err := tx.Where("tenant_id = ? AND id = ?", tenantID, parentExpID).First(&parent).Error; err != nil {
+				return err
+			}
+			if parent.ParentExpID != nil {
+				return errors.New("an EXP variant cannot contain child variants")
+			}
+			if parent.Status == db.ExpStatusDeprecated {
+				return errors.New("deprecated EXP cannot accept variants")
+			}
+			item.ParentExpID = &parent.ID
+			item.ProductName = parent.ProductName
+			var existing int64
+			if err := tx.Model(&db.Exp{}).Where("tenant_id = ? AND parent_exp_id = ? AND variant_key = ?", tenantID, parent.ID, variantKey).Count(&existing).Error; err != nil {
+				return err
+			}
+			if existing > 0 {
+				return errors.New("duplicate variant_key under the same parent EXP")
+			}
+		}
 		if err := tx.Create(&item).Error; err != nil {
 			return err
 		}
-		return createAudit(tx, tenantID, item.ID, 0, actorID, "create", map[string]any{"risk_level": riskLevel})
+		return createAudit(tx, tenantID, item.ID, 0, actorID, "create", map[string]any{"risk_level": riskLevel, "product_name": item.ProductName, "parent_exp_id": parentExpID, "variant_key": variantKey})
 	}); err != nil {
 		return db.Exp{}, fmt.Errorf("create EXP: %w", err)
 	}
 	return item, nil
+}
+
+func (s *Service) ListExpsFiltered(ctx context.Context, tenantID, productName, search string, offset, limit int) ([]db.Exp, int64, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	query := s.db.WithContext(ctx).Model(&db.Exp{}).Where("tenant_id = ?", tenantID)
+	if productName = strings.TrimSpace(productName); productName != "" {
+		query = query.Where("product_name = ?", productName)
+	}
+	if search = strings.TrimSpace(search); search != "" {
+		like := "%" + strings.ToLower(search) + "%"
+		query = query.Where("LOWER(product_name) LIKE ? OR LOWER(name) LIKE ? OR LOWER(variant_key) LIKE ?", like, like, like)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var items []db.Exp
+	err := query.Order("product_name ASC, parent_exp_id NULLS FIRST, updated_at DESC").Offset(offset).Limit(limit).Find(&items).Error
+	return items, total, err
 }
 
 func (s *Service) ListExps(ctx context.Context, tenantID string, offset, limit int) ([]db.Exp, int64, error) {

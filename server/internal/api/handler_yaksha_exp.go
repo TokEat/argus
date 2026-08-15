@@ -18,6 +18,15 @@ import (
 	"gorm.io/gorm"
 )
 
+type expMetadataRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	RiskLevel   string `json:"risk_level"`
+	ProductName string `json:"product_name"`
+	ParentExpID string `json:"parent_exp_id"`
+	VariantKey  string `json:"variant_key"`
+}
+
 func expWorkspace(c *gin.Context) (*expworkspace.Service, bool) {
 	service := routerRuntime().EXPWorkspace
 	if service == nil {
@@ -32,16 +41,12 @@ func createYakshaExp(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		RiskLevel   string `json:"risk_level"`
-	}
+	var req expMetadataRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid EXP metadata"})
 		return
 	}
-	item, err := service.CreateExp(c.Request.Context(), currentTenantID(c), currentUserID(c), req.Name, req.Description, req.RiskLevel)
+	item, err := service.CreateStructuredExp(c.Request.Context(), currentTenantID(c), currentUserID(c), req.Name, req.Description, req.RiskLevel, expworkspace.ExpStructureInput{ProductName: req.ProductName, ParentExpID: req.ParentExpID, VariantKey: req.VariantKey})
 	if err != nil {
 		writeEXPWorkspaceError(c, err)
 		return
@@ -55,7 +60,7 @@ func listYakshaExps(c *gin.Context) {
 		return
 	}
 	page, pageSize := pagination(c)
-	items, total, err := service.ListExps(c.Request.Context(), currentTenantID(c), (page-1)*pageSize, pageSize)
+	items, total, err := service.ListExpsFiltered(c.Request.Context(), currentTenantID(c), c.Query("product_name"), c.Query("search"), (page-1)*pageSize, pageSize)
 	if err != nil {
 		writeEXPWorkspaceError(c, err)
 		return
@@ -81,11 +86,7 @@ func updateYakshaExp(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		RiskLevel   string `json:"risk_level"`
-	}
+	var req expMetadataRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid EXP metadata"})
 		return

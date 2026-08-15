@@ -1323,6 +1323,9 @@ declare namespace API {
   interface Exp {
     id: string;
     name: string;
+    product_name?: string;
+    parent_exp_id?: string;
+    variant_key?: string;
     description: string;
     risk_level: 'low' | 'medium' | 'high' | 'critical';
     status: 'draft' | 'published' | 'deprecated';
@@ -1333,7 +1336,7 @@ declare namespace API {
   }
 
   interface ExpList { items: Exp[]; total: number; page: number; page_size: number; }
-  interface CreateExpRequest { name: string; description?: string; risk_level: Exp['risk_level']; }
+  interface CreateExpRequest { name: string; product_name?: string; parent_exp_id?: string; variant_key?: string; description?: string; risk_level: Exp['risk_level']; }
   interface ExpDependencyRef { exp_id: string; revision: number; source_sha256: string; }
   interface ExpAssetRef { asset_id: string; version: number; sha256: string; }
   interface CreateExpRevisionRequest { source: string; dependencies: ExpDependencyRef[]; assets: ExpAssetRef[]; test_cases: ExpTestCaseInput[]; test_receipt: string; }

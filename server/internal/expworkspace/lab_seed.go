@@ -27,6 +27,7 @@ type LabSeedResult struct {
 
 type labSeedDefinition struct {
 	Name        string
+	ProductName string
 	Description string
 	RiskLevel   string
 	SourceFile  string
@@ -72,10 +73,18 @@ func (s *Service) seedDevelopmentLabEXP(ctx context.Context, tenantID, actorID s
 	var root db.Exp
 	err = s.db.WithContext(ctx).Where("tenant_id = ? AND name = ?", tenantID, definition.Name).First(&root).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		root, err = s.CreateExp(ctx, tenantID, actorID, definition.Name, definition.Description, definition.RiskLevel)
+		root, err = s.CreateStructuredExp(ctx, tenantID, actorID, definition.Name, definition.Description, definition.RiskLevel, ExpStructureInput{ProductName: definition.ProductName})
 	}
 	if err != nil {
 		return LabSeedResult{}, err
+	}
+	if root.ProductName == uncategorizedProduct && definition.ProductName != "" {
+		if err := s.db.WithContext(ctx).Model(&db.Exp{}).
+			Where("tenant_id = ? AND id = ? AND product_name = ?", tenantID, root.ID, uncategorizedProduct).
+			Update("product_name", definition.ProductName).Error; err != nil {
+			return LabSeedResult{}, err
+		}
+		root.ProductName = definition.ProductName
 	}
 	if root.Status == db.ExpStatusDeprecated {
 		return LabSeedResult{}, errors.New("existing lab EXP is deprecated and will not be overwritten")
@@ -136,11 +145,11 @@ func (s *Service) seedDevelopmentLabEXP(ctx context.Context, tenantID, actorID s
 func developmentLabSeeds() []labSeedDefinition {
 	return []labSeedDefinition{
 		{
-			Name: "lab-shiro-cve-2016-4437-rce", Description: "仅用于 argus-exp-lab 的 Apache Shiro 1.2.4 默认 Key 反序列化 RCE 验收", RiskLevel: "critical", SourceFile: "shiro-cve-2016-4437.yak",
+			Name: "lab-shiro-cve-2016-4437-rce", ProductName: "Apache Shiro", Description: "仅用于 argus-exp-lab 的 Apache Shiro 1.2.4 默认 Key 反序列化 RCE 验收", RiskLevel: "critical", SourceFile: "shiro-cve-2016-4437.yak",
 			TestCase: TestCaseInput{Name: "offline-shiro-multistep", Params: mustLabJSON(map[string]any{"target": "http://argus-exp-shiro:8080", "canary_token": "ARGUS_FIXTURE_CANARY_1234", "shiro_key": "kPH+bIxk5D2deZiIxcaaaA=="}), Fixture: json.RawMessage(`{"http":[{"method":"GET","url":"http://argus-exp-shiro:8080","request_headers":{"Cookie":{"exact":"rememberMe=argus-invalid-probe"}},"status_code":302,"response_headers":{"Set-Cookie":"rememberMe=deleteMe"}},{"method":"GET","url":"http://argus-exp-shiro:8080","request_headers":{"Cookie":{"regex":"^rememberMe=.+"}},"status_code":302,"response_headers":{"Location":"/login"}},{"method":"GET","url":"http://argus-exp-shiro:8080","request_headers":{"Cookie":{"regex":"^rememberMe=.+"}},"status_code":302,"response_headers":{"Location":"/login"}},{"method":"GET","url":"http://argus-exp-canary:8080/status/ARGUS_FIXTURE_CANARY_1234","status_code":200,"body":"{\"hit\":true}"}]}`), Expect: json.RawMessage(`{"evidence":{"behavior_detected":true,"crypto_roundtrip":true,"default_key_valid":true,"canary_hit":true,"gadget":"CommonsBeanutils1-1.9.2"}}`)},
 		},
 		{
-			Name: "lab-telnet-unauth-rce", Description: "仅用于 argus-exp-lab 的 Telnet 未认证 Shell 字节交互与命令回显验收", RiskLevel: "critical", SourceFile: "telnet-unauth-rce.yak",
+			Name: "lab-telnet-unauth-rce", ProductName: "Telnet", Description: "仅用于 argus-exp-lab 的 Telnet 未认证 Shell 字节交互与命令回显验收", RiskLevel: "critical", SourceFile: "telnet-unauth-rce.yak",
 			TestCase: TestCaseInput{Name: "offline-telnet-exchange", Params: json.RawMessage(`{"address":"argus-exp-telnet:23","marker":"ARGUS_FIXTURE_MARKER"}`), Fixture: json.RawMessage(`{"tcp":[{"address":"argus-exp-telnet:23","success":true,"remote_address":"192.0.2.10:23","steps":[{"operation":"read","response":"//0B//0f//sB//sD","encoding":"base64"},{"operation":"write","data":{"exact":"id; echo ARGUS_FIXTURE_MARKER; exit\n"}},{"operation":"read","response":"uid=0(root) gid=0(root) groups=0(root)\r\nARGUS_FIXTURE_MARKER\r\n","encoding":"utf8"}]}]}`), Expect: json.RawMessage(`{"evidence":{"identity_found":true,"marker_found":true}}`)},
 		},
 	}

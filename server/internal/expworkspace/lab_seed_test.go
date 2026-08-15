@@ -47,6 +47,12 @@ func TestDevelopmentLabSeedsArePublishedActiveAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := database.Model(&db.Exp{}).Where("id = ?", first[0].ExpID).Update("product_name", uncategorizedProduct).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Model(&db.Exp{}).Where("id = ?", first[1].ExpID).Update("product_name", "自定义 Telnet 产品").Error; err != nil {
+		t.Fatal(err)
+	}
 	second, err := service.SeedDevelopmentLab(context.Background(), "tenant-lab", "seed-actor")
 	if err != nil {
 		t.Fatal(err)
@@ -62,6 +68,15 @@ func TestDevelopmentLabSeedsArePublishedActiveAndIdempotent(t *testing.T) {
 		t.Fatalf("exps=%+v", exps)
 	}
 	for _, item := range exps {
+		if item.ProductName == "" || item.ProductName == uncategorizedProduct {
+			t.Fatalf("lab EXP missing product classification: %+v", item)
+		}
+		if item.Name == "lab-shiro-cve-2016-4437-rce" && item.ProductName != "Apache Shiro" {
+			t.Fatalf("unclassified seed product was not repaired: %+v", item)
+		}
+		if item.Name == "lab-telnet-unauth-rce" && item.ProductName != "自定义 Telnet 产品" {
+			t.Fatalf("custom seed product was overwritten: %+v", item)
+		}
 		if item.Status != db.ExpStatusPublished || item.ActiveRevision == nil || *item.ActiveRevision != 1 {
 			t.Fatalf("EXP not published/active: %+v", item)
 		}

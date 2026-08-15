@@ -1182,8 +1182,8 @@ export async function rollbackArsenal(type: string, filename: string, guard?: { 
 // Yaksha EXP Workspace API
 // ===========================
 
-export async function listExps(): Promise<API.ExpList> {
-    return request.get('/exps');
+export async function listExps(params?: { page?: number; page_size?: number; product_name?: string; search?: string }): Promise<API.ExpList> {
+    return request.get('/exps', { params });
 }
 
 export async function createExp(data: API.CreateExpRequest): Promise<API.Exp> {

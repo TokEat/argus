@@ -1072,7 +1072,11 @@ CREATE TABLE public.exps (
     created_by character varying(128) NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    deprecated_at timestamp with time zone
+    deprecated_at timestamp with time zone,
+    product_name character varying(160) DEFAULT '未分类'::character varying NOT NULL,
+    parent_exp_id character varying(36),
+    variant_key character varying(64) DEFAULT ''::character varying NOT NULL,
+    CONSTRAINT chk_exps_family_shape CHECK ((((parent_exp_id IS NULL) AND ((variant_key)::text = ''::text)) OR ((parent_exp_id IS NOT NULL) AND ((variant_key)::text ~ '^[a-z0-9][a-z0-9._-]{0,63}$'::text))))
 );
 
 CREATE TABLE public.fingerprint_hits (
@@ -2784,11 +2788,19 @@ CREATE INDEX idx_exp_test_case_revision ON public.exp_test_cases USING btree (ex
 
 CREATE INDEX idx_exp_test_cases_tenant_id ON public.exp_test_cases USING btree (tenant_id);
 
+CREATE INDEX idx_exps_parent_exp_id ON public.exps USING btree (parent_exp_id);
+
+CREATE UNIQUE INDEX idx_exps_parent_variant ON public.exps USING btree (parent_exp_id, variant_key) WHERE (parent_exp_id IS NOT NULL);
+
 CREATE INDEX idx_exps_status ON public.exps USING btree (status);
 
 CREATE INDEX idx_exps_tenant_id ON public.exps USING btree (tenant_id);
 
+CREATE UNIQUE INDEX idx_exps_tenant_id_id ON public.exps USING btree (tenant_id, id);
+
 CREATE UNIQUE INDEX idx_exps_tenant_name ON public.exps USING btree (tenant_id, name);
+
+CREATE INDEX idx_exps_tenant_product ON public.exps USING btree (tenant_id, product_name);
 
 CREATE INDEX idx_fingerprint_hits_root_task_id ON public.fingerprint_hits USING btree (root_task_id);
 
@@ -3298,6 +3310,9 @@ ALTER TABLE ONLY public.exp_runs
 
 ALTER TABLE ONLY public.exp_test_cases
     ADD CONSTRAINT fk_exp_test_case_revision FOREIGN KEY (exp_id, revision) REFERENCES public.exp_revisions(exp_id, revision) ON DELETE RESTRICT;
+
+ALTER TABLE ONLY public.exps
+    ADD CONSTRAINT fk_exps_parent_same_tenant FOREIGN KEY (tenant_id, parent_exp_id) REFERENCES public.exps(tenant_id, id) ON DELETE RESTRICT;
 
 ALTER TABLE ONLY public.risk_validation_execution_idempotencies
     ADD CONSTRAINT fk_rvei_attempt FOREIGN KEY (tenant_id, project_id, root_task_id, batch_id, attempt_id) REFERENCES public.sub_tasks(tenant_id, project_id, root_task_id, batch_id, id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;

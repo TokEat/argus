@@ -2,6 +2,26 @@
 
 Workspace 帮助人和 AI 编写、测试、调试和发布单文件 Yaklang EXP。`main.yak` 同时承载官方 `cli.*` 参数声明与执行逻辑，Server 根据 inspect 结果渲染声明式 UI。
 
+## 产品与漏洞利用族
+
+EXP 库按“产品 → 漏洞 EXP → 利用分支”组织。一个漏洞利用族包含一个根 EXP 和零到多个子 EXP：
+
+```text
+Apache Shiro
+└── CVE-2016-4437
+    ├── main.yak
+    ├── dnslog.yak
+    ├── command.yak
+    └── memshell.yak
+```
+
+- 根 EXP 的源码在界面中固定显示为 `main.yak`，负责公共前置检查和选择利用方式。
+- 每个子 Yak 在存储和执行模型中仍是独立 EXP，只是通过 `parent_exp_id + variant_key` 归入同一漏洞；它拥有独立 Revision、CLI Schema、Fixture、风险级别、发布状态和审计记录。
+- 根 Revision 使用确定 Revision 与源码哈希的 `yaksha.call` 锁定子 EXP。界面层级不是运行时授权，也不会自动发布或授权子分支。
+- 父子关系只允许两层且必须同租户、同产品；旧 EXP 自动归入“未分类”。
+
+该结构保持“每个可执行单元只有一个权威 Yak 源码”的约束，不引入宿主文件路径、多文件 include 或可变源码包。
+
 ## 源码标准
 
 ```yak
