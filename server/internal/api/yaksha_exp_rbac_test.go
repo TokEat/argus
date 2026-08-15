@@ -1,14 +1,33 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/P0lar1ght/argus/server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/expworkspace"
 	"github.com/gin-gonic/gin"
 )
+
+func TestYakshaEXPRiskConfirmationErrorIsActionable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	writeEXPWorkspaceError(context, expworkspace.ErrRiskConfirmationRequired)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var body map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["error"] != expworkspace.ErrRiskConfirmationRequired.Error() {
+		t.Fatalf("body=%v", body)
+	}
+}
 
 func TestYakshaEXPWorkspacePermissionMatrix(t *testing.T) {
 	tests := []struct{ method, path, want string }{

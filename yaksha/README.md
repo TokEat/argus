@@ -105,7 +105,8 @@ Daemon 的统一原始 TCP Connector 为 direct 与 SOCKS5 解析目标 DNS、�
 V1 inspect 契约：
 
 - 参数类型：`cli.String/Text/Int/Integer/Float/Bool/StringSlice`。
-- UI 选项：`cli.setRequired/setDefault/setHelp/setVerboseName/setCliGroup/setSelectOption/setMultipleSelect`。
+- UI 选项：`cli.setRequired/setDefault/setHelp/setVerboseName/setCliGroup/setInputType/setSelectOption/setMultipleSelect`。
+- `cli.String` 可通过 `cli.setInputType("host_port"|"url")` 声明输入组件和格式校验；页面不得从参数值猜测协议或组件。
 - 参数名和 UI 配置必须是字面量；参数声明必须位于顶层、处于唯一的顶层 `cli.check()` 之前。
 - 语法或契约不合格时，请求本身仍返回 `Succeeded`，由 `inspection.valid=false` 和 `diagnostics` 表达源码问题；协议或运行时自身故障才使用错误状态。
 

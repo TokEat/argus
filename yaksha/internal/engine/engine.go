@@ -199,6 +199,7 @@ func cliLibs(app *cli.CliApp) map[string]interface{} {
 		"Float": app.Float, "Bool": app.Bool, "StringSlice": app.StringSlice,
 		"setRequired": app.SetRequired, "setDefault": app.SetDefault, "setHelp": app.SetHelp,
 		"setVerboseName": app.SetVerboseName, "setCliGroup": app.SetCliGroup,
+		"setInputType":    func(_ string) cli.SetCliExtraParam { return app.SetVerboseName("") },
 		"setSelectOption": app.SetSelectOption, "setMultipleSelect": app.SetMultipleSelect, "check": app.Check,
 	}
 }

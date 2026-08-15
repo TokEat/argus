@@ -1206,6 +1206,18 @@ export async function createExpRevision(id: string, data: API.CreateExpRevisionR
     return request.post(`/exps/${encodeURIComponent(id)}/revisions`, data);
 }
 
+export async function inspectExpDraft(id: string, data: API.ExpDraftPackage): Promise<API.YakshaResult & { inspection?: API.ExpInspection }> {
+    return request.post(`/exps/${encodeURIComponent(id)}/draft/inspect`, data);
+}
+
+export async function validateExpDraft(id: string, data: API.ExpDraftPackage): Promise<API.YakshaResult> {
+    return request.post(`/exps/${encodeURIComponent(id)}/draft/validate`, data);
+}
+
+export async function testExpDraft(id: string, data: API.ExpDraftPackage): Promise<API.ExpDraftTestResult> {
+    return request.post(`/exps/${encodeURIComponent(id)}/draft/test`, data);
+}
+
 export async function getExpSealedPackage(id: string, revision: number, includeTests = false): Promise<API.ExpSealedPackage> {
     return request.get(`/exps/${encodeURIComponent(id)}/revisions/${revision}/sealed-package`, { params: { include_tests: includeTests } });
 }

@@ -11,6 +11,7 @@ func TestInspectExtractsSupportedCLISchemaWithoutExecution(t *testing.T) {
 target = cli.String("target",
     cli.setVerboseName("目标地址"),
     cli.setHelp("授权测试目标"),
+	cli.setInputType("url"),
     cli.setRequired(true),
     cli.setDefault("https://example.invalid"),
     cli.setCliGroup("目标"),
@@ -44,7 +45,7 @@ panic("inspect must not execute source")
 	if target.Name != "target" || target.Type != "string" || !target.Required || !target.HasDefault || target.Default != "https://example.invalid" {
 		t.Fatalf("unexpected target schema: %#v", target)
 	}
-	if target.VerboseName != "目标地址" || target.Help != "授权测试目标" || target.Group != "目标" {
+	if target.VerboseName != "目标地址" || target.Help != "授权测试目标" || target.Group != "目标" || target.InputType != "url" {
 		t.Fatalf("unexpected target UI metadata: %#v", target)
 	}
 	methods := inspection.Parameters[6]
@@ -80,6 +81,39 @@ func TestInspectExtractsLiteralResolverReferences(t *testing.T) {
 	}
 }
 
+func TestInspectExtractsStaticControlAndDataFlow(t *testing.T) {
+	source := `
+target = cli.String("target", cli.setInputType("url"))
+cli.check()
+response, request_err = yaksha.httpRequest({"url": target})
+matched, match_err = yaksha.regexMatch("ready", yaksha.toString(response))
+if request_err != nil || match_err != nil || !matched {
+    panic("probe failed")
+}
+yaksha.evidence("matched", matched)
+yaksha.result({"vulnerable": matched})
+`
+	inspection := Inspect(source)
+	if !inspection.Valid {
+		t.Fatalf("inspection invalid: %#v", inspection.Diagnostics)
+	}
+	if len(inspection.ControlFlow) < 6 {
+		t.Fatalf("control flow too short: %#v", inspection.ControlFlow)
+	}
+	request := inspection.ControlFlow[0]
+	if request.Operation != "yaksha.httpRequest" || !containsAll(request.Inputs, "target") || !containsAll(request.Outputs, "response", "request_err") {
+		t.Fatalf("unexpected request step: %#v", request)
+	}
+	match := inspection.ControlFlow[1]
+	if match.Operation != "yaksha.regexMatch" || !containsAll(match.Inputs, "response") || !containsAll(match.Outputs, "matched", "match_err") || !containsAll(match.DependsOn, request.ID) {
+		t.Fatalf("unexpected match step: %#v", match)
+	}
+	condition := inspection.ControlFlow[2]
+	if condition.Kind != "condition" || !containsAll(condition.Inputs, "request_err", "match_err", "matched") || !containsAll(condition.DependsOn, request.ID, match.ID) {
+		t.Fatalf("unexpected condition step: %#v", condition)
+	}
+}
+
 func TestInspectRejectsDynamicResolverReferences(t *testing.T) {
 	inspection := Inspect(`id = "child"; cli.check(); yaksha.call(id, 1, {}); yaksha.asset(id)`)
 	if inspection.Valid || !hasCode(inspection, "dynamic_dependency_reference") || !hasCode(inspection, "dynamic_asset_reference") {
@@ -102,6 +136,9 @@ func TestInspectEnforcesPublishableV1Contract(t *testing.T) {
 		{name: "reserved name", source: `help = cli.Bool("help"); cli.check()`, code: "invalid_cli_parameter_name"},
 		{name: "unsupported type", source: `target = cli.File("target"); cli.check()`, code: "unsupported_cli_type"},
 		{name: "unsupported option", source: `target = cli.String("target", cli.setShortName("t")); cli.check()`, code: "unsupported_cli_option"},
+		{name: "unsupported input type", source: `target = cli.String("target", cli.setInputType("socket")); cli.check()`, code: "unsupported_cli_input_type"},
+		{name: "input type on wrong parameter", source: `target = cli.Text("target", cli.setInputType("host_port")); cli.check()`, code: "invalid_cli_option_target"},
+		{name: "invalid input default", source: `target = cli.String("target", cli.setInputType("host_port"), cli.setDefault("tcp://host:23")); cli.check()`, code: "invalid_cli_input_default"},
 		{name: "option on wrong type", source: `target = cli.String("target", cli.setMultipleSelect(true)); cli.check()`, code: "invalid_cli_option_target"},
 		{name: "default type mismatch", source: `threads = cli.Int("threads", cli.setDefault("five")); cli.check()`, code: "invalid_cli_default"},
 		{name: "default outside options", source: `methods = cli.StringSlice("methods", cli.setSelectOption("GET", "GET"), cli.setDefault("POST")); cli.check()`, code: "invalid_cli_default_option"},
@@ -129,4 +166,17 @@ func hasCode(inspection protocol.Inspection, code string) bool {
 		}
 	}
 	return false
+}
+
+func containsAll(values []string, wants ...string) bool {
+	set := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		set[value] = struct{}{}
+	}
+	for _, want := range wants {
+		if _, ok := set[want]; !ok {
+			return false
+		}
+	}
+	return true
 }

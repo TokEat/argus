@@ -121,6 +121,8 @@ func TestExpConsoleUsesYakshaCanonicalParameterTypes(t *testing.T) {
 		"type === 'string_array'",
 		"type === 'integer'",
 		"type === 'number'",
+		"item.input_type === 'host_port'",
+		"item.input_type === 'url'",
 	} {
 		if !strings.Contains(expConsoleHTML, want) {
 			t.Fatalf("EXP console does not handle Yaksha parameter type %q", want)
@@ -131,13 +133,16 @@ func TestExpConsoleUsesYakshaCanonicalParameterTypes(t *testing.T) {
 			t.Fatalf("EXP console still contains stale CLI type check %q", stale)
 		}
 	}
-	for _, want := range []string{"ui/notifications/tool-cancelled", "ui/resource-teardown", "value.isError", "event.source !== window.parent", "boundContext.exp_id", "boundContext.revision", "boundContext.source_sha256", "workspaceRevision.addEventListener('change'", "current.cli_schema", "value.dependency_refs", "value.asset_refs", "action.value === 'test' ? 'disabled'", "action.value === 'test' && !isBound", "if (!isBound)", "checkpointWorkspace", "args.script = source.value", "[source, dependencies, assets]", "内存源码", "egress-mode", "['disabled', 'direct', 'socks5', 'agent']", "risk-confirmed", "proxy.value = ''", "autocomplete=\"new-password\"", "EXP 生命周期", "clearBinding(true)", "result-tabs", "parseTargets"} {
+	for _, want := range []string{"ui/notifications/tool-cancelled", "ui/resource-teardown", "value.isError", "event.source !== window.parent", "boundContext.exp_id", "boundContext.revision", "boundContext.source_sha256", "workspaceRevision.addEventListener('change'", "current.cli_schema", "value.dependency_refs", "value.asset_refs", "action.value === 'test' ? 'disabled'", "action.value === 'test' && !isBound", "if (!isBound)", "checkpointWorkspace", "args.script = source.value", "[source, dependencies, assets, tests]", "draft_inspect", "draft_test", "draftReceipt", "scheduleLiveInspect", "renderFlow", "内存源码", "egress-mode", "['disabled', 'direct', 'socks5', 'agent']", "risk-confirmed", "proxy.value = ''", "autocomplete=\"new-password\"", "EXP 生命周期", "clearBinding(true)", "result-tabs", "parseTargets", "resetRunContext()"} {
 		if !strings.Contains(expConsoleHTML, want) {
 			t.Fatalf("EXP console is missing MCP App lifecycle behavior %q", want)
 		}
 	}
 	if strings.Contains(expConsoleHTML, "proxy.value = a.egress.socks5_proxy") {
 		t.Fatal("EXP console must never refill the write-only SOCKS5 URL")
+	}
+	if strings.Contains(expConsoleHTML, "await checkpointWorkspace();\n\t        isBound = true") {
+		t.Fatal("MCP App must never auto-save an untested in-memory draft before debug/run")
 	}
 }
 

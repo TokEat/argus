@@ -164,7 +164,7 @@ func TestConfirmCopilotActionCreatesPOCDraftAndAudits(t *testing.T) {
 	}
 }
 
-func TestConfirmCopilotActionCreatesExpDraftAndAudits(t *testing.T) {
+func TestConfirmCopilotActionPreparesUnsavedExpDraftAndAudits(t *testing.T) {
 	store := setupAITestDB(t)
 	objects, err := storage.NewLocalStore(t.TempDir())
 	if err != nil {
@@ -211,12 +211,15 @@ func TestConfirmCopilotActionCreatesExpDraftAndAudits(t *testing.T) {
 	if err := store.Where("tenant_id = ? AND name = ?", "default", "exp-demo").First(&item).Error; err != nil {
 		t.Fatalf("expected Yaksha EXP: %v", err)
 	}
-	var revision db.ExpRevision
-	if err := store.Where("tenant_id = ? AND exp_id = ?", "default", item.ID).First(&revision).Error; err != nil {
-		t.Fatalf("expected Draft Revision: %v", err)
+	var revisionCount int64
+	if err := store.Model(&db.ExpRevision{}).Where("tenant_id = ? AND exp_id = ?", "default", item.ID).Count(&revisionCount).Error; err != nil {
+		t.Fatal(err)
 	}
-	if revision.Status != db.ExpStatusDraft || revision.SourceSHA256 == "" {
-		t.Fatalf("unexpected Draft Revision %+v", revision)
+	if revisionCount != 0 {
+		t.Fatalf("AI-generated source must remain unsaved until Fixture acceptance, revisions=%d", revisionCount)
+	}
+	if !strings.Contains(rec.Body.String(), `"state":"in_memory"`) || !strings.Contains(rec.Body.String(), `"source_sha256"`) {
+		t.Fatalf("expected in-memory draft response, got %s", rec.Body.String())
 	}
 	var audit db.AIToolInvocation
 	if err := store.Where("tool_name = ?", "CopilotAction:create_exp_draft").First(&audit).Error; err != nil {

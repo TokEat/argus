@@ -66,7 +66,13 @@ func (c *Client) expWorkspace(ctx context.Context, args map[string]interface{}) 
 		if expID == "" {
 			return nil, fmt.Errorf("exp_id is required")
 		}
-		return c.workspaceJSON(ctx, http.MethodPost, "/api/v1/exps/"+url.PathEscape(expID)+"/revisions", workspaceFields(args, "source", "dependencies", "assets"))
+		return c.workspaceJSON(ctx, http.MethodPost, "/api/v1/exps/"+url.PathEscape(expID)+"/revisions", workspaceFields(args, "source", "dependencies", "assets", "test_cases", "test_receipt"))
+	case "draft_inspect", "draft_validate", "draft_test":
+		if expID == "" {
+			return nil, fmt.Errorf("exp_id is required")
+		}
+		actionName := strings.TrimPrefix(action, "draft_")
+		return c.workspaceJSON(ctx, http.MethodPost, "/api/v1/exps/"+url.PathEscape(expID)+"/draft/"+actionName, workspaceFields(args, "source", "dependencies", "assets", "test_cases"))
 	case "revision_get", "revision_inspect", "revision_validate", "revision_publish", "revision_sealed":
 		if expID == "" || !hasRevision || revision < 1 {
 			return nil, fmt.Errorf("exp_id and positive revision are required")

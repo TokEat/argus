@@ -30,6 +30,24 @@ type CreateRevisionInput struct {
 	Assets       []AssetRefInput   `json:"assets"`
 }
 
+type DraftPackageInput struct {
+	Source       string            `json:"source"`
+	Dependencies []DependencyInput `json:"dependencies"`
+	Assets       []AssetRefInput   `json:"assets"`
+	TestCases    []TestCaseInput   `json:"test_cases,omitempty"`
+}
+
+type CreateTestedRevisionInput struct {
+	DraftPackageInput
+	TestReceipt string `json:"test_receipt"`
+}
+
+type DraftTestResult struct {
+	RuntimeResponse RuntimeResponse `json:"runtime_response"`
+	TestReceipt     string          `json:"test_receipt"`
+	ExpiresAt       time.Time       `json:"expires_at"`
+}
+
 type SealedDependency struct {
 	ExpID        string `json:"exp_id"`
 	Revision     int    `json:"revision"`

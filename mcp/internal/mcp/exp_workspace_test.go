@@ -22,7 +22,7 @@ func TestExpWorkspaceRoutesRevisionCreateThroughServer(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body["action"] != nil || body["source"] != "cli.check()" {
+		if body["action"] != nil || body["source"] != "cli.check()" || body["test_receipt"] != "receipt" {
 			t.Fatalf("unexpected body: %#v", body)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -30,12 +30,38 @@ func TestExpWorkspaceRoutesRevisionCreateThroughServer(t *testing.T) {
 	}))
 	defer server.Close()
 	client := NewClientWithYakshaURL(server.URL, "token", "http://127.0.0.1:8790")
-	result, err := client.CallTool(context.Background(), "argus_exp_workspace", map[string]interface{}{"action": "revision_create", "exp_id": "exp-1", "source": "cli.check()", "dependencies": []interface{}{}, "assets": []interface{}{}})
+	result, err := client.CallTool(context.Background(), "argus_exp_workspace", map[string]interface{}{"action": "revision_create", "exp_id": "exp-1", "source": "cli.check()", "dependencies": []interface{}{}, "assets": []interface{}{}, "test_cases": []interface{}{}, "test_receipt": "receipt"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(toJSON(result), `"revision":1`) {
 		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestExpWorkspaceRoutesInMemoryDraftTestWithoutSavingSource(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/exps/exp-1/draft/test" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["source"] != "cli.check()" || len(body["test_cases"].([]interface{})) != 1 || body["test_receipt"] != nil {
+			t.Fatalf("unexpected draft body: %#v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"runtime_response":{"status":"Succeeded","test":{"failed":0}},"test_receipt":"write-only","expires_at":"2026-08-14T12:00:00Z"}`))
+	}))
+	defer server.Close()
+	client := NewClientWithYakshaURL(server.URL, "token", "http://127.0.0.1:8790")
+	result, err := client.CallTool(context.Background(), "argus_exp_workspace", map[string]interface{}{
+		"action": "draft_test", "exp_id": "exp-1", "source": "cli.check()", "dependencies": []interface{}{}, "assets": []interface{}{},
+		"test_cases": []interface{}{map[string]interface{}{"name": "offline", "params": map[string]interface{}{}, "fixture": map[string]interface{}{}, "expect": map[string]interface{}{}}},
+	})
+	if err != nil || !strings.Contains(toJSON(result), `"test_receipt":"write-only"`) {
+		t.Fatalf("result=%#v err=%v", result, err)
 	}
 }
 

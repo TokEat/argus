@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,9 +21,31 @@ import (
 
 	aipkg "github.com/P0lar1ght/argus/server/internal/ai"
 	"github.com/P0lar1ght/argus/server/internal/db"
+	egresspkg "github.com/P0lar1ght/argus/server/internal/egress"
 	"github.com/P0lar1ght/argus/server/internal/scheduler"
+	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 	"github.com/gin-gonic/gin"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
 )
+
+type nodeEgressTestService struct {
+	pb.UnimplementedAgentEgressServiceServer
+	broker *egresspkg.Broker
+}
+
+func (s nodeEgressTestService) EgressTunnel(stream pb.AgentEgressService_EgressTunnelServer) error {
+	first, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	return s.broker.AttachAgent(first.GetAgentId(), stream)
+}
+
+func nodeEgressBufDialer(listener *bufconn.Listener) func(context.Context, string) (net.Conn, error) {
+	return func(context.Context, string) (net.Conn, error) { return listener.Dial() }
+}
 
 func ptrTime(v time.Time) *time.Time {
 	return &v
@@ -74,6 +97,65 @@ func TestGetAgentCommandsDoesNotExposeAPIConfigSyncState(t *testing.T) {
 	}
 	if _, ok := resp["api_config_hash"]; ok {
 		t.Fatalf("commands response must not expose api config hash: %s", recorder.Body.String())
+	}
+}
+
+func TestGetNodesReportsNativeEgressAvailabilityWithinTenant(t *testing.T) {
+	store := setupAITestDB(t)
+	for _, node := range []db.Node{
+		{TenantID: "default", AgentID: "agent-egress", Status: "Alive"},
+		{TenantID: "default", AgentID: "agent-scan-only", Status: "Alive"},
+		{TenantID: "tenant-b", AgentID: "agent-foreign", Status: "Alive"},
+	} {
+		if err := store.Create(&node).Error; err != nil {
+			t.Fatalf("seed node: %v", err)
+		}
+	}
+
+	broker := egresspkg.NewBroker()
+	oldBroker := routerRuntime().EgressBroker
+	routerRuntime().EgressBroker = broker
+	t.Cleanup(func() { routerRuntime().EgressBroker = oldBroker })
+
+	listener := bufconn.Listen(1 << 20)
+	grpcServer := grpc.NewServer()
+	pb.RegisterAgentEgressServiceServer(grpcServer, nodeEgressTestService{broker: broker})
+	go func() { _ = grpcServer.Serve(listener) }()
+	t.Cleanup(grpcServer.Stop)
+	connection, err := grpc.NewClient("passthrough:///agent", grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithContextDialer(nodeEgressBufDialer(listener)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = connection.Close() })
+	stream, err := pb.NewAgentEgressServiceClient(connection).EgressTunnel(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&pb.EgressFrame{Kind: pb.EgressFrameKind_EGRESS_FRAME_HELLO, AgentId: "agent-egress"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, recorder := newTenantContext(http.MethodGet, "/nodes")
+	getNodes(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response []NodeResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response) != 2 {
+		t.Fatalf("tenant-scoped nodes=%d body=%s", len(response), recorder.Body.String())
+	}
+	availability := make(map[string]bool, len(response))
+	for _, item := range response {
+		availability[item.AgentID] = item.EgressOnline
+	}
+	if !availability["agent-egress"] || availability["agent-scan-only"] {
+		t.Fatalf("unexpected egress availability: %#v", availability)
 	}
 }
 

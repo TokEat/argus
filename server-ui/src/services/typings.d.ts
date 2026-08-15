@@ -522,6 +522,7 @@ declare namespace API {
     AgentID: string;
     IP: string;
     Status: string;        // Alive, Offline
+    EgressOnline?: boolean; // 原生 EXP 出口隧道是否在线
     Token: string;
     TokenExpiresAt?: string;
     TokenRevokedAt?: string;
@@ -1335,11 +1336,38 @@ declare namespace API {
   interface CreateExpRequest { name: string; description?: string; risk_level: Exp['risk_level']; }
   interface ExpDependencyRef { exp_id: string; revision: number; source_sha256: string; }
   interface ExpAssetRef { asset_id: string; version: number; sha256: string; }
-  interface CreateExpRevisionRequest { source: string; dependencies: ExpDependencyRef[]; assets: ExpAssetRef[]; }
+  interface CreateExpRevisionRequest { source: string; dependencies: ExpDependencyRef[]; assets: ExpAssetRef[]; test_cases: ExpTestCaseInput[]; test_receipt: string; }
+
+  interface ExpControlFlowStep {
+    id: string;
+    kind: string;
+    operation: string;
+    label: string;
+    expression?: string;
+    inputs?: string[];
+    outputs?: string[];
+    depends_on?: string[];
+    line: number;
+    column: number;
+  }
+
+  interface ExpInspection {
+    valid: boolean;
+    source_sha256: string;
+    parameters: ExpCLIParam[];
+    dependencies: Array<{ exp_id: string; revision: number }>;
+    asset_refs: Array<{ asset_id: string }>;
+    control_flow: ExpControlFlowStep[];
+    diagnostics: Array<{ severity: string; code: string; message: string; line: number; column: number }>;
+  }
+
+  interface ExpDraftPackage { source: string; dependencies: ExpDependencyRef[]; assets: ExpAssetRef[]; test_cases: ExpTestCaseInput[]; }
+  interface ExpDraftTestResult { runtime_response: YakshaResult; test_receipt: string; expires_at: string; }
 
   interface ExpCLIParam {
     name: string;
     type?: string;
+	input_type?: 'host_port' | 'url';
     required?: boolean;
     default?: unknown;
 	has_default?: boolean;

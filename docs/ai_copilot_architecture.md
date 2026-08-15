@@ -28,7 +28,7 @@
 - 全局上下文注入：`GlobalAIContext` / `useAutoContext` 已升级为分层上下文，前端发送 `_identity`、`_focus`、`data`、`_ambient`，页面旧上下文字段会合并进 `data`。
 - 全局入口与抽屉：`BasicLayout` 已增加可拖拽悬浮按钮，`GlobalAIChatDrawer` 已支持打开、输入、SSE 读取、工具状态展示和流式取消。
 - Copilot 抽屉体验：已支持 Markdown 标题、列表、引用、代码块、链接渲染，工具调用会以可折叠记录展示，支持停止生成和会话重置。
-- 可控编辑体验：POC 与 EXP 编辑器会注册为 Copilot 可编辑目标；POC 应用 fenced `yaml`，EXP 只应用 fenced `yak` / `yaklang`。EXP 修改创建新的不可变 Draft Revision，不会自动发布或执行。
+- 可控编辑体验：POC 与 EXP 编辑器会注册为 Copilot 可编辑目标；POC 应用 fenced `yaml`，EXP 只应用 fenced `yak` / `yaklang`。EXP 修改先保留为内存草稿，只有通过离线 Fixture 验收后才允许保存新的不可变 Draft Revision。
 - 模块化 Copilot Profile：后端会优先根据 `page_context._focus.module` 选择系统提示词和工具白名单，兼容旧的 `page_context.module`；POC、EXP Builder、任务、资产、节点、结果、弹药库等模块按需启用工具。
 - Prompt Registry：参考 `_ref_claude_code` 将 Copilot base prompt、模块追加段、工具白名单、别名和最大轮次集中维护在 `server/internal/api/prompts/copilot_profiles.yaml`，Go 侧仅负责 embed 加载、解析和路由，不再把提示词正文硬编码在 handler 中。
 - 上下文安全处理：发送给 LLM 前会脱敏 `token`、`api_key`、`authorization`、`password`、`secret` 等字段，并裁剪超长字符串和大型数组。
@@ -237,7 +237,7 @@ graph TD
 
 - 已完成 POC 编辑器的第一阶段可控编辑闭环：AI 根据当前 `poc_content` 生成完整 YAML，前端识别代码块后允许用户一键应用到当前 POC 编辑器；应用后用户可在 Copilot 内确认保存草稿，审核仍走原有按钮。
 - 已建立统一的动作确认模型：模型只能提出 `pending_action`，前端展示动作摘要、影响范围、参数和风险，用户确认后才调用后端确认入口。
-- 已接入草稿类低风险动作：`create_poc_draft` 保存 POC 草稿，`create_exp_draft` 保存 EXP 草稿，`upsert_workflow_draft` 保存 Workflow 草稿，`create_task_draft` 保存扫描任务草稿，`upsert_dir_draft` 保存 Dir 字典草稿；当前不直接删除、审批、发布、执行 EXP、下发任务或修改云资源。
+- 已接入草稿类低风险动作：`create_poc_draft` 保存 POC 草稿，`create_exp_draft` 创建 EXP 元数据并返回未保存的内存源码，`upsert_workflow_draft` 保存 Workflow 草稿，`create_task_draft` 保存扫描任务草稿，`upsert_dir_draft` 保存 Dir 字典草稿；当前不直接删除、审批、发布、执行 EXP、下发任务或修改云资源。
 - 所有执行类动作必须写入审计：记录用户、租户、模块、动作、参数摘要、执行结果、错误摘要；`content` 正文只记录 hash 与长度。
 - 为高风险动作增加二次确认和 RBAC：规则发布、任务下发、批量资产操作、云资源操作必须至少 operator/admin 权限，并保留人工确认门槛。
 - 已建立动作 schema：每类动作定义 `action_type`、`title`、`summary`、`risk_level`、`params`、`preview`、`required_role` 和 `confirm_label`。
@@ -249,7 +249,7 @@ graph TD
 | action_type | 风险等级 | required_role | params | 执行语义 |
 |-------------|----------|---------------|--------|----------|
 | `create_poc_draft` | low | operator | `file_name`, `content` | 写入 `arsenals(poc)`，状态固定为 `Draft`，审核仍走原有按钮 |
-| `create_exp_draft` | low | operator | `name`, `content`，追加时可带 `exp_id` | 通过 Server EXP Workspace 创建 Yaksha EXP 与不可变 Draft Revision；发布和执行仍走独立门禁 |
+| `create_exp_draft` | low | operator | `name`, `content`，追加时可带 `exp_id` | 创建或定位 EXP 元数据，源码作为内存草稿返回；必须通过离线 Fixture test 后才能保存 Revision |
 | `upsert_workflow_draft` | medium | operator | `product`, `type`, `pocs` | 更新 `workflow.yaml` 草稿内容，状态固定为 `Draft`，发布/审核不由 Copilot 自动触发 |
 | `create_task_draft` | medium | operator | `project_id`, `name`, `targets`, `config`, `priority`, `timeout_sec` | 写入 `root_tasks`，状态固定为 `Draft`，不会拆分子任务或入队 |
 | `upsert_dir_draft` | low | operator | `product`, `paths` | 更新 `dir.yaml` 草稿内容，状态固定为 `Draft`，不会自动发布 |

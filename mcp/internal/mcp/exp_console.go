@@ -71,10 +71,10 @@ const expConsoleHTML = `<!doctype html>
 <body>
 <main>
   <header>
-    <div><h1>Yaksha EXP Studio</h1><div class="muted">Server 权威 Revision · 私有 MinIO · 单文件 Yaklang EXP · 不访问宿主文件系统</div><div id="identity" class="muted">未绑定 Revision</div><div id="dirty" class="dirty" hidden>当前为工作草稿；Debug / Run 会先自动保存不可变 Revision 并继承 Fixture。</div></div>
+    <div><h1>Yaksha EXP Studio</h1><div class="muted">Server 权威 Revision · 私有 MinIO · 单文件 Yaklang EXP · 不访问宿主文件系统</div><div id="identity" class="muted">未绑定 Revision</div><div id="dirty" class="dirty" hidden>当前为内存草稿；实时 Inspect，离线 Fixture Test 通过后才能保存。Debug / Run 只执行已保存 Revision。</div></div>
     <span id="status" class="status">等待输入</span>
   </header>
-  <div class="lifecycle" aria-label="EXP 生命周期"><span>Draft</span><span>Inspect / Validate</span><span>Fixture</span><span>Published</span><span>Active</span></div>
+  <div class="lifecycle" aria-label="EXP 生命周期"><span>内存草稿</span><span>实时 Inspect</span><span>Fixture Test</span><span>已保存 Revision</span><span>Published / Active</span></div>
   <details class="panel" open>
     <summary>Server Workspace</summary>
     <div class="workspace-grid">
@@ -85,7 +85,7 @@ const expConsoleHTML = `<!doctype html>
       <label>风险<select id="workspace-risk"><option>high</option><option>critical</option><option>medium</option><option>low</option></select></label>
       <button id="workspace-create" type="button">创建 EXP</button>
       <button id="workspace-load" type="button">加载密封 Revision</button>
-      <button id="workspace-save" type="button">保存工作草稿</button>
+      <button id="workspace-save" type="button">保存测试通过的 Revision</button>
       <button id="workspace-inspect" type="button">Inspect Revision</button>
       <button id="workspace-validate" type="button">Validate Revision</button>
       <button id="workspace-publish" type="button">按哈希发布</button>
@@ -124,7 +124,8 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
     </section>
     <aside class="panel">
       <h2 class="section-title">声明式参数 UI</h2>
-      <div id="fields" class="fields"><span class="muted">先运行 inspect 解析 cli.* 声明</span></div>
+      <div id="fields" class="fields"><span class="muted">源码修改后会实时解析 cli.* 声明</span></div>
+	  <h2 class="section-title" style="margin-top:12px">静态执行流程</h2><div id="flow" class="fields"><span class="muted">源码修改后会实时显示控制流与数据依赖</span></div>
 	      <details><summary>高级：参数与临时测试 JSON</summary><label>参数 JSON<textarea id="params" spellcheck="false">{"target":"https://authorized.invalid"}</textarea></label><label id="test-wrap">临时 Fixture 测试 JSON<textarea id="tests" spellcheck="false">[]</textarea></label></details>
 	      <details>
 	        <summary>Resolver、Asset 与网络出口</summary>
@@ -165,8 +166,12 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
   var output = document.getElementById('output');
   var status = document.getElementById('status');
   var fields = document.getElementById('fields');
+	var flow = document.getElementById('flow');
 	var identity = document.getElementById('identity');
 	var boundContext = {};
+	var draftReceipt = '';
+	var previewTimer = 0;
+	var previewSequence = 0;
 	var workspaceExp = document.getElementById('workspace-exp');
 	var workspaceRevision = document.getElementById('workspace-revision');
 	var workspaceName = document.getElementById('workspace-name');
@@ -230,8 +235,12 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
   }
   function renderResult(value) {
     if (!value || typeof value !== 'object') return;
-	if (value.context) {
+	if (value.context && value.context.exp_id && value.context.revision) {
 	  bindContext(value.context);
+	} else if (value.context && value.context.source_sha256) {
+	  boundContext = {source_sha256: value.context.source_sha256};
+	  dirty.hidden = false;
+	  renderIdentity();
 	}
 	if (value.isError) {
 	  setStatus('失败', true);
@@ -242,6 +251,7 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
 	  renderResultTabs(value);
 	    if (value.inspection) {
 	      renderFields(value.inspection.parameters || []);
+	      renderFlow(value.inspection.control_flow || []);
 	      refs.textContent = JSON.stringify({dependencies: value.inspection.dependencies || [], asset_refs: value.inspection.asset_refs || []}, null, 2);
 	    }
   }
@@ -249,10 +259,13 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
 	  return value && value.structuredContent ? value.structuredContent : value;
 	}
 	async function callWorkspace(args) {
-	  var response = await sendRequest('tools/call', {name: 'argus_exp_workspace', arguments: args});
-	  var value = unwrapToolResult(response);
+	  var value = await callWorkspaceRaw(args);
 	  renderResult(value);
 	  return value;
+	}
+	async function callWorkspaceRaw(args) {
+	  var response = await sendRequest('tools/call', {name: 'argus_exp_workspace', arguments: args});
+	  return unwrapToolResult(response);
 	}
 	function selectedExpID() { return workspaceExp.value.trim(); }
 	function selectedRevisionNumber() { return Number(workspaceRevision.value || 0); }
@@ -290,17 +303,18 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
 	  }
 	  identity.textContent = hash ? '内存源码 · sha256 ' + hash.slice(0, 12) : '未绑定 Revision';
 	}
-	function clearBinding(showDirty) { boundContext = {}; dirty.hidden = !showDirty; renderIdentity(); }
+	function clearBinding(showDirty) { boundContext = {}; if (showDirty) draftReceipt = ''; dirty.hidden = !showDirty; renderIdentity(); }
+	function resetRunContext() {
+	  params.value = '{}'; targets.value = ''; egressMode.value = 'disabled'; proxy.value = ''; agentID.value = ''; riskConfirmed.checked = false; output.textContent = ''; syncEgressMode();
+	}
 	function bindContext(value) { boundContext = value || {}; dirty.hidden = true; renderIdentity(); }
 	async function checkpointWorkspace() {
 	  if (boundContext.exp_id && boundContext.revision && boundContext.source_sha256) return boundContext;
 	  requireWorkspaceIdentity(false);
-	  var value = await callWorkspace({action: 'revision_create', exp_id: selectedExpID(), source: source.value, dependencies: parseJSON(dependencies.value || '[]', '依赖闭包'), assets: parseJSON(assets.value || '[]', 'Asset 引用')});
 	  var cases = parseJSON(tests.value || '[]', 'Fixture');
-	  for (var index = 0; index < cases.length; index++) {
-	    var testCase = cases[index] || {};
-	    await callWorkspace({action: 'test_case_create', exp_id: selectedExpID(), revision: value.revision, name: testCase.name || testCase.id || ('fixture-' + (index + 1)), params: testCase.params || {}, fixture: testCase.fixture || {}, expect: testCase.expect || {}, enabled: testCase.enabled !== false});
-	  }
+	  if (!draftReceipt) throw new Error('请先对当前源码和 Fixture 执行离线 draft_test；任意修改都会使测试凭据失效');
+	  var value = await callWorkspace({action: 'revision_create', exp_id: selectedExpID(), source: source.value, dependencies: parseJSON(dependencies.value || '[]', '依赖闭包'), assets: parseJSON(assets.value || '[]', 'Asset 引用'), test_cases: cases, test_receipt: draftReceipt});
+	  draftReceipt = '';
 	  bindContext({exp_id: value.exp_id, revision: value.revision, source_sha256: value.source_sha256});
 	  await refreshWorkspaceRevisions(value.revision);
 	  return boundContext;
@@ -349,6 +363,9 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
 		control = document.createElement('input');
 		control.type = type === 'integer' || type === 'number' ? 'number' : 'text';
 		if (type === 'number') control.step = 'any';
+		if (item.input_type === 'url') control.type = 'url';
+		if (item.input_type === 'host_port') control.placeholder = '主机或 IP:端口，如 10.0.0.8:23';
+		if (item.input_type === 'url') control.placeholder = 'http(s)://主机:端口/路径';
 	  }
 	  control.dataset.paramName = item.name;
 	  control.dataset.paramType = type;
@@ -363,6 +380,23 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
 	});
 	syncParamsFromFields();
   }
+	function renderFlow(items) {
+	  flow.textContent = '';
+	  if (!items.length) {
+	    flow.innerHTML = '<span class="muted">未识别到 HTTP、TCP、条件、转换或结果步骤</span>';
+	    return;
+	  }
+	  items.forEach(function (item, index) {
+	    var row = document.createElement('div'); row.className = 'field';
+	    var title = document.createElement('strong'); title.textContent = String(index + 1) + '. ' + (item.label || item.operation || item.kind);
+	    var detail = document.createElement('small');
+	    var inputs = item.inputs && item.inputs.length ? '输入 ' + item.inputs.join(', ') : '';
+	    var outputs = item.outputs && item.outputs.length ? '输出 ' + item.outputs.join(', ') : '';
+	    var dependenciesText = item.depends_on && item.depends_on.length ? '依赖 ' + item.depends_on.join(', ') : '';
+	    detail.textContent = [inputs, outputs, dependenciesText, item.line ? 'L' + item.line : ''].filter(Boolean).join(' · ');
+	    row.appendChild(title); row.appendChild(detail); flow.appendChild(row);
+	  });
+	}
 	function setControlValue(control, value, item) {
 	  if (value === undefined || value === null) return;
 	  if (control.type === 'checkbox') { control.checked = Boolean(value); return; }
@@ -439,11 +473,23 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
   execute.addEventListener('click', async function () {
     execute.disabled = true;
     setStatus('执行中', false);
-    try {
+	    try {
 	      var isBound = Boolean(boundContext.exp_id && boundContext.revision && boundContext.source_sha256);
 	      if ((action.value === 'run' || action.value === 'debug') && !isBound) {
-	        await checkpointWorkspace();
-	        isBound = true;
+	        throw new Error('Debug / Run 只执行已保存 Revision；请先让当前内存源码通过离线 Fixture Test，再显式保存');
+	      }
+	      if (!isBound && (action.value === 'inspect' || action.value === 'validate' || action.value === 'test')) {
+	        requireWorkspaceIdentity(false);
+	        var draftArgs = {action: 'draft_' + action.value, exp_id: selectedExpID(), source: source.value, dependencies: parseJSON(dependencies.value || '[]', '依赖闭包'), assets: parseJSON(assets.value || '[]', 'Asset 引用'), test_cases: parseJSON(tests.value || '[]', '测试用例')};
+	        var draftValue = await callWorkspaceRaw(draftArgs);
+	        if (action.value === 'test') {
+	          draftReceipt = String(draftValue.test_receipt || '');
+	          renderResult(draftValue.runtime_response || draftValue);
+	          dirty.hidden = false;
+	        } else {
+	          renderResult(draftValue);
+	        }
+	        return;
 	      }
 	      var args = {action: action.value, timeout_ms: Number(timeout.value || 0)};
 	      if (isBound) {
@@ -482,11 +528,25 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
     } finally { execute.disabled = false; }
 	  });
 	  egressMode.addEventListener('change', syncEgressMode);
-	  [source, dependencies, assets].forEach(function (field) {
-	    field.addEventListener('input', function () { clearBinding(true); });
+	  function scheduleLiveInspect() {
+	    window.clearTimeout(previewTimer);
+	    if (!selectedExpID() || !source.value.trim()) return;
+	    var sequence = ++previewSequence;
+	    previewTimer = window.setTimeout(function () {
+	      sendRequest('tools/call', {name: 'argus_exp_workspace', arguments: {action: 'draft_inspect', exp_id: selectedExpID(), source: source.value}}).then(function (response) {
+	        if (sequence !== previewSequence) return;
+	        renderResult(unwrapToolResult(response));
+	      }).catch(function (error) {
+	        if (sequence === previewSequence) setStatus(error.message || '实时 Inspect 失败', true);
+	      });
+	    }, 350);
+	  }
+	  [source, dependencies, assets, tests].forEach(function (field) {
+	    field.addEventListener('input', function () { clearBinding(true); if (field === source) scheduleLiveInspect(); });
 	  });
-	  workspaceExp.addEventListener('change', function () { clearBinding(false); refreshWorkspaceRevisions().catch(function (error) { renderResult({isError: true, error: error.message}); }); });
+	  workspaceExp.addEventListener('change', function () { resetRunContext(); clearBinding(false); refreshWorkspaceRevisions().then(scheduleLiveInspect).catch(function (error) { renderResult({isError: true, error: error.message}); }); });
 	  workspaceRevision.addEventListener('change', function () {
+	    resetRunContext();
 	    clearBinding(false);
 	    var current = workspaceRevisions.find(function (item) { return item.revision === selectedRevisionNumber(); });
 	    updateLifecycle(current);
@@ -509,6 +569,7 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
 	      dependencies.value = JSON.stringify(value.dependency_refs || [], null, 2);
 	      assets.value = JSON.stringify(value.asset_refs || [], null, 2);
 	      tests.value = JSON.stringify(value.test_cases || [], null, 2);
+	      resetRunContext();
 	      var current = workspaceRevisions.find(function (item) { return item.revision === selectedRevisionNumber(); });
 	      renderFields(current && current.cli_schema ? current.cli_schema : []);
 	      bindContext({exp_id: value.exp_id, revision: value.revision, source_sha256: value.source_sha256});
@@ -549,7 +610,7 @@ yaksha.result({"vulnerable": false, "target": target})</textarea>
 	  document.getElementById('workspace-fixtures').addEventListener('click', function () { try { requireWorkspaceIdentity(true); callWorkspace({action: 'test_case_list', exp_id: selectedExpID(), revision: selectedRevisionNumber()}); } catch (error) { renderResult({isError: true, error: error.message}); } });
 	  document.getElementById('workspace-runs').addEventListener('click', function () { try { requireWorkspaceIdentity(false); callWorkspace({action: 'run_list', exp_id: selectedExpID(), page_size: 100}); } catch (error) { renderResult({isError: true, error: error.message}); } });
 	  document.getElementById('workspace-assets').addEventListener('click', function () { callWorkspace({action: 'asset_list'}).catch(function (error) { renderResult({isError: true, error: error.message}); }); });
-	  document.getElementById('workspace-fixture-create').addEventListener('click', function () { try { requireWorkspaceIdentity(true); if (!workspaceFixtureName.value.trim()) throw new Error('请输入 Fixture 名称'); var fixture = {}; if (workspaceFixtureProtocol.value === 'http') { if (!workspaceFixtureTarget.value.trim()) throw new Error('HTTP Fixture 需要 URL'); fixture.http = [{method: 'GET', url: workspaceFixtureTarget.value.trim(), status_code: 200, body: workspaceFixtureResponse.value || ''}]; } if (workspaceFixtureProtocol.value === 'tcp') { if (!workspaceFixtureTarget.value.trim()) throw new Error('TCP Fixture 需要 host:port'); fixture.tcp = [{address: workspaceFixtureTarget.value.trim(), success: true, remote_address: workspaceFixtureTarget.value.trim(), steps: workspaceFixtureResponse.value ? [{operation: 'read', response: workspaceFixtureResponse.value, encoding: 'utf8'}] : []}]; } callWorkspace({action: 'test_case_create', exp_id: selectedExpID(), revision: selectedRevisionNumber(), name: workspaceFixtureName.value.trim(), params: parseJSON(params.value || '{}', '参数'), fixture: fixture, expect: {status: workspaceFixtureStatus.value}, enabled: true}); } catch (error) { renderResult({isError: true, error: error.message}); } });
+	  document.getElementById('workspace-fixture-create').addEventListener('click', function () { try { requireWorkspaceIdentity(false); if (!workspaceFixtureName.value.trim()) throw new Error('请输入 Fixture 名称'); var fixture = {}; if (workspaceFixtureProtocol.value === 'http') { if (!workspaceFixtureTarget.value.trim()) throw new Error('HTTP Fixture 需要 URL'); fixture.http = [{method: 'GET', url: workspaceFixtureTarget.value.trim(), status_code: 200, body: workspaceFixtureResponse.value || ''}]; } if (workspaceFixtureProtocol.value === 'tcp') { if (!workspaceFixtureTarget.value.trim()) throw new Error('TCP Fixture 需要 host:port'); fixture.tcp = [{address: workspaceFixtureTarget.value.trim(), success: true, remote_address: workspaceFixtureTarget.value.trim(), steps: workspaceFixtureResponse.value ? [{operation: 'read', response: workspaceFixtureResponse.value, encoding: 'utf8'}] : []}]; } var cases = parseJSON(tests.value || '[]', 'Fixture'); cases.push({name: workspaceFixtureName.value.trim(), params: parseJSON(params.value || '{}', '参数'), fixture: fixture, expect: {status: workspaceFixtureStatus.value}, enabled: true}); tests.value = JSON.stringify(cases, null, 2); clearBinding(true); renderResult({status: 'Fixture 已加入内存草稿', fixture_count: cases.length}); } catch (error) { renderResult({isError: true, error: error.message}); } });
 	  document.getElementById('workspace-asset-create').addEventListener('click', function () { try { if (!workspaceAssetID.value.trim()) throw new Error('请输入 Asset 逻辑 ID'); callWorkspace({action: 'asset_create', asset_id: workspaceAssetID.value.trim(), media_type: workspaceAssetType.value.trim() || 'application/octet-stream', encoding: workspaceAssetEncoding.value, content: workspaceAssetContent.value}); workspaceAssetContent.value = ''; } catch (error) { renderResult({isError: true, error: error.message}); } });
 	  document.getElementById('workspace-deprecate').addEventListener('click', function () { try { requireWorkspaceIdentity(false); if (window.confirm('确认废弃该 EXP？')) callWorkspace({action: 'exp_deprecate', exp_id: selectedExpID()}).then(function () { refreshWorkspaceExps(); }); } catch (error) { renderResult({isError: true, error: error.message}); } });
 	  syncEgressMode();

@@ -17,6 +17,8 @@ type RiskWaiverInput struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
+var ErrRiskConfirmationRequired = errors.New("high-risk EXP execution requires risk_confirmed=true or an active risk waiver")
+
 func (s *Service) CheckExecutionAllowed(ctx context.Context, tenantID, expID string, revision int, action string, riskConfirmed bool) (bool, error) {
 	root, err := s.GetExp(ctx, tenantID, expID)
 	if err != nil {
@@ -55,7 +57,7 @@ func (s *Service) CheckExecutionAllowed(ctx context.Context, tenantID, expID str
 				return false, err
 			}
 			if !active {
-				return false, errors.New("high-risk EXP execution requires risk_confirmed=true or an active risk waiver")
+				return false, ErrRiskConfirmationRequired
 			}
 			waiverUsed = true
 		}

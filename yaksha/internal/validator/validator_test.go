@@ -78,6 +78,18 @@ func TestValidateRejectsParameterErrors(t *testing.T) {
 	}
 }
 
+func TestValidateAppliesDeclaredInputType(t *testing.T) {
+	source := `address = cli.String("address", cli.setInputType("host_port"), cli.setRequired(true)); cli.check()`
+	valid := Validate(protocol.Request{Script: source, Params: map[string]any{"address": "telnet.internal:23"}})
+	if !valid.Validation.Valid {
+		t.Fatalf("valid host:port rejected: %#v", valid.Validation.Diagnostics)
+	}
+	invalid := Validate(protocol.Request{Script: source, Params: map[string]any{"address": "tcp://telnet.internal:23"}})
+	if invalid.Validation.Valid || !hasDiagnostic(invalid.Validation.Diagnostics, "parameter_input_mismatch", "address") {
+		t.Fatalf("scheme-prefixed host:port accepted: %#v", invalid.Validation.Diagnostics)
+	}
+}
+
 func TestContractValidationAllowsMissingRuntimeParameters(t *testing.T) {
 	result := Validate(protocol.Request{Action: protocol.ActionValidate, ValidationMode: protocol.ValidationContract, Script: contractSource})
 	if !result.Validation.Valid {

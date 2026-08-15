@@ -2,14 +2,20 @@ address = cli.String(
     "address",
     cli.setDefault("argus-exp-telnet:23"),
     cli.setVerboseName("Telnet 实验靶机"),
+    cli.setInputType("host_port"),
 )
 marker = cli.String(
     "marker",
-    cli.setRequired(true),
-    cli.setVerboseName("随机执行标记"),
+    cli.setDefault(""),
+    cli.setVerboseName("Fixture 标记覆写值"),
+    cli.setHelp("留空时由 EXP 为本次命令生成；仅离线 Fixture 或定向调试需要覆写"),
 )
 
 cli.check()
+
+if marker == "" {
+    marker = "ARGUS_TELNET_" + codec.EncodeToHex(codec.CryptoRandBytes(12))
+}
 
 if address != "argus-exp-telnet:23" {
     panic("lab EXP only accepts the isolated Telnet container")

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -190,12 +191,14 @@ type Inspection struct {
 	Parameters   []CLIParameter        `json:"parameters"`
 	Dependencies []DependencyReference `json:"dependencies"`
 	AssetRefs    []AssetReference      `json:"asset_refs"`
+	ControlFlow  []ControlFlowStep     `json:"control_flow"`
 	Diagnostics  []Diagnostic          `json:"diagnostics"`
 }
 
 type CLIParameter struct {
 	Name           string      `json:"name"`
 	Type           string      `json:"type"`
+	InputType      string      `json:"input_type,omitempty"`
 	Required       bool        `json:"required"`
 	Default        any         `json:"default,omitempty"`
 	HasDefault     bool        `json:"has_default"`
@@ -209,6 +212,44 @@ type CLIParameter struct {
 type CLIOption struct {
 	Label string `json:"label"`
 	Value string `json:"value"`
+}
+
+// ControlFlowStep is a side-effect-free, source-derived execution outline.
+// It is intentionally descriptive rather than executable: renderers use it
+// to preview data flow while Test/Debug/Run remain the runtime authority.
+type ControlFlowStep struct {
+	ID         string   `json:"id"`
+	Kind       string   `json:"kind"`
+	Operation  string   `json:"operation"`
+	Label      string   `json:"label"`
+	Expression string   `json:"expression,omitempty"`
+	Inputs     []string `json:"inputs,omitempty"`
+	Outputs    []string `json:"outputs,omitempty"`
+	DependsOn  []string `json:"depends_on,omitempty"`
+	Line       int      `json:"line"`
+	Column     int      `json:"column"`
+}
+
+// ValidateCLIInputValue applies the semantic input contract declared by the
+// EXP. Renderers choose a component from input_type, while Yaksha remains the
+// authority that validates the submitted value.
+func ValidateCLIInputValue(inputType, value string) bool {
+	switch inputType {
+	case "":
+		return true
+	case "host_port":
+		host, portText, err := net.SplitHostPort(value)
+		if err != nil || strings.TrimSpace(host) == "" {
+			return false
+		}
+		port, err := strconv.Atoi(portText)
+		return err == nil && port > 0 && port <= 65535
+	case "url":
+		parsed, err := url.ParseRequestURI(value)
+		return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Hostname() != ""
+	default:
+		return false
+	}
 }
 
 type Diagnostic struct {

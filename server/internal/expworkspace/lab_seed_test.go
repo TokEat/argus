@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/P0lar1ght/argus/server/internal/db"
@@ -81,5 +82,17 @@ func TestDevelopmentLabSourcesStayBoundToIsolatedTargets(t *testing.T) {
 	}
 	if sources["lab-shiro-cve-2016-4437-rce"] == "" || sources["lab-telnet-unauth-rce"] == "" {
 		t.Fatalf("missing embedded lab source")
+	}
+	if !strings.Contains(sources["lab-shiro-cve-2016-4437-rce"], `canary_token = "ARGUS_CANARY_" + codec.EncodeToHex(codec.CryptoRandBytes(12))`) {
+		t.Fatal("Shiro seed must generate its one-time Canary token inside the EXP")
+	}
+	if !strings.Contains(sources["lab-telnet-unauth-rce"], `marker = "ARGUS_TELNET_" + codec.EncodeToHex(codec.CryptoRandBytes(12))`) {
+		t.Fatal("Telnet seed must generate its one-time execution marker inside the EXP")
+	}
+	if !strings.Contains(sources["lab-telnet-unauth-rce"], `cli.setInputType("host_port")`) {
+		t.Fatal("Telnet seed must declare its host:port CLI component")
+	}
+	if !strings.Contains(sources["lab-shiro-cve-2016-4437-rce"], `cli.setInputType("url")`) {
+		t.Fatal("Shiro seed must declare its URL CLI component")
 	}
 }

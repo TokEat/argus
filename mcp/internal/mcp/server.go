@@ -296,6 +296,7 @@ func expWorkspaceInputSchema() map[string]interface{} {
 	actions := []string{
 		"exp_list", "exp_create", "exp_get", "exp_update", "exp_deprecate",
 		"audit_list", "risk_waiver_get", "risk_waiver_upsert", "risk_waiver_delete",
+		"draft_inspect", "draft_validate", "draft_test",
 		"revision_list", "revision_create", "revision_get", "revision_inspect", "revision_validate", "revision_publish", "revision_set_active", "revision_sealed",
 		"asset_list", "asset_create", "asset_get", "asset_delete",
 		"test_case_list", "test_case_create", "test_case_update", "test_case_delete",
@@ -312,6 +313,14 @@ func expWorkspaceInputSchema() map[string]interface{} {
 		"source_sha256": map[string]interface{}{"type": "string", "pattern": "^[0-9a-f]{64}$"},
 		"dependencies":  map[string]interface{}{"type": "array", "maxItems": 16, "items": objectSchema(map[string]interface{}{"exp_id": stringSchema("Pinned child EXP id"), "revision": map[string]interface{}{"type": "integer", "minimum": 1}, "source_sha256": map[string]interface{}{"type": "string", "pattern": "^[0-9a-f]{64}$"}}, []string{"exp_id", "revision", "source_sha256"})},
 		"assets":        map[string]interface{}{"type": "array", "maxItems": 32, "items": objectSchema(map[string]interface{}{"asset_id": stringSchema("Logical Asset id"), "version": map[string]interface{}{"type": "integer", "minimum": 1}, "sha256": map[string]interface{}{"type": "string", "pattern": "^[0-9a-f]{64}$"}}, []string{"asset_id", "version", "sha256"})},
+		"test_cases": map[string]interface{}{
+			"type": "array", "maxItems": 128,
+			"items": objectSchema(map[string]interface{}{
+				"name": stringSchema("Fixture test case name"), "params": map[string]interface{}{"type": "object"},
+				"fixture": map[string]interface{}{"type": "object"}, "expect": map[string]interface{}{"type": "object"}, "enabled": map[string]interface{}{"type": "boolean"},
+			}, []string{"name", "params", "fixture", "expect"}),
+		},
+		"test_receipt":  map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 256, "writeOnly": true, "description": "Short-lived receipt from draft_test; never display or log"},
 		"asset_id":      stringSchema("Logical Asset id"),
 		"asset_version": map[string]interface{}{"type": "integer", "minimum": 1},
 		"media_type":    stringSchema("Asset media type"),

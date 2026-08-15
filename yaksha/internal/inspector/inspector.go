@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -28,6 +29,9 @@ var parameterTypes = map[string]string{
 }
 
 var parameterNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,63}$`)
+var identifierPattern = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
+
+const maxControlFlowSteps = 128
 
 // Inspect parses source and extracts the deliberately small Yaksha V1 subset
 // of Yaklang's cli declarations. It never compiles or evaluates the program.
@@ -40,6 +44,7 @@ func Inspect(source string) protocol.Inspection {
 		Parameters:   []protocol.CLIParameter{},
 		Dependencies: []protocol.DependencyReference{},
 		AssetRefs:    []protocol.AssetReference{},
+		ControlFlow:  []protocol.ControlFlowStep{},
 		Diagnostics:  []protocol.Diagnostic{},
 	}
 
@@ -124,6 +129,11 @@ func Inspect(source string) protocol.Inspection {
 		if param.HasDefault && !validDefault(param.Type, param.Default) {
 			addDiagnostic(&result, expr, "error", "invalid_cli_default", fmt.Sprintf("default value for parameter %q does not match type %s", paramName, schemaType))
 		}
+		if param.HasDefault && param.InputType != "" {
+			if value, ok := param.Default.(string); ok && !protocol.ValidateCLIInputValue(param.InputType, value) {
+				addDiagnostic(&result, expr, "error", "invalid_cli_input_default", fmt.Sprintf("default value for parameter %q does not match input type %s", paramName, param.InputType))
+			}
+		}
 		if param.Type == "string_array" {
 			validateSelectContract(&result, expr, param)
 		}
@@ -154,6 +164,7 @@ func Inspect(source string) protocol.Inspection {
 	}
 
 	result.Valid = !hasErrors(result.Diagnostics)
+	result.ControlFlow = extractControlFlow(tree, result.Parameters)
 	return result
 }
 
@@ -286,6 +297,22 @@ func parseOption(result *protocol.Inspection, param *protocol.CLIParameter, expr
 	case "cli.setCliGroup":
 		if requireArgs(1) {
 			param.Group, _ = stringArg(0)
+		}
+	case "cli.setInputType":
+		if requireArgs(1) {
+			if param.Type != "string" {
+				addDiagnostic(result, ctx, "error", "invalid_cli_option_target", "cli.setInputType is only valid for cli.String")
+				return
+			}
+			value, ok := stringArg(0)
+			if ok {
+				switch value {
+				case "host_port", "url":
+					param.InputType = value
+				default:
+					addDiagnostic(result, ctx, "error", "unsupported_cli_input_type", fmt.Sprintf("input type %q is not supported by the Yaksha V1 EXP contract", value))
+				}
+			}
 		}
 	case "cli.setMultipleSelect":
 		if requireArgs(1) {
@@ -477,6 +504,150 @@ func walk(tree antlr.Tree, visit func(*parser.ExpressionContext)) {
 	for _, child := range tree.GetChildren() {
 		walk(child, visit)
 	}
+}
+
+type flowCandidate struct {
+	step      protocol.ControlFlowStep
+	rawInputs []string
+}
+
+func extractControlFlow(tree antlr.Tree, parameters []protocol.CLIParameter) []protocol.ControlFlowStep {
+	candidates := make([]flowCandidate, 0)
+	var collect func(antlr.Tree)
+	collect = func(node antlr.Tree) {
+		if panicStatement, ok := node.(*parser.PanicStmtContext); ok {
+			line, column := position(panicStatement)
+			expression := ""
+			if value := panicStatement.Expression(); value != nil {
+				expression = value.GetText()
+			}
+			candidates = append(candidates, flowCandidate{step: protocol.ControlFlowStep{
+				Kind: "failure", Operation: "panic", Label: "终止并报告失败", Expression: expression, Line: line, Column: column,
+			}, rawInputs: identifiers(expression)})
+		}
+		if condition, ok := node.(*parser.IfStmtContext); ok {
+			expressions := condition.AllExpression()
+			if len(expressions) > 0 {
+				line, column := position(condition)
+				expression := expressions[0].GetText()
+				candidates = append(candidates, flowCandidate{step: protocol.ControlFlowStep{
+					Kind: "condition", Operation: "if", Label: "条件判断", Expression: expression, Line: line, Column: column,
+				}, rawInputs: identifiers(expression)})
+			}
+		}
+		if expression, ok := node.(*parser.ExpressionContext); ok {
+			if name, args, ok := call(expression); ok {
+				kind, label, include := flowOperation(name)
+				if include {
+					line, column := position(expression)
+					argumentText := make([]string, 0, len(args))
+					for _, argument := range args {
+						argumentText = append(argumentText, argument.GetText())
+					}
+					candidates = append(candidates, flowCandidate{step: protocol.ControlFlowStep{
+						Kind: kind, Operation: name, Label: label, Expression: expression.GetText(),
+						Outputs: assignedOutputs(expression), Line: line, Column: column,
+					}, rawInputs: identifiers(strings.Join(argumentText, ","))})
+				}
+			}
+		}
+		for _, child := range node.GetChildren() {
+			collect(child)
+		}
+	}
+	collect(tree)
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].step.Line == candidates[j].step.Line {
+			return candidates[i].step.Column < candidates[j].step.Column
+		}
+		return candidates[i].step.Line < candidates[j].step.Line
+	})
+	if len(candidates) > maxControlFlowSteps {
+		candidates = candidates[:maxControlFlowSteps]
+	}
+
+	known := make(map[string]struct{}, len(parameters))
+	for _, parameter := range parameters {
+		known[parameter.Name] = struct{}{}
+	}
+	producer := make(map[string]string)
+	steps := make([]protocol.ControlFlowStep, 0, len(candidates))
+	for index, candidate := range candidates {
+		candidate.step.ID = fmt.Sprintf("step-%d", index+1)
+		seenInput := make(map[string]struct{})
+		seenDependency := make(map[string]struct{})
+		for _, input := range candidate.rawInputs {
+			if _, exists := known[input]; !exists {
+				continue
+			}
+			if _, exists := seenInput[input]; !exists {
+				candidate.step.Inputs = append(candidate.step.Inputs, input)
+				seenInput[input] = struct{}{}
+			}
+			if dependency := producer[input]; dependency != "" {
+				if _, exists := seenDependency[dependency]; !exists {
+					candidate.step.DependsOn = append(candidate.step.DependsOn, dependency)
+					seenDependency[dependency] = struct{}{}
+				}
+			}
+		}
+		for _, output := range candidate.step.Outputs {
+			known[output] = struct{}{}
+			producer[output] = candidate.step.ID
+		}
+		steps = append(steps, candidate.step)
+	}
+	return steps
+}
+
+func flowOperation(name string) (kind, label string, include bool) {
+	switch name {
+	case "yaksha.httpRequest", "yaksha.httpGet":
+		return "request", "HTTP 请求", true
+	case "yaksha.tcpExchange", "yaksha.dial":
+		return "request", "TCP 交互", true
+	case "yaksha.call":
+		return "compose", "调用子 EXP", true
+	case "yaksha.asset":
+		return "asset", "读取 Asset", true
+	case "yaksha.regexMatch":
+		return "transform", "条件计算", true
+	case "yaksha.evidence":
+		return "evidence", "记录证据", true
+	case "yaksha.result":
+		return "result", "输出结果", true
+	case "panic":
+		return "failure", "终止并报告失败", true
+	}
+	if strings.HasPrefix(name, "codec.") {
+		return "transform", "编码或加解密", true
+	}
+	if strings.HasPrefix(name, "yso.") {
+		return "transform", "生成反序列化 Payload", true
+	}
+	return "", "", false
+}
+
+func assignedOutputs(expression *parser.ExpressionContext) []string {
+	for parent := expression.GetParent(); parent != nil; parent = parent.GetParent() {
+		assignment, ok := parent.(*parser.AssignExpressionContext)
+		if !ok {
+			continue
+		}
+		left := assignment.LeftExpressionList()
+		if left == nil || (assignment.AssignEq() == nil && assignment.ColonAssignEq() == nil) {
+			continue
+		}
+		outputs := identifiers(left.GetText())
+		if len(outputs) > 0 {
+			return outputs
+		}
+	}
+	return nil
+}
+
+func identifiers(text string) []string {
+	return identifierPattern.FindAllString(text, -1)
 }
 
 func addDiagnostic(result *protocol.Inspection, ctx antlr.ParserRuleContext, severity, code, message string) {

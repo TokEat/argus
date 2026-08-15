@@ -64,6 +64,17 @@ yaksha.evidence("regex_ok", ok)
 	}
 }
 
+func TestDeclaredInputTypeExecutesAsCLIMetadata(t *testing.T) {
+	resp := Execute(protocol.Request{
+		ID:     "host-port-cli",
+		Script: `address = cli.String("address", cli.setInputType("host_port"), cli.setRequired(true)); cli.check(); yaksha.result(address)`,
+		Params: map[string]any{"address": "telnet.internal:23"},
+	})
+	if resp.Status != protocol.StatusSucceeded || resp.Result != "telnet.internal:23" {
+		t.Fatalf("response=%#v", resp)
+	}
+}
+
 func TestInjectedErrorIsReturnedNotThrown(t *testing.T) {
 	script := `
 v, err = yaksha.b64decode("!!!not-base64!!!")

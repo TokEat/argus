@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/P0lar1ght/argus/server/internal/storage"
@@ -156,8 +155,8 @@ func (s *Service) DeprecateExp(ctx context.Context, tenantID, actorID, expID str
 }
 
 func (s *Service) CreateRevision(ctx context.Context, tenantID, actorID, expID string, input CreateRevisionInput) (db.ExpRevision, error) {
-	if len(input.Source) == 0 || len(input.Source) > MaxSourceBytes || !utf8.ValidString(input.Source) {
-		return db.ExpRevision{}, fmt.Errorf("source must be valid UTF-8 and contain 1 to %d bytes", MaxSourceBytes)
+	if err := validateDraftSource(input.Source); err != nil {
+		return db.ExpRevision{}, err
 	}
 	if len(input.Dependencies) > MaxDependencies || len(input.Assets) > MaxAssets {
 		return db.ExpRevision{}, errors.New("revision resolver limits exceeded")
@@ -170,33 +169,42 @@ func (s *Service) CreateRevision(ctx context.Context, tenantID, actorID, expID s
 
 	var created db.ExpRevision
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var root db.Exp
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("tenant_id = ? AND id = ?", tenantID, expID).First(&root).Error; err != nil {
-			return err
-		}
-		if root.Status == db.ExpStatusDeprecated {
-			return errors.New("deprecated EXP cannot accept revisions")
-		}
-		var last int
-		if err := tx.Model(&db.ExpRevision{}).Where("tenant_id = ? AND exp_id = ?", tenantID, expID).Select("COALESCE(MAX(revision), 0)").Scan(&last).Error; err != nil {
-			return err
-		}
-		created = db.ExpRevision{ExpID: expID, TenantID: tenantID, Revision: last + 1, Status: db.ExpStatusDraft, SourceObjectKey: key, SourceSHA256: hash, SourceSize: int64(len(input.Source)), CLISchema: "{}", InspectSummary: "{}", ValidateSummary: "{}", CreatedBy: actorID}
-		if err := tx.Create(&created).Error; err != nil {
-			return err
-		}
-		if err := s.createDependencyRows(tx, tenantID, created, input.Dependencies); err != nil {
-			return err
-		}
-		if err := s.createAssetRefRows(tx, tenantID, created, input.Assets); err != nil {
-			return err
-		}
-		if err := s.rejectDependencyCycle(tx, tenantID, expID, created.Revision); err != nil {
-			return err
-		}
-		return createAudit(tx, tenantID, expID, created.Revision, actorID, "create_revision", map[string]any{"source_sha256": hash})
+		var err error
+		created, err = s.createRevisionRecord(tx, tenantID, actorID, expID, input, key, hash)
+		return err
 	})
 	if err != nil {
+		return db.ExpRevision{}, err
+	}
+	return created, nil
+}
+
+func (s *Service) createRevisionRecord(tx *gorm.DB, tenantID, actorID, expID string, input CreateRevisionInput, key, hash string) (db.ExpRevision, error) {
+	var root db.Exp
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("tenant_id = ? AND id = ?", tenantID, expID).First(&root).Error; err != nil {
+		return db.ExpRevision{}, err
+	}
+	if root.Status == db.ExpStatusDeprecated {
+		return db.ExpRevision{}, errors.New("deprecated EXP cannot accept revisions")
+	}
+	var last int
+	if err := tx.Model(&db.ExpRevision{}).Where("tenant_id = ? AND exp_id = ?", tenantID, expID).Select("COALESCE(MAX(revision), 0)").Scan(&last).Error; err != nil {
+		return db.ExpRevision{}, err
+	}
+	created := db.ExpRevision{ExpID: expID, TenantID: tenantID, Revision: last + 1, Status: db.ExpStatusDraft, SourceObjectKey: key, SourceSHA256: hash, SourceSize: int64(len(input.Source)), CLISchema: "{}", InspectSummary: "{}", ValidateSummary: "{}", CreatedBy: actorID}
+	if err := tx.Create(&created).Error; err != nil {
+		return db.ExpRevision{}, err
+	}
+	if err := s.createDependencyRows(tx, tenantID, created, input.Dependencies); err != nil {
+		return db.ExpRevision{}, err
+	}
+	if err := s.createAssetRefRows(tx, tenantID, created, input.Assets); err != nil {
+		return db.ExpRevision{}, err
+	}
+	if err := s.rejectDependencyCycle(tx, tenantID, expID, created.Revision); err != nil {
+		return db.ExpRevision{}, err
+	}
+	if err := createAudit(tx, tenantID, expID, created.Revision, actorID, "create_revision", map[string]any{"source_sha256": hash}); err != nil {
 		return db.ExpRevision{}, err
 	}
 	return created, nil

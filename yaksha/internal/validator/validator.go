@@ -96,6 +96,10 @@ func validate(req protocol.Request, validateResolver bool) Result {
 			addParameterError(&result, parameter.Name, "parameter_type_mismatch", fmt.Sprintf("parameter %q must have type %s", parameter.Name, parameter.Type))
 			continue
 		}
+		if parameter.InputType != "" && !protocol.ValidateCLIInputValue(parameter.InputType, encoded) {
+			addParameterError(&result, parameter.Name, "parameter_input_mismatch", fmt.Sprintf("parameter %q must match input type %s", parameter.Name, parameter.InputType))
+			continue
+		}
 		if len(parameter.Options) > 0 && !valuesAllowed(selectedValues, parameter.Options) {
 			addParameterError(&result, parameter.Name, "parameter_not_in_options", fmt.Sprintf("parameter %q contains a value outside its declared options", parameter.Name))
 			continue

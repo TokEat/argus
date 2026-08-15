@@ -38,6 +38,7 @@ func getAgentCommands(c *gin.Context) {
 type NodeResponse struct {
 	db.Node
 	RunningTaskDetails []map[string]interface{} `json:"RunningTaskDetails"`
+	EgressOnline       bool                     `json:"EgressOnline"`
 }
 
 func getNodes(c *gin.Context) {
@@ -46,10 +47,14 @@ func getNodes(c *gin.Context) {
 	scopedNodeQuery(tenantID).Find(&nodes)
 
 	resp := make([]NodeResponse, 0, len(nodes))
+	broker := routerRuntime().EgressBroker
 	for _, n := range nodes {
 		nr := NodeResponse{
 			Node:               n,
 			RunningTaskDetails: make([]map[string]interface{}, 0),
+		}
+		if broker != nil {
+			nr.EgressOnline = broker.AgentOnline(n.AgentID)
 		}
 		if n.RunningTaskIDs != "" && n.RunningTaskIDs != "[]" {
 			var ids []string

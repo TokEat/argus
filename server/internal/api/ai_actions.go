@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/P0lar1ght/argus/server/internal/db"
-	"github.com/P0lar1ght/argus/server/internal/expworkspace"
 	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
@@ -341,20 +340,19 @@ func executeCreateExpDraft(c *gin.Context, params map[string]interface{}) (copil
 			return copilotActionResult{}, err
 		}
 		expID = created.ID
-	}
-	revision, err := service.CreateRevision(c.Request.Context(), tenantID, actorID, expID, expworkspace.CreateRevisionInput{Source: content})
-	if err != nil {
+	} else if _, err := service.GetExp(c.Request.Context(), tenantID, expID); err != nil {
 		return copilotActionResult{}, err
 	}
+	sourceHash := sha256.Sum256([]byte(content))
 	return copilotActionResult{
-		Status:     "saved",
-		Message:    "Yaksha EXP Draft Revision saved. Inspect, validate and trusted Fixture tests are still required before Admin publication.",
+		Status:     "prepared",
+		Message:    "EXP metadata is ready. The generated Yak source remains an in-memory draft and must pass a trusted offline Fixture test before it can be saved as a Revision.",
 		ActionType: copilotActionCreateExpDraft,
 		Object: map[string]interface{}{
 			"exp_id":        expID,
-			"revision":      revision.Revision,
-			"state":         revision.Status,
-			"source_sha256": revision.SourceSHA256,
+			"state":         "in_memory",
+			"source":        content,
+			"source_sha256": hex.EncodeToString(sourceHash[:]),
 		},
 	}, nil
 }

@@ -46,7 +46,7 @@
 | 类别 | 已验证范围 |
 | --- | --- |
 | 参数类型 | `cli.String`、`Text`、`Int`、`Integer`、`Float`、`Bool`、`StringSlice` |
-| UI 元数据 | `setRequired`、`setDefault`、`setHelp`、`setVerboseName`、`setCliGroup` |
+| UI 元数据 | `setRequired`、`setDefault`、`setHelp`、`setVerboseName`、`setCliGroup`、`setInputType("host_port"|"url")` |
 | 选择控件 | `setSelectOption`、`setMultipleSelect`，且只允许用于 `StringSlice` |
 | 静态约束 | 顶层字面量声明、声明位于 `cli.check()` 之前、唯一顶层 `cli.check()`、参数名去重、默认值类型检查 |
 | 诊断 | Yak 语法错误、非字面量配置、V1 未支持类型/选项、行列位置 |

@@ -388,6 +388,12 @@ body {
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .page-container {
+    animation: none;
+  }
+}
+
 /* Login Page - Clean White & Sky Blue */
 .login-container {
   min-height: 100vh;
@@ -882,4 +888,3 @@ body {
 .table-row-dark {
     background-color: #ffffff;
 }
-

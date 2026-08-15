@@ -215,17 +215,75 @@ func createYakshaExpRevision(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req expworkspace.CreateRevisionInput
+	var req expworkspace.CreateTestedRevisionInput
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid revision package"})
 		return
 	}
-	item, err := service.CreateRevision(c.Request.Context(), currentTenantID(c), currentUserID(c), c.Param("id"), req)
+	item, err := service.CreateTestedRevision(c.Request.Context(), currentTenantID(c), currentUserID(c), c.Param("id"), req)
 	if err != nil {
 		writeEXPWorkspaceError(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, expRevisionResponse(item))
+}
+
+func inspectYakshaExpDraft(c *gin.Context) {
+	service, ok := expWorkspace(c)
+	if !ok {
+		return
+	}
+	var req expworkspace.DraftPackageInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid in-memory EXP draft"})
+		return
+	}
+	result, err := service.InspectDraft(c.Request.Context(), currentTenantID(c), c.Param("id"), req.Source)
+	if err != nil {
+		writeEXPWorkspaceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func validateYakshaExpDraft(c *gin.Context) {
+	service, ok := expWorkspace(c)
+	if !ok {
+		return
+	}
+	var req expworkspace.DraftPackageInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid in-memory EXP draft"})
+		return
+	}
+	result, err := service.ValidateDraft(c.Request.Context(), currentTenantID(c), c.Param("id"), req)
+	if err != nil {
+		writeEXPWorkspaceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func testYakshaExpDraft(c *gin.Context) {
+	service, ok := expWorkspace(c)
+	if !ok {
+		return
+	}
+	var req expworkspace.DraftPackageInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid in-memory EXP draft"})
+		return
+	}
+	result, err := service.TestDraft(c.Request.Context(), currentTenantID(c), currentUserID(c), c.Param("id"), req)
+	if err != nil {
+		if result.RuntimeResponse != nil {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error(), "runtime_response": result.RuntimeResponse})
+			return
+		}
+		writeEXPWorkspaceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
 }
 
 func listYakshaExpRevisions(c *gin.Context) {
@@ -596,7 +654,7 @@ func prepareServerEXPEgress(c *gin.Context, input expworkspace.RunInput) (map[st
 		}
 		broker := routerRuntime().EgressBroker
 		if broker == nil {
-			return nil, nil, errors.New("Agent Egress Unavailable")
+			return nil, nil, errors.New("Agent Egress Unavailable: egress gateway is not configured")
 		}
 		var node db.Node
 		agentID := strings.TrimSpace(input.Egress.AgentID)
@@ -604,7 +662,7 @@ func prepareServerEXPEgress(c *gin.Context, input expworkspace.RunInput) (map[st
 			return nil, nil, errors.New("Agent not found or not accessible")
 		}
 		if !strings.EqualFold(node.Status, "Alive") || node.Token == "" || node.TokenRevokedAt != nil || (node.TokenExpiresAt != nil && time.Now().After(*node.TokenExpiresAt)) || !broker.AgentOnline(agentID) {
-			return nil, nil, errors.New("Agent Egress Unavailable")
+			return nil, nil, errors.New("Agent Egress Unavailable: agent tunnel is offline")
 		}
 		snapshot, err := broker.CreateRoute(c.Request.Context(), egressRouteRequest(currentTenantID(c), currentUserID(c), agentID, input.NetworkTargets, input.TimeoutMS))
 		if err != nil {
@@ -710,6 +768,10 @@ func validEXPProxyURL(raw string) bool {
 func writeEXPWorkspaceError(c *gin.Context, err error) {
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "EXP object not found or not accessible"})
+		return
+	}
+	if errors.Is(err, expworkspace.ErrRiskConfirmationRequired) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	message := err.Error()
