@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/P0lar1ght/argus/scanner/ddout"
 	"github.com/mattn/go-isatty"
 	"github.com/projectdiscovery/gologger"
 )
@@ -62,6 +63,7 @@ func PresentationForArgs(args []string, stdoutTTY bool) CLIPresentation {
 func ConfigureCLIPresentation(args []string) CLIPresentation {
 	presentation := PresentationForArgs(args, stdoutIsTTY())
 	gologger.ConfigureCLIOutput(presentation.NoColor, presentation.SuppressInfo)
+	ddout.SetUseColor(!presentation.NoColor)
 	return presentation
 }
 

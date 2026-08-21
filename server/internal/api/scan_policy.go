@@ -268,12 +268,10 @@ func compileTaskScanPolicy(c *gin.Context, req scanPolicyPlanRequest) (scanPolic
 	config.PasswordFile = ""
 	applyPolicyIntensity(&config, normalized.Intensity)
 	portCount := scanpolicy.PortCount(ports)
-	protocolLimit := portCount * len(targets)
-	if protocolLimit < 1 {
-		protocolLimit = 1
-	}
-	if protocolLimit > scanpolicy.MaximumGoPocTargets {
-		protocolLimit = scanpolicy.MaximumGoPocTargets
+	protocolEndpointCount := estimatedProtocolCheckEndpointCount(targets)
+	protocolLimit, err := scanpolicy.GoPocTargetLimitForPorts(ports, protocolEndpointCount, scanpolicy.GoPocProtocolCheck)
+	if err != nil {
+		return scanPolicyPlan{}, err
 	}
 	_, protocolRate := validationBudgetLimits(normalized.Intensity)
 	config.GoPocCatalogSHA256 = scanpolicy.GoPocCatalogSHA256()

@@ -18,52 +18,41 @@ import (
 )
 
 var PluginList = map[string]interface{}{
-	"NetBios-GetHostInfo": NetBIOS,
-	"RPC-GetHostInfo":     Findnet,
-	"SSH-Crack":           SshScan,
-	"FTP-Crack":           FtpScan,
-	"Mysql-Crack":         MysqlScan,
-	"Mssql-Crack":         MssqlScan,
-	"Oracle-Crack":        OracleScan,
-	"MongoDB-Crack":       MongodbScan,
-	"RDP-Crack":           RdpScan,
-	"Redis-Crack":         RedisScan,
-	"SMB-MS17-010":        MS17010,
-	"PostgreSQL-Crack":    PostgresScan,
-	"SMB-Crack":           SmbScan,
-	"Telnet-Crack":        TelnetScan,
-	"Memcache-Crack":      MemcachedScan,
-	"JDWP-Scan":           JDWPScan,
-	"Shiro-Key-Crack":     ShiroKeyCheck,
-	"ADB-Scan":            ADBScan,
-	"Telnet-Bypass":       TelnetBypassScan,
-	"ViewState-Key-Crack": ViewStateKeyCheck,
-	"VNC-Scan":            VncScan,
-	"Rsync-Scan":          RsyncScan,
-	"DM-Scan":             DmScan,
-	"Kingbase-Scan":       KingbaseScan,
-	"DNP3-Scan":           DNP3Scan,
-	"S7-Scan":             S7Scan,
-	"EtherNetIP-Scan":     EtherNetIPScan,
-	"ATG-Scan":            ATGScan,
-	"MELSEC-Scan":         MELSECScan,
-	"FINS-Scan":           FINSScan,
-	"Crimson-Scan":        CrimsonScan,
-	"IEC104-Scan":         IEC104Scan,
-	"LDAP-Scan":           LDAPScan,
-	"Zookeeper-Scan":      ZookeeperScan,
-	"MQTT-Scan":           MQTTScan,
-	"Cassandra-Scan":      CassandraScan,
-	"ClickHouse-Scan":     ClickHouseScan,
-	"ActiveMQ-Scan":       ActiveMQScan,
-	"RMI-Scan":            RMIScan,
-	"SVN-Scan":            SVNScan,
-	"HsqlDb-Scan":         HsqlDbScan,
-	"TiDB-Scan":           TiDBScan,
-	"Nacos-Raft-Scan":     NacosRaftScan,
-	"MSMQ-Scan":           MSMQScan,
-	"SAP-P4-Scan":         SAPP4Scan,
-	"Telnet-CVE-Scan":     TelnetCVEScan,
+	"NetBios-GetHostInfo":      NetBIOS,
+	"RPC-GetHostInfo":          Findnet,
+	"SSH-Crack":                SshScan,
+	"FTP-Crack":                FtpScan,
+	"Mysql-Crack":              MysqlScan,
+	"Mssql-Crack":              MssqlScan,
+	"Oracle-Crack":             OracleScan,
+	"MongoDB-Crack":            MongodbScan,
+	"RDP-Crack":                RdpScan,
+	"Redis-Crack":              RedisScan,
+	"SMB-MS17-010":             MS17010,
+	"PostgreSQL-Crack":         PostgresScan,
+	"SMB-Crack":                SmbScan,
+	"Telnet-Crack":             TelnetScan,
+	"Memcache-Crack":           MemcachedScan,
+	"JDWP-Scan":                JDWPScan,
+	"Shiro-Key-Crack":          ShiroKeyCheck,
+	"ADB-Scan":                 ADBScan,
+	"Telnet-Bypass":            TelnetBypassScan,
+	"ViewState-Key-Crack":      ViewStateKeyCheck,
+	"VNC-Scan":                 VncScan,
+	"Rsync-Scan":               RsyncScan,
+	"DM-Scan":                  DmScan,
+	"Kingbase-Scan":            KingbaseScan,
+	"LDAP-Scan":                LDAPScan,
+	"Zookeeper-Scan":           ZookeeperScan,
+	"MQTT-Scan":                MQTTScan,
+	"RMI-Scan":                 RMIScan,
+	"Telnet-CVE-Scan":          TelnetCVEScan,
+	"RocketMQ-Broker-Scan":     RocketMQBrokerScan,
+	"RocketMQ-NameServer-Scan": RocketMQNameServerScan,
+	"RabbitMQ-AMQP-Scan":       RabbitMQAMQPScan,
+	"EPMD-Scan":                EPMDScan,
+	"Cassandra-Scan":           CassandraScan,
+	"ClickHouse-Scan":          ClickHouseScan,
 }
 
 func InitDictionaries() {
@@ -223,7 +212,61 @@ func sortUserPassword(info *structs.HostInfo, UserPasswdDict string, DefaultKeys
 	// the built-in service dictionary prevents a low limit from replacing the
 	// platform defaults with user input.
 	userPasswdList = append(userPasswdList, info.UserPassPairs...)
+	userPasswdList = expandCredentialAppend(info, userPasswdList)
 	return limitUserPasswd(info, RemoveDuplicateUserPass(userPasswdList))
+}
+
+func expandCredentialAppend(info *structs.HostInfo, pairs []structs.UserPasswd) []structs.UserPasswd {
+	if info == nil || (len(info.UserAppend) == 0 && len(info.PasswordAppend) == 0) {
+		return pairs
+	}
+	users := make(map[string]struct{})
+	passwords := make(map[string]struct{})
+	for _, pair := range pairs {
+		if pair.UserName != "" {
+			users[pair.UserName] = struct{}{}
+		}
+		if pair.Password != "" {
+			passwords[pair.Password] = struct{}{}
+		}
+	}
+	for _, user := range info.UserAppend {
+		if user = strings.TrimSpace(user); user != "" {
+			users[user] = struct{}{}
+		}
+	}
+	for _, password := range info.PasswordAppend {
+		if password = strings.TrimSpace(password); password != "" {
+			passwords[password] = struct{}{}
+		}
+	}
+	for _, user := range info.UserAppend {
+		user = strings.TrimSpace(user)
+		if user == "" {
+			continue
+		}
+		for password := range passwords {
+			pairs = append(pairs, structs.UserPasswd{UserName: user, Password: password})
+		}
+	}
+	for _, password := range info.PasswordAppend {
+		password = strings.TrimSpace(password)
+		if password == "" {
+			continue
+		}
+		for user := range users {
+			pairs = append(pairs, structs.UserPasswd{UserName: user, Password: password})
+		}
+	}
+	return pairs
+}
+
+func mergePasswordAppend(list []string, info *structs.HostInfo) []string {
+	if info == nil {
+		return list
+	}
+	list = append(list, info.PasswordAppend...)
+	return utils.RemoveDuplicateElement(list)
 }
 
 func limitUserPasswd(info *structs.HostInfo, values []structs.UserPasswd) []structs.UserPasswd {

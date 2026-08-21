@@ -323,8 +323,9 @@ type Observation struct {
 }
 
 type ServiceCheckpoint struct {
-	Endpoint string `json:"endpoint"`
-	Protocol string `json:"protocol"`
+	Endpoint  string `json:"endpoint"`
+	Protocol  string `json:"protocol"`
+	Transport string `json:"transport,omitempty"` // "" or "tcp" default; "udp" keeps UDP services out of the TCP port map
 }
 
 // StageCheckpoint contains only bounded, derived discovery facts required to

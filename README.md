@@ -174,30 +174,29 @@ argus --version
 argus -h
 
 # 扫描 IP
-argus -t 192.168.0.1
+argus -a 192.168.0.1
 
 # 扫描网段
-argus -t 192.168.0.1/24
-argus -t 192.168.0.0-192.168.0.12
+argus -a 192.168.0.1/24
+argus -a 192.168.0.0-192.168.0.12
 
 # 扫描网站
-argus -t http://test.com
+argus -a http://test.com
 ```
 
 单机 CLI 的扫描结果统一保存在当前工作目录的 `datas/<目标_时间>/` 下。普通运行只保留实时 `result.txt`、一份权威 HTML 报告和小型 `summary.txt`；不会再为了扫描记忆额外创建 `argus-data/state`、`argus-data/runs` 或 targets/findings/coverage/timing TSV。
 
-扫描开始时，CLI 会自动读取 `datas` 下已完成运行的 `result.txt` 作为“扫描记忆”，从 `[Alive]`、`[Port]`、`[Protocol]`、`[Web]`、`[Finger]`、`[Active-Finger]`、`[Domain]` 和 JSON finding 中抽取已经发现的资产；`targets.tsv` 不参与跳过判断。输入单个 IP 时，历史已出现该 IP 就跳过；输入 CIDR 或 IP 范围时，Argus 会展开地址集合、剔除历史已有资产的 IP，只把剩余 IP 交给完整发现流水线。终端会打印被跳过的 IP、来源结果目录以及本次计划/跳过数量。域名、URL 和显式 `IP:Port` 继续采用保守的精确匹配，历史没有 finding 的地址会重新扫描。
-
-历史跳过只对普通信息收集扫描生效。用户显式传入 `-poc <name>` 或 `-gp` 时，Argus 会认为这是一次新的风险验证意图，不会因为 `datas` 中已有资产而跳过；`-force` 也会忽略历史并强制完整重扫。历史结果损坏、仍在运行、失败或无法提取资产时会被忽略，不会阻断本次扫描。该模型有意不把“过去扫描过但没有结果”等同于“当前无需扫描”：只有 `result.txt` 中确实出现过的资产才会被剔除。
+把上次的结果目录或 `result.txt` 交给 `-a`，会复用 `[Alive]` / `[Port]`：有存活就跳过探活去做端口，有端口就直接做协议/Web/POC。
+`-ss` 才会跳过 `datas` 里已经出现过的 IP，默认关闭；与 `-f` 一起用时仍完整扫描。
 
 成功完成时，交互文本输出会给出执行阶段数、完整/部分/全跳过输入数，以及本次计划与历史跳过资产数。`-ot json` 使用版本化 UTF-8 NDJSON：每个 finding 独占一行，最后一行是唯一 `run_summary`；stdout 不包含 Banner、ANSI、进度或普通日志。重定向的文本模式同样只保留扫描结果和必要错误。完整 Schema、退出码和迁移示例见 [Argus CLI 结构化输出](docs/cli-output.md)。
 
-普通 CLI 扫描现在默认只执行资产发现，不自动启动 Nuclei POC、通用 POC 或 GoPoc/弱口令探测；已有 `-poc <name>` 或 `-gp` 仍代表用户显式请求风险操作，并固定绕过 `datas` 历史跳过。`-gp` 仅是离线 CLI 的兼容入口，会沿用旧的 GoPoc 混合派发，不是 Server 产品中的第三个开关；Server 会把 `protocol_check`、`vulnerability_check`、`credential` 分别收敛到协议识别、自动 POC 和弱口令阶段。`-npoc` 保留兼容，可继续用于脚本中明确表达“只做资产发现”；它与 `-poc`、`-gp` 同时出现时会按参数冲突退出，不会静默执行风险阶段。
+普通 CLI 扫描默认执行资产发现、Nuclei 与 GoPoc（含口令爆破），请在授权目标上使用。用 `-nopoc` 只关 Nuclei，用 `-nogpoc` 关全部 GoPoc，用 `-nobr` 只关服务口令爆破。只做发现时写 `-nopoc -nogpoc`；要跳过 `datas` 历史已见 IP 还需显式 `-ss`。`-pwda` / `-usea` 在内置用户本、密码本上追加；`-up` / `-upf` 是整本替换。Server 创建任务的默认值仍是关 POC，不跟 CLI 手感走。
 
 需要忽略未过期历史并重新执行完整资产流水线时，只增加可选 `-force`：
 
 ```bash
-argus -t 192.168.0.1 -force
+argus -a 192.168.0.1 -force
 ```
 
 `-force` 不会扩大目标或端口范围，不会开启 POC/GoPoc，也不会删除或覆盖旧结果；本次完整执行仍会写入新的 `datas/<目标_时间>/` 目录。默认命令和其他现有参数保持不变。
@@ -317,24 +316,22 @@ sudo ./deploy/upgrade-server.sh
 
 ```bash
 # 红队外网 - 子域名枚举
-argus -t xxx.com -sd
+argus -a xxx.com -sd
 
-# 红队内网
-argus -t 172.16.100.0/24
+# 红队内网（默认含 Nuclei 与 GoPoc）
+argus -a 172.16.100.0/24
 
 # 绕过本地增量覆盖，完整复测授权范围
-argus -t 172.16.100.0/24 -force
+argus -a 172.16.100.0/24 -force
 
 # 安服测试 - 开启审计日志
-argus -t 172.16.100.1 -a
+argus -a 172.16.100.1 -ad
 
-# 显式声明仅做资产发现（当前也是普通扫描默认值）
-argus -t http://www.xxx.com -npoc
-argus -t 172.16.100.11 -npoc
-argus -t 172.16.120.11:3307 -npoc
+# 只做资产发现
+argus -a http://www.xxx.com -nopoc -nogpoc
+argus -a 172.16.100.11 -nopoc -nogpoc
+argus -a 172.16.120.11:3307 -nopoc -nogpoc
 ```
-
-Hunter、FOFA 和 Quake 查询请在 Server 端当前项目的“资产测绘”页面发起；该页面负责租户凭据、权限、审计、历史、导出、标签/备注/软移除和笔记本分发。`argus` 只执行显式目标的本地扫描；Scanner/Agent 不读取或同步 Provider 凭据，也不发起 Provider 请求。
 
 ### 输出文件
 
@@ -420,6 +417,7 @@ argus/
 | [ScanPlan 与覆盖契约](docs/scanplan-contract.md) | 场景、阶段、Plan、WorkKey、Observation 与 Coverage 的跨组件稳定语义 |
 | [扫描策略 V1](docs/scan-policy-v1.md) | 语义化预设、自动验证阶段、增量凭据字典和 Agent TLS 能力边界 |
 | [性能基线采集](docs/performance-baseline.md) | CLI/Agent 计时证据与可重复的外部 process-wall 基线采集方式 |
+| [CLI 参数说明](CLI.md) | Standalone CLI 扫描参数、默认值和常用例子 |
 | [CLI 结构化输出](docs/cli-output.md) | `-ot json` NDJSON Schema、终端摘要、非 TTY 行为和稳定退出码 |
 | [云资源动态调度](docs/cloud-resource-scheduling.md) | AutoScaler、云实例生命周期、Spot 回收与未来演进 |
 | [EXP 能力规划](docs/exp-capability-planning.md) | 独立 EXP 规则库、POC 关联、执行审计、安全闸门与阶段路线 |

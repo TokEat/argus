@@ -41,6 +41,7 @@ type reusableScanConfig struct {
 	SkipHostDiscovery bool
 	NoICMPPing        bool
 	TCPPing           bool
+	UDPPing           bool
 	NoHostBind        bool
 	NoDirSearch       bool
 	NoPoc             bool
@@ -118,7 +119,7 @@ func ApplyReusableCoverageAtClaim(store *gorm.DB, attemptID, tenantID, agentID s
 		// Agent Pipeline skips host discovery for small tasks unless TCP ping
 		// was explicitly requested. Mirror that runtime decision so the Planner
 		// does not require an ICMP stage the Agent intentionally never ran.
-		if !config.TCPPing && !config.SkipHostDiscovery && reusableTargetIPCount(targets) <= 256 {
+		if !config.TCPPing && !config.UDPPing && !config.SkipHostDiscovery && reusableTargetIPCount(targets) <= 256 {
 			config.SkipHostDiscovery = true
 		}
 
@@ -482,7 +483,7 @@ func reusableStagesForTarget(target string, config reusableScanConfig) ([]scanpl
 		if !config.SkipHostDiscovery && !config.NoICMPPing {
 			stages = append(stages, scanplan.StageICMPDiscovery)
 		}
-		if !config.SkipHostDiscovery && config.TCPPing {
+		if !config.SkipHostDiscovery {
 			stages = append(stages, scanplan.StageTCPLiveness)
 		}
 		stages = append(stages, scanplan.StagePortScan)

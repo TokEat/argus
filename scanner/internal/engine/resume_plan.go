@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/P0lar1ght/argus/scanner/utils"
 	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 )
@@ -55,7 +56,7 @@ func ValidateResumePlan(cfg Config, targets []string, ruleVersion, planHash stri
 }
 
 func applyAgentSmallTargetPolicy(cfg *Config) {
-	if cfg == nil || cfg.TCPPing || cfg.SkipHostDiscovery {
+	if cfg == nil || cfg.TCPPing || cfg.UDPPing || cfg.SkipHostDiscovery {
 		return
 	}
 	if estimateIPCount(cfg.Targets) <= 256 {
@@ -93,7 +94,7 @@ func resumeStagesForTarget(target string, cfg Config) ([]scanplan.Stage, bool) {
 		if !cfg.SkipHostDiscovery && !cfg.NoICMPPing {
 			stages = append(stages, scanplan.StageICMPDiscovery)
 		}
-		if !cfg.SkipHostDiscovery && cfg.TCPPing {
+		if !cfg.SkipHostDiscovery {
 			stages = append(stages, scanplan.StageTCPLiveness)
 		}
 		stages = append(stages, scanplan.StagePortScan, scanplan.StageProtocolIdentify)
@@ -202,7 +203,30 @@ func restoreResumeProtocolServices(ctx *ScanContext) {
 	}
 	ctx.IPPortMapLock.Lock()
 	defer ctx.IPPortMapLock.Unlock()
+	if ctx.ServiceMap == nil {
+		ctx.ServiceMap = make(map[string]structs.ServiceRecord)
+	}
 	for _, service := range checkpoint.Services {
-		ctx.IPPortMap[service.Endpoint] = service.Protocol
+		proto := service.Protocol
+		// UDP services are keyed with a /udp suffix in ServiceMap and never
+		// enter IPPortMap (see protocol.storeRecord); restore them the same
+		// way so a resumed scan does not treat them as TCP open ports.
+		if strings.EqualFold(service.Transport, "udp") {
+			key := service.Endpoint + "/udp"
+			ctx.ServiceMap[key] = structs.ServiceRecord{
+				Endpoint:   service.Endpoint,
+				Transport:  "udp",
+				Protocol:   proto,
+				Confidence: "port-hint",
+			}
+			continue
+		}
+		ctx.IPPortMap[service.Endpoint] = proto
+		ctx.ServiceMap[service.Endpoint] = structs.ServiceRecord{
+			Endpoint:   service.Endpoint,
+			Transport:  "tcp",
+			Protocol:   proto,
+			Confidence: "port-hint",
+		}
 	}
 }

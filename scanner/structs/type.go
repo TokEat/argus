@@ -24,8 +24,11 @@ const (
 
 // WebInfo Web 页面信息。
 type WebInfo struct {
-	Status string `json:"status,omitempty"`
-	Title  string `json:"title,omitempty"`
+	Status   string `json:"status,omitempty"`
+	Title    string `json:"title,omitempty"`
+	Cert     string `json:"cert,omitempty"`
+	Size     string `json:"size,omitempty"`
+	Redirect string `json:"redirect,omitempty"`
 }
 
 // OutputMessage 统一输出消息格式。
@@ -35,6 +38,9 @@ type OutputMessage struct {
 	IPs           []string         `json:"ips,omitempty"`
 	Port          string           `json:"port,omitempty"`
 	Protocol      string           `json:"protocol,omitempty"`
+	Product       string           `json:"product,omitempty"`
+	Version       string           `json:"version,omitempty"`
+	Transport     string           `json:"transport,omitempty"`
 	Web           WebInfo          `json:"web,omitempty"`
 	Finger        []string         `json:"finger,omitempty"`
 	Domain        string           `json:"domain,omitempty"`
@@ -88,6 +94,7 @@ type Config struct {
 	PortScanType               string
 	GetBannerThreads           int
 	GetBannerTimeout           int
+	NoUDPIdentify              bool
 	TCPPortScanThreads         int
 	SYNPortScanThreads         int
 	PortsThreshold             int
@@ -116,6 +123,10 @@ type Config struct {
 	ActiveFingerprintProducts  map[string]string
 	BehaviorProbeRequestBudget int64
 	GolangPoc                  bool
+	NoGoPoc                    bool
+	NoBrute                    bool
+	UserAppend                 []string
+	PasswordAppend             []string
 	DisableGeneralPoc          bool
 	WAFBypassHeaders           bool
 	WAFSkipOnManyFingerprints  bool
@@ -134,6 +145,8 @@ type Config struct {
 	QuakeSize                  int
 	NoICMPPing                 bool
 	TCPPing                    bool
+	UDPPing                    bool
+	TraceRoute                 bool
 	NoInteractsh               bool
 	OnlyIPPort                 bool
 	OutputFile                 string
@@ -148,8 +161,15 @@ type Config struct {
 	// MachineOutput is a standalone CLI presentation hint. It is never
 	// accepted from Server task JSON and does not change scan stages.
 	MachineOutput bool `json:"-"`
-	PasswordFile  string
-	Password      string
+	// SkipSeenHistory opts into skipping datas/ IPs from previous completed
+	// CLI runs. It is CLI-only and defaults to off.
+	SkipSeenHistory bool `json:"-"`
+	// ShowPocMap prints fingerprint-to-Nuclei YAML mapping. CLI-only, default off.
+	ShowPocMap bool `json:"-"`
+	// TraceOnly is CLI-only: -tr <target> runs traceroute without the scan pipeline.
+	TraceOnly    bool `json:"-"`
+	PasswordFile string
+	Password     string
 }
 
 type CDNResult struct {
@@ -181,6 +201,18 @@ type ProtocolResult struct {
 	Port     int
 	Status   int
 	Response *gonmap.Response
+}
+
+// ServiceRecord is the protocol-stage service picture for one endpoint.
+// IPPortMap still stores only the canonical protocol name.
+type ServiceRecord struct {
+	Endpoint   string
+	Transport  string
+	Protocol   string
+	Product    string
+	Version    string
+	Extra      string
+	Confidence string
 }
 
 // GlobalIPDomainMap 存储ip->domains的关系
@@ -302,6 +334,8 @@ type HostInfo struct {
 	CredentialAttempt   func()
 	Password            string
 	PasswordFile        string
+	UserAppend          []string
+	PasswordAppend      []string
 	WriteResult         func(GoPocsResultType)
 	Emit                func(OutputMessage)
 	OutputType          string

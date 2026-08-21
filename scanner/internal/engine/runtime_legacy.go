@@ -86,8 +86,8 @@ func ApplyConfigDefaults(cfg *Config) {
 	if cfg.Ports == "" {
 		cfg.Ports = commoncfg.PortCommon100
 	}
-	if !cfg.SkipHostDiscovery && !cfg.TCPPing && cfg.NoICMPPing {
-		cfg.SkipHostDiscovery = true
+	if !cfg.SkipHostDiscovery && !cfg.TCPPing && cfg.NoICMPPing && !cfg.UDPPing {
+		cfg.TCPPing = true
 	}
 }
 
@@ -460,14 +460,20 @@ func toEngineGoPocResults(src []structs.GoPocsResultType) []GoPocsResultType {
 
 func toEngineOutputMessage(msg ddout.OutputMessage) OutputMessage {
 	return OutputMessage{
-		Type:     msg.Type,
-		IP:       msg.IP,
-		IPs:      append([]string(nil), msg.IPs...),
-		Port:     msg.Port,
-		Protocol: msg.Protocol,
+		Type:      msg.Type,
+		IP:        msg.IP,
+		IPs:       append([]string(nil), msg.IPs...),
+		Port:      msg.Port,
+		Protocol:  msg.Protocol,
+		Product:   msg.Product,
+		Version:   msg.Version,
+		Transport: msg.Transport,
 		Web: WebInfo{
-			Status: msg.Web.Status,
-			Title:  msg.Web.Title,
+			Status:   msg.Web.Status,
+			Title:    msg.Web.Title,
+			Cert:     msg.Web.Cert,
+			Size:     msg.Web.Size,
+			Redirect: msg.Web.Redirect,
 		},
 		Finger: append([]string(nil), msg.Finger...),
 		Domain: msg.Domain,

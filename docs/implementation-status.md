@@ -56,7 +56,7 @@
 | 模块 | 功能 | 文件 |
 |------|------|------|
 | API Gateway | Gin REST API 主路由 | `server/internal/api/router.go` |
-| Server 资产发现（Server-only） | 已建立 FOFA/Hunter/Quake 三个 Server Provider 核心和项目级查询 API：operator 及以上且拥有项目访问权时，Server 从当前租户已批准配置读取对应凭据，执行有界查询并原子保存审计、不可变快照和规范资产。viewer 可在对象授权范围内读取历史、导出和测绘 Notebook；operator 可维护筛选、标签、备注、软移除/恢复，并将 1–100 个条目通过预览和 Idempotency-Key 显式分发到同项目任务。Standalone CLI 的旧 Provider 参数在初始化前返回迁移提示；Scanner 已删除搜索执行链和本地凭据模板，Agent 不再同步/读写 Provider 凭据，Server 对新建、追加、派发和领取的遗留 Provider 配置失败关闭 | `server/internal/assetdiscovery/` `server/internal/api/asset_discovery_*` `server/internal/api/asset_discovery_notebook_operations.go` `server/internal/db/asset_discovery_notebook.go` `scanner/cmd/cli/early.go` `scanner/internal/engine/` `scanner/internal/agent/worker.go` `server-ui/src/pages/AssetDiscovery.tsx` |
+| Server 资产发现（Server-only） | 已建立 FOFA/Hunter/Quake 三个 Server Provider 核心和项目级查询 API：operator 及以上且拥有项目访问权时，Server 从当前租户已批准配置读取对应凭据，执行有界查询并原子保存审计、不可变快照和规范资产。viewer 可在对象授权范围内读取历史、导出和测绘 Notebook；operator 可维护筛选、标签、备注、软移除/恢复，并将 1–100 个条目通过预览和 Idempotency-Key 显式分发到同项目任务。Scanner 不执行测绘查询、不读本地 Provider 凭据；Agent 不同步/读写 Provider 凭据；Server 对新建、追加、派发和领取中的测绘执行配置失败关闭 | `server/internal/assetdiscovery/` `server/internal/api/asset_discovery_*` `server/internal/api/asset_discovery_notebook_operations.go` `server/internal/db/asset_discovery_notebook.go` `scanner/internal/engine/` `scanner/internal/agent/worker.go` `server-ui/src/pages/AssetDiscovery.tsx` |
 | 身份与权限 | JWT 登录校验、RBAC 中间件、EXP 授权闸门、项目成员访问控制 | `server/internal/api/router.go` `server/internal/api/middleware_rbac.go` `server/internal/api/project_access.go` |
 | 任务管理 | RootTask / TaskBatch / Attempt 创建、拆分、查询、暂停/恢复/停止/重试、结果保留归档、增加批次、配置版本与项目访问校验；任务级控制只修改各批次最新 Attempt，暂停期间已领取执行允许收敛且失败后保持暂停，恢复按需追加 Attempt，立即停止可从暂停态执行并向 Agent 下发取消，任务重试仅重跑失败/超时/停止批次；增加批次会规范化并幂等去重、扩展 Project SeedTargets/Scope、写审计；TaskBatch 使用独立 `control_state` 支持批次控制，`sub_tasks` 兼容表追加保存实际 Attempt；任务详情区分可管理批次与完整执行历史；普通任务 POC 配置在 API、Agent 领取和 Agent 执行三层失败关闭；风险验证支持 Workflow 匹配和指定已审核 POC，预览绑定配置/规则/内容哈希，确认后追加只执行精确 POC 的 `risk_validation` Batch，高风险二次确认、关闭自动重试并写审计 | `server/internal/api/handler_tasks.go` `server/internal/api/task_input.go` `server/internal/api/task_lifecycle.go` `server/internal/api/task_batch_lifecycle.go` `server/internal/api/task_scope.go` `server/internal/api/task_config.go` `server/internal/api/risk_validation_preview.go` `server/internal/api/risk_validation_execute.go` `server/internal/db/task_batch.go` `server/internal/db/task_attempt.go` |
 | 创建任务幂等（G39A） | `POST /tasks` 可选 `Idempotency-Key`，无 header 的旧客户端保持原有非幂等行为，UI 为一次新建意图复用稳定 Key；同 tenant/project/operator/`create_task_v1`/Key 的同规范请求重放首次结果，异请求返回 409。原始 Key 不持久化；幂等账本与 RootTask、配置修订、TaskBatch、首个 Attempt、Project SeedTargets/Scope 扩展和创建审计同事务提交，仅首次提交后派发，重放不入队 | `server/internal/api/task_create_idempotency.go` `server/internal/db/task_creation_idempotency.go` `server-ui/src/pages/TaskManagement.tsx` |
@@ -113,20 +113,21 @@
 | 模块 | 功能 | 文件 |
 |------|------|------|
 | CLI 运行目录 | 普通扫描结果统一写入当前工作目录的 `datas/<目标_时间>/`，仅保留 `result.txt`、一份权威 HTML 报告和小型 `summary.txt`；不创建 targets/findings/coverage/timing TSV，扫描记忆也不再依赖或创建 `argus-data/state`、`argus-data/runs`。`ARGUS_HOME/argus-data` 仅保留为显式离线规则包管理兼容目录 | `scanner/cmd/cli/main.go` `scanner/internal/localstate/run.go` `scanner/internal/config/cli.go` |
-| datas 历史跳过 | 普通 CLI 默认关闭 POC/GoPoc；启动时只从 `datas/` 已完成运行的 `result.txt` 提取历史资产，不依赖 TSV。单 IP 命中即跳过，CIDR/IP 范围剔除历史已有资产 IP 后仅扫描剩余地址，域名/URL/显式服务保守精确匹配；终端打印跳过 IP 与来源，HTML/JSON 汇总完整、部分、全跳过及计划数量。该能力不维护长期资产表、不做 TTL/阶段级 ResumePlan、不读取 HTML；显式 `-poc/-gp` 与 `-force` 固定完整扫描 | `scanner/internal/localplanner/datas_history.go` `scanner/internal/localplanner/planner.go` `scanner/internal/localstate/run.go` |
+| datas 历史跳过 | 历史跳过只由显式 `-ss`/`--skip-seen` 开启：从 `datas/` 已完成运行的 `result.txt` 提取历史资产并跳过已出现 IP（`-nopoc -nogpoc` 不会隐式开启）。单 IP 命中即跳过，CIDR/IP 范围剔除历史已有资产 IP 后仅扫描剩余地址，域名/URL/显式服务保守精确匹配。`-force` 固定完整扫描 | `scanner/internal/localplanner/datas_history.go` `scanner/internal/localplanner/planner.go` `scanner/internal/localstate/run.go` |
 | CLI 与 Agent 计时（G31） | CLI 在进程内记录 earliest-observable startup、规则准备、`ScanContext` 初始化和实际 Stage 终态，text 模式只显示简短汇总，不再为普通 datas Run 生成 `timing.tsv`；JSON/非 text stdout 不增加人类日志。Agent 使用现有 `StreamResult` 和 `x-agent-token` 上报版本化有界契约，复用或未开始 Stage 不会伪装为执行。G31 仅建立测量/展示/基线，未实施 G32–G36 性能优化 | `scanner/cmd/cli/main.go` `scanner/internal/localstate/timing.go` `scanner/internal/timing/recorder.go` `scanner/internal/agent/worker.go` `scanner/cmd/perf-baseline/main.go` |
-| CLI 品牌与 Provider 迁移（G37/G41） | 发行命令名继续为 `argus`，通用扫描参数及 `finger/poc/workflow` 子命令兼容；Banner、版本、帮助和说明统一显示 Argus CLI，`--version` 在规则与扫描初始化前直接返回。FOFA/Hunter/Quake 参数从主帮助移除并由早期迁移守卫拦截；Scanner Pipeline 已删除旧搜索阶段，Agent 不再同步或读取 Provider 凭据，Server 新建/追加/派发/领取均对遗留 Provider 配置失败关闭 | `scanner/cmd/cli/early.go` `scanner/internal/engine/` `scanner/internal/agent/worker.go` `server/internal/api/task_dispatch.go` |
+| CLI 品牌 | 发行命令名继续为 `argus`；Banner、版本、帮助统一显示 Argus CLI，`--version` 在规则与扫描初始化前直接返回。Scanner Pipeline 不执行测绘查询，Agent 不同步或读取 Provider 凭据 | `scanner/cmd/cli/early.go` `scanner/internal/engine/` `scanner/internal/agent/worker.go` `server/internal/api/task_dispatch.go` |
 | 强制完整扫描 | CLI 可选 `-force` 仅绕过 `datas` 历史跳过；目标、端口和 POC-off 安全默认不变，本次执行继续追加证据。该指令不进入 Server/Agent 配置 | `scanner/common/flag.go` `scanner/internal/config/cli.go` `scanner/internal/localplanner/planner.go` |
 
 ### 扫描引擎
 
 | 模块 | 功能 |
 |------|------|
-| 空间搜索引擎（Server-only） | FOFA / Hunter / Quake 的用户查询入口固定在 Server 项目“资产测绘”页面。Standalone CLI、Scanner 与 Agent 不读取 Provider 凭据或发起 Provider 请求；旧参数、任务配置和队列消息均给出稳定拒绝/失败状态，不会回退到本机配置。被动子域仍保留但显式排除三家 Provider 来源 |
+| 空间搜索引擎（Server-only） | FOFA / Hunter / Quake 的用户查询入口固定在 Server 项目“资产测绘”页面。Standalone CLI、Scanner 与 Agent 不读取 Provider 凭据或发起 Provider 请求。被动子域仍保留但显式排除三家 Provider 来源 |
 | 子域名枚举 | subfinder + 自定义爆破 |
-| 存活探测 | ICMP + TCP Ping |
+| 存活探测 | 同网段 ARP，其余 ICMP；ARP/ICMP 未应答的再 TCP 探活（80/443/3389/445/22）。`-PU` 再对剩余主机打常关 UDP 口，ICMP port unreachable 视为存活。`-Pn` 跳过，`-nip` 跳过 ICMP 直接 TCP |
+| 内网路径 | CLI `-tr <目标>` 是单独命令（IP / 文件 / 上次 result.txt），不进入扫描流水线。自实现 UDP/ICMP TTL 探路（不调用系统 traceroute/tracert），输出 `[Path]` 跳数和 `[Topo]` 网段蓝图 |
 | 端口扫描 | TCP / SYN (Masscan) |
-| 协议识别 | Banner 抓取 |
+| 协议识别 | gonmap TCP 识别 + 内网 TCP 握手 + 默认同机高价值 UDP 识别 |
 | Web 探测 | httpx 批量探测 |
 | 指纹识别 | 被动 + 主动目录指纹 |
 | Workflow 路由 | 指纹到 POC 的映射 |

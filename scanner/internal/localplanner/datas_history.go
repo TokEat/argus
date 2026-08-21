@@ -130,6 +130,9 @@ func (history dataResultHistory) addResultLine(line, source string) {
 		history.addFinding(message, source)
 		return
 	}
+	if isHistoryWEBChildLine(line) {
+		return
+	}
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return
@@ -139,11 +142,13 @@ func (history dataResultHistory) addResultLine(line, source string) {
 	case strings.HasPrefix(line, "[Alive] "):
 		target = firstField(strings.TrimPrefix(line, "[Alive] "))
 	case strings.HasPrefix(line, "[Port] "):
-		target = firstField(strings.TrimPrefix(line, "[Port] "))
+		target = historyServiceTarget(strings.TrimPrefix(line, "[Port] "))
 	case strings.HasPrefix(line, "[Protocol] "):
-		target = firstField(strings.TrimPrefix(line, "[Protocol] "))
-	case strings.HasPrefix(line, "[Web] "):
-		target = firstField(strings.TrimPrefix(line, "[Web] "))
+		target = historyServiceTarget(strings.TrimPrefix(line, "[Protocol] "))
+	case strings.HasPrefix(line, "[WEB] "), strings.HasPrefix(line, "[Web] "):
+		rest := strings.TrimPrefix(line, "[WEB] ")
+		rest = strings.TrimPrefix(rest, "[Web] ")
+		target = firstField(rest)
 	case strings.HasPrefix(line, "[Finger] "):
 		target = firstField(strings.TrimPrefix(line, "[Finger] "))
 	case strings.HasPrefix(line, "[Active-Finger] "):
@@ -172,7 +177,7 @@ func (history dataResultHistory) addFinding(message ddout.OutputMessage, source 
 	}
 	if ip := strings.TrimSpace(message.IP); ip != "" {
 		history.addIP(ip, source)
-		if port := strings.TrimSpace(message.Port); port != "" {
+		if port := strings.TrimSpace(message.Port); port != "" && !strings.EqualFold(message.Transport, "udp") && !strings.HasSuffix(port, "/udp") {
 			history.addTarget(net.JoinHostPort(ip, port), source)
 		}
 	}
@@ -220,6 +225,31 @@ func targetIP(target string) string {
 		}
 	}
 	return ""
+}
+
+func historyServiceTarget(rest string) string {
+	transport, endpoint := ddout.ParseServiceLineRest(rest)
+	if transport == "udp" {
+		host, _, err := net.SplitHostPort(endpoint)
+		if err != nil {
+			return ""
+		}
+		return host
+	}
+	return endpoint
+}
+
+func isHistoryWEBChildLine(line string) bool {
+	if line == "" || (line[0] != ' ' && line[0] != '\t') {
+		return false
+	}
+	trimmed := strings.TrimSpace(line)
+	for _, prefix := range []string{"[Finger]", "[Certificates]", "[Code]", "[Size]", "[Redirect]", "[Title]"} {
+		if strings.HasPrefix(trimmed, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func firstField(value string) string {

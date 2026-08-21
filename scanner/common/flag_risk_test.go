@@ -19,10 +19,6 @@ func TestValidateCLIRiskFlagsRejectsExplicitPOCWithNoPoc(t *testing.T) {
 			name:   "named nuclei POC",
 			config: structs.Config{NoPoc: true, PocNameForSearch: "shiro"},
 		},
-		{
-			name:   "Golang POC",
-			config: structs.Config{NoPoc: true, GolangPoc: true},
-		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

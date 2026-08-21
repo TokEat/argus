@@ -29,7 +29,7 @@ CLI 扫描结果统一写入当前工作目录的 `datas/<目标_时间>/`。普
 
 CLI 只旁路观察输出，不把 CLI 切换为 Agent 模式。旧 localstate TSV 读写代码仅为兼容既有库内测试和显式工具保留，不进入普通扫描路径。
 
-普通 CLI 仍默认关闭 POC、通用 POC 和 GoPoc；只有 `-poc` 或 `-gp` 等显式风险参数保持原执行语义，并强制完整扫描。`-gp` 是混合派发的兼容入口；Server 策略不接受它，而是依据共享 `argus.gopoc-catalog/v1` 将协议、漏洞和凭据插件分别密封到协议识别、自动 POC 和弱口令阶段。Planner 启动时只扫描 `datas/` 下已完成历史目录的 `result.txt`：带 `summary.txt` 的 Run 必须同时满足 `status=completed` 与 `terminal_status=completed`；老格式目录只有在 `result.txt` 非空时才作为已有发现使用。`targets.tsv` 不参与扫描记忆，也不会把零 finding 的旧扫描作为跳过依据。
+Standalone CLI 默认开启 Nuclei 与 GoPoc（含口令爆破）。`-nopoc` 只关 Nuclei，`-nogpoc` 关全部 GoPoc，`-nobr` 只关服务口令爆破。`datas` 历史跳过默认关闭，需显式 `-ss`；`-f` 会覆盖 `-ss`。把上次 `result.txt` 交给 `-a` 会复用存活主机和开放端口，跳过已完成的探活/对应端口扫描。Server 依据共享 `argus.gopoc-catalog/v1` 将协议、漏洞和凭据插件分别密封到协议识别、自动 POC 和弱口令阶段。Planner 启动时只扫描 `datas/` 下已完成历史目录的 `result.txt`：带 `summary.txt` 的 Run 必须同时满足 `status=completed` 与 `terminal_status=completed`；老格式目录只有在 `result.txt` 非空时才作为已有发现使用。`targets.tsv` 不参与扫描记忆，也不会把零 finding 的旧扫描作为跳过依据。
 
 跳过粒度是资产差集，而不是阶段级恢复：单 IP 命中历史时直接跳过；CIDR/IP 范围会展开并剔除已有资产 IP，只扫描剩余地址；域名、URL 和显式服务目标按规范化身份精确匹配。交互终端打印跳过地址及来源目录，HTML 与 JSON `run_summary` 记录完整、部分、全跳过输入及计划/跳过资产计数。CLI 不再读取 TTL 策略、不生成 `ResumePlan`、不做端口前缀复核，也不维护长期资产差异表。显式风险参数和 `-force` 永远绕过 `datas` 历史跳过。
 

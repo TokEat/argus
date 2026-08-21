@@ -155,14 +155,25 @@ func portConnect(item addr, respondingHosts chan<- string, adjustedTimeout int, 
 				Port: strconv.Itoa(item.port),
 			})
 		}
-	} else {
-		if emit != nil {
-			emit(ddout.OutputMessage{
-				Type:          "IPAlive",
-				IP:            item.ip,
-				AdditionalMsg: "TCP:" + strconv.Itoa(item.port),
-			})
-		}
+		wg.Add(1)
+		respondingHosts <- item.ip + ":" + strconv.Itoa(item.port)
+		return
+	}
+
+	// Liveness: first open port proves the host is up. Later ports skip.
+	backlistLock.Lock()
+	if _, exists := (*backlist)[item.ip]; exists {
+		backlistLock.Unlock()
+		return
+	}
+	(*backlist)[item.ip] = struct{}{}
+	backlistLock.Unlock()
+	if emit != nil {
+		emit(ddout.OutputMessage{
+			Type:          "IPAlive",
+			IP:            item.ip,
+			AdditionalMsg: "TCP:" + strconv.Itoa(item.port),
+		})
 	}
 	wg.Add(1)
 	respondingHosts <- item.ip + ":" + strconv.Itoa(item.port)

@@ -4,7 +4,7 @@ Argus 已将 Hunter、FOFA、Quake 的用户查询入口完整迁移到 Server �
 
 ## CLI 迁移提示
 
-`argus` 不再执行 Hunter、FOFA 或 Quake 查询，不读取 Provider 凭据，也不会发起 Provider 网络请求。旧有 Provider flag 仅作为迁移期提示被识别：CLI 会返回非零状态并提示在当前项目的“资产测绘”页面发起查询。请改用 Server 的项目级入口；显式目标的本地扫描继续使用 `argus -t <target>`。
+Hunter、FOFA、Quake 查询在 Server 当前项目的“资产测绘”页面发起。Standalone CLI 只扫描 `-a` 指定的目标。
 
 ## 当前能力
 

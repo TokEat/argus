@@ -25,7 +25,7 @@ Schema 固定为 `argus.cli-output/v1`。记录公共字段：
 {"schema_version":"argus.cli-output/v1","record_type":"run_summary","sequence":2,"run_id":"20260810T030901Z-example","summary":{"status":"completed","exit_code":0,"counts":{"targets":1,"findings":1,"coverage":2,"assets_new":0,"services_changed":0,"assets_disappeared":0,"assets_not_assessed":0,"stages_executed":2,"stages_reused":0,"targets_full":0,"targets_incremental":0,"targets_partial":1,"targets_skipped":0,"assets_planned":253,"assets_history_skipped":3}}}
 ```
 
-`finding` 的稳定字段为 `type`、`ip`、`ips`、`port`、`protocol`、`web`、`finger`、`domain`、`go_poc`、`uri`、`city`、`am` 和 `nuclei`；空的 `web`、`go_poc` 不输出。发现由并发阶段产生，不承诺目标排序；`sequence` 只表示实际写出顺序。
+`finding` 的稳定字段为 `type`、`ip`、`ips`、`port`、`protocol`、`product`、`version`、`transport`、`web`、`finger`、`domain`、`go_poc`、`uri`、`city`、`am` 和 `nuclei`；空的 `web`、`go_poc`、`product`、`version`、`transport` 不输出。`product` / `version` 来自协议识别阶段的服务画像，不是 Web CMS 指纹。文本把传输层和服务名写在同一行：`[Port] [tcp] 10.0.0.8:445 smb`、`[Port] [udp] 10.0.0.8:53 dns`，HTTP/HTTPS 端口标 `[web]`。单独执行 `argus -tr <目标>` 时另有 `[Path] dest hops=N hop1 -> hop2` 和收成网段的 `[Topo]`，不进入复用目标。文本模式下 Web 探测和指纹会先攒在一起，指纹识别结束后按同源（协议+主机+端口）只打一条 `[WEB]` 分组块；同站 302 和落地页合成一块，子行是 `[Finger]`、`[Certificates]`、`[Code]`、`[Size]`、`[Redirect]`、`[Title]`。命中的 Nuclei/GoPoc 紧跟其后写成 `[POC] ...`，包含 info 级探测模板。Nuclei 模板 runtime/syntax 告警默认进审计，不占终端。JSON 仍按到达顺序分别写 `web`、`finger`、`nuclei`/`go_poc`。Workflow 只消费正式指纹阶段的 ResultMap，不消费展示用即时指纹。发现由并发阶段产生，不承诺目标排序；`sequence` 只表示实际写出顺序。
 
 `run_summary.counts` 中的 `targets_full`、`targets_partial`、`targets_skipped` 描述原始输入的 datas 历史差集决策；`assets_planned` 与 `assets_history_skipped` 描述 CIDR/IP 范围展开后的地址数量。扫描记忆只读取已完成目录的 `result.txt`，不依赖 TSV；因此历史中没有 finding 的地址仍会再次扫描。
 
@@ -41,7 +41,7 @@ HTML 中的“扫描执行状态”只描述扫描、本地历史与报告准备
 
 Nuclei 的全部多步骤 packet/request/response、独立 request/response、OAST interaction 和复现命令都会保留并进行 HTML 转义；超过 21 步的模板不再被固定上限截断。HTTP 文本按原始多行展示，Network/TCP 每一步的实际收发字节使用可恢复的 hex-dump，避免非法 UTF-8 在 JSON 中被替换。GoPoc 的 `InfoLeft`、`InfoRight` 与 `ShowMsg` 继续作为验证摘要保留；凡扫描器能够直接取得实际网络字节的成功验证，都会提供结构化 `go_poc.exchanges` 原始证据，即使未开启审计也会进入 JSON 和 HTML。使用第三方协议客户端且 Argus 无法取得原始帧的插件仅展示真实可得的验证摘要，不会把摘要或推测内容冒充网络包。页面不加载 CDN、远程脚本或字体。
 
-POC-off 只影响风险验证执行，不影响资产、服务、Web 和指纹进入 HTML。此时漏洞区明确显示“未记录漏洞结果”，不能将其解释为目标不存在漏洞。`-npoc` 与显式 `-poc`/`-gp` 同时使用会返回参数错误，避免互相矛盾的开关意外执行风险阶段。
+`-nopoc` 只关闭 Nuclei，不影响资产、服务、Web、指纹和 GoPoc 进入 HTML。此时漏洞区若没有 Nuclei 证据，不能解释成目标不存在漏洞。`-nopoc` 与 `-poc` 同时使用会返回参数错误。关掉 GoPoc 用 `-nogpoc`。
 
 参数或初始化在 Run 建立前失败时不会伪造 `run_summary`。必要诊断写入无 ANSI 的 stderr，stderr 不属于 NDJSON 数据通道。
 
@@ -55,7 +55,7 @@ POC-off 只影响风险验证执行，不影响资产、服务、Web 和指纹�
 | --- | --- |
 | `0` | 扫描完成，或 help/version 成功 |
 | `1` | 执行、输出或本地历史持久化失败 |
-| `2` | 参数、目标或输出类型错误；Standalone Provider 参数已迁移到 Server |
+| `2` | 参数、目标或输出类型错误 |
 | `130` | 扫描收到中断并完成取消收敛 |
 
 机器调用方应同时检查进程退出码和最后一条 `run_summary`。Run 建立前的错误只有进程退出码和 stderr。

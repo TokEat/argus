@@ -25,8 +25,8 @@ func TestCompileTaskScanPolicyPresetsAndSafeDiscoveryConfig(t *testing.T) {
 		preset scanpolicy.Preset
 		ports  int
 	}{
-		{scanpolicy.PresetQuick, 100},
-		{scanpolicy.PresetStandard, 1000},
+		{scanpolicy.PresetQuick, scanpolicy.PortCount(scanpolicy.Common100Ports)},
+		{scanpolicy.PresetStandard, scanpolicy.PortCount(scanpolicy.Top1000TCPPorts)},
 		{scanpolicy.PresetDeep, 65535},
 	} {
 		policy, err := scanpolicy.PresetPolicy(tc.preset)
@@ -56,6 +56,17 @@ func TestCompileTaskScanPolicyPresetsAndSafeDiscoveryConfig(t *testing.T) {
 		if !config.ProtocolCheckEnabled || config.GoPocCatalogSHA256 != scanpolicy.GoPocCatalogSHA256() || config.ProtocolCheckTargetLimit < 1 || config.ProtocolCheckRequestBudget < 1 {
 			t.Fatalf("%s protocol-check contract is incomplete: %+v", tc.preset, config)
 		}
+		ports, err := scanpolicy.PortsForProfile(policy.PortProfile, policy.CustomPorts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantProtocolLimit, err := scanpolicy.GoPocTargetLimitForPorts(ports, 1, scanpolicy.GoPocProtocolCheck)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.ProtocolCheckTargetLimit != wantProtocolLimit || config.ProtocolCheckRequestBudget != int64(wantProtocolLimit) {
+			t.Fatalf("%s protocol-check budget=%d/%d want %d", tc.preset, config.ProtocolCheckTargetLimit, config.ProtocolCheckRequestBudget, wantProtocolLimit)
+		}
 		var selector db.AgentSelectorRules
 		if err := json.Unmarshal([]byte(plan.SelectorRules), &selector); err != nil {
 			t.Fatal(err)
@@ -68,6 +79,44 @@ func TestCompileTaskScanPolicyPresetsAndSafeDiscoveryConfig(t *testing.T) {
 				t.Fatalf("deep policy did not require recursive-capable Agent: %+v", selector)
 			}
 		}
+	}
+}
+
+func TestCompileTaskScanPolicyBudgetsProtocolChecksForCIDRTargets(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Project{ID: "policy-cidr-project", TenantID: "default", OwnerUserID: "1", Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	ctx, _ := newTenantContextWithRole(http.MethodPost, "/tasks/plan-preview", "admin", "1")
+	policy, err := scanpolicy.PresetPolicy(scanpolicy.PresetQuick)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := compileTaskScanPolicy(ctx, scanPolicyPlanRequest{ProjectID: "policy-cidr-project", Targets: json.RawMessage(`"192.0.2.0/24"`), Policy: policy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config taskScanConfig
+	if err := json.Unmarshal([]byte(plan.ScannerConfig), &config); err != nil {
+		t.Fatal(err)
+	}
+	ports, err := scanpolicy.PortsForProfile(policy.PortProfile, policy.CustomPorts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := scanpolicy.GoPocTargetLimitForPorts(ports, 256, scanpolicy.GoPocProtocolCheck)
+	if err != nil {
+		t.Fatal(err)
+	}
+	singleTargetLimit, err := scanpolicy.GoPocTargetLimitForPorts(ports, 1, scanpolicy.GoPocProtocolCheck)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.ProtocolCheckTargetLimit != want || config.ProtocolCheckRequestBudget != int64(want) {
+		t.Fatalf("CIDR protocol-check budget=%d/%d want %d", config.ProtocolCheckTargetLimit, config.ProtocolCheckRequestBudget, want)
+	}
+	if config.ProtocolCheckTargetLimit <= singleTargetLimit {
+		t.Fatalf("CIDR protocol-check budget stayed at single-target limit %d", singleTargetLimit)
 	}
 }
 

@@ -8,7 +8,134 @@ import (
 	"testing"
 
 	"github.com/projectdiscovery/httpx/runner"
+	"github.com/projectdiscovery/tlsx/pkg/tlsx/clients"
 )
+
+func TestURLCallbackEmitsPassiveFingersForDisplay(t *testing.T) {
+	var emitted []structs.OutputMessage
+	rt := NewRuntime(
+		map[string]structs.URLEntity{},
+		&sync.Mutex{},
+		nil, nil, nil, nil,
+		[]structs.FingerPEntity{{
+			ProductName: "DemoCMS",
+			AllString:   `title="Index"`,
+			Rule:        ddfinger.ParseRule(`title="Index"`),
+		}},
+		nil,
+		map[string][]string{},
+		&sync.Mutex{},
+		func(msg structs.OutputMessage) { emitted = append(emitted, msg) },
+	)
+	rt.URLCallback(runner.Result{
+		URL:           "http://example.com/",
+		Scheme:        "http",
+		Host:          "example.com",
+		Port:          "80",
+		Path:          "/",
+		Title:         "Index",
+		StatusCode:    200,
+		ContentLength: 12,
+		Hashes: map[string]interface{}{
+			"body_md5":   "body-1",
+			"header_md5": "header-1",
+		},
+	})
+	if len(emitted) != 1 || !reflect.DeepEqual(emitted[0].Finger, []string{"DemoCMS"}) {
+		t.Fatalf("expected display fingers, got %#v", emitted)
+	}
+}
+
+func TestURLCallbackEmitsSizeAndRedirect(t *testing.T) {
+	var emitted []structs.OutputMessage
+	rt := NewRuntime(map[string]structs.URLEntity{}, &sync.Mutex{}, nil, nil, nil, nil, nil, nil, map[string][]string{}, &sync.Mutex{}, func(msg structs.OutputMessage) {
+		emitted = append(emitted, msg)
+	})
+	rt.URLCallback(runner.Result{
+		URL:           "http://example.com/",
+		Scheme:        "http",
+		Host:          "example.com",
+		Port:          "80",
+		Path:          "/",
+		Title:         "Home",
+		StatusCode:    302,
+		ContentLength: 2862,
+		Location:      "https://example.com/login",
+		Hashes: map[string]interface{}{
+			"body_md5":   "body-1",
+			"header_md5": "header-1",
+		},
+	})
+	if len(emitted) != 1 {
+		t.Fatalf("emitted = %#v", emitted)
+	}
+	if emitted[0].Web.Status != "302" || emitted[0].Web.Size != "2862" || emitted[0].Web.Redirect != "https://example.com/login" || emitted[0].Web.Title != "Home" {
+		t.Fatalf("web fields = %#v", emitted[0].Web)
+	}
+}
+
+func TestURLCallbackEmitsCertificate(t *testing.T) {
+	var emitted []structs.OutputMessage
+	rt := NewRuntime(map[string]structs.URLEntity{}, &sync.Mutex{}, nil, nil, nil, nil, nil, nil, map[string][]string{}, &sync.Mutex{}, func(msg structs.OutputMessage) {
+		emitted = append(emitted, msg)
+	})
+	rt.URLCallback(runner.Result{
+		URL:           "https://10.0.0.8/",
+		Scheme:        "https",
+		Host:          "10.0.0.8",
+		Port:          "443",
+		Path:          "/",
+		StatusCode:    200,
+		ContentLength: 12,
+		TLSData: &clients.Response{
+			CertificateResponse: &clients.CertificateResponse{
+				SubjectAN: []string{"intranet.local", "10.0.0.8"},
+				IssuerOrg: []string{"ExampleCA"},
+			},
+		},
+		Hashes: map[string]interface{}{"body_md5": "body-1", "header_md5": "header-1"},
+	})
+	if len(emitted) != 1 {
+		t.Fatalf("emitted = %#v", emitted)
+	}
+	if emitted[0].Web.Cert != "CN=intranet.local SAN=10.0.0.8 issuer=ExampleCA" {
+		t.Fatalf("cert = %q", emitted[0].Web.Cert)
+	}
+}
+
+func TestCompactCertificateUsesSANWhenCNEmpty(t *testing.T) {
+	got := compactCertificate(runner.Result{TLSData: &clients.Response{
+		CertificateResponse: &clients.CertificateResponse{
+			SubjectAN: []string{"app.local", "app.local"},
+			IssuerCN:  "R3",
+			Expired:   true,
+		},
+	}})
+	if got != "CN=app.local issuer=R3 expired=true" {
+		t.Fatalf("compact = %q", got)
+	}
+	if compactCertificate(runner.Result{}) != "" {
+		t.Fatal("empty TLS should stay empty")
+	}
+	if compactCertificate(runner.Result{TLSData: &clients.Response{}}) != "" {
+		t.Fatal("nil certificate response should stay empty")
+	}
+}
+
+func TestProbeURLsAddsHTTPSOnTLSPorts(t *testing.T) {
+	if got := ProbeURLs("10.0.0.8:80", "http"); !reflect.DeepEqual(got, []string{"http://10.0.0.8:80"}) {
+		t.Fatalf("http 80 = %v", got)
+	}
+	if got := ProbeURLs("10.0.0.8:443", "http"); !reflect.DeepEqual(got, []string{"http://10.0.0.8:443", "https://10.0.0.8:443"}) {
+		t.Fatalf("http 443 = %v", got)
+	}
+	if got := ProbeURLs("10.0.0.8:8443", "https"); !reflect.DeepEqual(got, []string{"https://10.0.0.8:8443"}) {
+		t.Fatalf("https 8443 = %v", got)
+	}
+	if got := ProbeURLs("10.0.0.8:22", "ssh"); got != nil {
+		t.Fatalf("ssh = %v", got)
+	}
+}
 
 func TestURLCallbackStoresWebPath(t *testing.T) {
 	urlMap := make(map[string]structs.URLEntity)

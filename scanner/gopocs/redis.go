@@ -51,6 +51,7 @@ func RedisScan(info *structs.HostInfo) (tmperr error) {
 			upList = append(upList, pair.Password)
 		}
 	}
+	upList = mergePasswordAppend(upList, info)
 
 	upList = utils.RemoveDuplicateElement(upList)
 

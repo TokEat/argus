@@ -255,6 +255,9 @@ func recordStageCheckpointItem(stage scanplan.Stage, state *stageObservationStat
 			add(ip, scanplan.ServiceCheckpoint{Endpoint: ip})
 		}
 	case scanplan.StagePortScan:
+		if strings.EqualFold(strings.TrimSpace(message.Transport), "udp") || strings.HasSuffix(strings.TrimSpace(message.Port), "/udp") {
+			return
+		}
 		if endpoint := normalizedCheckpointEndpoint(message.IP, message.Port); endpoint != "" {
 			add(endpoint, scanplan.ServiceCheckpoint{Endpoint: endpoint})
 		}
@@ -262,7 +265,7 @@ func recordStageCheckpointItem(stage scanplan.Stage, state *stageObservationStat
 		endpoint := normalizedCheckpointEndpoint(message.IP, message.Port)
 		protocol := strings.ToLower(strings.TrimSpace(message.Protocol))
 		if endpoint != "" && protocol != "" && len(protocol) <= 64 && !strings.ContainsAny(protocol, "\r\n\x00") {
-			add(endpoint+"\x00"+protocol, scanplan.ServiceCheckpoint{Endpoint: endpoint, Protocol: protocol})
+			add(endpoint+"\x00"+protocol, scanplan.ServiceCheckpoint{Endpoint: endpoint, Protocol: protocol, Transport: strings.ToLower(strings.TrimSpace(message.Transport))})
 		}
 	case scanplan.StageHTTPProbe, scanplan.StageHostBinding:
 		if normalized := normalizedCheckpointURL(message.URI); normalized != "" {

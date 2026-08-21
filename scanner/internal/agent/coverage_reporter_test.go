@@ -60,6 +60,7 @@ func TestStageObservationReporterEmitsBoundedSingleTargetCheckpoint(t *testing.T
 	reporter.observePhase(engine.PhaseEvent{Phase: engine.PhasePortScan, Status: "start"})
 	for _, message := range []engine.OutputMessage{
 		{Type: "PortScan", IP: "10.0.0.1", Port: "443"},
+		{Type: "PortScan", IP: "10.0.0.1", Port: "53", Transport: "udp", Protocol: "dns"},
 		{Type: "PortScan", IP: "10.0.0.1", Port: "22"},
 		{Type: "PortScan", IP: "10.0.0.1", Port: "443"},
 	} {

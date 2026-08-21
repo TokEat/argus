@@ -64,6 +64,8 @@ type ScanContext struct {
 	// IPPortMap IP:Port → Protocol (如 "192.168.1.1:80" → "http")
 	IPPortMap     map[string]string
 	IPPortMapLock sync.Mutex
+	// ServiceMap IP:Port → protocol-stage product/version picture.
+	ServiceMap map[string]structs.ServiceRecord
 
 	// IPDomainMap 存储 IP → []Domain 的映射关系
 	IPDomainMap     map[string][]string
@@ -174,6 +176,7 @@ func NewScanContext(cfg Config) (*ScanContext, error) {
 		Config: cfg,
 
 		IPPortMap:            make(map[string]string),
+		ServiceMap:           make(map[string]structs.ServiceRecord),
 		IPDomainMap:          make(map[string][]string),
 		URLMap:               make(map[string]URLEntity),
 		httpURLVisits:        make(map[string]struct{}),
@@ -227,6 +230,7 @@ func (sc *ScanContext) Reset() {
 	sc.PhaseObserver = nil
 	sc.IPPortMapLock.Lock()
 	sc.IPPortMap = make(map[string]string)
+	sc.ServiceMap = make(map[string]structs.ServiceRecord)
 	sc.IPPortMapLock.Unlock()
 
 	sc.IPDomainMapLock.Lock()

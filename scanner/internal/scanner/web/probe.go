@@ -7,6 +7,7 @@ import (
 	"github.com/P0lar1ght/argus/scanner/lib/ddfinger"
 	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/P0lar1ght/argus/scanner/utils"
+	"net"
 	"net/url"
 	"sort"
 	"strconv"
@@ -94,15 +95,18 @@ func (rt *Runtime) URLCallback(resp runner.Result) {
 		return
 	}
 
-	if rt.emit != nil {
+	if rt.emit != nil && isHTTPScheme(resp.URL) {
 		rt.emit(structs.OutputMessage{
 			Type: "Web",
 			Web: structs.WebInfo{
-				Status: strconv.Itoa(resp.StatusCode),
-				Title:  resp.Title,
+				Status:   strconv.Itoa(resp.StatusCode),
+				Title:    resp.Title,
+				Cert:     compactCertificate(resp),
+				Size:     strconv.Itoa(resp.ContentLength),
+				Redirect: webRedirect(resp),
 			},
 			URI:    resp.URL,
-			Finger: nil,
+			Finger: rt.matchAllFingers(resp),
 		})
 	}
 }
@@ -266,6 +270,47 @@ func (rt *Runtime) matchingDirPaths(respPath string) []string {
 	return paths
 }
 
+func (rt *Runtime) matchAllFingers(resp runner.Result) []string {
+	if rt == nil || len(rt.FingerprintDB) == 0 {
+		return nil
+	}
+	portInt, err := strconv.Atoi(resp.Port)
+	if err != nil {
+		portInt = -1
+	}
+	cert := getTLSString(resp)
+	path := normalizedPath(resp)
+	bodyHash := hashValue(resp, "body_md5")
+	seen := map[string]struct{}{}
+	var results []string
+	for _, finger := range rt.FingerprintDB {
+		if _, ok := seen[finger.ProductName]; ok {
+			continue
+		}
+		if !ddfinger.SingleCheck(
+			finger,
+			resp.Scheme,
+			resp.Header,
+			resp.Body,
+			resp.WebServer,
+			resp.Title,
+			cert,
+			portInt,
+			path,
+			bodyHash,
+			resp.FavIconMMH3,
+			resp.StatusCode,
+			resp.ContentType,
+			"",
+		) {
+			continue
+		}
+		seen[finger.ProductName] = struct{}{}
+		results = append(results, finger.ProductName)
+	}
+	return results
+}
+
 func (rt *Runtime) matchesProduct(resp runner.Result, productName string) bool {
 	portInt, err := strconv.Atoi(resp.Port)
 	if err != nil {
@@ -300,6 +345,9 @@ func (rt *Runtime) upsertResponse(resp runner.Result) (string, bool) {
 	finalURL := responseURL(resp)
 	URL, err := url.Parse(finalURL)
 	if err != nil {
+		return "", false
+	}
+	if URL.Scheme != "http" && URL.Scheme != "https" {
 		return "", false
 	}
 
@@ -556,6 +604,19 @@ func isDefaultPort(URL *url.URL) bool {
 		(URL.Scheme == "https" && port == "443")
 }
 
+func isHTTPScheme(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+		return true
+	default:
+		return false
+	}
+}
+
 func responseURL(resp runner.Result) string {
 	if resp.FinalURL != "" {
 		return resp.FinalURL
@@ -596,6 +657,116 @@ func hashValue(resp runner.Result, key string) string {
 		return typed
 	}
 	return fmt.Sprint(value)
+}
+
+func webRedirect(resp runner.Result) string {
+	location := strings.TrimSpace(resp.Location)
+	if location != "" {
+		return location
+	}
+	finalURL := strings.TrimSpace(resp.FinalURL)
+	if finalURL != "" && finalURL != strings.TrimSpace(resp.URL) {
+		return finalURL
+	}
+	return ""
+}
+
+// ProbeURLs builds HTTP(S) probe targets from a protocol-identify result.
+// TLS-typical ports that were labeled http still get an https:// attempt so
+// the WEB block can show the leaf certificate.
+func ProbeURLs(hostPort, service string) []string {
+	hostPort = strings.TrimSpace(hostPort)
+	service = strings.ToLower(strings.TrimSpace(service))
+	if hostPort == "" {
+		return nil
+	}
+	switch service {
+	case "https", "ssl/http", "http2":
+		return []string{"https://" + hostPort}
+	case "http", "http-proxy", "http-alt":
+		urls := []string{"http://" + hostPort}
+		if tlsLikelyWebPort(hostPort) {
+			urls = append(urls, "https://"+hostPort)
+		}
+		return urls
+	default:
+		return nil
+	}
+}
+
+func tlsLikelyWebPort(hostPort string) bool {
+	_, port, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		return false
+	}
+	switch port {
+	case "443", "1443", "3443", "4443", "6443", "7443", "8443", "9443", "10443":
+		return true
+	default:
+		return false
+	}
+}
+
+func compactCertificate(resp runner.Result) string {
+	if resp.TLSData == nil || resp.TLSData.CertificateResponse == nil {
+		return ""
+	}
+	cert := resp.TLSData.CertificateResponse
+	parts := make([]string, 0, 6)
+	cn := strings.TrimSpace(cert.SubjectCN)
+	if cn == "" && len(cert.SubjectAN) > 0 {
+		cn = strings.TrimSpace(cert.SubjectAN[0])
+	}
+	if cn != "" {
+		parts = append(parts, "CN="+cn)
+	}
+	if sans := compactSAN(cert.SubjectAN, cn); sans != "" {
+		parts = append(parts, "SAN="+sans)
+	}
+	issuer := strings.TrimSpace(cert.IssuerCN)
+	if issuer == "" && len(cert.IssuerOrg) > 0 {
+		issuer = strings.TrimSpace(cert.IssuerOrg[0])
+	}
+	if issuer != "" {
+		parts = append(parts, "issuer="+issuer)
+	}
+	if cert.SelfSigned {
+		parts = append(parts, "self_signed=true")
+	}
+	if cert.Expired {
+		parts = append(parts, "expired=true")
+	}
+	if cert.MisMatched {
+		parts = append(parts, "mismatch=true")
+	}
+	out := strings.Join(parts, " ")
+	if len(out) > 160 {
+		return out[:160]
+	}
+	return out
+}
+
+func compactSAN(names []string, cn string) string {
+	var out []string
+	seen := map[string]struct{}{}
+	if cn != "" {
+		seen[cn] = struct{}{}
+	}
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+		if len(out) == 3 {
+			break
+		}
+	}
+	return strings.Join(out, ",")
 }
 
 func getTLSString(resp runner.Result) string {

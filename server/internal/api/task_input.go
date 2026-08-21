@@ -92,6 +92,8 @@ type taskScanConfig struct {
 	QuakeSize                  int
 	NoICMPPing                 bool
 	TCPPing                    bool
+	UDPPing                    bool
+	TraceRoute                 bool
 	NoInteractsh               bool
 	OnlyIPPort                 bool
 	OutputFile                 string
@@ -104,7 +106,7 @@ type taskScanConfig struct {
 
 func defaultTaskScanConfig() taskScanConfig {
 	return taskScanConfig{
-		Ports:                      "21,22,23,25,53,69,80,81,88,110,111,135,137,139,143,161,179,389,443,445,465,500,514,548,554,587,636,873,993,995,1025,1080,1099,1194,1433,1521,1723,1900,2049,2082,2083,2121,2181,2222,2375,2379,2601,3000,3128,3306,3389,3690,4443,4848,5000,5236,5432,5555,5601,5632,5800,5900,5901,5984,5985,6000,6379,7001,7002,7080,8000,8001,8008,8009,8080,8081,8088,8089,8090,8161,8443,8848,8888,9000,9001,9043,9090,9091,9200,9300,9418,10000,11211,27017,27018,50000,50070,54321",
+		Ports:                      scanpolicy.Common100Ports,
 		PortScanType:               "tcp",
 		TCPPortScanThreads:         1000,
 		SYNPortScanThreads:         10000,
@@ -266,8 +268,8 @@ func validateTaskScanConfig(cfg *taskScanConfig) error {
 		return fmt.Errorf("Provider discovery is Server-only; use project asset discovery")
 	}
 
-	if !cfg.SkipHostDiscovery && cfg.NoICMPPing && !cfg.TCPPing {
-		cfg.SkipHostDiscovery = true
+	if !cfg.SkipHostDiscovery && cfg.NoICMPPing && !cfg.TCPPing && !cfg.UDPPing {
+		cfg.TCPPing = true
 	}
 
 	if cfg.ReportName != "" {
@@ -317,6 +319,73 @@ func validateTargetsByMode(targets []string, mode taskTargetMode) ([]string, tas
 	}
 
 	return targets, summary, nil
+}
+
+func estimatedProtocolCheckEndpointCount(targets []string) int {
+	total := 0
+	for _, target := range targets {
+		total += estimatedDirectTargetEndpointCount(target)
+		if total >= scanpolicy.MaximumGoPocTargets {
+			return scanpolicy.MaximumGoPocTargets
+		}
+	}
+	if total < 1 && len(targets) > 0 {
+		return 1
+	}
+	return total
+}
+
+func estimatedDirectTargetEndpointCount(target string) int {
+	switch detectDirectTargetType(target) {
+	case "cidr":
+		return estimatedCIDREndpointCount(target)
+	case "ip_range":
+		return estimatedIPRangeEndpointCount(target)
+	default:
+		return 1
+	}
+}
+
+func estimatedCIDREndpointCount(target string) int {
+	_, network, err := net.ParseCIDR(strings.TrimSpace(target))
+	if err != nil {
+		return 1
+	}
+	ones, bits := network.Mask.Size()
+	if ones < 0 || bits != 32 {
+		return 1
+	}
+	hostBits := bits - ones
+	if hostBits >= 12 {
+		return scanpolicy.MaximumGoPocTargets
+	}
+	return 1 << uint(hostBits)
+}
+
+func estimatedIPRangeEndpointCount(target string) int {
+	parts := strings.Split(strings.TrimSpace(target), "-")
+	if len(parts) != 2 {
+		return 1
+	}
+	start := net.ParseIP(strings.TrimSpace(parts[0])).To4()
+	end := net.ParseIP(strings.TrimSpace(parts[1])).To4()
+	if start == nil || end == nil {
+		return 1
+	}
+	startValue := ipv4ToUint32(start)
+	endValue := ipv4ToUint32(end)
+	if endValue < startValue {
+		return 1
+	}
+	count := uint64(endValue) - uint64(startValue) + 1
+	if count > uint64(scanpolicy.MaximumGoPocTargets) {
+		return scanpolicy.MaximumGoPocTargets
+	}
+	return int(count)
+}
+
+func ipv4ToUint32(ip net.IP) uint32 {
+	return uint32(ip[0])<<24 | uint32(ip[1])<<16 | uint32(ip[2])<<8 | uint32(ip[3])
 }
 
 type invalidTarget struct {

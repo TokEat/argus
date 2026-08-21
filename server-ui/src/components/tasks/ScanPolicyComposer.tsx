@@ -187,7 +187,7 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
                         <Card size="small" title="扫描预设">
                             <Form.Item name="preset" noStyle>
                                 <Radio.Group buttonStyle="solid" onChange={(event) => applyPreset(event.target.value)}>
-                                    <Radio.Button value="quick">快速 · 常用100</Radio.Button>
+                                    <Radio.Button value="quick">快速 · 常用协议</Radio.Button>
                                     <Radio.Button value="standard">标准 · Top1000</Radio.Button>
                                     <Radio.Button value="deep">深度 · 全端口</Radio.Button>
                                     <Radio.Button value="custom">自定义</Radio.Button>
@@ -240,7 +240,7 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
                         <Collapse items={[{ key: 'expert', label: <Space><ExperimentOutlined />结构化专家配置</Space>, children: (
                             <Row gutter={12}>
                                 <Col span={8}><Form.Item name="scan_method" label="扫描方式"><Select options={[{ value: 'tcp', label: 'TCP' }, { value: 'syn', label: 'SYN（需兼容 Agent）' }]} /></Form.Item></Col>
-                                <Col span={8}><Form.Item name="port_profile" label="端口范围"><Select disabled={values?.preset !== 'custom'} options={[{ value: 'common-100', label: '常用100' }, { value: 'top-1000', label: 'Top1000' }, { value: 'all', label: '1-65535' }, { value: 'custom', label: '自定义' }]} /></Form.Item></Col>
+                                <Col span={8}><Form.Item name="port_profile" label="端口范围"><Select disabled={values?.preset !== 'custom'} options={[{ value: 'common-100', label: '常用协议端口' }, { value: 'top-1000', label: 'Top1000' }, { value: 'all', label: '1-65535' }, { value: 'custom', label: '自定义' }]} /></Form.Item></Col>
                                 <Col span={8}><Form.Item name="intensity" label="强度"><Select options={[{ value: 'low', label: '低' }, { value: 'balanced', label: '均衡' }, { value: 'high', label: '高' }]} /></Form.Item></Col>
                                 {values?.port_profile === 'custom' && <Col span={24}><Form.Item name="custom_ports" label="自定义端口" rules={[{ required: true, message: '请输入端口范围' }]}><Input placeholder="22,80,443,8000-9000" /></Form.Item></Col>}
                                 <Col span={8}><Form.Item name="priority" label="优先级"><Select options={[{ value: 0, label: 'P0 紧急' }, { value: 1, label: 'P1 普通' }, { value: 2, label: 'P2 低' }]} /></Form.Item></Col>

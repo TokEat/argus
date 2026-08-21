@@ -14,6 +14,55 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestCommonPortProfileDerivationIsAccepted(t *testing.T) {
+	store := setupAITestDB(t)
+	root := db.RootTask{ID: "common-profile-root", TenantID: "default", ProjectID: "common-profile-project", Status: "Running", RuleVersion: "rules-v1"}
+	intent := db.ScanPolicyIntent{
+		TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID,
+		PolicyJSON: `{"schema_version":"argus.scan-policy/v1","preset":"quick","port_profile":"common-100","scan_method":"tcp","intensity":"low"}`,
+		RiskStatus: db.ScanStageIntentPending, CredentialStatus: db.ScanStageIntentPending,
+	}
+	if err := store.Create(&db.Project{ID: root.ProjectID, TenantID: root.TenantID, OwnerUserID: "1", Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(&db.SystemConfig{Key: "rule_version", Value: root.RuleVersion}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(&intent).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(&db.TaskBatch{ID: "common-asset-batch", TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Kind: "asset_scan", Status: "Done", LatestAttemptID: "common-asset-attempt"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(&db.SubTask{ID: "common-asset-attempt", TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, BatchID: "common-asset-batch", Status: "Done", Config: `{}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := NewScanStageOrchestrator().DeriveRoot(context.Background(), root.TenantID, root.ID); err != nil {
+		t.Fatal(err)
+	}
+	var got db.ScanPolicyIntent
+	if err := store.First(&got, "root_task_id = ?", root.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.RiskStatus != db.ScanStageIntentSkipped || got.CredentialStatus != db.ScanStageIntentSkipped {
+		t.Fatalf("common profile statuses = %s/%s", got.RiskStatus, got.CredentialStatus)
+	}
+	var derivations []db.ScanStageDerivation
+	if err := store.Where("root_task_id = ?", root.ID).Find(&derivations).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(derivations) != 2 {
+		t.Fatalf("common profile derivations = %+v", derivations)
+	}
+	summary := derivations[0].Summary + derivations[1].Summary
+	if !strings.Contains(summary, "no_approved_workflow_matches") || !strings.Contains(summary, "no_eligible_services") {
+		t.Fatalf("common profile derivations = %+v", derivations)
+	}
+}
+
 func TestCredentialTargetsFromAssetsUsesProtocolThenSafePortFallback(t *testing.T) {
 	assets := []db.Asset{
 		{Target: "192.0.2.10", Port: 2222, Protocol: "tcp", Service: "ssh"},

@@ -92,6 +92,7 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 		credentialList = append(credentialList, structs.UserPasswd{UserName: user, Password: password})
 	}
 	credentialList = append(credentialList, info.UserPassPairs...)
+	credentialList = expandCredentialAppend(info, credentialList)
 	credentialList = limitUserPasswd(info, RemoveDuplicateUserPass(credentialList))
 
 	// Telnet爆破

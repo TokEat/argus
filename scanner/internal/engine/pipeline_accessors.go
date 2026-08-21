@@ -42,11 +42,15 @@ func currentFingerRuntime(ctx *ScanContext, emit func(structs.OutputMessage)) *f
 }
 
 func currentProtocolRuntime(ctx *ScanContext, emit func(structs.OutputMessage)) *protocol.Runtime {
+	if ctx.ServiceMap == nil {
+		ctx.ServiceMap = make(map[string]structs.ServiceRecord)
+	}
 	return protocol.NewRuntime(
 		ctx.IPPortMap,
 		&ctx.IPPortMapLock,
 		ctx.BannerHMap,
 		emit,
+		ctx.ServiceMap,
 	)
 }
 

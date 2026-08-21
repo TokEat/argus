@@ -239,7 +239,15 @@ func TestRenderActiveFingerIncludesFallbackTag(t *testing.T) {
 		Finger:        []string{"Shiro"},
 		AdditionalMsg: "[dir-fallback]",
 	})
-	want := "[Active-Finger] http://127.0.0.1:8081/aaa [Shiro] [dir-fallback]"
+	want := "[WEB] http://127.0.0.1:8081/aaa\n     [Finger] Shiro [dir-fallback]"
+	if got != want {
+		t.Fatalf("unexpected render output: got %q want %q", got, want)
+	}
+}
+
+func TestRenderNucleiUsesPOCTag(t *testing.T) {
+	got := Render(OutputMessage{Type: "Nuclei", Show: "[cve-2021-41773] [high] http://10.0.0.8/cgi-bin/"})
+	want := "[POC] [cve-2021-41773] [high] http://10.0.0.8/cgi-bin/"
 	if got != want {
 		t.Fatalf("unexpected render output: got %q want %q", got, want)
 	}
@@ -253,7 +261,278 @@ func TestRenderGoPocUsesShowMsgAndSecurity(t *testing.T) {
 			ShowMsg:  "http://127.0.0.1:8081 key=kPH+bIxk5D2deZiIxcaaaA==",
 		},
 	})
-	want := "[CRITICAL] http://127.0.0.1:8081 key=kPH+bIxk5D2deZiIxcaaaA=="
+	want := "[POC] [CRITICAL] http://127.0.0.1:8081 key=kPH+bIxk5D2deZiIxcaaaA=="
+	if got != want {
+		t.Fatalf("unexpected render output: got %q want %q", got, want)
+	}
+}
+
+func TestRenderNmapIncludesProductVersion(t *testing.T) {
+	got := Render(OutputMessage{
+		Type:          "Nmap",
+		IP:            "10.0.0.8",
+		Port:          "445",
+		Protocol:      "smb",
+		Product:       "Microsoft Windows SMB",
+		Version:       "3.1.1",
+		AdditionalMsg: "Microsoft Windows SMB 3.1.1 domain=CORP",
+	})
+	want := "[Port] [tcp] 10.0.0.8:445 smb Microsoft Windows SMB 3.1.1 domain=CORP"
+	if got != want {
+		t.Fatalf("unexpected render output: got %q want %q", got, want)
+	}
+}
+
+func TestRenderTCPPortHasTransportTag(t *testing.T) {
+	got := Render(OutputMessage{Type: "PortScan", IP: "10.0.0.8", Port: "445"})
+	want := "[Port] [tcp] 10.0.0.8:445"
+	if got != want {
+		t.Fatalf("unexpected render output: got %q want %q", got, want)
+	}
+}
+
+func TestRenderOtherTransportTag(t *testing.T) {
+	got := Render(OutputMessage{Type: "Nmap", IP: "10.0.0.8", Port: "5000", Protocol: "sctp", Transport: "sctp"})
+	want := "[Port] [other] 10.0.0.8:5000 sctp"
+	if got != want {
+		t.Fatalf("unexpected render output: got %q want %q", got, want)
+	}
+}
+
+func TestColorizeFindingLineHighlightsWEBAndFinger(t *testing.T) {
+	prev := useColor
+	t.Cleanup(func() { useColor = prev })
+	SetUseColor(false)
+	plain := formatTextLine(OutputMessage{Type: "Finger", URI: "http://172.20.0.180/", Finger: []string{"Nginx", "GitLab"}})
+	if strings.Contains(plain, "\x1b[") {
+		t.Fatalf("plain format leaked ANSI: %q", plain)
+	}
+	SetUseColor(true)
+	web := colorizeFindingLine("[WEB] http://172.20.0.180/\n     [Finger] Nginx,GitLab\n     [Code] 200")
+	if !strings.Contains(web, "\x1b[") || !strings.Contains(web, "[WEB]") || !strings.Contains(web, "[Finger]") {
+		t.Fatalf("web/finger not colored: %q", web)
+	}
+	finger := colorizeFindingLine("[Finger] ssh://172.20.0.180:22 OpenSSH")
+	if !strings.Contains(finger, "\x1b[") || !strings.Contains(finger, "[Finger]") {
+		t.Fatalf("service finger not colored: %q", finger)
+	}
+}
+
+func TestFormatServiceFingerIsNotWEBBlock(t *testing.T) {
+	line := formatTextLine(OutputMessage{Type: "Finger", URI: "ssh://172.20.0.180:22", Finger: []string{"OpenSSH", "SSH"}})
+	if line != "[Finger] ssh://172.20.0.180:22 OpenSSH,SSH" {
+		t.Fatalf("ssh finger = %q", line)
+	}
+	if shouldBufferWEB(OutputMessage{Type: "Finger", URI: "ssh://172.20.0.180:22"}) {
+		t.Fatal("ssh finger must not enter the WEB buffer")
+	}
+	if !shouldBufferWEB(OutputMessage{Type: "Finger", URI: "http://172.20.0.180/users/sign_in"}) {
+		t.Fatal("http finger should still buffer under WEB")
+	}
+	if shouldBufferWEB(OutputMessage{Type: "Web", URI: "ssh://172.20.0.180:22/"}) {
+		t.Fatal("ssh must not enter the WEB buffer")
+	}
+}
+
+func TestFormatPathAndTopoLines(t *testing.T) {
+	path := formatTextLine(OutputMessage{Type: "Path", IP: "10.0.2.20", IPs: []string{"10.0.0.1", "10.0.2.1", "10.0.2.20"}, AdditionalMsg: "hops=2"})
+	if path != "[Path] 10.0.2.20 hops=2 10.0.0.1 -> 10.0.2.1 -> 10.0.2.20" {
+		t.Fatalf("path = %q", path)
+	}
+	topo := formatTextLine(OutputMessage{Type: "Topo", AdditionalMsg: "10.0.0.1 -> 10.0.2.0/24"})
+	if topo != "[Topo] 10.0.0.1 -> 10.0.2.0/24" {
+		t.Fatalf("topo = %q", topo)
+	}
+}
+
+func TestParseServiceLineRest(t *testing.T) {
+	tag, endpoint := ParseServiceLineRest("[udp] 10.0.0.8:53 dns")
+	if tag != "udp" || endpoint != "10.0.0.8:53" {
+		t.Fatalf("got %q %q", tag, endpoint)
+	}
+	tag, endpoint = ParseServiceLineRest("10.0.0.8:53/udp dns")
+	if tag != "udp" || endpoint != "10.0.0.8:53" {
+		t.Fatalf("legacy got %q %q", tag, endpoint)
+	}
+	tag, endpoint = ParseServiceLineRest("[tcp] 10.0.0.8:445")
+	if tag != "tcp" || endpoint != "10.0.0.8:445" {
+		t.Fatalf("tcp got %q %q", tag, endpoint)
+	}
+	tag, endpoint = ParseServiceLineRest("[web] 10.0.0.8:80 http")
+	if tag != "web" || endpoint != "10.0.0.8:80" {
+		t.Fatalf("web got %q %q", tag, endpoint)
+	}
+}
+
+func TestFormatOutputMergesSameOriginRedirectIntoOneWEBBlock(t *testing.T) {
+	resetForTest()
+	t.Cleanup(resetForTest)
+	var out bytes.Buffer
+	writeMu.Lock()
+	stdout = &out
+	OutputType = "text"
+	writeMu.Unlock()
+
+	if err := FormatOutputE(OutputMessage{
+		Type:   "Web",
+		URI:    "http://172.20.0.180:80/",
+		Web:    WebInfo{Status: "302", Size: "99", Redirect: "http://172.20.0.180/users/sign_in"},
+		Finger: []string{"Nginx"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := FormatOutputE(OutputMessage{
+		Type:   "Web",
+		URI:    "http://172.20.0.180/users/sign_in",
+		Web:    WebInfo{Status: "200", Size: "14351", Title: "Sign in · GitLab"},
+		Finger: []string{"GitLab", "Ruby", "Nginx", "RAILS-Framework"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := FlushWEBBlocks(); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.TrimSpace(out.String())
+	want := strings.Join([]string{
+		"[WEB] http://172.20.0.180:80/",
+		"     [Finger] Nginx,GitLab,Ruby,RAILS-Framework",
+		"     [Code] 200",
+		"     [Size] 14351",
+		"     [Redirect] /users/sign_in",
+		"     [Title] Sign in · GitLab",
+	}, "\n")
+	if got != want {
+		t.Fatalf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestCanonicalWEBOriginStripsDefaultPortAndPath(t *testing.T) {
+	if got := canonicalWEBOrigin("http://172.20.0.180:80/users/sign_in"); got != "http://172.20.0.180/" {
+		t.Fatalf("http 80 = %q", got)
+	}
+	if got := canonicalWEBOrigin("https://10.0.0.8:443/"); got != "https://10.0.0.8/" {
+		t.Fatalf("https 443 = %q", got)
+	}
+	if got := canonicalWEBOrigin("http://10.0.0.8:8080/admin"); got != "http://10.0.0.8:8080/" {
+		t.Fatalf("http 8080 = %q", got)
+	}
+}
+
+func TestFormatOutputMergesFingerIntoOneWEBBlock(t *testing.T) {
+	resetForTest()
+	t.Cleanup(resetForTest)
+	var out bytes.Buffer
+	writeMu.Lock()
+	stdout = &out
+	OutputType = "text"
+	writeMu.Unlock()
+
+	if err := FormatOutputE(OutputMessage{
+		Type: "Web",
+		URI:  "http://10.0.0.8",
+		Web:  WebInfo{Status: "200", Size: "12", Title: "Home", Cert: "CN=10.0.0.8"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("web line written before fingerprint: %q", out.String())
+	}
+	if err := FormatOutputE(OutputMessage{
+		Type:   "Finger",
+		URI:    "http://10.0.0.8/",
+		Finger: []string{"nginx"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := FlushWEBBlocks(); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.TrimSpace(out.String())
+	want := strings.Join([]string{
+		"[WEB] http://10.0.0.8",
+		"     [Finger] nginx",
+		"     [Certificates] CN=10.0.0.8",
+		"     [Code] 200",
+		"     [Size] 12",
+		"     [Title] Home",
+	}, "\n")
+	if got != want {
+		t.Fatalf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestRenderWEBBlockIncludesSizeAndRedirect(t *testing.T) {
+	got := Render(OutputMessage{
+		Type: "Web",
+		URI:  "http://10.0.0.8/",
+		Web: WebInfo{
+			Status:   "302",
+			Title:    "Moved",
+			Cert:     "CN=10.0.0.8 issuer=ExampleCA",
+			Size:     "2862",
+			Redirect: "https://10.0.0.8/login",
+		},
+	})
+	want := strings.Join([]string{
+		"[WEB] http://10.0.0.8/",
+		"     [Certificates] CN=10.0.0.8 issuer=ExampleCA",
+		"     [Code] 302",
+		"     [Size] 2862",
+		"     [Redirect] https://10.0.0.8/login",
+		"     [Title] Moved",
+	}, "\n")
+	if got != want {
+		t.Fatalf("web block =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestRenderWEBFingerRepeatsURL(t *testing.T) {
+	got := Render(OutputMessage{
+		Type:   "Finger",
+		URI:    "http://10.0.0.8/",
+		Finger: []string{"nginx", "php"},
+	})
+	want := "[WEB] http://10.0.0.8/\n     [Finger] nginx,php"
+	if got != want {
+		t.Fatalf("finger block = %q", got)
+	}
+}
+
+func TestRenderHTTPPortUsesWebTag(t *testing.T) {
+	got := Render(OutputMessage{Type: "PortScan", IP: "10.0.0.8", Port: "80", Protocol: "http", Transport: "tcp"})
+	want := "[Port] [web] 10.0.0.8:80 http"
+	if got != want {
+		t.Fatalf("unexpected render output: got %q want %q", got, want)
+	}
+	got = Render(OutputMessage{Type: "PortScan", IP: "10.0.0.8", Port: "443", Protocol: "https", Transport: "tcp"})
+	want = "[Port] [web] 10.0.0.8:443 https"
+	if got != want {
+		t.Fatalf("unexpected https render: got %q want %q", got, want)
+	}
+}
+
+func TestRenderUDPPort(t *testing.T) {
+	got := Render(OutputMessage{
+		Type:      "PortScan",
+		IP:        "10.0.0.8",
+		Port:      "53",
+		Transport: "udp",
+	})
+	want := "[Port] [udp] 10.0.0.8:53"
+	if got != want {
+		t.Fatalf("unexpected render output: got %q want %q", got, want)
+	}
+}
+
+func TestRenderUDPProtocol(t *testing.T) {
+	got := Render(OutputMessage{
+		Type:      "Nmap",
+		IP:        "10.0.0.8",
+		Port:      "53",
+		Protocol:  "dns",
+		Transport: "udp",
+	})
+	want := "[Port] [udp] 10.0.0.8:53 dns"
 	if got != want {
 		t.Fatalf("unexpected render output: got %q want %q", got, want)
 	}

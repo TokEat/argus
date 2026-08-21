@@ -110,14 +110,14 @@ func (c *CLI) colorizeLabel(event *LogEvent) {
 	case levels.LevelSilent:
 		return
 	case levels.LevelInfo, levels.LevelVerbose:
-		event.Metadata["label"] = c.aurora.Blue(label).String()
+		event.Metadata["label"] = c.aurora.BrightBlue(label).Bold().String()
 	case levels.LevelFatal:
-		event.Metadata["label"] = c.aurora.Bold(aurora.Red(label)).String()
+		event.Metadata["label"] = c.aurora.Bold(aurora.BrightRed(label)).String()
 	case levels.LevelError:
-		event.Metadata["label"] = c.aurora.Red(label).String()
+		event.Metadata["label"] = c.aurora.BrightRed(label).Bold().String()
 	case levels.LevelDebug:
-		event.Metadata["label"] = c.aurora.Magenta(label).String()
+		event.Metadata["label"] = c.aurora.Magenta(label).Bold().String()
 	case levels.LevelWarning:
-		event.Metadata["label"] = c.aurora.Yellow(label).String()
+		event.Metadata["label"] = c.aurora.BrightYellow(label).Bold().String()
 	}
 }

@@ -208,10 +208,7 @@ func runNucleiPhase(ctx *ScanContext, cfg *Config, resultMap map[string][]string
 	}
 	var nucleiResults []nucleiOutput.ResultEvent
 	TargetAndPocsName, count := mapper.GetPocs(resultMap, currentPipelineWorkflowDB(ctx), cfg.DisableGeneralPoc, cfg.WAFSkipOnManyFingerprints)
-	gologger.Info().Msgf("[Pipeline] Nuclei 映射结果: targets=%d pocs=%d template_path=%s", len(TargetAndPocsName), count, cfg.NucleiTemplate)
-	for target, pocs := range TargetAndPocsName {
-		gologger.Info().Msgf("[Pipeline]   %s → %v", target, pocs)
-	}
+	logNucleiPocMap(cfg, TargetAndPocsName, count)
 	if count > 0 {
 		emitPhase(ctx, PhaseNuclei, "start", fmt.Sprintf("%d pocs", count))
 		addResult, collector := buildNucleiResultHandler(ctx, enableLocalReports)
@@ -268,6 +265,16 @@ func runPocSearch(ctx *ScanContext, cfg *Config, aliveURLs []string, enableLocal
 		converted[i] = gopocs.NucleiResult{TemplateID: r.TemplateID, Matched: r.Matched, URL: r.URL}
 	}
 	return converted, nil
+}
+
+func logNucleiPocMap(cfg *Config, targetAndPocs map[string][]string, count int) {
+	if cfg == nil || !cfg.ShowPocMap {
+		return
+	}
+	gologger.Info().Msgf("[Pipeline] Nuclei 映射结果: targets=%d pocs=%d template_path=%s", len(targetAndPocs), count, cfg.NucleiTemplate)
+	for target, pocs := range targetAndPocs {
+		gologger.Info().Msgf("[Pipeline]   %s → %v", target, pocs)
+	}
 }
 
 func embedPocs(ep embed.FS) embed.FS { return ep }

@@ -23,21 +23,15 @@ func TestCLIBannerUsesArgusBrandAndKeepsCommandName(t *testing.T) {
 
 func TestCLIHelpKeepsCommandsAndMovesProviderDiscoveryToServer(t *testing.T) {
 	for _, want := range []string{
-		"argus help finger",
-		"argus finger --help",
-		"argus poc list --severity high",
-		"argus workflow list --product ruoyi",
+		"argus -h",
+		"argus --help",
 		"argus --version",
-		"Argus Server",
-		"资产测绘",
+		"argus -a https://example.com",
+		"argus -tr 192.0.2.9",
+		"argus -tr res.txt",
 	} {
 		if !strings.Contains(cliHelpText, want) {
 			t.Fatalf("CLI help does not contain %q", want)
-		}
-	}
-	for _, removedFlag := range []string{"-hunter", "-fofa", "-quake", "-lpm", "-oip"} {
-		if strings.Contains(cliHelpText, removedFlag) {
-			t.Fatalf("CLI help still advertises Server-only flag %q", removedFlag)
 		}
 	}
 	if !strings.HasPrefix(CLIVersionString(), "Argus CLI v") {

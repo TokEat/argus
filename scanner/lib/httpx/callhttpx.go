@@ -93,7 +93,7 @@ func (s *ProbeSession) CallHTTPxFollowHostRedirects(urls []string, callBack func
 }
 
 func (s *ProbeSession) callHTTPx(urls []string, callBack func(resp runner.Result), proxy string, threads int, followHostRedirects bool) {
-	gologger.Info().Msg("获取Web响应中")
+	gologger.AuditTimeLogger("获取Web响应中")
 
 	timeout := int(s.timeout / time.Second)
 	if timeout <= 0 {
@@ -114,7 +114,7 @@ func (s *ProbeSession) callHTTPx(urls []string, callBack func(resp runner.Result
 		if len(nextUrls) == 0 {
 			break
 		}
-		gologger.Info().Msgf("[HTTPProbe] pass=%d targets=%d threads=%d timeout=%ds", times+1, len(nextUrls), threads, timeout)
+		gologger.AuditTimeLogger("[HTTPProbe] pass=%d targets=%d threads=%d timeout=%ds", times+1, len(nextUrls), threads, timeout)
 		maxRedirects := 3
 		if followHostRedirects {
 			maxRedirects = 8
@@ -146,7 +146,7 @@ func (s *ProbeSession) callHTTPx(urls []string, callBack func(resp runner.Result
 			gologger.Error().Msgf("params error: %v", err)
 		}
 
-		gologger.Info().Msgf("[HTTPProbe] 创建httpx runner...")
+		gologger.AuditTimeLogger("[HTTPProbe] 创建httpx runner")
 		httpxRunner, err := newProbeRunner(&options)
 		if err != nil {
 			gologger.Error().Msgf("[HTTPProbe] runner.New 失败: %v", err)
@@ -161,14 +161,14 @@ func (s *ProbeSession) callHTTPx(urls []string, callBack func(resp runner.Result
 			break
 		}
 		options.InputTargetHost = nextUrls
-		gologger.Info().Msgf("[HTTPProbe] runner创建耗时: %v", time.Since(t0))
+		gologger.AuditTimeLogger("[HTTPProbe] runner创建耗时: %v", time.Since(t0))
 		httpxRunner.CallBack = s.wrapCallback(callBack)
 
-		gologger.Info().Msgf("[HTTPProbe] 开始RunEnumeration...")
+		gologger.AuditTimeLogger("[HTTPProbe] 开始RunEnumeration")
 		// Request cancellation is supplied through TargetContext. Run synchronously
 		// so Runner resources are not closed concurrently with callbacks.
 		httpxRunner.RunEnumeration()
-		gologger.Info().Msgf("[HTTPProbe] RunEnumeration完成, 耗时: %v", time.Since(t0))
+		gologger.AuditTimeLogger("[HTTPProbe] RunEnumeration完成, 耗时: %v", time.Since(t0))
 		httpxRunner.Close()
 		nextUrls = s.registerNextCheckTargets(httpxRunner.NextCheckTargets)
 		times += 1

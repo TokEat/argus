@@ -42,17 +42,17 @@ func TestGetPocsUsesExplicitStateAndDedupesYamlNames(t *testing.T) {
 
 func TestGetPocsSkipsGeneralPocsWhenDisabled(t *testing.T) {
 	resultMap := map[string][]string{
-		"tcp://127.0.0.1:6379": {"Redis"},
+		"http://example.com": {"Apache"},
 	}
 
 	workFlowDB := map[string]structs.WorkFlowEntity{
-		"Redis": {
+		"Apache": {
 			RootType: true,
-			PocsName: []string{"redis-login"},
+			PocsName: []string{"apache-detect"},
 		},
-		"General-Poc-TCP": {
+		"General-Poc-HTTP": {
 			RootType: true,
-			PocsName: []string{"generic-tcp"},
+			PocsName: []string{"generic-http"},
 		},
 	}
 
@@ -62,10 +62,47 @@ func TestGetPocsSkipsGeneralPocsWhenDisabled(t *testing.T) {
 	}
 
 	expect := map[string][]string{
-		"tcp://127.0.0.1:6379": {"redis-login.yaml"},
+		"http://example.com": {"apache-detect.yaml"},
 	}
 	if !reflect.DeepEqual(got, expect) {
 		t.Fatalf("unexpected mapping:\nwant=%#v\ngot=%#v", expect, got)
+	}
+}
+
+func TestGetPocsAppliesRootTypeToNonHTTPTargets(t *testing.T) {
+	resultMap := map[string][]string{
+		"ssh://172.20.0.180:22":   {"OpenSSH", "SSH"},
+		"ssh://172.20.0.180:2222": {"NonRoot"},
+		"tcp://127.0.0.1:6379":    {"Redis"},
+		"https://172.20.0.180/":   {"GitLab"},
+	}
+	workFlowDB := map[string]structs.WorkFlowEntity{
+		"OpenSSH": {RootType: true, PocsName: []string{"CVE-2001-1473"}},
+		"SSH":     {RootType: true, PocsName: []string{"CVE-2021-44228"}},
+		"Redis":   {RootType: true, PocsName: []string{"redis-login"}},
+		"GitLab":  {RootType: true, PocsName: []string{"gitlab-detect"}},
+		"NonRoot": {RootType: false, PocsName: []string{"non-root-tcp"}},
+	}
+
+	got, count := GetPocs(resultMap, workFlowDB, false, false)
+	if count != 4 {
+		t.Fatalf("count = %d, want 4 (ssh root x2 + redis root + gitlab root) map=%#v", count, got)
+	}
+	ssh := got["ssh://172.20.0.180:22"]
+	if len(ssh) != 2 || ssh[0] != "CVE-2001-1473.yaml" || ssh[1] != "CVE-2021-44228.yaml" {
+		t.Fatalf("ssh root pocs = %q, want CVE-2001-1473 + CVE-2021-44228", ssh)
+	}
+	if _, ok := got["ssh://172.20.0.180:2222"]; ok {
+		t.Fatalf("non-root non-HTTP target must be skipped: %#v", got)
+	}
+	if redis := got["tcp://127.0.0.1:6379"]; len(redis) != 1 || redis[0] != "redis-login.yaml" {
+		t.Fatalf("tcp root pocs = %q, want redis-login", redis)
+	}
+	expect := map[string][]string{
+		"https://172.20.0.180": {"gitlab-detect.yaml"},
+	}
+	if !reflect.DeepEqual(got["https://172.20.0.180"], expect["https://172.20.0.180"]) {
+		t.Fatalf("http root mapping:\nwant=%#v\ngot=%#v", expect, got)
 	}
 }
 

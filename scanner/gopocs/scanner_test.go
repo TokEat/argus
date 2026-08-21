@@ -29,7 +29,7 @@ func TestBuildScanPlanSkipsWebServices(t *testing.T) {
 		"127.0.0.1:80":   "http",
 		"127.0.0.1:443":  "https",
 		"127.0.0.1:3306": "mysql",
-	}, "", "", func(structs.GoPocsResultType) {})
+	}, DispatchCreds{}, func(structs.GoPocsResultType) {})
 
 	if len(plan) != 1 {
 		t.Fatalf("expected only mysql scan task, got %+v", plan)
@@ -41,28 +41,17 @@ func TestBuildScanPlanSkipsWebServices(t *testing.T) {
 
 func TestBuildScanPlanNewProtocolTasksAreRegistered(t *testing.T) {
 	plan := buildScanPlan(map[string]string{
-		"127.0.0.1:102":   "s7comm",
 		"127.0.0.1:389":   "ldap",
 		"127.0.0.1:1099":  "rmi",
-		"127.0.0.1:1801":  "unknown",
 		"127.0.0.1:1883":  "mqtt",
 		"127.0.0.1:2181":  "zookeeper",
-		"127.0.0.1:2404":  "iec104",
-		"127.0.0.1:3690":  "svn",
-		"127.0.0.1:4000":  "mysql",
-		"127.0.0.1:44818": "enip",
-		"127.0.0.1:50000": "unknown",
-		"127.0.0.1:5006":  "melsec",
-		"127.0.0.1:61616": "activemq",
-		"127.0.0.1:7848":  "unknown",
-		"127.0.0.1:789":   "crimson",
+		"127.0.0.1:4369":  "unknown",
+		"127.0.0.1:5672":  "amqp",
 		"127.0.0.1:9000":  "clickhouse",
-		"127.0.0.1:9001":  "hsqldb",
-		"127.0.0.1:9042":  "cassandra",
-		"127.0.0.1:9600":  "fins",
-		"127.0.0.1:10001": "atg",
-		"127.0.0.1:20000": "dnp3",
-	}, "", "", func(structs.GoPocsResultType) {})
+		"127.0.0.1:9042":  "unknown",
+		"127.0.0.1:9876":  "unknown",
+		"127.0.0.1:10911": "unknown",
+	}, DispatchCreds{}, func(structs.GoPocsResultType) {})
 
 	if len(plan) == 0 {
 		t.Fatal("expected new protocol scan tasks")
@@ -71,6 +60,100 @@ func TestBuildScanPlanNewProtocolTasksAreRegistered(t *testing.T) {
 		if PluginList[task.Name] == nil {
 			t.Fatalf("scan task %q is not registered in PluginList", task.Name)
 		}
+	}
+}
+
+func TestBuildScanPlanKeepsDefaultPortFingerprintsOutOfGoPoc(t *testing.T) {
+	plan := buildScanPlan(map[string]string{
+		"127.0.0.1:502":   "modbus",
+		"127.0.0.1:1962":  "pcworx",
+		"127.0.0.1:4447":  "jboss-remoting",
+		"127.0.0.1:7001":  "weblogic-t3",
+		"127.0.0.1:7002":  "iiop",
+		"127.0.0.1:11740": "codesys",
+		"127.0.0.1:20547": "proconos",
+		"127.0.0.1:20880": "dubbo",
+		"127.0.0.1:20000": "dnp3",
+		"127.0.0.1:102":   "s7comm",
+		"127.0.0.1:44818": "enip",
+		"127.0.0.1:10001": "atg",
+		"127.0.0.1:5006":  "melsec",
+		"127.0.0.1:9600":  "fins",
+		"127.0.0.1:789":   "crimson",
+		"127.0.0.1:2404":  "iec104",
+		"127.0.0.1:61616": "activemq",
+		"127.0.0.1:3690":  "svn",
+		"127.0.0.1:9001":  "hsqldb",
+		"127.0.0.1:1801":  "msmq",
+		"127.0.0.1:50000": "sap-p4",
+		"127.0.0.1:4000":  "tidb",
+		"127.0.0.1:7848":  "nacos",
+	}, DispatchCreds{}, func(structs.GoPocsResultType) {})
+
+	if len(plan) != 0 {
+		t.Fatalf("default-port fingerprints must stay in protocol identification, got GoPoc tasks: %+v", plan)
+	}
+}
+
+func TestBuildScanPlanRocketMQRoleBoundaries(t *testing.T) {
+	plan := buildScanPlan(map[string]string{
+		"127.0.0.1:10911": "smtp",
+		"127.0.0.1:12345": "rocketmq-broker",
+		"127.0.0.1:12346": "rocketmq-namesrv",
+	}, DispatchCreds{}, func(structs.GoPocsResultType) {})
+
+	names := map[string]bool{}
+	for _, task := range plan {
+		names[task.Name+":"+task.Info.Ports] = true
+	}
+	if names["RocketMQ-Broker-Scan:10911"] {
+		t.Fatalf("RocketMQ broker port fallback ran for identified SMTP: %+v", plan)
+	}
+	if !names["RocketMQ-Broker-Scan:12345"] {
+		t.Fatalf("RocketMQ broker non-standard protocol trigger missing: %+v", plan)
+	}
+	if !names["RocketMQ-NameServer-Scan:12346"] {
+		t.Fatalf("RocketMQ namesrv non-standard protocol trigger missing: %+v", plan)
+	}
+}
+
+func TestBuildScanPlanUsesCanonicalProtocolOnNonStandardPort(t *testing.T) {
+	plan := buildScanPlan(map[string]string{
+		"127.0.0.1:2222": "ms-wbt-server",
+		"127.0.0.1:5555": "java-rmi",
+	}, DispatchCreds{}, func(structs.GoPocsResultType) {})
+
+	names := map[string]string{}
+	for _, task := range plan {
+		names[task.Name] = task.Info.ObservedService
+	}
+	if names["RDP-Crack"] != "rdp" {
+		t.Fatalf("RDP on 2222 missing or not canonical: %+v", plan)
+	}
+	if names["RMI-Scan"] != "rmi" {
+		t.Fatalf("RMI on 5555 missing or not canonical: %+v", plan)
+	}
+	if _, ok := names["ADB-Scan"]; ok {
+		t.Fatalf("ADB must not run on identified RMI at 5555: %+v", plan)
+	}
+}
+
+func TestBuildScanPlanDoesNotUsePortFallbackWhenProtocolKnown(t *testing.T) {
+	plan := buildScanPlan(map[string]string{
+		"127.0.0.1:3306": "ssh",
+		"127.0.0.1:445":  "http",
+		"127.0.0.1:9000": "http",
+		"127.0.0.1:9042": "smtp",
+	}, DispatchCreds{}, func(structs.GoPocsResultType) {})
+
+	for _, task := range plan {
+		switch task.Name {
+		case "Mysql-Crack", "SMB-Crack", "SMB-MS17-010", "NetBios-GetHostInfo", "ClickHouse-Scan", "Cassandra-Scan":
+			t.Fatalf("port fallback dispatched %s for identified %s: %+v", task.Name, task.Info.ObservedService, plan)
+		}
+	}
+	if len(plan) != 1 || plan[0].Name != "SSH-Crack" {
+		t.Fatalf("expected only SSH-Crack, got %+v", plan)
 	}
 }
 
@@ -158,12 +241,30 @@ func TestBuildDispatchPlanUsesTaskLocalFingerprintsAndDeduplicatesViewState(t *t
 		nil,
 		map[string][]string{"https://CURRENT.example.test": {"ViewState"}},
 		[]NucleiResult{{TemplateID: "yongyou_u9_viewstate", Matched: "https://current.example.test/"}},
-		"", "", func(structs.GoPocsResultType) {},
+		DispatchCreds{}, func(structs.GoPocsResultType) {},
 	)
 	if len(plan) != 1 {
 		t.Fatalf("dispatch plan = %#v, want one de-duplicated task-local trigger", plan)
 	}
 	if plan[0].Name != "ViewState-Key-Crack" || !strings.EqualFold(plan[0].Info.Url, "https://current.example.test/") {
 		t.Fatalf("unexpected task-local trigger: %#v", plan[0])
+	}
+}
+
+func TestBuildDispatchPlanNoBruteSkipsServiceCracks(t *testing.T) {
+	plan := buildDispatchPlan(map[string]string{"127.0.0.1:22": "ssh", "127.0.0.1:445": "smb"}, nil, nil, DispatchCreds{NoBrute: true}, func(structs.GoPocsResultType) {})
+	for _, task := range plan {
+		if isServiceBruteTask(task.Name) {
+			t.Fatalf("brute task leaked under -nobr: %#v", task)
+		}
+	}
+	foundMS17 := false
+	for _, task := range plan {
+		if task.Name == "SMB-MS17-010" {
+			foundMS17 = true
+		}
+	}
+	if !foundMS17 {
+		t.Fatal("expected SMB-MS17-010 to remain when only brute is disabled")
 	}
 }

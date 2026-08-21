@@ -120,7 +120,7 @@ describe('TaskManagement', () => {
             return ({
             policy: request.policy,
             policy_hash: 'policy-hash', plan_hash: 'plan-hash', rule_version: 'rules-v1',
-            port_count: request.policy.port_profile === 'common-100' ? 100 : request.policy.port_profile === 'all' ? 65535 : 1000,
+            port_count: request.policy.port_profile === 'common-100' ? 134 : request.policy.port_profile === 'all' ? 65535 : 1000,
             target_summary: { total: 1 }, stages: [
                 { id: 'host_discovery', enabled: true }, { id: 'port_scan', enabled: true },
                 { id: 'protocol_identification', enabled: true }, { id: 'fingerprint', enabled: true },

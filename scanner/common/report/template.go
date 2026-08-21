@@ -40,7 +40,7 @@ func sectionFor(category string, counts Counts) sectionView {
 	case categoryServices:
 		return sectionView{ID: category, Title: "服务与协议", Description: "开放端口及协议识别结果。", Empty: "未记录开放端口或协议。", Count: counts.Services}
 	case categoryWeb:
-		return sectionView{ID: category, Title: "Web 服务", Description: "HTTP 状态、页面标题与随 Web 探测返回的技术特征。", Empty: "未记录 Web 服务。", Count: counts.Web}
+		return sectionView{ID: category, Title: "Web 服务", Description: "HTTP 状态、页面标题、TLS 证书与随 Web 探测返回的技术特征。", Empty: "未记录 Web 服务。", Count: counts.Web}
 	case categoryFingerprints:
 		return sectionView{ID: category, Title: "指纹", Description: "同一服务与产品已归并；展开可查看被动命中、主动确认和路径推断证据。", Empty: "未记录指纹产品。", Count: counts.Fingerprints}
 	case categoryVulnerabilities:
@@ -179,8 +179,8 @@ var itemHTMLTemplate = template.Must(template.New("item").Parse(`{{if .Vulnerabi
 <article class="report-item record" data-category="{{.Category}}" data-severity="">
   <div><span class="record-type">{{.TypeLabel}}</span><div class="record-meta">{{.Type}}</div></div>
   <div class="record-main">{{if .Link}}<strong><a href="{{.Link}}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">{{.Endpoint}}</a></strong>{{else}}<strong>{{.Endpoint}}</strong>{{end}}{{if .IP}}<span class="record-meta">IP {{.IP}}</span>{{end}}</div>
-  <div><strong>{{.Status}}</strong>{{if .Port}}<div class="record-meta">端口 {{.Port}}</div>{{end}}{{if .Protocol}}<div class="record-meta">{{.Protocol}}</div>{{end}}</div>
-  <div><strong>{{.Title}}</strong>{{if .Location}}<div class="record-meta">{{.Location}}</div>{{end}}{{if .Fingerprints}}<div class="tag-list">{{range .Fingerprints}}<span class="tag">{{.}}</span>{{end}}</div>{{end}}</div>
+  <div><strong>{{.Status}}</strong>{{if .Port}}<div class="record-meta">{{if .Transport}}[{{.Transport}}] {{end}}端口 {{.Port}}</div>{{end}}{{if .Protocol}}<div class="record-meta">{{.Protocol}}</div>{{end}}</div>
+  <div><strong>{{.Title}}</strong>{{if .Certificate}}<div class="record-meta">{{.Certificate}}</div>{{end}}{{if .Location}}<div class="record-meta">{{.Location}}</div>{{end}}{{if .Fingerprints}}<div class="tag-list">{{range .Fingerprints}}<span class="tag">{{.}}</span>{{end}}</div>{{end}}</div>
   {{if .Details}}<pre class="record-detail">{{.Details}}</pre>{{end}}
 </article>
 {{end}}`))

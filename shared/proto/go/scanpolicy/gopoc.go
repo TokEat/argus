@@ -80,19 +80,6 @@ var goPocCatalog = []GoPocDescriptor{
 
 	gopoc("NetBios-GetHostInfo", GoPocProtocolCheck, []string{"netbios", "smb"}, []int{445}),
 	gopoc("RPC-GetHostInfo", GoPocProtocolCheck, []string{"rpc"}, nil),
-	gopoc("DNP3-Scan", GoPocProtocolCheck, []string{"dnp3"}, []int{20000}),
-	gopoc("S7-Scan", GoPocProtocolCheck, []string{"s7comm"}, []int{102}),
-	gopoc("EtherNetIP-Scan", GoPocProtocolCheck, []string{"enip"}, []int{44818}),
-	gopoc("ATG-Scan", GoPocProtocolCheck, []string{"atg"}, []int{10001}),
-	gopoc("MELSEC-Scan", GoPocProtocolCheck, []string{"melsec"}, []int{5006, 5007}),
-	gopoc("FINS-Scan", GoPocProtocolCheck, []string{"fins"}, []int{9600}),
-	gopoc("Crimson-Scan", GoPocProtocolCheck, []string{"crimson"}, []int{789}),
-	gopoc("IEC104-Scan", GoPocProtocolCheck, []string{"iec104"}, []int{2404}),
-	gopoc("ActiveMQ-Scan", GoPocProtocolCheck, []string{"activemq"}, []int{61616}),
-	gopoc("SVN-Scan", GoPocProtocolCheck, []string{"svn"}, []int{3690}),
-	gopoc("HsqlDb-Scan", GoPocProtocolCheck, []string{"hsqldb"}, []int{9001}),
-	gopoc("MSMQ-Scan", GoPocProtocolCheck, nil, []int{1801}),
-	gopoc("SAP-P4-Scan", GoPocProtocolCheck, nil, []int{50000}),
 
 	gopoc("SMB-MS17-010", GoPocVulnerabilityCheck, []string{"smb"}, []int{445}),
 	{Plugin: "Telnet-Bypass", Capability: GoPocVulnerabilityCheck, Services: []string{"telnet"}, Ports: []int{23}, Revision: 1, RequestCost: 1, Reviewed: true, Enabled: false},
@@ -104,11 +91,13 @@ var goPocCatalog = []GoPocDescriptor{
 	gopoc("LDAP-Scan", GoPocVulnerabilityCheck, []string{"ldap"}, []int{389}),
 	gopoc("Zookeeper-Scan", GoPocVulnerabilityCheck, []string{"zookeeper"}, []int{2181}),
 	gopoc("MQTT-Scan", GoPocVulnerabilityCheck, []string{"mqtt"}, []int{1883}),
+	gopoc("RMI-Scan", GoPocVulnerabilityCheck, []string{"rmi"}, []int{1099}),
+	gopoc("RocketMQ-Broker-Scan", GoPocVulnerabilityCheck, []string{"rocketmq-broker"}, []int{10909, 10911}),
+	gopoc("RocketMQ-NameServer-Scan", GoPocVulnerabilityCheck, []string{"rocketmq-namesrv"}, []int{9876}),
+	gopoc("RabbitMQ-AMQP-Scan", GoPocVulnerabilityCheck, []string{"amqp"}, []int{5672, 5671}),
+	gopoc("EPMD-Scan", GoPocVulnerabilityCheck, []string{"epmd"}, []int{4369}),
 	gopoc("Cassandra-Scan", GoPocVulnerabilityCheck, []string{"cassandra"}, []int{9042}),
 	gopoc("ClickHouse-Scan", GoPocVulnerabilityCheck, []string{"clickhouse"}, []int{9000}),
-	gopoc("RMI-Scan", GoPocVulnerabilityCheck, []string{"rmi"}, []int{1099}),
-	{Plugin: "TiDB-Scan", Capability: GoPocVulnerabilityCheck, Services: []string{"mysql"}, Ports: []int{4000}, RequireServiceAndPort: true, Revision: 1, RequestCost: 1, Reviewed: true, Enabled: true},
-	gopoc("Nacos-Raft-Scan", GoPocVulnerabilityCheck, nil, []int{7848}),
 	{Plugin: "Shiro-Key-Crack", Capability: GoPocVulnerabilityCheck, NucleiTemplates: []string{"shiro-detect"}, Revision: 1, RequestCost: 128, Reviewed: true, Enabled: true},
 	{Plugin: "ViewState-Key-Crack", Capability: GoPocVulnerabilityCheck, NucleiTemplates: []string{"yongyou_u9_viewstate"}, Fingerprints: []string{"viewstate"}, Revision: 1, RequestCost: 128, Reviewed: true, Enabled: true},
 }
@@ -193,6 +182,48 @@ func GoPocTargetsForEndpoint(target, service string, port int, observationSHA256
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Plugin < result[j].Plugin })
 	return result
+}
+
+// GoPocTargetLimitForPorts returns the sealed upper bound for protocol or
+// validation targets produced from a port set. Each scanned port reserves at
+// least one target slot for non-standard ports that may be identified only
+// after protocol probing; standard-port fan-out reserves one slot per matching
+// reviewed descriptor.
+func GoPocTargetLimitForPorts(rawPorts string, endpointCount int, capability GoPocCapability) (int, error) {
+	if endpointCount <= 0 {
+		return 0, nil
+	}
+	normalized, err := NormalizePorts(rawPorts)
+	if err != nil {
+		return 0, err
+	}
+	limit := 0
+	for _, part := range strings.Split(normalized, ",") {
+		port, err := strconv.Atoi(part)
+		if err != nil {
+			return 0, fmt.Errorf("invalid normalized port %q", part)
+		}
+		matches := 0
+		for _, descriptor := range goPocCatalog {
+			if descriptor.Capability != capability {
+				continue
+			}
+			if _, ok := GoPocMatchesEndpoint(descriptor, "unknown", port); ok {
+				matches++
+			}
+		}
+		if matches == 0 {
+			matches = 1
+		}
+		limit += matches * endpointCount
+		if limit > MaximumGoPocTargets {
+			return MaximumGoPocTargets, nil
+		}
+	}
+	if limit < 1 {
+		return 1, nil
+	}
+	return limit, nil
 }
 
 func GoPocTargetForSignal(target, plugin, signalKind, signal, observationSHA256 string) (GoPocTarget, error) {

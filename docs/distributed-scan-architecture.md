@@ -387,6 +387,6 @@ graph TD
 - 模板按 URL 层级和文件名去重后交给 Nuclei 执行。
 - Nuclei 结果会通过 `nucleiResultCollector` 传给 GoPoc 调度器，实现如 Shiro 检测命中后触发 Key 爆破的联动。
 
-以上图示描述离线 CLI 的兼容流水线。Server 不调用广泛 `-gp` 派发，而是使用共享目录和精确目标契约；GoPoc 在产品层只作为 Nuclei、协议识别和弱口令阶段的内部执行来源展示。
+以上图示描述离线 CLI 流水线。Server 使用共享目录和精确目标契约；GoPoc 在产品层只作为 Nuclei、协议识别和弱口令阶段的内部执行来源展示。
 
 `General-Poc-*` 的设计价值是“反向指纹识别”：用主动 Probe 判定技术栈，补齐被动/目录指纹未识别的场景。以 Shiro 为例，通用模板对 HTTP 目标发送 `rememberMe` 探测请求，命中后可继续触发 GoPoc 的 Shiro Key 爆破链路。

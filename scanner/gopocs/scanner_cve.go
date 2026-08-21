@@ -36,7 +36,7 @@ func TelnetBypassDispatchScoped(ipPortMap map[string]string, goPocThreads int, p
 		host := t[0]
 		port := t[1]
 
-		if protocol == "telnet" || port == "23" {
+		if matchObservedOrPort(protocol, port, "telnet", "23") {
 			tasks = append(tasks, scanTask{
 				Name: "Telnet-Bypass",
 				Info: structs.HostInfo{

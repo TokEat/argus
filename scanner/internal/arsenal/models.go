@@ -1,6 +1,6 @@
 // Package arsenal 弹药库管理模块。
 // 提供指纹、POC、Workflow、主动探测路径的 CRUD 和导入导出能力。
-// CLI 子命令和 Server REST API 共用此包的数据模型与业务逻辑。
+// Server REST API 与扫描运行时共用此包的数据模型与业务逻辑。
 package arsenal
 
 import "time"

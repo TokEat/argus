@@ -57,6 +57,11 @@ func (n *Nmap) ScanTimeout(ip string, port int, timeout time.Duration) (status S
 }
 
 func (n *Nmap) Scan(ip string, port int) (status Status, response *Response) {
+	// Each target must start with a clean used-probe set. Reusing a scanner
+	// across host:port pairs used to skip probes already sent to earlier
+	// targets and silently under-identify later services.
+	n.probeUsed = ProbeList{}
+
 	var probeNames ProbeList
 	if n.bypassAllProbePort.exist(port) == true {
 		probeNames = append(n.portProbeMap[port], n.allProbeMap...)
@@ -188,14 +193,13 @@ func (n *Nmap) getFinger(responseRaw string, tls bool, requestName string) *Fing
 
 	finger := probe.match(data)
 
-	// 沙雕正则匹配adb失败，暴力判断
-	if requestName == "TCP_adbConnect" && finger.Service == "" {
-		if (strings.HasPrefix(responseRaw, "CNXN\x01\x00\x00\x01\x00\x10\x00") || strings.HasPrefix(responseRaw, "AUTH\x01\x00\x00\x01\x00\x10\x00")) &&
-			strings.Contains(responseRaw, "\xbc\xb1\xa7\xb1") {
-			return &FingerPrint{
-				ProbeName: requestName,
-				Service:   "adb",
-			}
+	// ADB banners vary by version; the nmap regex is too strict. Any CNXN/AUTH
+	// frame with the ADB magic is enough to name the protocol.
+	if finger.Service == "" && isADBBanner(responseRaw) {
+		return &FingerPrint{
+			ProbeName: requestName,
+			Service:   "adb",
+			Info:      adbBannerInfo(responseRaw),
 		}
 	}
 	if tls == true {

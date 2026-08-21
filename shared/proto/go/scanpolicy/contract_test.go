@@ -190,8 +190,8 @@ func TestNormalizePortsRejectsInvalidRanges(t *testing.T) {
 	}
 }
 
-func TestNamedPortProfilesHaveExactCardinality(t *testing.T) {
-	if got := PortCount(Common100Ports); got != 100 {
+func TestNamedPortProfilesHaveExpectedCardinality(t *testing.T) {
+	if got := PortCount(Common100Ports); got != 134 {
 		t.Fatalf("common port count = %d", got)
 	}
 	if got := PortCount(Top1000TCPPorts); got != 1000 {
@@ -199,5 +199,14 @@ func TestNamedPortProfilesHaveExactCardinality(t *testing.T) {
 	}
 	if got := PortCount("1-65535"); got != 65535 {
 		t.Fatalf("all port count = %d", got)
+	}
+}
+
+func TestCommonPortsIncludeReviewedProtocolCoverage(t *testing.T) {
+	set := "," + Common100Ports + ","
+	for _, port := range []string{"20880", "22222", "61616", "7848", "1883", "9042", "1801", "5672", "4369", "9876", "10911", "4447", "9999", "502", "1962", "11740", "1217", "20547", "789", "2404", "5006", "5007", "9600", "20000"} {
+		if !strings.Contains(set, ","+port+",") {
+			t.Fatalf("common ports missing reviewed protocol port %s", port)
+		}
 	}
 }

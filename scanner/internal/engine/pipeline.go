@@ -9,9 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/gopocs"
 	"github.com/P0lar1ght/argus/scanner/internal/scanner/cdn"
 	"github.com/P0lar1ght/argus/scanner/internal/scanner/discovery"
 	"github.com/P0lar1ght/argus/scanner/internal/scanner/portscan"
+	"github.com/P0lar1ght/argus/scanner/internal/scanner/protocol"
 	"github.com/P0lar1ght/argus/scanner/internal/scanner/subdomain"
 	"github.com/P0lar1ght/argus/scanner/internal/scanner/web"
 	gopoc "github.com/P0lar1ght/argus/scanner/internal/vuln/gopoc"
@@ -19,6 +21,7 @@ import (
 	"github.com/P0lar1ght/argus/scanner/utils"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 	"github.com/logrusorgru/aurora"
@@ -71,6 +74,10 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 	defer gologger.Info().Msg(aurora.BrightGreen("Done!").String())
 
+	if ctx != nil && ctx.Config.TraceOnly {
+		return runStandaloneTrace(ctx, ctx.Config, emit)
+	}
+
 	// 无锁上下文绑定：仅加载知识库，不写全局变量，不获取互斥锁。
 	cleanup, err := bindAgentContext(ctx)
 	if err != nil {
@@ -83,7 +90,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	// Agent 模式：大网段启用存活预扫描先发现存活主机。
 	// 小网段（<=256 IP）直接端口扫描更高效，也避免无 root 环境 ICMP 慢路径拖累任务。
 	if ctx != nil && ctx.OutputHook != nil {
-		if !cfg.TCPPing && !cfg.SkipHostDiscovery {
+		if !cfg.TCPPing && !cfg.UDPPing && !cfg.SkipHostDiscovery {
 			ipCount := estimateIPCount(cfg.Targets)
 			if ipCount <= 256 {
 				cfg.SkipHostDiscovery = true
@@ -188,42 +195,19 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	urls = utils.RemoveDuplicateElement(urls)
 
 	// 端口扫描
+	var confirmedAlive []string
+	var udpRecords []structs.ServiceRecord
+	udpProbed := false
 	if len(ips) > 0 {
 		if err := checkPipelineCancelled(ctx); err != nil {
 			return err
 		}
 		if !cfg.SkipHostDiscovery {
-			ICMPAlive := checkpointAliveHosts(ctx, scanplan.StageICMPDiscovery)
-			if !cfg.NoICMPPing && resumeStageEnabled(ctx, scanplan.StageICMPDiscovery) {
-				emitPhase(ctx, PhaseICMP, "start", fmt.Sprintf("%d ips", len(ips)))
-				ICMPAlive = discovery.CheckLive(ips, false, emit)
-				emitPhase(ctx, PhaseICMP, "end", fmt.Sprintf("%d alive", len(ICMPAlive)))
-			}
-
-			TCPAlive := checkpointAliveHosts(ctx, scanplan.StageTCPLiveness)
-			if cfg.TCPPing && resumeStageEnabled(ctx, scanplan.StageTCPLiveness) {
-				var uncheck []string
-				for _, ip := range ips {
-					index := utils.GetItemInArray(ICMPAlive, ip)
-					if index == -1 {
-						uncheck = append(uncheck, ip)
-					}
-				}
-				emitPhase(ctx, PhaseTCPPing, "start", fmt.Sprintf("%d ips", len(uncheck)))
-				gologger.Info().Msg("TCP存活探测")
-				tcpAliveIPPort := portscan.ScanTCP(uncheck, "80,443,3389,445,22",
-					cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, false, emit)
-				for _, tIPPort := range tcpAliveIPPort {
-					t := strings.Split(tIPPort, ":")
-					TCPAlive = append(TCPAlive, t[0])
-				}
-				emitPhase(ctx, PhaseTCPPing, "end", fmt.Sprintf("%d alive", len(TCPAlive)))
-			}
-
+			ICMPAlive, TCPAlive := discoverLiveHosts(ctx, cfg, ips, emit)
 			// 存活探测命中时只扫描存活主机；无命中时保留原始目标继续扫描，避免误空跑。
 			if len(ICMPAlive) > 0 || len(TCPAlive) > 0 {
-				ips = append(ICMPAlive, TCPAlive...)
-				ips = utils.RemoveDuplicateElement(ips)
+				ips = discovery.Union(ICMPAlive, TCPAlive)
+				confirmedAlive = append([]string(nil), ips...)
 			}
 		}
 		if resumeStageEnabled(ctx, scanplan.StagePortScan) {
@@ -239,13 +223,20 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 			emitPhase(ctx, PhasePortScan, "start", fmt.Sprintf("%d ips, type=%s", len(ips), cfg.PortScanType))
 			if cfg.PortScanType == "syn" {
-				tmpIPPort = portscan.ScanSYN(ips, cfg.Ports, cfg.MasscanPath, cfg.SYNPortScanThreads, emit)
+				tmpIPPort = portscan.ScanSYN(ips, cfg.Ports, cfg.MasscanPath, cfg.SYNPortScanThreads, nil)
 			} else {
-				tmpIPPort = portscan.ScanTCP(ips, cfg.Ports, cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, true, emit)
+				tmpIPPort = portscan.ScanTCP(ips, cfg.Ports, cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, true, nil)
 			}
 
 			tmpIPPort = portscan.RemoveFirewall(tmpIPPort, cfg.PortsThreshold)
-			emitPhase(ctx, PhasePortScan, "end", fmt.Sprintf("%d open ports", len(tmpIPPort)))
+			if !cfg.NoUDPIdentify {
+				udpHosts := protocol.UDPIdentifyHosts(confirmedAlive, tmpIPPort)
+				if len(udpHosts) > 0 {
+					udpRecords = portscan.ScanUDP(udpHosts, cfg.GetBannerTimeout, cfg.GetBannerThreads, emit)
+					udpProbed = true
+				}
+			}
+			emitPhase(ctx, PhasePortScan, "end", fmt.Sprintf("%d tcp, %d udp", len(tmpIPPort), len(udpRecords)))
 
 			for _, each := range tmpIPPort {
 				ipPort = append(ipPort, each)
@@ -259,14 +250,34 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		return err
 	}
 
+	if cfg.TraceRoute && !cfg.TraceOnly {
+		traceHosts := discovery.TraceInputHosts(confirmedAlive, ips, ipPort)
+		if len(traceHosts) == 0 {
+			gologger.Info().Msg("内网路径探测：没有探活或开放端口作为输入，已跳过")
+		} else {
+			mapIntranet(traceHosts, emit)
+		}
+	}
+
 	// 协议识别
 	getProtocalInput := ipPort
 	for _, each := range domainPort {
 		getProtocalInput = append(getProtocalInput, each)
 	}
-	if resumeStageEnabled(ctx, scanplan.StageProtocolIdentify) && (len(getProtocalInput) > 0 || ctx.ResumePlan != nil) {
+	udpHosts := []string(nil)
+	if !cfg.NoUDPIdentify && !udpProbed {
+		udpHosts = protocolPhaseUDPHosts(confirmedAlive)
+	}
+	if resumeStageEnabled(ctx, scanplan.StageProtocolIdentify) && (len(getProtocalInput) > 0 || udpProbed || len(udpHosts) > 0 || ctx.ResumePlan != nil) {
 		emitPhase(ctx, PhaseProtocol, "start", fmt.Sprintf("%d targets", len(getProtocalInput)))
-		currentProtocolRuntime(ctx, emit).Identify(getProtocalInput, cfg.GetBannerThreads, cfg.GetBannerTimeout)
+		if len(getProtocalInput) > 0 || ctx.ResumePlan != nil {
+			currentProtocolRuntime(ctx, emit).Identify(getProtocalInput, cfg.GetBannerThreads, cfg.GetBannerTimeout)
+		}
+		if udpProbed {
+			currentProtocolRuntime(ctx, emit).StoreUDP(udpRecords)
+		} else if len(udpHosts) > 0 {
+			currentProtocolRuntime(ctx, emit).IdentifyUDP(udpHosts, cfg.GetBannerThreads, cfg.GetBannerTimeout)
+		}
 		if err := runProtocolCheckPhase(ctx, &cfg, currentPipelineIPPortMap(ctx)); err != nil {
 			emitPhase(ctx, PhaseProtocol, "failed", "scoped GoPoc protocol checks failed")
 			return err
@@ -284,11 +295,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 	// HTTP 探测
 	for hostPort, service := range currentPipelineIPPortMap(ctx) {
-		if service == "http" {
-			urls = append(urls, "http://"+hostPort)
-		} else if service == "https" {
-			urls = append(urls, "https://"+hostPort)
-		}
+		urls = append(urls, web.ProbeURLs(hostPort, service)...)
 	}
 	urls = utils.RemoveDuplicateElement(urls)
 	httpProbeComplete := true
@@ -334,6 +341,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		if err := checkPipelineCancelled(ctx); err != nil {
 			return err
 		}
+		if err := ddout.FlushWEBBlocks(); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -353,7 +363,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	if !cfg.NoDirSearch && resumeStageEnabled(ctx, scanplan.StageDirectoryProbe) {
 		checkURLs := buildDirProbeURLs(aliveURLs, currentPipelineDirDB(ctx))
 		emitPhase(ctx, PhaseDirBrute, "start", fmt.Sprintf("%d urls", len(checkURLs)))
-		gologger.Info().Msg("开始主动指纹探测")
+		gologger.AuditTimeLogger("开始主动指纹探测")
 		httpx.DirBrute(checkURLs,
 			currentWebRuntime(ctx, emit).DirBruteCallback,
 			cfg.HTTPProxy,
@@ -392,6 +402,12 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		}
 	}
 	setPipelineResultMap(ctx, resultMap)
+	for target, fingers := range resultMap {
+		ddout.MergeWEBFingers(target, fingers)
+	}
+	if err := ddout.FlushWEBBlocks(); err != nil {
+		return err
+	}
 
 	// WAF 过滤：Safedog / 安全狗 WAF 标题检测。
 	for _, entity := range currentPipelineURLMap(ctx) {
@@ -408,21 +424,25 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		}
 	}
 
+	var nucleiResults []gopocs.NucleiResult
 	if cfg.NoPoc {
-		gologger.Info().Msg("跳过漏洞探测")
-		return nil
-	}
-	if !httpProbeComplete {
-		gologger.Warning().Msg("HTTP probe incomplete; skipping risk validation stages")
-		return nil
+		gologger.Info().Msg("跳过 Nuclei POC")
+	} else if !httpProbeComplete {
+		gologger.Warning().Msg("HTTP probe incomplete; skipping Nuclei")
+	} else {
+		var err error
+		nucleiResults, err = runNucleiPhase(ctx, &cfg, resultMap, enableLocalReports, emit)
+		if err != nil {
+			return err
+		}
+		if err := checkPipelineCancelled(ctx); err != nil {
+			return err
+		}
 	}
 
-	nucleiResults, err := runNucleiPhase(ctx, &cfg, resultMap, enableLocalReports, emit)
-	if err != nil {
-		return err
-	}
-	if err := checkPipelineCancelled(ctx); err != nil {
-		return err
+	if !cfg.GolangPoc {
+		gologger.Info().Msg("跳过 GoPoc")
+		return nil
 	}
 
 	ipPortMap := currentPipelineIPPortMap(ctx)
@@ -454,26 +474,28 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	}
 	emitPhase(ctx, "gopoc_telnet_cve", "end", fmt.Sprintf("%d results", len(goPocResults)))
 
-	if cfg.GolangPoc {
-		emitPhase(ctx, "gopoc_dispatch", "start", fmt.Sprintf("%d services", len(ipPortMap)))
-		var dispatchResults []structs.GoPocsResultType
-		var dispatchErr error
-		if cfg.MachineOutput {
-			dispatchResults, dispatchErr = gopoc.DispatchMachine(ipPortMap, resultMap, cfg.GoPocThreads, cfg.Password, cfg.PasswordFile, nucleiResults, emit)
-		} else {
-			dispatchResults, dispatchErr = gopoc.Dispatch(ipPortMap, resultMap, cfg.GoPocThreads, cfg.Password, cfg.PasswordFile, nucleiResults, emit)
-		}
-		goPocResults = append(goPocResults, dispatchResults...)
-		if dispatchErr != nil {
-			emitPhase(ctx, "gopoc_dispatch", "failed", "GoPoc execution failed")
-			emitPhase(ctx, PhaseGoPoc, "failed", "GoPoc execution failed")
-			if ctx != nil {
-				ctx.GoPocsResults = toEngineGoPocResults(goPocResults)
-			}
-			return fmt.Errorf("run GoPoc dispatcher: %w", dispatchErr)
-		}
-		emitPhase(ctx, "gopoc_dispatch", "end", fmt.Sprintf("%d results", len(dispatchResults)))
+	emitPhase(ctx, "gopoc_dispatch", "start", fmt.Sprintf("%d services", len(ipPortMap)))
+	creds := gopocs.DispatchCreds{
+		Password: cfg.Password, PasswordFile: cfg.PasswordFile,
+		UserAppend: cfg.UserAppend, PasswordAppend: cfg.PasswordAppend, NoBrute: cfg.NoBrute,
 	}
+	var dispatchResults []structs.GoPocsResultType
+	var dispatchErr error
+	if cfg.MachineOutput {
+		dispatchResults, dispatchErr = gopoc.DispatchMachineWithCreds(ipPortMap, resultMap, cfg.GoPocThreads, creds, nucleiResults, emit)
+	} else {
+		dispatchResults, dispatchErr = gopoc.DispatchWithCreds(ipPortMap, resultMap, cfg.GoPocThreads, creds, nucleiResults, emit)
+	}
+	goPocResults = append(goPocResults, dispatchResults...)
+	if dispatchErr != nil {
+		emitPhase(ctx, "gopoc_dispatch", "failed", "GoPoc execution failed")
+		emitPhase(ctx, PhaseGoPoc, "failed", "GoPoc execution failed")
+		if ctx != nil {
+			ctx.GoPocsResults = toEngineGoPocResults(goPocResults)
+		}
+		return fmt.Errorf("run GoPoc dispatcher: %w", dispatchErr)
+	}
+	emitPhase(ctx, "gopoc_dispatch", "end", fmt.Sprintf("%d results", len(dispatchResults)))
 	emitPhase(ctx, PhaseGoPoc, "end", fmt.Sprintf("%d total results", len(goPocResults)))
 	if err := checkPipelineCancelled(ctx); err != nil {
 		return err
@@ -557,10 +579,110 @@ func (p *Pipeline) probeRedirectLocations(ctx *ScanContext, cfg *Config, webRunt
 			return nil
 		}
 
-		gologger.Info().Msgf("[HTTPProbe] redirect pass=%d targets=%d follow_host_redirects=true", pass+1, len(redirectURLs))
+		gologger.AuditTimeLogger("[HTTPProbe] redirect pass=%d targets=%d follow_host_redirects=true", pass+1, len(redirectURLs))
 		session.CallHTTPxFollowHostRedirects(redirectURLs, webRuntime.URLCallback, cfg.HTTPProxy, cfg.WebThreads)
 	}
 	return nil
+}
+
+var (
+	probeARP  = discovery.ProbeARP
+	probeICMP = discovery.CheckLive
+	probeTCP  = func(ips []string, timeout, threads, threshold int, emit func(ddout.OutputMessage)) []string {
+		return discovery.HostsFromIPPorts(portscan.ScanTCP(ips, discovery.TCPProbePorts, timeout, threads, threshold, false, emit))
+	}
+	probeUDP      = discovery.ProbeUDP
+	localLinkNets = discovery.LocalIPv4Nets
+	mapIntranet   = discovery.MapIntranet
+)
+
+func runStandaloneTrace(ctx *ScanContext, cfg Config, emit func(ddout.OutputMessage)) error {
+	if err := checkPipelineCancelled(ctx); err != nil {
+		return err
+	}
+	hosts := discovery.HostsFromTraceTargets(cfg.Targets)
+	if len(hosts) == 0 {
+		gologger.Info().Msg("内网路径探测：没有可用的 IPv4 目标，已跳过")
+		return nil
+	}
+	mapIntranet(hosts, emit)
+	return checkPipelineCancelled(ctx)
+}
+
+func protocolPhaseUDPHosts(confirmedAlive []string) []string {
+	return protocol.UDPIdentifyHosts(confirmedAlive, nil)
+}
+
+func discoverLiveHosts(ctx *ScanContext, cfg Config, ips []string, emit func(ddout.OutputMessage)) (icmpAlive, extraAlive []string) {
+	icmpAlive = checkpointAliveHosts(ctx, scanplan.StageICMPDiscovery)
+	extraAlive = checkpointAliveHosts(ctx, scanplan.StageTCPLiveness)
+	if len(ips) == 0 {
+		return icmpAlive, extraAlive
+	}
+
+	doICMP := !cfg.NoICMPPing && resumeStageEnabled(ctx, scanplan.StageICMPDiscovery)
+	doTCP := resumeStageEnabled(ctx, scanplan.StageTCPLiveness)
+	onLink, _ := discovery.Partition(ips, localLinkNets())
+	needARP := len(onLink) > 0 && (doICMP || ((cfg.TCPPing || cfg.UDPPing) && doTCP) || cfg.UDPPing)
+
+	if doICMP {
+		emitPhase(ctx, PhaseICMP, "start", fmt.Sprintf("%d ips", len(ips)))
+		var arpAlive []string
+		if needARP {
+			gologger.Info().Msg("ARP存活探测")
+			arpAlive, _ = probeARP(onLink, emit)
+		}
+		icmpTargets := discovery.Difference(ips, arpAlive)
+		var icmpOnly []string
+		if len(icmpTargets) > 0 {
+			icmpOnly = probeICMP(icmpTargets, false, emit)
+		}
+		icmpAlive = discovery.Union(arpAlive, icmpOnly)
+		emitPhase(ctx, PhaseICMP, "end", fmt.Sprintf("%d alive", len(icmpAlive)))
+		if remaining := discovery.Difference(ips, icmpAlive); doTCP && len(remaining) > 0 {
+			extraAlive = runTCPLiveness(ctx, cfg, remaining, extraAlive, emit)
+		}
+	} else if cfg.TCPPing && doTCP {
+		emitPhase(ctx, PhaseTCPPing, "start", fmt.Sprintf("%d ips", len(ips)))
+		if needARP {
+			gologger.Info().Msg("ARP存活探测")
+			arpAlive, _ := probeARP(onLink, emit)
+			icmpAlive = discovery.Union(icmpAlive, arpAlive)
+		}
+		gologger.Info().Msg("TCP存活探测")
+		uncheck := discovery.Difference(ips, icmpAlive)
+		if len(uncheck) > 0 {
+			extraAlive = discovery.Union(extraAlive, probeTCP(uncheck, cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, emit))
+		}
+		emitPhase(ctx, PhaseTCPPing, "end", fmt.Sprintf("%d alive", len(extraAlive)))
+	} else if needARP {
+		gologger.Info().Msg("ARP存活探测")
+		arpAlive, _ := probeARP(onLink, emit)
+		icmpAlive = discovery.Union(icmpAlive, arpAlive)
+	}
+
+	if cfg.UDPPing {
+		remaining := discovery.Difference(ips, discovery.Union(icmpAlive, extraAlive))
+		if len(remaining) > 0 {
+			gologger.Info().Msg("UDP存活探测")
+			wait := time.Duration(cfg.TCPPortScanTimeout) * time.Second
+			if wait <= 0 {
+				wait = time.Second
+			}
+			extraAlive = discovery.Union(extraAlive, probeUDP(remaining, wait, cfg.TCPPortScanThreads, emit))
+		}
+	}
+	return icmpAlive, extraAlive
+}
+
+func runTCPLiveness(ctx *ScanContext, cfg Config, uncheck, tcpAlive []string, emit func(ddout.OutputMessage)) []string {
+	emitPhase(ctx, PhaseTCPPing, "start", fmt.Sprintf("%d ips", len(uncheck)))
+	gologger.Info().Msg("TCP存活探测")
+	if len(uncheck) > 0 {
+		tcpAlive = discovery.Union(tcpAlive, probeTCP(uncheck, cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, emit))
+	}
+	emitPhase(ctx, PhaseTCPPing, "end", fmt.Sprintf("%d alive", len(tcpAlive)))
+	return tcpAlive
 }
 
 func checkPipelineCancelled(ctx *ScanContext) error {

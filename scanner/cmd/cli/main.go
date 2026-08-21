@@ -13,7 +13,6 @@ import (
 	"github.com/P0lar1ght/argus/scanner/common"
 	"github.com/P0lar1ght/argus/scanner/common/report"
 	"github.com/P0lar1ght/argus/scanner/ddout"
-	"github.com/P0lar1ght/argus/scanner/internal/arsenal"
 	"github.com/P0lar1ght/argus/scanner/internal/config"
 	"github.com/P0lar1ght/argus/scanner/internal/localplanner"
 	"github.com/P0lar1ght/argus/scanner/internal/localstate"
@@ -42,9 +41,6 @@ func runCLI() int {
 
 	recorder := timing.NewRecorder(nil)
 	startup, _ := recorder.Begin(scanplan.TimingProcessStartup, "")
-	if handled, exitCode := dispatchArsenalCommand(os.Args[1:]); handled {
-		return exitCode
-	}
 
 	ctx, err := config.InitCLIWithTiming(recorder)
 	if err != nil {
@@ -155,45 +151,6 @@ func runCLI() int {
 	return exitCode
 }
 
-func dispatchArsenalCommand(args []string) (bool, int) {
-	if len(args) == 0 {
-		return false, exitSuccess
-	}
-	switch args[0] {
-	case "help":
-		if len(args) > 1 {
-			switch args[1] {
-			case "finger":
-				arsenal.HandleFingerCommand([]string{"--help"})
-				return true, exitSuccess
-			case "poc":
-				arsenal.HandlePocCommand([]string{"--help"})
-				return true, exitSuccess
-			case "workflow":
-				arsenal.HandleWorkflowCommand([]string{"--help"})
-				return true, exitSuccess
-			}
-		}
-		os.Args = []string{os.Args[0], "--help"}
-		return false, exitSuccess
-	case "finger", "poc", "workflow":
-		if err := prepareArsenalCommand(args[1:]); err != nil {
-			writeCLIError("offline arsenal init failed", err)
-			return true, exitFailure
-		}
-		switch args[0] {
-		case "finger":
-			arsenal.HandleFingerCommand(args[1:])
-		case "poc":
-			arsenal.HandlePocCommand(args[1:])
-		case "workflow":
-			arsenal.HandleWorkflowCommand(args[1:])
-		}
-		return true, exitSuccess
-	}
-	return false, exitSuccess
-}
-
 func watchInterrupt(cancel context.CancelFunc) func() {
 	interrupts := make(chan os.Signal, 1)
 	done := make(chan struct{})
@@ -291,18 +248,4 @@ func formatRunDifferenceSummary(outputType, runID string, summary localstate.Dif
 		runID, summary.StageExecuted, plan.InputsFull, plan.InputsPartial, plan.InputsSkipped,
 		plan.AssetsPlanned, plan.AssetsSkipped,
 	), true
-}
-
-func prepareArsenalCommand(args []string) error {
-	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
-		return nil
-	}
-	home, err := localstate.Ensure()
-	if err != nil {
-		return fmt.Errorf("cli data init: %w", err)
-	}
-	if _, err := config.PrepareCLIArsenal(home); err != nil {
-		return err
-	}
-	return nil
 }

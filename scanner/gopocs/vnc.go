@@ -76,6 +76,7 @@ func vncScanWithConnector(info *structs.HostInfo, connect vncConnector) (tmperr 
 			passwdList = append(passwdList, pair.Password)
 		}
 	}
+	passwdList = mergePasswordAppend(passwdList, info)
 
 	passwdList = utils.RemoveDuplicateElement(passwdList)
 

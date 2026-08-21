@@ -1,6 +1,7 @@
 package common
 
 import (
+	"bytes"
 	"embed"
 	"fmt"
 	"github.com/P0lar1ght/argus/scanner/ddout"
@@ -47,6 +48,8 @@ var CLIForceFullScan bool
 var disableWAFBypassHeaders bool
 var disableWAFSkipOnManyFingerprints bool
 var cliRulePackageDir string
+var passwordAppendRaw string
+var userAppendRaw string
 
 // ConfigureCLIRulePackage makes an already validated, materialized offline
 // arsenal package the standalone CLI's authoritative rule source. Explicit
@@ -285,6 +288,9 @@ func prepare() error {
 	if err := validateCLIRiskFlags(structs.GlobalConfig); err != nil {
 		return err
 	}
+	if err := applyCLIAppendDictionaries(); err != nil {
+		return err
+	}
 	if structs.GlobalConfig.ReportName != "" {
 		if !hasHTMLReportExtension(structs.GlobalConfig.ReportName) {
 			return &CLIUsageError{Message: "HTML 输出必须使用 .html 或 .htm 扩展名"}
@@ -298,12 +304,11 @@ func prepare() error {
 		structs.GlobalEmbedActiveFingerprints = EmbedActiveFingerprints
 	}
 
-	if !structs.GlobalConfig.SkipHostDiscovery && !structs.GlobalConfig.TCPPing && structs.GlobalConfig.NoICMPPing {
-		gologger.Warning().Msg("未选择TCP或ICMP Ping，跳过存活探测")
-		structs.GlobalConfig.SkipHostDiscovery = true
+	if !structs.GlobalConfig.SkipHostDiscovery && structs.GlobalConfig.NoICMPPing && !structs.GlobalConfig.UDPPing {
+		structs.GlobalConfig.TCPPing = true
 	}
 
-	if structs.GlobalConfig.HTTPProxyTest && structs.GlobalConfig.HTTPProxy != "" {
+	if structs.GlobalConfig.HTTPProxyTest && structs.GlobalConfig.HTTPProxy != "" && !structs.GlobalConfig.TraceOnly {
 		proxyURL, parseErr := url.Parse(structs.GlobalConfig.HTTPProxy)
 		if parseErr != nil {
 			return &CLIUsageError{Message: "HTTP 代理格式不正确"}
@@ -328,13 +333,33 @@ func prepare() error {
 		gologger.Info().Msgf("代理有效！测试URL返回码: %v", resp.StatusCode)
 	}
 
-	// 兼容文件输入
-	if utils.IsFileNameValid(TargetString) {
-		fileBytes, err := os.ReadFile(TargetString)
-		if err == nil && len(fileBytes) > 0 {
-			// 兼容Windows输入
+	// 兼容文件输入：普通目标列表，或上次扫描的 result.txt / 结果目录。
+	// 路径形式但不存在/为空时显式报错，避免把文件名当域名目标解析。
+	if inputFile := resolveScanInputFile(TargetString); inputFile != "" {
+		if info, statErr := os.Stat(inputFile); statErr == nil {
+			if info.IsDir() {
+				return &CLIUsageError{Message: fmt.Sprintf("结果目录中没有 result.txt: %s", TargetString)}
+			}
+			fileBytes, readErr := os.ReadFile(inputFile)
+			if readErr != nil {
+				return &CLIUsageError{Message: fmt.Sprintf("读取输入文件失败: %v", readErr)}
+			}
+			if len(bytes.TrimSpace(fileBytes)) == 0 {
+				return &CLIUsageError{Message: fmt.Sprintf("输入文件为空: %s", TargetString)}
+			}
 			content := strings.ReplaceAll(string(fileBytes), "\r\n", "\n")
 			tmpTargets = strings.Split(content, "\n")
+		} else if dirInfo, dirErr := os.Stat(TargetString); dirErr == nil && dirInfo.IsDir() {
+			return &CLIUsageError{Message: fmt.Sprintf("结果目录中没有 result.txt: %s", TargetString)}
+		} else if isFileLikeInput(TargetString) {
+			return &CLIUsageError{Message: fmt.Sprintf("输入文件不存在: %s", TargetString)}
+		} else {
+			tgs := strings.Split(TargetString, ",")
+			for _, each := range tgs {
+				if each != "" {
+					tmpTargets = append(tmpTargets, each)
+				}
+			}
 		}
 	} else {
 		tgs := strings.Split(TargetString, ",")
@@ -344,65 +369,23 @@ func prepare() error {
 			}
 		}
 	}
-	tmpTargets = utils.RemoveDuplicateElement(tmpTargets)
-
-	structs.GlobalResultMap = make(map[string][]string)
+	ingested := ingestScanInputLines(tmpTargets)
+	structs.GlobalConfig.Targets = append(structs.GlobalConfig.Targets, ingested.Targets...)
+	structs.GlobalResultMap = ingested.Fingers
+	if structs.GlobalResultMap == nil {
+		structs.GlobalResultMap = make(map[string][]string)
+	}
 	structs.DirFallbackResultMap = make(map[string][]string)
-
-	// 过滤不支持输入
-	for _, tg := range tmpTargets {
-		if tg == "" {
-			continue
-		}
-		// 从本地文件获取目标
-		if utils.GetInputType(tg) == structs.TypeUnSupport {
-			if strings.HasPrefix(tg, "[") {
-				// 解析历史指纹
-				if strings.HasPrefix(tg, "[Finger") {
-					t := strings.Split(tg, " ")
-					uri := t[1]
-					tf := ""
-
-					if strings.HasPrefix(uri, "http") {
-						tf = t[3]
-					} else {
-						tf = t[2]
-					}
-					if len(tf) <= 2 {
-						continue
-					}
-					tf = tf[1 : len(tf)-1]
-					fingers := strings.Split(tf, ",")
-					structs.GlobalResultMap[uri] = fingers
-					continue
-				}
-
-			} else if strings.HasPrefix(tg, "{") {
-				in, ok, err := ddout.DecodeFindingLine(tg)
-				if err == nil && ok {
-					if in.Type == "Finger" {
-						structs.GlobalResultMap[in.URI] = in.Finger
-						continue
-					}
-					continue
-				}
-
-			} else if strings.HasSuffix(tg, " open") {
-				ipPort := strings.ReplaceAll(tg, " open", "")
-				if utils.IsIPPort(ipPort) {
-					structs.GlobalConfig.Targets = append(structs.GlobalConfig.Targets, ipPort)
-					continue
-				}
-
-			}
-			// gologger.Error().Msgf("不支持的格式: %s", tg)
-			continue
-		}
-		structs.GlobalConfig.Targets = append(structs.GlobalConfig.Targets, tg)
+	if ingested.SkipDiscover {
+		structs.GlobalConfig.SkipHostDiscovery = true
+		gologger.Info().Msgf("复用上次结果: 存活主机 %d, 开放端口 %d, 已跳过探活", ingested.ReusedAlive, ingested.ReusedPorts)
 	}
 
 	if len(structs.GlobalConfig.Targets) == 0 && len(structs.GlobalResultMap) == 0 {
-		return &CLIUsageError{Message: "无目标输入；请使用 -t/--target 指定已授权目标"}
+		if structs.GlobalConfig.TraceOnly {
+			return &CLIUsageError{Message: "-tr/--trace 没有可用目标；请指定 IP、网段或结果文件"}
+		}
+		return &CLIUsageError{Message: "无目标输入；请使用 -a/--target 指定已授权目标"}
 	}
 
 	loc := time.FixedZone("CST", 8*3600)
@@ -440,10 +423,8 @@ func prepare() error {
 		gologger.AuditLogFileName = filepath.Join(dirName, filepath.Base(gologger.AuditLogFileName))
 	}
 
-	// 如果是Linux则调整扫描线程 gogo抄的感谢感谢
 	if IsLinux() {
-		structs.GlobalConfig.TCPPortScanThreads = 4000
-		if fdlimit := GetFdLimit(); structs.GlobalConfig.TCPPortScanThreads > fdlimit {
+		if fdlimit := GetFdLimit(); fdlimit > 0 && structs.GlobalConfig.TCPPortScanThreads > fdlimit {
 			gologger.Warning().Msgf("System fd limit: %d , Please exec 'ulimit -n 65535'", fdlimit)
 			gologger.Warning().Msgf("Now set threads to %d", fdlimit-100)
 			structs.GlobalConfig.TCPPortScanThreads = fdlimit - 100
@@ -454,8 +435,8 @@ func prepare() error {
 	ddout.OutputFileName = structs.GlobalConfig.OutputFile
 
 	if PortString == "" {
-		// 默认使用 Argus 精选常用 100 端口；Server 的标准预设使用
-		// scanpolicy.Top1000TCPPorts。
+		// 默认使用 Argus 常用协议端口集；Server 的标准预设使用
+		// 未额外改写的 scanpolicy.Top1000TCPPorts。
 		structs.GlobalConfig.Ports = PortCommon100
 	} else {
 		structs.GlobalConfig.Ports = PortString
@@ -467,6 +448,13 @@ func prepare() error {
 	structs.GlobalIPPortMap = make(map[string]string)
 	structs.GlobalIPDomainMap = make(map[string][]string)
 	structs.GlobalURLMap = make(map[string]structs.URLEntity)
+
+	if structs.GlobalConfig.TraceOnly {
+		if !hasIPv4TraceTarget(structs.GlobalConfig.Targets) {
+			return &CLIUsageError{Message: "-tr/--trace 需要 IPv4、网段或含主机的结果文件"}
+		}
+		return nil
+	}
 
 	if err := parseFingerDB(); err != nil {
 		return err
@@ -587,15 +575,22 @@ func FlagWithError() error {
 	flagSet.SetDescription(cliDescription)
 	flagSet.SetCustomHelpText(cliHelpText)
 
+	defaultTCPThreads := 1000
+	if IsLinux() {
+		defaultTCPThreads = 4000
+	}
+
 	flagSet.CreateGroup("input", "扫描目标",
-		flagSet.StringVarP(&TargetString, "target", "t", "", "被扫描的目标。 192.168.0.1 192.168.0.0/16 192.168.0.1:80 baidu.com:80 file.txt(一行一个) result.txt(fscan/argus)"),
-		flagSet.BoolVar(&CLIForceFullScan, "force", false, "忽略本地增量覆盖并执行完整扫描"),
+		flagSet.StringVarP(&TargetString, "target", "a", "", "被扫描的目标。 192.168.0.1 192.168.0.0/16 192.168.0.1:80 baidu.com:80 file.txt(一行一个) result.txt(fscan/argus)"),
+		flagSet.StringVarP(&TraceTarget, "trace", "tr", "", "单独路径探测。后跟 IP、网段或结果文件，不跑端口/指纹/POC"),
+		flagSet.BoolVarP(&CLIForceFullScan, "force", "f", false, "与 -ss 一起使用时，忽略 datas 历史跳过并完整扫描"),
+		flagSet.BoolVarP(&structs.GlobalConfig.SkipSeenHistory, "skip-seen", "ss", false, "跳过 datas 里已经出现过的 IP（默认关闭）"),
 	)
 
 	flagSet.CreateGroup("portscan", "端口扫描",
-		flagSet.StringVarP(&PortString, "port", "p", "", "端口设置。默认扫描常用100端口"),
+		flagSet.StringVarP(&PortString, "port", "p", "", "端口设置。默认扫描常用协议端口集"),
 		flagSet.StringVarP(&structs.GlobalConfig.PortScanType, "scan-type", "st", "tcp", "端口扫描方式 | \"-st tcp\"设置TCP扫描 | \"-st syn\"设置SYN扫描"),
-		flagSet.IntVarP(&structs.GlobalConfig.TCPPortScanThreads, "tcp-scan-threads", "tst", 1000, "TCP扫描线程 | Windows/Mac默认1000线程 Linux默认4000"),
+		flagSet.IntVarP(&structs.GlobalConfig.TCPPortScanThreads, "tcp-scan-threads", "t", defaultTCPThreads, "TCP扫描线程 | Windows/Mac默认1000线程 Linux默认4000"),
 		flagSet.IntVarP(&structs.GlobalConfig.SYNPortScanThreads, "syn-scan-threads", "sst", 10000, "SYN扫描线程"),
 		flagSet.StringVarP(&structs.GlobalConfig.MasscanPath, "masscan-path", "mp", "masscan", "指定masscan程序路径 | SYN扫描依赖"),
 		flagSet.IntVarP(&structs.GlobalConfig.PortsThreshold, "ports-max-count", "pmc", 300, "IP端口数量阈值 | 当一个IP的端口数量超过此值，此IP将会被抛弃"),
@@ -603,14 +598,15 @@ func FlagWithError() error {
 	)
 
 	flagSet.CreateGroup("alive", "主机发现",
-		flagSet.BoolVar(&structs.GlobalConfig.SkipHostDiscovery, "Pn", false, "禁用主机发现功能(icmp,tcp)"),
-		flagSet.BoolVarP(&structs.GlobalConfig.NoICMPPing, "no-icmp-ping", "nip", false, "当启用主机发现功能时，禁用ICMP主机发现功能"),
-		flagSet.BoolVarP(&structs.GlobalConfig.TCPPing, "tcp-ping", "tp", false, "当启用主机发现功能时，启用TCP主机发现功能"),
+		flagSet.BoolVar(&structs.GlobalConfig.SkipHostDiscovery, "Pn", false, "跳过存活探测，对全部目标直接端口扫描"),
+		flagSet.BoolVarP(&structs.GlobalConfig.NoICMPPing, "no-icmp-ping", "nip", false, "不用 ICMP，改用 TCP 探活(80,443,3389,445,22)；同网段仍先 ARP"),
+		flagSet.BoolVarP(&structs.GlobalConfig.UDPPing, "udp-ping", "PU", false, "UDP探活：打常关口 40125，ICMP port unreachable 视为存活。TCP/ICMP 被禁时用"),
 	)
 
 	flagSet.CreateGroup("nmap", "协议识别",
 		flagSet.IntVarP(&structs.GlobalConfig.GetBannerThreads, "nmap-threads", "tc", 500, "Nmap协议识别线程"),
 		flagSet.IntVarP(&structs.GlobalConfig.GetBannerTimeout, "nmap-timeout", "nto", 5, "Nmap协议识别超时时间(秒)"),
+		flagSet.BoolVarP(&structs.GlobalConfig.NoUDPIdentify, "no-udp-identify", "nudp", false, "关闭默认的高价值内网 UDP 识别"),
 	)
 
 	flagSet.CreateGroup("subdomain", "探索子域名",
@@ -630,7 +626,7 @@ func FlagWithError() error {
 	)
 
 	flagSet.CreateGroup("proxy", "HTTP代理配置",
-		flagSet.StringVarP(&structs.GlobalConfig.HTTPProxy, "proxy", "", "", "HTTP代理"),
+		flagSet.StringVarP(&structs.GlobalConfig.HTTPProxy, "proxy", "x", "", "HTTP代理"),
 		flagSet.BoolVarP(&structs.GlobalConfig.HTTPProxyTest, "proxy-test", "pt", true, "启动前测试HTTP代理"),
 		flagSet.StringVarP(&structs.GlobalConfig.HTTPProxyTestURL, "proxy-test-url", "ptu", "https://www.baidu.com", "测试HTTP代理的url，需要url返回200"),
 	)
@@ -642,15 +638,16 @@ func FlagWithError() error {
 	)
 
 	flagSet.CreateGroup("vuln-detect", "漏洞探测",
-		flagSet.BoolVar(&structs.GlobalConfig.NoPoc, "npoc", false, "关闭漏洞探测,只进行信息收集"),
+		flagSet.BoolVar(&structs.GlobalConfig.NoPoc, "nopoc", false, "关闭 Nuclei POC，不影响 GoPoc"),
+		flagSet.BoolVarP(&structs.GlobalConfig.ShowPocMap, "show-poc-map", "spm", false, "打印指纹到 Nuclei POC 的映射和加载的模板列表（默认关闭）"),
+		flagSet.BoolVarP(&structs.GlobalConfig.NoGoPoc, "no-gopoc", "nogpoc", false, "关闭全部 GoPoc"),
+		flagSet.BoolVarP(&structs.GlobalConfig.NoBrute, "no-brute", "nobr", false, "关闭服务口令爆破，不影响其它 GoPoc"),
 		flagSet.StringVarP(&structs.GlobalConfig.PocNameForSearch, "poc-name", "poc", "", "模糊匹配Poc名称"),
 		flagSet.BoolVarP(&structs.GlobalConfig.NoInteractsh, "no-interactsh", "ni", true, "禁用Interactsh服务器，排除反连模版"),
 		flagSet.IntVarP(&structs.GlobalConfig.GoPocThreads, "golang-poc-threads", "gpt", 50, "GoPoc运行线程"),
-		flagSet.BoolVarP(&structs.GlobalConfig.GolangPoc, "golang-poc", "gp", false, "兼容模式：混合执行 GoPoc 协议、漏洞与凭据插件（Server 不使用）"),
 		flagSet.BoolVarP(&structs.GlobalConfig.DisableGeneralPoc, "disable-general-poc", "dgp", false, "禁用无视指纹的漏洞映射"),
-		flagSet.BoolVar(&structs.GlobalConfig.WAFBypassHeaders, "waf-bypass-headers", true, "启用WAF绕过请求头，默认开启"),
-		flagSet.BoolVar(&disableWAFBypassHeaders, "no-waf-bypass-headers", false, "关闭默认WAF绕过请求头"),
-		flagSet.BoolVar(&disableWAFSkipOnManyFingerprints, "no-waf-skip-many-fingerprints", false, "关闭多指纹目标跳过POC映射，默认开启"),
+		flagSet.BoolVarP(&disableWAFBypassHeaders, "no-waf-bypass-headers", "nwb", false, "关闭默认开启的 WAF 绕过请求头"),
+		flagSet.BoolVarP(&disableWAFSkipOnManyFingerprints, "no-waf-skip-many-fingerprints", "nws", false, "关闭多指纹目标跳过POC映射，默认开启"),
 		flagSet.StringVarP(&structs.GlobalConfig.ExcludeTags, "exclude-tags", "et", "", "通过tags排除模版 | 多个tags请用,连接"),
 		flagSet.StringVarP(&structs.GlobalConfig.Severities, "severity", "s", "", "只允许指定严重程度的模板运行 | 多参数用,连接 | 允许的值: "+strings.ReplaceAll(severity.GetSupportedSeverities().String(), " ", "")),
 	)
@@ -666,6 +663,8 @@ func FlagWithError() error {
 	flagSet.CreateGroup("passwd", "爆破密码配置",
 		flagSet.StringVarP(&structs.GlobalConfig.Password, "username-password", "up", "", "设置爆破凭证，设置后将禁用内置字典 | 凭证格式 'admin : password'"),
 		flagSet.StringVarP(&structs.GlobalConfig.PasswordFile, "username-password-file", "upf", "", "设置爆破凭证文件(一行一个)，设置后将禁用内置字典 | 凭证格式 'admin : password'"),
+		flagSet.StringVarP(&passwordAppendRaw, "password-append", "pwda", "", "在内置密码本上追加密码。值为已存在文件时按行读取，否则按空白分词"),
+		flagSet.StringVarP(&userAppendRaw, "user-append", "usea", "", "在内置用户本上追加用户。值为已存在文件时按行读取，否则按空白分词"),
 	)
 
 	// 生成带时间戳的默认审计日志文件名
@@ -673,19 +672,18 @@ func FlagWithError() error {
 	defaultAuditLogFileName := fmt.Sprintf("audit_%s.log", time.Now().In(loc).Format("20060102_150405"))
 
 	flagSet.CreateGroup("audit", "审计日志 | 敏感环境必备 (默认关闭)",
-		flagSet.BoolVar(&gologger.Audit, "a", false, "审计日志开关，默认关闭。使用 -a 开启。记录程序运行日志、收发包详细信息，避免背黑锅。"),
+		flagSet.BoolVarP(&gologger.Audit, "audit", "ad", false, "审计日志开关，默认关闭。记录程序运行日志、收发包详细信息。"),
 		flagSet.StringVarP(&gologger.AuditLogFileName, "audit-log-filename", "alf", defaultAuditLogFileName, "审计日志文件名称，默认格式: audit_YYYYMMDD_HHMMSS.log"),
 	)
 
 	if err := parseCLIFlags(flagSet.Parse, presentation, os.Args[1:]); err != nil {
 		return fmt.Errorf("parse CLI configuration: %w", err)
 	}
+	applyTraceFlag()
 	if err := ValidateCLIOutputType(structs.GlobalConfig.OutputType); err != nil {
 		return err
 	}
-	if disableWAFBypassHeaders {
-		structs.GlobalConfig.WAFBypassHeaders = false
-	}
+	structs.GlobalConfig.WAFBypassHeaders = !disableWAFBypassHeaders
 	if disableWAFSkipOnManyFingerprints {
 		structs.GlobalConfig.WAFSkipOnManyFingerprints = false
 	}
@@ -708,8 +706,13 @@ func flagAudit() {
 	gologger.AuditLogger("AllowLocalAreaDomain: %v", structs.GlobalConfig.AllowLocalAreaDomain)
 	gologger.AuditLogger("Ports: %v", structs.GlobalConfig.Ports)
 	gologger.AuditLogger("SkipHostDiscovery: %v", structs.GlobalConfig.SkipHostDiscovery)
+	gologger.AuditLogger("SkipSeenHistory: %v", structs.GlobalConfig.SkipSeenHistory)
 	gologger.AuditLogger("NoICMPPing: %v", structs.GlobalConfig.NoICMPPing)
 	gologger.AuditLogger("TCPPing: %v", structs.GlobalConfig.TCPPing)
+	gologger.AuditLogger("UDPPing: %v", structs.GlobalConfig.UDPPing)
+	gologger.AuditLogger("TraceRoute: %v", structs.GlobalConfig.TraceRoute)
+	gologger.AuditLogger("TraceOnly: %v", structs.GlobalConfig.TraceOnly)
+	gologger.AuditLogger("ShowPocMap: %v", structs.GlobalConfig.ShowPocMap)
 	gologger.AuditLogger("GetBannerThreads: %v", structs.GlobalConfig.GetBannerThreads)
 	gologger.AuditLogger("PortScanType: %v", structs.GlobalConfig.PortScanType)
 	gologger.AuditLogger("TCPPortScanThreads: %v", structs.GlobalConfig.TCPPortScanThreads)
@@ -723,17 +726,13 @@ func flagAudit() {
 	gologger.AuditLogger("HTTPProxyTestURL: %v", structs.GlobalConfig.HTTPProxyTestURL)
 	gologger.AuditLogger("HTTPProxyTest: %v", structs.GlobalConfig.HTTPProxyTest)
 	gologger.AuditLogger("NoDirSearch: %v", structs.GlobalConfig.NoDirSearch)
-	gologger.AuditLogger("Hunter: %v", structs.GlobalConfig.Hunter)
-	gologger.AuditLogger("HunterPageSize: %v", structs.GlobalConfig.HunterPageSize)
-	gologger.AuditLogger("HunterMaxPageCount: %v", structs.GlobalConfig.HunterMaxPageCount)
-	gologger.AuditLogger("Fofa: %v", structs.GlobalConfig.Fofa)
-	gologger.AuditLogger("FofaMaxCount: %v", structs.GlobalConfig.FofaMaxCount)
-	gologger.AuditLogger("Quake: %v", structs.GlobalConfig.Quake)
-	gologger.AuditLogger("QuakeSize: %v", structs.GlobalConfig.QuakeSize)
-	gologger.AuditLogger("LowPerceptionMode: %v", structs.GlobalConfig.LowPerceptionMode)
 	gologger.AuditLogger("ReportName: %v", structs.GlobalConfig.ReportName)
 	gologger.AuditLogger("GoPocThreads: %v", structs.GlobalConfig.GoPocThreads)
 	gologger.AuditLogger("GolangPoc: %v", structs.GlobalConfig.GolangPoc)
+	gologger.AuditLogger("NoGoPoc: %v", structs.GlobalConfig.NoGoPoc)
+	gologger.AuditLogger("NoBrute: %v", structs.GlobalConfig.NoBrute)
+	gologger.AuditLogger("UserAppend: %d", len(structs.GlobalConfig.UserAppend))
+	gologger.AuditLogger("PasswordAppend: %d", len(structs.GlobalConfig.PasswordAppend))
 	gologger.AuditLogger("PocNameForSearch: %v", structs.GlobalConfig.PocNameForSearch)
 	gologger.AuditLogger("NoPoc: %v", structs.GlobalConfig.NoPoc)
 	gologger.AuditLogger("NoInteractsh: %v", structs.GlobalConfig.NoInteractsh)
@@ -742,6 +741,7 @@ func flagAudit() {
 	gologger.AuditLogger("Audit: %v", gologger.Audit)
 	gologger.AuditLogger("AuditLogFileName: %v", gologger.AuditLogFileName)
 	gologger.AuditLogger("GetBannerTimeout: %v", structs.GlobalConfig.GetBannerTimeout)
+	gologger.AuditLogger("NoUDPIdentify: %v", structs.GlobalConfig.NoUDPIdentify)
 	gologger.AuditLogger("SubdomainWordListFile: %v", structs.GlobalConfig.SubdomainWordListFile)
 	gologger.AuditLogger("NucleiTemplate: %v", structs.GlobalConfig.NucleiTemplate)
 	gologger.AuditLogger("DirSearchYaml: %v", structs.GlobalConfig.DirSearchYaml)

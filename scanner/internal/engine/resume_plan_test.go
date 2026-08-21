@@ -49,6 +49,14 @@ func TestRequiredResumeStagesUsesValidatorSmallTargetPolicy(t *testing.T) {
 	}
 }
 
+func TestRequiredResumeStagesIncludesTCPRemainderForLargeCIDR(t *testing.T) {
+	cfg := Config{Targets: []string{"10.20.0.0/16"}, NoHostBind: true, NoDirSearch: true, NoPoc: true, DisableGeneralPoc: true}
+	stages, ok := RequiredResumeStages("10.20.0.0/16", cfg)
+	if !ok || len(stages) < 2 || stages[0] != scanplan.StageICMPDiscovery || stages[1] != scanplan.StageTCPLiveness {
+		t.Fatalf("large CIDR discovery stages = %v, ok=%v", stages, ok)
+	}
+}
+
 func TestValidateResumePlanRejectsMissingDependencyAndUnsafeHTTPContentStart(t *testing.T) {
 	target := "192.0.2.10"
 	cfg := Config{Targets: []string{target}, SkipHostDiscovery: true, NoHostBind: true, NoDirSearch: true, NoPoc: true, DisableGeneralPoc: true}
@@ -105,6 +113,32 @@ func TestRestoreResumeProtocolServices(t *testing.T) {
 	restoreResumeProtocolServices(ctx)
 	if got := ctx.IPPortMap[target]; got != "https" {
 		t.Fatalf("protocol checkpoint restored %q, want https", got)
+	}
+}
+
+func TestRestoreResumeProtocolServicesUDPStaysOutOfIPPortMap(t *testing.T) {
+	target := "192.0.2.10:53"
+	checkpoint := testResumeCheckpoint(t, target, scanplan.StageCheckpoint{
+		SchemaVersion: scanplan.CheckpointSchemaVersion,
+		Stage:         scanplan.StageProtocolIdentify,
+		Services:      []scanplan.ServiceCheckpoint{{Endpoint: target, Protocol: "dns", Transport: "udp"}},
+	})
+	ctx := &ScanContext{
+		IPPortMap: make(map[string]string),
+		ResumePlan: &scanplan.ResumePlan{
+			Checkpoints: []scanplan.ResumeCheckpoint{checkpoint},
+		},
+	}
+	restoreResumeProtocolServices(ctx)
+	if _, exists := ctx.IPPortMap[target]; exists {
+		t.Fatalf("UDP service must not be restored into IPPortMap: %q", ctx.IPPortMap[target])
+	}
+	rec, ok := ctx.ServiceMap[target+"/udp"]
+	if !ok {
+		t.Fatalf("UDP service missing from ServiceMap key %q", target+"/udp")
+	}
+	if rec.Transport != "udp" || rec.Protocol != "dns" {
+		t.Fatalf("UDP record = %+v, want udp/dns", rec)
 	}
 }
 

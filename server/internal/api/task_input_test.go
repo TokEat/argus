@@ -4,14 +4,22 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 )
 
 func TestDefaultTaskScanConfigIncludesDatabaseGoPocPorts(t *testing.T) {
 	ports := "," + defaultTaskScanConfig().Ports + ","
-	for _, port := range []string{"2379", "5236", "54321"} {
+	for _, port := range []string{"2379", "5236", "54321", "20880", "5672", "4369", "10911", "11740", "61616"} {
 		if !strings.Contains(ports, ","+port+",") {
 			t.Fatalf("expected default task ports to include %s, got %q", port, defaultTaskScanConfig().Ports)
 		}
+	}
+}
+
+func TestDefaultTaskScanConfigUsesSharedCommonPorts(t *testing.T) {
+	if got := defaultTaskScanConfig().Ports; got != scanpolicy.Common100Ports {
+		t.Fatalf("default task ports diverged from shared common ports")
 	}
 }
 
@@ -133,6 +141,24 @@ func TestClassifyTargetsKeepsValidTargetsAndReportsInvalidTargets(t *testing.T) 
 	}
 }
 
+func TestEstimatedProtocolCheckEndpointCountExpandsNetworkTargets(t *testing.T) {
+	got := estimatedProtocolCheckEndpointCount([]string{
+		"example.com",
+		"192.0.2.0/30",
+		"192.0.2.10-192.0.2.12",
+	})
+	if got != 8 {
+		t.Fatalf("endpoint count = %d, want 8", got)
+	}
+}
+
+func TestEstimatedProtocolCheckEndpointCountCapsLargeNetworkTargets(t *testing.T) {
+	got := estimatedProtocolCheckEndpointCount([]string{"10.0.0.0/8"})
+	if got != scanpolicy.MaximumGoPocTargets {
+		t.Fatalf("large CIDR endpoint count = %d, want cap %d", got, scanpolicy.MaximumGoPocTargets)
+	}
+}
+
 func TestNormalizeTaskConfigRejectsLegacyProviderSettings(t *testing.T) {
 	for _, payload := range []string{
 		`{"Hunter":true}`, `{"Fofa":true}`, `{"Quake":true}`,
@@ -187,5 +213,35 @@ func TestNormalizeTaskConfigRejectsCallerControlledBehaviorProbes(t *testing.T) 
 		if _, _, err := normalizeTaskConfigPayload(json.RawMessage(payload)); err == nil || !strings.Contains(err.Error(), "Server-only") {
 			t.Fatalf("caller-controlled behavior probe payload %s err = %v, want Server-only rejection", payload, err)
 		}
+	}
+}
+
+func TestValidateTaskScanConfigNoICMPEnablesTCPPing(t *testing.T) {
+	cfg := defaultTaskScanConfig()
+	cfg.NoICMPPing = true
+	cfg.TCPPing = false
+	cfg.SkipHostDiscovery = false
+	if err := validateTaskScanConfig(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.TCPPing || cfg.SkipHostDiscovery {
+		t.Fatalf("NoICMPPing should enable TCP ping, got TCPPing=%v Skip=%v", cfg.TCPPing, cfg.SkipHostDiscovery)
+	}
+}
+
+func TestValidateTaskScanConfigUDPPingSkipsForcedTCPPing(t *testing.T) {
+	cfg := defaultTaskScanConfig()
+	cfg.NoICMPPing = true
+	cfg.TCPPing = false
+	cfg.UDPPing = true
+	cfg.SkipHostDiscovery = false
+	if err := validateTaskScanConfig(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TCPPing {
+		t.Fatal("UDPPing=true with NoICMPPing must not force TCPPing")
+	}
+	if cfg.SkipHostDiscovery {
+		t.Fatal("UDP-only ping must keep host discovery enabled")
 	}
 }
