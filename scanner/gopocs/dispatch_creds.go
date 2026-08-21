@@ -13,6 +13,7 @@ type DispatchCreds struct {
 	UserAppend     []string
 	PasswordAppend []string
 	NoBrute        bool
+	Modules        string
 }
 
 func isServiceBruteTask(name string) bool {

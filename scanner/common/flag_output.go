@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/P0lar1ght/argus/scanner/gopocs"
 	"github.com/P0lar1ght/argus/scanner/structs"
 )
 
@@ -26,6 +27,9 @@ func validateCLIRiskFlags(config structs.Config) error {
 	}
 	if hasAppend && (config.NoBrute || config.NoGoPoc) {
 		return &CLIUsageError{Message: "-pwda/-usea 不能与 -nobr 或 -nogpoc 同时使用"}
+	}
+	if err := gopocs.ValidateModuleFilter(config.GoPocModules); err != nil {
+		return &CLIUsageError{Message: err.Error()}
 	}
 	return nil
 }

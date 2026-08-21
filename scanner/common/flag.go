@@ -4,12 +4,6 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
-	"github.com/P0lar1ght/argus/scanner/ddout"
-	"github.com/P0lar1ght/argus/scanner/internal/taskstore"
-	"github.com/P0lar1ght/argus/scanner/lib/ddfinger"
-	"github.com/P0lar1ght/argus/scanner/structs"
-	"github.com/P0lar1ght/argus/scanner/utils"
-	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,6 +14,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/gopocs"
+	"github.com/P0lar1ght/argus/scanner/internal/taskstore"
+	"github.com/P0lar1ght/argus/scanner/lib/ddfinger"
+	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/utils"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 
 	"github.com/projectdiscovery/goflags"
 	"github.com/projectdiscovery/gologger"
@@ -642,6 +644,7 @@ func FlagWithError() error {
 		flagSet.BoolVarP(&structs.GlobalConfig.ShowPocMap, "show-poc-map", "spm", false, "打印指纹到 Nuclei POC 的映射和加载的模板列表（默认关闭）"),
 		flagSet.BoolVarP(&structs.GlobalConfig.NoGoPoc, "no-gopoc", "nogpoc", false, "关闭全部 GoPoc"),
 		flagSet.BoolVarP(&structs.GlobalConfig.NoBrute, "no-brute", "nobr", false, "关闭服务口令爆破，不影响其它 GoPoc"),
+		flagSet.StringVarP(&structs.GlobalConfig.GoPocModules, "module", "m", "", "只运行指定 GoPoc/爆破协议或插件，多个用逗号分隔。支持: "+gopocs.GoPocModuleHelpList()),
 		flagSet.StringVarP(&structs.GlobalConfig.PocNameForSearch, "poc-name", "poc", "", "模糊匹配Poc名称"),
 		flagSet.BoolVarP(&structs.GlobalConfig.NoInteractsh, "no-interactsh", "ni", true, "禁用Interactsh服务器，排除反连模版"),
 		flagSet.IntVarP(&structs.GlobalConfig.GoPocThreads, "golang-poc-threads", "gpt", 50, "GoPoc运行线程"),
@@ -731,6 +734,7 @@ func flagAudit() {
 	gologger.AuditLogger("GolangPoc: %v", structs.GlobalConfig.GolangPoc)
 	gologger.AuditLogger("NoGoPoc: %v", structs.GlobalConfig.NoGoPoc)
 	gologger.AuditLogger("NoBrute: %v", structs.GlobalConfig.NoBrute)
+	gologger.AuditLogger("GoPocModules: %v", structs.GlobalConfig.GoPocModules)
 	gologger.AuditLogger("UserAppend: %d", len(structs.GlobalConfig.UserAppend))
 	gologger.AuditLogger("PasswordAppend: %d", len(structs.GlobalConfig.PasswordAppend))
 	gologger.AuditLogger("PocNameForSearch: %v", structs.GlobalConfig.PocNameForSearch)

@@ -461,6 +461,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		cfg.GoPocThreads,
 		cfg.Password,
 		cfg.PasswordFile,
+		cfg.GoPocModules,
 		emit,
 	)
 	goPocResults = append(goPocResults, telnetResults...)
@@ -478,6 +479,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	creds := gopocs.DispatchCreds{
 		Password: cfg.Password, PasswordFile: cfg.PasswordFile,
 		UserAppend: cfg.UserAppend, PasswordAppend: cfg.PasswordAppend, NoBrute: cfg.NoBrute,
+		Modules: cfg.GoPocModules,
 	}
 	var dispatchResults []structs.GoPocsResultType
 	var dispatchErr error

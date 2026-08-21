@@ -19,6 +19,7 @@ const cliHelpText = `
 示例:
   argus -a https://example.com
   argus -a 10.0.0.0/24 -nopoc -nogpoc
+  argus -a 10.0.0.5 -m ssh,mysql
   argus -tr 192.0.2.9
   argus -tr res.txt`
 

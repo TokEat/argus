@@ -237,12 +237,15 @@ func TestBuildDispatchPlanUsesTaskLocalFingerprintsAndDeduplicatesViewState(t *t
 	structs.GlobalResultMap = map[string][]string{"https://legacy.example.test/": {"viewstate"}}
 	defer func() { structs.GlobalResultMap = previous }()
 
-	plan := buildDispatchPlan(
+	plan, err := buildDispatchPlan(
 		nil,
 		map[string][]string{"https://CURRENT.example.test": {"ViewState"}},
 		[]NucleiResult{{TemplateID: "yongyou_u9_viewstate", Matched: "https://current.example.test/"}},
 		DispatchCreds{}, func(structs.GoPocsResultType) {},
 	)
+	if err != nil {
+		t.Fatalf("build dispatch plan: %v", err)
+	}
 	if len(plan) != 1 {
 		t.Fatalf("dispatch plan = %#v, want one de-duplicated task-local trigger", plan)
 	}
@@ -252,7 +255,10 @@ func TestBuildDispatchPlanUsesTaskLocalFingerprintsAndDeduplicatesViewState(t *t
 }
 
 func TestBuildDispatchPlanNoBruteSkipsServiceCracks(t *testing.T) {
-	plan := buildDispatchPlan(map[string]string{"127.0.0.1:22": "ssh", "127.0.0.1:445": "smb"}, nil, nil, DispatchCreds{NoBrute: true}, func(structs.GoPocsResultType) {})
+	plan, err := buildDispatchPlan(map[string]string{"127.0.0.1:22": "ssh", "127.0.0.1:445": "smb"}, nil, nil, DispatchCreds{NoBrute: true}, func(structs.GoPocsResultType) {})
+	if err != nil {
+		t.Fatalf("build dispatch plan: %v", err)
+	}
 	for _, task := range plan {
 		if isServiceBruteTask(task.Name) {
 			t.Fatalf("brute task leaked under -nobr: %#v", task)
@@ -267,4 +273,74 @@ func TestBuildDispatchPlanNoBruteSkipsServiceCracks(t *testing.T) {
 	if !foundMS17 {
 		t.Fatal("expected SMB-MS17-010 to remain when only brute is disabled")
 	}
+}
+
+func TestBuildDispatchPlanModuleFilterAllowsSelectedProtocols(t *testing.T) {
+	plan, err := buildDispatchPlan(map[string]string{
+		"127.0.0.1:22":   "ssh",
+		"127.0.0.1:3306": "mysql",
+		"127.0.0.1:6379": "redis",
+	}, nil, nil, DispatchCreds{Modules: "ssh,mysql"}, func(structs.GoPocsResultType) {})
+	if err != nil {
+		t.Fatalf("build dispatch plan: %v", err)
+	}
+	names := scanTaskNames(plan)
+	if !names["SSH-Crack"] || !names["Mysql-Crack"] {
+		t.Fatalf("selected protocol tasks missing: %+v", plan)
+	}
+	if names["Redis-Crack"] {
+		t.Fatalf("unselected protocol task leaked: %+v", plan)
+	}
+}
+
+func TestBuildDispatchPlanModuleFilterAcceptsPluginNames(t *testing.T) {
+	plan, err := buildDispatchPlan(map[string]string{"127.0.0.1:445": "smb"}, nil, nil, DispatchCreds{Modules: "SMB-MS17-010"}, func(structs.GoPocsResultType) {})
+	if err != nil {
+		t.Fatalf("build dispatch plan: %v", err)
+	}
+	names := scanTaskNames(plan)
+	if !names["SMB-MS17-010"] {
+		t.Fatalf("explicit plugin task missing: %+v", plan)
+	}
+	if names["SMB-Crack"] {
+		t.Fatalf("unselected sibling plugin leaked: %+v", plan)
+	}
+}
+
+func TestBuildDispatchPlanModuleFilterCoversFollowupTriggers(t *testing.T) {
+	plan, err := buildDispatchPlan(nil, map[string][]string{"https://view.example": {"viewstate"}}, []NucleiResult{{TemplateID: "shiro-detect", Matched: "https://shiro.example"}}, DispatchCreds{Modules: "shiro"}, func(structs.GoPocsResultType) {})
+	if err != nil {
+		t.Fatalf("build dispatch plan: %v", err)
+	}
+	names := scanTaskNames(plan)
+	if !names["Shiro-Key-Crack"] {
+		t.Fatalf("selected follow-up task missing: %+v", plan)
+	}
+	if names["ViewState-Key-Crack"] {
+		t.Fatalf("unselected follow-up task leaked: %+v", plan)
+	}
+}
+
+func TestValidateModuleFilterRejectsUnknown(t *testing.T) {
+	if err := ValidateModuleFilter("ssh,does-not-exist"); err == nil || !strings.Contains(err.Error(), "does-not-exist") {
+		t.Fatalf("unknown module validation error = %v", err)
+	}
+}
+
+func TestTelnetBypassModuleFilterSkipsUnselectedModule(t *testing.T) {
+	results, err := TelnetBypassDispatchScopedWithModules(map[string]string{"127.0.0.1:23": "telnet"}, 1, "", "", "mysql", func(structs.OutputMessage) {})
+	if err != nil {
+		t.Fatalf("telnet bypass filtered dispatch: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("telnet bypass ran under mysql-only filter: %+v", results)
+	}
+}
+
+func scanTaskNames(plan []scanTask) map[string]bool {
+	names := make(map[string]bool, len(plan))
+	for _, task := range plan {
+		names[task.Name] = true
+	}
+	return names
 }

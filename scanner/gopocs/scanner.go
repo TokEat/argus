@@ -194,7 +194,10 @@ func DispatchWithPresentationAndCreds(ipPortMap map[string]string, fingerprints 
 		presentation: presentation,
 	}
 
-	plan := buildDispatchPlan(ipPortMap, fingerprints, nucleiResults, creds, dispatcher.writeResult)
+	plan, err := buildDispatchPlan(ipPortMap, fingerprints, nucleiResults, creds, dispatcher.writeResult)
+	if err != nil {
+		return nil, err
+	}
 	dispatcher.allCount = len(plan)
 	if dispatcher.allCount == 0 {
 		return nil, nil
@@ -239,12 +242,19 @@ func appendUniqueScanTask(plan *[]scanTask, seen map[string]struct{}, task scanT
 	*plan = append(*plan, task)
 }
 
-func buildDispatchPlan(ipPortMap map[string]string, fingerprints map[string][]string, nucleiResults []NucleiResult, creds DispatchCreds, writeResult func(structs.GoPocsResultType)) []scanTask {
+func buildDispatchPlan(ipPortMap map[string]string, fingerprints map[string][]string, nucleiResults []NucleiResult, creds DispatchCreds, writeResult func(structs.GoPocsResultType)) ([]scanTask, error) {
+	filter, err := newModuleFilter(creds.Modules)
+	if err != nil {
+		return nil, err
+	}
 	basePlan := buildScanPlan(ipPortMap, creds, writeResult)
 	seen := make(map[string]struct{}, len(basePlan)+len(nucleiResults)+len(fingerprints))
 	plan := make([]scanTask, 0, len(basePlan)+len(nucleiResults)+len(fingerprints))
 	for _, task := range basePlan {
 		if creds.NoBrute && isServiceBruteTask(task.Name) {
+			continue
+		}
+		if !filter.allows(task.Name) {
 			continue
 		}
 		appendUniqueScanTask(&plan, seen, task)
@@ -253,14 +263,14 @@ func buildDispatchPlan(ipPortMap map[string]string, fingerprints map[string][]st
 		if result.TemplateID == "shiro-detect" {
 			info := structs.HostInfo{Url: result.Matched}
 			applyDispatchCreds(&info, creds)
-			appendUniqueScanTask(&plan, seen, scanTask{Name: "Shiro-Key-Crack", Info: info})
+			appendUniqueAllowedScanTask(&plan, seen, filter, scanTask{Name: "Shiro-Key-Crack", Info: info})
 		}
 		if isViewStateNucleiResult(result) {
 			targetURL := firstNonEmpty(result.Matched, result.URL)
 			if targetURL != "" {
 				info := structs.HostInfo{Url: targetURL}
 				applyDispatchCreds(&info, creds)
-				appendUniqueScanTask(&plan, seen, scanTask{Name: "ViewState-Key-Crack", Info: info})
+				appendUniqueAllowedScanTask(&plan, seen, filter, scanTask{Name: "ViewState-Key-Crack", Info: info})
 			}
 		}
 	}
@@ -269,11 +279,18 @@ func buildDispatchPlan(ipPortMap map[string]string, fingerprints map[string][]st
 			if strings.EqualFold(fingerprint, "viewstate") {
 				info := structs.HostInfo{Url: host}
 				applyDispatchCreds(&info, creds)
-				appendUniqueScanTask(&plan, seen, scanTask{Name: "ViewState-Key-Crack", Info: info})
+				appendUniqueAllowedScanTask(&plan, seen, filter, scanTask{Name: "ViewState-Key-Crack", Info: info})
 			}
 		}
 	}
-	return plan
+	return plan, nil
+}
+
+func appendUniqueAllowedScanTask(plan *[]scanTask, seen map[string]struct{}, filter moduleFilter, task scanTask) {
+	if !filter.allows(task.Name) {
+		return
+	}
+	appendUniqueScanTask(plan, seen, task)
 }
 
 func scanTaskIdentity(task scanTask) string {

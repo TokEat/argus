@@ -27,6 +27,6 @@ func DispatchMachineWithCreds(ipPortMap map[string]string, fingerprints map[stri
 }
 
 // TelnetCVEOnly 高危 CVE 专项检测（不依赖 GoPoc 开关）。
-func TelnetCVEOnly(ipPortMap map[string]string, goPocThreads int, password string, passwordFile string, emit func(structs.OutputMessage)) ([]structs.GoPocsResultType, error) {
-	return gopocs.TelnetBypassDispatchScoped(ipPortMap, goPocThreads, password, passwordFile, emit)
+func TelnetCVEOnly(ipPortMap map[string]string, goPocThreads int, password string, passwordFile string, modules string, emit func(structs.OutputMessage)) ([]structs.GoPocsResultType, error) {
+	return gopocs.TelnetBypassDispatchScopedWithModules(ipPortMap, goPocThreads, password, passwordFile, modules, emit)
 }

@@ -125,6 +125,7 @@ type Config struct {
 	GolangPoc                  bool
 	NoGoPoc                    bool
 	NoBrute                    bool
+	GoPocModules               string
 	UserAppend                 []string
 	PasswordAppend             []string
 	DisableGeneralPoc          bool

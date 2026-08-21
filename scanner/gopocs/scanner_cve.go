@@ -12,7 +12,18 @@ import (
 // TelnetBypassDispatchScoped reports dispatcher infrastructure failures to
 // task-scoped callers while retaining Telnet probe misses as zero findings.
 func TelnetBypassDispatchScoped(ipPortMap map[string]string, goPocThreads int, password string, passwordFile string, emit func(structs.OutputMessage)) ([]structs.GoPocsResultType, error) {
+	return TelnetBypassDispatchScopedWithModules(ipPortMap, goPocThreads, password, passwordFile, "", emit)
+}
+
+func TelnetBypassDispatchScopedWithModules(ipPortMap map[string]string, goPocThreads int, password string, passwordFile string, modules string, emit func(structs.OutputMessage)) ([]structs.GoPocsResultType, error) {
 	if len(ipPortMap) == 0 {
+		return nil, nil
+	}
+	filter, err := newModuleFilter(modules)
+	if err != nil {
+		return nil, err
+	}
+	if !filter.allows("Telnet-Bypass") {
 		return nil, nil
 	}
 

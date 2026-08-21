@@ -31,6 +31,14 @@ func TestValidateCLIRiskFlagsRejectsExplicitPOCWithNoPoc(t *testing.T) {
 	}
 }
 
+func TestValidateCLIRiskFlagsRejectsUnknownGoPocModule(t *testing.T) {
+	err := validateCLIRiskFlags(structs.Config{GoPocModules: "ssh,does-not-exist"})
+	var usageErr *CLIUsageError
+	if !errors.As(err, &usageErr) || !strings.Contains(err.Error(), "does-not-exist") {
+		t.Fatalf("expected unknown module usage error, got %v", err)
+	}
+}
+
 func TestSanitizeResultDirectoryNameAcceptsURLQueriesOnWindows(t *testing.T) {
 	name := sanitizeResultDirectoryName(`https://scan.example.test/path?q=one&next=two|three`)
 	if name == "" || strings.ContainsAny(name, `<>:"/\\|?*`) {
@@ -94,6 +102,7 @@ func TestValidateCLIRiskFlagsAllowsInformationOnlyOrExplicitRisk(t *testing.T) {
 		{NoPoc: true},
 		{PocNameForSearch: "shiro"},
 		{GolangPoc: true},
+		{GoPocModules: "ssh,mysql,rocketmq"},
 	} {
 		if err := validateCLIRiskFlags(config); err != nil {
 			t.Fatalf("unexpected validation error for %#v: %v", config, err)
