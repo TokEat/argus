@@ -208,7 +208,7 @@ argus -a 192.168.0.1 -force
 #### 基础设施
 
 ```bash
-# 一键启动 RabbitMQ、PostgreSQL，并完成建库/建用户/migration
+# 一键启动 RabbitMQ、PostgreSQL，并完成数据库初始化（纯 SQL 导入）
 make setup-local
 ```
 
@@ -218,15 +218,21 @@ make setup-local
 # 1. 启动基础设施
 make infra-up
 
-# 2. 初始化数据库角色与数据库
-make db-init
+# 2. 数据库初始化（建库/建角色 + 最小基线导入 + 种子 + 自检，psql 纯 SQL，
+#    宿主机没有 psql 时自动在 postgres 容器内执行）
+make db-setup
 
-# 3. 执行业务 schema migration
-make db-migrate
+# 3. 校验：SQL 导入后跑 server 启动期同款版本/契约校验
+make db-verify
 
 # 4. 做一遍本地搭建冒烟校验（可选）
 make smoke-local
 ```
+
+> 数据库初始化与 server 启动已解耦：`argus-server` 启动时只校验数据库
+> （版本 + 表/列/索引契约），不再执行任何迁移；未初始化/版本不匹配会拒绝
+> 启动并提示运行 `deploy/db-init.sh`（或 `make db-setup`）。维护政策见
+> `deploy/db/README.md`。
 
 #### 安全配置
 
@@ -290,9 +296,7 @@ sudo ./deploy/upgrade-server.sh
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--db` | 空（内置 PostgreSQL 默认 DSN） | PostgreSQL 数据库 DSN |
-| `--migrate-only` | `false` | 只执行数据库 migration 和 schema verify，然后退出。空库应用 `server/internal/db/schema` baseline，已有库继续增量升级 |
-| `--db-migration-mode` | `apply` | 数据库迁移模式：`apply` / `verify` / `dev-auto` |
+| `--db` | 空（内置 PostgreSQL 默认 DSN） | PostgreSQL 数据库 DSN。启动时仅校验（版本+契约），初始化/升级请用 `deploy/db-init.sh` |
 | `--amqp` | `amqp://guest:guest@localhost:5672/` | RabbitMQ 地址，空则回退内存队列 |
 | `--grpc` | `50051` | gRPC 监听端口 |
 | `--api` | `:8085` | HTTP API 监听地址 |

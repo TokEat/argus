@@ -105,33 +105,29 @@ func shouldMarkAgentOffline(hub *grpc.NotifyHub, agentID string) bool {
 
 func main() {
 	var (
-		dbDSN           string
-		amqpURL         string
-		grpcPort        int
-		grpcTLSPort     int
-		grpcTLSCert     string
-		grpcTLSKey      string
-		apiAddr         string
-		configDir       string
-		agentPSK        string
-		devMode         bool
-		migrateOnly     bool
-		dbMigrationMode string
-		seedFromDB      string
+		dbDSN       string
+		amqpURL     string
+		grpcPort    int
+		grpcTLSPort int
+		grpcTLSCert string
+		grpcTLSKey  string
+		apiAddr     string
+		configDir   string
+		agentPSK    string
+		devMode     bool
+		seedFromDB  string
 	)
 
 	flag.StringVar(&dbDSN, "db", "", "PostgreSQL DSN. Empty uses the built-in local PostgreSQL default.")
 	flag.StringVar(&amqpURL, "amqp", "amqp://guest:guest@localhost:5672/", "RabbitMQ AMQP URL. Empty falls back to in-memory queue")
 	flag.IntVar(&grpcPort, "grpc", 50051, "gRPC listen port")
-	flag.IntVar(&grpcTLSPort, "grpc-tls-port", 0, "TLS gRPC listen port for credential-capable Agents (0=disabled)")
+	flag.IntVar(&grpcTLSPort, "grpc-tls-port", 0, "TLS gRPC port for credential-capable Agents (0=disabled)")
 	flag.StringVar(&grpcTLSCert, "grpc-tls-cert", "", "Server certificate for the TLS Agent listener")
 	flag.StringVar(&grpcTLSKey, "grpc-tls-key", "", "Server private key for the TLS Agent listener")
 	flag.StringVar(&apiAddr, "api", ":8085", "HTTP API listen address")
 	flag.StringVar(&configDir, "config-dir", "", "Path to the directory containing finger.yaml, dir.yaml, workflow.yaml, and pocs/")
 	flag.StringVar(&agentPSK, "agent-psk", "", "Pre-shared key for Agent authentication (env: ARGUS_AGENT_PSK)")
 	flag.BoolVar(&devMode, "dev", false, "Enable development mode (skip mandatory security checks)")
-	flag.BoolVar(&migrateOnly, "migrate-only", false, "Apply/verify PostgreSQL schema and exit without starting services")
-	flag.StringVar(&dbMigrationMode, "db-migration-mode", string(db.MigrationModeApply), "Database migration mode: apply|verify|dev-auto")
 	flag.StringVar(&seedFromDB, "seed-from-db", "", "Path to SQLite db file containing precompiled rule assets to seed into PostgreSQL and exit")
 	flag.Parse()
 
@@ -161,8 +157,8 @@ func main() {
 	}
 
 	// 生产模式安全强制检查。
-	// 数据库初始化/迁移场景不需要启动 API/gRPC，也不依赖运行期鉴权密钥。
-	if !devMode && !migrateOnly && seedFromDB == "" {
+	// 规则资产导入场景不启动 API/gRPC，也不依赖运行期鉴权密钥。
+	if !devMode && seedFromDB == "" {
 		if agentPSK == "" {
 			log.Fatalf("[SECURITY] ARGUS_AGENT_PSK is required in production mode. Use --dev to skip.")
 		}
@@ -177,52 +173,43 @@ func main() {
 		}
 	}
 
-	migrationMode, err := db.ParseMigrationMode(dbMigrationMode)
-	if err != nil {
-		log.Fatalf("Invalid db migration mode: %v", err)
-	}
-	if migrationMode == db.MigrationModeDevAuto && !devMode {
-		log.Fatalf("db migration mode 'dev-auto' requires --dev")
-	}
-
 	if strings.TrimSpace(dbDSN) == "" {
 		log.Printf("No DSN provided, using default PostgreSQL DSN: %s", db.DefaultPostgresDSN)
 	}
 
+	// 启动期只做数据库校验（连接重试 + schema 版本 + 结构契约），不执行任何迁移。
+	// 数据库初始化/升级由 deploy/db-init.sh（纯 SQL 导入）在部署阶段完成。
+	dbConnectTimeout := 30 * time.Second
+	if v := strings.TrimSpace(os.Getenv("ARGUS_DB_CONNECT_TIMEOUT")); v != "" {
+		if parsed, parseErr := time.ParseDuration(v); parseErr != nil {
+			log.Fatalf("Invalid ARGUS_DB_CONNECT_TIMEOUT: %v", parseErr)
+		} else if parsed > 0 {
+			dbConnectTimeout = parsed
+		}
+	}
 	log.Println("Opening PostgreSQL database connection...")
-	conn, err := db.OpenDB(dbDSN)
+	conn, err := db.OpenDBWithRetry(dbDSN, dbConnectTimeout)
 	if err != nil {
 		log.Fatalf("Failed to open PostgreSQL database: %v", err)
 	}
 	db.SetDB(conn)
 
-	log.Printf("Applying database migrations (mode=%s)...", migrationMode)
-	if err := db.ApplyMigrations(conn, migrationMode); err != nil {
-		log.Fatalf("Failed to apply database migrations: %v", err)
+	log.Printf("Verifying database schema (required version >= %s)...", db.RequiredSchemaVersion)
+	if err := db.VerifyDatabaseReady(conn); err != nil {
+		log.Fatalf("Database not ready: %v", err)
 	}
 
-	log.Println("Verifying database schema...")
-	if err := db.VerifySchema(conn); err != nil {
-		log.Fatalf("Failed to verify database schema: %v", err)
-	}
+	// Run rule catalog sync in background to avoid blocking startup.
+	// The sync rebuilds structured rule tables from raw arsenal data.
+	go func() {
+		log.Println("Synchronizing rule catalog indexes (background)...")
+		if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+			log.Printf("[RuleCatalog] background sync error: %v", err)
+			return
+		}
+		log.Println("[RuleCatalog] background sync completed")
+	}()
 
-	if migrationMode != db.MigrationModeVerify {
-		// Run rule catalog sync in background to avoid blocking startup.
-		// The sync rebuilds structured rule tables from raw arsenal data.
-		go func() {
-			log.Println("Synchronizing rule catalog indexes (background)...")
-			if err := db.SyncRuleCatalogFromArsenal(); err != nil {
-				log.Printf("[RuleCatalog] background sync error: %v", err)
-				return
-			}
-			log.Println("[RuleCatalog] background sync completed")
-		}()
-	}
-
-	if migrateOnly {
-		log.Println("Database migrations and schema verification completed successfully.")
-		return
-	}
 	if err := egresspkg.ReconcileStaleAudits(context.Background()); err != nil {
 		log.Fatalf("Failed to reconcile EXP egress audits: %v", err)
 	}

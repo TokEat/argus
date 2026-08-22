@@ -59,13 +59,8 @@ func schemaTableSpecs() []schemaTableSpec {
 			Columns: []string{"tenant_id", "project_id", "user_id", "role"},
 		},
 		{
-			Table:   "cron_tasks",
-			Columns: []string{"project_id", "cron_expr", "next_run_at", "status", "deleted_at"},
-			Indexes: []string{"idx_cron_tasks_project_id", "idx_cron_tasks_status", "idx_cron_tasks_deleted_at"},
-		},
-		{
 			Table:   "root_tasks",
-			Columns: []string{"project_id", "cron_task_id", "total_targets", "completed_targets", "status", "archived_at", "current_config_version"},
+			Columns: []string{"project_id", "total_targets", "completed_targets", "status", "archived_at", "current_config_version"},
 			Indexes: []string{"idx_root_tasks_tenant_id", "idx_root_tasks_project_id", "idx_root_tasks_status", "idx_root_tasks_archived_at", "idx_root_tasks_scope_id"},
 		},
 		{
@@ -362,16 +357,6 @@ func schemaTableSpecs() []schemaTableSpec {
 			Table:   "build_jobs",
 			Columns: []string{"platform", "arch", "components", "pack", "status", "artifact", "artifacts", "log_tail", "log_text", "error", "started_at", "finished_at"},
 			Indexes: []string{"idx_build_jobs_platform", "idx_build_jobs_arch", "idx_build_jobs_status"},
-		},
-		{
-			Table:   "notification_rules",
-			Columns: []string{"project_id", "event", "channel", "config", "status"},
-			Indexes: []string{"idx_notification_rules_project_id", "idx_notification_rules_event"},
-		},
-		{
-			Table:   "asset_change_logs",
-			Columns: []string{"project_id", "task_id", "entity_type", "entity_id", "change_type", "details"},
-			Indexes: []string{"idx_asset_change_logs_project_id", "idx_asset_change_logs_task_id", "idx_asset_change_logs_entity_type"},
 		},
 		{
 			Table:   "reports",

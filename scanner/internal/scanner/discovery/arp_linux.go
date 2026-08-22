@@ -4,7 +4,6 @@ package discovery
 
 import (
 	"encoding/binary"
-	"net"
 	"time"
 	"unsafe"
 

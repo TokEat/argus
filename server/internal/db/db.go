@@ -50,25 +50,10 @@ type ProjectMember struct {
 	UpdatedAt time.Time
 }
 
-type CronTask struct {
-	ID        string `gorm:"primaryKey"`
-	ProjectID string `gorm:"index"`
-	Name      string
-	CronExpr  string     `gorm:"index"`
-	Targets   string     `gorm:"type:jsonb"`
-	Config    string     `gorm:"type:jsonb"`
-	NextRunAt *time.Time `gorm:"index"`
-	Status    string     `gorm:"default:'active';index"`
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	DeletedAt gorm.DeletedAt `gorm:"index"`
-}
-
 type RootTask struct {
 	ID                   string `gorm:"primaryKey"`
 	TenantID             string `gorm:"default:'default';index"`
 	ProjectID            string `gorm:"index"`
-	CronTaskID           string `gorm:"index"`
 	UserID               string `gorm:"index"`
 	Name                 string
 	OriginalTargets      string `gorm:"type:text"`
@@ -374,27 +359,6 @@ type Vulnerability struct {
 	MatchedAt    string `gorm:"type:text"` // 匹配位置 URL
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
-}
-
-type NotificationRule struct {
-	ID        uint   `gorm:"primaryKey;autoIncrement"`
-	ProjectID string `gorm:"index"`
-	Event     string `gorm:"index"`
-	Channel   string
-	Config    string `gorm:"type:jsonb"`
-	Status    string `gorm:"default:'enabled'"`
-	CreatedAt time.Time
-}
-
-type AssetChangeLog struct {
-	ID         uint   `gorm:"primaryKey;autoIncrement"`
-	ProjectID  string `gorm:"index"`
-	TaskID     string `gorm:"index"`
-	EntityType string `gorm:"index"`
-	EntityID   uint   `gorm:"index"`
-	ChangeType string `gorm:"index"`
-	Details    string `gorm:"type:jsonb"`
-	CreatedAt  time.Time
 }
 
 type Report struct {

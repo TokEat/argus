@@ -1,9 +1,8 @@
--- 020_seed_admin_and_fix_roles.sql
--- 1) Fix empty roles: prevent privilege escalation via login endpoint
+-- 默认管理员种子（幂等）。与旧 migrations/020_seed-admin-and-fix-roles.sql 等价：
+-- 1) 修复空 role，防止登录端点提权；2) 种入开发/初装默认管理员。
+-- 生产环境首次登录后必须立即修改密码。
 UPDATE users SET role = 'viewer' WHERE role = '' OR role IS NULL;
 
--- 2) Seed default admin user for development/testing (idempotent)
--- Password: admin123  (bcrypt hash, cost=10)
 INSERT INTO users (tenant_id, username, password_hash, role, status, created_at, updated_at)
 VALUES (
     'default',

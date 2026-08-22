@@ -127,8 +127,9 @@ if [[ -z "$PUBLIC_IP" ]]; then
     echo -e "${YELLOW}[*] 自动检测到公网 IP: ${PUBLIC_IP}${NC}"
 fi
 
-# DSN（与 Makefile 格式一致）
+# DSN（与 Makefile 格式一致）。容器内超级用户即 POSTGRES_USER，bootstrap 用它连 postgres 库。
 DB_DSN="host=127.0.0.1 user=${POSTGRES_USER} password=${POSTGRES_PASSWORD} dbname=${POSTGRES_DB} port=${POSTGRES_PORT} sslmode=disable"
+ADMIN_DSN="host=127.0.0.1 user=${POSTGRES_USER} password=${POSTGRES_PASSWORD} dbname=postgres port=${POSTGRES_PORT} sslmode=disable"
 AMQP_URL="amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@127.0.0.1:${RABBITMQ_PORT}/"
 INSTALL_DIR="${ROOT_DIR}"
 mkdir -p "${INSTALL_DIR}/config"
@@ -175,7 +176,7 @@ if ! command -v docker &>/dev/null; then
     echo -e "${YELLOW}  安装 Docker...${NC}"
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
-    apt-get install -y -qq ca-certificates curl gnupg
+    apt-get install -y -qq ca-certificates curl gnupg postgresql-client
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
     chmod a+r /etc/apt/keyrings/docker.gpg
@@ -247,10 +248,6 @@ if [[ "$(docker inspect -f '{{.State.ExitCode}}' argus-minio-init 2>/dev/null ||
     echo -e "${RED}[!] MinIO 私有 Bucket 或应用用户初始化失败${NC}"
     exit 1
 fi
-
-# 初始化数据库（执行 init 脚本）
-echo -e "  初始化数据库..."
-docker compose -f "$COMPOSE_FILE" exec -T postgres bash -lc '/docker-entrypoint-initdb.d/000-init-db.sh' 2>/dev/null || true
 
 echo -e "${GREEN}[✔] 基础设施就绪${NC}"
 
@@ -356,12 +353,20 @@ fi
 echo -e "${GREEN}[✔] 二进制及配置部署完成${NC}"
 
 # ============================================================
-# Step 4: 数据库迁移
+# Step 4: 数据库初始化（纯 SQL，与 server 启动解耦）
 # ============================================================
-echo -e "${YELLOW}[4/6] 执行数据库迁移...${NC}"
+echo -e "${YELLOW}[4/6] 执行数据库初始化...${NC}"
 
-"$INSTALL_DIR/bin/argus-server" --db "$DB_DSN" --migrate-only --db-migration-mode apply --config-dir "$INSTALL_DIR/config"
-echo -e "${GREEN}[✔] 数据库迁移完成${NC}"
+command -v psql >/dev/null 2>&1 || {
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq && apt-get install -y -qq postgresql-client
+}
+
+if ! bash "${SCRIPT_DIR}/db-init.sh" --dsn "$DB_DSN" --admin-dsn "$ADMIN_DSN"; then
+    echo -e "${RED}[!] 数据库初始化失败${NC}"
+    exit 1
+fi
+echo -e "${GREEN}[✔] 数据库初始化完成${NC}"
 
 # ============================================================
 # Step 4.5: 导入规则资产库

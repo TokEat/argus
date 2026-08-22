@@ -4,17 +4,19 @@
 
 当前以以下实现为准：
 
-- `server/internal/db/schema/000_current_schema.sql`：空库当前态 DDL
+- `deploy/db/init/001_init.sql`：版本重启（v001）后的最小基线 DDL，由 `deploy/db-init.sh` 纯 SQL 导入
 - `server/internal/db/schema_verify.go`：启动后表/列/索引契约
-- `server/internal/db/migrations/`：已有库增量升级历史（文件不可改 checksum）
+- `server/internal/db/schema_version.go`：启动期 schema 版本校验（`RequiredSchemaVersion`）
 - `server/internal/db/db.go`
 - `server/internal/db/rule_catalog.go`
 - `server/internal/db/task_lifecycle.go`
 
 > 注：
 > - 本文描述的是“当前主链路实际需要的完整 schema”。
-> - 空库由 `argus-server --migrate-only` 应用 baseline；已有库继续按 `migrations/*.sql` 增量升级。
-> - 已发布的 migration 版本号和 checksum 都不可复用或改写；发生历史版本冲突时必须退休原编号，并以新的递增版本提供幂等迁移。版本 `510` 已永久退休，扫描策略编排使用 `560`。
+> - 数据库初始化与项目启动已分离：`deploy/db-init.sh`（psql 纯 SQL 导入，不依赖二进制）负责建库/建角色/基线导入/种子/自检；`argus-server` 启动时只做连接重试 + 版本校验 + 结构契约校验，不再执行任何迁移。
+> - 历史上 010..570 的嵌入式增量迁移已随 v001 版本重启退役（git 历史可查）；存量旧终态库由 `deploy/db/legacy/900_cutover_from_010_570.sql` 一次性切换。v001 起的版本演进规则：新增 `deploy/db/init/NNN_xxx.sql`（文件末尾自记 `schema_migrations` 版本），并同步推进 `RequiredSchemaVersion` 与 `schema_verify.go` 契约。
+> - v001 收敛时删除了历史废弃对象：`cron_tasks`、`notification_rules`、`asset_change_logs` 表、`tenant_quota` 兼容视图与 `root_tasks.cron_task_id` 列（均无业务代码引用）。
+> - 文中出现的 “Migration 4xx/5xx” 编号指 v001 之前的历史增量，仅作演进背景说明。
 > - 规则资产不在 SQL 里，使用 `deploy/arsenal_seed.db` 和 `--seed-from-db`。
 
 ---
@@ -38,7 +40,7 @@
 - 扫描结果统一做 `target` 归一化，避免 URL / Host / IP 多种写法导致重复资产。
 - 为保证吞吐，当前模型基本不依赖物理外键，而是通过应用层逻辑关联 `project_id`、`root_task_id`、`agent_id` 等业务主键。测绘证据链是例外：查询快照、笔记本来源及分发意图使用 tenant/project 复合外键绑定审计、资产项、任务配置和选中项，防止后续历史、导出、归档或分发链路产生跨项目挂接。
 - 灵活结构统一使用 `jsonb` 或 `text(JSON)` 存储，例如标签、任务配置、节点选择器、规则详情。
-- 误删风险高的实体使用软删除：当前包括 `projects`、`cron_tasks`、`credentials`。
+- 误删风险高的实体使用软删除：当前包括 `projects`、`credentials`。
 
 ### 1.3 当前状态字段约定
 
@@ -58,8 +60,8 @@
 
 核心数据关系可以概括为：
 
-- `projects` 是项目隔离的顶层容器，向下关联 `project_members`、`cron_tasks`、`root_tasks`、`notification_rules`、`domains`、`assets`、`credentials`、`fingerprint_hits`、`vulnerabilities`、`asset_change_logs`、`reports`。
-- `root_tasks` 表示一次用户发起或定时触发的巡航任务，向下包含稳定的 `task_batches`，每个批次以追加式 `sub_tasks` 保存真实 Attempt。
+- `projects` 是项目隔离的顶层容器，向下关联 `project_members`、`root_tasks`、`domains`、`assets`、`credentials`、`fingerprint_hits`、`vulnerabilities`、`reports`。
+- `root_tasks` 表示一次用户发起的巡航任务，向下包含稳定的 `task_batches`，每个批次以追加式 `sub_tasks` 保存真实 Attempt。
 - `sub_tasks` 由 `nodes` 认领执行，并驱动结果写入 `domains`、`assets`、`fingerprint_hits`、`vulnerabilities`；阶段级证据另以 `scan_observations` 追加保存。
 - `scan_coverages` 保存一个 WorkKey 的当前覆盖状态，`scan_work_claims` 为并发相同工作提供唯一占用槽，`task_coverage_links` 记录任务实际执行、历史复用或执行中挂接的来源。
 - `asset_discovery_audits` 保存 Server 网络空间测绘查询、导出和笔记本归档的项目级脱敏审计；只记录查询/配置哈希、计数、状态与耗时，不保存原始表达式、凭据或 Provider 响应。`asset_discovery_snapshots` 与 `asset_discovery_snapshot_items` 是查询历史、导出和笔记本的追加式来源；`asset_discovery_notebook_items` 与 `asset_discovery_notebook_sources` 分离项目内去重目标和每次快照来源；`asset_discovery_notebook_distribution_intents` 及其 item 表冻结分发确认的幂等请求快照，`asset_discovery_notebook_distribution_materializations` 冻结确认后的 typed 结果。intent 单独存在不代表授权或执行。
@@ -132,19 +134,7 @@
 
 ### 3.2 调度控制面
 
-#### `cron_tasks`
-
-| 字段 | 类型 | 说明 | 约束 / 索引 |
-|------|------|------|-------------|
-| `id` | string | 定时任务主键 | PK |
-| `project_id` | string | 所属项目 | Index |
-| `name` | string | 定时任务名称 | - |
-| `cron_expr` | string | Cron 表达式 | Index |
-| `targets` | jsonb | 定时目标集 | - |
-| `config` | jsonb | 定时任务扫描配置 | - |
-| `next_run_at` | timestamp | 下次执行时间 | Index |
-| `status` | string | `active` / `disabled` | Index, Default:`active` |
-| `created_at` / `updated_at` / `deleted_at` | timestamp | 审计时间与软删除时间 | `deleted_at` Index |
+> `cron_tasks`（定时任务）与 `notification_rules`（通知规则）自 v001 起已随历史功能下线一并移除；定时触发能力由外部调度（cron/systemd timer）直接调用 API 承担。
 
 #### `root_tasks`
 
@@ -153,7 +143,6 @@
 | `id` | string | 根任务 ID | PK |
 | `tenant_id` | string | 租户隔离键 | Index |
 | `project_id` | string | 所属项目 | Index |
-| `cron_task_id` | string | 来源定时任务 | Index |
 | `user_id` | string | 发起用户 | Index |
 | `name` | string | 任务名称 | - |
 | `original_targets` | text | 原始输入目标列表 | Text |
@@ -349,18 +338,6 @@
 | `timestamp` | int64 | Agent 侧原始时间戳 | Index |
 | `created_at` | timestamp | 服务端入库时间 | - |
 
-#### `notification_rules`
-
-| 字段 | 类型 | 说明 | 约束 / 索引 |
-|------|------|------|-------------|
-| `id` | uint | 规则主键 | PK |
-| `project_id` | string | 所属项目 | Index |
-| `event` | string | 触发事件类型 | Index |
-| `channel` | string | 通知渠道 | - |
-| `config` | jsonb | 渠道配置 | - |
-| `status` | string | `enabled` / `disabled` | Default:`enabled` |
-| `created_at` | timestamp | 创建时间 | - |
-
 ---
 
 #### `task_creation_idempotencies`
@@ -511,19 +488,6 @@ G31 新增的 additive、append-only 表，保存 `argus.timing/v1` 的已校验
 | `created_at` / `updated_at` | timestamp | 审计时间 | - |
 
 联合唯一约束：`(project_id, target, plugin)`。
-
-#### `asset_change_logs`
-
-| 字段 | 类型 | 说明 | 约束 / 索引 |
-|------|------|------|-------------|
-| `id` | uint | 变更主键 | PK |
-| `project_id` | string | 所属项目 | Index |
-| `task_id` | string | 触发变更的任务 | Index |
-| `entity_type` | string | 变更对象类型 | Index |
-| `entity_id` | uint | 变更对象主键 | Index |
-| `change_type` | string | 变更类型 | Index |
-| `details` | jsonb | 变更详情 | - |
-| `created_at` | timestamp | 记录时间 | - |
 
 #### `reports`
 
@@ -721,7 +685,7 @@ G31 新增的 additive、append-only 表，保存 `argus.timing/v1` 的已校验
 
 ## 5. 相比旧文档本次补齐的重点
 
-- 补全 `project_members`、`cron_tasks`、`notification_rules`、`domains`、`credentials`、`asset_change_logs`、`reports`。
+- 补全 `project_members`、`domains`、`credentials`、`reports`（`cron_tasks`、`notification_rules`、`asset_change_logs` 已在 v001 收敛时移除）。
 - 补全规则治理层的 `rule_catalog_bootstraps`、`fingerprint_rules`、`poc_rules`、`workflow_rules`、`dir_rules`。
 - 补全 `nodes` 的会话令牌、容量、运行任务列表、OS/Arch、资源使用率等字段。
 - 补全 `users` 的密码哈希、状态字段，以及 `system_configs` 对 `mcp_*` API Key 的承载方式。
@@ -733,7 +697,7 @@ G31 新增的 additive、append-only 表，保存 `argus.timing/v1` 的已校验
 
 ## 5.1 云资源编排
 
-> 云资源编排三表已落地，对应 GORM 模型在 `server/internal/db/cloud_models.go`，SQL migration 为 `060_add_cloud_tables.sql`、`070_add_oss_fields.sql`、`080_add_cloud_instance_reboot_count.sql`。
+> 云资源编排三表已落地，对应 GORM 模型在 `server/internal/db/cloud_models.go`；建表 DDL 已并入 `deploy/db/init/001_init.sql`（历史增量 060/070/080 见 git 历史）。
 
 #### `cloud_accounts`
 
@@ -835,8 +799,7 @@ Argus 早期结果入库以 `task_id` 为主要关联键，适合一次性扫描
 - `projects` 是长期业务容器，承载授权边界、默认配置、初始目标、成员和后续巡航任务。
 - `root_tasks` / `sub_tasks` 只描述一次执行，不再作为资产生命周期的唯一真相源。
 - `domains`、`assets`、`fingerprint_hits`、`vulnerabilities` 使用 `project_id + target + 业务键` 做去重，避免同一项目多次扫描产生重复资产。
-- 误删影响大的实体使用软删除，例如 `projects`、`cron_tasks`、`credentials`。
-- 资产变更需要独立流水，`asset_change_logs` 用于描述发现、新增、消失、属性变化等事件，而不是把历史塞回资产主表。
+- 误删影响大的实体使用软删除，例如 `projects`、`credentials`。（`cron_tasks`、`asset_change_logs` 为历史设计，v001 收敛时已随死代码移除。）
 - 凭证必须加密存储，不使用 JSONB 明文查询；`credentials.content` 是密文承载字段。
 
 历史 schema 草案的具体结构体内容已经合并进本文的当前 schema 与上述设计背景，不再单独保留拆分稿。

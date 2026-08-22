@@ -15,7 +15,6 @@ POSTGRES_DB="${POSTGRES_DB:-argus}"
 DB_HOST="${DB_HOST:-127.0.0.1}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 DB_PORT="${DB_PORT:-${POSTGRES_PORT}}"
-DB_MIGRATION_MODE="${DB_MIGRATION_MODE:-apply}"
 
 RABBITMQ_HOST="${RABBITMQ_HOST:-127.0.0.1}"
 RABBITMQ_PORT="${RABBITMQ_PORT:-5672}"
@@ -64,24 +63,10 @@ wait_for_service() {
   exit 1
 }
 
-run_migrate_only() {
+run_db_setup() {
   (
     cd "${ROOT_DIR}"
-    if [[ -x "${ROOT_DIR}/bin/argus-server" ]]; then
-      if [[ "${DB_MIGRATION_MODE}" == "dev-auto" ]]; then
-        ./bin/argus-server --db "${DB_DSN}" --migrate-only --db-migration-mode "${DB_MIGRATION_MODE}" --dev
-      else
-        ./bin/argus-server --db "${DB_DSN}" --migrate-only --db-migration-mode "${DB_MIGRATION_MODE}"
-      fi
-      return
-    fi
-
-    require_cmd go
-    if [[ "${DB_MIGRATION_MODE}" == "dev-auto" ]]; then
-      go run ./server/cmd/argus-server --db "${DB_DSN}" --migrate-only --db-migration-mode "${DB_MIGRATION_MODE}" --dev
-    else
-      go run ./server/cmd/argus-server --db "${DB_DSN}" --migrate-only --db-migration-mode "${DB_MIGRATION_MODE}"
-    fi
+    make --no-print-directory db-setup
   )
 }
 
@@ -105,11 +90,8 @@ log "starting local infrastructure: ${RABBITMQ_SERVICE}, ${POSTGRES_SERVICE}"
 wait_for_service "${RABBITMQ_SERVICE}"
 wait_for_service "${POSTGRES_SERVICE}"
 
-log "bootstrapping PostgreSQL database and role"
-"${COMPOSE_CMD[@]}" exec -T "${POSTGRES_SERVICE}" bash -lc '/docker-entrypoint-initdb.d/000-init-db.sh'
-
-log "applying database migrations"
-run_migrate_only
+log "bootstrapping database and importing schema (pure SQL via deploy/db-init.sh)"
+run_db_setup
 
 cat <<EOF
 [setup-local] local infrastructure is ready

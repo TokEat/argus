@@ -72,7 +72,7 @@ cd "${ROOT_DIR}"
 echo -e "${YELLOW}[2/3] 整理部署文件与资源...${NC}"
 rm -rf "${BUNDLE_DIR}"
 mkdir -p "${BUNDLE_DIR}/bin"
-mkdir -p "${BUNDLE_DIR}/deploy/postgres"
+mkdir -p "${BUNDLE_DIR}/deploy/db"
 mkdir -p "${BUNDLE_DIR}/deploy/images"
 
 # 拷贝二进制
@@ -113,9 +113,12 @@ else
 fi
 
 # 拷贝数据库初始化脚本
-if [[ -d "${ROOT_DIR}/server/deploy/postgres" ]]; then
-    cp -r "${ROOT_DIR}/server/deploy/postgres/"* "${BUNDLE_DIR}/deploy/postgres/" 2>/dev/null || true
+# 数据库初始化 SQL 与脚本是部署必需品，缺失即失败（不得静默跳过）
+if [[ ! -f "${ROOT_DIR}/deploy/db/init/001_init.sql" || ! -f "${ROOT_DIR}/deploy/db-init.sh" ]]; then
+    echo -e "${RED}[!] 缺少数据库初始化文件 deploy/db/ 或 deploy/db-init.sh${NC}"
+    exit 1
 fi
+cp -r "${ROOT_DIR}/deploy/db/"* "${BUNDLE_DIR}/deploy/db/"
 
 required_paths=(
     "bin/argus-server-linux-amd64"

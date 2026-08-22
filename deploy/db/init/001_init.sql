@@ -1,7 +1,17 @@
--- Current-state PostgreSQL schema for empty Argus databases.
--- Generated from an empty database after applying incremental migrations.
--- Do not edit by hand. Regenerate with: make db-schema-dump
--- Existing databases keep using server/internal/db/migrations/*.sql.
+-- Argus 控制面数据库最小基线（版本重启后的权威 schema，v001）。
+-- 生成方式：由 010..570 全量增量在空库物化后 pg_dump --schema-only 收敛而成，
+-- 并剔除历史废弃对象（cron_tasks / notification_rules / asset_change_logs 表、
+-- tenant_quota 兼容视图、root_tasks.cron_task_id 列）。请勿手工改写已发布内容；
+-- 后续 schema 变更新增 init/002_xxx.sql 并在文件末尾追加对应的
+-- INSERT INTO schema_migrations 记录。维护政策见 deploy/db/README.md。
+--
+--
+-- PostgreSQL database dump
+--
+
+
+-- Dumped from database version 15.17
+-- Dumped by pg_dump version 15.17
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -14,11 +24,27 @@ SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
 
+--
+-- Name: pg_trgm; Type: EXTENSION; Schema: -; Owner: -
+--
+
 CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION pg_trgm; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION pg_trgm IS 'text similarity measurement and index searching based on trigrams';
+
 
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
+
+--
+-- Name: active_fingerprint_rules; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.active_fingerprint_rules (
     id bigint NOT NULL,
@@ -40,6 +66,11 @@ CREATE TABLE public.active_fingerprint_rules (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: active_fingerprint_rules_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.active_fingerprint_rules_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -47,7 +78,17 @@ CREATE SEQUENCE public.active_fingerprint_rules_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: active_fingerprint_rules_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.active_fingerprint_rules_id_seq OWNED BY public.active_fingerprint_rules.id;
+
+
+--
+-- Name: agent_log_alert_events; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.agent_log_alert_events (
     id bigint NOT NULL,
@@ -60,6 +101,11 @@ CREATE TABLE public.agent_log_alert_events (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: agent_log_alert_events_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.agent_log_alert_events_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -67,7 +113,17 @@ CREATE SEQUENCE public.agent_log_alert_events_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: agent_log_alert_events_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.agent_log_alert_events_id_seq OWNED BY public.agent_log_alert_events.id;
+
+
+--
+-- Name: agent_log_alert_rules; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.agent_log_alert_rules (
     id bigint NOT NULL,
@@ -81,6 +137,11 @@ CREATE TABLE public.agent_log_alert_rules (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: agent_log_alert_rules_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.agent_log_alert_rules_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -88,7 +149,17 @@ CREATE SEQUENCE public.agent_log_alert_rules_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: agent_log_alert_rules_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.agent_log_alert_rules_id_seq OWNED BY public.agent_log_alert_rules.id;
+
+
+--
+-- Name: agent_log_archives; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.agent_log_archives (
     id bigint NOT NULL,
@@ -101,6 +172,11 @@ CREATE TABLE public.agent_log_archives (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: agent_log_archives_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.agent_log_archives_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -108,7 +184,17 @@ CREATE SEQUENCE public.agent_log_archives_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: agent_log_archives_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.agent_log_archives_id_seq OWNED BY public.agent_log_archives.id;
+
+
+--
+-- Name: agent_logs; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.agent_logs (
     id bigint NOT NULL,
@@ -120,6 +206,11 @@ CREATE TABLE public.agent_logs (
     tenant_id text DEFAULT 'default'::text NOT NULL
 );
 
+
+--
+-- Name: agent_logs_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.agent_logs_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -127,7 +218,17 @@ CREATE SEQUENCE public.agent_logs_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: agent_logs_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.agent_logs_id_seq OWNED BY public.agent_logs.id;
+
+
+--
+-- Name: agent_session_audits; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.agent_session_audits (
     id bigint NOT NULL,
@@ -139,6 +240,11 @@ CREATE TABLE public.agent_session_audits (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: agent_session_audits_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.agent_session_audits_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -146,7 +252,17 @@ CREATE SEQUENCE public.agent_session_audits_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: agent_session_audits_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.agent_session_audits_id_seq OWNED BY public.agent_session_audits.id;
+
+
+--
+-- Name: ai_tool_invocations; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.ai_tool_invocations (
     id bigint NOT NULL,
@@ -163,6 +279,11 @@ CREATE TABLE public.ai_tool_invocations (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: ai_tool_invocations_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.ai_tool_invocations_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -170,7 +291,17 @@ CREATE SEQUENCE public.ai_tool_invocations_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: ai_tool_invocations_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.ai_tool_invocations_id_seq OWNED BY public.ai_tool_invocations.id;
+
+
+--
+-- Name: arsenal_ai_reviews; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.arsenal_ai_reviews (
     id bigint NOT NULL,
@@ -191,6 +322,11 @@ CREATE TABLE public.arsenal_ai_reviews (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: arsenal_ai_reviews_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.arsenal_ai_reviews_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -198,7 +334,17 @@ CREATE SEQUENCE public.arsenal_ai_reviews_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: arsenal_ai_reviews_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.arsenal_ai_reviews_id_seq OWNED BY public.arsenal_ai_reviews.id;
+
+
+--
+-- Name: arsenal_events; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.arsenal_events (
     id bigint NOT NULL,
@@ -216,6 +362,11 @@ CREATE TABLE public.arsenal_events (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: arsenal_events_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.arsenal_events_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -223,7 +374,17 @@ CREATE SEQUENCE public.arsenal_events_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: arsenal_events_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.arsenal_events_id_seq OWNED BY public.arsenal_events.id;
+
+
+--
+-- Name: arsenals; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.arsenals (
     id text NOT NULL,
@@ -240,25 +401,10 @@ CREATE TABLE public.arsenals (
     previous_content text
 );
 
-CREATE TABLE public.asset_change_logs (
-    id bigint NOT NULL,
-    project_id text,
-    task_id text,
-    entity_type text,
-    entity_id bigint,
-    change_type text,
-    details jsonb,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
 
-CREATE SEQUENCE public.asset_change_logs_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.asset_change_logs_id_seq OWNED BY public.asset_change_logs.id;
+--
+-- Name: asset_discovery_audits; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.asset_discovery_audits (
     id bigint NOT NULL,
@@ -282,6 +428,11 @@ CREATE TABLE public.asset_discovery_audits (
     notebook_item_id bigint
 );
 
+
+--
+-- Name: asset_discovery_audits_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.asset_discovery_audits_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -289,7 +440,17 @@ CREATE SEQUENCE public.asset_discovery_audits_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: asset_discovery_audits_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.asset_discovery_audits_id_seq OWNED BY public.asset_discovery_audits.id;
+
+
+--
+-- Name: asset_discovery_notebook_distribution_intent_items; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.asset_discovery_notebook_distribution_intent_items (
     id bigint NOT NULL,
@@ -302,11 +463,16 @@ CREATE TABLE public.asset_discovery_notebook_distribution_intent_items (
     target_hash character varying(64) NOT NULL,
     disposition character varying(32) NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT chk_addii_disposition CHECK (((disposition)::text = ANY ((ARRAY['new'::character varying, 'duplicate'::character varying])::text[]))),
-    CONSTRAINT chk_addii_ids CHECK ((((octet_length(tenant_id) >= 1) AND (octet_length(tenant_id) <= 1024)) AND ((octet_length(project_id) >= 1) AND (octet_length(project_id) <= 1024)))),
+    CONSTRAINT chk_addii_disposition CHECK (((disposition)::text = ANY (ARRAY[('new'::character varying)::text, ('duplicate'::character varying)::text]))),
+    CONSTRAINT chk_addii_ids CHECK (((octet_length(tenant_id) >= 1) AND (octet_length(tenant_id) <= 1024) AND ((octet_length(project_id) >= 1) AND (octet_length(project_id) <= 1024)))),
     CONSTRAINT chk_addii_position CHECK ((("position" >= 0) AND ("position" <= 99))),
-    CONSTRAINT chk_addii_target CHECK ((((octet_length(normalized_target) >= 1) AND (octet_length(normalized_target) <= 8192)) AND ((target_hash)::text ~ '^[0-9a-f]{64}$'::text)))
+    CONSTRAINT chk_addii_target CHECK (((octet_length(normalized_target) >= 1) AND (octet_length(normalized_target) <= 8192) AND ((target_hash)::text ~ '^[0-9a-f]{64}$'::text)))
 );
+
+
+--
+-- Name: asset_discovery_notebook_distribution_intent_items_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
 
 CREATE SEQUENCE public.asset_discovery_notebook_distribution_intent_items_id_seq
     START WITH 1
@@ -315,7 +481,17 @@ CREATE SEQUENCE public.asset_discovery_notebook_distribution_intent_items_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: asset_discovery_notebook_distribution_intent_items_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.asset_discovery_notebook_distribution_intent_items_id_seq OWNED BY public.asset_discovery_notebook_distribution_intent_items.id;
+
+
+--
+-- Name: asset_discovery_notebook_distribution_intents; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.asset_discovery_notebook_distribution_intents (
     id bigint NOT NULL,
@@ -341,13 +517,18 @@ CREATE TABLE public.asset_discovery_notebook_distribution_intents (
     batch_count integer NOT NULL,
     status character varying(32) NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT chk_addi_counts CHECK ((((selected >= 1) AND (selected <= 100)) AND (fresh >= 0) AND (duplicate >= 0) AND ((fresh + duplicate) = selected) AND ((scope_added >= 0) AND (scope_added <= fresh)) AND ((seed_targets_added >= 0) AND (seed_targets_added <= fresh)) AND ((batch_count >= 0) AND (batch_count <= fresh)))),
+    CONSTRAINT chk_addi_counts CHECK (((selected >= 1) AND (selected <= 100) AND (fresh >= 0) AND (duplicate >= 0) AND ((fresh + duplicate) = selected) AND ((scope_added >= 0) AND (scope_added <= fresh)) AND ((seed_targets_added >= 0) AND (seed_targets_added <= fresh)) AND ((batch_count >= 0) AND (batch_count <= fresh)))),
     CONSTRAINT chk_addi_hashes CHECK ((((idempotency_key_hash)::text ~ '^[0-9a-f]{64}$'::text) AND ((request_hash)::text ~ '^[0-9a-f]{64}$'::text) AND ((plan_hash)::text ~ '^[0-9a-f]{64}$'::text) AND ((config_hash)::text ~ '^[0-9a-f]{64}$'::text))),
-    CONSTRAINT chk_addi_ids CHECK ((((octet_length(tenant_id) >= 1) AND (octet_length(tenant_id) <= 1024)) AND ((octet_length(project_id) >= 1) AND (octet_length(project_id) <= 1024)) AND ((octet_length(root_task_id) >= 1) AND (octet_length(root_task_id) <= 1024)) AND ((octet_length(operator_id) >= 1) AND (octet_length(operator_id) <= 1024)))),
+    CONSTRAINT chk_addi_ids CHECK (((octet_length(tenant_id) >= 1) AND (octet_length(tenant_id) <= 1024) AND ((octet_length(project_id) >= 1) AND (octet_length(project_id) <= 1024)) AND ((octet_length(root_task_id) >= 1) AND (octet_length(root_task_id) <= 1024)) AND ((octet_length(operator_id) >= 1) AND (octet_length(operator_id) <= 1024)))),
     CONSTRAINT chk_addi_operation CHECK (((operation)::text = 'materialize'::text)),
     CONSTRAINT chk_addi_status CHECK (((status)::text = 'recorded'::text)),
-    CONSTRAINT chk_addi_versions CHECK ((((octet_length((schema_version)::text) >= 1) AND (octet_length((schema_version)::text) <= 64)) AND ((octet_length((preview_schema_version)::text) >= 1) AND (octet_length((preview_schema_version)::text) <= 64)) AND ((octet_length((task_status)::text) >= 1) AND (octet_length((task_status)::text) <= 64)) AND ((octet_length(rule_version) >= 0) AND (octet_length(rule_version) <= 8192)) AND (config_version >= 1)))
+    CONSTRAINT chk_addi_versions CHECK (((octet_length((schema_version)::text) >= 1) AND (octet_length((schema_version)::text) <= 64) AND ((octet_length((preview_schema_version)::text) >= 1) AND (octet_length((preview_schema_version)::text) <= 64)) AND ((octet_length((task_status)::text) >= 1) AND (octet_length((task_status)::text) <= 64)) AND ((octet_length(rule_version) >= 0) AND (octet_length(rule_version) <= 8192)) AND (config_version >= 1)))
 );
+
+
+--
+-- Name: asset_discovery_notebook_distribution_intents_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
 
 CREATE SEQUENCE public.asset_discovery_notebook_distribution_intents_id_seq
     START WITH 1
@@ -356,7 +537,17 @@ CREATE SEQUENCE public.asset_discovery_notebook_distribution_intents_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: asset_discovery_notebook_distribution_intents_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.asset_discovery_notebook_distribution_intents_id_seq OWNED BY public.asset_discovery_notebook_distribution_intents.id;
+
+
+--
+-- Name: asset_discovery_notebook_distribution_materializations; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.asset_discovery_notebook_distribution_materializations (
     id bigint NOT NULL,
@@ -370,9 +561,14 @@ CREATE TABLE public.asset_discovery_notebook_distribution_materializations (
     attempt_ids jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT chk_addm_arrays CHECK (((jsonb_typeof(batch_ids) = 'array'::text) AND (jsonb_typeof(attempt_ids) = 'array'::text) AND (jsonb_array_length(batch_ids) = jsonb_array_length(attempt_ids)) AND (jsonb_array_length(batch_ids) <= 100) AND (((status)::text <> 'unchanged'::text) OR (jsonb_array_length(batch_ids) = 0)))),
-    CONSTRAINT chk_addm_ids CHECK ((((octet_length(tenant_id) >= 1) AND (octet_length(tenant_id) <= 1024)) AND ((octet_length(project_id) >= 1) AND (octet_length(project_id) <= 1024)) AND ((octet_length(root_task_id) >= 1) AND (octet_length(root_task_id) <= 1024)))),
-    CONSTRAINT chk_addm_status CHECK (((status)::text = ANY ((ARRAY['materialized'::character varying, 'unchanged'::character varying])::text[])))
+    CONSTRAINT chk_addm_ids CHECK (((octet_length(tenant_id) >= 1) AND (octet_length(tenant_id) <= 1024) AND ((octet_length(project_id) >= 1) AND (octet_length(project_id) <= 1024)) AND ((octet_length(root_task_id) >= 1) AND (octet_length(root_task_id) <= 1024)))),
+    CONSTRAINT chk_addm_status CHECK (((status)::text = ANY (ARRAY[('materialized'::character varying)::text, ('unchanged'::character varying)::text])))
 );
+
+
+--
+-- Name: asset_discovery_notebook_distribution_materializations_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
 
 CREATE SEQUENCE public.asset_discovery_notebook_distribution_materializations_id_seq
     START WITH 1
@@ -381,7 +577,17 @@ CREATE SEQUENCE public.asset_discovery_notebook_distribution_materializations_id
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: asset_discovery_notebook_distribution_materializations_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.asset_discovery_notebook_distribution_materializations_id_seq OWNED BY public.asset_discovery_notebook_distribution_materializations.id;
+
+
+--
+-- Name: asset_discovery_notebook_item_tags; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.asset_discovery_notebook_item_tags (
     id bigint NOT NULL,
@@ -392,6 +598,11 @@ CREATE TABLE public.asset_discovery_notebook_item_tags (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: asset_discovery_notebook_item_tags_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.asset_discovery_notebook_item_tags_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -399,7 +610,17 @@ CREATE SEQUENCE public.asset_discovery_notebook_item_tags_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: asset_discovery_notebook_item_tags_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.asset_discovery_notebook_item_tags_id_seq OWNED BY public.asset_discovery_notebook_item_tags.id;
+
+
+--
+-- Name: asset_discovery_notebook_items; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.asset_discovery_notebook_items (
     id bigint NOT NULL,
@@ -418,6 +639,11 @@ CREATE TABLE public.asset_discovery_notebook_items (
     CONSTRAINT chk_asset_discovery_notebook_items_target_hash CHECK ((char_length((target_hash)::text) = 64))
 );
 
+
+--
+-- Name: asset_discovery_notebook_items_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.asset_discovery_notebook_items_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -425,7 +651,17 @@ CREATE SEQUENCE public.asset_discovery_notebook_items_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: asset_discovery_notebook_items_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.asset_discovery_notebook_items_id_seq OWNED BY public.asset_discovery_notebook_items.id;
+
+
+--
+-- Name: asset_discovery_notebook_sources; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.asset_discovery_notebook_sources (
     id bigint NOT NULL,
@@ -440,6 +676,11 @@ CREATE TABLE public.asset_discovery_notebook_sources (
     CONSTRAINT chk_asset_discovery_notebook_sources_archive CHECK (((octet_length(archived_by) >= 1) AND (octet_length(archived_by) <= 1024)))
 );
 
+
+--
+-- Name: asset_discovery_notebook_sources_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.asset_discovery_notebook_sources_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -447,7 +688,17 @@ CREATE SEQUENCE public.asset_discovery_notebook_sources_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: asset_discovery_notebook_sources_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.asset_discovery_notebook_sources_id_seq OWNED BY public.asset_discovery_notebook_sources.id;
+
+
+--
+-- Name: asset_discovery_notebook_tags; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.asset_discovery_notebook_tags (
     id bigint NOT NULL,
@@ -458,6 +709,11 @@ CREATE TABLE public.asset_discovery_notebook_tags (
     CONSTRAINT chk_adn_tag_name CHECK (((octet_length((name)::text) >= 1) AND (octet_length((name)::text) <= 64)))
 );
 
+
+--
+-- Name: asset_discovery_notebook_tags_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.asset_discovery_notebook_tags_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -465,7 +721,17 @@ CREATE SEQUENCE public.asset_discovery_notebook_tags_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: asset_discovery_notebook_tags_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.asset_discovery_notebook_tags_id_seq OWNED BY public.asset_discovery_notebook_tags.id;
+
+
+--
+-- Name: asset_discovery_snapshot_items; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.asset_discovery_snapshot_items (
     id bigint NOT NULL,
@@ -494,6 +760,11 @@ CREATE TABLE public.asset_discovery_snapshot_items (
     CONSTRAINT chk_asset_discovery_snapshot_items_target CHECK (((octet_length(normalized_target) >= 1) AND (octet_length(normalized_target) <= 8192)))
 );
 
+
+--
+-- Name: asset_discovery_snapshot_items_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.asset_discovery_snapshot_items_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -501,7 +772,17 @@ CREATE SEQUENCE public.asset_discovery_snapshot_items_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: asset_discovery_snapshot_items_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.asset_discovery_snapshot_items_id_seq OWNED BY public.asset_discovery_snapshot_items.id;
+
+
+--
+-- Name: asset_discovery_snapshots; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.asset_discovery_snapshots (
     id bigint NOT NULL,
@@ -525,6 +806,11 @@ CREATE TABLE public.asset_discovery_snapshots (
     CONSTRAINT chk_asset_discovery_snapshots_expression CHECK (((octet_length(expression) >= 1) AND (octet_length(expression) <= 4096)))
 );
 
+
+--
+-- Name: asset_discovery_snapshots_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.asset_discovery_snapshots_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -532,7 +818,17 @@ CREATE SEQUENCE public.asset_discovery_snapshots_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: asset_discovery_snapshots_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.asset_discovery_snapshots_id_seq OWNED BY public.asset_discovery_snapshots.id;
+
+
+--
+-- Name: assets; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.assets (
     id bigint NOT NULL,
@@ -556,6 +852,11 @@ CREATE TABLE public.assets (
     root_task_id text
 );
 
+
+--
+-- Name: assets_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.assets_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -563,7 +864,17 @@ CREATE SEQUENCE public.assets_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: assets_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.assets_id_seq OWNED BY public.assets.id;
+
+
+--
+-- Name: build_jobs; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.build_jobs (
     id bigint NOT NULL,
@@ -583,6 +894,11 @@ CREATE TABLE public.build_jobs (
     artifacts text
 );
 
+
+--
+-- Name: build_jobs_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.build_jobs_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -590,7 +906,17 @@ CREATE SEQUENCE public.build_jobs_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: build_jobs_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.build_jobs_id_seq OWNED BY public.build_jobs.id;
+
+
+--
+-- Name: cloud_account_bindings; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.cloud_account_bindings (
     id bigint NOT NULL,
@@ -602,6 +928,11 @@ CREATE TABLE public.cloud_account_bindings (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: cloud_account_bindings_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.cloud_account_bindings_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -609,7 +940,17 @@ CREATE SEQUENCE public.cloud_account_bindings_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: cloud_account_bindings_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.cloud_account_bindings_id_seq OWNED BY public.cloud_account_bindings.id;
+
+
+--
+-- Name: cloud_accounts; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.cloud_accounts (
     id text NOT NULL,
@@ -630,6 +971,11 @@ CREATE TABLE public.cloud_accounts (
     oss_endpoint text DEFAULT ''::text NOT NULL,
     owner_user_id text DEFAULT ''::text NOT NULL
 );
+
+
+--
+-- Name: cloud_instances; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.cloud_instances (
     id text NOT NULL,
@@ -652,6 +998,11 @@ CREATE TABLE public.cloud_instances (
     reboot_count integer DEFAULT 0 NOT NULL
 );
 
+
+--
+-- Name: cloud_scaling_policies; Type: TABLE; Schema: public; Owner: -
+--
+
 CREATE TABLE public.cloud_scaling_policies (
     id text NOT NULL,
     tenant_id text DEFAULT 'default'::text NOT NULL,
@@ -673,6 +1024,11 @@ CREATE TABLE public.cloud_scaling_policies (
     spot_duration_hours integer DEFAULT 1 NOT NULL
 );
 
+
+--
+-- Name: credential_bundles; Type: TABLE; Schema: public; Owner: -
+--
+
 CREATE TABLE public.credential_bundles (
     ref character varying(36) NOT NULL,
     tenant_id character varying(128) NOT NULL,
@@ -692,6 +1048,11 @@ CREATE TABLE public.credential_bundles (
     CONSTRAINT credential_bundles_pair_count_check CHECK ((pair_count >= 0))
 );
 
+
+--
+-- Name: credential_dictionaries; Type: TABLE; Schema: public; Owner: -
+--
+
 CREATE TABLE public.credential_dictionaries (
     id character varying(36) NOT NULL,
     tenant_id character varying(128) NOT NULL,
@@ -702,8 +1063,13 @@ CREATE TABLE public.credential_dictionaries (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     deleted_at timestamp with time zone,
-    CONSTRAINT credential_dictionaries_kind_check CHECK (((kind)::text = ANY ((ARRAY['username'::character varying, 'password'::character varying])::text[])))
+    CONSTRAINT credential_dictionaries_kind_check CHECK (((kind)::text = ANY (ARRAY[('username'::character varying)::text, ('password'::character varying)::text])))
 );
+
+
+--
+-- Name: credential_dictionary_revisions; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.credential_dictionary_revisions (
     id bigint NOT NULL,
@@ -721,6 +1087,11 @@ CREATE TABLE public.credential_dictionary_revisions (
     CONSTRAINT credential_dictionary_revisions_revision_check CHECK ((revision > 0))
 );
 
+
+--
+-- Name: credential_dictionary_revisions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.credential_dictionary_revisions_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -728,7 +1099,17 @@ CREATE SEQUENCE public.credential_dictionary_revisions_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: credential_dictionary_revisions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.credential_dictionary_revisions_id_seq OWNED BY public.credential_dictionary_revisions.id;
+
+
+--
+-- Name: credential_finding_secrets; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.credential_finding_secrets (
     id character varying(36) NOT NULL,
@@ -745,6 +1126,11 @@ CREATE TABLE public.credential_finding_secrets (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: credential_reveal_audits; Type: TABLE; Schema: public; Owner: -
+--
+
 CREATE TABLE public.credential_reveal_audits (
     id bigint NOT NULL,
     tenant_id character varying(128) NOT NULL,
@@ -755,6 +1141,11 @@ CREATE TABLE public.credential_reveal_audits (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: credential_reveal_audits_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.credential_reveal_audits_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -762,7 +1153,17 @@ CREATE SEQUENCE public.credential_reveal_audits_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: credential_reveal_audits_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.credential_reveal_audits_id_seq OWNED BY public.credential_reveal_audits.id;
+
+
+--
+-- Name: credentials; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.credentials (
     id text NOT NULL,
@@ -775,19 +1176,10 @@ CREATE TABLE public.credentials (
     deleted_at timestamp with time zone
 );
 
-CREATE TABLE public.cron_tasks (
-    id text NOT NULL,
-    project_id text,
-    name text,
-    cron_expr text,
-    targets jsonb,
-    config jsonb,
-    next_run_at timestamp with time zone,
-    status text DEFAULT 'active'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    deleted_at timestamp with time zone
-);
+
+--
+-- Name: custom_roles; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.custom_roles (
     id bigint NOT NULL,
@@ -801,6 +1193,11 @@ CREATE TABLE public.custom_roles (
     updated_at timestamp with time zone
 );
 
+
+--
+-- Name: custom_roles_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.custom_roles_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -808,7 +1205,17 @@ CREATE SEQUENCE public.custom_roles_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: custom_roles_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.custom_roles_id_seq OWNED BY public.custom_roles.id;
+
+
+--
+-- Name: dir_rules; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.dir_rules (
     id bigint NOT NULL,
@@ -825,6 +1232,11 @@ CREATE TABLE public.dir_rules (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: dir_rules_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.dir_rules_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -832,7 +1244,17 @@ CREATE SEQUENCE public.dir_rules_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: dir_rules_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.dir_rules_id_seq OWNED BY public.dir_rules.id;
+
+
+--
+-- Name: domains; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.domains (
     id bigint NOT NULL,
@@ -849,6 +1271,11 @@ CREATE TABLE public.domains (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: domains_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.domains_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -856,7 +1283,17 @@ CREATE SEQUENCE public.domains_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: domains_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.domains_id_seq OWNED BY public.domains.id;
+
+
+--
+-- Name: exp_asset_refs; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.exp_asset_refs (
     id bigint NOT NULL,
@@ -869,6 +1306,11 @@ CREATE TABLE public.exp_asset_refs (
     CONSTRAINT exp_asset_refs_asset_version_check CHECK ((asset_version > 0))
 );
 
+
+--
+-- Name: exp_asset_refs_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.exp_asset_refs_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -876,7 +1318,17 @@ CREATE SEQUENCE public.exp_asset_refs_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: exp_asset_refs_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.exp_asset_refs_id_seq OWNED BY public.exp_asset_refs.id;
+
+
+--
+-- Name: exp_assets; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.exp_assets (
     id bigint NOT NULL,
@@ -893,6 +1345,11 @@ CREATE TABLE public.exp_assets (
     CONSTRAINT exp_assets_version_check CHECK ((version > 0))
 );
 
+
+--
+-- Name: exp_assets_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.exp_assets_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -900,7 +1357,17 @@ CREATE SEQUENCE public.exp_assets_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: exp_assets_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.exp_assets_id_seq OWNED BY public.exp_assets.id;
+
+
+--
+-- Name: exp_audits; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.exp_audits (
     id bigint NOT NULL,
@@ -913,6 +1380,11 @@ CREATE TABLE public.exp_audits (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: exp_audits_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.exp_audits_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -920,7 +1392,17 @@ CREATE SEQUENCE public.exp_audits_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: exp_audits_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.exp_audits_id_seq OWNED BY public.exp_audits.id;
+
+
+--
+-- Name: exp_dependencies; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.exp_dependencies (
     id bigint NOT NULL,
@@ -933,6 +1415,11 @@ CREATE TABLE public.exp_dependencies (
     CONSTRAINT exp_dependencies_dependency_revision_check CHECK ((dependency_revision > 0))
 );
 
+
+--
+-- Name: exp_dependencies_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.exp_dependencies_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -940,7 +1427,17 @@ CREATE SEQUENCE public.exp_dependencies_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: exp_dependencies_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.exp_dependencies_id_seq OWNED BY public.exp_dependencies.id;
+
+
+--
+-- Name: exp_egress_audits; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.exp_egress_audits (
     id bigint NOT NULL,
@@ -963,6 +1460,11 @@ CREATE TABLE public.exp_egress_audits (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: exp_egress_audits_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.exp_egress_audits_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -970,7 +1472,17 @@ CREATE SEQUENCE public.exp_egress_audits_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: exp_egress_audits_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.exp_egress_audits_id_seq OWNED BY public.exp_egress_audits.id;
+
+
+--
+-- Name: exp_revisions; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.exp_revisions (
     id bigint NOT NULL,
@@ -994,6 +1506,11 @@ CREATE TABLE public.exp_revisions (
     CONSTRAINT exp_revisions_source_size_check CHECK ((source_size >= 0))
 );
 
+
+--
+-- Name: exp_revisions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.exp_revisions_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -1001,7 +1518,17 @@ CREATE SEQUENCE public.exp_revisions_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: exp_revisions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.exp_revisions_id_seq OWNED BY public.exp_revisions.id;
+
+
+--
+-- Name: exp_risk_waivers; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.exp_risk_waivers (
     id bigint NOT NULL,
@@ -1014,6 +1541,11 @@ CREATE TABLE public.exp_risk_waivers (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: exp_risk_waivers_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.exp_risk_waivers_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -1021,7 +1553,17 @@ CREATE SEQUENCE public.exp_risk_waivers_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: exp_risk_waivers_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.exp_risk_waivers_id_seq OWNED BY public.exp_risk_waivers.id;
+
+
+--
+-- Name: exp_runs; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.exp_runs (
     id character varying(36) NOT NULL,
@@ -1046,6 +1588,11 @@ CREATE TABLE public.exp_runs (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: exp_test_cases; Type: TABLE; Schema: public; Owner: -
+--
+
 CREATE TABLE public.exp_test_cases (
     id character varying(36) NOT NULL,
     tenant_id character varying(128) NOT NULL,
@@ -1060,6 +1607,11 @@ CREATE TABLE public.exp_test_cases (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+
+--
+-- Name: exps; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.exps (
     id character varying(36) NOT NULL,
@@ -1079,6 +1631,11 @@ CREATE TABLE public.exps (
     CONSTRAINT chk_exps_family_shape CHECK ((((parent_exp_id IS NULL) AND ((variant_key)::text = ''::text)) OR ((parent_exp_id IS NOT NULL) AND ((variant_key)::text ~ '^[a-z0-9][a-z0-9._-]{0,63}$'::text))))
 );
 
+
+--
+-- Name: fingerprint_hits; Type: TABLE; Schema: public; Owner: -
+--
+
 CREATE TABLE public.fingerprint_hits (
     id bigint NOT NULL,
     tenant_id text DEFAULT 'default'::text NOT NULL,
@@ -1093,6 +1650,11 @@ CREATE TABLE public.fingerprint_hits (
     root_task_id text
 );
 
+
+--
+-- Name: fingerprint_hits_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.fingerprint_hits_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -1100,7 +1662,17 @@ CREATE SEQUENCE public.fingerprint_hits_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: fingerprint_hits_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.fingerprint_hits_id_seq OWNED BY public.fingerprint_hits.id;
+
+
+--
+-- Name: fingerprint_rules; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.fingerprint_rules (
     id bigint NOT NULL,
@@ -1118,6 +1690,11 @@ CREATE TABLE public.fingerprint_rules (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: fingerprint_rules_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.fingerprint_rules_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -1125,7 +1702,17 @@ CREATE SEQUENCE public.fingerprint_rules_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: fingerprint_rules_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.fingerprint_rules_id_seq OWNED BY public.fingerprint_rules.id;
+
+
+--
+-- Name: nodes; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.nodes (
     agent_id text NOT NULL,
@@ -1150,24 +1737,10 @@ CREATE TABLE public.nodes (
     last_token_rotated_at timestamp with time zone
 );
 
-CREATE TABLE public.notification_rules (
-    id bigint NOT NULL,
-    project_id text,
-    event text,
-    channel text,
-    config jsonb,
-    status text DEFAULT 'enabled'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
 
-CREATE SEQUENCE public.notification_rules_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.notification_rules_id_seq OWNED BY public.notification_rules.id;
+--
+-- Name: poc_rules; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.poc_rules (
     id bigint NOT NULL,
@@ -1193,6 +1766,11 @@ CREATE TABLE public.poc_rules (
     risk_level text DEFAULT 'unknown'::text NOT NULL
 );
 
+
+--
+-- Name: poc_rules_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.poc_rules_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -1200,7 +1778,17 @@ CREATE SEQUENCE public.poc_rules_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: poc_rules_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.poc_rules_id_seq OWNED BY public.poc_rules.id;
+
+
+--
+-- Name: project_members; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.project_members (
     tenant_id text DEFAULT 'default'::text NOT NULL,
@@ -1210,6 +1798,11 @@ CREATE TABLE public.project_members (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+
+--
+-- Name: projects; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.projects (
     id text NOT NULL,
@@ -1228,6 +1821,11 @@ CREATE TABLE public.projects (
     deleted_at timestamp with time zone
 );
 
+
+--
+-- Name: reports; Type: TABLE; Schema: public; Owner: -
+--
+
 CREATE TABLE public.reports (
     id text NOT NULL,
     project_id text,
@@ -1239,6 +1837,11 @@ CREATE TABLE public.reports (
     created_by text,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+
+--
+-- Name: risk_validation_execution_idempotencies; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.risk_validation_execution_idempotencies (
     id bigint NOT NULL,
@@ -1268,9 +1871,14 @@ CREATE TABLE public.risk_validation_execution_idempotencies (
     after_status character varying(64) NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT chk_rvei_hashes CHECK ((((idempotency_key_hash)::text ~ '^[0-9a-f]{64}$'::text) AND ((request_hash)::text ~ '^[0-9a-f]{64}$'::text) AND ((plan_hash)::text ~ '^[0-9a-f]{64}$'::text) AND ((poc_set_hash)::text ~ '^[0-9a-f]{64}$'::text) AND ((config_hash)::text ~ '^[0-9a-f]{64}$'::text))),
-    CONSTRAINT chk_rvei_ids CHECK ((((octet_length(tenant_id) >= 1) AND (octet_length(tenant_id) <= 1024)) AND ((octet_length(project_id) >= 1) AND (octet_length(project_id) <= 1024)) AND ((octet_length(root_task_id) >= 1) AND (octet_length(root_task_id) <= 1024)) AND ((octet_length(operator_id) >= 1) AND (octet_length(operator_id) <= 1024)) AND ((octet_length(batch_id) >= 1) AND (octet_length(batch_id) <= 1024)) AND ((octet_length(attempt_id) >= 1) AND (octet_length(attempt_id) <= 1024)))),
+    CONSTRAINT chk_rvei_ids CHECK (((octet_length(tenant_id) >= 1) AND (octet_length(tenant_id) <= 1024) AND ((octet_length(project_id) >= 1) AND (octet_length(project_id) <= 1024)) AND ((octet_length(root_task_id) >= 1) AND (octet_length(root_task_id) <= 1024)) AND ((octet_length(operator_id) >= 1) AND (octet_length(operator_id) <= 1024)) AND ((octet_length(batch_id) >= 1) AND (octet_length(batch_id) <= 1024)) AND ((octet_length(attempt_id) >= 1) AND (octet_length(attempt_id) <= 1024)))),
     CONSTRAINT chk_rvei_outcome CHECK (((config_version >= 1) AND (batch_sequence >= 0) AND (attempt_no >= 1) AND (candidate_count >= 1) AND (target_count >= 1) AND (poc_count >= 1) AND (estimated_requests >= 0) AND ((octet_length(rule_version) >= 1) AND (octet_length(rule_version) <= 1024)) AND ((octet_length((before_status)::text) >= 1) AND (octet_length((before_status)::text) <= 64)) AND ((octet_length((after_status)::text) >= 1) AND (octet_length((after_status)::text) <= 64))))
 );
+
+
+--
+-- Name: risk_validation_execution_idempotencies_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
 
 CREATE SEQUENCE public.risk_validation_execution_idempotencies_id_seq
     START WITH 1
@@ -1279,7 +1887,17 @@ CREATE SEQUENCE public.risk_validation_execution_idempotencies_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: risk_validation_execution_idempotencies_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.risk_validation_execution_idempotencies_id_seq OWNED BY public.risk_validation_execution_idempotencies.id;
+
+
+--
+-- Name: root_tasks; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.root_tasks (
     id text NOT NULL,
@@ -1297,12 +1915,16 @@ CREATE TABLE public.root_tasks (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     project_id text,
-    cron_task_id text,
     total_targets integer DEFAULT 0 NOT NULL,
     completed_targets integer DEFAULT 0 NOT NULL,
     archived_at timestamp with time zone,
     current_config_version integer DEFAULT 1 NOT NULL
 );
+
+
+--
+-- Name: rule_catalog_bootstraps; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.rule_catalog_bootstraps (
     key text NOT NULL,
@@ -1321,6 +1943,11 @@ CREATE TABLE public.rule_catalog_bootstraps (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     active_finger_count integer
 );
+
+
+--
+-- Name: scan_coverages; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.scan_coverages (
     id bigint NOT NULL,
@@ -1353,6 +1980,11 @@ CREATE TABLE public.scan_coverages (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: scan_coverages_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.scan_coverages_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -1360,7 +1992,17 @@ CREATE SEQUENCE public.scan_coverages_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: scan_coverages_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.scan_coverages_id_seq OWNED BY public.scan_coverages.id;
+
+
+--
+-- Name: scan_observations; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.scan_observations (
     id bigint NOT NULL,
@@ -1393,6 +2035,11 @@ CREATE TABLE public.scan_observations (
     checkpoint_hash character varying(64) DEFAULT ''::character varying NOT NULL
 );
 
+
+--
+-- Name: scan_observations_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.scan_observations_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -1400,7 +2047,17 @@ CREATE SEQUENCE public.scan_observations_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: scan_observations_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.scan_observations_id_seq OWNED BY public.scan_observations.id;
+
+
+--
+-- Name: scan_policy_intents; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.scan_policy_intents (
     id bigint NOT NULL,
@@ -1419,6 +2076,11 @@ CREATE TABLE public.scan_policy_intents (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: scan_policy_intents_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.scan_policy_intents_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -1426,7 +2088,17 @@ CREATE SEQUENCE public.scan_policy_intents_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: scan_policy_intents_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.scan_policy_intents_id_seq OWNED BY public.scan_policy_intents.id;
+
+
+--
+-- Name: scan_stage_derivations; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.scan_stage_derivations (
     id bigint NOT NULL,
@@ -1445,6 +2117,11 @@ CREATE TABLE public.scan_stage_derivations (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: scan_stage_derivations_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.scan_stage_derivations_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -1452,7 +2129,17 @@ CREATE SEQUENCE public.scan_stage_derivations_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: scan_stage_derivations_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.scan_stage_derivations_id_seq OWNED BY public.scan_stage_derivations.id;
+
+
+--
+-- Name: scan_timing_events; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.scan_timing_events (
     id bigint NOT NULL,
@@ -1473,10 +2160,15 @@ CREATE TABLE public.scan_timing_events (
     config_version integer NOT NULL,
     rule_version text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT chk_scan_timing_event_contract CHECK ((((schema_version)::text = 'argus.timing/v1'::text) AND ((kind)::text = ANY ((ARRAY['process_startup'::character varying, 'rule_prepare'::character varying, 'context_init'::character varying, 'stage'::character varying])::text[])) AND ((outcome)::text = ANY ((ARRAY['success'::character varying, 'negative'::character varying, 'failed'::character varying, 'skipped'::character varying])::text[])) AND ((((kind)::text = 'stage'::text) AND ((octet_length((stage)::text) >= 1) AND (octet_length((stage)::text) <= 64))) OR (((kind)::text <> 'stage'::text) AND ((stage)::text = ''::text))) AND (config_version >= 1) AND ((octet_length(rule_version) >= 1) AND (octet_length(rule_version) <= 8192)))),
-    CONSTRAINT chk_scan_timing_event_ids CHECK ((((octet_length(tenant_id) >= 1) AND (octet_length(tenant_id) <= 1024)) AND ((octet_length(project_id) >= 1) AND (octet_length(project_id) <= 1024)) AND ((octet_length(root_task_id) >= 1) AND (octet_length(root_task_id) <= 1024)) AND ((octet_length(batch_id) >= 1) AND (octet_length(batch_id) <= 1024)) AND ((octet_length(attempt_id) >= 1) AND (octet_length(attempt_id) <= 1024)) AND ((octet_length(agent_id) >= 1) AND (octet_length(agent_id) <= 1024)) AND (source_event_id ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT chk_scan_timing_event_contract CHECK ((((schema_version)::text = 'argus.timing/v1'::text) AND ((kind)::text = ANY (ARRAY[('process_startup'::character varying)::text, ('rule_prepare'::character varying)::text, ('context_init'::character varying)::text, ('stage'::character varying)::text])) AND ((outcome)::text = ANY (ARRAY[('success'::character varying)::text, ('negative'::character varying)::text, ('failed'::character varying)::text, ('skipped'::character varying)::text])) AND ((((kind)::text = 'stage'::text) AND ((octet_length((stage)::text) >= 1) AND (octet_length((stage)::text) <= 64))) OR (((kind)::text <> 'stage'::text) AND ((stage)::text = ''::text))) AND (config_version >= 1) AND ((octet_length(rule_version) >= 1) AND (octet_length(rule_version) <= 8192)))),
+    CONSTRAINT chk_scan_timing_event_ids CHECK (((octet_length(tenant_id) >= 1) AND (octet_length(tenant_id) <= 1024) AND ((octet_length(project_id) >= 1) AND (octet_length(project_id) <= 1024)) AND ((octet_length(root_task_id) >= 1) AND (octet_length(root_task_id) <= 1024)) AND ((octet_length(batch_id) >= 1) AND (octet_length(batch_id) <= 1024)) AND ((octet_length(attempt_id) >= 1) AND (octet_length(attempt_id) <= 1024)) AND ((octet_length(agent_id) >= 1) AND (octet_length(agent_id) <= 1024)) AND (source_event_id ~ '^[0-9a-f]{64}$'::text))),
     CONSTRAINT chk_scan_timing_event_interval CHECK (((duration_ns >= 0) AND (duration_ns <= '86400000000000'::bigint) AND (finished_at >= started_at) AND ((finished_at - started_at) <= '24:00:00'::interval)))
 );
+
+
+--
+-- Name: scan_timing_events_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
 
 CREATE SEQUENCE public.scan_timing_events_id_seq
     START WITH 1
@@ -1485,7 +2177,17 @@ CREATE SEQUENCE public.scan_timing_events_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: scan_timing_events_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.scan_timing_events_id_seq OWNED BY public.scan_timing_events.id;
+
+
+--
+-- Name: scan_work_claims; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.scan_work_claims (
     id bigint NOT NULL,
@@ -1517,6 +2219,11 @@ CREATE TABLE public.scan_work_claims (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: scan_work_claims_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.scan_work_claims_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -1524,7 +2231,29 @@ CREATE SEQUENCE public.scan_work_claims_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: scan_work_claims_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.scan_work_claims_id_seq OWNED BY public.scan_work_claims.id;
+
+
+--
+-- Name: schema_migrations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.schema_migrations (
+    version text NOT NULL,
+    name text NOT NULL,
+    checksum text NOT NULL,
+    applied_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: sub_tasks; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.sub_tasks (
     id text NOT NULL,
@@ -1555,6 +2284,11 @@ CREATE TABLE public.sub_tasks (
     finished_at timestamp with time zone
 );
 
+
+--
+-- Name: subdomain_dictionaries; Type: TABLE; Schema: public; Owner: -
+--
+
 CREATE TABLE public.subdomain_dictionaries (
     id character varying(36) NOT NULL,
     tenant_id character varying(128) NOT NULL,
@@ -1565,6 +2299,11 @@ CREATE TABLE public.subdomain_dictionaries (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     deleted_at timestamp with time zone
 );
+
+
+--
+-- Name: subdomain_dictionary_revisions; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.subdomain_dictionary_revisions (
     id bigint NOT NULL,
@@ -1581,6 +2320,11 @@ CREATE TABLE public.subdomain_dictionary_revisions (
     CONSTRAINT subdomain_dictionary_revisions_revision_check CHECK ((revision > 0))
 );
 
+
+--
+-- Name: subdomain_dictionary_revisions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.subdomain_dictionary_revisions_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -1588,13 +2332,28 @@ CREATE SEQUENCE public.subdomain_dictionary_revisions_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: subdomain_dictionary_revisions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.subdomain_dictionary_revisions_id_seq OWNED BY public.subdomain_dictionary_revisions.id;
+
+
+--
+-- Name: system_configs; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.system_configs (
     key text NOT NULL,
     value text,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+
+--
+-- Name: task_append_idempotencies; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.task_append_idempotencies (
     id bigint NOT NULL,
@@ -1624,13 +2383,18 @@ CREATE TABLE public.task_append_idempotencies (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT chk_tai_counts CHECK (((config_version > 0) AND (requested_targets >= 0) AND (new_targets >= 0) AND (duplicate_targets >= 0) AND (requested_targets = (new_targets + duplicate_targets)) AND (project_scope_added >= 0) AND (project_seeds_added >= 0) AND (total_chunks >= 0) AND (total_targets >= 0))),
     CONSTRAINT chk_tai_hashes CHECK ((((idempotency_key_hash)::text ~ '^[0-9a-f]{64}$'::text) AND ((request_hash)::text ~ '^[0-9a-f]{64}$'::text) AND ((config_hash)::text ~ '^[0-9a-f]{64}$'::text))),
-    CONSTRAINT chk_tai_ids CHECK ((((octet_length(tenant_id) >= 1) AND (octet_length(tenant_id) <= 1024)) AND ((octet_length(project_id) >= 1) AND (octet_length(project_id) <= 1024)) AND ((octet_length(root_task_id) >= 1) AND (octet_length(root_task_id) <= 1024)) AND ((octet_length(operator_id) >= 1) AND (octet_length(operator_id) <= 1024)))),
+    CONSTRAINT chk_tai_ids CHECK (((octet_length(tenant_id) >= 1) AND (octet_length(tenant_id) <= 1024) AND ((octet_length(project_id) >= 1) AND (octet_length(project_id) <= 1024)) AND ((octet_length(root_task_id) >= 1) AND (octet_length(root_task_id) <= 1024)) AND ((octet_length(operator_id) >= 1) AND (octet_length(operator_id) <= 1024)))),
     CONSTRAINT chk_tai_ids_json CHECK (((jsonb_typeof(batch_ids) = 'array'::text) AND (jsonb_typeof(attempt_ids) = 'array'::text))),
-    CONSTRAINT chk_tai_outcome CHECK (((outcome)::text = ANY ((ARRAY['appended'::character varying, 'unchanged'::character varying])::text[]))),
+    CONSTRAINT chk_tai_outcome CHECK (((outcome)::text = ANY (ARRAY[('appended'::character varying)::text, ('unchanged'::character varying)::text]))),
     CONSTRAINT chk_tai_outcome_ids CHECK (((((outcome)::text = 'unchanged'::text) AND (new_targets = 0) AND (jsonb_array_length(batch_ids) = 0) AND (jsonb_array_length(attempt_ids) = 0)) OR (((outcome)::text = 'appended'::text) AND (new_targets > 0) AND (jsonb_array_length(batch_ids) > 0) AND (jsonb_array_length(batch_ids) = jsonb_array_length(attempt_ids))))),
-    CONSTRAINT chk_tai_schema_operation CHECK ((((octet_length((schema_version)::text) >= 1) AND (octet_length((schema_version)::text) <= 64)) AND ((octet_length((operation)::text) >= 1) AND (octet_length((operation)::text) <= 64)))),
-    CONSTRAINT chk_tai_statuses CHECK ((((octet_length((before_status)::text) >= 1) AND (octet_length((before_status)::text) <= 64)) AND ((octet_length((after_status)::text) >= 1) AND (octet_length((after_status)::text) <= 64)) AND ((octet_length(rule_version) >= 1) AND (octet_length(rule_version) <= 1024))))
+    CONSTRAINT chk_tai_schema_operation CHECK (((octet_length((schema_version)::text) >= 1) AND (octet_length((schema_version)::text) <= 64) AND ((octet_length((operation)::text) >= 1) AND (octet_length((operation)::text) <= 64)))),
+    CONSTRAINT chk_tai_statuses CHECK (((octet_length((before_status)::text) >= 1) AND (octet_length((before_status)::text) <= 64) AND ((octet_length((after_status)::text) >= 1) AND (octet_length((after_status)::text) <= 64)) AND ((octet_length(rule_version) >= 1) AND (octet_length(rule_version) <= 1024))))
 );
+
+
+--
+-- Name: task_append_idempotencies_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
 
 CREATE SEQUENCE public.task_append_idempotencies_id_seq
     START WITH 1
@@ -1639,7 +2403,17 @@ CREATE SEQUENCE public.task_append_idempotencies_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: task_append_idempotencies_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.task_append_idempotencies_id_seq OWNED BY public.task_append_idempotencies.id;
+
+
+--
+-- Name: task_audits; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.task_audits (
     id bigint NOT NULL,
@@ -1656,6 +2430,11 @@ CREATE TABLE public.task_audits (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: task_audits_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.task_audits_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -1663,7 +2442,17 @@ CREATE SEQUENCE public.task_audits_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: task_audits_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.task_audits_id_seq OWNED BY public.task_audits.id;
+
+
+--
+-- Name: task_batch_retry_idempotencies; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.task_batch_retry_idempotencies (
     id bigint NOT NULL,
@@ -1685,10 +2474,15 @@ CREATE TABLE public.task_batch_retry_idempotencies (
     after_status character varying(64) NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT chk_tbri_hashes CHECK ((((idempotency_key_hash)::text ~ '^[0-9a-f]{64}$'::text) AND ((request_hash)::text ~ '^[0-9a-f]{64}$'::text) AND ((config_hash)::text ~ '^[0-9a-f]{64}$'::text))),
-    CONSTRAINT chk_tbri_ids CHECK ((((octet_length(tenant_id) >= 1) AND (octet_length(tenant_id) <= 1024)) AND ((octet_length(project_id) >= 1) AND (octet_length(project_id) <= 1024)) AND ((octet_length(root_task_id) >= 1) AND (octet_length(root_task_id) <= 1024)) AND ((octet_length(batch_id) >= 1) AND (octet_length(batch_id) <= 1024)) AND ((octet_length(operator_id) >= 1) AND (octet_length(operator_id) <= 1024)) AND ((octet_length(attempt_id) >= 1) AND (octet_length(attempt_id) <= 1024)))),
+    CONSTRAINT chk_tbri_ids CHECK (((octet_length(tenant_id) >= 1) AND (octet_length(tenant_id) <= 1024) AND ((octet_length(project_id) >= 1) AND (octet_length(project_id) <= 1024)) AND ((octet_length(root_task_id) >= 1) AND (octet_length(root_task_id) <= 1024)) AND ((octet_length(batch_id) >= 1) AND (octet_length(batch_id) <= 1024)) AND ((octet_length(operator_id) >= 1) AND (octet_length(operator_id) <= 1024)) AND ((octet_length(attempt_id) >= 1) AND (octet_length(attempt_id) <= 1024)))),
     CONSTRAINT chk_tbri_outcome CHECK (((attempt_no >= 1) AND (config_version >= 1) AND ((octet_length(rule_version) >= 1) AND (octet_length(rule_version) <= 1024)) AND ((octet_length((before_status)::text) >= 1) AND (octet_length((before_status)::text) <= 64)) AND ((octet_length((after_status)::text) >= 1) AND (octet_length((after_status)::text) <= 64)))),
-    CONSTRAINT chk_tbri_schema_operation CHECK ((((octet_length((schema_version)::text) >= 1) AND (octet_length((schema_version)::text) <= 64)) AND ((octet_length((operation)::text) >= 1) AND (octet_length((operation)::text) <= 64))))
+    CONSTRAINT chk_tbri_schema_operation CHECK (((octet_length((schema_version)::text) >= 1) AND (octet_length((schema_version)::text) <= 64) AND ((octet_length((operation)::text) >= 1) AND (octet_length((operation)::text) <= 64))))
 );
+
+
+--
+-- Name: task_batch_retry_idempotencies_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
 
 CREATE SEQUENCE public.task_batch_retry_idempotencies_id_seq
     START WITH 1
@@ -1697,7 +2491,17 @@ CREATE SEQUENCE public.task_batch_retry_idempotencies_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: task_batch_retry_idempotencies_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.task_batch_retry_idempotencies_id_seq OWNED BY public.task_batch_retry_idempotencies.id;
+
+
+--
+-- Name: task_batches; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.task_batches (
     id text NOT NULL,
@@ -1726,6 +2530,11 @@ CREATE TABLE public.task_batches (
     control_state text DEFAULT 'active'::text NOT NULL
 );
 
+
+--
+-- Name: task_config_revisions; Type: TABLE; Schema: public; Owner: -
+--
+
 CREATE TABLE public.task_config_revisions (
     id bigint NOT NULL,
     tenant_id text DEFAULT 'default'::text NOT NULL,
@@ -1743,6 +2552,11 @@ CREATE TABLE public.task_config_revisions (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: task_config_revisions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.task_config_revisions_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -1750,7 +2564,17 @@ CREATE SEQUENCE public.task_config_revisions_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: task_config_revisions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.task_config_revisions_id_seq OWNED BY public.task_config_revisions.id;
+
+
+--
+-- Name: task_coverage_links; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.task_coverage_links (
     id bigint NOT NULL,
@@ -1773,6 +2597,11 @@ CREATE TABLE public.task_coverage_links (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: task_coverage_links_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.task_coverage_links_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -1780,7 +2609,17 @@ CREATE SEQUENCE public.task_coverage_links_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: task_coverage_links_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.task_coverage_links_id_seq OWNED BY public.task_coverage_links.id;
+
+
+--
+-- Name: task_creation_idempotencies; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.task_creation_idempotencies (
     id bigint NOT NULL,
@@ -1799,10 +2638,15 @@ CREATE TABLE public.task_creation_idempotencies (
     CONSTRAINT chk_tci_attempt_ids CHECK ((jsonb_typeof(attempt_ids) = 'array'::text)),
     CONSTRAINT chk_tci_counts CHECK (((project_scope_added >= 0) AND (project_seeds_added >= 0))),
     CONSTRAINT chk_tci_hashes CHECK ((((idempotency_key_hash)::text ~ '^[0-9a-f]{64}$'::text) AND ((request_hash)::text ~ '^[0-9a-f]{64}$'::text))),
-    CONSTRAINT chk_tci_ids CHECK ((((octet_length(tenant_id) >= 1) AND (octet_length(tenant_id) <= 1024)) AND ((octet_length(project_id) >= 1) AND (octet_length(project_id) <= 1024)) AND ((octet_length(operator_id) >= 1) AND (octet_length(operator_id) <= 1024)) AND ((octet_length(root_task_id) >= 1) AND (octet_length(root_task_id) <= 1024)))),
+    CONSTRAINT chk_tci_ids CHECK (((octet_length(tenant_id) >= 1) AND (octet_length(tenant_id) <= 1024) AND ((octet_length(project_id) >= 1) AND (octet_length(project_id) <= 1024)) AND ((octet_length(operator_id) >= 1) AND (octet_length(operator_id) <= 1024)) AND ((octet_length(root_task_id) >= 1) AND (octet_length(root_task_id) <= 1024)))),
     CONSTRAINT chk_tci_operation CHECK (((octet_length((operation)::text) >= 1) AND (octet_length((operation)::text) <= 64))),
     CONSTRAINT chk_tci_schema CHECK (((octet_length((schema_version)::text) >= 1) AND (octet_length((schema_version)::text) <= 64)))
 );
+
+
+--
+-- Name: task_creation_idempotencies_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
 
 CREATE SEQUENCE public.task_creation_idempotencies_id_seq
     START WITH 1
@@ -1811,7 +2655,17 @@ CREATE SEQUENCE public.task_creation_idempotencies_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: task_creation_idempotencies_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.task_creation_idempotencies_id_seq OWNED BY public.task_creation_idempotencies.id;
+
+
+--
+-- Name: task_retry_idempotencies; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.task_retry_idempotencies (
     id bigint NOT NULL,
@@ -1832,10 +2686,15 @@ CREATE TABLE public.task_retry_idempotencies (
     CONSTRAINT chk_tri_attempt_ids CHECK (((jsonb_typeof(attempt_ids) = 'array'::text) AND (jsonb_array_length(attempt_ids) >= 1))),
     CONSTRAINT chk_tri_counts CHECK (((completed_skipped >= 0) AND (paused_skipped >= 0))),
     CONSTRAINT chk_tri_hashes CHECK ((((idempotency_key_hash)::text ~ '^[0-9a-f]{64}$'::text) AND ((request_hash)::text ~ '^[0-9a-f]{64}$'::text))),
-    CONSTRAINT chk_tri_ids CHECK ((((octet_length(tenant_id) >= 1) AND (octet_length(tenant_id) <= 1024)) AND ((octet_length(project_id) >= 1) AND (octet_length(project_id) <= 1024)) AND ((octet_length(root_task_id) >= 1) AND (octet_length(root_task_id) <= 1024)) AND ((octet_length(operator_id) >= 1) AND (octet_length(operator_id) <= 1024)))),
-    CONSTRAINT chk_tri_schema_operation CHECK ((((octet_length((schema_version)::text) >= 1) AND (octet_length((schema_version)::text) <= 64)) AND ((octet_length((operation)::text) >= 1) AND (octet_length((operation)::text) <= 64)))),
-    CONSTRAINT chk_tri_statuses CHECK ((((octet_length((before_status)::text) >= 1) AND (octet_length((before_status)::text) <= 64)) AND ((octet_length((after_status)::text) >= 1) AND (octet_length((after_status)::text) <= 64))))
+    CONSTRAINT chk_tri_ids CHECK (((octet_length(tenant_id) >= 1) AND (octet_length(tenant_id) <= 1024) AND ((octet_length(project_id) >= 1) AND (octet_length(project_id) <= 1024)) AND ((octet_length(root_task_id) >= 1) AND (octet_length(root_task_id) <= 1024)) AND ((octet_length(operator_id) >= 1) AND (octet_length(operator_id) <= 1024)))),
+    CONSTRAINT chk_tri_schema_operation CHECK (((octet_length((schema_version)::text) >= 1) AND (octet_length((schema_version)::text) <= 64) AND ((octet_length((operation)::text) >= 1) AND (octet_length((operation)::text) <= 64)))),
+    CONSTRAINT chk_tri_statuses CHECK (((octet_length((before_status)::text) >= 1) AND (octet_length((before_status)::text) <= 64) AND ((octet_length((after_status)::text) >= 1) AND (octet_length((after_status)::text) <= 64))))
 );
+
+
+--
+-- Name: task_retry_idempotencies_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
 
 CREATE SEQUENCE public.task_retry_idempotencies_id_seq
     START WITH 1
@@ -1844,7 +2703,17 @@ CREATE SEQUENCE public.task_retry_idempotencies_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: task_retry_idempotencies_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.task_retry_idempotencies_id_seq OWNED BY public.task_retry_idempotencies.id;
+
+
+--
+-- Name: tenant_quotas; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.tenant_quotas (
     tenant_id text DEFAULT 'default'::text NOT NULL,
@@ -1855,14 +2724,10 @@ CREATE TABLE public.tenant_quotas (
     updated_at timestamp with time zone
 );
 
-CREATE VIEW public.tenant_quota AS
- SELECT tenant_quotas.tenant_id,
-    tenant_quotas.max_concurrent_tasks,
-    tenant_quotas.max_running_sub_tasks,
-    tenant_quotas.daily_task_limit,
-    tenant_quotas.created_at,
-    tenant_quotas.updated_at
-   FROM public.tenant_quotas;
+
+--
+-- Name: users; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.users (
     id bigint NOT NULL,
@@ -1876,6 +2741,11 @@ CREATE TABLE public.users (
     exp_authorized boolean DEFAULT false NOT NULL
 );
 
+
+--
+-- Name: users_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.users_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -1883,7 +2753,17 @@ CREATE SEQUENCE public.users_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: users_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.users_id_seq OWNED BY public.users.id;
+
+
+--
+-- Name: vulnerabilities; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.vulnerabilities (
     id bigint NOT NULL,
@@ -1908,6 +2788,11 @@ CREATE TABLE public.vulnerabilities (
     root_task_id text
 );
 
+
+--
+-- Name: vulnerabilities_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.vulnerabilities_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -1915,7 +2800,17 @@ CREATE SEQUENCE public.vulnerabilities_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: vulnerabilities_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.vulnerabilities_id_seq OWNED BY public.vulnerabilities.id;
+
+
+--
+-- Name: workflow_product_summaries; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.workflow_product_summaries (
     tenant_id text DEFAULT 'default'::text NOT NULL,
@@ -1935,6 +2830,11 @@ CREATE TABLE public.workflow_product_summaries (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: workflow_rules; Type: TABLE; Schema: public; Owner: -
+--
+
 CREATE TABLE public.workflow_rules (
     id bigint NOT NULL,
     tenant_id text DEFAULT 'default'::text NOT NULL,
@@ -1951,6 +2851,11 @@ CREATE TABLE public.workflow_rules (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: workflow_rules_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.workflow_rules_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -1958,7 +2863,17 @@ CREATE SEQUENCE public.workflow_rules_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: workflow_rules_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.workflow_rules_id_seq OWNED BY public.workflow_rules.id;
+
+
+--
+-- Name: ws_event_logs; Type: TABLE; Schema: public; Owner: -
+--
 
 CREATE TABLE public.ws_event_logs (
     id bigint NOT NULL,
@@ -1969,6 +2884,11 @@ CREATE TABLE public.ws_event_logs (
     occurred_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+
+--
+-- Name: ws_event_logs_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
 CREATE SEQUENCE public.ws_event_logs_id_seq
     START WITH 1
     INCREMENT BY 1
@@ -1976,1385 +2896,4421 @@ CREATE SEQUENCE public.ws_event_logs_id_seq
     NO MAXVALUE
     CACHE 1;
 
+
+--
+-- Name: ws_event_logs_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
 ALTER SEQUENCE public.ws_event_logs_id_seq OWNED BY public.ws_event_logs.id;
+
+
+--
+-- Name: active_fingerprint_rules id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.active_fingerprint_rules ALTER COLUMN id SET DEFAULT nextval('public.active_fingerprint_rules_id_seq'::regclass);
 
+
+--
+-- Name: agent_log_alert_events id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.agent_log_alert_events ALTER COLUMN id SET DEFAULT nextval('public.agent_log_alert_events_id_seq'::regclass);
+
+
+--
+-- Name: agent_log_alert_rules id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.agent_log_alert_rules ALTER COLUMN id SET DEFAULT nextval('public.agent_log_alert_rules_id_seq'::regclass);
 
+
+--
+-- Name: agent_log_archives id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.agent_log_archives ALTER COLUMN id SET DEFAULT nextval('public.agent_log_archives_id_seq'::regclass);
+
+
+--
+-- Name: agent_logs id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.agent_logs ALTER COLUMN id SET DEFAULT nextval('public.agent_logs_id_seq'::regclass);
 
+
+--
+-- Name: agent_session_audits id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.agent_session_audits ALTER COLUMN id SET DEFAULT nextval('public.agent_session_audits_id_seq'::regclass);
+
+
+--
+-- Name: ai_tool_invocations id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.ai_tool_invocations ALTER COLUMN id SET DEFAULT nextval('public.ai_tool_invocations_id_seq'::regclass);
 
+
+--
+-- Name: arsenal_ai_reviews id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.arsenal_ai_reviews ALTER COLUMN id SET DEFAULT nextval('public.arsenal_ai_reviews_id_seq'::regclass);
+
+
+--
+-- Name: arsenal_events id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.arsenal_events ALTER COLUMN id SET DEFAULT nextval('public.arsenal_events_id_seq'::regclass);
 
-ALTER TABLE ONLY public.asset_change_logs ALTER COLUMN id SET DEFAULT nextval('public.asset_change_logs_id_seq'::regclass);
+
+--
+-- Name: asset_discovery_audits id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.asset_discovery_audits ALTER COLUMN id SET DEFAULT nextval('public.asset_discovery_audits_id_seq'::regclass);
 
+
+--
+-- Name: asset_discovery_notebook_distribution_intent_items id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.asset_discovery_notebook_distribution_intent_items ALTER COLUMN id SET DEFAULT nextval('public.asset_discovery_notebook_distribution_intent_items_id_seq'::regclass);
+
+
+--
+-- Name: asset_discovery_notebook_distribution_intents id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.asset_discovery_notebook_distribution_intents ALTER COLUMN id SET DEFAULT nextval('public.asset_discovery_notebook_distribution_intents_id_seq'::regclass);
 
+
+--
+-- Name: asset_discovery_notebook_distribution_materializations id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.asset_discovery_notebook_distribution_materializations ALTER COLUMN id SET DEFAULT nextval('public.asset_discovery_notebook_distribution_materializations_id_seq'::regclass);
+
+
+--
+-- Name: asset_discovery_notebook_item_tags id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.asset_discovery_notebook_item_tags ALTER COLUMN id SET DEFAULT nextval('public.asset_discovery_notebook_item_tags_id_seq'::regclass);
 
+
+--
+-- Name: asset_discovery_notebook_items id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.asset_discovery_notebook_items ALTER COLUMN id SET DEFAULT nextval('public.asset_discovery_notebook_items_id_seq'::regclass);
+
+
+--
+-- Name: asset_discovery_notebook_sources id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.asset_discovery_notebook_sources ALTER COLUMN id SET DEFAULT nextval('public.asset_discovery_notebook_sources_id_seq'::regclass);
 
+
+--
+-- Name: asset_discovery_notebook_tags id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.asset_discovery_notebook_tags ALTER COLUMN id SET DEFAULT nextval('public.asset_discovery_notebook_tags_id_seq'::regclass);
+
+
+--
+-- Name: asset_discovery_snapshot_items id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.asset_discovery_snapshot_items ALTER COLUMN id SET DEFAULT nextval('public.asset_discovery_snapshot_items_id_seq'::regclass);
 
+
+--
+-- Name: asset_discovery_snapshots id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.asset_discovery_snapshots ALTER COLUMN id SET DEFAULT nextval('public.asset_discovery_snapshots_id_seq'::regclass);
+
+
+--
+-- Name: assets id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.assets ALTER COLUMN id SET DEFAULT nextval('public.assets_id_seq'::regclass);
 
+
+--
+-- Name: build_jobs id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.build_jobs ALTER COLUMN id SET DEFAULT nextval('public.build_jobs_id_seq'::regclass);
+
+
+--
+-- Name: cloud_account_bindings id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.cloud_account_bindings ALTER COLUMN id SET DEFAULT nextval('public.cloud_account_bindings_id_seq'::regclass);
 
+
+--
+-- Name: credential_dictionary_revisions id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.credential_dictionary_revisions ALTER COLUMN id SET DEFAULT nextval('public.credential_dictionary_revisions_id_seq'::regclass);
+
+
+--
+-- Name: credential_reveal_audits id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.credential_reveal_audits ALTER COLUMN id SET DEFAULT nextval('public.credential_reveal_audits_id_seq'::regclass);
 
+
+--
+-- Name: custom_roles id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.custom_roles ALTER COLUMN id SET DEFAULT nextval('public.custom_roles_id_seq'::regclass);
+
+
+--
+-- Name: dir_rules id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.dir_rules ALTER COLUMN id SET DEFAULT nextval('public.dir_rules_id_seq'::regclass);
 
+
+--
+-- Name: domains id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.domains ALTER COLUMN id SET DEFAULT nextval('public.domains_id_seq'::regclass);
+
+
+--
+-- Name: exp_asset_refs id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.exp_asset_refs ALTER COLUMN id SET DEFAULT nextval('public.exp_asset_refs_id_seq'::regclass);
 
+
+--
+-- Name: exp_assets id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.exp_assets ALTER COLUMN id SET DEFAULT nextval('public.exp_assets_id_seq'::regclass);
+
+
+--
+-- Name: exp_audits id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.exp_audits ALTER COLUMN id SET DEFAULT nextval('public.exp_audits_id_seq'::regclass);
 
+
+--
+-- Name: exp_dependencies id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.exp_dependencies ALTER COLUMN id SET DEFAULT nextval('public.exp_dependencies_id_seq'::regclass);
+
+
+--
+-- Name: exp_egress_audits id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.exp_egress_audits ALTER COLUMN id SET DEFAULT nextval('public.exp_egress_audits_id_seq'::regclass);
 
+
+--
+-- Name: exp_revisions id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.exp_revisions ALTER COLUMN id SET DEFAULT nextval('public.exp_revisions_id_seq'::regclass);
+
+
+--
+-- Name: exp_risk_waivers id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.exp_risk_waivers ALTER COLUMN id SET DEFAULT nextval('public.exp_risk_waivers_id_seq'::regclass);
 
+
+--
+-- Name: fingerprint_hits id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.fingerprint_hits ALTER COLUMN id SET DEFAULT nextval('public.fingerprint_hits_id_seq'::regclass);
+
+
+--
+-- Name: fingerprint_rules id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.fingerprint_rules ALTER COLUMN id SET DEFAULT nextval('public.fingerprint_rules_id_seq'::regclass);
 
-ALTER TABLE ONLY public.notification_rules ALTER COLUMN id SET DEFAULT nextval('public.notification_rules_id_seq'::regclass);
+
+--
+-- Name: poc_rules id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.poc_rules ALTER COLUMN id SET DEFAULT nextval('public.poc_rules_id_seq'::regclass);
 
+
+--
+-- Name: risk_validation_execution_idempotencies id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.risk_validation_execution_idempotencies ALTER COLUMN id SET DEFAULT nextval('public.risk_validation_execution_idempotencies_id_seq'::regclass);
+
+
+--
+-- Name: scan_coverages id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.scan_coverages ALTER COLUMN id SET DEFAULT nextval('public.scan_coverages_id_seq'::regclass);
 
+
+--
+-- Name: scan_observations id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.scan_observations ALTER COLUMN id SET DEFAULT nextval('public.scan_observations_id_seq'::regclass);
+
+
+--
+-- Name: scan_policy_intents id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.scan_policy_intents ALTER COLUMN id SET DEFAULT nextval('public.scan_policy_intents_id_seq'::regclass);
 
+
+--
+-- Name: scan_stage_derivations id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.scan_stage_derivations ALTER COLUMN id SET DEFAULT nextval('public.scan_stage_derivations_id_seq'::regclass);
+
+
+--
+-- Name: scan_timing_events id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.scan_timing_events ALTER COLUMN id SET DEFAULT nextval('public.scan_timing_events_id_seq'::regclass);
 
+
+--
+-- Name: scan_work_claims id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.scan_work_claims ALTER COLUMN id SET DEFAULT nextval('public.scan_work_claims_id_seq'::regclass);
+
+
+--
+-- Name: subdomain_dictionary_revisions id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.subdomain_dictionary_revisions ALTER COLUMN id SET DEFAULT nextval('public.subdomain_dictionary_revisions_id_seq'::regclass);
 
+
+--
+-- Name: task_append_idempotencies id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.task_append_idempotencies ALTER COLUMN id SET DEFAULT nextval('public.task_append_idempotencies_id_seq'::regclass);
+
+
+--
+-- Name: task_audits id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.task_audits ALTER COLUMN id SET DEFAULT nextval('public.task_audits_id_seq'::regclass);
 
+
+--
+-- Name: task_batch_retry_idempotencies id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.task_batch_retry_idempotencies ALTER COLUMN id SET DEFAULT nextval('public.task_batch_retry_idempotencies_id_seq'::regclass);
+
+
+--
+-- Name: task_config_revisions id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.task_config_revisions ALTER COLUMN id SET DEFAULT nextval('public.task_config_revisions_id_seq'::regclass);
 
+
+--
+-- Name: task_coverage_links id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.task_coverage_links ALTER COLUMN id SET DEFAULT nextval('public.task_coverage_links_id_seq'::regclass);
+
+
+--
+-- Name: task_creation_idempotencies id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.task_creation_idempotencies ALTER COLUMN id SET DEFAULT nextval('public.task_creation_idempotencies_id_seq'::regclass);
 
+
+--
+-- Name: task_retry_idempotencies id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.task_retry_idempotencies ALTER COLUMN id SET DEFAULT nextval('public.task_retry_idempotencies_id_seq'::regclass);
+
+
+--
+-- Name: users id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.users ALTER COLUMN id SET DEFAULT nextval('public.users_id_seq'::regclass);
 
+
+--
+-- Name: vulnerabilities id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.vulnerabilities ALTER COLUMN id SET DEFAULT nextval('public.vulnerabilities_id_seq'::regclass);
+
+
+--
+-- Name: workflow_rules id; Type: DEFAULT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.workflow_rules ALTER COLUMN id SET DEFAULT nextval('public.workflow_rules_id_seq'::regclass);
 
+
+--
+-- Name: ws_event_logs id; Type: DEFAULT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.ws_event_logs ALTER COLUMN id SET DEFAULT nextval('public.ws_event_logs_id_seq'::regclass);
+
+
+--
+-- Name: active_fingerprint_rules active_fingerprint_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.active_fingerprint_rules
     ADD CONSTRAINT active_fingerprint_rules_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: agent_log_alert_events agent_log_alert_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.agent_log_alert_events
     ADD CONSTRAINT agent_log_alert_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_log_alert_rules agent_log_alert_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.agent_log_alert_rules
     ADD CONSTRAINT agent_log_alert_rules_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: agent_log_archives agent_log_archives_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.agent_log_archives
     ADD CONSTRAINT agent_log_archives_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_logs agent_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.agent_logs
     ADD CONSTRAINT agent_logs_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: agent_session_audits agent_session_audits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.agent_session_audits
     ADD CONSTRAINT agent_session_audits_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ai_tool_invocations ai_tool_invocations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.ai_tool_invocations
     ADD CONSTRAINT ai_tool_invocations_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: arsenal_ai_reviews arsenal_ai_reviews_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.arsenal_ai_reviews
     ADD CONSTRAINT arsenal_ai_reviews_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: arsenal_events arsenal_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.arsenal_events
     ADD CONSTRAINT arsenal_events_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: arsenals arsenals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.arsenals
     ADD CONSTRAINT arsenals_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.asset_change_logs
-    ADD CONSTRAINT asset_change_logs_pkey PRIMARY KEY (id);
+
+--
+-- Name: asset_discovery_audits asset_discovery_audits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.asset_discovery_audits
     ADD CONSTRAINT asset_discovery_audits_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: asset_discovery_notebook_distribution_intent_items asset_discovery_notebook_distribution_intent_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.asset_discovery_notebook_distribution_intent_items
     ADD CONSTRAINT asset_discovery_notebook_distribution_intent_items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: asset_discovery_notebook_distribution_intents asset_discovery_notebook_distribution_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.asset_discovery_notebook_distribution_intents
     ADD CONSTRAINT asset_discovery_notebook_distribution_intents_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: asset_discovery_notebook_distribution_materializations asset_discovery_notebook_distribution_materializations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.asset_discovery_notebook_distribution_materializations
     ADD CONSTRAINT asset_discovery_notebook_distribution_materializations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: asset_discovery_notebook_item_tags asset_discovery_notebook_item_tags_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.asset_discovery_notebook_item_tags
     ADD CONSTRAINT asset_discovery_notebook_item_tags_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: asset_discovery_notebook_items asset_discovery_notebook_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.asset_discovery_notebook_items
     ADD CONSTRAINT asset_discovery_notebook_items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: asset_discovery_notebook_sources asset_discovery_notebook_sources_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.asset_discovery_notebook_sources
     ADD CONSTRAINT asset_discovery_notebook_sources_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: asset_discovery_notebook_tags asset_discovery_notebook_tags_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.asset_discovery_notebook_tags
     ADD CONSTRAINT asset_discovery_notebook_tags_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: asset_discovery_snapshot_items asset_discovery_snapshot_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.asset_discovery_snapshot_items
     ADD CONSTRAINT asset_discovery_snapshot_items_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: asset_discovery_snapshots asset_discovery_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.asset_discovery_snapshots
     ADD CONSTRAINT asset_discovery_snapshots_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: assets assets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.assets
     ADD CONSTRAINT assets_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: build_jobs build_jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.build_jobs
     ADD CONSTRAINT build_jobs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: cloud_account_bindings cloud_account_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.cloud_account_bindings
     ADD CONSTRAINT cloud_account_bindings_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: cloud_accounts cloud_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.cloud_accounts
     ADD CONSTRAINT cloud_accounts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: cloud_instances cloud_instances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.cloud_instances
     ADD CONSTRAINT cloud_instances_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: cloud_scaling_policies cloud_scaling_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.cloud_scaling_policies
     ADD CONSTRAINT cloud_scaling_policies_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: credential_bundles credential_bundles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.credential_bundles
     ADD CONSTRAINT credential_bundles_pkey PRIMARY KEY (ref);
 
+
+--
+-- Name: credential_dictionaries credential_dictionaries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.credential_dictionaries
     ADD CONSTRAINT credential_dictionaries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: credential_dictionary_revisions credential_dictionary_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.credential_dictionary_revisions
     ADD CONSTRAINT credential_dictionary_revisions_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: credential_finding_secrets credential_finding_secrets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.credential_finding_secrets
     ADD CONSTRAINT credential_finding_secrets_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: credential_reveal_audits credential_reveal_audits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.credential_reveal_audits
     ADD CONSTRAINT credential_reveal_audits_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: credentials credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.credentials
     ADD CONSTRAINT credentials_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.cron_tasks
-    ADD CONSTRAINT cron_tasks_pkey PRIMARY KEY (id);
+
+--
+-- Name: custom_roles custom_roles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.custom_roles
     ADD CONSTRAINT custom_roles_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: dir_rules dir_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.dir_rules
     ADD CONSTRAINT dir_rules_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: domains domains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.domains
     ADD CONSTRAINT domains_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: exp_asset_refs exp_asset_refs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.exp_asset_refs
     ADD CONSTRAINT exp_asset_refs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: exp_assets exp_assets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.exp_assets
     ADD CONSTRAINT exp_assets_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: exp_audits exp_audits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.exp_audits
     ADD CONSTRAINT exp_audits_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: exp_dependencies exp_dependencies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.exp_dependencies
     ADD CONSTRAINT exp_dependencies_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: exp_egress_audits exp_egress_audits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.exp_egress_audits
     ADD CONSTRAINT exp_egress_audits_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: exp_revisions exp_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.exp_revisions
     ADD CONSTRAINT exp_revisions_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: exp_risk_waivers exp_risk_waivers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.exp_risk_waivers
     ADD CONSTRAINT exp_risk_waivers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: exp_runs exp_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.exp_runs
     ADD CONSTRAINT exp_runs_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: exp_test_cases exp_test_cases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.exp_test_cases
     ADD CONSTRAINT exp_test_cases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: exps exps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.exps
     ADD CONSTRAINT exps_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: fingerprint_hits fingerprint_hits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.fingerprint_hits
     ADD CONSTRAINT fingerprint_hits_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fingerprint_rules fingerprint_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.fingerprint_rules
     ADD CONSTRAINT fingerprint_rules_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: task_batches idx_task_batches_task_sequence; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.task_batches
     ADD CONSTRAINT idx_task_batches_task_sequence UNIQUE (root_task_id, sequence);
+
+
+--
+-- Name: task_config_revisions idx_task_config_revisions_task_version; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.task_config_revisions
     ADD CONSTRAINT idx_task_config_revisions_task_version UNIQUE (root_task_id, version);
 
+
+--
+-- Name: nodes nodes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.nodes
     ADD CONSTRAINT nodes_pkey PRIMARY KEY (agent_id);
 
-ALTER TABLE ONLY public.notification_rules
-    ADD CONSTRAINT notification_rules_pkey PRIMARY KEY (id);
+
+--
+-- Name: poc_rules poc_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.poc_rules
     ADD CONSTRAINT poc_rules_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: project_members project_members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.project_members
     ADD CONSTRAINT project_members_pkey PRIMARY KEY (project_id, user_id);
+
+
+--
+-- Name: projects projects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.projects
     ADD CONSTRAINT projects_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: reports reports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.reports
     ADD CONSTRAINT reports_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: risk_validation_execution_idempotencies risk_validation_execution_idempotencies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.risk_validation_execution_idempotencies
     ADD CONSTRAINT risk_validation_execution_idempotencies_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: root_tasks root_tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.root_tasks
     ADD CONSTRAINT root_tasks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: rule_catalog_bootstraps rule_catalog_bootstraps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.rule_catalog_bootstraps
     ADD CONSTRAINT rule_catalog_bootstraps_pkey PRIMARY KEY (key);
 
+
+--
+-- Name: scan_coverages scan_coverages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.scan_coverages
     ADD CONSTRAINT scan_coverages_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scan_observations scan_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.scan_observations
     ADD CONSTRAINT scan_observations_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: scan_policy_intents scan_policy_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.scan_policy_intents
     ADD CONSTRAINT scan_policy_intents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scan_stage_derivations scan_stage_derivations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.scan_stage_derivations
     ADD CONSTRAINT scan_stage_derivations_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: scan_timing_events scan_timing_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.scan_timing_events
     ADD CONSTRAINT scan_timing_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scan_work_claims scan_work_claims_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.scan_work_claims
     ADD CONSTRAINT scan_work_claims_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schema_migrations
+    ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (version);
+
+
+--
+-- Name: sub_tasks sub_tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.sub_tasks
     ADD CONSTRAINT sub_tasks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: subdomain_dictionaries subdomain_dictionaries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.subdomain_dictionaries
     ADD CONSTRAINT subdomain_dictionaries_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: subdomain_dictionary_revisions subdomain_dictionary_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.subdomain_dictionary_revisions
     ADD CONSTRAINT subdomain_dictionary_revisions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: system_configs system_configs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.system_configs
     ADD CONSTRAINT system_configs_pkey PRIMARY KEY (key);
 
+
+--
+-- Name: task_append_idempotencies task_append_idempotencies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.task_append_idempotencies
     ADD CONSTRAINT task_append_idempotencies_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: task_audits task_audits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.task_audits
     ADD CONSTRAINT task_audits_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: task_batch_retry_idempotencies task_batch_retry_idempotencies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.task_batch_retry_idempotencies
     ADD CONSTRAINT task_batch_retry_idempotencies_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: task_batches task_batches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.task_batches
     ADD CONSTRAINT task_batches_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: task_config_revisions task_config_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.task_config_revisions
     ADD CONSTRAINT task_config_revisions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: task_coverage_links task_coverage_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.task_coverage_links
     ADD CONSTRAINT task_coverage_links_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: task_creation_idempotencies task_creation_idempotencies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.task_creation_idempotencies
     ADD CONSTRAINT task_creation_idempotencies_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: task_retry_idempotencies task_retry_idempotencies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.task_retry_idempotencies
     ADD CONSTRAINT task_retry_idempotencies_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: tenant_quotas tenant_quotas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.tenant_quotas
     ADD CONSTRAINT tenant_quotas_pkey PRIMARY KEY (tenant_id);
+
+
+--
+-- Name: users users_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: vulnerabilities vulnerabilities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.vulnerabilities
     ADD CONSTRAINT vulnerabilities_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workflow_product_summaries workflow_product_summaries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.workflow_product_summaries
     ADD CONSTRAINT workflow_product_summaries_pkey PRIMARY KEY (tenant_id, product_name);
 
+
+--
+-- Name: workflow_rules workflow_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.workflow_rules
     ADD CONSTRAINT workflow_rules_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ws_event_logs ws_event_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.ws_event_logs
     ADD CONSTRAINT ws_event_logs_pkey PRIMARY KEY (id);
 
+
+--
+-- Name: idx_active_finger_rule_unique; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_active_finger_rule_unique ON public.active_fingerprint_rules USING btree (tenant_id, source_file);
+
+
+--
+-- Name: idx_active_fingerprint_rules_artifact_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_active_fingerprint_rules_artifact_id ON public.active_fingerprint_rules USING btree (artifact_id);
 
+
+--
+-- Name: idx_active_fingerprint_rules_auto_eligible; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_active_fingerprint_rules_auto_eligible ON public.active_fingerprint_rules USING btree (auto_eligible);
+
+
+--
+-- Name: idx_active_fingerprint_rules_content_hash; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_active_fingerprint_rules_content_hash ON public.active_fingerprint_rules USING btree (content_hash);
 
+
+--
+-- Name: idx_active_fingerprint_rules_enabled; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_active_fingerprint_rules_enabled ON public.active_fingerprint_rules USING btree (enabled);
+
+
+--
+-- Name: idx_active_fingerprint_rules_product_name; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_active_fingerprint_rules_product_name ON public.active_fingerprint_rules USING btree (product_name);
 
+
+--
+-- Name: idx_active_fingerprint_rules_state; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_active_fingerprint_rules_state ON public.active_fingerprint_rules USING btree (state);
+
+
+--
+-- Name: idx_active_fingerprint_rules_tenant_auto; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_active_fingerprint_rules_tenant_auto ON public.active_fingerprint_rules USING btree (tenant_id, enabled, auto_eligible, source_file);
 
+
+--
+-- Name: idx_addi_idempotency; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_addi_idempotency ON public.asset_discovery_notebook_distribution_intents USING btree (tenant_id, project_id, operator_id, operation, idempotency_key_hash);
+
+
+--
+-- Name: idx_addi_operator_created; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_addi_operator_created ON public.asset_discovery_notebook_distribution_intents USING btree (tenant_id, project_id, operator_id, created_at);
 
+
+--
+-- Name: idx_addi_scope_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_addi_scope_id ON public.asset_discovery_notebook_distribution_intents USING btree (tenant_id, project_id, id);
+
+
+--
+-- Name: idx_addi_status_created; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_addi_status_created ON public.asset_discovery_notebook_distribution_intents USING btree (tenant_id, project_id, status, created_at);
 
+
+--
+-- Name: idx_addi_task_created; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_addi_task_created ON public.asset_discovery_notebook_distribution_intents USING btree (tenant_id, project_id, root_task_id, created_at);
+
+
+--
+-- Name: idx_addii_intent_notebook_item; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_addii_intent_notebook_item ON public.asset_discovery_notebook_distribution_intent_items USING btree (tenant_id, project_id, intent_id, notebook_item_id);
 
+
+--
+-- Name: idx_addii_intent_position; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_addii_intent_position ON public.asset_discovery_notebook_distribution_intent_items USING btree (tenant_id, project_id, intent_id, "position");
+
+
+--
+-- Name: idx_addii_intent_target_hash; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_addii_intent_target_hash ON public.asset_discovery_notebook_distribution_intent_items USING btree (tenant_id, project_id, intent_id, target_hash);
 
+
+--
+-- Name: idx_addii_notebook_item; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_addii_notebook_item ON public.asset_discovery_notebook_distribution_intent_items USING btree (tenant_id, project_id, notebook_item_id);
+
+
+--
+-- Name: idx_addii_scope_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_addii_scope_id ON public.asset_discovery_notebook_distribution_intent_items USING btree (tenant_id, project_id, id);
 
+
+--
+-- Name: idx_addii_target_hash; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_addii_target_hash ON public.asset_discovery_notebook_distribution_intent_items USING btree (tenant_id, project_id, target_hash);
+
+
+--
+-- Name: idx_addm_intent; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_addm_intent ON public.asset_discovery_notebook_distribution_materializations USING btree (tenant_id, project_id, intent_id);
 
+
+--
+-- Name: idx_addm_scope_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_addm_scope_id ON public.asset_discovery_notebook_distribution_materializations USING btree (tenant_id, project_id, id);
+
+
+--
+-- Name: idx_addm_task_created; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_addm_task_created ON public.asset_discovery_notebook_distribution_materializations USING btree (tenant_id, project_id, root_task_id, created_at);
 
+
+--
+-- Name: idx_adn_item_tag; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_adn_item_tag ON public.asset_discovery_notebook_item_tags USING btree (tenant_id, project_id, notebook_item_id, tag_id);
+
+
+--
+-- Name: idx_adn_items_active_updated; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_adn_items_active_updated ON public.asset_discovery_notebook_items USING btree (tenant_id, project_id, removed_at, updated_at DESC, id DESC);
 
+
+--
+-- Name: idx_adn_tag; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_adn_tag ON public.asset_discovery_notebook_tags USING btree (tenant_id, project_id, name);
+
+
+--
+-- Name: idx_adn_tag_scope; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_adn_tag_scope ON public.asset_discovery_notebook_tags USING btree (tenant_id, project_id, id);
 
+
+--
+-- Name: idx_agent_log_alert_events_agent_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_agent_log_alert_events_agent_id ON public.agent_log_alert_events USING btree (agent_id);
+
+
+--
+-- Name: idx_agent_log_alert_events_created_at; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_agent_log_alert_events_created_at ON public.agent_log_alert_events USING btree (created_at);
 
+
+--
+-- Name: idx_agent_log_alert_events_level; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_agent_log_alert_events_level ON public.agent_log_alert_events USING btree (level);
+
+
+--
+-- Name: idx_agent_log_alert_events_log_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_agent_log_alert_events_log_id ON public.agent_log_alert_events USING btree (log_id);
 
+
+--
+-- Name: idx_agent_log_alert_events_rule_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_agent_log_alert_events_rule_id ON public.agent_log_alert_events USING btree (rule_id);
+
+
+--
+-- Name: idx_agent_log_alert_events_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_agent_log_alert_events_tenant_id ON public.agent_log_alert_events USING btree (tenant_id);
 
+
+--
+-- Name: idx_agent_log_alert_rules_agent_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_agent_log_alert_rules_agent_id ON public.agent_log_alert_rules USING btree (agent_id);
+
+
+--
+-- Name: idx_agent_log_alert_rules_level; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_agent_log_alert_rules_level ON public.agent_log_alert_rules USING btree (level);
 
+
+--
+-- Name: idx_agent_log_alert_rules_name; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_agent_log_alert_rules_name ON public.agent_log_alert_rules USING btree (name);
+
+
+--
+-- Name: idx_agent_log_alert_rules_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_agent_log_alert_rules_tenant_id ON public.agent_log_alert_rules USING btree (tenant_id);
 
+
+--
+-- Name: idx_agent_log_archives_day; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_agent_log_archives_day ON public.agent_log_archives USING btree (day);
+
+
+--
+-- Name: idx_agent_log_archives_status; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_agent_log_archives_status ON public.agent_log_archives USING btree (status);
 
+
+--
+-- Name: idx_agent_log_archives_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_agent_log_archives_tenant_id ON public.agent_log_archives USING btree (tenant_id);
+
+
+--
+-- Name: idx_agent_logs_agent_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_agent_logs_agent_id ON public.agent_logs USING btree (agent_id);
 
+
+--
+-- Name: idx_agent_logs_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_agent_logs_tenant_id ON public.agent_logs USING btree (tenant_id);
+
+
+--
+-- Name: idx_agent_logs_timestamp; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_agent_logs_timestamp ON public.agent_logs USING btree ("timestamp");
 
+
+--
+-- Name: idx_agent_session_audits_action; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_agent_session_audits_action ON public.agent_session_audits USING btree (action);
+
+
+--
+-- Name: idx_agent_session_audits_agent_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_agent_session_audits_agent_id ON public.agent_session_audits USING btree (agent_id);
 
+
+--
+-- Name: idx_agent_session_audits_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_agent_session_audits_created_at ON public.agent_session_audits USING btree (created_at);
+
+
+--
+-- Name: idx_agent_session_audits_operator_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_agent_session_audits_operator_id ON public.agent_session_audits USING btree (operator_id);
 
+
+--
+-- Name: idx_agent_session_audits_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_agent_session_audits_tenant_id ON public.agent_session_audits USING btree (tenant_id);
+
+
+--
+-- Name: idx_ai_tool_invocations_agent_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_ai_tool_invocations_agent_id ON public.ai_tool_invocations USING btree (agent_id);
 
+
+--
+-- Name: idx_ai_tool_invocations_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_ai_tool_invocations_created_at ON public.ai_tool_invocations USING btree (created_at);
+
+
+--
+-- Name: idx_ai_tool_invocations_module; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_ai_tool_invocations_module ON public.ai_tool_invocations USING btree (module);
 
+
+--
+-- Name: idx_ai_tool_invocations_status; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_ai_tool_invocations_status ON public.ai_tool_invocations USING btree (status);
+
+
+--
+-- Name: idx_ai_tool_invocations_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_ai_tool_invocations_tenant_id ON public.ai_tool_invocations USING btree (tenant_id);
 
+
+--
+-- Name: idx_ai_tool_invocations_tool_name; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_ai_tool_invocations_tool_name ON public.ai_tool_invocations USING btree (tool_name);
+
+
+--
+-- Name: idx_ai_tool_invocations_user_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_ai_tool_invocations_user_id ON public.ai_tool_invocations USING btree (user_id);
 
+
+--
+-- Name: idx_arsenal_ai_reviews_cache; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_arsenal_ai_reviews_cache ON public.arsenal_ai_reviews USING btree (tenant_id, type, content_hash, created_at DESC);
+
+
+--
+-- Name: idx_arsenal_ai_reviews_content_hash; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_arsenal_ai_reviews_content_hash ON public.arsenal_ai_reviews USING btree (content_hash);
 
+
+--
+-- Name: idx_arsenal_ai_reviews_created_by; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_arsenal_ai_reviews_created_by ON public.arsenal_ai_reviews USING btree (created_by);
+
+
+--
+-- Name: idx_arsenal_ai_reviews_file_name; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_arsenal_ai_reviews_file_name ON public.arsenal_ai_reviews USING btree (file_name);
 
+
+--
+-- Name: idx_arsenal_ai_reviews_suggestion; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_arsenal_ai_reviews_suggestion ON public.arsenal_ai_reviews USING btree (suggestion);
+
+
+--
+-- Name: idx_arsenal_ai_reviews_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_arsenal_ai_reviews_tenant_id ON public.arsenal_ai_reviews USING btree (tenant_id);
 
+
+--
+-- Name: idx_arsenal_ai_reviews_type; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_arsenal_ai_reviews_type ON public.arsenal_ai_reviews USING btree (type);
+
+
+--
+-- Name: idx_arsenal_event_artifact; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_arsenal_event_artifact ON public.arsenal_events USING btree (tenant_id, artifact_id, created_at DESC);
 
+
+--
+-- Name: idx_arsenal_events_action; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_arsenal_events_action ON public.arsenal_events USING btree (action);
+
+
+--
+-- Name: idx_arsenal_events_actor_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_arsenal_events_actor_id ON public.arsenal_events USING btree (actor_id);
 
+
+--
+-- Name: idx_arsenal_events_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_arsenal_events_created_at ON public.arsenal_events USING btree (created_at);
+
+
+--
+-- Name: idx_arsenal_events_file_name; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_arsenal_events_file_name ON public.arsenal_events USING btree (file_name);
 
+
+--
+-- Name: idx_arsenal_events_hash; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_arsenal_events_hash ON public.arsenal_events USING btree (hash);
+
+
+--
+-- Name: idx_arsenal_events_state; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_arsenal_events_state ON public.arsenal_events USING btree (state);
 
+
+--
+-- Name: idx_arsenal_events_type; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_arsenal_events_type ON public.arsenal_events USING btree (type);
+
+
+--
+-- Name: idx_arsenal_events_version; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_arsenal_events_version ON public.arsenal_events USING btree (version);
 
+
+--
+-- Name: idx_arsenals_file_name; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_arsenals_file_name ON public.arsenals USING btree (file_name);
+
+
+--
+-- Name: idx_arsenals_state; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_arsenals_state ON public.arsenals USING btree (state);
 
+
+--
+-- Name: idx_arsenals_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_arsenals_tenant_id ON public.arsenals USING btree (tenant_id);
+
+
+--
+-- Name: idx_arsenals_tenant_type_file; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_arsenals_tenant_type_file ON public.arsenals USING btree (tenant_id, type, file_name);
 
+
+--
+-- Name: idx_arsenals_tenant_type_state_updated; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_arsenals_tenant_type_state_updated ON public.arsenals USING btree (tenant_id, type, state, updated_at DESC, id);
+
+
+--
+-- Name: idx_arsenals_type; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_arsenals_type ON public.arsenals USING btree (type);
 
-CREATE INDEX idx_asset_change_logs_change_type ON public.asset_change_logs USING btree (change_type);
 
-CREATE INDEX idx_asset_change_logs_entity_id ON public.asset_change_logs USING btree (entity_id);
-
-CREATE INDEX idx_asset_change_logs_entity_type ON public.asset_change_logs USING btree (entity_type);
-
-CREATE INDEX idx_asset_change_logs_project_id ON public.asset_change_logs USING btree (project_id);
-
-CREATE INDEX idx_asset_change_logs_task_id ON public.asset_change_logs USING btree (task_id);
+--
+-- Name: idx_asset_dedupe; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_asset_dedupe ON public.assets USING btree (project_id, target, protocol);
 
+
+--
+-- Name: idx_asset_discovery_audits_action; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_audits_action ON public.asset_discovery_audits USING btree (action);
+
+
+--
+-- Name: idx_asset_discovery_audits_created_at; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_audits_created_at ON public.asset_discovery_audits USING btree (created_at);
 
+
+--
+-- Name: idx_asset_discovery_audits_error_code; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_audits_error_code ON public.asset_discovery_audits USING btree (error_code);
+
+
+--
+-- Name: idx_asset_discovery_audits_notebook_item_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_audits_notebook_item_id ON public.asset_discovery_audits USING btree (notebook_item_id);
 
+
+--
+-- Name: idx_asset_discovery_audits_operator_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_audits_operator_id ON public.asset_discovery_audits USING btree (operator_id);
+
+
+--
+-- Name: idx_asset_discovery_audits_project_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_audits_project_id ON public.asset_discovery_audits USING btree (project_id);
 
+
+--
+-- Name: idx_asset_discovery_audits_provider; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_audits_provider ON public.asset_discovery_audits USING btree (provider);
+
+
+--
+-- Name: idx_asset_discovery_audits_query_hash; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_audits_query_hash ON public.asset_discovery_audits USING btree (query_hash);
 
+
+--
+-- Name: idx_asset_discovery_audits_scope_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_asset_discovery_audits_scope_id ON public.asset_discovery_audits USING btree (tenant_id, project_id, id);
+
+
+--
+-- Name: idx_asset_discovery_audits_status; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_audits_status ON public.asset_discovery_audits USING btree (status);
 
+
+--
+-- Name: idx_asset_discovery_audits_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_audits_tenant_id ON public.asset_discovery_audits USING btree (tenant_id);
+
+
+--
+-- Name: idx_asset_discovery_notebook_items_created_at; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_notebook_items_created_at ON public.asset_discovery_notebook_items USING btree (created_at);
 
+
+--
+-- Name: idx_asset_discovery_notebook_items_created_by; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_notebook_items_created_by ON public.asset_discovery_notebook_items USING btree (created_by);
+
+
+--
+-- Name: idx_asset_discovery_notebook_items_project_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_notebook_items_project_id ON public.asset_discovery_notebook_items USING btree (project_id);
 
+
+--
+-- Name: idx_asset_discovery_notebook_items_removed_at; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_notebook_items_removed_at ON public.asset_discovery_notebook_items USING btree (removed_at);
+
+
+--
+-- Name: idx_asset_discovery_notebook_items_removed_by; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_notebook_items_removed_by ON public.asset_discovery_notebook_items USING btree (removed_by);
 
+
+--
+-- Name: idx_asset_discovery_notebook_items_scope_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_asset_discovery_notebook_items_scope_id ON public.asset_discovery_notebook_items USING btree (tenant_id, project_id, id);
+
+
+--
+-- Name: idx_asset_discovery_notebook_items_target; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_asset_discovery_notebook_items_target ON public.asset_discovery_notebook_items USING btree (tenant_id, project_id, target_hash);
 
+
+--
+-- Name: idx_asset_discovery_notebook_items_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_notebook_items_tenant_id ON public.asset_discovery_notebook_items USING btree (tenant_id);
+
+
+--
+-- Name: idx_asset_discovery_notebook_items_updated_at; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_notebook_items_updated_at ON public.asset_discovery_notebook_items USING btree (updated_at);
 
+
+--
+-- Name: idx_asset_discovery_notebook_items_updated_by; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_notebook_items_updated_by ON public.asset_discovery_notebook_items USING btree (updated_by);
+
+
+--
+-- Name: idx_asset_discovery_notebook_sources_archived_at; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_notebook_sources_archived_at ON public.asset_discovery_notebook_sources USING btree (archived_at);
 
+
+--
+-- Name: idx_asset_discovery_notebook_sources_archived_by; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_notebook_sources_archived_by ON public.asset_discovery_notebook_sources USING btree (archived_by);
+
+
+--
+-- Name: idx_asset_discovery_notebook_sources_audit_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_notebook_sources_audit_id ON public.asset_discovery_notebook_sources USING btree (audit_id);
 
+
+--
+-- Name: idx_asset_discovery_notebook_sources_notebook_item_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_notebook_sources_notebook_item_id ON public.asset_discovery_notebook_sources USING btree (notebook_item_id);
+
+
+--
+-- Name: idx_asset_discovery_notebook_sources_project_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_notebook_sources_project_id ON public.asset_discovery_notebook_sources USING btree (project_id);
 
+
+--
+-- Name: idx_asset_discovery_notebook_sources_snapshot_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_notebook_sources_snapshot_id ON public.asset_discovery_notebook_sources USING btree (snapshot_id);
+
+
+--
+-- Name: idx_asset_discovery_notebook_sources_snapshot_item; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_asset_discovery_notebook_sources_snapshot_item ON public.asset_discovery_notebook_sources USING btree (tenant_id, project_id, snapshot_id, snapshot_item_id);
 
+
+--
+-- Name: idx_asset_discovery_notebook_sources_snapshot_item_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_notebook_sources_snapshot_item_id ON public.asset_discovery_notebook_sources USING btree (snapshot_item_id);
+
+
+--
+-- Name: idx_asset_discovery_notebook_sources_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_notebook_sources_tenant_id ON public.asset_discovery_notebook_sources USING btree (tenant_id);
 
+
+--
+-- Name: idx_asset_discovery_snapshot_items_domain; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_snapshot_items_domain ON public.asset_discovery_snapshot_items USING btree (domain);
+
+
+--
+-- Name: idx_asset_discovery_snapshot_items_ip; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_snapshot_items_ip ON public.asset_discovery_snapshot_items USING btree (ip);
 
+
+--
+-- Name: idx_asset_discovery_snapshot_items_observed_at; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_snapshot_items_observed_at ON public.asset_discovery_snapshot_items USING btree (observed_at);
+
+
+--
+-- Name: idx_asset_discovery_snapshot_items_project_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_snapshot_items_project_id ON public.asset_discovery_snapshot_items USING btree (project_id);
 
+
+--
+-- Name: idx_asset_discovery_snapshot_items_project_snapshot; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_snapshot_items_project_snapshot ON public.asset_discovery_snapshot_items USING btree (tenant_id, project_id, snapshot_id, "position");
+
+
+--
+-- Name: idx_asset_discovery_snapshot_items_protocol; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_snapshot_items_protocol ON public.asset_discovery_snapshot_items USING btree (protocol);
 
+
+--
+-- Name: idx_asset_discovery_snapshot_items_scope_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_asset_discovery_snapshot_items_scope_id ON public.asset_discovery_snapshot_items USING btree (tenant_id, project_id, snapshot_id, id);
+
+
+--
+-- Name: idx_asset_discovery_snapshot_items_snapshot_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_snapshot_items_snapshot_id ON public.asset_discovery_snapshot_items USING btree (snapshot_id);
 
+
+--
+-- Name: idx_asset_discovery_snapshot_items_source; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_snapshot_items_source ON public.asset_discovery_snapshot_items USING btree (source);
+
+
+--
+-- Name: idx_asset_discovery_snapshot_items_target; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_asset_discovery_snapshot_items_target ON public.asset_discovery_snapshot_items USING btree (snapshot_id, target_hash);
 
+
+--
+-- Name: idx_asset_discovery_snapshot_items_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_snapshot_items_tenant_id ON public.asset_discovery_snapshot_items USING btree (tenant_id);
+
+
+--
+-- Name: idx_asset_discovery_snapshots_audit_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_asset_discovery_snapshots_audit_id ON public.asset_discovery_snapshots USING btree (audit_id);
 
+
+--
+-- Name: idx_asset_discovery_snapshots_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_snapshots_created_at ON public.asset_discovery_snapshots USING btree (created_at);
+
+
+--
+-- Name: idx_asset_discovery_snapshots_created_by; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_snapshots_created_by ON public.asset_discovery_snapshots USING btree (created_by);
 
+
+--
+-- Name: idx_asset_discovery_snapshots_project_created; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_snapshots_project_created ON public.asset_discovery_snapshots USING btree (tenant_id, project_id, created_at DESC);
+
+
+--
+-- Name: idx_asset_discovery_snapshots_project_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_snapshots_project_id ON public.asset_discovery_snapshots USING btree (project_id);
 
+
+--
+-- Name: idx_asset_discovery_snapshots_provider; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_asset_discovery_snapshots_provider ON public.asset_discovery_snapshots USING btree (provider);
+
+
+--
+-- Name: idx_asset_discovery_snapshots_query_hash; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_snapshots_query_hash ON public.asset_discovery_snapshots USING btree (query_hash);
 
+
+--
+-- Name: idx_asset_discovery_snapshots_scope_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_asset_discovery_snapshots_scope_id ON public.asset_discovery_snapshots USING btree (tenant_id, project_id, id);
+
+
+--
+-- Name: idx_asset_discovery_snapshots_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_asset_discovery_snapshots_tenant_id ON public.asset_discovery_snapshots USING btree (tenant_id);
 
+
+--
+-- Name: idx_assets_cred_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_assets_cred_id ON public.assets USING btree (cred_id);
+
+
+--
+-- Name: idx_assets_owner_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_assets_owner_id ON public.assets USING btree (owner_id);
 
+
+--
+-- Name: idx_assets_root_task_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_assets_root_task_id ON public.assets USING btree (root_task_id);
+
+
+--
+-- Name: idx_assets_status; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_assets_status ON public.assets USING btree (status);
 
+
+--
+-- Name: idx_assets_task_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_assets_task_id ON public.assets USING btree (task_id);
+
+
+--
+-- Name: idx_assets_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_assets_tenant_id ON public.assets USING btree (tenant_id);
 
+
+--
+-- Name: idx_build_jobs_arch; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_build_jobs_arch ON public.build_jobs USING btree (arch);
+
+
+--
+-- Name: idx_build_jobs_platform; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_build_jobs_platform ON public.build_jobs USING btree (platform);
 
+
+--
+-- Name: idx_build_jobs_status; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_build_jobs_status ON public.build_jobs USING btree (status);
+
+
+--
+-- Name: idx_cloud_account_binding_unique; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_cloud_account_binding_unique ON public.cloud_account_bindings USING btree (tenant_id, cloud_account_id, user_id);
 
+
+--
+-- Name: idx_cloud_account_bindings_cloud_account_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_cloud_account_bindings_cloud_account_id ON public.cloud_account_bindings USING btree (cloud_account_id);
+
+
+--
+-- Name: idx_cloud_account_bindings_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_cloud_account_bindings_tenant_id ON public.cloud_account_bindings USING btree (tenant_id);
 
+
+--
+-- Name: idx_cloud_account_bindings_user_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_cloud_account_bindings_user_id ON public.cloud_account_bindings USING btree (user_id);
+
+
+--
+-- Name: idx_cloud_accounts_owner_user_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_cloud_accounts_owner_user_id ON public.cloud_accounts USING btree (owner_user_id);
 
+
+--
+-- Name: idx_cloud_accounts_provider; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_cloud_accounts_provider ON public.cloud_accounts USING btree (provider);
+
+
+--
+-- Name: idx_cloud_accounts_status; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_cloud_accounts_status ON public.cloud_accounts USING btree (status);
 
+
+--
+-- Name: idx_cloud_accounts_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_cloud_accounts_tenant ON public.cloud_accounts USING btree (tenant_id);
+
+
+--
+-- Name: idx_cloud_instances_account; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_cloud_instances_account ON public.cloud_instances USING btree (cloud_account_id);
 
+
+--
+-- Name: idx_cloud_instances_agent; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_cloud_instances_agent ON public.cloud_instances USING btree (agent_id);
+
+
+--
+-- Name: idx_cloud_instances_deleted; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_cloud_instances_deleted ON public.cloud_instances USING btree (deleted_at);
 
+
+--
+-- Name: idx_cloud_instances_policy; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_cloud_instances_policy ON public.cloud_instances USING btree (policy_id);
+
+
+--
+-- Name: idx_cloud_instances_provider_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_cloud_instances_provider_id ON public.cloud_instances USING btree (provider_instance_id);
 
+
+--
+-- Name: idx_cloud_instances_status; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_cloud_instances_status ON public.cloud_instances USING btree (status);
+
+
+--
+-- Name: idx_cloud_instances_tenant; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_cloud_instances_tenant ON public.cloud_instances USING btree (tenant_id);
 
+
+--
+-- Name: idx_cloud_policies_account; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_cloud_policies_account ON public.cloud_scaling_policies USING btree (cloud_account_id);
+
+
+--
+-- Name: idx_cloud_policies_enabled; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_cloud_policies_enabled ON public.cloud_scaling_policies USING btree (enabled);
 
+
+--
+-- Name: idx_cloud_policies_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_cloud_policies_tenant ON public.cloud_scaling_policies USING btree (tenant_id);
+
+
+--
+-- Name: idx_credential_bundles_attempt_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_credential_bundles_attempt_id ON public.credential_bundles USING btree (attempt_id);
 
+
+--
+-- Name: idx_credential_bundles_expires_at; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_credential_bundles_expires_at ON public.credential_bundles USING btree (expires_at);
+
+
+--
+-- Name: idx_credential_dictionaries_project_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_credential_dictionaries_project_id ON public.credential_dictionaries USING btree (project_id);
 
+
+--
+-- Name: idx_credential_dictionary_name; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_credential_dictionary_name ON public.credential_dictionaries USING btree (tenant_id, project_id, kind, name) WHERE (deleted_at IS NULL);
+
+
+--
+-- Name: idx_credential_dictionary_revision; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_credential_dictionary_revision ON public.credential_dictionary_revisions USING btree (dictionary_id, revision);
 
+
+--
+-- Name: idx_credential_dictionary_revisions_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_credential_dictionary_revisions_tenant_id ON public.credential_dictionary_revisions USING btree (tenant_id);
+
+
+--
+-- Name: idx_credential_finding_secrets_root_task_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_credential_finding_secrets_root_task_id ON public.credential_finding_secrets USING btree (root_task_id);
 
+
+--
+-- Name: idx_credential_finding_secrets_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_credential_finding_secrets_tenant_id ON public.credential_finding_secrets USING btree (tenant_id);
+
+
+--
+-- Name: idx_credential_reveal_audits_finding_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_credential_reveal_audits_finding_id ON public.credential_reveal_audits USING btree (finding_id);
 
+
+--
+-- Name: idx_credential_reveal_audits_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_credential_reveal_audits_tenant_id ON public.credential_reveal_audits USING btree (tenant_id);
+
+
+--
+-- Name: idx_credentials_deleted_at; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_credentials_deleted_at ON public.credentials USING btree (deleted_at);
 
+
+--
+-- Name: idx_credentials_project_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_credentials_project_id ON public.credentials USING btree (project_id);
+
+
+--
+-- Name: idx_credentials_type; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_credentials_type ON public.credentials USING btree (type);
 
-CREATE INDEX idx_cron_tasks_cron_expr ON public.cron_tasks USING btree (cron_expr);
 
-CREATE INDEX idx_cron_tasks_deleted_at ON public.cron_tasks USING btree (deleted_at);
-
-CREATE INDEX idx_cron_tasks_next_run_at ON public.cron_tasks USING btree (next_run_at);
-
-CREATE INDEX idx_cron_tasks_project_id ON public.cron_tasks USING btree (project_id);
-
-CREATE INDEX idx_cron_tasks_status ON public.cron_tasks USING btree (status);
+--
+-- Name: idx_custom_roles_base_role; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_custom_roles_base_role ON public.custom_roles USING btree (base_role);
 
+
+--
+-- Name: idx_custom_roles_tenant_name; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_custom_roles_tenant_name ON public.custom_roles USING btree (tenant_id, name);
+
+
+--
+-- Name: idx_dir_rule_unique; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_dir_rule_unique ON public.dir_rules USING btree (tenant_id, path, product_name);
 
+
+--
+-- Name: idx_dir_rules_artifact_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_dir_rules_artifact_id ON public.dir_rules USING btree (artifact_id);
+
+
+--
+-- Name: idx_dir_rules_content_hash; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_dir_rules_content_hash ON public.dir_rules USING btree (content_hash);
 
+
+--
+-- Name: idx_dir_rules_enabled; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_dir_rules_enabled ON public.dir_rules USING btree (enabled);
+
+
+--
+-- Name: idx_dir_rules_path; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_dir_rules_path ON public.dir_rules USING btree (path);
 
+
+--
+-- Name: idx_dir_rules_product_name; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_dir_rules_product_name ON public.dir_rules USING btree (product_name);
+
+
+--
+-- Name: idx_dir_rules_source_file; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_dir_rules_source_file ON public.dir_rules USING btree (source_file);
 
+
+--
+-- Name: idx_dir_rules_state; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_dir_rules_state ON public.dir_rules USING btree (state);
+
+
+--
+-- Name: idx_dir_rules_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_dir_rules_tenant_id ON public.dir_rules USING btree (tenant_id);
 
+
+--
+-- Name: idx_domain_dedupe; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_domain_dedupe ON public.domains USING btree (tenant_id, project_id, name);
+
+
+--
+-- Name: idx_domains_status; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_domains_status ON public.domains USING btree (status);
 
+
+--
+-- Name: idx_domains_task_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_domains_task_id ON public.domains USING btree (task_id);
+
+
+--
+-- Name: idx_exp_asset_identity; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_exp_asset_identity ON public.exp_assets USING btree (tenant_id, asset_id, version);
 
+
+--
+-- Name: idx_exp_asset_ref; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_exp_asset_ref ON public.exp_asset_refs USING btree (exp_id, revision, asset_id);
+
+
+--
+-- Name: idx_exp_asset_refs_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_exp_asset_refs_tenant_id ON public.exp_asset_refs USING btree (tenant_id);
 
+
+--
+-- Name: idx_exp_assets_sha256; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_exp_assets_sha256 ON public.exp_assets USING btree (sha256);
+
+
+--
+-- Name: idx_exp_assets_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_exp_assets_tenant_id ON public.exp_assets USING btree (tenant_id);
 
+
+--
+-- Name: idx_exp_audits_action; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_exp_audits_action ON public.exp_audits USING btree (action);
+
+
+--
+-- Name: idx_exp_audits_actor_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_exp_audits_actor_id ON public.exp_audits USING btree (actor_id);
 
+
+--
+-- Name: idx_exp_audits_exp_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_exp_audits_exp_id ON public.exp_audits USING btree (exp_id);
+
+
+--
+-- Name: idx_exp_audits_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_exp_audits_tenant_id ON public.exp_audits USING btree (tenant_id);
 
+
+--
+-- Name: idx_exp_dependencies_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_exp_dependencies_tenant_id ON public.exp_dependencies USING btree (tenant_id);
+
+
+--
+-- Name: idx_exp_dependency; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_exp_dependency ON public.exp_dependencies USING btree (parent_exp_id, parent_revision, dependency_exp_id, dependency_revision);
 
+
+--
+-- Name: idx_exp_egress_audits_agent_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_exp_egress_audits_agent_id ON public.exp_egress_audits USING btree (agent_id);
+
+
+--
+-- Name: idx_exp_egress_audits_error_code; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_exp_egress_audits_error_code ON public.exp_egress_audits USING btree (error_code);
 
+
+--
+-- Name: idx_exp_egress_audits_expires_at; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_exp_egress_audits_expires_at ON public.exp_egress_audits USING btree (expires_at);
+
+
+--
+-- Name: idx_exp_egress_audits_finished_at; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_exp_egress_audits_finished_at ON public.exp_egress_audits USING btree (finished_at);
 
+
+--
+-- Name: idx_exp_egress_audits_issued_at; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_exp_egress_audits_issued_at ON public.exp_egress_audits USING btree (issued_at);
+
+
+--
+-- Name: idx_exp_egress_audits_operator_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_exp_egress_audits_operator_id ON public.exp_egress_audits USING btree (operator_id);
 
+
+--
+-- Name: idx_exp_egress_audits_route_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_exp_egress_audits_route_id ON public.exp_egress_audits USING btree (route_id);
+
+
+--
+-- Name: idx_exp_egress_audits_status; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_exp_egress_audits_status ON public.exp_egress_audits USING btree (status);
 
+
+--
+-- Name: idx_exp_egress_audits_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_exp_egress_audits_tenant_id ON public.exp_egress_audits USING btree (tenant_id);
+
+
+--
+-- Name: idx_exp_revision; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_exp_revision ON public.exp_revisions USING btree (exp_id, revision);
 
+
+--
+-- Name: idx_exp_revisions_source_sha256; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_exp_revisions_source_sha256 ON public.exp_revisions USING btree (source_sha256);
+
+
+--
+-- Name: idx_exp_revisions_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_exp_revisions_tenant_id ON public.exp_revisions USING btree (tenant_id);
 
+
+--
+-- Name: idx_exp_risk_waiver; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_exp_risk_waiver ON public.exp_risk_waivers USING btree (tenant_id, exp_id);
+
+
+--
+-- Name: idx_exp_runs_artifact_expires_at; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_exp_runs_artifact_expires_at ON public.exp_runs USING btree (artifact_expires_at);
 
+
+--
+-- Name: idx_exp_runs_exp_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_exp_runs_exp_id ON public.exp_runs USING btree (exp_id);
+
+
+--
+-- Name: idx_exp_runs_status; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_exp_runs_status ON public.exp_runs USING btree (status);
 
+
+--
+-- Name: idx_exp_runs_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_exp_runs_tenant_id ON public.exp_runs USING btree (tenant_id);
+
+
+--
+-- Name: idx_exp_test_case_revision; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_exp_test_case_revision ON public.exp_test_cases USING btree (exp_id, revision);
 
+
+--
+-- Name: idx_exp_test_cases_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_exp_test_cases_tenant_id ON public.exp_test_cases USING btree (tenant_id);
+
+
+--
+-- Name: idx_exps_parent_exp_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_exps_parent_exp_id ON public.exps USING btree (parent_exp_id);
 
+
+--
+-- Name: idx_exps_parent_variant; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_exps_parent_variant ON public.exps USING btree (parent_exp_id, variant_key) WHERE (parent_exp_id IS NOT NULL);
+
+
+--
+-- Name: idx_exps_status; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_exps_status ON public.exps USING btree (status);
 
+
+--
+-- Name: idx_exps_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_exps_tenant_id ON public.exps USING btree (tenant_id);
+
+
+--
+-- Name: idx_exps_tenant_id_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_exps_tenant_id_id ON public.exps USING btree (tenant_id, id);
 
+
+--
+-- Name: idx_exps_tenant_name; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_exps_tenant_name ON public.exps USING btree (tenant_id, name);
+
+
+--
+-- Name: idx_exps_tenant_product; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_exps_tenant_product ON public.exps USING btree (tenant_id, product_name);
 
+
+--
+-- Name: idx_fingerprint_hits_root_task_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_fingerprint_hits_root_task_id ON public.fingerprint_hits USING btree (root_task_id);
+
+
+--
+-- Name: idx_fingerprint_hits_task_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_fingerprint_hits_task_id ON public.fingerprint_hits USING btree (task_id);
 
+
+--
+-- Name: idx_fingerprint_hits_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_fingerprint_hits_tenant_id ON public.fingerprint_hits USING btree (tenant_id);
+
+
+--
+-- Name: idx_fingerprint_rules_artifact_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_fingerprint_rules_artifact_id ON public.fingerprint_rules USING btree (artifact_id);
 
+
+--
+-- Name: idx_fingerprint_rules_category; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_fingerprint_rules_category ON public.fingerprint_rules USING btree (category);
+
+
+--
+-- Name: idx_fingerprint_rules_content_hash; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_fingerprint_rules_content_hash ON public.fingerprint_rules USING btree (content_hash);
 
+
+--
+-- Name: idx_fingerprint_rules_enabled; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_fingerprint_rules_enabled ON public.fingerprint_rules USING btree (enabled);
+
+
+--
+-- Name: idx_fingerprint_rules_product_name; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_fingerprint_rules_product_name ON public.fingerprint_rules USING btree (product_name);
 
+
+--
+-- Name: idx_fingerprint_rules_product_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_fingerprint_rules_product_trgm ON public.fingerprint_rules USING gin (product_name public.gin_trgm_ops);
+
+
+--
+-- Name: idx_fingerprint_rules_source_file; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_fingerprint_rules_source_file ON public.fingerprint_rules USING btree (source_file);
 
+
+--
+-- Name: idx_fingerprint_rules_state; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_fingerprint_rules_state ON public.fingerprint_rules USING btree (state);
+
+
+--
+-- Name: idx_fingerprint_rules_tenant_enabled_product; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_fingerprint_rules_tenant_enabled_product ON public.fingerprint_rules USING btree (tenant_id, enabled, product_name);
 
+
+--
+-- Name: idx_fingerprint_rules_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_fingerprint_rules_tenant_id ON public.fingerprint_rules USING btree (tenant_id);
+
+
+--
+-- Name: idx_fingerprint_rules_tenant_state_product; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_fingerprint_rules_tenant_state_product ON public.fingerprint_rules USING btree (tenant_id, state, product_name);
 
+
+--
+-- Name: idx_fp_dedupe; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_fp_dedupe ON public.fingerprint_hits USING btree (project_id, target, product_name);
+
+
+--
+-- Name: idx_fp_rule_unique; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_fp_rule_unique ON public.fingerprint_rules USING btree (tenant_id, product_name, rule_expr);
 
+
+--
+-- Name: idx_nodes_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_nodes_tenant_id ON public.nodes USING btree (tenant_id);
 
-CREATE INDEX idx_notification_rules_event ON public.notification_rules USING btree (event);
 
-CREATE INDEX idx_notification_rules_project_id ON public.notification_rules USING btree (project_id);
+--
+-- Name: idx_poc_rule_unique; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_poc_rule_unique ON public.poc_rules USING btree (tenant_id, source_file);
 
+
+--
+-- Name: idx_poc_rules_artifact_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_poc_rules_artifact_id ON public.poc_rules USING btree (artifact_id);
+
+
+--
+-- Name: idx_poc_rules_compatibility_status; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_poc_rules_compatibility_status ON public.poc_rules USING btree (compatibility_status);
 
+
+--
+-- Name: idx_poc_rules_content_hash; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_poc_rules_content_hash ON public.poc_rules USING btree (content_hash);
+
+
+--
+-- Name: idx_poc_rules_cve; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_poc_rules_cve ON public.poc_rules USING btree (cve);
 
+
+--
+-- Name: idx_poc_rules_cve_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_poc_rules_cve_trgm ON public.poc_rules USING gin (cve public.gin_trgm_ops);
+
+
+--
+-- Name: idx_poc_rules_enabled; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_poc_rules_enabled ON public.poc_rules USING btree (enabled);
 
+
+--
+-- Name: idx_poc_rules_execution_class; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_poc_rules_execution_class ON public.poc_rules USING btree (execution_class);
+
+
+--
+-- Name: idx_poc_rules_name; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_poc_rules_name ON public.poc_rules USING btree (name);
 
+
+--
+-- Name: idx_poc_rules_name_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_poc_rules_name_trgm ON public.poc_rules USING gin (name public.gin_trgm_ops);
+
+
+--
+-- Name: idx_poc_rules_risk_level; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_poc_rules_risk_level ON public.poc_rules USING btree (risk_level);
 
+
+--
+-- Name: idx_poc_rules_severity; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_poc_rules_severity ON public.poc_rules USING btree (severity);
+
+
+--
+-- Name: idx_poc_rules_source_file; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_poc_rules_source_file ON public.poc_rules USING btree (source_file);
 
+
+--
+-- Name: idx_poc_rules_source_file_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_poc_rules_source_file_trgm ON public.poc_rules USING gin (source_file public.gin_trgm_ops);
+
+
+--
+-- Name: idx_poc_rules_state; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_poc_rules_state ON public.poc_rules USING btree (state);
 
+
+--
+-- Name: idx_poc_rules_tags_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_poc_rules_tags_trgm ON public.poc_rules USING gin (tags public.gin_trgm_ops);
+
+
+--
+-- Name: idx_poc_rules_target_product; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_poc_rules_target_product ON public.poc_rules USING btree (target_product);
 
+
+--
+-- Name: idx_poc_rules_target_product_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_poc_rules_target_product_trgm ON public.poc_rules USING gin (target_product public.gin_trgm_ops);
+
+
+--
+-- Name: idx_poc_rules_tenant_compat_updated; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_poc_rules_tenant_compat_updated ON public.poc_rules USING btree (tenant_id, compatibility_status, updated_at DESC, id DESC);
 
+
+--
+-- Name: idx_poc_rules_tenant_enabled_updated; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_poc_rules_tenant_enabled_updated ON public.poc_rules USING btree (tenant_id, enabled, updated_at DESC, id DESC);
+
+
+--
+-- Name: idx_poc_rules_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_poc_rules_tenant_id ON public.poc_rules USING btree (tenant_id);
 
+
+--
+-- Name: idx_poc_rules_tenant_severity_updated; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_poc_rules_tenant_severity_updated ON public.poc_rules USING btree (tenant_id, severity, updated_at DESC, id DESC);
+
+
+--
+-- Name: idx_project_members_tenant_project; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_project_members_tenant_project ON public.project_members USING btree (tenant_id, project_id);
 
+
+--
+-- Name: idx_project_members_tenant_user; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_project_members_tenant_user ON public.project_members USING btree (tenant_id, user_id);
+
+
+--
+-- Name: idx_projects_deleted_at; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_projects_deleted_at ON public.projects USING btree (deleted_at);
 
+
+--
+-- Name: idx_projects_name; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_projects_name ON public.projects USING btree (name);
+
+
+--
+-- Name: idx_projects_owner_user_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_projects_owner_user_id ON public.projects USING btree (owner_user_id);
 
+
+--
+-- Name: idx_projects_scope_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_projects_scope_id ON public.projects USING btree (tenant_id, id);
+
+
+--
+-- Name: idx_projects_status; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_projects_status ON public.projects USING btree (status);
 
+
+--
+-- Name: idx_projects_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_projects_tenant_id ON public.projects USING btree (tenant_id);
+
+
+--
+-- Name: idx_reports_created_by; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_reports_created_by ON public.reports USING btree (created_by);
 
+
+--
+-- Name: idx_reports_project_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_reports_project_id ON public.reports USING btree (project_id);
+
+
+--
+-- Name: idx_reports_type; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_reports_type ON public.reports USING btree (type);
 
+
+--
+-- Name: idx_root_tasks_archived_at; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_root_tasks_archived_at ON public.root_tasks USING btree (archived_at);
 
-CREATE INDEX idx_root_tasks_cron_task_id ON public.root_tasks USING btree (cron_task_id);
+
+--
+-- Name: idx_root_tasks_project_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_root_tasks_project_id ON public.root_tasks USING btree (project_id);
 
+
+--
+-- Name: idx_root_tasks_scope_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_root_tasks_scope_id ON public.root_tasks USING btree (tenant_id, project_id, id);
+
+
+--
+-- Name: idx_root_tasks_status; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_root_tasks_status ON public.root_tasks USING btree (status);
 
+
+--
+-- Name: idx_root_tasks_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_root_tasks_tenant_id ON public.root_tasks USING btree (tenant_id);
+
+
+--
+-- Name: idx_root_tasks_user_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_root_tasks_user_id ON public.root_tasks USING btree (user_id);
 
+
+--
+-- Name: idx_rule_catalog_bootstraps_aggregate_hash; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_rule_catalog_bootstraps_aggregate_hash ON public.rule_catalog_bootstraps USING btree (aggregate_hash);
+
+
+--
+-- Name: idx_rule_catalog_bootstraps_status; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_rule_catalog_bootstraps_status ON public.rule_catalog_bootstraps USING btree (status);
 
+
+--
+-- Name: idx_rvei_idempotency; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_rvei_idempotency ON public.risk_validation_execution_idempotencies USING btree (tenant_id, project_id, root_task_id, operator_id, operation, idempotency_key_hash);
+
+
+--
+-- Name: idx_rvei_operator_created; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_rvei_operator_created ON public.risk_validation_execution_idempotencies USING btree (tenant_id, project_id, operator_id, created_at);
 
+
+--
+-- Name: idx_rvei_scope_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_rvei_scope_id ON public.risk_validation_execution_idempotencies USING btree (tenant_id, project_id, root_task_id, id);
+
+
+--
+-- Name: idx_rvei_task_created; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_rvei_task_created ON public.risk_validation_execution_idempotencies USING btree (tenant_id, project_id, root_task_id, created_at);
 
+
+--
+-- Name: idx_scan_coverages_finished_at; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_coverages_finished_at ON public.scan_coverages USING btree (finished_at);
+
+
+--
+-- Name: idx_scan_coverages_lookup; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_coverages_lookup ON public.scan_coverages USING btree (tenant_id, project_id, network_zone, target_hash, stage);
 
+
+--
+-- Name: idx_scan_coverages_outcome; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_coverages_outcome ON public.scan_coverages USING btree (outcome);
+
+
+--
+-- Name: idx_scan_coverages_project_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_coverages_project_id ON public.scan_coverages USING btree (project_id);
 
+
+--
+-- Name: idx_scan_coverages_rule_version; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_coverages_rule_version ON public.scan_coverages USING btree (rule_version);
+
+
+--
+-- Name: idx_scan_coverages_source_attempt_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_coverages_source_attempt_id ON public.scan_coverages USING btree (source_attempt_id);
 
+
+--
+-- Name: idx_scan_coverages_source_batch_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_coverages_source_batch_id ON public.scan_coverages USING btree (source_batch_id);
+
+
+--
+-- Name: idx_scan_coverages_source_observation_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_coverages_source_observation_id ON public.scan_coverages USING btree (source_observation_id);
 
+
+--
+-- Name: idx_scan_coverages_source_task_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_coverages_source_task_id ON public.scan_coverages USING btree (source_task_id);
+
+
+--
+-- Name: idx_scan_coverages_stage; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_coverages_stage ON public.scan_coverages USING btree (stage);
 
+
+--
+-- Name: idx_scan_coverages_status; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_coverages_status ON public.scan_coverages USING btree (status);
+
+
+--
+-- Name: idx_scan_coverages_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_coverages_tenant_id ON public.scan_coverages USING btree (tenant_id);
 
+
+--
+-- Name: idx_scan_coverages_tenant_project_work; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_scan_coverages_tenant_project_work ON public.scan_coverages USING btree (tenant_id, project_id, work_key_hash);
+
+
+--
+-- Name: idx_scan_coverages_valid_until; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_coverages_valid_until ON public.scan_coverages USING btree (valid_until);
 
+
+--
+-- Name: idx_scan_observations_agent_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_observations_agent_id ON public.scan_observations USING btree (agent_id);
+
+
+--
+-- Name: idx_scan_observations_attempt_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_observations_attempt_id ON public.scan_observations USING btree (attempt_id);
 
+
+--
+-- Name: idx_scan_observations_batch_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_observations_batch_id ON public.scan_observations USING btree (batch_id);
+
+
+--
+-- Name: idx_scan_observations_observed_at; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_observations_observed_at ON public.scan_observations USING btree (observed_at);
 
+
+--
+-- Name: idx_scan_observations_outcome; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_observations_outcome ON public.scan_observations USING btree (outcome);
+
+
+--
+-- Name: idx_scan_observations_project_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_observations_project_id ON public.scan_observations USING btree (project_id);
 
+
+--
+-- Name: idx_scan_observations_root_task_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_observations_root_task_id ON public.scan_observations USING btree (root_task_id);
+
+
+--
+-- Name: idx_scan_observations_rule_version; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_observations_rule_version ON public.scan_observations USING btree (rule_version);
 
+
+--
+-- Name: idx_scan_observations_scope; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_observations_scope ON public.scan_observations USING btree (tenant_id, project_id, network_zone, stage, observed_at DESC);
+
+
+--
+-- Name: idx_scan_observations_stage; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_observations_stage ON public.scan_observations USING btree (stage);
 
+
+--
+-- Name: idx_scan_observations_target_hash; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_observations_target_hash ON public.scan_observations USING btree (target_hash);
+
+
+--
+-- Name: idx_scan_observations_tenant_event; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_scan_observations_tenant_event ON public.scan_observations USING btree (tenant_id, source_event_id) WHERE (source_event_id IS NOT NULL);
 
+
+--
+-- Name: idx_scan_observations_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_observations_tenant_id ON public.scan_observations USING btree (tenant_id);
+
+
+--
+-- Name: idx_scan_observations_work_key_hash; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_observations_work_key_hash ON public.scan_observations USING btree (work_key_hash);
 
+
+--
+-- Name: idx_scan_policy_intent_root; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_scan_policy_intent_root ON public.scan_policy_intents USING btree (tenant_id, root_task_id);
+
+
+--
+-- Name: idx_scan_policy_intents_plan_hash; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_policy_intents_plan_hash ON public.scan_policy_intents USING btree (plan_hash);
 
+
+--
+-- Name: idx_scan_policy_intents_policy_hash; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_policy_intents_policy_hash ON public.scan_policy_intents USING btree (policy_hash);
+
+
+--
+-- Name: idx_scan_policy_intents_project_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_policy_intents_project_id ON public.scan_policy_intents USING btree (project_id);
 
+
+--
+-- Name: idx_scan_stage_derivation; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_scan_stage_derivation ON public.scan_stage_derivations USING btree (tenant_id, root_task_id, stage);
+
+
+--
+-- Name: idx_scan_stage_derivations_batch_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_stage_derivations_batch_id ON public.scan_stage_derivations USING btree (batch_id);
 
+
+--
+-- Name: idx_scan_timing_events_attempt_created; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_timing_events_attempt_created ON public.scan_timing_events USING btree (tenant_id, project_id, root_task_id, attempt_id, created_at);
+
+
+--
+-- Name: idx_scan_timing_events_scope_created; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_timing_events_scope_created ON public.scan_timing_events USING btree (tenant_id, project_id, root_task_id, created_at);
 
+
+--
+-- Name: idx_scan_timing_events_tenant_source_event; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_scan_timing_events_tenant_source_event ON public.scan_timing_events USING btree (tenant_id, source_event_id);
+
+
+--
+-- Name: idx_scan_work_claims_lease_expires_at; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_work_claims_lease_expires_at ON public.scan_work_claims USING btree (lease_expires_at);
 
+
+--
+-- Name: idx_scan_work_claims_network_zone; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_work_claims_network_zone ON public.scan_work_claims USING btree (network_zone);
+
+
+--
+-- Name: idx_scan_work_claims_owner_agent_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_work_claims_owner_agent_id ON public.scan_work_claims USING btree (owner_agent_id);
 
+
+--
+-- Name: idx_scan_work_claims_owner_attempt_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_work_claims_owner_attempt_id ON public.scan_work_claims USING btree (owner_attempt_id);
+
+
+--
+-- Name: idx_scan_work_claims_owner_batch_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_work_claims_owner_batch_id ON public.scan_work_claims USING btree (owner_batch_id);
 
+
+--
+-- Name: idx_scan_work_claims_owner_task_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_work_claims_owner_task_id ON public.scan_work_claims USING btree (owner_task_id);
+
+
+--
+-- Name: idx_scan_work_claims_project_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_work_claims_project_id ON public.scan_work_claims USING btree (project_id);
 
+
+--
+-- Name: idx_scan_work_claims_rule_version; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_work_claims_rule_version ON public.scan_work_claims USING btree (rule_version);
+
+
+--
+-- Name: idx_scan_work_claims_stage; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_work_claims_stage ON public.scan_work_claims USING btree (stage);
 
+
+--
+-- Name: idx_scan_work_claims_status; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_work_claims_status ON public.scan_work_claims USING btree (status);
+
+
+--
+-- Name: idx_scan_work_claims_target_hash; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_scan_work_claims_target_hash ON public.scan_work_claims USING btree (target_hash);
 
+
+--
+-- Name: idx_scan_work_claims_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_scan_work_claims_tenant_id ON public.scan_work_claims USING btree (tenant_id);
+
+
+--
+-- Name: idx_scan_work_claims_tenant_project_work; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_scan_work_claims_tenant_project_work ON public.scan_work_claims USING btree (tenant_id, project_id, work_key_hash);
 
+
+--
+-- Name: idx_sub_tasks_agent_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_sub_tasks_agent_id ON public.sub_tasks USING btree (agent_id);
+
+
+--
+-- Name: idx_sub_tasks_batch_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_sub_tasks_batch_id ON public.sub_tasks USING btree (batch_id);
 
+
+--
+-- Name: idx_sub_tasks_finished_at; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_sub_tasks_finished_at ON public.sub_tasks USING btree (finished_at);
+
+
+--
+-- Name: idx_sub_tasks_parent_attempt_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_sub_tasks_parent_attempt_id ON public.sub_tasks USING btree (parent_attempt_id);
 
+
+--
+-- Name: idx_sub_tasks_priority; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_sub_tasks_priority ON public.sub_tasks USING btree (priority);
+
+
+--
+-- Name: idx_sub_tasks_project_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_sub_tasks_project_id ON public.sub_tasks USING btree (project_id);
 
+
+--
+-- Name: idx_sub_tasks_root_task_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_sub_tasks_root_task_id ON public.sub_tasks USING btree (root_task_id);
+
+
+--
+-- Name: idx_sub_tasks_scope_attempt_agent_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_sub_tasks_scope_attempt_agent_id ON public.sub_tasks USING btree (tenant_id, project_id, root_task_id, batch_id, id, agent_id);
 
+
+--
+-- Name: idx_sub_tasks_scope_attempt_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_sub_tasks_scope_attempt_id ON public.sub_tasks USING btree (tenant_id, project_id, root_task_id, batch_id, id);
+
+
+--
+-- Name: idx_sub_tasks_started_at; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_sub_tasks_started_at ON public.sub_tasks USING btree (started_at);
 
+
+--
+-- Name: idx_sub_tasks_status; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_sub_tasks_status ON public.sub_tasks USING btree (status);
+
+
+--
+-- Name: idx_sub_tasks_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_sub_tasks_tenant_id ON public.sub_tasks USING btree (tenant_id);
 
+
+--
+-- Name: idx_sub_tasks_trigger; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_sub_tasks_trigger ON public.sub_tasks USING btree (trigger);
+
+
+--
+-- Name: idx_subdomain_dictionaries_project_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_subdomain_dictionaries_project_id ON public.subdomain_dictionaries USING btree (project_id);
 
+
+--
+-- Name: idx_subdomain_dictionary_name; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_subdomain_dictionary_name ON public.subdomain_dictionaries USING btree (tenant_id, project_id, name) WHERE (deleted_at IS NULL);
+
+
+--
+-- Name: idx_subdomain_dictionary_revision; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_subdomain_dictionary_revision ON public.subdomain_dictionary_revisions USING btree (dictionary_id, revision);
 
+
+--
+-- Name: idx_subdomain_dictionary_revisions_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_subdomain_dictionary_revisions_tenant_id ON public.subdomain_dictionary_revisions USING btree (tenant_id);
+
+
+--
+-- Name: idx_tai_idempotency; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_tai_idempotency ON public.task_append_idempotencies USING btree (tenant_id, project_id, root_task_id, operator_id, operation, idempotency_key_hash);
 
+
+--
+-- Name: idx_tai_operator_created; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_tai_operator_created ON public.task_append_idempotencies USING btree (tenant_id, project_id, operator_id, created_at);
+
+
+--
+-- Name: idx_tai_scope_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_tai_scope_id ON public.task_append_idempotencies USING btree (tenant_id, project_id, root_task_id, id);
 
+
+--
+-- Name: idx_tai_task_created; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_tai_task_created ON public.task_append_idempotencies USING btree (tenant_id, project_id, root_task_id, created_at);
+
+
+--
+-- Name: idx_task_audits_action; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_audits_action ON public.task_audits USING btree (action);
 
+
+--
+-- Name: idx_task_audits_attempt_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_task_audits_attempt_id ON public.task_audits USING btree (attempt_id);
+
+
+--
+-- Name: idx_task_audits_batch_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_audits_batch_id ON public.task_audits USING btree (batch_id);
 
+
+--
+-- Name: idx_task_audits_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_task_audits_created_at ON public.task_audits USING btree (created_at);
+
+
+--
+-- Name: idx_task_audits_operator_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_audits_operator_id ON public.task_audits USING btree (operator_id);
 
+
+--
+-- Name: idx_task_audits_project_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_task_audits_project_id ON public.task_audits USING btree (project_id);
+
+
+--
+-- Name: idx_task_audits_root_task_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_audits_root_task_id ON public.task_audits USING btree (root_task_id);
 
+
+--
+-- Name: idx_task_audits_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_task_audits_tenant_id ON public.task_audits USING btree (tenant_id);
+
+
+--
+-- Name: idx_task_batches_archived_at; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_batches_archived_at ON public.task_batches USING btree (archived_at);
 
+
+--
+-- Name: idx_task_batches_control_state; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_task_batches_control_state ON public.task_batches USING btree (control_state);
+
+
+--
+-- Name: idx_task_batches_created_by; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_batches_created_by ON public.task_batches USING btree (created_by);
 
+
+--
+-- Name: idx_task_batches_kind; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_task_batches_kind ON public.task_batches USING btree (kind);
+
+
+--
+-- Name: idx_task_batches_latest_attempt_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_batches_latest_attempt_id ON public.task_batches USING btree (latest_attempt_id);
 
+
+--
+-- Name: idx_task_batches_project_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_task_batches_project_id ON public.task_batches USING btree (project_id);
+
+
+--
+-- Name: idx_task_batches_root_task_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_batches_root_task_id ON public.task_batches USING btree (root_task_id);
 
+
+--
+-- Name: idx_task_batches_scope_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_task_batches_scope_id ON public.task_batches USING btree (tenant_id, project_id, root_task_id, id);
+
+
+--
+-- Name: idx_task_batches_status; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_batches_status ON public.task_batches USING btree (status);
 
+
+--
+-- Name: idx_task_batches_target_type; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_task_batches_target_type ON public.task_batches USING btree (target_type);
+
+
+--
+-- Name: idx_task_batches_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_batches_tenant_id ON public.task_batches USING btree (tenant_id);
 
+
+--
+-- Name: idx_task_config_revisions_config_hash; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_task_config_revisions_config_hash ON public.task_config_revisions USING btree (config_hash);
+
+
+--
+-- Name: idx_task_config_revisions_created_by; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_config_revisions_created_by ON public.task_config_revisions USING btree (created_by);
 
+
+--
+-- Name: idx_task_config_revisions_project_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_task_config_revisions_project_id ON public.task_config_revisions USING btree (project_id);
+
+
+--
+-- Name: idx_task_config_revisions_root_task_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_config_revisions_root_task_id ON public.task_config_revisions USING btree (root_task_id);
 
+
+--
+-- Name: idx_task_config_revisions_scope_version; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_task_config_revisions_scope_version ON public.task_config_revisions USING btree (tenant_id, project_id, root_task_id, version);
+
+
+--
+-- Name: idx_task_config_revisions_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_config_revisions_tenant_id ON public.task_config_revisions USING btree (tenant_id);
 
+
+--
+-- Name: idx_task_coverage_links_attempt_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_task_coverage_links_attempt_id ON public.task_coverage_links USING btree (attempt_id);
+
+
+--
+-- Name: idx_task_coverage_links_batch_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_coverage_links_batch_id ON public.task_coverage_links USING btree (batch_id);
 
+
+--
+-- Name: idx_task_coverage_links_claim_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_task_coverage_links_claim_id ON public.task_coverage_links USING btree (claim_id);
+
+
+--
+-- Name: idx_task_coverage_links_coverage_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_coverage_links_coverage_id ON public.task_coverage_links USING btree (coverage_id);
 
+
+--
+-- Name: idx_task_coverage_links_destination_work; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_task_coverage_links_destination_work ON public.task_coverage_links USING btree (tenant_id, project_id, root_task_id, batch_id, attempt_id, work_key_hash, link_type);
+
+
+--
+-- Name: idx_task_coverage_links_link_type; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_coverage_links_link_type ON public.task_coverage_links USING btree (link_type);
 
+
+--
+-- Name: idx_task_coverage_links_project_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_task_coverage_links_project_id ON public.task_coverage_links USING btree (project_id);
+
+
+--
+-- Name: idx_task_coverage_links_root_task_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_coverage_links_root_task_id ON public.task_coverage_links USING btree (root_task_id);
 
+
+--
+-- Name: idx_task_coverage_links_source_attempt_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_task_coverage_links_source_attempt_id ON public.task_coverage_links USING btree (source_attempt_id);
+
+
+--
+-- Name: idx_task_coverage_links_source_batch_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_coverage_links_source_batch_id ON public.task_coverage_links USING btree (source_batch_id);
 
+
+--
+-- Name: idx_task_coverage_links_source_task_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_task_coverage_links_source_task_id ON public.task_coverage_links USING btree (source_task_id);
+
+
+--
+-- Name: idx_task_coverage_links_status; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_coverage_links_status ON public.task_coverage_links USING btree (status);
 
+
+--
+-- Name: idx_task_coverage_links_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_task_coverage_links_tenant_id ON public.task_coverage_links USING btree (tenant_id);
+
+
+--
+-- Name: idx_task_coverage_links_work_key_hash; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_task_coverage_links_work_key_hash ON public.task_coverage_links USING btree (work_key_hash);
 
+
+--
+-- Name: idx_tbri_batch_created; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_tbri_batch_created ON public.task_batch_retry_idempotencies USING btree (tenant_id, project_id, root_task_id, batch_id, created_at);
+
+
+--
+-- Name: idx_tbri_idempotency; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_tbri_idempotency ON public.task_batch_retry_idempotencies USING btree (tenant_id, project_id, root_task_id, batch_id, operator_id, operation, idempotency_key_hash);
 
+
+--
+-- Name: idx_tbri_operator_created; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_tbri_operator_created ON public.task_batch_retry_idempotencies USING btree (tenant_id, project_id, operator_id, created_at);
+
+
+--
+-- Name: idx_tbri_scope_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_tbri_scope_id ON public.task_batch_retry_idempotencies USING btree (tenant_id, project_id, root_task_id, batch_id, id);
 
+
+--
+-- Name: idx_tci_idempotency; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_tci_idempotency ON public.task_creation_idempotencies USING btree (tenant_id, project_id, operator_id, operation, idempotency_key_hash);
+
+
+--
+-- Name: idx_tci_operator_created; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_tci_operator_created ON public.task_creation_idempotencies USING btree (tenant_id, project_id, operator_id, created_at);
 
+
+--
+-- Name: idx_tci_scope_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_tci_scope_id ON public.task_creation_idempotencies USING btree (tenant_id, project_id, id);
+
+
+--
+-- Name: idx_tci_task_created; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_tci_task_created ON public.task_creation_idempotencies USING btree (tenant_id, project_id, root_task_id, created_at);
 
+
+--
+-- Name: idx_tri_idempotency; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_tri_idempotency ON public.task_retry_idempotencies USING btree (tenant_id, project_id, root_task_id, operator_id, operation, idempotency_key_hash);
+
+
+--
+-- Name: idx_tri_operator_created; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_tri_operator_created ON public.task_retry_idempotencies USING btree (tenant_id, project_id, operator_id, created_at);
 
+
+--
+-- Name: idx_tri_scope_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_tri_scope_id ON public.task_retry_idempotencies USING btree (tenant_id, project_id, root_task_id, id);
+
+
+--
+-- Name: idx_tri_task_created; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_tri_task_created ON public.task_retry_idempotencies USING btree (tenant_id, project_id, root_task_id, created_at);
 
+
+--
+-- Name: idx_users_username; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_users_username ON public.users USING btree (username);
+
+
+--
+-- Name: idx_vuln_new_dedupe; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE UNIQUE INDEX idx_vuln_new_dedupe ON public.vulnerabilities USING btree (project_id, target, plugin);
 
+
+--
+-- Name: idx_vulnerabilities_assignee; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_vulnerabilities_assignee ON public.vulnerabilities USING btree (assignee);
+
+
+--
+-- Name: idx_vulnerabilities_root_task_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_vulnerabilities_root_task_id ON public.vulnerabilities USING btree (root_task_id);
 
+
+--
+-- Name: idx_vulnerabilities_status; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_vulnerabilities_status ON public.vulnerabilities USING btree (status);
+
+
+--
+-- Name: idx_vulnerabilities_task_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_vulnerabilities_task_id ON public.vulnerabilities USING btree (task_id);
 
+
+--
+-- Name: idx_vulnerabilities_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_vulnerabilities_tenant_id ON public.vulnerabilities USING btree (tenant_id);
+
+
+--
+-- Name: idx_vulnerabilities_verify_task_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_vulnerabilities_verify_task_id ON public.vulnerabilities USING btree (verify_task_id);
 
+
+--
+-- Name: idx_workflow_product_summaries_product_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_workflow_product_summaries_product_trgm ON public.workflow_product_summaries USING gin (product_name public.gin_trgm_ops);
+
+
+--
+-- Name: idx_workflow_product_summaries_tenant_enabled; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_workflow_product_summaries_tenant_enabled ON public.workflow_product_summaries USING btree (tenant_id, enabled, product_name);
 
+
+--
+-- Name: idx_workflow_product_summaries_tenant_general; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_workflow_product_summaries_tenant_general ON public.workflow_product_summaries USING btree (tenant_id, is_general_poc, product_name);
+
+
+--
+-- Name: idx_workflow_product_summaries_tenant_health; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_workflow_product_summaries_tenant_health ON public.workflow_product_summaries USING btree (tenant_id, fingerprint_bound, missing_poc_count, product_name);
 
+
+--
+-- Name: idx_workflow_rule_unique; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE UNIQUE INDEX idx_workflow_rule_unique ON public.workflow_rules USING btree (tenant_id, product_name, poc_name, match_type);
+
+
+--
+-- Name: idx_workflow_rules_artifact_id; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_workflow_rules_artifact_id ON public.workflow_rules USING btree (artifact_id);
 
+
+--
+-- Name: idx_workflow_rules_content_hash; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_workflow_rules_content_hash ON public.workflow_rules USING btree (content_hash);
+
+
+--
+-- Name: idx_workflow_rules_enabled; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_workflow_rules_enabled ON public.workflow_rules USING btree (enabled);
 
+
+--
+-- Name: idx_workflow_rules_match_type; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_workflow_rules_match_type ON public.workflow_rules USING btree (match_type);
+
+
+--
+-- Name: idx_workflow_rules_poc_name; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_workflow_rules_poc_name ON public.workflow_rules USING btree (poc_name);
 
+
+--
+-- Name: idx_workflow_rules_poc_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_workflow_rules_poc_trgm ON public.workflow_rules USING gin (poc_name public.gin_trgm_ops);
+
+
+--
+-- Name: idx_workflow_rules_product_name; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_workflow_rules_product_name ON public.workflow_rules USING btree (product_name);
 
+
+--
+-- Name: idx_workflow_rules_product_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_workflow_rules_product_trgm ON public.workflow_rules USING gin (product_name public.gin_trgm_ops);
+
+
+--
+-- Name: idx_workflow_rules_source_file; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_workflow_rules_source_file ON public.workflow_rules USING btree (source_file);
 
+
+--
+-- Name: idx_workflow_rules_state; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_workflow_rules_state ON public.workflow_rules USING btree (state);
+
+
+--
+-- Name: idx_workflow_rules_tenant_enabled_product; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_workflow_rules_tenant_enabled_product ON public.workflow_rules USING btree (tenant_id, enabled, product_name);
 
+
+--
+-- Name: idx_workflow_rules_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_workflow_rules_tenant_id ON public.workflow_rules USING btree (tenant_id);
+
+
+--
+-- Name: idx_workflow_rules_tenant_poc; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_workflow_rules_tenant_poc ON public.workflow_rules USING btree (tenant_id, poc_name);
 
+
+--
+-- Name: idx_workflow_rules_tenant_state_product; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_workflow_rules_tenant_state_product ON public.workflow_rules USING btree (tenant_id, state, product_name);
+
+
+--
+-- Name: idx_ws_event_logs_occurred_at; Type: INDEX; Schema: public; Owner: -
+--
 
 CREATE INDEX idx_ws_event_logs_occurred_at ON public.ws_event_logs USING btree (occurred_at);
 
+
+--
+-- Name: idx_ws_event_logs_project_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_ws_event_logs_project_id ON public.ws_event_logs USING btree (project_id);
 
+
+--
+-- Name: idx_ws_event_logs_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
 CREATE INDEX idx_ws_event_logs_tenant_id ON public.ws_event_logs USING btree (tenant_id);
+
+
+--
+-- Name: credential_dictionary_revisions credential_dictionary_revisions_dictionary_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.credential_dictionary_revisions
     ADD CONSTRAINT credential_dictionary_revisions_dictionary_id_fkey FOREIGN KEY (dictionary_id) REFERENCES public.credential_dictionaries(id) ON DELETE RESTRICT;
 
+
+--
+-- Name: asset_discovery_notebook_distribution_intents fk_addi_config_revision; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.asset_discovery_notebook_distribution_intents
     ADD CONSTRAINT fk_addi_config_revision FOREIGN KEY (tenant_id, project_id, root_task_id, config_version) REFERENCES public.task_config_revisions(tenant_id, project_id, root_task_id, version) ON DELETE RESTRICT;
+
+
+--
+-- Name: asset_discovery_notebook_distribution_intents fk_addi_root_task; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.asset_discovery_notebook_distribution_intents
     ADD CONSTRAINT fk_addi_root_task FOREIGN KEY (tenant_id, project_id, root_task_id) REFERENCES public.root_tasks(tenant_id, project_id, id) ON DELETE RESTRICT;
 
+
+--
+-- Name: asset_discovery_notebook_distribution_intent_items fk_addii_intent; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.asset_discovery_notebook_distribution_intent_items
     ADD CONSTRAINT fk_addii_intent FOREIGN KEY (tenant_id, project_id, intent_id) REFERENCES public.asset_discovery_notebook_distribution_intents(tenant_id, project_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: asset_discovery_notebook_distribution_intent_items fk_addii_notebook_item; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.asset_discovery_notebook_distribution_intent_items
     ADD CONSTRAINT fk_addii_notebook_item FOREIGN KEY (tenant_id, project_id, notebook_item_id) REFERENCES public.asset_discovery_notebook_items(tenant_id, project_id, id) ON DELETE RESTRICT;
 
+
+--
+-- Name: asset_discovery_notebook_distribution_materializations fk_addm_intent; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.asset_discovery_notebook_distribution_materializations
     ADD CONSTRAINT fk_addm_intent FOREIGN KEY (tenant_id, project_id, intent_id) REFERENCES public.asset_discovery_notebook_distribution_intents(tenant_id, project_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: asset_discovery_notebook_distribution_materializations fk_addm_root_task; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.asset_discovery_notebook_distribution_materializations
     ADD CONSTRAINT fk_addm_root_task FOREIGN KEY (tenant_id, project_id, root_task_id) REFERENCES public.root_tasks(tenant_id, project_id, id) ON DELETE RESTRICT;
 
+
+--
+-- Name: asset_discovery_notebook_items fk_adn_item_project; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.asset_discovery_notebook_items
     ADD CONSTRAINT fk_adn_item_project FOREIGN KEY (tenant_id, project_id) REFERENCES public.projects(tenant_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: asset_discovery_notebook_item_tags fk_adn_item_tag_item; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.asset_discovery_notebook_item_tags
     ADD CONSTRAINT fk_adn_item_tag_item FOREIGN KEY (tenant_id, project_id, notebook_item_id) REFERENCES public.asset_discovery_notebook_items(tenant_id, project_id, id) ON DELETE RESTRICT;
 
+
+--
+-- Name: asset_discovery_notebook_item_tags fk_adn_item_tag_tag; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.asset_discovery_notebook_item_tags
     ADD CONSTRAINT fk_adn_item_tag_tag FOREIGN KEY (tenant_id, project_id, tag_id) REFERENCES public.asset_discovery_notebook_tags(tenant_id, project_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: asset_discovery_notebook_tags fk_adn_tag_project; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.asset_discovery_notebook_tags
     ADD CONSTRAINT fk_adn_tag_project FOREIGN KEY (tenant_id, project_id) REFERENCES public.projects(tenant_id, id) ON DELETE RESTRICT;
 
+
+--
+-- Name: asset_discovery_audits fk_asset_discovery_audit_notebook_item; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.asset_discovery_audits
     ADD CONSTRAINT fk_asset_discovery_audit_notebook_item FOREIGN KEY (tenant_id, project_id, notebook_item_id) REFERENCES public.asset_discovery_notebook_items(tenant_id, project_id, id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: asset_discovery_notebook_sources fk_asset_discovery_notebook_sources_audit; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.asset_discovery_notebook_sources
     ADD CONSTRAINT fk_asset_discovery_notebook_sources_audit FOREIGN KEY (tenant_id, project_id, audit_id) REFERENCES public.asset_discovery_audits(tenant_id, project_id, id) ON DELETE RESTRICT;
 
+
+--
+-- Name: asset_discovery_notebook_sources fk_asset_discovery_notebook_sources_item; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.asset_discovery_notebook_sources
     ADD CONSTRAINT fk_asset_discovery_notebook_sources_item FOREIGN KEY (tenant_id, project_id, notebook_item_id) REFERENCES public.asset_discovery_notebook_items(tenant_id, project_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: asset_discovery_notebook_sources fk_asset_discovery_notebook_sources_snapshot_item; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.asset_discovery_notebook_sources
     ADD CONSTRAINT fk_asset_discovery_notebook_sources_snapshot_item FOREIGN KEY (tenant_id, project_id, snapshot_id, snapshot_item_id) REFERENCES public.asset_discovery_snapshot_items(tenant_id, project_id, snapshot_id, id) ON DELETE RESTRICT;
 
+
+--
+-- Name: asset_discovery_snapshot_items fk_asset_discovery_snapshot_items_snapshot; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.asset_discovery_snapshot_items
     ADD CONSTRAINT fk_asset_discovery_snapshot_items_snapshot FOREIGN KEY (tenant_id, project_id, snapshot_id) REFERENCES public.asset_discovery_snapshots(tenant_id, project_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: asset_discovery_snapshots fk_asset_discovery_snapshots_audit; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.asset_discovery_snapshots
     ADD CONSTRAINT fk_asset_discovery_snapshots_audit FOREIGN KEY (tenant_id, project_id, audit_id) REFERENCES public.asset_discovery_audits(tenant_id, project_id, id) ON DELETE RESTRICT;
 
+
+--
+-- Name: exp_asset_refs fk_exp_asset_ref_asset; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.exp_asset_refs
     ADD CONSTRAINT fk_exp_asset_ref_asset FOREIGN KEY (tenant_id, asset_id, asset_version) REFERENCES public.exp_assets(tenant_id, asset_id, version) ON DELETE RESTRICT;
+
+
+--
+-- Name: exp_asset_refs fk_exp_asset_ref_revision; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.exp_asset_refs
     ADD CONSTRAINT fk_exp_asset_ref_revision FOREIGN KEY (exp_id, revision) REFERENCES public.exp_revisions(exp_id, revision) ON DELETE RESTRICT;
 
+
+--
+-- Name: exp_dependencies fk_exp_dependency_child; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.exp_dependencies
     ADD CONSTRAINT fk_exp_dependency_child FOREIGN KEY (dependency_exp_id, dependency_revision) REFERENCES public.exp_revisions(exp_id, revision) ON DELETE RESTRICT;
+
+
+--
+-- Name: exp_dependencies fk_exp_dependency_parent; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.exp_dependencies
     ADD CONSTRAINT fk_exp_dependency_parent FOREIGN KEY (parent_exp_id, parent_revision) REFERENCES public.exp_revisions(exp_id, revision) ON DELETE RESTRICT;
 
+
+--
+-- Name: exp_revisions fk_exp_revisions_exp; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.exp_revisions
     ADD CONSTRAINT fk_exp_revisions_exp FOREIGN KEY (exp_id) REFERENCES public.exps(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: exp_risk_waivers fk_exp_risk_waiver_exp; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.exp_risk_waivers
     ADD CONSTRAINT fk_exp_risk_waiver_exp FOREIGN KEY (exp_id) REFERENCES public.exps(id) ON DELETE RESTRICT;
 
+
+--
+-- Name: exp_runs fk_exp_run_revision; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.exp_runs
     ADD CONSTRAINT fk_exp_run_revision FOREIGN KEY (exp_id, revision) REFERENCES public.exp_revisions(exp_id, revision) ON DELETE RESTRICT;
+
+
+--
+-- Name: exp_test_cases fk_exp_test_case_revision; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.exp_test_cases
     ADD CONSTRAINT fk_exp_test_case_revision FOREIGN KEY (exp_id, revision) REFERENCES public.exp_revisions(exp_id, revision) ON DELETE RESTRICT;
 
+
+--
+-- Name: exps fk_exps_parent_same_tenant; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.exps
     ADD CONSTRAINT fk_exps_parent_same_tenant FOREIGN KEY (tenant_id, parent_exp_id) REFERENCES public.exps(tenant_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: risk_validation_execution_idempotencies fk_rvei_attempt; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.risk_validation_execution_idempotencies
     ADD CONSTRAINT fk_rvei_attempt FOREIGN KEY (tenant_id, project_id, root_task_id, batch_id, attempt_id) REFERENCES public.sub_tasks(tenant_id, project_id, root_task_id, batch_id, id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
 
+
+--
+-- Name: risk_validation_execution_idempotencies fk_rvei_batch; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.risk_validation_execution_idempotencies
     ADD CONSTRAINT fk_rvei_batch FOREIGN KEY (tenant_id, project_id, root_task_id, batch_id) REFERENCES public.task_batches(tenant_id, project_id, root_task_id, id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: risk_validation_execution_idempotencies fk_rvei_config; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.risk_validation_execution_idempotencies
     ADD CONSTRAINT fk_rvei_config FOREIGN KEY (tenant_id, project_id, root_task_id, config_version) REFERENCES public.task_config_revisions(tenant_id, project_id, root_task_id, version) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
 
+
+--
+-- Name: risk_validation_execution_idempotencies fk_rvei_root_task; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.risk_validation_execution_idempotencies
     ADD CONSTRAINT fk_rvei_root_task FOREIGN KEY (tenant_id, project_id, root_task_id) REFERENCES public.root_tasks(tenant_id, project_id, id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: scan_timing_events fk_scan_timing_event_attempt; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.scan_timing_events
     ADD CONSTRAINT fk_scan_timing_event_attempt FOREIGN KEY (tenant_id, project_id, root_task_id, batch_id, attempt_id) REFERENCES public.sub_tasks(tenant_id, project_id, root_task_id, batch_id, id) ON DELETE RESTRICT;
 
+
+--
+-- Name: scan_timing_events fk_scan_timing_event_attempt_agent; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.scan_timing_events
     ADD CONSTRAINT fk_scan_timing_event_attempt_agent FOREIGN KEY (tenant_id, project_id, root_task_id, batch_id, attempt_id, agent_id) REFERENCES public.sub_tasks(tenant_id, project_id, root_task_id, batch_id, id, agent_id) ON DELETE RESTRICT;
+
+
+--
+-- Name: scan_timing_events fk_scan_timing_event_batch; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.scan_timing_events
     ADD CONSTRAINT fk_scan_timing_event_batch FOREIGN KEY (tenant_id, project_id, root_task_id, batch_id) REFERENCES public.task_batches(tenant_id, project_id, root_task_id, id) ON DELETE RESTRICT;
 
+
+--
+-- Name: scan_timing_events fk_scan_timing_event_root; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.scan_timing_events
     ADD CONSTRAINT fk_scan_timing_event_root FOREIGN KEY (tenant_id, project_id, root_task_id) REFERENCES public.root_tasks(tenant_id, project_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: task_append_idempotencies fk_tai_root_task; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.task_append_idempotencies
     ADD CONSTRAINT fk_tai_root_task FOREIGN KEY (tenant_id, project_id, root_task_id) REFERENCES public.root_tasks(tenant_id, project_id, id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
 
+
+--
+-- Name: task_batch_retry_idempotencies fk_tbri_attempt; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.task_batch_retry_idempotencies
     ADD CONSTRAINT fk_tbri_attempt FOREIGN KEY (tenant_id, project_id, root_task_id, batch_id, attempt_id) REFERENCES public.sub_tasks(tenant_id, project_id, root_task_id, batch_id, id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: task_batch_retry_idempotencies fk_tbri_batch; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.task_batch_retry_idempotencies
     ADD CONSTRAINT fk_tbri_batch FOREIGN KEY (tenant_id, project_id, root_task_id, batch_id) REFERENCES public.task_batches(tenant_id, project_id, root_task_id, id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
 
+
+--
+-- Name: task_batch_retry_idempotencies fk_tbri_root_task; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.task_batch_retry_idempotencies
     ADD CONSTRAINT fk_tbri_root_task FOREIGN KEY (tenant_id, project_id, root_task_id) REFERENCES public.root_tasks(tenant_id, project_id, id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: task_creation_idempotencies fk_tci_root_task; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
 
 ALTER TABLE ONLY public.task_creation_idempotencies
     ADD CONSTRAINT fk_tci_root_task FOREIGN KEY (tenant_id, project_id, root_task_id) REFERENCES public.root_tasks(tenant_id, project_id, id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
 
+
+--
+-- Name: task_retry_idempotencies fk_tri_root_task; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.task_retry_idempotencies
     ADD CONSTRAINT fk_tri_root_task FOREIGN KEY (tenant_id, project_id, root_task_id) REFERENCES public.root_tasks(tenant_id, project_id, id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
 
+
+--
+-- Name: subdomain_dictionary_revisions subdomain_dictionary_revisions_dictionary_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
 ALTER TABLE ONLY public.subdomain_dictionary_revisions
     ADD CONSTRAINT subdomain_dictionary_revisions_dictionary_id_fkey FOREIGN KEY (dictionary_id) REFERENCES public.subdomain_dictionaries(id) ON DELETE RESTRICT;
+
+
+--
+-- PostgreSQL database dump complete
+--
+
+
+
+-- 本基线自记版本号。后续编号文件请在各自文件末尾追加同样的记录。
+INSERT INTO public.schema_migrations (version, name, checksum, applied_at)
+VALUES ('001', 'init_baseline', 'psql-managed', now())
+ON CONFLICT (version) DO NOTHING;

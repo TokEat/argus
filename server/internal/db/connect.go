@@ -31,6 +31,8 @@ func SetDB(db *gorm.DB) {
 	DB = db
 }
 
+// InitDB 打开数据库并做启动期校验（不执行任何迁移）。
+// 初始化/升级由 deploy/db-init.sh（纯 SQL 导入）负责。
 func InitDB(dsn string) {
 	if strings.TrimSpace(dsn) == "" {
 		log.Printf("No DSN provided, using default PostgreSQL DSN: %s", DefaultPostgresDSN)
@@ -42,12 +44,9 @@ func InitDB(dsn string) {
 	}
 	SetDB(db)
 
-	if err := ApplyMigrations(db, MigrationModeApply); err != nil {
-		log.Fatalf("failed to apply PostgreSQL migrations: %v", err)
-	}
-	if err := VerifySchema(db); err != nil {
-		log.Fatalf("failed to verify PostgreSQL schema: %v", err)
+	if err := VerifyDatabaseReady(db); err != nil {
+		log.Fatalf("database not ready: %v", err)
 	}
 
-	log.Printf("PostgreSQL database initialized successfully.")
+	log.Printf("PostgreSQL database verified (schema version >= %s).", RequiredSchemaVersion)
 }

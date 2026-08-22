@@ -7,7 +7,7 @@
 - [ ] `git status --short --ignored` 确认只有预期改动，`deploy/argus-release-*.tar.gz`、`deploy/arsenal_seed.db`、`server/build_seed_db` 为 ignored 生成物。
 - [ ] `git diff --check` 无空白错误。
 - [ ] `make ci` 通过，包含根模块 Go test、`server` 子模块 Go test、`server-ui` lint/test/build 和 smoke。
-- [ ] 在临时 PostgreSQL 库执行 `make db-migrate DB_MIGRATION_MODE=apply` 和 `make db-verify`，并确认升级前 Notebook 数据不含无对应项目的孤儿行。
+- [ ] 在临时 PostgreSQL 库执行 `make db-setup` 和 `make db-verify`（纯 SQL 初始化 + 启动期校验），并确认升级前 Notebook 数据不含无对应项目的孤儿行。存量旧库升级需演练 `deploy/db-init.sh` 的 cutover 路径（自动备份 + 版本重写）。
 
 ## 2. 发行包构建
 

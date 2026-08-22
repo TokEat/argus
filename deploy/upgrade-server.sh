@@ -580,13 +580,20 @@ if [[ -f "${SCRIPT_DIR}/images/argus-yaksha-linux-amd64.tar" ]]; then
     mkdir -p "${INSTALL_DIR}/deploy/images"
     cp -a "${SCRIPT_DIR}/images/argus-yaksha-linux-amd64.tar" "${INSTALL_DIR}/deploy/images/"
 fi
-if [[ -d "${SCRIPT_DIR}/postgres" ]]; then
-    mkdir -p "${INSTALL_DIR}/deploy/postgres"
-    cp -a "${SCRIPT_DIR}/postgres/." "${INSTALL_DIR}/deploy/postgres/"
+if [[ -d "${SCRIPT_DIR}/db" ]]; then
+    mkdir -p "${INSTALL_DIR}/deploy/db"
+    cp -a "${SCRIPT_DIR}/db/." "${INSTALL_DIR}/deploy/db/"
+fi
+if [[ -f "${SCRIPT_DIR}/db-init.sh" ]]; then
+    cp -a "${SCRIPT_DIR}/db-init.sh" "${INSTALL_DIR}/deploy/"
 fi
 
-echo -e "${YELLOW}[5/6] 执行数据库迁移与规则同步...${NC}"
-"${INSTALL_DIR}/bin/argus-server" --db "$DB_DSN" --migrate-only --db-migration-mode apply --config-dir "${INSTALL_DIR}/config"
+echo -e "${YELLOW}[5/6] 执行数据库初始化/升级与规则同步（纯 SQL，与启动解耦）...${NC}"
+command -v psql >/dev/null 2>&1 || { echo -e "${RED}  [!] 缺少 psql，无法升级数据库${NC}"; exit 1; }
+if ! bash "${SCRIPT_DIR}/db-init.sh" --dsn "$DB_DSN" --no-bootstrap; then
+    echo -e "${RED}  [!] 数据库初始化/升级失败${NC}"
+    exit 1
+fi
 
 if [[ -f "${SCRIPT_DIR}/arsenal_seed.db" ]]; then
     "${INSTALL_DIR}/bin/argus-server" --db "$DB_DSN" --seed-from-db "${SCRIPT_DIR}/arsenal_seed.db"

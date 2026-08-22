@@ -1,45 +1,18 @@
 package db
 
 import (
-	"os"
 	"reflect"
-	"strings"
 	"sync"
 	"testing"
 
 	"gorm.io/gorm/schema"
 )
 
-func TestScanPolicyMigrationUsesCiphertextOnlyCredentialStorage(t *testing.T) {
-	contents, err := os.ReadFile("migrations/560_add_scan_policy_orchestration.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sql := strings.ToLower(string(contents))
-	for _, required := range []string{
-		"create table if not exists scan_policy_intents",
-		"create table if not exists scan_stage_derivations",
-		"create table if not exists credential_dictionary_revisions",
-		"create table if not exists credential_bundles",
-		"create table if not exists credential_finding_secrets",
-		"ciphertext bytea not null",
-		"unique index if not exists idx_scan_stage_derivation",
-	} {
-		if !strings.Contains(sql, required) {
-			t.Fatalf("migration is missing %q", required)
-		}
-	}
-	if strings.Contains(sql, "password text") || strings.Contains(sql, "password varchar") || strings.Contains(sql, "username text") {
-		t.Fatal("migration contains plaintext credential columns")
-	}
-}
-
 func TestSchemaModelTableNames(t *testing.T) {
 	expected := map[string]string{
 		"SchemaMigration":              "schema_migrations",
 		"Project":                      "projects",
 		"ProjectMember":                "project_members",
-		"CronTask":                     "cron_tasks",
 		"RootTask":                     "root_tasks",
 		"SubTask":                      "sub_tasks",
 		"TaskBatch":                    "task_batches",
@@ -60,13 +33,11 @@ func TestSchemaModelTableNames(t *testing.T) {
 		"ScanWorkClaim":                "scan_work_claims",
 		"TaskCoverageLink":             "task_coverage_links",
 		"ScanTimingEvent":              "scan_timing_events",
-		"NotificationRule":             "notification_rules",
 		"Domain":                       "domains",
 		"Asset":                        "assets",
 		"Credential":                   "credentials",
 		"FingerprintHit":               "fingerprint_hits",
 		"Vulnerability":                "vulnerabilities",
-		"AssetChangeLog":               "asset_change_logs",
 		"Report":                       "reports",
 		"Node":                         "nodes",
 		"AgentSessionAudit":            "agent_session_audits",

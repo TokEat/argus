@@ -48,7 +48,7 @@ sudo ./deploy/setup-server.sh
 **该脚本支持全自动配置，如无特殊定制需求，无需添加任何参数。它将自动：**
 1. 检查并安装 `Docker` 和 `docker-compose-plugin`。
 2. 使用 `docker-compose.yml` 启动内置的 PostgreSQL 14 和 RabbitMQ 3。
-3. 等待数据库启动并执行结构表迁移。
+3. 等待数据库启动并由 `deploy/db-init.sh`（psql 纯 SQL）完成建库与 schema 初始化；`argus-server` 启动时只做校验，不再执行迁移。存量旧版库会在备份后自动执行一次性 cutover。
 4. 从 `arsenal_seed.db` 导入所有核心规则资产；该文件是必需部署资产，导入失败会终止安装。
 5. 将 `argus-server` 注册为系统级守护进程 (`systemd`)。
 
