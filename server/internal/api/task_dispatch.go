@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -77,6 +78,21 @@ func totalDispatchedTasks(pushedByPriority map[int]int) int {
 		total += n
 	}
 	return total
+}
+
+// DispatchReleasedSubTask pushes one already-Dispatching attempt into the
+// queue and flips it to Pending. It is the release path for passive-collection
+// holds; enqueue failures deliberately leave the attempt in Dispatching so
+// the dispatch recovery daemon re-pushes it.
+func DispatchReleasedSubTask(ctx context.Context, q *scheduler.TaskQueue, sub db.SubTask) error {
+	if q == nil {
+		return fmt.Errorf("task queue unavailable")
+	}
+	_, pending := dispatchSubTasks(ctx, q, []db.SubTask{sub})
+	if pending > 0 {
+		return fmt.Errorf("push subtask %s into queue failed", sub.ID)
+	}
+	return nil
 }
 
 func broadcastDispatchedTasks(pushedByPriority map[int]int) {

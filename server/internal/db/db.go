@@ -313,6 +313,39 @@ type Asset struct {
 	UpdatedAt   time.Time
 }
 
+// SubdomainPassiveCache caches Server-side passive subdomain enumeration per
+// domain. CT / passive DNS data is public and append-only by nature, so the
+// cache is shared globally across tenants; freshness is decided by ExpiresAt.
+type SubdomainPassiveCache struct {
+	Domain      string `gorm:"primaryKey"`
+	Subdomains  string `gorm:"type:jsonb;not null"`
+	Sources     string `gorm:"type:jsonb;not null"`
+	CollectedAt time.Time
+	ExpiresAt   time.Time `gorm:"index:idx_subdomain_passive_cache_expires"`
+}
+
+func (SubdomainPassiveCache) TableName() string { return "subdomain_passive_cache" }
+
+// SubdomainPassiveJob tracks the pre-dispatch Server-side passive collection
+// hold for a domain batch. The attempt stays Queued (not enqueued) until the
+// collector releases it, which makes the job row the restart-recovery record.
+type SubdomainPassiveJob struct {
+	ID         string `gorm:"primaryKey"`
+	TenantID   string `gorm:"default:'default';index:idx_subdomain_passive_jobs_tenant"`
+	ProjectID  string
+	RootTaskID string `gorm:"index:idx_subdomain_passive_jobs_root"`
+	BatchID    string
+	AttemptID  string `gorm:"index:idx_subdomain_passive_jobs_attempt"`
+	Domains    string `gorm:"type:jsonb;not null"`
+	// DomainsDone advances as the collector finishes each domain; it backs the
+	// frontend progress projection.
+	DomainsDone int `gorm:"not null;default:0"`
+	State       string `gorm:"index:idx_subdomain_passive_jobs_state"`
+	Note        string `gorm:"type:text;not null;default:''"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
 type Credential struct {
 	ID        string `gorm:"primaryKey"`
 	ProjectID string `gorm:"index"`

@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func (s *Server) resolveClaimSubdomainConfig(tx *gorm.DB, task *pb.Task, sub db.SubTask, resumeConfig []byte, msgID string) ([]byte, bool, error) {
+func (s *Server) resolveClaimSubdomainConfig(tx *gorm.DB, task *pb.Task, sub db.SubTask, resumeConfig []byte, msgID, agentTags string) ([]byte, bool, error) {
 	config := task.Config
 	if len(config) == 0 {
 		config = []byte(sub.Config)
@@ -23,7 +23,7 @@ func (s *Server) resolveClaimSubdomainConfig(tx *gorm.DB, task *pb.Task, sub db.
 	}
 	config, err := configWithSubdomainDictionary(tx, sub, config)
 	if err == nil {
-		return config, false, nil
+		return applyPassiveClaimSeal(tx, agentTags, sub, config), false, nil
 	}
 	tx.Rollback()
 	if s.returnTaskHook == nil {

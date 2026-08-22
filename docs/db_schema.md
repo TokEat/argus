@@ -360,6 +360,10 @@ Migration 460 的内部、不可变单批次重试幂等账本。`(tenant_id, pr
 
 Migration 470 的内部、不可变风险验证执行账本。`(tenant_id, project_id, root_task_id, operator_id, operation, idempotency_key_hash)` 唯一，其中 `operation=execute_risk_validation_v1`；只保存原始 Key 的 SHA-256，以及规范请求、preview plan、POC/端点集合和实际 Attempt 配置各自的 SHA-256，并保存配置/规则版本、Batch/Attempt ID、候选/目标/POC/预计请求计数、二次确认要求和前后状态。账本没有目标、POC 文件或内容、配置正文、Provider 查询、凭据或原始 Key 字段；复合 deferred/RESTRICT 外键将其绑定到同 tenant/project/task 的配置修订、risk-validation Batch 与 Attempt。首次确认的账本、Batch、Attempt、RootTask 状态和单条 `risk_validation_execute` 审计在同一事务提交，只有首次提交后派发；同 Key 同请求只重放已提交结果，异请求固定冲突。认证、operator RBAC、项目/任务对象授权和归档校验始终先于账本读取；新 Key 仍必须重新验证 preview、配置、规则、POC 内容哈希和双重确认，账本本身不是授权凭证。
 
+#### `subdomain_passive_cache` / `subdomain_passive_jobs`
+
+Migration 002（v001 基线后的增量）支撑 Server 端被动子域收集。`subdomain_passive_cache` 按 `domain` 主键缓存已验证的被动收集结果（`subdomains`/`sources` 为 jsonb 数组，`expires_at` 判定新鲜度）；CT/被动 DNS 为公共历史数据，缓存全局共享、不含租户语义。`subdomain_passive_jobs` 记录派发前持有：开启被动子域发现且存在 `passive_server=v1` 能力 Agent 时，域名批次 Attempt 初始停留 `Queued` 并写入 `pending` 任务行；后台 collector 逐域收集（先查缓存）、把结果密封进 Attempt 配置（`SubdomainPassiveResults`，全覆盖时同时置 `NoSubFinder=true`）后释放入队。收集超时（默认 8 分钟）或全部数据源失败时不密封直接释放，Agent 回退原有端内被动收集；任务行兼作重启恢复凭证（`running` 超时自动回退 `pending`），每次终态迁移写入 `task_audits`（`passive_subdomain_<state>`）。`ARGUS_SERVER_PASSIVE_SUBDOMAIN=off` 可整体关闭该特性。
+
 ### 3.3 资产、结果与报表
 
 #### 扫描记忆与覆盖存储

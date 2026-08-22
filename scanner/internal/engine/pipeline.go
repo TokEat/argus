@@ -728,6 +728,7 @@ func currentSubdomainConfig(ctx *ScanContext, emit func(structs.OutputMessage)) 
 		SubdomainBruteforceDepth:   cfg.SubdomainBruteforceDepth,
 		SubdomainWordListFile:      cfg.SubdomainWordListFile,
 		SubdomainDictionaryWords:   append([]string(nil), cfg.SubdomainDictionaryWords...),
+		Injected:                   cfg.SubdomainPassiveResults,
 		EmitFunc: func(msg ddout.OutputMessage) {
 			emit(msg)
 		},

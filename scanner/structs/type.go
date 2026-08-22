@@ -106,7 +106,12 @@ type Config struct {
 	SubdomainWordListFile      string
 	// SubdomainDictionaryWords is a Server-resolved, revision-bound additive
 	// list. Scanner always unions it with built-in and managed Agent words.
-	SubdomainDictionaryWords   []string
+	SubdomainDictionaryWords []string
+	// SubdomainPassiveResults carries Server-side pre-collected passive
+	// subdomains keyed by domain. Domains present here skip agent-side
+	// subfinder queries; the map is sealed by the Server and deduplicated
+	// with bruteforce results like any other enumeration output.
+	SubdomainPassiveResults map[string][]string
 	HTTPProxy                  string
 	HTTPProxyTest              bool
 	HTTPProxyTestURL           string

@@ -185,6 +185,23 @@ declare namespace API {
     reason?: string;
   }
 
+  /** Server 端被动子域收集进度（GET /api/v1/tasks/:id 的 passive_collection） */
+  interface PassiveCollectionProgress {
+    active: boolean;
+    state: string;
+    domains_total: number;
+    domains_done: number;
+    updated_at: string;
+    held_batches: {
+      batch_id: string;
+      attempt_id: string;
+      state: string;
+      domains: string[];
+      domains_done: number;
+      updated_at: string;
+    }[];
+  }
+
   /** 子任务摘要 (GET /api/v1/tasks/:id) */
   interface SubTaskSummary {
     id: string;
@@ -356,6 +373,8 @@ declare namespace API {
     batches?: TaskBatchSummary[];
     attempts?: SubTaskSummary[];
     status_distribution: Record<string, number>;
+    /** Server-side passive subdomain collection progress (absent on old servers). */
+    passive_collection?: PassiveCollectionProgress;
     reason_stats: {
       status: string;
       reason: string;

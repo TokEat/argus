@@ -705,6 +705,22 @@ const TaskManagement: React.FC = () => {
         if (targetText) form.setFieldValue('targets', targetText);
     };
 
+    // 被动收集进行中时轮询刷新任务详情，让进度条实时推进；收集结束或抽屉关闭即停。
+    useEffect(() => {
+        if (!detailOpen || !taskDetail?.passive_collection?.active) return;
+        const taskId = taskDetail.task.id;
+        const timer = setInterval(async () => {
+            if (detailTaskIdRef.current !== taskId) return;
+            try {
+                const refreshed = await getTaskDetail(taskId);
+                if (detailTaskIdRef.current === taskId) setTaskDetail(refreshed);
+            } catch {
+                // 轮询失败忽略，下个周期重试
+            }
+        }, 3000);
+        return () => clearInterval(timer);
+    }, [detailOpen, taskDetail?.task?.id, taskDetail?.passive_collection?.active]);
+
     useEffect(() => {
         if (!createOpen) {
             setSelectorPreview(null);
@@ -2108,6 +2124,51 @@ const TaskManagement: React.FC = () => {
                                 </Descriptions.Item>
                             )}
                         </Descriptions>
+
+                        {/* Server 端被动子域收集进度：收集完成后域名批次才会下发给 Agent */}
+                        {taskDetail.passive_collection && (taskDetail.passive_collection.active || taskDetail.passive_collection.domains_total > 0) && (
+                            <div style={{ marginBottom: 20, padding: 12, border: '1px solid #91caff', borderRadius: 6, background: '#f0f7ff' }}>
+                                <Space direction="vertical" style={{ width: '100%' }} size={6}>
+                                    <Space wrap>
+                                        <Typography.Text strong style={{ fontSize: 13 }}>被动子域收集（Server 端派发前）</Typography.Text>
+                                        {taskDetail.passive_collection.active
+                                            ? <Tag color="processing">收集中（{taskDetail.passive_collection.state}）</Tag>
+                                            : <Tag color={taskDetail.passive_collection.state === 'failed' ? 'orange' : 'green'}>
+                                                {taskDetail.passive_collection.state === 'failed' ? '超时/失败，已回退 Agent 端收集' : '已完成并派发'}
+                                            </Tag>}
+                                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                                            域名 {taskDetail.passive_collection.domains_done}/{taskDetail.passive_collection.domains_total}
+                                            · 等待收集后派发的域名批次 {taskDetail.passive_collection.held_batches.length} 个
+                                        </Typography.Text>
+                                    </Space>
+                                    <Progress
+                                        percent={taskDetail.passive_collection.domains_total > 0
+                                            ? Math.min(100, Math.round((taskDetail.passive_collection.domains_done / taskDetail.passive_collection.domains_total) * 100))
+                                            : 0}
+                                        size="small"
+                                        status={taskDetail.passive_collection.active ? 'active' : undefined}
+                                    />
+                                    {taskDetail.passive_collection.held_batches.map((held) => {
+                                        const heldDomains = held.domains || [];
+                                        return (
+                                        <Space key={held.attempt_id} size={6} wrap style={{ fontSize: 12 }}>
+                                            <Tag style={{ fontSize: 11 }}>
+                                                {(held.batch_id || '').length > 28 ? `${held.batch_id.slice(0, 28)}…` : held.batch_id}
+                                            </Tag>
+                                            <Typography.Text type="secondary">
+                                                {held.domains_done}/{heldDomains.length} 域名
+                                            </Typography.Text>
+                                            <Tooltip title={heldDomains.join('、')}>
+                                                <Typography.Text style={{ fontSize: 11, maxWidth: 360 }} ellipsis>
+                                                    {heldDomains.join('、') || '-'}
+                                                </Typography.Text>
+                                            </Tooltip>
+                                        </Space>
+                                        );
+                                    })}
+                                </Space>
+                            </div>
+                        )}
 
                         {/* 原始目标 */}
                         {taskDetail.task.original_targets && (
