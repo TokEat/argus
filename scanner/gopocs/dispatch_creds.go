@@ -13,7 +13,11 @@ type DispatchCreds struct {
 	UserAppend     []string
 	PasswordAppend []string
 	NoBrute        bool
-	Modules        string
+	// CredentialPairLimit caps user:pass attempts per target via
+	// limitUserPasswd. Zero keeps the historical unlimited behavior; sealed
+	// credential-validation tasks set it from the scan policy.
+	CredentialPairLimit int
+	Modules             string
 }
 
 func isServiceBruteTask(name string) bool {
@@ -35,4 +39,5 @@ func applyDispatchCreds(info *structs.HostInfo, creds DispatchCreds) {
 	info.PasswordFile = creds.PasswordFile
 	info.UserAppend = append([]string(nil), creds.UserAppend...)
 	info.PasswordAppend = append([]string(nil), creds.PasswordAppend...)
+	info.CredentialPairLimit = creds.CredentialPairLimit
 }

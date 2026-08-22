@@ -136,6 +136,7 @@ func TestTelnetUsernamePasswordPublishesOnlyFinalSuccessfulConnection(t *testing
 			_, err := connection.Write(loginPrompt)
 			return err
 		},
+		consumeAuthTimeoutProbe,
 		func(connection net.Conn) error {
 			return serveTelnetCredentialAttempt(connection, loginPrompt, passwordPrompt, username, wrongPassword, failedResponse)
 		},
@@ -184,6 +185,7 @@ func TestTelnetOnlyPasswordPublishesSuccessfulConnection(t *testing.T) {
 			_, err := connection.Write(passwordPrompt)
 			return err
 		},
+		consumeAuthTimeoutProbe,
 		func(connection net.Conn) error {
 			if _, err := connection.Write(passwordPrompt); err != nil {
 				return err
@@ -208,6 +210,13 @@ func TestTelnetOnlyPasswordPublishesSuccessfulConnection(t *testing.T) {
 		{Request: password},
 		{Response: successResponse},
 	})
+}
+
+// consumeAuthTimeoutProbe absorbs the single TCP RTT probe TelnetScan opens
+// after the initial banner connection and before its cracking loop; the probe
+// closes without exchanging any data.
+func consumeAuthTimeoutProbe(connection net.Conn) error {
+	return nil
 }
 
 func serveTelnetScript(t *testing.T, listener net.Listener, handlers ...func(net.Conn) error) <-chan error {

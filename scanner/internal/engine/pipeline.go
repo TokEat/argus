@@ -479,7 +479,8 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	creds := gopocs.DispatchCreds{
 		Password: cfg.Password, PasswordFile: cfg.PasswordFile,
 		UserAppend: cfg.UserAppend, PasswordAppend: cfg.PasswordAppend, NoBrute: cfg.NoBrute,
-		Modules: cfg.GoPocModules,
+		CredentialPairLimit: cfg.CredentialPairLimit,
+		Modules:             cfg.GoPocModules,
 	}
 	var dispatchResults []structs.GoPocsResultType
 	var dispatchErr error
