@@ -51,6 +51,9 @@ const providerMeta: Record<string, ProviderMeta> = {
     whoisxmlapi:     { desc: 'WhoisXML API',                 format: 'api-key',    placeholder: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' },
 };
 
+// Server 端资产测绘实际消费的密钥引擎；其它条目为兼容保留（Server 端暂无消费方）。
+const serverConsumedProviders = new Set(['fofa', 'hunter', 'quake']);
+
 const ApiKeysConfig: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -112,7 +115,7 @@ const ApiKeysConfig: React.FC = () => {
         setSaving(true);
         try {
             await saveApiKeysConfig(entries);
-            message.success('API 密钥已保存，已触发全网 Agent 配置重载');
+            message.success('API 密钥已保存，Server 端即时生效');
             setModified(false);
         } catch {
             message.error('保存失败');
@@ -165,6 +168,17 @@ const ApiKeysConfig: React.FC = () => {
                     ? <Tag color="green">已配置</Tag>
                     : <Tag color="default">未配置</Tag>;
             },
+        },
+        {
+            title: 'Server 用途',
+            key: 'usage',
+            width: 120,
+            align: 'center',
+            render: (_, record) => (
+                serverConsumedProviders.has(record.provider)
+                    ? <Tag color="cyan">资产测绘</Tag>
+                    : <Tag style={{ color: '#94a3b8' }}>兼容保留</Tag>
+            ),
         },
         {
             title: '密钥 (API Key)',
@@ -243,11 +257,15 @@ const ApiKeysConfig: React.FC = () => {
                 color: '#94a3b8',
                 border: '1px solid rgba(51, 65, 85, 0.5)',
             }}>
-                💡 配置搜索引擎 API 密钥后，Agent 会自动同步。不同引擎格式不同：
+                💡 密钥由 Server 端统一读取，用于资产测绘查询（当前支持
+                <code style={{ color: '#4ade80', margin: '0 4px' }}>fofa</code>、
+                <code style={{ color: '#4ade80', margin: '0 4px' }}>hunter</code>、
+                <code style={{ color: '#4ade80', margin: '0 4px' }}>quake</code>），
+                保存后即时生效，不再分发到 Agent。不同引擎格式不同：
                 <code style={{ color: '#4ade80', margin: '0 4px' }}>fofa</code> 格式为 <code style={{ color: '#fb923c' }}>email:key</code>，
                 <code style={{ color: '#4ade80', margin: '0 4px' }}>hunter</code> 为纯 API Key，
                 <code style={{ color: '#4ade80', margin: '0 4px' }}>quake</code> 为 Token。
-                多个密钥可换行分隔（轮转使用）。
+                多个密钥可换行分隔（轮转使用）；「兼容保留」条目为历史 Agent 端子域收集源，Server 端暂无消费方，配置与否不影响 Server 功能。
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, position: 'relative', zIndex: 1 }}>
@@ -279,7 +297,7 @@ const ApiKeysConfig: React.FC = () => {
                         loading={saving}
                         disabled={!modified}
                     >
-                        {modified ? '保存并分发' : '已保存'}
+                        {modified ? '保存' : '已保存'}
                     </Button>
                 </Space>
             </div>

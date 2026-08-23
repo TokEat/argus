@@ -22,6 +22,8 @@ const DirProbeConfig: React.FC = () => {
     const [modalVisible, setModalVisible] = useState(false);
     const [isNew, setIsNew] = useState(false);
     const [currentProduct, setCurrentProduct] = useState<string>('');
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(15);
     const [fingerprintProducts, setFingerprintProducts] = useState<Set<string>>(new Set());
     const [form] = Form.useForm();
     const { message } = App.useApp();
@@ -209,7 +211,10 @@ const DirProbeConfig: React.FC = () => {
                     placeholder="搜索产品或探测路径..."
                     prefix={<SearchOutlined style={{ color: '#94a3b8' }} />}
                     value={searchKeyword}
-                    onChange={(e) => setSearchKeyword(e.target.value)}
+                    onChange={(e) => {
+                        setSearchKeyword(e.target.value);
+                        setPage(1);
+                    }}
                     style={{ width: 280 }}
                     allowClear
                 />
@@ -225,7 +230,18 @@ const DirProbeConfig: React.FC = () => {
                         dataSource={filtered}
                         rowKey="product"
                         loading={loading}
-                        pagination={{ pageSize: 15, showSizeChanger: true }}
+                        pagination={{
+                            current: page,
+                            pageSize,
+                            total: filtered.length,
+                            showSizeChanger: true,
+                            pageSizeOptions: [15, 20, 50, 100],
+                            showTotal: (total) => `共 ${total} 条`,
+                            onChange: (nextPage, nextPageSize) => {
+                                setPage(nextPageSize === pageSize ? nextPage : 1);
+                                setPageSize(nextPageSize);
+                            },
+                        }}
                         size="middle"
                     />
                 )}
