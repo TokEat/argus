@@ -200,6 +200,12 @@ declare namespace API {
       domains_done: number;
       updated_at: string;
     }[];
+    /** 每个主域名一行的被动收集结果（来自已密封下发的批次配置）。 */
+    results?: {
+      domain: string;
+      count: number;
+      subdomains: string[];
+    }[];
   }
 
   /** 子任务摘要 (GET /api/v1/tasks/:id) */

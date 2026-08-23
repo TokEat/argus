@@ -2170,6 +2170,49 @@ const TaskManagement: React.FC = () => {
                             </div>
                         )}
 
+                        {/* 被动收集结果：每个主域名一行，展示该域收集到的全部子域名 */}
+                        {(taskDetail.passive_collection?.results?.length ?? 0) > 0 && (
+                            <div style={{ marginBottom: 20 }}>
+                                <Divider style={{ margin: '0 0 8px' }}>被动收集结果（按主域名）</Divider>
+                                <Table
+                                    size="small"
+                                    rowKey="domain"
+                                    pagination={false}
+                                    dataSource={taskDetail.passive_collection!.results}
+                                    columns={[
+                                        { title: '主域名', dataIndex: 'domain', width: 180, render: (v: string) => <Text copyable style={{ fontSize: 12 }}>{v}</Text> },
+                                        { title: '子域数量', dataIndex: 'count', width: 90, render: (v: number) => <Tag color="blue">{v}</Tag> },
+                                        {
+                                            title: '查询到的子域名',
+                                            dataIndex: 'subdomains',
+                                            render: (subs: string[]) => (
+                                                <Space wrap size={[4, 4]}>
+                                                    {(subs || []).slice(0, 6).map((sub) => (
+                                                        <Tag key={sub} style={{ fontSize: 11 }}>{sub}</Tag>
+                                                    ))}
+                                                    {(subs || []).length > 6 && (
+                                                        <Tag key="__more" style={{ fontSize: 11 }}>
+                                                            +{subs.length - 6} 个（展开行查看全部）
+                                                        </Tag>
+                                                    )}
+                                                </Space>
+                                            ),
+                                        },
+                                    ]}
+                                    expandable={{
+                                        rowExpandable: (record) => (record.subdomains?.length ?? 0) > 6,
+                                        expandedRowRender: (record) => (
+                                            <Space wrap size={[4, 4]}>
+                                                {(record.subdomains || []).map((sub) => (
+                                                    <Tag key={sub} style={{ fontSize: 11 }}>{sub}</Tag>
+                                                ))}
+                                            </Space>
+                                        ),
+                                    }}
+                                />
+                            </div>
+                        )}
+
                         {/* 原始目标 */}
                         {taskDetail.task.original_targets && (
                             <>

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -223,5 +224,48 @@ func TestProcessJobSealsReleasesAndInheritsProgress(t *testing.T) {
 	}
 	if updated.DomainsDone != 2 {
 		t.Fatalf("domains_done = %d, want 2", updated.DomainsDone)
+	}
+}
+
+func TestSealedResultsProjectOneRowPerDomain(t *testing.T) {
+	store := testWorkerStore(t)
+	// 两个 Attempt 的密封配置覆盖同一/不同主域，应按主域合并去重成一行。
+	mustAttempt := func(id, config string) {
+		if err := store.Create(&db.SubTask{
+			ID: id, TenantID: "tenant-a", ProjectID: "p", RootTaskID: "root-1",
+			BatchID: id + "-b", Status: "Pending", Config: config,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustAttempt("a1", `{"Subdomain":true,"SubdomainPassiveResults":{"chng.com.cn":["api.chng.com.cn","www.chng.com.cn"]}}`)
+	mustAttempt("a2", `{"Subdomain":true,"SubdomainPassiveResults":{"chng.com.cn":["API.chng.com.cn","mail.chng.com.cn"],"impc.com.cn":["www.impc.com.cn"]}}`)
+	// 其他租户的 Attempt 不得混入。
+	if err := store.Create(&db.SubTask{
+		ID: "other", TenantID: "tenant-b", ProjectID: "p", RootTaskID: "root-1",
+		BatchID: "other-b", Status: "Pending",
+		Config: `{"SubdomainPassiveResults":{"evil.test":["x.evil.test"]}}`,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	progress := CollectionProgressForTask(store, "tenant-a", "root-1")
+	if len(progress.Results) != 2 {
+		t.Fatalf("results rows = %d, want 2 (one per main domain): %+v", len(progress.Results), progress.Results)
+	}
+	chng := progress.Results[0]
+	if chng.Domain != "chng.com.cn" || chng.Count != 3 {
+		t.Fatalf("chng row = %+v, want 3 deduped subdomains", chng)
+	}
+	impc := progress.Results[1]
+	if impc.Domain != "impc.com.cn" || impc.Count != 1 {
+		t.Fatalf("impc row = %+v", impc)
+	}
+	for _, row := range progress.Results {
+		for _, sub := range row.Subdomains {
+			if !strings.HasSuffix(sub, "."+row.Domain) {
+				t.Fatalf("subdomain %q does not belong to row %q", sub, row.Domain)
+			}
+		}
 	}
 }
