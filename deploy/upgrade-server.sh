@@ -590,7 +590,9 @@ fi
 
 echo -e "${YELLOW}[5/6] 执行数据库初始化/升级与规则同步（纯 SQL，与启动解耦）...${NC}"
 command -v psql >/dev/null 2>&1 || { echo -e "${RED}  [!] 缺少 psql，无法升级数据库${NC}"; exit 1; }
-if ! bash "${SCRIPT_DIR}/db-init.sh" --dsn "$DB_DSN" --no-bootstrap; then
+# 本脚本已在 [2/6] 用容器内匹配版本的 pg_dump 完成备份；db-init 自身的
+# 二次 pg_dump 在宿主客户端版本与服务端不一致时会失败，故显式跳过。
+if ! bash "${SCRIPT_DIR}/db-init.sh" --dsn "$DB_DSN" --no-bootstrap --no-backup; then
     echo -e "${RED}  [!] 数据库初始化/升级失败${NC}"
     exit 1
 fi
