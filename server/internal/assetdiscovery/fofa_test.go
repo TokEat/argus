@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -64,6 +65,43 @@ func TestFOFAClientSearchNormalizesDeduplicatesAndBoundsRequest(t *testing.T) {
 	}
 }
 
+func TestFOFAClientSearchFetchesOnePageAndReportsMoreResults(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		query := r.URL.Query()
+		if query.Get("page") != "2" || query.Get("size") != "100" || query.Get("qbase64") == "" {
+			t.Fatalf("unexpected paging parameters: %v", query)
+		}
+		makeRow := func(index int) string {
+			return fmt.Sprintf(`["192.0.2.%d:80","http","","","192.0.2.%d","80",""]`, index, index)
+		}
+		rows := make([]string, 0, 100)
+		for index := 101; index <= 200; index++ {
+			rows = append(rows, makeRow(index))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"error":false,"size":250,"results":[` + strings.Join(rows, ",") + `]}`))
+	}))
+	defer server.Close()
+
+	client := NewFOFAClient(server.Client())
+	client.endpoint = server.URL + "/api/v1/search/all"
+	result, err := client.Search(context.Background(), FOFACredential{
+		Email: "tenant@example.test", Key: "secret-key",
+	}, FOFAQuery{Expression: `domain="Example.com"`, Limit: 100, Page: 2})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if requests.Load() != 1 || result.Page != 2 || result.PageSize != 100 ||
+		result.ProviderTotal != 250 || !result.Truncated || len(result.Assets) != 100 {
+		t.Fatalf("unexpected paged result: requests=%d result=%#v", requests.Load(), result)
+	}
+	if got := result.Assets[0]; got.Target != "http://192.0.2.101:80" || got.Source != fofaProvider {
+		t.Fatalf("first paged asset = %#v", got)
+	}
+}
+
 func TestFOFAClientSearchRejectsInvalidInput(t *testing.T) {
 	client := NewFOFAClient(nil)
 	validCredential := FOFACredential{Email: "tenant@example.test", Key: "key"}
@@ -79,6 +117,7 @@ func TestFOFAClientSearchRejectsInvalidInput(t *testing.T) {
 		{name: "empty query", ctx: context.Background(), credential: validCredential},
 		{name: "query control", ctx: context.Background(), credential: validCredential, query: FOFAQuery{Expression: "domain=x\nnext"}},
 		{name: "limit too large", ctx: context.Background(), credential: validCredential, query: FOFAQuery{Expression: "domain=x", Limit: MaxFOFAResultLimit + 1}},
+		{name: "page too large", ctx: context.Background(), credential: validCredential, query: FOFAQuery{Expression: "domain=x", Page: fofaMaxPages + 1}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := client.Search(test.ctx, test.credential, test.query); !errors.Is(err, ErrInvalidFOFARequest) {

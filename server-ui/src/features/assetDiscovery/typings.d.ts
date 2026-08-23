@@ -26,8 +26,13 @@ declare namespace API {
     schema_version: 'argus.asset-discovery-query-preview/v1' | string;
     project_id: string;
     audit_id: number;
+    snapshot_id?: number;
     provider: AssetDiscoveryProvider | string;
     provider_total: number;
+    returned_count?: number;
+    page?: number;
+    page_size?: number;
+    has_more?: boolean;
     skipped_rows: number;
     truncated: boolean;
     assets: AssetDiscoveryQueryAsset[];

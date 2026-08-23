@@ -153,8 +153,13 @@ const previewResponse: API.AssetDiscoveryQueryPreview = {
     schema_version: 'argus.asset-discovery-query-preview/v1',
     project_id: project.ID,
     audit_id: 22,
+    snapshot_id: 77,
     provider: 'fofa',
     provider_total: 1,
+    returned_count: 1,
+    page: 1,
+    page_size: 100,
+    has_more: false,
     skipped_rows: 0,
     truncated: false,
     assets: [{
@@ -505,11 +510,51 @@ describe('AssetDiscovery', () => {
                 project.ID,
                 'fofa',
                 'domain="new.example.invalid"',
+                { page: 1 },
             );
         });
         expect(await screen.findByText('https://new.example.invalid:443')).toBeInTheDocument();
         expect(screen.queryByRole('button', { name: '归档到笔记本' })).not.toBeInTheDocument();
         await waitFor(() => expect(apiMocks.listProjectAssetDiscoveryQueries.mock.calls.length).toBeGreaterThanOrEqual(2));
+    });
+
+    it('pages through the fresh query result instead of capping at 100 assets', async () => {
+        setRole('operator');
+        const user = userEvent.setup();
+        const pageTwo: API.AssetDiscoveryQueryPreview = {
+            ...previewResponse,
+            provider_total: 150,
+            returned_count: 2,
+            page: 2,
+            has_more: false,
+            assets: [{
+                target: 'https://second.example.invalid:443',
+                domain: 'second.example.invalid',
+                port: 443,
+                protocol: 'https',
+                source: 'fofa',
+            }],
+        };
+        apiMocks.queryProjectAssetDiscovery
+            .mockResolvedValueOnce({ ...previewResponse, provider_total: 150, has_more: true })
+            .mockResolvedValueOnce(pageTwo);
+        renderPage();
+
+        const expressionInput = await screen.findByLabelText('查询表达式');
+        await user.type(expressionInput, 'domain="new.example.invalid"');
+        await user.click(screen.getByRole('button', { name: /开始测绘/ }));
+        expect(await screen.findByText('https://new.example.invalid:443')).toBeInTheDocument();
+
+        await user.click(screen.getByRole('listitem', { name: '2' }));
+        await waitFor(() => {
+            expect(apiMocks.queryProjectAssetDiscovery).toHaveBeenCalledWith(
+                project.ID,
+                'fofa',
+                '',
+                { page: 2, limit: 100, snapshotId: 77 },
+            );
+        });
+        expect(await screen.findByText('https://second.example.invalid:443')).toBeInTheDocument();
     });
 
     it('discards a pending query when the user switches projects', async () => {

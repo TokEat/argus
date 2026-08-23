@@ -4,10 +4,16 @@ export async function queryProjectAssetDiscovery(
     projectId: string,
     provider: API.AssetDiscoveryProvider,
     expression: string,
+    params: { page?: number; limit?: number; snapshotId?: number } = {},
 ): Promise<API.AssetDiscoveryQueryPreview> {
     return request.post(
         `/projects/${encodeURIComponent(projectId)}/asset-discovery/${provider}/query`,
-        { expression },
+        {
+            expression,
+            limit: params.limit,
+            page: params.page,
+            snapshot_id: params.snapshotId,
+        },
     );
 }
 

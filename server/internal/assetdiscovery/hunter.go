@@ -50,11 +50,14 @@ type HunterCredential struct {
 
 // HunterQuery is one bounded provider query. Zero values use safe defaults.
 // PageSize is an internal provider tuning value; public APIs should generally
-// expose only Limit and let the Server select the page size.
+// expose only Limit and let the Server select the page size. A zero Page keeps
+// the aggregate behavior (fetch from the first page up to Limit); Page > 0
+// fetches exactly that provider page.
 type HunterQuery struct {
 	Expression string
 	Limit      int
 	PageSize   int
+	Page       int
 }
 
 // HunterClient is the Server-side Hunter provider client.
@@ -119,23 +122,27 @@ func (c *HunterClient) Search(ctx context.Context, credential HunterCredential, 
 	if ctx == nil {
 		return result, fmt.Errorf("%w: context is required", ErrInvalidHunterRequest)
 	}
-	apiKey, expression, limit, pageSize, err := validateHunterInput(credential, query)
+	apiKey, expression, limit, pageSize, page, err := validateHunterInput(credential, query)
 	if err != nil {
 		return result, err
 	}
 
 	requestContext, cancel := context.WithTimeout(ctx, c.queryTimeout)
 	defer cancel()
+	if page > 0 {
+		return c.searchOnePage(requestContext, apiKey, expression, page, pageSize)
+	}
+
 	remainingResponseBytes := c.responseLimit
 	processedRows := 0
 	assetsByTarget := make(map[string]Asset, limit)
 	maxPages := (limit + pageSize - 1) / pageSize
 
-	for page := 1; page <= maxPages && processedRows < limit; page++ {
+	for curPage := 1; curPage <= maxPages && processedRows < limit; curPage++ {
 		if remainingResponseBytes <= 0 {
 			return result, fmt.Errorf("%w: total response budget exhausted", ErrInvalidHunterResponse)
 		}
-		providerResponse, responseBytes, requestErr := c.searchPage(requestContext, apiKey, expression, page, pageSize, remainingResponseBytes)
+		providerResponse, responseBytes, requestErr := c.searchPage(requestContext, apiKey, expression, curPage, pageSize, remainingResponseBytes)
 		if requestErr != nil {
 			return result, requestErr
 		}
@@ -198,6 +205,55 @@ func (c *HunterClient) Search(ctx context.Context, credential HunterCredential, 
 	return finalizeHunterResult(result, assetsByTarget), nil
 }
 
+// searchOnePage fetches exactly one specified provider page with the validated
+// page size, so control-plane callers can browse results page by page like the
+// official Hunter web UI. Truncated reports whether the advertised total is
+// still beyond this page.
+func (c *HunterClient) searchOnePage(ctx context.Context, apiKey, expression string, page, pageSize int) (Result, error) {
+	result := Result{Provider: hunterProvider, Assets: []Asset{}, Page: page, PageSize: pageSize}
+	providerResponse, _, requestErr := c.searchPage(ctx, apiKey, expression, page, pageSize, c.responseLimit)
+	if requestErr != nil {
+		return result, requestErr
+	}
+	if providerResponse.Data.Total < 0 {
+		return result, fmt.Errorf("%w: negative result total", ErrInvalidHunterResponse)
+	}
+	result.ProviderTotal = providerResponse.Data.Total
+	rows := providerResponse.Data.Items
+	if result.ProviderTotal == 0 {
+		if len(rows) != 0 {
+			return result, fmt.Errorf("%w: rows returned with zero total", ErrInvalidHunterResponse)
+		}
+		return result, nil
+	}
+	if len(rows) == 0 {
+		return result, fmt.Errorf("%w: pagination ended before advertised total", ErrInvalidHunterResponse)
+	}
+	if len(rows) > pageSize {
+		rows = rows[:pageSize]
+	}
+	offset := (page - 1) * pageSize
+	if offset+len(rows) > result.ProviderTotal {
+		return result, fmt.Errorf("%w: page rows exceed advertised total", ErrInvalidHunterResponse)
+	}
+
+	assetsByTarget := make(map[string]Asset, len(rows))
+	for _, row := range rows {
+		asset, ok := normalizeHunterRow(row)
+		if !ok {
+			result.SkippedRows++
+			continue
+		}
+		if existing, duplicate := assetsByTarget[asset.Target]; duplicate {
+			assetsByTarget[asset.Target] = mergeAsset(existing, asset)
+			continue
+		}
+		assetsByTarget[asset.Target] = asset
+	}
+	result.Truncated = result.ProviderTotal > offset+len(rows)
+	return finalizeHunterResult(result, assetsByTarget), nil
+}
+
 func (c *HunterClient) searchPage(ctx context.Context, apiKey, expression string, page, pageSize int, responseLimit int64) (hunterResponse, int64, error) {
 	var providerResponse hunterResponse
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpoint, nil)
@@ -247,17 +303,17 @@ func (c *HunterClient) searchPage(ctx context.Context, apiKey, expression string
 	return providerResponse, int64(len(body)), nil
 }
 
-func validateHunterInput(credential HunterCredential, query HunterQuery) (string, string, int, int, error) {
+func validateHunterInput(credential HunterCredential, query HunterQuery) (string, string, int, int, int, error) {
 	apiKey := strings.TrimSpace(credential.APIKey)
 	expression := strings.TrimSpace(query.Expression)
 	if apiKey == "" || len(apiKey) > hunterMaxCredentialBytes || !utf8.ValidString(apiKey) || hasControl(apiKey) {
-		return "", "", 0, 0, fmt.Errorf("%w: credential is malformed", ErrInvalidHunterRequest)
+		return "", "", 0, 0, 0, fmt.Errorf("%w: credential is malformed", ErrInvalidHunterRequest)
 	}
 	if expression == "" {
-		return "", "", 0, 0, fmt.Errorf("%w: query is empty", ErrInvalidHunterRequest)
+		return "", "", 0, 0, 0, fmt.Errorf("%w: query is empty", ErrInvalidHunterRequest)
 	}
 	if len(expression) > MaxHunterQueryBytes || !utf8.ValidString(expression) || strings.ContainsAny(expression, "\r\n\x00") {
-		return "", "", 0, 0, fmt.Errorf("%w: query is malformed", ErrInvalidHunterRequest)
+		return "", "", 0, 0, 0, fmt.Errorf("%w: query is malformed", ErrInvalidHunterRequest)
 	}
 
 	limit := query.Limit
@@ -265,22 +321,34 @@ func validateHunterInput(credential HunterCredential, query HunterQuery) (string
 		limit = DefaultHunterResultLimit
 	}
 	if limit < 1 || limit > MaxHunterResultLimit {
-		return "", "", 0, 0, fmt.Errorf("%w: result limit must be between 1 and %d", ErrInvalidHunterRequest, MaxHunterResultLimit)
+		return "", "", 0, 0, 0, fmt.Errorf("%w: result limit must be between 1 and %d", ErrInvalidHunterRequest, MaxHunterResultLimit)
 	}
 	pageSize := query.PageSize
 	if pageSize == 0 {
 		pageSize = DefaultHunterPageSize
 	}
 	if pageSize < 1 || pageSize > MaxHunterPageSize {
-		return "", "", 0, 0, fmt.Errorf("%w: page size must be between 1 and %d", ErrInvalidHunterRequest, MaxHunterPageSize)
+		return "", "", 0, 0, 0, fmt.Errorf("%w: page size must be between 1 and %d", ErrInvalidHunterRequest, MaxHunterPageSize)
 	}
 	if pageSize > limit {
 		pageSize = limit
 	}
-	if (limit+pageSize-1)/pageSize > hunterMaxPages {
-		return "", "", 0, 0, fmt.Errorf("%w: query would exceed %d pages", ErrInvalidHunterRequest, hunterMaxPages)
+	page := query.Page
+	if page < 0 {
+		return "", "", 0, 0, 0, fmt.Errorf("%w: page must not be negative", ErrInvalidHunterRequest)
 	}
-	return apiKey, expression, limit, pageSize, nil
+	if page > 0 {
+		// A single page fetch obeys the same provider contract as the
+		// aggregate mode: at most hunterMaxPages pages of the chosen page size.
+		if page > hunterMaxPages {
+			return "", "", 0, 0, 0, fmt.Errorf("%w: page must not exceed %d", ErrInvalidHunterRequest, hunterMaxPages)
+		}
+		return apiKey, expression, limit, pageSize, page, nil
+	}
+	if (limit+pageSize-1)/pageSize > hunterMaxPages {
+		return "", "", 0, 0, 0, fmt.Errorf("%w: query would exceed %d pages", ErrInvalidHunterRequest, hunterMaxPages)
+	}
+	return apiKey, expression, limit, pageSize, 0, nil
 }
 
 func normalizeHunterRow(row hunterResponseItem) (Asset, bool) {
