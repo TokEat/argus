@@ -20,6 +20,7 @@ import (
 	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/P0lar1ght/argus/scanner/utils"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -160,10 +161,11 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 	// CDN 检测
 	var cdnDomains []string
+	var normalDomains []string
 	var tIPs []string
 	if len(domains) > 0 && resumeStageEnabled(ctx, scanplan.StageCDNClassification) {
 		emitPhase(ctx, PhaseCDN, "start", fmt.Sprintf("%d domains", len(domains)))
-		cdnDomains, _, tIPs = cdn.CheckCDNs(
+		cdnDomains, normalDomains, tIPs = cdn.CheckCDNs(
 			domains,
 			cfg.SubdomainBruteForceThreads,
 			ctx.IPDomainMap,
@@ -172,12 +174,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 				emit(msg)
 			},
 		)
-		for _, each := range tIPs {
-			if cfg.AllowLocalAreaDomain && utils.IsLocalIP(each) {
-				continue
-			}
-			ips = append(ips, each)
-		}
+		ips = append(ips, filterDomainIPs(tIPs, cfg)...)
 		emitPhase(ctx, PhaseCDN, "end", fmt.Sprintf("%d cdn, %d ips", len(cdnDomains), len(tIPs)))
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {
@@ -185,12 +182,16 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	}
 	ips = utils.RemoveDuplicateElement(ips)
 
-	// 处理带CDN的域名
-	if cfg.AllowCDNAssets {
-		for _, cd := range cdnDomains {
-			urls = append(urls, "http://"+cd)
-			urls = append(urls, "https://"+cd)
-		}
+	// 处理带CDN的域名：不扫描其解析 IP（避免触达 CDN 厂商基础设施、
+	// 越出授权范围），开启 AllowCDNAssets 后按任务配置的扫描端口
+	// （与 IP 目标端口扫描同源）对域名本身做 http(s) 补偿探测。
+	if cfg.AllowCDNAssets && len(cdnDomains) > 0 {
+		urls = append(urls, buildDomainProbeURLs(cfg, cdnDomains)...)
+	}
+	// 非 CDN 域名：开启 NoResolvedIPScan 时同样不扫解析 IP，
+	// 仅按 域名:端口 形式对域名本身盲探。
+	if cfg.NoResolvedIPScan && len(normalDomains) > 0 {
+		urls = append(urls, buildDomainProbeURLs(cfg, normalDomains)...)
 	}
 	urls = utils.RemoveDuplicateElement(urls)
 
@@ -294,15 +295,14 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	}
 
 	// HTTP 探测
-	for hostPort, service := range currentPipelineIPPortMap(ctx) {
-		urls = append(urls, web.ProbeURLs(hostPort, service)...)
-	}
+	urls = append(urls, buildHTTPProbeURLs(ctx, cfg, currentPipelineIPPortMap(ctx))...)
 	urls = utils.RemoveDuplicateElement(urls)
 	httpProbeComplete := true
 
 	if resumeStageEnabled(ctx, scanplan.StageHTTPProbe) {
 		emitPhase(ctx, PhaseHTTPProbe, "start", fmt.Sprintf("%d urls", len(urls)))
 		webRuntime := currentWebRuntime(ctx, emit)
+		webRuntime.CDNHosts = cdnHostSet(cdnDomains)
 		var err error
 		httpProbeComplete, err = completeHTTPProbePhase(ctx, p.runHTTPProbe(ctx, &cfg, urls, webRuntime))
 		if err != nil {
@@ -316,7 +316,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	// 域名绑定资产探测
 	if !cfg.NoHostBind && resumeStageEnabled(ctx, scanplan.StageHostBinding) {
 		emitPhase(ctx, PhaseHostBind, "start", "")
-		currentWebRuntime(ctx, emit).HostBindCheck(cfg.HTTPProxy, cfg.WebThreads, cfg.WebTimeout)
+		bindRuntime := currentWebRuntime(ctx, emit)
+		bindRuntime.CDNHosts = cdnHostSet(cdnDomains)
+		bindRuntime.HostBindCheck(cfg.HTTPProxy, cfg.WebThreads, cfg.WebTimeout)
 		completeHTTPDependentPhase(ctx, PhaseHostBind, httpProbeComplete)
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {
@@ -410,19 +412,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	}
 
 	// WAF 过滤：Safedog / 安全狗 WAF 标题检测。
-	for _, entity := range currentPipelineURLMap(ctx) {
-		for _, path := range entity.WebPaths {
-			title := strings.ToLower(path.Title)
-			if strings.Contains(title, "当前网络访问异常") || strings.Contains(title, "请验证是否真人访问") {
-				for target := range resultMap {
-					if strings.Contains(target, entity.IP) {
-						delete(resultMap, target)
-						gologger.AuditTimeLogger("[WAF] %s 标题 Safedog → 跳过 Nuclei", target)
-					}
-				}
-			}
-		}
-	}
+	suppressSafedogTargets(ctx, resultMap)
 
 	var nucleiResults []gopocs.NucleiResult
 	if cfg.NoPoc {
@@ -527,6 +517,140 @@ func buildDirProbeURLs(aliveURLs []string, dirDB map[string][]string) []string {
 		}
 	}
 	return utils.RemoveDuplicateElement(checkURLs)
+}
+
+// probeDomainsForHost returns the domains bound to an IPv4 hostPort according
+// to the CDN-classification IP→domain mapping. Domain-form probing keeps web
+// assets in the imported domain shape; it is disabled by NoDomainProbe and
+// never applies to non-IPv4 endpoints such as direct domain:port inputs.
+func probeDomainsForHost(ctx *ScanContext, cfg Config, hostPort string) []string {
+	if ctx == nil || cfg.NoDomainProbe {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(hostPort)
+	if err != nil || !utils.IsIPv4(host) {
+		return nil
+	}
+	ctx.IPDomainMapLock.Lock()
+	defer ctx.IPDomainMapLock.Unlock()
+	if len(ctx.IPDomainMap[host]) == 0 {
+		return nil
+	}
+	return utils.RemoveDuplicateElement(append([]string(nil), ctx.IPDomainMap[host]...))
+}
+
+// buildHTTPProbeURLs turns protocol-identified host:port services into HTTP
+// probe targets. An open ip:port with bound domains is probed only as
+// scheme://domain:port so the resolved IP form never duplicates the request;
+// unbound hosts keep the legacy scheme://ip:port form.
+func buildHTTPProbeURLs(ctx *ScanContext, cfg Config, ipPortMap map[string]string) []string {
+	var urls []string
+	for hostPort, service := range ipPortMap {
+		domains := probeDomainsForHost(ctx, cfg, hostPort)
+		if len(domains) > 0 {
+			if _, port, portErr := net.SplitHostPort(hostPort); portErr == nil {
+				for _, domain := range domains {
+					urls = append(urls, web.ProbeURLs(domain+":"+port, service)...)
+				}
+				continue
+			}
+		}
+		urls = append(urls, web.ProbeURLs(hostPort, service)...)
+	}
+	return urls
+}
+
+// filterDomainIPs 决定哪些「域名解析 IP」进入存活探测与端口扫描：
+//   - NoResolvedIPScan=true：完全跳过（域名仅按 域名:端口 形式盲探）；
+//   - AllowLocalAreaDomain=false（默认）：跳过私网/回环地址，避免把
+//     解析到内网的域名当作扫描目标；开启后才纳入扫描。
+func filterDomainIPs(ips []string, cfg Config) []string {
+	if cfg.NoResolvedIPScan {
+		return nil
+	}
+	var out []string
+	for _, raw := range ips {
+		if !cfg.AllowLocalAreaDomain && utils.IsLocalIP(raw) {
+			continue
+		}
+		out = append(out, raw)
+	}
+	return out
+}
+
+// buildDomainProbeURLs turns domain-classified targets into domain-form
+// HTTP(S) probe targets. These domains skip IP port scanning (CDN domains by
+// policy, other domains when NoResolvedIPScan is set), so the candidate ports
+// follow the task's configured scan ports (cfg.Ports) — the same set an IP
+// target would have its open ports discovered from — parsed with the same
+// rules as the TCP port scanner (portscan.ParsePort). TLS-typical ports get
+// an https:// attempt, the rest http://, so each port is probed exactly once.
+func buildDomainProbeURLs(cfg Config, domains []string) []string {
+	ports := portscan.ParsePort(cfg.Ports)
+	if len(ports) == 0 || len(domains) == 0 {
+		return nil
+	}
+	var urls []string
+	for _, rawDomain := range domains {
+		domain := strings.TrimSpace(rawDomain)
+		if domain == "" {
+			continue
+		}
+		for _, port := range ports {
+			portStr := strconv.Itoa(port)
+			service := "http"
+			if web.TLSLikelyPort(portStr) {
+				service = "https"
+			}
+			urls = append(urls, web.ProbeURLs(domain+":"+portStr, service)...)
+		}
+	}
+	return urls
+}
+
+// cdnHostSet lowercases CDN-classified domains into a hostname lookup set
+// used by the web runtime to tag emitted assets as "cdn".
+func cdnHostSet(domains []string) map[string]struct{} {
+	if len(domains) == 0 {
+		return nil
+	}
+	hosts := make(map[string]struct{}, len(domains))
+	for _, rawDomain := range domains {
+		domain := strings.ToLower(strings.TrimSpace(rawDomain))
+		if domain == "" {
+			continue
+		}
+		hosts[domain] = struct{}{}
+	}
+	return hosts
+}
+
+// suppressSafedogTargets drops fingerprint targets whose resolved host served
+// a Safedog interstitial page. Domain-form rootURLs do not contain the
+// resolved IP, so matching combines substring checks against entity.IP with a
+// URLMap reverse lookup keyed by URLEntity.IP.
+func suppressSafedogTargets(ctx *ScanContext, resultMap map[string][]string) {
+	targetsByIP := make(map[string][]string)
+	for rootURL, entity := range currentPipelineURLMap(ctx) {
+		if entity.IP == "" {
+			continue
+		}
+		targetsByIP[entity.IP] = append(targetsByIP[entity.IP], rootURL)
+	}
+	for _, entity := range currentPipelineURLMap(ctx) {
+		for _, path := range entity.WebPaths {
+			title := strings.ToLower(path.Title)
+			if !strings.Contains(title, "当前网络访问异常") && !strings.Contains(title, "请验证是否真人访问") {
+				continue
+			}
+			for target := range resultMap {
+				if strings.Contains(target, entity.IP) || utils.GetItemInArray(targetsByIP[entity.IP], target) != -1 {
+					delete(resultMap, target)
+					gologger.AuditTimeLogger("[WAF] %s 标题 Safedog → 跳过 Nuclei", target)
+				}
+			}
+		}
+	}
 }
 
 func (p *Pipeline) runHTTPProbe(ctx *ScanContext, cfg *Config, urls []string, webRuntime *web.Runtime) error {
@@ -728,6 +852,7 @@ func currentSubdomainConfig(ctx *ScanContext, emit func(structs.OutputMessage)) 
 		SubdomainBruteforceDepth:   cfg.SubdomainBruteforceDepth,
 		SubdomainWordListFile:      cfg.SubdomainWordListFile,
 		SubdomainDictionaryWords:   append([]string(nil), cfg.SubdomainDictionaryWords...),
+		Injected:                   cfg.SubdomainPassiveResults,
 		EmitFunc: func(msg ddout.OutputMessage) {
 			emit(msg)
 		},

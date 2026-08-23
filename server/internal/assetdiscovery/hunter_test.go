@@ -80,6 +80,35 @@ func TestHunterClientSearchPaginatesNormalizesAndDropsRawBanner(t *testing.T) {
 	}
 }
 
+func TestHunterClientSearchFetchesOneExplicitPage(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		query := r.URL.Query()
+		if query.Get("page") != "2" || query.Get("page_size") != "2" {
+			t.Fatalf("unexpected paging parameters: %v", query)
+		}
+		_, _ = w.Write([]byte(`{"code":200,"data":{"total":4,"arr":[
+			{"url":"","ip":"192.0.2.3","port":22,"protocol":"ssh"},
+			{"url":"","ip":"192.0.2.4","port":22,"protocol":"ssh"}
+		]}}`))
+	}))
+	defer server.Close()
+
+	client := NewHunterClient(server.Client())
+	client.endpoint = server.URL
+	result, err := client.Search(context.Background(), HunterCredential{APIKey: "key"}, HunterQuery{
+		Expression: "domain=example", Limit: 4, PageSize: 2, Page: 2,
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if requests.Load() != 1 || result.Page != 2 || result.PageSize != 2 ||
+		result.ProviderTotal != 4 || result.Truncated || len(result.Assets) != 2 {
+		t.Fatalf("unexpected single-page result: requests=%d result=%#v", requests.Load(), result)
+	}
+}
+
 func TestHunterClientSearchEnforcesResultLimitAcrossPages(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
@@ -120,6 +149,8 @@ func TestHunterClientSearchRejectsInvalidInput(t *testing.T) {
 		{name: "query control", ctx: context.Background(), credential: validCredential, query: HunterQuery{Expression: "domain=x\nnext"}},
 		{name: "limit too large", ctx: context.Background(), credential: validCredential, query: HunterQuery{Expression: "domain=x", Limit: MaxHunterResultLimit + 1}},
 		{name: "page size too large", ctx: context.Background(), credential: validCredential, query: HunterQuery{Expression: "domain=x", PageSize: MaxHunterPageSize + 1}},
+		{name: "page too large", ctx: context.Background(), credential: validCredential, query: HunterQuery{Expression: "domain=x", Page: hunterMaxPages + 1}},
+		{name: "negative page", ctx: context.Background(), credential: validCredential, query: HunterQuery{Expression: "domain=x", Page: -1}},
 		{name: "too many pages", ctx: context.Background(), credential: validCredential, query: HunterQuery{Expression: "domain=x", Limit: 11, PageSize: 1}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

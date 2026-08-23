@@ -42,10 +42,22 @@ POST /api/v1/projects/{project_id}/asset-discovery/notebook-distributions
 ```
 
 - `expression` 必填，去除首尾空白后最多 4096 字节，不能包含换行或 NUL。
-- `limit` 可省略；默认 100。FOFA 范围为 1–10000，Hunter 范围为 1–1000，Quake 范围为 1–500。
+- `limit` 可省略；默认 100，表示每页条数。FOFA 范围为 1–10000，Hunter 范围为 1–1000（单页实际按上限 100 条拉取），Quake 范围为 1–500。
 - 未声明字段、多 JSON 文档或超过 16 KiB 的请求体会被拒绝。
 
-查询成功响应使用 `argus.asset-discovery-query-preview/v1`，包含项目 ID、审计 ID、Provider 计数和规范化资产。它不会回显查询表达式、配置版本、配置哈希或 Provider 凭据；同一事务还会保存不可变查询快照，供历史、导出和笔记本使用。
+查询成功响应使用 `argus.asset-discovery-query-preview/v1`，包含项目 ID、审计 ID、快照 ID（`snapshot_id`）、Provider 计数、当前页（`page`）、实际页大小（`page_size`）、是否还有下一页（`has_more`）、当前已获取资产数（`returned_count`）和规范化资产。它不会回显查询表达式、配置版本、配置哈希或 Provider 凭据；同一事务还会保存不可变查询快照，供历史、导出和笔记本使用。
+
+### 逐页浏览
+
+查询结果可以像官方站点一样逐页浏览，而不是一次性截断在默认 100 条：
+
+- 第一页使用上述请求体（`page` 可省略或为 1）。响应中的 `snapshot_id`、`page_size` 与 `has_more` 用于继续翻页。
+- 后续页面复用同一个 `/query` 入口，但请求体改为 `{"limit": 100, "page": 2, "snapshot_id": 77}`：`expression` 必须省略（Server 从快照读取原表达式），`snapshot_id` 必须属于当前用户可访问的项目且 Provider 匹配；不传或传错会返回 400/404，且不会请求第三方 Provider。
+- 每一页追加到同一个快照：目标按规范目标 SHA-256 去重，位置连续编号，`returned_count`、`provider_total`、`skipped_rows` 与 `truncated` 随页更新；历史明细、CSV 导出和笔记本归档覆盖所有已获取的页。
+- 每页请求独立记录 `query_page` 审计，查询表达式哈希沿用快照原表达式的哈希；单次查询快照最多保存 10000 个资产项，达到上限后翻页请求返回 409 `snapshot_limit_reached`，已获取部分仍可正常查看、导出和归档。
+- 幂等：重复请求已经抓取过的页只做去重，不产生重复资产项。
+
+单次请求的页数上限与 Provider 契约一致：FOFA 单页最多 10000 条；Quake 单页最多 500 条；Hunter 每页 100 条、最多 10 页（单次查询最多 1000 条）。
 
 ## 权限与配置
 
@@ -58,7 +70,7 @@ POST /api/v1/projects/{project_id}/asset-discovery/notebook-distributions
 
 每个通过项目访问校验的查询尝试都会写入 `asset_discovery_audits`。审计只保存：
 
-- tenant/project/operator、Provider 和动作；
+- tenant/project/operator、Provider 和动作（首个查询为 `query_preview`，后续页为 `query_page`）；
 - 查询表达式 SHA-256、API 配置语义 SHA-256 和配置版本；
 - 请求条数、Provider 总数、返回/跳过数、截断标记、耗时和稳定错误分类。
 
@@ -90,7 +102,7 @@ Migration 380 建立追加式 `asset_discovery_snapshots` 与 `asset_discovery_s
 - operator 可为条目维护最多 20 个规范化标签（每个最多 64 字节）和最多 4096 字节备注，并可软移除或恢复。viewer 只能读取。写操作会在事务内重验 tenant/project/item、项目非归档状态并写入关联具体 item 的脱敏审计；审计失败时全部回滚。
 - 软移除不会删除规范目标、不可变来源、既有分发意图或任务历史；默认列表与新的分发预览会排除已移除条目，恢复后才可重新选择。
 
-前端在 `/asset-discovery` 提供独立“资产测绘”模块：自动使用当前项目，operator 只需选择 Provider 并输入表达式即可查询，结果即时展示并进入历史；viewer 可以查看项目历史、分页明细、笔记本并一键导出完整快照 CSV。operator 可在已持久化历史明细中多选最多 100 条归档到笔记本，预览结果不能直接归档。归档项目保留历史、导出和笔记本读取入口，但页面不允许发起新查询或归档。高级查询预算继续使用 Server 安全默认值，不要求用户手动选择扫描参数。
+前端在 `/asset-discovery` 提供独立“资产测绘”模块：自动使用当前项目，operator 只需选择 Provider 并输入表达式即可查询，结果即时展示并进入历史；新查询结果抽屉与官方站点一致支持逐页浏览全部命中（默认每页 100 条，FOFA/Quake 可选 200/500），翻页请求只在用户浏览时按页拉取。viewer 可以查看项目历史、分页明细、笔记本并一键导出完整快照 CSV。operator 可在已持久化历史明细中多选最多 100 条归档到笔记本，预览结果不能直接归档。归档项目保留历史、导出和笔记本读取入口，但页面不允许发起新查询或归档。高级查询预算继续使用 Server 安全默认值，不要求用户手动选择扫描参数。
 
 ### 笔记本分发预览
 
@@ -119,7 +131,7 @@ Migration 380 建立追加式 `asset_discovery_snapshots` 与 `asset_discovery_s
 
 ## 内部 Provider 状态
 
-Server 已具备 FOFA、Hunter 与 Quake 三个相互独立的 Provider 核心和项目授权入口。Hunter 核心沿用统一规范资产结构，以租户隔离配置中的 API Key 和用户查询工作；分页共享一次 30 秒总超时、最多 10 页/1000 条和 8 MiB 总响应预算。它只提取 IP、域名、端口、协议、标题、国家、城市、公司和状态码，不保存或返回 Hunter banner、剩余额度、原始查询、原始响应或 API Key。
+Server 已具备 FOFA、Hunter 与 Quake 三个相互独立的 Provider 核心和项目授权入口。Hunter 核心沿用统一规范资产结构，以租户隔离配置中的 API Key 和用户查询工作。聚合模式（不指定页）共享一次 30 秒总超时、最多 10 页/1000 条和 8 MiB 总响应预算；逐页模式每次只请求指定的一页（单页不超过 100 条、总页数不超过 10 页）。它只提取 IP、域名、端口、协议、标题、国家、城市、公司和状态码，不保存或返回 Hunter banner、剩余额度、原始查询、原始响应或 API Key。
 
 Quake 核心只执行一次最多 500 条的有界 POST，不再沿用旧 Scanner 的查询前固定等待和 `/user/info` VIP 探测。Token 仅放在 `X-QuakeToken` Header，结果字段显式收窄；高级字段不可用时回退为规范 `IP:Port`。单行最多处理 32 个 URL，最终资产数还受查询条数派生上限和 2000 条硬上限约束。
 

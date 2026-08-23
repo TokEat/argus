@@ -2,6 +2,7 @@ package db
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -13,25 +14,38 @@ func TestInitSQLStampsRequiredVersion(t *testing.T) {
 	if _, err := os.Stat(root + "/go.mod"); err != nil {
 		t.Fatalf("cannot locate repo root: %v", err)
 	}
-	sqlPath := root + "/deploy/db/init/001_init.sql"
-	content, err := os.ReadFile(sqlPath)
-	if err != nil {
-		t.Fatalf("deploy/db/init/001_init.sql is missing: %v", err)
+	initFiles, err := filepath.Glob(root + "/deploy/db/init/[0-9]*.sql")
+	if err != nil || len(initFiles) == 0 {
+		t.Fatalf("deploy/db/init SQL files are missing: %v", err)
 	}
-	sql := string(content)
-	want := "VALUES ('" + RequiredSchemaVersion + "', 'init_baseline', 'psql-managed', now())"
-	if !strings.Contains(sql, want) {
-		t.Fatalf("init SQL does not stamp required version %q (looked for %q)", RequiredSchemaVersion, want)
-	}
-	for _, banned := range []string{
-		"CREATE TABLE public.cron_tasks",
-		"CREATE TABLE public.notification_rules",
-		"CREATE TABLE public.asset_change_logs",
-		"CREATE VIEW public.tenant_quota",
-	} {
-		if strings.Contains(sql, banned) {
-			t.Fatalf("init SQL still contains dropped legacy object: %q", banned)
+	versionPrefix := strings.SplitN(RequiredSchemaVersion, "_", 2)[0]
+	stamped := false
+	for _, sqlPath := range initFiles {
+		content, err := os.ReadFile(sqlPath)
+		if err != nil {
+			t.Fatalf("read %s failed: %v", sqlPath, err)
 		}
+		sql := string(content)
+		if strings.HasPrefix(filepath.Base(sqlPath), versionPrefix+"_") {
+			if !strings.Contains(sql, "VALUES ('"+RequiredSchemaVersion+"', '") ||
+				!strings.Contains(sql, ", 'psql-managed', now())") {
+				t.Fatalf("%s must self-stamp version %q with psql-managed checksum", filepath.Base(sqlPath), RequiredSchemaVersion)
+			}
+			stamped = true
+		}
+		for _, banned := range []string{
+			"CREATE TABLE public.cron_tasks",
+			"CREATE TABLE public.notification_rules",
+			"CREATE TABLE public.asset_change_logs",
+			"CREATE VIEW public.tenant_quota",
+		} {
+			if strings.Contains(sql, banned) {
+				t.Fatalf("%s still contains dropped legacy object: %q", filepath.Base(sqlPath), banned)
+			}
+		}
+	}
+	if !stamped {
+		t.Fatalf("no init SQL file matches required version %q", RequiredSchemaVersion)
 	}
 }
 

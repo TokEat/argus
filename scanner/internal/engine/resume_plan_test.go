@@ -57,6 +57,42 @@ func TestRequiredResumeStagesIncludesTCPRemainderForLargeCIDR(t *testing.T) {
 	}
 }
 
+// NoResolvedIPScan：域名目标的端口扫描与协议识别阶段随之消失，
+// 仅保留 CDN 分类 + HTTP 探测 + 指纹等后续阶段。
+func TestRequiredResumeStagesDropsPortStagesForDomainWhenResolvedIPScanDisabled(t *testing.T) {
+	target := "abc.example.test"
+	baseCfg := Config{NoHostBind: true, NoDirSearch: true, NoPoc: true, DisableGeneralPoc: true}
+
+	withScan, ok := RequiredResumeStages(target, baseCfg)
+	if !ok {
+		t.Fatal("domain target stages should be computable")
+	}
+	has := func(want scanplan.Stage) bool {
+		for _, stage := range withScan {
+			if stage == want {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(scanplan.StagePortScan) || !has(scanplan.StageProtocolIdentify) {
+		t.Fatalf("default domain stages must keep port stages: %v", withScan)
+	}
+
+	withoutScan, ok := RequiredResumeStages(target, Config{NoHostBind: true, NoDirSearch: true, NoPoc: true, DisableGeneralPoc: true, NoResolvedIPScan: true})
+	if !ok {
+		t.Fatal("domain target stages should be computable")
+	}
+	for _, stage := range withoutScan {
+		if stage == scanplan.StagePortScan || stage == scanplan.StageProtocolIdentify {
+			t.Fatalf("NoResolvedIPScan must drop port/protocol stages, got %v", withoutScan)
+		}
+	}
+	if !has(scanplan.StageCDNClassification) {
+		t.Fatalf("CDN classification must remain, got %v", withoutScan)
+	}
+}
+
 func TestValidateResumePlanRejectsMissingDependencyAndUnsafeHTTPContentStart(t *testing.T) {
 	target := "192.0.2.10"
 	cfg := Config{Targets: []string{target}, SkipHostDiscovery: true, NoHostBind: true, NoDirSearch: true, NoPoc: true, DisableGeneralPoc: true}

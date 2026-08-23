@@ -707,7 +707,7 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 				continue
 			}
 		}
-		claimConfig, deferred, err := s.resolveClaimSubdomainConfig(tx, task, sub, resumeConfig, msgID)
+		claimConfig, deferred, err := s.resolveClaimSubdomainConfig(tx, task, sub, resumeConfig, msgID, claimNode.Tags)
 		if err != nil {
 			return &pb.Task{}, err
 		}

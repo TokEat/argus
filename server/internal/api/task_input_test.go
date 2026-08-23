@@ -41,6 +41,12 @@ func TestDefaultTaskScanConfigUsesSafeExternalMapProfile(t *testing.T) {
 	}
 }
 
+func TestDefaultTaskScanConfigEnablesDomainFormProbe(t *testing.T) {
+	if defaultTaskScanConfig().NoDomainProbe {
+		t.Fatal("expected NoDomainProbe to default to false so domain-bound ports are probed as domain:port")
+	}
+}
+
 func TestDirectTargetsAllowUnderscoreHostInFullURL(t *testing.T) {
 	targets, summary, err := parseAndValidateTargetsForMode(
 		json.RawMessage(`["http://mzt_sc_gov_cn_ipv6.dynky.cn"]`),

@@ -26,6 +26,7 @@ const (
 	quakeMaxCredentialBytes  = 4096
 	quakeMaxURLsPerRow       = 32
 	quakeMaxNormalizedAssets = 2000
+	quakeMaxPages            = 100000
 )
 
 var (
@@ -45,10 +46,12 @@ type QuakeCredential struct {
 	Token string
 }
 
-// QuakeQuery is one bounded provider query. A zero Limit uses the safe default.
+// QuakeQuery is one bounded provider query. A zero Limit uses the safe default;
+// a zero Page fetches the first page only.
 type QuakeQuery struct {
 	Expression string
 	Limit      int
+	Page       int
 }
 
 // QuakeClient is the Server-side Quake provider client.
@@ -123,13 +126,13 @@ func (c *QuakeClient) Search(ctx context.Context, credential QuakeCredential, qu
 	if ctx == nil {
 		return result, fmt.Errorf("%w: context is required", ErrInvalidQuakeRequest)
 	}
-	token, expression, limit, err := validateQuakeInput(credential, query)
+	token, expression, limit, page, err := validateQuakeInput(credential, query)
 	if err != nil {
 		return result, err
 	}
 
 	payload, err := json.Marshal(quakeRequest{
-		Query: expression, Start: 0, Size: limit, Latest: false, IgnoreCache: true,
+		Query: expression, Start: (page - 1) * limit, Size: limit, Latest: false, IgnoreCache: true,
 		Include: []string{"ip", "port", "service.name", "service.http.host", "service.http.title", "service.http.http_load_url"},
 	})
 	if err != nil {
@@ -186,6 +189,8 @@ func (c *QuakeClient) Search(ctx context.Context, credential QuakeCredential, qu
 	}
 
 	rows := providerResponse.Data
+	result.Page = page
+	result.PageSize = limit
 	result.ProviderTotal = providerResponse.Meta.Pagination.Total
 	if result.ProviderTotal > 0 && len(rows) == 0 {
 		return result, fmt.Errorf("%w: empty result set before advertised total", ErrInvalidQuakeResponse)
@@ -195,9 +200,9 @@ func (c *QuakeClient) Search(ctx context.Context, credential QuakeCredential, qu
 	}
 	if len(rows) > limit {
 		rows = rows[:limit]
-		result.Truncated = true
 	}
-	if result.ProviderTotal > len(rows) {
+	offset := (page - 1) * limit
+	if result.ProviderTotal > offset+len(rows) {
 		result.Truncated = true
 	}
 
@@ -233,26 +238,35 @@ func (c *QuakeClient) Search(ctx context.Context, credential QuakeCredential, qu
 	return finalizeQuakeResult(result, assetsByTarget), nil
 }
 
-func validateQuakeInput(credential QuakeCredential, query QuakeQuery) (string, string, int, error) {
+func validateQuakeInput(credential QuakeCredential, query QuakeQuery) (string, string, int, int, error) {
 	token := strings.TrimSpace(credential.Token)
 	expression := strings.TrimSpace(query.Expression)
 	if token == "" || len(token) > quakeMaxCredentialBytes || !utf8.ValidString(token) || hasControl(token) {
-		return "", "", 0, fmt.Errorf("%w: credential is malformed", ErrInvalidQuakeRequest)
+		return "", "", 0, 0, fmt.Errorf("%w: credential is malformed", ErrInvalidQuakeRequest)
 	}
 	if expression == "" {
-		return "", "", 0, fmt.Errorf("%w: query is empty", ErrInvalidQuakeRequest)
+		return "", "", 0, 0, fmt.Errorf("%w: query is empty", ErrInvalidQuakeRequest)
 	}
 	if len(expression) > MaxQuakeQueryBytes || !utf8.ValidString(expression) || strings.ContainsAny(expression, "\r\n\x00") {
-		return "", "", 0, fmt.Errorf("%w: query is malformed", ErrInvalidQuakeRequest)
+		return "", "", 0, 0, fmt.Errorf("%w: query is malformed", ErrInvalidQuakeRequest)
 	}
 	limit := query.Limit
 	if limit == 0 {
 		limit = DefaultQuakeResultLimit
 	}
 	if limit < 1 || limit > MaxQuakeResultLimit {
-		return "", "", 0, fmt.Errorf("%w: result limit must be between 1 and %d", ErrInvalidQuakeRequest, MaxQuakeResultLimit)
+		return "", "", 0, 0, fmt.Errorf("%w: result limit must be between 1 and %d", ErrInvalidQuakeRequest, MaxQuakeResultLimit)
 	}
-	return token, expression, limit, nil
+	page := query.Page
+	if page == 0 {
+		page = 1
+	}
+	// Cap the offset so page * limit stays a small positive integer even when
+	// both fields come from the caller.
+	if page < 1 || page > quakeMaxPages {
+		return "", "", 0, 0, fmt.Errorf("%w: page must be between 1 and %d", ErrInvalidQuakeRequest, quakeMaxPages)
+	}
+	return token, expression, limit, page, nil
 }
 
 func quakeResponseCodeSucceeded(raw json.RawMessage) (bool, bool) {

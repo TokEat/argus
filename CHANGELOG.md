@@ -1,5 +1,73 @@
 # Changelog
 
+## [Platform] 2026-07-06 — 解析 IP 扫描开关、内网解析语义修正与域名/IP 关联展示
+
+### Scanner
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| 「允许解析到内网」语义修复 | `scanner/internal/engine/pipeline.go` | 修正条件反转：默认跳过解析到私网/回环的域名 IP，开启 AllowLocalAreaDomain 后才纳入扫描（此前行为与开关名相反） |
+| 非 CDN 域名免 IP 扫描选项 | `scanner/structs/type.go`、`scanner/common/flag.go`、`engine/resume_plan.go` | 新增 `-nsi`/NoResolvedIPScan：开启后域名解析 IP 完全不进存活探测/端口扫描，仅按任务端口设置以 域名:端口 形式盲探；resume 阶段集合同步剔除端口/协议阶段 |
+| CDN 补偿探测泛化 | `scanner/internal/engine/pipeline.go`、`internal/scanner/cdn/check.go` | 域名形式盲探抽为通用 buildDomainProbeURLs，CDN 与 NoResolvedIPScan 路径共用；CDN 桥接包透传 normalDomains |
+
+### Server 与 API
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| 复用阶段同步 | `server/internal/db/scan_reuse.go` | reusableScanConfig 增加 NoResolvedIPScan（旧配置缺省按 false），域名目标复用阶段与执行侧保持一致 |
+| 配置透传 | `server/internal/api/task_input.go` | 任务配置新增 NoResolvedIPScan 字段并随任务下发 Agent |
+
+### Frontend
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| 域名 ↔ 解析 IP 关联展示 | `server-ui/src/pages/TaskResults.tsx`、`TaskManagement.tsx` | 资产列表基于 RealIP 行建立 IP↔域名映射，主机列展示关联徽标（IP 行显示关联域名、域名行显示解析 IP）；创建任务专家配置新增「解析 IP 扫描」开关 |
+
+## [Platform] 2026-07-06 — CDN 资产补偿探测、误判规则收敛与疑似 CDN 标记
+
+### Scanner
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| CDN 误判规则收敛 | `scanner/utils/cdn/cdn.go` | 移除「多 IP+CNAME」「含 IPv6」启发式，仅保留 CNAME 命中已知 CDN/WAF 关键字与精确 IP 两类高置信度判定，避免自建负载均衡/GSLB/双栈站点被整域跳过漏扫 |
+| CDN 域名补偿探测 | `scanner/internal/engine/pipeline.go` | 开启 AllowCDNAssets 后不扫描 CDN 域名的解析 IP（避免越权触达厂商基础设施），按任务配置的扫描端口（与 IP 端口扫描同源 `portscan.ParsePort`）对 CDN 域名本身做 `域名:端口` 形式 http(s) 探测 |
+| 疑似 CDN 打标 | `scanner/structs/type.go`、`scanner/internal/scanner/web/probe.go` | 输出消息新增可选 `tag` 字段；Web/Domain-Bind 回调对命中 CDN 主机集合的资产携带 `tag=cdn` |
+
+### Server 与 API
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| 结果路由契约化 | `server/internal/db/db.go` | payload Type → 结果表路由抽为集合函数；漏洞表准入与资产/指纹集合两两互斥，CDN-Domain 永远不会进入 vulnerabilities 表（回归测试锁定） |
+| 资产 CDN 标记字段 | `server/internal/db/db.go`、`deploy/db/init/003_cdn_asset_tag.sql`、`schema_version.go`、`schema_verify.go` | assets 表新增 `cdn` 布尔列（schema v003）：CDN-Domain 记录与 tag=cdn 的 Web/Domain-Bind 探测结果置 true |
+
+### Frontend
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| 资产列表 CDN 徽标 | `server-ui/src/pages/TaskResults.tsx`、`services/typings.d.ts` | 资产 Tab 主机列展示「CDN」徽标，新增「疑似 CDN」筛选列；漏洞列表不受影响 |
+
+## [Platform] 2026-07-06 — 域名目标以「域名:端口」形式产出 Web 资产
+
+### Scanner
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| 域名形态 Web 探测 | `scanner/internal/engine/pipeline.go` | 域名解析 IP 上发现的开放 Web 端口改以 `scheme://域名:端口` 探测并产出资产，不再以 IP 形式重复探测；无绑定域名的 IP 目标行为不变 |
+| Safedog 过滤适配 | `scanner/internal/engine/pipeline.go` | WAF 标题过滤在域名形态 rootURL 下通过 `URLEntity.IP` 反查同 IP 目标，保持原跳过语义（抽为 `suppressSafedogTargets`） |
+| `NoDomainProbe` 配置 | `scanner/structs/type.go`、`scanner/structs/defaults.go`、`scanner/common/flag.go` | 新增 `-ndp`/`--no-domain-probe`（默认 false=开启域名形态探测），关闭后回退 IP 形式 |
+
+### Server 与 API
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| 任务配置透传 `NoDomainProbe` | `server/internal/api/task_input.go` | 默认 false，随任务配置下发 Agent |
+
+### Frontend
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| 「域名+端口探测」开关 | `server-ui/src/pages/TaskManagement.tsx` | 高级发现选项新增开关，默认开启 |
+
 ## [Platform] 2026-07-05 — 日志、分页、扫描策略与文档工具整理
 
 ### Server 与 API

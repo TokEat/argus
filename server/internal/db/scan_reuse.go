@@ -43,6 +43,9 @@ type reusableScanConfig struct {
 	TCPPing           bool
 	UDPPing           bool
 	NoHostBind        bool
+	// NoResolvedIPScan 改变域名目标的阶段集合（去掉端口扫描/协议识别），
+	// 必须参与复用阶段判定；旧配置缺省该字段时按 false 处理。
+	NoResolvedIPScan  bool
 	NoDirSearch       bool
 	NoPoc             bool
 	GolangPoc         bool
@@ -494,7 +497,10 @@ func reusableStagesForTarget(target string, config reusableScanConfig) ([]scanpl
 		if config.Subdomain {
 			stages = append(stages, scanplan.StageSubdomainDiscovery)
 		}
-		stages = append(stages, scanplan.StageCDNClassification, scanplan.StagePortScan)
+		stages = append(stages, scanplan.StageCDNClassification)
+		if !config.NoResolvedIPScan {
+			stages = append(stages, scanplan.StagePortScan)
+		}
 		stages = append(stages, common...)
 		return stages, true, true
 	case "ip_port", "domain_port":

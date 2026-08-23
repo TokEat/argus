@@ -25,6 +25,8 @@ func schemaTableSpecs() []schemaTableSpec {
 		{Table: "credential_dictionary_revisions", Columns: []string{"tenant_id", "project_id", "dictionary_id", "revision", "sha256", "item_count", "ciphertext", "nonce", "created_by", "created_at"}, Indexes: []string{"idx_credential_dictionary_revision", "idx_credential_dictionary_revisions_tenant_id"}},
 		{Table: "subdomain_dictionaries", Columns: []string{"id", "tenant_id", "project_id", "name", "created_by", "created_at", "updated_at", "deleted_at"}, Indexes: []string{"idx_subdomain_dictionary_name", "idx_subdomain_dictionaries_project_id"}},
 		{Table: "subdomain_dictionary_revisions", Columns: []string{"tenant_id", "project_id", "dictionary_id", "revision", "sha256", "item_count", "values_json", "created_by", "created_at"}, Indexes: []string{"idx_subdomain_dictionary_revision", "idx_subdomain_dictionary_revisions_tenant_id"}},
+		{Table: "subdomain_passive_cache", Columns: []string{"domain", "subdomains", "sources", "collected_at", "expires_at"}, Indexes: []string{"idx_subdomain_passive_cache_expires"}},
+		{Table: "subdomain_passive_jobs", Columns: []string{"id", "tenant_id", "project_id", "root_task_id", "batch_id", "attempt_id", "domains", "domains_done", "state", "note", "created_at", "updated_at"}, Indexes: []string{"idx_subdomain_passive_jobs_state", "idx_subdomain_passive_jobs_attempt", "idx_subdomain_passive_jobs_root", "idx_subdomain_passive_jobs_tenant"}},
 		{Table: "credential_bundles", Columns: []string{"ref", "tenant_id", "project_id", "root_task_id", "batch_id", "attempt_id", "agent_id", "sha256", "pair_count", "ciphertext", "nonce", "expires_at", "claimed_at", "consumed_at", "created_at"}, Indexes: []string{"idx_credential_bundles_attempt_id", "idx_credential_bundles_expires_at"}},
 		{Table: "credential_finding_secrets", Columns: []string{"id", "tenant_id", "project_id", "root_task_id", "attempt_id", "endpoint", "service", "plugin", "masked_username", "ciphertext", "nonce", "created_at"}, Indexes: []string{"idx_credential_finding_secrets_tenant_id", "idx_credential_finding_secrets_root_task_id"}},
 		{Table: "credential_reveal_audits", Columns: []string{"tenant_id", "project_id", "finding_id", "actor_id", "action", "created_at"}, Indexes: []string{"idx_credential_reveal_audits_tenant_id", "idx_credential_reveal_audits_finding_id"}},
@@ -286,7 +288,7 @@ func schemaTableSpecs() []schemaTableSpec {
 		},
 		{
 			Table:   "assets",
-			Columns: []string{"project_id", "tags", "status", "owner_id", "cred_id", "updated_at"},
+			Columns: []string{"project_id", "tags", "cdn", "status", "owner_id", "cred_id", "updated_at"},
 			Indexes: []string{"idx_asset_dedupe", "idx_assets_task_id", "idx_assets_status"},
 		},
 		{

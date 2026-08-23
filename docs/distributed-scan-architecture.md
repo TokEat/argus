@@ -111,6 +111,8 @@ Agent 使用注册会话的 `x-agent-id + x-agent-token` 访问内部规则接�
 
 网络空间 Provider 凭据只属于 Server 控制面。Agent 内部接口不再提供 `api-config` 同步，Worker 不读取或写入 Provider 配置；Scanner Pipeline 不再包含 Hunter/FOFA/Quake 搜索阶段。新任务、追加、派发与领取均拒绝旧 Provider 配置，遗留队列消息会被消费并标记失败而不会下发。被动子域枚举继续保留，但禁用本机 Provider 配置并显式排除 FOFA/Hunter/Quake 来源。
 
+被动子域枚举默认收敛到 Server 端执行：开启被动子域发现且存在 `passive_server=v1` 能力 Agent 时，域名批次在派发前停留 `Queued` 持有态，由 Server collector 统一查询免凭据公共源（crt.name/crt.sh/certspotter，含 DNS 泛解析与解析验证）并按域缓存（`subdomain_passive_cache`，默认 24h）；结果密封进 Attempt 配置（`SubdomainPassiveResults`，全覆盖时置 `NoSubFinder=true`）后入队，Agent 只对未覆盖域名回退端内 subfinder 并继续执行字典爆破与全链路下游。收集超时（8 分钟）或全部源失败时不密封直接派发，行为回退到原 Agent 端收集；无能力标签的旧 Agent 认领时配置不密封。认领时密封（含重试/恢复路径）只对声明 `passive_server=v1` 的 Agent 生效。多 Agent 并发分发不再对同一批免费数据源重复查询，重复任务直接命中缓存。
+
 规则激活与任务执行之间采用版本使用窗口：Context 初始化前登记规则使用者，任务进入 `runningTasks` 后才释放初始化占用；初始化中或运行中的任务存在时，新包只进入 pending，最后一个使用者退出后再激活。risk-validation、恢复计划和覆盖事件始终使用任务开始时捕获的版本，Debug 自定义规则在修改前深拷贝脱离共享快照。
 
 ### 取消与中断

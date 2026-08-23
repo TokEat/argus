@@ -10,20 +10,25 @@
   <meta name="author" content="Argus Team" />
   <title>Argus - 分布式漏洞扫描管理平台</title>
   <style>
-    /* Loading screen */
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      background: #030507;
+    }
+
+    /* ── Loading screen: Argus login-styled splash ── */
     #loading-screen {
       position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: #141414;
+      inset: 0;
+      background: #030507;
       display: flex;
-      flex-direction: column;
       align-items: center;
       justify-content: center;
       z-index: 9999;
-      transition: opacity 0.3s ease;
+      overflow: hidden;
+      transition: opacity 0.45s ease;
+      font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
     #loading-screen.hidden {
@@ -31,25 +36,671 @@
       pointer-events: none;
     }
 
-    .loader {
-      width: 50px;
-      height: 50px;
-      border: 3px solid #303030;
-      border-top-color: #667eea;
+    /* ambient aurora glow, slow drift */
+    .ld-aurora {
+      position: absolute;
+      inset: 0;
+      opacity: 0.55;
+      background:
+        radial-gradient(36% 28% at 64% 28%, rgba(56, 213, 255, 0.11), transparent 70%),
+        radial-gradient(30% 26% at 30% 74%, rgba(102, 126, 234, 0.11), transparent 70%),
+        radial-gradient(24% 20% at 50% 50%, rgba(56, 213, 255, 0.05), transparent 70%);
+      filter: blur(34px);
+      animation: ld-drift 18s ease-in-out infinite alternate;
+      pointer-events: none;
+    }
+
+    /* grid overlay across the whole splash */
+    .ld-grid {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(244, 247, 250, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(244, 247, 250, 0.04) 1px, transparent 1px);
+      background-size: 72px 72px;
+      mask-image: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.9), rgba(0, 0, 0, 0.35) 70%, transparent);
+      pointer-events: none;
+    }
+
+    /* floating telemetry dots */
+    .ld-dot {
+      position: absolute;
       border-radius: 50%;
-      animation: spin 1s linear infinite;
+      background: rgba(244, 247, 250, 0.72);
+      animation: ld-twinkle 3s ease-in-out infinite;
+      pointer-events: none;
     }
 
-    .loading-text {
-      margin-top: 20px;
-      color: rgba(255, 255, 255, 0.65);
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-size: 14px;
+    /* hero: framed mark + title, mirrors the login left panel */
+    .ld-hero {
+      position: relative;
+      z-index: 5;
+      display: grid;
+      place-items: center;
+      padding: 24px;
     }
 
-    @keyframes spin {
+    .ld-stage {
+      position: relative;
+      width: min(320px, 56vmin);
+      aspect-ratio: 1;
+      display: grid;
+      place-items: center;
+    }
+
+    .ld-tagline {
+      position: absolute;
+      top: -34px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      color: #8a95a5;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 5px;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    /* soft glow ring breathing behind the frame */
+    .ld-frame-glow {
+      position: absolute;
+      inset: -20px;
+      border-radius: 52px;
+      border: 2px solid rgba(56, 213, 255, 0.2);
+      filter: blur(8px);
+      animation: ld-glow-pulse 4.2s ease-in-out infinite;
+      pointer-events: none;
+    }
+
+    .ld-frame {
+      position: absolute;
+      inset: 0;
+      border: 9px solid #f4f7fa;
+      border-radius: 38px;
+      background: rgba(10, 15, 23, 0.76);
+      display: grid;
+      place-items: center;
+      box-shadow:
+        0 34px 88px rgba(0, 0, 0, 0.36),
+        0 0 46px rgba(56, 213, 255, 0.10);
+      overflow: hidden;
+    }
+
+    .ld-frame-grid {
+      position: absolute;
+      inset: 22px;
+      border: 1px solid rgba(244, 247, 250, 0.16);
+      background-image:
+        linear-gradient(rgba(244, 247, 250, 0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(244, 247, 250, 0.06) 1px, transparent 1px);
+      background-size: 34px 34px;
+      pointer-events: none;
+    }
+
+    /* cyan scan sweep with gradient trail */
+    .ld-scan {
+      position: absolute;
+      left: 28px;
+      right: 28px;
+      top: 36px;
+      height: 3px;
+      background: linear-gradient(90deg,
+          transparent 0%,
+          rgba(56, 213, 255, 0.55) 18%,
+          #38d5ff 50%,
+          rgba(155, 232, 255, 0.9) 82%,
+          transparent 100%);
+      box-shadow: 0 0 22px rgba(56, 213, 255, 0.9);
+      z-index: 4;
+      animation: ld-scan 2.7s ease-in-out infinite alternate;
+    }
+
+    /* one-shot light glint crossing the mark on entrance */
+    .ld-glint {
+      position: absolute;
+      top: -20%;
+      left: 0;
+      width: 30%;
+      height: 140%;
+      background: linear-gradient(105deg,
+          transparent 0%,
+          rgba(155, 232, 255, 0.32) 50%,
+          transparent 100%);
+      transform: rotate(18deg);
+      z-index: 2;
+      animation: ld-glint 2.4s ease-in-out 1.15s 1 both;
+      pointer-events: none;
+    }
+
+    .ld-mark {
+      width: min(220px, 38vmin);
+      height: min(220px, 38vmin);
+      position: relative;
+      z-index: 3;
+      filter:
+        drop-shadow(0 18px 36px rgba(0, 0, 0, 0.55))
+        drop-shadow(0 0 26px rgba(56, 213, 255, 0.2));
+      animation: ld-float 3.2s ease-in-out infinite alternate;
+    }
+
+    /* bands of the A build up one by one */
+    .ld-mark polygon {
+      opacity: 0;
+      animation: ld-band 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+
+    .ld-mark polygon:nth-child(1) {
+      animation-delay: 0.28s;
+    }
+
+    .ld-mark polygon:nth-child(2) {
+      animation-delay: 0.4s;
+    }
+
+    .ld-mark polygon:nth-child(3) {
+      animation-delay: 0.52s;
+    }
+
+    .ld-mark polygon:nth-child(4) {
+      animation-delay: 0.64s;
+    }
+
+    /* status LED inside the frame */
+    .ld-led {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #38d5ff;
+      box-shadow: 0 0 10px rgba(56, 213, 255, 0.9);
+      z-index: 5;
+      animation: ld-blink 2.4s ease-in-out infinite;
+    }
+
+    /* dashed orbit ring with satellite dot, around the frame */
+    .ld-orbit {
+      position: absolute;
+      inset: -34px;
+      border: 1.5px dashed rgba(56, 213, 255, 0.3);
+      border-radius: 50%;
+      animation: ld-orbit-spin 14s linear infinite;
+      pointer-events: none;
+    }
+
+    .ld-orbit::after {
+      content: '';
+      position: absolute;
+      top: -4px;
+      left: 50%;
+      width: 7px;
+      height: 7px;
+      margin-left: -3.5px;
+      border-radius: 50%;
+      background: #9be8ff;
+      box-shadow: 0 0 12px rgba(56, 213, 255, 0.95);
+    }
+
+    /* HUD corner brackets */
+    .ld-corner {
+      position: absolute;
+      width: 26px;
+      height: 26px;
+      border: 2px solid rgba(244, 247, 250, 0.85);
+      opacity: 0;
+      animation: ld-corner-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+      pointer-events: none;
+    }
+
+    .ld-corner-tl {
+      top: -14px;
+      left: -14px;
+      border-right: none;
+      border-bottom: none;
+      border-top-left-radius: 6px;
+      animation-delay: 0.5s;
+    }
+
+    .ld-corner-tr {
+      top: -14px;
+      right: -14px;
+      border-left: none;
+      border-bottom: none;
+      border-top-right-radius: 6px;
+      animation-delay: 0.58s;
+    }
+
+    .ld-corner-bl {
+      bottom: -14px;
+      left: -14px;
+      border-right: none;
+      border-top: none;
+      border-bottom-left-radius: 6px;
+      animation-delay: 0.66s;
+    }
+
+    .ld-corner-br {
+      bottom: -14px;
+      right: -14px;
+      border-left: none;
+      border-top: none;
+      border-bottom-right-radius: 6px;
+      animation-delay: 0.74s;
+    }
+
+    .ld-title {
+      position: absolute;
+      top: calc(50% + min(180px, 32vmin));
+      left: 0;
+      right: 0;
+      text-align: center;
+      color: #f4f7fa;
+      font-size: clamp(30px, 6vmin, 58px);
+      font-weight: 800;
+      letter-spacing: 0.32em;
+      text-indent: 0.32em;
+      text-shadow: 0 0 34px rgba(56, 213, 255, 0.14);
+    }
+
+    .ld-rail {
+      position: absolute;
+      height: 3px;
+      background: #f4f7fa;
+      opacity: 0.84;
+      border-radius: 2px;
+      animation: ld-rail-shift 2.4s ease-in-out infinite alternate;
+      pointer-events: none;
+    }
+
+    .ld-rail-a {
+      width: min(230px, 34vw);
+      top: calc(50% - min(172px, 30vmin));
+      left: calc(50% - min(290px, 48vw));
+    }
+
+    .ld-rail-b {
+      width: min(320px, 45vw);
+      right: calc(50% - min(340px, 54vw));
+      bottom: calc(50% - min(172px, 30vmin));
+      animation-delay: -0.35s;
+    }
+
+    .ld-ring {
+      position: absolute;
+      width: min(132px, 22vmin);
+      height: min(132px, 22vmin);
+      border: 2px solid rgba(56, 213, 255, 0.48);
+      border-radius: 18px;
+      opacity: 0.48;
+      animation: ld-ring-spin 10s linear infinite;
+      pointer-events: none;
+    }
+
+    .ld-ring-a {
+      left: calc(50% - min(240px, 40vw));
+      bottom: calc(50% - min(180px, 32vmin));
+      transform: rotate(18deg);
+    }
+
+    .ld-ring-b {
+      right: calc(50% - min(248px, 41vw));
+      top: calc(50% - min(176px, 31vmin));
+      transform: rotate(-16deg);
+      animation-delay: -0.6s;
+    }
+
+    .ld-footer {
+      position: absolute;
+      bottom: clamp(28px, 7vh, 56px);
+      left: 0;
+      right: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      z-index: 5;
+    }
+
+    .ld-dots {
+      display: flex;
+      gap: 8px;
+    }
+
+    .ld-dots i {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: rgba(244, 247, 250, 0.9);
+      animation: ld-pulse 1.2s ease-in-out infinite;
+    }
+
+    .ld-dots i:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+
+    .ld-dots i:nth-child(3) {
+      animation-delay: 0.4s;
+    }
+
+    /* cycling status lines */
+    .ld-status {
+      position: relative;
+      height: 16px;
+      width: 260px;
+    }
+
+    .ld-status span {
+      position: absolute;
+      inset: 0;
+      text-align: center;
+      color: rgba(255, 255, 255, 0.42);
+      font-size: 11px;
+      letter-spacing: 3px;
+      text-indent: 3px;
+      opacity: 0;
+      animation: ld-cycle 6s ease-in-out infinite;
+    }
+
+    .ld-status span:nth-child(2) {
+      animation-delay: 2s;
+    }
+
+    .ld-status span:nth-child(3) {
+      animation-delay: 4s;
+    }
+
+    /* indeterminate progress sweep */
+    .ld-sweep {
+      position: relative;
+      width: 150px;
+      height: 2px;
+      border-radius: 2px;
+      background: rgba(244, 247, 250, 0.1);
+      overflow: hidden;
+    }
+
+    .ld-sweep i {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 44px;
+      border-radius: 2px;
+      background: linear-gradient(90deg, transparent, #38d5ff 55%, #9be8ff);
+      box-shadow: 0 0 10px rgba(56, 213, 255, 0.85);
+      animation: ld-sweep 1.6s ease-in-out infinite;
+    }
+
+    /* entrance (staggered) */
+    .ld-rail {
+      animation-name: ld-rail-shift-in, ld-rail-shift;
+      animation-duration: 0.65s, 2.4s;
+    }
+
+    .ld-rail-a {
+      animation-delay: 0.08s, 0.08s;
+    }
+
+    .ld-rail-b {
+      animation-delay: 0.16s, -0.35s;
+    }
+
+    .ld-ring {
+      animation-name: ld-enter, ld-ring-spin;
+      animation-duration: 0.65s, 10s;
+    }
+
+    .ld-ring-a {
+      animation-delay: 0.24s, 0s;
+    }
+
+    .ld-ring-b {
+      animation-delay: 0.32s, -0.6s;
+    }
+
+    .ld-stage {
+      animation: ld-enter 0.65s cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+
+    .ld-footer {
+      animation: ld-enter 0.65s cubic-bezier(0.22, 1, 0.36, 1) 0.48s both;
+    }
+
+    @keyframes ld-enter {
+      from {
+        transform: translateY(26px);
+        opacity: 0;
+      }
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    @keyframes ld-band {
+      from {
+        opacity: 0;
+        transform: translateY(26px);
+      }
+      to {
+        opacity: 1;
+        transform: none;
+      }
+    }
+
+    @keyframes ld-glint {
+      from {
+        transform: translateX(-420%) rotate(18deg);
+        opacity: 0;
+      }
+      30% {
+        opacity: 1;
+      }
+      to {
+        transform: translateX(520%) rotate(18deg);
+        opacity: 0;
+      }
+    }
+
+    @keyframes ld-glow-pulse {
+
+      0%,
+      100% {
+        opacity: 0.25;
+        transform: scale(0.99);
+      }
+      50% {
+        opacity: 0.6;
+        transform: scale(1.015);
+      }
+    }
+
+    @keyframes ld-blink {
+
+      0%,
+      100% {
+        opacity: 0.25;
+      }
+      50% {
+        opacity: 1;
+      }
+    }
+
+    @keyframes ld-orbit-spin {
       to {
         transform: rotate(360deg);
+      }
+    }
+
+    @keyframes ld-corner-in {
+      from {
+        opacity: 0;
+        transform: scale(1.35);
+      }
+      to {
+        opacity: 0.9;
+        transform: scale(1);
+      }
+    }
+
+    @keyframes ld-drift {
+      from {
+        transform: translate(0, 0) scale(1);
+      }
+      to {
+        transform: translate(30px, -22px) scale(1.08);
+      }
+    }
+
+    @keyframes ld-float {
+      from {
+        transform: translateY(0) scale(1);
+      }
+      to {
+        transform: translateY(-10px) scale(1.025);
+      }
+    }
+
+    @keyframes ld-scan {
+      from {
+        transform: translateY(0);
+        opacity: 0.32;
+      }
+      to {
+        transform: translateY(calc(min(320px, 56vmin) - 96px));
+        opacity: 0.94;
+      }
+    }
+
+    @keyframes ld-ring-spin {
+      to {
+        rotate: 360deg;
+      }
+    }
+
+    @keyframes ld-rail-shift {
+      from {
+        translate: 0 0;
+        opacity: 0.84;
+      }
+      to {
+        translate: 26px 0;
+        opacity: 0.42;
+      }
+    }
+
+    @keyframes ld-rail-shift-in {
+      from {
+        transform: translateY(26px);
+        opacity: 0;
+      }
+      to {
+        transform: translateY(0);
+        opacity: 0.84;
+      }
+    }
+
+    @keyframes ld-twinkle {
+
+      0%,
+      100% {
+        opacity: 0.3;
+        transform: scale(1);
+      }
+      50% {
+        opacity: 1;
+        transform: scale(1.5);
+      }
+    }
+
+    @keyframes ld-pulse {
+
+      0%,
+      100% {
+        opacity: 0.2;
+        transform: scale(0.8);
+      }
+      50% {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+
+    @keyframes ld-cycle {
+
+      0%,
+      2% {
+        opacity: 0;
+        transform: translateY(5px);
+      }
+      6% {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      30% {
+        opacity: 1;
+      }
+      34% {
+        opacity: 0;
+        transform: translateY(-5px);
+      }
+      100% {
+        opacity: 0;
+      }
+    }
+
+    @keyframes ld-sweep {
+      from {
+        transform: translateX(-44px);
+      }
+      to {
+        transform: translateX(150px);
+      }
+    }
+
+    @media (max-width: 768px) {
+
+      .ld-rail-a,
+      .ld-rail-b,
+      .ld-ring-a,
+      .ld-ring-b {
+        display: none;
+      }
+
+      .ld-tagline {
+        letter-spacing: 3px;
+      }
+
+      .ld-orbit {
+        inset: -24px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+
+      .ld-aurora,
+      .ld-dot,
+      .ld-mark,
+      .ld-scan,
+      .ld-glint,
+      .ld-ring,
+      .ld-rail,
+      .ld-stage,
+      .ld-footer,
+      .ld-dots i,
+      .ld-orbit,
+      .ld-led,
+      .ld-corner,
+      .ld-frame-glow,
+      .ld-status span,
+      .ld-sweep i {
+        animation: none !important;
+      }
+
+      .ld-status span:first-child,
+      .ld-mark polygon {
+        opacity: 1;
       }
     }
   </style>
@@ -57,8 +708,56 @@
 
 <body>
   <div id="loading-screen">
-    <div class="loader"></div>
-    <div class="loading-text">正在加载...</div>
+    <div class="ld-aurora"></div>
+    <div class="ld-grid"></div>
+    <div class="ld-dot" style="width:6px;height:6px;top:20%;left:15%"></div>
+    <div class="ld-dot" style="width:4px;height:4px;top:35%;left:70%;animation-delay:0.8s"></div>
+    <div class="ld-dot" style="width:8px;height:8px;top:60%;left:22%;animation-delay:1.5s"></div>
+    <div class="ld-dot" style="width:5px;height:5px;top:75%;left:65%;animation-delay:0.4s"></div>
+    <div class="ld-dot" style="width:6px;height:6px;top:12%;left:55%;animation-delay:2.0s"></div>
+    <div class="ld-dot" style="width:4px;height:4px;top:82%;left:40%;animation-delay:1.2s"></div>
+
+    <div class="ld-rail ld-rail-a"></div>
+    <div class="ld-rail ld-rail-b"></div>
+    <div class="ld-ring ld-ring-a"></div>
+    <div class="ld-ring ld-ring-b"></div>
+
+    <div class="ld-hero">
+      <div class="ld-stage">
+        <div class="ld-tagline">Security Automation Platform</div>
+        <div class="ld-frame-glow"></div>
+        <div class="ld-frame">
+          <div class="ld-frame-grid"></div>
+          <div class="ld-glint"></div>
+          <div class="ld-scan"></div>
+          <div class="ld-led"></div>
+          <svg class="ld-mark" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <g fill="#F4F7FA">
+              <polygon points="196 844 266 844 470 314 400 314" />
+              <polygon points="298 844 420 844 548 486 498 344" />
+              <polygon points="466 154 594 154 860 844 714 844 536 360" />
+              <polygon points="388 594 654 594 696 706 348 706" />
+            </g>
+          </svg>
+        </div>
+        <div class="ld-orbit"></div>
+        <div class="ld-corner ld-corner-tl"></div>
+        <div class="ld-corner ld-corner-tr"></div>
+        <div class="ld-corner ld-corner-bl"></div>
+        <div class="ld-corner ld-corner-br"></div>
+        <div class="ld-title">ARGUS</div>
+      </div>
+    </div>
+
+    <div class="ld-footer">
+      <div class="ld-dots"><i></i><i></i><i></i></div>
+      <div class="ld-status">
+        <span>正在加载引擎</span>
+        <span>同步规则库</span>
+        <span>校验任务队列</span>
+      </div>
+      <div class="ld-sweep"><i></i></div>
+    </div>
   </div>
   <div id="root"></div>
   <script type="module" src="/src/main.tsx"></script>
@@ -67,7 +766,7 @@
     window.addEventListener('load', function () {
       setTimeout(function () {
         document.getElementById('loading-screen').classList.add('hidden');
-      }, 100);
+      }, 350);
     });
   </script>
 </body>

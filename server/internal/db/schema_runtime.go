@@ -1,6 +1,5 @@
 package db
 
-
 func schemaModels() []interface{} {
 	return []interface{}{
 		&Project{},
@@ -16,6 +15,8 @@ func schemaModels() []interface{} {
 		&CredentialDictionaryRevision{},
 		&SubdomainDictionary{},
 		&SubdomainDictionaryRevision{},
+		&SubdomainPassiveCache{},
+		&SubdomainPassiveJob{},
 		&CredentialBundle{},
 		&CredentialFindingSecret{},
 		&CredentialRevealAudit{},
@@ -84,4 +85,3 @@ func schemaModels() []interface{} {
 		&CloudInstance{},
 	}
 }
-

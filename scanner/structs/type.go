@@ -48,8 +48,11 @@ type OutputMessage struct {
 	URI           string           `json:"uri,omitempty"`
 	City          string           `json:"city,omitempty"`
 	AdditionalMsg string           `json:"am,omitempty"`
-	Show          string           `json:"-"`
-	Nuclei        string           `json:"nuclei,omitempty"`
+	// Tag marks special asset classes for Server-side asset tagging, e.g.
+	// "cdn" for suspected CDN assets. Old peers ignore the unknown field.
+	Tag    string `json:"tag,omitempty"`
+	Show   string `json:"-"`
+	Nuclei string `json:"nuclei,omitempty"`
 }
 
 type Config struct {
@@ -103,10 +106,24 @@ type Config struct {
 	AllowLocalAreaDomain       bool
 	AllowCDNAssets             bool
 	NoHostBind                 bool
-	SubdomainWordListFile      string
+	// NoDomainProbe disables domain-form web probing. When false (default),
+	// an open ip:port that has bound domains from CDN classification is
+	// probed as scheme://domain:port instead of scheme://ip:port, so web
+	// assets keep the imported domain form.
+	NoDomainProbe bool
+	// NoResolvedIPScan skips host discovery / port scanning of domain-
+	// resolved IPs entirely; those domains are only probed blind as
+	// scheme://domain:port across the configured port set.
+	NoResolvedIPScan      bool
+	SubdomainWordListFile string
 	// SubdomainDictionaryWords is a Server-resolved, revision-bound additive
 	// list. Scanner always unions it with built-in and managed Agent words.
-	SubdomainDictionaryWords   []string
+	SubdomainDictionaryWords []string
+	// SubdomainPassiveResults carries Server-side pre-collected passive
+	// subdomains keyed by domain. Domains present here skip agent-side
+	// subfinder queries; the map is sealed by the Server and deduplicated
+	// with bruteforce results like any other enumeration output.
+	SubdomainPassiveResults map[string][]string
 	HTTPProxy                  string
 	HTTPProxyTest              bool
 	HTTPProxyTestURL           string

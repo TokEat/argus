@@ -114,6 +114,39 @@ func TestQuakeClientSearchBoundsExpandedURLs(t *testing.T) {
 	}
 }
 
+func TestQuakeClientSearchFetchesPageByOffsetAndReportsMoreResults(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request quakeRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if request.Start != 200 || request.Size != 100 {
+			t.Fatalf("unexpected paging request: %+v", request)
+		}
+		_, _ = w.Write([]byte(`{"code":0,"meta":{"pagination":{"total":250}},"data":[
+			{"ip":"192.0.2.10","port":80,"service":{"name":"http","http":{}}},
+			{"ip":"192.0.2.11","port":80,"service":{"name":"http","http":{}}}
+		]}`))
+	}))
+	defer server.Close()
+
+	client := NewQuakeClient(server.Client())
+	client.endpoint = server.URL
+	result, err := client.Search(context.Background(), QuakeCredential{Token: "token"}, QuakeQuery{
+		Expression: "service:http", Limit: 100, Page: 3,
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if result.Page != 3 || result.PageSize != 100 || result.ProviderTotal != 250 ||
+		!result.Truncated || len(result.Assets) != 2 {
+		t.Fatalf("unexpected paged result: %#v", result)
+	}
+	if got := result.Assets[0]; got.Target != "http://192.0.2.10:80" || got.Source != quakeProvider {
+		t.Fatalf("first paged asset = %#v", got)
+	}
+}
+
 func TestQuakeClientSearchRejectsInvalidInput(t *testing.T) {
 	client := NewQuakeClient(nil)
 	validCredential := QuakeCredential{Token: "token"}
@@ -129,6 +162,7 @@ func TestQuakeClientSearchRejectsInvalidInput(t *testing.T) {
 		{name: "empty query", ctx: context.Background(), credential: validCredential},
 		{name: "query control", ctx: context.Background(), credential: validCredential, query: QuakeQuery{Expression: "service:http\nnext"}},
 		{name: "limit too large", ctx: context.Background(), credential: validCredential, query: QuakeQuery{Expression: "service:http", Limit: MaxQuakeResultLimit + 1}},
+		{name: "page too large", ctx: context.Background(), credential: validCredential, query: QuakeQuery{Expression: "service:http", Page: quakeMaxPages + 1}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := client.Search(test.ctx, test.credential, test.query); !errors.Is(err, ErrInvalidQuakeRequest) {

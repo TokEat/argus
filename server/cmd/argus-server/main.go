@@ -19,6 +19,7 @@ import (
 	egresspkg "github.com/P0lar1ght/argus/server/internal/egress"
 	"github.com/P0lar1ght/argus/server/internal/grpc"
 	"github.com/P0lar1ght/argus/server/internal/scheduler"
+	"github.com/P0lar1ght/argus/server/internal/subdomainpassive"
 	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 )
 
@@ -329,6 +330,26 @@ func main() {
 	routerDeps.EgressBroker = srv.Egress
 	routerDeps.EXPWorkspace = expWorkspace
 	api.ConfigureRouterDependencies(routerDeps)
+
+	// Server 端被动子域收集：派发前统一收集并按域缓存，结果密封进任务配置。
+	// worker 必须常开：ARGUS_SERVER_PASSIVE_SUBDOMAIN=off 时进入排空模式，
+	// 立即释放已持有的域名批次（回退 Agent 端被动收集），避免批次滞留 Queued。
+	passiveWorker := subdomainpassive.NewWorker(db.DB, subdomainpassive.NewCollector(), func(ctx context.Context, sub db.SubTask) error {
+		if err := api.DispatchReleasedSubTask(ctx, queue, sub); err != nil {
+			return err
+		}
+		if srv.Hub != nil {
+			srv.Hub.BroadcastNewTask(1, int32(sub.Priority))
+		}
+		return nil
+	})
+	go passiveWorker.Run(context.Background())
+	if subdomainpassive.Enabled() {
+		log.Println("[PassiveSubdomain] server-side passive collection enabled")
+	} else {
+		log.Println("[PassiveSubdomain] disabled; hold drain mode active")
+	}
+
 	scanOrchestrator := api.NewScanStageOrchestrator()
 	srv.SetOnTaskTerminalHook(scanOrchestrator.HandleAttemptTerminal)
 	go func() {

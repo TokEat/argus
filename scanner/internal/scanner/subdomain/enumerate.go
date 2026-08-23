@@ -27,7 +27,11 @@ type Config struct {
 	SubdomainBruteforceDepth   int
 	SubdomainWordListFile      string
 	SubdomainDictionaryWords   []string
-	EmitFunc                   func(ddout.OutputMessage)
+	// Injected holds Server-side pre-collected passive results keyed by
+	// (lowercased) domain. Domains covered here skip subfinder entirely and
+	// their results are emitted like locally collected ones.
+	Injected map[string][]string
+	EmitFunc func(ddout.OutputMessage)
 }
 
 // Enumerate runs active and passive subdomain enumeration without relying on
@@ -61,6 +65,19 @@ func Enumerate(domains []string, cfg Config) []string {
 			}
 		}
 
+		// Map presence (even an empty list) marks the domain as already
+		// collected Server-side: skip subfinder, emit what was injected.
+		if injected, ok := cfg.Injected[strings.ToLower(domain)]; ok {
+			for _, host := range injected {
+				emitOutput(cfg.EmitFunc, ddout.OutputMessage{
+					Type:          "DNS-SubFinder",
+					Domain:        host,
+					AdditionalMsg: "server-passive",
+				})
+			}
+			results = append(results, injected...)
+			continue
+		}
 		if !cfg.NoSubFinder {
 			results = append(results, subFinder(domain, cfg.EmitFunc)...)
 		}

@@ -167,6 +167,50 @@ describe('TaskResults', () => {
         expect(screen.getByText('https://b.example')).toBeInTheDocument();
     });
 
+    it('renders domain ↔ resolved-IP association badges from RealIP rows', async () => {
+        apiMocks.getVulns.mockResolvedValue(paged([], 0, 1));
+        apiMocks.getAssets.mockResolvedValue(paged([
+            {
+                ID: 11,
+                TenantID: 'default',
+                TaskID: 'task-1',
+                Target: 'assoc.test',
+                Protocol: 'RealIP',
+                Port: 0,
+                Title: '',
+                Service: '',
+                Tags: JSON.stringify({ type: 'RealIP', domain: 'assoc.test', ips: ['198.51.100.9'] }),
+                CreatedAt: '2026-07-06T00:00:00Z',
+            },
+            {
+                ID: 12,
+                TenantID: 'default',
+                TaskID: 'task-1',
+                Target: 'http://198.51.100.9:8080',
+                Protocol: 'Web',
+                Port: 8080,
+                Title: 'Origin page',
+                Service: 'http/200',
+                CreatedAt: '2026-07-06T00:00:00Z',
+            },
+        ], 2, 1));
+
+        render(
+            <MemoryRouter initialEntries={['/tasks/task-1/results']}>
+                <App>
+                    <Routes>
+                        <Route path="/tasks/:taskId/results" element={<TaskResults />} />
+                    </Routes>
+                </App>
+            </MemoryRouter>,
+        );
+
+        expect(await screen.findByText('Origin page')).toBeInTheDocument();
+        // IP 形式的资产行需要显示其关联域名；域名形式的资产行需要显示解析 IP。
+        expect(screen.getAllByText('assoc.test').length).toBeGreaterThanOrEqual(2);
+        expect(screen.getAllByText('198.51.100.9').length).toBeGreaterThanOrEqual(2);
+    });
+
     it('opens the first non-empty asset result instead of an empty vulnerability tab', async () => {
 		apiMocks.getVulns.mockResolvedValue(paged([], 0, 1));
 		apiMocks.getAssets.mockResolvedValue(paged([{
