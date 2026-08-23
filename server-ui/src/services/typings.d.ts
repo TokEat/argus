@@ -605,6 +605,8 @@ declare namespace API {
     Service: string;
     /** 疑似 CDN 资产标记：CDN-Domain 记录或来自 CDN 域名的探测结果 */
     CDN?: boolean;
+    /** 原始上报 JSON（RealIP 行含 domain/ips，用于域名↔IP 关联展示） */
+    Tags?: string;
     CreatedAt: string;
   }
 

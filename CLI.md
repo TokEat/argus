@@ -140,7 +140,11 @@ go run ./scanner/cmd/cli -tr datas/<上次目录>
 
 ### 3.5 协议 / Web / 子域 / 代理 / 输出
 
-`-tc`、`-nto`、`-nudp`、`-sd`、`-nsb`、`-ns`、`-sbt`、`-ld`、`-ac`、`-nhb`、`-ndp`、`-wt`、`-wto`、`-nd`、`-x`/`--proxy`、`-pt`、`-ptu`、`-o`、`-ot`、`-ho`。`-PU` 见主机发现。
+`-tc`、`-nto`、`-nudp`、`-sd`、`-nsb`、`-ns`、`-sbt`、`-ld`、`-ac`、`-nhb`、`-ndp`、`-nsi`、`-wt`、`-wto`、`-nd`、`-x`/`--proxy`、`-pt`、`-ptu`、`-o`、`-ot`、`-ho`。`-PU` 见主机发现。
+
+`-ld`/`--local-domain` 默认关闭：域名解析到私网/回环地址时默认不进入存活探测与端口扫描，开启后才纳入扫描。
+
+`-nsi`/`--no-resolved-ip-scan` 默认关闭：开启后非 CDN 域名的解析 IP 完全不做存活探测和端口扫描，仅按任务端口设置对域名本身做 `域名:端口` 形式的 http(s) 盲探。
 
 `-ndp`/`--no-domain-probe` 默认关闭：域名目标的解析 IP 上发现开放 Web 端口时，Web 探测以 `域名:端口` 形式发起并产出资产（例如导入 `abc.com` 得到 `[WEB] http://abc.com:8080/`），不会再用解析 IP 重复探测。加 `-ndp` 回退为旧的 `IP:端口` 探测形式。
 

@@ -40,7 +40,9 @@ func DefaultConfig() Config {
 		NoHostBind:                 true,
 		// NoDomainProbe=false keeps domain-form web probing enabled: open
 		// ports bound to a scanned domain are probed as scheme://domain:port.
-		NoDomainProbe:              false,
+		NoDomainProbe: false,
+		// NoResolvedIPScan=false keeps domain-resolved IPs in the scan path.
+		NoResolvedIPScan:           false,
 		GoPocThreads:               50,
 		NoPoc:                      true,
 		GolangPoc:                  false,

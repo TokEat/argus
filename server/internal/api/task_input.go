@@ -52,7 +52,10 @@ type taskScanConfig struct {
 	NoHostBind                 bool
 	// NoDomainProbe=false (default) keeps domain-form web probing enabled:
 	// open ports bound to a scanned domain are probed as scheme://domain:port.
-	NoDomainProbe         bool
+	NoDomainProbe bool
+	// NoResolvedIPScan=true skips host discovery / port scanning of domain-
+	// resolved IPs; those domains are only probed as scheme://domain:port.
+	NoResolvedIPScan      bool
 	SubdomainWordListFile string
 	SubdomainDictionaryWords   []string
 	SubdomainDictionaryRefs    []scanpolicy.DictionaryRef
@@ -134,7 +137,9 @@ func defaultTaskScanConfig() taskScanConfig {
 		NoHostBind:                 true,
 		// NoDomainProbe=false keeps domain-form web probing enabled by
 		// default; open ports bound to a domain are probed as domain:port.
-		NoDomainProbe:              false,
+		NoDomainProbe: false,
+		// NoResolvedIPScan=false keeps domain-resolved IPs in the scan path.
+		NoResolvedIPScan:           false,
 		GoPocThreads:               50,
 		NoDirSearch:                true,
 		NoPoc:                      true,

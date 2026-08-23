@@ -104,7 +104,12 @@ func resumeStagesForTarget(target string, cfg Config) ([]scanplan.Stage, bool) {
 		if cfg.Subdomain {
 			stages = append(stages, scanplan.StageSubdomainDiscovery)
 		}
-		stages = append(stages, scanplan.StageCDNClassification, scanplan.StagePortScan, scanplan.StageProtocolIdentify)
+		stages = append(stages, scanplan.StageCDNClassification)
+		// NoResolvedIPScan 时域名解析 IP 不进存活探测/端口扫描，
+		// 端口与协议阶段随之消失，Web 探测改为按配置端口盲探。
+		if !cfg.NoResolvedIPScan {
+			stages = append(stages, scanplan.StagePortScan, scanplan.StageProtocolIdentify)
+		}
 		return append(stages, common...), true
 	case TypeIPPort, TypeDomainPort:
 		return append([]scanplan.Stage{scanplan.StageProtocolIdentify}, common...), true

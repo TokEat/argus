@@ -110,7 +110,11 @@ type Config struct {
 	// an open ip:port that has bound domains from CDN classification is
 	// probed as scheme://domain:port instead of scheme://ip:port, so web
 	// assets keep the imported domain form.
-	NoDomainProbe         bool
+	NoDomainProbe bool
+	// NoResolvedIPScan skips host discovery / port scanning of domain-
+	// resolved IPs entirely; those domains are only probed blind as
+	// scheme://domain:port across the configured port set.
+	NoResolvedIPScan      bool
 	SubdomainWordListFile string
 	// SubdomainDictionaryWords is a Server-resolved, revision-bound additive
 	// list. Scanner always unions it with built-in and managed Agent words.

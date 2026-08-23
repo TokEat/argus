@@ -262,6 +262,7 @@ const createInitialValues = {
     NoSubFinder: false,
     NoHostBind: true,
     NoDomainProbe: false,
+    NoResolvedIPScan: false,
     WebThreads: 200,
     WebTimeout: 10,
     NoDirSearch: true,
@@ -376,6 +377,7 @@ function buildTaskConfig(formValues: Record<string, unknown>) {
         AllowLocalAreaDomain: values.AllowLocalAreaDomain,
         NoHostBind: values.NoHostBind,
         NoDomainProbe: values.NoDomainProbe,
+        NoResolvedIPScan: values.NoResolvedIPScan,
         WebThreads: values.WebThreads,
         WebTimeout: values.WebTimeout,
         NoDirSearch: values.NoDirSearch,
@@ -1841,6 +1843,16 @@ const TaskManagement: React.FC = () => {
                                                     name="NoDomainProbe"
                                                     {...invertedSwitchBinding}
                                                     tooltip="开启后，域名解析 IP 上发现的开放 Web 端口将以 域名:端口 形式探测并产出资产，不再以 IP 形式重复探测"
+                                                >
+                                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                                                </Form.Item>
+                                            </Col>
+                                            <Col span={8}>
+                                                <Form.Item
+                                                    label="解析 IP 扫描"
+                                                    name="NoResolvedIPScan"
+                                                    {...invertedSwitchBinding}
+                                                    tooltip="开启后对非 CDN 域名的解析 IP 做存活探测和端口扫描；关闭则跳过 IP 扫描，仅按任务端口设置以 域名:端口 形式盲探 Web"
                                                 >
                                                     <Switch checkedChildren="开启" unCheckedChildren="关闭" />
                                                 </Form.Item>

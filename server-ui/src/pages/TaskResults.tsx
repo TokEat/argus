@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Typography, Table, Tag, Tabs, Space, Spin, Button, Tooltip, Empty, Drawer, Descriptions, Divider, Popover } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
@@ -273,6 +273,39 @@ const TaskResults: React.FC = () => {
         return 0;
     };
 
+    // ── 域名 ↔ 解析 IP 关联（来源：RealIP 资产行 Tags 中的 domain/ips）──
+    const { ipToDomains, domainToIPs } = useMemo(() => {
+        const ipMap = new Map<string, string[]>();
+        const domainMap = new Map<string, string[]>();
+        assets.forEach((asset) => {
+            if (asset.Protocol !== 'RealIP' || !asset.Tags) return;
+            try {
+                const payload = JSON.parse(asset.Tags) as { domain?: unknown; ips?: unknown };
+                const domain = typeof payload.domain === 'string' ? payload.domain : '';
+                const ips = Array.isArray(payload.ips)
+                    ? payload.ips.filter((item): item is string => typeof item === 'string')
+                    : [];
+                if (!domain || ips.length === 0) return;
+                ips.forEach((ip) => {
+                    const domains = ipMap.get(ip) || [];
+                    if (!domains.includes(domain)) domains.push(domain);
+                    ipMap.set(ip, domains);
+                    const resolved = domainMap.get(domain) || [];
+                    if (!resolved.includes(ip)) resolved.push(ip);
+                    domainMap.set(domain, resolved);
+                });
+            } catch { /* ignore malformed tags */ }
+        });
+        return { ipToDomains: ipMap, domainToIPs: domainMap };
+    }, [assets]);
+
+    const ipv4Pattern = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+    const relatedHostsFor = (host: string): string[] => {
+        if (ipv4Pattern.test(host)) return ipToDomains.get(host) || [];
+        return domainToIPs.get(host) || [];
+    };
+
+
     const isJsonString = (s: string): boolean => {
         if (!s) return false;
         return (s.startsWith('{') && s.endsWith('}')) || (s.startsWith('[') && s.endsWith(']'));
@@ -365,15 +398,32 @@ const TaskResults: React.FC = () => {
         {
             title: '主机',
             key: 'host',
-            width: 160,
+            width: 220,
             render: (_, record) => {
                 const host = extractHostFromTarget(record.Target);
+                const related = relatedHostsFor(host).filter((item) => item !== host);
+                const shown = related.slice(0, 2);
                 return (
-                    <Space size={4}>
+                    <Space size={4} wrap>
                         <Text copyable={{ text: host }} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 500 }}>
                             {host}
                         </Text>
                         {record.CDN && <Tag color="orange" style={{ margin: 0, fontSize: 10 }}>CDN</Tag>}
+                        {shown.length > 0 && (
+                            <Tooltip title={`关联 ${related.length === 1 ? '主机' : '主机'}：${related.join('、')}`}>
+                                <span style={{ display: 'inline-flex', gap: 2 }}>
+                                    <Text type="secondary" style={{ fontSize: 10 }}>↔</Text>
+                                    {shown.map((item) => (
+                                        <Tag key={item} color="default" style={{ margin: 0, fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }}>
+                                            {item}
+                                        </Tag>
+                                    ))}
+                                    {related.length > shown.length && (
+                                        <Tag style={{ margin: 0, fontSize: 10 }}>+{related.length - shown.length}</Tag>
+                                    )}
+                                </span>
+                            </Tooltip>
+                        )}
                     </Space>
                 );
             },

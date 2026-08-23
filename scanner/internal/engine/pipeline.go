@@ -161,10 +161,11 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 	// CDN 检测
 	var cdnDomains []string
+	var normalDomains []string
 	var tIPs []string
 	if len(domains) > 0 && resumeStageEnabled(ctx, scanplan.StageCDNClassification) {
 		emitPhase(ctx, PhaseCDN, "start", fmt.Sprintf("%d domains", len(domains)))
-		cdnDomains, _, tIPs = cdn.CheckCDNs(
+		cdnDomains, normalDomains, tIPs = cdn.CheckCDNs(
 			domains,
 			cfg.SubdomainBruteForceThreads,
 			ctx.IPDomainMap,
@@ -173,12 +174,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 				emit(msg)
 			},
 		)
-		for _, each := range tIPs {
-			if cfg.AllowLocalAreaDomain && utils.IsLocalIP(each) {
-				continue
-			}
-			ips = append(ips, each)
-		}
+		ips = append(ips, filterDomainIPs(tIPs, cfg)...)
 		emitPhase(ctx, PhaseCDN, "end", fmt.Sprintf("%d cdn, %d ips", len(cdnDomains), len(tIPs)))
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {
@@ -190,7 +186,12 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	// 越出授权范围），开启 AllowCDNAssets 后按任务配置的扫描端口
 	// （与 IP 目标端口扫描同源）对域名本身做 http(s) 补偿探测。
 	if cfg.AllowCDNAssets && len(cdnDomains) > 0 {
-		urls = append(urls, buildCDNProbeURLs(cfg, cdnDomains)...)
+		urls = append(urls, buildDomainProbeURLs(cfg, cdnDomains)...)
+	}
+	// 非 CDN 域名：开启 NoResolvedIPScan 时同样不扫解析 IP，
+	// 仅按 域名:端口 形式对域名本身盲探。
+	if cfg.NoResolvedIPScan && len(normalDomains) > 0 {
+		urls = append(urls, buildDomainProbeURLs(cfg, normalDomains)...)
 	}
 	urls = utils.RemoveDuplicateElement(urls)
 
@@ -559,13 +560,32 @@ func buildHTTPProbeURLs(ctx *ScanContext, cfg Config, ipPortMap map[string]strin
 	return urls
 }
 
-// buildCDNProbeURLs turns CDN-classified domains into domain-form HTTP(S)
-// probe targets. CDN domains skip IP port scanning, so the candidate ports
+// filterDomainIPs 决定哪些「域名解析 IP」进入存活探测与端口扫描：
+//   - NoResolvedIPScan=true：完全跳过（域名仅按 域名:端口 形式盲探）；
+//   - AllowLocalAreaDomain=false（默认）：跳过私网/回环地址，避免把
+//     解析到内网的域名当作扫描目标；开启后才纳入扫描。
+func filterDomainIPs(ips []string, cfg Config) []string {
+	if cfg.NoResolvedIPScan {
+		return nil
+	}
+	var out []string
+	for _, raw := range ips {
+		if !cfg.AllowLocalAreaDomain && utils.IsLocalIP(raw) {
+			continue
+		}
+		out = append(out, raw)
+	}
+	return out
+}
+
+// buildDomainProbeURLs turns domain-classified targets into domain-form
+// HTTP(S) probe targets. These domains skip IP port scanning (CDN domains by
+// policy, other domains when NoResolvedIPScan is set), so the candidate ports
 // follow the task's configured scan ports (cfg.Ports) — the same set an IP
 // target would have its open ports discovered from — parsed with the same
 // rules as the TCP port scanner (portscan.ParsePort). TLS-typical ports get
 // an https:// attempt, the rest http://, so each port is probed exactly once.
-func buildCDNProbeURLs(cfg Config, domains []string) []string {
+func buildDomainProbeURLs(cfg Config, domains []string) []string {
 	ports := portscan.ParsePort(cfg.Ports)
 	if len(ports) == 0 || len(domains) == 0 {
 		return nil

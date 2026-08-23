@@ -1,5 +1,28 @@
 # Changelog
 
+## [Platform] 2026-07-06 — 解析 IP 扫描开关、内网解析语义修正与域名/IP 关联展示
+
+### Scanner
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| 「允许解析到内网」语义修复 | `scanner/internal/engine/pipeline.go` | 修正条件反转：默认跳过解析到私网/回环的域名 IP，开启 AllowLocalAreaDomain 后才纳入扫描（此前行为与开关名相反） |
+| 非 CDN 域名免 IP 扫描选项 | `scanner/structs/type.go`、`scanner/common/flag.go`、`engine/resume_plan.go` | 新增 `-nsi`/NoResolvedIPScan：开启后域名解析 IP 完全不进存活探测/端口扫描，仅按任务端口设置以 域名:端口 形式盲探；resume 阶段集合同步剔除端口/协议阶段 |
+| CDN 补偿探测泛化 | `scanner/internal/engine/pipeline.go`、`internal/scanner/cdn/check.go` | 域名形式盲探抽为通用 buildDomainProbeURLs，CDN 与 NoResolvedIPScan 路径共用；CDN 桥接包透传 normalDomains |
+
+### Server 与 API
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| 复用阶段同步 | `server/internal/db/scan_reuse.go` | reusableScanConfig 增加 NoResolvedIPScan（旧配置缺省按 false），域名目标复用阶段与执行侧保持一致 |
+| 配置透传 | `server/internal/api/task_input.go` | 任务配置新增 NoResolvedIPScan 字段并随任务下发 Agent |
+
+### Frontend
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| 域名 ↔ 解析 IP 关联展示 | `server-ui/src/pages/TaskResults.tsx`、`TaskManagement.tsx` | 资产列表基于 RealIP 行建立 IP↔域名映射，主机列展示关联徽标（IP 行显示关联域名、域名行显示解析 IP）；创建任务专家配置新增「解析 IP 扫描」开关 |
+
 ## [Platform] 2026-07-06 — CDN 资产补偿探测、误判规则收敛与疑似 CDN 标记
 
 ### Scanner

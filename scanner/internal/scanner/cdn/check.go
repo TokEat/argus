@@ -9,6 +9,6 @@ import (
 )
 
 // CheckCDNs 批量 CDN 检测。
-func CheckCDNs(domains []string, threads int, ipDomainMap map[string][]string, ipDomainMapLock *sync.Mutex, emit func(ddout.OutputMessage)) (cdnDomains []string, cdnResults interface{}, ips []string) {
+func CheckCDNs(domains []string, threads int, ipDomainMap map[string][]string, ipDomainMapLock *sync.Mutex, emit func(ddout.OutputMessage)) (cdnDomains []string, normalDomains []string, ips []string) {
 	return utlcdn.CheckCDNs(domains, threads, ipDomainMap, ipDomainMapLock, emit)
 }
