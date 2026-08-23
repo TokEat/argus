@@ -12,7 +12,7 @@ import (
 // 版本记录由 deploy/db-init.sh（纯 SQL 导入）写入 schema_migrations 表；
 // server 启动时只校验、不迁移。schema 变更流程见 deploy/db/README.md：
 // 新增 deploy/db/init/NNN_xxx.sql 并将本常量同步推进到 NNN。
-const RequiredSchemaVersion = "002"
+const RequiredSchemaVersion = "003"
 
 // SchemaMigration 映射 schema_migrations 表（由 deploy/db-init.sh 维护）。
 type SchemaMigration struct {

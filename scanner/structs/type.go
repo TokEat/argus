@@ -48,8 +48,11 @@ type OutputMessage struct {
 	URI           string           `json:"uri,omitempty"`
 	City          string           `json:"city,omitempty"`
 	AdditionalMsg string           `json:"am,omitempty"`
-	Show          string           `json:"-"`
-	Nuclei        string           `json:"nuclei,omitempty"`
+	// Tag marks special asset classes for Server-side asset tagging, e.g.
+	// "cdn" for suspected CDN assets. Old peers ignore the unknown field.
+	Tag    string `json:"tag,omitempty"`
+	Show   string `json:"-"`
+	Nuclei string `json:"nuclei,omitempty"`
 }
 
 type Config struct {

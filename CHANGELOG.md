@@ -1,5 +1,28 @@
 # Changelog
 
+## [Platform] 2026-07-06 — CDN 资产补偿探测、误判规则收敛与疑似 CDN 标记
+
+### Scanner
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| CDN 误判规则收敛 | `scanner/utils/cdn/cdn.go` | 移除「多 IP+CNAME」「含 IPv6」启发式，仅保留 CNAME 命中已知 CDN/WAF 关键字与精确 IP 两类高置信度判定，避免自建负载均衡/GSLB/双栈站点被整域跳过漏扫 |
+| CDN 域名补偿探测 | `scanner/internal/engine/pipeline.go` | 开启 AllowCDNAssets 后不扫描 CDN 域名的解析 IP（避免越权触达厂商基础设施），按任务配置的扫描端口（与 IP 端口扫描同源 `portscan.ParsePort`）对 CDN 域名本身做 `域名:端口` 形式 http(s) 探测 |
+| 疑似 CDN 打标 | `scanner/structs/type.go`、`scanner/internal/scanner/web/probe.go` | 输出消息新增可选 `tag` 字段；Web/Domain-Bind 回调对命中 CDN 主机集合的资产携带 `tag=cdn` |
+
+### Server 与 API
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| 结果路由契约化 | `server/internal/db/db.go` | payload Type → 结果表路由抽为集合函数；漏洞表准入与资产/指纹集合两两互斥，CDN-Domain 永远不会进入 vulnerabilities 表（回归测试锁定） |
+| 资产 CDN 标记字段 | `server/internal/db/db.go`、`deploy/db/init/003_cdn_asset_tag.sql`、`schema_version.go`、`schema_verify.go` | assets 表新增 `cdn` 布尔列（schema v003）：CDN-Domain 记录与 tag=cdn 的 Web/Domain-Bind 探测结果置 true |
+
+### Frontend
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| 资产列表 CDN 徽标 | `server-ui/src/pages/TaskResults.tsx`、`services/typings.d.ts` | 资产 Tab 主机列展示「CDN」徽标，新增「疑似 CDN」筛选列；漏洞列表不受影响 |
+
 ## [Platform] 2026-07-06 — 域名目标以「域名:端口」形式产出 Web 资产
 
 ### Scanner

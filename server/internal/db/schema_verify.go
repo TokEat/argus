@@ -288,7 +288,7 @@ func schemaTableSpecs() []schemaTableSpec {
 		},
 		{
 			Table:   "assets",
-			Columns: []string{"project_id", "tags", "status", "owner_id", "cred_id", "updated_at"},
+			Columns: []string{"project_id", "tags", "cdn", "status", "owner_id", "cred_id", "updated_at"},
 			Indexes: []string{"idx_asset_dedupe", "idx_assets_task_id", "idx_assets_status"},
 		},
 		{

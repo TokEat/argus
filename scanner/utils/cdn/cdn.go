@@ -54,8 +54,14 @@ func LookupCNAME(domain string) ([]string, error) {
 	return nil, lastErr
 }
 
+// lookupIP / lookupCNAME 以变量注入，便于单元测试替换 DNS 行为。
+var (
+	lookupIP    = net.LookupIP
+	lookupCNAME = LookupCNAME
+)
+
 func CheckCDN(domain string) (bool, string, []net.IP) {
-	ips, err := net.LookupIP(domain)
+	ips, err := lookupIP(domain)
 	if err != nil {
 		return false, "", []net.IP{}
 	}
@@ -67,37 +73,39 @@ func CheckCDN(domain string) (bool, string, []net.IP) {
 		}
 	}
 
-	CNAMES, err := LookupCNAME(domain)
+	CNAMES, err := lookupCNAME(domain)
 	if err != nil {
 		gologger.Error().Msgf("lookupCNAME err: %v", domain)
 		return false, "", ips
 	}
-	for _, cname := range CNAMES {
-		for _, item := range domainItems {
-			if strings.Contains(cname, item.Domain) {
-				return true, item.Name, ips
-			}
-		}
-		if strings.Contains(cname, "cdn") {
-			return true, "CNAME关键字:cdn", ips
-		}
-		if strings.Contains(cname, "waf") {
-			return true, "CNAME关键字:waf", ips
-		}
-	}
 
-	if len(ips) > 1 && len(CNAMES) > 0 {
-		return true, "CNAME&&多IP解析", ips
-	}
-
-	// 不喜欢这一段可以注释掉，会默认过滤所有IPv6的域名资产
-	for _, ip := range ips {
-		if utils.IsIPv6(ip.String()) {
-			return true, "IPv6", ips
-		}
+	// 仅保留高置信度规则：CNAME 链命中已知 CDN/WAF 供应商关键字。
+	// 历史上的“多 IP+CNAME”与“含 IPv6”启发式误伤自建负载均衡、GSLB、
+	// 容灾和双栈站点，导致真实资产被整域跳过，已移除。
+	if name, ok := matchKnownCDNCNAME(CNAMES); ok {
+		return true, name, ips
 	}
 
 	return false, "", ips
+}
+
+// matchKnownCDNCNAME 判断 CNAME 链是否命中已知 CDN 体系关键字，
+// 命中时返回展示名。关键字来自 domainItems 清单与 cdn/waf 子串。
+func matchKnownCDNCNAME(cnames []string) (string, bool) {
+	for _, cname := range cnames {
+		for _, item := range domainItems {
+			if strings.Contains(cname, item.Domain) {
+				return item.Name, true
+			}
+		}
+		if strings.Contains(cname, "cdn") {
+			return "CNAME关键字:cdn", true
+		}
+		if strings.Contains(cname, "waf") {
+			return "CNAME关键字:waf", true
+		}
+	}
+	return "", false
 }
 
 func CheckCDNs(domains []string, threads int, ipDomainMap map[string][]string, ipDomainMapLock *sync.Mutex, emit func(ddout.OutputMessage)) (rCDNDomains []string, normalDomains []string, rIPs []string) {
@@ -144,6 +152,7 @@ func CheckCDNs(domains []string, threads int, ipDomainMap map[string][]string, i
 					Finger:        nil,
 					Domain:        result.Domain,
 					AdditionalMsg: result.CDNName,
+					Tag:           "cdn",
 				})
 				rCDNDomainsLock.Lock()
 				rCDNDomains = append(rCDNDomains, result.Domain)

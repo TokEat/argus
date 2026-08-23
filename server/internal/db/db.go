@@ -306,6 +306,9 @@ type Asset struct {
 	CertSubject string     // TLS 证书主体
 	CertExpiry  *time.Time // TLS 证书过期时间
 	Tags        string     `gorm:"type:jsonb"`
+	// CDN 标记疑似 CDN 资产：CDN-Domain 记录本身，以及来自 CDN 域名的
+	// Web / Domain-Bind 探测结果。仅作展示与过滤，不影响扫描行为。
+	CDN         bool       `gorm:"default:false"`
 	Status      string     `gorm:"default:'alive';index"`
 	OwnerID     string     `gorm:"index"`
 	CredID      string     `gorm:"index"`
@@ -829,6 +832,43 @@ func isOSINTAssetPayloadType(payloadType string) bool {
 	return payloadType == "Quake" || payloadType == "Hunter" || payloadType == "Fofa"
 }
 
+// assetPayloadTypes / fingerprintPayloadTypes / vulnerabilityPayloadTypes
+// 声明 payload Type 到结果表的唯一路由。漏洞表只接收漏洞类 Type；
+// CDN-Domain 等资产类 Type 永远不进入 vulnerabilities。
+var (
+	assetPayloadTypes = map[string]struct{}{
+		"asset": {}, "port_scan": {}, "subdomain": {},
+		"Web": {}, "Protocol": {}, "ProtocolCheck": {}, "PortScan": {}, "IPAlive": {},
+		"Domain": {}, "Domain-Bind": {}, "Nmap": {}, "DNS-SubFinder": {}, "DNS-Brute": {},
+		"CDN-Domain": {}, "RealIP": {},
+		"Quake": {}, "Hunter": {}, "Fofa": {},
+	}
+	fingerprintPayloadTypes = map[string]struct{}{
+		"fingerprint": {}, "web_fingerprint": {}, "tech": {},
+		"Finger": {}, "Active-Finger": {},
+	}
+	vulnerabilityPayloadTypes = map[string]struct{}{
+		"nuclei": {}, "gopoc": {}, "GoPoc": {}, "Nuclei": {}, "vulnerability": {},
+	}
+)
+
+func isAssetPayloadType(payloadType string) bool {
+	_, ok := assetPayloadTypes[payloadType]
+	return ok
+}
+
+func isFingerprintPayloadType(payloadType string) bool {
+	_, ok := fingerprintPayloadTypes[payloadType]
+	return ok
+}
+
+// isVulnerabilityPayloadType 是写入 vulnerabilities 表的唯一准入判定；
+// 资产类（含 CDN-Domain）与指纹类 Type 在集合层面与之互斥。
+func isVulnerabilityPayloadType(payloadType string) bool {
+	_, ok := vulnerabilityPayloadTypes[payloadType]
+	return ok
+}
+
 func payloadString(payload map[string]interface{}, key string) string {
 	if payload == nil {
 		return ""
@@ -953,10 +993,8 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 		})
 	}
 
-	switch payloadType {
-	case "asset", "port_scan", "subdomain",
-		"Web", "Protocol", "ProtocolCheck", "PortScan", "IPAlive", "Domain", "Domain-Bind", "Nmap", "DNS-SubFinder", "DNS-Brute", "CDN-Domain", "RealIP",
-		"Quake", "Hunter", "Fofa":
+	switch {
+	case isAssetPayloadType(payloadType):
 		// Agent 通过 ddout.OutputMessage 发送的 Type 为大写开头（如 Web/Protocol/PortScan/IPAlive/Domain/Nmap）
 		// 统一归入资产表
 		if isOSINTAssetPayloadType(payloadType) {
@@ -1033,13 +1071,21 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 			actualURL = target // target 已 normalize 为 scheme://host:port 格式
 		}
 
+		// 疑似 CDN 标记：CDN-Domain 记录本身，或携带 tag=cdn 的
+		// Web / Domain-Bind 探测结果（来自被判定为 CDN 的域名）。
+		cdn := payloadType == "CDN-Domain"
+		if !cdn {
+			if tag, ok := p["tag"].(string); ok {
+				cdn = strings.EqualFold(tag, "cdn")
+			}
+		}
+
 		assetBuffer <- Asset{
 			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID, Target: target, Protocol: payloadType,
 			Port: port, URL: actualURL, Title: title, Service: service,
-			Tags: payloadJSON, Status: "alive", CreatedAt: time.Now(), UpdatedAt: time.Now(),
+			Tags: payloadJSON, CDN: cdn, Status: "alive", CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
-	case "fingerprint", "web_fingerprint", "tech",
-		"Finger", "Active-Finger":
+	case isFingerprintPayloadType(payloadType):
 		// Agent 通过 ddout 发送的指纹 Type 为 Finger/Active-Finger。
 		// 原实现将 finger[] 拼接成一个字符串，容易产生“顺序变化导致重复”
 		// 和“单产品维度漏报”。这里改为逐产品名写入。
@@ -1058,7 +1104,7 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 				Evidence: payloadJSON, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 			}
 		}
-	case "phase":
+	case payloadType == "phase":
 		// Agent PhaseHook 发送的阶段进度事件，仅广播到 WebSocket，不入库
 		if WSBroadcastHook != nil {
 			WSBroadcastHook(tenantID, map[string]interface{}{
@@ -1068,7 +1114,7 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 			})
 		}
 		return
-	case "nuclei", "gopoc", "GoPoc", "Nuclei", "vulnerability":
+	case isVulnerabilityPayloadType(payloadType):
 		if severity == "" {
 			severity = "Unknown"
 		}

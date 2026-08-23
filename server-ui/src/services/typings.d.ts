@@ -603,6 +603,8 @@ declare namespace API {
     URL: string;
     Title: string;
     Service: string;
+    /** 疑似 CDN 资产标记：CDN-Domain 记录或来自 CDN 域名的探测结果 */
+    CDN?: boolean;
     CreatedAt: string;
   }
 

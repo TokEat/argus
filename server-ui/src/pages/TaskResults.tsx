@@ -369,9 +369,12 @@ const TaskResults: React.FC = () => {
             render: (_, record) => {
                 const host = extractHostFromTarget(record.Target);
                 return (
-                    <Text copyable={{ text: host }} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 500 }}>
-                        {host}
-                    </Text>
+                    <Space size={4}>
+                        <Text copyable={{ text: host }} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 500 }}>
+                            {host}
+                        </Text>
+                        {record.CDN && <Tag color="orange" style={{ margin: 0, fontSize: 10 }}>CDN</Tag>}
+                    </Space>
                 );
             },
             filters: (() => {
@@ -379,6 +382,16 @@ const TaskResults: React.FC = () => {
                 return hosts.slice(0, 20).map(h => ({ text: h, value: h }));
             })(),
             onFilter: (value, record) => extractHostFromTarget(record.Target) === value,
+        },
+        {
+            title: 'CDN',
+            key: 'cdn',
+            width: 70,
+            render: (_, record) => record.CDN
+                ? <Tag color="orange" style={{ margin: 0 }}>疑似 CDN</Tag>
+                : <Text type="secondary">-</Text>,
+            filters: [{ text: '疑似 CDN', value: true }],
+            onFilter: (value, record) => Boolean(record.CDN) === value,
         },
         {
             title: '端口',

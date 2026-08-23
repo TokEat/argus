@@ -33,6 +33,9 @@ type Runtime struct {
 	WorkFlowDB             map[string]structs.WorkFlowEntity
 	DirFallbackResultMap   map[string][]string
 	DirFallbackResultMapMu *sync.Mutex
+	// CDNHosts holds lowercased hostnames classified as CDN so emitted Web /
+	// Domain-Bind messages can carry the "cdn" asset tag.
+	CDNHosts map[string]struct{}
 
 	fingerprintByProduct map[string][]structs.FingerPEntity
 	emit                 func(structs.OutputMessage)
@@ -107,6 +110,7 @@ func (rt *Runtime) URLCallback(resp runner.Result) {
 			},
 			URI:    resp.URL,
 			Finger: rt.matchAllFingers(resp),
+			Tag:    rt.assetTag(resp.URL),
 		})
 	}
 }
@@ -253,10 +257,27 @@ func (rt *Runtime) HostBindCallback(resp runner.Result) {
 			},
 			URI:           resp.URL,
 			AdditionalMsg: resp.Title,
+			Tag:           rt.assetTag(resp.URL),
 		})
 	}
 
 	rt.upsertResponse(resp)
+}
+
+// assetTag returns the special asset class for a probed URL, currently "cdn"
+// when its hostname was classified as a CDN domain during CDN checks.
+func (rt *Runtime) assetTag(rawURL string) string {
+	if rt == nil || len(rt.CDNHosts) == 0 {
+		return ""
+	}
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return ""
+	}
+	if _, ok := rt.CDNHosts[strings.ToLower(parsed.Hostname())]; ok {
+		return "cdn"
+	}
+	return ""
 }
 
 func (rt *Runtime) matchingDirPaths(respPath string) []string {
@@ -699,6 +720,13 @@ func tlsLikelyWebPort(hostPort string) bool {
 	if err != nil {
 		return false
 	}
+	return TLSLikelyPort(port)
+}
+
+// TLSLikelyPort reports whether the given port number commonly serves HTTPS
+// directly, so domain-form probing can pick the scheme without protocol
+// identification.
+func TLSLikelyPort(port string) bool {
 	switch port {
 	case "443", "1443", "3443", "4443", "6443", "7443", "8443", "9443", "10443":
 		return true

@@ -20,6 +20,7 @@ import (
 	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/P0lar1ght/argus/scanner/utils"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -185,12 +186,11 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	}
 	ips = utils.RemoveDuplicateElement(ips)
 
-	// 处理带CDN的域名
-	if cfg.AllowCDNAssets {
-		for _, cd := range cdnDomains {
-			urls = append(urls, "http://"+cd)
-			urls = append(urls, "https://"+cd)
-		}
+	// 处理带CDN的域名：不扫描其解析 IP（避免触达 CDN 厂商基础设施、
+	// 越出授权范围），开启 AllowCDNAssets 后按任务配置的扫描端口
+	// （与 IP 目标端口扫描同源）对域名本身做 http(s) 补偿探测。
+	if cfg.AllowCDNAssets && len(cdnDomains) > 0 {
+		urls = append(urls, buildCDNProbeURLs(cfg, cdnDomains)...)
 	}
 	urls = utils.RemoveDuplicateElement(urls)
 
@@ -301,6 +301,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	if resumeStageEnabled(ctx, scanplan.StageHTTPProbe) {
 		emitPhase(ctx, PhaseHTTPProbe, "start", fmt.Sprintf("%d urls", len(urls)))
 		webRuntime := currentWebRuntime(ctx, emit)
+		webRuntime.CDNHosts = cdnHostSet(cdnDomains)
 		var err error
 		httpProbeComplete, err = completeHTTPProbePhase(ctx, p.runHTTPProbe(ctx, &cfg, urls, webRuntime))
 		if err != nil {
@@ -314,7 +315,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	// 域名绑定资产探测
 	if !cfg.NoHostBind && resumeStageEnabled(ctx, scanplan.StageHostBinding) {
 		emitPhase(ctx, PhaseHostBind, "start", "")
-		currentWebRuntime(ctx, emit).HostBindCheck(cfg.HTTPProxy, cfg.WebThreads, cfg.WebTimeout)
+		bindRuntime := currentWebRuntime(ctx, emit)
+		bindRuntime.CDNHosts = cdnHostSet(cdnDomains)
+		bindRuntime.HostBindCheck(cfg.HTTPProxy, cfg.WebThreads, cfg.WebTimeout)
 		completeHTTPDependentPhase(ctx, PhaseHostBind, httpProbeComplete)
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {
@@ -554,6 +557,52 @@ func buildHTTPProbeURLs(ctx *ScanContext, cfg Config, ipPortMap map[string]strin
 		urls = append(urls, web.ProbeURLs(hostPort, service)...)
 	}
 	return urls
+}
+
+// buildCDNProbeURLs turns CDN-classified domains into domain-form HTTP(S)
+// probe targets. CDN domains skip IP port scanning, so the candidate ports
+// follow the task's configured scan ports (cfg.Ports) — the same set an IP
+// target would have its open ports discovered from — parsed with the same
+// rules as the TCP port scanner (portscan.ParsePort). TLS-typical ports get
+// an https:// attempt, the rest http://, so each port is probed exactly once.
+func buildCDNProbeURLs(cfg Config, domains []string) []string {
+	ports := portscan.ParsePort(cfg.Ports)
+	if len(ports) == 0 || len(domains) == 0 {
+		return nil
+	}
+	var urls []string
+	for _, rawDomain := range domains {
+		domain := strings.TrimSpace(rawDomain)
+		if domain == "" {
+			continue
+		}
+		for _, port := range ports {
+			portStr := strconv.Itoa(port)
+			service := "http"
+			if web.TLSLikelyPort(portStr) {
+				service = "https"
+			}
+			urls = append(urls, web.ProbeURLs(domain+":"+portStr, service)...)
+		}
+	}
+	return urls
+}
+
+// cdnHostSet lowercases CDN-classified domains into a hostname lookup set
+// used by the web runtime to tag emitted assets as "cdn".
+func cdnHostSet(domains []string) map[string]struct{} {
+	if len(domains) == 0 {
+		return nil
+	}
+	hosts := make(map[string]struct{}, len(domains))
+	for _, rawDomain := range domains {
+		domain := strings.ToLower(strings.TrimSpace(rawDomain))
+		if domain == "" {
+			continue
+		}
+		hosts[domain] = struct{}{}
+	}
+	return hosts
 }
 
 // suppressSafedogTargets drops fingerprint targets whose resolved host served
