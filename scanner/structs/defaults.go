@@ -38,6 +38,9 @@ func DefaultConfig() Config {
 		NoSubdomainBruteForce:      true,
 		NoSubFinder:                true,
 		NoHostBind:                 true,
+		// NoDomainProbe=false keeps domain-form web probing enabled: open
+		// ports bound to a scanned domain are probed as scheme://domain:port.
+		NoDomainProbe:              false,
 		GoPocThreads:               50,
 		NoPoc:                      true,
 		GolangPoc:                  false,

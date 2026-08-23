@@ -294,9 +294,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	}
 
 	// HTTP 探测
-	for hostPort, service := range currentPipelineIPPortMap(ctx) {
-		urls = append(urls, web.ProbeURLs(hostPort, service)...)
-	}
+	urls = append(urls, buildHTTPProbeURLs(ctx, cfg, currentPipelineIPPortMap(ctx))...)
 	urls = utils.RemoveDuplicateElement(urls)
 	httpProbeComplete := true
 
@@ -410,19 +408,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	}
 
 	// WAF 过滤：Safedog / 安全狗 WAF 标题检测。
-	for _, entity := range currentPipelineURLMap(ctx) {
-		for _, path := range entity.WebPaths {
-			title := strings.ToLower(path.Title)
-			if strings.Contains(title, "当前网络访问异常") || strings.Contains(title, "请验证是否真人访问") {
-				for target := range resultMap {
-					if strings.Contains(target, entity.IP) {
-						delete(resultMap, target)
-						gologger.AuditTimeLogger("[WAF] %s 标题 Safedog → 跳过 Nuclei", target)
-					}
-				}
-			}
-		}
-	}
+	suppressSafedogTargets(ctx, resultMap)
 
 	var nucleiResults []gopocs.NucleiResult
 	if cfg.NoPoc {
@@ -527,6 +513,75 @@ func buildDirProbeURLs(aliveURLs []string, dirDB map[string][]string) []string {
 		}
 	}
 	return utils.RemoveDuplicateElement(checkURLs)
+}
+
+// probeDomainsForHost returns the domains bound to an IPv4 hostPort according
+// to the CDN-classification IP→domain mapping. Domain-form probing keeps web
+// assets in the imported domain shape; it is disabled by NoDomainProbe and
+// never applies to non-IPv4 endpoints such as direct domain:port inputs.
+func probeDomainsForHost(ctx *ScanContext, cfg Config, hostPort string) []string {
+	if ctx == nil || cfg.NoDomainProbe {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(hostPort)
+	if err != nil || !utils.IsIPv4(host) {
+		return nil
+	}
+	ctx.IPDomainMapLock.Lock()
+	defer ctx.IPDomainMapLock.Unlock()
+	if len(ctx.IPDomainMap[host]) == 0 {
+		return nil
+	}
+	return utils.RemoveDuplicateElement(append([]string(nil), ctx.IPDomainMap[host]...))
+}
+
+// buildHTTPProbeURLs turns protocol-identified host:port services into HTTP
+// probe targets. An open ip:port with bound domains is probed only as
+// scheme://domain:port so the resolved IP form never duplicates the request;
+// unbound hosts keep the legacy scheme://ip:port form.
+func buildHTTPProbeURLs(ctx *ScanContext, cfg Config, ipPortMap map[string]string) []string {
+	var urls []string
+	for hostPort, service := range ipPortMap {
+		domains := probeDomainsForHost(ctx, cfg, hostPort)
+		if len(domains) > 0 {
+			if _, port, portErr := net.SplitHostPort(hostPort); portErr == nil {
+				for _, domain := range domains {
+					urls = append(urls, web.ProbeURLs(domain+":"+port, service)...)
+				}
+				continue
+			}
+		}
+		urls = append(urls, web.ProbeURLs(hostPort, service)...)
+	}
+	return urls
+}
+
+// suppressSafedogTargets drops fingerprint targets whose resolved host served
+// a Safedog interstitial page. Domain-form rootURLs do not contain the
+// resolved IP, so matching combines substring checks against entity.IP with a
+// URLMap reverse lookup keyed by URLEntity.IP.
+func suppressSafedogTargets(ctx *ScanContext, resultMap map[string][]string) {
+	targetsByIP := make(map[string][]string)
+	for rootURL, entity := range currentPipelineURLMap(ctx) {
+		if entity.IP == "" {
+			continue
+		}
+		targetsByIP[entity.IP] = append(targetsByIP[entity.IP], rootURL)
+	}
+	for _, entity := range currentPipelineURLMap(ctx) {
+		for _, path := range entity.WebPaths {
+			title := strings.ToLower(path.Title)
+			if !strings.Contains(title, "当前网络访问异常") && !strings.Contains(title, "请验证是否真人访问") {
+				continue
+			}
+			for target := range resultMap {
+				if strings.Contains(target, entity.IP) || utils.GetItemInArray(targetsByIP[entity.IP], target) != -1 {
+					delete(resultMap, target)
+					gologger.AuditTimeLogger("[WAF] %s 标题 Safedog → 跳过 Nuclei", target)
+				}
+			}
+		}
+	}
 }
 
 func (p *Pipeline) runHTTPProbe(ctx *ScanContext, cfg *Config, urls []string, webRuntime *web.Runtime) error {

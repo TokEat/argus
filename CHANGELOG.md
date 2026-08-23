@@ -1,5 +1,27 @@
 # Changelog
 
+## [Platform] 2026-07-06 — 域名目标以「域名:端口」形式产出 Web 资产
+
+### Scanner
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| 域名形态 Web 探测 | `scanner/internal/engine/pipeline.go` | 域名解析 IP 上发现的开放 Web 端口改以 `scheme://域名:端口` 探测并产出资产，不再以 IP 形式重复探测；无绑定域名的 IP 目标行为不变 |
+| Safedog 过滤适配 | `scanner/internal/engine/pipeline.go` | WAF 标题过滤在域名形态 rootURL 下通过 `URLEntity.IP` 反查同 IP 目标，保持原跳过语义（抽为 `suppressSafedogTargets`） |
+| `NoDomainProbe` 配置 | `scanner/structs/type.go`、`scanner/structs/defaults.go`、`scanner/common/flag.go` | 新增 `-ndp`/`--no-domain-probe`（默认 false=开启域名形态探测），关闭后回退 IP 形式 |
+
+### Server 与 API
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| 任务配置透传 `NoDomainProbe` | `server/internal/api/task_input.go` | 默认 false，随任务配置下发 Agent |
+
+### Frontend
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| 「域名+端口探测」开关 | `server-ui/src/pages/TaskManagement.tsx` | 高级发现选项新增开关，默认开启 |
+
 ## [Platform] 2026-07-05 — 日志、分页、扫描策略与文档工具整理
 
 ### Server 与 API

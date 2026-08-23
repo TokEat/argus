@@ -140,7 +140,9 @@ go run ./scanner/cmd/cli -tr datas/<上次目录>
 
 ### 3.5 协议 / Web / 子域 / 代理 / 输出
 
-`-tc`、`-nto`、`-nudp`、`-sd`、`-nsb`、`-ns`、`-sbt`、`-ld`、`-ac`、`-nhb`、`-wt`、`-wto`、`-nd`、`-x`/`--proxy`、`-pt`、`-ptu`、`-o`、`-ot`、`-ho`。`-PU` 见主机发现。
+`-tc`、`-nto`、`-nudp`、`-sd`、`-nsb`、`-ns`、`-sbt`、`-ld`、`-ac`、`-nhb`、`-ndp`、`-wt`、`-wto`、`-nd`、`-x`/`--proxy`、`-pt`、`-ptu`、`-o`、`-ot`、`-ho`。`-PU` 见主机发现。
+
+`-ndp`/`--no-domain-probe` 默认关闭：域名目标的解析 IP 上发现开放 Web 端口时，Web 探测以 `域名:端口` 形式发起并产出资产（例如导入 `abc.com` 得到 `[WEB] http://abc.com:8080/`），不会再用解析 IP 重复探测。加 `-ndp` 回退为旧的 `IP:端口` 探测形式。
 
 `-p` 只做 TCP。UDP 在端口扫描阶段另走第一波单播探针：`53`、`88`、`123`、`137`、`161`、`500`、`1900`、`5060`、`5353`。只打已确认存活的主机（ARP/ICMP/TCP 探活命中，或已有开放 TCP 端口），超时当关闭。有应答才记开放 UDP 口。文本不再单独打 `[Protocol]`，服务名写在端口行上：
 

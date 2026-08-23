@@ -261,6 +261,7 @@ const createInitialValues = {
     NoSubdomainBruteForce: true,
     NoSubFinder: false,
     NoHostBind: true,
+    NoDomainProbe: false,
     WebThreads: 200,
     WebTimeout: 10,
     NoDirSearch: true,
@@ -374,6 +375,7 @@ function buildTaskConfig(formValues: Record<string, unknown>) {
         AllowCDNAssets: values.AllowCDNAssets,
         AllowLocalAreaDomain: values.AllowLocalAreaDomain,
         NoHostBind: values.NoHostBind,
+        NoDomainProbe: values.NoDomainProbe,
         WebThreads: values.WebThreads,
         WebTimeout: values.WebTimeout,
         NoDirSearch: values.NoDirSearch,
@@ -1828,6 +1830,18 @@ const TaskManagement: React.FC = () => {
                                             </Col>
                                             <Col span={8}>
                                                 <Form.Item label="域名绑定探测" name="NoHostBind" {...invertedSwitchBinding}>
+                                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                                                </Form.Item>
+                                            </Col>
+                                        </Row>
+                                        <Row gutter={16}>
+                                            <Col span={8}>
+                                                <Form.Item
+                                                    label="域名+端口探测"
+                                                    name="NoDomainProbe"
+                                                    {...invertedSwitchBinding}
+                                                    tooltip="开启后，域名解析 IP 上发现的开放 Web 端口将以 域名:端口 形式探测并产出资产，不再以 IP 形式重复探测"
+                                                >
                                                     <Switch checkedChildren="开启" unCheckedChildren="关闭" />
                                                 </Form.Item>
                                             </Col>

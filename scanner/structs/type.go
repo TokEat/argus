@@ -103,7 +103,12 @@ type Config struct {
 	AllowLocalAreaDomain       bool
 	AllowCDNAssets             bool
 	NoHostBind                 bool
-	SubdomainWordListFile      string
+	// NoDomainProbe disables domain-form web probing. When false (default),
+	// an open ip:port that has bound domains from CDN classification is
+	// probed as scheme://domain:port instead of scheme://ip:port, so web
+	// assets keep the imported domain form.
+	NoDomainProbe         bool
+	SubdomainWordListFile string
 	// SubdomainDictionaryWords is a Server-resolved, revision-bound additive
 	// list. Scanner always unions it with built-in and managed Agent words.
 	SubdomainDictionaryWords []string

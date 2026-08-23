@@ -619,6 +619,7 @@ func FlagWithError() error {
 		flagSet.BoolVarP(&structs.GlobalConfig.AllowLocalAreaDomain, "local-domain", "ld", false, "允许域名解析到局域网"),
 		flagSet.BoolVarP(&structs.GlobalConfig.AllowCDNAssets, "allow-cdn", "ac", false, "允许扫描带CDN的资产 | 默认略过"),
 		flagSet.BoolVarP(&structs.GlobalConfig.NoHostBind, "no-host-bind", "nhb", true, "禁用域名绑定资产探测"),
+		flagSet.BoolVarP(&structs.GlobalConfig.NoDomainProbe, "no-domain-probe", "ndp", false, "禁用域名+端口形式的 Web 探测（回退为解析 IP 形式）"),
 	)
 
 	flagSet.CreateGroup("web", "Web探针配置",

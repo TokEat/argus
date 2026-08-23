@@ -49,6 +49,12 @@ func TestDefaultConfigDisablesNoisyDiscoveryByDefault(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigEnablesDomainFormProbe(t *testing.T) {
+	if DefaultConfig().NoDomainProbe {
+		t.Fatal("expected NoDomainProbe to default to false so domain-bound ports are probed as domain:port")
+	}
+}
+
 func TestDefaultConfigDisablesImplicitPocAndCredentialChecks(t *testing.T) {
 	cfg := DefaultConfig()
 	if !cfg.NoPoc || cfg.GolangPoc || !cfg.DisableGeneralPoc || cfg.PocNameForSearch != "" {
