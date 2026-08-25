@@ -172,9 +172,10 @@ func MarkAutomaticValidationStageDerived(tx *gorm.DB, root RootTask, batch TaskB
 	default:
 		return nil
 	}
+	// 派生行是阶段级唯一行：多兄弟批次时按阶段更新到最新重派的尝试。
 	result := tx.Model(&ScanStageDerivation{}).
-		Where("tenant_id = ? AND root_task_id = ? AND batch_id = ? AND stage = ?", root.TenantID, root.ID, batch.ID, stage).
-		Updates(map[string]interface{}{"status": ScanStageIntentDerived, "attempt_id": attemptID})
+		Where("tenant_id = ? AND root_task_id = ? AND stage = ?", root.TenantID, root.ID, stage).
+		Updates(map[string]interface{}{"status": ScanStageIntentDerived, "batch_id": batch.ID, "attempt_id": attemptID})
 	if result.Error != nil || result.RowsAffected == 0 {
 		return result.Error
 	}

@@ -5,10 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -61,13 +61,103 @@ func (o *ScanStageOrchestrator) HandleAttemptTerminal(ctx context.Context, attem
 	if batch.Kind != "asset_scan" {
 		return nil
 	}
-	return o.DeriveRoot(ctx, attempt.TenantID, attempt.RootTaskID)
+	// 流水线化衔接：单个资产批次终态后立即派生它的风险验证兄弟批次，
+	// 不等待其余资产批次；凭据验证仍等全局就绪后单批派生。
+	var queued []db.SubTask
+	if err := db.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var intent db.ScanPolicyIntent
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("tenant_id = ? AND root_task_id = ?", attempt.TenantID, attempt.RootTaskID).First(&intent).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				return nil
+			}
+			return err
+		}
+		var root db.RootTask
+		if err := tx.Where("id = ? AND tenant_id = ?", attempt.RootTaskID, attempt.TenantID).First(&root).Error; err != nil {
+			return err
+		}
+		if intent.RiskStatus == db.ScanStageIntentPending || intent.RiskStatus == db.ScanStageIntentDerived {
+			sibling, err := o.deriveRiskSiblingForAssetBatch(ctx, tx, &intent, root, batch, attempt.AgentID)
+			if err != nil {
+				return err
+			}
+			if sibling != nil {
+				queued = append(queued, *sibling)
+			}
+		}
+		return tx.Save(&intent).Error
+	}); err != nil {
+		return err
+	}
+	credential, err := o.deriveCredentialIfReady(ctx, attempt.TenantID, attempt.RootTaskID)
+	if err != nil {
+		return err
+	}
+	if credential != nil {
+		queued = append(queued, *credential)
+	}
+	return o.dispatchQueuedValidations(ctx, queued)
+}
+
+// deriveCredentialIfReady 在全部资产批次终态且策略开启弱口令验证时派生全局
+// 单批凭据验证；否则返回 nil。
+func (o *ScanStageOrchestrator) deriveCredentialIfReady(ctx context.Context, tenantID, rootTaskID string) (*db.SubTask, error) {
+	var intent db.ScanPolicyIntent
+	if err := db.DB.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("tenant_id = ? AND root_task_id = ?", tenantID, rootTaskID).First(&intent).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if intent.CredentialStatus != db.ScanStageIntentPending {
+		return nil, nil
+	}
+	ready, err := assetDiscoveryBatchesTerminal(db.DB, tenantID, rootTaskID)
+	if err != nil || !ready {
+		return nil, err
+	}
+	var root db.RootTask
+	if err := db.DB.Where("id = ? AND tenant_id = ?", rootTaskID, tenantID).First(&root).Error; err != nil {
+		return nil, err
+	}
+	return o.deriveCredentialValidation(ctx, db.DB, &intent, root)
+}
+
+func (o *ScanStageOrchestrator) dispatchQueuedValidations(ctx context.Context, queued []db.SubTask) error {
+	if len(queued) == 0 {
+		return nil
+	}
+	if routerRuntime().TaskQueue == nil {
+		return errTaskCreateQueueUnavailable
+	}
+	for i := range queued {
+		protoTask, err := db.SubTaskToProto(&queued[i])
+		if err != nil {
+			return err
+		}
+		if err := routerRuntime().TaskQueue.PushTask(ctx, protoTask); err != nil {
+			return err
+		}
+		batchID := queued[i].BatchID
+		attemptID := queued[i].ID
+		if err := db.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Model(&db.SubTask{}).Where("id = ? AND tenant_id = ? AND status = ?", attemptID, queued[i].TenantID, subTaskStatusDispatching).Updates(map[string]interface{}{"status": "Pending", "stream_msg_id": subTaskQueuedMarker}).Error; err != nil {
+				return err
+			}
+			return tx.Model(&db.TaskBatch{}).Where("id = ? AND tenant_id = ? AND latest_attempt_id = ?", batchID, queued[i].TenantID, attemptID).Update("status", "Pending").Error
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func updateAutomaticStageStatus(ctx context.Context, batch db.TaskBatch, completed db.SubTask) error {
 	return db.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var derivation db.ScanStageDerivation
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("tenant_id = ? AND root_task_id = ? AND batch_id = ? AND stage = ?", batch.TenantID, batch.RootTaskID, batch.ID, batch.Kind).First(&derivation).Error; err != nil {
+		var root db.RootTask
+		if err := tx.Where("id = ? AND tenant_id = ?", batch.RootTaskID, batch.TenantID).First(&root).Error; err != nil {
 			return err
 		}
 		var latest db.SubTask
@@ -82,93 +172,87 @@ func updateAutomaticStageStatus(ctx context.Context, batch db.TaskBatch, complet
 				statusValue = db.ScanStageIntentFailed
 			}
 		}
-		if derivation.Status == statusValue && derivation.AttemptID == latest.ID {
-			return nil
-		}
-		updates := map[string]interface{}{"status": statusValue, "attempt_id": latest.ID, "updated_at": time.Now().UTC()}
-		if err := tx.Model(&derivation).Updates(updates).Error; err != nil {
-			return err
-		}
+
 		column := "risk_status"
 		if batch.Kind == automaticCredentialStage {
 			column = "credential_status"
 		}
+		if batch.Kind == automaticRiskStage {
+			aggregated, ready, err := aggregateAutomaticRiskStatus(tx, batch.TenantID, batch.RootTaskID)
+			if err != nil {
+				return err
+			}
+			if !ready {
+				if aggregated == db.ScanStageIntentDerived {
+					return recordTaskAudit(tx, root, "automatic_"+batch.Kind+"_terminal", completed.Status, latest.Status, "system", map[string]interface{}{"stage": batch.Kind, "batch_id": batch.ID, "attempt_id": latest.ID, "stage_status": aggregated, "aggregated": false})
+				}
+			} else {
+				statusValue = aggregated
+			}
+		}
 		if err := tx.Model(&db.ScanPolicyIntent{}).Where("tenant_id = ? AND root_task_id = ?", batch.TenantID, batch.RootTaskID).Update(column, statusValue).Error; err != nil {
 			return err
 		}
-		var root db.RootTask
-		if err := tx.Where("id = ? AND tenant_id = ?", batch.RootTaskID, batch.TenantID).First(&root).Error; err != nil {
+		// 阶段级派生行同步最新状态（行在首次派生时已创建）。
+		if err := tx.Model(&db.ScanStageDerivation{}).
+			Where("tenant_id = ? AND root_task_id = ? AND stage = ?", batch.TenantID, batch.RootTaskID, batch.Kind).
+			Updates(map[string]interface{}{"status": statusValue, "batch_id": batch.ID, "attempt_id": latest.ID, "updated_at": time.Now().UTC()}).Error; err != nil {
 			return err
 		}
 		return recordTaskAudit(tx, root, "automatic_"+batch.Kind+"_terminal", completed.Status, latest.Status, "system", map[string]interface{}{"stage": batch.Kind, "batch_id": batch.ID, "attempt_id": latest.ID, "stage_status": statusValue})
 	})
 }
 
-func (o *ScanStageOrchestrator) DeriveRoot(ctx context.Context, tenantID, rootTaskID string) error {
-	var queued []db.SubTask
-	err := db.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var intent db.ScanPolicyIntent
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("tenant_id = ? AND root_task_id = ?", tenantID, rootTaskID).First(&intent).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return nil
-			}
-			return err
-		}
-		ready, err := assetDiscoveryBatchesTerminal(tx, tenantID, rootTaskID)
-		if err != nil || !ready {
-			return err
-		}
-		var root db.RootTask
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND tenant_id = ?", rootTaskID, tenantID).First(&root).Error; err != nil {
-			return err
-		}
-		if intent.RiskStatus == db.ScanStageIntentPending {
-			attempt, err := o.deriveRiskValidation(ctx, tx, &intent, root)
-			if err != nil {
-				return err
-			}
-			if attempt != nil {
-				queued = append(queued, *attempt)
-			}
-		}
-		if intent.CredentialStatus == db.ScanStageIntentPending {
-			attempt, err := o.deriveCredentialValidation(ctx, tx, &intent, root)
-			if err != nil {
-				return err
-			}
-			if attempt != nil {
-				queued = append(queued, *attempt)
-			}
-		}
-		return tx.Save(&intent).Error
-	})
-	if err != nil {
-		return err
+func riskSiblingBatchID(assetBatchID string) string {
+	return assetBatchID + "-risk"
+}
+
+func aggregateAutomaticRiskStatus(tx *gorm.DB, tenantID, rootTaskID string) (string, bool, error) {
+	var assetBatches []db.TaskBatch
+	if err := tx.Where("tenant_id = ? AND root_task_id = ? AND kind = ? AND archived_at IS NULL", tenantID, rootTaskID, "asset_scan").
+		Order("id ASC").Find(&assetBatches).Error; err != nil {
+		return "", false, err
 	}
-	if len(queued) == 0 {
-		return nil
+	if len(assetBatches) == 0 {
+		return "", false, nil
 	}
-	if routerRuntime().TaskQueue == nil {
-		return errTaskCreateQueueUnavailable
-	}
-	for _, attempt := range queued {
-		protoTask, err := db.SubTaskToProto(&attempt)
+	failed := false
+	for _, assetBatch := range assetBatches {
+		var sibling db.TaskBatch
+		err := tx.Where("id = ? AND tenant_id = ? AND kind = ? AND archived_at IS NULL", riskSiblingBatchID(assetBatch.ID), tenantID, automaticRiskStage).
+			First(&sibling).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return db.ScanStageIntentDerived, false, nil
+		}
 		if err != nil {
-			return err
+			return "", false, err
 		}
-		if err := routerRuntime().TaskQueue.PushTask(ctx, protoTask); err != nil {
-			return err
+		var latest db.SubTask
+		if err := tx.Where("id = ? AND tenant_id = ?", sibling.LatestAttemptID, tenantID).First(&latest).Error; err != nil {
+			return "", false, err
 		}
-		if err := db.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if err := tx.Model(&db.SubTask{}).Where("id = ? AND tenant_id = ? AND status = ?", attempt.ID, attempt.TenantID, subTaskStatusDispatching).Updates(map[string]interface{}{"status": "Pending", "stream_msg_id": subTaskQueuedMarker}).Error; err != nil {
-				return err
-			}
-			return tx.Model(&db.TaskBatch{}).Where("id = ? AND tenant_id = ? AND latest_attempt_id = ?", attempt.BatchID, attempt.TenantID, attempt.ID).Update("status", "Pending").Error
-		}); err != nil {
-			return err
+		if !db.IsTerminalAttemptStatus(latest.Status) {
+			return db.ScanStageIntentDerived, false, nil
+		}
+		if db.CanonicalAttemptState(latest.Status) != db.AttemptStateCompleted {
+			failed = true
 		}
 	}
-	return nil
+	if failed {
+		return db.ScanStageIntentFailed, true, nil
+	}
+	return db.ScanStageIntentComplete, true, nil
+}
+
+func taskBatchLatestAttemptTerminal(tx *gorm.DB, batch db.TaskBatch) (bool, error) {
+	if strings.TrimSpace(batch.LatestAttemptID) == "" {
+		return false, nil
+	}
+	var latest db.SubTask
+	if err := tx.Where("id = ? AND tenant_id = ?", batch.LatestAttemptID, batch.TenantID).First(&latest).Error; err != nil {
+		return false, err
+	}
+	return db.IsTerminalAttemptStatus(latest.Status), nil
 }
 
 func assetDiscoveryBatchesTerminal(tx *gorm.DB, tenantID, rootTaskID string) (bool, error) {
@@ -184,69 +268,166 @@ func assetDiscoveryBatchesTerminal(tx *gorm.DB, tenantID, rootTaskID string) (bo
 	return terminal == count, err
 }
 
-func (o *ScanStageOrchestrator) deriveRiskValidation(ctx context.Context, tx *gorm.DB, intent *db.ScanPolicyIntent, root db.RootTask) (*db.SubTask, error) {
+// DeriveRoot 是补漏清扫器：为"已终态但没有风险兄弟批次"的资产批次补派生
+// （服务重启、手动重置、历史遗留等场景）；实时衔接由 HandleAttemptTerminal
+// 的流水线化路径完成。凭据验证保持全局单批语义。
+func (o *ScanStageOrchestrator) DeriveRoot(ctx context.Context, tenantID, rootTaskID string) error {
+	var queued []db.SubTask
+	err := db.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var intent db.ScanPolicyIntent
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("tenant_id = ? AND root_task_id = ?", tenantID, rootTaskID).First(&intent).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				return nil
+			}
+			return err
+		}
+		var root db.RootTask
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND tenant_id = ?", rootTaskID, tenantID).First(&root).Error; err != nil {
+			return err
+		}
+		if intent.RiskStatus == db.ScanStageIntentPending || intent.RiskStatus == db.ScanStageIntentDerived {
+			siblings, err := o.sweepRiskSiblingsForTerminalAssetBatches(ctx, tx, &intent, root)
+			if err != nil {
+				return err
+			}
+			queued = append(queued, siblings...)
+		}
+		if intent.CredentialStatus == db.ScanStageIntentPending {
+			ready, err := assetDiscoveryBatchesTerminal(tx, tenantID, rootTaskID)
+			if err != nil {
+				return err
+			}
+			if ready {
+				attempt, err := o.deriveCredentialValidation(ctx, tx, &intent, root)
+				if err != nil {
+					return err
+				}
+				if attempt != nil {
+					queued = append(queued, *attempt)
+				}
+			}
+		}
+		return tx.Save(&intent).Error
+	})
+	if err != nil {
+		return err
+	}
+	return o.dispatchQueuedValidations(ctx, queued)
+}
+
+// sweepRiskSiblingsForTerminalAssetBatches 为缺少风险兄弟批次的终态资产批次
+// 逐个补派生，返回新建的兄弟批次尝试列表。
+func (o *ScanStageOrchestrator) sweepRiskSiblingsForTerminalAssetBatches(ctx context.Context, tx *gorm.DB, intent *db.ScanPolicyIntent, root db.RootTask) ([]db.SubTask, error) {
+	var assetBatches []db.TaskBatch
+	if err := tx.Where("tenant_id = ? AND root_task_id = ? AND kind = ? AND archived_at IS NULL", root.TenantID, root.ID, "asset_scan").
+		Order("id ASC").Find(&assetBatches).Error; err != nil {
+		return nil, err
+	}
+	created := make([]db.SubTask, 0)
+	for _, assetBatch := range assetBatches {
+		terminal, err := taskBatchLatestAttemptTerminal(tx, assetBatch)
+		if err != nil {
+			return nil, err
+		}
+		if !terminal {
+			continue
+		}
+		sibling, err := o.deriveRiskSiblingForAssetBatchTx(ctx, tx, intent, root, assetBatch, "")
+		if err != nil {
+			return nil, err
+		}
+		if sibling != nil {
+			created = append(created, *sibling)
+		}
+	}
+	return created, nil
+}
+
+// deriveRiskSiblingForAssetBatch 为单个资产批次派生其专属的风险验证兄弟
+// 批次（流水线化衔接）：目标与指纹均限定在该资产批次范围内，Agent 本地完成
+// workflow→POC 匹配。空指纹的资产批次也会创建空兄弟批次（原生路径立即正常
+// 完结），保证"每个资产批次恰好对应一个风险兄弟批次"的聚合判定语义。
+// preferredAgentID 非空时作为亲和提示（发现该资产的 Agent 优先续扫）。
+func (o *ScanStageOrchestrator) deriveRiskSiblingForAssetBatch(ctx context.Context, tx *gorm.DB, intent *db.ScanPolicyIntent, root db.RootTask, assetBatch db.TaskBatch, preferredAgentID string) (*db.SubTask, error) {
+	return o.deriveRiskSiblingForAssetBatchTx(ctx, tx, intent, root, assetBatch, preferredAgentID)
+}
+
+func (o *ScanStageOrchestrator) deriveRiskSiblingForAssetBatchTx(ctx context.Context, tx *gorm.DB, intent *db.ScanPolicyIntent, root db.RootTask, assetBatch db.TaskBatch, preferredAgentID string) (*db.SubTask, error) {
 	if currentRuleVersionTx(tx) != root.RuleVersion {
+		// 规则版本漂移时跳过派生：旧版本计划对已升级的规则包没有意义。
 		return nil, recordSkippedDerivation(tx, intent, automaticRiskStage, "rule_version_drift")
 	}
-	preview, err := buildTaskRiskValidationPreview(ctx, root.TenantID, root, riskValidationPreviewOptions{})
+	var policy scanpolicy.Policy
+	if err := json.Unmarshal([]byte(intent.PolicyJSON), &policy); err != nil {
+		return nil, fmt.Errorf("decode task policy intent: %w", err)
+	}
+
+	riskBatchID := riskSiblingBatchID(assetBatch.ID)
+	var existing db.TaskBatch
+	if err := tx.Where("id = ?", riskBatchID).First(&existing).Error; err == nil {
+		return nil, nil // 幂等：兄弟批次已存在（重放/清扫竞态）
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	targetPrints, err := loadBatchFingerprintMap(ctx, tx, root, assetBatch.ID)
 	if err != nil {
 		return nil, err
 	}
-	selected := make([]riskValidationCandidate, 0, len(preview.Candidates))
-	var estimatedRequests int64
-	for _, candidate := range preview.Candidates {
-		if len(candidate.WorkflowSources) > 0 {
-			selected = append(selected, candidate)
-			estimatedRequests = saturatingAdd(estimatedRequests, candidate.EstimatedRequests)
+	// 零指纹命中的批次同样创建空兄弟批次（原生路径立即正常完结），
+	// 保持"每个资产批次恰好对应一个风险兄弟批次"的稳定聚合语义。
+	targets := make([]string, 0, len(targetPrints))
+	for target := range targetPrints {
+		targets = append(targets, target)
+	}
+	sort.Strings(targets)
+
+	matchedProducts := 0
+	for _, prints := range targetPrints {
+		matchedProducts += len(prints)
+	}
+	var allocation validationExecutionAllocation
+	if estimatedRequests := int64(len(targets)) * riskValidationEstRequestsPerTarget; estimatedRequests > 0 {
+		alloc, allocErr := validationAllocation(*intent, root.ID, automaticRiskStage, estimatedRequests)
+		if allocErr != nil {
+			return nil, allocErr
 		}
-	}
-	var assets []db.Asset
-	if err := tx.WithContext(ctx).Where("tenant_id = ? AND project_id = ? AND root_task_id = ?", root.TenantID, root.ProjectID, root.ID).Order("target, port").Find(&assets).Error; err != nil {
-		return nil, err
-	}
-	var activeFingerprintHits []db.FingerprintHit
-	if err := tx.WithContext(ctx).Where("tenant_id = ? AND project_id = ? AND root_task_id = ?", root.TenantID, root.ProjectID, root.ID).Order("target, product_name").Find(&activeFingerprintHits).Error; err != nil {
-		return nil, err
-	}
-	var activeFingerprintRules []db.ActiveFingerprintRule
-	if err := tx.WithContext(ctx).
-		Where("tenant_id = ? AND enabled = ? AND auto_eligible = ? AND LOWER(state) = ?", root.TenantID, true, true, "approved").
-		Order("source_file").Find(&activeFingerprintRules).Error; err != nil {
-		return nil, err
-	}
-	goPocTargets, goPocEstimated := riskGoPocTargetsFromObservations(assets, selected, activeFingerprintHits, activeFingerprintRules)
-	if len(selected) == 0 && len(goPocTargets) == 0 {
-		return nil, recordSkippedDerivation(tx, intent, automaticRiskStage, "no_approved_workflow_matches")
+		allocation = alloc
+	} else {
+		// 零目标空批次：原生路径立即完结，预算字段给最小占位即可。
+		allocation = validationExecutionAllocation{BudgetID: riskBatchID + "-budget", TargetConcurrency: 1, RateLimit: 30, RequestBudget: 1}
 	}
 	revision, err := db.CurrentTaskConfigRevision(tx, root)
 	if err != nil {
 		return nil, err
 	}
-	var config string
-	var targets []string
-	if len(selected) > 0 {
-		config, targets, _, _, err = buildRiskValidationAttemptConfig(revision, root.RuleVersion, selected)
-	} else {
-		config, err = buildGoPocOnlyRiskValidationAttemptConfig(revision, root.RuleVersion)
+	config := make(map[string]interface{})
+	if strings.TrimSpace(revision.Config) != "" {
+		if err := json.Unmarshal([]byte(revision.Config), &config); err != nil {
+			return nil, fmt.Errorf("decode current task config: %w", err)
+		}
 	}
-	if err != nil {
-		return nil, err
+	config["ExecutionMode"] = automaticRiskStage
+	config["RequiredRuleVersion"] = strings.TrimSpace(root.RuleVersion)
+	config["NoPoc"] = false
+	config["GolangPoc"] = false
+	config["PocNameForSearch"] = ""
+	config["Hunter"], config["Fofa"], config["Quake"] = false, false, false
+	config["TargetFingerprints"] = targetPrints
+	config["AllowHighRiskAutoExecution"] = policy.Authorization.AllowHighRiskAutoExecution
+	config["ValidationBudgetID"] = allocation.BudgetID
+	config["ValidationTargetConcurrency"] = allocation.TargetConcurrency
+	config["ValidationRateLimit"] = allocation.RateLimit
+	config["ValidationRequestBudget"] = allocation.RequestBudget
+	config["ValidationEstimatedRequests"] = allocation.EstimatedRequests
+	if preferredAgentID != "" {
+		applyValidationAffinity(config, validationAffinity{
+			AgentID:          preferredAgentID,
+			AgentUntilUnix:   time.Now().UTC().Add(60 * time.Second).Unix(),
+			NetworkUntilUnix: time.Now().UTC().Add(120 * time.Second).Unix(),
+		})
 	}
-	config, targets, err = configWithRiskGoPocTargets(config, targets, goPocTargets)
-	if err != nil {
-		return nil, err
-	}
-	estimatedRequests = saturatingAdd(estimatedRequests, goPocEstimated)
-	allocation, err := validationAllocation(*intent, root.ID, automaticRiskStage, estimatedRequests)
-	if err != nil {
-		return nil, err
-	}
-	config, err = configWithValidationAllocation(config, allocation)
-	if err != nil {
-		return nil, err
-	}
-	affinity := deriveValidationAffinity(tx, root)
-	config, err = configWithValidationAffinity(config, affinity)
+	configJSON, err := json.Marshal(config)
 	if err != nil {
 		return nil, err
 	}
@@ -256,132 +437,49 @@ func (o *ScanStageOrchestrator) deriveRiskValidation(ctx context.Context, tx *go
 	}
 	rules.Match["risk_validation"] = []string{"v1"}
 	rules.Match["gopoc_scoped"] = []string{"v1"}
-	observationHash := hashJSON(struct {
-		Nuclei []riskValidationCandidate `json:"nuclei"`
-		GoPoc  []scanpolicy.GoPocTarget  `json:"gopoc"`
-	}{selected, goPocTargets})
+	observationHash := hashJSON(targetPrints)
 	planHash := hashJSON(struct {
-		NucleiPlan string                   `json:"nuclei_plan"`
-		Catalog    string                   `json:"gopoc_catalog"`
-		Targets    []scanpolicy.GoPocTarget `json:"gopoc_targets"`
-	}{preview.PlanHash, scanpolicy.GoPocCatalogSHA256(), goPocTargets})
-	return createAutomaticStageBatch(tx, intent, root, automaticRiskStage, config, targets, observationHash, planHash, revision, rules, len(selected)+len(goPocTargets), map[string]interface{}{"nuclei_candidate_count": len(selected), "gopoc_candidate_count": len(goPocTargets), "workflow_scoped": true, "affinity": affinity, "execution_allocation": allocation})
+		RuleVersion        string              `json:"rule_version"`
+		Fingerprints       map[string][]string `json:"fingerprints"`
+		AllowHighRiskAuto  bool                `json:"allow_high_risk_auto"`
+		GoPocCatalogSHA256 string              `json:"gopoc_catalog"`
+	}{root.RuleVersion, targetPrints, policy.Authorization.AllowHighRiskAutoExecution, scanpolicy.GoPocCatalogSHA256()})
+	timeoutSec := automaticStageTimeoutSec(revision.TimeoutSec, len(targets))
+	return createAutomaticStageBatchWithIDs(tx, intent, root, automaticRiskStage, string(configJSON), targets, observationHash, planHash, revision, rules, timeoutSec, matchedProducts, map[string]interface{}{"matched_products": matchedProducts, "target_count": len(targets), "timeout_sec": timeoutSec, "workflow_scoped": true, "preferred_agent": preferredAgentID, "execution_allocation": allocation, "high_risk_auto_authorized": policy.Authorization.AllowHighRiskAutoExecution, "matching": "agent_native", "source_asset_batch": assetBatch.ID}, riskBatchID, riskBatchID+"-attempt-1")
 }
 
-func buildGoPocOnlyRiskValidationAttemptConfig(revision db.TaskConfigRevision, ruleVersion string) (string, error) {
-	config := make(map[string]interface{})
-	if strings.TrimSpace(revision.Config) != "" {
-		if err := json.Unmarshal([]byte(revision.Config), &config); err != nil {
-			return "", fmt.Errorf("decode current task config: %w", err)
-		}
+// loadBatchFingerprintMap 汇总指定资产批次上报的指纹（按其全部尝试聚合），
+// 返回目标 → 去重排序的产品名列表。
+func loadBatchFingerprintMap(ctx context.Context, tx *gorm.DB, root db.RootTask, assetBatchID string) (map[string][]string, error) {
+	prints := make(map[string][]string)
+	var hits []db.FingerprintHit
+	if err := tx.WithContext(ctx).
+		Where("tenant_id = ? AND project_id = ? AND root_task_id = ? AND task_id IN (?)",
+			root.TenantID, root.ProjectID, root.ID,
+			tx.Model(&db.SubTask{}).Select("id").Where("tenant_id = ? AND root_task_id = ? AND batch_id = ?", root.TenantID, root.ID, assetBatchID)).
+		Order("target, product_name").Find(&hits).Error; err != nil {
+		return nil, fmt.Errorf("load fingerprint hits for batch %s: %w", assetBatchID, err)
 	}
-	config["ExecutionMode"] = automaticRiskStage
-	config["RequiredRuleVersion"] = strings.TrimSpace(ruleVersion)
-	config["RiskValidationTargets"] = map[string][]string{}
-	config["RiskValidationPocHashes"] = map[string]string{}
-	config["NoPoc"] = false
-	config["GolangPoc"] = false
-	config["PocNameForSearch"] = ""
-	config["Hunter"], config["Fofa"], config["Quake"] = false, false, false
-	encoded, err := json.Marshal(config)
-	return string(encoded), err
-}
-
-func riskGoPocTargetsFromObservations(assets []db.Asset, selected []riskValidationCandidate, activeHits []db.FingerprintHit, activeRules []db.ActiveFingerprintRule) ([]scanpolicy.GoPocTarget, int64) {
-	items := make([]scanpolicy.GoPocTarget, 0)
-	for _, asset := range assets {
-		host := assetHost(asset)
-		if host == "" || asset.Port < 1 || asset.Port > 65535 {
-			continue
-		}
-		service := strings.ToLower(strings.TrimSpace(firstNonEmpty(asset.Service, asset.Protocol)))
-		switch service {
-		case "tcp", "protocol", "portscan", "unknown protocol", "":
-			service = "unknown"
-		}
-		observation := sha256.Sum256([]byte(strings.Join([]string{asset.Target, asset.URL, asset.Protocol, asset.Service, strconv.Itoa(asset.Port)}, "\x00")))
-		items = append(items, scanpolicy.GoPocTargetsForEndpoint(net.JoinHostPort(host, strconv.Itoa(asset.Port)), service, asset.Port, hex.EncodeToString(observation[:]), scanpolicy.GoPocVulnerabilityCheck)...)
-	}
-	for _, candidate := range selected {
-		pocID := strings.TrimSuffix(strings.ToLower(filepath.Base(candidate.PocFile)), strings.ToLower(filepath.Ext(candidate.PocFile)))
-		plugin := ""
-		switch pocID {
-		case "yongyou_u9_viewstate":
-			plugin = "ViewState-Key-Crack"
-		}
-		if plugin == "" {
-			continue
-		}
-		observation := sha256.Sum256([]byte(hashJSON(candidate)))
-		item, err := scanpolicy.GoPocTargetForSignal(candidate.Endpoint, plugin, "nuclei", pocID, hex.EncodeToString(observation[:]))
-		if err == nil {
-			items = append(items, item)
-		}
-	}
-	items = append(items, riskGoPocTargetsFromActiveFingerprints(activeHits, activeRules)...)
-	seen := make(map[string]struct{}, len(items))
-	result := make([]scanpolicy.GoPocTarget, 0, len(items))
-	var estimated int64
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].Target == items[j].Target {
-			return items[i].Plugin < items[j].Plugin
-		}
-		return items[i].Target < items[j].Target
-	})
-	for _, item := range items {
-		key := strings.ToLower(item.Target) + "\x00" + item.Plugin
-		if _, duplicate := seen[key]; duplicate {
-			continue
-		}
-		seen[key] = struct{}{}
-		result = append(result, item)
-		estimated = saturatingAdd(estimated, int64(item.RequestCost))
-	}
-	return result, estimated
-}
-
-func riskGoPocTargetsFromActiveFingerprints(hits []db.FingerprintHit, rules []db.ActiveFingerprintRule) []scanpolicy.GoPocTarget {
-	rulesBySignal := make(map[string]db.ActiveFingerprintRule, len(rules))
-	ambiguousSignals := make(map[string]struct{})
-	for _, rule := range rules {
-		signal := strings.ToLower(strings.TrimSuffix(filepath.Base(strings.TrimSpace(rule.SourceFile)), filepath.Ext(rule.SourceFile)))
-		if signal == "" || strings.TrimSpace(rule.Name) == "" || strings.TrimSpace(rule.ContentHash) == "" {
-			continue
-		}
-		if _, ambiguous := ambiguousSignals[signal]; ambiguous {
-			continue
-		}
-		if _, duplicate := rulesBySignal[signal]; duplicate {
-			delete(rulesBySignal, signal)
-			ambiguousSignals[signal] = struct{}{}
-			continue
-		}
-		rulesBySignal[signal] = rule
-	}
-
-	descriptors := scanpolicy.GoPocDescriptors()
-	result := make([]scanpolicy.GoPocTarget, 0)
 	for _, hit := range hits {
-		signal := behaviorProbeSignal(hit.Evidence)
-		rule, ok := rulesBySignal[signal]
-		if !ok || !strings.EqualFold(strings.TrimSpace(hit.ProductName), strings.TrimSpace(rule.ProductName)) {
+		target := strings.TrimSpace(hit.Target)
+		product := strings.TrimSpace(hit.ProductName)
+		if target == "" || product == "" {
 			continue
 		}
-		observation := sha256.Sum256([]byte(strings.Join([]string{
-			strconv.FormatUint(uint64(hit.ID), 10), hit.Target, hit.ProductName, hit.Evidence,
-			rule.Name, rule.ContentHash, strconv.Itoa(rule.Version),
-		}, "\x00")))
-		for _, descriptor := range descriptors {
-			if descriptor.Capability != scanpolicy.GoPocVulnerabilityCheck || !containsFold(descriptor.NucleiTemplates, rule.Name) {
-				continue
-			}
-			item, err := scanpolicy.GoPocTargetForSignal(hit.Target, descriptor.Plugin, "nuclei", rule.Name, hex.EncodeToString(observation[:]))
-			if err == nil {
-				result = append(result, item)
+		list := prints[target]
+		dup := false
+		for _, existing := range list {
+			if existing == product {
+				dup = true
+				break
 			}
 		}
+		if !dup {
+			list = append(list, product)
+		}
+		prints[target] = list
 	}
-	return result
+	return prints, nil
 }
 
 func behaviorProbeSignal(evidence string) string {
@@ -415,32 +513,6 @@ func containsFold(values []string, expected string) bool {
 		}
 	}
 	return false
-}
-
-func configWithRiskGoPocTargets(raw string, targets []string, goPocTargets []scanpolicy.GoPocTarget) (string, []string, error) {
-	var config map[string]interface{}
-	if err := json.Unmarshal([]byte(raw), &config); err != nil {
-		return "", nil, err
-	}
-	config["RiskValidationGoPocTargets"] = goPocTargets
-	config["GoPocCatalogSHA256"] = scanpolicy.GoPocCatalogSHA256()
-	seen := make(map[string]struct{}, len(targets)+len(goPocTargets))
-	merged := make([]string, 0, len(targets)+len(goPocTargets))
-	for _, target := range targets {
-		if _, ok := seen[target]; !ok {
-			seen[target] = struct{}{}
-			merged = append(merged, target)
-		}
-	}
-	for _, item := range goPocTargets {
-		if _, ok := seen[item.Target]; !ok {
-			seen[item.Target] = struct{}{}
-			merged = append(merged, item.Target)
-		}
-	}
-	sort.Strings(merged)
-	encoded, err := json.Marshal(config)
-	return string(encoded), merged, err
 }
 
 type credentialTargetEnvelope struct {
@@ -524,7 +596,7 @@ func (o *ScanStageOrchestrator) deriveCredentialValidation(ctx context.Context, 
 	rules.Match["credential_validation"] = []string{"v1"}
 	rules.Match["transport_tls"] = []string{"verified"}
 	observationHash := hashJSON(targets)
-	return createAutomaticStageBatchWithIDs(tx, intent, root, automaticCredentialStage, string(encoded), endpoints, observationHash, intent.PlanHash, revision, rules, len(targets), map[string]interface{}{"service_count": len(targets), "custom_pair_count": len(pairs), "built_in_dictionary": true, "affinity": affinity, "execution_allocation": allocation}, batchID, attemptID)
+	return createAutomaticStageBatchWithIDs(tx, intent, root, automaticCredentialStage, string(encoded), endpoints, observationHash, intent.PlanHash, revision, rules, revision.TimeoutSec, len(targets), map[string]interface{}{"service_count": len(targets), "custom_pair_count": len(pairs), "built_in_dictionary": true, "affinity": affinity, "execution_allocation": allocation}, batchID, attemptID)
 }
 
 func validationAllocation(intent db.ScanPolicyIntent, budgetID, stage string, estimated int64) (validationExecutionAllocation, error) {
@@ -718,29 +790,67 @@ func prepareRetriedAutomaticValidation(tx *gorm.DB, root db.RootTask, batch *db.
 	return db.MarkAutomaticValidationStageDerived(tx, root, *batch, next.ID)
 }
 
-func createAutomaticStageBatch(tx *gorm.DB, intent *db.ScanPolicyIntent, root db.RootTask, stage, config string, targets []string, observationHash, planHash string, revision db.TaskConfigRevision, rules db.AgentSelectorRules, itemCount int, summary map[string]interface{}) (*db.SubTask, error) {
-	batchID := root.ID + "-auto-" + strings.ReplaceAll(stage, "_validation", "")
-	return createAutomaticStageBatchWithIDs(tx, intent, root, stage, config, targets, observationHash, planHash, revision, rules, itemCount, summary, batchID, batchID+"-attempt-1")
+// riskValidationEstRequestsPerTarget 是无显式映射时的粗粒度请求预算基数：
+// Agent 本地匹配后实际消耗由 sealed request budget 兜底限流。
+const riskValidationEstRequestsPerTarget = 25
+
+// automaticStageTimeoutScaleThreshold / Ceil 控制验证阶段超时伸缩：
+// 小批次维持操作员设定的基础超时；大批次按目标规模线性放大并封顶，
+// 避免"健康但缓慢"的执行被反复杀死后进入超时循环。
+const (
+	automaticStageTimeoutScaleThreshold = 500
+	automaticStageTimeoutCeil           = 24 * 3600
+)
+
+func automaticStageTimeoutSec(base int, targetCount int) int {
+	if base <= 0 {
+		base = 3600
+	}
+	if targetCount <= automaticStageTimeoutScaleThreshold {
+		return base
+	}
+	scaled := base * (targetCount/automaticStageTimeoutScaleThreshold + 1)
+	if scaled > automaticStageTimeoutCeil {
+		scaled = automaticStageTimeoutCeil
+	}
+	return scaled
 }
 
-func createAutomaticStageBatchWithIDs(tx *gorm.DB, intent *db.ScanPolicyIntent, root db.RootTask, stage, config string, targets []string, observationHash, planHash string, revision db.TaskConfigRevision, rules db.AgentSelectorRules, itemCount int, summary map[string]interface{}, batchID, attemptID string) (*db.SubTask, error) {
+// loadTaskFingerprintMap 汇总本任务资产发现阶段上报的指纹，返回
+// 目标 → 去重排序的产品名列表。
+func createAutomaticStageBatch(tx *gorm.DB, intent *db.ScanPolicyIntent, root db.RootTask, stage, config string, targets []string, observationHash, planHash string, revision db.TaskConfigRevision, rules db.AgentSelectorRules, timeoutSec int, itemCount int, summary map[string]interface{}) (*db.SubTask, error) {
+	batchID := root.ID + "-auto-" + strings.ReplaceAll(stage, "_validation", "")
+	return createAutomaticStageBatchWithIDs(tx, intent, root, stage, config, targets, observationHash, planHash, revision, rules, timeoutSec, itemCount, summary, batchID, batchID+"-attempt-1")
+}
+
+func createAutomaticStageBatchWithIDs(tx *gorm.DB, intent *db.ScanPolicyIntent, root db.RootTask, stage, config string, targets []string, observationHash, planHash string, revision db.TaskConfigRevision, rules db.AgentSelectorRules, timeoutSec int, itemCount int, summary map[string]interface{}, batchID, attemptID string) (*db.SubTask, error) {
 	var sequence int
 	if err := tx.Model(&db.TaskBatch{}).Select("COALESCE(MAX(sequence), -1) + 1").Where("tenant_id = ? AND root_task_id = ?", root.TenantID, root.ID).Scan(&sequence).Error; err != nil {
 		return nil, err
 	}
 	targetJSON, _ := json.Marshal(targets)
 	summaryJSON, _ := json.Marshal(summary)
-	batch := db.TaskBatch{ID: batchID, TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Sequence: sequence, Kind: stage, TargetType: stage, Targets: string(targetJSON), TargetCount: len(targets), Status: subTaskStatusDispatching, ControlState: string(db.BatchControlActive), ConfigVersion: revision.Version, RuleVersion: root.RuleVersion, Priority: revision.Priority, TimeoutSec: revision.TimeoutSec, AgentSelector: revision.AgentSelector, AgentSelectorRules: db.SelectorRulesToJSON(rules), CurrentAttemptNo: 1, AttemptCount: 1, LatestAttemptID: attemptID, CreatedBy: intent.AuthorizationActorID}
-	attempt := db.SubTask{ID: attemptID, TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, BatchID: batchID, AttemptNo: 1, Trigger: "automatic_" + stage, ChunkTargets: string(targetJSON), Status: subTaskStatusDispatching, Config: config, Priority: revision.Priority, TimeoutSec: revision.TimeoutSec, MaxRetry: 1, ConfigVersion: revision.Version, RuleVersion: root.RuleVersion, AgentSelector: revision.AgentSelector, AgentSelectorRules: db.SelectorRulesToJSON(rules)}
-	derivation := db.ScanStageDerivation{TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Stage: stage, Status: db.ScanStageIntentDerived, PlanHash: planHash, ObservationHash: observationHash, BatchID: batchID, AttemptID: attemptID, ItemCount: itemCount, Summary: string(summaryJSON)}
+	batch := db.TaskBatch{ID: batchID, TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Sequence: sequence, Kind: stage, TargetType: stage, Targets: string(targetJSON), TargetCount: len(targets), Status: subTaskStatusDispatching, ControlState: string(db.BatchControlActive), ConfigVersion: revision.Version, RuleVersion: root.RuleVersion, Priority: revision.Priority, TimeoutSec: timeoutSec, AgentSelector: revision.AgentSelector, AgentSelectorRules: db.SelectorRulesToJSON(rules), CurrentAttemptNo: 1, AttemptCount: 1, LatestAttemptID: attemptID, CreatedBy: intent.AuthorizationActorID}
+	attempt := db.SubTask{ID: attemptID, TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, BatchID: batchID, AttemptNo: 1, Trigger: "automatic_" + stage, ChunkTargets: string(targetJSON), Status: subTaskStatusDispatching, Config: config, Priority: revision.Priority, TimeoutSec: timeoutSec, MaxRetry: 1, ConfigVersion: revision.Version, RuleVersion: root.RuleVersion, AgentSelector: revision.AgentSelector, AgentSelectorRules: db.SelectorRulesToJSON(rules)}
 	if err := tx.Create(&batch).Error; err != nil {
 		return nil, err
 	}
 	if err := tx.Create(&attempt).Error; err != nil {
 		return nil, err
 	}
-	if err := tx.Create(&derivation).Error; err != nil {
+	// 派生行是阶段级摘要（tenant+root+stage 唯一）：多兄弟批次时仅在首次
+	// 创建，后续兄弟批次只追加 task_batches/sub_tasks 行。
+	var stageRows int64
+	if err := tx.Model(&db.ScanStageDerivation{}).
+		Where("tenant_id = ? AND root_task_id = ? AND stage = ?", root.TenantID, root.ID, stage).
+		Count(&stageRows).Error; err != nil {
 		return nil, err
+	}
+	if stageRows == 0 {
+		derivation := db.ScanStageDerivation{TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Stage: stage, Status: db.ScanStageIntentDerived, PlanHash: planHash, ObservationHash: observationHash, BatchID: batchID, AttemptID: attemptID, ItemCount: itemCount, Summary: string(summaryJSON)}
+		if err := tx.Create(&derivation).Error; err != nil {
+			return nil, err
+		}
 	}
 	if stage == automaticRiskStage {
 		intent.RiskStatus = db.ScanStageIntentDerived
@@ -788,7 +898,11 @@ func (o *ScanStageOrchestrator) Reconcile(ctx context.Context) error {
 		return err
 	}
 	var intents []db.ScanPolicyIntent
-	if err := db.DB.WithContext(ctx).Where("risk_status = ? OR credential_status = ?", db.ScanStageIntentPending, db.ScanStageIntentPending).Limit(100).Find(&intents).Error; err != nil {
+	if err := db.DB.WithContext(ctx).Where(
+		"risk_status IN ? OR credential_status = ?",
+		[]string{db.ScanStageIntentPending, db.ScanStageIntentDerived},
+		db.ScanStageIntentPending,
+	).Limit(100).Find(&intents).Error; err != nil {
 		return err
 	}
 	for _, intent := range intents {
