@@ -436,7 +436,6 @@ func (o *ScanStageOrchestrator) deriveRiskSiblingForAssetBatchTx(ctx context.Con
 		rules.Match = db.SelectorValues{}
 	}
 	rules.Match["risk_validation"] = []string{"v1"}
-	rules.Match["gopoc_scoped"] = []string{"v1"}
 	observationHash := hashJSON(targetPrints)
 	planHash := hashJSON(struct {
 		RuleVersion        string              `json:"rule_version"`
