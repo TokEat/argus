@@ -1,8 +1,8 @@
 // Package subdomainpassive implements Server-side passive subdomain
-// enumeration for domain batches. Collection runs once per domain before
-// dispatch, is cached across tasks, and its results are sealed into the
-// attempt config so Agents no longer query public passive sources
-// (deduplicating work across concurrently dispatched Agents).
+// enumeration for domain batches. Collection runs once per registrable apex
+// (eTLD+1) before dispatch, is cached across tasks, and its results are
+// sealed into the attempt config so Agents no longer query public passive
+// sources (deduplicating work across concurrently dispatched Agents).
 package subdomainpassive
 
 import (

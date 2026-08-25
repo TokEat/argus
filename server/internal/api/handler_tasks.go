@@ -603,7 +603,7 @@ func createTask(c *gin.Context) {
 			AgentSelectorRules: rulesJSON,
 		})
 		if holdPassive {
-			domainsJSON, _ := json.Marshal(batch.Targets)
+			domainsJSON, _ := json.Marshal(subdomainpassive.CollectionDomains(batch.Targets))
 			passiveJobs = append(passiveJobs, db.SubdomainPassiveJob{
 				ID:         subdomainpassive.PassiveJobID(attemptID),
 				TenantID:   tenantID,

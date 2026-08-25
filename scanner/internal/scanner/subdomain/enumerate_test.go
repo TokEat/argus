@@ -121,6 +121,40 @@ func TestEnumerateInjectedDomainSkipsSubfinderEvenWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestApexDomainUsesRegistrableRoot(t *testing.T) {
+	if got := apexDomain("harbor-arm.uhomecp.com"); got != "uhomecp.com" {
+		t.Fatalf("apexDomain(harbor-arm.uhomecp.com) = %q, want uhomecp.com", got)
+	}
+	if got := apexDomain("jslgroup.cn"); got != "jslgroup.cn" {
+		t.Fatalf("apexDomain(jslgroup.cn) = %q, want jslgroup.cn", got)
+	}
+}
+
+func TestEnumerateInjectedApexCoversFQDNTarget(t *testing.T) {
+	original := runDNSBruteforce
+	t.Cleanup(func() { runDNSBruteforce = original })
+	runDNSBruteforce = func(_ string, _ int, _ func(string), _ []string, _ string) []string {
+		t.Fatal("bruteforce should be disabled")
+		return nil
+	}
+
+	var emitted []ddout.OutputMessage
+	got := Enumerate([]string{"www.example.test", "api.example.test"}, Config{
+		NoSubdomainBruteForce: true,
+		NoSubFinder:           false,
+		Injected:              map[string][]string{"example.test": {"www.example.test", "api.example.test", "mail.example.test"}},
+		EmitFunc:              func(msg ddout.OutputMessage) { emitted = append(emitted, msg) },
+	})
+	if !slices.Equal(got, []string{"mail.example.test"}) {
+		t.Fatalf("results = %v, want new hosts only after dropping inputs", got)
+	}
+	for _, msg := range emitted {
+		if msg.Type == "DNS-SubFinder" && (msg.Domain == "www.example.test" || msg.Domain == "api.example.test") {
+			t.Fatalf("passive emit must not repeat input %q", msg.Domain)
+		}
+	}
+}
+
 func TestEnumerateEmptyInjectedListStillSkipsSubfinder(t *testing.T) {
 	original := runDNSBruteforce
 	t.Cleanup(func() { runDNSBruteforce = original })

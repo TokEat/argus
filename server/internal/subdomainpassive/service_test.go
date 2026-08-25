@@ -180,6 +180,42 @@ func TestClaimSealGatesOnCapabilityAndConfig(t *testing.T) {
 	if out := ClaimSeal(store, capable, chunk, passiveOff); string(out) != string(passiveOff) {
 		t.Fatal("passive-disabled config must pass through unchanged")
 	}
+
+	fqdn := ClaimSeal(store, capable, []string{"www.example.test"}, config)
+	var fqdnPayload map[string]interface{}
+	if err := json.Unmarshal(fqdn, &fqdnPayload); err != nil {
+		t.Fatal(err)
+	}
+	if fqdnPayload["NoSubFinder"] != true {
+		t.Fatal("FQDN under a cached apex must count as full coverage")
+	}
+	results, _ := fqdnPayload["SubdomainPassiveResults"].(map[string]interface{})
+	if _, ok := results["example.test"]; !ok {
+		t.Fatalf("sealed results must be keyed by apex, got %v", results)
+	}
+}
+
+func TestClaimSealDropsHostsAlreadyInChunkTargets(t *testing.T) {
+	store := testStore(t)
+	now := time.Now()
+	subdomains, _ := json.Marshal([]string{"www.example.test", "mail.example.test"})
+	if err := store.Create(&db.SubdomainPassiveCache{
+		Domain: "example.test", Subdomains: string(subdomains), Sources: `["crt.name"]`,
+		CollectedAt: now, ExpiresAt: now.Add(time.Hour),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	sealed := ClaimSeal(store, `{"passive_server":"v1"}`, []string{"www.example.test"}, []byte(`{"Subdomain":true,"NoSubFinder":false}`))
+	var payload struct {
+		SubdomainPassiveResults map[string][]string
+	}
+	if err := json.Unmarshal(sealed, &payload); err != nil {
+		t.Fatal(err)
+	}
+	got := payload.SubdomainPassiveResults["example.test"]
+	if len(got) != 1 || got[0] != "mail.example.test" {
+		t.Fatalf("sealed hosts = %v, want [mail.example.test] after dropping the input FQDN", got)
+	}
 }
 
 func TestCollectionProgressForTaskAggregatesJobs(t *testing.T) {

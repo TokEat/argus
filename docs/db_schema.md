@@ -354,7 +354,7 @@
 
 #### `subdomain_passive_cache` / `subdomain_passive_jobs`
 
-Migration 002（v001 基线后的增量）支撑 Server 端被动子域收集。`subdomain_passive_cache` 按 `domain` 主键缓存已验证的被动收集结果（`subdomains`/`sources` 为 jsonb 数组，`expires_at` 判定新鲜度）；CT/被动 DNS 为公共历史数据，缓存全局共享、不含租户语义。`subdomain_passive_jobs` 记录派发前持有：开启被动子域发现且存在 `passive_server=v1` 能力 Agent 时，域名批次 Attempt 初始停留 `Queued` 并写入 `pending` 任务行；后台 collector 逐域收集（先查缓存）、把结果密封进 Attempt 配置（`SubdomainPassiveResults`，全覆盖时同时置 `NoSubFinder=true`）后释放入队。收集超时（默认 8 分钟）或全部数据源失败时不密封直接释放，Agent 回退原有端内被动收集；任务行兼作重启恢复凭证（`running` 超时自动回退 `pending`），每次终态迁移写入 `task_audits`（`passive_subdomain_<state>`）。`ARGUS_SERVER_PASSIVE_SUBDOMAIN=off` 可整体关闭该特性。
+Migration 002（v001 基线后的增量）支撑 Server 端被动子域收集。`subdomain_passive_cache` 按注册根域（eTLD+1）主键缓存已验证的被动收集结果（`subdomains`/`sources` 为 jsonb 数组，`expires_at` 判定新鲜度）；CT/被动 DNS 为公共历史数据，缓存全局共享、不含租户语义。`subdomain_passive_jobs` 记录派发前持有：开启被动子域发现且存在 `passive_server=v1` 能力 Agent 时，域名批次 Attempt 初始停留 `Queued` 并写入 `pending` 任务行；后台 collector 按根域收集（先查缓存）、把结果密封进 Attempt 配置（`SubdomainPassiveResults`，全覆盖时同时置 `NoSubFinder=true`）后释放入队。收集超时（默认 8 分钟）或全部数据源失败时不密封直接释放，Agent 回退原有端内被动收集；任务行兼作重启恢复凭证（`running` 超时自动回退 `pending`），每次终态迁移写入 `task_audits`（`passive_subdomain_<state>`）。`ARGUS_SERVER_PASSIVE_SUBDOMAIN=off` 可整体关闭该特性。
 
 ### 3.3 资产、结果与报表
 

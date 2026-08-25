@@ -452,7 +452,9 @@ func (w *Worker) sealAndRelease(job db.SubdomainPassiveJob, domains []string, co
 		log.Printf("[PassiveSubdomain] attempt %s missing for seal: %v", job.AttemptID, err)
 		return
 	}
-	if sealed, ok, err := SealConfig([]byte(sub.Config), collected); err != nil {
+	var chunkTargets []string
+	_ = json.Unmarshal([]byte(sub.ChunkTargets), &chunkTargets)
+	if sealed, ok, err := SealConfig([]byte(sub.Config), DropInputHosts(collected, chunkTargets)); err != nil {
 		log.Printf("[PassiveSubdomain] seal %s failed: %v", sub.ID, err)
 	} else if ok {
 		if err := w.DB.Model(&db.SubTask{}).
@@ -528,8 +530,8 @@ func (w *Worker) finishJob(job db.SubdomainPassiveJob, state, note string, detai
 }
 
 // ClaimSeal applies claim-time sealing for capable agents: fresh cache hits
-// for the attempt's domain targets are injected into the config being handed
-// to the Agent. It is best-effort; errors keep the unsealed config.
+// for the attempt's registrable apex domains are injected into the config
+// being handed to the Agent. It is best-effort; errors keep the unsealed config.
 func ClaimSeal(store *gorm.DB, agentTagsJSON string, chunkTargets []string, config []byte) []byte {
 	if !Enabled() || !AgentHasCapability(agentTagsJSON) || len(config) == 0 {
 		return config
@@ -546,13 +548,7 @@ func ClaimSeal(store *gorm.DB, agentTagsJSON string, chunkTargets []string, conf
 	if !metadata.Subdomain || metadata.NoSubFinder || len(metadata.SubdomainPassiveResults) > 0 {
 		return config
 	}
-	var domains []string
-	for _, target := range chunkTargets {
-		value := strings.ToLower(strings.TrimSpace(target))
-		if value != "" && !strings.ContainsAny(value, " /?#:") && strings.Contains(value, ".") {
-			domains = append(domains, value)
-		}
-	}
+	domains := CollectionDomains(chunkTargets)
 	if len(domains) == 0 {
 		return config
 	}
@@ -560,7 +556,7 @@ func ClaimSeal(store *gorm.DB, agentTagsJSON string, chunkTargets []string, conf
 	if len(cached) == 0 {
 		return config
 	}
-	sealed, ok, err := SealConfig(config, cacheToMap(cached))
+	sealed, ok, err := SealConfig(config, DropInputHosts(cacheToMap(cached), chunkTargets))
 	if err != nil || !ok {
 		if err != nil {
 			log.Printf("[PassiveSubdomain] claim seal skipped: %v", err)
@@ -575,7 +571,7 @@ func ClaimSeal(store *gorm.DB, agentTagsJSON string, chunkTargets []string, conf
 	return sealed
 }
 
-// fullCoverage reports whether every domain target has a fresh cache entry
+// fullCoverage reports whether every registrable apex has a fresh cache entry
 // (entries may legitimately be empty lists).
 func fullCoverage(cached map[string]CacheResult, domains []string) bool {
 	for _, domain := range domains {

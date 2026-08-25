@@ -35,10 +35,15 @@ type Config struct {
 }
 
 // Enumerate runs active and passive subdomain enumeration without relying on
-// process-wide globals.
+// process-wide globals. Dictionary bruteforce still walks each input host;
+// passive collection (injected results and subfinder) uses the registrable
+// apex so harbor-arm.uhomecp.com is collected as uhomecp.com, then drops any
+// host that was already in the original input list.
 func Enumerate(domains []string, cfg Config) []string {
 	var results []string
 	dict := mergeWordlists(embeddedWordlist(), cfg.SubdomainDictionaryWords)
+	seenPassive := make(map[string]struct{}, len(domains))
+	knownInputs := inputHostSet(domains)
 
 	for _, domain := range domains {
 		if domain == "" {
@@ -65,9 +70,21 @@ func Enumerate(domains []string, cfg Config) []string {
 			}
 		}
 
-		// Map presence (even an empty list) marks the domain as already
+		// Passive collection is keyed by registrable apex so FQDNs under the
+		// same root (harbor-arm.uhomecp.com → uhomecp.com) share one query.
+		passiveKey := apexDomain(domain)
+		if passiveKey == "" {
+			passiveKey = strings.ToLower(strings.TrimSpace(domain))
+		}
+		if _, done := seenPassive[passiveKey]; done {
+			continue
+		}
+		seenPassive[passiveKey] = struct{}{}
+
+		// Map presence (even an empty list) marks the apex as already
 		// collected Server-side: skip subfinder, emit what was injected.
-		if injected, ok := cfg.Injected[strings.ToLower(domain)]; ok {
+		if injected, ok := lookupInjected(cfg.Injected, domain, passiveKey); ok {
+			injected = dropInputHosts(injected, knownInputs)
 			for _, host := range injected {
 				emitOutput(cfg.EmitFunc, ddout.OutputMessage{
 					Type:          "DNS-SubFinder",
@@ -79,12 +96,29 @@ func Enumerate(domains []string, cfg Config) []string {
 			continue
 		}
 		if !cfg.NoSubFinder {
-			results = append(results, subFinder(domain, cfg.EmitFunc)...)
+			found := dropInputHosts(subFinder(passiveKey, skipKnownPassiveEmit(cfg.EmitFunc, knownInputs)), knownInputs)
+			results = append(results, found...)
 		}
 	}
 
 	results = utils.RemoveDuplicateElement(results)
 	return removeEmpty(results)
+}
+
+func skipKnownPassiveEmit(emit func(ddout.OutputMessage), known map[string]struct{}) func(ddout.OutputMessage) {
+	if len(known) == 0 {
+		return emit
+	}
+	return func(msg ddout.OutputMessage) {
+		if msg.Type == "DNS-SubFinder" {
+			if key := normalizeCollectionHost(msg.Domain); key != "" {
+				if _, skip := known[key]; skip {
+					return
+				}
+			}
+		}
+		emitOutput(emit, msg)
+	}
 }
 
 func subFinder(domain string, emit func(ddout.OutputMessage)) []string {
