@@ -1271,10 +1271,6 @@ func (c *fakeAgentClient) Heartbeat(ctx context.Context, in *pb.HeartbeatReq, op
 	return &pb.HeartbeatResp{Ack: true}, nil
 }
 
-func (c *fakeAgentClient) FetchTask(ctx context.Context, in *pb.FetchTaskReq, opts ...grpc.CallOption) (*pb.Task, error) {
-	return &pb.Task{}, nil
-}
-
 func (c *fakeAgentClient) FetchCredentialBundle(ctx context.Context, in *pb.FetchCredentialBundleReq, opts ...grpc.CallOption) (*pb.FetchCredentialBundleResp, error) {
 	if c.credentialBundleErr != nil {
 		return nil, c.credentialBundleErr

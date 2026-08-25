@@ -286,20 +286,6 @@ func main() {
 		return task, msgID, nil
 	})
 
-	// FetchTask 兼容旧版 Agent：保留阻塞等待（最多 1 秒）
-	srv.SetFetchTaskHook(func(agentID string) (*pb.Task, string, error) {
-		task, msgID, err := queue.PopTask(context.Background(), agentID)
-		if err != nil {
-			log.Printf("Error popping task for %s: %v", agentID, err)
-			return nil, "", err
-		}
-		if task == nil {
-			return &pb.Task{}, "", nil
-		}
-		log.Printf("Assigned Task %s (MsgID: %s) to Agent %s", task.TaskId, msgID, agentID)
-		return task, msgID, nil
-	})
-
 	srv.SetAckTaskHook(func(msgID string) error {
 		return queue.AckTask(context.Background(), msgID)
 	})

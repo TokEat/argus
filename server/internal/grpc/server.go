@@ -84,7 +84,6 @@ type Server struct {
 
 	// queue hooks — 通过回调与任务队列解耦（RabbitMQ / Memory）
 	claimTaskHook      func(agentID string) (*pb.Task, string, error) // 原子认领
-	fetchTaskHook      func(agentID string) (*pb.Task, string, error) // 兼容旧版
 	ackTaskHook        func(msgID string) error                       // ACK 确认
 	returnTaskHook     func(task *pb.Task, msgID string) error        // 退回队列
 	requeueTaskHook    func(task *pb.Task) error                      // 重新入队（用于重试/拆分）
@@ -121,10 +120,6 @@ func NewServer(port int) *Server {
 
 func (s *Server) SetClaimTaskHook(fn func(agentID string) (*pb.Task, string, error)) {
 	s.claimTaskHook = fn
-}
-
-func (s *Server) SetFetchTaskHook(fn func(agentID string) (*pb.Task, string, error)) {
-	s.fetchTaskHook = fn
 }
 
 func (s *Server) SetAckTaskHook(fn func(msgID string) error) {
@@ -346,9 +341,6 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 	}
 
 	hook := s.claimTaskHook
-	if hook == nil {
-		hook = s.fetchTaskHook // fallback
-	}
 	if hook == nil {
 		return &pb.Task{}, nil
 	}
@@ -874,18 +866,6 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 	}
 
 	return &pb.Task{}, nil // 重试耗尽
-}
-
-// ============================================================================
-// FetchTask — 兼容旧版 Agent 的轮询接口
-// ============================================================================
-
-func (s *Server) FetchTask(ctx context.Context, req *pb.FetchTaskReq) (*pb.Task, error) {
-	// 委托给 ClaimTask 逻辑
-	return s.ClaimTask(ctx, &pb.ClaimTaskReq{
-		AgentId:   req.AgentId,
-		FreeSlots: 1,
-	})
 }
 
 // ============================================================================

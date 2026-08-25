@@ -46,7 +46,7 @@
 | 调度队列 | RabbitMQ 多优先级队列 + 内存 fallback，支持队列深度查询与通知广播；风险验证只允许规则版本一致且版本不低于 v2.4.0 的 Agent 领取；普通任务领取时原子占用同项目 WorkClaim，重复执行挂接等待且不占 Agent 容量 | `server/internal/scheduler/queue.go` `server/internal/grpc/server.go` `server/internal/db/scan_work_claim.go` |
 | 队列恢复 | Dead-Letter 回收、旧队列迁移、死亡节点任务抢救；终态 WorkClaim 来源的等待者自动重新规划，队列发布失败保留 Dispatching 供周期恢复 | `server/internal/scheduler/queue.go` `server/internal/api/task_recovery.go` `server/cmd/argus-server/main.go` |
 | 超时与重试 | 基于 `timeout_sec` 的超时扫描与自动重试守护协程 | `server/internal/api/router.go` |
-| gRPC 通信 | `Register` / `Heartbeat` / `FetchTask` / `StreamResult` / `TaskComplete` / `EmergencyDump` / `StreamLogs` | `server/internal/grpc/server.go` |
+| gRPC 通信 | `Register` / `Heartbeat` / `Subscribe` / `ClaimTask` / `StreamResult` / `TaskComplete` / `EmergencyDump` / `StreamLogs` | `server/internal/grpc/server.go` |
 | Agent 覆盖事件 | v2.5.0 将 legacy Phase 显式映射为 ScanPlan Stage，按分配目标上报 success/negative/failed/skipped、起止时间和顺序无关内容哈希；单目标成功/阴性事件可附带不含响应正文的有界派生检查点，多目标不做错误归属；Server 只接收与当前 Agent/Attempt/目标一致的事件，旧 Agent 无事件时保持 unknown | `scanner/internal/agent/coverage_reporter.go` `server/internal/grpc/server.go` |
 | 覆盖归并 | Server 用 Project Scope、配置修订、Attempt 规则版本、Agent 标签和目标类型重算 WorkKey，幂等追加 Observation 并维护当前 Coverage；公网使用共享 `public`，私网按 `private:<network_zone>` 隔离，无标签私网回退 `agent:<agent_id>`；失败/跳过、版本漂移和未知风险维度均不可复用；完整覆盖按阶段设置 TTL，上游内容变化只失效较旧依赖覆盖 | `server/internal/db/scan_observation_merge.go` `server/internal/db/scan_network_zone.go` `server/internal/db/scan_coverage_policy.go` |
 | 已完成覆盖复用 | Agent 领取前按完整目标匹配同租户、项目、网络区、Scope/Config/规则版本的有效 Coverage；全量复用不分配 Agent，部分复用只下发剩余目标并将 reused links 与 Agent 租约同事务提交；公网可跨 Agent 复用，同标签私网可跨 Agent 复用，不同标签或无标签私网保持隔离；手动重试、风险验证和未知旧配置绕过 | `server/internal/db/scan_reuse.go` `server/internal/grpc/server.go` |
@@ -224,7 +224,6 @@
 | `Heartbeat` | 更新节点存活时间、运行任务数、运行任务列表与规则版本，并判断是否需要同步规则；发现 token 过期/吊销时返回终止信号 |
 | `Subscribe` | Agent 长连接等待任务通知和控制信号，并接收 `capacity_update` 更新空闲槽位 |
 | `ClaimTask` | Agent 主动认领任务，支持 RabbitMQ 原子领取、标签匹配、容量回写和终态消息丢弃；普通认领不单独校验内部 HTTP session token，弱口令验证类认领强制校验 session token 与 TLS |
-| `FetchTask` | 兼容旧 Agent 的轮询接口，内部委托领取逻辑 |
 | `StreamResult` | 接收 Agent 流式结果并异步写入结果缓冲池 |
 | `TaskComplete` | 更新子任务状态、ACK 队列、递减节点运行数，并刷新 RootTask 聚合状态 |
 | `EmergencyDump` | Spot 或紧急中断场景的兜底上报入口 |

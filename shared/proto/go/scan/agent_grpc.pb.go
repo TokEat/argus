@@ -23,7 +23,6 @@ const (
 	AgentService_Heartbeat_FullMethodName             = "/scan.AgentService/Heartbeat"
 	AgentService_Subscribe_FullMethodName             = "/scan.AgentService/Subscribe"
 	AgentService_ClaimTask_FullMethodName             = "/scan.AgentService/ClaimTask"
-	AgentService_FetchTask_FullMethodName             = "/scan.AgentService/FetchTask"
 	AgentService_StreamResult_FullMethodName          = "/scan.AgentService/StreamResult"
 	AgentService_TaskComplete_FullMethodName          = "/scan.AgentService/TaskComplete"
 	AgentService_FetchCredentialBundle_FullMethodName = "/scan.AgentService/FetchCredentialBundle"
@@ -47,10 +46,8 @@ type AgentServiceClient interface {
 	// Agent 通过 AgentSignal 上报状态变更（如容量变化）。
 	Subscribe(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentSignal, TaskNotify], error)
 	// ClaimTask Agent 主动认领任务（原子操作，保证不重复领取）。
-	// Agent 收到 TaskNotify 后调用此接口从 Redis 队列中领取任务。
+	// Agent 收到 TaskNotify 后调用此接口从队列中领取任务。
 	ClaimTask(ctx context.Context, in *ClaimTaskReq, opts ...grpc.CallOption) (*Task, error)
-	// FetchTask 领取分配给该节点的扫描任务（兼容旧版，作为 fallback）
-	FetchTask(ctx context.Context, in *FetchTaskReq, opts ...grpc.CallOption) (*Task, error)
 	// StreamResult 流式回传扫描产生的中间结果（如单独发现的一个漏洞）
 	StreamResult(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ScanResult, Ack], error)
 	// TaskComplete 任务完成通知
@@ -111,16 +108,6 @@ func (c *agentServiceClient) ClaimTask(ctx context.Context, in *ClaimTaskReq, op
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Task)
 	err := c.cc.Invoke(ctx, AgentService_ClaimTask_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *agentServiceClient) FetchTask(ctx context.Context, in *FetchTaskReq, opts ...grpc.CallOption) (*Task, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(Task)
-	err := c.cc.Invoke(ctx, AgentService_FetchTask_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -211,10 +198,8 @@ type AgentServiceServer interface {
 	// Agent 通过 AgentSignal 上报状态变更（如容量变化）。
 	Subscribe(grpc.BidiStreamingServer[AgentSignal, TaskNotify]) error
 	// ClaimTask Agent 主动认领任务（原子操作，保证不重复领取）。
-	// Agent 收到 TaskNotify 后调用此接口从 Redis 队列中领取任务。
+	// Agent 收到 TaskNotify 后调用此接口从队列中领取任务。
 	ClaimTask(context.Context, *ClaimTaskReq) (*Task, error)
-	// FetchTask 领取分配给该节点的扫描任务（兼容旧版，作为 fallback）
-	FetchTask(context.Context, *FetchTaskReq) (*Task, error)
 	// StreamResult 流式回传扫描产生的中间结果（如单独发现的一个漏洞）
 	StreamResult(grpc.ClientStreamingServer[ScanResult, Ack]) error
 	// TaskComplete 任务完成通知
@@ -249,9 +234,6 @@ func (UnimplementedAgentServiceServer) Subscribe(grpc.BidiStreamingServer[AgentS
 }
 func (UnimplementedAgentServiceServer) ClaimTask(context.Context, *ClaimTaskReq) (*Task, error) {
 	return nil, status.Error(codes.Unimplemented, "method ClaimTask not implemented")
-}
-func (UnimplementedAgentServiceServer) FetchTask(context.Context, *FetchTaskReq) (*Task, error) {
-	return nil, status.Error(codes.Unimplemented, "method FetchTask not implemented")
 }
 func (UnimplementedAgentServiceServer) StreamResult(grpc.ClientStreamingServer[ScanResult, Ack]) error {
 	return status.Error(codes.Unimplemented, "method StreamResult not implemented")
@@ -353,24 +335,6 @@ func _AgentService_ClaimTask_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
-func _AgentService_FetchTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(FetchTaskReq)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(AgentServiceServer).FetchTask(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: AgentService_FetchTask_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AgentServiceServer).FetchTask(ctx, req.(*FetchTaskReq))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _AgentService_StreamResult_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(AgentServiceServer).StreamResult(&grpc.GenericServerStream[ScanResult, Ack]{ServerStream: stream})
 }
@@ -464,10 +428,6 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ClaimTask",
 			Handler:    _AgentService_ClaimTask_Handler,
-		},
-		{
-			MethodName: "FetchTask",
-			Handler:    _AgentService_FetchTask_Handler,
 		},
 		{
 			MethodName: "TaskComplete",

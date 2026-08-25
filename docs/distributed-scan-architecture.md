@@ -55,7 +55,7 @@ Argus 当前采用典型的 `Control Plane + Data Plane` 结构：
 
 - `Register`
 - `Heartbeat`
-- `FetchTask`
+- `ClaimTask`
 - `StreamResult`
 - `TaskComplete`
 - `EmergencyDump`
@@ -91,7 +91,7 @@ Argus 当前采用典型的 `Control Plane + Data Plane` 结构：
 
 - 启动后 `Register`
 - 周期性 `Heartbeat`
-- `FetchTask` 拉取任务
+- `ClaimTask` 认领任务
 - 本地执行扫描流水线
 - 通过 `StreamResult` 流式回传结果
 - 通过 `TaskComplete` 上报完成状态
@@ -139,7 +139,7 @@ Worker Pool 与引擎并发上限协同控制；Agent 通过 `capacity_update` �
 3. 服务端生成 `RootTask`
 4. 服务端按目标类型与批量上限生成稳定 `TaskBatch`，并为每个批次生成 Attempt 1（数据库兼容表名仍为 `sub_tasks`）
 5. 服务端将 Attempt 序列化后写入 RabbitMQ 优先级队列
-6. Agent 通过 gRPC `FetchTask` 拉取任务
+6. Agent 通过 gRPC `ClaimTask` 认领任务
 7. 服务端将命中的 Attempt 状态改为 `Running`，并同步其 `TaskBatch` 最新状态镜像
 8. Agent 执行扫描流水线
 9. Agent 通过 `StreamResult` 连续回传结果
