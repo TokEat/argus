@@ -482,39 +482,6 @@ func loadBatchFingerprintMap(ctx context.Context, tx *gorm.DB, root db.RootTask,
 	return prints, nil
 }
 
-func behaviorProbeSignal(evidence string) string {
-	var payload struct {
-		AdditionalMsg string `json:"additional_msg"`
-	}
-	if json.Unmarshal([]byte(evidence), &payload) != nil {
-		return ""
-	}
-	const prefix = "[behavior-probe:"
-	message := strings.TrimSpace(payload.AdditionalMsg)
-	if !strings.HasPrefix(message, prefix) || !strings.HasSuffix(message, "]") || strings.Count(message, prefix) != 1 {
-		return ""
-	}
-	signal := strings.ToLower(strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(message, prefix), "]")))
-	if signal == "" || len(signal) > 128 {
-		return ""
-	}
-	for _, char := range signal {
-		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '.' && char != '_' && char != '-' {
-			return ""
-		}
-	}
-	return signal
-}
-
-func containsFold(values []string, expected string) bool {
-	for _, value := range values {
-		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(expected)) {
-			return true
-		}
-	}
-	return false
-}
-
 type credentialTargetEnvelope struct {
 	Endpoint          string `json:"endpoint"`
 	Service           string `json:"service"`
@@ -631,20 +598,6 @@ func validationBudgetLimits(intensity scanpolicy.Intensity) (targetConcurrency, 
 	default:
 		return 6, 30
 	}
-}
-
-func configWithValidationAllocation(raw string, allocation validationExecutionAllocation) (string, error) {
-	var config map[string]interface{}
-	if err := json.Unmarshal([]byte(raw), &config); err != nil {
-		return "", err
-	}
-	config["ValidationBudgetID"] = allocation.BudgetID
-	config["ValidationTargetConcurrency"] = allocation.TargetConcurrency
-	config["ValidationRateLimit"] = allocation.RateLimit
-	config["ValidationRequestBudget"] = allocation.RequestBudget
-	config["ValidationEstimatedRequests"] = allocation.EstimatedRequests
-	encoded, err := json.Marshal(config)
-	return string(encoded), err
 }
 
 func deriveValidationAffinity(tx *gorm.DB, root db.RootTask) validationAffinity {
@@ -814,13 +767,6 @@ func automaticStageTimeoutSec(base int, targetCount int) int {
 		scaled = automaticStageTimeoutCeil
 	}
 	return scaled
-}
-
-// loadTaskFingerprintMap 汇总本任务资产发现阶段上报的指纹，返回
-// 目标 → 去重排序的产品名列表。
-func createAutomaticStageBatch(tx *gorm.DB, intent *db.ScanPolicyIntent, root db.RootTask, stage, config string, targets []string, observationHash, planHash string, revision db.TaskConfigRevision, rules db.AgentSelectorRules, timeoutSec int, itemCount int, summary map[string]interface{}) (*db.SubTask, error) {
-	batchID := root.ID + "-auto-" + strings.ReplaceAll(stage, "_validation", "")
-	return createAutomaticStageBatchWithIDs(tx, intent, root, stage, config, targets, observationHash, planHash, revision, rules, timeoutSec, itemCount, summary, batchID, batchID+"-attempt-1")
 }
 
 func createAutomaticStageBatchWithIDs(tx *gorm.DB, intent *db.ScanPolicyIntent, root db.RootTask, stage, config string, targets []string, observationHash, planHash string, revision db.TaskConfigRevision, rules db.AgentSelectorRules, timeoutSec int, itemCount int, summary map[string]interface{}, batchID, attemptID string) (*db.SubTask, error) {

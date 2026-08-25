@@ -32,19 +32,6 @@ func ExportWorkflowYAML() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("查询 Workflow 失败: %w", err)
 	}
-	// 关联 POC 风险等级（重名取最严格），供 Agent 本地预授权门过滤。
-	pocs, err := GetAllEnabledPocs()
-	if err != nil {
-		return nil, fmt.Errorf("查询 POC 风险等级失败: %w", err)
-	}
-	riskByPoc := make(map[string]string, len(pocs))
-	for _, p := range pocs {
-		existing, exists := riskByPoc[p.Name]
-		if !exists || pocRiskRank(p.RiskLevel) > pocRiskRank(existing) {
-			existing = p.RiskLevel
-		}
-		riskByPoc[p.Name] = existing
-	}
 
 	type exportEntry struct {
 		Type      []string `yaml:"type"`
