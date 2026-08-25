@@ -11,7 +11,6 @@ import {
     Descriptions,
     Divider,
     Dropdown,
-    Drawer,
     Empty,
     Form,
     Input,
@@ -31,13 +30,10 @@ import {
 } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
-    AimOutlined,
     ApiOutlined,
-    AuditOutlined,
     BugOutlined,
     InboxOutlined,
     ExperimentOutlined,
-    EditOutlined,
     EyeOutlined,
     GlobalOutlined,
     InfoCircleOutlined,
@@ -51,20 +47,33 @@ import {
     RocketOutlined,
     SearchOutlined,
     StopOutlined,
+    UnorderedListOutlined,
     WifiOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { MenuProps } from 'antd';
 import { appendTargets, archiveTaskBatch, connectWebSocket, createTask, deleteTask, executeTaskRiskValidation, getTaskConfigRevisions, getTaskDetail, getNodes, listPocRulesPage, listProjects, listTasks, pauseTask, pauseTaskBatch, previewTaskRiskValidation, previewTaskSelector, resumeTask, resumeTaskBatch, retryTask, retryTaskBatch, stopTask, stopTaskBatch, updateTaskConfig, validateTargets } from '../services/api';
-import { getTaskStatusMeta, isTaskCancellable, isTaskFailedLike, isTaskFinished, isTaskPausable, isTaskResumable, isTaskRetryable, normalizeTaskStatus } from '../utils/taskStatus';
+import { isTaskCancellable, isTaskFailedLike, isTaskFinished, isTaskPausable, isTaskResumable, isTaskRetryable, normalizeTaskStatus } from '../utils/taskStatus';
 import { canAccessRole } from '../utils/auth';
 import { useAutoContext } from '../contexts/GlobalAIContext';
 import NetworkCanvas from '../components/NetworkCanvas';
-import TaskTimingPanel from '../components/TaskTimingPanel';
 import { scanPolicyInitialValues, type ScanPolicyFormValues } from '../components/tasks/ScanPolicyComposer';
 import ScanTaskCreateModal from '../components/tasks/ScanTaskCreateModal';
-import TaskStageOverview from '../components/tasks/TaskStageOverview';
-import CredentialFindingsPanel from '../components/tasks/CredentialFindingsPanel';
+import TaskBatchDrawer from './taskManagement/TaskBatchDrawer';
+import TaskDetailDrawer from './taskManagement/TaskDetailDrawer';
+import {
+    batchActionLabels,
+    isIdempotencyConflict,
+    isNetworkOrTimeout,
+    newIdempotencyKey,
+    renderTaskStatusTag,
+    targetTypeLabels,
+    type AppendIntent,
+    type BatchAction,
+    type BatchRetryIntent,
+    type CreateIntent,
+    type RetryIntent,
+} from './taskManagement/shared';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -77,134 +86,12 @@ const legacyProviderConfigKeys = new Set([
     'lowperceptionmode', 'onlyipport', 'apiconfigfilepath',
 ]);
 
-const targetTypeLabels: Record<string, string> = {
-    url: 'URL',
-    domain: '域名',
-    domain_port: '域名端口',
-    ip: 'IP',
-    cidr: 'CIDR',
-    ip_range: 'IP 段',
-    ip_port: 'IP 端口',
-    osint: '空间搜索',
-    unknown: '未知',
-};
-
-const scanStageLabels: Record<string, string> = {
-    search_engine: '空间搜索',
-    subdomain_discovery: '子域发现',
-    cdn_classification: 'CDN 识别',
-    icmp_discovery: 'ICMP 存活',
-    tcp_liveness: 'TCP 存活',
-    port_scan: '端口扫描',
-    protocol_identify: '协议识别',
-    http_probe: 'HTTP 探测',
-    host_binding: 'Host 绑定',
-    behavior_probe: '安全行为探针',
-    directory_probe: '主动路径指纹',
-    fingerprint: '指纹识别',
-    risk_validation: '风险验证',
-};
-
-const coverageLinkMeta: Record<string, { label: string; color: string }> = {
-    executed: { label: '实际执行', color: 'blue' },
-    reused: { label: '历史复用', color: 'green' },
-    in_flight: { label: '执行中关联', color: 'gold' },
-};
-
-const coverageReasonLabels: Record<string, string> = {
-    valid_project_coverage: '同项目有效历史覆盖',
-    checkpoint_resume: '有效检查点恢复',
-    claimed_for_execution: '当前尝试领取执行',
-    active_work_claim: '相同工作正在其他尝试执行',
-    source_replanned: '来源尝试已重新规划',
-    source_failed: '来源尝试失败，等待重新规划',
-    ttl_expired: '覆盖已超过有效期',
-    agent_config_hash_mismatch: 'Agent 配置证据不一致',
-    rule_version_mismatch: '规则版本不一致',
-    endpoint_content_unknown: '端点内容版本未知',
-};
-
-const coverageLinkStatusLabels: Record<string, { label: string; color: string }> = {
-    active: { label: '执行中', color: 'processing' },
-    waiting: { label: '等待来源', color: 'warning' },
-    completed: { label: '已完成', color: 'success' },
-    resolved: { label: '来源已完成', color: 'success' },
-    failed: { label: '执行失败', color: 'error' },
-    source_failed: { label: '来源失败', color: 'error' },
-};
-
-function coverageReasonText(reason: string): string {
-    if (!reason) return '-';
-    if (coverageReasonLabels[reason]) return coverageReasonLabels[reason];
-    if (reason.startsWith('upstream_content_changed:')) {
-        const stage = reason.slice('upstream_content_changed:'.length);
-        return `上游内容变化（${scanStageLabels[stage] || stage}）`;
-    }
-    return reason;
-}
-
-type BatchAction = 'pause' | 'resume' | 'stop' | 'retry' | 'archive';
-
-type CreateIntent = {
-    key: string;
-    fingerprint: string;
-    request: API.CreateTaskRequest;
-};
-
-type AppendIntent = {
-    key: string;
-    fingerprint: string;
-    taskId: string;
-    targets: string;
-};
-
-type RetryIntent = {
-    key: string;
-    taskId: string;
-};
-
-type BatchRetryIntent = {
-    key: string;
-    taskId: string;
-    batchId: string;
-    detailSession: number;
-};
-
 type RiskValidationIntent = {
     key: string;
     taskId: string;
     previewSession: number;
     request: API.ExecuteRiskValidationRequest;
     fingerprint: string;
-};
-
-const newIdempotencyKey = () => globalThis.crypto?.randomUUID?.()
-    || `argus-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-const isIdempotencyConflict = (error: unknown) => {
-    if (typeof error === 'object' && error !== null && 'status' in error && (error as { status?: unknown }).status === 409) return true;
-    const text = typeof error === 'string' ? error : error instanceof Error ? error.message : '';
-    return /idempotency.*conflict|conflict.*idempotency|idempotency-key.*already used|different task creation request|幂等.*冲突/i.test(text);
-};
-
-const isNetworkOrTimeout = (error: unknown) => {
-    const status = typeof error === 'object' && error !== null && 'status' in error
-        ? (error as { status?: unknown }).status
-        : undefined;
-    if (typeof status === 'number') return false;
-    const code = typeof error === 'object' && error !== null && 'code' in error
-        ? String((error as { code?: unknown }).code || '')
-        : '';
-    const text = typeof error === 'string' ? error : error instanceof Error ? error.message : '';
-    return /^(ERR_NETWORK|ECONNABORTED|ETIMEDOUT)$/i.test(code) || /network|timeout|timed out|网络|超时/i.test(text);
-};
-
-const batchActionLabels: Record<BatchAction, string> = {
-    pause: '暂停批次',
-    resume: '恢复批次',
-    stop: '立即停止',
-    retry: '重试批次',
-    archive: '归档批次',
 };
 
 const riskLevelLabels: Record<API.RiskValidationPreviewCandidate['risk_level'], string> = {
@@ -226,24 +113,7 @@ const excludedRiskReasonLabels: Record<string, string> = {
     unsupported_match_type: 'Workflow 匹配类型不受支持',
 };
 
-const terminalBatchStatuses = new Set(['COMPLETED', 'FINISHED', 'DONE', 'SUCCESS', 'SUCCEEDED', 'FAILED', 'TIMEOUT', 'STOPPED', 'CANCELLED', 'CANCELED']);
-const activeBatchStatuses = new Set(['QUEUED', 'PENDING', 'DISPATCHING', 'RUNNING', 'RECOVERED']);
 const legacyScanUIEnabled = false;
-
-function availableBatchActions(batch: API.TaskBatchSummary): BatchAction[] {
-    if (batch.archived_at) return [];
-    const status = (batch.status || '').trim().toUpperCase();
-    const control = (batch.control_state || 'active').trim().toLowerCase();
-    if (control === 'stopping') return [];
-    if (control === 'paused') {
-        const actions: BatchAction[] = ['resume'];
-        if (status === 'PAUSED' || status === 'RUNNING') actions.push('stop');
-        return actions;
-    }
-    if (activeBatchStatuses.has(status)) return ['pause', 'stop'];
-    if (terminalBatchStatuses.has(status)) return ['retry', 'archive'];
-    return [];
-}
 
 const createInitialValues = {
     priority: 1,
@@ -414,6 +284,7 @@ const TaskManagement: React.FC = () => {
     const [showArchived, setShowArchived] = useState(false);
     const showArchivedRef = useRef(false);
     const [detailOpen, setDetailOpen] = useState(false);
+    const [batchOpen, setBatchOpen] = useState(false);
     const [detailLoading, setDetailLoading] = useState(false);
     const [taskDetail, setTaskDetail] = useState<API.TaskDetailResponse | null>(null);
 	const [riskPreviewOpen, setRiskPreviewOpen] = useState(false);
@@ -534,7 +405,7 @@ const TaskManagement: React.FC = () => {
             completed_targets: t.CompletedTargets,
             created_at: t.CreatedAt,
         })),
-        viewing_task_detail: detailOpen ? taskDetail : null,
+        viewing_task_detail: (detailOpen || batchOpen) ? taskDetail : null,
     });
 
     const clearCreateIntent = () => {
@@ -711,7 +582,7 @@ const TaskManagement: React.FC = () => {
 
     // 被动收集进行中时轮询刷新任务详情，让进度条实时推进；收集结束或抽屉关闭即停。
     useEffect(() => {
-        if (!detailOpen || !taskDetail?.passive_collection?.active) return;
+        if ((!detailOpen && !batchOpen) || !taskDetail?.passive_collection?.active) return;
         const taskId = taskDetail.task.id;
         const timer = setInterval(async () => {
             if (detailTaskIdRef.current !== taskId) return;
@@ -723,7 +594,7 @@ const TaskManagement: React.FC = () => {
             }
         }, 3000);
         return () => clearInterval(timer);
-    }, [detailOpen, taskDetail?.task?.id, taskDetail?.passive_collection?.active]);
+    }, [detailOpen, batchOpen, taskDetail?.task?.id, taskDetail?.passive_collection?.active]);
 
     useEffect(() => {
         if (!createOpen) {
@@ -842,6 +713,10 @@ const TaskManagement: React.FC = () => {
                 : `已为 ${result.retried_batches} 个失败批次追加重试${pendingText}`);
             if (retryIntentRef.current === intent) retryIntentRef.current = null;
             fetchTasks();
+            if (detailTaskIdRef.current === taskId) {
+                const detail = await getTaskDetail(taskId);
+                if (detailTaskIdRef.current === taskId) setTaskDetail(detail);
+            }
         } catch (error: unknown) {
             if (isIdempotencyConflict(error)) {
                 if (retryIntentRef.current === intent) retryIntentRef.current = null;
@@ -936,16 +811,8 @@ const TaskManagement: React.FC = () => {
         });
     };
 
-    const handleShowDetail = async (taskId: string) => {
-        appendIntentRef.current = null;
-        retryIntentRef.current = null;
-        riskPreviewSessionRef.current += 1;
-        riskIntentRef.current = null;
-        riskInFlightRef.current = null;
-        setRiskExecuting(false);
+    const loadTaskDetail = async (taskId: string, detailSession: number) => {
         detailTaskIdRef.current = taskId;
-        const detailSession = ++detailSessionRef.current;
-        setDetailOpen(true);
         setDetailLoading(true);
         try {
             const result = await getTaskDetail(taskId);
@@ -962,6 +829,51 @@ const TaskManagement: React.FC = () => {
             if (detailTaskIdRef.current === taskId && detailSessionRef.current === detailSession) message.error('获取任务详情失败');
         } finally {
             if (detailTaskIdRef.current === taskId && detailSessionRef.current === detailSession) setDetailLoading(false);
+        }
+    };
+
+    const handleShowDetail = async (taskId: string) => {
+        appendIntentRef.current = null;
+        retryIntentRef.current = null;
+        riskPreviewSessionRef.current += 1;
+        riskIntentRef.current = null;
+        riskInFlightRef.current = null;
+        setRiskExecuting(false);
+        const detailSession = ++detailSessionRef.current;
+        setDetailOpen(true);
+        await loadTaskDetail(taskId, detailSession);
+    };
+
+    const handleShowBatches = async (taskId: string) => {
+        const detailSession = ++detailSessionRef.current;
+        setBatchOpen(true);
+        await loadTaskDetail(taskId, detailSession);
+    };
+
+    const closeDetailDrawer = () => {
+        if (riskInFlightRef.current) return;
+        appendIntentRef.current = null;
+        retryIntentRef.current = null;
+        riskPreviewSessionRef.current += 1;
+        riskIntentRef.current = null;
+        riskInFlightRef.current = null;
+        setRiskExecuting(false);
+        setDetailOpen(false);
+        if (!batchOpen) {
+            detailTaskIdRef.current = null;
+            detailSessionRef.current += 1;
+            setTaskDetail(null);
+            setConfigRevisions([]);
+        }
+    };
+
+    const closeBatchDrawer = () => {
+        setBatchOpen(false);
+        if (!detailOpen) {
+            detailTaskIdRef.current = null;
+            detailSessionRef.current += 1;
+            setTaskDetail(null);
+            setConfigRevisions([]);
         }
     };
 
@@ -1280,10 +1192,7 @@ const TaskManagement: React.FC = () => {
         }
     };
 
-    const getStatusTag = (status: string) => {
-        const { color, text } = getTaskStatusMeta(status);
-        return <Tag color={color}>{text}</Tag>;
-    };
+    const getStatusTag = (status: string) => renderTaskStatusTag(status);
 
     const columns: ColumnsType<API.RootTask> = [
         {
@@ -1392,13 +1301,17 @@ const TaskManagement: React.FC = () => {
         {
             title: '操作',
             key: 'actions',
-            width: 230,
+            width: 280,
             fixed: 'right',
             render: (_, record) => (
                 <Space size={4}>
                     <Button type="link" size="small" icon={<InfoCircleOutlined />}
                         onClick={() => handleShowDetail(record.ID)}>
                         详情
+                    </Button>
+                    <Button type="link" size="small" icon={<UnorderedListOutlined />}
+                        onClick={() => handleShowBatches(record.ID)}>
+                        批次
                     </Button>
                     <Button type="link" size="small" icon={<EyeOutlined />}
                         onClick={() => navigate(`/tasks/${record.ID}/results`)}>
@@ -1973,641 +1886,34 @@ const TaskManagement: React.FC = () => {
                 </Space>
             </Modal>}
 
-            {/* 任务详情 Drawer */}
-            <Drawer
-                title={
-                    taskDetail ? (
-                        <Space>
-                            <RocketOutlined style={{ color: '#10b981' }} />
-                            <span>{taskDetail.task.name}</span>
-                            {getStatusTag(taskDetail.task.status)}
-                        </Space>
-                    ) : '任务详情'
-                }
+            <TaskDetailDrawer
                 open={detailOpen}
-                extra={taskDetail ? (
-                    <Space>
-						{canManageTasks && !taskDetail.task.archived_at && (
-							<Space size={8}>
-								<Button icon={<PlusOutlined />} onClick={openAppendTargets}>增加批次</Button>
-								<Button icon={<EditOutlined />} onClick={openConfigEditor}>更新配置</Button>
-							</Space>
-						)}
-                    </Space>
-                ) : null}
-                onClose={() => {
-                    if (riskInFlightRef.current) return;
-                    appendIntentRef.current = null;
-                    retryIntentRef.current = null;
-                    riskPreviewSessionRef.current += 1;
-                    riskIntentRef.current = null;
-                    riskInFlightRef.current = null;
-                    setRiskExecuting(false);
-                    detailTaskIdRef.current = null;
-                    detailSessionRef.current += 1;
-                    setDetailOpen(false);
-                    setTaskDetail(null);
-                    setConfigRevisions([]);
+                loading={detailLoading}
+                detail={taskDetail}
+                configRevisions={configRevisions}
+                canManageTasks={canManageTasks}
+                onClose={closeDetailDrawer}
+                onUpdateConfig={openConfigEditor}
+            />
+
+            <TaskBatchDrawer
+                open={batchOpen}
+                loading={detailLoading}
+                detail={taskDetail}
+                canManageTasks={canManageTasks}
+                onClose={closeBatchDrawer}
+                onAppend={openAppendTargets}
+                onBatchAction={handleBatchAction}
+                onBulkRetryFailed={() => {
+                    if (!taskDetail) return;
+                    const record = tasks.find((item) => item.ID === taskDetail.task.id);
+                    handleTaskAction(record || {
+                        ID: taskDetail.task.id,
+                        Name: taskDetail.task.name,
+                        Status: taskDetail.task.status,
+                    } as API.RootTask, 'retry');
                 }}
-                width={920}
-                destroyOnClose
-            >
-                {detailLoading ? (
-                    <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 0' }}>
-                        <Spin size="large" />
-                    </div>
-                ) : taskDetail ? (
-                    <div>
-                        <TaskStageOverview detail={taskDetail} />
-                        {/* 概况统计卡片 */}
-                        <Row gutter={16} style={{ marginBottom: 24 }}>
-                            <Col span={6}>
-                                <div style={{
-                                    background: 'linear-gradient(135deg, #0ea5e9 0%, #06b6d4 100%)',
-                                    borderRadius: 12, padding: '20px 16px', color: '#fff',
-                                }}>
-                                    <Statistic
-                                        title={<span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }}>进度</span>}
-                                        value={taskDetail.task.total_targets > 0
-                                            ? Math.round((taskDetail.task.completed_targets / taskDetail.task.total_targets) * 100)
-                                            : taskDetail.task.total_chunks > 0
-                                                ? Math.round((taskDetail.task.completed_chunks / taskDetail.task.total_chunks) * 100)
-                                                : 0}
-                                        suffix="%"
-                                        valueStyle={{ color: '#fff', fontSize: 28, fontWeight: 700 }}
-                                    />
-                                </div>
-                            </Col>
-                            <Col span={6}>
-                                <div style={{
-                                    background: 'linear-gradient(135deg, #3b82f6 0%, #6366f1 100%)',
-                                    borderRadius: 12, padding: '20px 16px', color: '#fff',
-                                }}>
-                                    <Statistic
-                                        title={<span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }}>资产</span>}
-                                        value={taskDetail.result_stats.assets}
-                                        valueStyle={{ color: '#fff', fontSize: 28, fontWeight: 700 }}
-                                    />
-                                </div>
-                            </Col>
-                            <Col span={6}>
-                                <div style={{
-                                    background: 'linear-gradient(135deg, #06b6d4 0%, #14b8a6 100%)',
-                                    borderRadius: 12, padding: '20px 16px', color: '#fff',
-                                }}>
-                                    <Statistic
-                                        title={<span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }}>指纹</span>}
-                                        value={taskDetail.result_stats.fingerprints}
-                                        valueStyle={{ color: '#fff', fontSize: 28, fontWeight: 700 }}
-                                    />
-                                </div>
-                            </Col>
-                            <Col span={6}>
-                                <div style={{
-                                    background: 'linear-gradient(135deg, #ef4444 0%, #f97316 100%)',
-                                    borderRadius: 12, padding: '20px 16px', color: '#fff',
-                                }}>
-                                    <Statistic
-                                        title={<span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }}>漏洞</span>}
-                                        value={taskDetail.result_stats.vulns}
-                                        valueStyle={{ color: '#fff', fontSize: 28, fontWeight: 700 }}
-                                    />
-                                </div>
-                            </Col>
-                        </Row>
-
-                        {/* 漏洞严重度分布 */}
-                        {taskDetail.result_stats.vulns > 0 && (
-                            <div style={{ marginBottom: 20 }}>
-                                <Space wrap>
-                                    {Object.entries(taskDetail.result_stats.severity).map(([sev, count]) => {
-                                        const colorMap: Record<string, string> = {
-                                            Critical: '#ef4444', High: '#f97316', Medium: '#f59e0b',
-                                            Low: '#3b82f6', Info: '#6b7280', Unknown: '#94a3b8',
-                                        };
-                                        return (
-                                            <Tag key={sev} color={colorMap[sev] || '#94a3b8'} style={{ fontSize: 12 }}>
-                                                {sev}: {count}
-                                            </Tag>
-                                        );
-                                    })}
-                                </Space>
-                            </div>
-                        )}
-
-                        {/* 任务基本信息 */}
-                        <Descriptions column={2} bordered size="small" style={{ marginBottom: 20 }}>
-                            <Descriptions.Item label="任务 ID">
-                                <Text copyable style={{ fontFamily: 'monospace', fontSize: 12 }}>{taskDetail.task.id}</Text>
-                            </Descriptions.Item>
-                            <Descriptions.Item label="优先级">
-                                {({ 0: 'P0 / 紧急', 1: 'P1 / 普通', 2: 'P2 / 低' } as Record<number, string>)[taskDetail.task.priority] || String(taskDetail.task.priority)}
-                            </Descriptions.Item>
-                            <Descriptions.Item label="目标进度">
-                                <Space>
-                                    <Progress
-                                        type="circle"
-                                        size={40}
-                                        percent={taskDetail.task.total_targets > 0
-                                            ? Math.round((taskDetail.task.completed_targets / taskDetail.task.total_targets) * 100)
-                                            : 0}
-                                    />
-                                    <Text style={{ fontSize: 12 }}>
-                                        {taskDetail.task.completed_targets}/{taskDetail.task.total_targets} 目标
-                                    </Text>
-                                </Space>
-                            </Descriptions.Item>
-                            <Descriptions.Item label="批次进度">
-                                <Space>
-                                    <Progress
-                                        type="circle"
-                                        size={40}
-                                        percent={taskDetail.task.total_chunks > 0
-                                            ? Math.round((taskDetail.task.completed_chunks / taskDetail.task.total_chunks) * 100)
-                                            : 0}
-                                    />
-                                    <Text style={{ fontSize: 12 }}>
-                                        {taskDetail.task.completed_chunks}/{taskDetail.task.total_chunks} 批次
-                                    </Text>
-                                </Space>
-                            </Descriptions.Item>
-                            <Descriptions.Item label="超时时间">
-                                {taskDetail.task.timeout_sec > 0 ? `${taskDetail.task.timeout_sec} 秒` : '未设置'}
-                            </Descriptions.Item>
-                            <Descriptions.Item label="规则版本">
-                                <Tag color="blue">{taskDetail.task.rule_version || '-'}</Tag>
-                            </Descriptions.Item>
-                            <Descriptions.Item label="配置版本">
-                                <Tag color="cyan">v{taskDetail.task.current_config_version || 1}</Tag>
-                            </Descriptions.Item>
-                            <Descriptions.Item label="创建时间">
-                                {taskDetail.task.created_at}
-                            </Descriptions.Item>
-                            {taskDetail.task.archived_at && (
-                                <Descriptions.Item label="归档时间" span={2}>
-                                    <Tag icon={<InboxOutlined />}>已归档</Tag>
-                                    {taskDetail.task.archived_at}
-                                </Descriptions.Item>
-                            )}
-                        </Descriptions>
-
-                        {/* Server 端被动子域收集进度：收集完成后域名批次才会下发给 Agent */}
-                        {taskDetail.passive_collection && (taskDetail.passive_collection.active || taskDetail.passive_collection.domains_total > 0) && (
-                            <div style={{ marginBottom: 20, padding: 12, border: '1px solid #91caff', borderRadius: 6, background: '#f0f7ff' }}>
-                                <Space direction="vertical" style={{ width: '100%' }} size={6}>
-                                    <Space wrap>
-                                        <Typography.Text strong style={{ fontSize: 13 }}>被动子域收集（Server 端派发前）</Typography.Text>
-                                        {taskDetail.passive_collection.active
-                                            ? <Tag color="processing">收集中（{taskDetail.passive_collection.state}）</Tag>
-                                            : <Tag color={taskDetail.passive_collection.state === 'failed' ? 'orange' : 'green'}>
-                                                {taskDetail.passive_collection.state === 'failed' ? '超时/失败，已回退 Agent 端收集' : '已完成并派发'}
-                                            </Tag>}
-                                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                                            域名 {taskDetail.passive_collection.domains_done}/{taskDetail.passive_collection.domains_total}
-                                            · 等待收集后派发的域名批次 {taskDetail.passive_collection.held_batches.length} 个
-                                        </Typography.Text>
-                                    </Space>
-                                    <Progress
-                                        percent={taskDetail.passive_collection.domains_total > 0
-                                            ? Math.min(100, Math.round((taskDetail.passive_collection.domains_done / taskDetail.passive_collection.domains_total) * 100))
-                                            : 0}
-                                        size="small"
-                                        status={taskDetail.passive_collection.active ? 'active' : undefined}
-                                    />
-                                    {taskDetail.passive_collection.held_batches.map((held) => {
-                                        const heldDomains = held.domains || [];
-                                        return (
-                                        <Space key={held.attempt_id} size={6} wrap style={{ fontSize: 12 }}>
-                                            <Tag style={{ fontSize: 11 }}>
-                                                {(held.batch_id || '').length > 28 ? `${held.batch_id.slice(0, 28)}…` : held.batch_id}
-                                            </Tag>
-                                            <Typography.Text type="secondary">
-                                                {held.domains_done}/{heldDomains.length} 域名
-                                            </Typography.Text>
-                                            <Tooltip title={heldDomains.join('、')}>
-                                                <Typography.Text style={{ fontSize: 11, maxWidth: 360 }} ellipsis>
-                                                    {heldDomains.join('、') || '-'}
-                                                </Typography.Text>
-                                            </Tooltip>
-                                        </Space>
-                                        );
-                                    })}
-                                </Space>
-                            </div>
-                        )}
-
-                        {/* 被动收集结果：每个主域名一行，展示该域收集到的全部子域名 */}
-                        {(taskDetail.passive_collection?.results?.length ?? 0) > 0 && (
-                            <div style={{ marginBottom: 20 }}>
-                                <Divider style={{ margin: '0 0 8px' }}>被动收集结果（按主域名）</Divider>
-                                <Table
-                                    size="small"
-                                    rowKey="domain"
-                                    pagination={false}
-                                    dataSource={taskDetail.passive_collection!.results}
-                                    columns={[
-                                        { title: '主域名', dataIndex: 'domain', width: 180, render: (v: string) => <Text copyable style={{ fontSize: 12 }}>{v}</Text> },
-                                        { title: '子域数量', dataIndex: 'count', width: 90, render: (v: number) => <Tag color="blue">{v}</Tag> },
-                                        {
-                                            title: '查询到的子域名',
-                                            dataIndex: 'subdomains',
-                                            render: (subs: string[]) => (
-                                                <Space wrap size={[4, 4]}>
-                                                    {(subs || []).slice(0, 6).map((sub) => (
-                                                        <Tag key={sub} style={{ fontSize: 11 }}>{sub}</Tag>
-                                                    ))}
-                                                    {(subs || []).length > 6 && (
-                                                        <Tag key="__more" style={{ fontSize: 11 }}>
-                                                            +{subs.length - 6} 个（展开行查看全部）
-                                                        </Tag>
-                                                    )}
-                                                </Space>
-                                            ),
-                                        },
-                                    ]}
-                                    expandable={{
-                                        rowExpandable: (record) => (record.subdomains?.length ?? 0) > 6,
-                                        expandedRowRender: (record) => (
-                                            <Space wrap size={[4, 4]}>
-                                                {(record.subdomains || []).map((sub) => (
-                                                    <Tag key={sub} style={{ fontSize: 11 }}>{sub}</Tag>
-                                                ))}
-                                            </Space>
-                                        ),
-                                    }}
-                                />
-                            </div>
-                        )}
-
-                        {/* 原始目标 */}
-                        {taskDetail.task.original_targets && (
-                            <>
-                                <Divider orientation="left" style={{ fontSize: 13 }}>
-                                    <AimOutlined style={{ marginRight: 4 }} />原始目标
-                                </Divider>
-                                <pre style={{
-                                    background: '#f1f5f9', border: '1px solid #e2e8f0',
-                                    borderRadius: 8, padding: 12, fontSize: 12,
-                                    maxHeight: 160, overflow: 'auto', whiteSpace: 'pre-wrap',
-                                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                                    color: '#334155',
-                                }}>
-                                    {taskDetail.task.original_targets}
-                                </pre>
-                            </>
-                        )}
-
-                        {/* 扫描配置 */}
-                        {taskDetail.task.config && typeof taskDetail.task.config === 'object' && (
-                            <>
-                                <Divider orientation="left" style={{ fontSize: 13 }}>
-                                    <AuditOutlined style={{ marginRight: 4 }} />扫描配置 <Tag color="cyan">v{taskDetail.task.current_config_version || 1}</Tag>
-                                </Divider>
-                                <pre style={{
-                                    background: '#0f172a', color: '#e2e8f0',
-                                    borderRadius: 8, padding: 12, fontSize: 11,
-                                    maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap',
-                                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                                }}>
-                                    {JSON.stringify(taskDetail.task.config, null, 2)}
-                                </pre>
-                            </>
-                        )}
-
-                        {/* 子任务状态分布 */}
-                        {Object.keys(taskDetail.status_distribution).length > 0 && (
-                            <>
-                                <Divider orientation="left" style={{ fontSize: 13 }}>
-                                    批次状态分布
-                                </Divider>
-                                <Space wrap style={{ marginBottom: 12 }}>
-                                    {Object.entries(taskDetail.status_distribution).map(([status, count]) => {
-                                        const { color, text } = getTaskStatusMeta(status);
-                                        return (
-                                            <Badge key={status} count={count} color={color === 'processing' ? '#1677ff' : undefined} overflowCount={9999}>
-                                                <Tag color={color} style={{ marginRight: 0 }}>{text}</Tag>
-                                            </Badge>
-                                        );
-                                    })}
-                                </Space>
-                            </>
-                        )}
-
-                        {/* 任务原因统计 */}
-                        {taskDetail.reason_stats?.length > 0 && (
-                            <>
-                                <Divider orientation="left" style={{ fontSize: 13 }}>
-                                    调度与终态原因
-                                </Divider>
-                                <Space direction="vertical" size={6} style={{ width: '100%', marginBottom: 12 }}>
-                                    {taskDetail.reason_stats.map((item, index) => {
-                                        const { color, text } = getTaskStatusMeta(item.status);
-                                        return (
-                                            <Alert
-                                                key={`${item.status}-${index}`}
-                                                type={item.status.toLowerCase().includes('fail') || item.status.toLowerCase().includes('timeout') ? 'warning' : 'info'}
-                                                showIcon
-                                                message={
-                                                    <Space wrap>
-                                                        <Tag color={color}>{text}</Tag>
-                                                        <Text>{item.reason}</Text>
-                                                        <Text type="secondary">{item.count} 批次 / {item.target_count} 目标</Text>
-                                                    </Space>
-                                                }
-                                            />
-                                        );
-                                    })}
-                                </Space>
-                            </>
-                        )}
-
-                        {taskDetail.coverage_explanation && (
-                            taskDetail.coverage_explanation.items.length > 0
-                            || taskDetail.coverage_explanation.invalidations.length > 0
-                            || Object.values(taskDetail.coverage_explanation.summary).some((value) => value > 0)
-                        ) && (
-                            <>
-                                <Divider orientation="left" style={{ fontSize: 13 }}>
-                                    <RadarChartOutlined style={{ marginRight: 4 }} />扫描复用与覆盖
-                                </Divider>
-                                <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
-                                    <Col xs={12} md={6}>
-                                        <Statistic title="实际执行工作项" value={taskDetail.coverage_explanation.summary.executed_work_items} valueStyle={{ color: '#1677ff', fontSize: 22 }} />
-                                    </Col>
-                                    <Col xs={12} md={6}>
-                                        <Statistic title="历史复用阶段" value={taskDetail.coverage_explanation.summary.reused_stages} valueStyle={{ color: '#16a34a', fontSize: 22 }} />
-                                    </Col>
-                                    <Col xs={12} md={6}>
-                                        <Statistic title="执行中关联" value={taskDetail.coverage_explanation.summary.in_flight_work_items} valueStyle={{ color: '#d97706', fontSize: 22 }} />
-                                    </Col>
-                                    <Col xs={12} md={6}>
-                                        <Statistic
-                                            title="失效 / 过期阶段"
-                                            value={taskDetail.coverage_explanation.summary.invalidated_stages + taskDetail.coverage_explanation.summary.expired_stages}
-                                            valueStyle={{ color: '#dc2626', fontSize: 22 }}
-                                        />
-                                    </Col>
-                                </Row>
-                                <Alert
-                                    type={taskDetail.coverage_explanation.summary.saved_stages > 0 ? 'success' : 'info'}
-                                    showIcon
-                                    message={taskDetail.coverage_explanation.summary.saved_stages > 0
-                                        ? `已节省 ${taskDetail.coverage_explanation.summary.saved_stages} 个扫描阶段、${taskDetail.coverage_explanation.summary.saved_targets} 个完整目标`
-                                        : '本次没有复用历史覆盖'}
-                                    description="实际执行工作项代表该目标领取的扫描流水线；历史复用按可验证阶段计数，执行中关联会在来源完成或失败后自动重新规划。"
-                                    style={{ marginBottom: 12 }}
-                                />
-                                {taskDetail.coverage_explanation.items.length > 0 && (
-                                    <Table
-                                        aria-label="扫描复用明细"
-                                        dataSource={taskDetail.coverage_explanation.items}
-                                        rowKey={(item) => `${item.link_type}-${item.normalized_target}-${item.stage}-${item.source.attempt_id}-${item.created_at}`}
-                                        size="small"
-                                        pagination={false}
-                                        scroll={{ x: 980 }}
-                                        style={{ marginBottom: 12 }}
-                                        columns={[
-                                            {
-                                                title: '处理方式', dataIndex: 'link_type', key: 'link_type', width: 110,
-                                                render: (value: string) => {
-                                                    const meta = coverageLinkMeta[value] || { label: value || '未知', color: 'default' };
-                                                    return <Tag color={meta.color}>{meta.label}</Tag>;
-                                                },
-                                            },
-                                            {
-                                                title: '状态', dataIndex: 'status', key: 'status', width: 105,
-                                                render: (value: string) => {
-                                                    const meta = coverageLinkStatusLabels[value] || { label: value || '未知', color: 'default' };
-                                                    return <Tag color={meta.color}>{meta.label}</Tag>;
-                                                },
-                                            },
-                                            { title: '目标', dataIndex: 'normalized_target', key: 'normalized_target', ellipsis: true, width: 230, render: (value: string) => value || '-' },
-                                            { title: '阶段', dataIndex: 'stage', key: 'stage', width: 120, render: (value: string) => scanStageLabels[value] || value || '-' },
-                                            { title: '网络区域', dataIndex: 'network_zone', key: 'network_zone', width: 120, render: (value: string) => <Tag>{value || '-'}</Tag> },
-                                            {
-                                                title: '来源', key: 'source', ellipsis: true, width: 220,
-                                                render: (_, item: API.TaskCoverageExplanationItem) => item.source.task_id ? (
-                                                    <Tooltip title={`${item.source.task_id} / ${item.source.batch_id || '-'} / ${item.source.attempt_id || '-'}`}>
-                                                        <Text>{item.source.task_name || item.source.task_id}</Text>
-                                                    </Tooltip>
-                                                ) : <Text type="secondary">-</Text>,
-                                            },
-                                            { title: '原因', dataIndex: 'reason', key: 'reason', ellipsis: true, width: 200, render: (value: string) => coverageReasonText(value) },
-                                        ]}
-                                    />
-                                )}
-                                {taskDetail.coverage_explanation.items_truncated && (
-                                    <Text type="secondary">仅展示最近 100 条复用关联，顶部汇总为完整计数。</Text>
-                                )}
-                                {taskDetail.coverage_explanation.invalidations.length > 0 && (
-                                    <>
-                                        <Text strong style={{ display: 'block', margin: '12px 0 8px' }}>失效与过期原因</Text>
-                                        <Table
-                                            aria-label="扫描覆盖失效明细"
-                                            dataSource={taskDetail.coverage_explanation.invalidations}
-                                            rowKey={(item) => `${item.normalized_target}-${item.stage}-${item.invalidated_at}`}
-                                            size="small"
-                                            pagination={false}
-                                            scroll={{ x: 820 }}
-                                            style={{ marginBottom: 12 }}
-                                            columns={[
-                                                { title: '目标', dataIndex: 'normalized_target', key: 'normalized_target', ellipsis: true, width: 250 },
-                                                { title: '阶段', dataIndex: 'stage', key: 'stage', width: 120, render: (value: string) => scanStageLabels[value] || value || '-' },
-                                                {
-                                                    title: '状态', dataIndex: 'status', key: 'status', width: 90,
-                                                    render: (value: string) => <Tag color={value === 'expired' ? 'orange' : 'red'}>{value === 'expired' ? '已过期' : '已失效'}</Tag>,
-                                                },
-                                                { title: '原因', dataIndex: 'reason', key: 'reason', ellipsis: true, width: 260, render: (value: string) => coverageReasonText(value) },
-                                            ]}
-                                        />
-                                        {taskDetail.coverage_explanation.invalidations_truncated && (
-                                            <Text type="secondary">仅展示最近 100 条失效记录，顶部汇总为完整计数。</Text>
-                                        )}
-                                    </>
-                                )}
-                            </>
-                        )}
-
-                        {configRevisions.length > 0 && (
-                            <>
-                                <Divider orientation="left" style={{ fontSize: 13 }}>配置修订历史</Divider>
-                                <Table
-                                    dataSource={configRevisions}
-                                    rowKey="version"
-                                    size="small"
-                                    pagination={false}
-                                    style={{ marginBottom: 12 }}
-                                    columns={[
-                                        { title: '版本', dataIndex: 'version', key: 'version', width: 80, render: (version: number) => <Tag color="cyan">v{version}</Tag> },
-                                        { title: '说明', dataIndex: 'change_note', key: 'change_note', render: (note: string) => note || '-' },
-                                        { title: '操作者', dataIndex: 'created_by', key: 'created_by', width: 120 },
-                                        { title: '时间', dataIndex: 'created_at', key: 'created_at', width: 180 },
-                                    ]}
-                                />
-                            </>
-                        )}
-
-                        {taskDetail.audits?.length > 0 && (
-                            <>
-                                <Divider orientation="left" style={{ fontSize: 13 }}>
-                                    <AuditOutlined style={{ marginRight: 4 }} />操作审计
-                                </Divider>
-                                <Table
-                                    dataSource={taskDetail.audits}
-                                    rowKey="id"
-                                    size="small"
-                                    pagination={false}
-                                    style={{ marginBottom: 12 }}
-                                    columns={[
-                                        {
-                                            title: '操作', dataIndex: 'action', key: 'action', width: 90,
-                                            render: (action: string) => ({
-                                                pause: '暂停', resume: '恢复', stop: '停止', archive: '归档', config_update: '更新配置', batch_append: '增加批次', notebook_distribution_materialize: '测绘笔记本分发',
-                                                batch_pause: '暂停批次', batch_resume: '恢复批次', batch_stop: '停止批次', batch_retry: '重试批次', batch_archive: '归档批次',
-                                            } as Record<string, string>)[action] || action,
-                                        },
-                                        {
-                                            title: '状态变化', key: 'status_change',
-                                            render: (_, audit) => (
-                                                <Space size={4}>
-                                                    <Tag>{audit.before_status || '-'}</Tag>
-                                                    <Text type="secondary">→</Text>
-                                                    <Tag color="blue">{audit.after_status || '-'}</Tag>
-                                                </Space>
-                                            ),
-                                        },
-                                        { title: '操作者', dataIndex: 'operator_id', key: 'operator_id', width: 120 },
-                                        { title: '时间', dataIndex: 'created_at', key: 'created_at', width: 180 },
-                                    ]}
-                                />
-                            </>
-                        )}
-
-                        {/* 当前批次 */}
-                        <Divider orientation="left" style={{ fontSize: 13 }}>
-                            批次管理 ({taskDetail.batches?.length || taskDetail.sub_tasks.length})
-                        </Divider>
-                        <Table
-                            dataSource={taskDetail.batches || []}
-                            rowKey="id"
-                            size="small"
-                            scroll={{ x: 1180 }}
-                            pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 个批次（含已归档历史）` }}
-                            columns={[
-                                {
-                                    title: '批次 ID', dataIndex: 'id', key: 'id', ellipsis: true, width: 230,
-                                    render: (v: string, row) => (
-                                        <Space size={4}>
-                                            <Text style={{ fontFamily: 'monospace', fontSize: 11 }}>{v}</Text>
-                                            {row.archived_at && <Tag icon={<InboxOutlined />}>已归档</Tag>}
-                                        </Space>
-                                    ),
-                                },
-                                { title: '尝试', dataIndex: 'current_attempt_no', key: 'current_attempt_no', width: 70, render: (v: number, row) => <Tag>#{v || 1}/{row.attempt_count || 1}</Tag> },
-                                {
-                                    title: '状态', dataIndex: 'display_status', key: 'display_status', width: 100,
-                                    render: (v: string) => getStatusTag(v),
-                                },
-                                {
-                                    title: '类型', dataIndex: 'target_type', key: 'target_type', width: 90,
-                                    render: (v: string) => <Tag>{targetTypeLabels[v] || v || '-'}</Tag>,
-                                },
-                                {
-                                    title: 'Agent', dataIndex: 'agent_id', key: 'agent_id', ellipsis: true, width: 140,
-                                    render: (v: string) => v ? <Tag color="blue" style={{ fontSize: 11 }}>{v}</Tag> : <Text type="secondary">-</Text>,
-                                },
-                                {
-                                    title: '目标数', dataIndex: 'target_count', key: 'target_count', width: 80,
-                                    sorter: (a, b) => a.target_count - b.target_count,
-                                },
-                                {
-                                    title: '重试', key: 'retry', width: 70,
-                                    render: (_, r) => <Text style={{ fontSize: 12 }}>{r.retry_count}/{r.max_retry}</Text>,
-                                },
-                                {
-                                    title: '配置', dataIndex: 'config_version', key: 'config_version', width: 70,
-                                    render: (version: number) => <Tag color="cyan">v{version || 1}</Tag>,
-                                },
-                                {
-                                    title: '更新时间', dataIndex: 'updated_at', key: 'updated_at', width: 170,
-                                    render: (v: string) => <Text style={{ fontSize: 11, color: '#64748b' }}>{v}</Text>,
-                                },
-                                {
-                                    title: '操作', key: 'actions', fixed: 'right', width: 80,
-                                    render: (_, row) => {
-                                        const actions = canManageTasks && !taskDetail.task.archived_at ? availableBatchActions(row) : [];
-                                        if (actions.length === 0) {
-                                            return <Text type="secondary">-</Text>;
-                                        }
-                                        return (
-                                            <Dropdown
-                                                trigger={['click']}
-                                                menu={{
-                                                    items: actions.map((action) => ({
-                                                        key: action,
-                                                        label: batchActionLabels[action],
-                                                        danger: action === 'stop' || action === 'archive',
-                                                    })),
-                                                    onClick: ({ key }) => handleBatchAction(row, key as BatchAction),
-                                                }}
-                                            >
-                                                <Button aria-label={`管理批次 ${row.id}`} size="small" icon={<MoreOutlined />} />
-                                            </Dropdown>
-                                        );
-                                    },
-                                },
-                            ]}
-                        />
-
-                        {(taskDetail.attempts?.length || 0) > 0 && (
-                            <>
-                                <Divider orientation="left" style={{ fontSize: 13 }}>
-                                    执行尝试历史 ({taskDetail.attempts?.length || 0})
-                                </Divider>
-                                <Table
-                                    dataSource={taskDetail.attempts}
-                                    rowKey="id"
-                                    size="small"
-                                    scroll={{ x: 1250 }}
-                                    pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 次执行` }}
-                                    columns={[
-                                        {
-                                            title: '批次 ID', dataIndex: 'batch_id', key: 'batch_id', ellipsis: true, width: 210,
-                                            render: (v: string) => <Text style={{ fontFamily: 'monospace', fontSize: 11 }}>{v || '-'}</Text>,
-                                        },
-                                        { title: '尝试', dataIndex: 'attempt_no', key: 'attempt_no', width: 65, render: (v: number) => <Tag>#{v || 1}</Tag> },
-                                        {
-                                            title: '触发方式', dataIndex: 'trigger', key: 'trigger', width: 130,
-                                            render: (v: string) => ({
-                                                initial: '初次执行', automatic_retry: '失败重试', timeout_retry: '超时重试', split_retry: '拆分重试',
-                                                agent_offline_recovery: '掉线恢复', spot_recovery: 'Spot 恢复', manual_retry: '手动重试', legacy_retry: '历史重试',
-                                            } as Record<string, string>)[v] || v || '-',
-                                        },
-                                        { title: '状态', dataIndex: 'status', key: 'status', width: 90, render: (v: string) => getStatusTag(v) },
-                                        {
-                                            title: 'Agent', dataIndex: 'agent_id', key: 'agent_id', ellipsis: true, width: 130,
-                                            render: (v: string) => v ? <Tag color="blue">{v}</Tag> : <Text type="secondary">-</Text>,
-                                        },
-                                        {
-                                            title: '版本', key: 'versions', width: 145,
-                                            render: (_, row) => <Space size={4}><Tag color="cyan">配置 v{row.config_version || 1}</Tag><Tag>{row.rule_version || '-'}</Tag></Space>,
-                                        },
-                                        {
-                                            title: '失败原因', dataIndex: 'failure_reason', key: 'failure_reason', ellipsis: true, width: 240,
-                                            render: (v: string) => v || <Text type="secondary">-</Text>,
-                                        },
-                                        { title: '开始时间', dataIndex: 'started_at', key: 'started_at', width: 180, render: (v?: string | null) => v || '-' },
-                                        { title: '完成时间', dataIndex: 'finished_at', key: 'finished_at', width: 180, render: (v?: string | null) => v || '-' },
-                                    ]}
-                                />
-                            </>
-                        )}
-
-                        {taskDetail.timing && <TaskTimingPanel timing={taskDetail.timing} stageLabels={scanStageLabels} />}
-                        <CredentialFindingsPanel taskId={taskDetail.task.id} />
-                    </div>
-                ) : null}
-            </Drawer>
+            />
 
 			{legacyScanUIEnabled && riskPreview && <Modal
 				title="风险验证预览"

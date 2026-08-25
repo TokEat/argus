@@ -31,7 +31,7 @@ func TestTaskStatusBehaviorMatrix(t *testing.T) {
 	if !CanStopTaskStatus("Paused") {
 		t.Fatal("paused task must remain stoppable")
 	}
-	for _, status := range []string{"Failed", "Timeout", "Cancelled"} {
+	for _, status := range []string{"Failed", "Timeout", "Cancelled", "PartialDone"} {
 		if !CanExplicitRetryTaskStatus(status) {
 			t.Fatalf("%s must expose explicit retry", status)
 		}

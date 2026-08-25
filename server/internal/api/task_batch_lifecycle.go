@@ -618,13 +618,8 @@ func retryTaskBatch(c *gin.Context) {
 			return errBatchStateChanged
 		}
 		prepared = next
-		if isCredentialValidation {
-			if err := reissueCredentialBundle(tx, currentRoot, currentBatch, attempt, &prepared); err != nil {
-				return err
-			}
-		}
 		if isRiskValidation || isCredentialValidation {
-			if err := db.MarkAutomaticValidationStageDerived(tx, currentRoot, currentBatch, prepared.ID); err != nil {
+			if err := prepareRetriedAutomaticValidation(tx, currentRoot, &currentBatch, attempt, &prepared); err != nil {
 				return err
 			}
 		}

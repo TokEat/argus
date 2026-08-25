@@ -113,6 +113,7 @@ export function isTaskFailedLike(status?: string): boolean {
 
 export function isTaskRetryable(status?: string): boolean {
     switch (normalizeTaskStatus(status)) {
+        case 'PARTIAL':
         case 'FAILED':
         case 'TIMEOUT':
         case 'STOPPED':

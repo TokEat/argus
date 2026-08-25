@@ -30,6 +30,7 @@ describe('task status compatibility', () => {
         expect(isTaskRetryable('Failed')).toBe(true);
         expect(isTaskRetryable('Timeout')).toBe(true);
         expect(isTaskRetryable('Cancelled')).toBe(true);
+        expect(isTaskRetryable('PartialDone')).toBe(true);
         expect(isTaskFinished('FINISHED')).toBe(true);
         expect(isTaskPausable('FINISHED')).toBe(false);
         expect(isTaskRetryable('FINISHED')).toBe(false);

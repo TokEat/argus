@@ -550,8 +550,9 @@ describe('TaskManagement', () => {
         );
 
         expect(await screen.findByText('History Task')).toBeInTheDocument();
-        await user.click(screen.getByRole('button', { name: /详情/ }));
+        await user.click(screen.getByRole('button', { name: /批次/ }));
         expect(await screen.findByText('执行尝试历史 (2)')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /批量重试失败批次/ })).toBeDisabled();
         expect(screen.getByText('connection reset')).toBeInTheDocument();
         expect(screen.getByText('失败重试')).toBeInTheDocument();
         expect(screen.getByText('agent-old')).toBeInTheDocument();
@@ -579,6 +580,7 @@ describe('TaskManagement', () => {
                 schema_version: 'argus.task-coverage-explanation/v1',
                 summary: {
                     executed_work_items: 1, reused_stages: 2, in_flight_work_items: 1,
+                    skipped_stages: 1, failed_stages: 1,
                     invalidated_stages: 1, expired_stages: 1, saved_stages: 2, saved_targets: 1,
                 },
                 items: [
@@ -598,12 +600,34 @@ describe('TaskManagement', () => {
                         reason: 'active_work_claim', created_at: '2026-08-09T01:00:20Z',
                     },
                 ],
-                invalidations: [{
-                    normalized_target: 'https://a.test', stage: 'http_probe', status: 'invalidated',
-                    reason: 'upstream_content_changed:port_scan',
-                    source: { task_id: 'task-source', task_name: 'Source Task', batch_id: 'source-batch', attempt_id: 'source-attempt' },
-                    invalidated_at: '2026-08-09T01:03:00Z', valid_until: null,
-                }],
+                invalidations: [
+                    {
+                        normalized_target: 'https://a.test', stage: 'http_probe', status: 'invalidated',
+                        reason: 'upstream_content_changed:port_scan',
+                        source: { task_id: 'task-source', task_name: 'Source Task', batch_id: 'source-batch', attempt_id: 'source-attempt' },
+                        invalidated_at: '2026-08-09T01:03:00Z', valid_until: null,
+                    },
+                    {
+                        normalized_target: 'jslgroup.cn', stage: 'icmp_discovery', status: 'skipped',
+                        reason: 'stage_not_executed',
+                        source: { task_id: 'task-coverage', task_name: 'Coverage Task', batch_id: 'batch-1', attempt_id: 'attempt-1' },
+                        invalidated_at: '2026-08-09T01:03:10Z', valid_until: null,
+                    },
+                    {
+                        normalized_target: 'https://dtry.cn:8088', stage: 'http_probe', status: 'failed',
+                        reason: 'http_budget_exhausted',
+                        source: { task_id: 'task-coverage', task_name: 'Coverage Task', batch_id: 'batch-1', attempt_id: 'attempt-1' },
+                        invalidated_at: '2026-08-09T01:03:20Z', valid_until: null,
+                    },
+                    {
+                        normalized_target: 'https://www.jslgroup.cn:443', stage: 'risk_validation', status: 'invalidated',
+                        reason: 'fingerprint_unmatched_pocs',
+                        fingerprints: ['DigiCert-Cert', 'Nginx'],
+                        matched_pocs: [],
+                        source: { task_id: 'task-coverage', task_name: 'Coverage Task', batch_id: 'batch-1', attempt_id: 'attempt-1' },
+                        invalidated_at: '2026-08-09T01:03:30Z', valid_until: null,
+                    },
+                ],
                 items_truncated: false,
                 invalidations_truncated: false,
             },
@@ -622,8 +646,16 @@ describe('TaskManagement', () => {
         expect(screen.getAllByText('执行中关联').length).toBeGreaterThan(0);
         expect(screen.getAllByText('Source Task').length).toBeGreaterThan(0);
         expect(screen.getByText('有效检查点恢复')).toBeInTheDocument();
-        expect(screen.getByText('失效与过期原因')).toBeInTheDocument();
+        expect(screen.getByText('覆盖缺口与原因')).toBeInTheDocument();
         expect(screen.getByText('上游内容变化（端口扫描）')).toBeInTheDocument();
+        expect(screen.getAllByText('已跳过').length).toBeGreaterThan(0);
+        expect(screen.getByText('该阶段对本批次不适用或已按策略跳过')).toBeInTheDocument();
+        expect(screen.getAllByText('阶段失败').length).toBeGreaterThan(0);
+        expect(screen.getByText('该目标 HTTP 探测耗尽网络预算，未得到完整响应')).toBeInTheDocument();
+        expect(screen.getByText('指纹未匹配到可执行 POC')).toBeInTheDocument();
+        expect(screen.getByText('Nginx')).toBeInTheDocument();
+        expect(screen.getByText('DigiCert-Cert')).toBeInTheDocument();
+        expect(screen.getAllByText('未匹配').length).toBeGreaterThan(0);
     });
 
 
@@ -728,7 +760,7 @@ describe('TaskManagement', () => {
         );
 
         expect(await screen.findByText('Append Task')).toBeInTheDocument();
-        await user.click(screen.getByRole('button', { name: /详情/ }));
+        await user.click(screen.getByRole('button', { name: /批次/ }));
         await user.click(await screen.findByRole('button', { name: /增加批次/ }));
         const targetInput = await screen.findByLabelText('新增批次目标');
         const dialog = targetInput.closest('[role="dialog"]') as HTMLElement;
@@ -757,7 +789,7 @@ describe('TaskManagement', () => {
             .mockResolvedValue({ status: 'unchanged', replayed: false, new_subtasks: 0, new_batches: 0, new_targets: 0, duplicate_targets: 1, config_version: 1, total_chunks: 1, total_targets: 1 });
 
         render(<MemoryRouter><App><TaskManagement /></App></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: /详情/ }));
+        await user.click(await screen.findByRole('button', { name: /批次/ }));
         await user.click(await screen.findByRole('button', { name: /增加批次/ }));
         const input = await screen.findByLabelText('新增批次目标');
         const dialog = input.closest('[role="dialog"]') as HTMLElement;
@@ -819,7 +851,8 @@ describe('TaskManagement', () => {
         );
 
         expect(await screen.findByText('Batch Control Task')).toBeInTheDocument();
-        await user.click(screen.getByRole('button', { name: /详情/ }));
+        await user.click(screen.getByRole('button', { name: /批次/ }));
+        expect(screen.getByRole('button', { name: /批量重试失败批次/ })).toBeDisabled();
         await user.click(await screen.findByRole('button', { name: '管理批次 batch-pending' }));
         await user.click(await screen.findByText('重试批次'));
         const confirmationText = await screen.findByText(/将保留历史执行/);
@@ -831,7 +864,7 @@ describe('TaskManagement', () => {
         const firstKey = retryTaskBatchMock.mock.calls[0][2];
         expect(await screen.findByText(/批次重试未确认完成/)).toBeInTheDocument();
         await user.click(screen.getByLabelText('Close'));
-        await user.click(screen.getByRole('button', { name: /详情/ }));
+        await user.click(screen.getByRole('button', { name: /批次/ }));
         await screen.findByRole('button', { name: '管理批次 batch-pending' });
         await user.click(await screen.findByRole('button', { name: '管理批次 batch-pending' }));
         const retryActions = await screen.findAllByText('重试批次');
@@ -872,6 +905,45 @@ describe('TaskManagement', () => {
 
         await waitFor(() => expect(retryTaskMock).toHaveBeenCalledWith('task-failed', expect.any(String)));
         await waitFor(() => expect(listTasksMock).toHaveBeenCalledTimes(2));
+    });
+
+    it('bulk-retries failed batches from the batch drawer of a partial task', async () => {
+        const user = userEvent.setup();
+        listTasksMock.mockResolvedValue({
+            items: [{
+                ID: 'task-partial', Name: 'Partial Task', Status: 'PartialDone', TotalTargets: 4, CompletedTargets: 2,
+                TotalChunks: 4, CompletedChunks: 2, Priority: 1, CreatedAt: '2026-08-09T01:00:00Z',
+            } as API.RootTask],
+            total: 1, page: 1, page_size: 20, has_more: false,
+        });
+        getTaskDetailMock.mockResolvedValue({
+            task: {
+                id: 'task-partial', name: 'Partial Task', status: 'PartialDone', priority: 1,
+                total_chunks: 4, completed_chunks: 2, total_targets: 4, completed_targets: 2,
+                timeout_sec: 60, original_targets: '[]', config: {},
+                rule_version: 'rules-v1', current_config_version: 1,
+                created_at: '2026-08-09T01:00:00Z', updated_at: '2026-08-09T01:02:00Z',
+            },
+            sub_tasks: [],
+            batches: [{
+                id: 'batch-failed', sequence: 0, kind: 'risk_validation', target_type: 'risk_validation', target_count: 2,
+                status: 'FAILED', display_status: 'FAILED', control_state: 'active', config_version: 1,
+                rule_version: 'rules-v1', priority: 1, timeout_sec: 60, current_attempt_no: 1, attempt_count: 1,
+                latest_attempt_id: 'batch-failed-attempt-1', retry_count: 0, max_retry: 3,
+                created_at: '2026-08-09T01:00:00Z', updated_at: '2026-08-09T01:01:00Z',
+            }],
+            attempts: [], status_distribution: { FAILED: 1 }, reason_stats: [], audits: [],
+            result_stats: { assets: 1, fingerprints: 1, vulns: 0, severity: {} },
+        } satisfies API.TaskDetailResponse);
+        getTaskConfigRevisionsMock.mockResolvedValue({ task_id: 'task-partial', current_config_version: 1, items: [] });
+        retryTaskMock.mockResolvedValue({ status: 'retried', replayed: false, retried_batches: 1, completed_skipped: 1, paused_skipped: 0, dispatch_pending: 0 });
+
+        render(<MemoryRouter><App><TaskManagement /></App></MemoryRouter>);
+        await user.click(await screen.findByRole('button', { name: /批次/ }));
+        await user.click(await screen.findByRole('button', { name: /批量重试失败批次/ }));
+        const dialog = (await screen.findByText(/成功批次不会重复扫描/)).closest('[role="dialog"]') as HTMLElement;
+        await user.click(within(dialog).getByRole('button', { name: '确 认' }));
+        await waitFor(() => expect(retryTaskMock).toHaveBeenCalledWith('task-partial', expect.any(String)));
     });
 
     it('reuses a retry key after a network failure', async () => {
