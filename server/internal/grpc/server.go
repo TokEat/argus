@@ -1074,19 +1074,46 @@ func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb
 		_ = s.ackTaskHook(sub.StreamMsgID)
 	}
 
-	// 失败批次拆分重试：对多目标失败批次执行二分拆分
-	if (status == "FAILED" || status == "TIMEOUT") && sub.RootTaskID != "" && !isCredentialValidationConfig(sub.Config) {
-		splitSubs, didSplit, _ := db.SplitFailedSubTask(&sub, false)
-		if didSplit && len(splitSubs) > 0 {
-			// 拆分成功，将两个子批次推入 urgent 队列优先调度。
-			for _, splitSub := range splitSubs {
-				s.enqueuePreparedRetry(splitSub)
+	// 失败批次拆分重试：对多目标失败批次执行二分拆分。
+	// 风险验证快照不可走通用拆分/重试：其派生配置（NoPoc=false、
+	// RiskValidationTargets、钉住的规则版本）会被任务级资产发现修订覆盖，
+	// 导致重试"成功完成"却静默跳过全部 POC。必须经 AppendRetry 保留原配置。
+	if (status == "FAILED" || status == "TIMEOUT") && sub.RootTaskID != "" {
+		switch {
+		case isCredentialValidationConfig(sub.Config):
+			// 凭据验证的重发由 sealed-bundle reissue 流程负责，这里不处理。
+		case isRiskValidationConfig(sub.Config):
+			terminalStatus := "Failed"
+			if status == "TIMEOUT" {
+				terminalStatus = "Timeout"
 			}
-			log.Printf("[SplitRetry] Task %s split into %d sub-batches and re-enqueued", req.TaskId, len(splitSubs))
-		} else if prepared, ok := db.PrepareSubTaskRetry(&sub); ok {
-			// 普通重试：单目标批次失败或无法拆分时，走常规重试流程
-			log.Printf("[Retry] Task %s failed, regular retry (%d/%d)", req.TaskId, prepared.RetryCount, prepared.MaxRetry)
-			s.enqueuePreparedRetry(prepared)
+			prepared, appended, appendErr := credentialbundle.AppendRetry(db.DB, &sub, db.AttemptRetryOptions{
+				Trigger:              db.AttemptTriggerAutomaticRetry,
+				TerminalStatus:       terminalStatus,
+				FailureReason:        sub.FailureReason,
+				ConsumeRetryBudget:   true,
+				UseCurrentTaskConfig: true,
+			})
+			if appendErr != nil {
+				log.Printf("[Retry] Risk validation attempt %s retry preparation failed: %v", sub.ID, appendErr)
+			} else if !appended {
+				log.Printf("[Retry] Risk validation attempt %s retry blocked by state or budget", sub.ID)
+			} else if s.enqueuePreparedRetry(prepared) {
+				log.Printf("[Retry] Risk validation attempt %s requeued with preserved stage config (retry %d/%d)", prepared.ID, prepared.RetryCount, prepared.MaxRetry)
+			}
+		default:
+			splitSubs, didSplit, _ := db.SplitFailedSubTask(&sub, false)
+			if didSplit && len(splitSubs) > 0 {
+				// 拆分成功，将两个子批次推入 urgent 队列优先调度。
+				for _, splitSub := range splitSubs {
+					s.enqueuePreparedRetry(splitSub)
+				}
+				log.Printf("[SplitRetry] Task %s split into %d sub-batches and re-enqueued", req.TaskId, len(splitSubs))
+			} else if prepared, ok := db.PrepareSubTaskRetry(&sub); ok {
+				// 普通重试：单目标批次失败或无法拆分时，走常规重试流程
+				log.Printf("[Retry] Task %s failed, regular retry (%d/%d)", req.TaskId, prepared.RetryCount, prepared.MaxRetry)
+				s.enqueuePreparedRetry(prepared)
+			}
 		}
 	}
 

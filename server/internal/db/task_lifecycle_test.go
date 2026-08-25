@@ -688,3 +688,122 @@ func TestRefreshRootTaskStatusRetriesAfterCASConflict(t *testing.T) {
 		t.Fatalf("root did not converge after CAS conflict: %+v", got)
 	}
 }
+
+func TestSplitFailedSubTaskPreservesRiskValidationStageConfig(t *testing.T) {
+	store := setupTaskLifecycleTestDB(t)
+	const riskConfig = `{"NoPoc":false,"ExecutionMode":"risk_validation","RequiredRuleVersion":"v-test","RiskValidationTargets":{"example.com:443":["poc-a"]}}`
+	const assetConfig = `{"NoPoc":true,"ExecutionMode":""}`
+	root := RootTask{ID: "risk-split-root", TenantID: "tenant-a", ProjectID: "project-a", Status: "Running", CurrentConfigVersion: 1}
+	batch := TaskBatch{
+		ID: "risk-batch", TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID,
+		Sequence: 1, Kind: "risk_validation", TargetCount: 2,
+		Targets:          `["https://example.com","https://example.org"]`,
+		LatestAttemptID:  "risk-batch-attempt-1",
+		CurrentAttemptNo: 1, AttemptCount: 1, ControlState: string(BatchControlActive),
+	}
+	attempt := SubTask{
+		ID: "risk-batch-attempt-1", TenantID: root.TenantID, ProjectID: root.ProjectID,
+		RootTaskID: root.ID, BatchID: batch.ID, AttemptNo: 1, Status: "Failed",
+		ChunkTargets: `["https://example.com","https://example.org"]`,
+		Config:       riskConfig, MaxRetry: 3, RetryCount: 0, RuleVersion: "v-test",
+	}
+	revision := TaskConfigRevision{TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Version: 1, Config: assetConfig}
+	for _, row := range []interface{}{&root, &batch, &attempt, &revision} {
+		if err := store.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	input := attempt
+	subs, didSplit, retryAllowed := SplitFailedSubTask(&input, false)
+	if !didSplit || !retryAllowed {
+		t.Fatalf("expected split to run: didSplit=%v retryAllowed=%v", didSplit, retryAllowed)
+	}
+	if len(subs) != 2 {
+		t.Fatalf("expected 2 split sub-batches, got %d", len(subs))
+	}
+	var persisted []SubTask
+	if err := store.Where("batch_id IN ?", []string{"risk-batch", "risk-batch-split-"}).
+		Or("root_task_id = ? AND id LIKE ?", root.ID, "%split-%").Find(&persisted).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(persisted) == 0 {
+		t.Fatal("split attempts were not persisted")
+	}
+	for _, sub := range append(subs, persisted...) {
+		if !immutableDerivedExecutionConfig(sub.Config) {
+			t.Fatalf("split attempt %s lost the risk_validation stage config: %s", sub.ID, sub.Config)
+		}
+		if sub.RuleVersion != "v-test" {
+			t.Fatalf("split attempt %s rule version drifted: %s (want v-test)", sub.ID, sub.RuleVersion)
+		}
+	}
+}
+
+func TestPrepareSubTaskRetryPreservesRiskValidationStageConfig(t *testing.T) {
+	store := setupTaskLifecycleTestDB(t)
+	const riskConfig = `{"NoPoc":false,"ExecutionMode":"risk_validation","RequiredRuleVersion":"v-test","RiskValidationTargets":{"example.com:443":["poc-a"]}}`
+	const assetConfig = `{"NoPoc":true,"ExecutionMode":""}`
+	root := RootTask{ID: "risk-retry-root", TenantID: "tenant-a", ProjectID: "project-a", Status: "Running", CurrentConfigVersion: 1}
+	batch := TaskBatch{
+		ID: "risk-retry-batch", TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID,
+		Sequence: 1, Kind: "risk_validation", TargetCount: 1,
+		Targets: `["https://example.com"]`, LatestAttemptID: "risk-retry-attempt-1",
+		CurrentAttemptNo: 1, AttemptCount: 1, ControlState: string(BatchControlActive),
+	}
+	attempt := SubTask{
+		ID: "risk-retry-attempt-1", TenantID: root.TenantID, ProjectID: root.ProjectID,
+		RootTaskID: root.ID, BatchID: batch.ID, AttemptNo: 1, Status: "Failed",
+		ChunkTargets: `["https://example.com"]`,
+		Config:       riskConfig, MaxRetry: 3, RetryCount: 0, RuleVersion: "v-test",
+	}
+	revision := TaskConfigRevision{TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Version: 1, Config: assetConfig}
+	for _, row := range []interface{}{&root, &batch, &attempt, &revision} {
+		if err := store.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	input := attempt
+	prepared, ok := PrepareSubTaskRetry(&input)
+	if !ok {
+		t.Fatal("expected regular retry to be prepared")
+	}
+	if !immutableDerivedExecutionConfig(prepared.Config) {
+		t.Fatalf("retry attempt %s lost the risk_validation stage config: %s", prepared.ID, prepared.Config)
+	}
+	if prepared.RuleVersion != "v-test" {
+		t.Fatalf("retry attempt %s rule version drifted: %s (want v-test)", prepared.ID, prepared.RuleVersion)
+	}
+}
+
+func TestAssetDiscoveryRetryStillRefreshesConfigRevision(t *testing.T) {
+	store := setupTaskLifecycleTestDB(t)
+	root := RootTask{ID: "asset-retry-root", TenantID: "tenant-a", ProjectID: "project-a", Status: "Running", CurrentConfigVersion: 2}
+	batch := TaskBatch{
+		ID: "asset-retry-batch", TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID,
+		Sequence: 1, Kind: "asset_scan", TargetCount: 1,
+		Targets: `["example.com"]`, LatestAttemptID: "asset-retry-attempt-1",
+		CurrentAttemptNo: 1, AttemptCount: 1, ControlState: string(BatchControlActive),
+	}
+	attempt := SubTask{
+		ID: "asset-retry-attempt-1", TenantID: root.TenantID, ProjectID: root.ProjectID,
+		RootTaskID: root.ID, BatchID: batch.ID, AttemptNo: 1, Status: "Failed",
+		ChunkTargets: `["example.com"]`, Config: `{"NoPoc":true}`, MaxRetry: 3, RetryCount: 0, RuleVersion: "v-old",
+	}
+	revision := TaskConfigRevision{TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Version: 2, Config: `{"NoPoc":true,"Ports":"80"}`}
+	for _, row := range []interface{}{&root, &batch, &attempt, &revision} {
+		if err := store.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	input := attempt
+	prepared, ok := PrepareSubTaskRetry(&input)
+	if !ok {
+		t.Fatal("expected regular retry to be prepared")
+	}
+	if prepared.Config != `{"NoPoc":true,"Ports":"80"}` {
+		t.Fatalf("asset discovery retry should adopt current config revision, got: %s", prepared.Config)
+	}
+}
