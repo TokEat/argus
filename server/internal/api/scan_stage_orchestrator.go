@@ -312,7 +312,11 @@ func (o *ScanStageOrchestrator) DeriveRoot(ctx context.Context, tenantID, rootTa
 	if err != nil {
 		return err
 	}
-	return o.dispatchQueuedValidations(ctx, queued)
+	if err := o.dispatchQueuedValidations(ctx, queued); err != nil {
+		return err
+	}
+	db.RefreshRootTaskStatus(rootTaskID)
+	return nil
 }
 
 // sweepRiskSiblingsForTerminalAssetBatches 为缺少风险兄弟批次的终态资产批次
@@ -387,15 +391,14 @@ func (o *ScanStageOrchestrator) deriveRiskSiblingForAssetBatchTx(ctx context.Con
 		matchedProducts += len(prints)
 	}
 	var allocation validationExecutionAllocation
-	if estimatedRequests := int64(len(targets)) * riskValidationEstRequestsPerTarget; estimatedRequests > 0 {
-		alloc, allocErr := validationAllocation(*intent, root.ID, automaticRiskStage, estimatedRequests)
+	if len(targets) == 0 {
+		allocation = validationExecutionAllocation{BudgetID: riskBatchID + "-budget", TargetConcurrency: 1, RateLimit: 30}
+	} else {
+		concurrency, rate, allocErr := validationIntensityLimits(*intent, automaticRiskStage)
 		if allocErr != nil {
 			return nil, allocErr
 		}
-		allocation = alloc
-	} else {
-		// 零目标空批次：原生路径立即完结，预算字段给最小占位即可。
-		allocation = validationExecutionAllocation{BudgetID: riskBatchID + "-budget", TargetConcurrency: 1, RateLimit: 30, RequestBudget: 1}
+		allocation = validationExecutionAllocation{BudgetID: riskBatchID + "-budget", TargetConcurrency: concurrency, RateLimit: rate}
 	}
 	revision, err := db.CurrentTaskConfigRevision(tx, root)
 	if err != nil {
@@ -444,7 +447,79 @@ func (o *ScanStageOrchestrator) deriveRiskSiblingForAssetBatchTx(ctx context.Con
 		GoPocCatalogSHA256 string              `json:"gopoc_catalog"`
 	}{root.RuleVersion, targetPrints, policy.Authorization.AllowHighRiskAutoExecution, scanpolicy.GoPocCatalogSHA256()})
 	timeoutSec := automaticStageTimeoutSec(revision.TimeoutSec, len(targets))
-	return createAutomaticStageBatchWithIDs(tx, intent, root, automaticRiskStage, string(configJSON), targets, observationHash, planHash, revision, rules, timeoutSec, matchedProducts, map[string]interface{}{"matched_products": matchedProducts, "target_count": len(targets), "timeout_sec": timeoutSec, "workflow_scoped": true, "preferred_agent": preferredAgentID, "execution_allocation": allocation, "high_risk_auto_authorized": policy.Authorization.AllowHighRiskAutoExecution, "matching": "agent_native", "source_asset_batch": assetBatch.ID}, riskBatchID, riskBatchID+"-attempt-1")
+	summary := map[string]interface{}{
+		"matched_products": matchedProducts, "target_count": len(targets), "timeout_sec": timeoutSec,
+		"workflow_scoped": true, "preferred_agent": preferredAgentID, "execution_allocation": allocation,
+		"high_risk_auto_authorized": policy.Authorization.AllowHighRiskAutoExecution, "matching": "agent_native",
+		"source_asset_batch": assetBatch.ID,
+	}
+	if len(targets) == 0 {
+		summary["empty_sibling"] = true
+		summary["local_complete"] = true
+		summary["reason"] = "no_fingerprint_hits"
+	}
+	attempt, err := createAutomaticStageBatchWithIDs(tx, intent, root, automaticRiskStage, string(configJSON), targets, observationHash, planHash, revision, rules, timeoutSec, matchedProducts, summary, riskBatchID, riskBatchID+"-attempt-1")
+	if err != nil {
+		return nil, err
+	}
+	if len(targets) == 0 {
+		// 空指纹兄弟批次没有可执行目标：覆盖率契约要求至少 1 个 normalized
+		// target，下发给 Agent 会在 validate coverage event 处失败关闭。
+		// 在同一事务内本地完结，并立刻参与 1:1 聚合，避免入队。
+		if err := completeEmptyAutomaticRiskSibling(tx, intent, root, attempt); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+	return attempt, nil
+}
+
+func completeEmptyAutomaticRiskSibling(tx *gorm.DB, intent *db.ScanPolicyIntent, root db.RootTask, attempt *db.SubTask) error {
+	if attempt == nil {
+		return nil
+	}
+	now := time.Now().UTC()
+	if err := tx.Model(&db.SubTask{}).Where("id = ? AND tenant_id = ?", attempt.ID, attempt.TenantID).Updates(map[string]interface{}{
+		"status":         "DONE",
+		"finished_at":    now,
+		"failure_reason": "",
+		"stream_msg_id":  "",
+	}).Error; err != nil {
+		return err
+	}
+	if err := tx.Model(&db.TaskBatch{}).Where("id = ? AND tenant_id = ? AND latest_attempt_id = ?", attempt.BatchID, attempt.TenantID, attempt.ID).Updates(map[string]interface{}{
+		"status":        "DONE",
+		"control_state": db.BatchControlActive,
+	}).Error; err != nil {
+		return err
+	}
+	attempt.Status = "DONE"
+	attempt.FinishedAt = &now
+	aggregated, ready, err := aggregateAutomaticRiskStatus(tx, attempt.TenantID, attempt.RootTaskID)
+	if err != nil {
+		return err
+	}
+	stageStatus := db.ScanStageIntentDerived
+	if ready {
+		stageStatus = aggregated
+		if intent != nil {
+			intent.RiskStatus = aggregated
+		}
+		if err := tx.Model(&db.ScanPolicyIntent{}).
+			Where("tenant_id = ? AND root_task_id = ?", attempt.TenantID, attempt.RootTaskID).
+			Update("risk_status", aggregated).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&db.ScanStageDerivation{}).
+			Where("tenant_id = ? AND root_task_id = ? AND stage = ?", attempt.TenantID, attempt.RootTaskID, automaticRiskStage).
+			Updates(map[string]interface{}{"status": aggregated, "batch_id": attempt.BatchID, "attempt_id": attempt.ID, "updated_at": now}).Error; err != nil {
+			return err
+		}
+	}
+	return recordTaskAudit(tx, root, "automatic_"+automaticRiskStage+"_terminal", "DONE", "DONE", "system", map[string]interface{}{
+		"stage": automaticRiskStage, "batch_id": attempt.BatchID, "attempt_id": attempt.ID,
+		"stage_status": stageStatus, "aggregated": ready, "local_complete": true, "reason": "no_fingerprint_hits",
+	})
 }
 
 // loadBatchFingerprintMap 汇总指定资产批次上报的指纹（按其全部尝试聚合），
@@ -565,10 +640,10 @@ func (o *ScanStageOrchestrator) deriveCredentialValidation(ctx context.Context, 
 	return createAutomaticStageBatchWithIDs(tx, intent, root, automaticCredentialStage, string(encoded), endpoints, observationHash, intent.PlanHash, revision, rules, revision.TimeoutSec, len(targets), map[string]interface{}{"service_count": len(targets), "custom_pair_count": len(pairs), "built_in_dictionary": true, "affinity": affinity, "execution_allocation": allocation}, batchID, attemptID)
 }
 
-func validationAllocation(intent db.ScanPolicyIntent, budgetID, stage string, estimated int64) (validationExecutionAllocation, error) {
+func validationIntensityLimits(intent db.ScanPolicyIntent, stage string) (concurrency, rate int, err error) {
 	var policy scanpolicy.Policy
 	if err := json.Unmarshal([]byte(intent.PolicyJSON), &policy); err != nil {
-		return validationExecutionAllocation{}, err
+		return 0, 0, err
 	}
 	totalConcurrency, totalRate := validationBudgetLimits(policy.Intensity)
 	activeStages := 0
@@ -579,10 +654,21 @@ func validationAllocation(intent db.ScanPolicyIntent, budgetID, stage string, es
 		activeStages++
 	}
 	if activeStages == 0 || (stage != automaticRiskStage && stage != automaticCredentialStage) {
-		return validationExecutionAllocation{}, fmt.Errorf("validation stage %q has no authorized budget", stage)
+		return 0, 0, fmt.Errorf("validation stage %q has no authorized budget", stage)
 	}
-	concurrency, rate := totalConcurrency/activeStages, totalRate/activeStages
-	if concurrency < 1 || rate < 1 || estimated < 1 {
+	concurrency, rate = totalConcurrency/activeStages, totalRate/activeStages
+	if concurrency < 1 || rate < 1 {
+		return 0, 0, fmt.Errorf("validation stage %q has an invalid execution intensity", stage)
+	}
+	return concurrency, rate, nil
+}
+
+func validationAllocation(intent db.ScanPolicyIntent, budgetID, stage string, estimated int64) (validationExecutionAllocation, error) {
+	concurrency, rate, err := validationIntensityLimits(intent, stage)
+	if err != nil {
+		return validationExecutionAllocation{}, err
+	}
+	if estimated < 1 {
 		return validationExecutionAllocation{}, fmt.Errorf("validation stage %q has an invalid execution estimate", stage)
 	}
 	return validationExecutionAllocation{BudgetID: budgetID, TargetConcurrency: concurrency, RateLimit: rate, RequestBudget: estimated, EstimatedRequests: estimated}, nil
@@ -741,10 +827,6 @@ func prepareRetriedAutomaticValidation(tx *gorm.DB, root db.RootTask, batch *db.
 	}
 	return db.MarkAutomaticValidationStageDerived(tx, root, *batch, next.ID)
 }
-
-// riskValidationEstRequestsPerTarget 是无显式映射时的粗粒度请求预算基数：
-// Agent 本地匹配后实际消耗由 sealed request budget 兜底限流。
-const riskValidationEstRequestsPerTarget = 25
 
 // automaticStageTimeoutScaleThreshold / Ceil 控制验证阶段超时伸缩：
 // 小批次维持操作员设定的基础超时；大批次按目标规模线性放大并封顶，

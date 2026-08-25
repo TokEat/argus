@@ -1063,6 +1063,10 @@ func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb
 		case isCredentialValidationConfig(sub.Config):
 			// 凭据验证的重发由 sealed-bundle reissue 流程负责，这里不处理。
 		case isRiskValidationConfig(sub.Config):
+			if isSealedNucleiBudgetExceeded(sub.FailureReason) {
+				log.Printf("[Retry] Risk validation attempt %s exhausted its sealed Nuclei budget; skipping automatic retry with the same snapshot", sub.ID)
+				break
+			}
 			terminalStatus := "Failed"
 			if status == "TIMEOUT" {
 				terminalStatus = "Timeout"

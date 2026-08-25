@@ -51,9 +51,9 @@ func TestCommonPortProfileDerivationIsAccepted(t *testing.T) {
 	if err := store.First(&got, "root_task_id = ?", root.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	// 原生契约：零指纹命中批次的空风险兄弟正常完结 → risk=derived；
+	// 原生契约：零指纹命中批次的空风险兄弟在控制面本地完结 → risk=complete；
 	// 凭据阶段无合格服务 → 保持 skipped。
-	if got.RiskStatus != db.ScanStageIntentDerived || got.CredentialStatus != db.ScanStageIntentSkipped {
+	if got.RiskStatus != db.ScanStageIntentComplete || got.CredentialStatus != db.ScanStageIntentSkipped {
 		t.Fatalf("common profile statuses = %s/%s", got.RiskStatus, got.CredentialStatus)
 	}
 	var derivations []db.ScanStageDerivation
@@ -126,13 +126,20 @@ func TestScanStageOrchestratorDerivesGoPocOnlyRiskBatch(t *testing.T) {
 	if err := store.First(&got, "root_task_id = ?", root.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	// 原生契约：零指纹命中批次创建空兄弟批次并立即正常完结，intent 进入 derived。
-	if got.RiskStatus != db.ScanStageIntentDerived {
-		t.Fatalf("risk status = %s, want derived via empty sibling", got.RiskStatus)
+	// 原生契约：零指纹命中批次创建空兄弟批次并在控制面立即正常完结，
+	// 不入队；唯一兄弟终态后 intent 进入 complete。
+	if got.RiskStatus != db.ScanStageIntentComplete {
+		t.Fatalf("risk status = %s, want complete via empty sibling", got.RiskStatus)
 	}
 	var child db.SubTask
 	if err := store.Where("root_task_id = ? AND trigger = ?", root.ID, "automatic_risk_validation").First(&child).Error; err != nil {
 		t.Fatal(err)
+	}
+	if db.CanonicalAttemptState(child.Status) != db.AttemptStateCompleted || child.FinishedAt == nil {
+		t.Fatalf("empty sibling was not completed locally: status=%s finished=%v", child.Status, child.FinishedAt)
+	}
+	if queued, _, err := queue.TryPopTask(context.Background(), "agent-empty"); err != nil || queued != nil {
+		t.Fatalf("empty sibling was dispatched: task=%v err=%v", queued, err)
 	}
 	var cfg struct {
 		NoPoc                      bool                `json:"NoPoc"`
@@ -145,6 +152,13 @@ func TestScanStageOrchestratorDerivesGoPocOnlyRiskBatch(t *testing.T) {
 	}
 	if cfg.NoPoc || len(cfg.TargetFingerprints) != 0 || len(cfg.RiskValidationTargets) != 0 {
 		t.Fatalf("empty sibling contract violated: %+v", cfg)
+	}
+	var derivation db.ScanStageDerivation
+	if err := store.Where("root_task_id = ? AND stage = ?", root.ID, automaticRiskStage).First(&derivation).Error; err != nil {
+		t.Fatal(err)
+	}
+	if derivation.Status != db.ScanStageIntentComplete || !strings.Contains(derivation.Summary, `"local_complete":true`) {
+		t.Fatalf("empty sibling derivation = status=%s summary=%s", derivation.Status, derivation.Summary)
 	}
 }
 
@@ -185,6 +199,7 @@ func TestScanStageOrchestratorDerivesShiroGoPocFromActiveFingerprint(t *testing.
 		TargetFingerprints          map[string][]string `json:"TargetFingerprints"`
 		NoPoc                       bool                `json:"NoPoc"`
 		AllowHighRiskAutoExecution  bool                `json:"AllowHighRiskAutoExecution"`
+		ValidationRequestBudget     int64               `json:"ValidationRequestBudget"`
 		ValidationEstimatedRequests int64               `json:"ValidationEstimatedRequests"`
 	}
 	if err := json.Unmarshal([]byte(child.Config), &config); err != nil {
@@ -199,6 +214,9 @@ func TestScanStageOrchestratorDerivesShiroGoPocFromActiveFingerprint(t *testing.
 	}
 	if len(config.RiskValidationTargets) != 0 || len(config.RiskValidationPocHashes) != 0 {
 		t.Fatalf("explicit mapping table must not be built for automatic native dispatch: %+v", config)
+	}
+	if config.ValidationRequestBudget != 0 || config.ValidationEstimatedRequests != 0 {
+		t.Fatalf("native dispatch must not seal a Nuclei request budget: %+v", config)
 	}
 }
 
@@ -594,30 +612,37 @@ func TestDeriveRootPipelinesRiskSiblingPerAssetBatchAndAggregates(t *testing.T) 
 		t.Fatalf("zero-hit batch must carry empty fingerprint scope: %+v", fp2)
 	}
 
-	// 聚合语义：第一个兄弟终态不翻转；第二个也终态后才 complete。
-	first := attempts[0]
-	if err := store.Model(&db.SubTask{}).Where("id = ?", first.ID).Update("status", "DONE").Error; err != nil {
-		t.Fatal(err)
+	var fingerprintAttempt, emptyAttempt db.SubTask
+	for _, at := range attempts {
+		var c struct {
+			TargetFingerprints map[string][]string `json:"TargetFingerprints"`
+		}
+		if err := json.Unmarshal([]byte(at.Config), &c); err != nil {
+			t.Fatal(err)
+		}
+		if len(c.TargetFingerprints) == 0 {
+			emptyAttempt = at
+		} else {
+			fingerprintAttempt = at
+		}
 	}
-	first.Status = "DONE"
-	if err := NewScanStageOrchestrator().HandleAttemptTerminal(context.Background(), first); err != nil {
-		t.Fatal(err)
+	if fingerprintAttempt.ID == "" || emptyAttempt.ID == "" {
+		t.Fatalf("expected one fingerprint sibling and one empty sibling, got %+v", attempts)
+	}
+	if db.CanonicalAttemptState(emptyAttempt.Status) != db.AttemptStateCompleted {
+		t.Fatalf("empty sibling should complete locally, status=%s", emptyAttempt.Status)
+	}
+	if db.IsTerminalAttemptStatus(fingerprintAttempt.Status) {
+		t.Fatalf("fingerprint sibling should still be queued, status=%s", fingerprintAttempt.Status)
 	}
 	var mid db.ScanPolicyIntent
 	if err := store.First(&mid, "root_task_id = ?", root.ID).Error; err != nil {
 		t.Fatal(err)
 	}
 	if mid.RiskStatus != db.ScanStageIntentDerived {
-		t.Fatalf("intent flipped before all siblings terminal: %s", mid.RiskStatus)
+		t.Fatalf("intent flipped before fingerprint sibling terminal: %s", mid.RiskStatus)
 	}
-	second := attempts[1]
-	if err := store.Model(&db.SubTask{}).Where("id = ?", second.ID).Update("status", "DONE").Error; err != nil {
-		t.Fatal(err)
-	}
-	second.Status = "DONE"
-	if err := NewScanStageOrchestrator().HandleAttemptTerminal(context.Background(), second); err != nil {
-		t.Fatal(err)
-	}
+	completeAutomaticRiskAttempt(t, store, fingerprintAttempt.ID, "DONE")
 	var final db.ScanPolicyIntent
 	if err := store.First(&final, "root_task_id = ?", root.ID).Error; err != nil {
 		t.Fatal(err)
@@ -675,7 +700,13 @@ func TestHandleAttemptTerminalDoesNotCompleteRiskStageAfterFirstEmptySibling(t *
 	if err := NewScanStageOrchestrator().HandleAttemptTerminal(context.Background(), firstAsset); err != nil {
 		t.Fatal(err)
 	}
-	completeAutomaticRiskAttempt(t, store, riskSiblingBatchID(firstAsset.BatchID)+"-attempt-1", "DONE")
+	var firstSibling db.SubTask
+	if err := store.Where("id = ?", riskSiblingBatchID(firstAsset.BatchID)+"-attempt-1").First(&firstSibling).Error; err != nil {
+		t.Fatal(err)
+	}
+	if db.CanonicalAttemptState(firstSibling.Status) != db.AttemptStateCompleted {
+		t.Fatalf("first empty sibling should complete locally, status=%s", firstSibling.Status)
+	}
 
 	var mid db.ScanPolicyIntent
 	if err := store.First(&mid, "root_task_id = ?", root.ID).Error; err != nil {

@@ -150,14 +150,20 @@ func TestCompleteHTTPProbePhaseMarksTargetDeadlineFailedWithoutCancellingPipelin
 		t.Fatalf("target deadline should fail the stage without cancelling the remaining pipeline: %v", err)
 	}
 	if complete {
-		t.Fatal("target deadline must taint downstream HTTP-dependent coverage")
+		t.Fatal("target deadline must keep HTTP coverage incomplete")
 	}
 	if len(phases) != 1 || phases[0].Phase != PhaseHTTPProbe || phases[0].Status != "failed" {
 		t.Fatalf("unexpected phase events: %#v", phases)
 	}
 	completeHTTPDependentPhase(ctx, PhaseFingerprint, complete)
-	if len(phases) != 2 || phases[1].Phase != PhaseFingerprint || phases[1].Status != "failed" {
-		t.Fatalf("unexpected dependent phase events: %#v", phases)
+	if len(phases) != 2 || phases[1].Phase != PhaseFingerprint || phases[1].Status != "skipped" || phases[1].Message != "upstream HTTP probe incomplete" {
+		t.Fatalf("empty URL map must skip fingerprint instead of failing it: %#v", phases)
+	}
+
+	ctx.URLMap = map[string]URLEntity{"https://alive.example": {}}
+	completeHTTPDependentPhase(ctx, PhaseDirBrute, complete)
+	if len(phases) != 3 || phases[2].Phase != PhaseDirBrute || phases[2].Status != "end" {
+		t.Fatalf("partial HTTP evidence must still finish directory/fingerprint work: %#v", phases)
 	}
 
 	parent, cancel := context.WithCancel(context.Background())

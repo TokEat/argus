@@ -316,9 +316,11 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	// 域名绑定资产探测
 	if !cfg.NoHostBind && resumeStageEnabled(ctx, scanplan.StageHostBinding) {
 		emitPhase(ctx, PhaseHostBind, "start", "")
-		bindRuntime := currentWebRuntime(ctx, emit)
-		bindRuntime.CDNHosts = cdnHostSet(cdnDomains)
-		bindRuntime.HostBindCheck(cfg.HTTPProxy, cfg.WebThreads, cfg.WebTimeout)
+		if httpProbeComplete || httpProbeHasURLEvidence(ctx) {
+			bindRuntime := currentWebRuntime(ctx, emit)
+			bindRuntime.CDNHosts = cdnHostSet(cdnDomains)
+			bindRuntime.HostBindCheck(cfg.HTTPProxy, cfg.WebThreads, cfg.WebTimeout)
+		}
 		completeHTTPDependentPhase(ctx, PhaseHostBind, httpProbeComplete)
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {
@@ -351,9 +353,11 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 	if cfg.BehaviorProbe && resumeStageEnabled(ctx, scanplan.StageBehaviorProbe) {
 		emitPhase(ctx, PhaseBehaviorProbe, "start", fmt.Sprintf("%d http services", len(aliveURLs)))
-		if err := runActiveFingerprintPhase(ctx, &cfg, aliveURLs); err != nil {
-			emitPhase(ctx, PhaseBehaviorProbe, "failed", err.Error())
-			return err
+		if httpProbeComplete || httpProbeHasURLEvidence(ctx) {
+			if err := runActiveFingerprintPhase(ctx, &cfg, aliveURLs); err != nil {
+				emitPhase(ctx, PhaseBehaviorProbe, "failed", err.Error())
+				return err
+			}
 		}
 		completeHTTPDependentPhase(ctx, PhaseBehaviorProbe, httpProbeComplete)
 	}
@@ -365,13 +369,15 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	if !cfg.NoDirSearch && resumeStageEnabled(ctx, scanplan.StageDirectoryProbe) {
 		checkURLs := buildDirProbeURLs(aliveURLs, currentPipelineDirDB(ctx))
 		emitPhase(ctx, PhaseDirBrute, "start", fmt.Sprintf("%d urls", len(checkURLs)))
-		gologger.AuditTimeLogger("开始主动指纹探测")
-		httpx.DirBrute(checkURLs,
-			currentWebRuntime(ctx, emit).DirBruteCallback,
-			cfg.HTTPProxy,
-			cfg.WebThreads,
-			cfg.WebTimeout)
-		gologger.AuditTimeLogger("主动指纹探测结束")
+		if httpProbeComplete || httpProbeHasURLEvidence(ctx) {
+			gologger.AuditTimeLogger("开始主动指纹探测")
+			httpx.DirBrute(checkURLs,
+				currentWebRuntime(ctx, emit).DirBruteCallback,
+				cfg.HTTPProxy,
+				cfg.WebThreads,
+				cfg.WebTimeout)
+			gologger.AuditTimeLogger("主动指纹探测结束")
+		}
 		completeHTTPDependentPhase(ctx, PhaseDirBrute, httpProbeComplete)
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {
@@ -381,7 +387,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	// 指纹识别
 	if resumeStageEnabled(ctx, scanplan.StageFingerprint) {
 		emitPhase(ctx, PhaseFingerprint, "start", "")
-		currentFingerRuntime(ctx, emit).Identify()
+		if httpProbeComplete || httpProbeHasURLEvidence(ctx) {
+			currentFingerRuntime(ctx, emit).Identify()
+		}
 		completeHTTPDependentPhase(ctx, PhaseFingerprint, httpProbeComplete)
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {
@@ -685,12 +693,19 @@ func completeHTTPProbePhase(ctx *ScanContext, probeErr error) (bool, error) {
 	return false, probeErr
 }
 
+func httpProbeHasURLEvidence(ctx *ScanContext) bool {
+	if ctx == nil {
+		return false
+	}
+	return len(ctx.URLMap) > 0
+}
+
 func completeHTTPDependentPhase(ctx *ScanContext, phase string, httpProbeComplete bool) {
-	if httpProbeComplete {
+	if httpProbeComplete || httpProbeHasURLEvidence(ctx) {
 		emitPhase(ctx, phase, "end", "")
 		return
 	}
-	emitPhase(ctx, phase, "failed", "upstream HTTP probe incomplete")
+	emitPhase(ctx, phase, "skipped", "upstream HTTP probe incomplete")
 }
 
 func (p *Pipeline) probeRedirectLocations(ctx *ScanContext, cfg *Config, webRuntime *web.Runtime, session httpProbeSession) error {

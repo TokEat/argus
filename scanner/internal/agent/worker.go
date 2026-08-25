@@ -964,6 +964,13 @@ func (w *Worker) executeTask(task *pb.Task) {
 	cfg.OutputFile = ""
 	cfg.ReportName = ""
 	applyAgentRuleFileConfig(&cfg)
+	if strings.EqualFold(strings.TrimSpace(cfg.ExecutionMode), "risk_validation") && len(normalizedEventTargets(task.Targets)) == 0 {
+		// 空指纹风险兄弟批次没有可执行目标。覆盖率契约拒绝空 targets，
+		// 这里直接成功完结，避免历史队列里的空批次再次失败关闭。
+		log.Printf("Completed empty risk validation %s without execution (no assigned targets)", task.TaskId)
+		w.reportTaskCompletion(task.TaskId, "DONE", "")
+		return
+	}
 
 	timingRecorder := timing.NewRecorder(nil)
 	ruleSpan, timingErr := timingRecorder.Begin(scanplan.TimingRulePrepare, "")

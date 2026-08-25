@@ -364,6 +364,11 @@ func dispatchedNativeTargets(targets []string) map[string]struct{} {
 // 服务端下发的目标指纹做 workflow→POC 匹配（mapper.GetPocs，与单次扫描同源），
 // 预授权门在本地按 workflow 条目的 risk_level 过滤 high/unknown 模板。
 func runNativeWorkflowMatchedPhase(ctx *ScanContext, cfg *Config, enableLocalReports bool) ([]gopocs.NucleiResult, error) {
+	if cfg == nil || len(cfg.TargetFingerprints) == 0 {
+		// 服务端应对零指纹兄弟批次本地完结。若仍被下发，不要发出空
+		// coverage 事件（StageObservationEvent 拒绝空 targets）。
+		return []gopocs.NucleiResult{}, nil
+	}
 	workflowDB, err := loadWorkflowDB(*cfg)
 	if err != nil {
 		return nil, fmt.Errorf("load local workflow db: %w", err)
@@ -419,11 +424,6 @@ func runNativeWorkflowMatchedPhase(ctx *ScanContext, cfg *Config, enableLocalRep
 	if concurrency < 1 {
 		concurrency = 6
 	}
-	requestBudget := cfg.ValidationRequestBudget
-	if requestBudget < 1 {
-		requestBudget = int64(total)*10 + 1000
-	}
-
 	emitPhase(ctx, PhaseNuclei, "start", fmt.Sprintf("native workflow match: %d targets, %d pocs (high-risk skipped: %d)", len(allowed), total, skippedHighRisk))
 	addResult, collector := buildNucleiResultHandler(ctx, enableLocalReports)
 	results, callErr := callNucleiLimited(
@@ -437,7 +437,7 @@ func runNativeWorkflowMatchedPhase(ctx *ScanContext, cfg *Config, enableLocalRep
 		cfg.NucleiTemplate,
 		strings.Split(cfg.ExcludeTags, ","),
 		strings.Split(cfg.Severities, ","),
-		nuclei.ExecutionLimits{RateLimit: rateLimit, TargetConcurrency: concurrency, RequestBudget: requestBudget},
+		nuclei.ExecutionLimits{RateLimit: rateLimit, TargetConcurrency: concurrency},
 		cfg.MachineOutput,
 	)
 	results = authoritativeNucleiResults(results, collector.snapshot())

@@ -49,6 +49,10 @@ func isRiskValidationConfig(config string) bool {
 	return json.Unmarshal([]byte(config), &internal) == nil && strings.EqualFold(strings.TrimSpace(internal.ExecutionMode), "risk_validation")
 }
 
+func isSealedNucleiBudgetExceeded(reason string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(reason)), "nuclei request budget exceeded")
+}
+
 func agentSupportsCredentialValidation(nodeTagsJSON string) bool {
 	return agentHasCapabilities(nodeTagsJSON, "credential_validation", "transport_tls")
 }

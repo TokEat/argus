@@ -24,6 +24,15 @@ func credentialTLSContext(token string) context.Context {
 	return metadata.NewIncomingContext(ctx, metadata.Pairs("x-agent-token", token))
 }
 
+func TestSealedNucleiBudgetExceededIsNotAutomaticallyRetried(t *testing.T) {
+	if !isSealedNucleiBudgetExceeded("run Nuclei enumeration: nuclei request budget exceeded") {
+		t.Fatal("budget exhaustion must be recognized")
+	}
+	if isSealedNucleiBudgetExceeded("phase_failed") {
+		t.Fatal("unrelated failures must still auto-retry")
+	}
+}
+
 func TestFetchCredentialBundleIsTLSBoundAndOneTime(t *testing.T) {
 	store := setupRegisterTestDB(t)
 	now := time.Now().UTC()
