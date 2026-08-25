@@ -10,8 +10,9 @@ Argus 的 Server、Agent 与离线 CLI 共享 `github.com/P0lar1ght/argus/shared
 | `internal-fast` | 兼容保留的 CLI 本地场景标识 | 使用 `_local/_default/_local` 作为离线租户、项目和网络区域占位符；独立 CLI 不再维护阶段级长期状态 |
 | `internal-server` | Server + Agent 内网扫描 | 必须使用 Agent 的实际 `network_zone`，不能按私网 IP 跨区域复用 |
 | `risk-validation` | 已确认的独立 POC 验证 | Plan 只能包含强制执行的 `risk_validation`，不能混入资产发现阶段 |
+| `credential-validation` | 已确认的弱口令验证 | Plan 只能包含强制执行的 `credential_validation`，消费密封凭据 Bundle，不重新执行资产发现 |
 
-稳定阶段包括搜索引擎、子域发现、CDN 分类、ICMP 发现、TCP 存活、端口扫描、协议识别、HTTP 探测、Host 绑定、安全行为探针、目录探测、指纹和风险验证。安全行为探针依赖 HTTP 探测，按规范化服务端点执行创建任务时密封的自动安全 Nuclei 文件集合；它只产生产品指纹。该阶段只接收必须通过随机 Cookie、自定义 `X-*` Header 或 Query 刺激才能观察到产品特有行为的模板；普通 HTTP 响应特征属于被动指纹，固定路径特征属于目录探针，漏洞验证属于风险验证。Scanner 旧 `PhaseEvent` 通过显式适配器映射到这些阶段；未知阶段不会被静默当作已覆盖。
+稳定阶段包括搜索引擎、子域发现、CDN 分类、ICMP 发现、TCP 存活、端口扫描、协议识别、HTTP 探测、Host 绑定、安全行为探针、目录探测、指纹、风险验证和弱口令验证。安全行为探针依赖 HTTP 探测，按规范化服务端点执行创建任务时密封的自动安全 Nuclei 文件集合；它只产生产品指纹。该阶段只接收必须通过随机 Cookie、自定义 `X-*` Header 或 Query 刺激才能观察到产品特有行为的模板；普通 HTTP 响应特征属于被动指纹，固定路径特征属于目录探针，漏洞验证属于风险验证。Scanner 旧 `PhaseEvent` 通过显式适配器映射到这些阶段；未知阶段不会被静默当作已覆盖。
 
 ## Plan
 
@@ -60,7 +61,7 @@ tenant_id + project_id + network_zone + normalized_target
 + stage + scope_hash + config_hash + rule_version
 ```
 
-`risk_validation` 额外且强制包含 `poc_set_hash + endpoint_content_hash`；其他阶段禁止携带这两个维度。`Digest()` 对校验后的固定字段 JSON 计算 SHA-256，任一维度变化都会得到不同键。WorkKey 不允许跨租户、项目或网络区域构造复用关系。
+`risk_validation` 额外且强制包含 `poc_set_hash + endpoint_content_hash`；`credential_validation` 额外且强制包含 `credential_set_hash + service_observation_hash`；其他阶段禁止携带这些内容维度。`Digest()` 对校验后的固定字段 JSON 计算 SHA-256，任一维度变化都会得到不同键。WorkKey 不允许跨租户、项目或网络区域构造复用关系。
 
 ## Observation 与 Coverage
 

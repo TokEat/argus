@@ -32,10 +32,7 @@ Argus 当前采用典型的 `Control Plane + Data Plane` 结构：
 - 云实例 mock 管理、构建产物列表
 - 统计接口与 Agent 日志查询
 
-当前问题：
-
-- HTTP 业务逻辑仍集中在 `router.go`
-- `core/usecase` 和 `/api/v2` 适配器仍未接线
+边界说明：任务、云资源、MCP、构建、日志等领域 handler 已从 `router.go` 拆分到独立文件；`server/internal/adapters/*` 与 `core/usecase` 仍是 Clean Architecture 长期演进 scaffold，不承接主链路，也不存在 `/api/v2`。
 
 ### 调度层
 
@@ -47,11 +44,10 @@ Argus 当前采用典型的 `Control Plane + Data Plane` 结构：
 - 旧队列迁移
 - 队列深度 / Pending 统计
 
-当前问题：
+调度选择器与容量已接入主链路：
 
-- 高级调度仍未完全打通
-- 任务创建接口未暴露 `agent_selector`
-- Agent 容量无法上报，导致服务端视角的容量仍固定为 `1`
+- `CreateTaskRequest.agent_selector` 支持扁平标签 map 与 `agent_selector_rules.match/not_match`；`POST /tasks/preview-selector` 与 Agent 认领共用匹配器并返回容量解释。
+- Agent 通过 `Subscribe` 流上报 `capacity_update` 空闲槽位，服务端按真实容量参与认领决策。
 
 ### gRPC 层
 
@@ -65,10 +61,7 @@ Argus 当前采用典型的 `Control Plane + Data Plane` 结构：
 - `EmergencyDump`
 - `StreamLogs`
 
-当前问题：
-
-- `Register` 返回的是占位 token，而不是可用于后续 REST 鉴权的真实令牌
-- `TaskComplete` 对 `DONE` 场景聚合较完整，但 `FAILED / CANCELLED / TIMEOUT` 的根任务状态收敛仍不完整
+边界说明：`Register` 返回真实 session token（支持过期、吊销和轮换审计），Agent 内部 HTTP 使用 `x-agent-id + x-agent-token` 鉴权。`TaskComplete` 对 `DONE` 场景聚合较完整，但 `FAILED / CANCELLED / TIMEOUT` 的根任务状态收敛仍不完整。
 
 ### 结果存储层
 
@@ -122,19 +115,13 @@ Agent 使用注册会话的 `x-agent-id + x-agent-token` 访问内部规则接�
 - `commandLoop` 轮询控制指令
 - `context.Cancel` 中断正在执行的扫描任务
 
-当前问题：
-
-- 轮询控制接口同样受 JWT 保护，但 Agent 未携带鉴权
+命令轮询使用注册会话的 `x-agent-id + x-agent-token` 鉴权，按节点绑定租户。
 
 ### 并发执行
 
 当前 Agent 已具备 Worker Pool 与引擎并发上限协同控制框架。
 
-当前问题：
-
-- Agent 启动参数虽然支持 `-workers`
-- 但服务端节点容量固定为 `1`
-- 因此调度端并不能真正利用多 worker 能力
+Worker Pool 与引擎并发上限协同控制；Agent 通过 `capacity_update` 向服务端上报空闲槽位，多 worker 能力可被调度真实利用。
 
 ### Spot 回收
 
@@ -271,7 +258,7 @@ network zone 由 Server 使用数据库中的 Agent 标签和每个规范目标�
 - **凭证安全**：AES-256-GCM 加密存储 AccessKey，API 返回脱敏
 - **Cloud-Init 自动化**：Go template 渲染 Agent 启动脚本，注入 Server 地址、AgentID、PSK
 - **实例状态真相收敛**：OS ready 只会把实例维持在 `WaitingReady`；只有 Agent 成功 `Register` 后才会进入 `Running`
-- **21 个 REST API 端点**：覆盖凭证、策略、实例、Agent OSS 分发、权限检查和一键配置
+- **云管控 REST API**：覆盖凭证、策略、实例、OSS 分发、价格推荐、权限检查和一键配置，清单见 [cloud-resource-scheduling.md](cloud-resource-scheduling.md)
 - **Provider 注册表模式**：aliyun 包在 `init()` 中自注册，`cloud` 包不直接导入 Provider 子包
 - **Spot 实例支持**：Agent 启动时自动激活 `StartSpotTerminationListener`（检测 `ARGUS_SPOT=1` 或 `cloud=...` 标签）
 
@@ -282,37 +269,15 @@ network zone 由 Server 使用数据库中的 Agent 标签和每个规范目标�
 
 ## 7. 前端现状
 
-### 已基本可用
-
-- Login
-- Dashboard
-- NodeManagement
-- TaskManagement
-- TaskResults
-- ProfilesView
-- POC / Workflow / Dir 配置页
-- UserManagement
-- McpConfig
-
-### 仍有明显断点
-
-- Dashboard 的 WebSocket 鉴权方式与服务端不一致
-- Dashboard 仍有部分前端静态推算图表
-- CloudManagement 中的凭证与策略链路未闭环
-- ClientBuild 只能看到产物列表，不能真正触发构建闭环
-- 遥测日志已有后端接口，但没有前端页面入口
-- RoleManagement 还是静态展示页
+管理控制台页面（Login、Dashboard、NodeManagement、TaskManagement、TaskResults、ProfilesView、规则配置页、AssetDiscovery、CloudManagement、ClientBuild、AgentLogs、RoleManagement、ApiKeysConfig、AIConfig）均已接入真实 `/api/v1` 数据链路与 WebSocket 重连刷新；逐页能力清单见 [implementation-status.md](implementation-status.md)。剩余体验类优化以后端状态文档的 ⚠️ 条目为准。
 
 ## 8. 当前最关键的缺口
 
-如果只看主链路，当前最需要优先解决的是：
+如果只看主链路，当前更需要关注的是（历史缺口中的 Agent 鉴权、容量/标签调度和遥测日志前端均已闭环）：
 
-1. Agent 鉴权链路
-   - 让 Agent 能够合法访问受 JWT 保护的 REST 接口
-2. 节点容量与标签调度
-   - 让调度真正利用多 worker 和节点路由
-3. 遥测日志前端
-   - 给 Agent 日志查询补页面入口
+1. 根任务非 `DONE` 终态收敛与状态机细化
+2. replay 日志保留期清理与归档长期化
+3. 真实云账号下的弹容、回收与 OSS 发布 smoke（见发布检查清单）
 
 ## 9. 建议阅读顺序
 

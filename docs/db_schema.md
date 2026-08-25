@@ -12,9 +12,9 @@
 - `server/internal/db/task_lifecycle.go`
 
 > 注：
-> - 本文描述的是“当前主链路实际需要的完整 schema”。
+> - 本文覆盖控制面主链路的核心表，**不是全部表的穷举清单**；完整权威来源是 `deploy/db/init/*.sql` 与 `schema_verify.go`。文中字段为节选，未列出的列以 DDL 为准。
 > - 数据库初始化与项目启动已分离：`deploy/db-init.sh`（psql 纯 SQL 导入，不依赖二进制）负责建库/建角色/基线导入/种子/自检；`argus-server` 启动时只做连接重试 + 版本校验 + 结构契约校验，不再执行任何迁移。
-> - 历史上 010..570 的嵌入式增量迁移已随 v001 版本重启退役（git 历史可查）；存量旧终态库由 `deploy/db/legacy/900_cutover_from_010_570.sql` 一次性切换。v001 起的版本演进规则：新增 `deploy/db/init/NNN_xxx.sql`（文件末尾自记 `schema_migrations` 版本），并同步推进 `RequiredSchemaVersion` 与 `schema_verify.go` 契约。
+> - 历史上 010..570 的嵌入式增量迁移已随 v001 版本重启退役（git 历史可查）；存量旧终态库由 `deploy/db/legacy/900_cutover_from_010_570.sql` 一次性切换。v001 起的版本演进规则：新增 `deploy/db/init/NNN_xxx.sql`（文件末尾自记 `schema_migrations` 版本），并同步推进 `RequiredSchemaVersion` 与 `schema_verify.go` 契约（当前已有 002 被动子域、003 CDN 标记两个增量）。
 > - v001 收敛时删除了历史废弃对象：`cron_tasks`、`notification_rules`、`asset_change_logs` 表、`tenant_quota` 兼容视图与 `root_tasks.cron_task_id` 列（均无业务代码引用）。
 > - 文中出现的 “Migration 4xx/5xx” 编号指 v001 之前的历史增量，仅作演进背景说明。
 > - 规则资产不在 SQL 里，使用 `deploy/arsenal_seed.db` 和 `--seed-from-db`。
@@ -340,25 +340,17 @@
 
 ---
 
-#### `task_creation_idempotencies`
+#### 幂等账本（五张同构表）
 
-Migration 430 的内部、不可变创建任务幂等账本。`(tenant_id, project_id, operator_id, operation, idempotency_key_hash)` 唯一，其中 `operation=create_task_v1`；只保存原始 Key 的 SHA-256、规范请求 SHA-256、RootTask ID、首批 Attempt ID 与首次 Project Scope/SeedTargets 增量，绝不持久化原始 Key、目标或配置正文。其 tenant/project 复合外键绑定 RootTask；与 RootTask、配置修订、TaskBatch、Attempt、Scope/SeedTargets 扩展和单条创建审计同事务提交，失败整体回滚。该账本不构成授权凭证，重放前仍需完成认证、operator RBAC、项目访问和 active 状态校验。
+| 表（Migration） | `operation` | 额外唯一维度 | 绑定的业务对象 | 额外保存的业务结果 |
+|---|---|---|---|---|
+| `task_creation_idempotencies`（430） | `create_task_v1` | - | RootTask、配置修订、首个 TaskBatch/Attempt | 首次 Project Scope/SeedTargets 增量 |
+| `task_append_idempotencies`（440） | `append_targets_v1` | `root_task_id` | 新增 TaskBatch/Attempt、Scope/SeedTargets、RootTask 聚合 | 首次 outcome、目标/范围增量、提交后任务总计数；全重复 `unchanged` 只写账本 |
+| `task_retry_idempotencies`（450） | `retry_task_v1` | `root_task_id` | 新增 Attempt、RootTask 状态 | 重试前后状态、首次跳过的完成/暂停批次数；Attempt 列表必须非空 |
+| `task_batch_retry_idempotencies`（460） | `retry_task_batch_v1` | `root_task_id` + `batch_id` | 稳定 TaskBatch 下的新 Attempt 与 Task/Batch 状态 | 前后状态、新 Attempt 编号/配置版本/规则版本 |
+| `risk_validation_execution_idempotencies`（470） | `execute_risk_validation_v1` | `root_task_id` | 配置修订、risk-validation Batch 与 Attempt（deferred/RESTRICT 复合外键） | preview plan、POC/端点集合哈希、候选/请求计数、二次确认要求、前后状态 |
 
-#### `task_append_idempotencies`
-
-Migration 440 的内部、不可变增加批次幂等账本。`(tenant_id, project_id, root_task_id, operator_id, operation, idempotency_key_hash)` 唯一，其中 `operation=append_targets_v1`；保存原始 Key/规范请求的 SHA-256、首次 outcome、配置与规则身份、状态、Batch/Attempt ID、目标/范围增量和提交后的任务总计数。它不保存原始 Key、目标列表或配置正文。账本通过 tenant/project/task 复合外键绑定 RootTask，并与新增 Batch/Attempt、Project Scope/SeedTargets、RootTask 聚合和单条 `batch_append` 审计在同一事务提交；全重复 `unchanged` 只写账本且不产生业务变更。只有首次新增在提交后进入队列，重放读取冻结对象且不会再次派发。
-
-#### `task_retry_idempotencies`
-
-Migration 450 的内部、不可变任务重试幂等账本。`(tenant_id, project_id, root_task_id, operator_id, operation, idempotency_key_hash)` 唯一，其中 `operation=retry_task_v1`；只保存原始 Key 的 SHA-256、版本化请求的 SHA-256、首次重试前后状态、新增 Attempt ID，以及首次跳过的完成/暂停批次数。账本不保存原始 Key、目标、配置、规则正文或 Provider 数据；Attempt 列表必须非空。它通过 tenant/project/task 复合外键绑定 RootTask，并与新 Attempt、RootTask 状态和单条 `retry` 审计在同一事务提交。只有首次提交后主动派发；重放读取首次 Attempt 的当前投递状态但不会再次入队，也不能绕过认证、operator RBAC、项目访问或归档校验。
-
-#### `task_batch_retry_idempotencies`
-
-Migration 460 的内部、不可变单批次重试幂等账本。`(tenant_id, project_id, root_task_id, batch_id, operator_id, operation, idempotency_key_hash)` 唯一，其中 `operation=retry_task_batch_v1`；只保存原始 Key 的 SHA-256、版本化请求的 SHA-256、首次重试前后状态以及新 Attempt 的 ID、编号、配置版本和规则版本。账本不保存原始 Key、目标、配置/规则正文或 Provider 数据，并通过 tenant/project/task/batch 复合外键绑定稳定 TaskBatch。账本、新 Attempt、Task/Batch 状态和单条 `batch_retry` 审计同事务提交；只有首次提交后主动派发，重放只投影该 Attempt 当前是否仍待投递，不会新增 Attempt、审计或队列消息。认证、operator RBAC、项目和批次对象授权及归档校验始终先于账本读取。
-
-#### `risk_validation_execution_idempotencies`
-
-Migration 470 的内部、不可变风险验证执行账本。`(tenant_id, project_id, root_task_id, operator_id, operation, idempotency_key_hash)` 唯一，其中 `operation=execute_risk_validation_v1`；只保存原始 Key 的 SHA-256，以及规范请求、preview plan、POC/端点集合和实际 Attempt 配置各自的 SHA-256，并保存配置/规则版本、Batch/Attempt ID、候选/目标/POC/预计请求计数、二次确认要求和前后状态。账本没有目标、POC 文件或内容、配置正文、Provider 查询、凭据或原始 Key 字段；复合 deferred/RESTRICT 外键将其绑定到同 tenant/project/task 的配置修订、risk-validation Batch 与 Attempt。首次确认的账本、Batch、Attempt、RootTask 状态和单条 `risk_validation_execute` 审计在同一事务提交，只有首次提交后派发；同 Key 同请求只重放已提交结果，异请求固定冲突。认证、operator RBAC、项目/任务对象授权和归档校验始终先于账本读取；新 Key 仍必须重新验证 preview、配置、规则、POC 内容哈希和双重确认，账本本身不是授权凭证。
+五张账本均为内部不可变表，唯一键统一为 `(tenant_id, project_id[, root_task_id[, batch_id]], operator_id, operation, idempotency_key_hash)`，只保存原始 Key 和规范请求的 SHA-256，不落原始 Key、目标、配置或规则正文。账本与业务写入和单条审计在同一事务提交，失败整体回滚；只有首次提交后派发，重放返回首次冻结结果且不会再次入队。账本不是授权凭证：认证、operator RBAC、项目/任务/批次对象授权与归档校验始终先于重放；风险验证的新 Key 仍须重新验证 preview、配置、规则和 POC 内容哈希。
 
 #### `subdomain_passive_cache` / `subdomain_passive_jobs`
 
@@ -377,19 +369,11 @@ Migration 002（v001 基线后的增量）支撑 Server 端被动子域收集。
 | `scan_work_claims` | 相同工作并发合并所需的唯一租约槽 | `(tenant_id, project_id, work_key_hash)` 唯一；保存 owner Task/Batch/Attempt/Agent、租约哈希、到期时间和错误摘要 |
 | `task_coverage_links` | 解释目标任务的工作是实际执行、历史复用还是挂接执行中来源 | 目标 Task/Batch/Attempt + WorkKey + link type 唯一；保存 Coverage/Claim 及来源 Task/Batch/Attempt |
 
-四张表均显式保存 `tenant_id` 与 `project_id`，任何读取或写入仍须由应用层验证当前用户对项目和任务的对象级权限。WorkKey 哈希不能替代租户条件；网络区域、Scope/Config、规则版本以及风险验证的 POC 集合和端点内容哈希均作为独立列保留，便于失效解释和审计。
+四张表均显式保存 `tenant_id` 与 `project_id`，任何读取或写入仍须由应用层验证当前用户对项目和任务的对象级权限；WorkKey 哈希不能替代租户条件，网络区域、Scope/Config、规则版本与风险验证内容哈希均作为独立列保留。
 
-当前归并规则是：Observation 只追加；同一租户内重复事件按目标派生幂等键；Coverage 只接受不早于当前来源的事件并递增修订号。成功或阴性事件在 Server 配置/规则快照一致时可形成 `complete`，失败或跳过只能形成 `incomplete`，版本漂移和缺少风险验证内容维度形成 `invalidated`。
+归并规则：Observation 只追加，同一租户内重复事件按目标派生幂等键；Coverage 只接受不早于当前来源的事件并递增修订号——配置/规则快照一致的成功或阴性形成 `complete`，失败或跳过形成 `incomplete`，版本漂移或缺少风险验证内容维度形成 `invalidated`。Server 为新完成 Coverage 设置有效期：存活证据 5 分钟、端口 1 小时、搜索/子域/CDN/协议/Web/Host 绑定/目录/指纹 6 小时、显式风险验证 24 小时；失效或不完整 Coverage 的 `valid_until` 为空且不可复用。Scope、配置、规则和网络区域是 WorkKey 维度，变化后不会命中旧行；上游内容变化会把较旧的依赖 Coverage 置为 `invalidated`（原因 `upstream_content_changed:<stage>`）。
 
-G21A 为新完成 Coverage 设置 Server 有效期：ICMP/TCP 存活 5 分钟，端口 1 小时，搜索/子域/CDN/协议/Web/Host 绑定/目录/指纹 6 小时，显式风险验证 24 小时。失效或不完整 Coverage 的 `valid_until` 为空且始终不可复用。Scope、配置、规则与网络区域属于 WorkKey 维度，变化后不会命中旧行；旧版本证据不做破坏性覆盖，仍可按原 WorkKey 审计。相同 WorkKey 的上游内容变化会把较旧的依赖 Coverage 置为 `invalidated`，原因使用 `upstream_content_changed:<stage>`，而上游和无关阶段保持有效。
-
-Migration 360 只为 `scan_observations` 增加 `checkpoint JSONB` 与 `checkpoint_hash`。检查点使用 `argus.checkpoint/v1`，只接收单目标成功/阴性事件的最多 4096 个存活 IP、开放端点、协议服务、URL 或域名；不保存响应正文、Header、凭据或任意错误文本。旧记录回填为空对象，旧 Agent 无检查点时保持兼容。当前 Coverage 仍通过 `source_observation_id` 指向不可变检查点，不复制 payload。
-
-G18 的领取时复用不会修改 `task_batches.targets/target_count`，它们继续表示用户请求的稳定范围。全量复用时，目标 Attempt 与 Batch 直接完成并写 `task_coverage_links(link_type=reused)`；部分目标复用时，剩余 `sub_tasks.chunk_targets`、Agent 租约和 reused links 在同一事务提交。每条关联保存来源 Task/Batch/Attempt/Coverage，RootTask 进度仍按稳定 Batch 范围聚合。显式手动重试和 `risk_validation` Batch 不读取历史覆盖。
-
-G20 起，网络区域由 Server 按目标和已注册 Node 标签派生：明确公网目标使用 `public`；私网、特殊用途地址或 split-horizon DNS 使用 `private:<network_zone>`；无区域标签的私网目标使用 `agent:<agent_id>`。带区域标签的 Agent 只有在 `network_scope=public` 时才把普通 DNS 归入公网，私网/保留 IP 始终不能提升为公网。归并、复用与 WorkClaim 都使用同一派生器，因此相同私网地址不会跨错误区域共享，且网络区域仍只是 WorkKey 维度，不能替代 tenant/project 查询条件。
-
-G19 将 `scan_work_claims.status` 约束为运行期 `active` 以及终态 `completed/failed`；相同唯一键的后续真实执行复用同一行并递增 `revision`，不会增长出多个活动 owner。`task_coverage_links` 使用 `executed/active` 表示 Claim 所有者，使用 `in_flight/waiting` 表示挂接者；来源结束后关联变为 `resolved` 或 `source_failed`。等待 Attempt 不写 Agent、使用 `workclaim:<digest>` 作为内部等待标记，普通 Pending 恢复查询不会提前派发它；所有依赖结束后才以 CAS 转为 `Dispatching`。Claim 获取与 Attempt/Agent 租约同事务提交，失败或状态竞态整体回滚。显式人工重试与 `risk_validation` 继续绕过 WorkClaim。
+检查点使用 `argus.checkpoint/v1`，只接收单目标成功/阴性事件的最多 4096 个存活 IP、开放端点、协议服务、URL 或域名，不保存响应正文、Header、凭据或任意错误文本；Coverage 通过 `source_observation_id` 引用检查点，不复制 payload。网络区域由 Server 按目标和 Node 标签派生（公网 `public`、私网 `private:<network_zone>`、无标签私网回退 `agent:<agent_id>`），归并、复用与 WorkClaim 共用同一派生器。`scan_work_claims.status` 约束为运行期 `active` 与终态 `completed/failed`，相同唯一键的后续真实执行复用同一行并递增 `revision`；`task_coverage_links` 使用 `executed/active` 表示 Claim 所有者、`in_flight/waiting` 表示挂接者，来源结束后转为 `resolved` 或 `source_failed`。等待 Attempt 不写 Agent，以 `workclaim:<digest>` 作内部标记，所有依赖结束后才以 CAS 转为 `Dispatching`；显式手动重试与 `risk_validation` 绕过 WorkClaim 和历史覆盖。
 
 #### `scan_timing_events`
 
@@ -433,6 +417,7 @@ G31 新增的 additive、append-only 表，保存 `argus.timing/v1` 的已校验
 | `service` | string | 服务名称 / 状态摘要 | - |
 | `cert_subject` | string | TLS 证书主体 | - |
 | `cert_expiry` | timestamp | TLS 证书过期时间 | - |
+| `cdn` | boolean | 是否疑似 CDN 资产（Migration 003，`tag=cdn` 探测与 CDN-Domain 记录置 true） | Not Null, Default:`false` |
 | `tags` | jsonb | 资产标签 | - |
 | `status` | string | `alive` / `inactive` 等 | Index, Default:`alive` |
 | `owner_id` | string | 责任人 | Index |
@@ -687,21 +672,9 @@ G31 新增的 additive、append-only 表，保存 `argus.timing/v1` 的已校验
 
 ---
 
-## 5. 相比旧文档本次补齐的重点
+## 5. 云资源编排
 
-- 补全 `project_members`、`domains`、`credentials`、`reports`（`cron_tasks`、`notification_rules`、`asset_change_logs` 已在 v001 收敛时移除）。
-- 补全规则治理层的 `rule_catalog_bootstraps`、`fingerprint_rules`、`poc_rules`、`workflow_rules`、`dir_rules`。
-- 补全 `nodes` 的会话令牌、容量、运行任务列表、OS/Arch、资源使用率等字段。
-- 补全 `users` 的密码哈希、状态字段，以及 `system_configs` 对 `mcp_*` API Key 的承载方式。
-- 修正任务状态机，明确 `PartialDone`、`Dispatching`、`Recovered`、`CancelPending` 等中间态。
-- 明确 PostgreSQL 只保存报表元数据，不直接保存报表文件本体。
-- 补全云资源编排三表：`cloud_accounts`、`cloud_scaling_policies`、`cloud_instances`。
-
----
-
-## 5.1 云资源编排
-
-> 云资源编排三表已落地，对应 GORM 模型在 `server/internal/db/cloud_models.go`；建表 DDL 已并入 `deploy/db/init/001_init.sql`（历史增量 060/070/080 见 git 历史）。
+> 云资源编排表已落地，对应 GORM 模型在 `server/internal/db/cloud_models.go`；建表 DDL 已并入 `deploy/db/init/001_init.sql`。
 
 #### `cloud_accounts`
 
@@ -780,33 +753,13 @@ G31 新增的 additive、append-only 表，保存 `argus.timing/v1` 的已校验
 
 ---
 
-## 6. 结合整体架构，后续建议预留但当前尚未落地的表
-
-下列能力已在架构文档或实现状态文档中明确为缺口，但当前数据库尚未正式建模，可作为后续 schema 扩展候选：
-
-| 能力域 | 建议表 | 原因 |
-|--------|--------|------|
-| 租户治理 | `tenant_quotas`、`tenant_usage_snapshots` | 任务配额、并发额度、租户级资源限制尚未落库 |
-| 角色权限矩阵 | `roles`、`permissions`、`role_bindings` | 现阶段仅有用户角色字段，没有可管理的权限矩阵 |
-| 构建与发布 | `build_jobs`、`build_artifacts` | 当前客户端构建接口只返回 `accepted`，缺少任务状态跟踪 |
-
-这些建议表不属于当前已落地 schema，单独列出是为了避免后续架构扩展继续走“接口先行、数据模型缺位”的老路。
-
----
-
 ## 附录 A：项目隔离与资产入库演进背景
 
-Argus 早期结果入库以 `task_id` 为主要关联键，适合一次性扫描，但不适合持续巡航后的资产归档、漏洞修复态追踪和多轮扫描去重。当前 schema 已经将长期资产、域名、指纹、漏洞等结果统一沉淀到 `project_id` 维度，并保留 `task_id` 作为本次扫描来源。
+Argus 早期结果入库以 `task_id` 为主要关联键，适合一次性扫描；当前 schema 已将长期资产、域名、指纹、漏洞统一沉淀到 `project_id` 维度，并保留 `task_id` 作为本次扫描来源。核心设计判断：
 
-这次演进的核心设计判断是：
-
-- `projects` 是长期业务容器，承载授权边界、默认配置、初始目标、成员和后续巡航任务。
-- `root_tasks` / `sub_tasks` 只描述一次执行，不再作为资产生命周期的唯一真相源。
-- `domains`、`assets`、`fingerprint_hits`、`vulnerabilities` 使用 `project_id + target + 业务键` 做去重，避免同一项目多次扫描产生重复资产。
-- 误删影响大的实体使用软删除，例如 `projects`、`credentials`。（`cron_tasks`、`asset_change_logs` 为历史设计，v001 收敛时已随死代码移除。）
-- 凭证必须加密存储，不使用 JSONB 明文查询；`credentials.content` 是密文承载字段。
-
-历史 schema 草案的具体结构体内容已经合并进本文的当前 schema 与上述设计背景，不再单独保留拆分稿。
+- `projects` 是长期业务容器，承载授权边界、默认配置、初始目标、成员和后续巡航任务；`root_tasks` / `sub_tasks` 只描述一次执行。
+- `domains`、`assets`、`fingerprint_hits`、`vulnerabilities` 使用 `project_id + target + 业务键` 去重，避免同一项目多次扫描产生重复资产。
+- 误删影响大的实体（`projects`、`credentials`）使用软删除；凭证必须加密存储，不使用 JSONB 明文查询。
 
 ## 附录 B：规则库 PostgreSQL 初始化流程
 

@@ -78,7 +78,7 @@ POST /api/v1/projects/{project_id}/asset-discovery/notebook-distributions
 
 Provider 查询、历史读取、导出、笔记本归档和分发预览都不会写入 `assets`，也不会自动扩展 Project Scope/SeedTargets 或创建 Task、Batch、Attempt。只有 operator 在分发预览后显式确认，才会将预览中的新增 direct 目标追加到所选任务与项目范围。
 
-Migration 380 建立追加式 `asset_discovery_snapshots` 与 `asset_discovery_snapshot_items` 契约，三个预览入口已原子写入该快照。快照将原始表达式视为受 tenant/project 对象权限保护的项目业务数据，审计表仍只保留表达式哈希；快照和资产项均没有凭据或 Provider 原始响应字段。
+基线 schema（`deploy/db/init/001_init.sql`）建立追加式 `asset_discovery_snapshots` 与 `asset_discovery_snapshot_items` 契约，三个预览入口已原子写入该快照。快照将原始表达式视为受 tenant/project 对象权限保护的项目业务数据，审计表仍只保留表达式哈希；快照和资产项均没有凭据或 Provider 原始响应字段。
 
 ## 查询历史
 
@@ -113,7 +113,7 @@ Migration 380 建立追加式 `asset_discovery_snapshots` 与 `asset_discovery_s
 
 ### 分发意图数据契约
 
-- Migration 400 新增内部使用的分发意图与逐项不可变快照。意图固定 tenant/project/task、操作者、操作域、预览 schema 与 `plan_hash`、任务状态、配置/规则版本和新增/重复计数；逐项快照固定笔记本条目、规范目标、目标哈希和预览判定。
+- 分发意图与逐项不可变快照（`asset_discovery_notebook_distribution_intents` 及其 item/materialization 表，均在 `001_init.sql`）为内部使用。意图固定 tenant/project/task、操作者、操作域、预览 schema 与 `plan_hash`、任务状态、配置/规则版本和新增/重复计数；逐项快照固定笔记本条目、规范目标、目标哈希和预览判定。
 - 原始 `Idempotency-Key` 不落库，只保存 SHA-256。同一 tenant/project/operator/operation 下，同键同请求原子返回已有意图，同键异请求返回固定冲突；父记录与全部选中项在同一事务内写入，任一步失败都会回滚。
 - Task、ConfigRevision、NotebookItem 和 Intent 均由 tenant/project 复合外键约束，禁止跨租户或跨项目挂接。该意图不是业务审计、扫描授权、风险确认或执行凭证。
 - 意图本身不是授权或执行凭证；只有下述确认接口可以在同一事务中创建意图、不可变执行结果和任务变更。原始幂等键、Provider 查询及响应不会进入意图、业务审计或公开响应。
@@ -143,4 +143,4 @@ Quake 核心只执行一次最多 500 条的有界 POST，不再沿用旧 Scanne
 
 ## 回滚
 
-应用回滚时可关闭笔记本运营与分发确认路由，并保留追加式审计、快照、笔记本、标签、来源、分发意图及其不可变 materialization 结果。Migration 370/380/390/400/420/480 只新增表、列、约束和索引，不修改或删除现有扫描数据；回滚应用版本无需删除新对象，删除前应先独立备份项目查询历史、笔记本来源、标签、分发意图和物化结果。
+应用回滚时可关闭笔记本运营与分发确认路由，并保留追加式审计、快照、笔记本、标签、来源、分发意图及其不可变 materialization 结果。测绘相关迁移（001 基线及 002/003 增量）只新增表、列、约束和索引，不修改或删除现有扫描数据；回滚应用版本无需删除新对象，删除前应先独立备份项目查询历史、笔记本来源、标签、分发意图和物化结果。

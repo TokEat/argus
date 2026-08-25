@@ -423,8 +423,9 @@ argus/
 | [性能基线采集](docs/performance-baseline.md) | CLI/Agent 计时证据与可重复的外部 process-wall 基线采集方式 |
 | [CLI 参数说明](CLI.md) | Standalone CLI 扫描参数、默认值和常用例子 |
 | [CLI 结构化输出](docs/cli-output.md) | `-ot json` NDJSON Schema、终端摘要、非 TTY 行为和稳定退出码 |
+| [CLI 离线弹药库](docs/cli-offline-arsenal.md) | 发行包内 `arsenal.db` 的校验、物化与本地替换/导入 |
 | [云资源动态调度](docs/cloud-resource-scheduling.md) | AutoScaler、云实例生命周期、Spot 回收与未来演进 |
-| [EXP 能力规划](docs/exp-capability-planning.md) | 独立 EXP 规则库、POC 关联、执行审计、安全闸门与阶段路线 |
+| [Yaksha EXP](docs/yaksha-exp.md) | 单文件 Yaklang EXP 权威模型、利用族组织、五种动作与测试调试发布流程 |
 | [AI Copilot 架构](docs/ai_copilot_architecture.md) | 全局 Copilot、工具调用、POC AI 审查和后续路线 |
 | [技术白皮书](docs/argus-technical-whitepaper.md) | 对外技术定位、核心闭环、典型场景与演进路线 |
 
