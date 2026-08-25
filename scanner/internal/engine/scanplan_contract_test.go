@@ -8,7 +8,6 @@ import (
 
 func TestCanonicalStageForEveryPipelinePhase(t *testing.T) {
 	tests := map[string]scanplan.Stage{
-		PhaseSearchEngine: scanplan.StageSearchEngine,
 		PhaseSubdomain:    scanplan.StageSubdomainDiscovery,
 		PhaseCDN:          scanplan.StageCDNClassification,
 		PhaseICMP:         scanplan.StageICMPDiscovery,

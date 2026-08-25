@@ -256,6 +256,11 @@ func localRiskPOCSetHash(cfg engine.Config) string {
 			items = append(items, target+"\x00"+poc+"\x00"+cfg.RiskValidationPocHashes[poc])
 		}
 	}
+	for target, prints := range cfg.TargetFingerprints {
+		products := append([]string(nil), prints...)
+		sort.Strings(products)
+		items = append(items, target+"\x00fingerprint\x00"+strings.Join(products, "\x00"))
+	}
 	sort.Strings(items)
 	return hashValues(items...)
 }

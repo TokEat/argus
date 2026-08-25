@@ -16,6 +16,8 @@ type taskCoverageExplanationSummary struct {
 	ExecutedWorkItems int64 `json:"executed_work_items"`
 	ReusedStages      int64 `json:"reused_stages"`
 	InFlightWorkItems int64 `json:"in_flight_work_items"`
+	SkippedStages     int64 `json:"skipped_stages"`
+	FailedStages      int64 `json:"failed_stages"`
 	InvalidatedStages int64 `json:"invalidated_stages"`
 	ExpiredStages     int64 `json:"expired_stages"`
 	SavedStages       int64 `json:"saved_stages"`
@@ -45,6 +47,8 @@ type taskCoverageInvalidationItem struct {
 	Stage            string                        `json:"stage"`
 	Status           string                        `json:"status"`
 	Reason           string                        `json:"reason"`
+	Fingerprints     []string                       `json:"fingerprints,omitempty"`
+	MatchedPocs      []string                       `json:"matched_pocs,omitempty"`
 	Source           taskCoverageExplanationSource `json:"source"`
 	InvalidatedAt    time.Time                     `json:"invalidated_at"`
 	ValidUntil       *time.Time                    `json:"valid_until"`
@@ -126,14 +130,19 @@ func buildTaskCoverageExplanation(store *gorm.DB, root db.RootTask) (taskCoverag
 		return result, err
 	}
 
-	invalidations, invalidatedCount, expiredCount, truncated, err := loadTaskCoverageInvalidations(store, root)
+	invalidations, gaps, truncated, err := loadTaskCoverageInvalidations(store, root)
 	if err != nil {
 		return result, err
 	}
-	result.Summary.InvalidatedStages = invalidatedCount
-	result.Summary.ExpiredStages = expiredCount
+	result.Summary.SkippedStages = gaps.Skipped
+	result.Summary.FailedStages = gaps.Failed
+	result.Summary.InvalidatedStages = gaps.Invalidated
+	result.Summary.ExpiredStages = gaps.Expired
 	result.Invalidations = invalidations
 	result.InvalidationsTruncated = truncated
+	if err := attachTaskCoverageRiskMatches(store, root, result.Invalidations); err != nil {
+		return result, err
+	}
 
 	sourceTaskIDs := make(map[string]struct{})
 	for _, link := range links {
@@ -258,7 +267,15 @@ func loadTaskCoverageLinkEvidence(store *gorm.DB, root db.RootTask, links []db.T
 	return coverages, claims, nil
 }
 
-func loadTaskCoverageInvalidations(store *gorm.DB, root db.RootTask) ([]taskCoverageInvalidationItem, int64, int64, bool, error) {
+type taskCoverageGapCounts struct {
+	Skipped     int64
+	Failed      int64
+	Invalidated int64
+	Expired     int64
+}
+
+func loadTaskCoverageInvalidations(store *gorm.DB, root db.RootTask) ([]taskCoverageInvalidationItem, taskCoverageGapCounts, bool, error) {
+	var counts taskCoverageGapCounts
 	now := time.Now().UTC()
 	linkedCoverageIDs := func() *gorm.DB {
 		return store.Model(&db.TaskCoverageLink{}).
@@ -270,33 +287,38 @@ func loadTaskCoverageInvalidations(store *gorm.DB, root db.RootTask) ([]taskCove
 			Where("tenant_id = ? AND project_id = ?", root.TenantID, root.ProjectID).
 			Where("source_task_id = ? OR id IN (?)", root.ID, linkedCoverageIDs())
 	}
-	var invalidatedCount int64
-	if err := coverageBase().Where("status <> ? OR invalid_reason <> ''", string(scanplan.CoverageComplete)).Count(&invalidatedCount).Error; err != nil {
-		return nil, 0, 0, false, fmt.Errorf("count invalidated task coverage: %w", err)
+	if err := excludeRetiredSearchEngineCoverage(coverageBase()).Where("status = ? AND outcome = ?", string(scanplan.CoverageIncomplete), string(scanplan.ObservationSkipped)).Count(&counts.Skipped).Error; err != nil {
+		return nil, counts, false, fmt.Errorf("count skipped task coverage: %w", err)
 	}
-	var expiredCount int64
-	if err := coverageBase().Where("status = ? AND valid_until IS NOT NULL AND valid_until <= ?", string(scanplan.CoverageComplete), now).Count(&expiredCount).Error; err != nil {
-		return nil, 0, 0, false, fmt.Errorf("count expired task coverage: %w", err)
+	if err := coverageBase().Where("status = ? AND outcome <> ?", string(scanplan.CoverageIncomplete), string(scanplan.ObservationSkipped)).Count(&counts.Failed).Error; err != nil {
+		return nil, counts, false, fmt.Errorf("count failed task coverage: %w", err)
+	}
+	if err := coverageBase().Where("status = ?", string(scanplan.CoverageInvalidated)).Count(&counts.Invalidated).Error; err != nil {
+		return nil, counts, false, fmt.Errorf("count invalidated task coverage: %w", err)
+	}
+	if err := coverageBase().Where("status = ? AND valid_until IS NOT NULL AND valid_until <= ?", string(scanplan.CoverageComplete), now).Count(&counts.Expired).Error; err != nil {
+		return nil, counts, false, fmt.Errorf("count expired task coverage: %w", err)
 	}
 	var rows []db.ScanCoverage
-	if err := coverageBase().Where("status <> ? OR invalid_reason <> '' OR (valid_until IS NOT NULL AND valid_until <= ?)", string(scanplan.CoverageComplete), now).
+	if err := excludeRetiredSearchEngineCoverage(coverageBase()).Where("status <> ? OR invalid_reason <> '' OR (valid_until IS NOT NULL AND valid_until <= ?)", string(scanplan.CoverageComplete), now).
 		Order("updated_at desc, id desc").Limit(taskCoverageExplanationLimit + 1).Find(&rows).Error; err != nil {
-		return nil, 0, 0, false, fmt.Errorf("load task coverage invalidations: %w", err)
+		return nil, counts, false, fmt.Errorf("load task coverage invalidations: %w", err)
 	}
 	truncated := len(rows) > taskCoverageExplanationLimit
 	if truncated {
 		rows = rows[:taskCoverageExplanationLimit]
 	}
+	observations, err := loadTaskCoverageObservations(store, root, rows)
+	if err != nil {
+		return nil, counts, false, err
+	}
 	items := make([]taskCoverageInvalidationItem, 0, len(rows))
 	for _, row := range rows {
-		status := row.Status
-		reason := strings.TrimSpace(row.InvalidReason)
-		if row.Status == string(scanplan.CoverageComplete) && row.ValidUntil != nil && !row.ValidUntil.After(now) {
-			status = "expired"
-			if reason == "" {
-				reason = "ttl_expired"
-			}
+		var obs *db.ScanObservation
+		if observation, ok := observations[row.SourceObservationID]; ok {
+			obs = &observation
 		}
+		status, reason := classifyTaskCoverageGap(row, obs, now)
 		items = append(items, taskCoverageInvalidationItem{
 			NormalizedTarget: row.NormalizedTarget,
 			Stage:            row.Stage,
@@ -307,7 +329,102 @@ func loadTaskCoverageInvalidations(store *gorm.DB, root db.RootTask) ([]taskCove
 			ValidUntil:       row.ValidUntil,
 		})
 	}
-	return items, invalidatedCount, expiredCount, truncated, nil
+	return items, counts, truncated, nil
+}
+
+func excludeRetiredSearchEngineCoverage(query *gorm.DB) *gorm.DB {
+	return query.Where("NOT (stage = ? AND status = ? AND outcome = ?)",
+		string(scanplan.StageSearchEngine), string(scanplan.CoverageIncomplete), string(scanplan.ObservationSkipped))
+}
+
+func loadTaskCoverageObservations(store *gorm.DB, root db.RootTask, rows []db.ScanCoverage) (map[uint64]db.ScanObservation, error) {
+	ids := make([]uint64, 0, len(rows))
+	seen := make(map[uint64]struct{}, len(rows))
+	for _, row := range rows {
+		if row.SourceObservationID == 0 {
+			continue
+		}
+		if _, exists := seen[row.SourceObservationID]; exists {
+			continue
+		}
+		seen[row.SourceObservationID] = struct{}{}
+		ids = append(ids, row.SourceObservationID)
+	}
+	result := make(map[uint64]db.ScanObservation, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	var observations []db.ScanObservation
+	if err := store.Where("tenant_id = ? AND project_id = ? AND id IN ?", root.TenantID, root.ProjectID, ids).Find(&observations).Error; err != nil {
+		return nil, fmt.Errorf("load task coverage observations: %w", err)
+	}
+	for _, observation := range observations {
+		result[observation.ID] = observation
+	}
+	return result, nil
+}
+
+func classifyTaskCoverageGap(row db.ScanCoverage, obs *db.ScanObservation, now time.Time) (string, string) {
+	reason := strings.TrimSpace(row.InvalidReason)
+	if row.Status == string(scanplan.CoverageComplete) && row.ValidUntil != nil && !row.ValidUntil.After(now) {
+		if reason == "" {
+			reason = "ttl_expired"
+		}
+		return "expired", reason
+	}
+	if row.Status == string(scanplan.CoverageInvalidated) {
+		if reason == "" {
+			reason = "coverage_invalidated"
+		}
+		return "invalidated", reason
+	}
+	if row.Status == string(scanplan.CoverageIncomplete) {
+		status := "failed"
+		if row.Outcome == string(scanplan.ObservationSkipped) {
+			status = "skipped"
+		}
+		if obs != nil {
+			if observationReason := publicObservationCoverageReason(obs.ErrorCode, obs.ErrorMessage); observationReason != "" {
+				return status, observationReason
+			}
+		}
+		if reason == "" {
+			if status == "skipped" {
+				reason = "stage_not_executed"
+			} else {
+				reason = "phase_failed"
+			}
+		}
+		return status, reason
+	}
+	if reason != "" {
+		return "invalidated", reason
+	}
+	return row.Status, reason
+}
+
+func publicObservationCoverageReason(code, message string) string {
+	code = strings.TrimSpace(code)
+	message = strings.TrimSpace(message)
+	switch message {
+	case "target HTTP budget exhausted":
+		return "http_budget_exhausted"
+	case "upstream HTTP probe incomplete":
+		return "upstream_http_probe_incomplete"
+	case "nuclei execution failed":
+		return "nuclei_execution_failed"
+	}
+	if strings.HasPrefix(message, "upstream HTTP probe incomplete") {
+		return "upstream_http_probe_incomplete"
+	}
+	switch code {
+	case "stage_not_executed", "phase_skipped", "phase_failed", "pipeline_cancelled", "pipeline_failed", "phase_incomplete":
+		return code
+	}
+	if code != "" {
+		return code
+	}
+	return ""
 }
 
 func loadTaskCoverageSourceNames(store *gorm.DB, root db.RootTask, sourceIDs map[string]struct{}) (map[string]string, error) {

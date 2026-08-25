@@ -17,7 +17,6 @@ import (
 )
 
 var assetObservationStages = []scanplan.Stage{
-	scanplan.StageSearchEngine,
 	scanplan.StageSubdomainDiscovery,
 	scanplan.StageCDNClassification,
 	scanplan.StageICMPDiscovery,
@@ -123,7 +122,7 @@ func (r *stageObservationReporter) recordOutput(payloadType string, payload []by
 }
 
 func (r *stageObservationReporter) observePhase(phase engine.PhaseEvent) []*scanplan.StageObservationEvent {
-	if r == nil {
+	if r == nil || len(r.targets) == 0 {
 		return nil
 	}
 	stage, ok := engine.CanonicalStageForPhase(phase.Phase)
@@ -196,6 +195,13 @@ func (r *stageObservationReporter) state(stage scanplan.Stage) *stageObservation
 }
 
 func (r *stageObservationReporter) finish(stage scanplan.Stage, state *stageObservationState, outcome scanplan.ObservationOutcome, finishedAt time.Time, errorCode, errorMessage string) *scanplan.StageObservationEvent {
+	if r == nil || state == nil || len(r.targets) == 0 {
+		if state != nil {
+			state.active = false
+			state.terminal = true
+		}
+		return nil
+	}
 	if state.startedAt.IsZero() {
 		state.startedAt = finishedAt
 	}

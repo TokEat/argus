@@ -11,6 +11,17 @@ import (
 	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 )
 
+func TestStageObservationReporterSkipsEmptyTargets(t *testing.T) {
+	reporter := newStageObservationReporter("attempt-empty", "agent-a", nil, []byte(`{"ExecutionMode":"risk_validation"}`), "rules-a", "risk_validation")
+	reporter.observePhase(engine.PhaseEvent{Phase: engine.PhaseNuclei, Status: "start"})
+	if events := reporter.observePhase(engine.PhaseEvent{Phase: engine.PhaseNuclei, Status: "end", Message: "native match produced no eligible pocs"}); len(events) != 0 {
+		t.Fatalf("empty-target reporter emitted coverage events: %+v", events)
+	}
+	if events := reporter.finalize(nil, false); len(events) != 0 {
+		t.Fatalf("empty-target finalize emitted coverage events: %+v", events)
+	}
+}
+
 func TestStageObservationReporterProducesOrderIndependentContentHash(t *testing.T) {
 	now := time.Date(2026, 8, 9, 1, 2, 3, 0, time.UTC)
 	makeEvent := func(payloads []string) *scanplan.StageObservationEvent {
@@ -116,6 +127,9 @@ func TestStageObservationReporterFailsActiveStageAndSkipsUnknownCoverage(t *test
 	for _, event := range events {
 		if err := event.Validate(); err != nil {
 			t.Fatalf("invalid final event %+v: %v", event, err)
+		}
+		if event.Stage == scanplan.StageSearchEngine {
+			t.Fatal("retired search_engine coverage was emitted")
 		}
 		switch event.Outcome {
 		case scanplan.ObservationFailed:

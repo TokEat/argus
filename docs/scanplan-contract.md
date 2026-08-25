@@ -61,7 +61,7 @@ tenant_id + project_id + network_zone + normalized_target
 + stage + scope_hash + config_hash + rule_version
 ```
 
-`risk_validation` 额外且强制包含 `poc_set_hash + endpoint_content_hash`；`credential_validation` 额外且强制包含 `credential_set_hash + service_observation_hash`；其他阶段禁止携带这些内容维度。`Digest()` 对校验后的固定字段 JSON 计算 SHA-256，任一维度变化都会得到不同键。WorkKey 不允许跨租户、项目或网络区域构造复用关系。
+`risk_validation` 额外且强制包含 `poc_set_hash + endpoint_content_hash`；`credential_validation` 额外且强制包含 `credential_set_hash + service_observation_hash`；其他阶段禁止携带这些内容维度。原生自动风险验证的 `poc_set_hash` 是密封指纹快照；显式确认路径仍是端点→POC 内容哈希。`endpoint_content_hash` 是完整 HTTP 探测内容，发现 URL 可继承来源资产 Attempt 的完整 HTTP 内容。`Digest()` 对校验后的固定字段 JSON 计算 SHA-256，任一维度变化都会得到不同键。WorkKey 不允许跨租户、项目或网络区域构造复用关系。
 
 ## Observation 与 Coverage
 
@@ -85,6 +85,6 @@ Server 新 Coverage 的默认有效期为：存活 5 分钟、端口 1 小时、
 
 运行中来源通过 WorkClaim 关联：由于当前 Scanner 以完整目标执行流水线，Server 使用每个目标的 `fingerprint` WorkKey 作为目标级互斥键，并在同一事务提交唯一 Claim、`executed` 来源关联、Attempt Agent 租约和节点容量。命中活动 Claim 的后续 Attempt 只记录 `in_flight/waiting` 关联并进入内部等待，不占 Agent；来源成功后重新进入 Planner 复用完整 Coverage，来源失败后重新竞争 Claim 执行，不会复用失败结果。
 
-`GET /api/v1/tasks/:id` 的 `coverage_explanation` 使用 `argus.task-coverage-explanation/v1` 返回上述决策的只读解释：完整汇总实际执行工作项、历史复用阶段、仍在等待的执行中关联、失效/过期阶段以及节省的阶段和完整目标数量；最近 100 条明细展示规范目标、Stage、network zone、状态、原因和同项目来源 Task/Batch/Attempt。失效列表只包含当前任务产生或曾由当前任务实际复用的 Coverage，避免把同项目无关历史误报为本任务决策。来源名称和证据关联都按当前 tenant/project 重新查询；WorkKey、配置哈希、租约令牌和检查点摘要不对 UI 暴露。
+`GET /api/v1/tasks/:id` 的 `coverage_explanation` 使用 `argus.task-coverage-explanation/v1` 返回上述决策的只读解释：完整汇总实际执行工作项、历史复用阶段、仍在等待的执行中关联、失效/过期阶段以及节省的阶段和完整目标数量；最近 100 条明细展示规范目标、Stage、network zone、状态、原因和同项目来源 Task/Batch/Attempt。风险验证缺口另含指纹与匹配 POC 文件名。失效列表只包含当前任务产生或曾由当前任务实际复用的 Coverage，避免把同项目无关历史误报为本任务决策。来源名称和证据关联都按当前 tenant/project 重新查询；WorkKey、配置哈希、租约令牌和检查点摘要不对 UI 暴露。
 
 Server 按每个目标派生 network zone：公网 IP/CIDR/范围和无私网标签的普通公网 DNS 为 `public`；私网、特殊用途地址与 split-horizon DNS 为 `private:<network_zone>`；无标签私网 Agent 回退为 `agent:<agent_id>`。Agent 不在 Observation 中声明这个边界。已有 `--tags` 可配置 `network_zone`；只有显式 `network_scope=public` 才允许带区域标签的普通公网 DNS 进入公网区，私网或保留 IP 永不提升为公网。
