@@ -381,12 +381,8 @@ argus/
 │   │   ├── grpc/              # gRPC Agent 通信服务
 │   │   ├── scheduler/         # RabbitMQ 多优先级任务调度
 │   │   ├── db/                # PostgreSQL 数据层
-│   │   ├── bootstrap/         # 依赖装配
-│   │   ├── config/            # 服务端配置
-│   │   ├── core/              # 领域模型与用例
-│   │   ├── adapters/          # 端口适配器 (HTTP/gRPC/持久层/队列)
 │   │   ├── cloud/             # 云端集成
-│   │   └── shared/            # 通用工具
+│   │   └── storage/           # 对象存储
 │   └── deploy/                # 部署配置 (docker-compose)
 │
 ├── shared/

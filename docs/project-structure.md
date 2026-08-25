@@ -59,7 +59,7 @@
 
 ## 架构现状
 
-- `server/internal/adapters/httpapi`、`server/internal/adapters/grpcagent`、`server/internal/core/usecase` 已存在，但仍是 Clean Architecture 迁移 scaffold，尚未承接主业务；`/api/v1` 主链路保持兼容。
+- 控制面主链路是 `server/internal/api`、`grpc`、`db`、`scheduler`；`/api/v1` 保持兼容，没有 `/api/v2`。
 - `server/internal/api/router.go` 已收敛为路由装配入口；任务、云资源、MCP、构建、日志等领域处理已拆分到独立 handler/service 文件。
 - `server/internal/cloud/` 提供 Provider、ResourceManager、AutoScaler、Cloud-Init 和 OSS 分发能力；真实云厂商调用仍通过 Provider 抽象隔离。
 

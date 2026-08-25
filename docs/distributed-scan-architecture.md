@@ -32,7 +32,7 @@ Argus 当前采用典型的 `Control Plane + Data Plane` 结构：
 - 云实例 mock 管理、构建产物列表
 - 统计接口与 Agent 日志查询
 
-边界说明：任务、云资源、MCP、构建、日志等领域 handler 已从 `router.go` 拆分到独立文件；`server/internal/adapters/*` 与 `core/usecase` 仍是 Clean Architecture 长期演进 scaffold，不承接主链路，也不存在 `/api/v2`。
+边界说明：任务、云资源、MCP、构建、日志等领域 handler 已从 `router.go` 拆分到独立文件。控制面主链路是 `api`、`grpc`、`db`、`scheduler`，不存在 `/api/v2`。
 
 ### 调度层
 

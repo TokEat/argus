@@ -152,7 +152,7 @@
 | 角色与租户治理 | 自定义角色 permissions 已作为运行时授权依据，但只能在 base_role 已允许的范围内收窄权限，不能越权提升；项目成员支持 viewer/operator/owner；租户任务配额覆盖任务创建和 Agent 认领 |
 | 工程质量门禁 | GitHub Actions、顶层 Makefile、Go/Vitest/前端 smoke/Cloud mock smoke/发布制品上传已接入 |
 
-Clean Architecture 迁移不再作为用户功能链路验收项，降级到长期架构演进；当前 `/api/v1` 主链路保持兼容，不为清状态强行暴露 `/api/v2`。
+当前 `/api/v1` 主链路保持兼容，没有 `/api/v2`。
 
 ---
 
@@ -169,7 +169,7 @@ Clean Architecture 迁移不再作为用户功能链路验收项，降级到长�
 
 ## 五、当前接口实现清单
 
-本文只描述从 `server/cmd/argus-server/main.go` 接线进入运行链路的接口，不把 `server/internal/adapters/httpapi`、`server/internal/adapters/grpcagent` 等 Clean Architecture scaffold 视为可用接口。
+本文只描述从 `server/cmd/argus-server/main.go` 接线进入运行链路的接口。
 
 ### 通用约定
 
@@ -241,5 +241,4 @@ Clean Architecture 迁移不再作为用户功能链路验收项，降级到长�
 ### 维护约定
 
 - 新增或删除 `/api/v1` 路由时，同步更新本节。
-- 如果启用 `/api/v2`，单独增加版本化接口小节，不与当前主链路混写。
-- 对只返回 `accepted`、mock 或 scaffold 的接口，必须明确标注是否真正执行后端动作。
+- 对只返回 `accepted` 或 mock 的接口，必须明确标注是否真正执行后端动作。
