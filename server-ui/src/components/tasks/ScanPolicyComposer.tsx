@@ -34,6 +34,7 @@ export interface ScanPolicyFormValues {
     password_books?: string[];
     credential_pair_limit?: number;
     validation_confirmed?: boolean;
+    high_risk_auto_execution?: boolean;
 }
 
 export const presetDefaults: Record<Exclude<API.ScanPreset, 'custom'>, Partial<ScanPolicyFormValues>> = {
@@ -82,7 +83,7 @@ export function buildScanPolicy(values: ScanPolicyFormValues, dictionaries: API.
             username_books: refs(values.username_books, 'username'), password_books: refs(values.password_books, 'password'),
             pair_limit: values.credential_pair_limit || 50000,
         },
-        authorization: { validation_confirmed: Boolean(values.validation_confirmed) },
+        authorization: { validation_confirmed: Boolean(values.validation_confirmed), allow_high_risk_auto_execution: Boolean(merged.risk_validation) && Boolean(values.high_risk_auto_execution) },
     };
 }
 
@@ -131,7 +132,7 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
         priority: values?.priority, timeout_sec: values?.timeout_sec,
         port_profile: values?.port_profile, custom_ports: values?.custom_ports,
         scan_method: values?.scan_method, intensity: values?.intensity,
-        capabilities: [values?.subdomain_discovery, values?.subdomain_bruteforce, values?.subdomain_bruteforce_depth, values?.allow_cdn_assets, values?.allow_private_resolved_domains, values?.host_binding, values?.behavior_probe, values?.directory_probe, values?.risk_validation, values?.credential_validation],
+        capabilities: [values?.subdomain_discovery, values?.subdomain_bruteforce, values?.subdomain_bruteforce_depth, values?.allow_cdn_assets, values?.allow_private_resolved_domains, values?.host_binding, values?.behavior_probe, values?.directory_probe, values?.risk_validation, values?.credential_validation, values?.high_risk_auto_execution],
         books: [values?.subdomain_books, values?.username_books, values?.password_books], pair_limit: values?.credential_pair_limit,
         confirmed: values?.validation_confirmed, dictionaries: dictionaries.map((item) => [item.id, item.revision, item.sha256]),
 		subdomain_dictionaries: subdomainDictionaries.map((item) => [item.id, item.revision, item.sha256]),
@@ -196,12 +197,12 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
                         </Card>
 
 						<Card size="small" title="子域发现">
-							<Form.Item name="subdomain_discovery" valuePropName="checked" label="被动来源收集" extra="默认开启；从证书透明度与公共 DNS 数据源收集候选子域。"><Switch /></Form.Item>
-							<Form.Item name="subdomain_bruteforce" valuePropName="checked" label="字典爆破" extra="深度模式默认开启；始终保留 Scanner 内置字典。"><Switch disabled={!values?.subdomain_discovery} /></Form.Item>
+							<Form.Item name="subdomain_discovery" valuePropName="checked" label="被动来源收集" tooltip={{ title: '任务下发前由 Server 从 crt.sh、certspotter、crt.name 等证书透明度公开数据源被动收集候选子域，经 DNS 解析验证去重后密封进任务配置；结果跨任务缓存并共享给所有 Agent，无需任何 API 凭据。默认开启，三种预设均生效。', icon: <InfoCircleOutlined /> }} extra="默认开启；从证书透明度与公共 DNS 数据源收集候选子域。"><Switch /></Form.Item>
+							<Form.Item name="subdomain_bruteforce" valuePropName="checked" label="字典爆破" tooltip={{ title: '以并发 DNS 解析方式，用「Scanner 内置子域词典 ∪ 所选项目增量词典」猜测子域，命中者进入后续端口扫描与 HTTP 探测。快速与标准预设默认关闭；深度预设默认开启且为 2 层。始终保留内置词典，项目词典只做增量补充。', icon: <InfoCircleOutlined /> }} extra="深度模式默认开启；始终保留 Scanner 内置字典。"><Switch disabled={!values?.subdomain_discovery} /></Form.Item>
 							{values?.subdomain_bruteforce && <>
 								<Alert type="info" showIcon message="内置字典 ∪ 项目增量字典" description="Server 去重后将选中的不可变 Revision 密封到本次任务；不接受 Agent 文件路径。" style={{ marginBottom: 12 }} />
-				<Form.Item name="subdomain_books" label="项目增量字典"><Select mode="multiple" options={subdomainOptions} placeholder="可选；不会替换内置字典" /></Form.Item>
-				<Form.Item name="subdomain_bruteforce_depth" label="爆破深度" extra="仅对上一层真实解析成功的子域继续展开；层数越高，请求量增长越快。">
+				<Form.Item name="subdomain_books" label="项目增量字典" tooltip={{ title: '从项目字典库中选择要叠加的子域词典；Server 会把所选不可变 Revision 的内容与哈希密封进本次任务，保证各 Agent 使用完全一致的词典，不接受 Agent 侧本地文件路径。', icon: <InfoCircleOutlined /> }}><Select mode="multiple" options={subdomainOptions} placeholder="可选；不会替换内置字典" /></Form.Item>
+				<Form.Item name="subdomain_bruteforce_depth" label="爆破深度" tooltip={{ title: '控制字典爆破的递归层数：第 1 层对主域做词典拼接猜测，只有上一层真实解析成功的子域才会作为下一层的展开基础，最大支持 4 层。层数越高请求量增长越快；深度预设默认 2 层。', icon: <InfoCircleOutlined /> }} extra="仅对上一层真实解析成功的子域继续展开；层数越高，请求量增长越快。">
 					<Select options={[1, 2, 3, 4].map((value) => ({ value, label: `${value} 层` }))} />
 				</Form.Item>
 				<Button size="small" onClick={() => setSubdomainDictionaryOpen(true)}>管理子域字典</Button>
@@ -210,8 +211,8 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
 
 						<Card size="small" title="Web 指纹识别">
 							<Alert type="success" showIcon message="响应指纹识别（默认）" description="复用 HTTP 探测响应完成基础指纹识别，作为后续 Workflow 与 POC 匹配依据。" style={{ marginBottom: 12 }} />
-							<Form.Item name="behavior_probe" valuePropName="checked" label="安全行为探针" extra="标准、深度默认开启；仅执行 Server 重新分类为自动安全的单请求 Nuclei 探针。"><Switch /></Form.Item>
-							<Form.Item name="directory_probe" valuePropName="checked" label="主动路径指纹" extra="可选；请求产品特征路径并产出 Active-Finger，不执行通用目录扫描。"><Switch /></Form.Item>
+							<Form.Item name="behavior_probe" valuePropName="checked" label="安全行为探针" tooltip={{ title: 'HTTP 探测完成后对存活 Web 服务执行一批经安全审核的 Nuclei 行为探针：Server 仅保留重新分类为「自动安全」的单请求探针，每个 HTTP 服务每探针最多发送一次请求，用于补充行为特征并作为指纹与 POC 匹配依据。标准与深度预设默认开启。', icon: <InfoCircleOutlined /> }} extra="标准、深度默认开启；仅执行 Server 重新分类为自动安全的单请求 Nuclei 探针。"><Switch /></Form.Item>
+							<Form.Item name="directory_probe" valuePropName="checked" label="主动路径指纹" tooltip={{ title: '对已识别出产品的资产请求其规则定义的特征路径（如 Spring Actuator、Druid 控制台等），命中即产出 Active-Finger 指纹供后续 Workflow 匹配；只请求规则内路径，不执行通用目录爆破。仅深度预设默认开启，开启会增加少量请求。', icon: <InfoCircleOutlined /> }} extra="可选；请求产品特征路径并产出 Active-Finger，不执行通用目录扫描。"><Switch /></Form.Item>
 						</Card>
 
 						<Card size="small" title="自动验证">
@@ -223,17 +224,20 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
 								style={{ marginBottom: 12 }}
 							/>
 							<Row gutter={[12, 8]}>
-								<Col span={12}><Form.Item name="risk_validation" valuePropName="checked" label="自动 POC 验证"><Switch /></Form.Item></Col>
-								<Col span={12}><Form.Item name="credential_validation" valuePropName="checked" label="弱口令验证"><Switch /></Form.Item></Col>
-							</Row>
+								<Col span={12}><Form.Item name="risk_validation" valuePropName="checked" label="自动 POC 验证" tooltip={{ title: '指纹识别完成后自动匹配并执行漏洞验证：Workflow 规则命中的资产运行对应 Nuclei 模板，服务精确命中的执行受审核 GoPoc 漏洞检查。默认仅自动执行 low/medium 风险的已审批 POC；高风险与未分类 POC 默认跳过，可开启下方预授权或事后经手动风险验证二次确认执行。需勾选页面底部的授权范围确认。标准与深度预设默认开启。', icon: <InfoCircleOutlined /> }}><Switch /></Form.Item></Col>
+									<Col span={12}><Form.Item name="credential_validation" valuePropName="checked" label="弱口令验证" tooltip={{ title: '对协议识别确认的服务（SSH、数据库、中间件等）使用「内置服务凭据字典 ∪ 所选项目用户名本×密码本」尝试登录验证，组合数受「每服务目标组合上限」约束防止请求爆炸；同样需要授权确认后才执行。默认关闭，开启后在下方配置增量字典。', icon: <InfoCircleOutlined /> }}><Switch /></Form.Item></Col>
+								</Row>
+								{values?.risk_validation && (
+									<Form.Item name="high_risk_auto_execution" valuePropName="checked" label="高风险 POC 预授权" extra="默认关闭；开启后自动阶段将直接执行已审批的高风险/未分类 POC。" tooltip={{ title: '任务级显式预授权开关：关闭时自动阶段跳过 high 与未分类（unknown）风险的已审批 POC 并记录原因，这些 POC 需在任务完成后通过手动「风险验证」入口经二次确认执行；开启后资产发现结束将直接自动执行它们。该选择会密封进不可变任务快照并写入审计，请确认目标均在授权范围内后再开启。', icon: <InfoCircleOutlined /> }}><Switch /></Form.Item>
+								)}
 						</Card>
 
                         {values?.credential_validation && (
                             <Card size="small" title={<Space><DatabaseOutlined />增量凭据字典</Space>} extra={<Button size="small" onClick={() => setDictionaryOpen(true)}>管理字典</Button>}>
                                 <Alert type="info" showIcon message="内置服务字典始终参与验证" description="所选项目用户名本 × 密码本只做增量补充；任务锁定当前 Revision 与哈希。" style={{ marginBottom: 12 }} />
-                                <Form.Item name="username_books" label="用户名本"><Select mode="multiple" options={usernameOptions} placeholder="可选；不影响内置用户名" /></Form.Item>
-                                <Form.Item name="password_books" label="密码本"><Select mode="multiple" options={passwordOptions} placeholder="可选；不影响内置密码" /></Form.Item>
-                                <Form.Item name="credential_pair_limit" label="每服务目标组合上限"><InputNumber min={1} max={100000} step={1000} style={{ width: '100%' }} /></Form.Item>
+                                <Form.Item name="username_books" label="用户名本" tooltip={{ title: '从项目凭据字典库中选择用户名词典作为增量来源；与下方密码本做笛卡尔积生成本次任务的增量弱口令组合。内容按所选不可变 Revision 加密存储并密封进一次性凭据包（带哈希校验）下发给 Agent，不影响 Scanner 内置服务字典。', icon: <InfoCircleOutlined /> }}><Select mode="multiple" options={usernameOptions} placeholder="可选；不影响内置用户名" /></Form.Item>
+                                <Form.Item name="password_books" label="密码本" tooltip={{ title: '从项目凭据字典库中选择密码词典作为增量来源；与上方用户名本做笛卡尔积生成增量弱口令组合，同样按不可变 Revision 密封下发。两者都未选择时不产生增量组合，仅使用内置服务字典。', icon: <InfoCircleOutlined /> }}><Select mode="multiple" options={passwordOptions} placeholder="可选；不影响内置密码" /></Form.Item>
+                                <Form.Item name="credential_pair_limit" label="每服务目标组合上限" tooltip={{ title: '限制「所选用户名本×密码本」笛卡尔积的最大组合数：默认 50000，最大 100000，超出会直接拒绝生成验证计划；Server 同时按 目标数×该上限 预估请求预算并密封进任务，防止弱口令阶段对目标产生过量登录尝试。内置服务字典不受此上限约束。', icon: <InfoCircleOutlined /> }}><InputNumber min={1} max={100000} step={1000} style={{ width: '100%' }} /></Form.Item>
                             </Card>
                         )}
 

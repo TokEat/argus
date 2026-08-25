@@ -188,7 +188,7 @@ describe('TaskManagement', () => {
             policy: expect.objectContaining({
                 schema_version: 'argus.scan-policy/v1', preset: 'standard', port_profile: 'top-1000',
                 capabilities: expect.objectContaining({ risk_validation: true, credential_validation: false }),
-                authorization: { validation_confirmed: true },
+                authorization: { validation_confirmed: true, allow_high_risk_auto_execution: false },
             }),
         }), expect.any(String)));
     });

@@ -16,7 +16,7 @@ declare namespace API {
     selector?: { match?: Record<string, string[]>; not_match?: Record<string, string[]> };
 	 subdomains: { wordlists?: ScanDictionaryRef[]; bruteforce_depth: number };
     credentials: { username_books?: ScanDictionaryRef[]; password_books?: ScanDictionaryRef[]; pair_limit: number };
-    authorization: { validation_confirmed: boolean };
+    authorization: { validation_confirmed: boolean; allow_high_risk_auto_execution?: boolean };
   }
   interface ScanPlanStage {
     id: string; depends_on?: string[]; enabled: boolean; targets?: number; reason?: string;

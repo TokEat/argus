@@ -138,6 +138,34 @@ func TestValidationRequiresOneAuthorization(t *testing.T) {
 	}
 }
 
+func TestHighRiskAutoExecutionRequiresRiskValidation(t *testing.T) {
+	policy, _ := PresetPolicy(PresetStandard)
+	policy.Authorization.ValidationConfirmed = true
+	policy.Capabilities.RiskValidation = false
+	policy.Authorization.AllowHighRiskAutoExecution = true
+	if _, err := Normalize(policy); err == nil || !strings.Contains(err.Error(), "high-risk auto execution") {
+		t.Fatalf("expected high-risk pre-authorization rejection without risk validation, got %v", err)
+	}
+	policy.Capabilities.RiskValidation = true
+	normalized, err := Normalize(policy)
+	if err != nil {
+		t.Fatalf("pre-authorization with risk validation rejected: %v", err)
+	}
+	if !normalized.Authorization.AllowHighRiskAutoExecution {
+		t.Fatal("pre-authorization flag was lost during normalization")
+	}
+	defaultPolicy, _ := PresetPolicy(PresetStandard)
+	defaultPolicy.Authorization.ValidationConfirmed = true
+	defaultPolicy.Capabilities.RiskValidation = true
+	fallback, err := Normalize(defaultPolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fallback.Authorization.AllowHighRiskAutoExecution {
+		t.Fatal("pre-authorization must default to false")
+	}
+}
+
 func TestCredentialDictionaryRequiresCredentialValidation(t *testing.T) {
 	policy := Policy{
 		SchemaVersion: SchemaVersion, Preset: PresetCustom,

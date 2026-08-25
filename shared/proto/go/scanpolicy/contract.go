@@ -123,6 +123,12 @@ type SubdomainPolicy struct {
 
 type Authorization struct {
 	ValidationConfirmed bool `json:"validation_confirmed"`
+	// AllowHighRiskAutoExecution is a per-task explicit pre-authorization that
+	// lets the automatic risk_validation stage seal approved POCs whose
+	// risk_level is high or unknown. Default false keeps those candidates out
+	// of automatic batches; they stay available through the operator-confirmed
+	// manual execution flow, which enforces second confirmation.
+	AllowHighRiskAutoExecution bool `json:"allow_high_risk_auto_execution,omitempty"`
 }
 
 type Policy struct {
@@ -251,6 +257,9 @@ func Normalize(input Policy) (Policy, error) {
 	}
 	if (input.Capabilities.RiskValidation || input.Capabilities.CredentialValidation) && !input.Authorization.ValidationConfirmed {
 		return Policy{}, errors.New("POC or credential validation requires one explicit authorization confirmation")
+	}
+	if input.Authorization.AllowHighRiskAutoExecution && !input.Capabilities.RiskValidation {
+		return Policy{}, errors.New("high-risk auto execution pre-authorization requires risk validation")
 	}
 	if input.Credentials.PairLimit == 0 {
 		input.Credentials.PairLimit = DefaultCredentialPairLimit
