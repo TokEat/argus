@@ -200,7 +200,7 @@ declare namespace API {
       domains_done: number;
       updated_at: string;
     }[];
-    /** 每个主域名一行的被动收集结果（来自已密封下发的批次配置）。 */
+    /** 每个注册根域（eTLD+1）一行的被动收集结果（来自已密封下发的批次配置）。 */
     results?: {
       domain: string;
       count: number;
@@ -302,6 +302,8 @@ declare namespace API {
     stage: string;
     status: string;
     reason: string;
+    fingerprints?: string[];
+    matched_pocs?: string[];
     source: TaskCoverageExplanationSource;
     invalidated_at: string;
     valid_until?: string | null;
@@ -313,6 +315,8 @@ declare namespace API {
       executed_work_items: number;
       reused_stages: number;
       in_flight_work_items: number;
+      skipped_stages?: number;
+      failed_stages?: number;
       invalidated_stages: number;
       expired_stages: number;
       saved_stages: number;
@@ -729,6 +733,21 @@ declare namespace API {
     };
   }
 
+  interface AssetResolution {
+    domain: string;
+    ips: string[];
+  }
+
+  interface AssetKindStats {
+    total: number;
+    web: number;
+    host_port: number;
+    domain: number;
+    resolution: number;
+    other: number;
+    resolutions?: AssetResolution[];
+  }
+
   interface PagedResponse<T> {
     items: T[];
     total: number;
@@ -737,6 +756,7 @@ declare namespace API {
     has_more: boolean;
     rule_version?: string;
     generated_at?: string;
+    stats?: AssetKindStats;
   }
 
   interface CopilotPendingAction {

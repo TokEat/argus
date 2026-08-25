@@ -21,13 +21,24 @@ vi.mock('../contexts/GlobalAIContext', () => ({
 
 vi.mock('../services/api', () => apiMocks);
 
-const paged = <T,>(items: T[], total: number, page: number, pageSize = 20) => ({
+const paged = <T,>(items: T[], total: number, page: number, pageSize = 20, stats?: API.AssetKindStats) => ({
     items,
     total,
     page,
     page_size: pageSize,
     has_more: page * pageSize < total,
     generated_at: '2026-07-05T00:00:00Z',
+    ...(stats ? { stats } : {}),
+});
+
+const assetStats = (partial: Partial<API.AssetKindStats>): API.AssetKindStats => ({
+    total: 0,
+    web: 0,
+    host_port: 0,
+    domain: 0,
+    resolution: 0,
+    other: 0,
+    ...partial,
 });
 
 describe('TaskResults', () => {
@@ -167,22 +178,30 @@ describe('TaskResults', () => {
         expect(screen.getByText('https://b.example')).toBeInTheDocument();
     });
 
-    it('renders domain ↔ resolved-IP association badges from RealIP rows', async () => {
+    it('renders domain ↔ resolved-IP association badges from task-wide resolution stats', async () => {
         apiMocks.getVulns.mockResolvedValue(paged([], 0, 1));
-        apiMocks.getAssets.mockResolvedValue(paged([
-            {
-                ID: 11,
-                TenantID: 'default',
-                TaskID: 'task-1',
-                Target: 'assoc.test',
-                Protocol: 'RealIP',
-                Port: 0,
-                Title: '',
-                Service: '',
-                Tags: JSON.stringify({ type: 'RealIP', domain: 'assoc.test', ips: ['198.51.100.9'] }),
-                CreatedAt: '2026-07-06T00:00:00Z',
-            },
-            {
+        const stats = assetStats({
+            total: 2,
+            web: 1,
+            resolution: 1,
+            resolutions: [{ domain: 'assoc.test', ips: ['198.51.100.9'] }],
+        });
+        apiMocks.getAssets.mockImplementation((params: { kind?: string }) => {
+            if (params.kind === 'resolution') {
+                return paged([{
+                    ID: 11,
+                    TenantID: 'default',
+                    TaskID: 'task-1',
+                    Target: 'assoc.test',
+                    Protocol: 'RealIP',
+                    Port: 0,
+                    Title: '',
+                    Service: '',
+                    Tags: JSON.stringify({ type: 'RealIP', domain: 'assoc.test', ips: ['198.51.100.9'] }),
+                    CreatedAt: '2026-07-06T00:00:00Z',
+                }], 1, 1, 20, stats);
+            }
+            return paged([{
                 ID: 12,
                 TenantID: 'default',
                 TaskID: 'task-1',
@@ -192,9 +211,10 @@ describe('TaskResults', () => {
                 Title: 'Origin page',
                 Service: 'http/200',
                 CreatedAt: '2026-07-06T00:00:00Z',
-            },
-        ], 2, 1));
+            }], 1, 1, 20, stats);
+        });
 
+        const user = userEvent.setup();
         render(
             <MemoryRouter initialEntries={['/tasks/task-1/results']}>
                 <App>
@@ -206,9 +226,14 @@ describe('TaskResults', () => {
         );
 
         expect(await screen.findByText('Origin page')).toBeInTheDocument();
-        // IP 形式的资产行需要显示其关联域名；域名形式的资产行需要显示解析 IP。
-        expect(screen.getAllByText('assoc.test').length).toBeGreaterThanOrEqual(2);
-        expect(screen.getAllByText('198.51.100.9').length).toBeGreaterThanOrEqual(2);
+        expect(screen.getByText('assoc.test')).toBeInTheDocument();
+        expect(screen.getByText('198.51.100.9')).toBeInTheDocument();
+        expect(screen.getByRole('tab', { name: /资产 \(2\)/ })).toBeInTheDocument();
+        expect(screen.getByRole('tab', { name: /Web 站点 \(1\)/ })).toBeInTheDocument();
+
+        await user.click(screen.getByRole('tab', { name: /解析关系 \(1\)/ }));
+        expect(await screen.findAllByText('assoc.test')).not.toHaveLength(0);
+        expect(screen.getAllByText('198.51.100.9').length).toBeGreaterThanOrEqual(1);
     });
 
     it('opens the first non-empty asset result instead of an empty vulnerability tab', async () => {
@@ -223,7 +248,7 @@ describe('TaskResults', () => {
 			Title: 'Asset result',
 			Service: 'http/200',
 			CreatedAt: '2026-07-05T00:00:00Z',
-		}], 1, 1));
+		}], 1, 1, 20, assetStats({ total: 1, web: 1 })));
 
 		render(
 			<MemoryRouter initialEntries={['/tasks/task-1/results']}>
@@ -280,7 +305,7 @@ describe('TaskResults', () => {
         await user.click(screen.getByRole('button', { name: /导出 CSV/ }));
 
         await waitFor(() => {
-            expect(apiMocks.exportAssets).toHaveBeenCalledWith('project-1', 'task-1');
+            expect(apiMocks.exportAssets).toHaveBeenCalledWith('project-1', 'task-1', 'web');
         });
         expect(apiMocks.exportVulns).not.toHaveBeenCalled();
         expect(apiMocks.exportFingerprints).not.toHaveBeenCalled();
@@ -306,5 +331,47 @@ describe('TaskResults', () => {
         });
         expect(apiMocks.exportVulns).not.toHaveBeenCalled();
         expect(apiMocks.exportAssets).not.toHaveBeenCalled();
+    });
+
+    it('keeps PortScan rows out of the Web 站点 group', async () => {
+        apiMocks.getVulns.mockResolvedValue(paged([], 0, 1));
+        apiMocks.getAssets.mockResolvedValue(paged([
+            {
+                ID: 1,
+                TenantID: 'default',
+                TaskID: 'task-1',
+                Target: '61.155.21.117:161',
+                Protocol: 'PortScan',
+                Port: 161,
+                CreatedAt: '2026-08-25T16:51:48Z',
+            },
+            {
+                ID: 2,
+                TenantID: 'default',
+                TaskID: 'task-1',
+                Target: 'https://jslgroup.cn',
+                Protocol: 'Web',
+                Port: 443,
+                Title: '苏豪鼎创',
+                Service: 'http/200',
+                CreatedAt: '2026-08-25T16:51:22Z',
+            },
+        ], 2, 1, 20, assetStats({ total: 2, web: 1, host_port: 1 })));
+
+        render(
+            <MemoryRouter initialEntries={['/tasks/task-1/results']}>
+                <App>
+                    <Routes>
+                        <Route path="/tasks/:taskId/results" element={<TaskResults />} />
+                    </Routes>
+                </App>
+            </MemoryRouter>,
+        );
+
+        expect(await screen.findByText('苏豪鼎创')).toBeInTheDocument();
+        expect(screen.queryByText('PortScan')).not.toBeInTheDocument();
+        expect(screen.getByRole('tab', { name: /资产 \(2\)/ })).toBeInTheDocument();
+        expect(screen.getByRole('tab', { name: /Web 站点 \(1\)/ })).toBeInTheDocument();
+        expect(screen.getByRole('tab', { name: /主机与端口 \(1\)/ })).toBeInTheDocument();
     });
 });

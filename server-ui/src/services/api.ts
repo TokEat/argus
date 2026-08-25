@@ -284,6 +284,7 @@ type ResultPageParams = {
     projectId?: string;
     page?: number;
     pageSize?: number;
+    kind?: string;
 };
 
 const buildResultParams = (first?: string | ResultPageParams, projectId?: string): Record<string, string | number> => {
@@ -293,6 +294,7 @@ const buildResultParams = (first?: string | ResultPageParams, projectId?: string
         if (first.projectId) params.project_id = first.projectId;
         if (first.page) params.page = first.page;
         if (first.pageSize) params.page_size = first.pageSize;
+        if (first.kind) params.kind = first.kind;
         return params;
     }
     if (first) params.task_id = first;
@@ -360,10 +362,16 @@ export async function listPocRulesPage(params?: {
     return request.get('/poc-rules', { params: { lite: '1', ...(params || {}) } });
 }
 
-const exportReportBlob = async (kind: 'vulns' | 'assets' | 'fingerprints', projectId?: string, taskId?: string): Promise<Blob> => {
+const exportReportBlob = async (
+    kind: 'vulns' | 'assets' | 'fingerprints',
+    projectId?: string,
+    taskId?: string,
+    assetKind?: string,
+): Promise<Blob> => {
     const params = new URLSearchParams();
     if (projectId) params.set('project_id', projectId);
     if (taskId) params.set('task_id', taskId);
+    if (kind === 'assets' && assetKind) params.set('kind', assetKind);
     const queryString = params.toString();
     const url = `/api/v1/reports/export/${kind}${queryString ? `?${queryString}` : ''}`;
     const response = await axios.get(url, {
@@ -379,8 +387,8 @@ export async function exportVulns(projectId?: string, taskId?: string): Promise<
     return exportReportBlob('vulns', projectId, taskId);
 }
 
-export async function exportAssets(projectId?: string, taskId?: string): Promise<Blob> {
-    return exportReportBlob('assets', projectId, taskId);
+export async function exportAssets(projectId?: string, taskId?: string, kind?: string): Promise<Blob> {
+    return exportReportBlob('assets', projectId, taskId, kind);
 }
 
 export async function exportFingerprints(projectId?: string, taskId?: string): Promise<Blob> {

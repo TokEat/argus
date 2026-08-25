@@ -16,7 +16,20 @@ import type { ColumnsType } from 'antd/es/table';
 import { useNavigate, useParams } from 'react-router-dom';
 import { getVulns, getAssets, getFingerprintGroups, exportVulns, exportAssets, exportFingerprints } from '../services/api';
 import { useAutoContext } from '../contexts/GlobalAIContext';
-import { DEFAULT_RESULT_PAGE_SIZE, firstNonEmptyResultTab, initialResultPageState, type ResultPageState, type ResultTabKey } from './taskResultTabs';
+import {
+    ASSET_KIND_LABELS,
+    DEFAULT_RESULT_PAGE_SIZE,
+    assetKindCount,
+    assetMatchesKind,
+    emptyAssetKindCounts,
+    firstNonEmptyAssetKind,
+    firstNonEmptyResultTab,
+    initialResultPageState,
+    visibleAssetKinds,
+    type AssetKind,
+    type ResultPageState,
+    type ResultTabKey,
+} from './taskResultTabs';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
@@ -35,6 +48,10 @@ const TaskResults: React.FC = () => {
     const [vulnPagination, setVulnPagination] = useState<ResultPageState>(initialResultPageState);
     const [assetPagination, setAssetPagination] = useState<ResultPageState>(initialResultPageState);
     const [fingerprintPagination, setFingerprintPagination] = useState<ResultPageState>(initialResultPageState);
+    const [assetKind, setAssetKind] = useState<AssetKind>('web');
+    const [assetKindCounts, setAssetKindCounts] = useState<Record<AssetKind, number>>(emptyAssetKindCounts);
+    const [assetTotal, setAssetTotal] = useState(0);
+    const [assetResolutions, setAssetResolutions] = useState<API.AssetResolution[]>([]);
     const [activeTab, setActiveTab] = useState<ResultTabKey>('vulns');
     const [selectedVuln, setSelectedVuln] = useState<API.Vulnerability | null>(null);
     const [drawerOpen, setDrawerOpen] = useState(false);
@@ -65,26 +82,48 @@ const TaskResults: React.FC = () => {
         }
     }, [setTabBusy, taskId]);
 
-    const fetchAssetsPage = useCallback(async (page: number, pageSize: number) => {
+    const applyAssetStats = useCallback((stats: API.AssetKindStats | undefined, fallbackTotal: number, kind: AssetKind) => {
+        const counts = emptyAssetKindCounts();
+        if (stats) {
+            counts.web = stats.web || 0;
+            counts.host_port = stats.host_port || 0;
+            counts.domain = stats.domain || 0;
+            counts.resolution = stats.resolution || 0;
+            counts.other = stats.other || 0;
+            setAssetTotal(stats.total || fallbackTotal);
+            setAssetResolutions(stats.resolutions || []);
+        } else {
+            counts[kind] = fallbackTotal;
+            setAssetTotal(fallbackTotal);
+            setAssetResolutions([]);
+        }
+        setAssetKindCounts(counts);
+        return counts;
+    }, []);
+
+    const fetchAssetsPage = useCallback(async (page: number, pageSize: number, kind: AssetKind) => {
         setTabBusy('assets', true);
         try {
             const projectId = localStorage.getItem('active_project_id') || undefined;
-            const res = await getAssets({ taskId, projectId, page, pageSize });
-            setAssets(res.items || []);
+            const res = await getAssets({ taskId, projectId, page, pageSize, kind });
+            const items = (res.items || []).filter((asset) => assetMatchesKind(asset.Protocol, kind));
+            setAssets(items);
             setAssetPagination({
                 current: res.page || page,
                 pageSize: res.page_size || pageSize,
-                total: res.total || 0,
+                total: res.stats ? (res.total || 0) : items.length,
             });
-            return res.total || 0;
+            const counts = applyAssetStats(res.stats, res.stats?.total ?? res.total ?? items.length, kind);
+            return { kindTotal: res.total || items.length, allTotal: res.stats?.total ?? res.total ?? items.length, counts };
         } catch (error) {
             console.error('Failed to fetch assets:', error);
             setAssets([]);
-            return 0;
+            applyAssetStats(undefined, 0, kind);
+            return { kindTotal: 0, allTotal: 0, counts: emptyAssetKindCounts() };
         } finally {
             setTabBusy('assets', false);
         }
-    }, [setTabBusy, taskId]);
+    }, [applyAssetStats, setTabBusy, taskId]);
 
     const fetchFingerprintsPage = useCallback(async (page: number, pageSize: number) => {
         setTabBusy('fingerprints', true);
@@ -110,12 +149,19 @@ const TaskResults: React.FC = () => {
     const fetchFirstPages = useCallback(async () => {
         setLoading(true);
         try {
-            const [vulnerabilityTotal, assetTotal, fingerprintTotal] = await Promise.all([
+            const [vulnerabilityTotal, assetPage, fingerprintTotal] = await Promise.all([
                 fetchVulnsPage(1, DEFAULT_RESULT_PAGE_SIZE),
-                fetchAssetsPage(1, DEFAULT_RESULT_PAGE_SIZE),
+                fetchAssetsPage(1, DEFAULT_RESULT_PAGE_SIZE, 'web'),
                 fetchFingerprintsPage(1, DEFAULT_RESULT_PAGE_SIZE),
             ]);
-            setActiveTab(firstNonEmptyResultTab(vulnerabilityTotal, assetTotal, fingerprintTotal));
+            const nextKind = firstNonEmptyAssetKind(assetPage.counts);
+            let allAssets = assetPage.allTotal;
+            if (nextKind !== 'web') {
+                const selected = await fetchAssetsPage(1, DEFAULT_RESULT_PAGE_SIZE, nextKind);
+                allAssets = selected.allTotal;
+            }
+            setAssetKind(nextKind);
+            setActiveTab(firstNonEmptyResultTab(vulnerabilityTotal, allAssets, fingerprintTotal));
         } finally {
             setLoading(false);
         }
@@ -126,13 +172,14 @@ const TaskResults: React.FC = () => {
         try {
             await Promise.all([
                 fetchVulnsPage(vulnPagination.current, vulnPagination.pageSize),
-                fetchAssetsPage(assetPagination.current, assetPagination.pageSize),
+                fetchAssetsPage(assetPagination.current, assetPagination.pageSize, assetKind),
                 fetchFingerprintsPage(fingerprintPagination.current, fingerprintPagination.pageSize),
             ]);
         } finally {
             setLoading(false);
         }
     }, [
+        assetKind,
         assetPagination,
         fetchAssetsPage,
         fetchFingerprintsPage,
@@ -150,8 +197,10 @@ const TaskResults: React.FC = () => {
         active_tab: activeTab,
         stats: {
             vulns: vulnPagination.total,
-            assets: assetPagination.total,
+            assets: assetTotal,
             fingerprints: fingerprintPagination.total,
+            asset_kind: assetKind,
+            asset_kinds: assetKindCounts,
         },
         vulns_summary: vulns.slice(0, 10).map(v => ({
             id: v.ID,
@@ -181,8 +230,8 @@ const TaskResults: React.FC = () => {
             let blob: Blob;
             let filename: string;
             if (activeTab === 'assets') {
-                blob = await exportAssets(projectId, taskId);
-                filename = `assets-${taskId || 'all'}.csv`;
+                blob = await exportAssets(projectId, taskId, assetKind);
+                filename = `assets-${assetKind}-${taskId || 'all'}.csv`;
             } else if (activeTab === 'fingerprints') {
                 blob = await exportFingerprints(projectId, taskId);
                 filename = `fingerprints-${taskId || 'all'}.csv`;
@@ -273,31 +322,40 @@ const TaskResults: React.FC = () => {
         return 0;
     };
 
-    // ── 域名 ↔ 解析 IP 关联（来源：RealIP 资产行 Tags 中的 domain/ips）──
+    // ── 域名 ↔ 解析 IP 关联：来自整任务 RealIP 统计，不跟当前页走 ──
     const { ipToDomains, domainToIPs } = useMemo(() => {
         const ipMap = new Map<string, string[]>();
         const domainMap = new Map<string, string[]>();
-        assets.forEach((asset) => {
-            if (asset.Protocol !== 'RealIP' || !asset.Tags) return;
-            try {
-                const payload = JSON.parse(asset.Tags) as { domain?: unknown; ips?: unknown };
-                const domain = typeof payload.domain === 'string' ? payload.domain : '';
-                const ips = Array.isArray(payload.ips)
-                    ? payload.ips.filter((item): item is string => typeof item === 'string')
-                    : [];
-                if (!domain || ips.length === 0) return;
-                ips.forEach((ip) => {
-                    const domains = ipMap.get(ip) || [];
-                    if (!domains.includes(domain)) domains.push(domain);
-                    ipMap.set(ip, domains);
-                    const resolved = domainMap.get(domain) || [];
-                    if (!resolved.includes(ip)) resolved.push(ip);
-                    domainMap.set(domain, resolved);
-                });
-            } catch { /* ignore malformed tags */ }
+        assetResolutions.forEach((row) => {
+            const domain = row.domain?.trim();
+            const ips = (row.ips || []).map((ip) => ip.trim()).filter(Boolean);
+            if (!domain || ips.length === 0) return;
+            domainMap.set(domain, ips);
+            ips.forEach((ip) => {
+                const domains = ipMap.get(ip) || [];
+                if (!domains.includes(domain)) domains.push(domain);
+                ipMap.set(ip, domains);
+            });
         });
         return { ipToDomains: ipMap, domainToIPs: domainMap };
-    }, [assets]);
+    }, [assetResolutions]);
+
+    const parseAssetResolution = (asset: API.Asset): { domain: string; ips: string[] } => {
+        let domain = '';
+        let ips: string[] = [];
+        if (asset.Tags) {
+            try {
+                const payload = JSON.parse(asset.Tags) as { domain?: unknown; ips?: unknown };
+                if (typeof payload.domain === 'string') domain = payload.domain.trim();
+                if (Array.isArray(payload.ips)) {
+                    ips = payload.ips.filter((item): item is string => typeof item === 'string' && item.trim() !== '').map((item) => item.trim());
+                }
+            } catch { /* ignore malformed tags */ }
+        }
+        if (!domain) domain = asset.Target || '';
+        if (ips.length === 0) ips = domainToIPs.get(domain) || [];
+        return { domain, ips };
+    };
 
     const ipv4Pattern = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
     const relatedHostsFor = (host: string): string[] => {
@@ -394,144 +452,234 @@ const TaskResults: React.FC = () => {
     ];
 
 
-    const assetColumns: ColumnsType<API.Asset> = [
-        {
-            title: '主机',
+    const renderRelatedHost = (host: string, cdn?: boolean) => {
+        const related = relatedHostsFor(host).filter((item) => item !== host);
+        const shown = related.slice(0, 2);
+        return (
+            <Space size={4} wrap>
+                <Text copyable={{ text: host }} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 500 }}>
+                    {host}
+                </Text>
+                {cdn && <Tag color="orange" style={{ margin: 0, fontSize: 10 }}>CDN</Tag>}
+                {shown.length > 0 && (
+                    <Tooltip title={`关联主机：${related.join('、')}`}>
+                        <span style={{ display: 'inline-flex', gap: 2 }}>
+                            <Text type="secondary" style={{ fontSize: 10 }}>↔</Text>
+                            {shown.map((item) => (
+                                <Tag key={item} color="default" style={{ margin: 0, fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }}>
+                                    {item}
+                                </Tag>
+                            ))}
+                            {related.length > shown.length && (
+                                <Tag style={{ margin: 0, fontSize: 10 }}>+{related.length - shown.length}</Tag>
+                            )}
+                        </span>
+                    </Tooltip>
+                )}
+            </Space>
+        );
+    };
+
+    const createdAtColumn: ColumnsType<API.Asset>[number] = {
+        title: '发现时间',
+        dataIndex: 'CreatedAt',
+        key: 'created_at',
+        width: 160,
+        sorter: (a, b) => new Date(a.CreatedAt).getTime() - new Date(b.CreatedAt).getTime(),
+        render: (v: string) => {
+            if (!v) return '-';
+            return <Text style={{ fontSize: 12, color: '#64748b' }}>{dayjs(v).format('YYYY-MM-DD HH:mm:ss')}</Text>;
+        },
+    };
+
+    const cdnColumn: ColumnsType<API.Asset>[number] = {
+        title: 'CDN',
+        key: 'cdn',
+        width: 90,
+        render: (_, record) => record.CDN
+            ? <Tag color="orange" style={{ margin: 0 }}>疑似 CDN</Tag>
+            : <Text type="secondary">-</Text>,
+        filters: [{ text: '疑似 CDN', value: true }],
+        onFilter: (value, record) => Boolean(record.CDN) === value,
+    };
+
+    const protocolColumn: ColumnsType<API.Asset>[number] = {
+        title: '来源',
+        dataIndex: 'Protocol',
+        key: 'protocol',
+        width: 120,
+        render: (v: string) => <Tag color={protocolColors[v] || 'default'} style={{ margin: 0, fontSize: 11 }}>{v}</Tag>,
+        filters: [...new Set(assets.map(a => a.Protocol))].map(p => ({ text: p, value: p })),
+        onFilter: (value, record) => record.Protocol === value,
+    };
+
+    const renderAssetURL = (url?: string) => {
+        if (!url) return <Text type="secondary">-</Text>;
+        if (url.startsWith('http://') || url.startsWith('https://')) {
+            return (
+                <Tooltip title={url}>
+                    <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, fontFamily: 'monospace' }}>
+                        <LinkOutlined style={{ marginRight: 4 }} />{url.replace(/^https?:\/\//, '').slice(0, 40)}
+                    </a>
+                </Tooltip>
+            );
+        }
+        if (isJsonString(url)) {
+            let preview = '';
+            try {
+                const parsed = JSON.parse(url);
+                preview = parsed.ip || parsed.type || 'evidence';
+            } catch {
+                preview = 'data';
+            }
+            return (
+                <Popover
+                    content={<pre style={{ maxWidth: 500, maxHeight: 300, overflow: 'auto', fontSize: 11, margin: 0 }}>{JSON.stringify(JSON.parse(url), null, 2)}</pre>}
+                    title="原始数据"
+                    trigger="hover"
+                >
+                    <Tag color="default" style={{ cursor: 'pointer', fontSize: 10, margin: 0 }}>📋 {preview}</Tag>
+                </Popover>
+            );
+        }
+        return <Text style={{ fontSize: 12, color: '#64748b' }} ellipsis={{ tooltip: url }}>{url}</Text>;
+    };
+
+    const assetColumnsForKind = (kind: AssetKind): ColumnsType<API.Asset> => {
+        if (kind === 'resolution') {
+            return [
+                {
+                    title: '域名',
+                    key: 'domain',
+                    width: 240,
+                    render: (_, record) => {
+                        const { domain } = parseAssetResolution(record);
+                        return renderRelatedHost(domain || record.Target, record.CDN);
+                    },
+                },
+                {
+                    title: '解析 IP',
+                    key: 'ips',
+                    render: (_, record) => {
+                        const { ips } = parseAssetResolution(record);
+                        if (ips.length === 0) return <Text type="secondary">-</Text>;
+                        return (
+                            <Space size={4} wrap>
+                                {ips.map((ip) => (
+                                    <Tag key={ip} style={{ margin: 0, fontFamily: "'JetBrains Mono', monospace" }}>{ip}</Tag>
+                                ))}
+                            </Space>
+                        );
+                    },
+                },
+                cdnColumn,
+                createdAtColumn,
+            ];
+        }
+        const hostColumn: ColumnsType<API.Asset>[number] = {
+            title: kind === 'domain' ? '域名' : '主机',
             key: 'host',
-            width: 220,
-            render: (_, record) => {
-                const host = extractHostFromTarget(record.Target);
-                const related = relatedHostsFor(host).filter((item) => item !== host);
-                const shown = related.slice(0, 2);
-                return (
-                    <Space size={4} wrap>
-                        <Text copyable={{ text: host }} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 500 }}>
-                            {host}
-                        </Text>
-                        {record.CDN && <Tag color="orange" style={{ margin: 0, fontSize: 10 }}>CDN</Tag>}
-                        {shown.length > 0 && (
-                            <Tooltip title={`关联 ${related.length === 1 ? '主机' : '主机'}：${related.join('、')}`}>
-                                <span style={{ display: 'inline-flex', gap: 2 }}>
-                                    <Text type="secondary" style={{ fontSize: 10 }}>↔</Text>
-                                    {shown.map((item) => (
-                                        <Tag key={item} color="default" style={{ margin: 0, fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }}>
-                                            {item}
-                                        </Tag>
-                                    ))}
-                                    {related.length > shown.length && (
-                                        <Tag style={{ margin: 0, fontSize: 10 }}>+{related.length - shown.length}</Tag>
-                                    )}
-                                </span>
-                            </Tooltip>
-                        )}
-                    </Space>
-                );
-            },
-            filters: (() => {
-                const hosts = [...new Set(assets.map(a => extractHostFromTarget(a.Target)))];
-                return hosts.slice(0, 20).map(h => ({ text: h, value: h }));
-            })(),
+            width: 240,
+            render: (_, record) => renderRelatedHost(extractHostFromTarget(record.Target), record.CDN && kind !== 'web' && kind !== 'domain'),
+            filters: [...new Set(assets.map(a => extractHostFromTarget(a.Target)))].slice(0, 20).map(h => ({ text: h, value: h })),
             onFilter: (value, record) => extractHostFromTarget(record.Target) === value,
-        },
-        {
-            title: 'CDN',
-            key: 'cdn',
-            width: 70,
-            render: (_, record) => record.CDN
-                ? <Tag color="orange" style={{ margin: 0 }}>疑似 CDN</Tag>
-                : <Text type="secondary">-</Text>,
-            filters: [{ text: '疑似 CDN', value: true }],
-            onFilter: (value, record) => Boolean(record.CDN) === value,
-        },
-        {
-            title: '端口',
-            key: 'port',
-            width: 90,
-            render: (_, record) => {
-                const port = extractPortFromTarget(record.Target, record.Port);
-                return port > 0
-                    ? <Tag color="blue" style={{ margin: 0, fontFamily: 'monospace', fontWeight: 600 }}>{port}</Tag>
-                    : <Text type="secondary">-</Text>;
+        };
+        if (kind === 'web') {
+            return [
+                hostColumn,
+                cdnColumn,
+                {
+                    title: 'URL',
+                    key: 'url',
+                    ellipsis: true,
+                    render: (_, record) => renderAssetURL(record.URL || record.Target),
+                },
+                {
+                    title: '标题',
+                    dataIndex: 'Title',
+                    key: 'title',
+                    ellipsis: { showTitle: false },
+                    render: (v: string) => v
+                        ? <Tooltip title={v}><Text style={{ fontSize: 12 }}>{v}</Text></Tooltip>
+                        : <Text type="secondary">-</Text>,
+                },
+                {
+                    title: '服务',
+                    dataIndex: 'Service',
+                    key: 'service',
+                    width: 120,
+                    render: (v: string) => v ? <Tag color="geekblue" style={{ margin: 0 }}>{v}</Tag> : <Text type="secondary">-</Text>,
+                },
+                protocolColumn,
+                createdAtColumn,
+            ];
+        }
+        if (kind === 'host_port') {
+            return [
+                hostColumn,
+                {
+                    title: '端口',
+                    key: 'port',
+                    width: 90,
+                    render: (_, record) => {
+                        const port = extractPortFromTarget(record.Target, record.Port);
+                        return port > 0
+                            ? <Tag color="blue" style={{ margin: 0, fontFamily: 'monospace', fontWeight: 600 }}>{port}</Tag>
+                            : <Text type="secondary">-</Text>;
+                    },
+                    sorter: (a, b) => extractPortFromTarget(a.Target, a.Port) - extractPortFromTarget(b.Target, b.Port),
+                },
+                protocolColumn,
+                {
+                    title: '服务',
+                    dataIndex: 'Service',
+                    key: 'service',
+                    width: 140,
+                    render: (v: string) => v ? <Tag color="geekblue" style={{ margin: 0 }}>{v}</Tag> : <Text type="secondary">-</Text>,
+                },
+                createdAtColumn,
+            ];
+        }
+        if (kind === 'domain') {
+            return [
+                hostColumn,
+                cdnColumn,
+                protocolColumn,
+                {
+                    title: '关联 IP',
+                    key: 'related_ips',
+                    render: (_, record) => {
+                        const host = extractHostFromTarget(record.Target);
+                        const ips = relatedHostsFor(host).filter((item) => ipv4Pattern.test(item));
+                        if (ips.length === 0) return <Text type="secondary">-</Text>;
+                        return (
+                            <Space size={4} wrap>
+                                {ips.map((ip) => (
+                                    <Tag key={ip} style={{ margin: 0, fontFamily: "'JetBrains Mono', monospace" }}>{ip}</Tag>
+                                ))}
+                            </Space>
+                        );
+                    },
+                },
+                createdAtColumn,
+            ];
+        }
+        return [
+            hostColumn,
+            cdnColumn,
+            protocolColumn,
+            {
+                title: '标题',
+                dataIndex: 'Title',
+                key: 'title',
+                ellipsis: { showTitle: false },
+                render: (v: string) => v
+                    ? <Tooltip title={v}><Text style={{ fontSize: 12 }}>{v}</Text></Tooltip>
+                    : <Text type="secondary">-</Text>,
             },
-            sorter: (a, b) => extractPortFromTarget(a.Target, a.Port) - extractPortFromTarget(b.Target, b.Port),
-        },
-        {
-            title: '来源',
-            dataIndex: 'Protocol',
-            key: 'protocol',
-            width: 100,
-            render: (v: string) => <Tag color={protocolColors[v] || 'default'} style={{ margin: 0, fontSize: 11 }}>{v}</Tag>,
-            filters: [...new Set(assets.map(a => a.Protocol))].map(p => ({ text: p, value: p })),
-            onFilter: (value, record) => record.Protocol === value,
-        },
-        {
-            title: '服务',
-            dataIndex: 'Service',
-            key: 'service',
-            width: 120,
-            render: (v: string) => v ? <Tag color="geekblue" style={{ margin: 0 }}>{v}</Tag> : <Text type="secondary">-</Text>,
-        },
-        {
-            title: '标题',
-            dataIndex: 'Title',
-            key: 'title',
-            ellipsis: { showTitle: false },
-            render: (v: string) => v
-                ? <Tooltip title={v}><Text style={{ fontSize: 12 }}>{v}</Text></Tooltip>
-                : <Text type="secondary">-</Text>,
-        },
-        {
-            title: 'URL',
-            key: 'url',
-            width: 180,
-            ellipsis: true,
-            render: (_, record) => {
-                const url = record.URL;
-                if (!url) return <Text type="secondary">-</Text>;
-                // 如果是真实 URL（非 JSON）
-                if (url.startsWith('http://') || url.startsWith('https://')) {
-                    return (
-                        <Tooltip title={url}>
-                            <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, fontFamily: 'monospace' }}>
-                                <LinkOutlined style={{ marginRight: 4 }} />{url.replace(/^https?:\/\//, '').slice(0, 40)}
-                            </a>
-                        </Tooltip>
-                    );
-                }
-                // JSON evidence — show as popover
-                if (isJsonString(url)) {
-                    let preview = '';
-                    try {
-                        const parsed = JSON.parse(url);
-                        preview = parsed.ip || parsed.type || 'evidence';
-                    } catch {
-                        preview = 'data';
-                    }
-                    return (
-                        <Popover
-                            content={<pre style={{ maxWidth: 500, maxHeight: 300, overflow: 'auto', fontSize: 11, margin: 0 }}>{JSON.stringify(JSON.parse(url), null, 2)}</pre>}
-                            title="原始数据"
-                            trigger="hover"
-                        >
-                            <Tag color="default" style={{ cursor: 'pointer', fontSize: 10, margin: 0 }}>📋 {preview}</Tag>
-                        </Popover>
-                    );
-                }
-                return <Text style={{ fontSize: 12, color: '#64748b' }} ellipsis={{ tooltip: url }}>{url}</Text>;
-            },
-        },
-        {
-            title: '发现时间',
-            dataIndex: 'CreatedAt',
-            key: 'created_at',
-            width: 160,
-            sorter: (a, b) => new Date(a.CreatedAt).getTime() - new Date(b.CreatedAt).getTime(),
-            render: (v: string) => {
-                if (!v) return '-';
-                return <Text style={{ fontSize: 12, color: '#64748b' }}>{dayjs(v).format('YYYY-MM-DD HH:mm:ss')}</Text>;
-            },
-        },
-    ];
+            createdAtColumn,
+        ];
+    };
 
     const fpColumns: ColumnsType<API.FingerprintGroup> = [
         {
@@ -619,7 +767,7 @@ const TaskResults: React.FC = () => {
                             </Tag>
                         );
                     })}
-                    <Tag color="blue"><GlobalOutlined /> 资产 {assetPagination.total}</Tag>
+                    <Tag color="blue"><GlobalOutlined /> 资产 {assetTotal}</Tag>
                     <Tag color="cyan"><ScanOutlined /> 指纹 {fingerprintPagination.total}</Tag>
                     <Button icon={<ReloadOutlined />} onClick={fetchCurrentPages} loading={loading}>刷新</Button>
                     <Button icon={<DownloadOutlined />} onClick={handleExport}>导出 CSV</Button>
@@ -631,7 +779,7 @@ const TaskResults: React.FC = () => {
                     <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}>
                         <Spin size="large" />
                     </div>
-                ) : vulnPagination.total === 0 && assetPagination.total === 0 && fingerprintPagination.total === 0 ? (
+                ) : vulnPagination.total === 0 && assetTotal === 0 && fingerprintPagination.total === 0 ? (
                     <Empty description="暂无扫描结果" style={{ padding: '60px 0' }} />
                 ) : (
                     <Tabs
@@ -668,25 +816,40 @@ const TaskResults: React.FC = () => {
                             },
                             {
                                 key: 'assets',
-                                label: <span><GlobalOutlined /> 资产 ({assetPagination.total})</span>,
+                                label: <span><GlobalOutlined /> 资产 ({assetTotal})</span>,
                                 children: (
-                                    <Table
-                                        bordered
-                                        columns={assetColumns}
-                                        dataSource={assets}
-                                        rowKey="ID"
-                                        loading={tabLoading.assets}
-                                        pagination={{
-                                            current: assetPagination.current,
-                                            pageSize: assetPagination.pageSize,
-                                            total: assetPagination.total,
-                                            showSizeChanger: true,
-                                            pageSizeOptions: ['10', '20', '50', '100', '200'],
-                                            showTotal: (t) => `共 ${t} 条`,
-                                            onChange: (page, pageSize) => fetchAssetsPage(page, pageSize),
+                                    <Tabs
+                                        size="small"
+                                        activeKey={assetKind}
+                                        onChange={(key) => {
+                                            const nextKind = key as AssetKind;
+                                            setAssetKind(nextKind);
+                                            fetchAssetsPage(1, assetPagination.pageSize || DEFAULT_RESULT_PAGE_SIZE, nextKind);
                                         }}
-                                        size="middle"
-                                        rowClassName={(_, index) => index % 2 === 1 ? 'table-row-light' : 'table-row-dark'}
+                                        items={visibleAssetKinds(assetKindCounts).map((kind) => ({
+                                            key: kind,
+                                            label: `${ASSET_KIND_LABELS[kind]} (${assetKindCount(assetKindCounts, kind)})`,
+                                            children: (
+                                                <Table
+                                                    bordered
+                                                    columns={assetColumnsForKind(kind)}
+                                                    dataSource={kind === assetKind ? assets : []}
+                                                    rowKey="ID"
+                                                    loading={tabLoading.assets}
+                                                    pagination={{
+                                                        current: assetPagination.current,
+                                                        pageSize: assetPagination.pageSize,
+                                                        total: assetPagination.total,
+                                                        showSizeChanger: true,
+                                                        pageSizeOptions: ['10', '20', '50', '100', '200'],
+                                                        showTotal: (t) => `共 ${t} 条`,
+                                                        onChange: (page, pageSize) => fetchAssetsPage(page, pageSize, kind),
+                                                    }}
+                                                    size="middle"
+                                                    rowClassName={(_, index) => index % 2 === 1 ? 'table-row-light' : 'table-row-dark'}
+                                                />
+                                            ),
+                                        }))}
                                     />
                                 ),
                             },

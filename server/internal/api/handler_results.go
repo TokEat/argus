@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -248,6 +249,15 @@ func exportAssets(c *gin.Context) {
 	tenantID := currentTenantID(c)
 	query := db.DB.Model(&db.Asset{}).Where("tenant_id = ?", tenantID)
 	query = applyReportResultScope(c, query, reportResultAsset)
+	query, err := applyAssetKindFilter(query, c.Query("kind"))
+	if err != nil {
+		if errors.Is(err, errUnknownAssetKind) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	query.Find(&assets)
 
 	var buf bytes.Buffer
@@ -334,7 +344,7 @@ func applyTaskResultScope(c *gin.Context, query *gorm.DB, taskID string, kind re
 	stages := []string{string(scanplan.StageFingerprint)}
 	if kind == reportResultAsset {
 		stages = []string{
-			string(scanplan.StageSearchEngine), string(scanplan.StageSubdomainDiscovery),
+			string(scanplan.StageSubdomainDiscovery),
 			string(scanplan.StageCDNClassification), string(scanplan.StageICMPDiscovery),
 			string(scanplan.StageTCPLiveness), string(scanplan.StagePortScan),
 			string(scanplan.StageProtocolIdentify), string(scanplan.StageHTTPProbe),
@@ -426,11 +436,25 @@ func getAssets(c *gin.Context) {
 	if taskID := c.Query("task_id"); taskID != "" {
 		query = applyTaskResultScope(c, query, taskID, reportResultAsset)
 	}
+	stats, err := collectAssetResultStats(query)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	query, err = applyAssetKindFilter(query, c.Query("kind"))
+	if err != nil {
+		if errors.Is(err, errUnknownAssetKind) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	page, pageSize, total, ok := paginateResultQuery(c, query, &db.Asset{}, &assets)
 	if !ok {
 		return
 	}
-	c.JSON(http.StatusOK, pagedResponse(assets, total, page, pageSize, ""))
+	c.JSON(http.StatusOK, pagedResponseWithStats(assets, total, page, pageSize, "", stats))
 }
 
 func getFingerprints(c *gin.Context) {
