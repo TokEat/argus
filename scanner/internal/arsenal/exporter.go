@@ -32,10 +32,24 @@ func ExportWorkflowYAML() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("查询 Workflow 失败: %w", err)
 	}
+	// 关联 POC 风险等级（重名取最严格），供 Agent 本地预授权门过滤。
+	pocs, err := GetAllEnabledPocs()
+	if err != nil {
+		return nil, fmt.Errorf("查询 POC 风险等级失败: %w", err)
+	}
+	riskByPoc := make(map[string]string, len(pocs))
+	for _, p := range pocs {
+		existing, exists := riskByPoc[p.Name]
+		if !exists || pocRiskRank(p.RiskLevel) > pocRiskRank(existing) {
+			existing = p.RiskLevel
+		}
+		riskByPoc[p.Name] = existing
+	}
 
 	type exportEntry struct {
-		Type []string `yaml:"type"`
-		Pocs []string `yaml:"pocs"`
+		Type      []string `yaml:"type"`
+		Pocs      []string `yaml:"pocs"`
+		RiskLevel string   `yaml:"risk_level"`
 	}
 
 	grouped := make(map[string]*exportEntry)
@@ -44,6 +58,9 @@ func ExportWorkflowYAML() ([]byte, error) {
 		if !ok {
 			entry = &exportEntry{}
 			grouped[w.ProductName] = entry
+		}
+		if pocRiskRank(w.RiskLevel) > pocRiskRank(entry.RiskLevel) {
+			entry.RiskLevel = strings.ToLower(strings.TrimSpace(w.RiskLevel))
 		}
 		// 添加 match type（去重）
 		found := false
@@ -91,14 +108,32 @@ func ExportWorkflowYAML() ([]byte, error) {
 			pocNode.Content = append(pocNode.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: p})
 		}
 		valNode := &yaml.Node{Kind: yaml.MappingNode}
+		if entry.RiskLevel == "" {
+			entry.RiskLevel = "unknown"
+		}
 		valNode.Content = append(valNode.Content,
 			&yaml.Node{Kind: yaml.ScalarNode, Value: "type"}, typeNode,
 			&yaml.Node{Kind: yaml.ScalarNode, Value: "pocs"}, pocNode,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "risk_level"}, &yaml.Node{Kind: yaml.ScalarNode, Value: entry.RiskLevel},
 		)
 		ordered.Content = append(ordered.Content, keyNode, valNode)
 	}
 
 	return yaml.Marshal(&ordered)
+}
+
+// pocRiskRank 将风险等级映射为严重度序（重名模板取最严格等级）。
+func pocRiskRank(riskLevel string) int {
+	switch strings.ToLower(strings.TrimSpace(riskLevel)) {
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
 }
 
 // ExportDirYAML 将数据库中启用的探测路径导出为 dir.yaml 格式。

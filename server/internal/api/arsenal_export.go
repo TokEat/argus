@@ -20,6 +20,11 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+// 历史说明：此前包内 Poc.Name 带 uniqueIndex，重名规则只能保留一条，
+// 且选择顺序不确定，导致风险验证计划引用未进包的模板文件。现在唯一性
+// 落在 FileName 上（poc_rules 以 tenant+source_file 唯一），全部启用规
+// 原样下发，不再需要任何代表选择逻辑。
+
 // ====================================================================
 // Agent-side arsenal.db SQLite schema (mirrors scanner/internal/arsenal/models.go)
 // 在 Server 端重新定义这些结构体，避免跨模块依赖。
@@ -41,9 +46,12 @@ type agentFingerprint struct {
 func (agentFingerprint) TableName() string { return "fingerprints" }
 
 type agentPoc struct {
-	ID             uint      `gorm:"primaryKey;autoIncrement"`
-	Name           string    `gorm:"uniqueIndex;not null"`
-	FileName       string    `gorm:"index;not null"`
+	ID uint `gorm:"primaryKey;autoIncrement"`
+	// Name 只是模板内部 ID，不同模板可能重名（历史数据存在 4 组）；
+	// 唯一性必须落在 FileName 上，否则按 Name 去重会随机丢弃其中一个
+	// 模板文件，导致风险验证计划引用 Agent 上不存在的 POC。
+	Name           string    `gorm:"index;not null"`
+	FileName       string    `gorm:"uniqueIndex;not null"`
 	Content        string    ``
 	ContentHash    string    ``
 	Severity       string    `gorm:"index;default:'info'"`
@@ -107,6 +115,7 @@ type agentWorkflow struct {
 	ProductName string    `gorm:"index;not null"`
 	PocName     string    `gorm:"index;not null"`
 	MatchType   string    `gorm:"not null"`
+	RiskLevel   string    `gorm:"index;default:'unknown'"`
 	Enabled     bool      `gorm:"default:true"`
 	CreatedAt   time.Time ``
 	UpdatedAt   time.Time ``
@@ -217,14 +226,11 @@ func buildArsenalSQLiteDB(tenantID string) (filePath string, md5Hash string, sha
 			}
 		}
 
-		// 按 Name 去重，避免 uniqueIndex 冲突导致整批插入失败
-		seen := make(map[string]bool, len(pocRules))
+		// 全量写入：FileName 在包内唯一（poc_rules 以 tenant+source_file 唯一），
+		// 重名模板各自携带不同文件，必须全部下发；按 Name 去重会随机丢失
+		// 其中一个文件，导致风险验证计划引用 Agent 上不存在的 POC。
 		batch := make([]agentPoc, 0, len(pocRules))
 		for _, r := range pocRules {
-			if seen[r.Name] {
-				continue
-			}
-			seen[r.Name] = true
 			content := contentMap[r.ArtifactID]
 			batch = append(batch, agentPoc{
 				Name:           r.Name,
@@ -358,6 +364,16 @@ func buildArsenalSQLiteDB(tenantID string) (filePath string, md5Hash string, sha
 	}
 
 	// --- 导入 Workflow ---
+	// 附加每个 PocName 的风险等级（重名取最严格），供 Agent 在本地
+	// workflow 匹配时执行高危预授权门，无需服务端显式映射表。
+	riskByPocName := make(map[string]string, len(pocRules))
+	for _, r := range pocRules {
+		existing, exists := riskByPocName[r.Name]
+		if !exists || pocRiskRank(r.RiskLevel) > pocRiskRank(existing) {
+			existing = r.RiskLevel
+		}
+		riskByPocName[r.Name] = existing
+	}
 	var wfRules []db.WorkflowRule
 	db.DB.Where("tenant_id = ? AND enabled = ?", tenantID, true).Find(&wfRules)
 	if len(wfRules) > 0 {
@@ -367,6 +383,7 @@ func buildArsenalSQLiteDB(tenantID string) (filePath string, md5Hash string, sha
 				ProductName: r.ProductName,
 				PocName:     r.PocName,
 				MatchType:   r.MatchType,
+				RiskLevel:   riskByPocName[r.PocName],
 				Enabled:     true,
 				CreatedAt:   now,
 				UpdatedAt:   now,
@@ -551,6 +568,20 @@ func getArsenalDBHash(c *gin.Context) {
 	})
 }
 
+// pocRiskRank 将风险等级映射为严重度序（用于重名模板取最严格等级）。
+func pocRiskRank(riskLevel string) int {
+	switch strings.ToLower(strings.TrimSpace(riskLevel)) {
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
+}
+
 // buildExportAggregateHash 计算 Arsenal 表当前 Approved 记录的聚合 hash。
 func buildExportAggregateHash(arsenals []db.Arsenal) string {
 	if len(arsenals) == 0 {
@@ -558,6 +589,10 @@ func buildExportAggregateHash(arsenals []db.Arsenal) string {
 	}
 
 	h := md5.New()
+	// 导出器组装逻辑版本盐：包内容生成方式变化（如去重策略、索引调整）时
+	// 必须递增，否则 arsenals 表未变会导致聚合 hash 不变，Agent 永远判定
+	// "已是最新"而拿不到修复后的完整规则包。
+	fmt.Fprintln(h, "argus-arsenal-export/v2")
 	for _, a := range arsenals {
 		fmt.Fprintf(h, "%s|%s|%s|%s|%s|%d\n",
 			a.TenantID,

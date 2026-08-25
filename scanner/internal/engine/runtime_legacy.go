@@ -261,8 +261,9 @@ func mergeDirYAML(dst map[string][]string, data []byte) error {
 }
 
 type workflowRule struct {
-	Type []string `yaml:"type"`
-	Pocs []string `yaml:"pocs"`
+	Type      []string `yaml:"type"`
+	Pocs      []string `yaml:"pocs"`
+	RiskLevel string   `yaml:"risk_level"`
 }
 
 func mergeWorkflowYAML(dst map[string]WorkFlowEntity, data []byte) error {
@@ -285,11 +286,40 @@ func mergeWorkflowYAML(dst map[string]WorkFlowEntity, data []byte) error {
 				existing.DirFallback = true
 			}
 		}
+		if arsenalPocRiskRank(rule.RiskLevel) > arsenalPocRiskRank(existing.RiskLevel) {
+			existing.RiskLevel = strings.ToLower(strings.TrimSpace(rule.RiskLevel))
+		}
 		existing.PocsName = append(existing.PocsName, rule.Pocs...)
 		existing.PocsName = utils.RemoveDuplicateElement(existing.PocsName)
 		dst[productName] = existing
 	}
 	return nil
+}
+
+// arsenalPocRiskRank 将风险等级映射为严重度序（合并多来源 workflow 时取最严格）。
+func arsenalPocRiskRank(riskLevel string) int {
+	switch strings.ToLower(strings.TrimSpace(riskLevel)) {
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// pocRequiresSecondConfirmation 与服务端 db.PocRequiresSecondConfirmation 语义一致：
+// 风险等级未知或 high 的模板在未预授权时不得进入无人值守执行。
+func pocRequiresSecondConfirmation(riskLevel string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(riskLevel))
+	switch normalized {
+	case "low", "medium":
+		return false
+	default:
+		return true
+	}
 }
 
 // bindAgentContext 无锁上下文绑定。

@@ -59,11 +59,18 @@ type Config struct {
 	// ExecutionMode and validation plans are internal Server-to-Agent
 	// fields. Public task creation deliberately does not accept them; they are
 	// populated only after a version-bound validation authorization.
-	ExecutionMode               string
-	RequiredRuleVersion         string
-	RiskValidationTargets       map[string][]string
-	RiskValidationPocHashes     map[string]string
-	RiskValidationGoPocTargets  []scanpolicy.GoPocTarget
+	ExecutionMode              string
+	RequiredRuleVersion        string
+	RiskValidationTargets      map[string][]string
+	RiskValidationPocHashes    map[string]string
+	RiskValidationGoPocTargets []scanpolicy.GoPocTarget
+	// TargetFingerprints 是原生匹配派发模式的目标指纹集合（目标 → 产品名列表）。
+	// 与 RiskValidationTargets 互斥：设置时 Agent 使用本地 workflow.yaml 完成
+	// 指纹→POC 匹配（与单次扫描同源逻辑），服务端不再构建显式映射表。
+	TargetFingerprints map[string][]string
+	// AllowHighRiskAutoExecution 对应策略预授权开关：未开启时 Agent 本地匹配
+	// 会剔除 high/unknown 风险等级的 workflow 条目。
+	AllowHighRiskAutoExecution  bool
 	GoPocCatalogSHA256          string
 	ProtocolCheckEnabled        bool
 	ProtocolCheckTargetLimit    int
@@ -123,7 +130,7 @@ type Config struct {
 	// subdomains keyed by domain. Domains present here skip agent-side
 	// subfinder queries; the map is sealed by the Server and deduplicated
 	// with bruteforce results like any other enumeration output.
-	SubdomainPassiveResults map[string][]string
+	SubdomainPassiveResults    map[string][]string
 	HTTPProxy                  string
 	HTTPProxyTest              bool
 	HTTPProxyTestURL           string
@@ -276,7 +283,8 @@ type WorkFlowEntity struct {
 	RootType    bool
 	DirType     bool
 	BaseType    bool
-	DirFallback bool // dir匹配且状态码200时直接标记指纹，无需finger验证
+	DirFallback bool   // dir匹配且状态码200时直接标记指纹，无需finger验证
+	RiskLevel   string // 关联 POC 的风险等级（unknown/low/medium/high），供预授权门本地过滤
 	PocsName    []string
 }
 
