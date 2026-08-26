@@ -19,6 +19,7 @@ type taskCoverageExplanationSummary struct {
 	SkippedStages     int64 `json:"skipped_stages"`
 	FailedStages      int64 `json:"failed_stages"`
 	InvalidatedStages int64 `json:"invalidated_stages"`
+	NotReusableStages int64 `json:"not_reusable_stages"`
 	ExpiredStages     int64 `json:"expired_stages"`
 	SavedStages       int64 `json:"saved_stages"`
 	SavedTargets      int   `json:"saved_targets"`
@@ -137,11 +138,15 @@ func buildTaskCoverageExplanation(store *gorm.DB, root db.RootTask) (taskCoverag
 	result.Summary.SkippedStages = gaps.Skipped
 	result.Summary.FailedStages = gaps.Failed
 	result.Summary.InvalidatedStages = gaps.Invalidated
+	result.Summary.NotReusableStages = gaps.NotReusable
 	result.Summary.ExpiredStages = gaps.Expired
 	result.Invalidations = invalidations
 	result.InvalidationsTruncated = truncated
 	if err := attachTaskCoverageRiskMatches(store, root, result.Invalidations); err != nil {
 		return result, err
+	}
+	for index := range result.Invalidations {
+		reconcileRiskCoverageGapStatus(&result.Invalidations[index])
 	}
 
 	sourceTaskIDs := make(map[string]struct{})
@@ -271,6 +276,7 @@ type taskCoverageGapCounts struct {
 	Skipped     int64
 	Failed      int64
 	Invalidated int64
+	NotReusable int64
 	Expired     int64
 }
 
@@ -293,8 +299,16 @@ func loadTaskCoverageInvalidations(store *gorm.DB, root db.RootTask) ([]taskCove
 	if err := coverageBase().Where("status = ? AND outcome <> ?", string(scanplan.CoverageIncomplete), string(scanplan.ObservationSkipped)).Count(&counts.Failed).Error; err != nil {
 		return nil, counts, false, fmt.Errorf("count failed task coverage: %w", err)
 	}
-	if err := coverageBase().Where("status = ?", string(scanplan.CoverageInvalidated)).Count(&counts.Invalidated).Error; err != nil {
+	var invalidatedTotal int64
+	if err := coverageBase().Where("status = ?", string(scanplan.CoverageInvalidated)).Count(&invalidatedTotal).Error; err != nil {
 		return nil, counts, false, fmt.Errorf("count invalidated task coverage: %w", err)
+	}
+	if err := coverageBase().Where("status = ? AND invalid_reason IN ?", string(scanplan.CoverageInvalidated), reuseDimensionUnknownReasons()).Count(&counts.NotReusable).Error; err != nil {
+		return nil, counts, false, fmt.Errorf("count not-reusable task coverage: %w", err)
+	}
+	counts.Invalidated = invalidatedTotal - counts.NotReusable
+	if counts.Invalidated < 0 {
+		counts.Invalidated = 0
 	}
 	if err := coverageBase().Where("status = ? AND valid_until IS NOT NULL AND valid_until <= ?", string(scanplan.CoverageComplete), now).Count(&counts.Expired).Error; err != nil {
 		return nil, counts, false, fmt.Errorf("count expired task coverage: %w", err)
@@ -376,6 +390,9 @@ func classifyTaskCoverageGap(row db.ScanCoverage, obs *db.ScanObservation, now t
 		if reason == "" {
 			reason = "coverage_invalidated"
 		}
+		if isReuseDimensionUnknownReason(reason) {
+			return "not_reusable", reason
+		}
 		return "invalidated", reason
 	}
 	if row.Status == string(scanplan.CoverageIncomplete) {
@@ -398,9 +415,47 @@ func classifyTaskCoverageGap(row db.ScanCoverage, obs *db.ScanObservation, now t
 		return status, reason
 	}
 	if reason != "" {
+		if isReuseDimensionUnknownReason(reason) {
+			return "not_reusable", reason
+		}
 		return "invalidated", reason
 	}
 	return row.Status, reason
+}
+
+func reuseDimensionUnknownReasons() []string {
+	return []string{
+		"poc_set_unknown",
+		"endpoint_content_unknown",
+		"poc_set_unknown,endpoint_content_unknown",
+		"endpoint_content_unknown,poc_set_unknown",
+	}
+}
+
+func isReuseDimensionUnknownReason(reason string) bool {
+	parts := splitCoverageReasonParts(reason)
+	if len(parts) == 0 {
+		return false
+	}
+	for _, part := range parts {
+		if part != "poc_set_unknown" && part != "endpoint_content_unknown" {
+			return false
+		}
+	}
+	return true
+}
+
+func reconcileRiskCoverageGapStatus(item *taskCoverageInvalidationItem) {
+	if item == nil || item.Stage != string(scanplan.StageRiskValidation) {
+		return
+	}
+	if item.Reason == "fingerprint_unmatched_pocs" {
+		item.Status = "invalidated"
+		return
+	}
+	if isReuseDimensionUnknownReason(item.Reason) {
+		item.Status = "not_reusable"
+	}
 }
 
 func publicObservationCoverageReason(code, message string) string {

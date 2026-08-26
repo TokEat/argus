@@ -66,6 +66,70 @@ func TestStageObservationReporterRecordsHTTPBudgetFailure(t *testing.T) {
 	}
 }
 
+func TestStageObservationReporterDoesNotMarkUnobservedHTTPTargetsNegativeOnEnd(t *testing.T) {
+	reporter := newStageObservationReporter("attempt-a", "agent-a", []string{"https://fast.example", "https://timeout.example"}, nil, "rules-a", "")
+	reporter.observePhase(engine.PhaseEvent{Phase: engine.PhaseHTTPProbe, Status: "start"})
+	payload, _ := json.Marshal(engine.OutputMessage{Type: "Web", URI: "https://fast.example:443/"})
+	reporter.recordOutput("Web", payload)
+	events := reporter.observePhase(engine.PhaseEvent{Phase: engine.PhaseHTTPProbe, Status: "end"})
+	if len(events) != 2 {
+		t.Fatalf("terminal events=%d, want success+failed", len(events))
+	}
+	byOutcome := map[scanplan.ObservationOutcome]*scanplan.StageObservationEvent{}
+	for _, event := range events {
+		if err := event.Validate(); err != nil {
+			t.Fatalf("HTTP split event invalid: %v", err)
+		}
+		byOutcome[event.Outcome] = event
+	}
+	success := byOutcome[scanplan.ObservationSuccess]
+	failed := byOutcome[scanplan.ObservationFailed]
+	if success == nil || len(success.Targets) != 1 || success.Targets[0] != "https://fast.example" {
+		t.Fatalf("unexpected HTTP success split: %+v", success)
+	}
+	if failed == nil || len(failed.Targets) != 1 || failed.Targets[0] != "https://timeout.example" || failed.ErrorCode != "phase_incomplete" {
+		t.Fatalf("unobserved HTTP targets must not be reusable negative coverage: %+v", failed)
+	}
+	if byOutcome[scanplan.ObservationNegative] != nil {
+		t.Fatalf("unobserved HTTP remainder was negative: %+v", byOutcome[scanplan.ObservationNegative])
+	}
+}
+
+func TestStageObservationReporterKeepsSuccessfulHTTPTargetsWhenBudgetExpires(t *testing.T) {
+	reporter := newStageObservationReporter("attempt-a", "agent-a", []string{"https://fast.example", "https://timeout.example"}, nil, "rules-a", "")
+	reporter.observePhase(engine.PhaseEvent{Phase: engine.PhaseHTTPProbe, Status: "start"})
+	payload, _ := json.Marshal(engine.OutputMessage{Type: "Web", URI: "https://fast.example:443/"})
+	reporter.recordOutput("Web", payload)
+	events := reporter.observePhase(engine.PhaseEvent{Phase: engine.PhaseHTTPProbe, Status: "failed", Message: "target HTTP budget exhausted"})
+	if len(events) != 2 {
+		t.Fatalf("terminal events=%d, want success+failed", len(events))
+	}
+	byOutcome := map[scanplan.ObservationOutcome]*scanplan.StageObservationEvent{}
+	for _, event := range events {
+		if err := event.Validate(); err != nil {
+			t.Fatalf("HTTP split event invalid: %v", err)
+		}
+		byOutcome[event.Outcome] = event
+	}
+	success := byOutcome[scanplan.ObservationSuccess]
+	failed := byOutcome[scanplan.ObservationFailed]
+	if success == nil || len(success.Targets) != 1 || success.Targets[0] != "https://fast.example" || success.ErrorMessage != "" {
+		t.Fatalf("unexpected HTTP success split: %+v", success)
+	}
+	if failed == nil || len(failed.Targets) != 1 || failed.Targets[0] != "https://timeout.example" || failed.ErrorMessage != "target HTTP budget exhausted" {
+		t.Fatalf("unexpected HTTP failure split: %+v", failed)
+	}
+}
+
+func TestHTTPObservationMatchesDefaultHTTPSPort(t *testing.T) {
+	if !httpObservationMatchesTarget("https://zhmrmp.szpcc.com", "https://zhmrmp.szpcc.com:443/") {
+		t.Fatal("https default port should match observed :443 URL")
+	}
+	if httpObservationMatchesTarget("https://timeout.example", "https://fast.example/") {
+		t.Fatal("different hosts must not match")
+	}
+}
+
 func TestStageObservationReporterEmitsBoundedSingleTargetCheckpoint(t *testing.T) {
 	reporter := newStageObservationReporter("attempt-checkpoint", "agent-a", []string{"10.0.0.1"}, []byte(`{}`), "rules-a", "")
 	reporter.observePhase(engine.PhaseEvent{Phase: engine.PhasePortScan, Status: "start"})

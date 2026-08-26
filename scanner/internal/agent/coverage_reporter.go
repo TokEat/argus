@@ -34,6 +34,7 @@ type stageObservationState struct {
 	active              bool
 	terminal            bool
 	items               []string
+	observedTargets     map[string]struct{}
 	checkpointItems     map[string]scanplan.ServiceCheckpoint
 	checkpointTruncated bool
 }
@@ -117,6 +118,9 @@ func (r *stageObservationReporter) recordOutput(payloadType string, payload []by
 			if len(r.targets) == 1 {
 				recordStageCheckpointItem(stage, state, message)
 			}
+			if stage == scanplan.StageHTTPProbe {
+				r.markObservedHTTPTargets(state, message.URI)
+			}
 		}
 	}
 }
@@ -145,12 +149,22 @@ func (r *stageObservationReporter) observePhase(phase engine.PhaseEvent) []*scan
 		state.active = true
 		return nil
 	case "end", "success", "negative":
+		if stage == scanplan.StageHTTPProbe && !strings.EqualFold(phase.Status, "negative") {
+			if events := r.finishHTTPProbeSplit(state, now, scanplan.ObservationFailed, "phase_incomplete", phase.Message); len(events) > 0 {
+				return events
+			}
+		}
 		outcome := scanplan.ObservationSuccess
 		if strings.EqualFold(phase.Status, "negative") || len(state.items) == 0 {
 			outcome = scanplan.ObservationNegative
 		}
 		return []*scanplan.StageObservationEvent{r.finish(stage, state, outcome, now, "", "")}
 	case "failed":
+		if stage == scanplan.StageHTTPProbe {
+			if events := r.finishHTTPProbeSplit(state, now, scanplan.ObservationFailed, "phase_failed", phase.Message); len(events) > 0 {
+				return events
+			}
+		}
 		return []*scanplan.StageObservationEvent{r.finish(stage, state, scanplan.ObservationFailed, now, "phase_failed", phase.Message)}
 	case "skipped":
 		return []*scanplan.StageObservationEvent{r.finish(stage, state, scanplan.ObservationSkipped, now, "phase_skipped", phase.Message)}
@@ -195,8 +209,34 @@ func (r *stageObservationReporter) state(stage scanplan.Stage) *stageObservation
 }
 
 func (r *stageObservationReporter) finish(stage scanplan.Stage, state *stageObservationState, outcome scanplan.ObservationOutcome, finishedAt time.Time, errorCode, errorMessage string) *scanplan.StageObservationEvent {
-	if r == nil || state == nil || len(r.targets) == 0 {
-		if state != nil {
+	return r.finishWithTargets(stage, state, outcome, finishedAt, errorCode, errorMessage, r.targets, true, state.items)
+}
+
+func (r *stageObservationReporter) finishHTTPProbeSplit(state *stageObservationState, finishedAt time.Time, remainder scanplan.ObservationOutcome, errorCode, message string) []*scanplan.StageObservationEvent {
+	if r == nil || state == nil {
+		return nil
+	}
+	probed, remaining := partitionHTTPProbeTargets(r.targets, state.observedTargets)
+	if len(probed) == 0 {
+		return nil
+	}
+	if state.startedAt.IsZero() {
+		state.startedAt = finishedAt
+	}
+	events := []*scanplan.StageObservationEvent{
+		r.finishWithTargets(scanplan.StageHTTPProbe, state, scanplan.ObservationSuccess, finishedAt, "", "", probed, false, state.items),
+	}
+	if len(remaining) > 0 {
+		events = append(events, r.finishWithTargets(scanplan.StageHTTPProbe, state, remainder, finishedAt, errorCode, message, remaining, false, nil))
+	}
+	state.active = false
+	state.terminal = true
+	return events
+}
+
+func (r *stageObservationReporter) finishWithTargets(stage scanplan.Stage, state *stageObservationState, outcome scanplan.ObservationOutcome, finishedAt time.Time, errorCode, errorMessage string, targets []string, terminate bool, items []string) *scanplan.StageObservationEvent {
+	if r == nil || state == nil || len(targets) == 0 {
+		if terminate && state != nil {
 			state.active = false
 			state.terminal = true
 		}
@@ -205,33 +245,108 @@ func (r *stageObservationReporter) finish(stage scanplan.Stage, state *stageObse
 	if state.startedAt.IsZero() {
 		state.startedAt = finishedAt
 	}
-	state.active = false
-	state.terminal = true
-	contentHash := observationContentHash(state.items)
+	if terminate {
+		state.active = false
+		state.terminal = true
+	}
 	event := &scanplan.StageObservationEvent{
 		SchemaVersion: scanplan.SchemaVersion,
 		AttemptID:     r.attemptID,
 		AgentID:       r.agentID,
 		Stage:         stage,
 		Outcome:       outcome,
-		Targets:       append([]string(nil), r.targets...),
+		Targets:       append([]string(nil), targets...),
 		ConfigHash:    r.configHash,
 		RuleVersion:   r.ruleVersion,
 		StartedAt:     state.startedAt,
 		FinishedAt:    finishedAt,
-		ContentHash:   contentHash,
+		ContentHash:   observationContentHash(items),
 		ErrorCode:     errorCode,
 		ErrorMessage:  strings.TrimSpace(errorMessage),
 	}
 	if outcome == scanplan.ObservationSuccess || outcome == scanplan.ObservationNegative {
 		checkpointTarget := ""
-		if len(r.targets) == 1 {
-			checkpointTarget = r.targets[0]
+		if len(targets) == 1 {
+			checkpointTarget = targets[0]
 		}
 		event.Checkpoint = stageCheckpointFromState(stage, state, checkpointTarget)
 	}
 	event.EventID = stageObservationEventID(event)
 	return event
+}
+
+func (r *stageObservationReporter) markObservedHTTPTargets(state *stageObservationState, uri string) {
+	if r == nil || state == nil {
+		return
+	}
+	uri = strings.TrimSpace(uri)
+	if uri == "" {
+		return
+	}
+	if state.observedTargets == nil {
+		state.observedTargets = make(map[string]struct{}, len(r.targets))
+	}
+	for _, target := range r.targets {
+		if httpObservationMatchesTarget(target, uri) {
+			state.observedTargets[target] = struct{}{}
+		}
+	}
+}
+
+func partitionHTTPProbeTargets(targets []string, observed map[string]struct{}) (probed, remaining []string) {
+	if len(observed) == 0 {
+		return nil, append([]string(nil), targets...)
+	}
+	for _, target := range targets {
+		if _, ok := observed[target]; ok {
+			probed = append(probed, target)
+		} else {
+			remaining = append(remaining, target)
+		}
+	}
+	return probed, remaining
+}
+
+func httpObservationMatchesTarget(target, uri string) bool {
+	target = strings.TrimSpace(target)
+	uri = strings.TrimSpace(uri)
+	if target == "" || uri == "" {
+		return false
+	}
+	if target == uri {
+		return true
+	}
+	targetOrigin, targetOK := canonicalHTTPOrigin(target)
+	uriOrigin, uriOK := canonicalHTTPOrigin(uri)
+	return targetOK && uriOK && targetOrigin == uriOrigin
+}
+
+func canonicalHTTPOrigin(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || parsed.User != nil {
+		return "", false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" {
+		return "", false
+	}
+	port := parsed.Port()
+	if port == "" {
+		if scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	return scheme + "://" + net.JoinHostPort(host, port), true
 }
 
 func recordStageCheckpointItem(stage scanplan.Stage, state *stageObservationState, message engine.OutputMessage) {

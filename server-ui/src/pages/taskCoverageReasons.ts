@@ -36,7 +36,7 @@ export const COVERAGE_REASON_LABELS: Record<string, string> = {
     phase_incomplete: '阶段已开始但没有正常结束',
     pipeline_cancelled: '任务取消，阶段未完成',
     pipeline_failed: '流水线失败，阶段未完成',
-    http_budget_exhausted: '该目标 HTTP 探测耗尽网络预算，未得到完整响应',
+    http_budget_exhausted: 'HTTP 探测超时，未得到完整响应',
     upstream_http_probe_incomplete: '上游 HTTP 探测未完成，后续指纹与目录未形成可复用覆盖',
     nuclei_execution_failed: 'Nuclei 执行失败',
     coverage_invalidated: '覆盖已失效，不可作为历史复用',
@@ -46,6 +46,7 @@ export const COVERAGE_GAP_STATUS_LABELS: Record<string, { label: string; color: 
     skipped: { label: '已跳过', color: 'default' },
     failed: { label: '阶段失败', color: 'volcano' },
     invalidated: { label: '已失效', color: 'red' },
+    not_reusable: { label: '不可复用', color: 'gold' },
     expired: { label: '已过期', color: 'orange' },
     incomplete: { label: '未完成', color: 'orange' },
 };

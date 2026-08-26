@@ -40,6 +40,13 @@ export default function TaskCoverageSection({ explanation }: { explanation: API.
                         valueStyle={{ color: '#dc2626', fontSize: 22 }}
                     />
                 </Col>
+                <Col xs={12} md={8} lg={4}>
+                    <Statistic
+                        title="已完成不可复用"
+                        value={explanation.summary.not_reusable_stages || 0}
+                        valueStyle={{ color: '#d97706', fontSize: 22 }}
+                    />
+                </Col>
             </Row>
             <Alert
                 type={explanation.summary.saved_stages > 0 ? 'success' : 'info'}
@@ -47,7 +54,7 @@ export default function TaskCoverageSection({ explanation }: { explanation: API.
                 message={explanation.summary.saved_stages > 0
                     ? `已节省 ${explanation.summary.saved_stages} 个扫描阶段、${explanation.summary.saved_targets} 个完整目标`
                     : '本次没有复用历史覆盖'}
-                description="已跳过表示该批次未执行对应阶段（例如 URL 批次不做 ICMP）；阶段失败才是探测本身没有完成。失效/过期只影响下次是否复用，不代表这次漏洞或资产结果丢失。"
+                description={coverageAlertDescription(explanation)}
                 style={{ marginBottom: 12 }}
             />
             {explanation.items.length > 0 && (
@@ -135,6 +142,16 @@ export default function TaskCoverageSection({ explanation }: { explanation: API.
             )}
         </>
     );
+}
+
+function coverageAlertDescription(explanation: API.TaskCoverageExplanation) {
+    const parts = [
+        '已跳过表示该批次未执行对应阶段（例如 URL 批次不做 ICMP）；阶段失败才是探测本身没有完成。失效/过期只影响下次是否复用，不代表这次漏洞或资产结果丢失。',
+    ];
+    if ((explanation.summary.not_reusable_stages || 0) > 0) {
+        parts.push('「已完成不可复用」表示风险验证已经跑完，但没有绑上可复用的 HTTP 内容版本（常见原因是 HTTP 探测超时），下次不会拿这次结果当历史覆盖。');
+    }
+    return parts.join('');
 }
 
 function renderCoverageNameList(values?: string[]) {

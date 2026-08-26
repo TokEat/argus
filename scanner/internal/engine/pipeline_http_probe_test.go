@@ -176,3 +176,25 @@ func TestCompleteHTTPProbePhaseMarksTargetDeadlineFailedWithoutCancellingPipelin
 		t.Fatal("parent cancellation racing with a completed probe must still stop the pipeline")
 	}
 }
+
+func TestCompleteHTTPProbePhaseKeepsSuccessfulTargetsWhenAnotherBudgetExpires(t *testing.T) {
+	var phases []PhaseEvent
+	ctx := &ScanContext{
+		Ctx:    context.Background(),
+		URLMap: map[string]URLEntity{"https://alive.example": {}},
+		PhaseObserver: func(event PhaseEvent) {
+			phases = append(phases, event)
+		},
+	}
+
+	complete, err := completeHTTPProbePhase(ctx, context.DeadlineExceeded)
+	if err != nil {
+		t.Fatalf("independent target deadline should not cancel HTTP coverage: %v", err)
+	}
+	if !complete {
+		t.Fatal("usable HTTP responses must keep the HTTP stage complete")
+	}
+	if len(phases) != 1 || phases[0].Phase != PhaseHTTPProbe || phases[0].Status != "failed" || phases[0].Message != "target HTTP budget exhausted" {
+		t.Fatalf("partial budget expiry must fail unprobed targets, not emit end: %#v", phases)
+	}
+}

@@ -581,7 +581,7 @@ describe('TaskManagement', () => {
                 summary: {
                     executed_work_items: 1, reused_stages: 2, in_flight_work_items: 1,
                     skipped_stages: 1, failed_stages: 1,
-                    invalidated_stages: 1, expired_stages: 1, saved_stages: 2, saved_targets: 1,
+                    invalidated_stages: 1, not_reusable_stages: 36, expired_stages: 1, saved_stages: 2, saved_targets: 1,
                 },
                 items: [
                     {
@@ -620,10 +620,10 @@ describe('TaskManagement', () => {
                         invalidated_at: '2026-08-09T01:03:20Z', valid_until: null,
                     },
                     {
-                        normalized_target: 'https://www.jslgroup.cn:443', stage: 'risk_validation', status: 'invalidated',
-                        reason: 'fingerprint_unmatched_pocs',
+                        normalized_target: 'https://www.jslgroup.cn:443', stage: 'risk_validation', status: 'not_reusable',
+                        reason: 'endpoint_content_unknown',
                         fingerprints: ['DigiCert-Cert', 'Nginx'],
-                        matched_pocs: [],
+                        matched_pocs: ['nginx-config'],
                         source: { task_id: 'task-coverage', task_name: 'Coverage Task', batch_id: 'batch-1', attempt_id: 'attempt-1' },
                         invalidated_at: '2026-08-09T01:03:30Z', valid_until: null,
                     },
@@ -651,11 +651,13 @@ describe('TaskManagement', () => {
         expect(screen.getAllByText('已跳过').length).toBeGreaterThan(0);
         expect(screen.getByText('该阶段对本批次不适用或已按策略跳过')).toBeInTheDocument();
         expect(screen.getAllByText('阶段失败').length).toBeGreaterThan(0);
-        expect(screen.getByText('该目标 HTTP 探测耗尽网络预算，未得到完整响应')).toBeInTheDocument();
-        expect(screen.getByText('指纹未匹配到可执行 POC')).toBeInTheDocument();
+        expect(screen.getByText('HTTP 探测超时，未得到完整响应')).toBeInTheDocument();
+        expect(screen.getByText('不可复用')).toBeInTheDocument();
+        expect(screen.getByText('风险验证已完成，但未绑定该目标的 HTTP 探测内容版本，下次不能复用')).toBeInTheDocument();
         expect(screen.getByText('Nginx')).toBeInTheDocument();
         expect(screen.getByText('DigiCert-Cert')).toBeInTheDocument();
-        expect(screen.getAllByText('未匹配').length).toBeGreaterThan(0);
+        expect(screen.getByText('nginx-config')).toBeInTheDocument();
+        expect(screen.getByText('已完成不可复用')).toBeInTheDocument();
     });
 
 

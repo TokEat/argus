@@ -687,6 +687,16 @@ func completeHTTPProbePhase(ctx *ScanContext, probeErr error) (bool, error) {
 		return false, probeErr
 	}
 	if errors.Is(probeErr, context.DeadlineExceeded) {
+		if httpProbeHasURLEvidence(ctx) {
+			if err := checkPipelineCancelled(ctx); err != nil {
+				return false, err
+			}
+			// Keep the pipeline going for targets that already produced HTTP
+			// evidence, but mark the phase failed so unprobed targets are not
+			// recorded as reusable negative coverage.
+			emitPhase(ctx, PhaseHTTPProbe, "failed", "target HTTP budget exhausted")
+			return true, nil
+		}
 		emitPhase(ctx, PhaseHTTPProbe, "failed", "target HTTP budget exhausted")
 		return false, nil
 	}

@@ -318,6 +318,7 @@ declare namespace API {
       skipped_stages?: number;
       failed_stages?: number;
       invalidated_stages: number;
+      not_reusable_stages?: number;
       expired_stages: number;
       saved_stages: number;
       saved_targets: number;

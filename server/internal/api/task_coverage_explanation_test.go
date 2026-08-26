@@ -106,7 +106,7 @@ func TestTaskDetailExplainsExecutionReuseAndInvalidationWithinProject(t *testing
 	if got.SchemaVersion != "argus.task-coverage-explanation/v1" || got.Summary.ExecutedWorkItems != 1 || got.Summary.ReusedStages != 2 || got.Summary.InFlightWorkItems != 1 {
 		t.Fatalf("unexpected coverage summary: %+v", got.Summary)
 	}
-	if got.Summary.SavedStages != 2 || got.Summary.SavedTargets != 1 || got.Summary.InvalidatedStages != 2 || got.Summary.ExpiredStages != 1 {
+	if got.Summary.SavedStages != 2 || got.Summary.SavedTargets != 1 || got.Summary.InvalidatedStages != 1 || got.Summary.NotReusableStages != 1 || got.Summary.ExpiredStages != 1 {
 		t.Fatalf("unexpected saved/invalid summary: %+v", got.Summary)
 	}
 	if got.Summary.SkippedStages != 1 || got.Summary.FailedStages != 2 {
@@ -145,7 +145,7 @@ func TestTaskDetailExplainsExecutionReuseAndInvalidationWithinProject(t *testing
 			foundHTTPBudget = true
 		case item.Status == "failed" && item.Reason == "upstream_http_probe_incomplete":
 			foundUpstream = true
-		case item.Status == "invalidated" && item.Reason == "poc_set_unknown,endpoint_content_unknown":
+		case item.Status == "not_reusable" && item.Reason == "poc_set_unknown,endpoint_content_unknown":
 			foundRiskUnknown = true
 		}
 	}
@@ -207,11 +207,11 @@ func TestTaskCoverageExplanationShowsRiskFingerprintsAndMatchedPocs(t *testing.T
 		got[item.NormalizedTarget] = item
 	}
 	matched := got["https://app.example"]
-	if matched.Reason != "poc_set_unknown,endpoint_content_unknown" || len(matched.Fingerprints) != 1 || matched.Fingerprints[0] != "Nginx" || len(matched.MatchedPocs) != 1 || matched.MatchedPocs[0] != "nginx-detect.yaml" {
+	if matched.Status != "not_reusable" || matched.Reason != "poc_set_unknown,endpoint_content_unknown" || len(matched.Fingerprints) != 1 || matched.Fingerprints[0] != "Nginx" || len(matched.MatchedPocs) != 1 || matched.MatchedPocs[0] != "nginx-detect.yaml" {
 		t.Fatalf("matched risk gap = %+v", matched)
 	}
 	unmatched := got["https://bare.example"]
-	if unmatched.Reason != "fingerprint_unmatched_pocs" || len(unmatched.Fingerprints) != 1 || unmatched.Fingerprints[0] != "DigiCert-Cert" || len(unmatched.MatchedPocs) != 0 {
+	if unmatched.Status != "invalidated" || unmatched.Reason != "fingerprint_unmatched_pocs" || len(unmatched.Fingerprints) != 1 || unmatched.Fingerprints[0] != "DigiCert-Cert" || len(unmatched.MatchedPocs) != 0 {
 		t.Fatalf("unmatched risk gap = %+v", unmatched)
 	}
 }
@@ -254,7 +254,7 @@ func TestClassifyTaskCoverageGapUsesObservationWhenInvalidReasonEmpty(t *testing
 	status, reason = classifyTaskCoverageGap(db.ScanCoverage{
 		Status: string(scanplan.CoverageInvalidated), InvalidReason: "poc_set_unknown,endpoint_content_unknown",
 	}, nil, now)
-	if status != "invalidated" || reason != "poc_set_unknown,endpoint_content_unknown" {
+	if status != "not_reusable" || reason != "poc_set_unknown,endpoint_content_unknown" {
 		t.Fatalf("risk gap = %s %s", status, reason)
 	}
 	status, reason = classifyTaskCoverageGap(db.ScanCoverage{
