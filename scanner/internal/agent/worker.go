@@ -14,7 +14,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -29,6 +28,7 @@ import (
 
 	"github.com/P0lar1ght/argus/scanner/internal/arsenal"
 	"github.com/P0lar1ght/argus/scanner/internal/engine"
+	"github.com/P0lar1ght/argus/scanner/internal/scanner/portscan"
 	"github.com/P0lar1ght/argus/scanner/internal/timing"
 	"github.com/P0lar1ght/argus/scanner/structs"
 	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
@@ -290,7 +290,7 @@ func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[stri
 	tags["subdomain_depth"] = "v1"
 	tags["passive_server"] = "v1"
 	tags["behavior_probe"] = "v1"
-	if _, err := exec.LookPath("masscan"); err == nil {
+	if portscan.CanSYNScan() {
 		tags["scan_syn"] = "v1"
 	}
 	return &Worker{

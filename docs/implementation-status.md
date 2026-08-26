@@ -105,7 +105,7 @@
 | 子域名枚举 | subfinder + 自定义爆破 |
 | 存活探测 | 同网段 ARP，其余 ICMP；ARP/ICMP 未应答的再 TCP 探活（80/443/3389/445/22）。`-PU` 再对剩余主机打常关 UDP 口，ICMP port unreachable 视为存活。`-Pn` 跳过，`-nip` 跳过 ICMP 直接 TCP |
 | 内网路径 | CLI `-tr <目标>` 是单独命令（IP / 文件 / 上次 result.txt），不进入扫描流水线。自实现 UDP/ICMP TTL 探路（不调用系统 traceroute/tracert），输出 `[Path]` 跳数和 `[Topo]` 网段蓝图 |
-| 端口扫描 | TCP / SYN (Masscan) |
+| 端口扫描 | TCP / 内置 SYN（Linux raw socket） |
 | 协议识别 | gonmap TCP 识别 + 内网 TCP 握手 + 默认同机高价值 UDP 识别 |
 | Web 探测 | httpx 批量探测 |
 | 指纹识别 | 被动 + 主动目录指纹 |

@@ -109,7 +109,6 @@ type Config struct {
 	SYNPortScanThreads         int
 	PortsThreshold             int
 	TCPPortScanTimeout         int
-	MasscanPath                string
 	AllowLocalAreaDomain       bool
 	AllowCDNAssets             bool
 	NoHostBind                 bool

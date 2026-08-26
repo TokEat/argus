@@ -222,6 +222,24 @@ func TestNormalizeTaskConfigRejectsCallerControlledBehaviorProbes(t *testing.T) 
 	}
 }
 
+func TestNormalizeTaskConfigRejectsMasscanPath(t *testing.T) {
+	for _, payload := range []string{
+		`{"MasscanPath":"/tmp/evil"}`,
+		`{"masscanpath":"masscan; id"}`,
+	} {
+		if _, _, err := normalizeTaskConfigPayload(json.RawMessage(payload)); err == nil || !strings.Contains(err.Error(), "unsupported field") {
+			t.Fatalf("MasscanPath payload %s err = %v, want unsupported field rejection", payload, err)
+		}
+	}
+	encoded, _, err := normalizeTaskConfigPayload(json.RawMessage(`{"PortScanType":"syn"}`))
+	if err != nil {
+		t.Fatalf("syn scan config should be accepted: %v", err)
+	}
+	if strings.Contains(encoded, "MasscanPath") {
+		t.Fatalf("task JSON must not contain MasscanPath, got %s", encoded)
+	}
+}
+
 func TestValidateTaskScanConfigNoICMPEnablesTCPPing(t *testing.T) {
 	cfg := defaultTaskScanConfig()
 	cfg.NoICMPPing = true

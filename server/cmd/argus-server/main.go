@@ -261,6 +261,9 @@ func main() {
 	log.Printf("Initializing gRPC server on :%d...", grpcPort)
 	srv := grpc.NewServer(grpcPort)
 	srv.SetPSK(agentPSK)
+	if devMode {
+		srv.SetAllowOpenPSK(true)
+	}
 	if grpcTLSPort != 0 {
 		go func() {
 			log.Printf("Initializing TLS Agent gRPC server on :%d...", grpcTLSPort)

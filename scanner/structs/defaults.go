@@ -17,7 +17,6 @@ func DefaultConfig() Config {
 		SYNPortScanThreads:         10000,
 		PortsThreshold:             300,
 		TCPPortScanTimeout:         6,
-		MasscanPath:                "masscan",
 		GetBannerThreads:           500,
 		GetBannerTimeout:           5,
 		SubdomainBruteForceThreads: 150,
@@ -42,16 +41,16 @@ func DefaultConfig() Config {
 		// ports bound to a scanned domain are probed as scheme://domain:port.
 		NoDomainProbe: false,
 		// NoResolvedIPScan=false keeps domain-resolved IPs in the scan path.
-		NoResolvedIPScan:           false,
-		GoPocThreads:               50,
-		NoPoc:                      true,
-		GolangPoc:                  false,
-		DisableGeneralPoc:          true,
-		NucleiTemplate:             "config/pocs",
-		WorkflowYamlPath:           "config/workflow.yaml",
-		FingerConfigFilePath:       "config/finger.yaml",
-		DirSearchYaml:              "config/dir.yaml",
-		SubdomainWordListFile:      "config/subdomains.txt",
+		NoResolvedIPScan:      false,
+		GoPocThreads:          50,
+		NoPoc:                 true,
+		GolangPoc:             false,
+		DisableGeneralPoc:     true,
+		NucleiTemplate:        "config/pocs",
+		WorkflowYamlPath:      "config/workflow.yaml",
+		FingerConfigFilePath:  "config/finger.yaml",
+		DirSearchYaml:         "config/dir.yaml",
+		SubdomainWordListFile: "config/subdomains.txt",
 	}
 
 	if runtime.GOOS == "linux" {

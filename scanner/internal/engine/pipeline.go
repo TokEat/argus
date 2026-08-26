@@ -214,17 +214,24 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		if resumeStageEnabled(ctx, scanplan.StagePortScan) {
 			var tmpIPPort []string
 
-			if cfg.PortScanType == "syn" {
-				if !portscan.CheckMasscan(cfg.MasscanPath) {
-					gologger.Error().Msg("降级TCP扫描")
-					cfg.PortScanType = "tcp"
-					setPipelineConfig(ctx, cfg)
-				}
+			portScanType := cfg.PortScanType
+			if portScanType == "syn" && !portscan.CanSYNScan() {
+				gologger.Error().Msg("降级TCP扫描")
+				portScanType = "tcp"
+				cfg.PortScanType = "tcp"
+				setPipelineConfig(ctx, cfg)
 			}
 
-			emitPhase(ctx, PhasePortScan, "start", fmt.Sprintf("%d ips, type=%s", len(ips), cfg.PortScanType))
-			if cfg.PortScanType == "syn" {
-				tmpIPPort = portscan.ScanSYN(ips, cfg.Ports, cfg.MasscanPath, cfg.SYNPortScanThreads, nil)
+			emitPhase(ctx, PhasePortScan, "start", fmt.Sprintf("%d ips, type=%s", len(ips), portScanType))
+			if portScanType == "syn" {
+				tmpIPPort = portscan.ScanSYN(ips, cfg.Ports, cfg.SYNPortScanThreads, nil)
+				if tmpIPPort == nil && len(ips) > 0 && strings.TrimSpace(cfg.Ports) != "" {
+					gologger.Error().Msg("SYN扫描失败，降级TCP扫描")
+					portScanType = "tcp"
+					cfg.PortScanType = "tcp"
+					setPipelineConfig(ctx, cfg)
+					tmpIPPort = portscan.ScanTCP(ips, cfg.Ports, cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, true, nil)
+				}
 			} else {
 				tmpIPPort = portscan.ScanTCP(ips, cfg.Ports, cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, true, nil)
 			}

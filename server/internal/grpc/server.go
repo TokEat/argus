@@ -76,8 +76,9 @@ func taskRequestsUnconfirmedPOC(task *pb.Task) bool {
 type Server struct {
 	pb.UnimplementedAgentServiceServer
 	pb.UnimplementedAgentEgressServiceServer
-	port int
-	psk  string // Agent 预共享密钥，为空则跳过鉴权（开发模式）
+	port         int
+	psk          string // Agent 预共享密钥；生产必须非空
+	allowOpenPSK bool   // --dev 才允许空 PSK 开放模式
 	// NotifyHub 管理所有在线 Agent 的 Subscribe 流连接
 	Hub    *NotifyHub
 	Egress *egressbroker.Broker
@@ -146,9 +147,18 @@ func (s *Server) SetOnTaskTerminalHook(fn func(context.Context, db.SubTask) erro
 	s.onTaskTerminalHook = fn
 }
 
-// SetPSK 设置 Agent 预共享密钥（为空则跳过鉴权，适用于开发环境）
+// SetPSK 设置 Agent 预共享密钥（为空则跳过鉴权，仅允许开发环境）
 func (s *Server) SetPSK(psk string) {
 	s.psk = psk
+}
+
+// SetAllowOpenPSK 允许空 PSK 开放接入。仅 --dev 可打开。
+func (s *Server) SetAllowOpenPSK(allow bool) {
+	s.allowOpenPSK = allow
+}
+
+func (s *Server) agentPSKMissing() bool {
+	return strings.TrimSpace(s.psk) == "" && !s.allowOpenPSK
 }
 
 // generateSessionToken 生成随机 session token
@@ -166,24 +176,15 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterReq) (*pb.Registe
 	log.Printf("[Register] Agent %s connected, version: %s", req.AgentId, req.Version)
 
 	tags := attestedAgentTags(ctx, req.Tags)
-	tagsJSON := "{}"
-	if len(tags) > 0 {
-		if data, err := json.Marshal(tags); err == nil {
-			tagsJSON = string(data)
-		}
+	delete(tags, "tenant_id")
+	tenantID := resolveRegisterTenantID(strings.TrimSpace(req.AgentId))
+	if tags == nil {
+		tags = map[string]string{}
 	}
-
-	// 多租户：从 Agent 标签中提取 tenant_id（Cloud-Init 会注入），
-	// 回退到关联 CloudInstance 的 tenant_id，最终兜底 "default"。
-	tenantID := "default"
-	if tid, ok := tags["tenant_id"]; ok && strings.TrimSpace(tid) != "" {
-		tenantID = strings.TrimSpace(tid)
-	} else {
-		// 尝试从已有的 CloudInstance 记录中继承 tenant_id
-		var cloudInst db.CloudInstance
-		if err := db.DB.Select("tenant_id").Where("agent_id = ?", req.AgentId).First(&cloudInst).Error; err == nil && cloudInst.TenantID != "" {
-			tenantID = cloudInst.TenantID
-		}
+	tags["tenant_id"] = tenantID
+	tagsJSON := "{}"
+	if data, err := json.Marshal(tags); err == nil {
+		tagsJSON = string(data)
 	}
 
 	token := generateSessionToken()
@@ -1523,6 +1524,32 @@ func tenantIDForAgent(agentID string) string {
 	var node db.Node
 	if err := db.DB.Select("tenant_id").Where("agent_id = ?", agentID).First(&node).Error; err == nil && strings.TrimSpace(node.TenantID) != "" {
 		return node.TenantID
+	}
+	return "default"
+}
+
+// resolveRegisterTenantID binds an Agent to a server-side tenant.
+// Agent-supplied tags are untrusted. Existing nodes keep their tenant (agent_id
+// is globally unique, so a node cannot be moved across tenants). New nodes
+// inherit CloudInstance.tenant_id when the Server provisioned that agent_id,
+// otherwise they join "default".
+func resolveRegisterTenantID(agentID string) string {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return "default"
+	}
+	var existing db.Node
+	if err := db.DB.Select("tenant_id").Where("agent_id = ?", agentID).First(&existing).Error; err == nil {
+		if tid := strings.TrimSpace(existing.TenantID); tid != "" {
+			return tid
+		}
+		return "default"
+	}
+	var cloudInst db.CloudInstance
+	if err := db.DB.Select("tenant_id").Where("agent_id = ?", agentID).First(&cloudInst).Error; err == nil {
+		if tid := strings.TrimSpace(cloudInst.TenantID); tid != "" {
+			return tid
+		}
 	}
 	return "default"
 }

@@ -593,8 +593,7 @@ func FlagWithError() error {
 		flagSet.StringVarP(&PortString, "port", "p", "", "端口设置。默认扫描常用协议端口集"),
 		flagSet.StringVarP(&structs.GlobalConfig.PortScanType, "scan-type", "st", "tcp", "端口扫描方式 | \"-st tcp\"设置TCP扫描 | \"-st syn\"设置SYN扫描"),
 		flagSet.IntVarP(&structs.GlobalConfig.TCPPortScanThreads, "tcp-scan-threads", "t", defaultTCPThreads, "TCP扫描线程 | Windows/Mac默认1000线程 Linux默认4000"),
-		flagSet.IntVarP(&structs.GlobalConfig.SYNPortScanThreads, "syn-scan-threads", "sst", 10000, "SYN扫描线程"),
-		flagSet.StringVarP(&structs.GlobalConfig.MasscanPath, "masscan-path", "mp", "masscan", "指定masscan程序路径 | SYN扫描依赖"),
+		flagSet.IntVarP(&structs.GlobalConfig.SYNPortScanThreads, "syn-scan-threads", "sst", 10000, "SYN扫描发包速率(包/秒)"),
 		flagSet.IntVarP(&structs.GlobalConfig.PortsThreshold, "ports-max-count", "pmc", 300, "IP端口数量阈值 | 当一个IP的端口数量超过此值，此IP将会被抛弃"),
 		flagSet.IntVarP(&structs.GlobalConfig.TCPPortScanTimeout, "port-scan-timeout", "pst", 6, "TCP端口扫描超时(秒)"),
 	)
@@ -724,7 +723,6 @@ func flagAudit() {
 	gologger.AuditLogger("SYNPortScanThreads: %v", structs.GlobalConfig.SYNPortScanThreads)
 	gologger.AuditLogger("PortsThreshold: %v", structs.GlobalConfig.PortsThreshold)
 	gologger.AuditLogger("TCPPortScanTimeout: %v", structs.GlobalConfig.TCPPortScanTimeout)
-	gologger.AuditLogger("MasscanPath: %v", structs.GlobalConfig.MasscanPath)
 	gologger.AuditLogger("WebThreads: %v", structs.GlobalConfig.WebThreads)
 	gologger.AuditLogger("WebTimeout: %v", structs.GlobalConfig.WebTimeout)
 	gologger.AuditLogger("HTTPProxy: %v", structs.GlobalConfig.HTTPProxy)

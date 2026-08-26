@@ -3,7 +3,9 @@ package api
 import (
 	"bytes"
 	"crypto/md5"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -29,6 +31,8 @@ const (
 	agentLogRetentionKey     = "agent_logs_retention_days"
 	defaultAgentLogRetention = 14
 	agentSessionTTL          = 7 * 24 * time.Hour
+	agentSessionRole         = "agent"
+	ephemeralJWTSecretLen    = 32
 )
 
 func isAgentInternalEndpoint(c *gin.Context) bool {
@@ -102,7 +106,7 @@ func validateAgentSession(c *gin.Context) bool {
 		tenantID = "default"
 	}
 	c.Set("tenant", tenantID)
-	c.Set("role", "admin")
+	c.Set("role", agentSessionRole)
 	c.Set("agent_id", agentID)
 	c.Set("agent_internal", true)
 	return true
@@ -217,17 +221,27 @@ func scopedNodeQuery(tenantID string) *gorm.DB {
 	return db.DB.Where("tenant_id = ?", tenantID)
 }
 
-var jwtSecretWarningOnce sync.Once
+var (
+	jwtSecretOnce sync.Once
+	jwtSecret     []byte
+)
 
-// currentJWTSecret 从环境变量 ARGUS_JWT_SECRET 读取，未设置则使用默认值（仅限开发环境）
+// currentJWTSecret 从 ARGUS_JWT_SECRET 读取 HMAC 密钥。
+// 未设置时为当前进程生成一次性随机密钥（开发模式）；重启后已签发 token 全部失效。
 func currentJWTSecret() []byte {
-	if secret := os.Getenv("ARGUS_JWT_SECRET"); secret != "" {
-		return []byte(secret)
-	}
-	jwtSecretWarningOnce.Do(func() {
-		log.Println("[Auth] WARNING: ARGUS_JWT_SECRET not set, using insecure default (dev only)")
+	jwtSecretOnce.Do(func() {
+		if secret := os.Getenv("ARGUS_JWT_SECRET"); secret != "" {
+			jwtSecret = []byte(secret)
+			return
+		}
+		buf := make([]byte, ephemeralJWTSecretLen)
+		if _, err := rand.Read(buf); err != nil {
+			log.Fatalf("[Auth] failed to generate ephemeral JWT secret: %v", err)
+		}
+		jwtSecret = []byte(hex.EncodeToString(buf))
+		log.Println("[Auth] WARNING: ARGUS_JWT_SECRET not set, using ephemeral HMAC key for this process (tokens will not survive restart)")
 	})
-	return []byte("P8-MUST-HAVE-SECRET-KEY")
+	return jwtSecret
 }
 
 // TenantMiddleware 强制 JWT 校验并拦截身份

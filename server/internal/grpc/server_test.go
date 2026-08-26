@@ -1622,3 +1622,70 @@ func TestRegisterPromotesWaitingCloudInstanceToRunning(t *testing.T) {
 		t.Fatalf("expected node to store rotated token and latest version, got %+v", node)
 	}
 }
+
+func TestRegisterIgnoresAgentSuppliedTenantID(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	server := NewServer(50051)
+	if _, err := server.Register(context.Background(), &pb.RegisterReq{
+		AgentId: "agent-self-tenant",
+		Version: "1.0.0",
+		Tags:    map[string]string{"tenant_id": "victim-tenant"},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	var node db.Node
+	if err := store.First(&node, "agent_id = ?", "agent-self-tenant").Error; err != nil {
+		t.Fatalf("load node: %v", err)
+	}
+	if node.TenantID != "default" {
+		t.Fatalf("agent-supplied tenant_id was trusted: %q", node.TenantID)
+	}
+	if !strings.Contains(node.Tags, `"tenant_id":"default"`) {
+		t.Fatalf("stored tags should record server tenant, got %s", node.Tags)
+	}
+}
+
+func TestRegisterUsesCloudInstanceTenantAndKeepsExistingNode(t *testing.T) {
+	store := setupRegisterTestDB(t)
+	if err := store.Create(&db.CloudInstance{
+		ID:       "ci-tenant",
+		TenantID: "cloud-tenant",
+		AgentID:  "cloud-agent",
+		Status:   db.CloudStatusWaitingReady,
+	}).Error; err != nil {
+		t.Fatalf("seed cloud instance: %v", err)
+	}
+	server := NewServer(50051)
+	if _, err := server.Register(context.Background(), &pb.RegisterReq{
+		AgentId: "cloud-agent",
+		Version: "1.0.0",
+		Tags:    map[string]string{"tenant_id": "attacker-tenant"},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	var node db.Node
+	if err := store.First(&node, "agent_id = ?", "cloud-agent").Error; err != nil {
+		t.Fatalf("load node: %v", err)
+	}
+	if node.TenantID != "cloud-tenant" {
+		t.Fatalf("expected cloud instance tenant, got %q", node.TenantID)
+	}
+
+	if err := store.Create(&db.Node{AgentID: "manual-agent", TenantID: "tenant-a", Status: "Offline"}).Error; err != nil {
+		t.Fatalf("seed existing node: %v", err)
+	}
+	if _, err := server.Register(context.Background(), &pb.RegisterReq{
+		AgentId: "manual-agent",
+		Version: "1.0.0",
+		Tags:    map[string]string{"tenant_id": "tenant-b"},
+	}); err != nil {
+		t.Fatalf("re-register: %v", err)
+	}
+	var existing db.Node
+	if err := store.First(&existing, "agent_id = ?", "manual-agent").Error; err != nil {
+		t.Fatalf("reload node: %v", err)
+	}
+	if existing.TenantID != "tenant-a" {
+		t.Fatalf("existing node tenant moved across tenants: %q", existing.TenantID)
+	}
+}

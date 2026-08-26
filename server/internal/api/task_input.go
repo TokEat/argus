@@ -46,7 +46,6 @@ type taskScanConfig struct {
 	SYNPortScanThreads         int
 	PortsThreshold             int
 	TCPPortScanTimeout         int
-	MasscanPath                string
 	AllowLocalAreaDomain       bool
 	AllowCDNAssets             bool
 	NoHostBind                 bool
@@ -55,8 +54,8 @@ type taskScanConfig struct {
 	NoDomainProbe bool
 	// NoResolvedIPScan=true skips host discovery / port scanning of domain-
 	// resolved IPs; those domains are only probed as scheme://domain:port.
-	NoResolvedIPScan      bool
-	SubdomainWordListFile string
+	NoResolvedIPScan           bool
+	SubdomainWordListFile      string
 	SubdomainDictionaryWords   []string
 	SubdomainDictionaryRefs    []scanpolicy.DictionaryRef
 	HTTPProxy                  string
@@ -118,7 +117,6 @@ func defaultTaskScanConfig() taskScanConfig {
 		SYNPortScanThreads:         10000,
 		PortsThreshold:             300,
 		TCPPortScanTimeout:         6,
-		MasscanPath:                "masscan",
 		GetBannerThreads:           500,
 		GetBannerTimeout:           5,
 		SubdomainBruteForceThreads: 150,
@@ -139,23 +137,23 @@ func defaultTaskScanConfig() taskScanConfig {
 		// default; open ports bound to a domain are probed as domain:port.
 		NoDomainProbe: false,
 		// NoResolvedIPScan=false keeps domain-resolved IPs in the scan path.
-		NoResolvedIPScan:           false,
-		GoPocThreads:               50,
-		NoDirSearch:                true,
-		NoPoc:                      true,
-		GolangPoc:                  false,
-		DisableGeneralPoc:          true,
-		WAFBypassHeaders:           true,
-		WAFSkipOnManyFingerprints:  true,
-		NoInteractsh:               true,
-		OutputFile:                 "result.txt",
-		OutputType:                 "text",
-		NucleiTemplate:             "config/pocs",
-		WorkflowYamlPath:           "config/workflow.yaml",
-		FingerConfigFilePath:       "config/finger.yaml",
-		DirSearchYaml:              "config/dir.yaml",
-		ActiveFingerprintTemplate:  "config/active-fingerprints",
-		SubdomainWordListFile:      "config/subdomains.txt",
+		NoResolvedIPScan:          false,
+		GoPocThreads:              50,
+		NoDirSearch:               true,
+		NoPoc:                     true,
+		GolangPoc:                 false,
+		DisableGeneralPoc:         true,
+		WAFBypassHeaders:          true,
+		WAFSkipOnManyFingerprints: true,
+		NoInteractsh:              true,
+		OutputFile:                "result.txt",
+		OutputType:                "text",
+		NucleiTemplate:            "config/pocs",
+		WorkflowYamlPath:          "config/workflow.yaml",
+		FingerConfigFilePath:      "config/finger.yaml",
+		DirSearchYaml:             "config/dir.yaml",
+		ActiveFingerprintTemplate: "config/active-fingerprints",
+		SubdomainWordListFile:     "config/subdomains.txt",
 	}
 }
 

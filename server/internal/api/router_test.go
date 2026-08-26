@@ -1125,6 +1125,22 @@ func TestNormalizeUserRoleAndStatus(t *testing.T) {
 	}
 }
 
+func TestCurrentJWTSecretIsNotCompileTimeDefault(t *testing.T) {
+	secret := string(currentJWTSecret())
+	if secret == "" {
+		t.Fatal("JWT secret must not be empty")
+	}
+	if secret == "P8-MUST-HAVE-SECRET-KEY" {
+		t.Fatal("JWT secret must not use the compile-time default")
+	}
+	if os.Getenv("ARGUS_JWT_SECRET") == "" && len(secret) < 32 {
+		t.Fatalf("ephemeral JWT secret too short: %d", len(secret))
+	}
+	if string(currentJWTSecret()) != secret {
+		t.Fatal("JWT secret must be stable for the process lifetime")
+	}
+}
+
 func TestValidateAgentSessionBindsTenantAndRejectsMismatch(t *testing.T) {
 	store := setupAITestDB(t)
 	if err := store.Create(&db.Node{
@@ -1149,6 +1165,12 @@ func TestValidateAgentSessionBindsTenantAndRejectsMismatch(t *testing.T) {
 	}
 	if got := c.GetString("tenant"); got != "tenant-a" {
 		t.Fatalf("expected tenant-a, got %q", got)
+	}
+	if got := c.GetString("role"); got != agentSessionRole {
+		t.Fatalf("expected agent session role %q, got %q", agentSessionRole, got)
+	}
+	if got, _ := c.Get("agent_internal"); got != true {
+		t.Fatalf("expected agent_internal flag, got %#v", got)
 	}
 
 	w = httptest.NewRecorder()
@@ -1210,6 +1232,38 @@ func TestValidateAgentSessionBindsTenantAndRejectsMismatch(t *testing.T) {
 	c.Request.Header.Set("x-agent-token", "revoked-token")
 	if ok := validateAgentSession(c); ok {
 		t.Fatalf("expected revoked agent session to be rejected")
+	}
+}
+
+func TestRBACMiddlewareLimitsAgentInternalSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tt := range []struct {
+		name string
+		path string
+		want int
+	}{
+		{name: "commands allowed", path: "/api/v1/agents/agent-a/commands", want: http.StatusOK},
+		{name: "admin users blocked", path: "/api/v1/users", want: http.StatusForbidden},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gin.New()
+			r.Use(func(c *gin.Context) {
+				c.Set("tenant", "tenant-a")
+				c.Set("role", agentSessionRole)
+				c.Set("agent_internal", true)
+				c.Next()
+			})
+			r.Use(RBACMiddleware())
+			r.GET(tt.path, func(c *gin.Context) {
+				c.JSON(http.StatusOK, gin.H{"status": "ok"})
+			})
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			r.ServeHTTP(w, req)
+			if w.Code != tt.want {
+				t.Fatalf("expected status %d, got %d body=%s", tt.want, w.Code, w.Body.String())
+			}
+		})
 	}
 }
 

@@ -1636,10 +1636,10 @@ const TaskManagement: React.FC = () => {
                                                 </Form.Item>
                                             </Col>
                                             <Col span={8}>
-                                                <Form.Item label="扫描方式" name="PortScanType">
+                                                <Form.Item label="扫描方式" name="PortScanType" tooltip="TCP：全连接，无需特权；SYN：内置半开扫描，仅调度已上报 scan_syn=v1 的 Linux Agent（通常需 CAP_NET_RAW/root）；已领取后运行时失败会降级 TCP">
                                                     <Select options={[
                                                         { value: 'tcp', label: 'TCP 连接扫描' },
-                                                        { value: 'syn', label: 'SYN 半开扫描' },
+                                                        { value: 'syn', label: 'SYN 半开扫描（内置）' },
                                                     ]} />
                                                 </Form.Item>
                                             </Col>
@@ -1656,7 +1656,7 @@ const TaskManagement: React.FC = () => {
                                                 </Form.Item>
                                             </Col>
                                             <Col span={8}>
-                                                <Form.Item label="SYN 扫描线程" name="SYNPortScanThreads">
+                                                <Form.Item label="SYN 发包速率" name="SYNPortScanThreads" tooltip="每秒 SYN 包数量（对应旧 --rate），不是线程数">
                                                     <InputNumber min={1} style={{ width: '100%' }} />
                                                 </Form.Item>
                                             </Col>

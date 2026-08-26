@@ -208,6 +208,17 @@ func RBACMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		if agentInternal, ok := c.Get("agent_internal"); ok {
+			if enabled, _ := agentInternal.(bool); enabled {
+				if !isAgentInternalEndpoint(c) {
+					c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "agent session is limited to agent-internal endpoints"})
+					return
+				}
+				c.Next()
+				return
+			}
+		}
+
 		// 从 context 获取角色（由 TenantMiddleware 注入）
 		role, exists := c.Get("role")
 		if !exists {

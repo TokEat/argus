@@ -35,9 +35,6 @@ func ApplyConfigDefaults(cfg *Config) {
 	if cfg.TCPPortScanTimeout == 0 {
 		cfg.TCPPortScanTimeout = 3
 	}
-	if cfg.MasscanPath == "" {
-		cfg.MasscanPath = "masscan"
-	}
 	if cfg.GetBannerThreads == 0 {
 		cfg.GetBannerThreads = 500
 	}

@@ -2,20 +2,15 @@
 package portscan
 
 import (
-	"bytes"
 	"fmt"
-	"github.com/P0lar1ght/argus/scanner/ddout"
-	"github.com/P0lar1ght/argus/scanner/lib/masscan"
-	"github.com/P0lar1ght/argus/scanner/utils"
 	"math/rand"
-	"os"
-	"os/exec"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	"github.com/projectdiscovery/gologger"
 )
 
@@ -179,88 +174,12 @@ func portConnect(item addr, respondingHosts chan<- string, adjustedTimeout int, 
 	respondingHosts <- item.ip + ":" + strconv.Itoa(item.port)
 }
 
-func ScanSYN(ips []string, ports string, masscanPath string, synThreads int, emit func(ddout.OutputMessage)) []string {
-	ipsPayload := strings.Join(utils.RemoveDuplicateElement(ips), "\n")
-	tmpFile, err := os.CreateTemp("", "masscan-targets-*.txt")
-	if err != nil {
-		return []string{}
-	}
-	tmpFileName := tmpFile.Name()
-	if _, err := tmpFile.Write([]byte(ipsPayload)); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpFileName)
-		return []string{}
-	}
-	tmpFile.Close()
-	defer os.Remove(tmpFileName)
-
-	ms := masscan.New(masscanPath)
-	ms.SetFileName(tmpFileName)
-	ms.SetPorts(ports)
-	ms.SetRate(strconv.Itoa(synThreads))
-	gologger.Info().Msgf("调用masscan进行SYN端口扫描")
-	if err := ms.Run(); err != nil {
-		return []string{}
-	}
-	gologger.AuditTimeLogger("masscan扫描结束")
-
-	hosts, err := ms.Parse()
-	if err != nil {
-		gologger.Error().Msgf("masscan结果解析失败")
-		return []string{}
-	}
-
-	var results []string
-	for _, each := range hosts {
-		for _, port := range each.Ports {
-			results = append(results, each.Address.Addr+":"+port.Portid)
-		}
-	}
-
-	results = utils.RemoveDuplicateElement(results)
-	for _, each := range results {
-		parts := strings.Split(each, ":")
-		if len(parts) != 2 {
-			continue
-		}
-		if emit != nil {
-			emit(ddout.OutputMessage{
-				Type: "PortScan",
-				IP:   parts[0],
-				Port: parts[1],
-			})
-		}
-	}
-	return results
-}
-
-func CheckMasscan(masscanPath string) bool {
-	bsenv := ""
-	if runtime.GOOS != "windows" {
-		bsenv = "/bin/bash"
-	}
-
-	var command *exec.Cmd
-	switch runtime.GOOS {
-	case "windows":
-		command = exec.Command("cmd", "/c", masscanPath)
-	default:
-		command = exec.Command(bsenv, "-c", masscanPath)
-	}
-
-	outinfo := bytes.Buffer{}
-	command.Stdout = &outinfo
-	if err := command.Start(); err != nil {
-		gologger.Error().Msgf("未检测到路径 %v 存在masscan", masscanPath)
-		return false
-	}
-	_ = command.Wait()
-
-	if !strings.Contains(outinfo.String(), "masscan -p80,8000-8100 10.0.0.0/8 --rate=10000") {
-		gologger.Error().Msgf("未检测到路径 %v 存在masscan", masscanPath)
-		return false
-	}
-	return true
+// ScanSYN runs the built-in IPv4 TCP SYN scanner (masscan-style async TX/RX
+// with SipHash SYN cookies). Returns nil when the scanner aborts before probing;
+// an empty non-nil slice means the scan completed with no open ports. Callers
+// should probe CanSYNScan and fall back to TCP connect scan on nil.
+func ScanSYN(ips []string, ports string, synThreads int, emit func(ddout.OutputMessage)) []string {
+	return scanSYNBuiltin(ips, ports, synThreads, emit)
 }
 
 func RemoveFirewall(ipPorts []string, portsThreshold int) []string {

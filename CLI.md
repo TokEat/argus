@@ -90,8 +90,7 @@ go run ./scanner/cmd/cli -a datas/<上次目录>/result.txt
 | --- | --- | --- | --- |
 | `--port` | `-p` | 常用协议端口集 | TCP 端口列表。UDP 不走这张表 |
 | `--scan-type` | `-st` | `tcp` | `tcp` 或 `syn` |
-| `--syn-scan-threads` | `-sst` | 10000 | SYN 线程 |
-| `--masscan-path` | `-mp` | `masscan` | SYN 依赖 |
+| `--syn-scan-threads` | `-sst` | 10000 | SYN 发包速率（包/秒；仅 Linux raw socket） |
 | `--ports-max-count` | `-pmc` | 300 | 单 IP 开放端口超限则丢弃 |
 | `--port-scan-timeout` | `-pst` | 6 | TCP 超时，秒 |
 
