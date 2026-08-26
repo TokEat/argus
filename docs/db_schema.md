@@ -14,7 +14,7 @@
 > 注：
 > - 本文覆盖控制面主链路的核心表，**不是全部表的穷举清单**；完整权威来源是 `deploy/db/init/*.sql` 与 `schema_verify.go`。文中字段为节选，未列出的列以 DDL 为准。
 > - 数据库初始化与项目启动已分离：`deploy/db-init.sh`（psql 纯 SQL 导入，不依赖二进制）负责建库/建角色/基线导入/种子/自检；`argus-server` 启动时只做连接重试 + 版本校验 + 结构契约校验，不再执行任何迁移。
-> - 历史上 010..570 的嵌入式增量迁移已随 v001 版本重启退役（git 历史可查）；存量旧终态库由 `deploy/db/legacy/900_cutover_from_010_570.sql` 一次性切换。v001 起的版本演进规则：新增 `deploy/db/init/NNN_xxx.sql`（文件末尾自记 `schema_migrations` 版本），并同步推进 `RequiredSchemaVersion` 与 `schema_verify.go` 契约（当前已有 002 被动子域、003 CDN 标记两个增量）。
+> - 历史上 010..570 的嵌入式增量迁移已随 v001 版本重启退役（git 历史可查）；存量旧终态库由 `deploy/db/legacy/900_cutover_from_010_570.sql` 一次性切换。v001 起的版本演进规则：新增 `deploy/db/init/NNN_xxx.sql`（文件末尾自记 `schema_migrations` 版本），并同步推进 `RequiredSchemaVersion` 与 `schema_verify.go` 契约（当前已有 002 被动子域、003 CDN 标记、004 MCP OAuth 三个增量）。
 > - v001 收敛时删除了历史废弃对象：`cron_tasks`、`notification_rules`、`asset_change_logs` 表、`tenant_quota` 兼容视图与 `root_tasks.cron_task_id` 列（均无业务代码引用）。
 > - 文中出现的 “Migration 4xx/5xx” 编号指 v001 之前的历史增量，仅作演进背景说明。
 > - 规则资产不在 SQL 里，使用 `deploy/arsenal_seed.db` 和 `--seed-from-db`。
@@ -113,6 +113,16 @@
 | `role` | string | `admin` / `operator` / `viewer` | Default:`viewer` |
 | `status` | string | `active` / `disabled` | Default:`active` |
 | `created_at` / `updated_at` | timestamp | 审计时间 | - |
+
+#### MCP OAuth（`004_mcp_oauth.sql`）
+
+授权码与 refresh token 只存 SHA-256，不落明文。预置 public `client_id=cursor`。其它 MCP 客户端（Codex、Claude、Grok 等）走 DCR；回环 `http://127.0.0.1` / `localhost` / `[::1]` 按 RFC 8252 忽略端口，并视作同一类回环主机。远程 HTTPS 回调仍拒绝。
+
+| 表 | 作用 |
+|------|------|
+| `oauth_clients` | 公开客户端、redirect JSON、可选 `tenant_id` |
+| `oauth_authorization_codes` | 单次授权码（约 2 分钟）、PKCE S256 challenge、resource、用户/租户/角色 |
+| `oauth_refresh_tokens` | refresh 轮转；重放即吊销该 client+user 的未撤销 refresh |
 
 #### `system_configs`
 

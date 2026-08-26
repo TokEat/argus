@@ -50,7 +50,7 @@ func TestMCPProtocolContractSnapshot(t *testing.T) {
 	}
 	digest := sha256.Sum256(data)
 	got := hex.EncodeToString(digest[:])
-	const want = "d5430cf4ebffe6016a31e339ab0efc7abe9add3d502a5252a9cec32f46ad8998"
+	const want = "fc4fe097a756b7b5b793a1c74bf5ddfd32e229394eb3acb7a10fd1d3559b2895"
 	if got != want {
 		t.Fatalf("MCP protocol contract changed: got %s want %s", got, want)
 	}

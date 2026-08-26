@@ -78,6 +78,9 @@ func TestSchemaModelTableNames(t *testing.T) {
 		"CloudAccountBinding":          "cloud_account_bindings",
 		"CloudScalingPolicy":           "cloud_scaling_policies",
 		"CloudInstance":                "cloud_instances",
+		"OAuthClient":                  "oauth_clients",
+		"OAuthAuthorizationCode":       "oauth_authorization_codes",
+		"OAuthRefreshToken":            "oauth_refresh_tokens",
 	}
 	expected["AssetDiscoverySnapshot"] = "asset_discovery_snapshots"
 	expected["AssetDiscoverySnapshotItem"] = "asset_discovery_snapshot_items"

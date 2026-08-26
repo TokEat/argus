@@ -27,7 +27,7 @@ Stop everything:
 - Logs: `runtime/logs/*.log`
 - PID files: `runtime/pids/*.pid`
 
-`start-mcp.sh` tries to log in to the local dev server with `admin/admin123` and writes a JWT to `runtime/argus-token.jwt`. Set `ARGUS_TOKEN` or `ARGUS_TOKEN_FILE` to use a different token.
+`start-mcp.sh` 仍可为本地 stdio `argus-mcp` 登录并写入 `runtime/argus-token.jwt`。Cursor 连 Server Streamable HTTP 时不要配 JWT：`{"url":"http://127.0.0.1:8085/mcp"}`（开发机若 API 在 18085 则改端口），在 IDE 里 Connect 后用浏览器登录。
 HTTP/SSE 传输还必须设置独立的 `ARGUS_MCP_AUTH_TOKEN`（或
 `ARGUS_MCP_AUTH_TOKEN_FILE`）供 MCP 客户端使用 Bearer 认证；stdio 不需要该入站 Token。
 

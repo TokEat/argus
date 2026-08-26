@@ -104,8 +104,6 @@ var permissionRules = map[string]string{
 	"GET:/queue/depth":                                     "operator",
 	"GET:/agents/*/logs":                                   "operator",
 	"GET:/mcp/resources/*":                                 "operator",
-	"POST:/mcp/tools/poc/debug":                            "operator",
-	"POST:/mcp/tools/poc/save-draft":                       "operator",
 	"POST:/mcp/tools/rule/context":                         "operator",
 	"POST:/mcp/tools/rule/debug":                           "operator",
 	"POST:/mcp/tools/rule/save":                            "operator",

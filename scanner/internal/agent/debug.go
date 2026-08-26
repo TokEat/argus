@@ -266,6 +266,8 @@ type fingerprintDebugOptions struct {
 	CustomProduct    string   `json:"custom_product"`
 	CustomRule       string   `json:"custom_rule"`
 	CustomRules      []string `json:"custom_rules"`
+	CustomDirProduct string   `json:"custom_dir_product"`
+	CustomDirPaths   []string `json:"custom_dir_paths"`
 	CustomWfProduct  string   `json:"custom_wf_product"`
 	CustomWfTypes    string   `json:"custom_wf_types"`
 	CustomWfPocs     string   `json:"custom_wf_pocs"`
@@ -305,7 +307,7 @@ func (w *Worker) runFingerprintDebugSession(
 	cfg.HTTPProxy = cmd.Proxy
 	cfg.NoPoc = !options.IncludePoc
 	cfg.NoHostBind = true
-	cfg.NoDirSearch = !options.IncludeDir
+	cfg.NoDirSearch = !options.IncludeDir && len(options.CustomDirPaths) == 0
 	cfg.SkipHostDiscovery = true
 	cfg.WebTimeout = int(timeout.Seconds())
 	if cfg.WebTimeout <= 0 || cfg.WebTimeout > int(defaultAgentDebugTimeout.Seconds()) {
@@ -369,6 +371,31 @@ func (w *Worker) runFingerprintDebugSession(
 	if options.CustomOnly && len(customProducts) == 0 {
 		sendComplete("custom_only fingerprint debug requires a valid custom fingerprint rule")
 		return
+	}
+
+	dirPaths := make([]string, 0, len(options.CustomDirPaths))
+	for _, path := range options.CustomDirPaths {
+		path = strings.TrimSpace(path)
+		if path != "" {
+			dirPaths = append(dirPaths, path)
+		}
+	}
+	if len(dirPaths) > 0 {
+		productName := strings.TrimSpace(options.CustomDirProduct)
+		if productName == "" {
+			productName = defaultDebugFingerprintProduct
+		}
+		if sc.DirDB == nil {
+			sc.DirDB = map[string][]string{}
+		}
+		for _, path := range dirPaths {
+			sc.DirDB[path] = append(sc.DirDB[path], productName)
+		}
+		send(&pb.DebugEvent{
+			Type:    "debug_log",
+			Level:   "INFO",
+			Message: fmt.Sprintf("injected custom dir paths: %s → %v", productName, dirPaths),
+		})
 	}
 
 	// --- 注入自定义 Workflow 规则 ---

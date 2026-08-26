@@ -4,7 +4,7 @@
 
 ## 租户隔离原则
 
-- 身份来源：登录成功后 JWT 写入 `tenant_id`、`role`、`user_id`。
+- 身份来源：登录成功后 JWT 写入 `tenant_id`、`role`、`user_id`。MCP HTTP 通过 Server OAuth 签发带同样 claims 且 `aud` 为 MCP resource 的 access token。
 - 请求上下文：`TenantMiddleware` 校验 JWT，并把 `tenant_id` 和 `role` 注入 Gin Context。
 - 数据边界：业务查询、更新、删除都必须带 `tenant_id = 当前租户` 条件；默认租户为 `default`。
 - 用户管理：管理员只能创建、修改、删除当前租户用户，不能通过请求体创建其他租户用户。
@@ -79,8 +79,14 @@
 - `GET /projects/:id/members`、`PUT /projects/:id/members`：仍需项目 owner 或 admin 通过业务校验
 - `DELETE /nodes/:id`、`POST /nodes/clean`
 - `POST /ai/chat`、`POST /ai/actions/confirm` 等 Copilot 问答与草稿确认接口
-- 规则草稿保存类 MCP 工具（如 `POST /mcp/tools/poc/save-draft`）；规则应用（apply）仍需 admin
+- 规则草稿保存类 MCP 工具（如 `POST /mcp/tools/rule/save`）；规则应用（apply）仍需 admin
+- MCP HTTP（`POST /mcp`）使用 OAuth 签发的 access token；工具内 RBAC 仍按 token 中的 `role` 执行
 - `GET /cloud/*`、`POST /cloud/*`、`PUT /cloud/*`、`DELETE /cloud/*`：仅限自己创建或被绑定的云账号；云账号用户绑定在业务层额外要求 admin
+
+### 公开（无 JWT）
+
+- `POST /auth/login`
+- MCP OAuth：`GET /.well-known/oauth-protected-resource`、`GET /.well-known/oauth-authorization-server`、`GET /.well-known/openid-configuration`、`GET|POST /oauth/authorize`、`POST /oauth/token`、`POST /oauth/register`。登录使用现有用户表；access token 的 `aud` 为 MCP resource，租户与角色仍写入 JWT。公开客户端通过 DCR 注册；回环回调遵循 RFC 8252，不绑定单一 IDE。
 
 ### admin only
 

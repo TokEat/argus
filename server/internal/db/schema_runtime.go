@@ -83,5 +83,8 @@ func schemaModels() []interface{} {
 		&CloudAccountBinding{},
 		&CloudScalingPolicy{},
 		&CloudInstance{},
+		&OAuthClient{},
+		&OAuthAuthorizationCode{},
+		&OAuthRefreshToken{},
 	}
 }

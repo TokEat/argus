@@ -318,6 +318,15 @@ func main() {
 	routerDeps := api.NewRouterDependencies(queue, srv.Hub, agentPSK)
 	routerDeps.EgressBroker = srv.Egress
 	routerDeps.EXPWorkspace = expWorkspace
+	publicBase := strings.TrimRight(strings.TrimSpace(os.Getenv("ARGUS_PUBLIC_URL")), "/")
+	if publicBase == "" {
+		_, port, splitErr := net.SplitHostPort(apiAddr)
+		if splitErr != nil || strings.TrimSpace(port) == "" {
+			port = "8085"
+		}
+		publicBase = "http://127.0.0.1:" + port
+	}
+	routerDeps.PublicBaseURL = publicBase
 	api.ConfigureRouterDependencies(routerDeps)
 
 	// Server 端被动子域收集：派发前统一收集并按域缓存，结果密封进任务配置。

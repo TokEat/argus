@@ -13,6 +13,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const maxRuleGetContentBytes = 64 * 1024
+
 func (c *Client) argusRuleGet(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	ruleType := normalizeRuleType(stringArg(args, "rule_type"))
 	if ruleType == "" {
@@ -20,54 +22,102 @@ func (c *Client) argusRuleGet(ctx context.Context, args map[string]interface{}) 
 	}
 	fileName := stringArg(args, "file_name")
 	artifactID := stringArg(args, "artifact_id")
-	ruleID := stringArg(args, "rule_id")
 	productName := stringArg(args, "product_name")
-	if fileName == "" && ruleType == "finger" {
-		fileName = "finger.yaml"
+	if fileName == "" {
+		switch ruleType {
+		case "finger":
+			fileName = "finger.yaml"
+		case "workflow":
+			fileName = "workflow.yaml"
+		case "dir":
+			fileName = "dir.yaml"
+		}
 	}
-	if fileName == "" && ruleType == "workflow" {
-		fileName = "workflow.yaml"
-	}
-	if fileName == "" && artifactID == "" && ruleID == "" {
-		return nil, fmt.Errorf("rule_get requires file_name, artifact_id or rule_id")
+	if fileName == "" && artifactID == "" {
+		return nil, fmt.Errorf("rule_get requires file_name or artifact_id")
 	}
 
-	catalog, err := c.loadRuleCatalog(ctx, ruleType)
+	found, err := c.resolveArsenal(ctx, ruleType, fileName, artifactID)
 	if err != nil {
 		return nil, err
 	}
-	if fileName == "" || artifactID == "" {
-		for _, row := range catalog {
-			if ruleID != "" && !catalogRowMatchesRuleID(row, ruleType, ruleID) {
-				continue
+	content := found.Content
+	contentSize := len(content)
+	if contentSize == 0 && found.ContentSize > 0 {
+		contentSize = found.ContentSize
+	}
+
+	out := map[string]interface{}{
+		"status":           "success",
+		"rule_type":        publicRuleType(ruleType),
+		"file_name":        found.EffectiveFileName(),
+		"artifact_id":      found.StableID(),
+		"state":            found.State,
+		"hash":             found.Hash,
+		"version":          found.Version,
+		"content_size":     contentSize,
+		"content_included": false,
+		"last_updated":     firstNonEmpty(found.UpdatedAt, found.CreatedAt),
+		"stable_ref":       stableRefFromArsenal(found, publicRuleType(ruleType)),
+	}
+
+	names := yamlMappingKeys(content)
+	if len(names) > 0 && productName == "" {
+		start, end, paged, err := optionalStringRange(args, len(names))
+		if err != nil {
+			return nil, err
+		}
+		window := names
+		if paged {
+			if start > len(names) {
+				window = []string{}
+			} else {
+				window = names[start-1 : end]
 			}
-			if ruleID == "" && fileName != "" {
-				rowFileName := firstNonEmpty(row.SourceFile, row.FileName)
-				if rowFileName != "" && rowFileName != fileName {
-					continue
-				}
-			}
-			if ruleID == "" && artifactID != "" {
-				rowArtifactID := row.ArtifactID
-				if rowArtifactID != "" && rowArtifactID != artifactID {
-					continue
-				}
-			}
-			if fileName == "" {
-				fileName = firstNonEmpty(row.SourceFile, row.FileName)
-			}
-			if artifactID == "" {
-				artifactID = row.ArtifactID
-			}
-			if fileName != "" || artifactID != "" {
-				break
-			}
+			out["range_start"] = start
+			out["range_end"] = end
+			out["has_more"] = end < len(names)
+		}
+		out["product_count"] = len(names)
+		out["returned"] = len(window)
+		out["products"] = window
+	}
+	if productName != "" {
+		out["product_name"] = productName
+		if entry := productEntryFromContent(ruleType, content, productName); entry != nil {
+			out["product_entry"] = entry
+		} else {
+			out["product_entry"] = map[string]interface{}{"product_name": productName, "found": false}
 		}
 	}
 
-	rows, err := c.loadArsenalRows(ctx, ruleType, false)
+	if boolArg(args, "include_content") {
+		if contentSize > maxRuleGetContentBytes {
+			out["content_refused"] = fmt.Sprintf("YAML is %d bytes; include_content is capped at %d. Use products (name array), product_name for one mapping, or action=coverage for catalog stats.", contentSize, maxRuleGetContentBytes)
+		} else {
+			out["content"] = content
+			out["content_included"] = true
+		}
+	} else if ruleType == "poc" || ruleType == "active_fingerprint" {
+		out["content_preview"] = contentPreview(content, 280)
+	}
+	if _, ok := out["content"]; !ok {
+		out["hint"] = "YAML omitted. Dict types return products as a string array of names. Pass product_name for one mapping or include_content=true for files under 64KiB."
+	}
+	return out, nil
+}
+
+func (c *Client) resolveArsenal(ctx context.Context, ruleType, fileName, artifactID string) (arsenalRecord, error) {
+	if fileName != "" && artifactID == "" {
+		row, err := c.loadArsenalFile(ctx, ruleType, fileName)
+		if err != nil {
+			return arsenalRecord{}, err
+		}
+		return row, nil
+	}
+	rows, err := c.loadArsenalRows(ctx, ruleType, true)
 	if err != nil {
-		return nil, err
+		return arsenalRecord{}, err
 	}
 	var found arsenalRecord
 	foundOK := false
@@ -84,31 +134,32 @@ func (c *Client) argusRuleGet(ctx context.Context, args map[string]interface{}) 
 		}
 	}
 	if !foundOK {
-		return nil, fmt.Errorf("rule not found for rule_type=%s file_name=%q artifact_id=%q rule_id=%q", publicRuleType(ruleType), fileName, artifactID, ruleID)
+		return arsenalRecord{}, fmt.Errorf("rule not found for rule_type=%s file_name=%q artifact_id=%q", publicRuleType(ruleType), fileName, artifactID)
 	}
-	fileName = found.EffectiveFileName()
-	artifactID = found.StableID()
-	content := found.Content
-	catalogMatches := filterCatalogForArtifact(catalog, ruleType, artifactID, fileName, ruleID, productName)
-	out := map[string]interface{}{
-		"status":        "success",
-		"source":        "native_api",
-		"rule_type":     publicRuleType(ruleType),
-		"file_name":     fileName,
-		"artifact_id":   artifactID,
-		"state":         found.State,
-		"hash":          found.Hash,
-		"version":       found.Version,
-		"content":       content,
-		"content_size":  len(content),
-		"catalog":       catalogRaw(catalogMatches),
-		"references":    c.ruleReferences(ctx, ruleType, fileName, productName, catalogMatches),
-		"mcp_guidance":  ruleGetGuidance(publicRuleType(ruleType)),
-		"last_updated":  firstNonEmpty(found.UpdatedAt, found.CreatedAt),
-		"stable_ref":    stableRefFromArsenal(found, publicRuleType(ruleType)),
-		"product_entry": productEntryFromContent(ruleType, content, productName),
+	if found.Content != "" {
+		return found, nil
 	}
-	return out, nil
+	name := found.EffectiveFileName()
+	if name == "" {
+		return arsenalRecord{}, fmt.Errorf("rule not found for rule_type=%s file_name=%q artifact_id=%q", publicRuleType(ruleType), fileName, artifactID)
+	}
+	row, err := c.loadArsenalFile(ctx, ruleType, name)
+	if err != nil {
+		return arsenalRecord{}, err
+	}
+	return row, nil
+}
+
+func (c *Client) loadArsenalFile(ctx context.Context, ruleType, fileName string) (arsenalRecord, error) {
+	path := "/api/v1/arsenals/" + url.PathEscape(ruleType) + "/" + url.PathEscape(fileName)
+	var row arsenalRecord
+	if err := c.do(ctx, http.MethodGet, path, nil, &row); err != nil {
+		return arsenalRecord{}, err
+	}
+	if row.EffectiveFileName() == "" && row.StableID() == "" {
+		return arsenalRecord{}, fmt.Errorf("rule not found for rule_type=%s file_name=%q", publicRuleType(ruleType), fileName)
+	}
+	return row, nil
 }
 
 func (c *Client) argusRuleList(ctx context.Context, args map[string]interface{}, draftsOnly bool) (interface{}, error) {
@@ -116,7 +167,7 @@ func (c *Client) argusRuleList(ctx context.Context, args map[string]interface{},
 	if raw := normalizeRuleType(stringArg(args, "rule_type")); raw != "" {
 		ruleTypes = append(ruleTypes, raw)
 	} else {
-		ruleTypes = []string{"finger", "active_fingerprint", "poc", "workflow"}
+		ruleTypes = []string{"finger", "active_fingerprint", "poc", "workflow", "dir"}
 	}
 	state := stringArg(args, "state")
 	if draftsOnly {
@@ -133,12 +184,11 @@ func (c *Client) argusRuleList(ctx context.Context, args map[string]interface{},
 		if err != nil {
 			return nil, err
 		}
-		catalog, _ := c.loadRuleCatalog(ctx, ruleType)
 		for _, row := range rows {
 			if state != "" && !strings.EqualFold(row.State, state) {
 				continue
 			}
-			item := summarizeArsenalForList(row, ruleType, catalog)
+			item := summarizeArsenalForList(row, ruleType)
 			if query != "" && !ruleListItemMatchesQuery(item, query) {
 				continue
 			}
@@ -172,7 +222,6 @@ func (c *Client) argusRuleList(ctx context.Context, args map[string]interface{},
 	}
 	return map[string]interface{}{
 		"status":           "success",
-		"source":           "native_api",
 		"action":           map[bool]string{true: "drafts", false: "rule_list"}[draftsOnly],
 		"rule_type":        publicRuleTypeForList(ruleTypes),
 		"state":            state,
@@ -186,21 +235,7 @@ func (c *Client) argusRuleList(ctx context.Context, args map[string]interface{},
 		"next_range_end":   nextEnd,
 		"list_snapshot":    time.Now().UTC().Format(time.RFC3339),
 		"items":            window,
-		"mcp_guidance":     ruleListGuidance(draftsOnly),
 	}, nil
-}
-
-func (c *Client) loadArsenalContent(ctx context.Context, ruleType, fileName string) (string, error) {
-	var rows []arsenalRecord
-	if err := c.do(ctx, http.MethodGet, "/api/v1/arsenals/"+url.PathEscape(ruleType)+"?all=1", nil, &rows); err != nil {
-		return "", err
-	}
-	for _, row := range rows {
-		if row.FileName == fileName {
-			return row.Content, nil
-		}
-	}
-	return "", nil
 }
 
 func (c *Client) loadArsenalRows(ctx context.Context, ruleType string, lite bool) ([]arsenalRecord, error) {
@@ -213,25 +248,6 @@ func (c *Client) loadArsenalRows(ctx context.Context, ruleType string, lite bool
 		return nil, err
 	}
 	return rows, nil
-}
-
-func (c *Client) loadRuleCatalog(ctx context.Context, ruleType string) ([]catalogRecord, error) {
-	switch ruleType {
-	case "poc":
-		var rows []catalogRecord
-		return rows, c.do(ctx, http.MethodGet, "/api/v1/poc-rules?all=1", nil, &rows)
-	case "finger":
-		var rows []catalogRecord
-		return rows, c.do(ctx, http.MethodGet, "/api/v1/dictionaries/fingerprint", nil, &rows)
-	case "workflow":
-		var rows []catalogRecord
-		return rows, c.do(ctx, http.MethodGet, "/api/v1/dictionaries/workflow", nil, &rows)
-	case "active_fingerprint":
-		var rows []catalogRecord
-		return rows, c.do(ctx, http.MethodGet, "/api/v1/active-fingerprint-rules?all=1", nil, &rows)
-	default:
-		return nil, nil
-	}
 }
 
 func normalizeRuleListRange(args map[string]interface{}) (int, int, error) {
@@ -252,25 +268,21 @@ func normalizeRuleListRange(args map[string]interface{}) (int, int, error) {
 	return start, end, nil
 }
 
-func summarizeArsenalForList(row arsenalRecord, ruleType string, catalog []catalogRecord) map[string]interface{} {
+func summarizeArsenalForList(row arsenalRecord, ruleType string) map[string]interface{} {
 	content := row.Content
 	contentSize := len(content)
 	if contentSize == 0 && row.ContentSize > 0 {
 		contentSize = row.ContentSize
 	}
-	fileName := row.EffectiveFileName()
-	artifactID := row.StableID()
-	summary := filterCatalogForArtifact(catalog, ruleType, artifactID, fileName, "", "")
 	item := map[string]interface{}{
 		"rule_type":       publicRuleType(ruleType),
-		"file_name":       fileName,
-		"artifact_id":     artifactID,
+		"file_name":       row.EffectiveFileName(),
+		"artifact_id":     row.StableID(),
 		"state":           row.State,
 		"hash":            row.Hash,
 		"version":         row.Version,
 		"content_size":    contentSize,
 		"content_preview": contentPreview(content, 280),
-		"catalog_summary": catalogRaw(summary),
 		"updated_at":      row.UpdatedAt,
 		"created_at":      row.CreatedAt,
 	}
@@ -315,47 +327,6 @@ func publicRuleTypeForList(ruleTypes []string) interface{} {
 	return out
 }
 
-func catalogRowMatchesRuleID(row catalogRecord, ruleType, ruleID string) bool {
-	if ruleID == "" {
-		return true
-	}
-	switch ruleType {
-	case "poc":
-		return row.Name == ruleID || row.SourceFile == ruleID
-	case "finger", "workflow", "active_fingerprint":
-		return row.Product == ruleID
-	default:
-		return false
-	}
-}
-
-func filterCatalogForArtifact(catalog []catalogRecord, ruleType, artifactID, fileName, ruleID, productName string) []catalogRecord {
-	out := []catalogRecord{}
-	for _, row := range catalog {
-		if artifactID != "" {
-			if row.ArtifactID != "" && row.ArtifactID == artifactID {
-				out = append(out, row)
-				continue
-			}
-		}
-		if fileName != "" {
-			if got := firstNonEmpty(row.SourceFile, row.FileName); got != "" && got == fileName {
-				out = append(out, row)
-				continue
-			}
-		}
-		if ruleID != "" && catalogRowMatchesRuleID(row, ruleType, ruleID) {
-			out = append(out, row)
-			continue
-		}
-		if productName != "" && row.Product == productName {
-			out = append(out, row)
-			continue
-		}
-	}
-	return out
-}
-
 func stableRefFromArsenal(row arsenalRecord, publicType string) map[string]interface{} {
 	return map[string]interface{}{
 		"artifact_id": row.StableID(),
@@ -366,16 +337,68 @@ func stableRefFromArsenal(row arsenalRecord, publicType string) map[string]inter
 	}
 }
 
+type workflowEntry struct {
+	Type []string `yaml:"type"`
+	Pocs []string `yaml:"pocs"`
+}
+
+func yamlMappingKeys(content string) []string {
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
+	data := map[string]interface{}{}
+	if yaml.Unmarshal([]byte(content), &data) != nil {
+		return nil
+	}
+	names := make([]string, 0, len(data))
+	for name := range data {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func optionalStringRange(args map[string]interface{}, total int) (int, int, bool, error) {
+	if !hasArg(args, "range_start") && !hasArg(args, "range_end") {
+		return 0, 0, false, nil
+	}
+	start := intArgDefault(args, "range_start", 1)
+	end := intArgDefault(args, "range_end", total)
+	if start <= 0 {
+		start = 1
+	}
+	if end <= 0 {
+		end = total
+	}
+	if end < start {
+		return 0, 0, false, fmt.Errorf("range_end must be greater than or equal to range_start")
+	}
+	if start > total {
+		return total + 1, total, true, nil
+	}
+	if end > total {
+		end = total
+	}
+	return start, end, true, nil
+}
+
 func productEntryFromContent(ruleType, content, productName string) interface{} {
 	if strings.TrimSpace(productName) == "" || strings.TrimSpace(content) == "" {
 		return nil
 	}
 	switch ruleType {
-	case "finger":
+	case "finger", "dir":
 		data := map[string][]string{}
 		if yaml.Unmarshal([]byte(content), &data) == nil {
 			if rules, ok := data[productName]; ok {
-				return map[string]interface{}{"product_name": productName, "rules": rules}
+				key := "rules"
+				if ruleType == "dir" {
+					key = "paths"
+				}
+				return map[string]interface{}{"product_name": productName, key: rules}
 			}
 		}
 	case "workflow":
@@ -387,56 +410,6 @@ func productEntryFromContent(ruleType, content, productName string) interface{} 
 		}
 	}
 	return nil
-}
-
-func (c *Client) ruleReferences(ctx context.Context, ruleType, fileName, productName string, catalog []catalogRecord) map[string]interface{} {
-	refs := map[string]interface{}{}
-	workflows, err := c.loadRuleCatalog(ctx, "workflow")
-	if err == nil {
-		switch ruleType {
-		case "poc":
-			matches := []map[string]interface{}{}
-			for _, wf := range workflows {
-				for _, poc := range wf.POCs {
-					if poc == fileName || strings.TrimSuffix(poc, ".yaml") == strings.TrimSuffix(fileName, ".yaml") {
-						matches = append(matches, wf.Raw)
-						break
-					}
-				}
-			}
-			refs["workflows"] = matches
-		case "finger", "workflow":
-			if productName != "" {
-				matches := []map[string]interface{}{}
-				for _, wf := range workflows {
-					if wf.Product == productName {
-						matches = append(matches, wf.Raw)
-					}
-				}
-				refs["workflows"] = matches
-			}
-		}
-	}
-	return refs
-}
-
-func ruleGetGuidance(ruleType string) map[string]interface{} {
-	return map[string]interface{}{
-		"next_steps": []string{"use this content/hash/version as the source of truth before editing", "after modifying content call argus_rule_save", "publish with argus_rule_apply using the returned hash/version"},
-		"warnings":   []string{"argus_product_search is fuzzy; rule_get is the exact read path before save/publish"},
-		"rule_type":  ruleType,
-	}
-}
-
-func ruleListGuidance(draftsOnly bool) map[string]interface{} {
-	next := []string{"if the desired rule is not in this range, call again with next_range_start and next_range_end", "call argus_context action=rule_get before editing any listed item"}
-	if draftsOnly {
-		next = append([]string{"review existing Drafts before saving to avoid overwriting unreviewed work"}, next...)
-	}
-	return map[string]interface{}{
-		"next_steps": next,
-		"warnings":   []string{"rule_list and drafts are exact range lists, not fuzzy product search; use argus_product_search for fuzzy discovery"},
-	}
 }
 
 func contentPreview(content string, maxLen int) string {

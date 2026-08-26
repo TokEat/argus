@@ -49,6 +49,7 @@ type RouterDependencies struct {
 	ObjectStorageRoot    string
 	EgressBroker         *egresspkg.Broker
 	EXPWorkspace         *expworkspace.Service
+	PublicBaseURL        string
 }
 
 // BuildService owns mutable build execution and cancellation state.
@@ -83,6 +84,10 @@ var activeRouterDependencies = &RouterDependencies{
 
 func normalizeRouterDependencies(deps RouterDependencies) *RouterDependencies {
 	deps.AgentPSK = strings.TrimSpace(deps.AgentPSK)
+	deps.PublicBaseURL = strings.TrimRight(strings.TrimSpace(deps.PublicBaseURL), "/")
+	if deps.PublicBaseURL == "" {
+		deps.PublicBaseURL = "http://127.0.0.1:8085"
+	}
 	if deps.Build == nil {
 		deps.Build = newBuildService(nil)
 	}

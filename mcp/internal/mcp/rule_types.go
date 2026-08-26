@@ -15,6 +15,8 @@ func normalizeRuleType(ruleType string) string {
 		return "poc"
 	case "behavior_probe", "active_fingerprint", "active-fingerprint":
 		return "active_fingerprint"
+	case "dir":
+		return "dir"
 	default:
 		return strings.ToLower(strings.TrimSpace(ruleType))
 	}

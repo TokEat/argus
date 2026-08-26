@@ -41,43 +41,19 @@ func authLogin(c *gin.Context) {
 	}
 
 	// 尝试从数据库校验用户
-	var user db.User
-	var tenantClaim string
-	var roleClaim string
-	var userIDClaim string
-	var expAuthorizedClaim bool
-	if err := db.DB.Where("username = ?", loginUsername).First(&user).Error; err == nil {
-		// 数据库有此用户，校验密码
-		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Wrong password"})
-			return
-		}
-		if user.Status != "active" {
-			c.JSON(http.StatusForbidden, gin.H{"error": "User is disabled"})
-			return
-		}
-		tenantClaim = user.TenantID
-		roleClaim = user.Role
-		if roleClaim == "" {
-			roleClaim = "viewer"
-		}
-		userIDClaim = fmt.Sprintf("%d", user.ID)
-		expAuthorizedClaim = user.ExpAuthorized
-	} else if errors.Is(err, gorm.ErrRecordNotFound) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Wrong password"})
-		return
-	} else {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query user"})
+	identity, err := authenticateArgusUser(loginUsername, req.Password)
+	if err != nil {
+		writeAuthLoginError(c, err)
 		return
 	}
 
 	// 颁发 Token（包含角色信息）
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"tenant_id":      tenantClaim,
-		"role":           roleClaim,
-		"role_base":      baseRoleForToken(tenantClaim, roleClaim),
-		"user_id":        userIDClaim,
-		"exp_authorized": expAuthorizedClaim,
+		"tenant_id":      identity.TenantID,
+		"role":           identity.Role,
+		"role_base":      identity.RoleBase,
+		"user_id":        identity.UserID,
+		"exp_authorized": identity.ExpAuthorized,
 		"exp":            time.Now().Add(time.Hour * 72).Unix(),
 	})
 	tokenString, err := token.SignedString(currentJWTSecret())
@@ -87,6 +63,58 @@ func authLogin(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"token": tokenString})
+}
+
+type argusIdentity struct {
+	UserID        string
+	TenantID      string
+	Role          string
+	RoleBase      string
+	ExpAuthorized bool
+}
+
+var (
+	errAuthInvalidCredentials = errors.New("wrong password")
+	errAuthUserDisabled       = errors.New("user is disabled")
+	errAuthLookupFailed       = errors.New("failed to query user")
+)
+
+func authenticateArgusUser(username, password string) (argusIdentity, error) {
+	var user db.User
+	if err := db.DB.Where("username = ?", username).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return argusIdentity{}, errAuthInvalidCredentials
+		}
+		return argusIdentity{}, errAuthLookupFailed
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		return argusIdentity{}, errAuthInvalidCredentials
+	}
+	if user.Status != "active" {
+		return argusIdentity{}, errAuthUserDisabled
+	}
+	role := user.Role
+	if role == "" {
+		role = "viewer"
+	}
+	return argusIdentity{
+		UserID:        fmt.Sprintf("%d", user.ID),
+		TenantID:      user.TenantID,
+		Role:          role,
+		RoleBase:      baseRoleForToken(user.TenantID, role),
+		ExpAuthorized: user.ExpAuthorized,
+	}, nil
+}
+
+func writeAuthLoginError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, errAuthInvalidCredentials):
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Wrong password"})
+	case errors.Is(err, errAuthUserDisabled):
+		c.JSON(http.StatusForbidden, gin.H{"error": "User is disabled"})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query user"})
+	}
 }
 
 func listUsers(c *gin.Context) {

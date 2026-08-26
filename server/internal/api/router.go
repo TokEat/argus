@@ -292,26 +292,16 @@ func TenantMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		if claims, ok := token.Claims.(jwt.MapClaims); ok {
-			c.Set("tenant", claims["tenant_id"])
-			// 解析角色信息用于 RBAC
-			if role, ok := claims["role"].(string); ok {
-				c.Set("role", role)
-			} else {
-				c.Set("role", "admin") // 兼容旧 token
-			}
-			if uid, ok := claims["user_id"].(string); ok {
-				c.Set("user_id", uid)
-			}
-			if expAuthorized, ok := claims["exp_authorized"].(bool); ok {
-				c.Set("exp_authorized", expAuthorized)
-			} else {
-				c.Set("exp_authorized", false)
-			}
-		} else {
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid claims map"})
 			return
 		}
+		if !tokenAllowsAPI(claims) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token audience"})
+			return
+		}
+		applyJWTClaims(c, claims)
 
 		c.Next()
 	}
@@ -366,7 +356,8 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 	r.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, UPDATE")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Idempotency-Key")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Idempotency-Key, Mcp-Session-Id, Last-Event-ID, MCP-Protocol-Version")
+		c.Writer.Header().Set("Access-Control-Expose-Headers", "Mcp-Session-Id, Last-Event-ID, WWW-Authenticate")
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
 			return
@@ -383,16 +374,22 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 	api.Use(RBACMiddleware())
 	registerAPIV1Routes(api)
 
+	registerOAuthRoutes(r)
+	registerMCPHTTP(r)
+
 	// SPA 控制塔前台映射兜底
 	r.Static("/assets", "./server-ui/dist/assets")
 	r.Static("/release", "./release") // Agent 二进制分发（OSS fallback）
 	r.StaticFile("/favicon.ico", "./server-ui/dist/favicon.ico")
 	r.NoRoute(func(c *gin.Context) {
-		if !strings.HasPrefix(c.Request.URL.Path, "/api/") {
-			c.File("./server-ui/dist/index.html")
-		} else {
+		if strings.HasPrefix(c.Request.URL.Path, "/api/") ||
+			strings.HasPrefix(c.Request.URL.Path, "/mcp") ||
+			strings.HasPrefix(c.Request.URL.Path, "/oauth") ||
+			strings.HasPrefix(c.Request.URL.Path, "/.well-known/") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "API route not found"})
+			return
 		}
+		c.File("./server-ui/dist/index.html")
 	})
 
 	return r

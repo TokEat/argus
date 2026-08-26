@@ -57,8 +57,6 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]inte
 	switch name {
 	case "argus_context":
 		return c.argusContext(ctx, args)
-	case "argus_product_search":
-		return c.argusProductSearch(ctx, args)
 	case "argus_rule_debug":
 		return c.argusRuleDebug(ctx, args)
 	case "argus_rule_save":

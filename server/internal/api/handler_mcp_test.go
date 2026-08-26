@@ -101,14 +101,19 @@ func TestMCPContextSelfDescribingResourcesAndQuickstart(t *testing.T) {
 		want []string
 	}{
 		{
+			name: "help",
+			body: `{"action":"help"}`,
+			want: []string{"source-less MCP client", "argus://dir/spec", "info.author", "rule_get", "coverage", "string array"},
+		},
+		{
 			name: "resources",
 			body: `{"action":"resources"}`,
-			want: []string{"argus://argus-mcp/quickstart", "argus://fingerprint/spec", "argus://workflow/spec", "recommended_reading_order"},
+			want: []string{"argus://argus-mcp/quickstart", "argus://fingerprint/spec", "argus://dir/spec", "argus://workflow/spec", "recommended_reading_order"},
 		},
 		{
 			name: "quickstart",
 			body: `{"action":"quickstart"}`,
-			want: []string{"debug", "save", "publish", "workflow_links"},
+			want: []string{"debug", "save", "publish", "argus_rule_debug"},
 		},
 		{
 			name: "lifecycle",
@@ -144,12 +149,15 @@ func TestMCPResourceEndpointsReturnSelfDescribingDocs(t *testing.T) {
 		want    []string
 	}{
 		{name: "quickstart", handler: mcpArgusMCPQuickstart, wantURI: "argus://argus-mcp/quickstart", want: []string{"argus_rule_debug", "argus_rule_save", "argus_rule_apply"}},
+		{name: "tool guide", handler: mcpArgusMCPToolGuide, wantURI: "argus://argus-mcp/tool-guide", want: []string{"coverage", "include_content", "name array"}},
 		{name: "fingerprint spec", handler: mcpFingerprintSpec, wantURI: "argus://fingerprint/spec", want: []string{"body=", "product_name"}},
+		{name: "dir spec", handler: mcpDirSpec, wantURI: "argus://dir/spec", want: []string{"rule_type: dir", "paths"}},
+		{name: "dir template", handler: mcpDirTemplate, wantURI: "argus://dir/template", want: []string{"ExampleProduct", "/admin"}},
 		{name: "behavior probe spec", handler: mcpBehaviorProbeSpec, wantURI: "argus://behavior-probe/spec", want: []string{"active-fingerprint", "argus-behavior-kind", "ordinary HTTP response", "risk_confirmed", "HTTP/HTTPS"}},
 		{name: "behavior probe template", handler: mcpBehaviorProbeTemplate, wantURI: "argus://behavior-probe/template", want: []string{"example-product-detect", "Example-Product", "argus-behavior-kind", "{{randstr}}"}},
 		{name: "poc spec", handler: mcpPOCSpec, wantURI: "argus://poc/spec", want: []string{"id:", "requests:", "matchers:"}},
 		{name: "workflow spec", handler: mcpWorkflowSpec, wantURI: "argus://workflow/spec", want: []string{"root", "workflow_pocs", "General-Poc-*", "general POC workflow"}},
-		{name: "full chain example", handler: mcpFullChainExample, wantURI: "argus://examples/fingerprint-poc-workflow", want: []string{"fingerprint", "workflow_links", "test_only"}},
+		{name: "full chain example", handler: mcpFullChainExample, wantURI: "argus://examples/fingerprint-poc-workflow", want: []string{"fingerprint", "rule_get", "test_only"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, recorder := newTenantContextWithRole(http.MethodGet, "/mcp/resources", "operator", "9")
@@ -380,6 +388,80 @@ func TestMCPRuleContextWorkflowLinks(t *testing.T) {
 		if !strings.Contains(recorder.Body.String(), want) {
 			t.Fatalf("context response missing %q: %s", want, recorder.Body.String())
 		}
+	}
+}
+
+func TestMCPContextCoverageFingerprintWithoutPOC(t *testing.T) {
+	store := setupAITestDB(t)
+	seed := []db.FingerprintRule{
+		{TenantID: "default", ProductName: "HasPOC", RuleExpr: `body="a"`, SourceFile: "finger.yaml", State: "Approved", Enabled: true},
+		{TenantID: "default", ProductName: "HasPOC", RuleExpr: `title="a"`, SourceFile: "finger.yaml", State: "Approved", Enabled: true},
+		{TenantID: "default", ProductName: "MissingPOC", RuleExpr: `body="b"`, SourceFile: "finger.yaml", State: "Approved", Enabled: true},
+		{TenantID: "default", ProductName: "AlsoMissing", RuleExpr: `body="c"`, SourceFile: "finger.yaml", State: "Approved", Enabled: true},
+		{TenantID: "default", ProductName: "DisabledFP", RuleExpr: `body="d"`, SourceFile: "finger.yaml", State: "Draft", Enabled: true},
+		{TenantID: "other", ProductName: "OtherTenant", RuleExpr: `body="e"`, SourceFile: "finger.yaml", State: "Approved", Enabled: true},
+	}
+	for i := range seed {
+		if err := store.Create(&seed[i]).Error; err != nil {
+			t.Fatalf("seed fingerprint rule: %v", err)
+		}
+	}
+	if err := store.Model(&db.FingerprintRule{}).Where("tenant_id = ? AND product_name = ?", "default", "DisabledFP").Update("enabled", false).Error; err != nil {
+		t.Fatalf("disable fingerprint rule: %v", err)
+	}
+	if err := store.Create(&db.WorkflowRule{TenantID: "default", ProductName: "HasPOC", PocName: "has-poc", MatchType: "root", SourceFile: "workflow.yaml", State: "Approved", Enabled: true}).Error; err != nil {
+		t.Fatalf("seed workflow rule: %v", err)
+	}
+	if err := store.Create(&db.WorkflowRule{TenantID: "default", ProductName: "General-Poc-Web", PocName: "generic", MatchType: "root", SourceFile: "workflow.yaml", State: "Approved", Enabled: true}).Error; err != nil {
+		t.Fatalf("seed general poc workflow: %v", err)
+	}
+	if err := store.Create(&db.PocRule{TenantID: "default", Name: "has-poc", SourceFile: "has-poc.yaml", State: "Approved", Enabled: true}).Error; err != nil {
+		t.Fatalf("seed poc rule: %v", err)
+	}
+
+	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/mcp/tools/rule/context", "operator", "9")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/rule/context", strings.NewReader(`{"action":"coverage"}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	mcpRuleContext(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode coverage: %v", err)
+	}
+	if got["fingerprint_products"].(float64) != 3 || got["workflow_products_with_poc"].(float64) != 1 || got["fingerprint_without_poc"].(float64) != 2 || got["general_poc_groups"].(float64) != 1 {
+		t.Fatalf("unexpected coverage counts: %#v", got)
+	}
+	products, _ := got["products"].([]interface{})
+	if len(products) != 2 || products[0] != "AlsoMissing" || products[1] != "MissingPOC" {
+		t.Fatalf("expected compact missing names, got %#v", got["products"])
+	}
+	for _, name := range products {
+		if _, isObject := name.(map[string]interface{}); isObject {
+			t.Fatalf("coverage products must be names only, got %#v", name)
+		}
+	}
+	if strings.Contains(recorder.Body.String(), "OtherTenant") || strings.Contains(recorder.Body.String(), "DisabledFP") {
+		t.Fatalf("coverage leaked other tenant or disabled rows: %s", recorder.Body.String())
+	}
+
+	ctx, recorder = newTenantContextWithRole(http.MethodPost, "/mcp/tools/rule/context", "operator", "9")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/rule/context", strings.NewReader(`{"action":"coverage","include_names":false}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	mcpRuleContext(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var countsOnly map[string]interface{}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &countsOnly); err != nil {
+		t.Fatalf("decode coverage without names: %v", err)
+	}
+	if _, exists := countsOnly["products"]; exists {
+		t.Fatalf("include_names=false should omit products: %#v", countsOnly)
+	}
+	if countsOnly["fingerprint_without_poc"].(float64) != 2 {
+		t.Fatalf("counts should remain when names are omitted: %#v", countsOnly)
 	}
 }
 

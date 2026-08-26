@@ -516,7 +516,6 @@ func TestTenantRolePermissionMatrix(t *testing.T) {
 		{method: "POST", path: "/api/v1/ai/arsenal/analyze/stream", want: "admin"},
 		{method: "GET", path: "/api/v1/reports/export/assets", want: "viewer"},
 		{method: "GET", path: "/api/v1/reports/export/fingerprints", want: "viewer"},
-		{method: "POST", path: "/api/v1/mcp/tools/poc/debug", want: "operator"},
 		{method: "POST", path: "/api/v1/mcp/tools/rule/context", want: "operator"},
 		{method: "POST", path: "/api/v1/mcp/tools/rule/debug", want: "operator"},
 		{method: "POST", path: "/api/v1/mcp/tools/rule/save", want: "operator"},
@@ -588,7 +587,6 @@ func TestRBACKeepsMCPRuleAuthoringPermissions(t *testing.T) {
 		path   string
 		want   string
 	}{
-		{method: http.MethodPost, path: "/api/v1/mcp/tools/poc/debug", want: "operator"},
 		{method: http.MethodPost, path: "/api/v1/mcp/tools/rule/context", want: "operator"},
 		{method: http.MethodPost, path: "/api/v1/mcp/tools/rule/debug", want: "operator"},
 		{method: http.MethodPost, path: "/api/v1/mcp/tools/rule/save", want: "operator"},

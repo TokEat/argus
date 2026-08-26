@@ -46,6 +46,9 @@ func shouldGzip(c *gin.Context) bool {
 	if !strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") {
 		return false
 	}
+	if strings.HasPrefix(c.Request.URL.Path, "/mcp") {
+		return false
+	}
 	if strings.Contains(c.GetHeader("Accept"), "text/event-stream") {
 		return false
 	}

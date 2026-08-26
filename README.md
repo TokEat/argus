@@ -248,9 +248,10 @@ make smoke-local
 | `ARGUS_EGRESS_GATEWAY_TOKEN` | Yaksha Gateway 独立共享密钥 | `openssl rand -hex 32` |
 | `YAKSHA_RELAY_ADDR` | Yaksha 连接的私有 Gateway 地址 | `127.0.0.1:50052` |
 | `YAKSHA_RELAY_TOKEN` | 与 Gateway Token 相同，仅注入 Yaksha Daemon | `openssl rand -hex 32` |
-| `ARGUS_MCP_AUTH_TOKEN` | MCP HTTP/SSE 入站 Bearer Token，与 Server API Token 分离 | `openssl rand -hex 32` |
+| `ARGUS_MCP_AUTH_TOKEN` | 独立 `argus-mcp` HTTP/SSE **入站** Bearer（stdio 不需要）。Cursor 连 Server `/mcp` 时走 OAuth，不要把 JWT 写进 mcp.json | `openssl rand -hex 32` |
+| `ARGUS_PUBLIC_URL` | Server 对外 API 基址，用作 OAuth issuer 与 MCP resource（默认 `http://127.0.0.1:<apiPort>`） | `http://127.0.0.1:18085` |
 
-> **安全约束**：生产模式下前三个基础密钥必须设置，否则 Server 会直接退出。开发环境可通过 `--dev` flag 跳过基础启动检查；未设置 `ARGUS_JWT_SECRET` 时每次启动生成一次性 HMAC 密钥，进程重启后已签发 token 全部失效。`--dev` 不得用于生产环境。Agent 原生 Egress 启用时，Gateway 地址和 Token 必须成对配置；Gateway 与 Yaksha Token 必须一致，监听端口不得发布公网。MCP 使用 HTTP/SSE 时必须配置独立入站 Token，否则拒绝启动；stdio 不需要该 Token。
+> **安全约束**：生产模式下前三个基础密钥必须设置，否则 Server 会直接退出。开发环境可通过 `--dev` flag 跳过基础启动检查；未设置 `ARGUS_JWT_SECRET` 时每次启动生成一次性 HMAC 密钥，进程重启后已签发 token 全部失效。`--dev` 不得用于生产环境。Agent 原生 Egress 启用时，Gateway 地址和 Token 必须成对配置；Gateway 与 Yaksha Token 必须一致，监听端口不得发布公网。独立 `argus-mcp` 使用 HTTP/SSE 时必须配置 `ARGUS_MCP_AUTH_TOKEN`，否则拒绝启动；stdio 不需要该 Token。Cursor 推荐配置 `{ "url": "http://<server>/mcp" }`，在 IDE 里 Connect 后用浏览器登录现有 Argus 账号，不要把 JWT 写入 mcp.json。
 
 #### 生产部署
 

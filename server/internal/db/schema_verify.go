@@ -19,6 +19,21 @@ func schemaTableSpecs() []schemaTableSpec {
 			Table:   "schema_migrations",
 			Columns: []string{"version", "name", "checksum", "applied_at"},
 		},
+		{
+			Table:   "oauth_clients",
+			Columns: []string{"client_id", "redirect_uris", "public", "tenant_id", "created_at"},
+			Indexes: []string{"idx_oauth_clients_tenant_id"},
+		},
+		{
+			Table:   "oauth_authorization_codes",
+			Columns: []string{"code_hash", "client_id", "redirect_uri", "resource", "code_challenge", "user_id", "tenant_id", "role", "role_base", "exp_authorized", "expires_at", "used_at", "created_at"},
+			Indexes: []string{"idx_oauth_authorization_codes_client_id", "idx_oauth_authorization_codes_tenant_id", "idx_oauth_authorization_codes_expires_at"},
+		},
+		{
+			Table:   "oauth_refresh_tokens",
+			Columns: []string{"token_hash", "client_id", "user_id", "tenant_id", "role", "role_base", "exp_authorized", "resource", "expires_at", "revoked_at", "created_at"},
+			Indexes: []string{"idx_oauth_refresh_tokens_client_id", "idx_oauth_refresh_tokens_user_id", "idx_oauth_refresh_tokens_tenant_id", "idx_oauth_refresh_tokens_expires_at", "idx_oauth_refresh_tokens_revoked_at"},
+		},
 		{Table: "scan_policy_intents", Columns: []string{"tenant_id", "project_id", "root_task_id", "schema_version", "policy_json", "policy_hash", "plan_hash", "risk_status", "credential_status", "authorization_actor_id", "authorized_at", "created_at", "updated_at"}, Indexes: []string{"idx_scan_policy_intent_root", "idx_scan_policy_intents_project_id", "idx_scan_policy_intents_policy_hash", "idx_scan_policy_intents_plan_hash"}},
 		{Table: "scan_stage_derivations", Columns: []string{"tenant_id", "project_id", "root_task_id", "stage", "status", "plan_hash", "observation_hash", "batch_id", "attempt_id", "item_count", "summary", "created_at", "updated_at"}, Indexes: []string{"idx_scan_stage_derivation", "idx_scan_stage_derivations_batch_id"}},
 		{Table: "credential_dictionaries", Columns: []string{"id", "tenant_id", "project_id", "kind", "name", "created_by", "created_at", "updated_at", "deleted_at"}, Indexes: []string{"idx_credential_dictionary_name", "idx_credential_dictionaries_project_id"}},
