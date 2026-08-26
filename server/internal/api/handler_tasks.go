@@ -299,6 +299,7 @@ func getTaskDetail(c *gin.Context) {
 		"task": gin.H{
 			"id":                     rootTask.ID,
 			"name":                   rootTask.Name,
+			"project_id":             rootTask.ProjectID,
 			"status":                 rootTask.Status,
 			"priority":               rootTask.Priority,
 			"total_chunks":           rootTask.TotalChunks,

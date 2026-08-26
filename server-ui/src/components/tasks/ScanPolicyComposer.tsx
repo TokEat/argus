@@ -52,6 +52,33 @@ export const scanPolicyInitialValues: ScanPolicyFormValues = {
 	subdomain_books: [],
 };
 
+export function policyToFormValues(policy?: API.ScanPolicy | null): Partial<ScanPolicyFormValues> {
+    if (!policy) return {};
+    return {
+        preset: policy.preset,
+        port_profile: policy.port_profile,
+        custom_ports: policy.custom_ports,
+        scan_method: policy.scan_method,
+        intensity: policy.intensity,
+        subdomain_discovery: Boolean(policy.capabilities?.subdomain_discovery),
+        subdomain_bruteforce: Boolean(policy.capabilities?.subdomain_bruteforce),
+        subdomain_bruteforce_depth: policy.subdomains?.bruteforce_depth || 1,
+        subdomain_books: (policy.subdomains?.wordlists || []).map((item) => item.id),
+        allow_cdn_assets: Boolean(policy.capabilities?.allow_cdn_assets),
+        allow_private_resolved_domains: Boolean(policy.capabilities?.allow_private_resolved_domains),
+        host_binding: Boolean(policy.capabilities?.host_binding),
+        behavior_probe: Boolean(policy.capabilities?.behavior_probe),
+        directory_probe: Boolean(policy.capabilities?.directory_probe),
+        risk_validation: Boolean(policy.capabilities?.risk_validation),
+        credential_validation: Boolean(policy.capabilities?.credential_validation),
+        username_books: (policy.credentials?.username_books || []).map((item) => item.id),
+        password_books: (policy.credentials?.password_books || []).map((item) => item.id),
+        credential_pair_limit: policy.credentials?.pair_limit || 50000,
+        validation_confirmed: Boolean(policy.authorization?.validation_confirmed),
+        high_risk_auto_execution: Boolean(policy.authorization?.allow_high_risk_auto_execution),
+    };
+}
+
 export function buildScanPolicy(values: ScanPolicyFormValues, dictionaries: API.CredentialDictionary[], subdomainDictionaries: API.SubdomainDictionary[] = []): API.ScanPolicy {
     const preset = values.preset || 'standard';
     const presetValues = preset === 'custom' ? {} : presetDefaults[preset];
@@ -99,11 +126,17 @@ interface Props {
     form: FormInstance<ScanPolicyFormValues>;
     projects: API.Project[];
     onPlanChange: (plan: API.ScanPlanPreview | null) => void;
+    /** create = 新建；update = 更新配置（项目/目标只读） */
+    mode?: 'create' | 'update';
+    /** 更新配置时锁定所属项目，不依赖可编辑下拉框 */
+    lockedProjectId?: string;
 }
 
-export default function ScanPolicyComposer({ form, projects, onPlanChange }: Props) {
+export default function ScanPolicyComposer({ form, projects, onPlanChange, mode = 'create', lockedProjectId }: Props) {
+    const readOnlyTargets = mode === 'update';
     const values = Form.useWatch([], form) as ScanPolicyFormValues | undefined;
-    const projectId = values?.project_id || '';
+    const projectId = lockedProjectId || values?.project_id || '';
+    const lockedProjectName = projects.find((project) => project.ID === projectId)?.Name || projectId;
     const [dictionaries, setDictionaries] = useState<API.CredentialDictionary[]>([]);
 	const [subdomainDictionaries, setSubdomainDictionaries] = useState<API.SubdomainDictionary[]>([]);
     const [dictionaryOpen, setDictionaryOpen] = useState(false);
@@ -143,7 +176,10 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
     useEffect(() => {
         const currentValues = form.getFieldsValue(true) as ScanPolicyFormValues;
         if (!projectId || !currentValues.targets?.trim()) {
-            setPreview(null); setPreviewError('填写项目和目标后生成执行计划'); onPlanChange(null); return;
+            setPreview(null);
+            setPreviewError(readOnlyTargets ? '无法读取当前任务的项目或目标，无法生成执行计划' : '填写项目和目标后生成执行计划');
+            onPlanChange(null);
+            return;
         }
         let cancelled = false;
         const timer = window.setTimeout(async () => {
@@ -160,7 +196,7 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
             } finally { if (!cancelled) setPreviewing(false); }
         }, 350);
         return () => { cancelled = true; window.clearTimeout(timer); };
-    }, [previewKey, projectId, form, dictionaries, subdomainDictionaries, onPlanChange]);
+    }, [previewKey, projectId, form, dictionaries, subdomainDictionaries, onPlanChange, readOnlyTargets]);
 
     const applyPreset = (preset: API.ScanPreset) => {
         if (preset !== 'custom') form.setFieldsValue({ ...presetDefaults[preset], preset });
@@ -177,13 +213,34 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
             <Row gutter={20} align="top">
                 <Col xs={24} xl={13}>
                     <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                        <Card size="small" title="项目与目标">
-                            <Form.Item name="project_id" label="所属项目" rules={[{ required: true, message: '请选择所属项目' }]}>
-                                <Select showSearch optionFilterProp="label" options={projects.map((project) => ({ label: project.Name, value: project.ID }))} placeholder="选择项目" />
-                            </Form.Item>
-                            <Form.Item name="name" label="任务名称（可选）"><Input placeholder="自动生成任务名称" /></Form.Item>
-                            <Form.Item name="targets" label="扫描目标" rules={[{ required: true, whitespace: true, message: '请输入扫描目标' }]} extra="每行一个 IP、域名、CIDR、IP 段或 URL。">
-                                <Input.TextArea rows={6} placeholder={'192.168.1.10\nexample.com\nhttps://example.com'} />
+                        <Card size="small" title={readOnlyTargets ? '项目与目标（只读）' : '项目与目标'}>
+                            {readOnlyTargets ? (
+                                <>
+                                    <Form.Item name="project_id" hidden><Input /></Form.Item>
+                                    <Form.Item label="所属项目">
+                                        <Input disabled value={lockedProjectName || '当前任务所属项目'} />
+                                    </Form.Item>
+                                </>
+                            ) : (
+                                <Form.Item name="project_id" label="所属项目" rules={[{ required: true, message: '请选择所属项目' }]}>
+                                    <Select
+                                        showSearch
+                                        optionFilterProp="label"
+                                        options={projects.map((project) => ({ label: project.Name, value: project.ID }))}
+                                        placeholder="选择项目"
+                                    />
+                                </Form.Item>
+                            )}
+                            {!readOnlyTargets && (
+                                <Form.Item name="name" label="任务名称（可选）"><Input placeholder="自动生成任务名称" /></Form.Item>
+                            )}
+                            <Form.Item
+                                name="targets"
+                                label="扫描目标"
+                                rules={[{ required: true, whitespace: true, message: '请输入扫描目标' }]}
+                                extra={readOnlyTargets ? '更新配置不修改目标；如需扩面请使用「增加批次」。' : '每行一个 IP、域名、CIDR、IP 段或 URL。'}
+                            >
+                                <Input.TextArea rows={readOnlyTargets ? 4 : 6} disabled={readOnlyTargets} placeholder={'192.168.1.10\nexample.com\nhttps://example.com'} />
                             </Form.Item>
                         </Card>
 

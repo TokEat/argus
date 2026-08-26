@@ -444,6 +444,7 @@ describe('TaskManagement', () => {
                 CompletedChunks: 0,
                 Priority: 1,
                 CurrentConfigVersion: 1,
+                ProjectID: 'project-1',
                 CreatedAt: '2026-08-09T01:00:00Z',
             } as API.RootTask],
             total: 1,
@@ -451,13 +452,43 @@ describe('TaskManagement', () => {
             page_size: 20,
             has_more: false,
         });
+        const sealedPolicy: API.ScanPolicy = {
+            schema_version: 'argus.scan-policy/v1',
+            preset: 'standard',
+            port_profile: 'top-1000',
+            scan_method: 'tcp',
+            intensity: 'balanced',
+            capabilities: {
+                subdomain_discovery: true,
+                subdomain_bruteforce: false,
+                allow_cdn_assets: false,
+                allow_private_resolved_domains: false,
+                host_binding: false,
+                behavior_probe: true,
+                directory_probe: false,
+                risk_validation: true,
+                credential_validation: false,
+            },
+            subdomains: { wordlists: [], bruteforce_depth: 0 },
+            credentials: { username_books: [], password_books: [], pair_limit: 50000 },
+            authorization: { validation_confirmed: true, allow_high_risk_auto_execution: false },
+        };
         const detail = {
             task: {
-                id: 'task-config', name: 'Config Task', status: 'Running', priority: 1,
+                id: 'task-config', name: 'Config Task', project_id: 'project-1', status: 'Running', priority: 1,
                 total_chunks: 1, completed_chunks: 0, total_targets: 1, completed_targets: 0,
                 timeout_sec: 60, original_targets: '["https://example.test"]',
                 config: { NoPoc: true, WebTimeout: 10 }, rule_version: 'rules-v1', current_config_version: 1,
                 created_at: '2026-08-09T01:00:00Z', updated_at: '2026-08-09T01:00:00Z',
+            },
+            scan_policy: {
+                schema_version: 'argus.scan-policy/v1',
+                policy: sealedPolicy,
+                policy_hash: 'policy-hash',
+                plan_hash: 'plan-hash',
+                risk_status: 'pending',
+                credential_status: 'skipped',
+                authorized_at: '2026-08-09T01:00:00Z',
             },
             sub_tasks: [], status_distribution: {}, reason_stats: [], audits: [],
             result_stats: { assets: 0, fingerprints: 0, vulns: 0, severity: {} },
@@ -497,16 +528,25 @@ describe('TaskManagement', () => {
         const modalHint = await screen.findByText(/新版本只用于之后新增的批次/);
         const dialog = modalHint.closest('[role="dialog"]') as HTMLElement;
         expect(dialog).toBeTruthy();
-        const timeoutInput = within(dialog).getByLabelText('批次超时（秒）');
+        expect(within(dialog).getByText('项目与目标（只读）')).toBeInTheDocument();
+        expect(within(dialog).getByDisplayValue('默认项目')).toBeInTheDocument();
+        expect(within(dialog).queryByPlaceholderText('选择项目')).not.toBeInTheDocument();
+        await user.click(within(dialog).getByText(/结构化专家配置/));
+        const timeoutInput = within(dialog).getByLabelText('任务超时（秒）');
         await user.clear(timeoutInput);
         await user.type(timeoutInput, '120');
         await user.type(within(dialog).getByPlaceholderText(/说明本次调整/), 'increase timeout');
+        await waitFor(() => expect(within(dialog).getByRole('button', { name: /保存为新版本/ })).toBeEnabled());
         await user.click(within(dialog).getByRole('button', { name: /保存为新版本/ }));
 
         await waitFor(() => expect(updateTaskConfigMock).toHaveBeenCalledWith('task-config', expect.objectContaining({
             timeout_sec: 120,
             change_note: 'increase timeout',
-            config: { NoPoc: true, WebTimeout: 10 },
+            plan_hash: 'plan-hash',
+            policy: expect.objectContaining({
+                schema_version: 'argus.scan-policy/v1',
+                preset: 'standard',
+            }),
         })));
     });
 

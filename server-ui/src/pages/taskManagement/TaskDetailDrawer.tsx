@@ -12,6 +12,62 @@ import { auditActionLabels, renderTaskStatusTag } from './shared';
 
 const { Text } = Typography;
 
+const presetLabels: Record<string, string> = {
+    quick: '快速 · 常用协议',
+    standard: '标准 · Top1000',
+    deep: '深度 · 全端口',
+    custom: '自定义',
+};
+const portProfileLabels: Record<string, string> = {
+    'common-100': '常用协议端口',
+    'top-1000': 'Top1000',
+    all: '1-65535',
+    custom: '自定义',
+};
+const scanMethodLabels: Record<string, string> = { tcp: 'TCP', syn: 'SYN（内置）' };
+const intensityLabels: Record<string, string> = { low: '低', balanced: '均衡', high: '高' };
+
+function enabledCapabilityLabels(capabilities?: API.ScanPolicy['capabilities']): string[] {
+    if (!capabilities) return [];
+    return ([
+        [capabilities.subdomain_discovery, '被动子域'],
+        [capabilities.subdomain_bruteforce, '子域爆破'],
+        [capabilities.behavior_probe, '行为探针'],
+        [capabilities.directory_probe, '路径指纹'],
+        [capabilities.risk_validation, '自动 POC'],
+        [capabilities.credential_validation, '弱口令'],
+        [capabilities.host_binding, 'Host Binding'],
+        [capabilities.allow_cdn_assets, 'CDN 资产'],
+        [capabilities.allow_private_resolved_domains, '解析到私网'],
+    ] as const).filter(([enabled]) => enabled).map(([, label]) => label);
+}
+
+function ScanPolicySummary({ policy }: { policy: API.ScanPolicy }) {
+    const capabilities = enabledCapabilityLabels(policy.capabilities);
+    return (
+        <>
+            <Divider orientation="left" style={{ fontSize: 13 }}>
+                <AuditOutlined style={{ marginRight: 4 }} />扫描配置
+            </Divider>
+            <Descriptions column={2} bordered size="small" style={{ marginBottom: 20 }}>
+                <Descriptions.Item label="预设">{presetLabels[policy.preset] || policy.preset}</Descriptions.Item>
+                <Descriptions.Item label="端口">
+                    {portProfileLabels[policy.port_profile] || policy.port_profile}
+                    {policy.port_profile === 'custom' && policy.custom_ports ? `（${policy.custom_ports}）` : ''}
+                </Descriptions.Item>
+                <Descriptions.Item label="扫描方式">{scanMethodLabels[policy.scan_method] || policy.scan_method}</Descriptions.Item>
+                <Descriptions.Item label="强度">{intensityLabels[policy.intensity] || policy.intensity}</Descriptions.Item>
+                <Descriptions.Item label="能力" span={2}>
+                    <Space wrap size={[4, 4]}>
+                        {capabilities.map((label) => <Tag key={label}>{label}</Tag>)}
+                        {capabilities.length === 0 && <Text type="secondary">仅基础发现</Text>}
+                    </Space>
+                </Descriptions.Item>
+            </Descriptions>
+        </>
+    );
+}
+
 type Props = {
     open: boolean;
     loading: boolean;
@@ -142,9 +198,6 @@ export default function TaskDetailDrawer({
                         <Descriptions.Item label="规则版本">
                             <Tag color="blue">{detail.task.rule_version || '-'}</Tag>
                         </Descriptions.Item>
-                        <Descriptions.Item label="配置版本">
-                            <Tag color="cyan">v{detail.task.current_config_version || 1}</Tag>
-                        </Descriptions.Item>
                         <Descriptions.Item label="创建时间">
                             {detail.task.created_at}
                         </Descriptions.Item>
@@ -205,11 +258,11 @@ export default function TaskDetailDrawer({
                             <Divider orientation="left" style={{ fontSize: 13 }}>被动收集结果</Divider>
                             <Table
                                 dataSource={detail.passive_collection?.results}
-                                rowKey={(row) => row.apex || row.query}
+                                rowKey={(row) => row.domain}
                                 size="small"
                                 pagination={false}
                                 columns={[
-                                    { title: '主域名', dataIndex: 'apex', key: 'apex', width: 180 },
+                                    { title: '主域名', dataIndex: 'domain', key: 'domain', width: 180 },
                                     {
                                         title: '查询到的子域名',
                                         dataIndex: 'subdomains',
@@ -258,21 +311,7 @@ export default function TaskDetailDrawer({
                         </>
                     )}
 
-                    {detail.task.config && typeof detail.task.config === 'object' && (
-                        <>
-                            <Divider orientation="left" style={{ fontSize: 13 }}>
-                                <AuditOutlined style={{ marginRight: 4 }} />扫描配置 <Tag color="cyan">v{detail.task.current_config_version || 1}</Tag>
-                            </Divider>
-                            <pre style={{
-                                background: '#0f172a', color: '#e2e8f0',
-                                borderRadius: 8, padding: 12, fontSize: 11,
-                                maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap',
-                                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                            }}>
-                                {JSON.stringify(detail.task.config, null, 2)}
-                            </pre>
-                        </>
-                    )}
+                    {detail.scan_policy?.policy && <ScanPolicySummary policy={detail.scan_policy.policy} />}
 
                     {detail.coverage_explanation && (
                         <TaskCoverageSection explanation={detail.coverage_explanation} />

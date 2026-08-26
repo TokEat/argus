@@ -79,6 +79,7 @@ declare namespace API {
     RunningTasks?: number;
     RuleVersion?: string;
     CurrentConfigVersion?: number;
+    ProjectID?: string;
     CreatedAt: string;
     UpdatedAt: string;
     ArchivedAt?: string | null;
@@ -366,6 +367,7 @@ declare namespace API {
     task: {
       id: string;
       name: string;
+      project_id?: string;
       status: string;
       priority: number;
       total_chunks: number;
@@ -537,6 +539,8 @@ declare namespace API {
     agent_selector?: Record<string, string>;
     agent_selector_rules?: AgentSelectorRules;
     change_note?: string;
+    policy?: ScanPolicy;
+    plan_hash?: string;
   }
 
   interface UpdateTaskConfigResponse {
@@ -544,6 +548,8 @@ declare namespace API {
     unchanged: boolean;
     current_config_version: number;
     revision: TaskConfigRevision;
+    policy_hash?: string;
+    plan_hash?: string;
   }
 
   // ======================== Node ========================
