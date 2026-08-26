@@ -52,7 +52,6 @@ info:
     product: DemoProduct
     version: v1.2.3
     argus-execution-class: verification
-    argus-risk-level: high
 `,
 		Hash:    "hash",
 		Version: 3,
@@ -136,19 +135,89 @@ func TestMaterializePocRuleDefaultsLegacyMetadataAndRejectsEXPClass(t *testing.T
 	if err != nil {
 		t.Fatalf("legacy POC should stay compatible: %v", err)
 	}
-	if legacy.ExecutionClass != PocExecutionClassDetection || legacy.RiskLevel != PocRiskLevelUnknown {
+	if legacy.ExecutionClass != PocExecutionClassDetection || legacy.RiskLevel != PocRiskLevelInfo {
 		t.Fatalf("unexpected legacy defaults: %#v", legacy)
 	}
-	if !PocRequiresSecondConfirmation(legacy.RiskLevel) {
-		t.Fatal("unknown legacy risk must require second confirmation")
+	if PocRequiresSecondConfirmation(legacy.RiskLevel) {
+		t.Fatal("info severity must not require second confirmation")
 	}
 
 	_, err = materializePocRule(Arsenal{
 		TenantID: "default", Type: "poc", FileName: "exploit.yaml",
-		Content: "id: exploit\ninfo:\n  name: Exploit\n  severity: high\n  metadata:\n    argus-execution-class: exploit\n    argus-risk-level: high\n",
+		Content: "id: exploit\ninfo:\n  name: Exploit\n  severity: high\n  metadata:\n    argus-execution-class: exploit\n",
 	})
 	if err == nil || !strings.Contains(err.Error(), "separate EXP package") {
 		t.Fatalf("expected exploit POC class to be rejected, got %v", err)
+	}
+}
+
+func TestPocRiskLevelFollowsNucleiSeverity(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		content     string
+		wantRisk    string
+		wantConfirm bool
+	}{
+		{
+			name:        "info",
+			content:     "id: info\ninfo:\n  name: Info\n  severity: info\n",
+			wantRisk:    PocRiskLevelInfo,
+			wantConfirm: false,
+		},
+		{
+			name:        "low",
+			content:     "id: low\ninfo:\n  name: Low\n  severity: low\n",
+			wantRisk:    PocRiskLevelLow,
+			wantConfirm: false,
+		},
+		{
+			name:        "medium",
+			content:     "id: medium\ninfo:\n  name: Medium\n  severity: medium\n",
+			wantRisk:    PocRiskLevelMedium,
+			wantConfirm: false,
+		},
+		{
+			name:        "high",
+			content:     "id: high\ninfo:\n  name: High\n  severity: high\n",
+			wantRisk:    PocRiskLevelHigh,
+			wantConfirm: true,
+		},
+		{
+			name:        "critical stored as high",
+			content:     "id: critical\ninfo:\n  name: Critical\n  severity: critical\n",
+			wantRisk:    PocRiskLevelHigh,
+			wantConfirm: true,
+		},
+		{
+			name:        "missing severity is unknown",
+			content:     "id: missing\ninfo:\n  name: Missing\n",
+			wantRisk:    PocRiskLevelUnknown,
+			wantConfirm: true,
+		},
+		{
+			name:        "ignores leftover argus-risk-level",
+			content:     "id: ignore-meta\ninfo:\n  name: Ignore\n  severity: info\n  metadata:\n    argus-risk-level: high\n",
+			wantRisk:    PocRiskLevelInfo,
+			wantConfirm: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rule, err := materializePocRule(Arsenal{
+				TenantID: "default", Type: "poc", FileName: tc.name + ".yaml",
+				Content: tc.content, State: "Approved",
+			})
+			if err != nil {
+				t.Fatalf("materialize: %v", err)
+			}
+			if rule.RiskLevel != tc.wantRisk {
+				t.Fatalf("risk_level=%q, want %q", rule.RiskLevel, tc.wantRisk)
+			}
+			if got := PocRequiresSecondConfirmation(rule.RiskLevel); got != tc.wantConfirm {
+				t.Fatalf("requires second confirmation=%v, want %v", got, tc.wantConfirm)
+			}
+		})
 	}
 }
 

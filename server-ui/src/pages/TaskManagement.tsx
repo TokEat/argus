@@ -95,11 +95,11 @@ type RiskValidationIntent = {
 };
 
 const riskLevelLabels: Record<API.RiskValidationPreviewCandidate['risk_level'], string> = {
-    unknown: '风险未分类', low: '低风险', medium: '中风险', high: '高风险',
+    unknown: '风险未分类', info: '信息级', low: '低风险', medium: '中风险', high: '高风险',
 };
 
 const riskLevelColors: Record<API.RiskValidationPreviewCandidate['risk_level'], string> = {
-    unknown: 'orange', low: 'green', medium: 'gold', high: 'red',
+    unknown: 'orange', info: 'default', low: 'green', medium: 'gold', high: 'red',
 };
 
 const severityColors: Record<string, string> = {

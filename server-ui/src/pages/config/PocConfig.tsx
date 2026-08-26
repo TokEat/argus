@@ -205,7 +205,6 @@ info:
   tags: tag1,tag2
   metadata:
     argus-execution-class: detection
-    argus-risk-level: low
 
 http:
   - method: GET
@@ -407,10 +406,10 @@ http:
 
     const getRiskTag = (record: API.PocRuleMetadata) => {
         const labels: Record<API.PocRuleMetadata['risk_level'], string> = {
-            unknown: '风险未分类', low: '低风险', medium: '中风险', high: '高风险',
+            unknown: '风险未分类', info: '信息级', low: '低风险', medium: '中风险', high: '高风险',
         };
         const colors: Record<API.PocRuleMetadata['risk_level'], string> = {
-            unknown: 'orange', low: 'green', medium: 'gold', high: 'red',
+            unknown: 'orange', info: 'default', low: 'green', medium: 'gold', high: 'red',
         };
         return (
             <Tooltip title={record.requires_second_confirmation ? '执行前必须二次确认' : '执行前仍需明确确认'}>

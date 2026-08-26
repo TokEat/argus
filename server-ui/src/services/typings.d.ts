@@ -432,7 +432,7 @@ declare namespace API {
     poc_file: string;
     severity: string;
     execution_class: 'detection' | 'verification';
-    risk_level: 'unknown' | 'low' | 'medium' | 'high';
+    risk_level: 'unknown' | 'info' | 'low' | 'medium' | 'high';
     requires_second_confirmation: boolean;
     poc_content_hash: string;
     template_request_estimate: number;
@@ -1102,7 +1102,7 @@ declare namespace API {
     content_hash: string;
     severity: string;
     execution_class: 'detection' | 'verification';
-    risk_level: 'unknown' | 'low' | 'medium' | 'high';
+    risk_level: 'unknown' | 'info' | 'low' | 'medium' | 'high';
     requires_confirmation: boolean;
     requires_second_confirmation: boolean;
     tags: string;

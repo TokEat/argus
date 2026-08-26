@@ -116,7 +116,7 @@ func pocRiskRank(riskLevel string) int {
 		return 3
 	case "medium":
 		return 2
-	case "low":
+	case "low", "info":
 		return 1
 	default:
 		return 0

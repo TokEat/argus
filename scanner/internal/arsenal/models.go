@@ -28,8 +28,8 @@ type Poc struct {
 	ContentHash    string    `json:"content_hash"`                          // MD5
 	Severity       string    `gorm:"index;default:'info'" json:"severity"`  // info/low/medium/high/critical
 	ExecutionClass string    `gorm:"index;default:'detection'" json:"execution_class"`
-	RiskLevel      string    `gorm:"index;default:'unknown'" json:"risk_level"`
-	Tags           string    `json:"tags"` // JSON 数组
+	RiskLevel      string    `gorm:"index;default:'unknown'" json:"risk_level"` // unknown/info/low/medium/high；critical 存成 high
+	Tags           string    `json:"tags"`                                      // JSON 数组
 	Author         string    `json:"author"`
 	Description    string    `json:"description"`
 	Enabled        bool      `gorm:"default:true" json:"enabled"`

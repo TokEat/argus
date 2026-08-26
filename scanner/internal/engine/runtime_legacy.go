@@ -303,7 +303,7 @@ func arsenalPocRiskRank(riskLevel string) int {
 		return 3
 	case "medium":
 		return 2
-	case "low":
+	case "low", "info":
 		return 1
 	default:
 		return 0
@@ -311,11 +311,11 @@ func arsenalPocRiskRank(riskLevel string) int {
 }
 
 // pocRequiresSecondConfirmation 与服务端 db.PocRequiresSecondConfirmation 语义一致：
-// 风险等级未知或 high 的模板在未预授权时不得进入无人值守执行。
+// 风险等级未知或 high 的模板在未预授权时不得进入无人值守执行；info/low/medium 不要求二次确认。
 func pocRequiresSecondConfirmation(riskLevel string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(riskLevel))
 	switch normalized {
-	case "low", "medium":
+	case "info", "low", "medium":
 		return false
 	default:
 		return true

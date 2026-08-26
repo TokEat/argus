@@ -32,7 +32,7 @@
 - 后续实现按独立纵向 Goal 交付：每个 Goal 只覆盖一条用户操作链，并同时完成数据事务、Server API、RBAC/审计、前端交互、真实 smoke 和文档；不再把后端、前端或测试按层横向拆成多个 Goal。
 - 用户明确要求暂不实施 AI 相关能力；G40 保留为未开始且持续暂缓的候选项。用户进一步要求把剩余非 AI 工作合并为单一 G41 完成，因此本轮不再拆分 Notebook 运营、Provider 旧链清理和发布验收子 Goal。
 - POC/Workflow 通过统一风险验证向导显式启动，默认使用当前任务指纹，在同一任务下新增 `risk_validation` Batch。
-- POC 原始权威来源保持为 Arsenal Nuclei YAML；`info.metadata.argus-execution-class` 仅允许 `detection/verification`，`argus-risk-level` 使用 `low/medium/high`，旧规则安全兼容为 `detection + unknown`。
+- POC 原始权威来源保持为 Arsenal Nuclei YAML；`info.metadata.argus-execution-class` 仅允许 `detection/verification`；执行风险跟 Nuclei `info.severity`（`info`/`low`/`medium` 不二次确认，`high`/`critical` 记成 `high`，缺省记成 `unknown`）。
 - 所有 POC 仅能经显式风险验证确认执行；`high/unknown` 必须二次确认；`exploit/exp` 分类禁止进入 POC 并必须使用独立 EXP 包，EXP 永不由 Workflow 自动触发。
 - 风险验证预览严格只读：只使用当前任务已落库指纹、当前已审核且启用的 Workflow/POC，返回规则/配置版本、POC 内容哈希、预计请求量上界和稳定计划哈希；不会创建 Batch/Attempt、入队或向 Agent 下发命令。
 - 风险验证执行只允许终态 Task 经 operator 明确授权确认后追加 `risk_validation` Batch；既支持 Workflow 匹配，也支持指定已审核 POC。`high/unknown` 必须二次确认，自动重试关闭，规则变化后必须重新预览；Agent 版本必须不低于 v2.4.0 且规则版本、实际 POC 内容哈希均与预览一致，执行链路仅运行精确 Nuclei 映射。

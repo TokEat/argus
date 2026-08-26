@@ -627,13 +627,12 @@ POC source is stored as a database artifact in arsenals. PocRule catalog rows ar
 Required fields:
 - id: stable safe identifier
 - info.name
-- info.severity
+- info.severity: info, low, medium, high or critical. Execution risk follows this field; critical is stored as high; missing severity is unknown and requires second confirmation. info, low and medium do not.
 - info.metadata.argus-execution-class: detection or verification
-- info.metadata.argus-risk-level: low, medium or high
 - requests: HTTP request definitions
 - matchers: status, word, regex or other supported Nuclei matchers
 
-Legacy templates without Argus governance metadata are indexed as detection + unknown and require elevated confirmation. The exploit/exp execution class is forbidden for POC rules; capabilities intended to exploit, persist, or change target state must use a separate EXP package. Every POC remains disabled in normal asset discovery and can run only after an explicit risk-validation confirmation; high and unknown risk require a second confirmation.
+Legacy templates without execution-class metadata are indexed as detection. Execution risk is derived from info.severity, not a custom Argus field. The exploit/exp execution class is forbidden for POC rules; capabilities intended to exploit, persist, or change target state must use a separate EXP package. Every POC remains disabled in normal asset discovery and can run only after an explicit risk-validation confirmation; high and unknown risk require a second confirmation.
 
 Minimal structure:
 id: example-poc
@@ -642,7 +641,6 @@ info:
   severity: info
   metadata:
     argus-execution-class: detection
-    argus-risk-level: low
 requests:
   - method: GET
     path:
@@ -753,7 +751,6 @@ info:
   severity: info
   metadata:
     argus-execution-class: detection
-    argus-risk-level: low
 requests:
   - method: GET
     path:

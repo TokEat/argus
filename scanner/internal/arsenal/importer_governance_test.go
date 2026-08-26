@@ -13,7 +13,6 @@ info:
   severity: high
   metadata:
     argus-execution-class: verification
-    argus-risk-level: high
 `))
 
 	if meta.executionClass != "verification" || meta.riskLevel != "high" {
@@ -24,14 +23,28 @@ info:
 	}
 }
 
-func TestParsePocMetaUsesSafeLegacyDefaults(t *testing.T) {
-	meta := parsePocMeta([]byte("id: legacy\ninfo:\n  name: Legacy\n  severity: info\n"))
-
-	if meta.executionClass != "detection" || meta.riskLevel != "unknown" {
-		t.Fatalf("unexpected legacy POC governance defaults: %+v", meta)
+func TestParsePocMetaUsesNucleiSeverityForRisk(t *testing.T) {
+	info := parsePocMeta([]byte("id: info\ninfo:\n  name: Info\n  severity: info\n"))
+	if info.executionClass != "detection" || info.riskLevel != "info" {
+		t.Fatalf("unexpected info POC governance: %+v", info)
 	}
-	if err := validatePocGovernanceMeta(meta); err != nil {
-		t.Fatalf("expected legacy POC to remain importable: %v", err)
+	if err := validatePocGovernanceMeta(info); err != nil {
+		t.Fatalf("expected info POC to remain importable: %v", err)
+	}
+
+	missing := parsePocMeta([]byte("id: missing\ninfo:\n  name: Missing\n"))
+	if missing.riskLevel != "unknown" || missing.severity != "info" {
+		t.Fatalf("missing severity should stay unknown risk: %+v", missing)
+	}
+
+	critical := parsePocMeta([]byte("id: critical\ninfo:\n  name: Critical\n  severity: critical\n"))
+	if critical.riskLevel != "high" {
+		t.Fatalf("critical should store as high: %+v", critical)
+	}
+
+	ignored := parsePocMeta([]byte("id: ignore\ninfo:\n  name: Ignore\n  severity: info\n  metadata:\n    argus-risk-level: high\n"))
+	if ignored.riskLevel != "info" {
+		t.Fatalf("argus-risk-level must be ignored: %+v", ignored)
 	}
 }
 

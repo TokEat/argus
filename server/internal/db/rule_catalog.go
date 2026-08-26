@@ -23,7 +23,7 @@ import (
 
 const (
 	RuleCatalogBootstrapKey    = "rule_catalog_v1"
-	RuleCatalogSchemaVersion   = 7
+	RuleCatalogSchemaVersion   = 8
 	RuleCatalogStatusReady     = "ready"
 	RuleCatalogStatusPartial   = "partial"
 	RuleCatalogStatusEmpty     = "empty"
@@ -35,6 +35,7 @@ const (
 	PocExecutionClassDetection    = "detection"
 	PocExecutionClassVerification = "verification"
 	PocRiskLevelUnknown           = "unknown"
+	PocRiskLevelInfo              = "info"
 	PocRiskLevelLow               = "low"
 	PocRiskLevelMedium            = "medium"
 	PocRiskLevelHigh              = "high"
@@ -144,24 +145,54 @@ func NormalizePocExecutionClass(raw string) (string, error) {
 	}
 }
 
+// PocRiskLevelFromNucleiSeverity maps Nuclei info.severity onto the stored
+// execution-risk field. critical is stored as high; missing or invalid
+// severity stays unknown so it still requires second confirmation.
+func PocRiskLevelFromNucleiSeverity(severity string) string {
+	switch strings.ToLower(strings.TrimSpace(severity)) {
+	case PocRiskLevelInfo:
+		return PocRiskLevelInfo
+	case PocRiskLevelLow:
+		return PocRiskLevelLow
+	case PocRiskLevelMedium:
+		return PocRiskLevelMedium
+	case PocRiskLevelHigh, "critical":
+		return PocRiskLevelHigh
+	default:
+		return PocRiskLevelUnknown
+	}
+}
+
 func NormalizePocRiskLevel(raw string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", PocRiskLevelUnknown:
 		return PocRiskLevelUnknown, nil
+	case PocRiskLevelInfo:
+		return PocRiskLevelInfo, nil
 	case PocRiskLevelLow:
 		return PocRiskLevelLow, nil
 	case PocRiskLevelMedium:
 		return PocRiskLevelMedium, nil
+	case "critical":
+		return PocRiskLevelHigh, nil
 	case PocRiskLevelHigh:
 		return PocRiskLevelHigh, nil
 	default:
-		return "", fmt.Errorf("POC risk_level must be unknown, low, medium, or high")
+		return "", fmt.Errorf("POC risk_level must be unknown, info, low, medium, or high")
 	}
 }
 
 func PocRequiresSecondConfirmation(riskLevel string) bool {
 	normalized, err := NormalizePocRiskLevel(riskLevel)
-	return err != nil || normalized == PocRiskLevelUnknown || normalized == PocRiskLevelHigh
+	if err != nil {
+		return true
+	}
+	switch normalized {
+	case PocRiskLevelInfo, PocRiskLevelLow, PocRiskLevelMedium:
+		return false
+	default:
+		return true
+	}
 }
 
 // WorkflowRule stores one product -> poc -> match_type mapping per row.
@@ -853,7 +884,6 @@ func parsePocMeta(content []byte) pocMeta {
 	text := sanitizePostgresText(string(content))
 	content = []byte(text)
 	meta := pocMeta{
-		severity:            "info",
 		compatibilityStatus: "unknown",
 		executionClass:      PocExecutionClassDetection,
 		riskLevel:           PocRiskLevelUnknown,
@@ -883,12 +913,8 @@ func parsePocMeta(content []byte) pocMeta {
 		meta.targetProduct = strings.TrimSpace(firstPocMetadataValue(parsed.Info.Metadata, "product", "vendor", "fofa-query", "shodan-query"))
 		meta.sourceVersion = strings.TrimSpace(firstPocMetadataValue(parsed.Info.Metadata, "version", "source_version", "template-version"))
 		meta.executionClass = strings.TrimSpace(firstPocMetadataValue(parsed.Info.Metadata, "argus-execution-class", "argus_execution_class", "execution-class", "execution_class"))
-		meta.riskLevel = strings.TrimSpace(firstPocMetadataValue(parsed.Info.Metadata, "argus-risk-level", "argus_risk_level", "risk-level", "risk_level"))
 		if meta.executionClass == "" {
 			meta.executionClass = PocExecutionClassDetection
-		}
-		if meta.riskLevel == "" {
-			meta.riskLevel = PocRiskLevelUnknown
 		}
 		if meta.id != "" || strings.TrimSpace(parsed.Info.Name) != "" {
 			meta.compatibilityStatus = "indexed"
@@ -923,6 +949,7 @@ func parsePocMeta(content []byte) pocMeta {
 			}
 		}
 	}
+	meta.riskLevel = PocRiskLevelFromNucleiSeverity(meta.severity)
 	if meta.severity == "" {
 		meta.severity = "info"
 	}

@@ -568,7 +568,7 @@ G31 新增的 additive、append-only 表，保存 `argus.timing/v1` 的已校验
 | `content_hash` | string | 内容哈希 | Index |
 | `severity` | string | 严重度 | Index, Default:`info` |
 | `execution_class` | string | POC 执行类别：`detection` / `verification`；`exploit` / `exp` 必须使用独立 EXP 包 | Index, Default:`detection` |
-| `risk_level` | string | 执行风险：`unknown` / `low` / `medium` / `high`；旧规则回填为 `unknown` | Index, Default:`unknown` |
+| `risk_level` | string | 执行风险：从 Nuclei `info.severity` 派生，`unknown` / `info` / `low` / `medium` / `high`；`critical` 记成 `high`，缺省 `severity` 记成 `unknown` | Index, Default:`unknown` |
 | `tags` | text | 标签串 | Text |
 | `author` | string | 作者 | - |
 | `description` | text | 描述 | Text |
@@ -579,7 +579,7 @@ G31 新增的 additive、append-only 表，保存 `argus.timing/v1` 的已校验
 
 联合唯一约束：`(tenant_id, source_file)`。
 
-`severity` 表示漏洞严重度，不能替代执行风险。所有 POC 仅能在显式风险验证流程确认后执行；`high` 和 `unknown` 需要二次确认。`arsenals` 中的 Nuclei YAML 仍是权威来源，治理字段来自 `info.metadata.argus-execution-class` 与 `info.metadata.argus-risk-level`，`poc_rules` 和 Agent `arsenal.db` 仅作为派生检索与分发层。
+`severity` 保存 Nuclei 原始严重度。执行风险 `risk_level` 与 `info.severity` 同步：`info` / `low` / `medium` 不要求二次确认，`high` 与缺省（`unknown`）需要二次确认，`critical` 在库中记成 `high`。`arsenals` 中的 Nuclei YAML 仍是权威来源，治理字段来自 `info.metadata.argus-execution-class` 与 `info.severity`，`poc_rules` 和 Agent `arsenal.db` 仅作为派生检索与分发层。
 
 #### `arsenal_ai_reviews`
 

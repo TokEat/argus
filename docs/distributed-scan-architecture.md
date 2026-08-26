@@ -151,7 +151,7 @@ Worker Pool 与引擎并发上限协同控制；Agent 通过 `capacity_update` �
 
 `POST /api/v1/tasks` 可选接收 `Idempotency-Key`：无 header 的旧客户端保持原有非幂等创建行为；UI 为一次新建意图生成并复用稳定 Key。认证、operator RBAC、项目访问与 active 状态校验始终先于重放。相同 tenant/project/operator/`create_task_v1`/Key 的同规范请求返回首次 Task，异请求返回 409 且无副作用；数据库只保存 Key 的 SHA-256，不保存原始 Key。幂等账本与 RootTask、配置修订、TaskBatch、首个 Attempt、Project Scope/SeedTargets 扩展和创建审计在同一事务提交；仅首次提交后派发。重放从首次配置修订和账本绑定的初始 Attempt/TaskBatch 重建目标与批次摘要，依据这些 Attempt 的当前状态重建派发摘要，但不再次入队。
 
-POC 与普通资产发现链路隔离。POC YAML 通过 `info.metadata.argus-execution-class` 标记 `detection` 或 `verification`，通过 `info.metadata.argus-risk-level` 标记 `low`、`medium` 或 `high`；未分类旧规则按 `detection + unknown` 兼容。所有 POC 均需进入显式风险验证并确认，`high` 与 `unknown` 需要二次确认：手动执行入口强制独立二次确认；自动派生阶段由 Server 密封目标与指纹，Agent 用本地 `workflow.yaml` 做 `mapper.GetPocs` 匹配，默认剔除 high/unknown，仅当任务策略 `authorization.allow_high_risk_auto_execution` 预授权时才执行这两类模板。需要利用、持久化或状态变更的能力禁止伪装为 POC，必须进入独立 EXP 包、审批与审计链路。
+POC 与普通资产发现链路隔离。POC YAML 通过 `info.metadata.argus-execution-class` 标记 `detection` 或 `verification`；执行风险跟 Nuclei `info.severity`：`info` / `low` / `medium` 不要求二次确认，`high` / `critical`（库中记成 `high`）以及缺省 `severity`（记成 `unknown`）需要二次确认。所有 POC 均需进入显式风险验证并确认：手动执行入口强制独立二次确认；自动派生阶段由 Server 密封目标与指纹，Agent 用本地 `workflow.yaml` 做 `mapper.GetPocs` 匹配，默认剔除 high/unknown，仅当任务策略 `authorization.allow_high_risk_auto_execution` 预授权时才执行这两类模板。需要利用、持久化或状态变更的能力禁止伪装为 POC，必须进入独立 EXP 包、审批与审计链路。
 
 `POST /api/v1/tasks/:id/risk-validation/preview` 是风险验证的只读规划入口。它只读取当前租户、已授权项目和指定任务已经落库的指纹与资产，既可用当前已审核且启用的 Workflow 解析 POC，也可由用户指定已审核且启用的 POC 对当前任务资产生成候选项；返回资产、产品、端点、POC、严重性、执行类别、风险等级、规则/配置版本和预计请求量。请求量是从 Nuclei 模板结构计算的保守上界，无法解析时按单请求回退。响应中的 `plan_hash` 绑定租户、项目、任务、当前规则版本、配置版本、端点和实际 POC 内容哈希，供后续执行前检查预览是否仍有效。该接口不会创建 TaskBatch/Attempt、写审计、入队或向 Agent 下发命令；高风险和未分类候选项仅标记为需要二次确认。
 
