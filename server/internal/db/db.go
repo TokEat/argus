@@ -740,6 +740,11 @@ func normalizeTarget(raw string) string {
 	return raw
 }
 
+// ResultTargetKey 把扫描结果 target 归一成三表关联用的同一把键。
+func ResultTargetKey(raw string) string {
+	return normalizeTarget(raw)
+}
+
 func splitFingerprintToken(raw string) []string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -1098,10 +1103,11 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 		if len(productNames) == 0 {
 			break
 		}
+		ruleName := fingerprintRuleName(payloadType, p)
 		for _, productName := range productNames {
 			fpBuffer <- FingerprintHit{
 				TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID, Target: target, ProductName: productName,
-				Evidence: payloadJSON, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+				RuleName: ruleName, Evidence: payloadJSON, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 			}
 		}
 	case payloadType == "phase":

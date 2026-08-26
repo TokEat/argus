@@ -61,7 +61,7 @@ func TestAddResultAsyncRoutesActiveFingerprintWithoutCreatingVulnerability(t *te
 	}
 	select {
 	case fingerprint := <-fpBuffer:
-		if fingerprint.ProductName != "APACHE-Shiro" || fingerprint.Target != "http://127.0.0.1:8081" || fingerprint.RootTaskID != "root-a" {
+		if fingerprint.ProductName != "APACHE-Shiro" || fingerprint.Target != "http://127.0.0.1:8081" || fingerprint.RootTaskID != "root-a" || fingerprint.RuleName != "behavior-probe" {
 			t.Fatalf("unexpected active fingerprint row: %+v", fingerprint)
 		}
 	case <-time.After(100 * time.Millisecond):

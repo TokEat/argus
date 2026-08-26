@@ -250,6 +250,10 @@ func TestRiskValidationPOCSetHashIncludesNativeFingerprints(t *testing.T) {
 	if _, ok := riskValidationPOCSetHash(config, "https://other.example"); ok {
 		t.Fatal("unfingerprinted endpoint received a POC set hash")
 	}
+	schemeFlip := `{"ExecutionMode":"risk_validation","TargetFingerprints":{"http://218.94.175.134:8086":["Nginx"]}}`
+	if hash, ok := riskValidationPOCSetHash(schemeFlip, "https://218.94.175.134:8086"); !ok || len(hash) != 64 {
+		t.Fatalf("scheme-alternate fingerprint key should seal: hash=%q ok=%v", hash, ok)
+	}
 	explicit := `{"ExecutionMode":"risk_validation","RiskValidationTargets":{"https://app.example":["safe.yaml"]},"RiskValidationPocHashes":{"safe.yaml":"0123456789abcdef0123456789abcdef"},"TargetFingerprints":{"https://app.example":["Nginx"]}}`
 	sealed, ok := riskValidationPOCSetHash(explicit, "https://app.example")
 	if !ok || sealed == hash {
@@ -339,6 +343,103 @@ func TestMergeNativeRiskCoverageStaysInvalidWhenExactHTTPFailed(t *testing.T) {
 	}
 	if riskCoverage.Status != string(scanplan.CoverageInvalidated) || !strings.Contains(riskCoverage.InvalidReason, "endpoint_content_unknown") || strings.Contains(riskCoverage.InvalidReason, "poc_set_unknown") {
 		t.Fatalf("failed HTTP should keep endpoint unknown but seal fingerprints: %+v", riskCoverage)
+	}
+}
+
+func TestSchemeAlternateTargetsKeepsExplicitPort(t *testing.T) {
+	got := schemeAlternateTargets("https://218.94.175.134:8086")
+	want := "http://218.94.175.134:8086"
+	found := false
+	for _, item := range got {
+		if item == want {
+			found = true
+		}
+		if strings.Contains(item, ":80") && !strings.Contains(item, ":8086") {
+			t.Fatalf("scheme alternate mapped 8086 onto 80: %v", got)
+		}
+	}
+	if !found {
+		t.Fatalf("scheme alternate missing %q: %v", want, got)
+	}
+	for _, item := range schemeAlternateTargets("https://example.test:443") {
+		if item == "http://example.test:80" || item == "http://example.test" {
+			t.Fatalf("https:443 must not map onto http:80: %v", item)
+		}
+	}
+}
+
+func TestMergeNativeRiskCoverageReusesSchemeAlternateHTTP(t *testing.T) {
+	store := openObservationMergeTestDB(t)
+	project := Project{ID: "project-scheme", TenantID: "tenant-scheme", Scope: `{}`}
+	if err := store.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	assetAttempt := SubTask{
+		ID: "attempt-http", TenantID: project.TenantID, ProjectID: project.ID, RootTaskID: "task-scheme", BatchID: "batch-http",
+		AgentID: "agent-scheme", Config: `{}`, Priority: 1, TimeoutSec: 60, AgentSelector: `{}`, AgentSelectorRules: `{}`, RuleVersion: "rules-v1",
+	}
+	httpEvent := mergeTestEvent(assetAttempt, "event-http-scheme", scanplan.StageHTTPProbe, scanplan.ObservationSuccess, now.Add(-2*time.Second), now.Add(-time.Second))
+	httpEvent.Targets = []string{"http://218.94.175.134:8086"}
+	if _, err := MergeStageObservationEvent(store, assetAttempt, httpEvent); err != nil {
+		t.Fatalf("merge source HTTP: %v", err)
+	}
+	riskAttempt := assetAttempt
+	riskAttempt.ID = "attempt-risk-scheme"
+	riskAttempt.BatchID = "batch-unrelated-risk"
+	riskAttempt.Config = `{"ExecutionMode":"risk_validation","TargetFingerprints":{"https://218.94.175.134:8086":["Nginx"]}}`
+	risk := mergeTestEvent(riskAttempt, "event-risk-scheme", scanplan.StageRiskValidation, scanplan.ObservationNegative, now, now.Add(time.Second))
+	risk.Targets = []string{"https://218.94.175.134:8086"}
+	if _, err := MergeStageObservationEvent(store, riskAttempt, risk); err != nil {
+		t.Fatalf("merge scheme-alternate risk: %v", err)
+	}
+	var riskCoverage ScanCoverage
+	if err := store.Where("stage = ?", string(scanplan.StageRiskValidation)).First(&riskCoverage).Error; err != nil {
+		t.Fatal(err)
+	}
+	if riskCoverage.Status != string(scanplan.CoverageComplete) || riskCoverage.EndpointContentHash == "_unknown" || riskCoverage.InvalidReason != "" {
+		t.Fatalf("same host:port HTTP/HTTPS should reuse HTTP content: %+v", riskCoverage)
+	}
+	var httpObservation ScanObservation
+	if err := store.Where("stage = ?", string(scanplan.StageHTTPProbe)).First(&httpObservation).Error; err != nil {
+		t.Fatal(err)
+	}
+	if riskCoverage.EndpointContentHash != httpObservation.ContentHash {
+		t.Fatalf("scheme-alternate risk did not inherit HTTP content: risk=%q http=%q", riskCoverage.EndpointContentHash, httpObservation.ContentHash)
+	}
+}
+
+func TestMergeNativeRiskCoverageDoesNotMapDefaultHTTPAndHTTPSPorts(t *testing.T) {
+	store := openObservationMergeTestDB(t)
+	project := Project{ID: "project-ports", TenantID: "tenant-ports", Scope: `{}`}
+	if err := store.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	assetAttempt := SubTask{
+		ID: "attempt-http", TenantID: project.TenantID, ProjectID: project.ID, RootTaskID: "task-ports", BatchID: "batch-http",
+		AgentID: "agent-ports", Config: `{}`, Priority: 1, TimeoutSec: 60, AgentSelector: `{}`, AgentSelectorRules: `{}`, RuleVersion: "rules-v1",
+	}
+	httpEvent := mergeTestEvent(assetAttempt, "event-http-80", scanplan.StageHTTPProbe, scanplan.ObservationSuccess, now.Add(-2*time.Second), now.Add(-time.Second))
+	httpEvent.Targets = []string{"http://example.test:80"}
+	if _, err := MergeStageObservationEvent(store, assetAttempt, httpEvent); err != nil {
+		t.Fatalf("merge source HTTP: %v", err)
+	}
+	riskAttempt := assetAttempt
+	riskAttempt.ID = "attempt-risk-443"
+	riskAttempt.BatchID = "batch-unrelated-risk"
+	riskAttempt.Config = `{"ExecutionMode":"risk_validation","TargetFingerprints":{"https://example.test:443":["Nginx"]}}`
+	risk := mergeTestEvent(riskAttempt, "event-risk-443", scanplan.StageRiskValidation, scanplan.ObservationNegative, now, now.Add(time.Second))
+	risk.Targets = []string{"https://example.test:443"}
+	if _, err := MergeStageObservationEvent(store, riskAttempt, risk); err != nil {
+		t.Fatalf("merge default-port risk: %v", err)
+	}
+	var riskCoverage ScanCoverage
+	if err := store.Where("stage = ?", string(scanplan.StageRiskValidation)).First(&riskCoverage).Error; err != nil {
+		t.Fatal(err)
+	}
+	if riskCoverage.Status != string(scanplan.CoverageInvalidated) || !strings.Contains(riskCoverage.InvalidReason, "endpoint_content_unknown") {
+		t.Fatalf("http:80 must not seal https:443 coverage: %+v", riskCoverage)
 	}
 }
 
