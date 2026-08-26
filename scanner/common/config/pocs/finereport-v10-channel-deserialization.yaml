@@ -1,29 +1,35 @@
 id: finereport-v10-channel-deserialization
 
 info:
-  name: 帆软报表 channel反序列化漏洞
+  name: 帆软 FineBI/FineReport channel 反序列化
   author: SleepingBag945
   severity: critical
   description: |
-    帆软报表 channel 接口存在反序列化漏洞, 攻击者通过漏洞可以获取服务器权限，攻击服务器
+    帆软 decision 远程设计 channel 接口存在反序列化 RCE（CommonsBeanutils 1.8.3 / 二次反序列化绕过）。本规则识别接口是否暴露（/webroot/decision 或 /decision），不发送利用链。风险按漏洞本身为 critical。
   metadata:
-  tags: finereport
+  tags: finereport,finebi
 
 http:
   - raw:
       - |
-        GET /webroot/decision/remote/design/channel HTTP/1.1
+        GET {{base}}/remote/design/channel HTTP/1.1
         Content-Type: application/json
         Host: {{Hostname}}
 
       - |
-        POST /webroot/decision/remote/design/channel HTTP/1.1
+        POST {{base}}/remote/design/channel HTTP/1.1
         Content-Type: application/json
         Host: {{Hostname}}
+
+    payloads:
+      base:
+        - "/webroot/decision"
+        - "/decision"
+    stop-at-first-match: true
 
     matchers:
       - type: dsl
         dsl:
-          - status_code_1 == 200 && contains(body_1,"document.getElementById") && contains(body_1,"/webroot/decision")
-          - status_code_2 == 200 && !contains(body_2,"/webroot/decision")
+          - status_code_1 == 200 && contains(body_1,"document.getElementById") && contains(body_1,"/decision")
+          - status_code_2 == 200 && !contains(body_2,"document.getElementById")
         condition: and

@@ -1,0 +1,31 @@
+id: apusic-version-detect
+
+info:
+  name: 金蝶 Apusic 应用服务器版本泄漏
+  author: argus
+  severity: info
+  description: |
+    从 HTTP Server 响应头提取金蝶 Apusic Application Server 精确版本/构建信息。
+  metadata:
+    max-request: 1
+    fofa-query: server="Apusic Application Server"
+  tags: apusic,kingdee,version,detect
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+
+    matchers:
+      - type: word
+        part: header
+        words:
+          - "Apusic Application Server"
+
+    extractors:
+      - type: regex
+        name: version
+        part: header
+        group: 1
+        regex:
+          - '(?i)Apusic Application Server/?([^\r\n]+)'

