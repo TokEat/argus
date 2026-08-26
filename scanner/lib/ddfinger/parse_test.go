@@ -140,6 +140,32 @@ func TestKingdeeK3CloudKeepsActiveProbePath(t *testing.T) {
 	t.Fatalf("expected 金蝶云星空 active probe /k3cloud, got %v", probes["金蝶云星空"])
 }
 
+func TestDirYamlOmitsGenericProbePaths(t *testing.T) {
+	path := filepath.Join("..", "..", "common", "config", "dir.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var probes map[string][]string
+	if err := yaml.Unmarshal(data, &probes); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+
+	generic := map[string]struct{}{
+		"/login": {}, "/login/": {}, "/admin/": {}, "/portal/": {},
+		"/version": {}, "/ui/": {}, "/explore": {}, "/graph": {},
+		"/ping": {}, "/docs/": {}, "/toLogin": {}, "/js/..;/actuator": {},
+		"/login.jsp": {}, "/login.php": {}, "/login.do": {}, "/login.action": {},
+	}
+	for product, paths := range probes {
+		for _, probe := range paths {
+			if _, banned := generic[probe]; banned {
+				t.Errorf("dir.yaml product %q uses generic probe %q; only keep paths that must be visited to identify the fingerprint", product, probe)
+			}
+		}
+	}
+}
+
 func loadFingerprintRules(t *testing.T, product string) []string {
 	t.Helper()
 

@@ -19344,3 +19344,170 @@ Apache-InLong:
 
 擎天政务系统:
     - 'title="擎天政务系统"'
+
+Symmetricom-SyncServer:
+    - 'body="Symmetricom SyncServer"'
+Arcserve-UDP:
+    - 'icon_hash="1015186617"'
+CodeChecker:
+    - 'icon_hash="-1496590341"'
+圣乔ERP:
+    - 'title="圣乔ERP系统"'
+    - 'body="圣乔ERP系统"'
+Dahua-EIMS:
+    - 'body="Dahua EIMS"'
+    - 'title="Dahua EIMS"'
+Cisco-SSM-On-Prem:
+    - 'title="On-Prem License Workspace"'
+Progress-Flowmon:
+    - 'header="Server: Flowmon"'
+    - 'server="Flowmon"'
+WyreStorm-Apollo-VX20:
+    - 'cert="WyreStorm Apollo VX20"'
+Docassemble:
+    - 'icon_hash="-575790689"'
+    - 'title="docassemble"'
+LG-LED-Assistant:
+    - 'title="LG LED Assistant"'
+    - 'icon_hash="195291629"'
+CyberPower-PowerPanel:
+    - 'title="PDNU"'
+DataCube3:
+    - 'title="DataCube3"'
+Reposilite:
+    - 'icon_hash="1212523028"'
+Ollama:
+    - 'body="Ollama is running"'
+SecurEnvoy:
+    - 'title="SecurEnvoy"'
+NextChat:
+    - 'title="NextChat"'
+    - 'title="ChatGPT Next Web"'
+Veeam-Backup-Replication:
+    - 'body="Veeam Backup"'
+HertzBeat:
+    - 'title="HertzBeat"'
+Hoverfly:
+    - 'icon_hash="1357234275"'
+    - 'title="Hoverfly Dashboard"'
+NAKIVO-Backup:
+    - 'title="NAKIVO"'
+Cleo-Harmony:
+    - 'header="Server: Cleo"'
+    - 'banner="Server: Cleo"'
+Fortra-FileCatalyst:
+    - 'body="FileCatalyst file transfer solution, easily transfer large files"'
+Devika-AI:
+    - 'title="Devika AI"'
+MasterSAM-StarGate:
+    - 'body="MasterSAM"'
+Vanna-AI:
+    - 'body="vanna.ai"'
+Aim-Server:
+    - 'icon_hash="-1047157256"'
+UsualTool-CMS:
+    - 'body="usualtool"'
+Elber-Satellite:
+    - 'title="Elber Satellite Equipment"'
+    - 'body="www.elber.it"'
+DocsGPT:
+    - 'body="Welcome to DocsGPT"'
+Gladinet-CentreStack:
+    - 'title="CentreStack"'
+    - 'title="Triofox"'
+    - 'icon_hash="-177043778"'
+    - 'icon_hash="1163764264"'
+Memos:
+    - 'icon_hash="-1924700661"'
+
+Aquatronica-Controller:
+    - 'body="aquatronica"'
+ICTBroadcast:
+    - 'body="ICTBroadcast"'
+FREEDOM-Administration:
+    - 'title="FREEDOM Administration"'
+TRUfusion-Enterprise:
+    - 'body="TRUfusion"'
+FoxCMS:
+    - 'body="foxcms-logo" || body="foxcms-container"'
+EnGenius-EnShare:
+    - 'body="/web/cgi-bin/usbinfo.cgi"'
+ETQ-Reliance:
+    - 'body="ETQ Reliance"'
+Aitemi-M300:
+    - 'icon_hash="-741058468"'
+Sawtooth-Lighthouse-Studio:
+    - 'body="Lighthouse Studio"'
+HPE-OneView:
+    - 'body="OneView" && body="HPE"'
+MeteoBridge:
+    - 'title="MeteoBridge" || body="meteobridge"'
+Evertz-SDVN:
+    - 'body="evertz.min.css"'
+TileServer-php:
+    - 'title="TileServer-php"'
+Invision-Community:
+    - 'body="Invision" && body="ips4"'
+Pterodactyl-Panel:
+    - 'title="Pterodactyl" || icon_hash="-456405319" || icon_hash="846001371"'
+MCP-Inspector:
+    - 'title="MCP Inspector"'
+DELMIA-Apriso:
+    - 'body="/Apriso/Portal" || body="apriso"'
+Securden-Unified-PAM:
+    - 'icon_hash="1798893256" || icon_hash="-766529773"'
+Laravel-Livewire:
+    - 'body="wire:id"'
+NestJS-DevTools:
+    - 'body="devtools.nestjs.com"'
+Stirling-PDF:
+    - 'title="Stirling PDF"'
+Argo-CD:
+    - 'title="Argo CD" || title="argo cd"'
+Agent-Zero:
+    - 'title="Agent Zero"'
+Traccar:
+    - 'body="Traccar"'
+ChanCMS:
+    - 'body="ChanCMS"'
+Chef-Automate:
+    - 'body="Chef Automate"'
+WordPress-wpForo:
+    - 'body="/wp-content/plugins/wpforo/"'
+ZimaOS:
+    - 'body="ZimaOS"'
+Ghost-CMS:
+    - 'body="content=\"Ghost"'
+    - 'header="X-Ghost"'
+WeGIA:
+    - 'body="WeGIA"'
+FOSSBilling:
+    - 'body="FOSSBilling"'
+Mesop:
+    - 'title="Mesop"'
+UniFi-OS:
+    - 'title="UniFi OS"'
+WordPress-Breeze:
+    - 'body="/wp-content/plugins/breeze/"'
+phpVMS:
+    - 'body="phpvms"'
+PraisonAI:
+    - 'body="PraisonAI"'
+Open-WebUI:
+    - 'title="Open WebUI"'
+Dozzle:
+    - 'title="Dozzle"'
+Nezha:
+    - 'title="Nezha"'
+WordPress-Drag-Drop-Multiple-File-Upload:
+    - 'body="/wp-content/plugins/drag-and-drop-multiple-file-upload-contact-form-7/"'
+WordPress-Burst-Statistics:
+    - 'body="/wp-content/plugins/burst-statistics/"'
+WordPress-Fusion-Builder:
+    - 'body="fusion-builder"'
+WordPress-WP-Maps-Pro:
+    - 'body="/wp-content/plugins/wp-maps-pro/"'
+Apache-ActiveMQ-Artemis:
+    - 'title="ActiveMQ Artemis Console"'
+Vlife:
+    - 'title="vlife"'
