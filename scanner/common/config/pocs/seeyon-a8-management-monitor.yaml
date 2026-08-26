@@ -1,0 +1,27 @@
+id: seeyon-a8-management-monitor
+
+info:
+  name: 致远 A8 Management Monitor 控制台路径泄露
+  author: zan8in
+  severity: info
+  description: |
+    致远 A8 /seeyon/management/index.jsp 暴露 Management Monitor 控制台标题，指纹首页常漏检该运维入口。
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: app="致远互联-OA"
+  tags: seeyon,a8,panel,disclosure
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/seeyon/management/index.jsp"
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "<title>A8 Management Monitor</title>"
+      - type: status
+        status:
+          - 200

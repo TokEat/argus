@@ -1,0 +1,35 @@
+id: seeyon-version
+
+info:
+  name: 致远 OA showAbout 版本与注册数泄露
+  author: zan8in
+  severity: info
+  description: |
+    致远 OA /seeyon/main.do?method=showAbout 未授权返回 Build Id 与注册数，可用于精确识别 A8 构建版本。
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: app="致远互联-OA"
+  tags: seeyon,a8,version,disclosure
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/seeyon/main.do?method=showAbout"
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - ">Build Id:</td>"
+          - ">注册数:</td>"
+        condition: and
+      - type: status
+        status:
+          - 200
+    extractors:
+      - type: regex
+        name: version
+        group: 1
+        regex:
+          - '<td width="75%">&nbsp;(.*?)</td>'

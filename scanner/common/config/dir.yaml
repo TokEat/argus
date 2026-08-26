@@ -1,22 +1,48 @@
 Alibaba-Nacos:
   - "/nacos/"
   - "/api/nacos/"
+  - "/nacos"
+  - "/nacos/index.html"
+  - "/nacos/v1/console/server/state"
+  - "/nacos/v1/console/health/liveness"
+  - "/nacos/v1/auth/login"
 Alibaba-Druid:
   - "/druid/index.html"
+  - "/druid/login.html"
+  - "/druid/sql.html"
+  - "/api/druid/index.html"
+  - "/prod-api/druid/index.html"
 帆软-FineReport:
   - "/WebReport/ReportServer"
   - "/ReportServer"
   - "/seeyonreport/ReportServer"
-  - "/webroot/decision/login"
+  - "/report/ReportServer"
+  - "/FineReport/ReportServer"
+  - "/webroot/ReportServer"
+  - "/decision/view/ReportServer"
+  - "/webroot/decision/view/ReportServer"
+帆软数据决策系统:
+  - "/decision"
   - "/decision/login"
+  - "/webroot/decision"
+  - "/webroot/decision/login"
+  - "/webroot/decision/view/form"
 XXL-JOB:
   - "/xxl-job-admin/toLogin"
   - "/xxl-job/toLogin"
   - "/xxl/toLogin"
   - "/toLogin"
   - "/xxl-rpc-admin/toLogin"
+  - "/xxl-job-admin/"
+  - "/xxl-job-admin/login"
+  - "/job-admin/toLogin"
 GeoServer:
   - "/geoserver/web/"
+  - "/geoserver/"
+  - "/geoserver/index.html"
+  - "/geoserver/web/wicket/bookmarkable/org.geoserver.web.GeoServerBasePage"
+  - "/geoserver/ows"
+  - "/geoserver/rest"
 百度-UEditor:
   - "/ueditor/ueditor.all.js"
   - "/js/ueditor/ueditor.all.js"
@@ -29,58 +55,102 @@ GeoServer:
   - "/thirdparty/ueditor1_4_3_3/editor.all.js"
 ArcGIS:
   - "/arcgis/"
+  - "/arcgis/rest/services"
+  - "/arcgis/manager"
 SMARTBI:
   - "/smartbi/vision/index.jsp"
+  - "/smartbi/"
+  - "/smartbi/vision/"
+  - "/smartbi/smartbix/index.jsp"
 MINIO-Browser:
   - "/minio/"
+  - "/minio/login"
+  - "/minio/webrpc"
+  - "/minio/bootstrap/v1/verify"
+MINIO-Console:
+  - "/minio/console/"
+  - "/api/v1/login"
 Jenkins:
   - "/jenkins/login"
+  - "/jenkins/"
+  - "/jenkins/loginError"
 Jeecg-Boot:
   - "/jeecg-boot/"
+  - "/jeecg-boot/sys/common/403"
+  - "/jeecg-boot/jmreport/list"
 ureport:
   - "/ureport/designer"
   - "/ureport"
+  - "/ureport/preview"
+  - "/ureport/res/ureport-asserts/js/designer.bundle.js"
 xxl-rpc:
   - "/services"
 积木报表:
   - "/jmreport/testConnection"
-springboot-env:
+  - "/jmreport/list"
+  - "/jmreport/view"
+  - "/jmreport/desreport_list"
+  - "/jmreport/index"
+springboot-heapdump:
   - "/actuator"
+  - "/actuator/"
   - "/api/actuator"
   - "/js/..;/actuator"
-Camunda:
-  - "/camunda/app/welcome/default/"
-  - "/camunda/"
-Apache-Tomcat:
-  - "/manager/html"
-  - "/host-manager/html"
 vmware-SpringBoot-Framework:
   - "/error"
   - "/gateway/error/"
   - "/api/error/"
+  - "/actuator"
+  - "/actuator/health"
+  - "/actuator/info"
+Camunda:
+  - "/camunda/app/welcome/default/"
+  - "/camunda/"
+  - "/camunda/app/admin/default/"
+Apache-Tomcat:
+  - "/manager/html"
+  - "/host-manager/html"
+  - "/manager/status"
+  - "/docs/"
 Tomcat-Login:
   - "/manager/html"
 Apache-APISIX:
   - "/apisix/"
+  - "/apisix/admin/routes"
+  - "/apisix/dashboard/"
 数字城管:
   - "/eUrbanMIS/main.htm"
 金蝶云星空:
   - "/k3cloud"
+  - "/k3cloud/"
+  - "/k3cloud/html5/index.aspx"
+  - "/k3cloud/html5/"
 kingdee-EAS:
   - "/eassso"
+  - "/eassso/"
+  - "/eassso/login"
+  - "/easweb/"
+  - "/easportal/"
 畅捷教育财税云平台:
   - "/exam_portal"
 Docker-api:
   - "/containers/json"
+  - "/version"
+  - "/v1.24/containers/json"
 Docker-Registry:
   - "/v2/_catalog"
+  - "/v2/"
 etcd:
   - "/v2/keys"
+  - "/version"
+  - "/v2/members"
 APACHE-Axis2:
   - "/axis2-admin/login"
-东方通-EJB:
+  - "/axis2/"
+  - "/axis2/axis2-admin/login"
+  - "/axis2/axis2-web/index.jsp"
+东方通-TongWeb:
   - "/ejbserver/ejb"
-东方通-Console:
   - "/console/"
 宝蓝德-Spark-EJB:
   - "/BesEJB/spark"
@@ -88,3 +158,371 @@ APACHE-Axis2:
   - "/__bes/__ejb"
 Edoc2(rce):
   - "/edoc2Flow-web/edoc-etc-processManage/importNewBpmnDesign"
+致远互联-OA:
+  - "/seeyon/"
+  - "/seeyon/index.jsp"
+  - "/seeyon/main.do"
+  - "/yyoa/"
+  - "/seeyon/common/js/"
+致远OA-M3-Server:
+  - "/mobile_portal/"
+泛微-协同办公OA:
+  - "/wui/index.html"
+  - "/login/Login.jsp"
+  - "/wui/theme/ecology8/page/login.jsp"
+  - "/js/ecology8/lang/weaver_lang_7_wev8.js"
+  - "/spa/portal/static4spa/index.html"
+泛微-EOffice:
+  - "/general/login/index.php"
+  - "/general/index.php"
+  - "/eoffice10/server/public/"
+ecology泛微e-office:
+  - "/general/login/index.php"
+用友-ERP-NC:
+  - "/nc"
+  - "/nc/"
+  - "/nc/servlet/nc.ui.iufo.login.Index"
+  - "/ServiceDispatcherServlet"
+  - "/NCFindWeb"
+用友-UFIDA-NC:
+  - "/nc"
+  - "/nc/"
+  - "/nc/servlet/nc.ui.iufo.login.Index"
+  - "/NCFindWeb"
+用友-NC-Cloud:
+  - "/nccloud"
+  - "/nccloud/"
+  - "/platform/pub/welcome.do"
+  - "/nccloud/resources/js/"
+用友-GRP-U8:
+  - "/login.jsp?up=1"
+  - "/login.jsp"
+畅捷通-TPlus:
+  - "/tplus/"
+  - "/tplus"
+  - "/tplus/view/login.html"
+奇安信-天擎:
+  - "/api/web/user/login"
+  - "/api/web/login"
+奇安信-VPN:
+  - "/vpn/"
+安恒信息-明御安全网关:
+  - "/webui/"
+安恒信息-明御运维审计与风险控制系统:
+  - "/ops/"
+  - "/iam/"
+深信服一体化网关 MIG:
+  - "/cgi-bin/login.cgi"
+深信服 waf:
+  - "/loginout.php"
+深信服 NGAF:
+  - "/cgi-bin/login.cgi"
+SangFor-EDR:
+  - "/ui/login.php"
+WebLogic:
+  - "/console/login/LoginForm.jsp"
+  - "/console/"
+  - "/uddiexplorer/"
+APACHE-Solr:
+  - "/solr/"
+  - "/solr/admin/"
+  - "/solr/admin/info/system"
+  - "/solr/admin/cores"
+APACHE-Airflow:
+  - "/login/"
+  - "/admin/airflow/login"
+  - "/airflow/"
+Apache-OFBiz:
+  - "/catalog/control/main"
+  - "/webtools/control/main"
+  - "/partymgr/control/main"
+ATLASSIAN-Confluence:
+  - "/confluence/"
+  - "/confluence/login.action"
+  - "/login.action"
+phpMyAdmin:
+  - "/phpmyadmin/"
+  - "/phpMyAdmin/"
+  - "/pma/"
+GitLab:
+  - "/users/sign_in"
+  - "/users/sign_up"
+  - "/explore"
+  - "/api/v4/projects"
+LandRay-OA:
+  - "/login.do"
+  - "/ekp/"
+  - "/sys/ui/"
+  - "/login.jsp"
+TDXK-通达OA:
+  - "/general/login.php"
+  - "/login.php"
+  - "/ispirit/login.php"
+  - "/general/index.php"
+万户网络-ezOFFICE:
+  - "/defaultroot/"
+  - "/defaultroot/login.jsp"
+  - "/defaultroot/portal.jsp"
+  - "/defaultroot/evo/ipad/login.jsp"
+亿赛通-电子文档安全管理系统:
+  - "/CDGServer3/"
+  - "/CDGServer3/index.jsp"
+  - "/CDGServer3/logon.jsp"
+金和网络-金和OA:
+  - "/jc6/"
+  - "/c6/"
+  - "/jc6/Jhsoft.Web.login/PassWord.aspx"
+  - "/c6/Jhsoft.Web.login"
+  - "/C6/"
+大华智慧园区综合管理平台:
+  - "/WPMS/"
+  - "/portal/"
+  - "/portal/login.jsp"
+大华ICC智能物联综合管理平台:
+  - "/evo-apigw/"
+  - "/evo-apigw/evo-brm/1.2.0/config/get-version"
+  - "/evo-apigw/evo-cirs/file/readPic"
+海康威视综合安防平台:
+  - "/portal/"
+  - "/portal/login.html"
+  - "/home/locationIndex.action"
+  - "/portal/conf/config.properties"
+  - "/bic/ssoService/v1/applyAutoLoginTicket"
+  - "/center/api/installation/detection"
+  - "/svm/api/external/report"
+REALOR-天翼应用虚拟化系统:
+  - "/CasMain.XGI"
+广联达-Linkworks办公OA:
+  - "/Services/Identification/"
+  - "/Services/Identification/login.ashx"
+Jolokia:
+  - "/jolokia/"
+  - "/jolokia/list"
+  - "/actuator/jolokia"
+  - "/jolokia/version"
+Jboss:
+  - "/jmx-console/"
+  - "/web-console/"
+  - "/invoker/JMXInvokerServlet"
+  - "/admin-console/"
+JBoss-AS:
+  - "/jmx-console/"
+  - "/web-console/"
+  - "/admin-console/"
+ZABBIX-监控系统:
+  - "/zabbix/"
+  - "/zabbix/index.php"
+  - "/zabbix.php"
+Webmin:
+  - "/webmin/"
+  - "/session_login.cgi"
+Adobe-ColdFusion:
+  - "/CFIDE/administrator/index.cfm"
+  - "/CFIDE/componentutils/"
+  - "/cfusion/administrator/"
+VMware-vCenter:
+  - "/ui/"
+  - "/vsphere-client/"
+  - "/sdk/"
+APACHE-ActiveMQ:
+  - "/admin/"
+  - "/admin/index.jsp"
+APACHE-NiFi:
+  - "/nifi/"
+  - "/nifi-api/"
+  - "/nifi/login"
+  - "/nifi-api/access/config"
+APACHE-Superset:
+  - "/login/"
+  - "/superset/welcome"
+Spring-Boot-Admin:
+  - "/applications"
+  - "/wallboard"
+JeeSpringCloud:
+  - "/a/login"
+Laravel-Framework:
+  - "/_ignition/health-check"
+  - "/telescope/requests"
+Grafana_Labs-公司产品:
+  - "/grafana/login"
+  - "/api/health"
+  - "/login"
+ClickHouse:
+  - "/play"
+  - "/ping"
+Kibana:
+  - "/app/kibana"
+  - "/api/status"
+帆软-FineBI:
+  - "/webroot/decision"
+  - "/webroot/decision/login"
+  - "/decision"
+  - "/decision/login"
+  - "/decision/view/ReportServer"
+  - "/webroot/decision/view/ReportServer"
+  - "/decision/remote/design/channel"
+  - "/webroot/decision/remote/design/channel"
+  - "/webroot/ReportServer"
+  - "/ReportServer"
+  - "/decision/nx/report/v9/largedataset/export/excel"
+
+润乾报表(西部):
+  - "/InputServlet"
+  - "/reportCenterServlet"
+
+CAS 单点登录:
+  - "/cas/login"
+
+吉大正元身份认证网关:
+  - "/jit_pnx_portal/"
+
+OpenAM:
+  - "/openam/XUI"
+  - "/openam/UI/Login"
+海康威视 流媒体管理服务器:
+  - "/config/user.xml"
+  - "/systemLog/downFile.php"
+海康威视联网网关:
+  - "/localDomain/downdb.php"
+Hikvision-iVMS:
+  - "/portal/common/js/commonvar.js"
+  - "/eps/api/triggerSnapshot/download"
+  - "/eps/resourceOperations/upload.action"
+KEDACOM-phoenix监控平台:
+  - "/pmc-bin/upload_fcgi"
+Kedacom-DVR access gateway:
+  - "/gatewayweb/"
+KEDACOM-DVR接入网关:
+  - "/gatewayweb/"
+Dahua-DSS:
+  - "/admin/login_login.action"
+  - "/portal/attachment_downloadAtt.action"
+  - "/portal/attachment_downloadByUrlAtt.action"
+大华安防 DSS:
+  - "/admin/login_login.action"
+  - "/portal/attachment_downloadAtt.action"
+
+H3C-iMC:
+  - "/imc/login.jsf"
+  - "/imc/"
+  - "/selfservice/"
+
+HuaWei-eSight:
+  - "/sso/login.action"
+
+SANGFOR-运维安全管理系统:
+  - "/fort/login"
+
+Prometheus:
+  - "/graph"
+  - "/prometheus/graph"
+
+天行网安-安全单向导入系统:
+  - "/userMainAction.action"
+
+安恒明御安全网关:
+  - "/webui/"
+
+锐捷防火墙:
+  - "/ssl_index_next.html"
+
+泛微-EMobile:
+  - "/verifyLogin.do"
+
+华天动力OA:
+  - "/OAapp/WebObjects/OAapp.woa"
+  - "/OAapp/htpages/app"
+
+金蝶OA:
+  - "/kingdee/index.jsp"
+
+宏景eHR人力资源信息管理系统:
+  - "/hrlogon"
+
+明源云-ERP:
+  - "/PubPlatform/Login/index.aspx"
+
+APACHE-hadoop-YARN:
+  - "/cluster/cluster"
+  - "/ws/v1/cluster/info"
+
+APACHE-hadoop-ResourceManager:
+  - "/cluster/cluster"
+  - "/ws/v1/cluster/info"
+
+Hadoop-Administration:
+  - "/dfshealth.html"
+
+Hadoop-Hue:
+  - "/hue/accounts/login"
+  - "/accounts/login/"
+  - "/hue/"
+
+Apache-Ranger:
+  - "/login.jsp"
+
+Spark history-server:
+  - "/history"
+  - "/api/v1/applications"
+
+APACHE-Spark:
+  - "/api/v1/applications"
+  - "/environment/"
+
+DataEase:
+  - "/login"
+  - "/de2api/user/info"
+
+DolphinScheduler:
+  - "/dolphinscheduler/ui/"
+
+Hillstone-SG-6000:
+  - "/loginok.html"
+
+用友bip:
+  - "/iuap-apcom-workbench"
+  - "/iuap-apcom-workbench/"
+
+畅捷通-TPlus(华东):
+  - "/tplus/"
+
+正方教学管理信息服务平台:
+  - "/xtgl/login_slogin.html"
+  - "/jwglxt/logo/favicon.ico"
+
+正方教务管理系统(JAVA版)(华东):
+  - "/xtgl/login_slogin.html"
+  - "/jwglxt/logo/favicon.ico"
+
+正方数字化校园平台:
+  - "/zfca/login"
+
+红帆-ioffice:
+  - "/iOffice/prg/welcome/welcomeShow.aspx?mode=login"
+  - "/iOffice/js"
+
+金盘-微信管理平台:
+  - "/admin/weichatcfg/getsysteminfo"
+  - "/pages/admin/tools/uploadFile/doUpload.jsp"
+
+金盘图书馆:
+  - "/opac/periodicals"
+
+青果教务系统:
+  - "/jkingo.js"
+
+新点OA:
+  - "/netoffice6"
+
+Epoint-Oa:
+  - "/netoffice6"
+
+浪潮政务系统:
+  - "/OnlineQuery/QueryList.aspx"
+
+金蝶-Apusic应用服务器:
+  - "/admin/"
+  - "/appmonitor/"
+
+普元-EOS:
+  - "/default/coframe/auth/login/login.jsp"

