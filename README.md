@@ -145,26 +145,27 @@ Argus 支持三种运行模式：
 
 ### 从源码构建
 
+本机可执行文件输出到 `bin/`，交叉编译输出到 `release/`。不要把 Agent 的 `config/`、`data/` 放进这两个目录。
+
 ```bash
-# 构建全部组件
-make all
+# 当前机器架构（推荐日常开发）
+./build.sh agent          # → bin/argus-agent
+./build.sh cli            # → bin/argus
+./build.sh server         # → bin/argus-server
+./build.sh                # cli + agent + server
 
-# 或单独构建
-make cli        # 单机版 CLI
-make agent      # Agent 探针节点
-make server     # Server 控制面
-make mcp        # MCP 代理
+# make 是同样入口
+make agent
 
-# 全平台交叉编译 (Linux/macOS/Windows)
-./build.sh
-
-# 启用 UPX 压缩
-./build.sh pack
+# 交叉编译到 release/
+./build.sh agent --target linux/amd64
+./build.sh cross          # 全平台
+./build.sh pack --all-targets
 ```
 
-产物输出在 `bin/`（make）或 `release/`（build.sh）目录。
+查看当前识别到的系统与可用目标：`./build.sh --list`。
 
-`build.sh` 默认使用 `CGO_ENABLED=0`、`-trimpath` 和 `-ldflags="-s -w"` 构建发行产物；CLI 内嵌规则，Agent 自动使用 `noembed`。UPX 是可选压缩步骤，未安装、目标平台不支持或压缩失败时会跳过，不影响未压缩产物。
+本机构建使用 `CGO_ENABLED=0`、`-trimpath` 和 `-ldflags="-s -w"`。Agent 使用 `noembed`，运行时从 Server 同步 `arsenal.db`。本机 CLI 内嵌规则，可直接 `./bin/argus`；发行版 CLI（`release/`）仍是 `noembed` + 离线弹药库压缩包。UPX 是可选压缩，未安装、darwin 或不支持的架构会跳过。
 
 ### 单机模式
 
