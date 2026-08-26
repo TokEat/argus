@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     assetMatchesKind,
+    fingerprintGroupSources,
     firstNonEmptyAssetKind,
     firstNonEmptyResultTab,
     visibleAssetKinds,
@@ -35,6 +36,16 @@ describe('taskResultTabs', () => {
         expect(assetMatchesKind('DNS-SubFinder', 'domain')).toBe(true);
         expect(assetMatchesKind('RealIP', 'resolution')).toBe(true);
         expect(assetMatchesKind('https', 'other')).toBe(true);
+    });
+
+    it('orders fingerprint sources with directory-scan first', () => {
+        expect(fingerprintGroupSources({
+            Targets: [
+                { Source: 'passive' },
+                { Source: 'directory' },
+                { Source: 'fallback' },
+            ],
+        })).toEqual(['directory', 'fallback', 'passive']);
     });
 });
 

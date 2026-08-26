@@ -125,7 +125,7 @@ export default function TaskCoverageSection({ explanation }: { explanation: API.
                                         : renderCoverageNameList(item.matched_pocs)
                                 ),
                             },
-                            { title: '原因', dataIndex: 'reason', key: 'reason', ellipsis: true, width: 240, render: (value: string) => coverageReasonText(value) },
+                            { title: '原因', dataIndex: 'reason', key: 'reason', ellipsis: true, width: 360, render: (value: string) => coverageReasonText(value) },
                         ]}
                     />
                     {explanation.invalidations_truncated && (

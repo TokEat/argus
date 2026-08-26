@@ -61,3 +61,53 @@ export function firstNonEmptyAssetKind(counts: Partial<Record<AssetKind, number>
 export function assetKindCount(counts: Partial<Record<AssetKind, number>> | undefined, kind: AssetKind): number {
     return counts?.[kind] || 0;
 }
+
+export type FingerprintSource = 'passive' | 'directory' | 'behavior' | 'fallback';
+
+export const FINGERPRINT_SOURCE_LABELS: Record<FingerprintSource, string> = {
+    passive: '被动命中',
+    directory: '主动指纹（目录扫描）',
+    behavior: '行为探针',
+    fallback: '路径推断',
+};
+
+export const FINGERPRINT_SOURCE_COLORS: Record<FingerprintSource, string> = {
+    passive: 'default',
+    directory: 'magenta',
+    behavior: 'purple',
+    fallback: 'orange',
+};
+
+export const FINGERPRINT_SOURCE_FILTERS: Array<{ value: '' | FingerprintSource; label: string }> = [
+    { value: '', label: '全部来源' },
+    { value: 'directory', label: FINGERPRINT_SOURCE_LABELS.directory },
+    { value: 'passive', label: FINGERPRINT_SOURCE_LABELS.passive },
+    { value: 'behavior', label: FINGERPRINT_SOURCE_LABELS.behavior },
+    { value: 'fallback', label: FINGERPRINT_SOURCE_LABELS.fallback },
+];
+
+export function isFingerprintSource(value: string | undefined): value is FingerprintSource {
+    return value === 'passive' || value === 'directory' || value === 'behavior' || value === 'fallback';
+}
+
+export function fingerprintSourceLabel(source?: string, fallback?: string): string {
+    if (fallback) return fallback;
+    if (isFingerprintSource(source)) return FINGERPRINT_SOURCE_LABELS[source];
+    return source || FINGERPRINT_SOURCE_LABELS.passive;
+}
+
+export function fingerprintSourceColor(source?: string): string {
+    if (isFingerprintSource(source)) return FINGERPRINT_SOURCE_COLORS[source];
+    return 'default';
+}
+
+export function fingerprintGroupSources(group: { Sources?: string[]; Targets?: Array<{ Source?: string }> }): FingerprintSource[] {
+    const raw = group.Sources?.length
+        ? group.Sources
+        : (group.Targets || []).map((target) => target.Source).filter((source): source is string => Boolean(source));
+    const unique: FingerprintSource[] = [];
+    (['directory', 'behavior', 'fallback', 'passive'] as FingerprintSource[]).forEach((source) => {
+        if (raw.includes(source) && !unique.includes(source)) unique.push(source);
+    });
+    return unique;
+}

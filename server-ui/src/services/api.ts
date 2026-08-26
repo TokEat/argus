@@ -285,6 +285,8 @@ type ResultPageParams = {
     page?: number;
     pageSize?: number;
     kind?: string;
+    search?: string;
+    source?: string;
 };
 
 const buildResultParams = (first?: string | ResultPageParams, projectId?: string): Record<string, string | number> => {
@@ -295,6 +297,8 @@ const buildResultParams = (first?: string | ResultPageParams, projectId?: string
         if (first.page) params.page = first.page;
         if (first.pageSize) params.page_size = first.pageSize;
         if (first.kind) params.kind = first.kind;
+        if (first.search) params.search = first.search;
+        if (first.source) params.source = first.source;
         return params;
     }
     if (first) params.task_id = first;
@@ -367,11 +371,14 @@ const exportReportBlob = async (
     projectId?: string,
     taskId?: string,
     assetKind?: string,
+    extras?: { search?: string; source?: string },
 ): Promise<Blob> => {
     const params = new URLSearchParams();
     if (projectId) params.set('project_id', projectId);
     if (taskId) params.set('task_id', taskId);
     if (kind === 'assets' && assetKind) params.set('kind', assetKind);
+    if (extras?.search) params.set('search', extras.search);
+    if (extras?.source) params.set('source', extras.source);
     const queryString = params.toString();
     const url = `/api/v1/reports/export/${kind}${queryString ? `?${queryString}` : ''}`;
     const response = await axios.get(url, {
@@ -391,8 +398,8 @@ export async function exportAssets(projectId?: string, taskId?: string, kind?: s
     return exportReportBlob('assets', projectId, taskId, kind);
 }
 
-export async function exportFingerprints(projectId?: string, taskId?: string): Promise<Blob> {
-    return exportReportBlob('fingerprints', projectId, taskId);
+export async function exportFingerprints(projectId?: string, taskId?: string, search?: string, source?: string): Promise<Blob> {
+    return exportReportBlob('fingerprints', projectId, taskId, undefined, { search, source });
 }
 
 export async function exportArsenalSeedDB(): Promise<Blob> {

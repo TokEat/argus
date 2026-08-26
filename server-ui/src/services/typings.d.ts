@@ -612,6 +612,15 @@ declare namespace API {
     /** 原始上报 JSON（RealIP 行含 domain/ips，用于域名↔IP 关联展示） */
     Tags?: string;
     CreatedAt: string;
+    /** Web 站点匹配到的指纹产品，含主动指纹（目录扫描）标记 */
+    Fingerprints?: AssetFingerprintMatch[];
+  }
+
+  interface AssetFingerprintMatch {
+    ProductName: string;
+    Source?: string;
+    SourceLabel?: string;
+    MatchedURL?: string;
   }
 
   /** 指纹 (GET /api/v1/fingerprints) */
@@ -628,7 +637,10 @@ declare namespace API {
 
   interface FingerprintGroupTarget {
     Target: string;
+    MatchedURL?: string;
     RuleName: string;
+    Source?: string;
+    SourceLabel?: string;
     Evidence?: string;
     CreatedAt?: string;
     UpdatedAt?: string;
@@ -638,6 +650,8 @@ declare namespace API {
     ProductName: string;
     TargetCount: number;
     Targets: FingerprintGroupTarget[];
+    Sources?: string[];
+    SourceLabels?: string[];
     FirstSeen?: string;
     LastSeen?: string;
   }

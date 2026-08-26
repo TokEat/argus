@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Typography, Table, Tag, Tabs, Space, Spin, Button, Tooltip, Empty, Drawer, Descriptions, Divider, Popover } from 'antd';
+import { Typography, Table, Tag, Tabs, Space, Spin, Button, Tooltip, Empty, Drawer, Descriptions, Divider, Popover, Input, Select } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     BugOutlined,
@@ -19,14 +19,19 @@ import { useAutoContext } from '../contexts/GlobalAIContext';
 import {
     ASSET_KIND_LABELS,
     DEFAULT_RESULT_PAGE_SIZE,
+    FINGERPRINT_SOURCE_FILTERS,
     assetKindCount,
     assetMatchesKind,
     emptyAssetKindCounts,
+    fingerprintGroupSources,
+    fingerprintSourceColor,
+    fingerprintSourceLabel,
     firstNonEmptyAssetKind,
     firstNonEmptyResultTab,
     initialResultPageState,
     visibleAssetKinds,
     type AssetKind,
+    type FingerprintSource,
     type ResultPageState,
     type ResultTabKey,
 } from './taskResultTabs';
@@ -48,6 +53,8 @@ const TaskResults: React.FC = () => {
     const [vulnPagination, setVulnPagination] = useState<ResultPageState>(initialResultPageState);
     const [assetPagination, setAssetPagination] = useState<ResultPageState>(initialResultPageState);
     const [fingerprintPagination, setFingerprintPagination] = useState<ResultPageState>(initialResultPageState);
+    const [fingerprintSearch, setFingerprintSearch] = useState('');
+    const [fingerprintSource, setFingerprintSource] = useState<'' | FingerprintSource>('');
     const [assetKind, setAssetKind] = useState<AssetKind>('web');
     const [assetKindCounts, setAssetKindCounts] = useState<Record<AssetKind, number>>(emptyAssetKindCounts);
     const [assetTotal, setAssetTotal] = useState(0);
@@ -125,11 +132,18 @@ const TaskResults: React.FC = () => {
         }
     }, [applyAssetStats, setTabBusy, taskId]);
 
-    const fetchFingerprintsPage = useCallback(async (page: number, pageSize: number) => {
+    const fetchFingerprintsPage = useCallback(async (page: number, pageSize: number, search = '', source: '' | FingerprintSource = '') => {
         setTabBusy('fingerprints', true);
         try {
             const projectId = localStorage.getItem('active_project_id') || undefined;
-            const res = await getFingerprintGroups({ taskId, projectId, page, pageSize });
+            const res = await getFingerprintGroups({
+                taskId,
+                projectId,
+                page,
+                pageSize,
+                search: search.trim() || undefined,
+                source: source || undefined,
+            });
             setFingerprints(res.items || []);
             setFingerprintPagination({
                 current: res.page || page,
@@ -173,7 +187,7 @@ const TaskResults: React.FC = () => {
             await Promise.all([
                 fetchVulnsPage(vulnPagination.current, vulnPagination.pageSize),
                 fetchAssetsPage(assetPagination.current, assetPagination.pageSize, assetKind),
-                fetchFingerprintsPage(fingerprintPagination.current, fingerprintPagination.pageSize),
+                fetchFingerprintsPage(fingerprintPagination.current, fingerprintPagination.pageSize, fingerprintSearch, fingerprintSource),
             ]);
         } finally {
             setLoading(false);
@@ -185,6 +199,8 @@ const TaskResults: React.FC = () => {
         fetchFingerprintsPage,
         fetchVulnsPage,
         fingerprintPagination,
+        fingerprintSearch,
+        fingerprintSource,
         vulnPagination,
     ]);
 
@@ -215,11 +231,13 @@ const TaskResults: React.FC = () => {
             port: a.Port,
             title: a.Title,
             service: a.Service,
+            fingerprints: (a.Fingerprints || []).map((match) => match.ProductName),
         })),
         fingerprints_summary: fingerprints.slice(0, 10).map(f => ({
             product_name: f.ProductName,
             target_count: f.TargetCount,
-            targets: f.Targets?.slice(0, 5).map(target => target.Target) || [],
+            sources: fingerprintGroupSources(f),
+            targets: f.Targets?.slice(0, 5).map(target => target.MatchedURL || target.Target) || [],
         })),
         viewing_vuln: drawerOpen ? selectedVuln : null,
     });
@@ -233,7 +251,7 @@ const TaskResults: React.FC = () => {
                 blob = await exportAssets(projectId, taskId, assetKind);
                 filename = `assets-${assetKind}-${taskId || 'all'}.csv`;
             } else if (activeTab === 'fingerprints') {
-                blob = await exportFingerprints(projectId, taskId);
+                blob = await exportFingerprints(projectId, taskId, fingerprintSearch, fingerprintSource);
                 filename = `fingerprints-${taskId || 'all'}.csv`;
             } else {
                 blob = await exportVulns(projectId, taskId);
@@ -545,6 +563,27 @@ const TaskResults: React.FC = () => {
         return <Text style={{ fontSize: 12, color: '#64748b' }} ellipsis={{ tooltip: url }}>{url}</Text>;
     };
 
+    const renderAssetFingerprints = (matches?: API.AssetFingerprintMatch[]) => {
+        if (!matches || matches.length === 0) return <Text type="secondary">-</Text>;
+        return (
+            <Space size={4} wrap>
+                {matches.map((match) => {
+                    const active = match.Source && match.Source !== 'passive';
+                    return (
+                        <Tag
+                            key={`${match.ProductName}-${match.Source || 'passive'}`}
+                            color={active ? fingerprintSourceColor(match.Source) : 'cyan'}
+                            style={{ margin: 0 }}
+                        >
+                            {match.ProductName}
+                            {active ? ` · ${fingerprintSourceLabel(match.Source, match.SourceLabel)}` : ''}
+                        </Tag>
+                    );
+                })}
+            </Space>
+        );
+    };
+
     const assetColumnsForKind = (kind: AssetKind): ColumnsType<API.Asset> => {
         if (kind === 'resolution') {
             return [
@@ -602,6 +641,11 @@ const TaskResults: React.FC = () => {
                     render: (v: string) => v
                         ? <Tooltip title={v}><Text style={{ fontSize: 12 }}>{v}</Text></Tooltip>
                         : <Text type="secondary">-</Text>,
+                },
+                {
+                    title: '匹配指纹',
+                    key: 'fingerprints',
+                    render: (_, record) => renderAssetFingerprints(record.Fingerprints),
                 },
                 {
                     title: '服务',
@@ -686,8 +730,17 @@ const TaskResults: React.FC = () => {
             title: '产品名称',
             dataIndex: 'ProductName',
             key: 'product_name',
-            width: 220,
-            render: (v: string) => <Tag color="cyan">{v}</Tag>,
+            width: 280,
+            render: (v: string, record) => (
+                <Space size={4} wrap>
+                    <Tag color="cyan">{v}</Tag>
+                    {fingerprintGroupSources(record).map((source) => (
+                        <Tag key={source} color={fingerprintSourceColor(source)} style={{ margin: 0 }}>
+                            {fingerprintSourceLabel(source)}
+                        </Tag>
+                    ))}
+                </Space>
+            ),
         },
         {
             title: 'URL 数',
@@ -705,17 +758,27 @@ const TaskResults: React.FC = () => {
                 if (targets.length === 0) return <Text type="secondary">-</Text>;
                 return (
                     <div style={{ maxHeight: 180, overflow: 'auto', display: 'grid', gap: 6 }}>
-                        {targets.map((target, index) => (
-                            <Space key={`${target.Target}-${index}`} size={6} wrap={false}>
-                                <Text
-                                    copyable={{ text: target.Target }}
-                                    style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}
-                                >
-                                    {target.Target}
-                                </Text>
-                                {target.RuleName && <Tag color="default">{target.RuleName}</Tag>}
-                            </Space>
-                        ))}
+                        {targets.map((target, index) => {
+                            const displayURL = target.MatchedURL || target.Target;
+                            return (
+                                <Space key={`${displayURL}-${index}`} size={6} wrap>
+                                    <Text
+                                        copyable={{ text: displayURL }}
+                                        style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}
+                                    >
+                                        {displayURL}
+                                    </Text>
+                                    {target.Source && (
+                                        <Tag color={fingerprintSourceColor(target.Source)} style={{ margin: 0, fontSize: 11 }}>
+                                            {fingerprintSourceLabel(target.Source, target.SourceLabel)}
+                                        </Tag>
+                                    )}
+                                    {target.RuleName && target.RuleName !== 'Finger' && target.RuleName !== 'Active-Finger' && (
+                                        <Tag color="default">{target.RuleName}</Tag>
+                                    )}
+                                </Space>
+                            );
+                        })}
                     </div>
                 );
             },
@@ -857,24 +920,49 @@ const TaskResults: React.FC = () => {
                                 key: 'fingerprints',
                                 label: <span><ScanOutlined /> 指纹 ({fingerprintPagination.total})</span>,
                                 children: (
-                                    <Table
-                                        bordered
-                                        columns={fpColumns}
-                                        dataSource={fingerprints}
-                                        rowKey="ProductName"
-                                        loading={tabLoading.fingerprints}
-                                        pagination={{
-                                            current: fingerprintPagination.current,
-                                            pageSize: fingerprintPagination.pageSize,
-                                            total: fingerprintPagination.total,
-                                            showSizeChanger: true,
-                                            pageSizeOptions: ['10', '20', '50', '100', '200'],
-                                            showTotal: (t) => `共 ${t} 条`,
-                                            onChange: (page, pageSize) => fetchFingerprintsPage(page, pageSize),
-                                        }}
-                                        size="middle"
-                                        rowClassName={(_, index) => index % 2 === 1 ? 'table-row-light' : 'table-row-dark'}
-                                    />
+                                    <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                                        <Space wrap>
+                                            <Input.Search
+                                                allowClear
+                                                placeholder="搜索产品名称或 URL"
+                                                defaultValue={fingerprintSearch}
+                                                onSearch={(value) => {
+                                                    const nextSearch = value.trim();
+                                                    setFingerprintSearch(nextSearch);
+                                                    fetchFingerprintsPage(1, fingerprintPagination.pageSize || DEFAULT_RESULT_PAGE_SIZE, nextSearch, fingerprintSource);
+                                                }}
+                                                style={{ width: 280 }}
+                                            />
+                                            <Select
+                                                value={fingerprintSource}
+                                                options={FINGERPRINT_SOURCE_FILTERS}
+                                                style={{ width: 220 }}
+                                                onChange={(value) => {
+                                                    const nextSource = value as '' | FingerprintSource;
+                                                    setFingerprintSource(nextSource);
+                                                    fetchFingerprintsPage(1, fingerprintPagination.pageSize || DEFAULT_RESULT_PAGE_SIZE, fingerprintSearch, nextSource);
+                                                }}
+                                            />
+                                        </Space>
+                                        <Table
+                                            bordered
+                                            columns={fpColumns}
+                                            dataSource={fingerprints}
+                                            rowKey="ProductName"
+                                            loading={tabLoading.fingerprints}
+                                            pagination={{
+                                                current: fingerprintPagination.current,
+                                                pageSize: fingerprintPagination.pageSize,
+                                                total: fingerprintPagination.total,
+                                                showSizeChanger: true,
+                                                pageSizeOptions: ['10', '20', '50', '100', '200'],
+                                                showTotal: (t) => `共 ${t} 条`,
+                                                onChange: (page, pageSize) => fetchFingerprintsPage(page, pageSize, fingerprintSearch, fingerprintSource),
+                                            }}
+                                            size="middle"
+                                            rowClassName={(_, index) => index % 2 === 1 ? 'table-row-light' : 'table-row-dark'}
+                                        />
+                                    </Space>
                                 ),
                             },
                         ]}

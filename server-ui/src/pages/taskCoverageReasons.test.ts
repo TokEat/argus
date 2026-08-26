@@ -4,7 +4,7 @@ import { coverageReasonText, scanStageLabel } from './taskCoverageReasons';
 describe('taskCoverageReasons', () => {
     it('translates compound risk coverage codes into Chinese', () => {
         expect(coverageReasonText('poc_set_unknown,endpoint_content_unknown')).toBe(
-            '原生指纹派发未记录可复用的 POC 集合；未找到该风险目标对应的 HTTP 探测内容版本',
+            '风险验证已完成，但未记录可复用的 POC 集合；风险验证已完成，但未绑定该目标的 HTTP 探测内容版本，下次不能复用',
         );
     });
 
