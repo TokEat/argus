@@ -339,7 +339,7 @@ func (rt *Runtime) matchesProduct(resp runner.Result, productName string) bool {
 	}
 
 	for _, finger := range rt.fingerprintByProduct[productName] {
-		if ddfinger.SingleCheck(
+		if ddfinger.DirProbeCheck(
 			finger,
 			resp.Scheme,
 			resp.Header,

@@ -46,13 +46,18 @@ func ValidateFingerRule(expr string) error {
 		AllString:   expr,
 		Rule:        rules,
 	}
+	var evalErr error
 	func() {
 		defer func() {
-			recover() // 捕获任何 panic
+			if r := recover(); r != nil {
+				evalErr = fmt.Errorf("规则求值失败: %v", r)
+			}
 		}()
-		// SingleCheck(finger, Protocol, header, body, Server, Title, Cert, Port, Path, Hash, IconHash, StatusCode, ContentType, Banner)
-		ddfinger.SingleCheck(entity, "", "", "", "", "", "", 0, "", "", "", 0, "", "")
+		_ = ddfinger.SingleCheck(entity, "", "", "", "", "", "", 0, "", "", "", 0, "", "")
 	}()
+	if evalErr != nil {
+		return evalErr
+	}
 
 	return nil
 }

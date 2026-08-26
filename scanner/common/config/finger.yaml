@@ -14579,7 +14579,6 @@ WowWee-Rovio-webcam:
 Wowza Streaming Engine Manager:
     - title="Wowza Streaming Engine"
     - server="Wowza Streaming Engine"
-    - 'title="manager" product:"wowza streaming engine"'
 Wowza-Media-Server:
     - header="www-authenticate realm=\"Wowza Media Systems" || body="<html><head><title>Wowza Media Server" || (protocol="rtsp" && (banner="Wowza Streaming Engine" || banner="Wowza Media Server")) || banner="Wowza Media Server"
 Wuhan Fusite - Information Management System:
@@ -18410,9 +18409,8 @@ Dahuasecurity-Dh-Ipc-Hdbw23a0rn-Zs-Firmware:
 FortiClient-EMS:
     - 'icon_hash="-800551065"'
 Fortinet-Fortios:
-    - 'body="/remote/login" "xxxxxxxx"'
+    - 'body="/remote/login"'
     - 'icon_hash="945408572"'
-    - 'body="/remote/login\" \"xxxxxxxx"'
 Hikvision-Ds-2cd2026g2-Iu-Sl-Firmware:
     - 'icon_hash="999357577"'
 Ivanti-EPMM:
@@ -18447,7 +18445,7 @@ Cisco-Identity-Services-Engine:
 Cisco-Rv160-Firmware:
     - 'body="cisco rv340"'
 Citrix-Netscaler-Application-Delivery-Controller:
-    - 'title="citrix gateway" || title:"netscaler gateway"'
+    - 'title="citrix gateway" || title="netscaler gateway"'
 CyberPanel:
     - 'body="cyberpanel"'
 Decolua-9router:

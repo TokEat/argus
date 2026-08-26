@@ -84,18 +84,6 @@ Edoc2(rce):
   - "/webroot/decision"
 MINIO-Console:
   - "/minio/console/"
-致远互联-OA:
-  - "/seeyon/"
-致远OA-M3-Server:
-  - "/mobile_portal/"
-泛微-协同办公OA:
-  - "/wui/index.html"
-泛微-EOffice:
-  - "/general/login/index.php"
-ecology泛微e-office:
-  - "/general/login/index.php"
-泛微-EMobile:
-  - "/verifyLogin.do"
 用友-ERP-NC:
   - "/nc/"
   - "/NCFindWeb"
@@ -104,18 +92,12 @@ ecology泛微e-office:
   - "/NCFindWeb"
 用友-NC-Cloud:
   - "/nccloud/"
-用友-GRP-U8:
-  - "/login.jsp?up=1"
-用友bip:
-  - "/iuap-apcom-workbench/"
 畅捷通-TPlus:
   - "/tplus/"
 畅捷通-TPlus(华东):
   - "/tplus/"
 LandRay-OA:
   - "/ekp/"
-TDXK-通达OA:
-  - "/general/login.php"
 万户网络-ezOFFICE:
   - "/defaultroot/"
 亿赛通-电子文档安全管理系统:
@@ -165,36 +147,18 @@ KEDACOM-DVR接入网关:
   - "/gatewayweb/"
 Kedacom-DVR access gateway:
   - "/gatewayweb/"
-奇安信-天擎:
-  - "/api/web/user/login"
 奇安信-VPN:
   - "/vpn/"
-安恒信息-明御安全网关:
-  - "/webui/"
-安恒明御安全网关:
-  - "/webui/"
-安恒信息-明御运维审计与风险控制系统:
-  - "/ops/"
-深信服一体化网关 MIG:
-  - "/cgi-bin/login.cgi"
-深信服 NGAF:
-  - "/cgi-bin/login.cgi"
 深信服 waf:
   - "/loginout.php"
-SangFor-EDR:
-  - "/ui/login.php"
 SANGFOR-运维安全管理系统:
   - "/fort/login"
 锐捷防火墙:
   - "/ssl_index_next.html"
-Hillstone-SG-6000:
-  - "/loginok.html"
 REALOR-天翼应用虚拟化系统:
   - "/CasMain.XGI"
 吉大正元身份认证网关:
   - "/jit_pnx_portal/"
-天行网安-安全单向导入系统:
-  - "/userMainAction.action"
 WebLogic:
   - "/console/login/LoginForm.jsp"
 APACHE-Solr:
@@ -241,8 +205,6 @@ APACHE-Spark:
   - "/environment/"
 Spark history-server:
   - "/history"
-JeeSpringCloud:
-  - "/a/login"
 Laravel-Framework:
   - "/_ignition/health-check"
 Grafana_Labs-公司产品:
@@ -279,5 +241,3 @@ HuaWei-eSight:
   - "/sso/login.action"
 DolphinScheduler:
   - "/dolphinscheduler/ui/"
-DataEase:
-  - "/de2api/user/info"

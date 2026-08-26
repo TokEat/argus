@@ -569,6 +569,101 @@ func TestDirBruteCallbackRecordsDirFallback(t *testing.T) {
 	}
 }
 
+func TestDirBruteCallbackDoesNotMarkGeneric403AsProducts(t *testing.T) {
+	urlMap := map[string]structs.URLEntity{
+		"http://58.210.164.90:8556": {
+			IP:       "58.210.164.90",
+			Port:     8556,
+			WebPaths: map[string]structs.UrlPathEntity{"/": {}},
+		},
+	}
+	var emitted []structs.OutputMessage
+	rt := NewRuntime(
+		urlMap,
+		&sync.Mutex{},
+		nil, nil, nil,
+		map[string][]string{
+			"/seeyon/":           {"致远互联-OA"},
+			"/wui/index.html":    {"泛微-协同办公OA"},
+			"/general/login.php": {"TDXK-通达OA"},
+		},
+		[]structs.FingerPEntity{
+			{ProductName: "致远互联-OA", AllString: `path="/seeyon/"`, Rule: ddfinger.ParseRule(`path="/seeyon/"`)},
+			{ProductName: "泛微-协同办公OA", AllString: `path="/wui/index.html"`, Rule: ddfinger.ParseRule(`path="/wui/index.html"`)},
+			{ProductName: "TDXK-通达OA", AllString: `path="/general/login.php"`, Rule: ddfinger.ParseRule(`path="/general/login.php"`)},
+			{ProductName: "TDXK-通达OA", AllString: `body="/general/login.php"`, Rule: ddfinger.ParseRule(`body="/general/login.php"`)},
+		},
+		nil,
+		map[string][]string{},
+		&sync.Mutex{},
+		func(msg structs.OutputMessage) { emitted = append(emitted, msg) },
+	)
+
+	denied := runner.Result{
+		Scheme:      "http",
+		Host:        "58.210.164.90",
+		Port:        "8556",
+		StatusCode:  403,
+		Title:       "403 Forbidden",
+		ContentType: "text/html",
+		Hashes:      map[string]interface{}{"body_md5": "same-waf", "header_md5": "same-hdr"},
+	}
+	for _, path := range []string{"/seeyon/", "/wui/index.html", "/general/login.php"} {
+		item := denied
+		item.Path = path
+		item.URL = "http://58.210.164.90:8556" + path
+		item.Body = `<html>403 Forbidden</html> URL: ` + item.URL
+		rt.DirBruteCallback(item)
+	}
+
+	if len(emitted) != 0 {
+		t.Fatalf("generic 403 directory probes should not emit active fingerprints, got %#v", emitted)
+	}
+}
+
+func TestDirBruteCallbackKeepsDistinctiveContentOnProbedPath(t *testing.T) {
+	urlMap := map[string]structs.URLEntity{
+		"http://example.com": {
+			IP:       "1.1.1.1",
+			Port:     80,
+			WebPaths: map[string]structs.UrlPathEntity{"/": {}},
+		},
+	}
+	var emitted []structs.OutputMessage
+	rt := NewRuntime(
+		urlMap,
+		&sync.Mutex{},
+		nil, nil, nil,
+		map[string][]string{"/seeyon/": {"致远互联-OA"}},
+		[]structs.FingerPEntity{{
+			ProductName: "致远互联-OA",
+			AllString:   `body="seeyonProductId"`,
+			Rule:        ddfinger.ParseRule(`body="seeyonProductId"`),
+		}},
+		nil,
+		map[string][]string{},
+		&sync.Mutex{},
+		func(msg structs.OutputMessage) { emitted = append(emitted, msg) },
+	)
+
+	rt.DirBruteCallback(runner.Result{
+		URL:         "http://example.com/seeyon/",
+		Scheme:      "http",
+		Host:        "example.com",
+		Port:        "80",
+		Path:        "/seeyon/",
+		StatusCode:  200,
+		Body:        `var seeyonProductId = "A8"`,
+		Title:       "致远A8",
+		ContentType: "text/html",
+		Hashes:      map[string]interface{}{"body_md5": "seeyon-ok", "header_md5": "hdr"},
+	})
+
+	if len(emitted) != 1 || len(emitted[0].Finger) != 1 || emitted[0].Finger[0] != "致远互联-OA" {
+		t.Fatalf("expected distinctive directory probe match, got %#v", emitted)
+	}
+}
+
 func TestMatchingDirPathsRequiresExactRequestURI(t *testing.T) {
 	rt := &Runtime{DirDB: map[string][]string{
 		"/login":               {"Login"},

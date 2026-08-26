@@ -7201,7 +7201,7 @@ FIT2CLOUD-JumpServer堡垒机:
   type:
   - root
   pocs:
-  - LOGBASE-test_qrcode_b-rce
+  - 思福迪 运维安全管理系统 test_qrcode_b 远程命令执行漏洞
   - logbase-test-qrcide-b-rce
 Coremail-邮件系统:
   type:

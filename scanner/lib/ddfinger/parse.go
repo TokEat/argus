@@ -2,7 +2,6 @@ package ddfinger
 
 import (
 	"container/list"
-	"fmt"
 	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/projectdiscovery/gologger"
 	"regexp"
@@ -27,17 +26,32 @@ func advance(ch int) int {
 	return 0
 }
 
+func listBackInt(stack *list.List) (int, bool) {
+	if stack == nil || stack.Back() == nil {
+		return 0, false
+	}
+	value, ok := stack.Back().Value.(int)
+	return value, ok
+}
+
+func popInt(stack *list.List) (int, bool) {
+	value, ok := listBackInt(stack)
+	if !ok {
+		return 0, false
+	}
+	stack.Remove(stack.Back())
+	return value, true
+}
+
 // 计算纯bool表达式，支持 ! && & || | ( )
 func boolEval(expression string) bool {
-	// 左右括号数量相等
 	if strings.Count(expression, "(") != strings.Count(expression, ")") {
-		gologger.Fatal().Msg(fmt.Sprintf("[-] 纯布尔表达式 [%s] 左右括号不匹配", expression))
+		gologger.Warning().Msgf("[-] 纯布尔表达式 [%s] 左右括号不匹配", expression)
+		return false
 	}
-	// 去除空格
 	for strings.Contains(expression, " ") {
 		expression = strings.ReplaceAll(expression, " ", "")
 	}
-	// 去除空表达式
 	for strings.Contains(expression, "()") {
 		expression = strings.ReplaceAll(expression, "()", "")
 	}
@@ -49,87 +63,112 @@ func boolEval(expression string) bool {
 	}
 	if !strings.Contains(expression, "T") && !strings.Contains(expression, "F") {
 		return false
-		// panic("纯布尔表达式错误，没有包含T/F")
 	}
 
 	expr := list.New()
 	operator_stack := list.New()
 	for _, ch := range expression {
-		// ch 为 T或者F
 		if ch == 84 || ch == 70 {
 			expr.PushBack(int(ch))
-		} else if advance(int(ch)) > 0 {
+			continue
+		}
+		if advance(int(ch)) > 0 {
 			if operator_stack.Len() == 0 {
 				operator_stack.PushBack(int(ch))
 				continue
 			}
-			// 两个!抵消
-			if ch == 33 && operator_stack.Back().Value.(int) == 33 {
+			top, ok := listBackInt(operator_stack)
+			if !ok {
+				return false
+			}
+			if ch == 33 && top == 33 {
 				operator_stack.Remove(operator_stack.Back())
 				continue
 			}
-			for operator_stack.Len() != 0 && operator_stack.Back().Value.(int) != 40 && advance(operator_stack.Back().Value.(int)) >= advance(int(ch)) {
-				e := operator_stack.Back()
-				expr.PushBack(e.Value.(int))
-				operator_stack.Remove(e)
+			for operator_stack.Len() != 0 {
+				top, ok = listBackInt(operator_stack)
+				if !ok || top == 40 || advance(top) < advance(int(ch)) {
+					break
+				}
+				expr.PushBack(top)
+				operator_stack.Remove(operator_stack.Back())
 			}
 			operator_stack.PushBack(int(ch))
-
-		} else if ch == 40 {
+			continue
+		}
+		if ch == 40 {
 			operator_stack.PushBack(int(ch))
-		} else if ch == 41 {
-			for operator_stack.Back().Value.(int) != 40 {
-				e := operator_stack.Back()
-				expr.PushBack(e.Value.(int))
-				operator_stack.Remove(e)
+			continue
+		}
+		if ch == 41 {
+			for {
+				top, ok := listBackInt(operator_stack)
+				if !ok {
+					return false
+				}
+				if top == 40 {
+					break
+				}
+				expr.PushBack(top)
+				operator_stack.Remove(operator_stack.Back())
 			}
 			operator_stack.Remove(operator_stack.Back())
 		}
 	}
 	for operator_stack.Len() != 0 {
-		e := operator_stack.Back()
-		expr.PushBack(e.Value.(int))
-		operator_stack.Remove(e)
+		top, ok := popInt(operator_stack)
+		if !ok {
+			return false
+		}
+		if top == 40 {
+			return false
+		}
+		expr.PushBack(top)
 	}
 
 	tf_stack := list.New()
 	for expr.Len() != 0 {
 		e := expr.Front()
-		ch := e.Value.(int)
+		ch, ok := e.Value.(int)
 		expr.Remove(e)
+		if !ok {
+			return false
+		}
 		if ch == 84 || ch == 70 {
-			tf_stack.PushBack(int(ch))
+			tf_stack.PushBack(ch)
+			continue
 		}
 		if ch == 38 { // &
-			em := tf_stack.Back()
-			a := em.Value.(int)
-			tf_stack.Remove(em)
-			em = tf_stack.Back()
-			b := em.Value.(int)
-			tf_stack.Remove(em)
+			a, okA := popInt(tf_stack)
+			b, okB := popInt(tf_stack)
+			if !okA || !okB {
+				return false
+			}
 			if a == 84 && b == 84 {
 				tf_stack.PushBack(84)
 			} else {
 				tf_stack.PushBack(70)
 			}
+			continue
 		}
 		if ch == 124 { // |
-			em := tf_stack.Back()
-			a := em.Value.(int)
-			tf_stack.Remove(em)
-			em = tf_stack.Back()
-			b := em.Value.(int)
-			tf_stack.Remove(em)
+			a, okA := popInt(tf_stack)
+			b, okB := popInt(tf_stack)
+			if !okA || !okB {
+				return false
+			}
 			if a == 70 && b == 70 {
 				tf_stack.PushBack(70)
 			} else {
 				tf_stack.PushBack(84)
 			}
+			continue
 		}
 		if ch == 33 { // !
-			em := tf_stack.Back()
-			a := em.Value.(int)
-			tf_stack.Remove(em)
+			a, okA := popInt(tf_stack)
+			if !okA {
+				return false
+			}
 			if a == 70 {
 				tf_stack.PushBack(84)
 			} else if a == 84 {
@@ -137,12 +176,11 @@ func boolEval(expression string) bool {
 			}
 		}
 	}
-	if tf_stack.Front().Value.(int) == 84 {
-		return true
-	} else {
+	result, ok := listBackInt(tf_stack)
+	if !ok || tf_stack.Len() != 1 {
 		return false
 	}
-
+	return result == 84
 }
 
 func getRuleData(rule string) structs.RuleData {
@@ -286,10 +324,68 @@ func dataCheckInt(op int16, dataSource int, dataRule int) bool {
 func SingleCheck(finger structs.FingerPEntity, Protocol string, headerString string, body string,
 	Server string, Title string, Cert string, Port int, Path string, Hash string, IconHash string, StatusCode int,
 	ContentType string, Banner string) bool {
+	return evalFinger(finger, Protocol, headerString, body, Server, Title, Cert, Port, Path, Hash, IconHash, StatusCode, ContentType, Banner, false)
+}
+
+// DirProbeCheck evaluates a fingerprint against a directory-probe response.
+// Path-only rules are not enough: the scanner chose the path. Generic denial
+// pages (403/404/5xx) that merely echo the probe path are also rejected.
+func DirProbeCheck(finger structs.FingerPEntity, Protocol string, headerString string, body string,
+	Server string, Title string, Cert string, Port int, Path string, Hash string, IconHash string, StatusCode int,
+	ContentType string, Banner string) bool {
+	return evalFinger(finger, Protocol, headerString, body, Server, Title, Cert, Port, Path, Hash, IconHash, StatusCode, ContentType, Banner, true)
+}
+
+func isGenericDenialStatus(code int) bool {
+	switch code {
+	case 400, 403, 404, 405, 408, 429, 500, 501, 502, 503, 504, 507, 508, 520, 521, 522, 523, 524, 525, 526, 527, 530:
+		return true
+	default:
+		return false
+	}
+}
+
+func isContentEvidenceKey(key string) bool {
+	switch key {
+	case "body", "title", "header", "server", "cert", "icon_hash", "body_hash", "banner":
+		return true
+	default:
+		return false
+	}
+}
+
+func isProbePathReflection(ruleValue, probePath string) bool {
+	value := strings.ToLower(strings.TrimSpace(strings.Trim(ruleValue, `"'`)))
+	path := strings.ToLower(strings.TrimSpace(probePath))
+	if value == "" || path == "" || path == "/" {
+		return false
+	}
+	value = strings.TrimSuffix(value, "/")
+	path = strings.TrimSuffix(path, "/")
+	if value == "" || path == "" {
+		return false
+	}
+	if value == path || value == strings.TrimPrefix(path, "/") {
+		return true
+	}
+	if strings.HasPrefix(value, "/") && (strings.Contains(path, value) || strings.Contains(value, path)) {
+		return true
+	}
+	return false
+}
+
+func evalFinger(finger structs.FingerPEntity, Protocol string, headerString string, body string,
+	Server string, Title string, Cert string, Port int, Path string, Hash string, IconHash string, StatusCode int,
+	ContentType string, Banner string, dirProbe bool) bool {
 	rules := finger.Rule
 	expr := finger.AllString
+	contentEvidence := false
+	genericDenial := dirProbe && isGenericDenialStatus(StatusCode)
 
 	for _, singleRule := range rules {
+		if singleRule.Start < 0 || singleRule.End > len(expr) || singleRule.Start > singleRule.End {
+			return false
+		}
 		singleRuleResult := false
 		if singleRule.Key == "header" {
 			if dataCheckString(singleRule.Op, headerString, singleRule.Value) {
@@ -359,6 +455,12 @@ func SingleCheck(finger structs.FingerPEntity, Protocol string, headerString str
 				singleRuleResult = true
 			}
 		}
+		if dirProbe && genericDenial && (singleRule.Key == "body" || singleRule.Key == "title") && isProbePathReflection(singleRule.Value, Path) {
+			singleRuleResult = false
+		}
+		if singleRuleResult && isContentEvidenceKey(singleRule.Key) {
+			contentEvidence = true
+		}
 		if singleRuleResult {
 			expr = expr[:singleRule.Start] + "T" + expr[singleRule.End:]
 		} else {
@@ -366,5 +468,11 @@ func SingleCheck(finger structs.FingerPEntity, Protocol string, headerString str
 		}
 	}
 
-	return boolEval(expr)
+	if !boolEval(expr) {
+		return false
+	}
+	if dirProbe && !contentEvidence {
+		return false
+	}
+	return true
 }
