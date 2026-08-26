@@ -131,6 +131,49 @@ func TestGetAssetsFiltersByKindAndReturnsScopedStats(t *testing.T) {
 		t.Fatalf("resolutions=%+v", page.Stats.Resolutions)
 	}
 
+	if err := store.Create(&[]db.FingerprintHit{
+		{
+			TenantID: "tenant-a", ProjectID: project.ID, TaskID: attempt.ID, RootTaskID: root.ID,
+			Target: "https://web.example:443", ProductName: "nginx", RuleName: "Finger",
+			Evidence: `{"type":"Finger","uri":"https://web.example/","finger":["nginx"]}`,
+		},
+		{
+			TenantID: "tenant-a", ProjectID: project.ID, TaskID: attempt.ID, RootTaskID: root.ID,
+			Target: "https://web.example:443", ProductName: "Jenkins", RuleName: "Active-Finger",
+			Evidence: `{"type":"Active-Finger","uri":"https://web.example/jenkins/login","finger":["Jenkins"]}`,
+		},
+		{
+			TenantID: "tenant-a", ProjectID: project.ID, TaskID: attempt.ID, RootTaskID: root.ID,
+			Target: "https://bind.example:443", ProductName: "apache", RuleName: "Finger",
+			Evidence: `{"type":"Finger","uri":"https://bind.example/","finger":["apache"]}`,
+		},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	webWithFP := invokeTaskResultHandler(t, "/assets?task_id="+root.ID+"&project_id="+project.ID+"&kind=web", getAssets)
+	var webPage struct {
+		Items []assetWithFingerprints `json:"items"`
+	}
+	if err := json.Unmarshal(webWithFP.Body.Bytes(), &webPage); err != nil {
+		t.Fatal(err)
+	}
+	byTarget := map[string][]assetFingerprintMatch{}
+	for _, item := range webPage.Items {
+		byTarget[item.Target] = item.Fingerprints
+	}
+	webPrints := byTarget["https://web.example"]
+	if len(webPrints) != 2 || webPrints[0].ProductName != "Jenkins" || webPrints[0].Source != db.FingerprintSourceDirectory || webPrints[1].ProductName != "nginx" {
+		t.Fatalf("web fingerprints=%+v", webPrints)
+	}
+	if webPrints[0].SourceLabel != "主动指纹（目录扫描）" {
+		t.Fatalf("directory source label=%q", webPrints[0].SourceLabel)
+	}
+	bindPrints := byTarget["https://bind.example"]
+	if len(bindPrints) != 1 || bindPrints[0].ProductName != "apache" || bindPrints[0].Source != db.FingerprintSourcePassive {
+		t.Fatalf("bind fingerprints=%+v", bindPrints)
+	}
+
 	hostRecorder := invokeTaskResultHandler(t, "/assets?task_id="+root.ID+"&project_id="+project.ID+"&kind=host_port", getAssets)
 	var hostPage struct {
 		Items []db.Asset `json:"items"`

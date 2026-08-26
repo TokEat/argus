@@ -18,12 +18,12 @@ const (
 )
 
 type riskCoverageAttemptSnapshot struct {
-	DisableGeneralPoc            bool
-	AllowHighRiskAutoExecution   bool
-	WAFSkipOnManyFingerprints    bool
-	TargetFingerprints           map[string][]string
-	RiskValidationTargets        map[string][]string
-	RiskValidationGoPocTargets   []riskCoverageGoPocTarget
+	DisableGeneralPoc          bool
+	AllowHighRiskAutoExecution bool
+	WAFSkipOnManyFingerprints  bool
+	TargetFingerprints         map[string][]string
+	RiskValidationTargets      map[string][]string
+	RiskValidationGoPocTargets []riskCoverageGoPocTarget
 }
 
 type riskCoverageGoPocTarget struct {
@@ -269,10 +269,10 @@ func loadRiskCoverageHighRiskPOCs(store *gorm.DB, tenantID string, workflowsByPr
 func refineRiskCoverageReason(reason string, fingerprints, pocs []string) string {
 	parts := splitCoverageReasonParts(reason)
 	kept := make([]string, 0, len(parts))
-	droppedReuse := false
+	reuseParts := make([]string, 0, 2)
 	for _, part := range parts {
 		if part == "poc_set_unknown" || part == "endpoint_content_unknown" {
-			droppedReuse = true
+			reuseParts = append(reuseParts, part)
 			continue
 		}
 		kept = append(kept, part)
@@ -280,13 +280,13 @@ func refineRiskCoverageReason(reason string, fingerprints, pocs []string) string
 	if len(fingerprints) > 0 && len(pocs) == 0 && !hasRiskExecutionFailure(kept) {
 		return "fingerprint_unmatched_pocs"
 	}
-	if len(kept) == 0 {
-		if droppedReuse && len(pocs) > 0 {
-			return ""
-		}
-		return strings.TrimSpace(reason)
+	if len(kept) > 0 {
+		return strings.Join(kept, ",")
 	}
-	return strings.Join(kept, ",")
+	if len(reuseParts) > 0 {
+		return strings.Join(reuseParts, ",")
+	}
+	return strings.TrimSpace(reason)
 }
 
 func splitCoverageReasonParts(reason string) []string {

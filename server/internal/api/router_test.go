@@ -2390,6 +2390,90 @@ func TestGetFingerprintsCanGroupByProductWithAllTargets(t *testing.T) {
 	}
 }
 
+func TestGetFingerprintsGroupsSearchAndMarkDirectorySource(t *testing.T) {
+	store := setupAITestDB(t)
+	now := time.Now()
+	if err := store.Create(&db.Project{ID: "project-1", TenantID: "default", Name: "Project 1", Status: "active"}).Error; err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if err := store.Create(&db.RootTask{ID: "root-1", TenantID: "default", ProjectID: "project-1", Name: "root", Status: "Running"}).Error; err != nil {
+		t.Fatalf("seed root task: %v", err)
+	}
+	if err := store.Create(&db.SubTask{ID: "sub-1", TenantID: "default", ProjectID: "project-1", RootTaskID: "root-1", Status: "Done"}).Error; err != nil {
+		t.Fatalf("seed sub task: %v", err)
+	}
+	rows := []db.FingerprintHit{
+		{
+			TenantID: "default", ProjectID: "project-1", TaskID: "sub-1", RootTaskID: "root-1",
+			Target: "https://jenkins.example:443", ProductName: "Jenkins", RuleName: "Active-Finger",
+			Evidence:  `{"type":"Active-Finger","uri":"https://jenkins.example/jenkins/login","finger":["Jenkins"]}`,
+			CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			TenantID: "default", ProjectID: "project-1", TaskID: "sub-1", RootTaskID: "root-1",
+			Target: "https://nginx.example:443", ProductName: "nginx", RuleName: "Finger",
+			Evidence:  `{"type":"Finger","uri":"https://nginx.example/","finger":["nginx"]}`,
+			CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			TenantID: "default", ProjectID: "project-1", TaskID: "sub-1", RootTaskID: "root-1",
+			Target: "https://shiro.example:8080", ProductName: "APACHE-Shiro", RuleName: "behavior-probe",
+			Evidence:  `{"type":"Active-Finger","uri":"https://shiro.example:8080","am":"[behavior-probe:shiro-detect]"}`,
+			CreatedAt: now, UpdatedAt: now,
+		},
+	}
+	if err := store.Create(&rows).Error; err != nil {
+		t.Fatalf("seed fingerprint hits: %v", err)
+	}
+
+	ctx, recorder := newTenantContext(http.MethodGet, "/fingerprints?project_id=project-1&task_id=root-1&group_by=product&search=jenkins")
+	getFingerprints(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected search response, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var searchResp struct {
+		Items []struct {
+			ProductName  string   `json:"ProductName"`
+			Sources      []string `json:"Sources"`
+			SourceLabels []string `json:"SourceLabels"`
+			Targets      []struct {
+				Target      string `json:"Target"`
+				MatchedURL  string `json:"MatchedURL"`
+				Source      string `json:"Source"`
+				SourceLabel string `json:"SourceLabel"`
+			} `json:"Targets"`
+		} `json:"items"`
+		Total int64 `json:"total"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &searchResp); err != nil {
+		t.Fatalf("decode search response: %v; body=%s", err, recorder.Body.String())
+	}
+	if searchResp.Total != 1 || len(searchResp.Items) != 1 || searchResp.Items[0].ProductName != "Jenkins" {
+		t.Fatalf("expected Jenkins search hit, got %+v", searchResp)
+	}
+	if len(searchResp.Items[0].Sources) != 1 || searchResp.Items[0].Sources[0] != db.FingerprintSourceDirectory {
+		t.Fatalf("expected directory source on Jenkins group, got %+v", searchResp.Items[0])
+	}
+	if searchResp.Items[0].SourceLabels[0] != "主动指纹（目录扫描）" {
+		t.Fatalf("expected directory source label, got %+v", searchResp.Items[0].SourceLabels)
+	}
+	if searchResp.Items[0].Targets[0].MatchedURL != "https://jenkins.example/jenkins/login" || searchResp.Items[0].Targets[0].Source != db.FingerprintSourceDirectory {
+		t.Fatalf("expected directory target metadata, got %+v", searchResp.Items[0].Targets[0])
+	}
+
+	ctx, recorder = newTenantContext(http.MethodGet, "/fingerprints?project_id=project-1&task_id=root-1&group_by=product&source=directory")
+	getFingerprints(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected source filter response, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &searchResp); err != nil {
+		t.Fatalf("decode source filter response: %v; body=%s", err, recorder.Body.String())
+	}
+	if searchResp.Total != 1 || len(searchResp.Items) != 1 || searchResp.Items[0].ProductName != "Jenkins" {
+		t.Fatalf("expected only directory fingerprints, got %+v", searchResp)
+	}
+}
+
 func TestCopilotProfileAndContextCompaction(t *testing.T) {
 	profile := resolveCopilotProfile("poc_inline")
 	if profile.MaxTurns <= 4 || len(profile.Tools) != 4 {

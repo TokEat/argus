@@ -207,7 +207,7 @@ func TestTaskCoverageExplanationShowsRiskFingerprintsAndMatchedPocs(t *testing.T
 		got[item.NormalizedTarget] = item
 	}
 	matched := got["https://app.example"]
-	if matched.Reason != "" || len(matched.Fingerprints) != 1 || matched.Fingerprints[0] != "Nginx" || len(matched.MatchedPocs) != 1 || matched.MatchedPocs[0] != "nginx-detect.yaml" {
+	if matched.Reason != "poc_set_unknown,endpoint_content_unknown" || len(matched.Fingerprints) != 1 || matched.Fingerprints[0] != "Nginx" || len(matched.MatchedPocs) != 1 || matched.MatchedPocs[0] != "nginx-detect.yaml" {
 		t.Fatalf("matched risk gap = %+v", matched)
 	}
 	unmatched := got["https://bare.example"]
@@ -216,12 +216,12 @@ func TestTaskCoverageExplanationShowsRiskFingerprintsAndMatchedPocs(t *testing.T
 	}
 }
 
-func TestRefineRiskCoverageReasonHidesReuseCodesWhenFingerprintsAreShown(t *testing.T) {
+func TestRefineRiskCoverageReasonKeepsReuseCodesWhenPOCsMatched(t *testing.T) {
 	if got := refineRiskCoverageReason("poc_set_unknown,endpoint_content_unknown", []string{"Nginx"}, nil); got != "fingerprint_unmatched_pocs" {
 		t.Fatalf("unmatched reason = %q", got)
 	}
-	if got := refineRiskCoverageReason("poc_set_unknown,endpoint_content_unknown", []string{"Nginx"}, []string{"nginx-detect.yaml"}); got != "" {
-		t.Fatalf("matched reuse codes should be hidden, got %q", got)
+	if got := refineRiskCoverageReason("poc_set_unknown,endpoint_content_unknown", []string{"Nginx"}, []string{"nginx-detect.yaml"}); got != "poc_set_unknown,endpoint_content_unknown" {
+		t.Fatalf("matched reuse codes should stay visible, got %q", got)
 	}
 	if got := refineRiskCoverageReason("nuclei_execution_failed,poc_set_unknown", []string{"Nginx"}, []string{"nginx-detect.yaml"}); got != "nuclei_execution_failed" {
 		t.Fatalf("execution failure should remain, got %q", got)
