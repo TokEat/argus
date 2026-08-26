@@ -46,9 +46,9 @@ G31 新增独立的 `argus.timing/v1` 契约，用于保存性能测量证据，
 
 CLI 在 `main` 中最早可观测位置开始记录 startup，覆盖离线 Arsenal/旧运行时规则准备、`ScanContext` 初始化和实际执行的 Stage 终态。普通 datas Run 将这些事件保存在当前进程内，仅用于 text 模式显示 bootstrap、规则、上下文、Stage 分段合计及最慢 Stage，不再额外持久化 `timing.tsv`；JSON 或其他非 text stdout 不增加人类日志。Agent 侧仍使用版本化 timing 契约上报 Server。
 
-Agent v2.7.0 起对活动 Attempt 记录规则准备、`NewScanContext` 与已真实开始的 Stage 终态，并通过既有 `StreamResult` 以 `attempt_timing_event` payload 上报；未开始或复用的阶段不会伪装为执行。payload 是单一严格 JSON 对象，最大 16 KiB。Agent 使用已注册会话的 `x-agent-token` 发送该流；Server 不信任事件声明的租户或项目，而是以活动 Attempt、已分配 Agent、会话和 Task 的 tenant/project 归属重新绑定并校验。实时接收仅允许完成时间位于过去 24 小时至未来 10 分钟的事件。相同 tenant + event ID 且内容相同为幂等重放；相同 ID 内容不同为冲突并拒绝。旧 Agent 不上报时任务仍可完成，任务详情将该 Attempt 标为 `available: false`，即 unavailable，而不是 0。
+Agent v2.7.0 起对活动 Attempt 记录规则准备、`NewScanContext` 与已真实开始的 Stage 终态，并通过既有 `StreamResult` 以 `attempt_timing_event` payload 上报；未开始或复用的阶段不会伪装为执行。payload 是单一严格 JSON 对象，最大 16 KiB。Agent 使用已注册会话的 `x-agent-token` 发送该流；Server 不信任事件声明的租户或项目，而是以活动 Attempt、已分配 Agent、会话和 Task 的 tenant/project 归属重新绑定并校验。实时接收仅允许完成时间位于过去 24 小时至未来 10 分钟的事件。相同 tenant + event ID 且内容相同为幂等重放；相同 ID 内容不同为冲突并拒绝。没有事件时任务仍可完成，任务详情将该 Attempt 标为 `available: false` 并给出 `unavailable_reason`（未执行、未上报或进行中），而不是 0。
 
-Server 将通过校验的事件追加保存，不使用会被后续 WorkKey 更新的 `ScanCoverage` 当前视图。授权后的 `GET /api/v1/tasks/:id` 仅投影当前 tenant、project 和 task 作用域中的 Attempt、受限事件字段与 `truncated` 状态；单个任务最多返回 5000 条事件。UI 按 Attempt 展示准备项、Stage、结果和 unavailable，且不暴露 target、WorkKey、配置/规则哈希、会话令牌或原始日志。
+Server 将通过校验的事件追加保存，不使用会被后续 WorkKey 更新的 `ScanCoverage` 当前视图。授权后的 `GET /api/v1/tasks/:id` 仅投影当前 tenant、project 和 task 作用域中的 Attempt、受限事件字段、`unavailable_reason` 与 `truncated` 状态；单个任务最多返回 5000 条事件。UI 按 Attempt 展示准备项、Stage、结果，以及未执行/未上报/进行中的 unavailable 说明，且不暴露 target、WorkKey、配置/规则哈希、会话令牌或原始日志。
 
 G31 只建立测量、授权展示和基线；不包含 G32–G36 的 gonmap 懒加载、HTTP 预算/Scheme、URL 去重、规则共享、HybridMap 或 Nuclei 缓存优化。CLI 计时为进程内展示，Server/Agent timing 表与投影保持原契约；不改变扫描阶段、结果、目标范围、Coverage、任务状态机或 POC/EXP 的安全默认。
 

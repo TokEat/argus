@@ -381,7 +381,7 @@ G31 新增的 additive、append-only 表，保存 `argus.timing/v1` 的已校验
 
 写入前 Server 以活动 Attempt 的分配 Agent、会话和 tenant/project/task 归属重建边界，不接受 Agent 自行声明 tenant 或 project。`(tenant_id, source_event_id)` 唯一：同 ID 且所有受保存字段相同的重放返回已有记录，不同内容视为冲突；历史事件不更新或删除。索引 `idx_scan_timing_events_scope_created` 供已授权任务详情按 tenant/project/task 读取，`idx_scan_timing_events_attempt_created` 供 Attempt 历史排序。租户、项目、任务、批次、Attempt 与 Agent 归属通过不可变 Attempt 复合外键并使用 `ON DELETE RESTRICT`；计时表不外键到可清理的 `nodes` 行，因此不会阻断既有离线 Agent 清理。
 
-任务详情只在已完成 tenant + project + task 对象授权后构建有界 projection：按 Attempt 返回 `available` 和 `kind/stage/outcome/duration/start/finish`，最多 5000 条，超出时置 `truncated`。旧 Agent 没有事件时保持 unavailable，不以 0 代替；投影不返回 Agent 会话、target、WorkKey、事件 ID、配置/规则哈希或原始日志。
+任务详情只在已完成 tenant + project + task 对象授权后构建有界 projection：按 Attempt 返回 `available`、`unavailable_reason`（`not_executed` / `not_reported` / `pending`）和 `kind/stage/outcome/duration/start/finish`，最多 5000 条，超出时置 `truncated`。没有事件时保持 unavailable，不以 0 代替，也不把空风险兄弟或覆盖复用误标成旧版 Agent；投影不返回 Agent 会话、target、WorkKey、事件 ID、配置/规则哈希或原始日志。
 
 #### `domains`
 

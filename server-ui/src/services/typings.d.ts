@@ -352,6 +352,7 @@ declare namespace API {
   interface TaskTimingAttempt {
     attempt_id: string;
     available: boolean;
+    unavailable_reason?: 'not_executed' | 'not_reported' | 'pending' | string;
     events?: TaskTimingEvent[];
   }
 
