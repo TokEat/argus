@@ -59,9 +59,11 @@ export function buildScanPolicy(values: ScanPolicyFormValues, dictionaries: API.
     const refs = (ids: string[] | undefined, kind: 'username' | 'password') => (ids || []).map((id) => dictionaries.find((item) => item.id === id && item.kind === kind)).filter(Boolean).map((item) => ({
         id: item!.id, revision: item!.revision, sha256: item!.sha256, count: item!.count,
     }));
-	const subdomainRefs = (values.subdomain_books || []).map((id) => subdomainDictionaries.find((item) => item.id === id)).filter(Boolean).map((item) => ({
-		id: item!.id, revision: item!.revision, sha256: item!.sha256, count: item!.count,
-	}));
+	const subdomainRefs = Boolean(merged.subdomain_bruteforce)
+		? (values.subdomain_books || []).map((id) => subdomainDictionaries.find((item) => item.id === id)).filter(Boolean).map((item) => ({
+			id: item!.id, revision: item!.revision, sha256: item!.sha256, count: item!.count,
+		}))
+		: [];
     return {
         schema_version: 'argus.scan-policy/v1', preset,
         port_profile: merged.port_profile || 'top-1000',
@@ -224,7 +226,7 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
 								style={{ marginBottom: 12 }}
 							/>
 							<Row gutter={[12, 8]}>
-								<Col span={12}><Form.Item name="risk_validation" valuePropName="checked" label="自动 POC 验证" tooltip={{ title: '指纹识别完成后自动匹配并执行漏洞验证：Workflow 规则命中的资产运行对应 Nuclei 模板，服务精确命中的执行受审核 GoPoc 漏洞检查。默认仅自动执行 low/medium 风险的已审批 POC；高风险与未分类 POC 默认跳过，可开启下方预授权或事后经手动风险验证二次确认执行。需勾选页面底部的授权范围确认。标准与深度预设默认开启。', icon: <InfoCircleOutlined /> }}><Switch /></Form.Item></Col>
+								<Col span={12}><Form.Item name="risk_validation" valuePropName="checked" label="自动 POC 验证" tooltip={{ title: '指纹识别完成后自动匹配并执行漏洞验证：Workflow 规则命中的资产运行对应 Nuclei 模板，服务精确命中的执行受审核 GoPoc 漏洞检查。默认仅自动执行 info/low/medium 风险的已审批 POC；高风险与未分类 POC 默认跳过，可开启下方预授权或事后经手动风险验证二次确认执行。需勾选页面底部的授权范围确认。标准与深度预设默认开启。', icon: <InfoCircleOutlined /> }}><Switch /></Form.Item></Col>
 									<Col span={12}><Form.Item name="credential_validation" valuePropName="checked" label="弱口令验证" tooltip={{ title: '对协议识别确认的服务（SSH、数据库、中间件等）使用「内置服务凭据字典 ∪ 所选项目用户名本×密码本」尝试登录验证，组合数受「每服务目标组合上限」约束防止请求爆炸；同样需要授权确认后才执行。默认关闭，开启后在下方配置增量字典。', icon: <InfoCircleOutlined /> }}><Switch /></Form.Item></Col>
 								</Row>
 								{values?.risk_validation && (

@@ -207,6 +207,12 @@ func Normalize(input Policy) (Policy, error) {
 		if input.Capabilities != (Capabilities{}) {
 			expected.Capabilities = input.Capabilities
 		}
+		if !expected.Capabilities.SubdomainBruteforce {
+			// Depth is part of the bruteforce capability. Turning the checkbox
+			// off must drop the preset default (deep=2) instead of leaving a
+			// dangling depth that fails validation.
+			expected.Subdomains.BruteforceDepth = 0
+		}
 		if expected.Credentials.PairLimit == 0 {
 			expected.Credentials.PairLimit = DefaultCredentialPairLimit
 		}

@@ -41,6 +41,38 @@ func TestPresetPolicies(t *testing.T) {
 	}
 }
 
+func TestDeepPresetCanDisableSubdomainBruteforce(t *testing.T) {
+	policy, err := PresetPolicy(PresetDeep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy.Capabilities.SubdomainBruteforce = false
+	policy.Subdomains.BruteforceDepth = 0
+	policy.Authorization.ValidationConfirmed = true
+	normalized, err := Normalize(policy)
+	if err != nil {
+		t.Fatalf("deep preset with bruteforce disabled: %v", err)
+	}
+	if normalized.Capabilities.SubdomainBruteforce {
+		t.Fatal("subdomain bruteforce should remain disabled")
+	}
+	if normalized.Subdomains.BruteforceDepth != 0 {
+		t.Fatalf("bruteforce depth = %d, want 0", normalized.Subdomains.BruteforceDepth)
+	}
+	if normalized.PortProfile != PortProfileAll || !normalized.Capabilities.DirectoryProbe {
+		t.Fatalf("deep port/path traits were lost: %+v", normalized)
+	}
+
+	policy.Subdomains.BruteforceDepth = 2
+	normalized, err = Normalize(policy)
+	if err != nil {
+		t.Fatalf("deep preset should ignore leftover depth when bruteforce is off: %v", err)
+	}
+	if normalized.Subdomains.BruteforceDepth != 0 {
+		t.Fatalf("leftover depth = %d, want 0", normalized.Subdomains.BruteforceDepth)
+	}
+}
+
 func TestSubdomainBruteforceDepthValidation(t *testing.T) {
 	base := Policy{
 		SchemaVersion: SchemaVersion, Preset: PresetCustom,
