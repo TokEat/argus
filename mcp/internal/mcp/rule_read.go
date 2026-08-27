@@ -61,7 +61,7 @@ func (c *Client) argusRuleGet(ctx context.Context, args map[string]interface{}) 
 		"stable_ref":       stableRefFromArsenal(found, publicRuleType(ruleType)),
 	}
 
-	names := yamlMappingKeys(content)
+	names := dictProductNames(ruleType, content)
 	if len(names) > 0 && productName == "" {
 		start, end, paged, err := optionalStringRange(args, len(names))
 		if err != nil {
@@ -81,6 +81,16 @@ func (c *Client) argusRuleGet(ctx context.Context, args map[string]interface{}) 
 		out["product_count"] = len(names)
 		out["returned"] = len(window)
 		out["products"] = window
+	}
+	if ruleType == "poc" || ruleType == "active_fingerprint" {
+		if id, name := nucleiIdentityFromContent(content); id != "" || name != "" {
+			if id != "" {
+				out["template_id"] = id
+			}
+			if name != "" {
+				out["template_name"] = name
+			}
+		}
 	}
 	if productName != "" {
 		out["product_name"] = productName
@@ -102,7 +112,7 @@ func (c *Client) argusRuleGet(ctx context.Context, args map[string]interface{}) 
 		out["content_preview"] = contentPreview(content, 280)
 	}
 	if _, ok := out["content"]; !ok {
-		out["hint"] = "YAML omitted. Dict types return products as a string array of names. Pass product_name for one mapping or include_content=true for files under 64KiB."
+		out["hint"] = "YAML omitted. Fingerprint/workflow/dir return products as a string array of names. POC returns template_id/template_name, not YAML keys. Pass product_name for one mapping or include_content=true for files under 64KiB."
 	}
 	return out, nil
 }
@@ -259,8 +269,11 @@ func normalizeRuleListRange(args map[string]interface{}) (int, int, error) {
 	if end <= 0 {
 		end = start + 49
 	}
-	if end < start {
+	if hasArg(args, "range_start") && hasArg(args, "range_end") && end < start {
 		return 0, 0, fmt.Errorf("range_end must be greater than or equal to range_start")
+	}
+	if end < start {
+		end = start + 49
 	}
 	if end-start+1 > 200 {
 		end = start + 199
@@ -338,8 +351,31 @@ func stableRefFromArsenal(row arsenalRecord, publicType string) map[string]inter
 }
 
 type workflowEntry struct {
-	Type []string `yaml:"type"`
-	Pocs []string `yaml:"pocs"`
+	Type      []string `yaml:"type"`
+	Pocs      []string `yaml:"pocs"`
+	RiskLevel string   `yaml:"risk_level"`
+}
+
+func dictProductNames(ruleType, content string) []string {
+	switch ruleType {
+	case "finger", "workflow", "dir":
+		return yamlMappingKeys(content)
+	default:
+		return nil
+	}
+}
+
+func nucleiIdentityFromContent(content string) (id, name string) {
+	var doc struct {
+		ID   string `yaml:"id"`
+		Info struct {
+			Name string `yaml:"name"`
+		} `yaml:"info"`
+	}
+	if yaml.Unmarshal([]byte(content), &doc) != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(doc.ID), strings.TrimSpace(doc.Info.Name)
 }
 
 func yamlMappingKeys(content string) []string {
@@ -374,6 +410,9 @@ func optionalStringRange(args map[string]interface{}, total int) (int, int, bool
 		end = total
 	}
 	if end < start {
+		if total == 0 {
+			return 1, 0, true, nil
+		}
 		return 0, 0, false, fmt.Errorf("range_end must be greater than or equal to range_start")
 	}
 	if start > total {
@@ -405,7 +444,7 @@ func productEntryFromContent(ruleType, content, productName string) interface{} 
 		data := map[string]workflowEntry{}
 		if yaml.Unmarshal([]byte(content), &data) == nil {
 			if entry, ok := data[productName]; ok {
-				return map[string]interface{}{"product_name": productName, "workflow_types": entry.Type, "workflow_pocs": entry.Pocs}
+				return map[string]interface{}{"product_name": productName, "workflow_types": entry.Type, "workflow_pocs": entry.Pocs, "risk_level": entry.RiskLevel}
 			}
 		}
 	}

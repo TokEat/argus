@@ -1,0 +1,39 @@
+id: mcp-oauth-protected
+
+info:
+  name: MCP OAuth 受保护资源识别
+  author: argus
+  severity: info
+  description: |
+    MCP initialize 返回 401，且 WWW-Authenticate 含 resource_metadata=。表示存在 MCP 服务但需要 OAuth 鉴权，与未授权暴露分开。
+  metadata:
+    max-request: 3
+    product: MCP-Server
+    argus-execution-class: detection
+  tags: mcp,detect,tech,oauth
+
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/mcp"
+      - "{{BaseURL}}/mcp/"
+      - "{{BaseURL}}/"
+
+    headers:
+      Accept: "application/json, text/event-stream"
+      Content-Type: "application/json"
+
+    body: '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"argus","version":"1.0"}}}'
+
+    stop-at-first-match: true
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 401
+
+      - type: word
+        part: header
+        words:
+          - "resource_metadata="

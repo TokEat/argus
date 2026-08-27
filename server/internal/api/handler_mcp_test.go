@@ -43,7 +43,7 @@ func (s *fakeSubscribeStream) RecvMsg(interface{}) error    { return io.EOF }
 
 func TestMCPRuleSaveFingerprintDraftDoesNotPublish(t *testing.T) {
 	store := setupAITestDB(t)
-	oldContent := "ExistingProduct:\n    - body=\"old\"\n"
+	oldContent := "# keep-me\nExistingProduct:\n    - body=\"old\"\nZedLast:\n    - title=\"z\"\n"
 	if err := store.Create(&db.Arsenal{
 		ID:       db.BuildTenantArsenalID("default", "finger", "finger.yaml"),
 		TenantID: "default",
@@ -83,6 +83,15 @@ func TestMCPRuleSaveFingerprintDraftDoesNotPublish(t *testing.T) {
 	}
 	if arsenal.State != "Draft" || arsenal.PreviousHash != "old-hash" || !strings.Contains(arsenal.Content, "ArgusMCP") {
 		t.Fatalf("unexpected finger arsenal: %+v", arsenal)
+	}
+	existingIdx := strings.Index(arsenal.Content, "ExistingProduct:")
+	zedIdx := strings.Index(arsenal.Content, "ZedLast:")
+	newIdx := strings.Index(arsenal.Content, "ArgusMCP:")
+	if existingIdx < 0 || zedIdx < 0 || newIdx < 0 || !(existingIdx < zedIdx && zedIdx < newIdx) {
+		t.Fatalf("fingerprint save remashaled the dictionary:\n%s", arsenal.Content)
+	}
+	if !strings.Contains(arsenal.Content, "# keep-me") {
+		t.Fatalf("fingerprint save dropped comments:\n%s", arsenal.Content)
 	}
 	var rule db.FingerprintRule
 	if err := store.Where("tenant_id = ? AND product_name = ?", "default", "ArgusMCP").First(&rule).Error; err != nil {
@@ -463,6 +472,41 @@ func TestMCPContextCoverageFingerprintWithoutPOC(t *testing.T) {
 	if countsOnly["fingerprint_without_poc"].(float64) != 2 {
 		t.Fatalf("counts should remain when names are omitted: %#v", countsOnly)
 	}
+
+	if err := store.Create(&db.FingerprintRule{TenantID: "default", ProductName: "MCP-Server", RuleExpr: `body="mcp"`, SourceFile: "finger.yaml", State: "Approved", Enabled: true}).Error; err != nil {
+		t.Fatalf("seed hyphenated fingerprint: %v", err)
+	}
+	ctx, recorder = newTenantContextWithRole(http.MethodPost, "/mcp/tools/rule/context", "operator", "9")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/rule/context", strings.NewReader(`{"action":"coverage","query":"MCP-Server"}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	mcpRuleContext(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("hyphenated coverage query expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var hyphenated map[string]interface{}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &hyphenated); err != nil {
+		t.Fatalf("decode hyphenated coverage: %v", err)
+	}
+	hyphenProducts, _ := hyphenated["products"].([]interface{})
+	if hyphenated["query"] != "mcp-server" || len(hyphenProducts) != 1 || hyphenProducts[0] != "MCP-Server" {
+		t.Fatalf("query=MCP-Server should match the product name, got %#v", hyphenated)
+	}
+
+	ctx, recorder = newTenantContextWithRole(http.MethodPost, "/mcp/tools/rule/context", "operator", "9")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/rule/context", strings.NewReader(`{"action":"coverage","query":"No-Such-Product"}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	mcpRuleContext(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("empty hyphenated coverage query expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var emptyQuery map[string]interface{}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &emptyQuery); err != nil {
+		t.Fatalf("decode empty coverage query: %v", err)
+	}
+	emptyProducts, _ := emptyQuery["products"].([]interface{})
+	if emptyQuery["total"].(float64) != 0 || len(emptyProducts) != 0 {
+		t.Fatalf("unmatched coverage query should return an empty list, got %#v", emptyQuery)
+	}
 }
 
 func TestMCPRuleDebugFingerprintDispatchesPayloadAndCollectsResult(t *testing.T) {
@@ -599,8 +643,8 @@ func TestDebugFingerprintDispatchesCustomRules(t *testing.T) {
 	Hub = &WebSocketHub{clients: make(map[*websocket.Conn]string), broadcast: make(chan wsEnvelope, 16)}
 	oldSessions := pocDebugSessions
 	pocDebugSessions = &debugSessionManager{
-		sessions:     make(map[string]*debugSession),
-		activeTenant: make(map[string]string),
+		sessions:    make(map[string]*debugSession),
+		activeAgent: make(map[string]string),
 	}
 	t.Cleanup(func() {
 		routerRuntime().NotifyHub = oldHub
@@ -758,7 +802,7 @@ func TestMCPDebugResultWaitMarksTemplateLoadFailure(t *testing.T) {
 	}
 }
 
-func TestMCPDebugResultWaitUsesResultMatchedOverComplete(t *testing.T) {
+func TestMCPDebugResultWaitReconcilesCompleteMatched(t *testing.T) {
 	resultChan := make(chan map[string]interface{}, 2)
 	resultChan <- map[string]interface{}{"type": "debug_result", "matched": true, "template_id": "poc-demo", "matched_at": "http://target.local/"}
 	resultChan <- map[string]interface{}{"type": "debug_complete", "matched": false}
@@ -767,12 +811,68 @@ func TestMCPDebugResultWaitUsesResultMatchedOverComplete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("wait result: %v", err)
 	}
-	if !result.Matched || result.ExecutionResult["matched"] != true || result.ExecutionResult["success"] != true {
-		t.Fatalf("expected result.matched to win over complete.matched: %#v", result)
+	if !result.Matched || result.Complete["matched"] != true || result.ExecutionResult["matched"] != true || result.ExecutionResult["success"] != true {
+		t.Fatalf("expected complete.matched to follow result.matched: %#v", result)
 	}
-	warnings, ok := result.ExecutionResult["warnings"].([]string)
-	if !ok || len(warnings) == 0 || !strings.Contains(warnings[0], "complete.matched differed") {
-		t.Fatalf("expected mismatch warning, got %#v", result.ExecutionResult)
+	if _, hasWarn := result.ExecutionResult["warnings"]; hasWarn {
+		t.Fatalf("reconciled complete should not warn: %#v", result.ExecutionResult)
+	}
+}
+
+func TestMCPRuleSaveWorkflowDraftWritesRiskLevelWithoutRewritingSiblings(t *testing.T) {
+	store := setupAITestDB(t)
+	oldContent := "KeepMe:\n  type:\n    - root\n  pocs:\n    - keep.yaml\n  risk_level: high\n"
+	if err := store.Create(&db.Arsenal{
+		ID:       db.BuildTenantArsenalID("default", "workflow", "workflow.yaml"),
+		TenantID: "default",
+		Type:     "workflow",
+		FileName: "workflow.yaml",
+		Content:  oldContent,
+		Hash:     "old-hash",
+		Version:  1,
+		State:    "Approved",
+	}).Error; err != nil {
+		t.Fatalf("seed workflow arsenal: %v", err)
+	}
+
+	body := `{"rule_type":"workflow","product_name":"ArgusMCP","workflow_types":["root"],"workflow_pocs":["argus-mcp-poc.yaml"],"risk_level":"info"}`
+	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/mcp/tools/rule/save", "operator", "9")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/rule/save", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	mcpRuleSave(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var arsenal db.Arsenal
+	if err := store.Where("tenant_id = ? AND type = ? AND file_name = ?", "default", "workflow", "workflow.yaml").First(&arsenal).Error; err != nil {
+		t.Fatalf("load workflow arsenal: %v", err)
+	}
+	if !strings.Contains(arsenal.Content, "KeepMe:") || !strings.Contains(arsenal.Content, "risk_level: high") {
+		t.Fatalf("workflow save rewrote sibling risk_level:\n%s", arsenal.Content)
+	}
+	if !strings.Contains(arsenal.Content, "ArgusMCP:") || !strings.Contains(arsenal.Content, "risk_level: info") {
+		t.Fatalf("workflow save did not write risk_level:\n%s", arsenal.Content)
+	}
+}
+
+func TestDebugSessionManagerLocksPerAgent(t *testing.T) {
+	manager := &debugSessionManager{
+		sessions:    make(map[string]*debugSession),
+		activeAgent: make(map[string]string),
+	}
+	first, ok := manager.start("tenant-a", "agent-1", time.Second, nil)
+	if !ok || first == nil {
+		t.Fatal("first debug session should start")
+	}
+	if _, ok := manager.start("tenant-a", "agent-2", time.Second, nil); !ok {
+		t.Fatal("same tenant different agent should not 409")
+	}
+	if _, ok := manager.start("tenant-b", "agent-1", time.Second, nil); ok {
+		t.Fatal("same agent should still 409 even across tenants")
+	}
+	manager.finish(first.SessionID)
+	if _, ok := manager.start("tenant-a", "agent-1", time.Second, nil); !ok {
+		t.Fatal("agent should accept a new session after finish")
 	}
 }
 

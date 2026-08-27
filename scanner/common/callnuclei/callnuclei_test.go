@@ -1,8 +1,14 @@
 package callnuclei
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
+	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/disk"
+	"github.com/projectdiscovery/nuclei/v3/pkg/parsers"
 	"github.com/projectdiscovery/nuclei/v3/pkg/types"
 )
 
@@ -46,5 +52,47 @@ func TestApplyPresentationAppliesSealedExecutionLimits(t *testing.T) {
 	applyPresentation(options, []Presentation{{RateLimit: 12, BulkSize: 3, TemplateThreads: 2, RequestLimit: 25}})
 	if options.RateLimit != 12 || options.BulkSize != 3 || options.HeadlessBulkSize != 3 || options.TemplateThreads != 2 || options.HeadlessTemplateThreads != 2 || options.RequestLimit != 25 || options.Retries != 0 {
 		t.Fatalf("sealed execution limits were not applied: %+v", options)
+	}
+}
+
+func TestMCPServerNucleiTemplatesAreInfoDetections(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	pocDir := filepath.Join(filepath.Dir(thisFile), "../config/pocs")
+	catalog := disk.NewCatalog(pocDir)
+	files := []string{
+		"mcp-initialize-detect.yaml",
+		"mcp-discover-detect.yaml",
+		"mcp-sse-endpoint-detect.yaml",
+		"mcp-tools-list-unauth.yaml",
+		"mcp-oauth-protected.yaml",
+	}
+	for _, name := range files {
+		path := filepath.Join(pocDir, name)
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if strings.Contains(string(raw), "tools/call") {
+			t.Fatalf("%s must not mention tools/call", name)
+		}
+		template, err := parsers.ParseTemplate(path, catalog)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		if template.ID != strings.TrimSuffix(name, ".yaml") {
+			t.Fatalf("%s id=%q", name, template.ID)
+		}
+		if template.Info.SeverityHolder.Severity.String() != "info" {
+			t.Fatalf("%s severity=%q, want info", name, template.Info.SeverityHolder.Severity.String())
+		}
+		if template.Info.Authors.IsEmpty() {
+			t.Fatalf("%s missing info.author", name)
+		}
+		if strings.TrimSpace(template.Info.Name) == "" {
+			t.Fatalf("%s missing info.name", name)
+		}
 	}
 }

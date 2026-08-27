@@ -117,6 +117,10 @@ type ScanContext struct {
 	// DirDB 主动指纹探测路径数据库
 	DirDB map[string][]string
 
+	// ReportAllDirProbes asks the directory probe stage to emit every path
+	// response. Debug sessions set this so MCP can show per-path status/body.
+	ReportAllDirProbes bool
+
 	// knowledge is an immutable, process-shared rules snapshot when the Agent
 	// supplied a verified package identity. Pipeline readers use it instead of
 	// the public compatibility fields above.

@@ -241,3 +241,9 @@ HuaWei-eSight:
   - "/sso/login.action"
 DolphinScheduler:
   - "/dolphinscheduler/ui/"
+MCP-Server:
+  - "/.well-known/mcp.json"
+  - "/.well-known/mcp/server-card.json"
+  - "/mcp"
+  - "/sse"
+  - "/messages"

@@ -62,7 +62,7 @@ func TestSDKServerListsOnlyAggregateTools(t *testing.T) {
 		}
 	}
 	data, _ := json.Marshal(result.Tools)
-	for _, wantText := range []string{"intent", "test_only", "stable_ref", "help", "resource", "rule_get", "rule_list", "drafts", "coverage", "include_content", "range_start", "range_end", "argus_yaksha_exp", "argus_exp_workspace", "argus_scan_task", "argus.scan-policy/v1", "plan_hash", "revision_create", "exp_id", "revision", "source_sha256", "immutable source identity", expConsoleURI, `"dir"`} {
+	for _, wantText := range []string{"intent", "test_only", "stable_ref", "help", "resource", "rule_get", "rule_list", "drafts", "coverage", "include_content", "range_start", "range_end", "Hyphens are literal", "argus_yaksha_exp", "argus_exp_workspace", "argus_scan_task", "argus.scan-policy/v1", "plan_hash", "revision_create", "exp_id", "revision", "source_sha256", "immutable source identity", expConsoleURI, `"dir"`} {
 		if !strings.Contains(string(data), wantText) {
 			t.Fatalf("tool schema/description missing %q: %s", wantText, data)
 		}
@@ -422,6 +422,39 @@ func TestContextRuleGetReturnsProductNamesWithoutYAML(t *testing.T) {
 	content, _ := withContent["content"].(string)
 	if withContent["content_included"] != true || !strings.Contains(content, "ProdA") {
 		t.Fatalf("small file include_content should return YAML: %#v", withContent)
+	}
+}
+
+func TestContextRuleGetPOCDoesNotUseYAMLKeysAsProducts(t *testing.T) {
+	const yamlBody = "id: mcp-server-detect\ninfo:\n  name: MCP Server Detect\n  author: argus\n  severity: info\nhttp:\n  - method: GET\n    path:\n      - \"{{BaseURL}}/\"\n"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/arsenals/poc/mcp-server-detect.yaml" {
+			t.Fatalf("unexpected route %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"ID":"poc_mcp-server-detect.yaml","Type":"poc","FileName":"mcp-server-detect.yaml","Hash":"h1","Version":1,"State":"Approved","Content":` + jsonString(yamlBody) + `,"UpdatedAt":"2026-06-18T10:00:00Z"}`))
+	}))
+	defer ts.Close()
+
+	session, cleanup := connectTestSession(t, NewServer(NewClient(ts.URL, "test-token")))
+	defer cleanup()
+
+	result, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{
+		Name:      "argus_context",
+		Arguments: map[string]any{"action": "rule_get", "rule_type": "poc", "file_name": "mcp-server-detect.yaml"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(rule_get poc): %v", err)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal([]byte(result.Content[0].(*sdkmcp.TextContent).Text), &got); err != nil {
+		t.Fatalf("decode poc rule_get: %v", err)
+	}
+	if _, exists := got["products"]; exists {
+		t.Fatalf("POC rule_get must not treat YAML keys as products: %#v", got)
+	}
+	if got["template_id"] != "mcp-server-detect" || got["template_name"] != "MCP Server Detect" {
+		t.Fatalf("unexpected POC identity: %#v", got)
 	}
 }
 

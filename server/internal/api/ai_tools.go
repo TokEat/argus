@@ -1235,7 +1235,7 @@ func (t *RunSandboxDebugTool) Execute(ctx context.Context, input json.RawMessage
 	// 启动沙箱会话 (借用现有的 debug.go 逻辑)
 	session, ok := pocDebugSessions.start(t.TenantID, args.AgentID, 30*time.Second, resultChan)
 	if !ok {
-		return nil, fmt.Errorf("tenant already has a running debug session")
+		return nil, fmt.Errorf("agent already has a running debug session")
 	}
 	defer pocDebugSessions.finish(session.SessionID)
 

@@ -8564,6 +8564,17 @@ MCP-Inspector:
   pocs:
   - CVE-2025-49596
 
+MCP-Server:
+  type:
+  - root
+  pocs:
+  - mcp-initialize-detect
+  - mcp-discover-detect
+  - mcp-sse-endpoint-detect
+  - mcp-tools-list-unauth
+  - mcp-oauth-protected
+  risk_level: info
+
 DELMIA-Apriso:
   type:
   - root

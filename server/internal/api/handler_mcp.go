@@ -180,7 +180,7 @@ func mcpPOCDebug(c *gin.Context) {
 	resultChan := make(chan map[string]interface{}, 10)
 	session, ok := pocDebugSessions.start(tenantID, req.AgentID, time.Duration(timeoutSec)*time.Second, resultChan)
 	if !ok {
-		c.JSON(http.StatusConflict, gin.H{"error": "tenant already has a running debug session"})
+		c.JSON(http.StatusConflict, gin.H{"error": "agent already has a running debug session"})
 		return
 	}
 	cmd := &pb.DebugCommand{
@@ -268,6 +268,9 @@ func waitMCPDebugResult(resultChan <-chan map[string]interface{}, timeout time.D
 				}
 				if errText == "" && len(errorMessages) > 0 {
 					errText = strings.Join(errorMessages, "; ")
+				}
+				if latestResult != nil && boolFromMCPMap(latestResult, "matched") {
+					msg["matched"] = true
 				}
 				executionResult := buildMCPExecutionResult(status, errText, logs, latestResult, msg)
 				return mcpDebugWaitResult{
@@ -539,8 +542,8 @@ argus_context actions:
 - resource: fetch one URI (required: uri)
 - quickstart / lifecycle_policy: short workflow and intent policy
 - agents: Alive Agents without session secrets
-- coverage: compact catalog counts plus a string array of fingerprint products without workflow POCs (or workflow without fingerprint)
-- rule_get: one artifact by file_name or artifact_id; omits YAML; dict types return products as a name array; product_name returns that mapping entry; include_content only for small files
+- coverage: compact catalog counts plus a string array of fingerprint products without workflow POCs (or workflow without fingerprint). query is a product-name substring; hyphens are literal. Use integer range_start/range_end for paging. Empty matches return an empty list, not an error.
+- rule_get: one artifact by file_name or artifact_id; omits YAML; fingerprint/workflow/dir return products as a name array; POC does not treat YAML keys (id/info/http) as products; product_name returns that mapping entry; include_content only for small files
 - rule_list / drafts: paged artifact lists (range_start/range_end, max 200)
 
 argus_rule_debug: fingerprint, dir, behavior_probe, workflow or poc through an online Agent. agent_id and target_url are required.
@@ -553,13 +556,13 @@ Fingerprint save: rule_type=fingerprint, product_name + rules, or content YAML m
 Fingerprint debug: product_name + rule injects one custom expression.
 
 Dir save: rule_type=dir, product_name + paths, or content YAML mapping. Isolated drafts should use a unique file_name (not dir.yaml unless you intend to edit the tenant dictionary).
-Dir debug: product_name + paths inject those probes.
+Dir debug: product_name + paths replace the tenant dir.yaml for that call and return per-path status/body.
 
 Behavior probe save/debug: complete Nuclei YAML in content. info.author is mandatory. file_name required. Controlled probes need risk_confirmed=true on debug.
 
-POC save/debug: complete Nuclei YAML; info.author is mandatory; file_name must end in .yaml. debug uses poc_content.
+POC save/debug: complete Nuclei YAML; info.author is mandatory; file_name must end in .yaml. debug uses poc_content. Look at result.matched / top-level matched, not Nuclei catalog log noise.
 
-Workflow save: product_name + workflow_types + workflow_pocs, or content YAML.
+Workflow save: product_name + workflow_types + workflow_pocs, optional risk_level (unknown/info/low/medium/high), or content YAML. Product patches do not rewrite the rest of workflow.yaml.
 Workflow debug: workflow_product, workflow_types, workflow_pocs; optional poc_content for one injected POC.
 
 Verify: argus_context action=rule_get with rule_type and file_name (default finger.yaml / dir.yaml / workflow.yaml). products is a compact name array; pass product_name for one mapping. Do not set include_content on large dictionaries. Catalog stats: action=coverage.
@@ -579,6 +582,7 @@ MCP save shape:
 - product_name: stable product name used by workflow
 - rules: array of expressions such as body="marker", title="marker", header="marker"
 - intent: optional lifecycle hint
+- saving one product patches only that mapping and does not rewrite the rest of finger.yaml
 
 Debug shape:
 - rule_type: fingerprint
@@ -604,11 +608,13 @@ MCP save:
 - rule_type: dir
 - product_name and paths together, or content as a complete YAML mapping
 - paths are single URL path strings such as /admin; no newlines or .. segments
+- saving one product patches only that mapping and does not rewrite the rest of dir.yaml
 
 MCP debug:
 - rule_type: dir
 - agent_id and target_url are required
-- product_name plus paths inject those probes for this call
+- product_name plus paths replace the tenant dir.yaml for this call (they are not merged into it)
+- each probed path returns status and a truncated body
 `
 
 const dirTemplateText = `ExampleProduct:
@@ -731,8 +737,10 @@ MCP save shape:
 - product_name: a fingerprint product name, or a reserved General-Poc-* name for a general POC workflow
 - workflow_types: array of supported match types
 - workflow_pocs: array of POC file names
+- risk_level: unknown, info, low, medium, or high (Agent pre-auth uses this; omitted keeps the existing value, or unknown for a new product)
+- saving one product patches only that mapping and does not rewrite the rest of workflow.yaml
 
-After publishing, verify with argus_context action=rule_get, rule_type=workflow, optional product_name. The product_entry field lists workflow_types and workflow_pocs.
+After publishing, verify with argus_context action=rule_get, rule_type=workflow, optional product_name. The product_entry field lists workflow_types, workflow_pocs and risk_level.
 `
 
 const workflowTemplateText = `ExampleProduct:
@@ -740,6 +748,7 @@ const workflowTemplateText = `ExampleProduct:
     - root
   pocs:
     - example-poc.yaml
+  risk_level: info
 `
 
 const fullChainExampleText = `# Fingerprint -> POC -> Workflow example

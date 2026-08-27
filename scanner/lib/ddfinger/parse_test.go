@@ -366,6 +366,67 @@ func TestDirYamlOmitsPassiveIdentifiableOAProbes(t *testing.T) {
 	}
 }
 
+func TestMCPServerDirAndFingerprintUseContentEvidence(t *testing.T) {
+	probes := loadDirProbes(t)
+	wantPaths := []string{
+		"/.well-known/mcp.json",
+		"/.well-known/mcp/server-card.json",
+		"/mcp",
+		"/sse",
+		"/messages",
+	}
+	gotPaths := probes["MCP-Server"]
+	if len(gotPaths) == 0 {
+		t.Fatal("dir.yaml missing MCP-Server probes")
+	}
+	for _, want := range wantPaths {
+		found := false
+		for _, got := range gotPaths {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("dir.yaml MCP-Server missing probe %s, got %v", want, gotPaths)
+		}
+	}
+
+	rules := loadFingerprintRules(t, "MCP-Server")
+	if len(rules) != 2 {
+		t.Fatalf("MCP-Server fingerprint rules=%d, want 2", len(rules))
+	}
+
+	sse := structs.FingerPEntity{
+		ProductName: "MCP-Server",
+		AllString:   rules[0],
+		Rule:        ParseRule(rules[0]),
+	}
+	rpc := structs.FingerPEntity{
+		ProductName: "MCP-Server",
+		AllString:   rules[1],
+		Rule:        ParseRule(rules[1]),
+	}
+
+	if DirProbeCheck(sse, "http", "", "ok", "", "", "", 80, "/sse", "", "", 200, "text/html", "") {
+		t.Fatal("bare 200 must not identify MCP-Server")
+	}
+	if DirProbeCheck(sse, "http", "", "Method Not Allowed", "", "", "", 80, "/mcp", "", "", 405, "text/plain", "") {
+		t.Fatal("GET /mcp 405 must not identify MCP-Server")
+	}
+	if !DirProbeCheck(sse, "http", "Content-Type: text/event-stream\r\n", "event: endpoint\ndata: /messages?sessionId=1\n", "", "", "", 80, "/sse", "", "", 200, "text/event-stream", "") {
+		t.Fatal("SSE event: endpoint with text/event-stream should identify MCP-Server")
+	}
+	if !DirProbeCheck(rpc, "http", "", `{"jsonrpc":"2.0","result":{"serverInfo":{"name":"demo"}}}`, "", "", "", 80, "/mcp", "", "", 200, "application/json", "") {
+		t.Fatal("jsonrpc+serverInfo body should identify MCP-Server")
+	}
+
+	clearPath := loadFingerprintRules(t, "UNiSYS-ClearPath-MCP")
+	if len(clearPath) == 0 {
+		t.Fatal("UNiSYS-ClearPath-MCP fingerprint must remain untouched")
+	}
+}
+
 func TestDirYamlKeepsMustVisitHiddenConsoles(t *testing.T) {
 	probes := loadDirProbes(t)
 	want := map[string]string{
@@ -388,6 +449,62 @@ func TestDirYamlKeepsMustVisitHiddenConsoles(t *testing.T) {
 		if !found {
 			t.Errorf("dir.yaml missing must-visit probe %s %s, got %v", product, path, probes[product])
 		}
+	}
+}
+
+func TestMCPServerWorkflowIsInfoAndKeepsInspectorRCESeparate(t *testing.T) {
+	path := filepath.Join("..", "..", "common", "config", "workflow.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	type workflowRule struct {
+		Type      []string `yaml:"type"`
+		Pocs      []string `yaml:"pocs"`
+		RiskLevel string   `yaml:"risk_level"`
+	}
+	var raw map[string]workflowRule
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+
+	server, ok := raw["MCP-Server"]
+	if !ok {
+		t.Fatal("workflow.yaml missing MCP-Server")
+	}
+	if server.RiskLevel != "info" {
+		t.Fatalf("MCP-Server risk_level=%q, want info", server.RiskLevel)
+	}
+	if len(server.Type) != 1 || server.Type[0] != "root" {
+		t.Fatalf("MCP-Server type=%v, want [root]", server.Type)
+	}
+	wantPocs := []string{
+		"mcp-initialize-detect",
+		"mcp-discover-detect",
+		"mcp-sse-endpoint-detect",
+		"mcp-tools-list-unauth",
+		"mcp-oauth-protected",
+	}
+	if len(server.Pocs) != len(wantPocs) {
+		t.Fatalf("MCP-Server pocs=%v, want %v", server.Pocs, wantPocs)
+	}
+	for i, want := range wantPocs {
+		if server.Pocs[i] != want {
+			t.Fatalf("MCP-Server pocs[%d]=%q, want %q", i, server.Pocs[i], want)
+		}
+	}
+	for _, poc := range server.Pocs {
+		if poc == "CVE-2025-49596" {
+			t.Fatal("MCP-Server must not bind CVE-2025-49596")
+		}
+	}
+
+	inspector, ok := raw["MCP-Inspector"]
+	if !ok {
+		t.Fatal("workflow.yaml missing MCP-Inspector")
+	}
+	if len(inspector.Pocs) != 1 || inspector.Pocs[0] != "CVE-2025-49596" {
+		t.Fatalf("MCP-Inspector pocs=%v, want [CVE-2025-49596]", inspector.Pocs)
 	}
 }
 

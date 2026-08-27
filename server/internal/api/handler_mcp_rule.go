@@ -63,6 +63,7 @@ type mcpRuleSaveRequest struct {
 	Type          []string `json:"type"`
 	Pocs          []string `json:"pocs"`
 	Paths         []string `json:"paths"`
+	RiskLevel     string   `json:"risk_level"`
 	Intent        string   `json:"intent"`
 }
 
@@ -77,6 +78,7 @@ type mcpRuleApplyRequest struct {
 
 type mcpDebugTranscript struct {
 	Status          string                   `json:"status"`
+	Matched         bool                     `json:"matched"`
 	Logs            []map[string]interface{} `json:"logs,omitempty"`
 	Results         []map[string]interface{} `json:"results,omitempty"`
 	Complete        map[string]interface{}   `json:"complete,omitempty"`
@@ -223,19 +225,16 @@ func saveMCPFingerprintDraft(tenantID string, req mcpRuleSaveRequest) (gin.H, er
 	if err := validateDraftFileName(fileName, true); err != nil {
 		return nil, err
 	}
-	data := map[string][]string{}
-	arsenal, err := db.FindTenantArsenalByTypeAndFile(tenantID, "finger", fileName)
-	if err == nil {
-		if err := yaml.Unmarshal([]byte(arsenal.Content), &data); err != nil {
-			return nil, fmt.Errorf("failed to parse existing finger yaml: %w", err)
-		}
-	} else {
-		arsenal = &db.Arsenal{ID: db.BuildTenantArsenalID(tenantID, "finger", fileName), TenantID: tenantID, Type: "finger", FileName: fileName}
+	arsenal, content, err := loadMCPDictArsenal(tenantID, "finger", fileName)
+	if err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(req.Content) != "" {
+		data := map[string][]string{}
 		if err := yaml.Unmarshal([]byte(req.Content), &data); err != nil {
 			return nil, fmt.Errorf("content is not valid fingerprint YAML: %w", err)
 		}
+		content = req.Content
 	}
 	product := strings.TrimSpace(req.ProductName)
 	if product != "" || len(req.Rules) > 0 {
@@ -246,12 +245,15 @@ func saveMCPFingerprintDraft(tenantID string, req mcpRuleSaveRequest) (gin.H, er
 		if len(rules) == 0 {
 			return nil, fmt.Errorf("rules must contain at least one entry")
 		}
-		data[product] = rules
+		content, err = upsertYAMLMappingKey(content, product, rules)
+		if err != nil {
+			return nil, err
+		}
 	}
-	if len(data) == 0 {
-		return nil, fmt.Errorf("fingerprint draft is empty")
+	if err := validateMCPStringListDict(content, "fingerprint draft is empty"); err != nil {
+		return nil, err
 	}
-	return saveMCPYAMLDraft(arsenal, data, "fingerprint")
+	return saveMCPYAMLDraft(arsenal, content, "fingerprint")
 }
 
 func saveMCPWorkflowDraft(tenantID string, req mcpRuleSaveRequest) (gin.H, error) {
@@ -262,19 +264,21 @@ func saveMCPWorkflowDraft(tenantID string, req mcpRuleSaveRequest) (gin.H, error
 	if err := validateDraftFileName(fileName, true); err != nil {
 		return nil, err
 	}
+	arsenal, content, err := loadMCPDictArsenal(tenantID, "workflow", fileName)
+	if err != nil {
+		return nil, err
+	}
 	data := map[string]WorkflowEntry{}
-	arsenal, err := db.FindTenantArsenalByTypeAndFile(tenantID, "workflow", fileName)
-	if err == nil {
-		if err := yaml.Unmarshal([]byte(arsenal.Content), &data); err != nil {
+	if strings.TrimSpace(content) != "" {
+		if err := yaml.Unmarshal([]byte(content), &data); err != nil {
 			return nil, fmt.Errorf("failed to parse existing workflow yaml: %w", err)
 		}
-	} else {
-		arsenal = &db.Arsenal{ID: db.BuildTenantArsenalID(tenantID, "workflow", fileName), TenantID: tenantID, Type: "workflow", FileName: fileName}
 	}
 	if strings.TrimSpace(req.Content) != "" {
 		if err := yaml.Unmarshal([]byte(req.Content), &data); err != nil {
 			return nil, fmt.Errorf("content is not valid workflow YAML: %w", err)
 		}
+		content = req.Content
 	}
 	product := strings.TrimSpace(req.ProductName)
 	types := cleanStringSlice(firstNonEmptyStringSlice(req.WorkflowTypes, req.Type))
@@ -293,12 +297,19 @@ func saveMCPWorkflowDraft(tenantID string, req mcpRuleSaveRequest) (gin.H, error
 				return nil, fmt.Errorf("invalid poc reference %q: %w", poc, err)
 			}
 		}
-		data[product] = WorkflowEntry{Type: types, Pocs: pocs}
+		riskLevel, err := mcpWorkflowRiskLevel(req.RiskLevel, data[product].RiskLevel)
+		if err != nil {
+			return nil, err
+		}
+		content, err = upsertYAMLMappingKey(content, product, WorkflowEntry{Type: types, Pocs: pocs, RiskLevel: riskLevel})
+		if err != nil {
+			return nil, err
+		}
 	}
-	if len(data) == 0 {
-		return nil, fmt.Errorf("workflow draft is empty")
+	if err := validateMCPWorkflowDict(content); err != nil {
+		return nil, err
 	}
-	return saveMCPYAMLDraft(arsenal, data, "workflow")
+	return saveMCPYAMLDraft(arsenal, content, "workflow")
 }
 
 func saveMCPDirDraft(tenantID string, req mcpRuleSaveRequest) (gin.H, error) {
@@ -309,25 +320,16 @@ func saveMCPDirDraft(tenantID string, req mcpRuleSaveRequest) (gin.H, error) {
 	if err := validateDraftFileName(fileName, true); err != nil {
 		return nil, err
 	}
-	data := map[string][]string{}
-	arsenal, err := db.FindTenantArsenalByTypeAndFile(tenantID, "dir", fileName)
-	if err == nil {
-		if err := yaml.Unmarshal([]byte(arsenal.Content), &data); err != nil {
-			return nil, fmt.Errorf("failed to parse existing dir yaml: %w", err)
-		}
-		if data == nil {
-			data = map[string][]string{}
-		}
-	} else {
-		arsenal = &db.Arsenal{ID: db.BuildTenantArsenalID(tenantID, "dir", fileName), TenantID: tenantID, Type: "dir", FileName: fileName}
+	arsenal, content, err := loadMCPDictArsenal(tenantID, "dir", fileName)
+	if err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(req.Content) != "" {
+		data := map[string][]string{}
 		if err := yaml.Unmarshal([]byte(req.Content), &data); err != nil {
 			return nil, fmt.Errorf("content is not valid dir YAML: %w", err)
 		}
-		if data == nil {
-			data = map[string][]string{}
-		}
+		content = req.Content
 	}
 	product := strings.TrimSpace(req.ProductName)
 	paths := cleanStringSlice(req.Paths)
@@ -340,12 +342,56 @@ func saveMCPDirDraft(tenantID string, req mcpRuleSaveRequest) (gin.H, error) {
 				return nil, err
 			}
 		}
-		data[product] = paths
+		content, err = upsertYAMLMappingKey(content, product, paths)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := validateMCPStringListDict(content, "dir draft is empty"); err != nil {
+		return nil, err
+	}
+	return saveMCPYAMLDraft(arsenal, content, "dir")
+}
+
+func loadMCPDictArsenal(tenantID, typ, fileName string) (*db.Arsenal, string, error) {
+	arsenal, err := db.FindTenantArsenalByTypeAndFile(tenantID, typ, fileName)
+	if err != nil {
+		return &db.Arsenal{ID: db.BuildTenantArsenalID(tenantID, typ, fileName), TenantID: tenantID, Type: typ, FileName: fileName}, "", nil
+	}
+	return arsenal, arsenal.Content, nil
+}
+
+func validateMCPStringListDict(content, emptyErr string) error {
+	data := map[string][]string{}
+	if err := yaml.Unmarshal([]byte(content), &data); err != nil {
+		return err
 	}
 	if len(data) == 0 {
-		return nil, fmt.Errorf("dir draft is empty")
+		return fmt.Errorf("%s", emptyErr)
 	}
-	return saveMCPYAMLDraft(arsenal, data, "dir")
+	return nil
+}
+
+func validateMCPWorkflowDict(content string) error {
+	data := map[string]WorkflowEntry{}
+	if err := yaml.Unmarshal([]byte(content), &data); err != nil {
+		return err
+	}
+	if len(data) == 0 {
+		return fmt.Errorf("workflow draft is empty")
+	}
+	return nil
+}
+
+func mcpWorkflowRiskLevel(requested, existing string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		if strings.TrimSpace(existing) == "" {
+			return db.PocRiskLevelUnknown, nil
+		}
+		return db.NormalizePocRiskLevel(existing)
+	}
+	return db.NormalizePocRiskLevel(requested)
 }
 
 func saveMCPPOCDraft(tenantID string, req mcpRuleSaveRequest) (gin.H, error) {
@@ -364,10 +410,10 @@ func saveMCPPOCDraft(tenantID string, req mcpRuleSaveRequest) (gin.H, error) {
 	return resp, nil
 }
 
-func saveMCPYAMLDraft(arsenal *db.Arsenal, data interface{}, ruleType string) (gin.H, error) {
-	out, err := yaml.Marshal(data)
-	if err != nil {
-		return nil, err
+func saveMCPYAMLDraft(arsenal *db.Arsenal, content, ruleType string) (gin.H, error) {
+	out := []byte(content)
+	if len(out) > 0 && out[len(out)-1] != '\n' {
+		out = append(out, '\n')
 	}
 	arsenal.PreviousContent = arsenal.Content
 	arsenal.PreviousHash = arsenal.Hash
@@ -617,7 +663,7 @@ func mcpContextHelp(c *gin.Context) {
 			"Debug only on a user-authorized target with an Alive Agent from action=agents.",
 			"Save creates a Draft. Publish only as admin with exact stable_ref hash/version.",
 			"Verify with action=rule_get. Dict types return product names as a string array and omit YAML. Pass product_name for one mapping.",
-			"Catalog coverage (fingerprint vs workflow POC) is action=coverage; names are a compact string array.",
+			"Catalog coverage (fingerprint vs workflow POC) is action=coverage; query is a product-name substring (hyphens are literal, not a range). Names are a compact string array.",
 		},
 		"workflow": []string{
 			"help -> resource(spec) -> resource(template) -> agents -> debug -> save Draft -> (admin) apply publish -> rule_get",
@@ -627,7 +673,7 @@ func mcpContextHelp(c *gin.Context) {
 			{"rule_type": "dir", "spec": "argus://dir/spec", "template": "argus://dir/template", "save": "product_name + paths, or content YAML mapping; unique file_name for isolated drafts", "debug": "agent_id, target_url, product_name, paths"},
 			{"rule_type": "behavior_probe", "spec": "argus://behavior-probe/spec", "template": "argus://behavior-probe/template", "save": "file_name + complete Nuclei YAML (info.author required)", "debug": "agent_id, target_url, file_name, content; risk_confirmed=true if controlled"},
 			{"rule_type": "poc", "spec": "argus://poc/spec", "template": "argus://poc/template", "save": "file_name ending .yaml + complete Nuclei YAML (info.author required)", "debug": "agent_id, target_url, poc_content"},
-			{"rule_type": "workflow", "spec": "argus://workflow/spec", "template": "argus://workflow/template", "save": "product_name + workflow_types + workflow_pocs, or content YAML", "debug": "agent_id, target_url, workflow_product, workflow_types, workflow_pocs, optional poc_content"},
+			{"rule_type": "workflow", "spec": "argus://workflow/spec", "template": "argus://workflow/template", "save": "product_name + workflow_types + workflow_pocs + optional risk_level, or content YAML", "debug": "agent_id, target_url, workflow_product, workflow_types, workflow_pocs, optional poc_content"},
 		},
 		"verify":                    "argus_context action=rule_get with rule_type and file_name or artifact_id; products is a name array; product_name extracts one mapping; include_content only for small files. Coverage is action=coverage.",
 		"resources":                 resources,
@@ -753,21 +799,27 @@ func mcpContextCoverage(c *gin.Context, tenantID string, req mcpRuleContextReque
 	total := len(names)
 	start, end := req.RangeStart, req.RangeEnd
 	paged := start > 0 || end > 0
+	if req.RangeStart > 0 && req.RangeEnd > 0 && req.RangeEnd < req.RangeStart {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "range_end must be greater than or equal to range_start"})
+		return
+	}
 	if start <= 0 {
 		start = 1
 	}
 	if end <= 0 || end > total {
 		end = total
 	}
-	if end < start {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "range_end must be greater than or equal to range_start"})
-		return
-	}
 	window := names
-	if paged {
+	if total == 0 {
+		window = []string{}
+		start, end = 0, 0
+	} else if paged {
 		if start > total {
 			window = []string{}
 		} else {
+			if end < start {
+				end = total
+			}
 			window = names[start-1 : end]
 		}
 	}
@@ -980,7 +1032,7 @@ func mcpRuleDebugFingerprint(c *gin.Context, req mcpRuleDebugRequest) {
 	resultChan := make(chan map[string]interface{}, 32)
 	session, ok := pocDebugSessions.start(tenantID, req.AgentID, time.Duration(timeoutSec)*time.Second, resultChan)
 	if !ok {
-		c.JSON(http.StatusConflict, gin.H{"error": "tenant already has a running debug session"})
+		c.JSON(http.StatusConflict, gin.H{"error": "agent already has a running debug session"})
 		return
 	}
 	cmd := &pb.DebugCommand{
@@ -1004,7 +1056,11 @@ func mcpRuleDebugFingerprint(c *gin.Context, req mcpRuleDebugRequest) {
 		c.JSON(http.StatusGatewayTimeout, gin.H{"error": err.Error()})
 		return
 	}
-	waited.MCPGuidance = mcpDebugGuidance("fingerprint")
+	guidanceType := "fingerprint"
+	if len(dirPaths) > 0 {
+		guidanceType = "dir"
+	}
+	waited.MCPGuidance = mcpDebugGuidance(guidanceType)
 	c.JSON(http.StatusOK, waited)
 }
 
@@ -1038,8 +1094,11 @@ func waitMCPDebugTranscript(resultChan <-chan map[string]interface{}, timeout ti
 				out.Logs = append(out.Logs, msg)
 			case "debug_result":
 				out.Results = append(out.Results, msg)
+				if boolFromMCPMap(msg, "matched") {
+					out.Matched = true
+				}
 				templateID, _ := msg["template_id"].(string)
-				if templateID == "Finger" || templateID == "Active-Finger" {
+				if templateID == "Finger" || templateID == "Active-Finger" || templateID == "Dir-Probe" {
 					for _, product := range stringSliceFromInterface(msg["extracted"]) {
 						product = strings.TrimPrefix(product, "[custom]")
 						if product != "" && !productSeen[product] {
@@ -1052,6 +1111,11 @@ func waitMCPDebugTranscript(resultChan <-chan map[string]interface{}, timeout ti
 					out.PocHits = append(out.PocHits, msg)
 				}
 			case "debug_complete":
+				if out.Matched {
+					msg["matched"] = true
+				} else {
+					out.Matched = boolFromMCPMap(msg, "matched")
+				}
 				out.Complete = msg
 				return out, nil
 			}

@@ -725,6 +725,35 @@ func TestDirBruteCallbackSkipsUnmatchedPathInsert(t *testing.T) {
 	}
 }
 
+func TestDirBruteCallbackReportsEveryPathWhenAsked(t *testing.T) {
+	var got []structs.OutputMessage
+	rt := NewRuntime(
+		map[string]structs.URLEntity{},
+		&sync.Mutex{},
+		nil,
+		nil,
+		nil,
+		map[string][]string{"/admin": {"Demo"}},
+		nil,
+		map[string]structs.WorkFlowEntity{},
+		map[string][]string{},
+		&sync.Mutex{},
+		func(msg structs.OutputMessage) { got = append(got, msg) },
+	)
+	rt.ReportAllDirProbes = true
+	rt.DirBruteCallback(runner.Result{
+		URL:           "http://example.com/admin",
+		Path:          "/admin",
+		StatusCode:    404,
+		Title:         "missing",
+		Body:          "<html>nope</html>",
+		ContentLength: 16,
+	})
+	if len(got) != 1 || got[0].Type != "Dir-Probe" || got[0].Web.Status != "404" || got[0].AdditionalMsg != "<html>nope</html>" {
+		t.Fatalf("expected dir probe miss with body, got %#v", got)
+	}
+}
+
 func TestHostBindCallbackStoresChangedBinding(t *testing.T) {
 	urlMap := map[string]structs.URLEntity{
 		"http://1.1.1.1:80": {

@@ -37,6 +37,11 @@ type Runtime struct {
 	// Domain-Bind messages can carry the "cdn" asset tag.
 	CDNHosts map[string]struct{}
 
+	// ReportAllDirProbes emits a Dir-Probe result for every directory probe
+	// response, including misses. Used by MCP/Agent dir debug so callers see
+	// per-path status and body instead of only fingerprint matches.
+	ReportAllDirProbes bool
+
 	fingerprintByProduct map[string][]structs.FingerPEntity
 	emit                 func(structs.OutputMessage)
 	redirectMu           sync.Mutex
@@ -139,6 +144,7 @@ func (rt *Runtime) DirBruteCallback(resp runner.Result) {
 		return
 	}
 
+	matched := make([]string, 0, 2)
 	for _, path := range rt.matchingDirPaths(resp.Path) {
 		for _, productName := range rt.DirDB[path] {
 			success := rt.matchesProduct(resp, productName)
@@ -154,7 +160,7 @@ func (rt *Runtime) DirBruteCallback(resp runner.Result) {
 					Finger: []string{productName},
 					URI:    resp.URL,
 				})
-
+				matched = append(matched, productName)
 				continue
 			}
 
@@ -181,10 +187,34 @@ func (rt *Runtime) DirBruteCallback(resp runner.Result) {
 				URI:           resp.URL,
 				AdditionalMsg: "[dir-fallback]",
 			})
+			matched = append(matched, productName)
 
 			rt.addDirFallback(rootURL, productName)
 		}
 	}
+	rt.emitDirProbe(resp, matched)
+}
+
+func (rt *Runtime) emitDirProbe(resp runner.Result, matched []string) {
+	if rt == nil || !rt.ReportAllDirProbes || rt.emit == nil {
+		return
+	}
+	body := resp.Body
+	const maxBody = 2048
+	if len(body) > maxBody {
+		body = body[:maxBody]
+	}
+	rt.emit(structs.OutputMessage{
+		Type: "Dir-Probe",
+		Web: structs.WebInfo{
+			Status: strconv.Itoa(resp.StatusCode),
+			Title:  resp.Title,
+			Size:   strconv.Itoa(resp.ContentLength),
+		},
+		URI:           resp.URL,
+		Finger:        matched,
+		AdditionalMsg: body,
+	})
 }
 
 // HostBindCheck 域名绑定资产探测。

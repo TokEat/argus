@@ -1,0 +1,107 @@
+id: mcp-tools-list-unauth
+
+info:
+  name: MCP 未授权 tools/list 暴露
+  author: argus
+  severity: info
+  description: |
+    在 initialize 或 server/discover 成功且未返回 401 后，发送规范 tools/list，提取 tools[].name。本模板只做工具清单识别，到此停止。
+  metadata:
+    max-request: 12
+    product: MCP-Server
+    argus-execution-class: detection
+  tags: mcp,detect,tech,unauth
+
+flow: (http(1) || http(2)) && http(3)
+
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/mcp"
+      - "{{BaseURL}}/mcp/"
+      - "{{BaseURL}}/"
+
+    headers:
+      Accept: "application/json, text/event-stream"
+      Content-Type: "application/json"
+
+    body: '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"{{protocol_version}}","capabilities":{},"clientInfo":{"name":"argus","version":"1.0"}}}'
+
+    payloads:
+      protocol_version:
+        - "2025-11-25"
+        - "2025-03-26"
+        - "2024-11-05"
+
+    stop-at-first-match: true
+
+    matchers:
+      - type: dsl
+        dsl:
+          - 'contains(body, "jsonrpc") && (contains(body, "serverInfo") || contains(body, "protocolVersion")) && status_code != 401'
+        internal: true
+
+    extractors:
+      - type: kval
+        name: session
+        internal: true
+        kval:
+          - mcp_session_id
+
+  - method: POST
+    path:
+      - "{{BaseURL}}/mcp"
+      - "{{BaseURL}}/mcp/"
+      - "{{BaseURL}}/"
+
+    headers:
+      Accept: "application/json, text/event-stream"
+      Content-Type: "application/json"
+      MCP-Protocol-Version: "2026-07-28"
+      Mcp-Method: "server/discover"
+
+    body: '{"jsonrpc":"2.0","id":1,"method":"server/discover"}'
+
+    stop-at-first-match: true
+
+    matchers:
+      - type: dsl
+        dsl:
+          - 'contains(body, "supportedVersions") && status_code != 401'
+        internal: true
+
+    extractors:
+      - type: kval
+        name: session
+        internal: true
+        kval:
+          - mcp_session_id
+
+  - method: POST
+    path:
+      - "{{BaseURL}}/mcp"
+      - "{{BaseURL}}/mcp/"
+      - "{{BaseURL}}/"
+
+    headers:
+      Accept: "application/json, text/event-stream"
+      Content-Type: "application/json"
+      Mcp-Session-Id: "{{session}}"
+
+    body: '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "jsonrpc"
+          - "tools"
+        condition: and
+
+    extractors:
+      - type: json
+        name: toolname
+        json:
+          - ".result.tools[].name"
