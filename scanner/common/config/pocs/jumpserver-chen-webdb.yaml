@@ -1,0 +1,43 @@
+id: jumpserver-chen-webdb
+
+info:
+  name: JumpServer Chen WebDB 组件识别
+  author: argus
+  severity: info
+  description: |
+    识别 JumpServer Chen（Web Database）HTTP 面，不是 Fastjson 利用。
+    GET /chen/ 或 /chen/connect 的 title 为 Chen: JumpServer Web Database；
+    GET /chen/api/profile 无 token 时 401 正文 Unauthorized（非 JSON）。
+    不匹配 GET /chen 空 200（Jeecg SPA 会误报）。不发 WS，不打 @type。
+  reference:
+    - https://github.com/jumpserver/chen
+    - https://www.jumpserver.org/blog/security-20260729.html
+  metadata:
+    max-request: 6
+    product: FIT2CLOUD-JumpServer堡垒机
+    fofa-query: app="FIT2CLOUD-JumpServer-堡垒机"
+  tags: jumpserver,chen,fingerprint,webdb
+
+http:
+  - raw:
+      - |
+        GET {{page}} HTTP/1.1
+        Host: {{Hostname}}
+
+      - |
+        GET /chen/api/profile HTTP/1.1
+        Host: {{Hostname}}
+
+    payloads:
+      page:
+        - "/chen/"
+        - "/chen/connect"
+        - "/chen/index.html"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: dsl
+        dsl:
+          - status_code_1 == 200 && contains(body_1, "Chen: JumpServer Web Database")
+          - status_code_2 == 401 && contains(body_2, "Unauthorized") && !contains(body_2, "timestamp")
+        condition: and

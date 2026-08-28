@@ -4906,6 +4906,8 @@ FIT2CLOUD-JumpServer堡垒机:
     - title="JumpServer Open Source Bastion Host" || title="JumpServer 开源堡垒机" || body="Welcome to the Jumpserver"
     - path="/core/auth/login/" && status="200" && title="JumpServer"
     - path="/users/login/" && status="200" && title="JumpServer"
+    - 'path="/chen/" && status="200" && title="Chen: JumpServer Web Database"'
+    - 'path="/chen/connect" && status="200" && title="Chen: JumpServer Web Database"'
 FIT2CLOUD-MeterSphere:
     - title="MeterSphere"
     - icon_hash="1023469568"
@@ -7533,6 +7535,7 @@ JeeSpringCloud:
     - body="/jeeSpringStatic/plugs/jquery/jquery" || header="com.jeespring.session.id"
 Jeecg-Boot:
     - title="JeecgBoot 企业级低代码平台"
+    - 'title="JeecgBoot" && body="jeecg"'
     - body="LoginController.do"
     - body="window._CONFIG['imgDomainURL'] = 'http://localhost:8080/jeecg-boot/" || title="Jeecg-Boot 企业级快速开发平台" || title="Jeecg 快速开发平台" || body="'http://fileview.jeecg.com/onlinePreview'"
     - body="滚动条优化"
@@ -7541,6 +7544,10 @@ Jeecg-Boot:
     - 'body="plug-in/ace/"'
     - 'body="color: #222222;" && body="lang=zh-cmn-hans" && body="loader-"'
     - 'body="onlinepreviewdomainurl''] = ''http://fileview.jeecg.com"'
+    - 'body="/sys/randomImage" && body="jeecg"'
+    - 'body="getDictItems" && body="jeecg"'
+    - 'body="swagger-bootstrap-ui" && body="jeecg"'
+    - 'body="_app.config.js?v=" && body="JeecgBoot"'
 Jeeplus:
     - body="name=\"author\" content=\"http://www.jeeplus.org/" || body="<meta name=\"author\" content=\"jeeplus\">" || title="Jeeplus vue快速开发平台" || (body="jeeplus.js" && body="/static/common/") || title="JeePlus 快速开发平台"
 Jellyfin:

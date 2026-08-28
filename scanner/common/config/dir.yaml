@@ -29,6 +29,10 @@ Jenkins:
   - "/jenkins/login"
 Jeecg-Boot:
   - "/jeecg-boot/"
+  - "/jeecg-boot/sys/login"
+  - "/jeecg-boot/sys/randomImage"
+  - "/jeecg-boot/sys/dict/"
+  - "/jeecg-boot/doc.html"
 ureport:
   - "/ureport/designer"
   - "/ureport"

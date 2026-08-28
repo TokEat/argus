@@ -482,6 +482,7 @@ Alibaba-Nacos:
   - root
   - dir
   pocs:
+  - nacos-v3-auth-scope
   - CVE-2021-29441
   - CVE-2021-29442
   - nacos-default-login
@@ -2420,21 +2421,22 @@ Jeecg-Boot:
   type:
   - root
   pocs:
+  - jeecg-boot-dict-unauth
+  - jeecg-boot-unauth
+  - jeecg-boot-swagger
+  - CVE-2023-38992
   - CVE-2021-37305
   - CVE-2021-37304
-  - jeecg-boot-swagger
   - CVE-2023-34659
   - CVE-2023-33510
   - CVE-2023-1454
   - jeecg-boot-ssti-rce
-  - jeecg-boot-unauth
   - jeecg-druid-unauth
   - JeecgBoot testConnection 远程命令执行漏洞
   - Jeecg-Boot-SSTL-RCE
   - JeecgBoot-testConnection-rce
   - jeecg-boot-jmreport-fileupload
   - CVE-2023-4450
-  - CVE-2023-38992
   - CVE-2024-48307
 Jeeplus:
   type:
@@ -7190,6 +7192,8 @@ FIT2CLOUD-JumpServer堡垒机:
   type:
   - root
   pocs:
+  - jumpserver-chen-webdb
+  - jumpserver-chen-fastjson
   - CVE-2023-42442
   - jumpserver-unauth-rce
 天融信-运维审计系统:
