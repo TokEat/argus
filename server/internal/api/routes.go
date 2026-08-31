@@ -273,6 +273,15 @@ func registerAPIV1Routes(api *gin.RouterGroup) {
 	api.GET("/mcp/keys", listMcpKeys)
 	api.POST("/mcp/keys", saveMcpKey)
 	api.DELETE("/mcp/keys/:id", deleteMcpKey)
+	api.GET("/mcp/admin/status", mcpAdminGetStatus)
+	api.PUT("/mcp/admin/status", mcpAdminPutStatus)
+	api.GET("/mcp/admin/clients", mcpAdminListClients)
+	api.POST("/mcp/admin/clients/:id/revoke", mcpAdminRevokeClient)
+	api.POST("/mcp/admin/clients/:id/disable", mcpAdminDisableClient)
+	api.POST("/mcp/admin/clients/:id/enable", mcpAdminEnableClient)
+	api.DELETE("/mcp/admin/clients/:id", mcpAdminDeleteClient)
+	api.GET("/mcp/admin/sessions", mcpAdminListSessions)
+	api.POST("/mcp/admin/sessions/revoke", mcpAdminRevokeSessions)
 
 	// 数据增强：趋势统计与报表
 	api.GET("/stats/trends", getVulnTrends)

@@ -81,6 +81,9 @@ func TestSchemaModelTableNames(t *testing.T) {
 		"OAuthClient":                  "oauth_clients",
 		"OAuthAuthorizationCode":       "oauth_authorization_codes",
 		"OAuthRefreshToken":            "oauth_refresh_tokens",
+		"TenantMCPSettings":            "tenant_mcp_settings",
+		"OAuthTenantClientBlock":       "oauth_tenant_client_blocks",
+		"MCPAdminEvent":                "mcp_admin_events",
 	}
 	expected["AssetDiscoverySnapshot"] = "asset_discovery_snapshots"
 	expected["AssetDiscoverySnapshotItem"] = "asset_discovery_snapshot_items"

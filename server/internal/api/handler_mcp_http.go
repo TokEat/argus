@@ -46,8 +46,19 @@ func authenticateMCPRequest(c *gin.Context) bool {
 		writeMCPUnauthorized(c)
 		return false
 	}
+	tenantID := normalizeTenantID(jwtStringClaim(claims, "tenant_id"))
+	clientID := strings.TrimSpace(jwtStringClaim(claims, "client_id"))
+	if err := denyIfTenantMCPBlocked(tenantID, clientID); err != nil {
+		writeMCPUnauthorized(c)
+		return false
+	}
 	applyJWTClaims(c, claims)
 	return true
+}
+
+func jwtStringClaim(claims jwt.MapClaims, key string) string {
+	value, _ := claims[key].(string)
+	return strings.TrimSpace(value)
 }
 
 func writeMCPUnauthorized(c *gin.Context) {

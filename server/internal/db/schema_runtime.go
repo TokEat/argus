@@ -86,5 +86,8 @@ func schemaModels() []interface{} {
 		&OAuthClient{},
 		&OAuthAuthorizationCode{},
 		&OAuthRefreshToken{},
+		&TenantMCPSettings{},
+		&OAuthTenantClientBlock{},
+		&MCPAdminEvent{},
 	}
 }

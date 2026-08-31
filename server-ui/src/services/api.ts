@@ -1098,6 +1098,42 @@ export async function deleteMcpKey(id: string): Promise<API.MessageResponse> {
     return request.delete(`/mcp/keys/${id}`);
 }
 
+export async function getMcpAdminStatus(): Promise<API.McpAdminStatus> {
+    return request.get('/mcp/admin/status');
+}
+
+export async function updateMcpAdminStatus(enabled: boolean, confirm = false): Promise<{ status: string; enabled: boolean; revoked_sessions?: number }> {
+    return request.put('/mcp/admin/status', { enabled, confirm });
+}
+
+export async function listMcpAdminClients(): Promise<API.McpAdminClient[]> {
+    return request.get('/mcp/admin/clients');
+}
+
+export async function revokeMcpAdminClient(clientId: string): Promise<{ status: string; revoked_sessions: number }> {
+    return request.post(`/mcp/admin/clients/${encodeURIComponent(clientId)}/revoke`, { confirm: true });
+}
+
+export async function disableMcpAdminClient(clientId: string): Promise<{ status: string; revoked_sessions: number }> {
+    return request.post(`/mcp/admin/clients/${encodeURIComponent(clientId)}/disable`, { confirm: true });
+}
+
+export async function enableMcpAdminClient(clientId: string): Promise<API.MessageResponse> {
+    return request.post(`/mcp/admin/clients/${encodeURIComponent(clientId)}/enable`);
+}
+
+export async function deleteMcpAdminClient(clientId: string): Promise<{ status: string; revoked_sessions: number; row_deleted: boolean }> {
+    return request.delete(`/mcp/admin/clients/${encodeURIComponent(clientId)}`, { data: { confirm: true } });
+}
+
+export async function listMcpAdminSessions(): Promise<API.McpAdminSession[]> {
+    return request.get('/mcp/admin/sessions');
+}
+
+export async function revokeMcpAdminSession(sessionId: string): Promise<{ status: string; revoked_sessions: number }> {
+    return request.post('/mcp/admin/sessions/revoke', { confirm: true, session_id: sessionId });
+}
+
 // ===========================
 // Data Enhancement API
 // ===========================

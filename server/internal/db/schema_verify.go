@@ -34,6 +34,20 @@ func schemaTableSpecs() []schemaTableSpec {
 			Columns: []string{"token_hash", "client_id", "user_id", "tenant_id", "role", "role_base", "exp_authorized", "resource", "expires_at", "revoked_at", "created_at"},
 			Indexes: []string{"idx_oauth_refresh_tokens_client_id", "idx_oauth_refresh_tokens_user_id", "idx_oauth_refresh_tokens_tenant_id", "idx_oauth_refresh_tokens_expires_at", "idx_oauth_refresh_tokens_revoked_at"},
 		},
+		{
+			Table:   "tenant_mcp_settings",
+			Columns: []string{"tenant_id", "enabled", "updated_at", "updated_by"},
+		},
+		{
+			Table:   "oauth_tenant_client_blocks",
+			Columns: []string{"tenant_id", "client_id", "blocked_at", "actor_id"},
+			Indexes: []string{"idx_oauth_tenant_client_blocks_client_id"},
+		},
+		{
+			Table:   "mcp_admin_events",
+			Columns: []string{"id", "tenant_id", "actor_id", "action", "client_id", "details", "created_at"},
+			Indexes: []string{"idx_mcp_admin_events_tenant_id", "idx_mcp_admin_events_actor_id", "idx_mcp_admin_events_action", "idx_mcp_admin_events_created_at"},
+		},
 		{Table: "scan_policy_intents", Columns: []string{"tenant_id", "project_id", "root_task_id", "schema_version", "policy_json", "policy_hash", "plan_hash", "risk_status", "credential_status", "authorization_actor_id", "authorized_at", "created_at", "updated_at"}, Indexes: []string{"idx_scan_policy_intent_root", "idx_scan_policy_intents_project_id", "idx_scan_policy_intents_policy_hash", "idx_scan_policy_intents_plan_hash"}},
 		{Table: "scan_stage_derivations", Columns: []string{"tenant_id", "project_id", "root_task_id", "stage", "status", "plan_hash", "observation_hash", "batch_id", "attempt_id", "item_count", "summary", "created_at", "updated_at"}, Indexes: []string{"idx_scan_stage_derivation", "idx_scan_stage_derivations_batch_id"}},
 		{Table: "credential_dictionaries", Columns: []string{"id", "tenant_id", "project_id", "kind", "name", "created_by", "created_at", "updated_at", "deleted_at"}, Indexes: []string{"idx_credential_dictionary_name", "idx_credential_dictionaries_project_id"}},

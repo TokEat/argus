@@ -14,7 +14,7 @@
 > 注：
 > - 本文覆盖控制面主链路的核心表，**不是全部表的穷举清单**；完整权威来源是 `deploy/db/init/*.sql` 与 `schema_verify.go`。文中字段为节选，未列出的列以 DDL 为准。
 > - 数据库初始化与项目启动已分离：`deploy/db-init.sh`（psql 纯 SQL 导入，不依赖二进制）负责建库/建角色/基线导入/种子/自检；`argus-server` 启动时只做连接重试 + 版本校验 + 结构契约校验，不再执行任何迁移。
-> - 历史上 010..570 的嵌入式增量迁移已随 v001 版本重启退役（git 历史可查）；存量旧终态库由 `deploy/db/legacy/900_cutover_from_010_570.sql` 一次性切换。v001 起的版本演进规则：新增 `deploy/db/init/NNN_xxx.sql`（文件末尾自记 `schema_migrations` 版本），并同步推进 `RequiredSchemaVersion` 与 `schema_verify.go` 契约（当前已有 002 被动子域、003 CDN 标记、004 MCP OAuth 三个增量）。
+> - 历史上 010..570 的嵌入式增量迁移已随 v001 版本重启退役（git 历史可查）；存量旧终态库由 `deploy/db/legacy/900_cutover_from_010_570.sql` 一次性切换。v001 起的版本演进规则：新增 `deploy/db/init/NNN_xxx.sql`（文件末尾自记 `schema_migrations` 版本），并同步推进 `RequiredSchemaVersion` 与 `schema_verify.go` 契约（当前已有 002 被动子域、003 CDN 标记、004 MCP OAuth、005 MCP 管理 四个增量）。
 > - v001 收敛时删除了历史废弃对象：`cron_tasks`、`notification_rules`、`asset_change_logs` 表、`tenant_quota` 兼容视图与 `root_tasks.cron_task_id` 列（均无业务代码引用）。
 > - 文中出现的 “Migration 4xx/5xx” 编号指 v001 之前的历史增量，仅作演进背景说明。
 > - 规则资产不在 SQL 里，使用 `deploy/arsenal_seed.db` 和 `--seed-from-db`。
@@ -123,6 +123,16 @@
 | `oauth_clients` | 公开客户端、redirect JSON、可选 `tenant_id` |
 | `oauth_authorization_codes` | 单次授权码（约 2 分钟）、PKCE S256 challenge、resource、用户/租户/角色 |
 | `oauth_refresh_tokens` | refresh 轮转；重放即吊销该 client+user 的未撤销 refresh |
+
+#### MCP 管理（`005_mcp_admin.sql`）
+
+租户级 MCP 开关与客户端治理。内置 `cursor` 客户端禁止物理删除，只能对本租户拉黑。
+
+| 表 | 作用 |
+|------|------|
+| `tenant_mcp_settings` | 本租户是否启用 MCP；缺行视为启用 |
+| `oauth_tenant_client_blocks` | 本租户拉黑的 `client_id`，不删除全局 `oauth_clients` 行 |
+| `mcp_admin_events` | admin 开关 / 撤销 / 禁用 / 删除动作审计，不是 tools/call 流水 |
 
 #### `system_configs`
 

@@ -206,6 +206,11 @@ func oauthAuthorizePost(c *gin.Context) {
 		writeOAuthLoginPage(c, http.StatusUnauthorized, req)
 		return
 	}
+	if err := denyIfTenantMCPBlocked(identity.TenantID, req.ClientID); err != nil {
+		req.Error = tenantMCPDenyMessage(err)
+		writeOAuthLoginPage(c, http.StatusForbidden, req)
+		return
+	}
 	code, err := issueOAuthAuthorizationCode(req, identity)
 	if err != nil {
 		oauthAuthorizeError(c, req, err)
@@ -291,6 +296,13 @@ func oauthAuthorizeError(c *gin.Context, req oauthAuthorizeRequest, err error) {
 		}
 	}
 	c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+}
+
+func tenantMCPDenyMessage(err error) string {
+	if errors.Is(err, errTenantMCPClientBlocked) {
+		return "该 MCP 客户端已对本租户禁用。"
+	}
+	return "本租户已关闭 MCP 接入。"
 }
 
 func writeOAuthLoginPage(c *gin.Context, status int, req oauthAuthorizeRequest) {
@@ -385,6 +397,10 @@ func oauthTokenAuthorizationCode(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
 		return
 	}
+	if err := denyIfTenantMCPBlocked(row.TenantID, clientID); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access_denied"})
+		return
+	}
 	identity := argusIdentity{
 		UserID:        row.UserID,
 		TenantID:      row.TenantID,
@@ -422,6 +438,10 @@ func oauthTokenRefresh(c *gin.Context) {
 	now := time.Now()
 	if row.ClientID != clientID || row.Resource != resource || now.After(row.ExpiresAt) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
+		return
+	}
+	if err := denyIfTenantMCPBlocked(row.TenantID, clientID); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access_denied"})
 		return
 	}
 	if row.RevokedAt != nil {

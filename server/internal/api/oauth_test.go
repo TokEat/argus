@@ -535,3 +535,110 @@ func exchangeOAuthCodeRaw(t *testing.T, ts *httptest.Server, code, verifier stri
 	}
 	return resp
 }
+
+func TestOAuthAndMCPHonorTenantDisableAndClientBlock(t *testing.T) {
+	ts := newOAuthTestServer(t)
+	defaultUser := seedLoginUser(t, uniqueLoginUsername("mcp-off"), "secret", "default", "operator")
+	otherUser := seedLoginUser(t, uniqueLoginUsername("mcp-keep"), "secret", "other", "operator")
+
+	verifier := oauthTestVerifier(t)
+	code := completeOAuthLogin(t, ts, defaultUser.Username, "secret", verifier)
+	tokens := exchangeOAuthCode(t, ts, code, verifier)
+	access := tokens["access_token"].(string)
+	refresh := tokens["refresh_token"].(string)
+
+	otherVerifier := oauthTestVerifier(t)
+	otherCode := completeOAuthLogin(t, ts, otherUser.Username, "secret", otherVerifier)
+	otherTokens := exchangeOAuthCode(t, ts, otherCode, otherVerifier)
+	otherAccess := otherTokens["access_token"].(string)
+
+	if err := upsertTenantMCPSettings("default", "9", false); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = revokeTenantRefreshTokens("default", "")
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2026-07-28","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}`))
+	req.Header.Set("Authorization", "Bearer "+access)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("disabled tenant MCP: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("disabled tenant access token should be rejected, status=%d", resp.StatusCode)
+	}
+
+	refreshResp, err := http.PostForm(ts.URL+"/oauth/token", url.Values{
+		"grant_type":    {"refresh_token"},
+		"client_id":     {"cursor"},
+		"refresh_token": {refresh},
+		"resource":      {ts.URL + "/mcp"},
+	})
+	if err != nil {
+		t.Fatalf("refresh after disable: %v", err)
+	}
+	refreshResp.Body.Close()
+	if refreshResp.StatusCode != http.StatusForbidden && refreshResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("refresh after disable status=%d", refreshResp.StatusCode)
+	}
+
+	authResp, err := http.PostForm(ts.URL+"/oauth/authorize", url.Values{
+		"response_type":         {"code"},
+		"client_id":             {"cursor"},
+		"redirect_uri":          {"http://127.0.0.1:8787/callback"},
+		"code_challenge":        {pkceS256(oauthTestVerifier(t))},
+		"code_challenge_method": {"S256"},
+		"resource":              {ts.URL + "/mcp"},
+		"username":              {defaultUser.Username},
+		"password":              {"secret"},
+	})
+	if err != nil {
+		t.Fatalf("authorize after disable: %v", err)
+	}
+	body, _ := io.ReadAll(authResp.Body)
+	authResp.Body.Close()
+	if authResp.StatusCode != http.StatusForbidden || !strings.Contains(string(body), "关闭 MCP") {
+		t.Fatalf("authorize after disable status=%d body=%s", authResp.StatusCode, body)
+	}
+
+	otherReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2026-07-28","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}`))
+	otherReq.Header.Set("Authorization", "Bearer "+otherAccess)
+	otherReq.Header.Set("Content-Type", "application/json")
+	otherReq.Header.Set("Accept", "application/json, text/event-stream")
+	otherResp, err := http.DefaultClient.Do(otherReq)
+	if err != nil {
+		t.Fatalf("other tenant MCP: %v", err)
+	}
+	otherBody, _ := io.ReadAll(otherResp.Body)
+	otherResp.Body.Close()
+	if otherResp.StatusCode != http.StatusOK || !strings.Contains(string(otherBody), "argus-mcp") {
+		t.Fatalf("other tenant should still use MCP, status=%d body=%s", otherResp.StatusCode, otherBody)
+	}
+
+	if err := upsertTenantMCPSettings("default", "9", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := setTenantClientBlock("default", "cursor", "9", true); err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := http.PostForm(ts.URL+"/oauth/authorize", url.Values{
+		"response_type":         {"code"},
+		"client_id":             {"cursor"},
+		"redirect_uri":          {"http://127.0.0.1:8787/callback"},
+		"code_challenge":        {pkceS256(oauthTestVerifier(t))},
+		"code_challenge_method": {"S256"},
+		"resource":              {ts.URL + "/mcp"},
+		"username":              {defaultUser.Username},
+		"password":              {"secret"},
+	})
+	if err != nil {
+		t.Fatalf("authorize blocked client: %v", err)
+	}
+	blockedBody, _ := io.ReadAll(blocked.Body)
+	blocked.Body.Close()
+	if blocked.StatusCode != http.StatusForbidden || !strings.Contains(string(blockedBody), "禁用") {
+		t.Fatalf("blocked client authorize status=%d body=%s", blocked.StatusCode, blockedBody)
+	}
+}

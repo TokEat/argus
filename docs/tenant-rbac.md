@@ -80,7 +80,7 @@
 - `DELETE /nodes/:id`、`POST /nodes/clean`
 - `POST /ai/chat`、`POST /ai/actions/confirm` 等 Copilot 问答与草稿确认接口
 - 规则草稿保存类 MCP 工具（如 `POST /mcp/tools/rule/save`）；规则应用（apply）仍需 admin
-- MCP HTTP（`POST /mcp`）使用 OAuth 签发的 access token；工具内 RBAC 仍按 token 中的 `role` 执行
+- MCP HTTP（`POST /mcp`）使用 OAuth 签发的 access token；工具内 RBAC 仍按 token 中的 `role` 执行。本租户关闭 MCP 或拉黑该 `client_id` 后，即使 access JWT 未过期也会被拒绝。
 - `GET /cloud/*`、`POST /cloud/*`、`PUT /cloud/*`、`DELETE /cloud/*`：仅限自己创建或被绑定的云账号；云账号用户绑定在业务层额外要求 admin
 
 ### 公开（无 JWT）
@@ -94,6 +94,7 @@
 - `POST /users`、`PUT /users/:id`、`DELETE /users/:id`
 - `GET /roles`、`POST /roles`、`PUT /roles/:name`、`DELETE /roles/:name`
 - `GET /mcp/keys`、`POST /mcp/keys`、`DELETE /mcp/keys/:id`
+- MCP 管理：`GET|PUT /mcp/admin/status`、`GET /mcp/admin/clients`、`POST /mcp/admin/clients/:id/{revoke,disable,enable}`、`DELETE /mcp/admin/clients/:id`、`GET /mcp/admin/sessions`、`POST /mcp/admin/sessions/revoke`。仅当前租户；关闭开关会撤销该租户全部 MCP 刷新令牌。`/mcp` 与 `/oauth/authorize`、`/oauth/token` 在本租户关闭或客户端被拉黑时拒绝。
 - `GET /config/api-keys`、`PUT /config/api-keys`
 - `GET /ai/config`、`PUT /ai/config`、`GET /ai/models`、`POST /ai/test`
 - `GET /build/artifacts`、`POST /build/client`、`POST /build/jobs/:id/cancel`、`POST /build/jobs/:id/retry`

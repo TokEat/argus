@@ -1294,6 +1294,32 @@ declare namespace API {
     status: string;
   }
 
+  interface McpAdminStatus {
+    enabled: boolean;
+    mcp_url: string;
+    public_url: string;
+    transport: string;
+    session_count: number;
+  }
+
+  interface McpAdminClient {
+    client_id: string;
+    redirect_uris: string[];
+    builtin: boolean;
+    blocked: boolean;
+    session_count: number;
+    last_used_at?: string;
+    created_at?: string;
+  }
+
+  interface McpAdminSession {
+    session_id: string;
+    user_id: string;
+    client_id: string;
+    created_at: string;
+    expires_at: string;
+  }
+
   // ======================== Arsenal Manifest ========================
 
   interface ManifestItem {
