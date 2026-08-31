@@ -31,7 +31,7 @@ func connectTestSession(t *testing.T, server *sdkmcp.Server) (*sdkmcp.ClientSess
 	}
 }
 
-func TestSDKServerListsOnlyAggregateTools(t *testing.T) {
+func TestSDKServerListsFocusedTools(t *testing.T) {
 	session, cleanup := connectTestSession(t, NewServer(NewClient("http://argus.local", "token")))
 	defer cleanup()
 
@@ -43,7 +43,10 @@ func TestSDKServerListsOnlyAggregateTools(t *testing.T) {
 	for _, tool := range result.Tools {
 		got = append(got, tool.Name)
 	}
-	want := map[string]bool{"argus_context": true, "argus_rule_debug": true, "argus_rule_save": true, "argus_rule_apply": true, "argus_yaksha_exp": true, "argus_exp_workspace": true, "argus_scan_task": true}
+	want := map[string]bool{}
+	for _, name := range focusedMCPToolNames() {
+		want[name] = true
+	}
 	if len(got) != len(want) {
 		t.Fatalf("unexpected tool count: got %v want %v", got, want)
 	}
@@ -52,7 +55,17 @@ func TestSDKServerListsOnlyAggregateTools(t *testing.T) {
 			t.Fatalf("unexpected tool %q in %v", name, got)
 		}
 	}
-	if instr := session.InitializeResult().Instructions; !strings.Contains(instr, "action=help") || !strings.Contains(instr, "do not have the Argus source") {
+	for _, banned := range []string{"argus_context", "argus_rule_debug", "argus_rule_save", "argus_scan_task"} {
+		if want[banned] {
+			t.Fatalf("banned aggregate tool %q still registered", banned)
+		}
+		for _, name := range got {
+			if name == banned {
+				t.Fatalf("banned aggregate tool %q still listed", banned)
+			}
+		}
+	}
+	if instr := session.InitializeResult().Instructions; !strings.Contains(instr, "argus_help") || !strings.Contains(instr, "do not have the Argus source") {
 		t.Fatalf("missing source-less instructions: %q", instr)
 	}
 	capabilities, _ := json.Marshal(session.InitializeResult().Capabilities.Extensions)
@@ -62,9 +75,21 @@ func TestSDKServerListsOnlyAggregateTools(t *testing.T) {
 		}
 	}
 	data, _ := json.Marshal(result.Tools)
-	for _, wantText := range []string{"intent", "test_only", "stable_ref", "help", "resource", "rule_get", "rule_list", "drafts", "coverage", "include_content", "range_start", "range_end", "Hyphens are literal", "argus_yaksha_exp", "argus_exp_workspace", "argus_scan_task", "argus.scan-policy/v1", "plan_hash", "revision_create", "exp_id", "revision", "source_sha256", "immutable source identity", expConsoleURI, `"dir"`} {
+	for _, wantText := range []string{"intent", "test_only", "stable_ref", "argus_help", "argus_resource", "argus_rule_get", "argus_rule_list", "drafts", "argus_coverage", "include_content", "range_start", "range_end", "Hyphens are literal", "argus_yaksha_exp", "argus_exp_workspace", "argus_scan_preview", "argus_scan_create", "argus.scan-policy/v1", "plan_hash", "revision_create", "exp_id", "revision", "source_sha256", "immutable source identity", expConsoleURI, `"dir"`, "argus_debug_fingerprint", "argus_save_poc"} {
 		if !strings.Contains(string(data), wantText) {
 			t.Fatalf("tool schema/description missing %q: %s", wantText, data)
+		}
+	}
+	if strings.Contains(string(data), `"argus_context"`) || strings.Contains(string(data), `"argus_scan_task"`) || strings.Contains(string(data), `"argus_rule_debug"`) || strings.Contains(string(data), `"argus_rule_save"`) {
+		t.Fatalf("aggregate tool names leaked into schema: %s", data)
+	}
+	for _, tool := range result.Tools {
+		if tool.Name != "argus_coverage" {
+			continue
+		}
+		schema, _ := json.Marshal(tool.InputSchema)
+		if strings.Contains(string(schema), "range_start") || strings.Contains(string(schema), "range_end") {
+			t.Fatalf("argus_coverage must not advertise range fields: %s", schema)
 		}
 	}
 }
@@ -240,8 +265,8 @@ func TestSDKServerRoutesAggregateToolsToNativeRESTEndpoints(t *testing.T) {
 		name string
 		args map[string]any
 	}{
-		{name: "argus_context", args: map[string]any{"action": "agents"}},
-		{name: "argus_rule_save", args: map[string]any{"rule_type": "poc", "file_name": "native-route.yaml", "content": "id: native-route\ninfo:\n  name: native route\n  severity: info\nrequests: []\n"}},
+		{name: "argus_agents", args: map[string]any{}},
+		{name: "argus_save_poc", args: map[string]any{"file_name": "native-route.yaml", "content": "id: native-route\ninfo:\n  name: native route\n  severity: info\nrequests: []\n"}},
 		{name: "argus_rule_apply", args: map[string]any{"action": "publish", "rule_type": "poc", "file_name": "native-route.yaml", "hash": "h1", "version": 3}},
 	}
 	for _, tc := range cases {
@@ -256,7 +281,7 @@ func TestSDKServerRoutesAggregateToolsToNativeRESTEndpoints(t *testing.T) {
 			t.Fatalf("CallTool(%s) returned %d content items", tc.name, len(result.Content))
 		}
 		text := result.Content[0].(*sdkmcp.TextContent).Text
-		if !strings.Contains(text, `"stable_ref"`) && tc.name == "argus_rule_save" {
+		if !strings.Contains(text, `"stable_ref"`) && tc.name == "argus_save_poc" {
 			t.Fatalf("CallTool(%s) returned no stable_ref: %s", tc.name, text)
 		}
 	}
@@ -297,8 +322,8 @@ func TestContextRuleListRangeAndDrafts(t *testing.T) {
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name:      "argus_context",
-		Arguments: map[string]any{"action": "rule_list", "rule_type": "poc", "range_start": 1, "range_end": 2},
+		Name:      "argus_rule_list",
+		Arguments: map[string]any{"rule_type": "poc", "range_start": 1, "range_end": 2},
 	})
 	if err != nil {
 		t.Fatalf("CallTool(rule_list): %v", err)
@@ -316,8 +341,8 @@ func TestContextRuleListRangeAndDrafts(t *testing.T) {
 	}
 
 	result, err = session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name:      "argus_context",
-		Arguments: map[string]any{"action": "rule_list", "rule_type": "poc", "range_start": 3, "range_end": 4},
+		Name:      "argus_rule_list",
+		Arguments: map[string]any{"rule_type": "poc", "range_start": 3, "range_end": 4},
 	})
 	if err != nil {
 		t.Fatalf("CallTool(rule_list second range): %v", err)
@@ -332,8 +357,8 @@ func TestContextRuleListRangeAndDrafts(t *testing.T) {
 	}
 
 	result, err = session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name:      "argus_context",
-		Arguments: map[string]any{"action": "drafts", "rule_type": "poc", "range_start": 1, "range_end": 10},
+		Name:      "argus_rule_list",
+		Arguments: map[string]any{"rule_type": "poc", "state": "Draft", "range_start": 1, "range_end": 10},
 	})
 	if err != nil {
 		t.Fatalf("CallTool(drafts): %v", err)
@@ -363,8 +388,8 @@ func TestContextRuleGetReturnsProductNamesWithoutYAML(t *testing.T) {
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name:      "argus_context",
-		Arguments: map[string]any{"action": "rule_get", "rule_type": "fingerprint"},
+		Name:      "argus_rule_get",
+		Arguments: map[string]any{"rule_type": "fingerprint"},
 	})
 	if err != nil {
 		t.Fatalf("CallTool(rule_get): %v", err)
@@ -390,8 +415,8 @@ func TestContextRuleGetReturnsProductNamesWithoutYAML(t *testing.T) {
 	}
 
 	result, err = session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name:      "argus_context",
-		Arguments: map[string]any{"action": "rule_get", "rule_type": "fingerprint", "product_name": "ProdB"},
+		Name:      "argus_rule_get",
+		Arguments: map[string]any{"rule_type": "fingerprint", "product_name": "ProdB"},
 	})
 	if err != nil {
 		t.Fatalf("CallTool(rule_get product_name): %v", err)
@@ -409,8 +434,8 @@ func TestContextRuleGetReturnsProductNamesWithoutYAML(t *testing.T) {
 	}
 
 	result, err = session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name:      "argus_context",
-		Arguments: map[string]any{"action": "rule_get", "rule_type": "fingerprint", "include_content": true},
+		Name:      "argus_rule_get",
+		Arguments: map[string]any{"rule_type": "fingerprint", "include_content": true},
 	})
 	if err != nil {
 		t.Fatalf("CallTool(rule_get include_content): %v", err)
@@ -440,8 +465,8 @@ func TestContextRuleGetPOCDoesNotUseYAMLKeysAsProducts(t *testing.T) {
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name:      "argus_context",
-		Arguments: map[string]any{"action": "rule_get", "rule_type": "poc", "file_name": "mcp-server-detect.yaml"},
+		Name:      "argus_rule_get",
+		Arguments: map[string]any{"rule_type": "poc", "file_name": "mcp-server-detect.yaml"},
 	})
 	if err != nil {
 		t.Fatalf("CallTool(rule_get poc): %v", err)

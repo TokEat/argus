@@ -16,6 +16,6 @@ func (c *Client) argusContext(ctx context.Context, args map[string]interface{}) 
 	case "drafts":
 		return c.argusRuleList(ctx, args, true)
 	default:
-		return nil, fmt.Errorf("unsupported argus_context action %q; call action=help first if you have no Argus source", stringArg(args, "action"))
+		return nil, fmt.Errorf("unsupported context action %q; call argus_help first if you have no Argus source", stringArg(args, "action"))
 	}
 }

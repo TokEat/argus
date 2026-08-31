@@ -122,7 +122,7 @@ func TestMCPContextSelfDescribingResourcesAndQuickstart(t *testing.T) {
 		{
 			name: "quickstart",
 			body: `{"action":"quickstart"}`,
-			want: []string{"debug", "save", "publish", "argus_rule_debug"},
+			want: []string{"debug", "save", "publish", "argus_debug_"},
 		},
 		{
 			name: "lifecycle",
@@ -157,7 +157,7 @@ func TestMCPResourceEndpointsReturnSelfDescribingDocs(t *testing.T) {
 		wantURI string
 		want    []string
 	}{
-		{name: "quickstart", handler: mcpArgusMCPQuickstart, wantURI: "argus://argus-mcp/quickstart", want: []string{"argus_rule_debug", "argus_rule_save", "argus_rule_apply"}},
+		{name: "quickstart", handler: mcpArgusMCPQuickstart, wantURI: "argus://argus-mcp/quickstart", want: []string{"argus_debug_", "argus_save_", "argus_rule_apply"}},
 		{name: "tool guide", handler: mcpArgusMCPToolGuide, wantURI: "argus://argus-mcp/tool-guide", want: []string{"coverage", "include_content", "name array"}},
 		{name: "fingerprint spec", handler: mcpFingerprintSpec, wantURI: "argus://fingerprint/spec", want: []string{"body=", "product_name"}},
 		{name: "dir spec", handler: mcpDirSpec, wantURI: "argus://dir/spec", want: []string{"rule_type: dir", "paths"}},

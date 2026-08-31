@@ -40,11 +40,11 @@ func TestDevAppHostServesStudioAndProtectsToolBridge(t *testing.T) {
 
 func TestDevAppHostRestrictsContextToAgentDiscovery(t *testing.T) {
 	host := NewDevAppHost(NewClient("http://127.0.0.1:1", "server-token"), http.NotFoundHandler()).(*devAppHost)
-	request := httptest.NewRequest(http.MethodPost, "/__dev/tools/call", strings.NewReader(`{"name":"argus_context","arguments":{"action":"overview"}}`))
+	request := httptest.NewRequest(http.MethodPost, "/__dev/tools/call", strings.NewReader(`{"name":"argus_help","arguments":{}}`))
 	request.Header.Set("X-Argus-Dev-Nonce", host.nonce)
 	response := httptest.NewRecorder()
 	host.ServeHTTP(response, request)
-	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "read-only agents") {
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "not available in EXP Studio") {
 		t.Fatalf("response=%d %s", response.Code, response.Body.String())
 	}
 }

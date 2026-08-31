@@ -658,27 +658,27 @@ func mcpContextHelp(c *gin.Context) {
 		"status":   "success",
 		"audience": "source-less MCP client",
 		"start_here": []string{
-			"Call this help action first. Do not guess YAML or REST paths.",
-			"Fetch specs/templates with argus_context action=resource and uri from resources[].",
-			"Debug only on a user-authorized target with an Alive Agent from action=agents.",
+			"Call argus_help first. Do not guess YAML or REST paths.",
+			"Fetch specs/templates with argus_resource and uri from resources[].",
+			"Debug only on a user-authorized target with an Alive Agent from argus_agents.",
 			"Save creates a Draft. Publish only as admin with exact stable_ref hash/version.",
-			"Verify with action=rule_get. Dict types return product names as a string array and omit YAML. Pass product_name for one mapping.",
-			"Catalog coverage (fingerprint vs workflow POC) is action=coverage; query is a product-name substring (hyphens are literal, not a range). Names are a compact string array.",
+			"Verify with argus_rule_get. Dict types return product names as a string array and omit YAML. Pass product_name for one mapping.",
+			"Catalog coverage (fingerprint vs workflow POC) is argus_coverage; query is a product-name substring (hyphens are literal, not a range). Names are a compact string array.",
 		},
 		"workflow": []string{
-			"help -> resource(spec) -> resource(template) -> agents -> debug -> save Draft -> (admin) apply publish -> rule_get",
+			"argus_help -> argus_resource(spec) -> argus_resource(template) -> argus_agents -> argus_debug_* -> argus_save_* Draft -> (admin) argus_rule_apply publish -> argus_rule_get",
 		},
 		"rule_kinds": []gin.H{
 			{"rule_type": "fingerprint", "spec": "argus://fingerprint/spec", "template": "argus://fingerprint/template", "save": "product_name + rules, or content YAML mapping", "debug": "agent_id, target_url, product_name, rule"},
 			{"rule_type": "dir", "spec": "argus://dir/spec", "template": "argus://dir/template", "save": "product_name + paths, or content YAML mapping; unique file_name for isolated drafts", "debug": "agent_id, target_url, product_name, paths"},
-			{"rule_type": "behavior_probe", "spec": "argus://behavior-probe/spec", "template": "argus://behavior-probe/template", "save": "file_name + complete Nuclei YAML (info.author required)", "debug": "agent_id, target_url, file_name, content; risk_confirmed=true if controlled"},
+			{"rule_type": "behavior_probe", "spec": "argus://behavior-probe/spec", "template": "argus://behavior-probe/template", "save": "file_name + complete Nuclei YAML (info.author required)", "debug": "agent_id, target_url, file_name, content; operator confirmation if controlled (elicitation when available, otherwise risk_confirmed=true)"},
 			{"rule_type": "poc", "spec": "argus://poc/spec", "template": "argus://poc/template", "save": "file_name ending .yaml + complete Nuclei YAML (info.author required)", "debug": "agent_id, target_url, poc_content"},
 			{"rule_type": "workflow", "spec": "argus://workflow/spec", "template": "argus://workflow/template", "save": "product_name + workflow_types + workflow_pocs + optional risk_level, or content YAML", "debug": "agent_id, target_url, workflow_product, workflow_types, workflow_pocs, optional poc_content"},
 		},
-		"verify":                    "argus_context action=rule_get with rule_type and file_name or artifact_id; products is a name array; product_name extracts one mapping; include_content only for small files. Coverage is action=coverage.",
+		"verify":                    "argus_rule_get with rule_type and file_name or artifact_id; products is a name array; product_name extracts one mapping; include_content only for small files. Coverage is argus_coverage.",
 		"resources":                 resources,
 		"recommended_reading_order": []string{"argus://argus-mcp/quickstart", "argus://argus-mcp/tool-guide", "argus://fingerprint/spec", "argus://dir/spec", "argus://behavior-probe/spec", "argus://poc/spec", "argus://workflow/spec", "argus://examples/fingerprint-poc-workflow"},
-		"minimum_tools":             []string{"argus_context", "argus_rule_debug", "argus_rule_save", "argus_rule_apply"},
+		"minimum_tools":             []string{"argus_help", "argus_resource", "argus_agents", "argus_debug_fingerprint", "argus_save_fingerprint", "argus_rule_apply"},
 		"constraints":               []string{"tenant/RBAC/approval stay on the Server", "do not debug unapproved targets", "do not publish test_only drafts unless the user asked", "Nuclei YAML requires info.author"},
 	})
 }
@@ -687,17 +687,17 @@ func mcpContextQuickstart(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"workflow": []string{
-			"If the host has no Argus source, call argus_context action=help first.",
-			"Read specs/templates with argus_context action=resource (or resources/read).",
-			"Use argus_context action=agents to select an Alive Agent.",
-			"Use argus_rule_debug before saving rules whenever a target is available.",
-			"Use argus_rule_save to create Draft artifacts and capture hash/version.",
+			"If the host has no Argus source, call argus_help first.",
+			"Read specs/templates with argus_resource (or resources/read).",
+			"Use argus_agents to select an Alive Agent.",
+			"Use argus_debug_* before saving rules whenever a target is available.",
+			"Use argus_save_* to create Draft artifacts and capture hash/version.",
 			"Use argus_rule_apply action=publish as admin with hash/version guard.",
-			"Use argus_context action=rule_get to verify the saved artifact; dict types return product names only. Pass product_name for one mapping. Use action=coverage for fingerprint vs workflow POC counts.",
+			"Use argus_rule_get to verify the saved artifact; dict types return product names only. Pass product_name for one mapping. Use argus_coverage for fingerprint vs workflow POC counts.",
 			"Treat General-Poc-* workflow names as reserved general POC groups, not real fingerprint products or aliases.",
 		},
-		"minimum_tools": []string{"argus_context", "argus_rule_debug", "argus_rule_save", "argus_rule_apply"},
-		"next_steps":    []string{"help", "resource", "debug", "save", "publish", "rule_get"},
+		"minimum_tools": []string{"argus_help", "argus_resource", "argus_agents", "argus_debug_fingerprint", "argus_save_fingerprint", "argus_rule_apply"},
+		"next_steps":    []string{"argus_help", "argus_resource", "argus_debug_*", "argus_save_*", "argus_rule_apply", "argus_rule_get"},
 	})
 }
 
@@ -1190,7 +1190,7 @@ func normalizeMCPIntent(raw string) string {
 }
 
 func mcpSaveGuidance(ruleType, intent string) gin.H {
-	next := []string{"debug against a representative target if not already done", "publish with argus_rule_apply using the returned file_name, hash and version", "verify with argus_context action=rule_get using file_name and optional product_name"}
+	next := []string{"debug against a representative target if not already done", "publish with argus_rule_apply using the returned file_name, hash and version", "verify with argus_rule_get using file_name and optional product_name"}
 	guidance := gin.H{
 		"next_steps":       next,
 		"requires_admin":   false,
@@ -1208,7 +1208,7 @@ func mcpSaveGuidance(ruleType, intent string) gin.H {
 
 func mcpPublishGuidance(ruleType string) gin.H {
 	return gin.H{
-		"next_steps":     []string{"verify active rule state", "for fingerprint/workflow/dir changes, call argus_context action=rule_get with product_name", "for test-only work, decide whether cleanup is appropriate"},
+		"next_steps":     []string{"verify active rule state", "for fingerprint/workflow/dir changes, call argus_rule_get with product_name", "for test-only work, decide whether cleanup is appropriate"},
 		"requires_admin": true,
 		"warnings":       []string{"publish changes active rule catalog and may be synced to Agents", "hash/version guards prevent publishing stale Draft content"},
 		"cleanup_hint":   "cleanup is situational: delete temporary test rules only when they should not remain reusable",
@@ -1218,7 +1218,7 @@ func mcpPublishGuidance(ruleType string) gin.H {
 
 func mcpDebugGuidance(ruleType string) gin.H {
 	return gin.H{
-		"next_steps":     []string{"if the result is correct, call argus_rule_save with the complete rule source", "if saving for temporary validation, set intent=test_only"},
+		"next_steps":     []string{"if the result is correct, call the matching argus_save_* tool with the complete rule source", "if saving for temporary validation, set intent=test_only"},
 		"requires_admin": false,
 		"warnings":       []string{"debug does not save or publish rules"},
 		"rule_type":      ruleType,

@@ -7,6 +7,20 @@ import (
 	"strings"
 )
 
+func cloneArgs(args map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(args)+1)
+	for key, value := range args {
+		out[key] = value
+	}
+	return out
+}
+
+func withString(args map[string]interface{}, key, value string) map[string]interface{} {
+	out := cloneArgs(args)
+	out[key] = value
+	return out
+}
+
 func stringArg(args map[string]interface{}, key string) string {
 	if args == nil {
 		return ""

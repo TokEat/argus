@@ -426,8 +426,8 @@ func TestMCPStreamableHTTPListsToolsWithOAuthToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(result.Tools) != 7 {
-		t.Fatalf("expected 7 tools, got %d", len(result.Tools))
+	if len(result.Tools) != 21 {
+		t.Fatalf("expected 21 tools, got %d", len(result.Tools))
 	}
 }
 

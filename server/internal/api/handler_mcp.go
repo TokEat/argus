@@ -35,7 +35,7 @@ type mcpResourceDoc struct {
 
 var mcpResourceDocs = []mcpResourceDoc{
 	{URI: "argus://argus-mcp/quickstart", Name: "Argus MCP Quickstart", Description: "How a source-less MCP client should read specs, debug, save, publish, and verify rules.", MIMEType: "text/markdown", Text: argusMCPQuickstartText},
-	{URI: "argus://argus-mcp/tool-guide", Name: "Argus MCP Tool Guide", Description: "Field combinations and expected sequencing for the aggregate MCP tools.", MIMEType: "text/markdown", Text: argusMCPToolGuideText},
+	{URI: "argus://argus-mcp/tool-guide", Name: "Argus MCP Tool Guide", Description: "Field combinations and expected sequencing for the focused MCP tools.", MIMEType: "text/markdown", Text: argusMCPToolGuideText},
 	{URI: "argus://fingerprint/spec", Name: "Argus Fingerprint Spec", Description: "Fingerprint dictionary format and expression examples.", MIMEType: "text/markdown", Text: fingerprintSpecText},
 	{URI: "argus://fingerprint/template", Name: "Argus Fingerprint Template", Description: "Minimal fingerprint YAML snippet.", MIMEType: "text/yaml", Text: fingerprintTemplateText},
 	{URI: "argus://dir/spec", Name: "Argus Dir Probe Spec", Description: "Dir dictionary format mapping products to URL paths.", MIMEType: "text/markdown", Text: dirSpecText},
@@ -508,19 +508,19 @@ const argusMCPQuickstartText = `# Argus MCP quickstart
 This is the only Argus operating manual a client needs. Do not read a git checkout or invent REST paths.
 
 If the host only exposes tools (no resources/read), start with:
-argus_context({"action":"help"})
+argus_help({})
 then fetch one spec/template with:
-argus_context({"action":"resource","uri":"argus://fingerprint/spec"})
+argus_resource({"uri":"argus://fingerprint/spec"})
 
 Sequence:
 
-1. argus_context action=help (playbook, resource list, required fields).
-2. argus_context action=resource for the spec and template of the rule_type you will write.
-3. argus_context action=agents and pick an Alive Agent (fingerprint/dir/workflow debug needs v2.3.0+).
-4. argus_rule_debug on a user-authorized target. Controlled behavior probes require risk_confirmed=true.
-5. argus_rule_save to create a Draft and capture stable_ref (artifact_id, file_name, hash, version).
-6. argus_rule_apply action=publish as admin with that exact hash/version. A 409 means the Draft changed; rule_get then save again before retrying.
-7. Verify with argus_context action=rule_get (rule_type + file_name, optional product_name). Fingerprint/workflow/dir return product names as a string array and omit YAML. Catalog coverage is action=coverage.
+1. argus_help (playbook, resource list, required fields).
+2. argus_resource for the spec and template of the rule_type you will write.
+3. argus_agents and pick an Alive Agent (fingerprint/dir/workflow debug needs v2.3.0+).
+4. argus_debug_* on a user-authorized target. Controlled behavior probes need operator confirmation (host elicitation when available; otherwise risk_confirmed=true). A risk_confirmed argument is not operator confirmation.
+5. argus_save_* to create a Draft and capture stable_ref (artifact_id, file_name, hash, version).
+6. argus_rule_apply action=publish as admin with that exact hash/version. A 409 means the Draft changed; argus_rule_get then save again before retrying.
+7. Verify with argus_rule_get (rule_type + file_name, optional product_name). Fingerprint/workflow/dir return product names as a string array and omit YAML. Catalog coverage is argus_coverage.
 
 Do not publish unless the user asked and the caller is admin. Do not debug unapproved targets.
 
@@ -529,43 +529,40 @@ Lifecycle intents:
 - production_candidate: default for rules being prepared for review or reuse.
 - approved_reusable: validated rule expected to remain in the library.
 
-EXP uses argus_yaksha_exp and argus_exp_workspace. Authorized scans use argus_scan_task (preview, then create with the returned plan_hash).
+EXP uses argus_yaksha_exp and argus_exp_workspace. Authorized scans use argus_scan_preview, then argus_scan_create with the returned plan_hash.
 `
 
 const argusMCPToolGuideText = `# Argus MCP tool guide
 
-Tools-only hosts (including many IDE agents) cannot rely on resources/read. Call argus_context action=help first, then action=resource with a URI from that list.
+Tools-only hosts (including many IDE agents) cannot rely on resources/read. Call argus_help first, then argus_resource with a URI from that list.
 
-argus_context actions:
-- help: one-shot playbook, resource catalog and required fields for a source-less client
-- resources: list spec/template URIs
-- resource: fetch one URI (required: uri)
-- quickstart / lifecycle_policy: short workflow and intent policy
-- agents: Alive Agents without session secrets
-- coverage: compact catalog counts plus a string array of fingerprint products without workflow POCs (or workflow without fingerprint). query is a product-name substring; hyphens are literal. Use integer range_start/range_end for paging. Empty matches return an empty list, not an error.
-- rule_get: one artifact by file_name or artifact_id; omits YAML; fingerprint/workflow/dir return products as a name array; POC does not treat YAML keys (id/info/http) as products; product_name returns that mapping entry; include_content only for small files
-- rule_list / drafts: paged artifact lists (range_start/range_end, max 200)
+Read tools:
+- argus_help: one-shot playbook, resource catalog and required fields for a source-less client
+- argus_resource: fetch one URI (required: uri)
+- argus_agents: Alive Agents without session secrets
+- argus_coverage: compact catalog counts plus a string array of fingerprint products without workflow POCs (or workflow without fingerprint). query is a product-name substring; hyphens are literal. Empty matches return an empty list, not an error.
+- argus_rule_get: one artifact by file_name or artifact_id; omits YAML; fingerprint/workflow/dir return products as a name array; POC does not treat YAML keys (id/info/http) as products; product_name returns that mapping entry; include_content only for small files
+- argus_rule_list: paged artifact lists (range_start/range_end, max 200). Use state=Draft for drafts-only listing.
 
-argus_rule_debug: fingerprint, dir, behavior_probe, workflow or poc through an online Agent. agent_id and target_url are required.
-argus_rule_save: always Draft; capture stable_ref.
+Debug tools require agent_id and target_url:
+- argus_debug_fingerprint: product_name + rule injects one custom expression
+- argus_debug_dir: product_name + paths replace tenant dir.yaml for that call
+- argus_debug_poc: poc_content (complete Nuclei YAML)
+- argus_debug_workflow: workflow_product, workflow_types, workflow_pocs; optional poc_content
+- argus_debug_behavior_probe: file_name + content; controlled probes need operator confirmation (host elicitation when available; otherwise risk_confirmed=true)
+
+Save always creates a Draft and returns stable_ref:
+- argus_save_fingerprint: product_name + rules, or content YAML mapping
+- argus_save_dir: product_name + paths, or content YAML mapping. Isolated drafts should use a unique file_name (not dir.yaml unless you intend to edit the tenant dictionary).
+- argus_save_poc: file_name ending .yaml + complete Nuclei YAML. info.author is mandatory.
+- argus_save_workflow: product_name + workflow_types + workflow_pocs, optional risk_level
+- argus_save_behavior_probe: file_name + complete Nuclei YAML. info.author is mandatory.
+
 argus_rule_apply: admin-only publish, deprecate, rollback with exact hash/version.
-argus_scan_task: preview then create with plan_hash. Never pass Scanner raw config or Agent paths.
+argus_scan_preview then argus_scan_create with plan_hash. Never pass Scanner raw config or Agent paths.
 argus_yaksha_exp / argus_exp_workspace: EXP only.
 
-Fingerprint save: rule_type=fingerprint, product_name + rules, or content YAML mapping.
-Fingerprint debug: product_name + rule injects one custom expression.
-
-Dir save: rule_type=dir, product_name + paths, or content YAML mapping. Isolated drafts should use a unique file_name (not dir.yaml unless you intend to edit the tenant dictionary).
-Dir debug: product_name + paths replace the tenant dir.yaml for that call and return per-path status/body.
-
-Behavior probe save/debug: complete Nuclei YAML in content. info.author is mandatory. file_name required. Controlled probes need risk_confirmed=true on debug.
-
-POC save/debug: complete Nuclei YAML; info.author is mandatory; file_name must end in .yaml. debug uses poc_content. Look at result.matched / top-level matched, not Nuclei catalog log noise.
-
-Workflow save: product_name + workflow_types + workflow_pocs, optional risk_level (unknown/info/low/medium/high), or content YAML. Product patches do not rewrite the rest of workflow.yaml.
-Workflow debug: workflow_product, workflow_types, workflow_pocs; optional poc_content for one injected POC.
-
-Verify: argus_context action=rule_get with rule_type and file_name (default finger.yaml / dir.yaml / workflow.yaml). products is a compact name array; pass product_name for one mapping. Do not set include_content on large dictionaries. Catalog stats: action=coverage.
+Verify: argus_rule_get with rule_type and file_name (default finger.yaml / dir.yaml / workflow.yaml). products is a compact name array; pass product_name for one mapping. Do not set include_content on large dictionaries. Catalog stats: argus_coverage.
 `
 
 const fingerprintSpecText = `# Argus fingerprint spec
@@ -577,18 +574,9 @@ MyProduct:
   - body="Welcome to MyProduct"
   - title="MyProduct Console"
 
-MCP save shape:
-- rule_type: fingerprint
-- product_name: stable product name used by workflow
-- rules: array of expressions such as body="marker", title="marker", header="marker"
-- intent: optional lifecycle hint
-- saving one product patches only that mapping and does not rewrite the rest of finger.yaml
+MCP save: argus_save_fingerprint with product_name + rules, or content YAML mapping. Saving one product patches only that mapping and does not rewrite the rest of finger.yaml.
 
-Debug shape:
-- rule_type: fingerprint
-- agent_id and target_url are required
-- product_name and rule inject one custom rule for debugging
-- include_poc plus workflow_product/workflow_types/workflow_pocs/poc_content can validate the fingerprint -> POC chain
+MCP debug: argus_debug_fingerprint. agent_id and target_url are required. product_name and rule inject one custom expression. include_poc plus workflow_product/workflow_types/workflow_pocs/poc_content can validate the fingerprint -> POC chain.
 `
 
 const fingerprintTemplateText = `ExampleProduct:
@@ -604,17 +592,9 @@ MyProduct:
   - /admin
   - /login
 
-MCP save:
-- rule_type: dir
-- product_name and paths together, or content as a complete YAML mapping
-- paths are single URL path strings such as /admin; no newlines or .. segments
-- saving one product patches only that mapping and does not rewrite the rest of dir.yaml
+MCP save: argus_save_dir (rule_type: dir) with product_name and paths, or content as a complete YAML mapping. Isolated drafts should use a unique file_name. Saving one product patches only that mapping and does not rewrite the rest of dir.yaml. paths are single URL path strings such as /admin; no newlines or .. segments.
 
-MCP debug:
-- rule_type: dir
-- agent_id and target_url are required
-- product_name plus paths replace the tenant dir.yaml for this call (they are not merged into it)
-- each probed path returns status and a truncated body
+MCP debug: argus_debug_dir. agent_id and target_url are required. product_name plus paths replace the tenant dir.yaml for this call (they are not merged into it). each probed path returns status and a truncated body.
 `
 
 const dirTemplateText = `ExampleProduct:
@@ -641,9 +621,9 @@ Required Argus metadata:
 
 This rule kind is reserved for products that cannot be identified from an ordinary HTTP response or a known static path. The request must actively stimulate a deterministic product behavior with a random value: a Cookie, a safe custom X-* header, or a query parameter containing {{randstr}}. Ordinary response matchers belong in passive fingerprint rules; ordinary path GETs belong in path probes; vulnerability checks belong in POC rules.
 
-Safe automatic probes are limited to one GET/HEAD request, one same-origin BaseURL path, no body/raw/payload/fuzz/OAST/headless/code, and no dangerous headers. A valid behavior probe outside that safety envelope is classified controlled: it can be stored, published and individually debugged with risk_confirmed=true, but is never included in automatic scanning.
+Safe automatic probes are limited to one GET/HEAD request, one same-origin BaseURL path, no body/raw/payload/fuzz/OAST/headless/code, and no dangerous headers. A valid behavior probe outside that safety envelope is classified controlled: it can be stored, published and individually debugged after operator confirmation (host elicitation when available; otherwise risk_confirmed=true), but is never included in automatic scanning.
 
-Use rule_type=behavior_probe for read, debug, save, publish, deprecate and rollback. Debug requires file_name, content, agent_id and target_url. Save always creates a Draft; admin lifecycle actions require the exact stable_ref hash/version.
+Use rule_type=behavior_probe for read, publish, deprecate and rollback. Debug with argus_debug_behavior_probe (file_name, content, agent_id, target_url). Save with argus_save_behavior_probe; admin lifecycle actions require the exact stable_ref hash/version.
 `
 
 const behaviorProbeTemplateText = `id: example-product-detect
@@ -704,7 +684,7 @@ requests:
         words:
           - "marker"
 
-Use argus_rule_debug with rule_type=poc before saving. Use argus_rule_save with file_name ending in .yaml and content containing the complete YAML.
+Use argus_debug_poc before saving. Use argus_save_poc with file_name ending in .yaml and content containing the complete YAML.
 `
 
 const workflowSpecText = `# Argus workflow spec
@@ -732,15 +712,9 @@ ProductName:
   pocs:
     - product-check.yaml
 
-MCP save shape:
-- rule_type: workflow
-- product_name: a fingerprint product name, or a reserved General-Poc-* name for a general POC workflow
-- workflow_types: array of supported match types
-- workflow_pocs: array of POC file names
-- risk_level: unknown, info, low, medium, or high (Agent pre-auth uses this; omitted keeps the existing value, or unknown for a new product)
-- saving one product patches only that mapping and does not rewrite the rest of workflow.yaml
+MCP save: argus_save_workflow with product_name (a fingerprint product, or a reserved General-Poc-* name for a general POC workflow), workflow_types, workflow_pocs, optional risk_level, or content YAML. Saving one product patches only that mapping and does not rewrite the rest of workflow.yaml.
 
-After publishing, verify with argus_context action=rule_get, rule_type=workflow, optional product_name. The product_entry field lists workflow_types, workflow_pocs and risk_level.
+After publishing, verify with argus_rule_get, rule_type=workflow, optional product_name. The product_entry field lists workflow_types, workflow_pocs and risk_level.
 `
 
 const workflowTemplateText = `ExampleProduct:
@@ -754,8 +728,7 @@ const workflowTemplateText = `ExampleProduct:
 const fullChainExampleText = `# Fingerprint -> POC -> Workflow example
 
 Fingerprint debug:
-argus_rule_debug({
-  "rule_type": "fingerprint",
+argus_debug_fingerprint({
   "agent_id": "agent-1",
   "target_url": "http://target/",
   "product_name": "ExampleProduct",
@@ -763,8 +736,7 @@ argus_rule_debug({
 })
 
 Fingerprint save:
-argus_rule_save({
-  "rule_type": "fingerprint",
+argus_save_fingerprint({
   "intent": "test_only",
   "product_name": "ExampleProduct",
   "rules": ["body=\"ExampleMarker\""]
@@ -788,8 +760,7 @@ requests:
           - "ExampleMarker"
 
 Dir save:
-argus_rule_save({
-  "rule_type": "dir",
+argus_save_dir({
   "intent": "test_only",
   "file_name": "example-dir.yaml",
   "product_name": "ExampleProduct",
@@ -797,8 +768,7 @@ argus_rule_save({
 })
 
 Workflow save:
-argus_rule_save({
-  "rule_type": "workflow",
+argus_save_workflow({
   "product_name": "ExampleProduct",
   "workflow_types": ["root"],
   "workflow_pocs": ["example-product-check.yaml"]
@@ -807,7 +777,7 @@ argus_rule_save({
 Publish steps use argus_rule_apply action=publish with the exact stable_ref file_name, hash and version returned by save.
 
 Verify:
-argus_context({"action":"rule_get","rule_type":"workflow","file_name":"workflow.yaml","product_name":"ExampleProduct"})
+argus_rule_get({"rule_type":"workflow","file_name":"workflow.yaml","product_name":"ExampleProduct"})
 
 Cleanup guidance:
 For test_only work, cleanup is situational. Remove temporary rules when the goal was only to prove the MCP flow. Do not delete rules that passed validation and should remain reusable.
