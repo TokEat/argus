@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	argusmcp "github.com/P0lar1ght/argus/mcp"
 	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
 )
@@ -63,6 +64,10 @@ func callMCPAdminJSON(t *testing.T, method, path, tenant, role, userID string, b
 		mcpAdminRevokeSessions(ctx)
 	case method == http.MethodGet && strings.HasSuffix(path, "/invocations"):
 		mcpAdminListInvocations(ctx)
+	case method == http.MethodGet && strings.Contains(path, "/admin/events"):
+		mcpAdminListEvents(ctx)
+	case method == http.MethodGet && strings.HasSuffix(path, "/admin/tools"):
+		mcpAdminListTools(ctx)
 	default:
 		t.Fatalf("unhandled test path %s %s", method, path)
 	}
@@ -211,5 +216,118 @@ func TestMCPAdminSessionsHideTokenHash(t *testing.T) {
 	var row db.OAuthRefreshToken
 	if err := db.DB.Where("token_hash = ?", "secret-hash").First(&row).Error; err != nil || row.RevokedAt == nil {
 		t.Fatalf("session should be revoked: %+v err=%v", row, err)
+	}
+}
+
+func TestMCPAdminRevokeSessionsByUser(t *testing.T) {
+	setupAITestDB(t)
+	now := time.Now()
+	if err := db.DB.Create(&db.OAuthRefreshToken{
+		TokenHash: "user-a-1",
+		ClientID:  "cursor",
+		UserID:    "7",
+		TenantID:  "default",
+		Role:      "operator",
+		Resource:  "http://example/mcp",
+		ExpiresAt: now.Add(time.Hour),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DB.Create(&db.OAuthRefreshToken{
+		TokenHash: "user-a-2",
+		ClientID:  "cursor",
+		UserID:    "8",
+		TenantID:  "default",
+		Role:      "operator",
+		Resource:  "http://example/mcp",
+		ExpiresAt: now.Add(time.Hour),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	revoked := callMCPAdminJSON(t, http.MethodPost, "/mcp/admin/sessions/revoke", "default", "admin", "9", map[string]any{
+		"confirm": true,
+		"user_id": "7",
+	})
+	if revoked.Code != http.StatusOK || !strings.Contains(revoked.Body.String(), `"revoked_sessions":1`) {
+		t.Fatalf("revoke by user: %d %s", revoked.Code, revoked.Body.String())
+	}
+	var kept db.OAuthRefreshToken
+	if err := db.DB.Where("token_hash = ?", "user-a-2").First(&kept).Error; err != nil || kept.RevokedAt != nil {
+		t.Fatalf("other user session must remain: %+v err=%v", kept, err)
+	}
+}
+
+func TestMCPAdminListEventsIsTenantScoped(t *testing.T) {
+	store := setupAITestDB(t)
+	recordMCPAdminEvent("default", "9", "disable", "", map[string]interface{}{"revoked_sessions": 2})
+	recordMCPAdminEvent("other", "9", "disable", "", map[string]interface{}{"revoked_sessions": 9})
+	recordMCPAdminEvent("default", "9", "enable", "cursor", map[string]interface{}{})
+
+	recorder := callMCPAdminJSON(t, http.MethodGet, "/mcp/admin/events", "default", "admin", "9", nil)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("list events: %d %s", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Total int `json:"total"`
+		Items []struct {
+			Action  string                 `json:"action"`
+			Details map[string]interface{} `json:"details"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if body.Total != 2 || len(body.Items) != 2 {
+		t.Fatalf("expected two default tenant events, got %+v %s", body, recorder.Body.String())
+	}
+	filtered := callMCPAdminJSON(t, http.MethodGet, "/mcp/admin/events?action=disable", "default", "admin", "9", nil)
+	if err := json.Unmarshal(filtered.Body.Bytes(), &body); err != nil {
+		t.Fatalf("parse filtered: %v", err)
+	}
+	if body.Total != 1 || len(body.Items) != 1 || body.Items[0].Action != "disable" {
+		t.Fatalf("expected one disable event, got %+v %s", body, filtered.Body.String())
+	}
+	if body.Items[0].Details["revoked_sessions"] != float64(2) {
+		t.Fatalf("details should keep revoked_sessions, got %#v", body.Items[0].Details)
+	}
+	var otherCount int64
+	store.Model(&db.MCPAdminEvent{}).Where("tenant_id = ?", "other").Count(&otherCount)
+	if otherCount != 1 {
+		t.Fatalf("other tenant event should remain, count=%d", otherCount)
+	}
+}
+
+func TestMCPAdminListToolsReturnsCatalog(t *testing.T) {
+	recorder := callMCPAdminJSON(t, http.MethodGet, "/mcp/admin/tools", "default", "admin", "9", nil)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("list tools: %d %s", recorder.Code, recorder.Body.String())
+	}
+	var tools []argusmcp.ToolCatalogEntry
+	if err := json.Unmarshal(recorder.Body.Bytes(), &tools); err != nil {
+		t.Fatalf("parse: %v %s", err, recorder.Body.String())
+	}
+	if len(tools) == 0 {
+		t.Fatal("expected tool catalog")
+	}
+	found := false
+	for _, tool := range tools {
+		if tool.Name == "argus_scan_create" {
+			found = true
+			if tool.Category != "scan" || !tool.Auditable {
+				t.Fatalf("scan_create catalog %#v", tool)
+			}
+			if tool.ExampleCall.Method != "tools/call" || tool.ExampleCall.Params.Name != "argus_scan_create" {
+				t.Fatalf("scan_create example %#v", tool.ExampleCall)
+			}
+			if _, ok := tool.ExampleCall.Params.Arguments["plan_hash"]; !ok {
+				t.Fatalf("scan_create example should include required plan_hash: %#v", tool.ExampleCall.Params.Arguments)
+			}
+		}
+		if strings.Contains(strings.ToLower(tool.Description), "token") && strings.Contains(tool.Description, "sk-") {
+			t.Fatalf("catalog must not include secrets: %#v", tool)
+		}
+	}
+	if !found {
+		t.Fatal("missing argus_scan_create")
 	}
 }

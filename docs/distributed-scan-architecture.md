@@ -28,7 +28,7 @@ Argus 当前采用典型的 `Control Plane + Data Plane` 结构：
 - 任务创建 / 删除 / 取消 / 追加目标
 - 结果查询与融合画像
 - Arsenal CRUD / 审批 / Manifest / 回滚
-- 用户管理、MCP Key 管理
+- 用户管理、MCP 管理
 - 云实例 mock 管理、构建产物列表
 - 统计接口与 Agent 日志查询
 

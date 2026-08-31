@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	argusmcp "github.com/P0lar1ght/argus/mcp"
 	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/gin-gonic/gin"
 )
@@ -34,6 +35,15 @@ type mcpAdminSessionResponse struct {
 	ClientID  string `json:"client_id"`
 	CreatedAt string `json:"created_at"`
 	ExpiresAt string `json:"expires_at"`
+}
+
+type mcpAdminEventResponse struct {
+	ID        string      `json:"id"`
+	ActorID   string      `json:"actor_id"`
+	Action    string      `json:"action"`
+	ClientID  string      `json:"client_id,omitempty"`
+	Details   interface{} `json:"details"`
+	CreatedAt string      `json:"created_at"`
 }
 
 func mcpAdminGetStatus(c *gin.Context) {
@@ -336,4 +346,57 @@ func parseBoolQuery(value string) bool {
 	default:
 		return false
 	}
+}
+
+func mcpAdminListEvents(c *gin.Context) {
+	limit := clampQueryInt(c.Query("limit"), 50, 1, 200)
+	offset := clampQueryInt(c.Query("offset"), 0, 0, 10000)
+	query := db.DB.Model(&db.MCPAdminEvent{}).Where("tenant_id = ?", currentTenantID(c))
+	if action := strings.TrimSpace(c.Query("action")); action != "" {
+		query = query.Where("action = ?", action)
+	}
+	if actorID := strings.TrimSpace(c.Query("actor_id")); actorID != "" {
+		query = query.Where("actor_id = ?", actorID)
+	}
+	if clientID := strings.TrimSpace(c.Query("client_id")); clientID != "" {
+		query = query.Where("client_id = ?", clientID)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list MCP admin events"})
+		return
+	}
+	var rows []db.MCPAdminEvent
+	if err := query.Order("created_at desc").Limit(limit).Offset(offset).Find(&rows).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list MCP admin events"})
+		return
+	}
+	items := make([]mcpAdminEventResponse, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, mcpAdminEventResponse{
+			ID:        row.ID,
+			ActorID:   row.ActorID,
+			Action:    row.Action,
+			ClientID:  row.ClientID,
+			Details:   decodeMCPAdminEventDetails(row.Details),
+			CreatedAt: row.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"total": total, "items": items})
+}
+
+func decodeMCPAdminEventDetails(raw string) interface{} {
+	if strings.TrimSpace(raw) == "" {
+		return map[string]interface{}{}
+	}
+	var details interface{}
+	if err := json.Unmarshal([]byte(raw), &details); err != nil {
+		return map[string]interface{}{}
+	}
+	return details
+}
+
+func mcpAdminListTools(c *gin.Context) {
+	c.JSON(http.StatusOK, argusmcp.ToolCatalog())
 }

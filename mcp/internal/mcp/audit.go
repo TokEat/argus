@@ -46,18 +46,20 @@ func applyServerOptions(opts []ServerOption) serverOptions {
 }
 
 // AuditableToolAction reports whether a tools/call should be persisted.
-// Coverage matches elicitMessage: behavior-probe debug, scan create, rule publish, yaksha debug/run.
+// All argus_debug_* / argus_save_* calls are recorded, plus scan create,
+// rule publish, and yaksha debug/run.
 func AuditableToolAction(tool string, args map[string]interface{}) (action string, ok bool) {
-	switch strings.TrimSpace(tool) {
-	case "argus_debug_behavior_probe":
+	name := strings.TrimSpace(tool)
+	switch {
+	case strings.HasPrefix(name, "argus_debug_"), strings.HasPrefix(name, "argus_save_"):
 		return "", true
-	case "argus_scan_create":
+	case name == "argus_scan_create":
 		return "", true
-	case "argus_rule_apply":
+	case name == "argus_rule_apply":
 		if strings.EqualFold(stringArg(args, "action"), "publish") {
 			return "publish", true
 		}
-	case "argus_yaksha_exp":
+	case name == "argus_yaksha_exp":
 		value := strings.ToLower(stringArg(args, "action"))
 		if value == "debug" || value == "run" {
 			return value, true

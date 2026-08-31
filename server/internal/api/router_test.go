@@ -528,6 +528,8 @@ func TestTenantRolePermissionMatrix(t *testing.T) {
 		{method: "GET", path: "/api/v1/mcp/admin/sessions", want: "admin"},
 		{method: "POST", path: "/api/v1/mcp/admin/sessions/revoke", want: "admin"},
 		{method: "GET", path: "/api/v1/mcp/admin/invocations", want: "admin"},
+		{method: "GET", path: "/api/v1/mcp/admin/events", want: "admin"},
+		{method: "GET", path: "/api/v1/mcp/admin/tools", want: "admin"},
 		{method: "GET", path: "/api/v1/users", want: "operator"},
 		{method: "GET", path: "/api/v1/roles", want: "admin"},
 		{method: "POST", path: "/api/v1/roles", want: "admin"},

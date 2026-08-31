@@ -65,7 +65,7 @@
 | 统计接口 | 首页五维统计 + 趋势 / 严重度 / 任务结果统计 / 最近高危漏洞 | `server/internal/api/router.go` `server/internal/db/stats.go` |
 | WebSocket Hub | 结果批量写入与 EXP 执行状态的服务端广播 | `server/internal/api/ws.go` |
 | 报表导出 | 漏洞 / 资产 / 指纹 CSV 导出 | `server/internal/api/router.go` `server/internal/api/handler_results.go` |
-| 系统管理 | 用户 CRUD、MCP Key CRUD、构建产物列表、Agent 日志查询、Agent 日志告警与归档 | `server/internal/api/router.go` |
+| 系统管理 | 用户 CRUD、MCP 接入治理、构建产物列表、Agent 日志查询、Agent 日志告警与归档 | `server/internal/api/router.go` |
 | AI Copilot | 全局 AI 助手、多轮对话、流式输出、在线/离线 Agent 上下文感知 | `server/internal/ai/` `server/internal/api/ai_handlers.go` |
 | AI 工具链 (Tool Calling) | Nuclei 文档检索、知识库查询、POC / EXP 分析审查、执行诊断、节点容量分析 | `server/internal/ai/tools_builtins.go` `server/internal/api/ai_tools.go` |
 | 云资源编排 | AutoScaler 自动伸缩引擎、阿里云 ECS Provider、实例对账与孤儿回收、AES-256-GCM 凭证加密 | `server/internal/cloud/` |
@@ -194,7 +194,7 @@
 | Arsenal 与规则 | `/arsenals/:type`、`/arsenals/manifest`、`/arsenals/db*`、审批/回滚/删除接口 | 原始规则 CRUD、审批、回滚、Manifest、`rule_version`、Agent SQLite DB 同步 |
 | Yaksha EXP Workspace | `/exps*`、`/exp-assets*`、`/exp-runs*`、`/exp-egress-routes*` | 单文件 Yaklang EXP、不可变 Revision、依赖闭包、版本化 Asset、Fixture 验收、inspect/validate/test/debug/run、按哈希发布、活动版本回滚、Agent 原生出口与完整运行审计；生产对象存储为私有 MinIO |
 | 字典 | `/dictionaries/workflow`、`/dictionaries/fingerprint` | Workflow / Fingerprint 结构化 CRUD，并回写 Arsenal |
-| 用户、角色、租户与系统配置 | `/users`、`/roles`、`/tenants/:id/quotas`、`/mcp/keys`、`/mcp/admin/*`、`/agent-logs/alert-rules`、`/agent-logs/alerts`、`/agent-logs/archive`、`/ai/config`、`/ai/models`、`/ai/test` | 用户管理、自定义角色 CRUD、权限矩阵返回、租户任务配额管理、MCP Key、MCP 接入治理与高风险 tools/call 审计、Agent 日志告警/归档、AI 配置与模型连通性测试 |
+| 用户、角色、租户与系统配置 | `/users`、`/roles`、`/tenants/:id/quotas`、`/mcp/admin/*`、`/agent-logs/alert-rules`、`/agent-logs/alerts`、`/agent-logs/archive`、`/ai/config`、`/ai/models`、`/ai/test` | 用户管理、自定义角色 CRUD、权限矩阵返回、租户任务配额管理、MCP 接入治理 / 会话 / 调用审计 / 治理事件 / 只读工具目录（投影 tools()，含 schema 生成的调用示例）、Agent 日志告警/归档、AI 配置与模型连通性测试 |
 | AI Copilot / POC 元数据 | `GET /poc-rules`、`POST /ai/chat`、`POST /ai/actions/confirm`、`GET /ai/copilot/prompts`、`POST /ai/arsenal/analyze`、`POST /ai/arsenal/analyze/stream` | POC 元数据检索、全局 Copilot SSE、草稿动作确认、Prompt/动作白名单展示、POC AI 审查同步/流式入口 |
 | 云资源编排 | `/cloud/accounts*`、`/cloud/policies*`、`/cloud/instances*`、`/cloud/dashboard` | 云凭证、策略、实例生命周期、OSS、一键配置、仪表盘 |
 | 构建 | `GET /build/artifacts`、`GET /build/jobs*`、`GET /build/jobs/:id/logs`、`POST /build/jobs/:id/cancel`、`POST /build/jobs/:id/retry`、`POST /build/client`、`GET /release/*` | 产物列表、BuildJob 状态/完整日志、取消/重试、多组件后台执行 `build.sh`、多产物下载与静态下载可用 |

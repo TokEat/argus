@@ -32,16 +32,16 @@ func focusedMCPToolNames() []string {
 
 func tools() []*sdkmcp.Tool {
 	return []*sdkmcp.Tool{
-		{Name: "argus_help", Description: "Playbook, resource catalog, required fields and lifecycle intents for a source-less client. Call this first. Do not guess YAML or invent tools.", InputSchema: objectSchema(map[string]interface{}{}, nil)},
-		{Name: "argus_resource", Description: "Fetch one spec or template by URI from argus_help resources[], for example argus://fingerprint/spec.", InputSchema: objectSchema(map[string]interface{}{"uri": stringSchema("Resource URI, for example argus://fingerprint/spec")}, []string{"uri"})},
-		{Name: "argus_agents", Description: "List Alive Agents without session secrets. Fingerprint, dir and workflow debug need Agent v2.3.0+.", InputSchema: objectSchema(map[string]interface{}{}, nil)},
-		{Name: "argus_coverage", Description: "Fingerprint vs workflow POC catalog counts and missing product names. Empty matches return an empty list, not an error.", InputSchema: objectSchema(map[string]interface{}{
+		{Name: "argus_help", Title: "入门手册", Description: "Playbook, resource catalog, required fields and lifecycle intents for a source-less client. Call this first. Do not guess YAML or invent tools.", InputSchema: objectSchema(map[string]interface{}{}, nil)},
+		{Name: "argus_resource", Title: "拉取规范或模板", Description: "Fetch one spec or template by URI from argus_help resources[], for example argus://fingerprint/spec.", InputSchema: objectSchema(map[string]interface{}{"uri": stringSchema("Resource URI, for example argus://fingerprint/spec")}, []string{"uri"})},
+		{Name: "argus_agents", Title: "在线 Agent 列表", Description: "List Alive Agents without session secrets. Fingerprint, dir and workflow debug need Agent v2.3.0+.", InputSchema: objectSchema(map[string]interface{}{}, nil)},
+		{Name: "argus_coverage", Title: "指纹与 POC 覆盖", Description: "Fingerprint vs workflow POC catalog counts and missing product names. Empty matches return an empty list, not an error.", InputSchema: objectSchema(map[string]interface{}{
 			"query":         stringSchema("Substring filter over product names. Hyphens are literal; query=MCP-Server is not a range."),
 			"include_names": map[string]interface{}{"type": "boolean", "description": "Include compact product name array; default true"},
 			"missing":       enumSchema([]string{"fingerprint_without_poc", "workflow_without_fingerprint"}),
 			"limit":         integerSchema("Maximum missing names to return"),
 		}, nil)},
-		{Name: "argus_rule_get", Description: "Read one artifact by file_name or artifact_id. Omits YAML unless include_content=true. Fingerprint/workflow/dir return product names as a string array. POC returns template_id/template_name, not YAML keys.", InputSchema: objectSchema(map[string]interface{}{
+		{Name: "argus_rule_get", Title: "读取规则", Description: "Read one artifact by file_name or artifact_id. Omits YAML unless include_content=true. Fingerprint/workflow/dir return product names as a string array. POC returns template_id/template_name, not YAML keys.", InputSchema: objectSchema(map[string]interface{}{
 			"rule_type":       ruleTypeSchema(),
 			"file_name":       stringSchema("Exact artifact file name"),
 			"artifact_id":     stringSchema("Exact artifact id"),
@@ -50,14 +50,14 @@ func tools() []*sdkmcp.Tool {
 			"range_start":     integerSchema("1-based inclusive first product name; not parsed from query"),
 			"range_end":       integerSchema("1-based inclusive last product name"),
 		}, []string{"rule_type"})},
-		{Name: "argus_rule_list", Description: "Paged artifact lists. Use state=Draft for drafts-only listing. Max window 200.", InputSchema: objectSchema(map[string]interface{}{
+		{Name: "argus_rule_list", Title: "列出规则", Description: "Paged artifact lists. Use state=Draft for drafts-only listing. Max window 200.", InputSchema: objectSchema(map[string]interface{}{
 			"rule_type":   ruleTypeSchema(),
 			"state":       enumSchema([]string{"Draft", "Approved", "Deprecated"}),
 			"query":       stringSchema("Substring filter over listed fields. Hyphens are literal."),
 			"range_start": integerSchema("1-based inclusive first row"),
 			"range_end":   integerSchema("1-based inclusive last row; max window 200"),
 		}, nil)},
-		{Name: "argus_debug_fingerprint", Description: "Debug one fingerprint expression through an authorized online Agent. Concurrent debug is per Agent, not per tenant.", InputSchema: objectSchema(mergeProps(debugCommonProperties(), map[string]interface{}{
+		{Name: "argus_debug_fingerprint", Title: "调试指纹", Description: "Debug one fingerprint expression through an authorized online Agent. Concurrent debug is per Agent, not per tenant.", InputSchema: objectSchema(mergeProps(debugCommonProperties(), map[string]interface{}{
 			"product_name":     stringSchema("Fingerprint product"),
 			"rule":             stringSchema("One fingerprint expression to inject"),
 			"include_dir":      map[string]interface{}{"type": "boolean"},
@@ -67,44 +67,44 @@ func tools() []*sdkmcp.Tool {
 			"workflow_pocs":    stringArraySchema("Workflow POC file names"),
 			"poc_content":      stringSchema("Optional injected POC YAML"),
 		}), []string{"agent_id", "target_url"})},
-		{Name: "argus_debug_dir", Description: "Debug dir probes through an authorized online Agent. paths replace tenant dir.yaml for that call and return per-path status/body.", InputSchema: objectSchema(mergeProps(debugCommonProperties(), map[string]interface{}{
+		{Name: "argus_debug_dir", Title: "调试目录探测", Description: "Debug dir probes through an authorized online Agent. paths replace tenant dir.yaml for that call and return per-path status/body.", InputSchema: objectSchema(mergeProps(debugCommonProperties(), map[string]interface{}{
 			"product_name": stringSchema("Dir product"),
 			"paths":        stringArraySchema("Dir probe paths that replace tenant dir.yaml for this debug call"),
 		}), []string{"agent_id", "target_url"})},
-		{Name: "argus_debug_poc", Description: "Debug one Nuclei POC through an authorized online Agent. Look at result.matched / top-level matched, not Nuclei catalog log noise.", InputSchema: objectSchema(mergeProps(debugCommonProperties(), map[string]interface{}{
+		{Name: "argus_debug_poc", Title: "调试 POC", Description: "Debug one Nuclei POC through an authorized online Agent. Look at result.matched / top-level matched, not Nuclei catalog log noise.", InputSchema: objectSchema(mergeProps(debugCommonProperties(), map[string]interface{}{
 			"file_name":   stringSchema("POC YAML file name ending in .yaml"),
 			"poc_content": stringSchema("Complete Nuclei POC YAML"),
 			"content":     stringSchema("Alias for poc_content"),
 		}), []string{"agent_id", "target_url"})},
-		{Name: "argus_debug_workflow", Description: "Debug a workflow product mapping through an authorized online Agent.", InputSchema: objectSchema(mergeProps(debugCommonProperties(), map[string]interface{}{
+		{Name: "argus_debug_workflow", Title: "调试 Workflow", Description: "Debug a workflow product mapping through an authorized online Agent.", InputSchema: objectSchema(mergeProps(debugCommonProperties(), map[string]interface{}{
 			"workflow_product": stringSchema("Workflow product or General-Poc-* group"),
 			"workflow_types":   stringArraySchema("Workflow match types"),
 			"workflow_pocs":    stringArraySchema("Workflow POC file names"),
 			"poc_content":      stringSchema("Optional injected POC YAML"),
 			"include_poc":      map[string]interface{}{"type": "boolean"},
 		}), []string{"agent_id", "target_url"})},
-		{Name: "argus_debug_behavior_probe", Description: "Debug a Nuclei behavior probe through an authorized online Agent. Controlled probes are never included in automatic scanning. Hosts with elicitation confirm via the operator prompt; other clients must set risk_confirmed=true. A risk_confirmed argument is not operator confirmation.", InputSchema: objectSchema(mergeProps(debugCommonProperties(), map[string]interface{}{
+		{Name: "argus_debug_behavior_probe", Title: "调试行为探针", Description: "Debug a Nuclei behavior probe through an authorized online Agent. Controlled probes are never included in automatic scanning. Hosts with elicitation confirm via the operator prompt; other clients must set risk_confirmed=true. A risk_confirmed argument is not operator confirmation.", InputSchema: objectSchema(mergeProps(debugCommonProperties(), map[string]interface{}{
 			"file_name":      stringSchema("Behavior probe YAML file name"),
 			"content":        stringSchema("Complete Nuclei behavior probe YAML"),
 			"risk_confirmed": map[string]interface{}{"type": "boolean", "description": "Server governance flag. Hosts with elicitation ignore this argument and confirm via the operator prompt; other clients must set true for controlled probes."},
 		}), []string{"agent_id", "target_url"})},
-		{Name: "argus_save_fingerprint", Description: "Save a fingerprint product mapping as a Draft and return stable_ref. Product patches do not rewrite the rest of finger.yaml.", InputSchema: objectSchema(mergeProps(saveCommonProperties(), map[string]interface{}{
+		{Name: "argus_save_fingerprint", Title: "保存指纹草稿", Description: "Save a fingerprint product mapping as a Draft and return stable_ref. Product patches do not rewrite the rest of finger.yaml.", InputSchema: objectSchema(mergeProps(saveCommonProperties(), map[string]interface{}{
 			"product_name": stringSchema("Fingerprint product"),
 			"rules":        stringArraySchema("Fingerprint expressions such as body=\"marker\""),
 		}), nil)},
-		{Name: "argus_save_dir", Description: "Save a dir product mapping as a Draft and return stable_ref. Product patches do not rewrite the rest of dir.yaml. Isolated drafts should use a unique file_name.", InputSchema: objectSchema(mergeProps(saveCommonProperties(), map[string]interface{}{
+		{Name: "argus_save_dir", Title: "保存目录探测草稿", Description: "Save a dir product mapping as a Draft and return stable_ref. Product patches do not rewrite the rest of dir.yaml. Isolated drafts should use a unique file_name.", InputSchema: objectSchema(mergeProps(saveCommonProperties(), map[string]interface{}{
 			"product_name": stringSchema("Dir product"),
 			"paths":        stringArraySchema("URL paths such as /admin"),
 		}), nil)},
-		{Name: "argus_save_poc", Description: "Save a complete Nuclei POC YAML as a Draft and return stable_ref. file_name must end in .yaml. info.author is mandatory.", InputSchema: objectSchema(saveCommonProperties(), []string{"file_name", "content"})},
-		{Name: "argus_save_workflow", Description: "Save a workflow product mapping as a Draft and return stable_ref. Product patches do not rewrite the rest of workflow.yaml.", InputSchema: objectSchema(mergeProps(saveCommonProperties(), map[string]interface{}{
+		{Name: "argus_save_poc", Title: "保存 POC 草稿", Description: "Save a complete Nuclei POC YAML as a Draft and return stable_ref. file_name must end in .yaml. info.author is mandatory.", InputSchema: objectSchema(saveCommonProperties(), []string{"file_name", "content"})},
+		{Name: "argus_save_workflow", Title: "保存 Workflow 草稿", Description: "Save a workflow product mapping as a Draft and return stable_ref. Product patches do not rewrite the rest of workflow.yaml.", InputSchema: objectSchema(mergeProps(saveCommonProperties(), map[string]interface{}{
 			"product_name":   stringSchema("Fingerprint product or General-Poc-* group"),
 			"workflow_types": stringArraySchema("Match types such as root"),
 			"workflow_pocs":  stringArraySchema("POC file names"),
 			"risk_level":     enumSchema([]string{"unknown", "info", "low", "medium", "high"}),
 		}), nil)},
-		{Name: "argus_save_behavior_probe", Description: "Save a complete Nuclei behavior probe YAML as a Draft and return stable_ref. info.author is mandatory.", InputSchema: objectSchema(saveCommonProperties(), []string{"file_name", "content"})},
-		{Name: "argus_rule_apply", Description: "Admin-only publish, deprecate or rollback using exact stable_ref hash/version guards.", InputSchema: objectSchema(map[string]interface{}{
+		{Name: "argus_save_behavior_probe", Title: "保存行为探针草稿", Description: "Save a complete Nuclei behavior probe YAML as a Draft and return stable_ref. info.author is mandatory.", InputSchema: objectSchema(saveCommonProperties(), []string{"file_name", "content"})},
+		{Name: "argus_rule_apply", Title: "发布 / 废弃 / 回滚", Description: "Admin-only publish, deprecate or rollback using exact stable_ref hash/version guards.", InputSchema: objectSchema(map[string]interface{}{
 			"action":      enumSchema([]string{"publish", "deprecate", "rollback"}),
 			"rule_type":   ruleTypeSchema(),
 			"artifact_id": stringSchema("Stable DB artifact id from stable_ref"),
@@ -112,10 +112,10 @@ func tools() []*sdkmcp.Tool {
 			"hash":        stringSchema("Expected artifact hash"),
 			"version":     integerSchema("Expected artifact version"),
 		}, []string{"action", "rule_type"})},
-		{Name: "argus_yaksha_exp", Title: "Yaksha EXP Runtime", Description: "Operate one sealed single-file Yaklang EXP through the persistent independent Yaksha runtime. Transient script is limited to inspect, validate, and offline Fixture test. Network-capable debug/run require a Server-saved Revision bound by exp_id + revision + source_sha256 as an immutable source identity, so tenant authorization, risk confirmation, and run audit cannot be bypassed. inspect derives the official cli.* UI plus literal yaksha.call/yaksha.asset references; validate checks source, params, dependencies, assets, exact network targets, and egress shape; test is fixture-only and always offline; debug returns complete unredacted HTTP/TCP Trace; run executes once. Dependencies are pinned child revisions and assets are hash-bound content. Egress explicitly selects disabled, direct, a per-call write-only SOCKS5 route, or an authorized Agent using agent_id plus risk_confirmed=true. Agent mode creates a single-use Server Route and never exposes route_id or Gateway credentials. This tool does not expose filesystem or object-storage paths.", Meta: sdkmcp.Meta{"ui": map[string]interface{}{"resourceUri": expConsoleURI, "visibility": []string{"model", "app"}}}, InputSchema: yakshaInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
-		{Name: "argus_exp_workspace", Title: "Yaksha EXP Studio Workspace", Description: "Manage the Server-authoritative Yaksha EXP Studio workspace: EXP metadata, immutable revisions, hash-bound Assets, Fixture acceptance cases, publication, rollback pointers and run history. All operations are tenant-scoped and require EXP authorization; publication/deprecation/rollback remain Admin-only. Source, Asset content and full run artifacts are stored in private MinIO and no object key, credential or host path is exposed.", Meta: sdkmcp.Meta{"ui": map[string]interface{}{"resourceUri": expConsoleURI, "visibility": []string{"model", "app"}}}, InputSchema: expWorkspaceInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
-		{Name: "argus_scan_preview", Title: "Argus Scan Preview", Description: "Preview one authorized scan through the Server-authoritative argus.scan-policy/v1 compiler. Show stages, port count, Agent capacity, POC scope and credential budget to the user, then pass the exact returned plan_hash to argus_scan_create. This tool never accepts Scanner raw config, Agent file paths or an independent manual POC phase.", InputSchema: scanPreviewInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
-		{Name: "argus_scan_create", Title: "Argus Scan Create", Description: "Create one authorized scan using the exact plan_hash returned by argus_scan_preview. POC and credential validation share one explicit authorization confirmation. This tool never accepts Scanner raw config, Agent file paths or an independent manual POC phase.", InputSchema: scanCreateInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
+		{Name: "argus_yaksha_exp", Title: "Yaksha EXP 运行时", Description: "Operate one sealed single-file Yaklang EXP through the persistent independent Yaksha runtime. Transient script is limited to inspect, validate, and offline Fixture test. Network-capable debug/run require a Server-saved Revision bound by exp_id + revision + source_sha256 as an immutable source identity, so tenant authorization, risk confirmation, and run audit cannot be bypassed. inspect derives the official cli.* UI plus literal yaksha.call/yaksha.asset references; validate checks source, params, dependencies, assets, exact network targets, and egress shape; test is fixture-only and always offline; debug returns complete unredacted HTTP/TCP Trace; run executes once. Dependencies are pinned child revisions and assets are hash-bound content. Egress explicitly selects disabled, direct, a per-call write-only SOCKS5 route, or an authorized Agent using agent_id plus risk_confirmed=true. Agent mode creates a single-use Server Route and never exposes route_id or Gateway credentials. This tool does not expose filesystem or object-storage paths.", Meta: sdkmcp.Meta{"ui": map[string]interface{}{"resourceUri": expConsoleURI, "visibility": []string{"model", "app"}}}, InputSchema: yakshaInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
+		{Name: "argus_exp_workspace", Title: "Yaksha EXP Studio 工作区", Description: "Manage the Server-authoritative Yaksha EXP Studio workspace: EXP metadata, immutable revisions, hash-bound Assets, Fixture acceptance cases, publication, rollback pointers and run history. All operations are tenant-scoped and require EXP authorization; publication/deprecation/rollback remain Admin-only. Source, Asset content and full run artifacts are stored in private MinIO and no object key, credential or host path is exposed.", Meta: sdkmcp.Meta{"ui": map[string]interface{}{"resourceUri": expConsoleURI, "visibility": []string{"model", "app"}}}, InputSchema: expWorkspaceInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
+		{Name: "argus_scan_preview", Title: "扫描预览", Description: "Preview one authorized scan through the Server-authoritative argus.scan-policy/v1 compiler. Show stages, port count, Agent capacity, POC scope and credential budget to the user, then pass the exact returned plan_hash to argus_scan_create. This tool never accepts Scanner raw config, Agent file paths or an independent manual POC phase.", InputSchema: scanPreviewInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
+		{Name: "argus_scan_create", Title: "创建扫描", Description: "Create one authorized scan using the exact plan_hash returned by argus_scan_preview. POC and credential validation share one explicit authorization confirmation. This tool never accepts Scanner raw config, Agent file paths or an independent manual POC phase.", InputSchema: scanCreateInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
 	}
 }
 

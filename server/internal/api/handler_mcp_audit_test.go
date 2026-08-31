@@ -44,6 +44,25 @@ func TestRecordMCPToolInvocationPersistsRedactedArgs(t *testing.T) {
 	}
 }
 
+func TestRecordMCPToolInvocationPersistsDebugAndSavePrefixes(t *testing.T) {
+	store := setupAITestDB(t)
+	recordMCPToolInvocation(mcpHTTPToolAuditor{tenantID: "default", userID: "u1", clientID: "cursor"}, argusmcp.ToolCallRecord{
+		ToolName: "argus_debug_fingerprint",
+		Args:     map[string]interface{}{"agent_id": "agent-1", "target_url": "http://authorized.example/", "rule": "body=\"x\""},
+	})
+	recordMCPToolInvocation(mcpHTTPToolAuditor{tenantID: "default", userID: "u1", clientID: "cursor"}, argusmcp.ToolCallRecord{
+		ToolName: "argus_save_poc",
+		Args:     map[string]interface{}{"file_name": "example.yaml", "content": "id: example\n", "intent": "test_only"},
+	})
+	var count int64
+	if err := store.Model(&db.MCPToolInvocation{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("expected debug/save rows, got %d", count)
+	}
+}
+
 func TestHelpAndInspectAreNotPersisted(t *testing.T) {
 	store := setupAITestDB(t)
 	recordMCPToolInvocation(mcpHTTPToolAuditor{tenantID: "default", userID: "u1", clientID: "cursor"}, argusmcp.ToolCallRecord{

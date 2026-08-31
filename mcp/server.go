@@ -24,6 +24,14 @@ func AuditableToolAction(tool string, args map[string]interface{}) (string, bool
 	return argusmcp.AuditableToolAction(tool, args)
 }
 
+// ToolCatalogEntry is a read-only admin projection of one runtime MCP tool.
+type ToolCatalogEntry = argusmcp.ToolCatalogEntry
+
+// ToolCatalog returns the current tools() list with schema-generated call examples.
+func ToolCatalog() []ToolCatalogEntry {
+	return argusmcp.ToolCatalog()
+}
+
 // NewServer builds an MCP server that calls Argus HTTP APIs with the given bearer token.
 func NewServer(apiBaseURL, bearerToken string, opts ...ServerOption) *sdkmcp.Server {
 	return argusmcp.NewServer(argusmcp.NewClient(apiBaseURL, bearerToken), opts...)

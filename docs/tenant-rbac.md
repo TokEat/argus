@@ -43,7 +43,7 @@
 | AI 规则分析（`/ai/arsenal/*`、`/arsenals/ai/analyze`） | - | - | 允许 |
 | 用户列表 | - | 查看 active 用户用于项目成员选择 | 允许管理用户 |
 | 角色管理 | - | - | 允许创建自定义角色和权限矩阵 |
-| MCP Key、API Key、AI 配置 | - | - | 允许 |
+| API Key、AI 配置、MCP 管理 | - | - | 允许 |
 | 云账号、伸缩策略、云实例、OSS 分发 | - | 使用自己创建或被绑定的 AK/SK | 全租户 AK/SK 管理 + 用户绑定 |
 | 客户端构建 | - | - | 允许 |
 
@@ -93,8 +93,7 @@
 - 弹药库与字典读写及治理：`GET|POST|DELETE /arsenals/*`（含 approve/rollback/deprecate/seed-db）、`GET|POST|PUT|DELETE /dictionaries/*`、`POST /arsenals/ai/analyze`、`POST /ai/arsenal/analyze(/stream)`
 - `POST /users`、`PUT /users/:id`、`DELETE /users/:id`
 - `GET /roles`、`POST /roles`、`PUT /roles/:name`、`DELETE /roles/:name`
-- `GET /mcp/keys`、`POST /mcp/keys`、`DELETE /mcp/keys/:id`
-- MCP 管理：`GET|PUT /mcp/admin/status`、`GET /mcp/admin/clients`、`POST /mcp/admin/clients/:id/{revoke,disable,enable}`、`DELETE /mcp/admin/clients/:id`、`GET /mcp/admin/sessions`、`POST /mcp/admin/sessions/revoke`、`GET /mcp/admin/invocations`。仅当前租户；关闭开关会撤销该租户全部 MCP 刷新令牌。`/mcp` 与 `/oauth/authorize`、`/oauth/token` 在本租户关闭或客户端被拉黑时拒绝。调用审计只含高风险 tools/call，参数已脱敏。
+- MCP 管理：`GET|PUT /mcp/admin/status`、`GET /mcp/admin/clients`、`POST /mcp/admin/clients/:id/{revoke,disable,enable}`、`DELETE /mcp/admin/clients/:id`、`GET /mcp/admin/sessions`、`POST /mcp/admin/sessions/revoke`、`GET /mcp/admin/invocations`、`GET /mcp/admin/events`、`GET /mcp/admin/tools`。仅当前租户；关闭开关会撤销该租户全部 MCP 刷新令牌。`/mcp` 与 `/oauth/authorize`、`/oauth/token` 在本租户关闭或客户端被拉黑时拒绝。调用审计含 `argus_debug_*`、`argus_save_*`、scan create、rule publish、yaksha debug/run，参数已脱敏。治理事件来自 `mcp_admin_events`。工具目录是 `tools()` 的只读投影（中文 Title、说明、InputSchema、由 schema 生成的 tools/call 示例），不改变 tools/list 或 tools/call。
 - `GET /config/api-keys`、`PUT /config/api-keys`
 - `GET /ai/config`、`PUT /ai/config`、`GET /ai/models`、`POST /ai/test`
 - `GET /build/artifacts`、`POST /build/client`、`POST /build/jobs/:id/cancel`、`POST /build/jobs/:id/retry`

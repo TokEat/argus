@@ -67,7 +67,7 @@
 - `asset_discovery_audits` 保存 Server 网络空间测绘查询、导出和笔记本归档的项目级脱敏审计；只记录查询/配置哈希、计数、状态与耗时，不保存原始表达式、凭据或 Provider 响应。`asset_discovery_snapshots` 与 `asset_discovery_snapshot_items` 是查询历史、导出和笔记本的追加式来源；`asset_discovery_notebook_items` 与 `asset_discovery_notebook_sources` 分离项目内去重目标和每次快照来源；`asset_discovery_notebook_distribution_intents` 及其 item 表冻结分发确认的幂等请求快照，`asset_discovery_notebook_distribution_materializations` 冻结确认后的 typed 结果。intent 单独存在不代表授权或执行。
 - `nodes` 维护在线 Agent 的会话、容量、心跳和运行任务信息；`agent_logs` 记录节点侧黑匣子日志。
 - `arsenals` 是规则文件真相源；`fingerprint_rules`、`poc_rules`、`workflow_rules`、`dir_rules` 是由 `arsenals` 物化出的结构化检索层，`rule_catalog_bootstraps` 记录物化状态。
-- `system_configs` 承载全局配置与 `mcp_*` 类型的 API Key。
+- `system_configs` 承载全局配置（如 `rule_version`）。历史 `mcp_*` 密钥键若有残留可手工清理；资产引擎密钥走 API 密钥页，模型密钥走 AI 配置。
 
 ---
 
@@ -140,7 +140,7 @@
 
 | 表 | 作用 |
 |------|------|
-| `mcp_tool_invocations` | 仅记录 `argus_debug_behavior_probe`、`argus_scan_create`、`argus_rule_apply`（publish）、`argus_yaksha_exp`（debug/run）。`args` 为剥离密钥后的完整参数；不存响应体或 token |
+| `mcp_tool_invocations` | 记录全部 `argus_debug_*`、`argus_save_*`，以及 `argus_scan_create`、`argus_rule_apply`（publish）、`argus_yaksha_exp`（debug/run）。`args` 为剥离密钥后的完整参数；不存响应体或 token |
 
 #### `system_configs`
 
@@ -153,10 +153,8 @@
 典型用途：
 
 - `rule_version`
-- `mcp_fofa`
-- `mcp_hunter`
-- `mcp_quake`
-- `mcp_openai`
+
+历史 `mcp_fofa` / `mcp_hunter` / `mcp_quake` / `mcp_openai` 键不再由接口读写。若库中仍有残留，可手工删除；不要把它们当成 MCP（Model Context Protocol）凭据。
 
 ---
 

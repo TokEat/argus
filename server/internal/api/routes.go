@@ -268,10 +268,7 @@ func registerAPIV1Routes(api *gin.RouterGroup) {
 	api.POST("/build/jobs/:id/retry", retryBuildJob)
 	api.POST("/build/client", triggerBuild)
 
-	// MCP / API Key 管理
-	api.GET("/mcp/keys", listMcpKeys)
-	api.POST("/mcp/keys", saveMcpKey)
-	api.DELETE("/mcp/keys/:id", deleteMcpKey)
+	// MCP 管理
 	api.GET("/mcp/admin/status", mcpAdminGetStatus)
 	api.PUT("/mcp/admin/status", mcpAdminPutStatus)
 	api.GET("/mcp/admin/clients", mcpAdminListClients)
@@ -282,6 +279,8 @@ func registerAPIV1Routes(api *gin.RouterGroup) {
 	api.GET("/mcp/admin/sessions", mcpAdminListSessions)
 	api.POST("/mcp/admin/sessions/revoke", mcpAdminRevokeSessions)
 	api.GET("/mcp/admin/invocations", mcpAdminListInvocations)
+	api.GET("/mcp/admin/events", mcpAdminListEvents)
+	api.GET("/mcp/admin/tools", mcpAdminListTools)
 
 	// 数据增强：趋势统计与报表
 	api.GET("/stats/trends", getVulnTrends)

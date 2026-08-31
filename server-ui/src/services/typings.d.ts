@@ -1266,62 +1266,6 @@ declare namespace API {
     updated_at: string;
   }
 
-  // ======================== MCP Keys ========================
-
-  interface McpKey {
-    id: string;
-    provider: string;
-    key: string;
-    status: string;
-  }
-
-  interface McpAdminStatus {
-    enabled: boolean;
-    mcp_url: string;
-    public_url: string;
-    transport: string;
-    session_count: number;
-  }
-
-  interface McpAdminClient {
-    client_id: string;
-    redirect_uris: string[];
-    builtin: boolean;
-    blocked: boolean;
-    session_count: number;
-    last_used_at?: string;
-    created_at?: string;
-  }
-
-  interface McpAdminSession {
-    session_id: string;
-    user_id: string;
-    client_id: string;
-    created_at: string;
-    expires_at: string;
-  }
-
-  interface McpAdminInvocation {
-    id: string;
-    user_id: string;
-    role: string;
-    client_id: string;
-    tool_name: string;
-    action?: string;
-    args: Record<string, unknown>;
-    agent_id?: string;
-    target?: string;
-    duration_ms: number;
-    status: string;
-    error_summary?: string;
-    created_at: string;
-  }
-
-  interface McpAdminInvocationList {
-    total: number;
-    items: McpAdminInvocation[];
-  }
-
   // ======================== Arsenal Manifest ========================
 
   interface ManifestItem {

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Typography, Table, Tag, Space, Button, Spin, Empty, Switch, message, Popconfirm, Drawer, Alert, Tabs, Form, Input, Select } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
-import { ApiOutlined, AuditOutlined, CopyOutlined, EyeOutlined, ReloadOutlined } from '@ant-design/icons';
+import { ApiOutlined, AppstoreOutlined, AuditOutlined, CopyOutlined, EyeOutlined, HistoryOutlined, ReloadOutlined, TeamOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
     deleteMcpAdminClient,
@@ -9,59 +9,67 @@ import {
     enableMcpAdminClient,
     getMcpAdminStatus,
     listMcpAdminClients,
+    listMcpAdminEvents,
     listMcpAdminInvocations,
     listMcpAdminSessions,
+    listMcpAdminTools,
     revokeMcpAdminClient,
     revokeMcpAdminSession,
+    revokeMcpAdminUserSessions,
     updateMcpAdminStatus,
-} from '../services/api';
+    type McpAdminClient,
+    type McpAdminEvent,
+    type McpAdminInvocation,
+    type McpAdminSession,
+    type McpAdminStatus,
+    type McpAdminTool,
+} from '../services/mcpAdmin';
 import NetworkCanvas from '../components/NetworkCanvas';
+import { cursorConfigSnippet, formatMcpTime } from './mcpManagementShared';
+import McpToolCatalog from './McpToolCatalog';
 
 const { Title, Text, Paragraph } = Typography;
-
-const cursorConfigSnippet = (mcpUrl: string) => `{
-  "mcpServers": {
-    "argus": {
-      "url": ${JSON.stringify(mcpUrl || 'http://127.0.0.1:8085/mcp')}
-    }
-  }
-}`;
-
-const formatTime = (value?: string) => {
-    if (!value) return '-';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleString('zh-CN');
-};
 
 const McpManagement: React.FC = () => {
     const [activeTab, setActiveTab] = useState('governance');
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [status, setStatus] = useState<API.McpAdminStatus | null>(null);
-    const [clients, setClients] = useState<API.McpAdminClient[]>([]);
-    const [sessions, setSessions] = useState<API.McpAdminSession[]>([]);
+    const [status, setStatus] = useState<McpAdminStatus | null>(null);
+    const [clients, setClients] = useState<McpAdminClient[]>([]);
+    const [sessions, setSessions] = useState<McpAdminSession[]>([]);
     const [sessionClient, setSessionClient] = useState<string | null>(null);
+    const [sessionUser, setSessionUser] = useState('');
+    const [tools, setTools] = useState<McpAdminTool[]>([]);
     const [auditForm] = Form.useForm<{ tool_name?: string; user_id?: string; client_id?: string; status?: string }>();
     const [auditLoading, setAuditLoading] = useState(false);
-    const [auditItems, setAuditItems] = useState<API.McpAdminInvocation[]>([]);
+    const [auditItems, setAuditItems] = useState<McpAdminInvocation[]>([]);
     const [auditTotal, setAuditTotal] = useState(0);
     const [auditPage, setAuditPage] = useState(1);
     const [auditPageSize, setAuditPageSize] = useState(50);
     const [auditFilters, setAuditFilters] = useState<{ tool_name?: string; user_id?: string; client_id?: string; status?: string }>({});
-    const [selectedAudit, setSelectedAudit] = useState<API.McpAdminInvocation | null>(null);
+    const [selectedAudit, setSelectedAudit] = useState<McpAdminInvocation | null>(null);
+    const [eventForm] = Form.useForm<{ action?: string; actor_id?: string; client_id?: string }>();
+    const [eventLoading, setEventLoading] = useState(false);
+    const [eventItems, setEventItems] = useState<McpAdminEvent[]>([]);
+    const [eventTotal, setEventTotal] = useState(0);
+    const [eventPage, setEventPage] = useState(1);
+    const [eventPageSize, setEventPageSize] = useState(50);
+    const [eventFilters, setEventFilters] = useState<{ action?: string; actor_id?: string; client_id?: string }>({});
+    const [selectedEvent, setSelectedEvent] = useState<McpAdminEvent | null>(null);
 
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const [nextStatus, nextClients, nextSessions] = await Promise.all([
+            const [nextStatus, nextClients, nextSessions, nextTools] = await Promise.all([
                 getMcpAdminStatus(),
                 listMcpAdminClients(),
                 listMcpAdminSessions(),
+                listMcpAdminTools(),
             ]);
             setStatus(nextStatus);
             setClients(nextClients || []);
             setSessions(nextSessions || []);
+            setTools(nextTools || []);
         } catch (error) {
             message.error(String(error));
         } finally {
@@ -96,8 +104,36 @@ const McpManagement: React.FC = () => {
         }
     }, []);
 
+    const fetchEvents = useCallback(async (
+        page: number,
+        pageSize: number,
+        filters: { action?: string; actor_id?: string; client_id?: string },
+    ) => {
+        setEventLoading(true);
+        try {
+            const normalized = Object.fromEntries(
+                Object.entries(filters).filter(([, value]) => typeof value === 'string' && value.trim() !== ''),
+            ) as { action?: string; actor_id?: string; client_id?: string };
+            const resp = await listMcpAdminEvents({
+                ...normalized,
+                limit: pageSize,
+                offset: (page - 1) * pageSize,
+            });
+            setEventItems(resp.items || []);
+            setEventTotal(resp.total || 0);
+            setEventPage(page);
+            setEventPageSize(pageSize);
+            setEventFilters(normalized);
+        } catch (error) {
+            message.error(String(error));
+        } finally {
+            setEventLoading(false);
+        }
+    }, []);
+
     useEffect(() => { load(); }, [load]);
     useEffect(() => { fetchAudit(1, 50, {}); }, [fetchAudit]);
+    useEffect(() => { fetchEvents(1, 50, {}); }, [fetchEvents]);
 
     const copyText = async (value: string, ok: string) => {
         try {
@@ -121,12 +157,41 @@ const McpManagement: React.FC = () => {
         }
     };
 
+    const openClientSessions = (clientId: string) => {
+        setSessionClient(clientId);
+        setActiveTab('sessions');
+    };
+
+    const handleRevokeSession = async (sessionId: string) => {
+        try {
+            await revokeMcpAdminSession(sessionId);
+            message.success('已撤销该刷新令牌');
+            await load();
+        } catch (error) {
+            message.error(String(error));
+        }
+    };
+
+    const handleRevokeUserSessions = async (userId: string) => {
+        try {
+            const result = await revokeMcpAdminUserSessions(userId);
+            message.success(`已撤销 ${result.revoked_sessions ?? 0} 条会话`);
+            await load();
+        } catch (error) {
+            message.error(String(error));
+        }
+    };
+
     const visibleSessions = useMemo(
-        () => sessions.filter((item) => !sessionClient || item.client_id === sessionClient),
-        [sessions, sessionClient],
+        () => sessions.filter((item) => {
+            if (sessionClient && item.client_id !== sessionClient) return false;
+            if (sessionUser.trim() && item.user_id !== sessionUser.trim()) return false;
+            return true;
+        }),
+        [sessions, sessionClient, sessionUser],
     );
 
-    const columns: ColumnsType<API.McpAdminClient> = [
+    const columns: ColumnsType<McpAdminClient> = [
         {
             title: '客户端',
             dataIndex: 'client_id',
@@ -173,7 +238,7 @@ const McpManagement: React.FC = () => {
             width: 280,
             render: (_, record) => (
                 <Space size={4} wrap>
-                    <Button type="link" size="small" onClick={() => setSessionClient(record.client_id)}>
+                    <Button type="link" size="small" onClick={() => openClientSessions(record.client_id)}>
                         会话
                     </Button>
                     <Popconfirm title="撤销本租户该客户端的全部刷新令牌？" onConfirm={() => revokeMcpAdminClient(record.client_id).then(load).catch((err) => message.error(String(err)))}>
@@ -198,28 +263,34 @@ const McpManagement: React.FC = () => {
         },
     ];
 
-    const sessionColumns: ColumnsType<API.McpAdminSession> = [
+    const sessionColumns: ColumnsType<McpAdminSession> = [
         { title: '用户', dataIndex: 'user_id', key: 'user_id' },
         { title: '客户端', dataIndex: 'client_id', key: 'client_id' },
         {
             title: '签发',
             dataIndex: 'created_at',
             key: 'created_at',
-            render: (value: string) => new Date(value).toLocaleString('zh-CN'),
+            render: (value: string) => formatMcpTime(value),
         },
         {
             title: '过期',
             dataIndex: 'expires_at',
             key: 'expires_at',
-            render: (value: string) => new Date(value).toLocaleString('zh-CN'),
+            render: (value: string) => formatMcpTime(value),
         },
         {
             title: '操作',
             key: 'actions',
+            width: 220,
             render: (_, record) => (
-                <Popconfirm title="撤销该刷新令牌？" onConfirm={() => revokeMcpAdminSession(record.session_id).then(load).catch((err) => message.error(String(err)))}>
-                    <Button type="link" size="small" danger>撤销</Button>
-                </Popconfirm>
+                <Space size={4} wrap>
+                    <Popconfirm title="撤销该刷新令牌？" onConfirm={() => handleRevokeSession(record.session_id)}>
+                        <Button type="link" size="small" danger>撤销</Button>
+                    </Popconfirm>
+                    <Popconfirm title={`撤销用户 ${record.user_id} 在本租户的全部 MCP 刷新令牌？`} onConfirm={() => handleRevokeUserSessions(record.user_id)}>
+                        <Button type="link" size="small" danger>撤销该用户</Button>
+                    </Popconfirm>
+                </Space>
             ),
         },
     ];
@@ -254,7 +325,14 @@ const McpManagement: React.FC = () => {
                         <Alert
                             type="info"
                             showIcon
-                            message="Cursor 用 url 连接 Server /mcp，不要把 JWT 写进 mcp.json。"
+                            message="通用 Streamable HTTP 接入"
+                            description={(
+                                <Space direction="vertical" size={4}>
+                                    <Text>传输为 Streamable HTTP（stateless JSON）。接入地址即下方 MCP URL。</Text>
+                                    <Text>浏览器 / IDE 走 Server OAuth。配置里只写 url，不要写 JWT。</Text>
+                                    <Text>关闭本租户或拉黑 client_id 后，未过期的 access token 也会被拒绝。</Text>
+                                </Space>
+                            )}
                         />
                         <Space wrap>
                             <Text>接入地址</Text>
@@ -284,6 +362,38 @@ const McpManagement: React.FC = () => {
                 )}
             </ProCard>
         </Space>
+    );
+
+    const renderSessions = () => (
+        <ProCard className="glass-card" style={{ background: 'transparent', border: 'none' }}>
+            <Space wrap style={{ marginBottom: 16 }}>
+                <Select
+                    allowClear
+                    placeholder="全部客户端"
+                    value={sessionClient || undefined}
+                    onChange={(value) => setSessionClient(value || null)}
+                    style={{ width: 220 }}
+                    options={clients.map((item) => ({ value: item.client_id, label: item.client_id }))}
+                />
+                <Input
+                    allowClear
+                    placeholder="按 user_id 筛选"
+                    value={sessionUser}
+                    onChange={(event) => setSessionUser(event.target.value)}
+                    style={{ width: 180 }}
+                />
+                <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新</Button>
+            </Space>
+            <Table
+                rowKey="session_id"
+                columns={sessionColumns}
+                dataSource={visibleSessions}
+                loading={loading}
+                pagination={false}
+                size="middle"
+                locale={{ emptyText: '没有未过期的刷新令牌' }}
+            />
+        </ProCard>
     );
 
     const renderAudit = () => (
@@ -326,7 +436,7 @@ const McpManagement: React.FC = () => {
                 type="info"
                 showIcon
                 style={{ marginBottom: 16 }}
-                message="只记录高风险 tools/call：behavior probe debug、scan create、rule publish、yaksha debug/run。参数已剥离密钥类字段。"
+                message="记录 argus_debug_*、argus_save_*、scan create、rule publish、yaksha debug/run。参数已剥离密钥类字段。"
             />
             <Table
                 rowKey="id"
@@ -343,7 +453,7 @@ const McpManagement: React.FC = () => {
                 }}
                 locale={{ emptyText: '暂无高风险调用' }}
                 columns={[
-                    { title: '时间', dataIndex: 'created_at', width: 180, render: formatTime },
+                    { title: '时间', dataIndex: 'created_at', width: 180, render: formatMcpTime },
                     { title: '用户', dataIndex: 'user_id', width: 100, render: (value: string) => value || '-' },
                     { title: '客户端', dataIndex: 'client_id', width: 120, render: (value: string) => value || '-' },
                     { title: '工具', dataIndex: 'tool_name', render: (value: string) => <Text code>{value}</Text> },
@@ -358,8 +468,84 @@ const McpManagement: React.FC = () => {
                     {
                         title: '操作',
                         width: 110,
-                        render: (_: unknown, row: API.McpAdminInvocation) => (
+                        render: (_: unknown, row: McpAdminInvocation) => (
                             <Button size="small" icon={<EyeOutlined />} onClick={() => setSelectedAudit(row)}>详情</Button>
+                        ),
+                    },
+                ]}
+            />
+        </ProCard>
+    );
+
+    const renderEvents = () => (
+        <ProCard className="glass-card" style={{ background: 'transparent', border: 'none', padding: 0 }}>
+            <Form
+                form={eventForm}
+                layout="inline"
+                onFinish={(values) => fetchEvents(1, eventPageSize, values)}
+                style={{ marginBottom: 16, rowGap: 8 }}
+            >
+                <Form.Item name="action" label="动作">
+                    <Select
+                        allowClear
+                        placeholder="全部"
+                        style={{ width: 180 }}
+                        options={[
+                            { value: 'enable', label: 'enable' },
+                            { value: 'disable', label: 'disable' },
+                            { value: 'revoke_client', label: 'revoke_client' },
+                            { value: 'disable_client', label: 'disable_client' },
+                            { value: 'enable_client', label: 'enable_client' },
+                            { value: 'delete_client', label: 'delete_client' },
+                            { value: 'revoke_session', label: 'revoke_session' },
+                            { value: 'revoke_sessions', label: 'revoke_sessions' },
+                        ]}
+                    />
+                </Form.Item>
+                <Form.Item name="actor_id" label="操作人">
+                    <Input allowClear placeholder="user_id" style={{ width: 140 }} />
+                </Form.Item>
+                <Form.Item name="client_id" label="客户端">
+                    <Input allowClear placeholder="cursor" style={{ width: 140 }} />
+                </Form.Item>
+                <Form.Item>
+                    <Space>
+                        <Button type="primary" htmlType="submit">筛选</Button>
+                        <Button onClick={() => { eventForm.resetFields(); fetchEvents(1, eventPageSize, {}); }}>重置</Button>
+                        <Button icon={<ReloadOutlined />} onClick={() => fetchEvents(eventPage, eventPageSize, eventFilters)} loading={eventLoading}>刷新</Button>
+                    </Space>
+                </Form.Item>
+            </Form>
+            <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message="记录本租户 admin 对 MCP 开关、客户端和会话的治理操作，不是 tools/call 流水。"
+            />
+            <Table
+                rowKey="id"
+                loading={eventLoading}
+                dataSource={eventItems}
+                pagination={{
+                    current: eventPage,
+                    pageSize: eventPageSize,
+                    total: eventTotal,
+                    showSizeChanger: true,
+                    pageSizeOptions: [20, 50, 100, 200],
+                    showTotal: (total) => `共 ${total} 条`,
+                    onChange: (page, pageSize) => fetchEvents(page, pageSize, eventFilters),
+                }}
+                locale={{ emptyText: '暂无治理操作' }}
+                columns={[
+                    { title: '时间', dataIndex: 'created_at', width: 180, render: formatMcpTime },
+                    { title: '操作人', dataIndex: 'actor_id', width: 120, render: (value: string) => value || '-' },
+                    { title: '动作', dataIndex: 'action', width: 160, render: (value: string) => <Tag>{value || '-'}</Tag> },
+                    { title: '客户端', dataIndex: 'client_id', width: 140, render: (value: string) => value || '-' },
+                    {
+                        title: '操作',
+                        width: 110,
+                        render: (_: unknown, row: McpAdminEvent) => (
+                            <Button size="small" icon={<EyeOutlined />} onClick={() => setSelectedEvent(row)}>详情</Button>
                         ),
                     },
                 ]}
@@ -375,30 +561,34 @@ const McpManagement: React.FC = () => {
                     <ApiOutlined style={{ marginRight: 8, color: '#0ea5e9' }} />
                     MCP 管理
                 </Title>
-                <Button icon={<ReloadOutlined />} onClick={() => { load(); fetchAudit(auditPage, auditPageSize, auditFilters); }} loading={loading || auditLoading}>刷新</Button>
+                <Button
+                    icon={<ReloadOutlined />}
+                    onClick={() => {
+                        load();
+                        fetchAudit(auditPage, auditPageSize, auditFilters);
+                        fetchEvents(eventPage, eventPageSize, eventFilters);
+                    }}
+                    loading={loading || auditLoading || eventLoading}
+                >
+                    刷新
+                </Button>
             </div>
 
             <div style={{ position: 'relative', zIndex: 1 }}>
                 <Tabs
                     activeKey={activeTab}
                     onChange={setActiveTab}
+                    destroyOnHidden
                     items={[
                         { key: 'governance', label: <span><ApiOutlined /> 接入治理</span>, children: renderGovernance() },
+                        { key: 'sessions', label: <span><TeamOutlined /> 会话</span>, children: renderSessions() },
                         { key: 'audit', label: <span><AuditOutlined /> 调用审计</span>, children: renderAudit() },
+                        { key: 'events', label: <span><HistoryOutlined /> 治理事件</span>, children: renderEvents() },
+                        { key: 'catalog', label: <span><AppstoreOutlined /> 工具目录</span>, children: <McpToolCatalog tools={tools} loading={loading} /> },
                     ]}
                 />
             </div>
 
-            <Drawer title={sessionClient ? `会话 · ${sessionClient}` : '会话'} open={!!sessionClient} width={640} onClose={() => setSessionClient(null)}>
-                <Table
-                    rowKey="session_id"
-                    columns={sessionColumns}
-                    dataSource={visibleSessions}
-                    pagination={false}
-                    size="small"
-                    locale={{ emptyText: '没有未过期的刷新令牌' }}
-                />
-            </Drawer>
             <Drawer title="调用详情" width={760} open={!!selectedAudit} onClose={() => setSelectedAudit(null)}>
                 {selectedAudit && (
                     <Space direction="vertical" size={16} style={{ width: '100%' }}>
@@ -406,11 +596,27 @@ const McpManagement: React.FC = () => {
                             <Text code>{selectedAudit.tool_name}</Text>
                             <Tag color={selectedAudit.status === 'ok' ? 'green' : 'red'}>{selectedAudit.status}</Tag>
                         </Space>
-                        <Text type="secondary">{formatTime(selectedAudit.created_at)} · {selectedAudit.user_id || '-'} · {selectedAudit.client_id || '-'}</Text>
+                        <Text type="secondary">{formatMcpTime(selectedAudit.created_at)} · {selectedAudit.user_id || '-'} · {selectedAudit.client_id || '-'}</Text>
                         {selectedAudit.error_summary ? <Alert type="error" showIcon message={selectedAudit.error_summary} /> : null}
                         <Paragraph style={{ marginBottom: 0 }}>
                             <pre style={{ margin: 0, padding: 12, background: '#0f172a', color: '#e2e8f0', borderRadius: 8, fontSize: 12, whiteSpace: 'pre-wrap' }}>
                                 {JSON.stringify(selectedAudit.args || {}, null, 2)}
+                            </pre>
+                        </Paragraph>
+                    </Space>
+                )}
+            </Drawer>
+            <Drawer title="治理事件详情" width={640} open={!!selectedEvent} onClose={() => setSelectedEvent(null)}>
+                {selectedEvent && (
+                    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                        <Space>
+                            <Tag>{selectedEvent.action}</Tag>
+                            <Text type="secondary">{formatMcpTime(selectedEvent.created_at)}</Text>
+                        </Space>
+                        <Text>操作人 {selectedEvent.actor_id || '-'} · 客户端 {selectedEvent.client_id || '-'}</Text>
+                        <Paragraph style={{ marginBottom: 0 }}>
+                            <pre style={{ margin: 0, padding: 12, background: '#0f172a', color: '#e2e8f0', borderRadius: 8, fontSize: 12, whiteSpace: 'pre-wrap' }}>
+                                {JSON.stringify(selectedEvent.details || {}, null, 2)}
                             </pre>
                         </Paragraph>
                     </Space>
