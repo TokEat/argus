@@ -10,13 +10,16 @@
 #   2. 旧 010..570 终态库  -> 先 pg_dump 备份，执行 legacy/900_cutover，再补导缺失文件
 #   3. 其它未知状态        -> 拒绝操作并提示人工处理
 #
-# 依赖：psql、pg_dump（PostgreSQL 客户端工具）。
+# 依赖：宿主机 bash；默认还需要本机 psql/pg_dump。指定 --container 时改在
+# PostgreSQL 容器内调用配套客户端，宿主机不必安装 PostgreSQL 客户端。
 # 用法示例：
 #   deploy/db-init.sh                                   # 全默认（本地开发库）
 #   POSTGRES_HOST=db POSTGRES_DB=argus POSTGRES_USER=argus \
 #     POSTGRES_PASSWORD=xxx ARGUS_ADMIN_POSTGRES_PASSWORD=yyy deploy/db-init.sh
 #   deploy/db-init.sh --dsn "host=... dbname=... user=... password=..." \
 #                     --admin-dsn "host=... user=postgres password=..." --no-backup
+#   deploy/db-init.sh --container argus-postgres         # 在指定容器内执行
+#   ARGUS_DB_CONTAINER=argus-postgres deploy/db-init.sh --no-backup
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,6 +36,7 @@ APP_DSN=""
 ADMIN_DSN=""
 BOOTSTRAP=1
 BACKUP=1
+CONTAINER="${ARGUS_DB_CONTAINER:-}"
 
 YELLOW='\033[1;33m'; GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 info()  { echo -e "${GREEN}[db-init]${NC} $*"; }
@@ -40,12 +44,43 @@ warn()  { echo -e "${YELLOW}[db-init]${NC} $*" >&2; }
 fail()  { echo -e "${RED}[db-init][FAIL]${NC} $*" >&2; exit 1; }
 
 usage() {
-  sed -n '2,19p' "${BASH_SOURCE[0]}"; exit 1
+  cat <<'EOF'
+Argus 数据库初始化（纯 SQL，psql 导入，不依赖 argus-server 二进制）。
+
+用法:
+  deploy/db-init.sh [选项]
+
+选项:
+  --container NAME   在指定 Docker 容器内执行 psql/pg_dump（宿主机无需安装客户端）
+  --dsn DSN          应用库连接串；配合 --container 时是容器内地址
+  --admin-dsn DSN    管理员连接串（bootstrap 连接 postgres 库）
+  --no-bootstrap     跳过建角色/建库
+  --no-backup        跳过存量旧库 cutover 前的 pg_dump
+  -h, --help         显示本说明
+
+环境变量:
+  ARGUS_DB_CONTAINER              等同 --container
+  POSTGRES_HOST/PORT/DB/USER/PASSWORD
+  ARGUS_ADMIN_POSTGRES_PASSWORD
+
+示例:
+  deploy/db-init.sh
+  deploy/db-init.sh --container argus-postgres
+  make db-setup
+  make db-setup POSTGRES_CONTAINER=argus-postgres
+EOF
+  exit 0
 }
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dsn) APP_DSN="$2"; shift 2 ;;
     --admin-dsn) ADMIN_DSN="$2"; shift 2 ;;
+    --container)
+      [[ -n "${2:-}" ]] || fail "--container 需要容器名或 ID"
+      CONTAINER="$2"
+      shift 2
+      ;;
     --no-bootstrap) BOOTSTRAP=0; shift ;;
     --no-backup) BACKUP=0; shift ;;
     -h|--help) usage ;;
@@ -55,27 +90,111 @@ done
 
 [[ -f "${DB_DIR}/init/001_init.sql" ]] || fail "未找到 ${DB_DIR}/init/001_init.sql"
 
-if [[ -z "${APP_DSN}" ]]; then
+if [[ -n "${CONTAINER}" ]]; then
+  [[ "${CONTAINER}" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || fail "非法容器名或 ID: ${CONTAINER}"
+fi
+
+# 指定容器时，连接的是容器内 Postgres，默认走 loopback:5432，忽略宿主机 POSTGRES_HOST/PORT。
+if [[ -n "${CONTAINER}" && -z "${APP_DSN}" ]]; then
+  APP_DSN="host=127.0.0.1 port=5432 dbname=${POSTGRES_DB} user=${POSTGRES_USER} password=${POSTGRES_PASSWORD} sslmode=disable"
+elif [[ -z "${APP_DSN}" ]]; then
   APP_DSN="host=${POSTGRES_HOST} port=${POSTGRES_PORT} dbname=${POSTGRES_DB} user=${POSTGRES_USER} password=${POSTGRES_PASSWORD} sslmode=disable"
 fi
-psql_app()     { psql "$APP_DSN" -v ON_ERROR_STOP=1 "$@"; }
-psql_admin()   { psql "$ADMIN_DSN" -v ON_ERROR_STOP=1 "$@"; }
 
-# ---------- 1. 等待 PostgreSQL 就绪（不依赖 docker） ----------
+run_psql() {
+  local dsn="$1"
+  shift
+  local -a args=()
+  local sql_file=""
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "-f" ]]; then
+      [[ -n "${2:-}" ]] || fail "psql -f 需要文件路径"
+      sql_file="$2"
+      shift 2
+      continue
+    fi
+    args+=("$1")
+    shift
+  done
+  if [[ -z "${CONTAINER}" ]]; then
+    if [[ -n "${sql_file}" ]]; then
+      psql "$dsn" -v ON_ERROR_STOP=1 "${args[@]}" -f "${sql_file}"
+    else
+      psql "$dsn" -v ON_ERROR_STOP=1 "${args[@]}"
+    fi
+    return
+  fi
+  if [[ -n "${sql_file}" ]]; then
+    [[ -f "${sql_file}" ]] || fail "SQL 文件不存在: ${sql_file}"
+    docker exec -i "${CONTAINER}" psql "$dsn" -v ON_ERROR_STOP=1 "${args[@]}" -f - < "${sql_file}"
+    return
+  fi
+  docker exec "${CONTAINER}" psql "$dsn" -v ON_ERROR_STOP=1 "${args[@]}"
+}
+
+psql_app()   { run_psql "$APP_DSN" "$@"; }
+psql_admin() { run_psql "$ADMIN_DSN" "$@"; }
+
+run_pg_dump() {
+  local dsn="$1" out="$2"
+  if [[ -z "${CONTAINER}" ]]; then
+    command -v pg_dump >/dev/null 2>&1 || fail "未找到 pg_dump，请先安装 PostgreSQL 客户端工具，或改用 --container"
+    pg_dump "$dsn" -Fc -f "$out"
+    return
+  fi
+  docker exec "${CONTAINER}" pg_dump "$dsn" -Fc > "$out"
+}
+
+ensure_container() {
+  command -v docker >/dev/null 2>&1 || fail "未找到 docker，无法使用 --container"
+  docker info >/dev/null 2>&1 || fail "无法连接 Docker daemon"
+  local status=""
+  status="$(docker inspect -f '{{.State.Status}}' "${CONTAINER}" 2>/dev/null || true)"
+  if [[ -z "${status}" ]]; then
+    fail "找不到容器 ${CONTAINER}。请先 make infra-up 或 docker compose up -d postgres"
+  fi
+  if [[ "${status}" != "running" ]]; then
+    info "容器 ${CONTAINER} 当前为 ${status}，尝试启动 ..."
+    docker start "${CONTAINER}" >/dev/null || fail "无法启动容器 ${CONTAINER}"
+  fi
+  local i
+  for i in $(seq 1 30); do
+    status="$(docker inspect -f '{{.State.Status}}' "${CONTAINER}" 2>/dev/null || true)"
+    if [[ "${status}" == "running" ]]; then
+      break
+    fi
+    sleep 1
+  done
+  [[ "${status}" == "running" ]] || fail "容器 ${CONTAINER} 未能进入 running"
+  docker exec "${CONTAINER}" sh -c 'command -v psql >/dev/null && command -v pg_dump >/dev/null' \
+    || fail "容器 ${CONTAINER} 内没有 psql/pg_dump，请指定 PostgreSQL 容器"
+}
+
+# ---------- 1. 等待 PostgreSQL 就绪 ----------
 wait_for_pg() {
   local dsn="$1" i
   for i in $(seq 1 30); do
-    if psql "$dsn" -tAc "SELECT 1" >/dev/null 2>&1; then return 0; fi
+    if run_psql "$dsn" -tAc "SELECT 1" >/dev/null 2>&1; then return 0; fi
     sleep 2
   done
   return 1
 }
-command -v psql >/dev/null 2>&1 || fail "未找到 psql，请先安装 PostgreSQL 客户端工具"
+
+if [[ -n "${CONTAINER}" ]]; then
+  info "使用 Docker 容器 ${CONTAINER} 执行 psql/pg_dump"
+  ensure_container
+else
+  command -v psql >/dev/null 2>&1 || fail "未找到 psql，请先安装 PostgreSQL 客户端工具，或改用 --container <postgres容器>"
+fi
 
 # ---------- 2. 建角色/建库（bootstrap，幂等） ----------
 if [[ "${BOOTSTRAP}" -eq 1 ]]; then
   if [[ -z "${ADMIN_DSN}" ]]; then
-    ADMIN_DSN="host=${POSTGRES_HOST} port=${POSTGRES_PORT} dbname=postgres user=${POSTGRES_USER} password=${ARGUS_ADMIN_POSTGRES_PASSWORD} sslmode=disable"
+    if [[ -n "${CONTAINER}" ]]; then
+      ADMIN_DSN="host=127.0.0.1 port=5432 dbname=postgres user=${POSTGRES_USER} password=${ARGUS_ADMIN_POSTGRES_PASSWORD} sslmode=disable"
+    else
+      ADMIN_DSN="host=${POSTGRES_HOST} port=${POSTGRES_PORT} dbname=postgres user=${POSTGRES_USER} password=${ARGUS_ADMIN_POSTGRES_PASSWORD} sslmode=disable"
+    fi
   fi
   info "等待 PostgreSQL 就绪 ..."
   wait_for_pg "${ADMIN_DSN}" || fail "PostgreSQL 未就绪（30 次重试后仍无法连接），请确认服务已启动"
@@ -130,7 +249,7 @@ case "${MODE}" in
       mkdir -p "${BACKUP_DIR}"
       BACKUP_FILE="${BACKUP_DIR}/db-$(date +%Y%m%d-%H%M%S).dump"
       info "备份当前数据库 -> ${BACKUP_FILE}"
-      pg_dump "${APP_DSN}" -Fc -f "${BACKUP_FILE}" || fail "备份失败；为安全起见已中止（可 --no-backup 跳过）"
+      run_pg_dump "${APP_DSN}" "${BACKUP_FILE}" || fail "备份失败；为安全起见已中止（可 --no-backup 跳过）"
     else
       warn "已指定 --no-backup，跳过升级前备份。"
     fi
@@ -167,9 +286,16 @@ psql_app -1 -q -f "${DB_DIR}/init/seed_admin.sql"
 TABLE_COUNT="$(psql_app -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'")"
 VERSION_ROW="$(psql_app -tAc "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1")"
 ADMIN_COUNT="$(psql_app -tAc "SELECT count(*) FROM users WHERE username='admin'")"
+TABLE_COUNT="$(echo "${TABLE_COUNT}" | tr -d '[:space:]')"
+VERSION_ROW="$(echo "${VERSION_ROW}" | tr -d '[:space:]')"
+ADMIN_COUNT="$(echo "${ADMIN_COUNT}" | tr -d '[:space:]')"
 [[ "${TABLE_COUNT}" -ge 70 ]] || fail "自检失败：表数量异常（${TABLE_COUNT}）"
 [[ -n "${VERSION_ROW}" ]]        || fail "自检失败：schema_migrations 无版本记录"
 [[ "${ADMIN_COUNT}" -ge 1 ]]     || fail "自检失败：默认管理员缺失"
 
 info "数据库初始化完成：表 ${TABLE_COUNT} 张，schema 版本 ${VERSION_ROW}。"
-info "下一步：直接启动 argus-server（启动时仅做校验，不再迁移）。"
+if [[ -n "${CONTAINER}" ]]; then
+  info "下一步：直接启动 argus-server（启动时仅做校验，不再迁移）。容器=${CONTAINER}"
+else
+  info "下一步：直接启动 argus-server（启动时仅做校验，不再迁移）。"
+fi

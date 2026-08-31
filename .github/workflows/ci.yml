@@ -107,6 +107,7 @@ jobs:
         env:
           DB_DSN: host=127.0.0.1 user=postgres password=argus_ci dbname=argus port=5432 sslmode=disable
         run: |
+          bash deploy/tests/db-init-container.sh
           make db-setup POSTGRES_PASSWORD=argus_ci
           make db-verify POSTGRES_PASSWORD=argus_ci
 

@@ -10,6 +10,7 @@ DB_PORT ?= $(POSTGRES_PORT)
 POSTGRES_USER ?= postgres
 POSTGRES_PASSWORD ?= argus_dev_pg_S7m9Q4r2L8xP6nV3
 POSTGRES_DB ?= argus
+POSTGRES_CONTAINER ?=
 DB_DSN ?= host=$(DB_HOST) user=$(POSTGRES_USER) password=$(POSTGRES_PASSWORD) dbname=$(POSTGRES_DB) port=$(DB_PORT) sslmode=disable
 
 # Argus CLI 单机版（当前机器 → bin/argus）
@@ -94,19 +95,27 @@ infra-down:
 infra-logs:
 	$(DOCKER_COMPOSE) logs -f rabbitmq postgres
 
-# 数据库初始化（纯 SQL，psql 导入；宿主机无 psql 时自动在 postgres 容器内执行）
+# 数据库初始化（纯 SQL，psql 导入）。POSTGRES_CONTAINER / ARGUS_DB_CONTAINER
+# 指定已有 Postgres 容器；宿主机无 psql 时自动对 compose postgres 使用 --container。
 db-setup:
-	@if command -v psql >/dev/null 2>&1; then \
+	@container="$(POSTGRES_CONTAINER)"; \
+	if [ -z "$$container" ]; then container="$$ARGUS_DB_CONTAINER"; fi; \
+	if [ -n "$$container" ]; then \
+		POSTGRES_DB="$(POSTGRES_DB)" POSTGRES_USER="$(POSTGRES_USER)" \
+		POSTGRES_PASSWORD="$(POSTGRES_PASSWORD)" \
+		bash deploy/db-init.sh --no-backup --container "$$container"; \
+	elif command -v psql >/dev/null 2>&1; then \
 		POSTGRES_HOST="$(DB_HOST)" POSTGRES_PORT="$(DB_PORT)" POSTGRES_DB="$(POSTGRES_DB)" \
 		POSTGRES_USER="$(POSTGRES_USER)" POSTGRES_PASSWORD="$(POSTGRES_PASSWORD)" \
 		bash deploy/db-init.sh --no-backup; \
 	else \
-		echo "[db-setup] host 未安装 psql，改为在 postgres 容器内执行"; \
+		echo "[db-setup] host 未安装 psql，改为通过 postgres 容器执行"; \
 		$(DOCKER_COMPOSE) up -d --wait postgres >/dev/null; \
-		$(DOCKER_COMPOSE) cp deploy/db postgres:/tmp/ >/dev/null; \
-		$(DOCKER_COMPOSE) cp deploy/db-init.sh postgres:/tmp/ >/dev/null; \
-		$(DOCKER_COMPOSE) exec -T postgres bash /tmp/db-init.sh --no-bootstrap \
-			--dsn "host=127.0.0.1 port=5432 dbname=$(POSTGRES_DB) user=$(POSTGRES_USER) password=$(POSTGRES_PASSWORD) sslmode=disable"; \
+		cid="$$($(DOCKER_COMPOSE) ps -q postgres | tr -d '\r')"; \
+		if [ -z "$$cid" ]; then echo "[db-setup] 无法解析 postgres 容器 ID" >&2; exit 1; fi; \
+		POSTGRES_DB="$(POSTGRES_DB)" POSTGRES_USER="$(POSTGRES_USER)" \
+		POSTGRES_PASSWORD="$(POSTGRES_PASSWORD)" \
+		bash deploy/db-init.sh --no-backup --container "$$cid"; \
 	fi
 
 # 数据库校验：先用 SQL 初始化脚本收敛 schema，再跑 server 启动期同款校验测试

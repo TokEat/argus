@@ -219,9 +219,11 @@ make setup-local
 # 1. 启动基础设施
 make infra-up
 
-# 2. 数据库初始化（建库/建角色 + 最小基线导入 + 种子 + 自检，psql 纯 SQL，
-#    宿主机没有 psql 时自动在 postgres 容器内执行）
+# 2. 数据库初始化（建库/建角色 + 最小基线导入 + 种子 + 自检，psql 纯 SQL）
+#    宿主机没有 psql 时自动对 compose postgres 使用 --container
 make db-setup
+# 或指定容器：make db-setup POSTGRES_CONTAINER=argus-postgres
+# 或：deploy/db-init.sh --container argus-postgres
 
 # 3. 校验：SQL 导入后跑 server 启动期同款版本/契约校验
 make db-verify

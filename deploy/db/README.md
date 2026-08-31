@@ -19,15 +19,24 @@ deploy/db/
 ## 使用
 
 ```bash
-# 手动部署（需 psql；可选环境变量 POSTGRES_HOST/PORT/DB/USER/PASSWORD、ARGUS_ADMIN_POSTGRES_PASSWORD）
+# 手动部署（需本机 psql；可选环境变量 POSTGRES_HOST/PORT/DB/USER/PASSWORD、ARGUS_ADMIN_POSTGRES_PASSWORD）
 deploy/db-init.sh
 
-# 开发环境（宿主机无 psql 时自动在 postgres 容器内执行）
+# 指定已有 PostgreSQL 容器（宿主机无需 psql；SQL 仍从本仓库导入）
+deploy/db-init.sh --container argus-postgres
+# 或：ARGUS_DB_CONTAINER=argus-postgres deploy/db-init.sh
+
+# 开发环境：本机有 psql 时直连；否则对 compose postgres 使用 --container
 make db-setup
+make db-setup POSTGRES_CONTAINER=argus-postgres
 
 # 校验（SQL 导入到目标库后跑 server 启动期同款校验测试）
 make db-verify
 ```
+
+`--container` 只使用已经存在的容器（可用 `make infra-up` 启动），不会创建 Compose 栈。
+未另外指定 `--dsn` 时，容器内连接为 `127.0.0.1:5432`（忽略宿主机 `POSTGRES_HOST`/`POSTGRES_PORT`）。
+已停止的容器会尝试 `docker start` 并等待 Postgres 就绪。
 
 > ⚠️ `db-init.sh` / `make db-setup` / `make db-verify` 会对目标库执行导入和种子写入，
 > 只能指向专用（开发/CI/新装）数据库；不要把 `DB_DSN` 指向共享或生产库运行。
