@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -24,7 +25,8 @@ var resourceEndpoints = map[string]string{
 	"argus://examples/fingerprint-poc-workflow": "/api/v1/mcp/resources/examples/fingerprint-poc-workflow",
 }
 
-func NewServer(client *Client) *sdkmcp.Server {
+func NewServer(client *Client, opts ...ServerOption) *sdkmcp.Server {
+	cfg := applyServerOptions(opts)
 	server := sdkmcp.NewServer(&sdkmcp.Implementation{Name: "argus-mcp", Version: "0.1.0"}, &sdkmcp.ServerOptions{
 		Instructions: sourceLessMCPInstructions,
 		Capabilities: &sdkmcp.ServerCapabilities{
@@ -37,11 +39,11 @@ func NewServer(client *Client) *sdkmcp.Server {
 			Tools:     &sdkmcp.ToolCapabilities{},
 		},
 	})
-	RegisterArgusMCP(server, client)
+	RegisterArgusMCP(server, client, cfg.auditor)
 	return server
 }
 
-func RegisterArgusMCP(server *sdkmcp.Server, client *Client) {
+func RegisterArgusMCP(server *sdkmcp.Server, client *Client, auditor ToolAuditor) {
 	for _, resource := range resources() {
 		resource := resource
 		server.AddResource(resource, func(ctx context.Context, req *sdkmcp.ReadResourceRequest) (*sdkmcp.ReadResourceResult, error) {
@@ -71,7 +73,9 @@ func RegisterArgusMCP(server *sdkmcp.Server, client *Client) {
 			if pending, err := maybeElicit(client, tool.Name, req, args); pending != nil || err != nil {
 				return pending, err
 			}
+			started := time.Now()
 			result, err := client.CallTool(ctx, tool.Name, args)
+			recordAuditableTool(ctx, auditor, tool.Name, args, time.Since(started), err)
 			if err != nil {
 				if isStructuredContentTool(tool.Name) {
 					return &sdkmcp.CallToolResult{

@@ -47,7 +47,7 @@ func TestSchemaModelTableNames(t *testing.T) {
 		"Arsenal":                      "arsenals",
 		"ArsenalEvent":                 "arsenal_events",
 		"ArsenalAIReview":              "arsenal_ai_reviews",
-		"AIToolInvocation":             "ai_tool_invocations",
+		"MCPToolInvocation":            "mcp_tool_invocations",
 		"User":                         "users",
 		"CustomRole":                   "custom_roles",
 		"TenantQuota":                  "tenant_quotas",

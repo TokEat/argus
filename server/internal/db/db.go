@@ -308,12 +308,12 @@ type Asset struct {
 	Tags        string     `gorm:"type:jsonb"`
 	// CDN 标记疑似 CDN 资产：CDN-Domain 记录本身，以及来自 CDN 域名的
 	// Web / Domain-Bind 探测结果。仅作展示与过滤，不影响扫描行为。
-	CDN         bool       `gorm:"default:false"`
-	Status      string     `gorm:"default:'alive';index"`
-	OwnerID     string     `gorm:"index"`
-	CredID      string     `gorm:"index"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	CDN       bool   `gorm:"default:false"`
+	Status    string `gorm:"default:'alive';index"`
+	OwnerID   string `gorm:"index"`
+	CredID    string `gorm:"index"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // SubdomainPassiveCache caches Server-side passive subdomain enumeration per
@@ -342,7 +342,7 @@ type SubdomainPassiveJob struct {
 	Domains    string `gorm:"type:jsonb;not null"`
 	// DomainsDone advances as the collector finishes each domain; it backs the
 	// frontend progress projection.
-	DomainsDone int `gorm:"not null;default:0"`
+	DomainsDone int    `gorm:"not null;default:0"`
 	State       string `gorm:"index:idx_subdomain_passive_jobs_state"`
 	Note        string `gorm:"type:text;not null;default:''"`
 	CreatedAt   time.Time
@@ -462,22 +462,6 @@ type ArsenalAIReview struct {
 	Model               string
 	CreatedBy           string `gorm:"index"`
 	CreatedAt           time.Time
-}
-
-// AIToolInvocation stores internal audit evidence for Copilot tool calls.
-type AIToolInvocation struct {
-	ID           uint   `gorm:"primaryKey;autoIncrement"`
-	TenantID     string `gorm:"default:'default';index"`
-	UserID       string `gorm:"index"`
-	Module       string `gorm:"index"`
-	ToolName     string `gorm:"index"`
-	ArgsSummary  string `gorm:"type:jsonb"`
-	AgentID      string `gorm:"index"`
-	TargetURL    string `gorm:"type:text"`
-	DurationMS   int64
-	Status       string `gorm:"index"`
-	ErrorSummary string `gorm:"type:text"`
-	CreatedAt    time.Time
 }
 
 // AgentLog 遥测日志模型

@@ -61,6 +61,8 @@ func callMCPAdminJSON(t *testing.T, method, path, tenant, role, userID string, b
 		mcpAdminListSessions(ctx)
 	case method == http.MethodPost && strings.HasSuffix(path, "/sessions/revoke"):
 		mcpAdminRevokeSessions(ctx)
+	case method == http.MethodGet && strings.HasSuffix(path, "/invocations"):
+		mcpAdminListInvocations(ctx)
 	default:
 		t.Fatalf("unhandled test path %s %s", method, path)
 	}

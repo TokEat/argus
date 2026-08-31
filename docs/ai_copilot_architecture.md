@@ -7,9 +7,9 @@
 | 模块 | 状态 |
 |------|------|
 | POC AI 结构化审查 | 静态检查、LLM 审查、缓存表、流式审查入口和兼容入口可用 |
-| AI 配置页 | Base URL、API Key 脱敏、模型列表、连接测试；已扩展为 Copilot Prompt、动作白名单与审计管理入口 |
+| AI 配置页 | Base URL、API Key 脱敏、模型列表、连接测试；已扩展为 Copilot Prompt 与动作白名单入口 |
 | 全局 Copilot 前端 | 分层 Context、悬浮入口、抽屉、Markdown 渲染、工具折叠、会话重置、POC/EXP 一键应用、pending_action 确认 UI 可用 |
-| Agent / Tool Calling 后端 | Agent 循环、模块 Profile、工具白名单、沙箱调试、安全审计、只读工具、草稿动作确认层、审计查询和 Prompt Registry 已实现 |
+| Agent / Tool Calling 后端 | Agent 循环、模块 Profile、工具白名单、沙箱调试、只读工具、草稿动作确认层和 Prompt Registry 已实现 |
 
 已落地的主要能力：
 
@@ -20,7 +20,7 @@
 - 工具面：文档检索、资产检索（`SearchAssets`）、任务洞察（`GetTaskInsight`）、Workflow 建议（`RecommendWorkflowRules`）、漏洞解释、节点容量分析、字典策略建议、Workflow 冲突检测等只读工具按模块挂载；`RunSandboxDebug` 复用 POC 调试通道并校验租户、节点状态、Agent 版本和目标。
 - 指纹/弹药库调试：Workflow 规则调试面板、`/arsenals/finger-debug` 入口和 Agent `start_fingerprint_debug` 流程；自定义 POC 调试在前端、Server、Agent 三层校验挂载信息和文件名边界。
 - 可控编辑：POC 应用 fenced `yaml`，EXP 只应用 fenced `yak` / `yaklang` 并校验 `cli.*` 与 `yaksha.result(`；EXP 修改先保留为内存草稿，通过离线 Fixture 验收后才能保存新的不可变 Draft Revision。
-- 审计闭环:`ai_tool_invocations` 记录租户、用户、模块、工具/动作、参数摘要（正文只存 hash 与长度）、耗时、状态；`GET /api/v1/ai/tool-invocations` 支持按角色过滤查询（operator 看自己，admin 看同租户）。
+- 高风险执行留痕改走 MCP 管理「调用审计」（`mcp_tool_invocations` / `GET /api/v1/mcp/admin/invocations`）。Copilot 对话工具不再写入独立审计表。
 
 ## 2. 架构现状
 
@@ -33,7 +33,6 @@ graph TD
         Drawer --> ChatAPI["POST /api/v1/ai/chat"]
         Drawer --> ActionAPI["POST /api/v1/ai/actions/confirm"]
         AIConfigPage["AI 配置 / Copilot 管理"] --> PromptAPI["GET /api/v1/ai/copilot/prompts"]
-        AIConfigPage --> AuditAPI["GET /api/v1/ai/tool-invocations"]
         PocPanel["POC 审查入口"] --> ReviewAPI["POST /api/v1/ai/arsenal/analyze / stream"]
     end
 
@@ -45,9 +44,6 @@ graph TD
         Router --> Agent["Agent QueryEngine + 模块工具白名单"]
         Analyzer --> ReviewStore["arsenal_ai_reviews"]
         ActionAPI --> ActionConfirm["草稿动作白名单执行"]
-        Agent --> AuditStore["ai_tool_invocations"]
-        ActionConfirm --> AuditStore
-        AuditAPI --> AuditStore
     end
 
     Agent --> NotifyHub["NotifyHub / Agent Debug Command"]

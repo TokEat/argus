@@ -509,16 +509,6 @@ export async function getCopilotPromptProfiles(): Promise<API.CopilotPromptRegis
     return request.get('/ai/copilot/prompts');
 }
 
-export async function listAIToolInvocations(params?: {
-    limit?: number;
-    offset?: number;
-    module?: string;
-    tool_name?: string;
-    status?: string;
-}): Promise<API.AIToolInvocationList> {
-    return request.get('/ai/tool-invocations', { params });
-}
-
 /** SSE streaming version of AI analysis — real-time token output */
 export function aiAnalyzeArsenalStream(
     data: API.AIAnalyzeRequest | string,
@@ -1132,6 +1122,19 @@ export async function listMcpAdminSessions(): Promise<API.McpAdminSession[]> {
 
 export async function revokeMcpAdminSession(sessionId: string): Promise<{ status: string; revoked_sessions: number }> {
     return request.post('/mcp/admin/sessions/revoke', { confirm: true, session_id: sessionId });
+}
+
+export async function listMcpAdminInvocations(params?: {
+    limit?: number;
+    offset?: number;
+    tool_name?: string;
+    user_id?: string;
+    client_id?: string;
+    status?: string;
+    since?: string;
+    until?: string;
+}): Promise<API.McpAdminInvocationList> {
+    return request.get('/mcp/admin/invocations', { params });
 }
 
 // ===========================

@@ -94,7 +94,7 @@
 - `POST /users`、`PUT /users/:id`、`DELETE /users/:id`
 - `GET /roles`、`POST /roles`、`PUT /roles/:name`、`DELETE /roles/:name`
 - `GET /mcp/keys`、`POST /mcp/keys`、`DELETE /mcp/keys/:id`
-- MCP 管理：`GET|PUT /mcp/admin/status`、`GET /mcp/admin/clients`、`POST /mcp/admin/clients/:id/{revoke,disable,enable}`、`DELETE /mcp/admin/clients/:id`、`GET /mcp/admin/sessions`、`POST /mcp/admin/sessions/revoke`。仅当前租户；关闭开关会撤销该租户全部 MCP 刷新令牌。`/mcp` 与 `/oauth/authorize`、`/oauth/token` 在本租户关闭或客户端被拉黑时拒绝。
+- MCP 管理：`GET|PUT /mcp/admin/status`、`GET /mcp/admin/clients`、`POST /mcp/admin/clients/:id/{revoke,disable,enable}`、`DELETE /mcp/admin/clients/:id`、`GET /mcp/admin/sessions`、`POST /mcp/admin/sessions/revoke`、`GET /mcp/admin/invocations`。仅当前租户；关闭开关会撤销该租户全部 MCP 刷新令牌。`/mcp` 与 `/oauth/authorize`、`/oauth/token` 在本租户关闭或客户端被拉黑时拒绝。调用审计只含高风险 tools/call，参数已脱敏。
 - `GET /config/api-keys`、`PUT /config/api-keys`
 - `GET /ai/config`、`PUT /ai/config`、`GET /ai/models`、`POST /ai/test`
 - `GET /build/artifacts`、`POST /build/client`、`POST /build/jobs/:id/cancel`、`POST /build/jobs/:id/retry`

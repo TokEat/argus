@@ -81,3 +81,23 @@ type MCPAdminEvent struct {
 }
 
 func (MCPAdminEvent) TableName() string { return "mcp_admin_events" }
+
+// MCPToolInvocation stores redacted high-risk MCP tools/call arguments.
+type MCPToolInvocation struct {
+	ID           string `gorm:"primaryKey;size:64"`
+	TenantID     string `gorm:"index;size:128;not null"`
+	UserID       string `gorm:"index;size:64;default:''"`
+	Role         string `gorm:"size:32;default:''"`
+	ClientID     string `gorm:"index;size:128;default:''"`
+	ToolName     string `gorm:"index;size:128;not null"`
+	Action       string `gorm:"size:32;default:''"`
+	Args         string `gorm:"type:text"`
+	AgentID      string `gorm:"size:255;default:''"`
+	Target       string `gorm:"type:text"`
+	DurationMS   int64
+	Status       string    `gorm:"index;size:32"`
+	ErrorSummary string    `gorm:"type:text"`
+	CreatedAt    time.Time `gorm:"index;autoCreateTime"`
+}
+
+func (MCPToolInvocation) TableName() string { return "mcp_tool_invocations" }

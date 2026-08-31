@@ -351,9 +351,9 @@ func schemaTableSpecs() []schemaTableSpec {
 			Indexes: []string{"idx_arsenal_ai_reviews_cache", "idx_arsenal_ai_reviews_content_hash", "idx_arsenal_ai_reviews_suggestion"},
 		},
 		{
-			Table:   "ai_tool_invocations",
-			Columns: []string{"tenant_id", "user_id", "module", "tool_name", "args_summary", "agent_id", "target_url", "duration_ms", "status", "error_summary", "created_at"},
-			Indexes: []string{"idx_ai_tool_invocations_tenant_id", "idx_ai_tool_invocations_user_id", "idx_ai_tool_invocations_module", "idx_ai_tool_invocations_tool_name", "idx_ai_tool_invocations_status"},
+			Table:   "mcp_tool_invocations",
+			Columns: []string{"id", "tenant_id", "user_id", "role", "client_id", "tool_name", "action", "args", "agent_id", "target", "duration_ms", "status", "error_summary", "created_at"},
+			Indexes: []string{"idx_mcp_tool_invocations_tenant_id", "idx_mcp_tool_invocations_user_id", "idx_mcp_tool_invocations_client_id", "idx_mcp_tool_invocations_tool_name", "idx_mcp_tool_invocations_status", "idx_mcp_tool_invocations_created_at"},
 		},
 		{
 			Table:   "custom_roles",

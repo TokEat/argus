@@ -162,7 +162,6 @@ func registerAPIV1Routes(api *gin.RouterGroup) {
 	api.POST("/ai/chat", globalAIChat)
 	api.POST("/ai/actions/confirm", confirmCopilotAction)
 	api.GET("/ai/copilot/prompts", getCopilotPromptProfiles)
-	api.GET("/ai/tool-invocations", listAIToolInvocations)
 
 	// Arsenal 弹药库热发车网关与审核墙
 	api.POST("/arsenals/ai/analyze", aiAnalyzeArsenal)
@@ -282,6 +281,7 @@ func registerAPIV1Routes(api *gin.RouterGroup) {
 	api.DELETE("/mcp/admin/clients/:id", mcpAdminDeleteClient)
 	api.GET("/mcp/admin/sessions", mcpAdminListSessions)
 	api.POST("/mcp/admin/sessions/revoke", mcpAdminRevokeSessions)
+	api.GET("/mcp/admin/invocations", mcpAdminListInvocations)
 
 	// 数据增强：趋势统计与报表
 	api.GET("/stats/trends", getVulnTrends)

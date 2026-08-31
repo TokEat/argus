@@ -51,7 +51,7 @@ func schemaModels() []interface{} {
 		&Arsenal{},
 		&ArsenalEvent{},
 		&ArsenalAIReview{},
-		&AIToolInvocation{},
+		&MCPToolInvocation{},
 		&User{},
 		&CustomRole{},
 		&TenantQuota{},

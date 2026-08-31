@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Typography, Table, Tag, Space, Button, Spin, Empty, Switch, message, Popconfirm, Drawer, Alert } from 'antd';
+import { Typography, Table, Tag, Space, Button, Spin, Empty, Switch, message, Popconfirm, Drawer, Alert, Tabs, Form, Input, Select } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
-import { ApiOutlined, CopyOutlined, ReloadOutlined } from '@ant-design/icons';
+import { ApiOutlined, AuditOutlined, CopyOutlined, EyeOutlined, ReloadOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
     deleteMcpAdminClient,
@@ -9,6 +9,7 @@ import {
     enableMcpAdminClient,
     getMcpAdminStatus,
     listMcpAdminClients,
+    listMcpAdminInvocations,
     listMcpAdminSessions,
     revokeMcpAdminClient,
     revokeMcpAdminSession,
@@ -26,13 +27,29 @@ const cursorConfigSnippet = (mcpUrl: string) => `{
   }
 }`;
 
+const formatTime = (value?: string) => {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString('zh-CN');
+};
+
 const McpManagement: React.FC = () => {
+    const [activeTab, setActiveTab] = useState('governance');
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [status, setStatus] = useState<API.McpAdminStatus | null>(null);
     const [clients, setClients] = useState<API.McpAdminClient[]>([]);
     const [sessions, setSessions] = useState<API.McpAdminSession[]>([]);
     const [sessionClient, setSessionClient] = useState<string | null>(null);
+    const [auditForm] = Form.useForm<{ tool_name?: string; user_id?: string; client_id?: string; status?: string }>();
+    const [auditLoading, setAuditLoading] = useState(false);
+    const [auditItems, setAuditItems] = useState<API.McpAdminInvocation[]>([]);
+    const [auditTotal, setAuditTotal] = useState(0);
+    const [auditPage, setAuditPage] = useState(1);
+    const [auditPageSize, setAuditPageSize] = useState(50);
+    const [auditFilters, setAuditFilters] = useState<{ tool_name?: string; user_id?: string; client_id?: string; status?: string }>({});
+    const [selectedAudit, setSelectedAudit] = useState<API.McpAdminInvocation | null>(null);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -52,7 +69,35 @@ const McpManagement: React.FC = () => {
         }
     }, []);
 
+    const fetchAudit = useCallback(async (
+        page: number,
+        pageSize: number,
+        filters: { tool_name?: string; user_id?: string; client_id?: string; status?: string },
+    ) => {
+        setAuditLoading(true);
+        try {
+            const normalized = Object.fromEntries(
+                Object.entries(filters).filter(([, value]) => typeof value === 'string' && value.trim() !== ''),
+            ) as { tool_name?: string; user_id?: string; client_id?: string; status?: string };
+            const resp = await listMcpAdminInvocations({
+                ...normalized,
+                limit: pageSize,
+                offset: (page - 1) * pageSize,
+            });
+            setAuditItems(resp.items || []);
+            setAuditTotal(resp.total || 0);
+            setAuditPage(page);
+            setAuditPageSize(pageSize);
+            setAuditFilters(normalized);
+        } catch (error) {
+            message.error(String(error));
+        } finally {
+            setAuditLoading(false);
+        }
+    }, []);
+
     useEffect(() => { load(); }, [load]);
+    useEffect(() => { fetchAudit(1, 50, {}); }, [fetchAudit]);
 
     const copyText = async (value: string, ok: string) => {
         try {
@@ -179,6 +224,149 @@ const McpManagement: React.FC = () => {
         },
     ];
 
+    const renderGovernance = () => (
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <ProCard className="glass-card" style={{ background: 'transparent', border: 'none' }}>
+                {loading && !status ? (
+                    <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 0' }}><Spin /></div>
+                ) : (
+                    <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                        <Space align="center">
+                            <Text>本租户 MCP</Text>
+                            <Switch
+                                checked={!!status?.enabled}
+                                loading={saving}
+                                onChange={(checked) => {
+                                    if (!checked) {
+                                        return;
+                                    }
+                                    handleToggle(true);
+                                }}
+                            />
+                            {!status?.enabled ? null : (
+                                <Popconfirm title="关闭后本租户无法授权或调用 /mcp，并立刻撤销全部刷新令牌。" onConfirm={() => handleToggle(false)}>
+                                    <Button size="small">关闭</Button>
+                                </Popconfirm>
+                            )}
+                            <Tag color={status?.enabled ? 'green' : 'red'}>{status?.enabled ? '已启用' : '已关闭'}</Tag>
+                            <Text type="secondary">活跃会话 {status?.session_count ?? 0}</Text>
+                        </Space>
+                        <Alert
+                            type="info"
+                            showIcon
+                            message="Cursor 用 url 连接 Server /mcp，不要把 JWT 写进 mcp.json。"
+                        />
+                        <Space wrap>
+                            <Text>接入地址</Text>
+                            <Text code>{status?.mcp_url || '-'}</Text>
+                            <Button size="small" icon={<CopyOutlined />} onClick={() => copyText(status?.mcp_url || '', '已复制 MCP 地址')}>复制</Button>
+                        </Space>
+                        <Text type="secondary">对外 public URL（只读，错了会导致 OAuth aud 对不上）：{status?.public_url || '-'}</Text>
+                        <Paragraph style={{ marginBottom: 0 }}>
+                            <pre style={{ margin: 0, padding: 12, background: '#0f172a', color: '#e2e8f0', borderRadius: 8, fontSize: 12 }}>
+                                {cursorConfigSnippet(status?.mcp_url || '')}
+                            </pre>
+                        </Paragraph>
+                        <Button size="small" icon={<CopyOutlined />} onClick={() => copyText(cursorConfigSnippet(status?.mcp_url || ''), '已复制 Cursor 配置')}>
+                            复制 mcp.json 示例
+                        </Button>
+                    </Space>
+                )}
+            </ProCard>
+
+            <ProCard className="glass-card" style={{ background: 'transparent', border: 'none' }} title="OAuth 客户端">
+                {loading && clients.length === 0 ? (
+                    <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 0' }}><Spin /></div>
+                ) : clients.length === 0 ? (
+                    <Empty description="暂无客户端" />
+                ) : (
+                    <Table rowKey="client_id" columns={columns} dataSource={clients} pagination={false} size="middle" />
+                )}
+            </ProCard>
+        </Space>
+    );
+
+    const renderAudit = () => (
+        <ProCard className="glass-card" style={{ background: 'transparent', border: 'none', padding: 0 }}>
+            <Form
+                form={auditForm}
+                layout="inline"
+                onFinish={(values) => fetchAudit(1, auditPageSize, values)}
+                style={{ marginBottom: 16, rowGap: 8 }}
+            >
+                <Form.Item name="tool_name" label="工具">
+                    <Input allowClear placeholder="如 argus_scan_create" style={{ width: 210 }} />
+                </Form.Item>
+                <Form.Item name="user_id" label="用户">
+                    <Input allowClear placeholder="user_id" style={{ width: 140 }} />
+                </Form.Item>
+                <Form.Item name="client_id" label="客户端">
+                    <Input allowClear placeholder="cursor" style={{ width: 140 }} />
+                </Form.Item>
+                <Form.Item name="status" label="状态">
+                    <Select
+                        allowClear
+                        placeholder="全部"
+                        style={{ width: 120 }}
+                        options={[
+                            { value: 'ok', label: 'ok' },
+                            { value: 'error', label: 'error' },
+                        ]}
+                    />
+                </Form.Item>
+                <Form.Item>
+                    <Space>
+                        <Button type="primary" htmlType="submit">筛选</Button>
+                        <Button onClick={() => { auditForm.resetFields(); fetchAudit(1, auditPageSize, {}); }}>重置</Button>
+                        <Button icon={<ReloadOutlined />} onClick={() => fetchAudit(auditPage, auditPageSize, auditFilters)} loading={auditLoading}>刷新</Button>
+                    </Space>
+                </Form.Item>
+            </Form>
+            <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message="只记录高风险 tools/call：behavior probe debug、scan create、rule publish、yaksha debug/run。参数已剥离密钥类字段。"
+            />
+            <Table
+                rowKey="id"
+                loading={auditLoading}
+                dataSource={auditItems}
+                pagination={{
+                    current: auditPage,
+                    pageSize: auditPageSize,
+                    total: auditTotal,
+                    showSizeChanger: true,
+                    pageSizeOptions: [20, 50, 100, 200],
+                    showTotal: (total) => `共 ${total} 条`,
+                    onChange: (page, pageSize) => fetchAudit(page, pageSize, auditFilters),
+                }}
+                locale={{ emptyText: '暂无高风险调用' }}
+                columns={[
+                    { title: '时间', dataIndex: 'created_at', width: 180, render: formatTime },
+                    { title: '用户', dataIndex: 'user_id', width: 100, render: (value: string) => value || '-' },
+                    { title: '客户端', dataIndex: 'client_id', width: 120, render: (value: string) => value || '-' },
+                    { title: '工具', dataIndex: 'tool_name', render: (value: string) => <Text code>{value}</Text> },
+                    { title: '动作', dataIndex: 'action', width: 90, render: (value: string) => value || '-' },
+                    {
+                        title: '状态',
+                        dataIndex: 'status',
+                        width: 90,
+                        render: (value: string) => <Tag color={value === 'ok' ? 'green' : 'red'}>{value || '-'}</Tag>,
+                    },
+                    { title: '耗时', dataIndex: 'duration_ms', width: 90, render: (value: number) => `${value || 0}ms` },
+                    {
+                        title: '操作',
+                        width: 110,
+                        render: (_: unknown, row: API.McpAdminInvocation) => (
+                            <Button size="small" icon={<EyeOutlined />} onClick={() => setSelectedAudit(row)}>详情</Button>
+                        ),
+                    },
+                ]}
+            />
+        </ProCard>
+    );
+
     return (
         <div style={{ position: 'relative', overflow: 'hidden' }}>
             <NetworkCanvas color="#0ea5e9" count={25} speed={0.12} linkDist={90} />
@@ -187,68 +375,19 @@ const McpManagement: React.FC = () => {
                     <ApiOutlined style={{ marginRight: 8, color: '#0ea5e9' }} />
                     MCP 管理
                 </Title>
-                <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新</Button>
+                <Button icon={<ReloadOutlined />} onClick={() => { load(); fetchAudit(auditPage, auditPageSize, auditFilters); }} loading={loading || auditLoading}>刷新</Button>
             </div>
 
-            <Space direction="vertical" size={16} style={{ width: '100%', position: 'relative', zIndex: 1 }}>
-                <ProCard className="glass-card" style={{ background: 'transparent', border: 'none' }}>
-                    {loading && !status ? (
-                        <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 0' }}><Spin /></div>
-                    ) : (
-                        <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                            <Space align="center">
-                                <Text>本租户 MCP</Text>
-                                <Switch
-                                    checked={!!status?.enabled}
-                                    loading={saving}
-                                    onChange={(checked) => {
-                                        if (!checked) {
-                                            return;
-                                        }
-                                        handleToggle(true);
-                                    }}
-                                />
-                                {!status?.enabled ? null : (
-                                    <Popconfirm title="关闭后本租户无法授权或调用 /mcp，并立刻撤销全部刷新令牌。" onConfirm={() => handleToggle(false)}>
-                                        <Button size="small">关闭</Button>
-                                    </Popconfirm>
-                                )}
-                                <Tag color={status?.enabled ? 'green' : 'red'}>{status?.enabled ? '已启用' : '已关闭'}</Tag>
-                                <Text type="secondary">活跃会话 {status?.session_count ?? 0}</Text>
-                            </Space>
-                            <Alert
-                                type="info"
-                                showIcon
-                                message="Cursor 用 url 连接 Server /mcp，不要把 JWT 写进 mcp.json。"
-                            />
-                            <Space wrap>
-                                <Text>接入地址</Text>
-                                <Text code>{status?.mcp_url || '-'}</Text>
-                                <Button size="small" icon={<CopyOutlined />} onClick={() => copyText(status?.mcp_url || '', '已复制 MCP 地址')}>复制</Button>
-                            </Space>
-                            <Text type="secondary">对外 public URL（只读，错了会导致 OAuth aud 对不上）：{status?.public_url || '-'}</Text>
-                            <Paragraph style={{ marginBottom: 0 }}>
-                                <pre style={{ margin: 0, padding: 12, background: '#0f172a', color: '#e2e8f0', borderRadius: 8, fontSize: 12 }}>
-                                    {cursorConfigSnippet(status?.mcp_url || '')}
-                                </pre>
-                            </Paragraph>
-                            <Button size="small" icon={<CopyOutlined />} onClick={() => copyText(cursorConfigSnippet(status?.mcp_url || ''), '已复制 Cursor 配置')}>
-                                复制 mcp.json 示例
-                            </Button>
-                        </Space>
-                    )}
-                </ProCard>
-
-                <ProCard className="glass-card" style={{ background: 'transparent', border: 'none' }} title="OAuth 客户端">
-                    {loading && clients.length === 0 ? (
-                        <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 0' }}><Spin /></div>
-                    ) : clients.length === 0 ? (
-                        <Empty description="暂无客户端" />
-                    ) : (
-                        <Table rowKey="client_id" columns={columns} dataSource={clients} pagination={false} size="middle" />
-                    )}
-                </ProCard>
-            </Space>
+            <div style={{ position: 'relative', zIndex: 1 }}>
+                <Tabs
+                    activeKey={activeTab}
+                    onChange={setActiveTab}
+                    items={[
+                        { key: 'governance', label: <span><ApiOutlined /> 接入治理</span>, children: renderGovernance() },
+                        { key: 'audit', label: <span><AuditOutlined /> 调用审计</span>, children: renderAudit() },
+                    ]}
+                />
+            </div>
 
             <Drawer title={sessionClient ? `会话 · ${sessionClient}` : '会话'} open={!!sessionClient} width={640} onClose={() => setSessionClient(null)}>
                 <Table
@@ -259,6 +398,23 @@ const McpManagement: React.FC = () => {
                     size="small"
                     locale={{ emptyText: '没有未过期的刷新令牌' }}
                 />
+            </Drawer>
+            <Drawer title="调用详情" width={760} open={!!selectedAudit} onClose={() => setSelectedAudit(null)}>
+                {selectedAudit && (
+                    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                        <Space>
+                            <Text code>{selectedAudit.tool_name}</Text>
+                            <Tag color={selectedAudit.status === 'ok' ? 'green' : 'red'}>{selectedAudit.status}</Tag>
+                        </Space>
+                        <Text type="secondary">{formatTime(selectedAudit.created_at)} · {selectedAudit.user_id || '-'} · {selectedAudit.client_id || '-'}</Text>
+                        {selectedAudit.error_summary ? <Alert type="error" showIcon message={selectedAudit.error_summary} /> : null}
+                        <Paragraph style={{ marginBottom: 0 }}>
+                            <pre style={{ margin: 0, padding: 12, background: '#0f172a', color: '#e2e8f0', borderRadius: 8, fontSize: 12, whiteSpace: 'pre-wrap' }}>
+                                {JSON.stringify(selectedAudit.args || {}, null, 2)}
+                            </pre>
+                        </Paragraph>
+                    </Space>
+                )}
             </Drawer>
         </div>
     );

@@ -828,25 +828,6 @@ declare namespace API {
     reference: string;
   }
 
-  interface AIToolInvocation {
-    id: number;
-    user_id: string;
-    module: string;
-    tool_name: string;
-    args_summary: string;
-    agent_id?: string;
-    target_url?: string;
-    duration_ms: number;
-    status: string;
-    error_summary?: string;
-    created_at: string;
-  }
-
-  interface AIToolInvocationList {
-    total: number;
-    items: AIToolInvocation[];
-  }
-
   interface DebugPocRequest {
     agent_id: string;
     poc_content: string;
@@ -1318,6 +1299,27 @@ declare namespace API {
     client_id: string;
     created_at: string;
     expires_at: string;
+  }
+
+  interface McpAdminInvocation {
+    id: string;
+    user_id: string;
+    role: string;
+    client_id: string;
+    tool_name: string;
+    action?: string;
+    args: Record<string, unknown>;
+    agent_id?: string;
+    target?: string;
+    duration_ms: number;
+    status: string;
+    error_summary?: string;
+    created_at: string;
+  }
+
+  interface McpAdminInvocationList {
+    total: number;
+    items: McpAdminInvocation[];
   }
 
   // ======================== Arsenal Manifest ========================

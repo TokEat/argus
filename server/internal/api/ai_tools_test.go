@@ -92,7 +92,7 @@ func setupAITestDB(t *testing.T) *gorm.DB {
 		&db.CredentialBundle{},
 		&db.CredentialFindingSecret{},
 		&db.CredentialRevealAudit{},
-		&db.AIToolInvocation{},
+		&db.MCPToolInvocation{},
 	); err != nil {
 		t.Fatalf("automigrate: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestExtractPendingActionsNormalizesAllowedSchemas(t *testing.T) {
 	}
 }
 
-func TestConfirmCopilotActionCreatesPOCDraftAndAudits(t *testing.T) {
+func TestConfirmCopilotActionCreatesPOCDraft(t *testing.T) {
 	store := setupAITestDB(t)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -161,16 +161,9 @@ func TestConfirmCopilotActionCreatesPOCDraftAndAudits(t *testing.T) {
 	if arsenal.State != "Draft" || !strings.Contains(arsenal.Content, "id: demo") {
 		t.Fatalf("unexpected arsenal %+v", arsenal)
 	}
-	var audit db.AIToolInvocation
-	if err := store.Where("tool_name = ?", "CopilotAction:create_poc_draft").First(&audit).Error; err != nil {
-		t.Fatalf("expected audit row: %v", err)
-	}
-	if strings.Contains(audit.ArgsSummary, "id: demo") || !strings.Contains(audit.ArgsSummary, "sha256") {
-		t.Fatalf("expected content hash in audit summary, got %s", audit.ArgsSummary)
-	}
 }
 
-func TestConfirmCopilotActionPreparesUnsavedExpDraftAndAudits(t *testing.T) {
+func TestConfirmCopilotActionPreparesUnsavedExpDraft(t *testing.T) {
 	store := setupAITestDB(t)
 	objects, err := storage.NewLocalStore(t.TempDir())
 	if err != nil {
@@ -226,16 +219,6 @@ func TestConfirmCopilotActionPreparesUnsavedExpDraftAndAudits(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"state":"in_memory"`) || !strings.Contains(rec.Body.String(), `"source_sha256"`) {
 		t.Fatalf("expected in-memory draft response, got %s", rec.Body.String())
-	}
-	var audit db.AIToolInvocation
-	if err := store.Where("tool_name = ?", "CopilotAction:create_exp_draft").First(&audit).Error; err != nil {
-		t.Fatalf("expected exp action audit row: %v", err)
-	}
-	if audit.Module != "exp_builder" {
-		t.Fatalf("expected exp_builder module audit, got %+v", audit)
-	}
-	if strings.Contains(audit.ArgsSummary, "authorized target") || !strings.Contains(audit.ArgsSummary, "sha256") {
-		t.Fatalf("expected content hash in exp audit summary, got %s", audit.ArgsSummary)
 	}
 }
 
@@ -387,43 +370,6 @@ func TestConfirmCopilotActionUpsertsDirDraft(t *testing.T) {
 	}
 }
 
-func TestListAIToolInvocationsIsScopedToOperatorUser(t *testing.T) {
-	store := setupAITestDB(t)
-	rows := []db.AIToolInvocation{
-		{TenantID: "default", UserID: "u1", Module: "poc_inline", ToolName: "CopilotAction:create_poc_draft", Status: "success", CreatedAt: time.Now()},
-		{TenantID: "default", UserID: "u2", Module: "poc_inline", ToolName: "CopilotAction:create_poc_draft", Status: "success", CreatedAt: time.Now()},
-	}
-	if err := store.Create(&rows).Error; err != nil {
-		t.Fatalf("seed audit rows: %v", err)
-	}
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.GET("/api/v1/ai/tool-invocations", func(c *gin.Context) {
-		c.Set("tenant", "default")
-		c.Set("user_id", "u1")
-		c.Set("role", "operator")
-		listAIToolInvocations(c)
-	})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/ai/tool-invocations?limit=10", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
-	}
-	var body struct {
-		Total int `json:"total"`
-		Items []struct {
-			UserID string `json:"user_id"`
-		} `json:"items"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("parse response: %v", err)
-	}
-	if body.Total != 1 || len(body.Items) != 1 || body.Items[0].UserID != "u1" {
-		t.Fatalf("expected operator to see own row only, got %+v", body)
-	}
-}
-
 func TestCopilotBusinessToolsAreTenantScoped(t *testing.T) {
 	store := setupAITestDB(t)
 	if err := store.Create(&db.Asset{TenantID: "default", Target: "example.com", Protocol: "https", Port: 443, URL: "https://example.com", Title: "Example", Service: "nginx", Status: "alive"}).Error; err != nil {
@@ -479,26 +425,6 @@ func TestCopilotTaskInsightAndWorkflowRecommendation(t *testing.T) {
 	recommendations := recommend.(map[string]interface{})["recommendations"].([]string)
 	if len(recommendations) == 0 || !strings.Contains(recommendations[0], "nginx") {
 		t.Fatalf("expected nginx workflow recommendation, got %+v", recommendations)
-	}
-}
-
-func TestAuditedCopilotToolRedactsPOCContent(t *testing.T) {
-	store := setupAITestDB(t)
-	tool := auditedCopilotTool(&RunSandboxDebugTool{TenantID: "default"}, AIToolAuditContext{TenantID: "default", UserID: "u1", Module: "poc_inline"})
-	_, _ = tool.Execute(context.Background(), []byte(`{"agent_id":"a1","target_url":"https://example.com","poc_content":"id: x"}`))
-
-	var rows []db.AIToolInvocation
-	if err := store.Find(&rows).Error; err != nil {
-		t.Fatalf("load audit: %v", err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("expected audit row, got %d", len(rows))
-	}
-	if rows[0].ToolName != "RunSandboxDebug" || rows[0].AgentID != "a1" || rows[0].TargetURL != "https://example.com" {
-		t.Fatalf("unexpected audit row: %+v", rows[0])
-	}
-	if strings.Contains(rows[0].ArgsSummary, "id: x") || !strings.Contains(rows[0].ArgsSummary, "sha256") {
-		t.Fatalf("expected redacted poc content hash, got %s", rows[0].ArgsSummary)
 	}
 }
 

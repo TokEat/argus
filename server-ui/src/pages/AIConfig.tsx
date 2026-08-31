@@ -19,7 +19,6 @@ import {
 } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
-    AuditOutlined,
     CloudSyncOutlined,
     EyeOutlined,
     FileTextOutlined,
@@ -31,7 +30,6 @@ import {
 import {
     getAIConfig,
     getCopilotPromptProfiles,
-    listAIToolInvocations,
     listAIModels,
     saveAIConfig,
     testAIConnection,
@@ -50,25 +48,11 @@ const baseURLHints = [
     { label: 'Ollama 本地', value: 'http://localhost:11434/v1' },
 ];
 
-const formatTime = (value?: string) => {
-    if (!value) return '-';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleString();
-};
-
-const statusColor = (status?: string) => {
-    if (status === 'success') return 'green';
-    if (status === 'error') return 'red';
-    return 'default';
-};
-
 const AIConfig: React.FC = () => {
     const [form] = Form.useForm<API.AIConfig>();
-    const [auditForm] = Form.useForm<{ module?: string; tool_name?: string; status?: string }>();
     const currentRole = getCurrentUserRole();
     const isAdmin = canAccessRole('admin', currentRole);
-    const defaultTab = isAdmin ? 'model' : 'audit';
+    const defaultTab = isAdmin ? 'model' : 'prompt';
     const [activeTab, setActiveTab] = useState(defaultTab);
 
     const [loading, setLoading] = useState(false);
@@ -84,14 +68,6 @@ const AIConfig: React.FC = () => {
     const [promptLoading, setPromptLoading] = useState(false);
     const [promptRegistry, setPromptRegistry] = useState<API.CopilotPromptRegistry | null>(null);
     const [selectedPrompt, setSelectedPrompt] = useState<API.CopilotPromptProfile | null>(null);
-
-    const [auditLoading, setAuditLoading] = useState(false);
-    const [auditItems, setAuditItems] = useState<API.AIToolInvocation[]>([]);
-    const [auditTotal, setAuditTotal] = useState(0);
-    const [auditPage, setAuditPage] = useState(1);
-    const [auditPageSize, setAuditPageSize] = useState(50);
-    const [auditFilters, setAuditFilters] = useState<{ module?: string; tool_name?: string; status?: string }>({});
-    const [selectedAudit, setSelectedAudit] = useState<API.AIToolInvocation | null>(null);
 
     const { message } = App.useApp();
     const fetchModels = useCallback(async (overrideBaseURL?: string, overrideAPIKey?: string) => {
@@ -146,40 +122,12 @@ const AIConfig: React.FC = () => {
         }
     }, [message]);
 
-    const fetchAudit = useCallback(async (
-        page: number,
-        pageSize: number,
-        filters: { module?: string; tool_name?: string; status?: string },
-    ) => {
-        setAuditLoading(true);
-        try {
-            const normalized = Object.fromEntries(
-                Object.entries(filters).filter(([, value]) => typeof value === 'string' && value.trim() !== ''),
-            ) as { module?: string; tool_name?: string; status?: string };
-            const resp = await listAIToolInvocations({
-                ...normalized,
-                limit: pageSize,
-                offset: (page - 1) * pageSize,
-            });
-            setAuditItems(resp.items || []);
-            setAuditTotal(resp.total || 0);
-            setAuditPage(page);
-            setAuditPageSize(pageSize);
-            setAuditFilters(normalized);
-        } catch (err: unknown) {
-            message.error(typeof err === 'string' ? err : '加载 Copilot 审计失败');
-        } finally {
-            setAuditLoading(false);
-        }
-    }, [message]);
-
     useEffect(() => {
         if (isAdmin) {
             fetchConfig();
         }
         fetchPromptRegistry();
-        fetchAudit(1, 50, {});
-    }, [fetchAudit, fetchConfig, fetchPromptRegistry, isAdmin]);
+    }, [fetchConfig, fetchPromptRegistry, isAdmin]);
 
     const handleFetchModels = () => {
         const baseURL = form.getFieldValue('base_url');
@@ -486,106 +434,6 @@ const AIConfig: React.FC = () => {
         </ProCard>
     );
 
-    const renderAuditTab = () => (
-        <ProCard className="glass-card" style={{ background: 'transparent', border: 'none', padding: 0 }}>
-            <Form
-                form={auditForm}
-                layout="inline"
-                onFinish={(values) => fetchAudit(1, auditPageSize, values)}
-                style={{ marginBottom: 16, rowGap: 8 }}
-            >
-                <Form.Item name="module" label="模块">
-                    <Input allowClear placeholder="如 poc_inline" style={{ width: 170 }} />
-                </Form.Item>
-                <Form.Item name="tool_name" label="工具/动作">
-                    <Input allowClear placeholder="如 node_capacity" style={{ width: 210 }} />
-                </Form.Item>
-                <Form.Item name="status" label="状态">
-                    <Select
-                        allowClear
-                        placeholder="全部"
-                        style={{ width: 130 }}
-                        options={[
-                            { value: 'success', label: 'success' },
-                            { value: 'error', label: 'error' },
-                        ]}
-                    />
-                </Form.Item>
-                <Form.Item>
-                    <Space>
-                        <Button type="primary" htmlType="submit">筛选</Button>
-                        <Button
-                            onClick={() => {
-                                auditForm.resetFields();
-                                fetchAudit(1, auditPageSize, {});
-                            }}
-                        >
-                            重置
-                        </Button>
-                        <Button icon={<ReloadOutlined />} onClick={() => fetchAudit(auditPage, auditPageSize, auditFilters)} loading={auditLoading}>
-                            刷新
-                        </Button>
-                    </Space>
-                </Form.Item>
-            </Form>
-
-            <Table
-                rowKey="id"
-                loading={auditLoading}
-                dataSource={auditItems}
-                pagination={{
-                    current: auditPage,
-                    pageSize: auditPageSize,
-                    total: auditTotal,
-                    showSizeChanger: true,
-                    pageSizeOptions: [20, 50, 100, 200],
-                    showTotal: (total) => `共 ${total} 条`,
-                    onChange: (page, pageSize) => fetchAudit(page, pageSize, auditFilters),
-                }}
-                columns={[
-                    {
-                        title: '时间',
-                        dataIndex: 'created_at',
-                        width: 180,
-                        render: formatTime,
-                    },
-                    {
-                        title: '模块',
-                        dataIndex: 'module',
-                        width: 150,
-                        render: (value: string) => value || '-',
-                    },
-                    {
-                        title: '工具/动作',
-                        dataIndex: 'tool_name',
-                        render: (value: string) => <Text code>{value}</Text>,
-                    },
-                    {
-                        title: '状态',
-                        dataIndex: 'status',
-                        width: 100,
-                        render: (value: string) => <Tag color={statusColor(value)}>{value || '-'}</Tag>,
-                    },
-                    {
-                        title: '耗时',
-                        dataIndex: 'duration_ms',
-                        width: 100,
-                        render: (value: number) => `${value || 0}ms`,
-                    },
-                    {
-                        title: '操作',
-                        width: 110,
-                        render: (_: unknown, row: API.AIToolInvocation) => (
-                            <Button size="small" icon={<EyeOutlined />} onClick={() => setSelectedAudit(row)}>
-                                详情
-                            </Button>
-                        ),
-                    },
-                ]}
-            />
-        </ProCard>
-    );
-
     const tabItems = [
         ...(isAdmin ? [{
             key: 'model',
@@ -596,11 +444,6 @@ const AIConfig: React.FC = () => {
             key: 'prompt',
             label: <span><FileTextOutlined /> Copilot Prompt</span>,
             children: renderPromptTab(),
-        },
-        {
-            key: 'audit',
-            label: <span><AuditOutlined /> 工具审计</span>,
-            children: renderAuditTab(),
         },
     ];
 
@@ -613,7 +456,7 @@ const AIConfig: React.FC = () => {
                     <Text strong>AI Copilot 管理</Text>
                     <Tag color={isAdmin ? 'gold' : 'blue'}>{isAdmin ? 'admin' : 'operator'}</Tag>
                 </Space>
-                {!isAdmin && <Text type="secondary">模型连接配置仅管理员可见；当前可管理 Prompt 与自己的审计记录。</Text>}
+                {!isAdmin && <Text type="secondary">模型连接配置仅管理员可见；当前可查看 Copilot Prompt。</Text>}
             </div>
 
             <div style={{ position: 'relative', zIndex: 1 }}>
@@ -643,36 +486,6 @@ const AIConfig: React.FC = () => {
                             <Text strong>最终 System Prompt</Text>
                             <Paragraph style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{selectedPrompt.system_prompt}</Paragraph>
                         </div>
-                    </Space>
-                )}
-            </Drawer>
-
-            <Drawer
-                title="审计详情"
-                width={720}
-                open={!!selectedAudit}
-                onClose={() => setSelectedAudit(null)}
-            >
-                {selectedAudit && (
-                    <Space direction="vertical" size={16} style={{ width: '100%' }}>
-                        <Descriptions column={1} bordered size="small" items={[
-                            { key: 'id', label: 'ID', children: selectedAudit.id },
-                            { key: 'created_at', label: '时间', children: formatTime(selectedAudit.created_at) },
-                            { key: 'user_id', label: '用户', children: selectedAudit.user_id || '-' },
-                            { key: 'module', label: '模块', children: selectedAudit.module || '-' },
-                            { key: 'tool_name', label: '工具/动作', children: selectedAudit.tool_name || '-' },
-                            { key: 'status', label: '状态', children: <Tag color={statusColor(selectedAudit.status)}>{selectedAudit.status}</Tag> },
-                            { key: 'duration', label: '耗时', children: `${selectedAudit.duration_ms || 0}ms` },
-                            { key: 'agent', label: 'Agent', children: selectedAudit.agent_id || '-' },
-                            { key: 'target', label: 'Target URL', children: selectedAudit.target_url || '-' },
-                        ]} />
-                        <div>
-                            <Text strong>参数摘要</Text>
-                            <Paragraph style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{selectedAudit.args_summary || '-'}</Paragraph>
-                        </div>
-                        {selectedAudit.error_summary && (
-                            <Alert type="error" showIcon message="错误摘要" description={selectedAudit.error_summary} />
-                        )}
                     </Space>
                 )}
             </Drawer>

@@ -13,7 +13,8 @@ import (
 func registerMCPHTTP(r *gin.Engine) {
 	handler := sdkmcp.NewStreamableHTTPHandler(func(req *http.Request) *sdkmcp.Server {
 		token := bearerToken(req.Header.Get("Authorization"))
-		return argusmcp.NewServer(publicAPIBase(), token)
+		identity := mcpIdentityFromBearer(token)
+		return argusmcp.NewServer(publicAPIBase(), token, argusmcp.WithToolAuditor(identity))
 	}, &sdkmcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 	serve := func(c *gin.Context) {
 		if !authenticateMCPRequest(c) {
@@ -25,11 +26,22 @@ func registerMCPHTTP(r *gin.Engine) {
 	r.Any("/mcp/*path", serve)
 }
 
-func authenticateMCPRequest(c *gin.Context) bool {
-	tokenString := bearerToken(c.GetHeader("Authorization"))
-	if tokenString == "" {
-		writeMCPUnauthorized(c)
-		return false
+func mcpIdentityFromBearer(tokenString string) mcpHTTPToolAuditor {
+	claims, ok := parseMCPAccessClaims(tokenString)
+	if !ok {
+		return mcpHTTPToolAuditor{}
+	}
+	return mcpHTTPToolAuditor{
+		tenantID: normalizeTenantID(jwtStringClaim(claims, "tenant_id")),
+		userID:   jwtStringClaim(claims, "user_id"),
+		role:     jwtStringClaim(claims, "role"),
+		clientID: jwtStringClaim(claims, "client_id"),
+	}
+}
+
+func parseMCPAccessClaims(tokenString string) (jwt.MapClaims, bool) {
+	if strings.TrimSpace(tokenString) == "" {
+		return nil, false
 	}
 	token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -37,11 +49,19 @@ func authenticateMCPRequest(c *gin.Context) bool {
 		}
 		return currentJWTSecret(), nil
 	})
-	if err != nil || !token.Valid {
-		writeMCPUnauthorized(c)
-		return false
+	if err != nil || token == nil || !token.Valid {
+		return nil, false
 	}
 	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, false
+	}
+	return claims, true
+}
+
+func authenticateMCPRequest(c *gin.Context) bool {
+	tokenString := bearerToken(c.GetHeader("Authorization"))
+	claims, ok := parseMCPAccessClaims(tokenString)
 	if !ok || !tokenAllowsMCP(claims) {
 		writeMCPUnauthorized(c)
 		return false
