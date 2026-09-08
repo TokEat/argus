@@ -33,6 +33,8 @@ type Runtime struct {
 	WorkFlowDB             map[string]structs.WorkFlowEntity
 	DirFallbackResultMap   map[string][]string
 	DirFallbackResultMapMu *sync.Mutex
+	DirEvidenceResultMap   map[string][]string
+	DirEvidenceResultMapMu *sync.Mutex
 	// CDNHosts holds lowercased hostnames classified as CDN so emitted Web /
 	// Domain-Bind messages can carry the "cdn" asset tag.
 	CDNHosts map[string]struct{}
@@ -78,6 +80,8 @@ func NewRuntime(
 		WorkFlowDB:             workFlowDB,
 		DirFallbackResultMap:   dirFallbackResultMap,
 		DirFallbackResultMapMu: dirFallbackResultMapMu,
+		DirEvidenceResultMap:   make(map[string][]string),
+		DirEvidenceResultMapMu: &sync.Mutex{},
 		emit:                   emit,
 		fingerprintByProduct:   make(map[string][]structs.FingerPEntity),
 		redirectURLSet:         make(map[string]struct{}),
@@ -98,7 +102,7 @@ func (rt *Runtime) URLCallback(resp runner.Result) {
 
 	rt.collectRedirectLocation(resp)
 
-	_, inserted := rt.upsertResponse(resp)
+	_, inserted := rt.upsertResponse(resp, true)
 	if !inserted {
 		return
 	}
@@ -145,26 +149,31 @@ func (rt *Runtime) DirBruteCallback(resp runner.Result) {
 	}
 
 	matched := make([]string, 0, 2)
+	catchAll := rt.isHomepageCatchAll(resp)
 	for _, path := range rt.matchingDirPaths(resp.Path) {
 		for _, productName := range rt.DirDB[path] {
-			success := rt.matchesProduct(resp, productName)
+			success := !catchAll && rt.matchesProduct(resp, productName)
 
 			if success {
-				rt.upsertResponse(resp)
+				rootURL, _ := rt.upsertResponse(resp, false)
 				rt.emit(ddout.OutputMessage{
 					Type: "Active-Finger",
 					Web: structs.WebInfo{
 						Status: strconv.Itoa(resp.StatusCode),
 						Title:  resp.Title,
 					},
-					Finger: []string{productName},
-					URI:    resp.URL,
+					Finger:        []string{productName},
+					URI:           resp.URL,
+					AdditionalMsg: "[directory-probe]",
 				})
+				if rootURL != "" {
+					rt.addDirEvidence(rootURL+normalizedPath(resp), productName)
+				}
 				matched = append(matched, productName)
 				continue
 			}
 
-			if resp.StatusCode != 200 {
+			if catchAll || resp.StatusCode != 200 {
 				continue
 			}
 			workflowEntity, ok := rt.WorkFlowDB[productName]
@@ -172,7 +181,7 @@ func (rt *Runtime) DirBruteCallback(resp runner.Result) {
 				continue
 			}
 
-			rootURL, _ := rt.upsertResponse(resp)
+			rootURL, _ := rt.upsertResponse(resp, false)
 			if rootURL == "" {
 				continue
 			}
@@ -291,7 +300,7 @@ func (rt *Runtime) HostBindCallback(resp runner.Result) {
 		})
 	}
 
-	rt.upsertResponse(resp)
+	rt.upsertResponse(resp, true)
 }
 
 // assetTag returns the special asset class for a probed URL, currently "cdn"
@@ -308,6 +317,46 @@ func (rt *Runtime) assetTag(rawURL string) string {
 		return "cdn"
 	}
 	return ""
+}
+
+// isHomepageCatchAll reports a directory probe that returned the same page as
+// the already-recorded site root. Catch-all auth gates and SPA/history fallback
+// pages share that signature and must not fan out into product fingerprints.
+func (rt *Runtime) isHomepageCatchAll(resp runner.Result) bool {
+	if rt == nil {
+		return false
+	}
+	hash := hashValue(resp, "body_md5")
+	if hash == "" {
+		return false
+	}
+	parsed, err := url.Parse(responseURL(resp))
+	if err != nil {
+		return false
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+	rootURL := fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
+	path := normalizedPath(resp)
+	if path == "/" {
+		return false
+	}
+
+	rt.lockURLMap()
+	defer rt.unlockURLMap()
+	entry, ok := rt.URLMap[rootURL]
+	if !ok || entry.WebPaths == nil {
+		return false
+	}
+	home, ok := entry.WebPaths["/"]
+	if !ok || home.Hash == "" || home.Hash != hash {
+		return false
+	}
+	if home.StatusCode != 0 && home.StatusCode != resp.StatusCode {
+		return false
+	}
+	return true
 }
 
 func (rt *Runtime) matchingDirPaths(respPath string) []string {
@@ -392,7 +441,7 @@ func (rt *Runtime) matchesProduct(resp runner.Result, productName string) bool {
 	return false
 }
 
-func (rt *Runtime) upsertResponse(resp runner.Result) (string, bool) {
+func (rt *Runtime) upsertResponse(resp runner.Result, natural bool) (string, bool) {
 	finalURL := responseURL(resp)
 	URL, err := url.Parse(finalURL)
 	if err != nil {
@@ -423,6 +472,7 @@ func (rt *Runtime) upsertResponse(resp runner.Result) (string, bool) {
 		ContentLength:    resp.ContentLength,
 		HeaderHashString: headerHash,
 		IconHash:         resp.FavIconMMH3,
+		Natural:          natural,
 	}
 
 	port := responsePort(URL, resp.Port)
@@ -435,10 +485,16 @@ func (rt *Runtime) upsertResponse(resp runner.Result) (string, bool) {
 			urlEntry.WebPaths = make(map[string]structs.UrlPathEntity)
 		}
 		if existingPath, pathOK := urlEntry.WebPaths[path]; pathOK {
+			pathEntity.Natural = existingPath.Natural || natural
 			if shouldReplaceWebPath(existingPath, pathEntity) {
 				urlEntry.WebPaths[path] = pathEntity
 				rt.URLMap[rootURL] = urlEntry
 				return rootURL, true
+			}
+			if pathEntity.Natural != existingPath.Natural {
+				existingPath.Natural = pathEntity.Natural
+				urlEntry.WebPaths[path] = existingPath
+				rt.URLMap[rootURL] = urlEntry
 			}
 			return rootURL, false
 		}
@@ -510,20 +566,29 @@ func (rt *Runtime) isNewHostBind(resp runner.Result) bool {
 }
 
 func (rt *Runtime) addDirFallback(rootURL string, productName string) {
-	if rt.DirFallbackResultMap == nil {
+	appendUniqueProduct(&rt.DirFallbackResultMap, rt.DirFallbackResultMapMu, rootURL, productName)
+}
+
+func (rt *Runtime) addDirEvidence(fullURL string, productName string) {
+	appendUniqueProduct(&rt.DirEvidenceResultMap, rt.DirEvidenceResultMapMu, fullURL, productName)
+}
+
+func appendUniqueProduct(dst *map[string][]string, mu *sync.Mutex, key, productName string) {
+	if dst == nil || key == "" || productName == "" {
 		return
 	}
-
-	if rt.DirFallbackResultMapMu != nil {
-		rt.DirFallbackResultMapMu.Lock()
-		defer rt.DirFallbackResultMapMu.Unlock()
+	if mu != nil {
+		mu.Lock()
+		defer mu.Unlock()
 	}
-
-	existing := rt.DirFallbackResultMap[rootURL]
+	if *dst == nil {
+		*dst = make(map[string][]string)
+	}
+	existing := (*dst)[key]
 	if utils.GetItemInArray(existing, productName) != -1 {
 		return
 	}
-	rt.DirFallbackResultMap[rootURL] = append(existing, productName)
+	(*dst)[key] = append(existing, productName)
 }
 
 func (rt *Runtime) lockURLMap() {

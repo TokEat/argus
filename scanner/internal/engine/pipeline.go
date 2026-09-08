@@ -403,21 +403,8 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		return err
 	}
 
-	// 合并 dir-fallback 指纹
-	resultMap := currentPipelineResultMap(ctx)
-	for target, fingers := range currentPipelineDirFallbackResultMap(ctx) {
-		existing, ok := resultMap[target]
-		if ok {
-			for _, f := range fingers {
-				if utils.GetItemInArray(existing, f) == -1 {
-					existing = append(existing, f)
-				}
-			}
-			resultMap[target] = existing
-		} else {
-			resultMap[target] = fingers
-		}
-	}
+	// 合并目录探测中具有独立内容证据的产品。dir-fallback 只作观察，不进入 ResultMap。
+	resultMap := mergeProductHits(currentPipelineResultMap(ctx), currentPipelineDirEvidenceResultMap(ctx))
 	setPipelineResultMap(ctx, resultMap)
 	for target, fingers := range resultMap {
 		ddout.MergeWEBFingers(target, fingers)
@@ -514,6 +501,24 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 	}
 
 	return nil
+}
+
+func mergeProductHits(dst map[string][]string, src map[string][]string) map[string][]string {
+	if dst == nil {
+		dst = make(map[string][]string)
+	}
+	for target, fingers := range src {
+		existing := dst[target]
+		for _, finger := range fingers {
+			if utils.GetItemInArray(existing, finger) == -1 {
+				existing = append(existing, finger)
+			}
+		}
+		if len(existing) > 0 {
+			dst[target] = existing
+		}
+	}
+	return dst
 }
 
 func buildDirProbeURLs(aliveURLs []string, dirDB map[string][]string) []string {

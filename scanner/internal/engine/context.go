@@ -26,6 +26,7 @@ import (
 //	httpx.GlobalUsedUrl          → ctx.httpURLVisits（仅通过 TryVisitHTTPURL 访问）
 //	structs.GlobalResultMap      → ctx.ResultMap
 //	structs.DirFallbackResultMap → ctx.DirFallbackResultMap
+//	structs.DirEvidenceResultMap → ctx.DirEvidenceResultMap
 //	structs.GoPocsResults        → ctx.GoPocsResults
 //	structs.GlobalBannerHMap     → ctx.BannerHMap
 //	structs.GlobalHttpBodyHMap   → ctx.BodyHMap
@@ -83,10 +84,13 @@ type ScanContext struct {
 	// ResultMap Target → []Fingerprint (指纹识别结果)
 	ResultMap map[string][]string
 
-	// DirFallbackResultMap 存储 dir-fallback 标记的指纹
-	// 在 FingerprintIdentification 之后合并到 ResultMap
+	// DirFallbackResultMap 存储 dir-fallback 观察（不合并进 ResultMap）。
 	DirFallbackResultMap     map[string][]string
 	DirFallbackResultMapLock sync.Mutex
+
+	// DirEvidenceResultMap 目录探测在独立内容证据下确认的产品，合并进 ResultMap。
+	DirEvidenceResultMap     map[string][]string
+	DirEvidenceResultMapLock sync.Mutex
 
 	// GoPocsResults 存储 Go Poc 的检测结果
 	GoPocsResults []GoPocsResultType
@@ -186,6 +190,7 @@ func NewScanContext(cfg Config) (*ScanContext, error) {
 		httpURLVisits:        make(map[string]struct{}),
 		ResultMap:            make(map[string][]string),
 		DirFallbackResultMap: make(map[string][]string),
+		DirEvidenceResultMap: make(map[string][]string),
 
 		BannerHMap: stores.Banner,
 		BodyHMap:   stores.Body,
@@ -252,6 +257,10 @@ func (sc *ScanContext) Reset() {
 	sc.DirFallbackResultMapLock.Lock()
 	sc.DirFallbackResultMap = make(map[string][]string)
 	sc.DirFallbackResultMapLock.Unlock()
+
+	sc.DirEvidenceResultMapLock.Lock()
+	sc.DirEvidenceResultMap = make(map[string][]string)
+	sc.DirEvidenceResultMapLock.Unlock()
 
 	sc.ResultMap = make(map[string][]string)
 	sc.GoPocsResults = nil

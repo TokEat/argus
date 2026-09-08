@@ -28,6 +28,8 @@ func currentWebRuntime(ctx *ScanContext, emit func(structs.OutputMessage)) *web.
 	)
 	if ctx != nil {
 		rt.ReportAllDirProbes = ctx.ReportAllDirProbes
+		rt.DirEvidenceResultMap = ctx.DirEvidenceResultMap
+		rt.DirEvidenceResultMapMu = &ctx.DirEvidenceResultMapLock
 	}
 	return rt
 }
@@ -84,8 +86,8 @@ func setPipelineResultMap(ctx *ScanContext, resultMap map[string][]string) {
 	ctx.ResultMap = resultMap
 }
 
-func currentPipelineDirFallbackResultMap(ctx *ScanContext) map[string][]string {
-	return ctx.DirFallbackResultMap
+func currentPipelineDirEvidenceResultMap(ctx *ScanContext) map[string][]string {
+	return ctx.DirEvidenceResultMap
 }
 
 func currentPipelineWorkflowDB(ctx *ScanContext) map[string]structs.WorkFlowEntity {

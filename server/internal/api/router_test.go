@@ -2516,7 +2516,7 @@ func TestGetFingerprintsGroupsSearchAndMarkDirectorySource(t *testing.T) {
 	if len(searchResp.Items[0].Sources) != 1 || searchResp.Items[0].Sources[0] != db.FingerprintSourceDirectory {
 		t.Fatalf("expected directory source on Jenkins group, got %+v", searchResp.Items[0])
 	}
-	if searchResp.Items[0].SourceLabels[0] != "主动指纹（目录扫描）" {
+	if searchResp.Items[0].SourceLabels[0] != "主动路径" {
 		t.Fatalf("expected directory source label, got %+v", searchResp.Items[0].SourceLabels)
 	}
 	if searchResp.Items[0].Targets[0].MatchedURL != "https://jenkins.example/jenkins/login" || searchResp.Items[0].Targets[0].Source != db.FingerprintSourceDirectory {

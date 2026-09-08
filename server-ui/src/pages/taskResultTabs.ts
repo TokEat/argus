@@ -66,7 +66,7 @@ export type FingerprintSource = 'passive' | 'directory' | 'behavior' | 'fallback
 
 export const FINGERPRINT_SOURCE_LABELS: Record<FingerprintSource, string> = {
     passive: '被动命中',
-    directory: '主动指纹（目录扫描）',
+    directory: '主动路径',
     behavior: '行为探针',
     fallback: '路径推断',
 };

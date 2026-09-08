@@ -15,6 +15,11 @@ func TestClassifyFingerprintSourceFromEvidence(t *testing.T) {
 			want:     FingerprintSourceDirectory,
 		},
 		{
+			name:     "directory probe with independent-evidence tag",
+			evidence: `{"type":"Active-Finger","uri":"https://example.test/nacos/","am":"[directory-probe]","finger":["Alibaba-Nacos"]}`,
+			want:     FingerprintSourceDirectory,
+		},
+		{
 			name:     "directory probe from rule name",
 			ruleName: "Active-Finger",
 			evidence: `{"uri":"https://example.test/druid"}`,

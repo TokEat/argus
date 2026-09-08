@@ -349,7 +349,7 @@ argus -a 172.16.120.11:3307 -nopoc -nogpoc
 | Argus HTML 扫描报告 | `<timestamp>.html` | `-ho` 更改文件名；资产、服务、Web、指纹和漏洞证据均在同一页面 |
 | 审计日志 | `audit_YYYYMMDD_HHMMSS.log`（需 `-a` 开启） | `-alf` 更改文件名 |
 
-> 每次 CLI 运行只生成一份权威 HTML，不再拆分为当前目录的漏洞页和 `datas/` 下的资产页。`result.txt` 仍会实时持久化；HTML 在运行收敛后原子写入。报告按“服务边界 + 产品”归并重复指纹，同一产品只计数一次，展开后仍保留被动命中、主动确认和较低置信度的路径推断来源；原始 `Finger` / `Active-Finger` 事件继续保留在 `result.txt`。Nuclei 的全部 HTTP/Network 多步骤 packet/request/response 会保留，二进制 TCP 证据以可恢复的 hex-dump 展示；GoPoc 的 `InfoLeft`、`InfoRight`、`ShowMsg` 继续作为摘要保留，扫描器能够直接观测到的成功验证收发包会以结构化 `go_poc.exchanges` 同时写入 JSON 和 HTML。使用第三方协议客户端且 Argus 无法取得原始帧的插件只展示真实可得的验证摘要，不会把摘要或推测内容冒充网络包。普通 POC-off 扫描也会生成报告，但漏洞区为空且不会暗示已完成漏洞验证。
+> 每次 CLI 运行只生成一份权威 HTML，不再拆分为当前目录的漏洞页和 `datas/` 下的资产页。`result.txt` 仍会实时持久化；HTML 在运行收敛后原子写入。报告按“服务边界 + 产品”归并重复指纹，同一产品只计数一次，展开后仍保留被动命中、主动路径、行为探针和较低置信度的路径推断来源；原始 `Finger` / `Active-Finger` 事件继续保留在 `result.txt`。Nuclei 的全部 HTTP/Network 多步骤 packet/request/response 会保留，二进制 TCP 证据以可恢复的 hex-dump 展示；GoPoc 的 `InfoLeft`、`InfoRight`、`ShowMsg` 继续作为摘要保留，扫描器能够直接观测到的成功验证收发包会以结构化 `go_poc.exchanges` 同时写入 JSON 和 HTML。使用第三方协议客户端且 Argus 无法取得原始帧的插件只展示真实可得的验证摘要，不会把摘要或推测内容冒充网络包。普通 POC-off 扫描也会生成报告，但漏洞区为空且不会暗示已完成漏洞验证。
 
 ---
 

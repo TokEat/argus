@@ -328,21 +328,13 @@ func SingleCheck(finger structs.FingerPEntity, Protocol string, headerString str
 }
 
 // DirProbeCheck evaluates a fingerprint against a directory-probe response.
-// Path-only rules are not enough: the scanner chose the path. Generic denial
-// pages (403/404/5xx) that merely echo the probe path are also rejected.
+// The scanner chose the path, so path= clauses and body/title values derived
+// from that path are never evidence. A product must still prove itself with
+// path-independent content (title, cookie/header, icon, distinctive body).
 func DirProbeCheck(finger structs.FingerPEntity, Protocol string, headerString string, body string,
 	Server string, Title string, Cert string, Port int, Path string, Hash string, IconHash string, StatusCode int,
 	ContentType string, Banner string) bool {
 	return evalFinger(finger, Protocol, headerString, body, Server, Title, Cert, Port, Path, Hash, IconHash, StatusCode, ContentType, Banner, true)
-}
-
-func isGenericDenialStatus(code int) bool {
-	switch code {
-	case 400, 403, 404, 405, 408, 429, 500, 501, 502, 503, 504, 507, 508, 520, 521, 522, 523, 524, 525, 526, 527, 530:
-		return true
-	default:
-		return false
-	}
 }
 
 func isContentEvidenceKey(key string) bool {
@@ -354,24 +346,64 @@ func isContentEvidenceKey(key string) bool {
 	}
 }
 
+func normalizeProbePath(path string) string {
+	path = strings.ToLower(strings.TrimSpace(path))
+	if path == "" {
+		return ""
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return strings.TrimSuffix(path, "/")
+}
+
 func isProbePathReflection(ruleValue, probePath string) bool {
 	value := strings.ToLower(strings.TrimSpace(strings.Trim(ruleValue, `"'`)))
-	path := strings.ToLower(strings.TrimSpace(probePath))
+	path := normalizeProbePath(probePath)
 	if value == "" || path == "" || path == "/" {
 		return false
 	}
 	value = strings.TrimSuffix(value, "/")
-	path = strings.TrimSuffix(path, "/")
-	if value == "" || path == "" {
+	if value == "" {
 		return false
 	}
-	if value == path || value == strings.TrimPrefix(path, "/") {
+	if value == path {
 		return true
 	}
-	if strings.HasPrefix(value, "/") && (strings.Contains(path, value) || strings.Contains(value, path)) {
+	if strings.Contains(value, path+"/") || strings.HasSuffix(value, path) || strings.Contains(value, path+"?") {
+		return true
+	}
+	if strings.HasPrefix(value, "/") && (strings.HasPrefix(path, value) || strings.HasPrefix(value, path) || value == strings.TrimPrefix(path, "/")) {
 		return true
 	}
 	return false
+}
+
+func isProbePathBodyToken(ruleValue, probePath string) bool {
+	value := strings.ToLower(strings.TrimSpace(strings.Trim(ruleValue, `"'`)))
+	path := normalizeProbePath(probePath)
+	if value == "" || path == "" || path == "/" {
+		return false
+	}
+	if strings.ContainsAny(value, "/?#") {
+		return false
+	}
+	for _, part := range strings.Split(path, "/") {
+		if part == "" || !isSignificantProbeToken(part) {
+			continue
+		}
+		if value == part {
+			return true
+		}
+	}
+	return false
+}
+
+func isSignificantProbeToken(value string) bool {
+	if strings.ContainsAny(value, "/._-") {
+		return len(value) >= 2
+	}
+	return len([]rune(value)) >= 4
 }
 
 func evalFinger(finger structs.FingerPEntity, Protocol string, headerString string, body string,
@@ -380,7 +412,6 @@ func evalFinger(finger structs.FingerPEntity, Protocol string, headerString stri
 	rules := finger.Rule
 	expr := finger.AllString
 	contentEvidence := false
-	genericDenial := dirProbe && isGenericDenialStatus(StatusCode)
 
 	for _, singleRule := range rules {
 		if singleRule.Start < 0 || singleRule.End > len(expr) || singleRule.Start > singleRule.End {
@@ -455,8 +486,17 @@ func evalFinger(finger structs.FingerPEntity, Protocol string, headerString stri
 				singleRuleResult = true
 			}
 		}
-		if dirProbe && genericDenial && (singleRule.Key == "body" || singleRule.Key == "title") && isProbePathReflection(singleRule.Value, Path) {
-			singleRuleResult = false
+		if dirProbe && singleRule.Op != 1 {
+			switch singleRule.Key {
+			case "title":
+				if isProbePathReflection(singleRule.Value, Path) {
+					singleRuleResult = false
+				}
+			case "body":
+				if isProbePathReflection(singleRule.Value, Path) || isProbePathBodyToken(singleRule.Value, Path) {
+					singleRuleResult = false
+				}
+			}
 		}
 		if singleRuleResult && isContentEvidenceKey(singleRule.Key) {
 			contentEvidence = true

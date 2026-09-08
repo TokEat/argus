@@ -253,6 +253,10 @@ type UrlPathEntity struct {
 	Server           string
 	ContentLength    int
 	HeaderHashString string
+	// Natural is true when this path was observed without the scanner choosing
+	// it (homepage or same-origin redirect). Directory-probe responses stay false
+	// so Identify() does not treat them as passive evidence.
+	Natural bool
 }
 
 type URLEntity struct {
@@ -307,9 +311,15 @@ var DirDB map[string][]string
 // GlobalResultMap 存储识别到的指纹
 var GlobalResultMap map[string][]string
 
-// DirFallbackResultMap 存储dir-fallback标记的指纹（在FingerprintIdentification之后合并到GlobalResultMap）
+// DirFallbackResultMap 存储 dir-fallback 观察（路径 200 但无独立内容证据）。
+// 不再合并进 ResultMap，避免无指纹 200 驱动 POC。
 var DirFallbackResultMap map[string][]string
 var DirFallbackResultMapLock sync.Mutex
+
+// DirEvidenceResultMap 存储目录探测在独立内容证据下确认的产品（探测 URL → 产品）。
+// 在正式指纹阶段之后合并进 ResultMap，供 Workflow/POC 使用。
+var DirEvidenceResultMap map[string][]string
+var DirEvidenceResultMapLock sync.Mutex
 
 type GoPocsResultType struct {
 	PocName     string

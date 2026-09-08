@@ -791,3 +791,219 @@ func TestHostBindCallbackStoresChangedBinding(t *testing.T) {
 		t.Fatalf("expected host bind path to be recorded")
 	}
 }
+
+func TestURLCallbackMarksHomepageNatural(t *testing.T) {
+	urlMap := make(map[string]structs.URLEntity)
+	rt := NewRuntime(urlMap, &sync.Mutex{}, nil, nil, nil, nil, nil, nil, map[string][]string{}, &sync.Mutex{}, nil)
+	rt.URLCallback(runner.Result{
+		URL:        "http://example.com/",
+		Scheme:     "http",
+		Host:       "example.com",
+		Port:       "80",
+		Path:       "/",
+		StatusCode: 200,
+		Hashes:     map[string]interface{}{"body_md5": "home", "header_md5": "hdr"},
+	})
+	if !urlMap["http://example.com"].WebPaths["/"].Natural {
+		t.Fatal("homepage from HTTP probe must be marked natural")
+	}
+}
+
+func TestDirBruteCallbackDoesNotMarkGeneric401AsProducts(t *testing.T) {
+	urlMap := map[string]structs.URLEntity{
+		"https://edu.example": {
+			IP:   "1.1.1.1",
+			Port: 443,
+			WebPaths: map[string]structs.UrlPathEntity{
+				"/": {Hash: "auth-gate", StatusCode: 401, Title: "401 Unauthorized", Natural: true},
+			},
+		},
+	}
+	var emitted []structs.OutputMessage
+	rt := NewRuntime(
+		urlMap,
+		&sync.Mutex{},
+		nil, nil, nil,
+		map[string][]string{
+			"/airflow/":       {"APACHE-Airflow"},
+			"/geoserver/web/": {"GeoServer"},
+			"/nacos/":         {"Alibaba-Nacos"},
+		},
+		[]structs.FingerPEntity{
+			{ProductName: "APACHE-Airflow", AllString: `body="airflow"`, Rule: ddfinger.ParseRule(`body="airflow"`)},
+			{ProductName: "GeoServer", AllString: `body="/geoserver/"`, Rule: ddfinger.ParseRule(`body="/geoserver/"`)},
+			{ProductName: "Alibaba-Nacos", AllString: `body="/nacos/"`, Rule: ddfinger.ParseRule(`body="/nacos/"`)},
+		},
+		nil,
+		map[string][]string{},
+		&sync.Mutex{},
+		func(msg structs.OutputMessage) { emitted = append(emitted, msg) },
+	)
+
+	denied := runner.Result{
+		Scheme:      "https",
+		Host:        "edu.example",
+		Port:        "443",
+		StatusCode:  401,
+		Title:       "401 Unauthorized",
+		ContentType: "text/html",
+		Hashes:      map[string]interface{}{"body_md5": "auth-gate", "header_md5": "auth-hdr"},
+	}
+	for _, path := range []string{"/airflow/", "/geoserver/web/", "/nacos/"} {
+		item := denied
+		item.Path = path
+		item.URL = "https://edu.example" + path
+		item.Body = `<html>401 Unauthorized</html> URL: ` + item.URL
+		rt.DirBruteCallback(item)
+	}
+
+	for _, msg := range emitted {
+		if msg.Type == "Active-Finger" {
+			t.Fatalf("generic 401 directory probes should not emit active fingerprints, got %#v", emitted)
+		}
+	}
+	if len(rt.DirEvidenceResultMap) != 0 {
+		t.Fatalf("401 path echo must not enter ResultMap evidence: %#v", rt.DirEvidenceResultMap)
+	}
+}
+
+func TestDirBruteCallbackSuppressesHomepageCatchAllEvenWithProductTokens(t *testing.T) {
+	urlMap := map[string]structs.URLEntity{
+		"http://example.com": {
+			IP:   "1.1.1.1",
+			Port: 80,
+			WebPaths: map[string]structs.UrlPathEntity{
+				"/": {Hash: "same-gate", StatusCode: 401, Natural: true},
+			},
+		},
+	}
+	var emitted []structs.OutputMessage
+	rt := NewRuntime(
+		urlMap,
+		&sync.Mutex{},
+		nil, nil, nil,
+		map[string][]string{"/seeyon/": {"致远互联-OA"}},
+		[]structs.FingerPEntity{{
+			ProductName: "致远互联-OA",
+			AllString:   `body="seeyonProductId"`,
+			Rule:        ddfinger.ParseRule(`body="seeyonProductId"`),
+		}},
+		nil,
+		map[string][]string{},
+		&sync.Mutex{},
+		func(msg structs.OutputMessage) { emitted = append(emitted, msg) },
+	)
+
+	rt.DirBruteCallback(runner.Result{
+		URL:         "http://example.com/seeyon/",
+		Scheme:      "http",
+		Host:        "example.com",
+		Port:        "80",
+		Path:        "/seeyon/",
+		StatusCode:  401,
+		Body:        `var seeyonProductId = "A8"`,
+		Title:       "401 Unauthorized",
+		ContentType: "text/html",
+		Hashes:      map[string]interface{}{"body_md5": "same-gate", "header_md5": "hdr"},
+	})
+
+	for _, msg := range emitted {
+		if msg.Type == "Active-Finger" {
+			t.Fatalf("homepage catch-all 401 must not emit a product fingerprint, got %#v", emitted)
+		}
+	}
+}
+
+func TestDirBruteCallbackRecordsIndependentEvidenceForPOC(t *testing.T) {
+	urlMap := map[string]structs.URLEntity{
+		"http://example.com": {
+			IP:       "1.1.1.1",
+			Port:     80,
+			WebPaths: map[string]structs.UrlPathEntity{"/": {Hash: "home", Natural: true}},
+		},
+	}
+	var emitted []structs.OutputMessage
+	rt := NewRuntime(
+		urlMap,
+		&sync.Mutex{},
+		nil, nil, nil,
+		map[string][]string{"/nacos/": {"Alibaba-Nacos"}},
+		[]structs.FingerPEntity{{
+			ProductName: "Alibaba-Nacos",
+			AllString:   `title="Nacos"`,
+			Rule:        ddfinger.ParseRule(`title="Nacos"`),
+		}},
+		nil,
+		map[string][]string{},
+		&sync.Mutex{},
+		func(msg structs.OutputMessage) { emitted = append(emitted, msg) },
+	)
+
+	rt.DirBruteCallback(runner.Result{
+		URL:         "http://example.com/nacos/",
+		Scheme:      "http",
+		Host:        "example.com",
+		Port:        "80",
+		Path:        "/nacos/",
+		StatusCode:  200,
+		Title:       "Nacos",
+		Body:        `<html>/nacos/</html>`,
+		ContentType: "text/html",
+		Hashes:      map[string]interface{}{"body_md5": "nacos-login", "header_md5": "hdr"},
+	})
+
+	if len(emitted) != 1 || emitted[0].Type != "Active-Finger" || !reflect.DeepEqual(emitted[0].Finger, []string{"Alibaba-Nacos"}) {
+		t.Fatalf("expected Nacos directory evidence, got %#v", emitted)
+	}
+	if emitted[0].AdditionalMsg != "[directory-probe]" {
+		t.Fatalf("expected [directory-probe] tag, got %q", emitted[0].AdditionalMsg)
+	}
+	if !reflect.DeepEqual(rt.DirEvidenceResultMap["http://example.com/nacos/"], []string{"Alibaba-Nacos"}) {
+		t.Fatalf("independent directory evidence must enter ResultMap key, got %#v", rt.DirEvidenceResultMap)
+	}
+	if urlMap["http://example.com"].WebPaths["/nacos/"].Natural {
+		t.Fatal("directory-probe path must not be marked natural")
+	}
+}
+
+func TestDirBruteCallbackFallbackDoesNotEnterEvidenceMap(t *testing.T) {
+	urlMap := map[string]structs.URLEntity{
+		"http://example.com": {
+			IP:       "1.1.1.1",
+			Port:     80,
+			WebPaths: map[string]structs.UrlPathEntity{"/": {Natural: true}},
+		},
+	}
+	dirFallback := make(map[string][]string)
+	rt := NewRuntime(
+		urlMap,
+		&sync.Mutex{},
+		nil, nil, nil,
+		map[string][]string{"/admin": {"TestProduct"}},
+		nil,
+		map[string]structs.WorkFlowEntity{
+			"TestProduct": {DirFallback: true},
+		},
+		dirFallback,
+		&sync.Mutex{},
+		nil,
+	)
+
+	rt.DirBruteCallback(runner.Result{
+		URL:         "http://example.com/admin",
+		Scheme:      "http",
+		Host:        "example.com",
+		Port:        "80",
+		Path:        "/admin",
+		StatusCode:  200,
+		ContentType: "text/html",
+		Hashes:      map[string]interface{}{"body_md5": "body-admin", "header_md5": "header-admin"},
+	})
+
+	if !reflect.DeepEqual(dirFallback["http://example.com"], []string{"TestProduct"}) {
+		t.Fatalf("fallback observation = %#v", dirFallback)
+	}
+	if len(rt.DirEvidenceResultMap) != 0 {
+		t.Fatalf("dir-fallback must not enter evidence/ResultMap: %#v", rt.DirEvidenceResultMap)
+	}
+}

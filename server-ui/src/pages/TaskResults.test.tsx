@@ -190,13 +190,13 @@ describe('TaskResults', () => {
                 ProductName: 'Jenkins',
                 TargetCount: 1,
                 Sources: ['directory'],
-                SourceLabels: ['主动指纹（目录扫描）'],
+                SourceLabels: ['主动路径'],
                 Targets: [{
                     Target: 'https://jenkins.example:443',
                     MatchedURL: 'https://jenkins.example/jenkins/login',
                     RuleName: 'Active-Finger',
                     Source: 'directory',
-                    SourceLabel: '主动指纹（目录扫描）',
+                    SourceLabel: '主动路径',
                 }],
                 FirstSeen: '2026-07-05T00:00:00Z',
                 LastSeen: '2026-07-05T00:00:00Z',
@@ -215,7 +215,7 @@ describe('TaskResults', () => {
         );
 
         expect(await screen.findByText('Jenkins')).toBeInTheDocument();
-        expect(screen.getAllByText('主动指纹（目录扫描）').length).toBeGreaterThan(0);
+        expect(screen.getAllByText('主动路径').length).toBeGreaterThan(0);
         expect(screen.getByText('https://jenkins.example/jenkins/login')).toBeInTheDocument();
 
         await user.type(screen.getByPlaceholderText('搜索产品名称或 URL'), 'jenkins');
@@ -443,7 +443,7 @@ describe('TaskResults', () => {
             Service: 'http/200',
             CreatedAt: '2026-08-25T16:51:22Z',
             Fingerprints: [
-                { ProductName: 'Jenkins', Source: 'directory', SourceLabel: '主动指纹（目录扫描）', MatchedURL: 'https://web.example/jenkins/login' },
+                { ProductName: 'Jenkins', Source: 'directory', SourceLabel: '主动路径', MatchedURL: 'https://web.example/jenkins/login' },
                 { ProductName: 'nginx', Source: 'passive', SourceLabel: '被动命中' },
             ],
         }], 1, 1, 20, assetStats({ total: 1, web: 1 })));
@@ -461,6 +461,6 @@ describe('TaskResults', () => {
         expect(await screen.findByText('Portal')).toBeInTheDocument();
         expect(screen.getByText('匹配指纹')).toBeInTheDocument();
         expect(screen.getByText('nginx')).toBeInTheDocument();
-        expect(screen.getByText('Jenkins · 主动指纹（目录扫描）')).toBeInTheDocument();
+        expect(screen.getByText('Jenkins · 主动路径')).toBeInTheDocument();
     });
 });

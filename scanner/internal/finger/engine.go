@@ -109,6 +109,9 @@ func (rt *Runtime) identifyWeb() {
 			continue
 		}
 		for path, pathEntity := range urlEntity.WebPaths {
+			if !pathEntity.Natural {
+				continue
+			}
 			results := rt.checkPath(path, pathEntity, urlEntity.Port, scheme, banner, urlEntity.Cert)
 			fullURL := rootURL + path
 

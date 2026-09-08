@@ -620,7 +620,7 @@ declare namespace API {
     /** 原始上报 JSON（RealIP 行含 domain/ips，用于域名↔IP 关联展示） */
     Tags?: string;
     CreatedAt: string;
-    /** Web 站点匹配到的指纹产品，含主动指纹（目录扫描）标记 */
+    /** Web 站点匹配到的指纹产品，含主动路径标记 */
     Fingerprints?: AssetFingerprintMatch[];
   }
 

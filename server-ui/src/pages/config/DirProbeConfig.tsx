@@ -203,8 +203,8 @@ const DirProbeConfig: React.FC = () => {
                 type="info"
                 showIcon
                 style={{ marginBottom: 16 }}
-                message="路径探针会独立发现产品"
-                description="启用主动路径指纹后，Scanner 会在 HTTP 探测后请求每个产品的路径，并用同产品被动规则复核响应；无需先命中首页指纹。仅当 Workflow 明确配置 dir-fallback 时，HTTP 200 才可作为回退命中。深度预设默认开启该阶段。"
+                message="路径探针去特征路径上看是不是该产品"
+                description="启用主动路径指纹后，Scanner 会在 HTTP 探测后请求每个产品的特征路径。路径是提问，命中必须靠与路径无关的标题、Header、Cookie 或独特正文；正文里出现探测路径本身不算确认。有独立内容证据时写入 Active-Finger 并可供 Workflow/POC 使用。dir-fallback 只记录「这条路径值得看」，不作为已识别、不调度 POC。深度预设默认开启该阶段。"
             />
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
                 <Input

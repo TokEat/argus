@@ -22,7 +22,7 @@ var fingerprintSourceOrder = []string{
 func FingerprintSourceLabel(source string) string {
 	switch strings.TrimSpace(source) {
 	case FingerprintSourceDirectory:
-		return "主动指纹（目录扫描）"
+		return "主动路径"
 	case FingerprintSourceBehavior:
 		return "行为探针"
 	case FingerprintSourceFallback:

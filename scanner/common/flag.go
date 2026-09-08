@@ -378,6 +378,7 @@ func prepare() error {
 		structs.GlobalResultMap = make(map[string][]string)
 	}
 	structs.DirFallbackResultMap = make(map[string][]string)
+	structs.DirEvidenceResultMap = make(map[string][]string)
 	if ingested.SkipDiscover {
 		structs.GlobalConfig.SkipHostDiscovery = true
 		gologger.Info().Msgf("复用上次结果: 存活主机 %d, 开放端口 %d, 已跳过探活", ingested.ReusedAlive, ingested.ReusedPorts)

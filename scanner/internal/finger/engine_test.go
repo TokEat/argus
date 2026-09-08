@@ -80,6 +80,7 @@ func TestIdentifyWebFingerprints(t *testing.T) {
 						StatusCode:       200,
 						ContentType:      "text/html",
 						Server:           "nginx",
+						Natural:          true,
 					},
 				},
 			},
@@ -117,6 +118,7 @@ func TestIdentifyWebFingerprintsByIconHash(t *testing.T) {
 				WebPaths: map[string]structs.UrlPathEntity{
 					"/": {
 						IconHash: "-1760645692",
+						Natural:  true,
 					},
 				},
 			},
@@ -141,5 +143,58 @@ func TestIdentifyWebFingerprintsByIconHash(t *testing.T) {
 	want := []string{"IconOnlyProduct"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected icon hash fingerprints: want=%v got=%v", want, got)
+	}
+}
+
+func TestIdentifySkipsDirectoryProbePaths(t *testing.T) {
+	bodyMap, err := hybrid.New(hybrid.DefaultDiskOptions)
+	if err != nil {
+		t.Fatalf("create body map: %v", err)
+	}
+	defer bodyMap.Close()
+	if err := bodyMap.Set("nacos-body", []byte(`href="/nacos/" title="Nacos"`)); err != nil {
+		t.Fatalf("set body: %v", err)
+	}
+
+	rt := NewRuntime(
+		map[string]string{},
+		map[string]structs.URLEntity{
+			"http://example.com": {
+				IP:   "1.1.1.1",
+				Port: 80,
+				WebPaths: map[string]structs.UrlPathEntity{
+					"/": {
+						Hash:    "home",
+						Title:   "nginx",
+						Natural: true,
+					},
+					"/nacos/": {
+						Hash:       "nacos-body",
+						Title:      "Nacos",
+						StatusCode: 200,
+						Natural:    false,
+					},
+				},
+			},
+		},
+		map[string][]string{},
+		nil,
+		bodyMap,
+		nil,
+		[]structs.FingerPEntity{{
+			ProductName: "Alibaba-Nacos",
+			AllString:   `body="/nacos/" || title="Nacos"`,
+			Rule:        ddfinger.ParseRule(`body="/nacos/" || title="Nacos"`),
+		}},
+		nil,
+	)
+
+	rt.Identify()
+
+	if _, ok := rt.ResultMap["http://example.com/nacos/"]; ok {
+		t.Fatalf("directory-probe path must not become a passive Finger: %#v", rt.ResultMap)
+	}
+	if got := rt.ResultMap["http://example.com/"]; len(got) != 0 {
+		t.Fatalf("homepage without Nacos evidence matched %v", got)
 	}
 }

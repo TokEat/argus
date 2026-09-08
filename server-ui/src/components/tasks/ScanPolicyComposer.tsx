@@ -271,7 +271,7 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange, mode 
 						<Card size="small" title="Web 指纹识别">
 							<Alert type="success" showIcon message="响应指纹识别（默认）" description="复用 HTTP 探测响应完成基础指纹识别，作为后续 Workflow 与 POC 匹配依据。" style={{ marginBottom: 12 }} />
 							<Form.Item name="behavior_probe" valuePropName="checked" label="安全行为探针" tooltip={{ title: 'HTTP 探测完成后对存活 Web 服务执行一批经安全审核的 Nuclei 行为探针：Server 仅保留重新分类为「自动安全」的单请求探针，每个 HTTP 服务每探针最多发送一次请求，用于补充行为特征并作为指纹与 POC 匹配依据。标准与深度预设默认开启。', icon: <InfoCircleOutlined /> }} extra="标准、深度默认开启；仅执行 Server 重新分类为自动安全的单请求 Nuclei 探针。"><Switch /></Form.Item>
-							<Form.Item name="directory_probe" valuePropName="checked" label="主动路径指纹" tooltip={{ title: '对已识别出产品的资产请求其规则定义的特征路径（如 Spring Actuator、Druid 控制台等），命中即产出 Active-Finger 指纹供后续 Workflow 匹配；只请求规则内路径，不执行通用目录爆破。仅深度预设默认开启，开启会增加少量请求。', icon: <InfoCircleOutlined /> }} extra="可选；请求产品特征路径并产出 Active-Finger，不执行通用目录扫描。"><Switch /></Form.Item>
+							<Form.Item name="directory_probe" valuePropName="checked" label="主动路径指纹" tooltip={{ title: '对每个存活 HTTP 服务请求规则内的产品特征路径（如 /nacos/、Druid 控制台）。路径是提问，命中必须靠与路径无关的内容证据，供后续 Workflow 匹配；不执行通用目录爆破。仅深度预设默认开启，开启会增加少量请求。', icon: <InfoCircleOutlined /> }} extra="可选；请求产品特征路径，仅独立内容证据才产出 Active-Finger，不执行通用目录扫描。"><Switch /></Form.Item>
 						</Card>
 
 						<Card size="small" title="自动验证">

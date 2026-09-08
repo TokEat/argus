@@ -180,6 +180,87 @@ func TestDirProbeCheckRejectsPathOnlyAndReflectedErrors(t *testing.T) {
 	}
 }
 
+func TestDirProbeCheckRejectsPathEchoAtAnyStatus(t *testing.T) {
+	cases := []struct {
+		rule   string
+		path   string
+		status int
+	}{
+		{`body="/geoserver/"`, "/geoserver/web/", 200},
+		{`body="airflow"`, "/airflow/", 401},
+		{`body="/opac/periodicals"`, "/opac/periodicals", 200},
+		{`path="/nacos/" && status="200"`, "/nacos/", 200},
+	}
+	for _, tc := range cases {
+		finger := structs.FingerPEntity{
+			ProductName: "probe-echo",
+			AllString:   tc.rule,
+			Rule:        ParseRule(tc.rule),
+		}
+		body := `<html>200 OK</html> URL: http://example.test` + tc.path
+		if DirProbeCheck(finger, "http", "", body, "", "", "", 80, tc.path, "", "", tc.status, "text/html", "") {
+			t.Fatalf("status %d path echo matched %q", tc.status, tc.rule)
+		}
+	}
+}
+
+func TestDirProbeCheckKeepsPathIndependentEvidence(t *testing.T) {
+	nacos := structs.FingerPEntity{
+		ProductName: "Alibaba-Nacos",
+		AllString:   `title="Nacos"`,
+		Rule:        ParseRule(`title="Nacos"`),
+	}
+	if !DirProbeCheck(nacos, "http", "", `<html>/nacos/</html>`, "", "Nacos", "", 80, "/nacos/", "", "", 200, "text/html", "") {
+		t.Fatal("title=Nacos is independent of the probe path and must still match")
+	}
+
+	airflow := structs.FingerPEntity{
+		ProductName: "APACHE-Airflow",
+		AllString:   `title="Sign In - Airflow"`,
+		Rule:        ParseRule(`title="Sign In - Airflow"`),
+	}
+	if !DirProbeCheck(airflow, "http", "", "<html>login</html>", "", "Sign In - Airflow", "", 80, "/airflow/", "", "", 401, "text/html", "") {
+		t.Fatal("distinctive Airflow login title should still match on 401")
+	}
+
+	minio := structs.FingerPEntity{
+		ProductName: "MINIO-Browser",
+		AllString:   `body="href=\"/minio/loader.css\"" || title="Minio Browser"`,
+		Rule:        ParseRule(`body="href=\"/minio/loader.css\"" || title="Minio Browser"`),
+	}
+	if DirProbeCheck(minio, "http", "", `href="/minio/loader.css"`, "", "", "", 80, "/minio/", "", "", 200, "text/html", "") {
+		t.Fatal("body that only contains the probe path prefix is not independent evidence")
+	}
+	if !DirProbeCheck(minio, "http", "", `href="/minio/loader.css"`, "", "Minio Browser", "", 80, "/minio/", "", "", 200, "text/html", "") {
+		t.Fatal("title=Minio Browser should still identify MinIO after the path-derived body clause is zeroed")
+	}
+}
+
+func TestDirProbeCheckRejectsUnauthorizedPathEcho(t *testing.T) {
+	cases := []struct {
+		product string
+		rule    string
+		path    string
+	}{
+		{"APACHE-Airflow", `body="airflow"`, "/airflow/"},
+		{"GeoServer", `body="/geoserver/"`, "/geoserver/web/"},
+		{"金盘图书馆", `body="/opac/periodicals"`, "/opac/periodicals"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.product, func(t *testing.T) {
+			finger := structs.FingerPEntity{
+				ProductName: tc.product,
+				AllString:   tc.rule,
+				Rule:        ParseRule(tc.rule),
+			}
+			body := `<html>401 Unauthorized</html> URL: https://edu.example` + tc.path
+			if DirProbeCheck(finger, "https", "WWW-Authenticate: Basic realm=\"Restricted\"\r\nServer: nginx\r\n", body, "nginx", "401 Unauthorized", "", 443, tc.path, "", "", 401, "text/html", "") {
+				t.Fatalf("401 path echo matched %s with rule %q", tc.product, tc.rule)
+			}
+		})
+	}
+}
+
 func unparsedFingerprintResidue(rule string, parsed []structs.RuleData) string {
 	expr := rule
 	for _, item := range parsed {

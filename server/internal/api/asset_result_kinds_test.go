@@ -166,7 +166,7 @@ func TestGetAssetsFiltersByKindAndReturnsScopedStats(t *testing.T) {
 	if len(webPrints) != 2 || webPrints[0].ProductName != "Jenkins" || webPrints[0].Source != db.FingerprintSourceDirectory || webPrints[1].ProductName != "nginx" {
 		t.Fatalf("web fingerprints=%+v", webPrints)
 	}
-	if webPrints[0].SourceLabel != "主动指纹（目录扫描）" {
+	if webPrints[0].SourceLabel != "主动路径" {
 		t.Fatalf("directory source label=%q", webPrints[0].SourceLabel)
 	}
 	bindPrints := byTarget["https://bind.example"]

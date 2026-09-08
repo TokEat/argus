@@ -254,7 +254,7 @@ const PocWorkflowLinkModal: React.FC<PocWorkflowLinkModalProps> = ({
                         { label: 'root — 根路径', value: 'root' },
                         { label: 'base — 完整路径', value: 'base' },
                         { label: 'dir — 逐级目录', value: 'dir' },
-                        { label: 'dir-fallback — 目录探测命中', value: 'dir-fallback' },
+                        { label: 'dir-fallback — 目录探测 200 仅记录路径存在', value: 'dir-fallback' },
                     ]}
                 />
             </Space>
