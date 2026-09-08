@@ -234,6 +234,24 @@ func TestDirProbeCheckKeepsPathIndependentEvidence(t *testing.T) {
 	if !DirProbeCheck(minio, "http", "", `href="/minio/loader.css"`, "", "Minio Browser", "", 80, "/minio/", "", "", 200, "text/html", "") {
 		t.Fatal("title=Minio Browser should still identify MinIO after the path-derived body clause is zeroed")
 	}
+
+	solr := structs.FingerPEntity{
+		ProductName: "APACHE-Solr",
+		AllString:   `header="location: /solr/"`,
+		Rule:        ParseRule(`header="location: /solr/"`),
+	}
+	if DirProbeCheck(solr, "http", "Location: /solr/\r\n", "", "", "", "", 80, "/solr/", "", "", 302, "text/html", "") {
+		t.Fatal("Location that only repeats the probe path must not identify Solr")
+	}
+
+	cookie := structs.FingerPEntity{
+		ProductName: "泛微-协同办公OA",
+		AllString:   `header="ecology_JSessionid"`,
+		Rule:        ParseRule(`header="ecology_JSessionid"`),
+	}
+	if !DirProbeCheck(cookie, "http", "Set-Cookie: ecology_JSessionid=abc\r\nLocation: /wui/index.html\r\n", "", "", "", "", 80, "/wui/index.html", "", "", 302, "text/html", "") {
+		t.Fatal("distinctive product cookie should still match when Location also echoes the probe path")
+	}
 }
 
 func TestDirProbeCheckRejectsUnauthorizedPathEcho(t *testing.T) {

@@ -286,7 +286,7 @@ type WorkFlowEntity struct {
 	RootType    bool
 	DirType     bool
 	BaseType    bool
-	DirFallback bool   // dir匹配且状态码200时直接标记指纹，无需finger验证
+	DirFallback bool   // 目录探测 200 且无独立内容时仅记录路径存在，不进 ResultMap、不调度 POC
 	RiskLevel   string // 关联 POC 的风险等级（unknown/low/medium/high），供预授权门本地过滤
 	PocsName    []string
 }

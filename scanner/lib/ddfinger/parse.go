@@ -488,7 +488,7 @@ func evalFinger(finger structs.FingerPEntity, Protocol string, headerString stri
 		}
 		if dirProbe && singleRule.Op != 1 {
 			switch singleRule.Key {
-			case "title":
+			case "title", "header":
 				if isProbePathReflection(singleRule.Value, Path) {
 					singleRuleResult = false
 				}
