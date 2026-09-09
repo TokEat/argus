@@ -11566,6 +11566,7 @@ SANGFOR-应用交付管理系统:
 SANGFOR-运维安全管理系统:
     - 'body="window.location.href=\"https://\"+window.location.host+\"/fort/login"'
     - path="/fort/login" && status="200" && body="/fort/"
+    - body="checkSingle.action"
 SANGFOR-集中管理系统:
     - body="/cgi-bin/login.cgi?requestname=" || body="var msg = '对不起，集中管理平台暂不支持您当前使用的浏览器" || body="var msg = '对不起, '+str+'暂不支持您当前使用的浏览器"
 SANSEC-SJJ1012 server cryptography:
@@ -16578,6 +16579,7 @@ splunk-日志分析:
     - 'title="303 see other" || body="content=\"splunk inc.\""'
 springboot-heapdump:
     - body="/actuator/env"
+    - body="_links" && body="\"env\""
 strapi-Headless-CMS:
     - 'header="X-Powered-By: Strapi"'
     - title="Welcome to your Strapi app"
@@ -17931,9 +17933,11 @@ zywall-usg-100:
     - body="><script>location='/tplus/';</script></body>"
     - 'path="/tplus/"'
     - 'path="/tplus/view/login.html"'
+    - body="Ufida.T.SM.Login"
 畅捷通-TPlus(华东):
     - "body=\"><script>location='/tplus/';</script></body>\""
     - 'path="/tplus/"'
+    - body="Ufida.T.SM.Login"
 畅捷通-畅捷CRM:
     - title="畅捷CRM"
     - icon_hash="-1068428644"

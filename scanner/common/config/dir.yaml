@@ -43,18 +43,12 @@ xxl-rpc:
 springboot-heapdump:
   - "/actuator"
   - "/api/actuator"
-vmware-SpringBoot-Framework:
-  - "/error"
-  - "/gateway/error/"
-  - "/api/error/"
 Camunda:
   - "/camunda/app/welcome/default/"
   - "/camunda/"
 Apache-Tomcat:
   - "/manager/html"
   - "/host-manager/html"
-Tomcat-Login:
-  - "/manager/html"
 Apache-APISIX:
   - "/apisix/"
 数字城管:
@@ -63,8 +57,6 @@ Apache-APISIX:
   - "/k3cloud"
 kingdee-EAS:
   - "/eassso"
-畅捷教育财税云平台:
-  - "/exam_portal"
 Docker-api:
   - "/containers/json"
 Docker-Registry:
@@ -78,8 +70,6 @@ APACHE-Axis2:
   - "/console/"
 宝蓝德-Spark-EJB:
   - "/BesEJB/spark"
-宝蓝德-Spark-BesEJB:
-  - "/__bes/__ejb"
 Edoc2(rce):
   - "/edoc2Flow-web/edoc-etc-processManage/importNewBpmnDesign"
 帆软数据决策系统:
@@ -115,8 +105,6 @@ LandRay-OA:
   - "/kingdee/index.jsp"
 金蝶-Apusic应用服务器:
   - "/appmonitor/"
-红帆-ioffice:
-  - "/iOffice/js"
 新点OA:
   - "/netoffice6"
 Epoint-Oa:

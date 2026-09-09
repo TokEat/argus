@@ -458,11 +458,61 @@ func TestDirYamlOmitsPassiveIdentifiableOAProbes(t *testing.T) {
 		"泛微-EMobile",
 		"TDXK-通达OA",
 		"用友-GRP-U8",
+		"红帆-ioffice",
 	} {
 		if paths, ok := probes[product]; ok {
 			t.Errorf("dir.yaml still probes %q at %v; homepage title/header/icon already identify it", product, paths)
 		}
 	}
+}
+
+func TestDirYamlOmitsDeadOrGenericProbes(t *testing.T) {
+	probes := loadDirProbes(t)
+	for _, product := range []string{
+		"Tomcat-Login",
+		"vmware-SpringBoot-Framework",
+		"宝蓝德-Spark-BesEJB",
+		"畅捷教育财税云平台",
+	} {
+		if paths, ok := probes[product]; ok {
+			t.Errorf("dir.yaml still probes %q at %v; this path cannot identify the product after path-echo scoring or is a generic Spring error page", product, paths)
+		}
+	}
+}
+
+func TestDirYamlProductsHavePathIndependentEvidence(t *testing.T) {
+	probes := loadDirProbes(t)
+	for product, paths := range probes {
+		rules := loadFingerprintRules(t, product)
+		if !productHasPathIndependentEvidence(rules, paths) {
+			t.Errorf("dir.yaml product %q at %v has no path-independent content clause; add title/header/icon/distinctive body or remove the probe", product, paths)
+		}
+	}
+}
+
+func productHasPathIndependentEvidence(rules, paths []string) bool {
+	for _, rule := range rules {
+		for _, clause := range ParseRule(rule) {
+			if !isContentEvidenceKey(clause.Key) || clause.Value == "" {
+				continue
+			}
+			reflected := false
+			for _, path := range paths {
+				if isProbePathReflection(clause.Value, path) {
+					reflected = true
+					break
+				}
+				if clause.Key == "body" && isProbePathBodyToken(clause.Value, path) {
+					reflected = true
+					break
+				}
+			}
+			if !reflected {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func TestMCPServerDirAndFingerprintUseContentEvidence(t *testing.T) {
@@ -526,16 +576,46 @@ func TestMCPServerDirAndFingerprintUseContentEvidence(t *testing.T) {
 	}
 }
 
+func TestDirProbeCheckKeptConsolesUseIndependentEvidence(t *testing.T) {
+	tplus := structs.FingerPEntity{
+		ProductName: "畅捷通-TPlus",
+		AllString:   `body="Ufida.T.SM.Login"`,
+		Rule:        ParseRule(`body="Ufida.T.SM.Login"`),
+	}
+	if DirProbeCheck(tplus, "http", "", `<script>location='/tplus/';</script>`, "", "", "", 80, "/tplus/", "", "", 200, "text/html", "") {
+		t.Fatal("path redirect script must not identify TPlus")
+	}
+	if !DirProbeCheck(tplus, "http", "", `Ufida.T.SM.Login.UIP.LoginManager`, "", "", "", 80, "/tplus/", "", "", 200, "text/html", "") {
+		t.Fatal("Ufida login type is independent of /tplus/ and must still match")
+	}
+
+	actuator := structs.FingerPEntity{
+		ProductName: "springboot-heapdump",
+		AllString:   `body="_links" && body="\"env\""`,
+		Rule:        ParseRule(`body="_links" && body="\"env\""`),
+	}
+	if DirProbeCheck(actuator, "http", "", `URL: http://example.test/actuator`, "", "", "", 80, "/actuator", "", "", 200, "text/html", "") {
+		t.Fatal("path echo must not identify Spring actuator")
+	}
+	if !DirProbeCheck(actuator, "http", "", `{"_links":{"self":{"href":"http://x/actuator"},"env":{"href":"http://x/actuator/env"}}}`, "", "", "", 80, "/actuator", "", "", 200, "application/json", "") {
+		t.Fatal("actuator catalog JSON should identify springboot-heapdump")
+	}
+}
+
 func TestDirYamlKeepsMustVisitHiddenConsoles(t *testing.T) {
 	probes := loadDirProbes(t)
 	want := map[string]string{
-		"Alibaba-Nacos": "/nacos/",
-		"Alibaba-Druid": "/druid/index.html",
-		"Apache-Tomcat": "/manager/html",
-		"APACHE-Solr":   "/solr/",
-		"金蝶云星空":         "/k3cloud",
-		"百度-UEditor":    "/ueditor/ueditor.all.js",
-		"畅捷通-TPlus":     "/tplus/",
+		"Alibaba-Nacos":  "/nacos/",
+		"Alibaba-Druid":  "/druid/index.html",
+		"Apache-Tomcat":  "/manager/html",
+		"APACHE-Solr":    "/solr/",
+		"APACHE-Airflow": "/airflow/",
+		"GeoServer":      "/geoserver/web/",
+		"Jenkins":        "/jenkins/login",
+		"金蝶云星空":          "/k3cloud",
+		"百度-UEditor":     "/ueditor/ueditor.all.js",
+		"畅捷通-TPlus":      "/tplus/",
+		"MCP-Server":     "/sse",
 	}
 	for product, path := range want {
 		found := false
