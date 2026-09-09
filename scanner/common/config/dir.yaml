@@ -88,8 +88,10 @@ MINIO-Console:
   - "/nccloud/"
 畅捷通-TPlus:
   - "/tplus/"
+  - "/tplus/view/login.html"
 畅捷通-TPlus(华东):
   - "/tplus/"
+  - "/tplus/view/login.html"
 LandRay-OA:
   - "/ekp/"
 万户网络-ezOFFICE:

@@ -1327,6 +1327,7 @@ Apache-Tomcat:
     - 'body="/manager/html" && body="/manager/status"'
     - 'body="<h3>apache tomcat" || body="<title>apache tomcat/" || body="href=\"tomcat.css" || body="this is the default tomcat home page""'
     - 'server="apache-coyote/" || header="x-powered-by: tomcat"'
+    - body="tomcat-users.xml" && status="401"
 Apache-Traffic-Server:
     - header="ApacheTrafficServer" || banner="ApacheTrafficServer"
 Apache-Web-Server:
@@ -11566,7 +11567,7 @@ SANGFOR-应用交付管理系统:
 SANGFOR-运维安全管理系统:
     - 'body="window.location.href=\"https://\"+window.location.host+\"/fort/login"'
     - path="/fort/login" && status="200" && body="/fort/"
-    - body="checkSingle.action"
+    - body="checkSingle.action" && body="SANGFOR"
 SANGFOR-集中管理系统:
     - body="/cgi-bin/login.cgi?requestname=" || body="var msg = '对不起，集中管理平台暂不支持您当前使用的浏览器" || body="var msg = '对不起, '+str+'暂不支持您当前使用的浏览器"
 SANSEC-SJJ1012 server cryptography:
@@ -16579,7 +16580,7 @@ splunk-日志分析:
     - 'title="303 see other" || body="content=\"splunk inc.\""'
 springboot-heapdump:
     - body="/actuator/env"
-    - body="_links" && body="\"env\""
+    - body="_links" && body="\"health\"" && body="\"env\""
 strapi-Headless-CMS:
     - 'header="X-Powered-By: Strapi"'
     - title="Welcome to your Strapi app"

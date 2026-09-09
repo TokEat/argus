@@ -591,13 +591,16 @@ func TestDirProbeCheckKeptConsolesUseIndependentEvidence(t *testing.T) {
 
 	actuator := structs.FingerPEntity{
 		ProductName: "springboot-heapdump",
-		AllString:   `body="_links" && body="\"env\""`,
-		Rule:        ParseRule(`body="_links" && body="\"env\""`),
+		AllString:   `body="_links" && body="\"health\"" && body="\"env\""`,
+		Rule:        ParseRule(`body="_links" && body="\"health\"" && body="\"env\""`),
 	}
 	if DirProbeCheck(actuator, "http", "", `URL: http://example.test/actuator`, "", "", "", 80, "/actuator", "", "", 200, "text/html", "") {
 		t.Fatal("path echo must not identify Spring actuator")
 	}
-	if !DirProbeCheck(actuator, "http", "", `{"_links":{"self":{"href":"http://x/actuator"},"env":{"href":"http://x/actuator/env"}}}`, "", "", "", 80, "/actuator", "", "", 200, "application/json", "") {
+	if DirProbeCheck(actuator, "http", "", `{"_links":{"self":{"href":"http://x/env"}}}`, "", "", "", 80, "/actuator", "", "", 200, "application/json", "") {
+		t.Fatal("generic HAL with only env must not identify Spring actuator")
+	}
+	if !DirProbeCheck(actuator, "http", "", `{"_links":{"self":{"href":"http://x/actuator"},"health":{"href":"http://x/actuator/health"},"env":{"href":"http://x/actuator/env"}}}`, "", "", "", 80, "/actuator", "", "", 200, "application/json", "") {
 		t.Fatal("actuator catalog JSON should identify springboot-heapdump")
 	}
 }
