@@ -92,10 +92,6 @@ MINIO-Console:
 畅捷通-TPlus(华东):
   - "/tplus/"
   - "/tplus/view/login.html"
-LandRay-OA:
-  - "/ekp/"
-万户网络-ezOFFICE:
-  - "/defaultroot/"
 亿赛通-电子文档安全管理系统:
   - "/CDGServer3/"
 金和网络-金和OA:
@@ -103,8 +99,6 @@ LandRay-OA:
   - "/c6/"
 华天动力OA:
   - "/OAapp/WebObjects/OAapp.woa"
-金蝶OA:
-  - "/kingdee/index.jsp"
 金蝶-Apusic应用服务器:
   - "/appmonitor/"
 新点OA:
@@ -133,8 +127,6 @@ Dahua-DSS:
   - "/config/user.xml"
 海康威视联网网关:
   - "/localDomain/downdb.php"
-Hikvision-iVMS:
-  - "/portal/common/js/commonvar.js"
 KEDACOM-phoenix监控平台:
   - "/pmc-bin/upload_fcgi"
 KEDACOM-DVR接入网关:
@@ -225,8 +217,6 @@ OpenAM:
   - "/admin/weichatcfg/getsysteminfo"
 金盘图书馆:
   - "/opac/periodicals"
-青果教务系统:
-  - "/jkingo.js"
 浪潮政务系统:
   - "/OnlineQuery/QueryList.aspx"
 H3C-iMC:

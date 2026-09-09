@@ -198,3 +198,41 @@ func TestIdentifySkipsDirectoryProbePaths(t *testing.T) {
 		t.Fatalf("homepage without Nacos evidence matched %v", got)
 	}
 }
+
+func TestIdentifyDoesNotTreatDirProbePathEqualsAsPassiveFinger(t *testing.T) {
+	rt := NewRuntime(
+		map[string]string{},
+		map[string]structs.URLEntity{
+			"http://example.com": {
+				IP:   "1.1.1.1",
+				Port: 80,
+				WebPaths: map[string]structs.UrlPathEntity{
+					"/": {Hash: "home", Title: "nginx", Natural: true, StatusCode: 200},
+					"/xxxx": {
+						Hash:       "dir-hit",
+						Title:      "404",
+						StatusCode: 200,
+						Natural:    false,
+					},
+				},
+			},
+		},
+		map[string][]string{},
+		nil, nil, nil,
+		[]structs.FingerPEntity{{
+			ProductName: "FakeProduct",
+			AllString:   `path="/xxxx"`,
+			Rule:        ddfinger.ParseRule(`path="/xxxx"`),
+		}},
+		nil,
+	)
+
+	rt.Identify()
+
+	if _, ok := rt.ResultMap["http://example.com/xxxx"]; ok {
+		t.Fatalf("scanner-chosen path must not become a passive Finger via path=: %#v", rt.ResultMap)
+	}
+	if got := rt.ResultMap["http://example.com/"]; len(got) != 0 {
+		t.Fatalf("homepage must not match path=/xxxx, got %v", got)
+	}
+}

@@ -148,7 +148,16 @@ func TestDirProbeCheckRejectsPathOnlyAndReflectedErrors(t *testing.T) {
 		t.Fatal("path-only rule must not identify a product on a directory probe")
 	}
 	if !SingleCheck(pathOnly, "http", "", "403 Forbidden", "", "403 Forbidden", "", 8556, "/seeyon/", "", "", 403, "text/html", "") {
-		t.Fatal("passive SingleCheck should still honor explicit path rules")
+		t.Fatal("passive SingleCheck should still honor explicit path rules on a naturally observed path")
+	}
+
+	scannerChosen := structs.FingerPEntity{
+		ProductName: "FakeProduct",
+		AllString:   `path="/xxxx" && status="200"`,
+		Rule:        ParseRule(`path="/xxxx" && status="200"`),
+	}
+	if DirProbeCheck(scannerChosen, "http", "", "ok", "", "", "", 80, "/xxxx", "", "", 200, "text/html", "") {
+		t.Fatal("scanner-chosen path= plus 200 must not identify a product")
 	}
 
 	reflected := structs.FingerPEntity{
@@ -459,6 +468,11 @@ func TestDirYamlOmitsPassiveIdentifiableOAProbes(t *testing.T) {
 		"TDXK-通达OA",
 		"用友-GRP-U8",
 		"红帆-ioffice",
+		"LandRay-OA",
+		"万户网络-ezOFFICE",
+		"金蝶OA",
+		"青果教务系统",
+		"Hikvision-iVMS",
 	} {
 		if paths, ok := probes[product]; ok {
 			t.Errorf("dir.yaml still probes %q at %v; homepage title/header/icon already identify it", product, paths)
