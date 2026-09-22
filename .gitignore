@@ -33,6 +33,7 @@ scanner/common/config/*
 !scanner/common/config/pocs/**
 !scanner/common/config/dict/
 !scanner/common/config/dict/**
+!scanner/common/config/AGENTS.md
 
 # OS files
 .DS_Store

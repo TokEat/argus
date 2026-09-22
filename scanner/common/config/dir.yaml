@@ -3,231 +3,65 @@ Alibaba-Nacos:
   - "/api/nacos/"
 Alibaba-Druid:
   - "/druid/index.html"
-帆软-FineReport:
-  - "/WebReport/ReportServer"
-  - "/ReportServer"
-  - "/seeyonreport/ReportServer"
-  - "/webroot/decision/login"
-  - "/decision/login"
-XXL-JOB:
-  - "/xxl-job-admin/toLogin"
-  - "/xxl-job/toLogin"
-  - "/xxl-rpc-admin/toLogin"
-GeoServer:
-  - "/geoserver/web/"
-百度-UEditor:
-  - "/ueditor/ueditor.all.js"
-  - "/js/ueditor/ueditor.all.js"
-  - "/plugins/ueditor/ueditor.all.js"
-ArcGIS:
-  - "/arcgis/"
-SMARTBI:
-  - "/smartbi/vision/index.jsp"
-MINIO-Browser:
-  - "/minio/"
-Jenkins:
-  - "/jenkins/login"
-Jeecg-Boot:
-  - "/jeecg-boot/"
-  - "/jeecg-boot/sys/login"
-  - "/jeecg-boot/sys/randomImage"
-  - "/jeecg-boot/sys/dict/"
-  - "/jeecg-boot/doc.html"
-ureport:
-  - "/ureport/designer"
-  - "/ureport"
-xxl-rpc:
-  - "/services"
-积木报表:
-  - "/jmreport/testConnection"
 springboot-heapdump:
   - "/actuator"
   - "/api/actuator"
-Camunda:
-  - "/camunda/app/welcome/default/"
-  - "/camunda/"
-Apache-Tomcat:
-  - "/manager/html"
-  - "/host-manager/html"
-Apache-APISIX:
-  - "/apisix/"
-数字城管:
-  - "/eUrbanMIS/main.htm"
-金蝶云星空:
-  - "/k3cloud"
-kingdee-EAS:
-  - "/eassso"
+东方通-TongWeb:
+  - "/console/"
+  - "/ejbserver/ejb"
+宝蓝德-Spark-EJB:
+  - "/BesEJB/spark"
+百度-UEditor:
+  - "/ueditor/ueditor.all.js"
+积木报表:
+  - "/jmreport/testConnection"
 Docker-api:
   - "/containers/json"
 Docker-Registry:
   - "/v2/_catalog"
 etcd:
   - "/v2/keys"
-APACHE-Axis2:
-  - "/axis2-admin/login"
-东方通-TongWeb:
-  - "/ejbserver/ejb"
-  - "/console/"
-宝蓝德-Spark-EJB:
-  - "/BesEJB/spark"
-Edoc2(rce):
-  - "/edoc2Flow-web/edoc-etc-processManage/importNewBpmnDesign"
-帆软数据决策系统:
-  - "/webroot/decision"
-帆软-FineBI:
-  - "/webroot/decision"
-MINIO-Console:
-  - "/minio/console/"
-用友-ERP-NC:
-  - "/nc/"
-  - "/NCFindWeb"
-用友-UFIDA-NC:
-  - "/nc/"
-  - "/NCFindWeb"
-用友-NC-Cloud:
-  - "/nccloud/"
-畅捷通-TPlus:
-  - "/tplus/"
-  - "/tplus/view/login.html"
-畅捷通-TPlus(华东):
-  - "/tplus/"
-  - "/tplus/view/login.html"
-亿赛通-电子文档安全管理系统:
-  - "/CDGServer3/"
-金和网络-金和OA:
-  - "/jc6/"
-  - "/c6/"
-华天动力OA:
-  - "/OAapp/WebObjects/OAapp.woa"
-金蝶-Apusic应用服务器:
-  - "/appmonitor/"
-新点OA:
-  - "/netoffice6"
-Epoint-Oa:
-  - "/netoffice6"
-普元-EOS:
-  - "/default/coframe/auth/login/login.jsp"
-广联达-Linkworks办公OA:
-  - "/Services/Identification/login.ashx"
-宏景eHR人力资源信息管理系统:
-  - "/hrlogon"
-明源云-ERP:
-  - "/PubPlatform/Login/index.aspx"
-大华智慧园区综合管理平台:
-  - "/WPMS/"
-大华ICC智能物联综合管理平台:
-  - "/evo-apigw/"
-大华安防 DSS:
-  - "/admin/login_login.action"
-Dahua-DSS:
-  - "/admin/login_login.action"
-海康威视综合安防平台:
-  - "/portal/login.html"
-海康威视 流媒体管理服务器:
-  - "/config/user.xml"
-海康威视联网网关:
-  - "/localDomain/downdb.php"
-KEDACOM-phoenix监控平台:
-  - "/pmc-bin/upload_fcgi"
-KEDACOM-DVR接入网关:
-  - "/gatewayweb/"
-Kedacom-DVR access gateway:
-  - "/gatewayweb/"
-奇安信-VPN:
-  - "/vpn/"
-深信服 waf:
-  - "/loginout.php"
-SANGFOR-运维安全管理系统:
-  - "/fort/login"
-锐捷防火墙:
-  - "/ssl_index_next.html"
-REALOR-天翼应用虚拟化系统:
-  - "/CasMain.XGI"
-吉大正元身份认证网关:
-  - "/jit_pnx_portal/"
-WebLogic:
-  - "/console/login/LoginForm.jsp"
-APACHE-Solr:
-  - "/solr/"
-APACHE-Airflow:
-  - "/airflow/"
-Apache-OFBiz:
-  - "/webtools/control/main"
-ATLASSIAN-Confluence:
-  - "/confluence/"
-phpMyAdmin:
-  - "/phpmyadmin/"
-  - "/phpMyAdmin/"
-Jolokia:
-  - "/jolokia/"
+XXL-JOB:
+  - "/xxl-job-admin/toLogin"
+xxl-rpc:
+  - "/services"
+Apache-Tomcat:
+  - "/manager/html"
+  - "/host-manager/html"
+Apache-APISIX:
+  - "/apisix/"
 Jboss:
   - "/jmx-console/"
   - "/invoker/JMXInvokerServlet"
-JBoss-AS:
-  - "/jmx-console/"
-ZABBIX-监控系统:
-  - "/zabbix/"
-Webmin:
-  - "/webmin/"
-Adobe-ColdFusion:
-  - "/CFIDE/administrator/index.cfm"
-VMware-vCenter:
-  - "/vsphere-client/"
-APACHE-ActiveMQ:
-  - "/admin/index.jsp"
-APACHE-NiFi:
-  - "/nifi/"
-APACHE-Superset:
-  - "/superset/welcome"
-APACHE-hadoop-YARN:
-  - "/cluster/cluster"
-APACHE-hadoop-ResourceManager:
-  - "/cluster/cluster"
-Hadoop-Administration:
-  - "/dfshealth.html"
-Hadoop-Hue:
-  - "/hue/accounts/login"
-APACHE-Spark:
-  - "/environment/"
-Spark history-server:
-  - "/history"
+Jolokia:
+  - "/jolokia/"
+亿赛通-电子文档安全管理系统:
+  - "/CDGServer3/"
+GeoServer:
+  - "/geoserver/web/"
+ArcGIS:
+  - "/arcgis/"
+MINIO-Browser:
+  - "/minio/"
+MINIO-Console:
+  - "/minio/console/"
+Edoc2(rce):
+  - "/edoc2Flow-web/edoc-etc-processManage/importNewBpmnDesign"
+海康威视联网网关:
+  - "/localDomain/downdb.php"
+海康威视 流媒体管理服务器:
+  - "/config/user.xml"
+KEDACOM-phoenix监控平台:
+  - "/pmc-bin/upload_fcgi"
 Laravel-Framework:
   - "/_ignition/health-check"
-Grafana_Labs-公司产品:
-  - "/grafana/login"
+phpMyAdmin:
+  - "/phpmyadmin/"
+ureport:
+  - "/ureport"
+Camunda:
+  - "/camunda/"
+Adobe-ColdFusion:
+  - "/CFIDE/administrator/index.cfm"
 ClickHouse:
   - "/play"
-Kibana:
-  - "/app/kibana"
-Prometheus:
-  - "/prometheus/graph"
-CAS 单点登录:
-  - "/cas/login"
-OpenAM:
-  - "/openam/XUI"
-润乾报表(西部):
-  - "/InputServlet"
-正方教学管理信息服务平台:
-  - "/xtgl/login_slogin.html"
-正方教务管理系统(JAVA版)(华东):
-  - "/xtgl/login_slogin.html"
-正方数字化校园平台:
-  - "/zfca/login"
-金盘-微信管理平台:
-  - "/admin/weichatcfg/getsysteminfo"
-金盘图书馆:
-  - "/opac/periodicals"
-浪潮政务系统:
-  - "/OnlineQuery/QueryList.aspx"
-H3C-iMC:
-  - "/imc/login.jsf"
-HuaWei-eSight:
-  - "/sso/login.action"
-DolphinScheduler:
-  - "/dolphinscheduler/ui/"
-MCP-Server:
-  - "/.well-known/mcp.json"
-  - "/.well-known/mcp/server-card.json"
-  - "/mcp"
-  - "/sse"
-  - "/messages"
