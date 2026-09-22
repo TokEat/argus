@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/P0lar1ght/argus/scanner/ddout"
 )
@@ -48,5 +49,28 @@ func TestRemoveFirewall(t *testing.T) {
 	want := []string{"10.0.0.2:22"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected firewall filtering: want=%v got=%v", want, got)
+	}
+}
+
+func TestDetermineConnectTimeout(t *testing.T) {
+	cases := []struct {
+		ip         string
+		configured int
+		want       time.Duration
+	}{
+		{ip: "10.120.0.1", configured: 6, want: 1500 * time.Millisecond},
+		{ip: "192.168.1.1", configured: 6, want: 1500 * time.Millisecond},
+		{ip: "127.0.0.1", configured: 6, want: 1500 * time.Millisecond},
+		{ip: "8.8.8.8", configured: 6, want: 6 * time.Second},
+		{ip: "10.120.0.1", configured: 2, want: 2 * time.Second},
+		{ip: "8.8.8.8", configured: 2, want: 2 * time.Second},
+		{ip: "10.120.0.1", configured: 0, want: 1500 * time.Millisecond},
+	}
+
+	for _, tc := range cases {
+		got := determineConnectTimeout(tc.ip, tc.configured)
+		if got != tc.want {
+			t.Errorf("determineConnectTimeout(%s, %d) = %v; want %v", tc.ip, tc.configured, got, tc.want)
+		}
 	}
 }

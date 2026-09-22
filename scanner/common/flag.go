@@ -30,15 +30,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func init() {
-	go func() {
-		for {
-			GC()
-			time.Sleep(10 * time.Second)
-		}
-	}()
-}
-
 func GC() {
 	runtime.GC()
 	debug.FreeOSMemory()
@@ -577,6 +568,18 @@ func FlagWithError() error {
 	flagSet.CaseSensitive = true
 	flagSet.SetDescription(cliDescription)
 	flagSet.SetCustomHelpText(cliHelpText)
+
+	// Argus CLI 是自包含/离线探测工具，不使用 goflags 自动生成的 config.yaml 配置文件。
+	// 禁用自动迁移并指定已存在的空临时文件作为配置源，避免 goflags 在当前目录下试图创建
+	// <可执行文件名>/config.yaml 时，因当前目录存在同名二进制文件而触发 ENOTDIR (not a directory)。
+	goflags.DisableAutoConfigMigration = true
+	if dummyConfig, err := os.CreateTemp("", "argus-goflags-*.yaml"); err == nil {
+		defer os.Remove(dummyConfig.Name())
+		_ = dummyConfig.Close()
+		flagSet.SetConfigFilePath(dummyConfig.Name())
+	} else {
+		flagSet.SetConfigFilePath(filepath.Join(os.TempDir(), "argus-goflags-dummy.yaml"))
+	}
 
 	defaultTCPThreads := 1000
 	if IsLinux() {

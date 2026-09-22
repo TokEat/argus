@@ -124,6 +124,19 @@ type addr struct {
 	port int
 }
 
+func determineConnectTimeout(ip string, configuredTimeout int) time.Duration {
+	if configuredTimeout <= 0 {
+		configuredTimeout = 6
+	}
+	// 当使用默认超时 (>=6s) 且目标为本地/内网私有地址时，自适应收敛至 1.5s，
+	// 防止遭遇防火墙 DROP 静默丢包时无谓等待 6 秒。
+	// 若调用方已明确配置了更小超时，则严格按调用方设定执行。
+	if configuredTimeout >= 6 && utils.IsLocalIP(ip) {
+		return 1500 * time.Millisecond
+	}
+	return time.Duration(configuredTimeout) * time.Second
+}
+
 func portConnect(item addr, respondingHosts chan<- string, adjustedTimeout int, portScan bool, portsThreshold int, backlist *map[string]struct{}, backlistLock *sync.Mutex, wg *sync.WaitGroup, emit func(ddout.OutputMessage)) {
 	backlistLock.Lock()
 	_, blocked := (*backlist)[item.ip]
@@ -132,7 +145,8 @@ func portConnect(item addr, respondingHosts chan<- string, adjustedTimeout int, 
 		return
 	}
 
-	conn, err := utils.WrapperTcpWithTimeout("tcp4", fmt.Sprintf("%s:%d", item.ip, item.port), time.Duration(adjustedTimeout)*time.Second)
+	timeoutDur := determineConnectTimeout(item.ip, adjustedTimeout)
+	conn, err := utils.WrapperTcpWithTimeout("tcp4", fmt.Sprintf("%s:%d", item.ip, item.port), timeoutDur)
 	defer func() {
 		if conn != nil {
 			conn.Close()

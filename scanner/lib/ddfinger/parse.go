@@ -1,7 +1,6 @@
 package ddfinger
 
 import (
-	"container/list"
 	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/projectdiscovery/gologger"
 	"regexp"
@@ -26,21 +25,38 @@ func advance(ch int) int {
 	return 0
 }
 
-func listBackInt(stack *list.List) (int, bool) {
-	if stack == nil || stack.Back() == nil {
-		return 0, false
-	}
-	value, ok := stack.Back().Value.(int)
-	return value, ok
+type intStack struct {
+	buf [64]int
+	arr []int
 }
 
-func popInt(stack *list.List) (int, bool) {
-	value, ok := listBackInt(stack)
-	if !ok {
+func (s *intStack) push(v int) {
+	if s.arr == nil {
+		s.arr = s.buf[:0]
+	}
+	s.arr = append(s.arr, v)
+}
+
+func (s *intStack) pop() (int, bool) {
+	l := len(s.arr)
+	if l == 0 {
 		return 0, false
 	}
-	stack.Remove(stack.Back())
-	return value, true
+	v := s.arr[l-1]
+	s.arr = s.arr[:l-1]
+	return v, true
+}
+
+func (s *intStack) peek() (int, bool) {
+	l := len(s.arr)
+	if l == 0 {
+		return 0, false
+	}
+	return s.arr[l-1], true
+}
+
+func (s *intStack) len() int {
+	return len(s.arr)
 }
 
 // 计算纯bool表达式，支持 ! && & || | ( )
@@ -65,119 +81,111 @@ func boolEval(expression string) bool {
 		return false
 	}
 
-	expr := list.New()
-	operator_stack := list.New()
+	var exprBuf [64]int
+	expr := exprBuf[:0]
+	var operator_stack intStack
 	for _, ch := range expression {
 		if ch == 84 || ch == 70 {
-			expr.PushBack(int(ch))
+			expr = append(expr, int(ch))
 			continue
 		}
 		if advance(int(ch)) > 0 {
-			if operator_stack.Len() == 0 {
-				operator_stack.PushBack(int(ch))
+			if operator_stack.len() == 0 {
+				operator_stack.push(int(ch))
 				continue
 			}
-			top, ok := listBackInt(operator_stack)
+			top, ok := operator_stack.peek()
 			if !ok {
 				return false
 			}
 			if ch == 33 && top == 33 {
-				operator_stack.Remove(operator_stack.Back())
+				operator_stack.pop()
 				continue
 			}
-			for operator_stack.Len() != 0 {
-				top, ok = listBackInt(operator_stack)
+			for operator_stack.len() != 0 {
+				top, ok = operator_stack.peek()
 				if !ok || top == 40 || advance(top) < advance(int(ch)) {
 					break
 				}
-				expr.PushBack(top)
-				operator_stack.Remove(operator_stack.Back())
+				expr = append(expr, top)
+				operator_stack.pop()
 			}
-			operator_stack.PushBack(int(ch))
+			operator_stack.push(int(ch))
 			continue
 		}
 		if ch == 40 {
-			operator_stack.PushBack(int(ch))
+			operator_stack.push(int(ch))
 			continue
 		}
 		if ch == 41 {
 			for {
-				top, ok := listBackInt(operator_stack)
+				top, ok := operator_stack.peek()
 				if !ok {
 					return false
 				}
 				if top == 40 {
 					break
 				}
-				expr.PushBack(top)
-				operator_stack.Remove(operator_stack.Back())
+				expr = append(expr, top)
+				operator_stack.pop()
 			}
-			operator_stack.Remove(operator_stack.Back())
+			operator_stack.pop()
 		}
 	}
-	for operator_stack.Len() != 0 {
-		top, ok := popInt(operator_stack)
-		if !ok {
+	for operator_stack.len() != 0 {
+		top, ok := operator_stack.pop()
+		if !ok || top == 40 {
 			return false
 		}
-		if top == 40 {
-			return false
-		}
-		expr.PushBack(top)
+		expr = append(expr, top)
 	}
 
-	tf_stack := list.New()
-	for expr.Len() != 0 {
-		e := expr.Front()
-		ch, ok := e.Value.(int)
-		expr.Remove(e)
-		if !ok {
-			return false
-		}
+	var tf_stack intStack
+	for _, ch := range expr {
 		if ch == 84 || ch == 70 {
-			tf_stack.PushBack(ch)
+			tf_stack.push(ch)
 			continue
 		}
 		if ch == 38 { // &
-			a, okA := popInt(tf_stack)
-			b, okB := popInt(tf_stack)
+			a, okA := tf_stack.pop()
+			b, okB := tf_stack.pop()
 			if !okA || !okB {
 				return false
 			}
 			if a == 84 && b == 84 {
-				tf_stack.PushBack(84)
+				tf_stack.push(84)
 			} else {
-				tf_stack.PushBack(70)
+				tf_stack.push(70)
 			}
 			continue
 		}
 		if ch == 124 { // |
-			a, okA := popInt(tf_stack)
-			b, okB := popInt(tf_stack)
+			a, okA := tf_stack.pop()
+			b, okB := tf_stack.pop()
 			if !okA || !okB {
 				return false
 			}
 			if a == 70 && b == 70 {
-				tf_stack.PushBack(70)
+				tf_stack.push(70)
 			} else {
-				tf_stack.PushBack(84)
+				tf_stack.push(84)
 			}
 			continue
 		}
 		if ch == 33 { // !
-			a, okA := popInt(tf_stack)
+			a, okA := tf_stack.pop()
 			if !okA {
 				return false
 			}
 			if a == 70 {
-				tf_stack.PushBack(84)
+				tf_stack.push(84)
 			} else if a == 84 {
-				tf_stack.PushBack(70)
+				tf_stack.push(70)
 			}
 		}
 	}
-	result, ok := listBackInt(tf_stack)
-	if !ok || tf_stack.Len() != 1 {
+	result, ok := tf_stack.peek()
+	if !ok || tf_stack.len() != 1 {
 		return false
 	}
 	return result == 84
@@ -275,24 +283,26 @@ func regexMatch(pattern string, s string) (bool, error) {
 
 // body="123"  op=0  dataSource为http.body dataRule=123
 func dataCheckString(op int16, dataSource string, dataRule string) bool {
-	dataSource = strings.ToLower(dataSource)
+	return dataCheckStringPrepared(op, strings.ToLower(dataSource), dataRule)
+}
 
+func dataCheckStringPrepared(op int16, dataSourceLower string, dataRule string) bool {
 	dataRule = strings.ToLower(dataRule)
 	dataRule = strings.ReplaceAll(dataRule, "\\\"", "\"")
 	if op == 0 {
-		if strings.Contains(dataSource, dataRule) {
+		if strings.Contains(dataSourceLower, dataRule) {
 			return true
 		}
 	} else if op == 1 {
-		if !strings.Contains(dataSource, dataRule) {
+		if !strings.Contains(dataSourceLower, dataRule) {
 			return true
 		}
 	} else if op == 2 {
-		if dataSource == dataRule {
+		if dataSourceLower == dataRule {
 			return true
 		}
 	} else if op == 5 {
-		rs, err := regexMatch(dataRule, dataSource)
+		rs, err := regexMatch(dataRule, dataSourceLower)
 		if err == nil && rs {
 			return true
 		}
@@ -321,10 +331,66 @@ func dataCheckInt(op int16, dataSource int, dataRule int) bool {
 	return false
 }
 
+// CheckContext 缓存预先计算好的小写文本与属性，避免跨万条规则重复在堆上 Lower 大文本
+type CheckContext struct {
+	Protocol         string
+	Header           string
+	HeaderLower      string
+	Body             string
+	BodyLower        string
+	Server           string
+	ServerLower      string
+	Title            string
+	TitleLower       string
+	Cert             string
+	CertLower        string
+	Port             int
+	Path             string
+	PathLower        string
+	Hash             string
+	HashLower        string
+	IconHash         string
+	StatusCode       int
+	ContentType      string
+	ContentTypeLower string
+	Banner           string
+	BannerLower      string
+}
+
+func NewCheckContext(Protocol string, headerString string, body string,
+	Server string, Title string, Cert string, Port int, Path string, Hash string, IconHash string, StatusCode int,
+	ContentType string, Banner string) *CheckContext {
+	return &CheckContext{
+		Protocol:         Protocol,
+		Header:           headerString,
+		HeaderLower:      strings.ToLower(headerString),
+		Body:             body,
+		BodyLower:        strings.ToLower(body),
+		Server:           Server,
+		ServerLower:      strings.ToLower(Server),
+		Title:            Title,
+		TitleLower:       strings.ToLower(Title),
+		Cert:             Cert,
+		CertLower:        strings.ToLower(Cert),
+		Port:             Port,
+		Path:             Path,
+		PathLower:        strings.ToLower(Path),
+		Hash:             Hash,
+		HashLower:        strings.ToLower(Hash),
+		IconHash:         IconHash,
+		StatusCode:       StatusCode,
+		ContentType:      ContentType,
+		ContentTypeLower: strings.ToLower(ContentType),
+		Banner:           Banner,
+		BannerLower:      strings.ToLower(Banner),
+	}
+}
+
 func SingleCheck(finger structs.FingerPEntity, Protocol string, headerString string, body string,
 	Server string, Title string, Cert string, Port int, Path string, Hash string, IconHash string, StatusCode int,
 	ContentType string, Banner string) bool {
-	return evalFinger(finger, Protocol, headerString, body, Server, Title, Cert, Port, Path, Hash, IconHash, StatusCode, ContentType, Banner, false)
+	ctx := NewCheckContext(Protocol, headerString, body, Server, Title, Cert, Port, Path, Hash, IconHash, StatusCode, ContentType, Banner)
+	return evalFingerWithContext(finger, ctx, false)
 }
 
 // DirProbeCheck evaluates a fingerprint against a directory-probe response.
@@ -334,7 +400,22 @@ func SingleCheck(finger structs.FingerPEntity, Protocol string, headerString str
 func DirProbeCheck(finger structs.FingerPEntity, Protocol string, headerString string, body string,
 	Server string, Title string, Cert string, Port int, Path string, Hash string, IconHash string, StatusCode int,
 	ContentType string, Banner string) bool {
-	return evalFinger(finger, Protocol, headerString, body, Server, Title, Cert, Port, Path, Hash, IconHash, StatusCode, ContentType, Banner, true)
+	ctx := NewCheckContext(Protocol, headerString, body, Server, Title, Cert, Port, Path, Hash, IconHash, StatusCode, ContentType, Banner)
+	return evalFingerWithContext(finger, ctx, true)
+}
+
+func SingleCheckWithContext(finger structs.FingerPEntity, ctx *CheckContext) bool {
+	if ctx == nil {
+		return false
+	}
+	return evalFingerWithContext(finger, ctx, false)
+}
+
+func DirProbeCheckWithContext(finger structs.FingerPEntity, ctx *CheckContext) bool {
+	if ctx == nil {
+		return false
+	}
+	return evalFingerWithContext(finger, ctx, true)
 }
 
 func isContentEvidenceKey(key string) bool {
@@ -409,6 +490,14 @@ func isSignificantProbeToken(value string) bool {
 func evalFinger(finger structs.FingerPEntity, Protocol string, headerString string, body string,
 	Server string, Title string, Cert string, Port int, Path string, Hash string, IconHash string, StatusCode int,
 	ContentType string, Banner string, dirProbe bool) bool {
+	ctx := NewCheckContext(Protocol, headerString, body, Server, Title, Cert, Port, Path, Hash, IconHash, StatusCode, ContentType, Banner)
+	return evalFingerWithContext(finger, ctx, dirProbe)
+}
+
+func evalFingerWithContext(finger structs.FingerPEntity, ctx *CheckContext, dirProbe bool) bool {
+	if ctx == nil {
+		return false
+	}
 	rules := finger.Rule
 	expr := finger.AllString
 	contentEvidence := false
@@ -419,66 +508,65 @@ func evalFinger(finger structs.FingerPEntity, Protocol string, headerString stri
 		}
 		singleRuleResult := false
 		if singleRule.Key == "header" {
-			if dataCheckString(singleRule.Op, headerString, singleRule.Value) {
+			if dataCheckStringPrepared(singleRule.Op, ctx.HeaderLower, singleRule.Value) {
 				singleRuleResult = true
 			}
 		} else if singleRule.Key == "body" {
-			if dataCheckString(singleRule.Op, body, singleRule.Value) {
+			if dataCheckStringPrepared(singleRule.Op, ctx.BodyLower, singleRule.Value) {
 				singleRuleResult = true
 			}
 		} else if singleRule.Key == "server" {
-			if dataCheckString(singleRule.Op, Server, singleRule.Value) {
+			if dataCheckStringPrepared(singleRule.Op, ctx.ServerLower, singleRule.Value) {
 				singleRuleResult = true
 			}
 		} else if singleRule.Key == "title" {
-			if dataCheckString(singleRule.Op, Title, singleRule.Value) {
+			if dataCheckStringPrepared(singleRule.Op, ctx.TitleLower, singleRule.Value) {
 				singleRuleResult = true
 			}
 		} else if singleRule.Key == "cert" {
-			if dataCheckString(singleRule.Op, Cert, singleRule.Value) {
+			if dataCheckStringPrepared(singleRule.Op, ctx.CertLower, singleRule.Value) {
 				singleRuleResult = true
 			}
 		} else if singleRule.Key == "port" {
 			value, err := strconv.Atoi(singleRule.Value)
-			if err == nil && dataCheckInt(singleRule.Op, Port, value) {
+			if err == nil && dataCheckInt(singleRule.Op, ctx.Port, value) {
 				singleRuleResult = true
 			}
 		} else if singleRule.Key == "protocol" {
 			if singleRule.Op == 0 {
-				if Protocol == singleRule.Value {
+				if ctx.Protocol == singleRule.Value {
 					singleRuleResult = true
 				}
 			} else if singleRule.Op == 1 {
-				if Protocol != singleRule.Value {
+				if ctx.Protocol != singleRule.Value {
 					singleRuleResult = true
 				}
 			}
 		} else if singleRule.Key == "path" {
-			if dataCheckString(singleRule.Op, Path, singleRule.Value) {
+			if dataCheckStringPrepared(singleRule.Op, ctx.PathLower, singleRule.Value) {
 				singleRuleResult = true
 			}
 		} else if singleRule.Key == "body_hash" {
-
-			if dataCheckString(singleRule.Op, Hash, singleRule.Value) {
+			if dataCheckStringPrepared(singleRule.Op, ctx.HashLower, singleRule.Value) {
 				singleRuleResult = true
 			}
 		} else if singleRule.Key == "icon_hash" {
 			value, err := strconv.Atoi(singleRule.Value)
-			hashIcon, errHash := strconv.Atoi(IconHash)
+			hashIcon, errHash := strconv.Atoi(ctx.IconHash)
 			if err == nil && errHash == nil && dataCheckInt(singleRule.Op, hashIcon, value) {
 				singleRuleResult = true
 			}
 		} else if singleRule.Key == "status" {
 			value, err := strconv.Atoi(singleRule.Value)
-			if err == nil && dataCheckInt(singleRule.Op, StatusCode, value) {
+			if err == nil && dataCheckInt(singleRule.Op, ctx.StatusCode, value) {
 				singleRuleResult = true
 			}
 		} else if singleRule.Key == "content_type" {
-			if dataCheckString(singleRule.Op, ContentType, singleRule.Value) {
+			if dataCheckStringPrepared(singleRule.Op, ctx.ContentTypeLower, singleRule.Value) {
 				singleRuleResult = true
 			}
 		} else if singleRule.Key == "banner" {
-			if dataCheckString(singleRule.Op, Banner, singleRule.Value) {
+			if dataCheckStringPrepared(singleRule.Op, ctx.BannerLower, singleRule.Value) {
 				singleRuleResult = true
 			}
 		} else if singleRule.Key == "type" {
@@ -489,11 +577,11 @@ func evalFinger(finger structs.FingerPEntity, Protocol string, headerString stri
 		if dirProbe && singleRule.Op != 1 {
 			switch singleRule.Key {
 			case "title", "header":
-				if isProbePathReflection(singleRule.Value, Path) {
+				if isProbePathReflection(singleRule.Value, ctx.Path) {
 					singleRuleResult = false
 				}
 			case "body":
-				if isProbePathReflection(singleRule.Value, Path) || isProbePathBodyToken(singleRule.Value, Path) {
+				if isProbePathReflection(singleRule.Value, ctx.Path) || isProbePathBodyToken(singleRule.Value, ctx.Path) {
 					singleRuleResult = false
 				}
 			}

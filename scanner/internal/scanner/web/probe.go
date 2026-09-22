@@ -383,26 +383,28 @@ func (rt *Runtime) matchAllFingers(resp runner.Result) []string {
 	bodyHash := hashValue(resp, "body_md5")
 	seen := map[string]struct{}{}
 	var results []string
+
+	ctx := ddfinger.NewCheckContext(
+		resp.Scheme,
+		resp.Header,
+		resp.Body,
+		resp.WebServer,
+		resp.Title,
+		cert,
+		portInt,
+		path,
+		bodyHash,
+		resp.FavIconMMH3,
+		resp.StatusCode,
+		resp.ContentType,
+		"",
+	)
+
 	for _, finger := range rt.FingerprintDB {
 		if _, ok := seen[finger.ProductName]; ok {
 			continue
 		}
-		if !ddfinger.SingleCheck(
-			finger,
-			resp.Scheme,
-			resp.Header,
-			resp.Body,
-			resp.WebServer,
-			resp.Title,
-			cert,
-			portInt,
-			path,
-			bodyHash,
-			resp.FavIconMMH3,
-			resp.StatusCode,
-			resp.ContentType,
-			"",
-		) {
+		if !ddfinger.SingleCheckWithContext(finger, ctx) {
 			continue
 		}
 		seen[finger.ProductName] = struct{}{}
@@ -417,23 +419,24 @@ func (rt *Runtime) matchesProduct(resp runner.Result, productName string) bool {
 		portInt = -1
 	}
 
+	ctx := ddfinger.NewCheckContext(
+		resp.Scheme,
+		resp.Header,
+		resp.Body,
+		resp.WebServer,
+		resp.Title,
+		getTLSString(resp),
+		portInt,
+		normalizedPath(resp),
+		hashValue(resp, "body_md5"),
+		resp.FavIconMMH3,
+		resp.StatusCode,
+		resp.ContentType,
+		"",
+	)
+
 	for _, finger := range rt.fingerprintByProduct[productName] {
-		if ddfinger.DirProbeCheck(
-			finger,
-			resp.Scheme,
-			resp.Header,
-			resp.Body,
-			resp.WebServer,
-			resp.Title,
-			getTLSString(resp),
-			portInt,
-			normalizedPath(resp),
-			hashValue(resp, "body_md5"),
-			resp.FavIconMMH3,
-			resp.StatusCode,
-			resp.ContentType,
-			"",
-		) {
+		if ddfinger.DirProbeCheckWithContext(finger, ctx) {
 			return true
 		}
 	}
