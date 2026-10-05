@@ -55,6 +55,20 @@ func ResetTemplateCache() {
 	parsedTemplatesCache = cache.New()
 }
 
+// templateParseLoads counts template bodies actually read after a cache miss.
+// Cache hits are not counted. Tests use it to compare repeated loads.
+var templateParseLoads atomic.Uint64
+
+// TemplateParseLoads returns how many template bodies have been read.
+func TemplateParseLoads() uint64 {
+	return templateParseLoads.Load()
+}
+
+// ResetTemplateParseLoads zeroes the template body read counter.
+func ResetTemplateParseLoads() {
+	templateParseLoads.Store(0)
+}
+
 func EmbedParse(f embed.FS, filePath string, preprocessor Preprocessor, options protocols.ExecutorOptions) (*Template, error) {
 	if !options.DoNotCache {
 		if value, err := parsedTemplatesCache.Has(filePath); value != nil {
@@ -67,6 +81,7 @@ func EmbedParse(f embed.FS, filePath string, preprocessor Preprocessor, options 
 		return nil, err
 	}
 	defer reader.Close()
+	templateParseLoads.Add(1)
 	options.TemplatePath = filePath
 	template, err := ParseTemplateFromReader(reader, preprocessor, options.Copy())
 	if err != nil {
@@ -114,6 +129,7 @@ func Parse(filePath string, preprocessor Preprocessor, options protocols.Executo
 		}
 	}
 	defer reader.Close()
+	templateParseLoads.Add(1)
 	options.TemplatePath = filePath
 	template, err := ParseTemplateFromReader(reader, preprocessor, options.Copy())
 	if err != nil {

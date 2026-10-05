@@ -506,121 +506,147 @@ func splitPathAndFileName(path string) (string, string) {
 func (store *Store) LoadTemplatesWithNames(f embed.FS, templatesList []string,
 	pocNames []string, excludeTags []string, enableSeverities []string,
 	fuzzyMatching bool) []*templates.Template {
-	loadedTemplatesName := make(map[string]struct{})
+	compiled := store.CompileTemplates(f, templatesList, pocNames, excludeTags, enableSeverities, fuzzyMatching)
+	return SelectCompiledTemplates(compiled, pocNames, fuzzyMatching, store.headlessEnabled())
+}
 
-	//includedTemplates, _ := store.config.Catalog.GetTemplatesPath(templatesList)
-	//// store.logErroredTemplates(errs)
-	//templatePathMap := store.pathFilter.Match(includedTemplates)
+// CompiledTemplate is a template parsed once and reused across targets.
+type CompiledTemplate struct {
+	Path     string
+	FileName string
+	Template *templates.Template
+}
 
-	var enableSeveritiesOK []string
-	var excludeTagsOK []string
-
-	for _, v := range enableSeverities {
-		if v == "" {
-			continue
-		}
-		enableSeveritiesOK = append(enableSeveritiesOK, v)
-	}
-	for _, v := range excludeTags {
-		if v == "" {
-			continue
-		}
-		excludeTagsOK = append(excludeTagsOK, v)
-	}
-
-	loadedTemplates := make([]*templates.Template, 0, len(templatesList))
+// CompileTemplates parses each candidate template at most once.
+// Paths that cannot match pocNames are not read. The result keeps library order
+// and can be reused for every target.
+func (store *Store) CompileTemplates(f embed.FS, templatesList []string, pocNames []string, excludeTags []string, enableSeverities []string, fuzzy bool) []CompiledTemplate {
+	enableSeveritiesOK := nonEmpty(enableSeverities)
+	excludeTagsOK := nonEmpty(excludeTags)
+	seen := make(map[string]struct{}, len(templatesList))
+	compiled := make([]CompiledTemplate, 0)
 	for _, templatePath := range templatesList {
 		_, fileName := splitPathAndFileName(templatePath)
-		_, ok := loadedTemplatesName[fileName]
-		if ok {
+		if _, ok := seen[fileName]; ok {
+			continue
+		}
+		if !templatePathCanMatch(templatePath, pocNames, fuzzy) {
 			continue
 		}
 		parsed, err := templates.Parse(templatePath, store.preprocessor, store.config.ExecutorOptions)
 		if err != nil {
 			parsed, err = templates.EmbedParse(f, templatePath, store.preprocessor, store.config.ExecutorOptions)
 		}
-
 		if err != nil {
 			stats.Increment(parsers.RuntimeWarningsStats)
 			gologger.Warning().Msgf("Could not parse template %s: %s\n", templatePath, err)
 			continue
 		}
-		if len(excludeTagsOK) > 0 {
-			isExclude := false
-			for _, tag := range parsed.Info.Tags.ToSlice() {
-				for _, t := range excludeTags {
-					if t == tag {
-						isExclude = true
-						break
-					}
-				}
-				if isExclude {
-					break
-				}
-			}
-			if isExclude {
-				// 排除指定tags的模板
-				continue
-			}
+		if templateExcluded(parsed, excludeTags, excludeTagsOK, enableSeveritiesOK) {
+			continue
 		}
+		seen[fileName] = struct{}{}
+		compiled = append(compiled, CompiledTemplate{Path: templatePath, FileName: fileName, Template: parsed})
+	}
+	return compiled
+}
 
-		if len(enableSeveritiesOK) > 0 {
-			isExclude := true
-
-			for _, s := range enableSeveritiesOK {
-				if strings.ToLower(s) == strings.ToLower(parsed.Info.SeverityHolder.Severity.String()) {
-					isExclude = false
-					break
-				}
-			}
-			if isExclude {
-				// 不允许的严重程度
-				continue
-			}
+// SelectCompiledTemplates returns the compiled templates that match pocNames.
+func SelectCompiledTemplates(compiled []CompiledTemplate, pocNames []string, fuzzy bool, headless bool) []*templates.Template {
+	loaded := make([]*templates.Template, 0)
+	for _, item := range compiled {
+		if item.Template == nil || !compiledTemplateMatches(item, pocNames, fuzzy) {
+			continue
 		}
-
-		loadedTemplatesName[fileName] = struct{}{}
-		tags := parsed.Info.Tags.ToSlice()
-		flag := false
-		for _, pocName := range pocNames {
-
-			changePocName := strings.ToLower(strings.ReplaceAll(pocName, "/", "\\"))
-			if fuzzyMatching {
-				if strings.Contains(strings.ToLower(templatePath), strings.ToLower(pocName)) {
-					flag = true
-					break
-				}
-			} else {
-				if strings.HasSuffix(strings.ToLower(templatePath), strings.ToLower(pocName)) {
-					flag = true
-					break
-				}
-				if strings.HasSuffix(strings.ToLower(templatePath), changePocName) {
-					flag = true
-					break
-				}
-				if strings.HasPrefix(pocName, "Tags@") {
-					tagName := pocName[5 : len(pocName)-5]
-					for _, t := range tags {
-						if strings.ToLower(t) == strings.ToLower(tagName) {
-							flag = true
-							break
-						}
-					}
-					if flag {
-						break
-					}
-				}
-			}
-
+		if len(item.Template.RequestsHeadless) > 0 && !headless {
+			gologger.Warning().Msgf("Headless flag is required for headless template %s\n", item.Path)
+			continue
 		}
-		if flag {
-			if len(parsed.RequestsHeadless) > 0 && !store.config.ExecutorOptions.Options.Headless {
-				gologger.Warning().Msgf("Headless flag is required for headless template %s\n", templatePath)
-			} else {
-				loadedTemplates = append(loadedTemplates, parsed)
+		loaded = append(loaded, item.Template)
+	}
+	return loaded
+}
+
+func (store *Store) headlessEnabled() bool {
+	return store.config != nil && store.config.ExecutorOptions.Options != nil && store.config.ExecutorOptions.Options.Headless
+}
+
+func nonEmpty(values []string) []string {
+	kept := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		kept = append(kept, value)
+	}
+	return kept
+}
+
+func templateExcluded(parsed *templates.Template, excludeTags []string, excludeTagsOK []string, enableSeveritiesOK []string) bool {
+	if len(excludeTagsOK) > 0 {
+		for _, tag := range parsed.Info.Tags.ToSlice() {
+			for _, excluded := range excludeTags {
+				if excluded == tag {
+					return true
+				}
 			}
 		}
 	}
-	return loadedTemplates
+	if len(enableSeveritiesOK) == 0 {
+		return false
+	}
+	severity := strings.ToLower(parsed.Info.SeverityHolder.Severity.String())
+	for _, allowed := range enableSeveritiesOK {
+		if strings.ToLower(allowed) == severity {
+			return false
+		}
+	}
+	return true
+}
+
+func templatePathCanMatch(templatePath string, pocNames []string, fuzzy bool) bool {
+	if len(pocNames) == 0 {
+		return false
+	}
+	lowerPath := strings.ToLower(templatePath)
+	for _, pocName := range pocNames {
+		if strings.HasPrefix(pocName, "Tags@") {
+			return true
+		}
+		if fuzzy {
+			if strings.Contains(lowerPath, strings.ToLower(pocName)) {
+				return true
+			}
+			continue
+		}
+		if strings.HasSuffix(lowerPath, strings.ToLower(pocName)) || strings.HasSuffix(lowerPath, strings.ToLower(strings.ReplaceAll(pocName, "/", "\\"))) {
+			return true
+		}
+	}
+	return false
+}
+
+func compiledTemplateMatches(item CompiledTemplate, pocNames []string, fuzzy bool) bool {
+	lowerPath := strings.ToLower(item.Path)
+	tags := item.Template.Info.Tags.ToSlice()
+	for _, pocName := range pocNames {
+		if fuzzy {
+			if strings.Contains(lowerPath, strings.ToLower(pocName)) {
+				return true
+			}
+			continue
+		}
+		if strings.HasSuffix(lowerPath, strings.ToLower(pocName)) || strings.HasSuffix(lowerPath, strings.ToLower(strings.ReplaceAll(pocName, "/", "\\"))) {
+			return true
+		}
+		if strings.HasPrefix(pocName, "Tags@") && len(pocName) >= 10 {
+			tagName := pocName[5 : len(pocName)-5]
+			for _, tag := range tags {
+				if strings.ToLower(tag) == strings.ToLower(tagName) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/P0lar1ght/argus/scanner/utils"
 	"github.com/projectdiscovery/gologger"
 	"github.com/tomatome/grdp/core"
+	"github.com/tomatome/grdp/emission"
 	"github.com/tomatome/grdp/glog"
 	"github.com/tomatome/grdp/protocol/nla"
 	"github.com/tomatome/grdp/protocol/pdu"
@@ -83,7 +84,11 @@ func worker(info *structs.HostInfo, host, domain string, port int, wg *sync.Wait
 
 		waitCredentialAttempt(info)
 		flag, exchanges, err := connect(host, domain, user, pass, port, timeout)
-		if isSuccessfulSessionEvidenceError(err) {
+		if isSuccessfulSessionEvidenceError(err) || isRDPHandshakePanic(err) {
+			if isRDPHandshakePanic(err) {
+				// The handshake failed before the password was checked.
+				gologger.Error().Msgf("[Go] [RDP-Brute] stop %s:%d: %v", host, port, err)
+			}
 			mutex.Lock()
 			*workerErr = err
 			*signal = true
@@ -181,12 +186,12 @@ func (g *Client) Login(domain, user, pwd string, timeout int64) error {
 	if err != nil {
 		return fmt.Errorf("[dial err] %v", err)
 	}
-	return g.loginConn(conn, domain, user, pwd)
+	return g.loginConn(conn, domain, user, pwd, time.Duration(timeout)*time.Second)
 }
 
 func (g *Client) loginWithEvidence(domain, user, pwd string, timeout int64, limit int) ([]structs.GoPocExchange, error) {
 	return g.loginWithEvidenceUsing(timeout, limit, func(conn net.Conn) error {
-		return g.loginConn(conn, domain, user, pwd)
+		return g.loginConn(conn, domain, user, pwd, time.Duration(timeout)*time.Second)
 	})
 }
 
@@ -207,7 +212,41 @@ func (g *Client) dialConn(network, address string, timeout time.Duration) (net.C
 	return utils.WrapperTcpWithTimeout(network, address, timeout)
 }
 
-func (g *Client) loginConn(conn net.Conn, domain, user, pwd string) error {
+// errRDPHandshakePanic marks a grdp listener panic. The failure happens while
+// negotiating standard RDP, before the password is checked.
+var errRDPHandshakePanic = errors.New("rdp handshake panic")
+
+func isRDPHandshakePanic(err error) bool {
+	return errors.Is(err, errRDPHandshakePanic)
+}
+
+type rdpPanicEmitter interface {
+	RecoverWith(emission.RecoveryListener) *emission.Emitter
+}
+
+// installRDPHandshakeGuard contains panics from grdp event listeners.
+// Those listeners run on emitter goroutines, so a plugin-level recover never
+// sees them. xrdp commonly selects standard RDP and omits ServerSecurityData;
+// sendClientRandom then dereferences nil at ServerRandom (offset 0x10).
+func installRDPHandshakeGuard(fail func(error), emitters ...rdpPanicEmitter) {
+	if fail == nil {
+		return
+	}
+	listener := func(event, _ interface{}, recovered error) {
+		fail(fmt.Errorf("%w on %v: %v", errRDPHandshakePanic, event, recovered))
+	}
+	for _, emitter := range emitters {
+		if emitter != nil {
+			emitter.RecoverWith(listener)
+		}
+	}
+}
+
+func (g *Client) loginConn(conn net.Conn, domain, user, pwd string, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = 6 * time.Second
+	}
+	_ = conn.SetDeadline(time.Now().Add(timeout))
 	glog.Info(conn.LocalAddr().String())
 
 	g.tpkt = tpkt.New(core.NewSocketLayer(conn), nla.NewNTLMv2(domain, user, pwd))
@@ -228,43 +267,45 @@ func (g *Client) loginConn(conn net.Conn, domain, user, pwd string) error {
 	//g.x224.SetRequestedProtocol(x224.PROTOCOL_SSL)
 	//g.x224.SetRequestedProtocol(x224.PROTOCOL_RDP)
 
-	err := g.x224.Connect()
-	if err != nil {
-		return fmt.Errorf("[x224 connect err] %v", err)
+	done := make(chan error, 1)
+	finish := func(err error) {
+		select {
+		case done <- err:
+		default:
+		}
 	}
-	glog.Info("wait connect ok")
-	wg := &sync.WaitGroup{}
-	breakFlag := false
-	wg.Add(1)
-
+	installRDPHandshakeGuard(finish, g.tpkt, g.x224, g.mcs, g.sec, g.pdu)
 	g.pdu.On("error", func(e error) {
-		err = e
 		glog.Error("error", e)
-		g.pdu.Emit("done")
+		finish(e)
 	})
 	g.pdu.On("close", func() {
-		err = errors.New("close")
 		glog.Info("on close")
-		g.pdu.Emit("done")
+		finish(errors.New("close"))
 	})
 	g.pdu.On("success", func() {
-		err = nil
 		glog.Info("on success")
-		g.pdu.Emit("done")
+		finish(nil)
 	})
 	g.pdu.On("ready", func() {
 		glog.Info("on ready")
-		g.pdu.Emit("done")
+		finish(nil)
 	})
 	g.pdu.On("update", func(rectangles []pdu.BitmapData) {
 		glog.Info("on update:", rectangles)
 	})
-	g.pdu.On("done", func() {
-		if breakFlag == false {
-			breakFlag = true
-			wg.Done()
-		}
-	})
-	wg.Wait()
-	return err
+
+	if err := g.x224.Connect(); err != nil {
+		return fmt.Errorf("[x224 connect err] %v", err)
+	}
+	glog.Info("wait connect ok")
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		return fmt.Errorf("rdp login timeout after %s", timeout)
+	}
 }

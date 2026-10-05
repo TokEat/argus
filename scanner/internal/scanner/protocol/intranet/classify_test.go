@@ -39,6 +39,8 @@ func TestFromBannerIntranetTCP(t *testing.T) {
 		{"FINS\x00\x00\x00\x00", 9600, "fins"},
 		{"\x01\x02\x03", 789, "crimson"},
 		{"\x68\x04\x0b\x00\x00\x00", 2404, "iec104"},
+		{string(rsspIIConnectionRequest()), 50000, "rssp-ii"},
+		{string(rsspIRSD()), 50000, "rssp-i"},
 		{"\x81\x01\x00\x14\x00\x00\x00\x01\x00\x00\x00\x00\x00\x02\x00\x00\x00.\x00\x00", 1962, "pcworx"},
 		{"\x04\xef\xef\xb3\x00\x00\x00\x01\x01\x00\xc4\x01\x00\x00\x00\x00", 11740, "codesys"},
 		{"\xcc\x01\x00\x20\x02\x92\x00V3.4 ProConOS V3.4 PLC\x00project\x00source\x00", 20547, "proconos"},
@@ -82,6 +84,44 @@ func cassandraOptionsSupported() []byte {
 	binary.BigEndian.PutUint32(out[5:9], uint32(len(body)))
 	copy(out[9:], body)
 	return out
+}
+
+func rsspIIConnectionRequest() []byte {
+	// ALEPKT length 0x001E, version 1, app 0x1A, seq 0, normal, type CR.
+	// CRC-16/CCITT-FALSE of the first eight bytes is 0x1089.
+	raw := []byte{0x00, 0x1E, 0x01, 0x1A, 0x00, 0x00, 0x01, 0x01, 0x10, 0x89}
+	return append(raw, make([]byte, 22)...)
+}
+
+func rsspIRSD() []byte {
+	return []byte{
+		0x01, 0x80,
+		0x01, 0x00, 0x02, 0x00,
+		0x07, 0x00, 0x00, 0x00,
+		0x08, 0x00,
+		0, 0, 0, 0, 0, 0, 0, 0,
+		0x12, 0x34,
+	}
+}
+
+func TestFromBannerRSSPIDetail(t *testing.T) {
+	rec, ok := FromBanner(string(rsspIRSD()), 40000)
+	if !ok || rec.Protocol != "rssp-i" || rec.Product != "RSSP-I" {
+		t.Fatalf("record = %+v ok=%v", rec, ok)
+	}
+	if rec.Extra != "frame=rsd-a cat=1 src=1 dst=2 seq=7" {
+		t.Fatalf("extra = %q", rec.Extra)
+	}
+}
+
+func TestFromBannerRSSPIIDetail(t *testing.T) {
+	rec, ok := FromBanner(string(rsspIIConnectionRequest()), 40000)
+	if !ok || rec.Protocol != "rssp-ii" || rec.Product != "RSSP-II" {
+		t.Fatalf("record = %+v ok=%v", rec, ok)
+	}
+	if rec.Extra != "ale=cr app=26 link=normal seq=0" {
+		t.Fatalf("extra = %q", rec.Extra)
+	}
 }
 
 func rocketMQTestFrameBytes() []byte {

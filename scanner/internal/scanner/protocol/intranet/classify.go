@@ -22,6 +22,8 @@ func FromBanner(raw string, port int) (structs.ServiceRecord, bool) {
 	activeMQVersion, activeMQ := protocolwire.ActiveMQOpenWireVersion([]byte(raw))
 	tidbVersion, tidb := protocolwire.TiDBServerVersion([]byte(raw))
 	iec104 := protocolwire.IsIEC104Frame([]byte(raw))
+	rsspII, rsspIIOK := protocolwire.RSSPIIALE([]byte(raw))
+	rsspI, rsspIOK := protocolwire.RSSPI([]byte(raw))
 	switch {
 	case isADB(raw):
 		info := "auth=required"
@@ -55,6 +57,10 @@ func FromBanner(raw string, port int) (structs.ServiceRecord, bool) {
 		return record("java-serialization", "Java serialized stream", "", "", "enriched"), true
 	case iec104:
 		return record("iec104", "IEC-60870-5-104", "", "", "enriched"), true
+	case rsspIIOK:
+		return record("rssp-ii", "RSSP-II", "", rsspII.Extra(), "enriched"), true
+	case rsspIOK:
+		return record("rssp-i", "RSSP-I", "", rsspI.Extra(), "enriched"), true
 	case tidb:
 		return record("tidb", "TiDB", tidbVersion, "", "enriched"), true
 	case isHTTP2Settings(raw):

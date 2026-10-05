@@ -50,7 +50,10 @@ func bannerExtra(raw, protocol string) string {
 		return ""
 	}
 	specific := specificBannerExtra(raw, protocol)
-	if specific != "" && (looksBinary(raw) || suppressGenericBannerExtra(protocol)) {
+	if suppressGenericBannerExtra(protocol) {
+		return limitExtra(specific)
+	}
+	if specific != "" && looksBinary(raw) {
 		return limitExtra(specific)
 	}
 	if extraKeyCount(specific) >= extraKeyMax {
@@ -140,7 +143,7 @@ func genericBannerExtra(raw string) string {
 
 func suppressGenericBannerExtra(protocol string) bool {
 	switch protocol {
-	case "rocketmq", "rocketmq-broker", "rocketmq-namesrv", "epmd", "jboss-remoting", "iiop", "modbus", "pcworx", "codesys", "proconos":
+	case "rocketmq", "rocketmq-broker", "rocketmq-namesrv", "epmd", "jboss-remoting", "iiop", "modbus", "pcworx", "codesys", "proconos", "rssp-ii", "rssp-i":
 		return true
 	default:
 		return false

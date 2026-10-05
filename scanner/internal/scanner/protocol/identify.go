@@ -188,7 +188,7 @@ func dedicatedIntranet(protocol string) bool {
 	case "ldap", "ldaps", "kerberos", "rpc", "netbios", "dns",
 		"smtp", "imap", "pop3", "vnc", "rsync", "nfs",
 		"postgresql", "mysql", "mariadb", "tidb", "mqtt", "amqp", "zookeeper",
-		"dm", "kingbase", "nacos", "iec104",
+		"dm", "kingbase", "nacos", "iec104", "rssp-ii", "rssp-i",
 		"activemq", "cassandra", "clickhouse", "svn", "hsqldb",
 		"adb", "rmi", "jmx", "jdwp", "grpc":
 		return true
