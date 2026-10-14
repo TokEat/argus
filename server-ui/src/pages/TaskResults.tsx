@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Typography, Table, Tag, Tabs, Space, Spin, Button, Tooltip, Empty, Drawer, Descriptions, Divider, Popover } from 'antd';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, Typography, Table, Tag, Tabs, Space, Spin, Button, Tooltip, Empty, Drawer, Descriptions, Divider, Popover, Input, Steps } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     BugOutlined,
@@ -11,11 +11,18 @@ import {
     SendOutlined,
     CloudDownloadOutlined,
     LinkOutlined,
+    SearchOutlined,
+    PartitionOutlined,
+    NodeIndexOutlined,
+    FileTextOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useNavigate, useParams } from 'react-router-dom';
-import { getVulns, getAssets, getFingerprintGroups, exportVulns, exportAssets, exportFingerprints } from '../services/api';
+import { getVulns, getAssets, getFingerprintGroups, getAssetLineage, exportVulns, exportAssets, exportFingerprints, listCrawlSiteCandidates, listSensitiveFindings } from '../services/api';
 import { useAutoContext } from '../contexts/GlobalAIContext';
+import { AIVerdictTag } from '../components/VulnAITriagePanel';
+import VulnAITriagePanel from '../components/VulnAITriagePanel';
+import ContentFindingsPanel from '../components/tasks/ContentFindingsPanel';
 import { DEFAULT_RESULT_PAGE_SIZE, firstNonEmptyResultTab, initialResultPageState, type ResultPageState, type ResultTabKey } from './taskResultTabs';
 import dayjs from 'dayjs';
 
@@ -28,27 +35,47 @@ const TaskResults: React.FC = () => {
         vulns: false,
         assets: false,
         fingerprints: false,
+        content: false,
     });
     const [vulns, setVulns] = useState<API.Vulnerability[]>([]);
     const [assets, setAssets] = useState<API.Asset[]>([]);
     const [fingerprints, setFingerprints] = useState<API.FingerprintGroup[]>([]);
+    const [vulnSort, setVulnSort] = useState<{ field?: string; order?: 'asc' | 'desc' }>({});
     const [vulnPagination, setVulnPagination] = useState<ResultPageState>(initialResultPageState);
     const [assetPagination, setAssetPagination] = useState<ResultPageState>(initialResultPageState);
     const [fingerprintPagination, setFingerprintPagination] = useState<ResultPageState>(initialResultPageState);
+    // 内容分析（关联资产候选 + 敏感信息）合计数，用于空结果判定与默认页签选择。
+    const [contentFindingsTotal, setContentFindingsTotal] = useState(0);
     const [activeTab, setActiveTab] = useState<ResultTabKey>('vulns');
     const [selectedVuln, setSelectedVuln] = useState<API.Vulnerability | null>(null);
     const [drawerOpen, setDrawerOpen] = useState(false);
+    // 扫描链路溯源 Drawer
+    const [lineageDrawerOpen, setLineageDrawerOpen] = useState(false);
+    const [lineageNodes, setLineageNodes] = useState<API.AssetLineageNode[]>([]);
+    const [lineageLoading, setLineageLoading] = useState(false);
+    const [lineageTitle, setLineageTitle] = useState('');
+    // 各页签的服务端搜索词（state 用于展示，ref 供稳定的 fetch 函数读取，避免级联重抓）
+    const [vulnSearch, setVulnSearch] = useState('');
+    const [assetSearch, setAssetSearch] = useState('');
+    const vulnSearchRef = useRef('');
+    const assetSearchRef = useRef('');
+    const fingerprintSearchRef = useRef('');
+    const [fingerprintStats, setFingerprintStats] = useState<API.FingerprintGroupStats | null>(null);
+    const [fingerprintSearchInput, setFingerprintSearchInput] = useState('');
+    const fingerprintSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const navigate = useNavigate();
 
     const setTabBusy = useCallback((key: ResultTabKey, value: boolean) => {
         setTabLoading((cur) => ({ ...cur, [key]: value }));
     }, []);
 
-    const fetchVulnsPage = useCallback(async (page: number, pageSize: number) => {
+    const fetchVulnsPage = useCallback(async (page: number, pageSize: number, sortField?: string, sortOrder?: 'asc' | 'desc') => {
         setTabBusy('vulns', true);
         try {
             const projectId = localStorage.getItem('active_project_id') || undefined;
-            const res = await getVulns({ taskId, projectId, page, pageSize });
+            const sort = sortField ?? vulnSort.field;
+            const order = sortOrder ?? vulnSort.order;
+            const res = await getVulns({ taskId, projectId, page, pageSize, sort, order, search: vulnSearchRef.current || undefined });
             setVulns(res.items || []);
             setVulnPagination({
                 current: res.page || page,
@@ -63,13 +90,13 @@ const TaskResults: React.FC = () => {
         } finally {
             setTabBusy('vulns', false);
         }
-    }, [setTabBusy, taskId]);
+    }, [setTabBusy, taskId, vulnSort]);
 
     const fetchAssetsPage = useCallback(async (page: number, pageSize: number) => {
         setTabBusy('assets', true);
         try {
             const projectId = localStorage.getItem('active_project_id') || undefined;
-            const res = await getAssets({ taskId, projectId, page, pageSize });
+            const res = await getAssets({ taskId, projectId, page, pageSize, search: assetSearchRef.current || undefined });
             setAssets(res.items || []);
             setAssetPagination({
                 current: res.page || page,
@@ -90,8 +117,9 @@ const TaskResults: React.FC = () => {
         setTabBusy('fingerprints', true);
         try {
             const projectId = localStorage.getItem('active_project_id') || undefined;
-            const res = await getFingerprintGroups({ taskId, projectId, page, pageSize });
+            const res = await getFingerprintGroups({ taskId, projectId, page, pageSize, search: fingerprintSearchRef.current || undefined });
             setFingerprints(res.items || []);
+            setFingerprintStats(res.stats ?? null);
             setFingerprintPagination({
                 current: res.page || page,
                 pageSize: res.page_size || pageSize,
@@ -101,45 +129,90 @@ const TaskResults: React.FC = () => {
         } catch (error) {
             console.error('Failed to fetch fingerprints:', error);
             setFingerprints([]);
+            setFingerprintStats(null);
             return 0;
         } finally {
             setTabBusy('fingerprints', false);
         }
     }, [setTabBusy, taskId]);
 
+    // 内容分析合计数（关联资产候选 + 敏感信息）。独立容错：内容分析为可选能力，
+    // 其请求失败不应导致整页结果空白，故单独捕获并计 0。
+    const fetchContentTotals = useCallback(async (): Promise<number> => {
+        try {
+            const projectId = localStorage.getItem('active_project_id') || undefined;
+            const [crawl, sensitive] = await Promise.all([
+                listCrawlSiteCandidates({ taskId, projectId, page: 1, pageSize: 1 }),
+                listSensitiveFindings({ taskId, projectId, page: 1, pageSize: 1 }),
+            ]);
+            return (crawl?.total || 0) + (sensitive?.total || 0);
+        } catch (error) {
+            console.error('Failed to fetch content analysis totals:', error);
+            return 0;
+        }
+    }, [taskId]);
+
     const fetchFirstPages = useCallback(async () => {
         setLoading(true);
         try {
-            const [vulnerabilityTotal, assetTotal, fingerprintTotal] = await Promise.all([
+            const [vulnerabilityTotal, assetTotal, fingerprintTotal, contentTotal] = await Promise.all([
                 fetchVulnsPage(1, DEFAULT_RESULT_PAGE_SIZE),
                 fetchAssetsPage(1, DEFAULT_RESULT_PAGE_SIZE),
                 fetchFingerprintsPage(1, DEFAULT_RESULT_PAGE_SIZE),
+                fetchContentTotals(),
             ]);
-            setActiveTab(firstNonEmptyResultTab(vulnerabilityTotal, assetTotal, fingerprintTotal));
+            setContentFindingsTotal(contentTotal);
+            setActiveTab(firstNonEmptyResultTab(vulnerabilityTotal, assetTotal, fingerprintTotal, contentTotal));
         } finally {
             setLoading(false);
         }
-    }, [fetchAssetsPage, fetchFingerprintsPage, fetchVulnsPage]);
+    }, [fetchAssetsPage, fetchContentTotals, fetchFingerprintsPage, fetchVulnsPage]);
 
     const fetchCurrentPages = useCallback(async () => {
         setLoading(true);
         try {
-            await Promise.all([
+            const [, , , contentTotal] = await Promise.all([
                 fetchVulnsPage(vulnPagination.current, vulnPagination.pageSize),
                 fetchAssetsPage(assetPagination.current, assetPagination.pageSize),
                 fetchFingerprintsPage(fingerprintPagination.current, fingerprintPagination.pageSize),
+                fetchContentTotals(),
             ]);
+            setContentFindingsTotal(contentTotal);
         } finally {
             setLoading(false);
         }
     }, [
         assetPagination,
         fetchAssetsPage,
+        fetchContentTotals,
         fetchFingerprintsPage,
         fetchVulnsPage,
         fingerprintPagination,
         vulnPagination,
+        vulnSort,
     ]);
+
+    // 切换任务时清空各页签搜索/统计，避免跨任务残留过滤态。
+    // 声明在 fetchFirstPages effect 之前，保证先清 ref 再触发重抓。
+    useEffect(() => {
+        if (fingerprintSearchTimer.current) {
+            clearTimeout(fingerprintSearchTimer.current);
+            fingerprintSearchTimer.current = null;
+        }
+        vulnSearchRef.current = '';
+        setVulnSearch('');
+        assetSearchRef.current = '';
+        setAssetSearch('');
+        fingerprintSearchRef.current = '';
+        setFingerprintSearchInput('');
+        setFingerprintStats(null);
+        setDrawerOpen(false);
+    }, [taskId]);
+
+    // 卸载时清理 debounce 定时器
+    useEffect(() => () => {
+        if (fingerprintSearchTimer.current) clearTimeout(fingerprintSearchTimer.current);
+    }, []);
 
     useEffect(() => {
         fetchFirstPages();
@@ -233,14 +306,6 @@ const TaskResults: React.FC = () => {
         return map[normalized] || '#94a3b8';
     };
 
-    const getSeverityWeight = (severity: string) => {
-        const normalized = normalizeSeverity(severity);
-        const map: Record<string, number> = {
-            Critical: 5, High: 4, Medium: 3, Low: 2, Info: 1, Unknown: 0,
-        };
-        return map[normalized] || 0;
-    };
-
     // ── Target helpers ──
     const extractHostFromTarget = (target: string): string => {
         if (!target) return '-';
@@ -284,6 +349,70 @@ const TaskResults: React.FC = () => {
         'IPAlive': 'default',
     };
 
+    // 指纹产品名搜索（debounce，搜索变化重置到第 1 页）
+    const handleFingerprintSearchChange = (value: string) => {
+        setFingerprintSearchInput(value);
+        if (fingerprintSearchTimer.current) clearTimeout(fingerprintSearchTimer.current);
+        fingerprintSearchTimer.current = setTimeout(() => {
+            const term = value.trim();
+            if (term === fingerprintSearchRef.current) return;
+            fingerprintSearchRef.current = term;
+            setFingerprintPagination(prev => ({ ...prev, current: 1 }));
+            void fetchFingerprintsPage(1, fingerprintPagination.pageSize);
+        }, 300);
+    };
+
+    // 下钻联动：指纹目标 → 资产/漏洞页签并按目标主机过滤
+    const handleViewAssets = (target: string) => {
+        const host = extractHostFromTarget(target);
+        assetSearchRef.current = host;
+        setAssetSearch(host);
+        setAssetPagination(prev => ({ ...prev, current: 1 }));
+        setActiveTab('assets');
+        void fetchAssetsPage(1, assetPagination.pageSize);
+    };
+
+    const handleViewVulns = (target: string) => {
+        const host = extractHostFromTarget(target);
+        vulnSearchRef.current = host;
+        setVulnSearch(host);
+        setVulnPagination(prev => ({ ...prev, current: 1 }));
+        setActiveTab('vulns');
+        void fetchVulnsPage(1, vulnPagination.pageSize);
+    };
+
+    const clearAssetFilter = () => {
+        assetSearchRef.current = '';
+        setAssetSearch('');
+        setAssetPagination(prev => ({ ...prev, current: 1 }));
+        void fetchAssetsPage(1, assetPagination.pageSize);
+    };
+
+    const clearVulnFilter = () => {
+        vulnSearchRef.current = '';
+        setVulnSearch('');
+        setVulnPagination(prev => ({ ...prev, current: 1 }));
+        void fetchVulnsPage(1, vulnPagination.pageSize);
+    };
+
+    // 扫描链路溯源：拉取资产链路并打开 Steps Drawer
+    const openAssetLineage = async (asset: API.Asset) => {
+        const projectId = localStorage.getItem('active_project_id') || undefined;
+        if (!projectId) return;
+        setLineageTitle(asset.Target);
+        setLineageNodes([]);
+        setLineageDrawerOpen(true);
+        setLineageLoading(true);
+        try {
+            const res = await getAssetLineage(projectId, asset.ID);
+            setLineageNodes(res.nodes || []);
+        } catch {
+            setLineageNodes([]);
+        } finally {
+            setLineageLoading(false);
+        }
+    };
+
     const vulnColumns: ColumnsType<API.Vulnerability> = [
         {
             title: '主机',
@@ -323,8 +452,36 @@ const TaskResults: React.FC = () => {
             onFilter: (value, record) => {
                 return normalizeSeverity(record.Severity) === value;
             },
-            sorter: (a, b) => getSeverityWeight(b.Severity) - getSeverityWeight(a.Severity),
-            defaultSortOrder: 'ascend',
+            sorter: true,
+            sortDirections: ['descend', 'ascend'],
+            sortOrder: vulnSort.field === 'severity' ? (vulnSort.order === 'asc' ? 'ascend' : 'descend') : null,
+        },
+        {
+            title: 'AI 研判',
+            dataIndex: 'AIStatus',
+            key: 'ai_status',
+            width: 110,
+            render: (v: string, record: API.Vulnerability) => (
+                <Space direction="vertical" size={2}>
+                    <AIVerdictTag verdict={v} />
+                    {v && (record.AIConfidence ?? 0) > 0 && (
+                        <Text type="secondary" style={{ fontSize: 11 }}>
+                            {((record.AIConfidence ?? 0) * 100).toFixed(0)}%
+                        </Text>
+                    )}
+                    {record.TaintStatus && (
+                        <Tooltip title={record.TaintReason || '该主机多端口返回同一响应页，疑似 WAF/catch-all 拦截，证据不可信'}>
+                            <Tag color="volcano" style={{ marginInlineEnd: 0, fontSize: 11 }}>疑似WAF页</Tag>
+                        </Tooltip>
+                    )}
+                </Space>
+            ),
+            filters: [
+                { text: '确认真实', value: 'confirmed' },
+                { text: '疑似误报', value: 'likely_false_positive' },
+                { text: '不确定', value: 'uncertain' },
+            ],
+            onFilter: (value, record) => (record.AIStatus || '') === value,
         },
         {
             title: '匹配位置',
@@ -468,6 +625,22 @@ const TaskResults: React.FC = () => {
                 return <Text style={{ fontSize: 12, color: '#64748b' }}>{dayjs(v).format('YYYY-MM-DD HH:mm:ss')}</Text>;
             },
         },
+        {
+            title: '操作',
+            key: 'actions',
+            width: 80,
+            render: (_, record) => (
+                <Button
+                    type="link"
+                    size="small"
+                    style={{ padding: 0 }}
+                    icon={<PartitionOutlined />}
+                    onClick={() => void openAssetLineage(record)}
+                >
+                    溯源
+                </Button>
+            ),
+        },
     ];
 
     const fpColumns: ColumnsType<API.FingerprintGroup> = [
@@ -475,37 +648,39 @@ const TaskResults: React.FC = () => {
             title: '产品名称',
             dataIndex: 'ProductName',
             key: 'product_name',
-            width: 220,
-            render: (v: string) => <Tag color="cyan">{v}</Tag>,
+            width: 240,
+            render: (v: string) => (
+                <Space size={6}>
+                    <ScanOutlined style={{ color: '#0ea5e9' }} />
+                    <Tag color="cyan" style={{ marginInlineEnd: 0 }}>{v}</Tag>
+                </Space>
+            ),
         },
         {
-            title: 'URL 数',
+            title: '命中数',
             dataIndex: 'TargetCount',
             key: 'target_count',
-            width: 100,
+            width: 110,
             sorter: (a, b) => (a.TargetCount || 0) - (b.TargetCount || 0),
+            defaultSortOrder: 'descend',
             render: (v: number) => <Tag color="blue">{v || 0}</Tag>,
         },
         {
-            title: '匹配 URL',
+            title: '目标',
             key: 'targets',
             render: (_, record) => {
                 const targets = record.Targets || [];
                 if (targets.length === 0) return <Text type="secondary">-</Text>;
+                const preview = targets.slice(0, 2).map(t => t.Target);
                 return (
-                    <div style={{ maxHeight: 180, overflow: 'auto', display: 'grid', gap: 6 }}>
-                        {targets.map((target, index) => (
-                            <Space key={`${target.Target}-${index}`} size={6} wrap={false}>
-                                <Text
-                                    copyable={{ text: target.Target }}
-                                    style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}
-                                >
-                                    {target.Target}
-                                </Text>
-                                {target.RuleName && <Tag color="default">{target.RuleName}</Tag>}
-                            </Space>
+                    <Space size={8} wrap>
+                        <Text type="secondary" style={{ fontSize: 12 }}>共 {targets.length} 个目标</Text>
+                        {preview.map((target, index) => (
+                            <Text key={`${target}-${index}`} style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>{target}</Text>
                         ))}
-                    </div>
+                        {targets.length > 2 && <Tag style={{ fontSize: 11, marginInlineEnd: 0 }}>+{targets.length - 2}</Tag>}
+                        <Text type="secondary" style={{ fontSize: 11 }}>点击行展开全部</Text>
+                    </Space>
                 );
             },
         },
@@ -568,7 +743,7 @@ const TaskResults: React.FC = () => {
                     <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}>
                         <Spin size="large" />
                     </div>
-                ) : vulnPagination.total === 0 && assetPagination.total === 0 && fingerprintPagination.total === 0 ? (
+                ) : vulnPagination.total === 0 && assetPagination.total === 0 && fingerprintPagination.total === 0 && contentFindingsTotal === 0 ? (
                     <Empty description="暂无扫描结果" style={{ padding: '60px 0' }} />
                 ) : (
                     <Tabs
@@ -579,12 +754,26 @@ const TaskResults: React.FC = () => {
                                 key: 'vulns',
                                 label: <span><BugOutlined /> 漏洞 ({vulnPagination.total})</span>,
                                 children: (
-                                    <Table
-                                        bordered
-                                        columns={vulnColumns}
-                                        dataSource={vulns}
-                                        rowKey="ID"
-                                        loading={tabLoading.vulns}
+                                    <>
+                                        {vulnSearch && (
+                                            <Alert
+                                                type="info"
+                                                showIcon
+                                                style={{ marginBottom: 12 }}
+                                                message={(
+                                                    <Space size={8}>
+                                                        <span>已按目标 <Text code>{vulnSearch}</Text> 过滤</span>
+                                                        <Button type="link" size="small" style={{ padding: 0 }} onClick={clearVulnFilter}>清除过滤</Button>
+                                                    </Space>
+                                                )}
+                                            />
+                                        )}
+                                        <Table
+                                            bordered
+                                            columns={vulnColumns}
+                                            dataSource={vulns}
+                                            rowKey="ID"
+                                            loading={tabLoading.vulns}
                                         pagination={{
                                             current: vulnPagination.current,
                                             pageSize: vulnPagination.pageSize,
@@ -592,7 +781,19 @@ const TaskResults: React.FC = () => {
                                             showSizeChanger: true,
                                             pageSizeOptions: ['10', '20', '50', '100', '200'],
                                             showTotal: (t) => `共 ${t} 条`,
-                                            onChange: (page, pageSize) => fetchVulnsPage(page, pageSize),
+                                        }}
+                                        onChange={(pagination, _filters, sorter) => {
+                                            const sort = Array.isArray(sorter) ? sorter[0] : sorter;
+                                            const sortField = sort?.field === 'Severity' ? 'severity' : sort?.field ? String(sort.field) : undefined;
+                                            const sortOrder: 'asc' | 'desc' | undefined = sort?.order === 'ascend' ? 'asc' : sort?.order === 'descend' ? 'desc' : undefined;
+                                            const nextSort = { field: sortField, order: sortOrder };
+                                            setVulnSort(nextSort);
+                                            fetchVulnsPage(
+                                                pagination.current || 1,
+                                                pagination.pageSize || DEFAULT_RESULT_PAGE_SIZE,
+                                                sortField,
+                                                sortOrder,
+                                            );
                                         }}
                                         size="middle"
                                         onRow={(record) => ({
@@ -601,55 +802,122 @@ const TaskResults: React.FC = () => {
                                         })}
                                         rowClassName={(_, index) => index % 2 === 1 ? 'table-row-light' : 'table-row-dark'}
                                     />
+                                    </>
                                 ),
                             },
                             {
                                 key: 'assets',
                                 label: <span><GlobalOutlined /> 资产 ({assetPagination.total})</span>,
                                 children: (
-                                    <Table
-                                        bordered
-                                        columns={assetColumns}
-                                        dataSource={assets}
-                                        rowKey="ID"
-                                        loading={tabLoading.assets}
-                                        pagination={{
-                                            current: assetPagination.current,
-                                            pageSize: assetPagination.pageSize,
-                                            total: assetPagination.total,
-                                            showSizeChanger: true,
-                                            pageSizeOptions: ['10', '20', '50', '100', '200'],
-                                            showTotal: (t) => `共 ${t} 条`,
-                                            onChange: (page, pageSize) => fetchAssetsPage(page, pageSize),
-                                        }}
-                                        size="middle"
-                                        rowClassName={(_, index) => index % 2 === 1 ? 'table-row-light' : 'table-row-dark'}
-                                    />
+                                    <>
+                                        {assetSearch && (
+                                            <Alert
+                                                type="info"
+                                                showIcon
+                                                style={{ marginBottom: 12 }}
+                                                message={(
+                                                    <Space size={8}>
+                                                        <span>已按目标 <Text code>{assetSearch}</Text> 过滤</span>
+                                                        <Button type="link" size="small" style={{ padding: 0 }} onClick={clearAssetFilter}>清除过滤</Button>
+                                                    </Space>
+                                                )}
+                                            />
+                                        )}
+                                        <Table
+                                            bordered
+                                            columns={assetColumns}
+                                            dataSource={assets}
+                                            rowKey="ID"
+                                            loading={tabLoading.assets}
+                                            pagination={{
+                                                current: assetPagination.current,
+                                                pageSize: assetPagination.pageSize,
+                                                total: assetPagination.total,
+                                                showSizeChanger: true,
+                                                pageSizeOptions: ['10', '20', '50', '100', '200'],
+                                                showTotal: (t) => `共 ${t} 条`,
+                                                onChange: (page, pageSize) => fetchAssetsPage(page, pageSize),
+                                            }}
+                                            size="middle"
+                                            rowClassName={(_, index) => index % 2 === 1 ? 'table-row-light' : 'table-row-dark'}
+                                        />
+                                    </>
                                 ),
                             },
                             {
                                 key: 'fingerprints',
                                 label: <span><ScanOutlined /> 指纹 ({fingerprintPagination.total})</span>,
                                 children: (
-                                    <Table
-                                        bordered
-                                        columns={fpColumns}
-                                        dataSource={fingerprints}
-                                        rowKey="ProductName"
-                                        loading={tabLoading.fingerprints}
-                                        pagination={{
-                                            current: fingerprintPagination.current,
-                                            pageSize: fingerprintPagination.pageSize,
-                                            total: fingerprintPagination.total,
-                                            showSizeChanger: true,
-                                            pageSizeOptions: ['10', '20', '50', '100', '200'],
-                                            showTotal: (t) => `共 ${t} 条`,
-                                            onChange: (page, pageSize) => fetchFingerprintsPage(page, pageSize),
-                                        }}
-                                        size="middle"
-                                        rowClassName={(_, index) => index % 2 === 1 ? 'table-row-light' : 'table-row-dark'}
-                                    />
+                                    <>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+                                            <Input
+                                                allowClear
+                                                prefix={<SearchOutlined />}
+                                                placeholder="按产品名称搜索"
+                                                style={{ width: 300 }}
+                                                value={fingerprintSearchInput}
+                                                onChange={(e) => handleFingerprintSearchChange(e.target.value)}
+                                            />
+                                            <Space size={8} wrap>
+                                                <Tag>产品种类 {fingerprintPagination.total}</Tag>
+                                                <Tag color="blue">命中总数 {fingerprintStats ? fingerprintStats.total_hits : '-'}</Tag>
+                                                <Tag color="cyan">涉及目标 {fingerprintStats ? fingerprintStats.distinct_targets : '-'}</Tag>
+                                                <Tag color="geekblue">当前页命中 {fingerprints.reduce((sum, f) => sum + (f.TargetCount || 0), 0)}</Tag>
+                                            </Space>
+                                        </div>
+                                        <Table
+                                            bordered
+                                            columns={fpColumns}
+                                            dataSource={fingerprints}
+                                            rowKey="ProductName"
+                                            loading={tabLoading.fingerprints}
+                                            scroll={{ y: 560, x: 900 }}
+                                            expandable={{
+                                                expandedRowRender: (record) => (
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '4px 8px' }}>
+                                                        {(record.Targets || []).map((target, index) => (
+                                                            <div key={`${target.Target}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                                                                <Text copyable={{ text: target.Target }} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>{target.Target}</Text>
+                                                                {target.RuleName && <Tag color="default" style={{ marginInlineEnd: 0 }}>{target.RuleName}</Tag>}
+                                                                {target.Evidence && (
+                                                                    <Popover
+                                                                        content={<pre style={{ maxWidth: 520, maxHeight: 320, overflow: 'auto', fontSize: 11, margin: 0 }}>{target.Evidence}</pre>}
+                                                                        title="匹配证据"
+                                                                        trigger="hover"
+                                                                    >
+                                                                        <Tag color="geekblue" style={{ cursor: 'pointer', marginInlineEnd: 0 }}>证据</Tag>
+                                                                    </Popover>
+                                                                )}
+                                                                <Text type="secondary" style={{ fontSize: 11 }}>
+                                                                    {target.UpdatedAt || target.CreatedAt ? dayjs(target.UpdatedAt || target.CreatedAt).format('YYYY-MM-DD HH:mm:ss') : ''}
+                                                                </Text>
+                                                                <span style={{ flex: 1 }} />
+                                                                <Button type="link" size="small" style={{ padding: 0 }} onClick={() => handleViewAssets(target.Target)}>看资产</Button>
+                                                                <Button type="link" size="small" style={{ padding: 0 }} onClick={() => handleViewVulns(target.Target)}>看漏洞</Button>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ),
+                                            }}
+                                            pagination={{
+                                                current: fingerprintPagination.current,
+                                                pageSize: fingerprintPagination.pageSize,
+                                                total: fingerprintPagination.total,
+                                                showSizeChanger: true,
+                                                pageSizeOptions: ['10', '20', '50', '100', '200'],
+                                                showTotal: (t) => `共 ${t} 条`,
+                                                onChange: (page, pageSize) => fetchFingerprintsPage(page, pageSize),
+                                            }}
+                                            size="middle"
+                                            rowClassName={(_, index) => index % 2 === 1 ? 'table-row-light' : 'table-row-dark'}
+                                        />
+                                    </>
                                 ),
+                            },
+                            {
+                                key: 'content',
+                                label: <span><FileTextOutlined /> 内容分析 ({contentFindingsTotal})</span>,
+                                children: <ContentFindingsPanel taskId={taskId} active={activeTab === 'content'} />,
                             },
                         ]}
                     />
@@ -695,6 +963,11 @@ const TaskResults: React.FC = () => {
                                 {selectedVuln.CreatedAt ? dayjs(selectedVuln.CreatedAt).format('YYYY-MM-DD HH:mm:ss') : '-'}
                             </Descriptions.Item>
                         </Descriptions>
+
+                        <VulnAITriagePanel
+                            vuln={selectedVuln}
+                            onChanged={() => fetchVulnsPage(vulnPagination.current, vulnPagination.pageSize)}
+                        />
 
                         {selectedVuln.Description && (
                             <>
@@ -794,6 +1067,60 @@ const TaskResults: React.FC = () => {
 
                     </div>
                 )}
+            </Drawer>
+
+            {/* 扫描链路溯源 Drawer */}
+            <Drawer
+                title={
+                    <Space>
+                        <PartitionOutlined style={{ color: '#1677ff' }} />
+                        <span>资产溯源</span>
+                        {lineageTitle && <Text type="secondary" style={{ fontSize: 12, fontFamily: 'monospace' }}>{lineageTitle}</Text>}
+                    </Space>
+                }
+                open={lineageDrawerOpen}
+                onClose={() => setLineageDrawerOpen(false)}
+                width={480}
+                destroyOnClose
+            >
+                <Spin spinning={lineageLoading}>
+                    {lineageNodes.length === 0 && !lineageLoading ? (
+                        <Empty description="暂无链路数据（仅新扫描产生的资产含溯源信息）" />
+                    ) : (
+                        <Steps
+                            direction="vertical"
+                            current={lineageNodes.length - 1}
+                            items={lineageNodes.map((node, index) => {
+                                const isLast = index === lineageNodes.length - 1;
+                                const icon = node.node_type === 'input'
+                                    ? <NodeIndexOutlined />
+                                    : node.node_type === 'vulnerability'
+                                        ? <BugOutlined />
+                                        : node.node_type === 'fingerprint'
+                                            ? <ScanOutlined />
+                                            : <GlobalOutlined />;
+                                const title = node.node_type === 'input' ? '扫描起点' : (node.stage || node.node_type);
+                                return {
+                                    icon,
+                                    title: (
+                                        <Text strong={isLast} style={{ fontSize: 13 }}>
+                                            {title}
+                                        </Text>
+                                    ),
+                                    description: node.target
+                                        ? (
+                                            <Text copyable={{ text: node.target }} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>
+                                                {node.target}
+                                            </Text>
+                                        )
+                                        : (
+                                            <Text type="secondary" style={{ fontSize: 12 }}>原始扫描输入</Text>
+                                        ),
+                                };
+                            })}
+                        />
+                    )}
+                </Spin>
             </Drawer>
         </div>
     );

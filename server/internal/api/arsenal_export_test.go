@@ -229,6 +229,58 @@ func TestArsenalDBEndpointsDownloadMaterializablePackage(t *testing.T) {
 	}
 }
 
+func TestBuildArsenalSQLiteDBKeepsDuplicateNamePocs(t *testing.T) {
+	store := setupAITestDB(t)
+	mk := func(fileName string) db.Arsenal {
+		return db.Arsenal{
+			ID:       db.BuildTenantArsenalID("default", "poc", fileName),
+			TenantID: "default", Type: "poc", FileName: fileName,
+			Content: "id: nacos-version\ninfo:\n  name: Nacos Version\n  severity: info\nrequests: []\n",
+			Hash:    fileName + "-hash", State: "Approved", Version: 1,
+		}
+	}
+	pocA := mk("nacos-version.yaml")
+	pocB := mk("nacos-version-nuclei-templates.yaml")
+	for _, row := range []interface{}{&pocA, &pocB} {
+		if err := store.Create(row).Error; err != nil {
+			t.Fatalf("seed arsenal: %v", err)
+		}
+	}
+	// Same `id:` (Name), different source files. Both must survive export because
+	// the server/agent unique key is the file name, not the id.
+	for _, rule := range []db.PocRule{
+		{TenantID: "default", ArtifactID: pocA.ID, Name: "nacos-version", SourceFile: "nacos-version.yaml", ContentHash: pocA.Hash, Severity: "info", Enabled: true},
+		{TenantID: "default", ArtifactID: pocB.ID, Name: "nacos-version", SourceFile: "nacos-version-nuclei-templates.yaml", ContentHash: pocB.Hash, Severity: "info", Enabled: true},
+	} {
+		if err := store.Create(&rule).Error; err != nil {
+			t.Fatalf("seed poc rule: %v", err)
+		}
+	}
+
+	dbPath, _, _, err := buildArsenalSQLiteDB("default")
+	if err != nil {
+		t.Fatalf("build arsenal sqlite db: %v", err)
+	}
+	defer os.Remove(dbPath)
+	sdb, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open exported db: %v", err)
+	}
+	sqlDB, err := sdb.DB()
+	if err != nil {
+		t.Fatalf("unwrap exported sqlite DB: %v", err)
+	}
+	defer sqlDB.Close()
+
+	var fileNames []string
+	if err := sdb.Model(&exportedPoc{}).Where("name = ?", "nacos-version").Pluck("file_name", &fileNames).Error; err != nil {
+		t.Fatalf("query exported pocs: %v", err)
+	}
+	if len(fileNames) != 2 {
+		t.Fatalf("exported duplicate-name pocs=%v, want both source files kept", fileNames)
+	}
+}
+
 func seedArsenalExportRules(t *testing.T, store *gorm.DB) {
 	t.Helper()
 	pocID := db.BuildTenantArsenalID("default", "poc", "http-demo.yaml")

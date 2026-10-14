@@ -102,6 +102,30 @@ CloudManagement、OSS 自动弹容和真实云资源回收在未完成真实云�
 - **重启服务**：`systemctl restart argus-server`
 - **停止服务**：`systemctl stop argus-server`
 
+### 🔐 凭据管理（重点）
+
+部署/升级时自动生成的**所有密码与密钥**统一保存在 `${安装目录}/config/secrets.env`（权限 `0600`），
+它是唯一事实来源，同时供 `docker compose` 与 `systemd` 使用。**不再需要 `docker inspect` 去容器里翻密码**。
+
+- **查看全部凭据**：
+  ```bash
+  sudo ./deploy/show-secrets.sh            # 完整展示
+  sudo ./deploy/show-secrets.sh --mask     # 脱敏（首尾各留 4 位）
+  ```
+- **进入数据库**（compose 命令必须带 `--env-file` 才能解析 `${VAR:?}` 变量）：
+  ```bash
+  sudo docker compose --env-file config/secrets.env -f deploy/docker-compose.yml exec postgres psql -U postgres -d argus
+  ```
+- **重启 / 关闭基础设施**：
+  ```bash
+  sudo docker compose --env-file config/secrets.env -f deploy/docker-compose.yml restart
+  sudo docker compose --env-file config/secrets.env -f deploy/docker-compose.yml down
+  ```
+- **幂等与数据卷锁定**：`setup-server.sh` 可重复执行，会复用 `secrets.env` 里已有的密码；
+  已初始化数据卷的 PostgreSQL / RabbitMQ / MinIO root 凭据**以容器实际值为准**，重复部署不会连不上库。
+- **轮换凭据**：直接编辑 `config/secrets.env`（保持 `KEY=VALUE`、无引号、无行内注释），
+  然后 `systemctl restart argus-server`；涉及数据库等卷锁定凭据的修改仅在数据卷重建后生效。
+
 ---
 
 ## 🗑 五、安全卸载

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -553,6 +554,67 @@ func TestPrepareSubTaskRetryAppendsImmutableAttemptWithCurrentSnapshots(t *testi
 	}
 	if batch.LatestAttemptID != prepared.ID || batch.CurrentAttemptNo != 2 || batch.AttemptCount != 2 {
 		t.Fatalf("batch attempt pointer mismatch: %+v", batch)
+	}
+}
+
+func TestPrepareSubTaskRetryPreservesRiskValidationConfig(t *testing.T) {
+	store := setupTaskLifecycleTestDB(t)
+	root := RootTask{
+		ID: "root-retry-risk", TenantID: "tenant-a", ProjectID: "project-a",
+		Status: "Running", TotalChunks: 1, CurrentConfigVersion: 2,
+	}
+	if err := store.Create(&root).Error; err != nil {
+		t.Fatalf("seed root: %v", err)
+	}
+	// The root's *current* revision is an asset-scan profile with NoPoc=true; a
+	// risk_validation retry must NOT inherit it (that silently disables POC
+	// execution while still reporting DONE).
+	if err := store.Create(&TaskConfigRevision{
+		TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Version: 2,
+		Config: `{"NoPoc":true,"WebTimeout":15}`, Priority: 2, TimeoutSec: 120,
+	}).Error; err != nil {
+		t.Fatalf("seed config revision: %v", err)
+	}
+	if err := store.Create(&SystemConfig{Key: "rule_version", Value: "rules-v2"}).Error; err != nil {
+		t.Fatalf("seed rule version: %v", err)
+	}
+	sealedConfig := `{"ExecutionMode":"risk_validation","NoPoc":false,"ValidationBudgetID":"b1","ValidationTargetConcurrency":6,"ValidationRateLimit":30,"ValidationRequestBudget":40,"ValidationEstimatedRequests":40,"RequiredRuleVersion":"rules-v1"}`
+	original := SubTask{
+		ID: "batch-risk-attempt-1", TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID,
+		BatchID: "batch-risk", AttemptNo: 1, Trigger: AttemptTriggerInitial,
+		Status: "FAILED", ChunkTargets: `["https://one.test"]`,
+		Config: sealedConfig, ConfigVersion: 1, RuleVersion: "rules-v1",
+		RetryCount: 0, MaxRetry: 3,
+	}
+	if err := store.Create(&original).Error; err != nil {
+		t.Fatalf("seed original attempt: %v", err)
+	}
+	if err := store.Create(&TaskBatch{
+		ID: original.BatchID, TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID,
+		Sequence: 0, Kind: "risk_validation", TargetType: "risk_validation", Targets: original.ChunkTargets, TargetCount: 1,
+		Status: original.Status, ConfigVersion: 1, RuleVersion: "rules-v1",
+		CurrentAttemptNo: 1, AttemptCount: 1, LatestAttemptID: original.ID,
+	}).Error; err != nil {
+		t.Fatalf("seed batch: %v", err)
+	}
+
+	expected := original
+	prepared, ok := PrepareSubTaskRetry(&expected)
+	if !ok {
+		t.Fatal("expected retry attempt to be appended")
+	}
+	var config map[string]interface{}
+	if err := json.Unmarshal([]byte(prepared.Config), &config); err != nil {
+		t.Fatalf("decode prepared config: %v", err)
+	}
+	if config["ExecutionMode"] != "risk_validation" {
+		t.Fatalf("risk execution mode lost on retry: %s", prepared.Config)
+	}
+	if nopoc, _ := config["NoPoc"].(bool); nopoc {
+		t.Fatalf("risk retry inherited asset-scan NoPoc=true: %s", prepared.Config)
+	}
+	if config["ValidationBudgetID"] != "b1" || config["ValidationTargetConcurrency"] != float64(6) || config["ValidationRequestBudget"] != float64(40) {
+		t.Fatalf("sealed validation budget lost on retry: %s", prepared.Config)
 	}
 }
 

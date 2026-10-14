@@ -18,6 +18,7 @@ import (
 	egressbroker "github.com/P0lar1ght/argus/server/internal/egress"
 	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -89,6 +90,7 @@ type Server struct {
 	returnTaskHook     func(task *pb.Task, msgID string) error        // 退回队列
 	requeueTaskHook    func(task *pb.Task) error                      // 重新入队（用于重试/拆分）
 	queueDepthHook     func() int32                                   // 获取队列深度
+	dispatchNotifyHook func()                                         // controller-push 调度信号
 	onTaskClaimedHook  func(agentID, taskID string)                   // UI 广播 Hook
 	onTaskTerminalHook func(context.Context, db.SubTask) error
 }
@@ -141,6 +143,27 @@ func (s *Server) SetRequeueTaskHook(fn func(task *pb.Task) error) {
 
 func (s *Server) SetQueueDepthHook(fn func() int32) {
 	s.queueDepthHook = fn
+}
+
+// SetDispatchNotifyHook wires the controller-push scheduling signal. Retry /
+// replan / emergency-dump paths call it for controller-push sub-tasks instead
+// of enqueueing onto a shared queue.
+func (s *Server) SetDispatchNotifyHook(fn func()) {
+	s.dispatchNotifyHook = fn
+}
+
+// routeViaController reports whether the sub-task uses the controller-push
+// strategy and, if so, hands it to the dispatch controller (leaving it
+// Dispatching) rather than the shared queue. It returns false for the legacy
+// agent-claim path so callers fall through to the normal enqueue.
+func (s *Server) routeViaController(sub db.SubTask) bool {
+	if scanpolicy.NormalizeDispatchStrategy(scanpolicy.DispatchStrategy(sub.DispatchStrategy), scanpolicy.DefaultDispatchStrategy()) != scanpolicy.DispatchStrategyControllerPush {
+		return false
+	}
+	if s.dispatchNotifyHook != nil {
+		s.dispatchNotifyHook()
+	}
+	return true
 }
 
 func (s *Server) SetOnTaskClaimedHook(fn func(agentID, taskID string)) {
@@ -374,6 +397,20 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 			}
 			log.Printf("[ClaimTask] Dropped orphan queue message for task %s: %v", task.TaskId, err)
 			continue
+		}
+
+		// Backoff gate: a retry whose exponential backoff has not yet elapsed is
+		// returned to the queue (Nack requeue) and not executed. The controller
+		// already filters by next_eligible_at before routing; this is a second
+		// layer for tasks already sitting in a queue (legacy agent-claim path).
+		if sub.NextEligibleAt != nil && sub.NextEligibleAt.After(time.Now()) {
+			if s.returnTaskHook != nil && msgID != "" {
+				if err := s.returnTaskHook(task, msgID); err != nil {
+					log.Printf("[ClaimTask] Failed to return backed-off task %s: %v", task.TaskId, err)
+				}
+			}
+			log.Printf("[ClaimTask] Task %s backing off until %s", task.TaskId, sub.NextEligibleAt.Format(time.RFC3339))
+			return &pb.Task{}, nil
 		}
 
 		if sub.RootTaskID != "" {
@@ -1128,6 +1165,10 @@ func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb
 }
 
 func (s *Server) enqueuePreparedRetry(sub db.SubTask) bool {
+	if s.routeViaController(sub) {
+		// Controller-push: leave Dispatching; the DispatchController routes it.
+		return true
+	}
 	pbSub, err := db.SubTaskToProto(&sub)
 	if err != nil || pbSub == nil {
 		log.Printf("[Retry] Failed to encode subtask %s: %v", sub.ID, err)
@@ -1167,6 +1208,10 @@ func (s *Server) enqueuePreparedRetry(sub db.SubTask) bool {
 }
 
 func (s *Server) enqueueWorkClaimReplan(sub db.SubTask) bool {
+	if s.routeViaController(sub) {
+		// Controller-push: leave Dispatching; the DispatchController routes it.
+		return true
+	}
 	pbSub, err := db.SubTaskToProto(&sub)
 	if err != nil || pbSub == nil {
 		log.Printf("[WorkClaim] Failed to encode replanned subtask %s: %v", sub.ID, err)

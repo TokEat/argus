@@ -12,6 +12,7 @@ import (
 
 	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -478,7 +479,15 @@ func createTask(c *gin.Context) {
 	//   4. TotalTargets 记录原始目标总数用于进度展示
 	// ================================================================
 
-	batches := groupAndBatchTargets(targets, targetMode)
+	// 调度策略：空值继承全局默认（生产默认 controller_push，可用
+	// ARGUS_DISPATCH_STRATEGY_DEFAULT 覆盖；测试可强制 agent_claim）。
+	dispatchStrategy := scanpolicy.NormalizeDispatchStrategy(scanpolicy.DispatchStrategy(strings.TrimSpace(req.DispatchStrategy)), scanpolicy.DefaultDispatchStrategy())
+	var batches []targetBatchGroup
+	if dispatchStrategy == scanpolicy.DispatchStrategyControllerPush {
+		batches = groupAndBatchTargetsForDispatch(targets, targetMode, dispatchStrategy, dispatchFreeSlots(userRules))
+	} else {
+		batches = groupAndBatchTargets(targets, targetMode)
+	}
 	ruleVersion := currentRuleVersionValue()
 	operatorID := currentUserID(c)
 	selectorJSON := mergeAgentSelector("{}", userSelector)
@@ -544,6 +553,7 @@ func createTask(c *gin.Context) {
 			TimeoutSec:         timeoutSec,
 			AgentSelector:      effectiveSelector,
 			AgentSelectorRules: rulesJSON,
+			DispatchStrategy:   string(dispatchStrategy),
 			CurrentAttemptNo:   1,
 			AttemptCount:       1,
 			LatestAttemptID:    attemptID,
@@ -567,6 +577,7 @@ func createTask(c *gin.Context) {
 			RuleVersion:        ruleVersion,
 			AgentSelector:      effectiveSelector,
 			AgentSelectorRules: rulesJSON,
+			DispatchStrategy:   string(dispatchStrategy),
 		})
 
 		profile.BatchesByType[batch.TargetType]++
@@ -592,6 +603,7 @@ func createTask(c *gin.Context) {
 		TimeoutSec:           timeoutSec,
 		RuleVersion:          ruleVersion,
 		CurrentConfigVersion: 1,
+		DispatchStrategy:     string(dispatchStrategy),
 	}
 	configRevision := db.NewTaskConfigRevision(rootTask, 1, selectorJSON, selectorRulesJSON, operatorID, "initial configuration")
 	var policyIntent *db.ScanPolicyIntent

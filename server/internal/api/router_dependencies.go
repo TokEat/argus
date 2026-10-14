@@ -8,6 +8,7 @@ import (
 
 	"github.com/P0lar1ght/argus/server/internal/assetdiscovery"
 	"github.com/P0lar1ght/argus/server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/dispatch"
 	egresspkg "github.com/P0lar1ght/argus/server/internal/egress"
 	"github.com/P0lar1ght/argus/server/internal/expworkspace"
 	grpcpkg "github.com/P0lar1ght/argus/server/internal/grpc"
@@ -37,6 +38,7 @@ type QuakeQueryProvider interface {
 // configured through independent package globals and setters.
 type RouterDependencies struct {
 	TaskQueue            *scheduler.TaskQueue
+	DispatchController   *dispatch.Controller
 	NotifyHub            *grpcpkg.NotifyHub
 	AgentPSK             string
 	Build                *BuildService

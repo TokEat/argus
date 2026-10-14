@@ -1,0 +1,28 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - ICEFLOW
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/log/system.log'
+id: iceflow-vpn-information-leakage
+info:
+  author: daffainfo
+  description: |-
+    ICEFlow VPN 存在信息泄露漏洞，攻击者可以查看日志中的敏感数据来进一步攻击系统
+    fofa: title="ICEFLOW VPN Router"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: ICEFlow VPN 信息泄露漏洞
+  severity: high
+  tags: iceflow,vpn,info-leak,argus-import

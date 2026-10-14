@@ -1,0 +1,39 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - headers:
+      Content-Type: application/json
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - isDocker
+          - databaseType
+          - nodeJsVersion
+          - versionCli
+          - instanceId
+        condition: and
+      - type: word
+        part: header
+        words:
+          - application/json
+        case-insensitive: true
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/rest/settings'
+id: n8n-config
+info:
+  author: icarot
+  description: |
+    The `/rest/settings` endpoint in N8n was publicly exposed, which could have disclosed internal configuration details and sensitive application information.
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: medium
+  name: N8n - Config
+  severity: medium
+  tags: n8n,config,exposed,vuln,argus-import

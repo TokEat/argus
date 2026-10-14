@@ -6,6 +6,20 @@ const subdomainDictionary: API.SubdomainDictionary = {
 	sha256: 'a'.repeat(64), count: 12, created_at: '2026-08-13T00:00:00Z',
 };
 
+describe('scan policy risk validation toggle', () => {
+    it('lets users disable risk validation while keeping behavior probes', () => {
+        const policy = buildScanPolicy({ preset: 'standard', risk_validation: false }, []);
+        expect(policy.capabilities.risk_validation).toBe(false);
+        expect(policy.capabilities.behavior_probe).toBe(true);
+        expect(policy.authorization.validation_confirmed).toBe(false);
+    });
+
+    it('keeps risk validation enabled when preset defaults are used', () => {
+        const policy = buildScanPolicy({ preset: 'standard' }, []);
+        expect(policy.capabilities.risk_validation).toBe(true);
+    });
+});
+
 describe('scan policy subdomain discovery', () => {
 	it('keeps behavior probes independent from active paths across presets', () => {
 		expect(buildScanPolicy({ preset: 'quick' }, []).capabilities.behavior_probe).toBe(false);

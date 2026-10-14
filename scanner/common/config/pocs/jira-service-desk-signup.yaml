@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: '{"email":"invalid","signUpContext":{},"secondaryEmail":"","usingNewUi":true}'
+    headers:
+      Content-Type: application/json
+    matchers:
+      - type: status
+        status:
+          - 400
+      - type: word
+        part: body
+        words:
+          - signup.validation.errors
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/servicedesk/customer/user/signup'
+id: jira-service-desk-signup
+info:
+  author: TechbrunchFR
+  description: Jira Service Desk Signup
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: medium
+  name: Jira Service Desk Signup
+  severity: medium
+  tags: jira,servicedesk,signup,unauth,argus-import

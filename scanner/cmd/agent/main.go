@@ -15,7 +15,15 @@ func main() {
 	serverAddr := flag.String("server", "127.0.0.1:50051", "Server gRPC address")
 	apiURL := flag.String("api", "http://127.0.0.1:8085", "Server REST HTTP API address")
 	hostname, _ := os.Hostname()
-	defaultID := fmt.Sprintf("agent-%s-%d", hostname, os.Getpid())
+	// 默认 ID 按 MAC 地址派生，保证重启后仍是同一个 Agent；
+	// 显式传入 --id 时以传入值为准。
+	defaultID, idSource := stableAgentID(hostname)
+	if defaultID == "" {
+		defaultID = fmt.Sprintf("agent-%s-%d", hostname, os.Getpid())
+		log.Printf("WARNING: no stable machine identifier (MAC/machine-id) found, falling back to per-boot ID %s; each restart will register a new agent", defaultID)
+	} else {
+		log.Printf("Default agent ID derived from %s: %s", idSource, defaultID)
+	}
 	agentID := flag.String("id", defaultID, "Agent unique ID")
 	workers := flag.Int("workers", 0, "Number of concurrent worker goroutines (0=auto-detect from CPU cores)")
 	tagsStr := flag.String("tags", "", "Node tags in key1=val1,key2=val2 format")

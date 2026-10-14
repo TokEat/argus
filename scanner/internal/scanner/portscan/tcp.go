@@ -19,9 +19,15 @@ import (
 	"github.com/projectdiscovery/gologger"
 )
 
-func ScanTCP(ips []string, ports string, timeout int, workers int, portsThreshold int, portScan bool, emit func(ddout.OutputMessage)) []string {
+func ScanTCP(ips []string, ports string, timeout int, workers int, portsThreshold int, portScan bool, scatter bool, probeInterval time.Duration, emit func(ddout.OutputMessage)) []string {
 	var aliveAddress []string
 	gologger.AuditTimeLogger("开始TCP端口扫描，端口设置: %s\nTCP端口扫描目标:%s", ports, strings.Join(ips, ","))
+
+	var pacer *scanPacer
+	if scatter && probeInterval > 0 {
+		pacer = newScanPacer(probeInterval)
+		gologger.Info().Msgf("端口扫描打散已开启，同一目标最小探测间隔 %s", probeInterval)
+	}
 
 	probePorts := ParsePort(ports)
 	rand.Seed(time.Now().UnixNano())
@@ -67,7 +73,7 @@ func ScanTCP(ips []string, ports string, timeout int, workers int, portsThreshol
 	for i := 0; i < workers; i++ {
 		go func() {
 			for item := range addrs {
-				portConnect(item, results, timeout, portScan, portsThreshold, &backlist, &backlistLock, &wg, emit)
+				portConnect(item, results, timeout, portScan, portsThreshold, &backlist, &backlistLock, pacer, &wg, emit)
 				wg.Done()
 			}
 		}()
@@ -129,12 +135,63 @@ type addr struct {
 	port int
 }
 
-func portConnect(item addr, respondingHosts chan<- string, adjustedTimeout int, portScan bool, portsThreshold int, backlist *map[string]struct{}, backlistLock *sync.Mutex, wg *sync.WaitGroup, emit func(ddout.OutputMessage)) {
+// scanPacer enforces a minimum interval between connection attempts to the
+// same target so one target's ports are scattered across time instead of being
+// probed back-to-back, which evades per-IP threshold auto-blocking.
+type scanPacer struct {
+	interval time.Duration
+	mu       sync.Mutex
+	next     map[string]time.Time
+}
+
+func newScanPacer(interval time.Duration) *scanPacer {
+	return &scanPacer{interval: interval, next: make(map[string]time.Time)}
+}
+
+// book reserves the next available slot for ip and returns how long the caller
+// must wait before its connection attempt may start.
+func (p *scanPacer) book(ip string) time.Duration {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := time.Now()
+	earliest := p.next[ip]
+	if earliest.Before(now) {
+		earliest = now
+	}
+	p.next[ip] = earliest.Add(p.interval)
+	return earliest.Sub(now)
+}
+
+// pacedSYNRate converts a per-target probe interval into an approximate global
+// masscan rate: with targetCount targets each probed at most once per interval,
+// the aggregate demand is targetCount*1000/intervalMillis pps. The result is
+// capped by the configured rate so pacing never exceeds the operator's ceiling.
+func pacedSYNRate(targetCount, intervalMillis, capRate int) int {
+	if targetCount <= 0 || intervalMillis <= 0 {
+		return capRate
+	}
+	rate := (targetCount*1000 + intervalMillis - 1) / intervalMillis
+	if rate < 1 {
+		rate = 1
+	}
+	if capRate > 0 && rate > capRate {
+		rate = capRate
+	}
+	return rate
+}
+
+func portConnect(item addr, respondingHosts chan<- string, adjustedTimeout int, portScan bool, portsThreshold int, backlist *map[string]struct{}, backlistLock *sync.Mutex, pacer *scanPacer, wg *sync.WaitGroup, emit func(ddout.OutputMessage)) {
 	backlistLock.Lock()
 	_, blocked := (*backlist)[item.ip]
 	backlistLock.Unlock()
 	if blocked {
 		return
+	}
+
+	if pacer != nil {
+		if wait := pacer.book(item.ip); wait > 0 {
+			time.Sleep(wait)
+		}
 	}
 
 	conn, err := utils.WrapperTcpWithTimeout("tcp4", fmt.Sprintf("%s:%d", item.ip, item.port), time.Duration(adjustedTimeout)*time.Second)
@@ -168,8 +225,9 @@ func portConnect(item addr, respondingHosts chan<- string, adjustedTimeout int, 
 	respondingHosts <- item.ip + ":" + strconv.Itoa(item.port)
 }
 
-func ScanSYN(ips []string, ports string, masscanPath string, synThreads int, emit func(ddout.OutputMessage)) []string {
-	ipsPayload := strings.Join(utils.RemoveDuplicateElement(ips), "\n")
+func ScanSYN(ips []string, ports string, masscanPath string, synThreads int, scatter bool, probeIntervalMillis int, emit func(ddout.OutputMessage)) []string {
+	uniqueIPs := utils.RemoveDuplicateElement(ips)
+	ipsPayload := strings.Join(uniqueIPs, "\n")
 	tmpFile, err := os.CreateTemp("", "masscan-targets-*.txt")
 	if err != nil {
 		return []string{}
@@ -186,7 +244,12 @@ func ScanSYN(ips []string, ports string, masscanPath string, synThreads int, emi
 	ms := masscan.New(masscanPath)
 	ms.SetFileName(tmpFileName)
 	ms.SetPorts(ports)
-	ms.SetRate(strconv.Itoa(synThreads))
+	rate := synThreads
+	if scatter && probeIntervalMillis > 0 {
+		rate = pacedSYNRate(len(uniqueIPs), probeIntervalMillis, synThreads)
+		gologger.Info().Msgf("SYN端口扫描打散已开启，按 %d 个目标的 %dms 间隔限速为 %d pps", len(uniqueIPs), probeIntervalMillis, rate)
+	}
+	ms.SetRate(strconv.Itoa(rate))
 	gologger.Info().Msgf("调用masscan进行SYN端口扫描")
 	if err := ms.Run(); err != nil {
 		return []string{}

@@ -1,0 +1,26 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <title>Airflow - DAGs</title>
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/admin/'
+id: airflow-unauth
+info:
+  author: pa55w0rd
+  description: app="APACHE-Airflow"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Airflow Unauth
+  severity: high
+  tags: airflow,unauth,argus-import

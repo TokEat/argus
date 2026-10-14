@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { Typography, Tag, Space, Spin, Input, Empty, Tooltip, Pagination, Popover, Badge } from 'antd';
+import { Typography, Tag, Space, Spin, Input, Empty, Tooltip, Pagination, Popover, Badge, Drawer } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     ProfileOutlined,
@@ -33,15 +33,27 @@ const SEVERITY_ORDER: Record<string, number> = {
 
 const normSeverity = (s: string) => s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : 'Unknown';
 
+// HTTP 状态码按类别着色：2xx 绿 / 3xx 蓝 / 4xx 橙 / 5xx 红
+const statusColor = (code: number): string => {
+    if (code >= 500) return '#ef4444';
+    if (code >= 400) return '#f97316';
+    if (code >= 300) return '#3b82f6';
+    if (code >= 200) return '#22c55e';
+    return '#94a3b8';
+};
+
 // ─── Host Card Component ───────────────────────────────────
 
 const HostCard: React.FC<{ profile: API.Profile }> = ({ profile }) => {
     const [expanded, setExpanded] = useState<string | null>(null);
+    const [activePort, setActivePort] = useState<API.PortInfo | null>(null);
+    const vulnCount = profile.vuln_count || 0;
+    const fpCount = profile.fingerprint_count || 0;
     const ports = profile.ports || [];
     const fps = profile.fingerprints || [];
     const vulns = profile.vulns || [];
 
-    // Severity summary
+    // Severity summary (based on returned details)
     const sevSummary = useMemo(() => {
         const map: Record<string, number> = {};
         vulns.forEach(v => {
@@ -51,12 +63,20 @@ const HostCard: React.FC<{ profile: API.Profile }> = ({ profile }) => {
         return Object.entries(map).sort((a, b) => (SEVERITY_ORDER[b[0]] || 0) - (SEVERITY_ORDER[a[0]] || 0));
     }, [vulns]);
 
-    // Unique fingerprint products
+    // Unique fingerprint products (based on returned details)
     const products = useMemo(() => [...new Set(fps.map(f => f.ProductName))], [fps]);
+
+    // 当前选中端口的贡献资产（优先按 asset_ids 精确匹配，退回按端口匹配）
+    const activePortAssets = useMemo(() => {
+        if (!activePort) return [];
+        const byIds = (profile.assets || []).filter(a => activePort.asset_ids?.includes(a.ID));
+        if (byIds.length > 0) return byIds;
+        return (profile.assets || []).filter(a => a.Port === activePort.port);
+    }, [activePort, profile.assets]);
 
     const toggle = (key: string) => setExpanded(prev => prev === key ? null : key);
 
-    const hasVulns = vulns.length > 0;
+    const hasVulns = vulnCount > 0;
     const maxSev = sevSummary.length > 0 ? sevSummary[0][0] : null;
     const borderColor = hasVulns ? (SEVERITY_COLOR[maxSev || 'Unknown'] || '#e2e8f0') : '#e2e8f0';
 
@@ -99,14 +119,14 @@ const HostCard: React.FC<{ profile: API.Profile }> = ({ profile }) => {
                         <Tag style={{ margin: 0, fontSize: 11, borderRadius: 4, background: '#f0f9ff', border: '1px solid #bae6fd', color: '#0369a1' }}>
                             <ApiOutlined style={{ marginRight: 3 }} />{ports.length} 端口
                         </Tag>
-                        {fps.length > 0 && (
+                        {fpCount > 0 && (
                             <Tag style={{ margin: 0, fontSize: 11, borderRadius: 4, background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>
-                                <ScanOutlined style={{ marginRight: 3 }} />{products.length} 指纹
+                                <ScanOutlined style={{ marginRight: 3 }} />{products.length} / {fpCount} 指纹
                             </Tag>
                         )}
-                        {vulns.length > 0 && (
+                        {vulnCount > 0 && (
                             <Tag style={{ margin: 0, fontSize: 11, borderRadius: 4, background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b' }}>
-                                <BugOutlined style={{ marginRight: 3 }} />{vulns.length} 漏洞
+                                <BugOutlined style={{ marginRight: 3 }} />{vulnCount} 漏洞
                             </Tag>
                         )}
                     </div>
@@ -143,7 +163,7 @@ const HostCard: React.FC<{ profile: API.Profile }> = ({ profile }) => {
                         {expanded !== 'ports' && (
                             <div style={{ flex: 1, display: 'flex', gap: 4, flexWrap: 'wrap', marginLeft: 8, overflow: 'hidden', maxHeight: 22 }}>
                                 {ports.slice(0, 12).map(p => (
-                                    <Tag key={`${p.port}:${p.protocol}`} style={{ margin: 0, fontSize: 10, padding: '0 4px', lineHeight: '18px', borderRadius: 3, background: '#f1f5f9', border: '1px solid #e2e8f0', color: '#475569' }}>
+                                    <Tag key={p.port} style={{ margin: 0, fontSize: 10, padding: '0 4px', lineHeight: '18px', borderRadius: 3, background: '#f1f5f9', border: '1px solid #e2e8f0', color: '#475569' }}>
                                         {p.port}
                                     </Tag>
                                 ))}
@@ -152,36 +172,52 @@ const HostCard: React.FC<{ profile: API.Profile }> = ({ profile }) => {
                         )}
                     </div>
                     {expanded === 'ports' && (
-                        <div style={{ padding: '0 20px 12px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
+                        <div style={{ padding: '0 20px 12px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 8 }}>
                             {ports.map(p => (
-                                <div key={`${p.port}:${p.protocol}`} style={{
-                                    padding: '8px 12px', borderRadius: 8,
-                                    background: '#f8fafc', border: '1px solid #f1f5f9',
-                                    display: 'flex', alignItems: 'center', gap: 10,
-                                }}>
+                                <div
+                                    key={p.port}
+                                    onClick={() => setActivePort(p)}
+                                    style={{
+                                        padding: '8px 12px', borderRadius: 8,
+                                        background: '#f8fafc', border: '1px solid #f1f5f9',
+                                        display: 'flex', alignItems: 'center', gap: 10,
+                                        cursor: 'pointer', transition: 'all 0.15s',
+                                    }}
+                                    onMouseEnter={e => { e.currentTarget.style.background = '#f1f5f9'; e.currentTarget.style.borderColor = '#bae6fd'; }}
+                                    onMouseLeave={e => { e.currentTarget.style.background = '#f8fafc'; e.currentTarget.style.borderColor = '#f1f5f9'; }}
+                                >
                                     <Tag color="blue" style={{ margin: 0, fontWeight: 600, fontFamily: 'monospace', minWidth: 52, textAlign: 'center' }}>
                                         {p.port}
                                     </Tag>
+                                    {p.transport && (
+                                        <Tag style={{ margin: 0, fontSize: 10, padding: '0 5px', borderRadius: 3, background: '#eef2ff', border: '1px solid #c7d2fe', color: '#4338ca', textTransform: 'lowercase' }}>
+                                            {p.transport}
+                                        </Tag>
+                                    )}
+                                    {p.status_code > 0 && (
+                                        <Tag style={{ margin: 0, fontSize: 10, padding: '0 5px', borderRadius: 3, fontWeight: 600, fontFamily: 'monospace', color: statusColor(p.status_code), background: statusColor(p.status_code) + '14', border: `1px solid ${statusColor(p.status_code)}55` }}>
+                                            {p.status_code}
+                                        </Tag>
+                                    )}
                                     <div style={{ flex: 1, minWidth: 0 }}>
-                                        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                                            <Tag style={{ margin: 0, fontSize: 10, padding: '0 4px', borderRadius: 3 }}>
-                                                {p.protocol || 'tcp'}
-                                            </Tag>
-                                            {p.service && (
-                                                <Tag color="geekblue" style={{ margin: 0, fontSize: 10, padding: '0 4px', borderRadius: 3 }}>
-                                                    {p.service}
-                                                </Tag>
-                                            )}
-                                        </div>
-                                        {p.title && (
-                                            <Text style={{ fontSize: 11, color: '#64748b', marginTop: 2, display: 'block' }} ellipsis={{ tooltip: p.title }}>
+                                        {p.title ? (
+                                            <Text style={{ fontSize: 12, color: '#334155', display: 'block' }} ellipsis={{ tooltip: p.title }}>
                                                 {p.title}
+                                            </Text>
+                                        ) : (
+                                            <Text style={{ fontSize: 11, color: '#cbd5e1' }}>
+                                                {p.service || p.stages?.join(' / ') || '—'}
                                             </Text>
                                         )}
                                     </div>
+                                    {p.stages && p.stages.length > 0 && (
+                                        <Tooltip title={p.stages.join(' → ')}>
+                                            <Text style={{ fontSize: 10, color: '#94a3b8', flexShrink: 0 }}>{p.stages.length} 阶段</Text>
+                                        </Tooltip>
+                                    )}
                                     {p.url && (
                                         <Tooltip title={p.url}>
-                                            <a href={p.url} target="_blank" rel="noopener noreferrer" style={{ flexShrink: 0 }}>
+                                            <a href={p.url} target="_blank" rel="noopener noreferrer" style={{ flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                                                 <LinkOutlined style={{ color: '#0ea5e9', fontSize: 13 }} />
                                             </a>
                                         </Tooltip>
@@ -194,7 +230,7 @@ const HostCard: React.FC<{ profile: API.Profile }> = ({ profile }) => {
             )}
 
             {/* ── Fingerprints Section ── */}
-            {fps.length > 0 && (
+            {fpCount > 0 && (
                 <div style={{ borderTop: '1px solid #f1f5f9' }}>
                     <div
                         onClick={() => toggle('fps')}
@@ -210,7 +246,7 @@ const HostCard: React.FC<{ profile: API.Profile }> = ({ profile }) => {
                         {expanded === 'fps' ? <DownOutlined style={{ fontSize: 10, color: '#94a3b8' }} /> : <RightOutlined style={{ fontSize: 10, color: '#94a3b8' }} />}
                         <SafetyCertificateOutlined style={{ color: '#f59e0b' }} />
                         <Text style={{ fontSize: 13, fontWeight: 500, color: '#334155' }}>指纹识别</Text>
-                        <Text style={{ fontSize: 12, color: '#94a3b8' }}>({products.length} 产品)</Text>
+                        <Text style={{ fontSize: 12, color: '#94a3b8' }}>({products.length} 产品 / {fpCount} 匹配)</Text>
                         {expanded !== 'fps' && (
                             <div style={{ flex: 1, display: 'flex', gap: 4, flexWrap: 'wrap', marginLeft: 8, overflow: 'hidden', maxHeight: 22 }}>
                                 {products.slice(0, 8).map(p => (
@@ -268,7 +304,7 @@ const HostCard: React.FC<{ profile: API.Profile }> = ({ profile }) => {
             )}
 
             {/* ── Vulnerabilities Section ── */}
-            {vulns.length > 0 && (
+            {vulnCount > 0 && (
                 <div style={{ borderTop: '1px solid #f1f5f9' }}>
                     <div
                         onClick={() => toggle('vulns')}
@@ -284,7 +320,7 @@ const HostCard: React.FC<{ profile: API.Profile }> = ({ profile }) => {
                         {expanded === 'vulns' ? <DownOutlined style={{ fontSize: 10, color: '#94a3b8' }} /> : <RightOutlined style={{ fontSize: 10, color: '#94a3b8' }} />}
                         <ExclamationCircleOutlined style={{ color: '#ef4444' }} />
                         <Text style={{ fontSize: 13, fontWeight: 500, color: '#334155' }}>漏洞</Text>
-                        <Text style={{ fontSize: 12, color: '#94a3b8' }}>({vulns.length})</Text>
+                        <Text style={{ fontSize: 12, color: '#94a3b8' }}>({vulnCount})</Text>
                         {expanded !== 'vulns' && (
                             <div style={{ flex: 1, display: 'flex', gap: 4, flexWrap: 'wrap', marginLeft: 8, overflow: 'hidden', maxHeight: 22 }}>
                                 {vulns.slice(0, 5).map((v, i) => (
@@ -363,6 +399,74 @@ const HostCard: React.FC<{ profile: API.Profile }> = ({ profile }) => {
                     )}
                 </div>
             )}
+
+            {/* ── Port Detail Drawer ── */}
+            <Drawer
+                title={
+                    activePort ? (
+                        <Space size={8}>
+                            <Text strong style={{ fontFamily: 'monospace', fontSize: 15 }}>{profile.host} : {activePort.port}</Text>
+                            {activePort.transport && <Tag style={{ margin: 0, textTransform: 'lowercase' }}>{activePort.transport}</Tag>}
+                            {activePort.status_code > 0 && (
+                                <Tag style={{ margin: 0, fontFamily: 'monospace', fontWeight: 600, color: statusColor(activePort.status_code), background: statusColor(activePort.status_code) + '14', border: `1px solid ${statusColor(activePort.status_code)}55` }}>
+                                    {activePort.status_code}
+                                </Tag>
+                            )}
+                        </Space>
+                    ) : null
+                }
+                placement="right"
+                width={520}
+                open={activePort !== null}
+                onClose={() => setActivePort(null)}
+            >
+                {activePort && (
+                    <div>
+                        {(activePort.stages?.length || 0) > 0 && (
+                            <div style={{ marginBottom: 16 }}>
+                                <Text style={{ fontSize: 11, color: '#94a3b8', display: 'block', marginBottom: 6 }}>产生阶段</Text>
+                                <Space size={4} wrap>
+                                    {activePort.stages.map(s => (
+                                        <Tag key={s} style={{ margin: 0, fontSize: 11, borderRadius: 4, background: '#f0f9ff', border: '1px solid #bae6fd', color: '#0369a1' }}>{s}</Tag>
+                                    ))}
+                                </Space>
+                            </div>
+                        )}
+                        <Text style={{ fontSize: 11, color: '#94a3b8', display: 'block', marginBottom: 8 }}>
+                            贡献资产（{activePortAssets.length}）
+                        </Text>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {activePortAssets.length === 0 && <Empty description="该端口暂无资产明细" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+                            {activePortAssets.map(a => (
+                                <div key={a.ID} style={{ padding: '10px 12px', borderRadius: 8, background: '#f8fafc', border: '1px solid #f1f5f9' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+                                        <Tag color="blue" style={{ margin: 0, fontFamily: 'monospace', fontSize: 10 }}>{a.Protocol}</Tag>
+                                        {a.Service && <Tag style={{ margin: 0, fontSize: 10 }}>{a.Service}</Tag>}
+                                        {a.Status && <Tag style={{ margin: 0, fontSize: 10, color: '#166534', background: '#f0fdf4', border: '1px solid #bbf7d0' }}>{a.Status}</Tag>}
+                                    </div>
+                                    <div style={{ fontSize: 12, fontFamily: 'monospace', color: '#334155', wordBreak: 'break-all' }}>
+                                        {a.Target}
+                                        {a.URL && a.URL !== a.Target && (
+                                            <Tooltip title={a.URL}>
+                                                <a href={a.URL} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 6 }}>
+                                                    <LinkOutlined style={{ fontSize: 11 }} />
+                                                </a>
+                                            </Tooltip>
+                                        )}
+                                    </div>
+                                    {a.Title && (
+                                        <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>{a.Title}</div>
+                                    )}
+                                    <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 6 }}>
+                                        {a.CreatedAt ? dayjs(a.CreatedAt).format('MM-DD HH:mm:ss') : ''}
+                                        {a.UpdatedAt && a.UpdatedAt !== a.CreatedAt ? ` · 更新 ${dayjs(a.UpdatedAt).format('MM-DD HH:mm:ss')}` : ''}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </Drawer>
         </div>
     );
 };
@@ -400,8 +504,8 @@ const ProfilesView: React.FC = () => {
 
     // Compute aggregates
     const totalPorts = profiles.reduce((acc, p) => acc + (p.ports?.length || 0), 0);
-    const totalFps = profiles.reduce((acc, p) => acc + (p.fingerprints?.length || 0), 0);
-    const totalVulns = profiles.reduce((acc, p) => acc + (p.vulns?.length || 0), 0);
+    const totalFps = profiles.reduce((acc, p) => acc + (p.fingerprint_count || 0), 0);
+    const totalVulns = profiles.reduce((acc, p) => acc + (p.vuln_count || 0), 0);
 
     return (
         <div style={{ position: 'relative', overflow: 'hidden' }}>

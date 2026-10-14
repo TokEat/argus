@@ -1,0 +1,27 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - 'Solr Index Req:'
+          - <field name="id">
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/datacache/solr.log'
+id: yonyou-u8-datacache-disclosure
+info:
+  author: zan8in
+  description: ""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: medium
+  name: 用友u8-crm存在信息泄露漏洞
+  severity: medium
+  tags: yonyou,disclosure,argus-import

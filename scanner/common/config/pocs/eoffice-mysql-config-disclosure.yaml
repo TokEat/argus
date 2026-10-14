@@ -1,0 +1,30 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - dataurl
+          - datauser
+          - datapassword
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/mysql_config.ini'
+id: eoffice-mysql-config-disclosure
+info:
+  author: zan8in
+  description: |-
+    泛微 E-Office mysql_config.ini文件可直接访问,泄漏数据库账号密码等信息
+    fofa: app="泛微-EOffice"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 泛微OA E-Office mysql_config.ini 数据库信息泄漏
+  severity: high
+  tags: ecology,disclosure,argus-import

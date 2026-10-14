@@ -9,9 +9,15 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 )
+
+// dispatchLivenessWindowMillis mirrors the heartbeat death-detector freshness
+// window used when counting free slots for controller-push fan-out.
+const dispatchLivenessWindowMillis = 60000
 
 type taskTargetMode string
 
@@ -94,6 +100,15 @@ type taskScanConfig struct {
 	TCPPing                    bool
 	NoInteractsh               bool
 	OnlyIPPort                 bool
+	PortScanScatter            bool
+	PortScanProbeInterval      int
+	WebCrawl                   bool
+	WebCrawlMaxDepth           int
+	WebCrawlMaxPages           int
+	WebCrawlMaxPathApps        int
+	SensitiveInfo              bool
+	WebCrawlAI                 bool
+	SensitiveInfoAI            bool
 	OutputFile                 string
 	OutputType                 string
 	APIConfigFilePath          string
@@ -110,6 +125,8 @@ func defaultTaskScanConfig() taskScanConfig {
 		SYNPortScanThreads:         10000,
 		PortsThreshold:             300,
 		TCPPortScanTimeout:         6,
+		PortScanScatter:            false,
+		PortScanProbeInterval:      scanpolicy.DefaultPacingIntervalMillis,
 		MasscanPath:                "masscan",
 		GetBannerThreads:           500,
 		GetBannerTimeout:           5,
@@ -135,6 +152,8 @@ func defaultTaskScanConfig() taskScanConfig {
 		WAFBypassHeaders:           true,
 		WAFSkipOnManyFingerprints:  true,
 		NoInteractsh:               true,
+		WebCrawlMaxDepth:           scanpolicy.DefaultWebCrawlMaxDepth,
+		WebCrawlMaxPages:           scanpolicy.DefaultWebCrawlMaxPages,
 		OutputFile:                 "result.txt",
 		OutputType:                 "text",
 		NucleiTemplate:             "config/pocs",
@@ -275,6 +294,32 @@ func validateTaskScanConfig(cfg *taskScanConfig) error {
 		if suffix != ".html" && suffix != ".htm" {
 			return fmt.Errorf("ReportName must end with .html or .htm")
 		}
+	}
+
+	if cfg.WebCrawl {
+		if cfg.WebCrawlMaxDepth == 0 {
+			cfg.WebCrawlMaxDepth = scanpolicy.DefaultWebCrawlMaxDepth
+		}
+		if cfg.WebCrawlMaxPages == 0 {
+			cfg.WebCrawlMaxPages = scanpolicy.DefaultWebCrawlMaxPages
+		}
+		if cfg.WebCrawlMaxDepth < 1 || cfg.WebCrawlMaxDepth > scanpolicy.MaximumWebCrawlMaxDepth {
+			return fmt.Errorf("WebCrawlMaxDepth must be between 1 and %d", scanpolicy.MaximumWebCrawlMaxDepth)
+		}
+		if cfg.WebCrawlMaxPages < 1 || cfg.WebCrawlMaxPages > scanpolicy.MaximumWebCrawlMaxPages {
+			return fmt.Errorf("WebCrawlMaxPages must be between 1 and %d", scanpolicy.MaximumWebCrawlMaxPages)
+		}
+		if cfg.WebCrawlMaxPathApps < 0 || cfg.WebCrawlMaxPathApps > scanpolicy.MaximumWebCrawlPathAppLimit {
+			return fmt.Errorf("WebCrawlMaxPathApps must be between 0 and %d", scanpolicy.MaximumWebCrawlPathAppLimit)
+		}
+	} else {
+		cfg.WebCrawlMaxDepth = 0
+		cfg.WebCrawlMaxPages = 0
+		cfg.WebCrawlMaxPathApps = 0
+		cfg.WebCrawlAI = false
+	}
+	if !cfg.SensitiveInfo {
+		cfg.SensitiveInfoAI = false
 	}
 
 	return nil
@@ -627,6 +672,75 @@ func chunkSlice(items []string, size int) [][]string {
 		chunks = append(chunks, items[i:end])
 	}
 	return chunks
+}
+
+// dispatchFreeSlots sums max(0, Capacity-RunningTasks) over alive,
+// selector-matching agents. It bounds how finely controller-push fan-out
+// subdivides targets so the push uses the currently-free capacity instead of
+// emitting a couple of oversized batches.
+func dispatchFreeSlots(rules db.AgentSelectorRules) int {
+	var nodes []db.Node
+	if err := db.DB.Where("status = ?", "Alive").Find(&nodes).Error; err != nil {
+		return 0
+	}
+	nowMilli := time.Now().UnixMilli()
+	free := 0
+	for i := range nodes {
+		n := &nodes[i]
+		if nowMilli-n.LastBeat >= dispatchLivenessWindowMillis {
+			continue
+		}
+		matched, _ := db.NodeMatchesSelectorRules(nil, rules, n.Tags)
+		if !matched {
+			continue
+		}
+		if slot := n.Capacity - n.RunningTasks; slot > 0 {
+			free += slot
+		}
+	}
+	return free
+}
+
+// groupAndBatchTargetsForDispatch wraps the pure groupAndBatchTargets with
+// controller-push fan-out: when the effective strategy is controller_push and
+// free agent slots exist, each type's targets are re-chunked to roughly
+// ceil(n/freeSlots) so the push fans out across alive agents. The legacy
+// agent-claim path (or no free slots) returns the pure grouping unchanged.
+// Coverage reuse keys on per-target WorkKey at claim time, so re-chunking
+// never changes scan content identity.
+func groupAndBatchTargetsForDispatch(targets []string, targetMode taskTargetMode, strategy scanpolicy.DispatchStrategy, freeSlots int) []targetBatchGroup {
+	base := groupAndBatchTargets(targets, targetMode)
+	if strategy != scanpolicy.DispatchStrategyControllerPush || freeSlots <= 0 {
+		return base
+	}
+	countByType := make(map[string]int)
+	for _, t := range targets {
+		typ := detectDirectTargetType(t)
+		if typ == "" {
+			typ = "unknown"
+		}
+		countByType[typ]++
+	}
+	out := make([]targetBatchGroup, 0, len(base))
+	for _, g := range base {
+		size := batchSizeForTargetType(g.TargetType)
+		if n := countByType[g.TargetType]; n > 0 {
+			if chunk := (n + freeSlots - 1) / freeSlots; chunk < size {
+				size = chunk
+			}
+		}
+		if size < 1 {
+			size = 1
+		}
+		for _, chunk := range chunkSlice(g.Targets, size) {
+			out = append(out, targetBatchGroup{
+				TargetType:   g.TargetType,
+				SelectorJSON: g.SelectorJSON,
+				Targets:      chunk,
+			})
+		}
+	}
+	return out
 }
 
 // batchProfile 描述一次聚合操作的批次概况

@@ -1,0 +1,30 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - status":"OK
+          - '"ticket":"anonymous"'
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/api/security/ticket'
+id: zeppelin-unauth
+info:
+  author: j4vaovo
+  description: |-
+    Apache Zeppelin server was able to be accessed because no authentication was required.
+    shodan: title:"Zeppelin"
+    fofa: title="Zeppelin"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Apache Zeppelin - Unauthenticated Access
+  severity: high
+  tags: misconfig,apache,zeppelin,unauth,argus-import

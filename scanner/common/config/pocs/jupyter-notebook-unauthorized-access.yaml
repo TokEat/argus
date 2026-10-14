@@ -1,0 +1,32 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - terminals/websocket
+        condition: and
+      - type: word
+        part: body
+        words:
+          - 'Password:'
+        negative: true
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/terminals/3'
+id: jupyter-notebook-unauthorized-access
+info:
+  author: bufsnake
+  description: Jupyter Notebook Unauthorized Access
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Jupyter Notebook Unauthorized Access
+  severity: high
+  tags: jupyter,notebook,unauth,argus-import

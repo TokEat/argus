@@ -1,0 +1,26 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - .kibanaWelcomeView
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/app/kibana'
+id: kibana-unauth
+info:
+  author: Isaac
+  description: Kibana Unauth
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Kibana Unauth
+  severity: high
+  tags: kibana,unauth,argus-import

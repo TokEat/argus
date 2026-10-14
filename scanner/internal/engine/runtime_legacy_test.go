@@ -32,6 +32,28 @@ func TestToEngineOutputMessageKeepsGoPocShowMsg(t *testing.T) {
 	}
 }
 
+// 爬取/敏感信息载荷必须穿透转换到达 OutputHook，否则服务端收不到候选。
+func TestToEngineOutputMessageKeepsCrawlAndSensitivePayload(t *testing.T) {
+	src := ddout.OutputMessage{
+		Type: "CrawlSite",
+		CrawlSite: &structs.CrawlSiteMsg{
+			URL: "http://127.0.0.1:18081/admin", Scheme: "http",
+			Host: "127.0.0.1", Port: 18081, AIControl: true,
+		},
+		SensitiveInfo: &structs.SensitiveInfoMsg{
+			Host: "127.0.0.1", Kind: "email", Value: "a@b.c", AIControl: true,
+		},
+	}
+
+	got := toEngineOutputMessage(src)
+	if got.CrawlSite == nil || got.CrawlSite.URL != src.CrawlSite.URL || got.CrawlSite.Port != src.CrawlSite.Port {
+		t.Fatalf("crawl site payload lost during conversion: got %#v", got.CrawlSite)
+	}
+	if got.SensitiveInfo == nil || got.SensitiveInfo.Value != src.SensitiveInfo.Value {
+		t.Fatalf("sensitive info payload lost during conversion: got %#v", got.SensitiveInfo)
+	}
+}
+
 func TestNewScanContextRuleFilesOnlyIgnoresArsenalDB(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "config")

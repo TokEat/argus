@@ -95,8 +95,12 @@ echo "  -> 拷贝环境部署脚本和 Docker 编排文件..."
 cp "${SCRIPT_DIR}/setup-server.sh" "${BUNDLE_DIR}/deploy/"
 cp "${SCRIPT_DIR}/upgrade-server.sh" "${BUNDLE_DIR}/deploy/"
 cp "${SCRIPT_DIR}/uninstall-server.sh" "${BUNDLE_DIR}/deploy/"
+cp "${SCRIPT_DIR}/show-secrets.sh" "${BUNDLE_DIR}/deploy/"
 cp "${SCRIPT_DIR}/docker-compose.yml" "${BUNDLE_DIR}/deploy/"
 cp "${SCRIPT_DIR}/production.env.example" "${BUNDLE_DIR}/deploy/"
+# 部署脚本共享库（setup/upgrade/show-secrets 均 source）
+mkdir -p "${BUNDLE_DIR}/deploy/lib"
+cp "${SCRIPT_DIR}/lib/argus-env.sh" "${BUNDLE_DIR}/deploy/lib/"
 cp "${ROOT_DIR}/yaksha/compose.yaml" "${BUNDLE_DIR}/deploy/yaksha-compose.yaml"
 
 # 生成并拷贝预编译的规则数据库
@@ -125,6 +129,8 @@ required_paths=(
     "deploy/setup-server.sh"
     "deploy/upgrade-server.sh"
     "deploy/uninstall-server.sh"
+    "deploy/show-secrets.sh"
+    "deploy/lib/argus-env.sh"
     "deploy/production.env.example"
     "deploy/yaksha-compose.yaml"
     "deploy/images/argus-yaksha-linux-amd64.tar"

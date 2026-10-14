@@ -155,6 +155,38 @@ func TestTenantQuotaCompatMigrationPresent(t *testing.T) {
 	}
 }
 
+func TestCrawlSiteTypeMigrationIsAdditive(t *testing.T) {
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations returned error: %v", err)
+	}
+
+	for _, migration := range migrations {
+		if migration.Version != "603" {
+			continue
+		}
+		for _, required := range []string{
+			"ALTER TABLE crawl_site_candidates",
+			"ADD COLUMN IF NOT EXISTS site_type",
+			"NOT NULL",
+			"DEFAULT ''",
+			"CREATE INDEX IF NOT EXISTS idx_crawlsite_sitetype ON crawl_site_candidates (site_type)",
+		} {
+			if !strings.Contains(migration.SQL, required) {
+				t.Fatalf("crawl site_type migration missing %q", required)
+			}
+		}
+		upperSQL := strings.ToUpper(migration.SQL)
+		for _, forbidden := range []string{"DROP TABLE", "DROP COLUMN", "DELETE FROM", "TRUNCATE "} {
+			if strings.Contains(upperSQL, forbidden) {
+				t.Fatalf("crawl site_type migration contains forbidden term %q", forbidden)
+			}
+		}
+		return
+	}
+	t.Fatal("expected crawl site_type migration 603")
+}
+
 func TestTaskBatchMigrationBackfillsAttemptsWithoutDroppingLegacyData(t *testing.T) {
 	migrations, err := loadMigrations()
 	if err != nil {

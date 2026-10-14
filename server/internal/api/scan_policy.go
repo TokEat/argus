@@ -32,6 +32,9 @@ type taskCreateRequest struct {
 	SkipUnsupported    bool               `json:"skip_unsupported"`
 	Policy             *scanpolicy.Policy `json:"policy,omitempty"`
 	PlanHash           string             `json:"plan_hash,omitempty"`
+	// DispatchStrategy selects controller-push (default) or the legacy
+	// agent-claim pull model. Empty inherits the process-wide default.
+	DispatchStrategy string `json:"dispatch_strategy,omitempty"`
 }
 
 type scanPolicyPlanRequest struct {
@@ -249,6 +252,10 @@ func compileTaskScanPolicy(c *gin.Context, req scanPolicyPlanRequest) (scanPolic
 	config := defaultTaskScanConfig()
 	config.Ports = ports
 	config.PortScanType = string(normalized.ScanMethod)
+	if normalized.Pacing != nil {
+		config.PortScanScatter = normalized.Pacing.Enabled
+		config.PortScanProbeInterval = normalized.Pacing.IntervalMillis
+	}
 	config.Subdomain = normalized.Capabilities.SubdomainDiscovery
 	config.NoSubFinder = !normalized.Capabilities.SubdomainDiscovery
 	config.NoSubdomainBruteForce = !normalized.Capabilities.SubdomainBruteforce
@@ -257,6 +264,21 @@ func compileTaskScanPolicy(c *gin.Context, req scanPolicyPlanRequest) (scanPolic
 	config.NoHostBind = !normalized.Capabilities.HostBinding
 	config.BehaviorProbe = normalized.Capabilities.BehaviorProbe
 	config.NoDirSearch = !normalized.Capabilities.DirectoryProbe
+	config.WebCrawl = normalized.Capabilities.WebCrawl
+	config.SensitiveInfo = normalized.Capabilities.SensitiveInfo
+	config.WebCrawlAI = normalized.AIControl.Crawl
+	config.SensitiveInfoAI = normalized.AIControl.SensitiveInfo
+	config.WebCrawlMaxDepth = normalized.WebCrawl.MaxDepth
+	config.WebCrawlMaxPages = normalized.WebCrawl.MaxPages
+	config.WebCrawlMaxPathApps = normalized.WebCrawl.PathAppLimit
+	if config.WebCrawl {
+		if config.WebCrawlMaxDepth == 0 {
+			config.WebCrawlMaxDepth = scanpolicy.DefaultWebCrawlMaxDepth
+		}
+		if config.WebCrawlMaxPages == 0 {
+			config.WebCrawlMaxPages = scanpolicy.DefaultWebCrawlMaxPages
+		}
+	}
 	config.AllowCDNAssets = normalized.Capabilities.AllowCDNAssets
 	config.AllowLocalAreaDomain = normalized.Capabilities.AllowPrivateResolvedDomains
 	// Discovery never executes validation. Child batches are sealed later.

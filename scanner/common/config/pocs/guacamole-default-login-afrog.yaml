@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: username=guacadmin&password=guacadmin
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"username"'
+          - '"authToken"'
+          - '"guacadmin"'
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/api/tokens'
+id: guacamole-default-login
+info:
+  author: r3dg33k
+  description: Guacamole default admin login credentials were detected.
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Guacamole Default Login
+  severity: high
+  tags: guacamole,default-login,argus-import

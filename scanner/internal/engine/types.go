@@ -94,4 +94,6 @@ const (
 	PhaseNuclei               = "nuclei_scan"
 	PhaseGoPoc                = "gopoc_scan"
 	PhaseCredentialValidation = "credential_validation"
+	PhaseWebCrawl             = "web_crawl"
+	PhaseSensitiveInfo        = "sensitive_info"
 )

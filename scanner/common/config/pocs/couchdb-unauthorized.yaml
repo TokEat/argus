@@ -1,0 +1,28 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - httpd_design_handlers
+          - external_manager
+          - replicator_manager
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/_config'
+id: couchdb-unauthorized
+info:
+  author: FiveAourThe
+  description: ""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: CouchDB Unauthorized
+  severity: high
+  tags: couchdb,unauth,argus-import

@@ -290,6 +290,19 @@ func AppendSubTaskAttemptTx(tx *gorm.DB, expected *SubTask, options AttemptRetry
 	prepared.Status = preparedStatus
 	prepared.AgentID = ""
 	prepared.StreamMsgID = ""
+	// A fresh attempt is unrouted; the dispatch controller assigns a new
+	// routing. When a retry budget is consumed, stamp the exponential backoff
+	// eligibility time so the controller (and the ClaimTask gate) hold the
+	// retry until it is eligible again. Budget-free recovery (e.g. agent
+	// offline) stays immediately eligible.
+	prepared.RoutedAgentID = ""
+	prepared.RoutedAt = nil
+	if options.ConsumeRetryBudget && nextRetryCount > current.RetryCount {
+		eligibleAt := RetryEligibleAt(nextRetryCount, now)
+		prepared.NextEligibleAt = &eligibleAt
+	} else {
+		prepared.NextEligibleAt = nil
+	}
 	prepared.FailureReason = ""
 	prepared.RetryCount = nextRetryCount
 	prepared.StartedAt = nil

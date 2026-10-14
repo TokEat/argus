@@ -65,17 +65,17 @@ func schemaTableSpecs() []schemaTableSpec {
 		},
 		{
 			Table:   "root_tasks",
-			Columns: []string{"project_id", "cron_task_id", "total_targets", "completed_targets", "status", "archived_at", "current_config_version"},
+			Columns: []string{"project_id", "cron_task_id", "total_targets", "completed_targets", "status", "archived_at", "current_config_version", "dispatch_strategy"},
 			Indexes: []string{"idx_root_tasks_tenant_id", "idx_root_tasks_project_id", "idx_root_tasks_status", "idx_root_tasks_archived_at", "idx_root_tasks_scope_id"},
 		},
 		{
 			Table:   "sub_tasks",
-			Columns: []string{"project_id", "batch_id", "attempt_no", "parent_attempt_id", "trigger", "failure_reason", "agent_selector", "agent_selector_rules", "timeout_sec", "retry_count", "max_retry", "config_version", "rule_version", "started_at", "finished_at"},
+			Columns: []string{"project_id", "batch_id", "attempt_no", "parent_attempt_id", "trigger", "failure_reason", "agent_selector", "agent_selector_rules", "timeout_sec", "retry_count", "max_retry", "config_version", "rule_version", "started_at", "finished_at", "dispatch_strategy", "next_eligible_at", "routed_agent_id", "routed_at"},
 			Indexes: []string{"idx_sub_tasks_project_id", "idx_sub_tasks_root_task_id", "idx_sub_tasks_batch_id", "idx_sub_tasks_parent_attempt_id", "idx_sub_tasks_trigger", "idx_sub_tasks_status", "idx_sub_tasks_started_at", "idx_sub_tasks_finished_at", "idx_sub_tasks_scope_attempt_id", "idx_sub_tasks_scope_attempt_agent_id"},
 		},
 		{
 			Table:   "task_batches",
-			Columns: []string{"tenant_id", "project_id", "root_task_id", "sequence", "kind", "target_type", "targets", "target_count", "status", "control_state", "config_version", "rule_version", "priority", "timeout_sec", "agent_selector", "agent_selector_rules", "current_attempt_no", "attempt_count", "latest_attempt_id", "created_by", "created_at", "updated_at", "archived_at"},
+			Columns: []string{"tenant_id", "project_id", "root_task_id", "sequence", "kind", "target_type", "targets", "target_count", "status", "control_state", "config_version", "rule_version", "priority", "timeout_sec", "agent_selector", "agent_selector_rules", "current_attempt_no", "attempt_count", "latest_attempt_id", "dispatch_strategy", "created_by", "created_at", "updated_at", "archived_at"},
 			Indexes: []string{"idx_task_batches_tenant_id", "idx_task_batches_project_id", "idx_task_batches_root_task_id", "idx_task_batches_task_sequence", "idx_task_batches_kind", "idx_task_batches_target_type", "idx_task_batches_status", "idx_task_batches_control_state", "idx_task_batches_latest_attempt_id", "idx_task_batches_created_by", "idx_task_batches_archived_at", "idx_task_batches_scope_id"},
 		},
 		{
@@ -291,7 +291,7 @@ func schemaTableSpecs() []schemaTableSpec {
 		},
 		{
 			Table:   "assets",
-			Columns: []string{"project_id", "tags", "status", "owner_id", "cred_id", "updated_at"},
+			Columns: []string{"project_id", "tags", "status", "owner_id", "cred_id", "source", "updated_at"},
 			Indexes: []string{"idx_asset_dedupe", "idx_assets_task_id", "idx_assets_status"},
 		},
 		{
@@ -306,8 +306,8 @@ func schemaTableSpecs() []schemaTableSpec {
 		},
 		{
 			Table:   "vulnerabilities",
-			Columns: []string{"project_id", "status", "assignee", "ignore_reason", "verify_task_id", "request", "response", "description", "reference", "matched_at", "updated_at"},
-			Indexes: []string{"idx_vuln_new_dedupe", "idx_vulnerabilities_status", "idx_vulnerabilities_verify_task_id"},
+			Columns: []string{"project_id", "status", "assignee", "ignore_reason", "verify_task_id", "request", "response", "description", "reference", "matched_at", "updated_at", "ai_status", "ai_confidence", "ai_reason", "ai_triaged_at", "ai_review_id", "taint_status", "taint_reason"},
+			Indexes: []string{"idx_vuln_new_dedupe", "idx_vulnerabilities_status", "idx_vulnerabilities_verify_task_id", "idx_vulnerabilities_ai_status", "idx_vulnerabilities_ai_triaged_at", "idx_vulnerabilities_taint_status"},
 		},
 		{
 			Table:   "arsenals",
@@ -323,6 +323,21 @@ func schemaTableSpecs() []schemaTableSpec {
 			Table:   "arsenal_ai_reviews",
 			Columns: []string{"tenant_id", "type", "file_name", "content_hash", "suggestion", "confidence", "issues", "duplicate_candidates", "raw_response"},
 			Indexes: []string{"idx_arsenal_ai_reviews_cache", "idx_arsenal_ai_reviews_content_hash", "idx_arsenal_ai_reviews_suggestion"},
+		},
+		{
+			Table:   "ai_finding_reviews",
+			Columns: []string{"tenant_id", "vulnerability_id", "root_task_id", "project_id", "plugin", "severity", "target", "evidence_hash", "verdict", "confidence", "reason", "raw_response", "overridden_by", "override_verdict", "created_by"},
+			Indexes: []string{"idx_ai_finding_reviews_vuln", "idx_ai_finding_reviews_evidence", "idx_ai_finding_reviews_verdict"},
+		},
+		{
+			Table:   "egress_ban_events",
+			Columns: []string{"tenant_id", "root_task_id", "sub_task_id", "batch_id", "project_id", "target", "host", "agent_id", "signal_type", "evidence", "classification", "recommended_action", "action_reason", "confidence", "status", "executed_at", "executed_by", "cooldown_until", "created_at", "resolved_at"},
+			Indexes: []string{"idx_egress_ban_events_tenant_status", "idx_egress_ban_events_target", "idx_egress_ban_events_root_task", "idx_egress_ban_events_created"},
+		},
+		{
+			Table:   "node_bans",
+			Columns: []string{"tenant_id", "target", "agent_id", "egress_ip", "hit_count", "banned_at", "cooldown_until"},
+			Indexes: []string{"idx_node_bans_target"},
 		},
 		{
 			Table:   "ai_tool_invocations",

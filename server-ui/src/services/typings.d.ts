@@ -565,6 +565,75 @@ declare namespace API {
     Reference: string;
     MatchedAt: string;
     CreatedAt: string;
+    /** AI 误报研判回写（GET /vulns/:id/ai-review 取详情） */
+    AIStatus?: string;
+    AIConfidence?: number;
+    AIReason?: string;
+    AITriagedAt?: string;
+    /** 安全设备对抗哨兵污点标记（如 suspect_waf = 疑似 WAF/catch-all 拦截页） */
+    TaintStatus?: string;
+    TaintReason?: string;
+  }
+
+  /** AI 漏洞研判记录 (GET /vulns/:id/ai-review → reviews[]) */
+  interface AIFindingReview {
+    ID: number;
+    Verdict: string;
+    Confidence: number;
+    Reason?: string;
+    Model?: string;
+    Provider?: string;
+    OverrideVerdict?: string;
+    OverriddenBy?: string;
+    CreatedAt: string;
+  }
+
+  /** AI 研判开关 (GET/PUT /ai/triage/config) */
+  interface AITriageConfig {
+    enabled: boolean;
+    auto_suppress: boolean;
+    confidence_threshold: number;
+  }
+
+  /** AI 内容分析（主动爬取关联资产 / 敏感信息）全局开关 (GET/PUT /ai/content/config) */
+  interface ContentAnalysisConfig {
+    enabled: boolean;
+  }
+
+  /** 扫描对抗哨兵事件 (GET /sentinel/events → items[]) */
+  interface SentinelEvent {
+    ID: number;
+    TenantID: string;
+    RootTaskID: string;
+    SubTaskID: string;
+    ProjectID: string;
+    Target: string;
+    Host: string;
+    AgentID: string;
+    /** 规则信号：homogeneity=同主机多端口同响应页；success_drop=成功率突降 */
+    SignalType: string;
+    /** 规则采集证据（JSON 字符串） */
+    Evidence: string;
+    /** pending | banned | rate_limited | waf_challenge | target_down | scanner_bug | false_positive */
+    Classification: string;
+    /** backoff | rescan_other_node | halt | flag_findings | none */
+    RecommendedAction: string;
+    ActionReason: string;
+    Confidence: number;
+    /** open | executed | dismissed | expired */
+    Status: string;
+    ExecutedAt?: string;
+    ExecutedBy: string;
+    CooldownUntil?: string;
+    CreatedAt: string;
+    ResolvedAt?: string;
+  }
+
+  /** 扫描对抗哨兵开关 (GET/PUT /sentinel/config) */
+  interface SentinelConfig {
+    enabled: boolean;
+    auto_execute: boolean;
+    cooldown_minutes: number;
   }
 
   /** 资产 (GET /api/v1/assets) */
@@ -578,6 +647,8 @@ declare namespace API {
     URL: string;
     Title: string;
     Service: string;
+    Status?: string;
+    UpdatedAt?: string;
     CreatedAt: string;
   }
 
@@ -591,6 +662,54 @@ declare namespace API {
     RuleName: string;
     Evidence: string;
     CreatedAt: string;
+  }
+
+  /** 主动爬取关联资产候选 (GET /api/v1/crawl-site-candidates) */
+  interface CrawlSiteCandidate {
+    ID: number;
+    TenantID: string;
+    ProjectID: string;
+    TaskID: string;
+    RootTaskID: string;
+    SourceURL: string;
+    URL: string;
+    Scheme: string;
+    Host: string;
+    Port: number;
+    LinkContext: string;
+    /** ''=端口/子域；path_app=路径反代应用；hidden_path=隐藏端点 */
+    SiteType: string;
+    AIControl: boolean;
+    /** pending | confirmed | duplicate | rejected */
+    AIStatus: string;
+    AIConfidence: number;
+    AIReason: string;
+    AssetPromoted: boolean;
+    CreatedAt: string;
+    UpdatedAt: string;
+  }
+
+  /** 敏感信息候选 (GET /api/v1/sensitive-findings) */
+  interface SensitiveFinding {
+    ID: number;
+    TenantID: string;
+    ProjectID: string;
+    TaskID: string;
+    RootTaskID: string;
+    SourceURL: string;
+    Host: string;
+    /** email | phone | idcard | account | keyword | custom */
+    Kind: string;
+    Value: string;
+    Snippet: string;
+    /** AI 结构化提取结果（json 文本） */
+    Context: string;
+    AIControl: boolean;
+    AIStatus: string;
+    AIConfidence: number;
+    AIReason: string;
+    CreatedAt: string;
+    UpdatedAt: string;
   }
 
   interface FingerprintGroupTarget {
@@ -609,13 +728,39 @@ declare namespace API {
     LastSeen?: string;
   }
 
+  /** 指纹分组聚合统计（随 search 过滤变化） */
+  interface FingerprintGroupStats {
+    total_hits: number;
+    distinct_targets: number;
+  }
+
+  interface FingerprintGroupsPage extends PagedResponse<FingerprintGroup> {
+    stats?: FingerprintGroupStats;
+  }
+
+  /** 扫描链路溯源节点（root-first，input 为合成的起点节点） */
+  interface AssetLineageNode {
+    target: string;
+    stage: string;
+    node_type: 'input' | 'asset' | 'fingerprint' | 'vulnerability' | string;
+  }
+
+  /** GET /assets|vulns|fingerprints/:id/lineage */
+  interface AssetLineageResponse {
+    nodes: AssetLineageNode[];
+  }
+
   /** 端口信息 */
+  /** 融合画像端口（跨阶段按端口号聚合） */
   interface PortInfo {
     port: number;
-    protocol: string;
-    service: string;
+    transport: string;    // 应用协议/方案: http/https/tcp/...
+    service: string;      // 合并后的最佳 Service 原值, 如 http/200
+    status_code: number;  // HTTP 状态码, 未知=0
     title: string;
     url: string;
+    stages: string[];     // 去重保序的阶段标签, 如 ["PortScan","Nmap","Web"]
+    asset_ids: number[];  // 该端口贡献的 Asset.ID
   }
 
   /** 融合画像 (GET /api/v1/profiles) — 以主机为单位聚合 */
@@ -625,6 +770,9 @@ declare namespace API {
     assets: Asset[];
     fingerprints: FingerprintHit[];
     vulns: Vulnerability[];
+    asset_count: number;
+    fingerprint_count: number;
+    vuln_count: number;
   }
 
   // ======================== Arsenal ========================

@@ -19,6 +19,7 @@ import (
 	"github.com/P0lar1ght/argus/scanner/utils"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 	"github.com/logrusorgru/aurora"
@@ -62,6 +63,7 @@ func pipelineHTTPURLVisits(ctx *ScanContext) httpx.URLVisitSet {
 func (p *Pipeline) Run(ctx *ScanContext) error {
 	var domains []string
 	emit := func(msg structs.OutputMessage) {
+		RecordLineageParent(ctx, msg)
 		dispatchPipelineOutput(ctx, msg)
 	}
 	var urls []string
@@ -212,7 +214,7 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 				emitPhase(ctx, PhaseTCPPing, "start", fmt.Sprintf("%d ips", len(uncheck)))
 				gologger.Info().Msg("TCP存活探测")
 				tcpAliveIPPort := portscan.ScanTCP(uncheck, "80,443,3389,445,22",
-					cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, false, emit)
+					cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, false, false, 0, emit)
 				for _, tIPPort := range tcpAliveIPPort {
 					t := strings.Split(tIPPort, ":")
 					TCPAlive = append(TCPAlive, t[0])
@@ -239,9 +241,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 
 			emitPhase(ctx, PhasePortScan, "start", fmt.Sprintf("%d ips, type=%s", len(ips), cfg.PortScanType))
 			if cfg.PortScanType == "syn" {
-				tmpIPPort = portscan.ScanSYN(ips, cfg.Ports, cfg.MasscanPath, cfg.SYNPortScanThreads, emit)
+				tmpIPPort = portscan.ScanSYN(ips, cfg.Ports, cfg.MasscanPath, cfg.SYNPortScanThreads, cfg.PortScanScatter, cfg.PortScanProbeInterval, emit)
 			} else {
-				tmpIPPort = portscan.ScanTCP(ips, cfg.Ports, cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, true, emit)
+				tmpIPPort = portscan.ScanTCP(ips, cfg.Ports, cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, true, cfg.PortScanScatter, time.Duration(cfg.PortScanProbeInterval)*time.Millisecond, emit)
 			}
 
 			tmpIPPort = portscan.RemoveFirewall(tmpIPPort, cfg.PortsThreshold)
@@ -300,6 +302,19 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		httpProbeComplete, err = completeHTTPProbePhase(ctx, p.runHTTPProbe(ctx, &cfg, urls, webRuntime))
 		if err != nil {
 			return err
+		}
+	}
+	if err := checkPipelineCancelled(ctx); err != nil {
+		return err
+	}
+
+	// 主动页面爬取 + 敏感信息提取（默认关闭，尽力而为，不中断主链路）。
+	if (cfg.WebCrawl || cfg.SensitiveInfo) && resumeStageEnabled(ctx, scanplan.StageWebCrawl) {
+		emitPhase(ctx, PhaseWebCrawl, "start", fmt.Sprintf("%d seeds", len(currentPipelineURLMap(ctx))))
+		if err := runCrawlPhase(ctx, &cfg); err != nil {
+			emitPhase(ctx, PhaseWebCrawl, "failed", err.Error())
+		} else {
+			completeHTTPDependentPhase(ctx, PhaseWebCrawl, httpProbeComplete)
 		}
 	}
 	if err := checkPipelineCancelled(ctx); err != nil {

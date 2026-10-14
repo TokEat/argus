@@ -9,9 +9,12 @@ import {
     Drawer,
     Form,
     Input,
+    InputNumber,
+    Popconfirm,
     Select,
     Space,
     Spin,
+    Switch,
     Table,
     Tabs,
     Tag,
@@ -25,16 +28,27 @@ import {
     FileTextOutlined,
     ReloadOutlined,
     RobotOutlined,
+    SafetyCertificateOutlined,
     SaveOutlined,
+    SecurityScanOutlined,
     ThunderboltOutlined,
 } from '@ant-design/icons';
 import {
+    dismissSentinelEvent,
+    executeSentinelEvent,
     getAIConfig,
+    getAITriageConfig,
+    getContentAnalysisConfig,
     getCopilotPromptProfiles,
+    getSentinelConfig,
     listAIToolInvocations,
     listAIModels,
+    listSentinelEvents,
     saveAIConfig,
     testAIConnection,
+    updateAITriageConfig,
+    updateContentAnalysisConfig,
+    updateSentinelConfig,
 } from '../services/api';
 import { canAccessRole, getCurrentUserRole } from '../utils/auth';
 import NetworkCanvas from '../components/NetworkCanvas';
@@ -61,6 +75,52 @@ const statusColor = (status?: string) => {
     if (status === 'success') return 'green';
     if (status === 'error') return 'red';
     return 'default';
+};
+
+const sentinelClassificationColor = (value?: string) => {
+    switch (value) {
+        case 'banned': return 'red';
+        case 'rate_limited': return 'orange';
+        case 'waf_challenge': return 'volcano';
+        case 'target_down': return 'geekblue';
+        case 'scanner_bug': return 'purple';
+        case 'false_positive': return 'default';
+        default: return 'gold'; // pending
+    }
+};
+
+const sentinelClassificationLabel = (value?: string) => {
+    switch (value) {
+        case 'banned': return '已封禁';
+        case 'rate_limited': return '被限速';
+        case 'waf_challenge': return 'WAF 拦截';
+        case 'target_down': return '目标宕机';
+        case 'scanner_bug': return '扫描器故障';
+        case 'false_positive': return '规则误报';
+        case 'pending': return '待研判';
+        default: return value || '-';
+    }
+};
+
+const sentinelActionLabel = (value?: string) => {
+    switch (value) {
+        case 'backoff': return '退避冷却';
+        case 'rescan_other_node': return '换节点重扫';
+        case 'flag_findings': return '标记 finding 污点';
+        case 'halt': return '建议暂停';
+        case 'none': return '无需处理';
+        default: return value || '-';
+    }
+};
+
+const sentinelEventStatusColor = (value?: string) => {
+    switch (value) {
+        case 'open': return 'gold';
+        case 'executed': return 'green';
+        case 'dismissed': return 'default';
+        case 'expired': return 'cyan';
+        default: return 'default';
+    }
 };
 
 const AIConfig: React.FC = () => {
@@ -92,6 +152,19 @@ const AIConfig: React.FC = () => {
     const [auditPageSize, setAuditPageSize] = useState(50);
     const [auditFilters, setAuditFilters] = useState<{ module?: string; tool_name?: string; status?: string }>({});
     const [selectedAudit, setSelectedAudit] = useState<API.AIToolInvocation | null>(null);
+
+    const [triageConfig, setTriageConfig] = useState<API.AITriageConfig | null>(null);
+    const [triageSaving, setTriageSaving] = useState(false);
+    const [contentConfig, setContentConfig] = useState<API.ContentAnalysisConfig | null>(null);
+    const [contentSaving, setContentSaving] = useState(false);
+    const [sentinelConfig, setSentinelConfig] = useState<API.SentinelConfig | null>(null);
+    const [sentinelSaving, setSentinelSaving] = useState(false);
+    const [sentinelEvents, setSentinelEvents] = useState<API.SentinelEvent[]>([]);
+    const [sentinelTotal, setSentinelTotal] = useState(0);
+    const [sentinelPage, setSentinelPage] = useState(1);
+    const [sentinelLoading, setSentinelLoading] = useState(false);
+    const [sentinelStatusFilter, setSentinelStatusFilter] = useState<string>('open');
+    const [sentinelActing, setSentinelActing] = useState<number | null>(null);
 
     const { message } = App.useApp();
     const fetchModels = useCallback(async (overrideBaseURL?: string, overrideAPIKey?: string) => {
@@ -146,6 +219,125 @@ const AIConfig: React.FC = () => {
         }
     }, [message]);
 
+    const fetchTriageConfig = useCallback(async () => {
+        if (!isAdmin) return;
+        try {
+            setTriageConfig(await getAITriageConfig());
+        } catch (err: unknown) {
+            message.error(typeof err === 'string' ? err : '加载研判开关失败');
+        }
+    }, [isAdmin, message]);
+
+    const handleTriageChange = async (patch: Partial<API.AITriageConfig>) => {
+        const next = { ...triageConfig, ...patch } as API.AITriageConfig;
+        setTriageConfig(next);
+        setTriageSaving(true);
+        try {
+            const saved = await updateAITriageConfig(patch);
+            setTriageConfig(saved);
+            message.success('研判开关已保存');
+        } catch (err: unknown) {
+            message.error(typeof err === 'string' ? err : '保存研判开关失败');
+            fetchTriageConfig();
+        } finally {
+            setTriageSaving(false);
+        }
+    };
+
+    const fetchContentConfig = useCallback(async () => {
+        if (!isAdmin) return;
+        try {
+            setContentConfig(await getContentAnalysisConfig());
+        } catch (err: unknown) {
+            message.error(typeof err === 'string' ? err : '加载内容分析开关失败');
+        }
+    }, [isAdmin, message]);
+
+    const handleContentChange = async (patch: Partial<API.ContentAnalysisConfig>) => {
+        const next = { ...contentConfig, ...patch } as API.ContentAnalysisConfig;
+        setContentConfig(next);
+        setContentSaving(true);
+        try {
+            const saved = await updateContentAnalysisConfig(patch);
+            setContentConfig(saved);
+            message.success('内容分析开关已保存');
+        } catch (err: unknown) {
+            message.error(typeof err === 'string' ? err : '保存内容分析开关失败');
+            fetchContentConfig();
+        } finally {
+            setContentSaving(false);
+        }
+    };
+
+    const fetchSentinelConfig = useCallback(async () => {
+        if (!isAdmin) return;
+        try {
+            setSentinelConfig(await getSentinelConfig());
+        } catch (err: unknown) {
+            message.error(typeof err === 'string' ? err : '加载哨兵配置失败');
+        }
+    }, [isAdmin, message]);
+
+    const handleSentinelChange = async (patch: Partial<API.SentinelConfig>) => {
+        const next = { ...sentinelConfig, ...patch } as API.SentinelConfig;
+        setSentinelConfig(next);
+        setSentinelSaving(true);
+        try {
+            const saved = await updateSentinelConfig(patch);
+            setSentinelConfig(saved);
+            message.success('哨兵配置已保存');
+        } catch (err: unknown) {
+            message.error(typeof err === 'string' ? err : '保存哨兵配置失败');
+            fetchSentinelConfig();
+        } finally {
+            setSentinelSaving(false);
+        }
+    };
+
+    const fetchSentinelEvents = useCallback(async (page: number, status: string) => {
+        setSentinelLoading(true);
+        try {
+            const resp = await listSentinelEvents({
+                page,
+                page_size: 20,
+                ...(status ? { status } : {}),
+            });
+            setSentinelEvents(resp.items || []);
+            setSentinelTotal(resp.total || 0);
+            setSentinelPage(page);
+        } catch (err: unknown) {
+            message.error(typeof err === 'string' ? err : '加载哨兵事件失败');
+        } finally {
+            setSentinelLoading(false);
+        }
+    }, [message]);
+
+    const handleSentinelExecute = async (row: API.SentinelEvent) => {
+        setSentinelActing(row.ID);
+        try {
+            await executeSentinelEvent(row.ID);
+            message.success('已执行建议动作');
+            fetchSentinelEvents(sentinelPage, sentinelStatusFilter);
+        } catch (err: unknown) {
+            message.error(typeof err === 'string' ? err : '执行失败');
+        } finally {
+            setSentinelActing(null);
+        }
+    };
+
+    const handleSentinelDismiss = async (row: API.SentinelEvent) => {
+        setSentinelActing(row.ID);
+        try {
+            await dismissSentinelEvent(row.ID);
+            message.success('已忽略该事件');
+            fetchSentinelEvents(sentinelPage, sentinelStatusFilter);
+        } catch (err: unknown) {
+            message.error(typeof err === 'string' ? err : '忽略失败');
+        } finally {
+            setSentinelActing(null);
+        }
+    };
+
     const fetchAudit = useCallback(async (
         page: number,
         pageSize: number,
@@ -176,10 +368,14 @@ const AIConfig: React.FC = () => {
     useEffect(() => {
         if (isAdmin) {
             fetchConfig();
+            fetchSentinelConfig();
+            fetchSentinelEvents(1, 'open');
         }
         fetchPromptRegistry();
         fetchAudit(1, 50, {});
-    }, [fetchAudit, fetchConfig, fetchPromptRegistry, isAdmin]);
+        fetchTriageConfig();
+        fetchContentConfig();
+    }, [fetchAudit, fetchConfig, fetchPromptRegistry, fetchTriageConfig, fetchSentinelConfig, fetchContentConfig, isAdmin]);
 
     const handleFetchModels = () => {
         const baseURL = form.getFieldValue('base_url');
@@ -350,6 +546,309 @@ const AIConfig: React.FC = () => {
                     />
                 </div>
             )}
+
+            <div style={{ marginTop: 24, borderTop: '1px solid #eef2f7', paddingTop: 16 }}>
+                <div style={{ marginBottom: 12 }}>
+                    <Text strong><SafetyCertificateOutlined /> 误报研判开关</Text>
+                    <div style={{ marginTop: 4 }}>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                            漏洞落库后由后台 worker 异步调用模型复核误报，结果写入 ai_status / 置信度 / 理由，人工可覆写。
+                        </Text>
+                    </div>
+                </div>
+                {triageConfig ? (
+                    <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 520 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Space direction="vertical" size={0}>
+                                <Text>启用 AI 误报研判</Text>
+                                <Text type="secondary" style={{ fontSize: 12 }}>关闭后后台 worker 停止自动研判</Text>
+                            </Space>
+                            <Switch
+                                checked={triageConfig.enabled}
+                                loading={triageSaving}
+                                onChange={(v) => handleTriageChange({ enabled: v })}
+                            />
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Space direction="vertical" size={0}>
+                                <Text>高置信误报自动抑制</Text>
+                                <Text type="secondary" style={{ fontSize: 12 }}>
+                                    研判为疑似误报且置信度 ≥ 阈值时，自动将漏洞置为 false_positive
+                                </Text>
+                            </Space>
+                            <Switch
+                                checked={triageConfig.auto_suppress}
+                                loading={triageSaving}
+                                onChange={(v) => handleTriageChange({ auto_suppress: v })}
+                            />
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Space direction="vertical" size={0}>
+                                <Text>抑制置信度阈值</Text>
+                                <Text type="secondary" style={{ fontSize: 12 }}>范围 (0, 1]，默认 0.85</Text>
+                            </Space>
+                            <InputNumber
+                                min={0.01}
+                                max={1}
+                                step={0.05}
+                                value={triageConfig.confidence_threshold}
+                                disabled={triageSaving}
+                                onChange={(v) => {
+                                    if (v != null) setTriageConfig({ ...triageConfig, confidence_threshold: v });
+                                }}
+                                onBlur={() => {
+                                    if (triageConfig.confidence_threshold > 0 && triageConfig.confidence_threshold <= 1) {
+                                        handleTriageChange({ confidence_threshold: triageConfig.confidence_threshold });
+                                    }
+                                }}
+                            />
+                        </div>
+                    </Space>
+                ) : (
+                    <Spin size="small" />
+                )}
+            </div>
+
+            <div style={{ marginTop: 24, borderTop: '1px solid #eef2f7', paddingTop: 16 }}>
+                <div style={{ marginBottom: 12 }}>
+                    <Text strong><FileTextOutlined /> AI 内容分析（爬取 / 敏感信息）</Text>
+                    <div style={{ marginTop: 4 }}>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                            主动爬取发现的"同主机不同站点"关联资产候选、页面/JS 敏感信息候选，由后台 worker 异步调用模型做价值研判 / 判重 / 结构化提取。
+                            需任务开启对应能力及 AI 子开关；全局关闭后 worker 停止研判。
+                        </Text>
+                    </div>
+                </div>
+                {contentConfig ? (
+                    <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 520 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Space direction="vertical" size={0}>
+                                <Text>启用 AI 内容分析</Text>
+                                <Text type="secondary" style={{ fontSize: 12 }}>关闭后关联资产研判与敏感信息提取全部停止</Text>
+                            </Space>
+                            <Switch
+                                checked={contentConfig.enabled}
+                                loading={contentSaving}
+                                onChange={(v) => handleContentChange({ enabled: v })}
+                            />
+                        </div>
+                    </Space>
+                ) : (
+                    <Spin size="small" />
+                )}
+            </div>
+        </ProCard>
+    );
+
+    const renderSentinelTab = () => (
+        <ProCard className="glass-card" style={{ background: 'transparent', border: 'none', padding: 0 }}>
+            <div style={{ marginBottom: 16 }}>
+                <Text strong><SecurityScanOutlined /> 扫描对抗哨兵</Text>
+                <div style={{ marginTop: 4 }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                        规则实时检测（同主机多端口同响应页 / 成功率突降）→ AI 研判分类与建议 → 策略门控执行。
+                        AI 只收敛不扩大：退避/打污点自动执行，换节点重扫需开启自动执行或人工确认。
+                    </Text>
+                </div>
+            </div>
+
+            {sentinelConfig ? (
+                <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 560, marginBottom: 24 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Space direction="vertical" size={0}>
+                            <Text>启用哨兵检测</Text>
+                            <Text type="secondary" style={{ fontSize: 12 }}>关闭后规则检测 / AI 研判 / 自动执行全部停止</Text>
+                        </Space>
+                        <Switch
+                            checked={sentinelConfig.enabled}
+                            loading={sentinelSaving}
+                            onChange={(v) => handleSentinelChange({ enabled: v })}
+                        />
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Space direction="vertical" size={0}>
+                            <Text>自动执行换节点重扫</Text>
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                                关闭时换节点/暂停类动作保持待处理，需人工在事件列表确认执行
+                            </Text>
+                        </Space>
+                        <Switch
+                            checked={sentinelConfig.auto_execute}
+                            loading={sentinelSaving}
+                            onChange={(v) => handleSentinelChange({ auto_execute: v })}
+                        />
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Space direction="vertical" size={0}>
+                            <Text>封禁冷却基数（分钟）</Text>
+                            <Text type="secondary" style={{ fontSize: 12 }}>已封禁出口按此冷却，封禁×3、WAF×2，默认 10</Text>
+                        </Space>
+                        <InputNumber
+                            min={1}
+                            max={1440}
+                            value={sentinelConfig.cooldown_minutes}
+                            disabled={sentinelSaving}
+                            onChange={(v) => {
+                                if (v != null) setSentinelConfig({ ...sentinelConfig, cooldown_minutes: v });
+                            }}
+                            onBlur={() => {
+                                if (sentinelConfig.cooldown_minutes >= 1) {
+                                    handleSentinelChange({ cooldown_minutes: sentinelConfig.cooldown_minutes });
+                                }
+                            }}
+                        />
+                    </div>
+                </Space>
+            ) : (
+                <Spin size="small" />
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <Space>
+                    <Text strong>对抗事件</Text>
+                    <Select
+                        size="small"
+                        value={sentinelStatusFilter}
+                        style={{ width: 130 }}
+                        onChange={(v) => {
+                            setSentinelStatusFilter(v);
+                            fetchSentinelEvents(1, v);
+                        }}
+                        options={[
+                            { value: 'open', label: '待处理' },
+                            { value: 'executed', label: '已执行' },
+                            { value: 'dismissed', label: '已忽略' },
+                            { value: '', label: '全部' },
+                        ]}
+                    />
+                </Space>
+                <Button size="small" icon={<ReloadOutlined />} onClick={() => fetchSentinelEvents(sentinelPage, sentinelStatusFilter)} loading={sentinelLoading}>
+                    刷新
+                </Button>
+            </div>
+
+            <Table<API.SentinelEvent>
+                rowKey="ID"
+                size="small"
+                loading={sentinelLoading}
+                dataSource={sentinelEvents}
+                pagination={{
+                    current: sentinelPage,
+                    pageSize: 20,
+                    total: sentinelTotal,
+                    showSizeChanger: false,
+                    onChange: (page) => fetchSentinelEvents(page, sentinelStatusFilter),
+                }}
+                expandable={{
+                    expandedRowRender: (row: API.SentinelEvent) => (
+                        <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                            {row.ActionReason && (
+                                <div><Text type="secondary">研判理由：</Text><Text>{row.ActionReason}</Text></div>
+                            )}
+                            <div>
+                                <Text type="secondary">证据：</Text>
+                                <Paragraph copyable code style={{ whiteSpace: 'pre-wrap', marginBottom: 0, fontSize: 12 }}>
+                                    {row.Evidence || '-'}
+                                </Paragraph>
+                            </div>
+                        </Space>
+                    ),
+                }}
+                columns={[
+                    {
+                        title: 'ID',
+                        dataIndex: 'ID',
+                        width: 70,
+                    },
+                    {
+                        title: '信号',
+                        dataIndex: 'SignalType',
+                        width: 130,
+                        render: (value: string) => (
+                            <Tag color={value === 'homogeneity' ? 'volcano' : 'geekblue'}>{value}</Tag>
+                        ),
+                    },
+                    {
+                        title: '目标 / 主机',
+                        dataIndex: 'Target',
+                        render: (_: string, row: API.SentinelEvent) => (
+                            <Space direction="vertical" size={0}>
+                                <Text code>{row.Host || row.Target || '-'}</Text>
+                                {row.AgentID && <Text type="secondary" style={{ fontSize: 12 }}>节点 {row.AgentID}</Text>}
+                            </Space>
+                        ),
+                    },
+                    {
+                        title: 'AI 分类',
+                        dataIndex: 'Classification',
+                        width: 120,
+                        render: (value: string) => (
+                            <Tag color={sentinelClassificationColor(value)}>{sentinelClassificationLabel(value)}</Tag>
+                        ),
+                    },
+                    {
+                        title: '置信度',
+                        dataIndex: 'Confidence',
+                        width: 80,
+                        render: (value: number) => (value > 0 ? `${(value * 100).toFixed(0)}%` : '-'),
+                    },
+                    {
+                        title: '建议动作',
+                        dataIndex: 'RecommendedAction',
+                        width: 130,
+                        render: (value: string) => sentinelActionLabel(value),
+                    },
+                    {
+                        title: '状态',
+                        dataIndex: 'Status',
+                        width: 90,
+                        render: (value: string) => (
+                            <Tag color={sentinelEventStatusColor(value)}>{value}</Tag>
+                        ),
+                    },
+                    {
+                        title: '时间',
+                        dataIndex: 'CreatedAt',
+                        width: 150,
+                        render: formatTime,
+                    },
+                    {
+                        title: '操作',
+                        width: 150,
+                        render: (_: unknown, row: API.SentinelEvent) => (
+                            row.Status === 'open' ? (
+                                <Space>
+                                    <Popconfirm
+                                        title="执行建议动作？"
+                                        description={sentinelActionLabel(row.RecommendedAction)}
+                                        okText="执行"
+                                        cancelText="取消"
+                                        onConfirm={() => handleSentinelExecute(row)}
+                                    >
+                                        <Button size="small" type="primary" loading={sentinelActing === row.ID}>
+                                            执行
+                                        </Button>
+                                    </Popconfirm>
+                                    <Popconfirm
+                                        title="忽略该事件？"
+                                        okText="忽略"
+                                        cancelText="取消"
+                                        onConfirm={() => handleSentinelDismiss(row)}
+                                    >
+                                        <Button size="small" loading={sentinelActing === row.ID}>
+                                            忽略
+                                        </Button>
+                                    </Popconfirm>
+                                </Space>
+                            ) : (
+                                <Text type="secondary" style={{ fontSize: 12 }}>
+                                    {row.ExecutedBy ? `${row.Status} by ${row.ExecutedBy}` : row.Status}
+                                </Text>
+                            )
+                        ),
+                    },
+                ]}
+            />
         </ProCard>
     );
 
@@ -591,6 +1090,11 @@ const AIConfig: React.FC = () => {
             key: 'model',
             label: <span><RobotOutlined /> 模型配置</span>,
             children: renderModelTab(),
+        }] : []),
+        ...(isAdmin ? [{
+            key: 'sentinel',
+            label: <span><SecurityScanOutlined /> 扫描对抗哨兵</span>,
+            children: renderSentinelTab(),
         }] : []),
         {
             key: 'prompt',

@@ -309,10 +309,21 @@ func (h *CloudHandler) deleteCloudAccount(c *gin.Context) {
 	}
 
 	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+		// 清理已终止/错误的实例记录，避免删除凭证后留下孤儿数据。
+		if err := tx.Unscoped().Where("tenant_id = ? AND cloud_account_id = ? AND status IN ?", tenantID, id, []string{db.CloudStatusTerminated, db.CloudStatusError}).Delete(&db.CloudInstance{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("tenant_id = ? AND cloud_account_id = ?", tenantID, id).Delete(&db.CloudAccountBinding{}).Error; err != nil {
 			return err
 		}
-		return tx.Where("id = ? AND tenant_id = ?", id, tenantID).Delete(&db.CloudAccount{}).Error
+		result := tx.Where("id = ? AND tenant_id = ?", id, tenantID).Delete(&db.CloudAccount{})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
 	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

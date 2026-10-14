@@ -1,0 +1,28 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"schema_name":'
+          - '"reason":'
+          - '"table_name":'
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/api/dbstat/gettablessize'
+id: 360tianqing-gettablessize-database-info-leakage
+info:
+  author: daffainfo,你是猪
+  description: 360天擎 存在未授权越权访问，造成敏感信息泄露 title="360新天擎" app="360天擎终端安全管理系统"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: medium
+  name: 360天擎 gettablessize 数据库信息泄露漏洞
+  severity: medium
+  tags: 360tianqing,sqli,argus-import

@@ -1,0 +1,30 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: word
+        part: body
+        words:
+          - total_rows
+          - offset
+        condition: and
+      - type: word
+        part: header
+        words:
+          - CouchDB/
+        case-insensitive: true
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/_users/_all_docs'
+id: couchdb-admin-party
+info:
+  author: organiccrap
+  description: Requests made against CouchDB are done in the context of an admin user.
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: CouchDB Admin Party
+  severity: high
+  tags: couchdb,admin,party,argus-import

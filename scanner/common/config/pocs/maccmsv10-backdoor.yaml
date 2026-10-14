@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: getpwd=WorldFilledWithLove
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - 扫描后门
+          - 反弹端口
+          - 文件管理
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/extend/Qcloud/Sms/Sms.php'
+id: maccmsv10-backdoor
+info:
+  author: FiveAourThe
+  description: Maccmsv10 Backdoor
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Maccmsv10 Backdoor
+  severity: critical
+  tags: maccmsv10,backdoor,argus-import

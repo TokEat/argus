@@ -72,10 +72,26 @@ func runEnumerationWithGuard(httpxRunner *runner.Runner, stage string, timeoutSe
 	}
 }
 
+// defaultMaxBodyBytes 默认响应体读取上限（1MiB）。
+const defaultMaxBodyBytes = 1048576
+
+// sanitizeMaxBody 兜底响应体上限：非正数退回默认 1MiB。
+func sanitizeMaxBody(n int) int {
+	if n <= 0 {
+		return defaultMaxBodyBytes
+	}
+	return n
+}
+
 func CallHTTPx(urls []string, callBack func(resp runner.Result), proxy string, threads int, timeout int) {
+	CallHTTPxLimit(urls, callBack, proxy, threads, timeout, defaultMaxBodyBytes)
+}
+
+// CallHTTPxLimit 同 CallHTTPx，但允许自定义响应体读取上限（爬虫抓取大体积 JS bundle 用）。
+func CallHTTPxLimit(urls []string, callBack func(resp runner.Result), proxy string, threads int, timeout int, maxBodyBytes int) {
 	session := NewProbeSession(context.Background(), timeout)
 	defer session.Close()
-	session.CallHTTPx(urls, callBack, proxy, threads)
+	session.CallHTTPxLimit(urls, callBack, proxy, threads, maxBodyBytes)
 }
 
 func CallHTTPxFollowHostRedirects(urls []string, callBack func(resp runner.Result), proxy string, threads int, timeout int) {
@@ -85,14 +101,18 @@ func CallHTTPxFollowHostRedirects(urls []string, callBack func(resp runner.Resul
 }
 
 func (s *ProbeSession) CallHTTPx(urls []string, callBack func(resp runner.Result), proxy string, threads int) {
-	s.callHTTPx(urls, callBack, proxy, threads, false)
+	s.callHTTPx(urls, callBack, proxy, threads, false, defaultMaxBodyBytes)
+}
+
+func (s *ProbeSession) CallHTTPxLimit(urls []string, callBack func(resp runner.Result), proxy string, threads int, maxBodyBytes int) {
+	s.callHTTPx(urls, callBack, proxy, threads, false, maxBodyBytes)
 }
 
 func (s *ProbeSession) CallHTTPxFollowHostRedirects(urls []string, callBack func(resp runner.Result), proxy string, threads int) {
-	s.callHTTPx(urls, callBack, proxy, threads, true)
+	s.callHTTPx(urls, callBack, proxy, threads, true, defaultMaxBodyBytes)
 }
 
-func (s *ProbeSession) callHTTPx(urls []string, callBack func(resp runner.Result), proxy string, threads int, followHostRedirects bool) {
+func (s *ProbeSession) callHTTPx(urls []string, callBack func(resp runner.Result), proxy string, threads int, followHostRedirects bool, maxBodyBytes int) {
 	gologger.Info().Msg("获取Web响应中")
 
 	timeout := int(s.timeout / time.Second)
@@ -129,7 +149,7 @@ func (s *ProbeSession) callHTTPx(urls []string, callBack func(resp runner.Result
 			OutputServerHeader:        true,
 			TLSProbe:                  false,
 			TLSGrab:                   true,
-			MaxResponseBodySizeToRead: 1048576,
+			MaxResponseBodySizeToRead: sanitizeMaxBody(maxBodyBytes),
 			FollowHostRedirects:       followHostRedirects,
 			MaxRedirects:              maxRedirects,
 			ExtractTitle:              true,

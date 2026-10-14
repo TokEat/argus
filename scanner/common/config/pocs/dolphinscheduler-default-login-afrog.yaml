@@ -1,0 +1,31 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: userName=admin&userPassword=dolphinscheduler123
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"msg":"login success"'
+          - '"sessionId":'
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/dolphinscheduler/login'
+id: dolphinscheduler-default-login
+info:
+  author: For3stCo1d
+  description: |-
+    Apache DolphinScheduler default admin credentials were discovered.
+    shodan: http.title:"DolphinScheduler"
+    fofa: title="DolphinScheduler"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Apache DolphinScheduler Default Login
+  severity: high
+  tags: apache,dolphinscheduler,default-login,oss,argus-import

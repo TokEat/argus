@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -25,6 +26,14 @@ const (
 	automaticRiskStage       = "risk_validation"
 	automaticCredentialStage = "credential_validation"
 )
+
+// maxEmptyMatchRetries bounds how many times an automatic stage derivation may
+// re-run after finding zero candidates before it is recorded as a terminal
+// skip. Fingerprint hits and assets are persisted by an async batch writer that
+// can lag the asset_scan terminal transition, so the first derivation can
+// spuriously observe nothing; a short bounded retry lets a later Reconcile tick
+// (30s) see the flushed rows.
+const maxEmptyMatchRetries = 3
 
 type ScanStageOrchestrator struct{}
 
@@ -152,6 +161,12 @@ func (o *ScanStageOrchestrator) DeriveRoot(ctx context.Context, tenantID, rootTa
 		return errTaskCreateQueueUnavailable
 	}
 	for _, attempt := range queued {
+		if effectiveDispatchStrategy(&attempt) == scanpolicy.DispatchStrategyControllerPush {
+			// Controller-push: never enqueue onto a shared queue. Leave the
+			// attempt Dispatching and let the DispatchController route it.
+			notifyDispatchController()
+			continue
+		}
 		protoTask, err := db.SubTaskToProto(&attempt)
 		if err != nil {
 			return err
@@ -185,6 +200,12 @@ func assetDiscoveryBatchesTerminal(tx *gorm.DB, tenantID, rootTaskID string) (bo
 }
 
 func (o *ScanStageOrchestrator) deriveRiskValidation(ctx context.Context, tx *gorm.DB, intent *db.ScanPolicyIntent, root db.RootTask) (*db.SubTask, error) {
+	if automaticStageBatchExists(tx, root, automaticRiskStage) {
+		// Idempotent re-entry: the automatic batch was already derived. Heal the
+		// intent projection and stop instead of re-inserting rows.
+		intent.RiskStatus = db.ScanStageIntentDerived
+		return nil, nil
+	}
 	if currentRuleVersionTx(tx) != root.RuleVersion {
 		return nil, recordSkippedDerivation(tx, intent, automaticRiskStage, "rule_version_drift")
 	}
@@ -216,6 +237,16 @@ func (o *ScanStageOrchestrator) deriveRiskValidation(ctx context.Context, tx *go
 	}
 	goPocTargets, goPocEstimated := riskGoPocTargetsFromObservations(assets, selected, activeFingerprintHits, activeFingerprintRules)
 	if len(selected) == 0 && len(goPocTargets) == 0 {
+		deferRetry, err := emptyMatchDefer(tx, intent, automaticRiskStage, "no_approved_workflow_matches")
+		if err != nil {
+			return nil, err
+		}
+		if deferRetry {
+			// Zero candidates likely because the async fingerprint writer has not
+			// flushed yet; keep the intent pending so a later Reconcile tick
+			// re-derives once the hits are visible.
+			return nil, nil
+		}
 		return nil, recordSkippedDerivation(tx, intent, automaticRiskStage, "no_approved_workflow_matches")
 	}
 	revision, err := db.CurrentTaskConfigRevision(tx, root)
@@ -454,6 +485,11 @@ type credentialTargetEnvelope struct {
 type credentialPair = credentialbundle.Pair
 
 func (o *ScanStageOrchestrator) deriveCredentialValidation(ctx context.Context, tx *gorm.DB, intent *db.ScanPolicyIntent, root db.RootTask) (*db.SubTask, error) {
+	if automaticStageBatchExists(tx, root, automaticCredentialStage) {
+		// Idempotent re-entry: the automatic batch was already derived.
+		intent.CredentialStatus = db.ScanStageIntentDerived
+		return nil, nil
+	}
 	var policy scanpolicy.Policy
 	if err := json.Unmarshal([]byte(intent.PolicyJSON), &policy); err != nil {
 		return nil, err
@@ -464,6 +500,13 @@ func (o *ScanStageOrchestrator) deriveCredentialValidation(ctx context.Context, 
 	}
 	targets, endpoints := credentialTargetsFromAssets(assets)
 	if len(targets) == 0 {
+		deferRetry, err := emptyMatchDefer(tx, intent, automaticCredentialStage, "no_eligible_services")
+		if err != nil {
+			return nil, err
+		}
+		if deferRetry {
+			return nil, nil
+		}
 		return nil, recordSkippedDerivation(tx, intent, automaticCredentialStage, "no_eligible_services")
 	}
 	pairs, err := loadCustomCredentialPairs(tx, policy, root.TenantID, root.ProjectID, policy.Credentials.PairLimit)
@@ -739,7 +782,9 @@ func createAutomaticStageBatchWithIDs(tx *gorm.DB, intent *db.ScanPolicyIntent, 
 	if err := tx.Create(&attempt).Error; err != nil {
 		return nil, err
 	}
-	if err := tx.Create(&derivation).Error; err != nil {
+	// Upsert so a skip→derived transition (bounded empty-match retries) updates
+	// the existing derivation row instead of violating idx_scan_stage_derivation.
+	if err := upsertStageDerivation(tx, &derivation); err != nil {
 		return nil, err
 	}
 	if stage == automaticRiskStage {
@@ -753,10 +798,68 @@ func createAutomaticStageBatchWithIDs(tx *gorm.DB, intent *db.ScanPolicyIntent, 
 	return &attempt, nil
 }
 
+// automaticStageBatchExists reports whether the deterministic automatic batch
+// for a stage has already been created. It is the idempotency guard that keeps
+// re-derivation from re-inserting the same batch/derivation rows.
+func automaticStageBatchExists(tx *gorm.DB, root db.RootTask, stage string) bool {
+	batchID := root.ID + "-auto-" + strings.ReplaceAll(stage, "_validation", "")
+	var count int64
+	if err := tx.Model(&db.TaskBatch{}).Where("tenant_id = ? AND id = ?", root.TenantID, batchID).Count(&count).Error; err != nil {
+		return false
+	}
+	return count > 0
+}
+
+// upsertStageDerivation inserts or updates the per-(tenant,root,stage) derivation
+// row so bounded empty-match retries and skip→derived transitions never violate
+// idx_scan_stage_derivation.
+func upsertStageDerivation(tx *gorm.DB, row *db.ScanStageDerivation) error {
+	return tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "tenant_id"}, {Name: "root_task_id"}, {Name: "stage"}},
+		DoUpdates: clause.AssignmentColumns([]string{"status", "batch_id", "attempt_id", "plan_hash", "observation_hash", "item_count", "summary", "updated_at"}),
+	}).Create(row).Error
+}
+
+// existingEmptyMatchRetries reads the retry counter stored in the current
+// derivation row's Summary (0 when absent).
+func existingEmptyMatchRetries(tx *gorm.DB, tenantID, rootTaskID, stage string) int {
+	var row db.ScanStageDerivation
+	err := tx.Select("summary").
+		Where("tenant_id = ? AND root_task_id = ? AND stage = ?", tenantID, rootTaskID, stage).
+		Order("id DESC").First(&row).Error
+	if err != nil {
+		return 0
+	}
+	var summary struct {
+		Retries int `json:"retries"`
+	}
+	if json.Unmarshal([]byte(row.Summary), &summary) != nil {
+		return 0
+	}
+	return summary.Retries
+}
+
+// emptyMatchDefer records a bounded retry marker for a zero-candidate derivation
+// and reports whether the derivation should be deferred (true) or terminalized
+// (false, caller then records a terminal skip). It leaves the intent status
+// untouched so the next Reconcile tick re-derives after the async flush lands.
+func emptyMatchDefer(tx *gorm.DB, intent *db.ScanPolicyIntent, stage, reason string) (bool, error) {
+	retries := existingEmptyMatchRetries(tx, intent.TenantID, intent.RootTaskID, stage)
+	if retries >= maxEmptyMatchRetries {
+		return false, nil
+	}
+	summary, _ := json.Marshal(map[string]interface{}{"reason": reason, "retries": retries + 1})
+	row := db.ScanStageDerivation{TenantID: intent.TenantID, ProjectID: intent.ProjectID, RootTaskID: intent.RootTaskID, Stage: stage, Status: db.ScanStageIntentSkipped, PlanHash: intent.PlanHash, Summary: string(summary)}
+	if err := upsertStageDerivation(tx, &row); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func recordSkippedDerivation(tx *gorm.DB, intent *db.ScanPolicyIntent, stage, reason string) error {
 	summary, _ := json.Marshal(map[string]string{"reason": reason})
 	row := db.ScanStageDerivation{TenantID: intent.TenantID, ProjectID: intent.ProjectID, RootTaskID: intent.RootTaskID, Stage: stage, Status: db.ScanStageIntentSkipped, PlanHash: intent.PlanHash, Summary: string(summary)}
-	if err := tx.Create(&row).Error; err != nil {
+	if err := upsertStageDerivation(tx, &row); err != nil {
 		return err
 	}
 	if stage == automaticRiskStage {
@@ -793,7 +896,10 @@ func (o *ScanStageOrchestrator) Reconcile(ctx context.Context) error {
 	}
 	for _, intent := range intents {
 		if err := o.DeriveRoot(ctx, intent.TenantID, intent.RootTaskID); err != nil {
-			return err
+			// One failing intent must not starve the remaining pending intents;
+			// log and continue so the queue keeps making progress.
+			log.Printf("[ScanStageOrchestrator] Reconcile derive root=%s: %v", intent.RootTaskID, err)
+			continue
 		}
 	}
 	return nil

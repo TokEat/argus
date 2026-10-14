@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - OpenVPN Status Monitor
+          - Username
+          - VPN IP
+          - Remote IP
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/openvpn-monitor/'
+id: openvpn-monitor-disclosure
+info:
+  author: geeknik
+  description: openvpn-monitor is a simple python program to generate html that displays the status of an OpenVPN server, including all current connections.
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: medium
+  name: OpenVPN Monitor Disclosure
+  severity: medium
+  tags: openvpn,disclosure,argus-import

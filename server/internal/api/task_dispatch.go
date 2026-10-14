@@ -7,7 +7,23 @@ import (
 
 	"github.com/P0lar1ght/argus/server/internal/db"
 	"github.com/P0lar1ght/argus/server/internal/scheduler"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 )
+
+// effectiveDispatchStrategy resolves a sub-task's stored dispatch strategy,
+// where empty means "inherit the process-wide default at read time".
+func effectiveDispatchStrategy(sub *db.SubTask) scanpolicy.DispatchStrategy {
+	return scanpolicy.NormalizeDispatchStrategy(scanpolicy.DispatchStrategy(sub.DispatchStrategy), scanpolicy.DefaultDispatchStrategy())
+}
+
+// notifyDispatchController nudges the controller-push reconciler that new
+// dispatchable work may exist. It is a no-op when no controller is wired
+// (e.g. in tests that exercise only the legacy pull path).
+func notifyDispatchController() {
+	if rt := routerRuntime(); rt != nil && rt.DispatchController != nil {
+		rt.DispatchController.Notify()
+	}
+}
 
 func dispatchSubTasks(ctx context.Context, q *scheduler.TaskQueue, subTasks []db.SubTask) (map[int]int, int) {
 	pushedByPriority := make(map[int]int)
@@ -33,6 +49,20 @@ func dispatchSubTasks(ctx context.Context, q *scheduler.TaskQueue, subTasks []db
 				db.RefreshRootTaskStatus(st.RootTaskID)
 			}
 			log.Printf("[Dispatch] Rejected legacy Provider task %s", st.ID)
+			continue
+		}
+		if st.NextEligibleAt != nil && st.NextEligibleAt.After(time.Now()) {
+			// Exponential backoff not yet elapsed: leave Dispatching and let a
+			// later reconcile pass dispatch it once eligible. Not counted as
+			// pending-recovery; it is intentionally waiting.
+			continue
+		}
+		if effectiveDispatchStrategy(&st) == scanpolicy.DispatchStrategyControllerPush {
+			// Controller-push: never touch a shared queue. Leave the sub-task in
+			// Dispatching and let the DispatchController route it to a specific
+			// agent's queue. The periodic recoverDispatchingTasks pass funnels back
+			// here, so a missed Notify is harmless.
+			notifyDispatchController()
 			continue
 		}
 		pbSub, err := db.SubTaskToProto(&st)

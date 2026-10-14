@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/P0lar1ght/argus/server/internal/db"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -390,6 +391,7 @@ func executeTaskRiskValidation(c *gin.Context) {
 		if revision.Version != preview.ConfigVersion {
 			return errRiskValidationStalePlan
 		}
+		batchID := current.ID + "-risk-" + uuid.NewString()
 		attemptConfig, targets, estimated, needsSecondConfirmation, err := buildRiskValidationAttemptConfig(revision, preview.RuleVersion, selected)
 		if err != nil {
 			return err
@@ -397,13 +399,27 @@ func executeTaskRiskValidation(c *gin.Context) {
 		if needsSecondConfirmation && !request.SecondConfirmation {
 			return errRiskValidationSecondCheck
 		}
+		// Seal a positive execution budget (mirrors the policy-driven path) so the
+		// agent's risk-validation branch accepts the attempt instead of rejecting
+		// it with "requires a positive sealed execution budget". The manual path
+		// has no ScanPolicyIntent, so it uses the standard (balanced) intensity.
+		concurrency, rate := validationBudgetLimits(scanpolicy.IntensityBalanced)
+		attemptConfig, err = configWithValidationAllocation(attemptConfig, validationExecutionAllocation{
+			BudgetID:          batchID,
+			TargetConcurrency: concurrency,
+			RateLimit:         rate,
+			RequestBudget:     estimated,
+			EstimatedRequests: estimated,
+		})
+		if err != nil {
+			return err
+		}
 
 		var sequence int
 		if err := tx.Model(&db.TaskBatch{}).Select("COALESCE(MAX(sequence), -1) + 1").
 			Where("tenant_id = ? AND root_task_id = ?", tenantID, current.ID).Scan(&sequence).Error; err != nil {
 			return err
 		}
-		batchID := current.ID + "-risk-" + uuid.NewString()
 		attemptID := batchID + "-attempt-1"
 		targetJSON, _ := json.Marshal(targets)
 		result.Batch = db.TaskBatch{

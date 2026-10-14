@@ -1,0 +1,23 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: word
+        part: body
+        words:
+          - 'ShiroKey:'
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/'
+id: shiro-key
+info:
+  author: zan8in
+  description: ""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Shiro Key
+  severity: critical
+  tags: shiro,key,argus-import

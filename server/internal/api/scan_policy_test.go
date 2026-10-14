@@ -71,6 +71,45 @@ func TestCompileTaskScanPolicyPresetsAndSafeDiscoveryConfig(t *testing.T) {
 	}
 }
 
+func TestCompileTaskScanPolicyMapsPacing(t *testing.T) {
+	store := setupAITestDB(t)
+	if err := store.Create(&db.Project{ID: "pacing-project", TenantID: "default", OwnerUserID: "1", Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	ctx, _ := newTenantContextWithRole(http.MethodPost, "/tasks/plan-preview", "admin", "1")
+
+	policy, err := scanpolicy.PresetPolicy(scanpolicy.PresetQuick)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compile := func(p scanpolicy.Policy) taskScanConfig {
+		t.Helper()
+		plan, err := compileTaskScanPolicy(ctx, scanPolicyPlanRequest{ProjectID: "pacing-project", Targets: json.RawMessage(`"example.com"`), Policy: p})
+		if err != nil {
+			t.Fatalf("compile pacing policy: %v", err)
+		}
+		var config taskScanConfig
+		if err := json.Unmarshal([]byte(plan.ScannerConfig), &config); err != nil {
+			t.Fatal(err)
+		}
+		return config
+	}
+
+	config := compile(policy)
+	if config.PortScanScatter {
+		t.Fatalf("pacing must default to disabled: %+v", config)
+	}
+	if config.PortScanProbeInterval != scanpolicy.DefaultPacingIntervalMillis {
+		t.Fatalf("default probe interval = %d, want %d", config.PortScanProbeInterval, scanpolicy.DefaultPacingIntervalMillis)
+	}
+
+	policy.Pacing = &scanpolicy.ScanPacing{Enabled: true, IntervalMillis: 200}
+	config = compile(policy)
+	if !config.PortScanScatter || config.PortScanProbeInterval != 200 {
+		t.Fatalf("pacing not mapped into scanner config: %+v", config)
+	}
+}
+
 func TestCompileTaskScanPolicyUsesDeduplicatedDictionaryUnion(t *testing.T) {
 	store := setupAITestDB(t)
 	project := db.Project{ID: "dictionary-project", TenantID: "default", OwnerUserID: "1", Status: "active"}

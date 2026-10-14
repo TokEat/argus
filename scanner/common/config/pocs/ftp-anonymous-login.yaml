@@ -1,0 +1,25 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: word
+        part: body
+        words:
+          - Anonymous access allowed,
+          - Logged in anonymously
+          - "230"
+    matchers-condition: or
+    method: GET
+    path:
+      - '{{BaseURL}}/'
+id: ftp-anonymous-login
+info:
+  author: C3l3si4n,pussycat0x
+  description: Anonymous FTP access allows anyone to access your public_ftp folder, allowing unidentified visitors to download (and possibly upload) files on your website. Anonymous FTP creates the potential for a security hole for hackers and is not recommended.
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: FTP Anonymous Login
+  severity: high
+  tags: network,ftp,default-login,argus-import

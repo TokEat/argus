@@ -22,19 +22,102 @@ import (
 
 // HostProfile 以主机(IP/域名)为单位聚合的画像
 type HostProfile struct {
-	Host         string              `json:"host"`
-	Ports        []PortInfo          `json:"ports"`
-	Assets       []db.Asset          `json:"assets"`
-	Fingerprints []db.FingerprintHit `json:"fingerprints"`
-	Vulns        []db.Vulnerability  `json:"vulns"`
+	Host             string              `json:"host"`
+	Ports            []PortInfo          `json:"ports"`
+	Assets           []db.Asset          `json:"assets"`
+	Fingerprints     []db.FingerprintHit `json:"fingerprints"`
+	Vulns            []db.Vulnerability  `json:"vulns"`
+	AssetCount       int64               `json:"asset_count"`
+	FingerprintCount int64               `json:"fingerprint_count"`
+	VulnCount        int64               `json:"vuln_count"`
 }
 
+// PortInfo 是某主机上一个端口的聚合视图：跨阶段（PortScan/Nmap/Web 等）按端口号
+// 合并成一行。Transport/StatusCode 从 Asset.Service（如 "http/200"）派生。
 type PortInfo struct {
-	Port     int    `json:"port"`
-	Protocol string `json:"protocol"`
-	Service  string `json:"service"`
-	Title    string `json:"title"`
-	URL      string `json:"url"`
+	Port       int      `json:"port"`
+	Transport  string   `json:"transport"`   // 应用协议/方案: http/https/tcp/...
+	Service    string   `json:"service"`     // 合并后的最佳 Service 原值, 如 http/200
+	StatusCode int      `json:"status_code"` // HTTP 状态码, 未知=0
+	Title      string   `json:"title"`
+	URL        string   `json:"url"`
+	Stages     []string `json:"stages"`    // 去重保序的阶段标签, 如 ["PortScan","Nmap","Web"]
+	AssetIDs   []uint   `json:"asset_ids"` // 该端口贡献的 Asset.ID（前端详情抽屉过滤用）
+}
+
+// resolvePortForAsset 从 Asset.Port 或 Target 字符串解析端口号，解析失败返回 0。
+func resolvePortForAsset(a db.Asset) int {
+	if a.Port != 0 {
+		return a.Port
+	}
+	if a.Target == "" {
+		return 0
+	}
+	if u, err := url.Parse(a.Target); err == nil && u.Port() != "" {
+		if pv, e := strconv.Atoi(u.Port()); e == nil {
+			return pv
+		}
+	}
+	if _, portStr, err := net.SplitHostPort(a.Target); err == nil {
+		if pv, e := strconv.Atoi(portStr); e == nil {
+			return pv
+		}
+	}
+	return 0
+}
+
+// wellKnownPortTransports 兜底：Service/URL 都拿不到协议时按知名端口推断。
+var wellKnownPortTransports = map[int]string{
+	80: "http", 81: "http", 8080: "http", 8081: "http", 8000: "http",
+	8888: "http", 8008: "http", 8088: "http", 8090: "http",
+	443: "https", 8443: "https", 4443: "https",
+	53: "dns", 22: "ssh", 21: "ftp", 25: "smtp", 110: "pop3", 143: "imap",
+	3306: "mysql", 5432: "postgres", 6379: "redis", 27017: "mongodb",
+}
+
+// parseService 从 Asset.Service（如 "http/200"）拆出应用协议与 HTTP 状态码。
+// 状态码仅当第二段能解析为 100–599 的整数时采纳。拿不到协议时按
+// URL scheme → 知名端口 → "tcp" 兜底。
+func parseService(a db.Asset) (transport string, statusCode int) {
+	service := strings.TrimSpace(a.Service)
+	parts := strings.SplitN(service, "/", 2)
+	transport = strings.ToLower(strings.TrimSpace(parts[0]))
+	if len(parts) == 2 {
+		if code, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil && code >= 100 && code <= 599 {
+			statusCode = code
+		}
+	}
+	if transport != "" {
+		return transport, statusCode
+	}
+	if a.URL != "" {
+		if u, err := url.Parse(a.URL); err == nil && u.Scheme != "" {
+			return strings.ToLower(u.Scheme), statusCode
+		}
+	}
+	if tk, ok := wellKnownPortTransports[a.Port]; ok {
+		return tk, statusCode
+	}
+	if port := resolvePortForAsset(a); port != 0 {
+		if tk, ok := wellKnownPortTransports[port]; ok {
+			return tk, statusCode
+		}
+	}
+	return "tcp", statusCode
+}
+
+// serviceRank 给 Service 质量打分：有状态码 > 仅有协议 > 空，用于合并择优。
+func serviceRank(service string) int {
+	parts := strings.SplitN(strings.TrimSpace(service), "/", 2)
+	if len(parts) == 2 {
+		if code, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil && code >= 100 && code <= 599 {
+			return 3
+		}
+	}
+	if strings.TrimSpace(parts[0]) != "" {
+		return 2
+	}
+	return 1
 }
 
 // extractHost 从 target 字符串中提取主机部分 (IP 或域名)
@@ -129,14 +212,43 @@ func getProfiles(c *gin.Context) {
 		return
 	}
 
-	// 步骤 3: 批量查询关联数据（含租户隔离 + 项目隔离）
+	// 步骤 3: 批量查询关联数据（含租户隔离 + 项目隔离），限制单页详情数量避免 OOM
+	const profileDetailLimit = 1000
+
+	type targetCount struct {
+		Target string
+		Count  int64
+	}
+
+	countByTarget := func(model interface{}, targets []string) map[string]int64 {
+		q := db.DB.Model(model).Select("target, COUNT(*) as count").Where("target IN ?", targets)
+		if tenantID != "" {
+			q = q.Where("tenant_id = ?", tenantID)
+		}
+		q, _ = applyProjectScope(c, q, "project_id")
+		var rows []targetCount
+		if err := q.Group("target").Scan(&rows).Error; err != nil {
+			log.Printf("[Profiles] failed to count targets for %T: %v", model, err)
+			return map[string]int64{}
+		}
+		m := make(map[string]int64, len(rows))
+		for _, r := range rows {
+			m[r.Target] = r.Count
+		}
+		return m
+	}
+
+	assetCounts := countByTarget(&db.Asset{}, pagedTargets)
+	fpCounts := countByTarget(&db.FingerprintHit{}, pagedTargets)
+	vulnCounts := countByTarget(&db.Vulnerability{}, pagedTargets)
+
 	var assets []db.Asset
 	assocQ := db.DB.Where("target IN ?", pagedTargets)
 	if tenantID != "" {
 		assocQ = assocQ.Where("tenant_id = ?", tenantID)
 	}
 	assocQ, _ = applyProjectScope(c, assocQ, "project_id")
-	assocQ.Find(&assets)
+	assocQ.Order("created_at desc").Limit(profileDetailLimit).Find(&assets)
 
 	var fps []db.FingerprintHit
 	fpQ := db.DB.Where("target IN ?", pagedTargets)
@@ -144,7 +256,7 @@ func getProfiles(c *gin.Context) {
 		fpQ = fpQ.Where("tenant_id = ?", tenantID)
 	}
 	fpQ, _ = applyProjectScope(c, fpQ, "project_id")
-	fpQ.Find(&fps)
+	fpQ.Order("created_at desc").Limit(profileDetailLimit).Find(&fps)
 
 	var vulns []db.Vulnerability
 	vulnQ := db.DB.Where("target IN ?", pagedTargets)
@@ -152,7 +264,7 @@ func getProfiles(c *gin.Context) {
 		vulnQ = vulnQ.Where("tenant_id = ?", tenantID)
 	}
 	vulnQ, _ = applyProjectScope(c, vulnQ, "project_id")
-	vulnQ.Find(&vulns)
+	vulnQ.Order("created_at desc").Limit(profileDetailLimit).Find(&vulns)
 
 	// 步骤 4: 按 host 聚合
 	profiles := make([]HostProfile, 0, len(pagedHosts))
@@ -162,41 +274,74 @@ func getProfiles(c *gin.Context) {
 		targetSet := make(map[string]bool, len(targets))
 		for _, t := range targets {
 			targetSet[t] = true
+			if c, ok := assetCounts[t]; ok {
+				hp.AssetCount += c
+			}
+			if c, ok := fpCounts[t]; ok {
+				hp.FingerprintCount += c
+			}
+			if c, ok := vulnCounts[t]; ok {
+				hp.VulnCount += c
+			}
 		}
 
-		// 聚合端口信息 (去重)
-		portSeen := make(map[string]bool)
+		// 聚合端口信息：按端口号跨阶段合并（同一 ip:port 的 PortScan/Nmap/Web 行合成一行）
+		portByNum := make(map[int]*PortInfo)
+		var portOrder []int
 		for _, a := range assets {
 			if !targetSet[a.Target] {
 				continue
 			}
 			hp.Assets = append(hp.Assets, a)
 
-			// 从 Asset.Port 或 Target 字符串中提取端口号
-			resolvedPort := a.Port
-			if resolvedPort == 0 && a.Target != "" {
-				if u, err := url.Parse(a.Target); err == nil && u.Port() != "" {
-					if pv, e := strconv.Atoi(u.Port()); e == nil {
-						resolvedPort = pv
+			resolvedPort := resolvePortForAsset(a)
+			if resolvedPort == 0 {
+				continue
+			}
+
+			transport, statusCode := parseService(a)
+			info, exists := portByNum[resolvedPort]
+			if !exists {
+				info = &PortInfo{Port: resolvedPort, Transport: transport, Service: a.Service, StatusCode: statusCode, Title: a.Title, URL: a.URL}
+				portByNum[resolvedPort] = info
+				portOrder = append(portOrder, resolvedPort)
+			} else {
+				// Title/URL 取带 URL 的（Web）行；Service 取质量更高者；状态码优先非零。
+				if a.URL != "" {
+					if info.URL == "" || info.Title == "" {
+						if a.Title != "" {
+							info.Title = a.Title
+						}
+						info.URL = a.URL
 					}
-				} else if _, portStr, err := net.SplitHostPort(a.Target); err == nil {
-					if pv, e := strconv.Atoi(portStr); e == nil {
-						resolvedPort = pv
+				} else if info.Title == "" && a.Title != "" {
+					info.Title = a.Title
+				}
+				if serviceRank(a.Service) > serviceRank(info.Service) {
+					info.Service = a.Service
+				}
+				if info.StatusCode == 0 && statusCode != 0 {
+					info.StatusCode = statusCode
+					if info.Transport == "" || info.Transport == "tcp" {
+						info.Transport = transport
 					}
 				}
 			}
-
-			portKey := fmt.Sprintf("%d:%s", resolvedPort, a.Protocol)
-			if !portSeen[portKey] {
-				portSeen[portKey] = true
-				hp.Ports = append(hp.Ports, PortInfo{
-					Port:     resolvedPort,
-					Protocol: a.Protocol,
-					Service:  a.Service,
-					Title:    a.Title,
-					URL:      a.URL,
-				})
+			// Stages 去重保序、AssetIDs 收集（一行资产只记一次）
+			stageSeen := false
+			for _, s := range info.Stages {
+				if s == a.Protocol {
+					stageSeen = true
+					break
+				}
 			}
+			if !stageSeen {
+				info.Stages = append(info.Stages, a.Protocol)
+			}
+			info.AssetIDs = append(info.AssetIDs, a.ID)
+		}
+		for _, p := range portOrder {
+			hp.Ports = append(hp.Ports, *portByNum[p])
 		}
 
 		for _, f := range fps {
@@ -406,16 +551,39 @@ func recordReportExport(c *gin.Context, tenantID, reportType, fileName string, c
 func getVulns(c *gin.Context) {
 	var vulns []db.Vulnerability
 	tenantID := currentTenantID(c)
-	query := db.DB.Where("tenant_id = ?", tenantID).Order("created_at desc")
+	query := db.DB.Where("tenant_id = ?", tenantID)
 	query, _ = applyProjectScope(c, query, "project_id")
 	if taskID := c.Query("task_id"); taskID != "" {
 		query = applyTaskResultScope(c, query, taskID, reportResultVulnerability)
 	}
+	if search := strings.TrimSpace(c.Query("search")); search != "" {
+		query = query.Where("target LIKE ?", "%"+search+"%")
+	}
+	query = applyResultSort(c, query, "created_at", map[string]string{
+		"severity":   "severity",
+		"created_at": "created_at",
+		"updated_at": "updated_at",
+	})
 	page, pageSize, total, ok := paginateResultQuery(c, query, &db.Vulnerability{}, &vulns)
 	if !ok {
 		return
 	}
 	c.JSON(http.StatusOK, pagedResponse(vulns, total, page, pageSize, ""))
+}
+
+// getVuln 返回单条漏洞全量字段（含 Request/Response 证据包），供结果详情查询。
+// 访问收敛：requireProjectAccess + tenant + project + id。
+func getVuln(c *gin.Context) {
+	project, ok := requireProjectAccess(c, strings.TrimSpace(c.Query("project_id")))
+	if !ok {
+		return
+	}
+	var vuln db.Vulnerability
+	if err := db.DB.Where("tenant_id = ? AND project_id = ? AND id = ?", currentTenantID(c), project.ID, c.Param("id")).First(&vuln).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "vulnerability not found"})
+		return
+	}
+	c.JSON(http.StatusOK, vuln)
 }
 
 func getAssets(c *gin.Context) {
@@ -425,6 +593,9 @@ func getAssets(c *gin.Context) {
 	query, _ = applyProjectScope(c, query, "project_id")
 	if taskID := c.Query("task_id"); taskID != "" {
 		query = applyTaskResultScope(c, query, taskID, reportResultAsset)
+	}
+	if search := strings.TrimSpace(c.Query("search")); search != "" {
+		query = query.Where("target LIKE ?", "%"+search+"%")
 	}
 	page, pageSize, total, ok := paginateResultQuery(c, query, &db.Asset{}, &assets)
 	if !ok {
@@ -455,6 +626,10 @@ func fingerprintResultQuery(c *gin.Context) *gorm.DB {
 	if taskID := c.Query("task_id"); taskID != "" {
 		query = applyTaskResultScope(c, query, taskID, reportResultFingerprint)
 	}
+	if search := strings.TrimSpace(c.Query("search")); search != "" {
+		like := "%" + search + "%"
+		query = query.Where("product_name LIKE ? OR target LIKE ?", like, like)
+	}
 	return query
 }
 
@@ -475,6 +650,9 @@ type fingerprintGroup struct {
 }
 
 func getFingerprintGroups(c *gin.Context, query *gorm.DB) {
+	if search := strings.TrimSpace(c.Query("search")); search != "" {
+		query = query.Where("product_name LIKE ?", "%"+search+"%")
+	}
 	page, pageSize := parsePagination(c, 20, 200)
 	totalQuery := query.Session(&gorm.Session{}).
 		Select("product_name").
@@ -547,7 +725,53 @@ func getFingerprintGroups(c *gin.Context, query *gorm.DB) {
 		}
 	}
 
-	c.JSON(http.StatusOK, pagedResponse(groups, total, page, pageSize, ""))
+	c.JSON(http.StatusOK, pagedResponseWithStats(groups, total, page, pageSize, "", fingerprintGroupStats(query)))
+}
+
+// fingerprintGroupStats aggregates hit counts over the same scoped (and
+// search-filtered) query used for grouping, independent of pagination.
+func fingerprintGroupStats(query *gorm.DB) struct {
+	TotalHits       int64 `json:"total_hits"`
+	DistinctTargets int64 `json:"distinct_targets"`
+} {
+	var stats struct {
+		TotalHits       int64 `json:"total_hits"`
+		DistinctTargets int64 `json:"distinct_targets"`
+	}
+	query.Session(&gorm.Session{}).Model(&db.FingerprintHit{}).
+		Select("COUNT(*) AS total_hits, COUNT(DISTINCT target) AS distinct_targets").
+		Scan(&stats)
+	return stats
+}
+
+// applyResultSort applies an optional sort clause from query parameters.
+// supported maps frontend sort field names to database column/expression names.
+// For severity, it uses a CASE expression so the order reflects actual risk
+// (critical > high > medium > low > info > unknown) instead of alphabetical.
+func applyResultSort(c *gin.Context, query *gorm.DB, defaultField string, supported map[string]string) *gorm.DB {
+	sortField := strings.TrimSpace(c.Query("sort"))
+	if sortField == "" {
+		sortField = defaultField
+	}
+	sortField = strings.ToLower(sortField)
+
+	sortOrder := strings.ToLower(strings.TrimSpace(c.Query("order")))
+	if sortOrder != "asc" && sortOrder != "desc" {
+		sortOrder = "desc"
+	}
+
+	column, ok := supported[sortField]
+	if !ok {
+		column = defaultField
+	}
+
+	if column == "severity" {
+		return query.Order(fmt.Sprintf(
+			"CASE LOWER(severity) WHEN 'critical' THEN 5 WHEN 'high' THEN 4 WHEN 'medium' THEN 3 WHEN 'low' THEN 2 WHEN 'info' THEN 1 ELSE 0 END %s",
+			sortOrder,
+		))
+	}
+	return query.Order(fmt.Sprintf("%s %s", column, sortOrder))
 }
 
 func paginateResultQuery(c *gin.Context, query *gorm.DB, model interface{}, dest interface{}) (int, int, int64, bool) {

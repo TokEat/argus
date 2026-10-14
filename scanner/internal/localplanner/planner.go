@@ -299,7 +299,9 @@ func localConfigHash(cfg engine.Config, policy localstate.LocalPolicy) string {
 		Subdomain, SkipHostDiscovery, AllowLocalAreaDomain, AllowCDNAssets bool
 		NoHostBind, NoDirSearch, NoICMPPing, TCPPing, LowPerceptionMode    bool
 		PortScanType                                                       string
-		PortsThreshold, TCPPortScanTimeout, GetBannerTimeout, WebTimeout   int
+		PortScanScatter                                                    bool
+		PortsThreshold, TCPPortScanTimeout, PortScanProbeInterval          int
+		GetBannerTimeout, WebTimeout                                       int
 		HTTPProxy                                                          string
 		LocalPolicy                                                        localstate.LocalPolicy
 	}{
@@ -307,7 +309,8 @@ func localConfigHash(cfg engine.Config, policy localstate.LocalPolicy) string {
 		AllowLocalAreaDomain: cfg.AllowLocalAreaDomain, AllowCDNAssets: cfg.AllowCDNAssets,
 		NoHostBind: cfg.NoHostBind, NoDirSearch: cfg.NoDirSearch, NoICMPPing: cfg.NoICMPPing,
 		TCPPing: cfg.TCPPing, LowPerceptionMode: cfg.LowPerceptionMode, PortScanType: cfg.PortScanType,
-		PortsThreshold: cfg.PortsThreshold, TCPPortScanTimeout: cfg.TCPPortScanTimeout,
+		PortScanScatter: cfg.PortScanScatter, PortsThreshold: cfg.PortsThreshold, TCPPortScanTimeout: cfg.TCPPortScanTimeout,
+		PortScanProbeInterval: cfg.PortScanProbeInterval,
 		GetBannerTimeout: cfg.GetBannerTimeout, WebTimeout: cfg.WebTimeout, HTTPProxy: cfg.HTTPProxy,
 		LocalPolicy: policy,
 	}

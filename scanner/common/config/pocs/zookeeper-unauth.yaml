@@ -1,0 +1,26 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: word
+        part: body
+        words:
+          - zookeeper.version
+          - Environment
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/'
+id: zookeeper-unauth
+info:
+  author: pdteam
+  description: |-
+    Apache ZooKeeper was able to be accessed without any required authentication.
+    fofa: port="2181" && protocol="zookeeper"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Apache ZooKeeper - Unauthenticated Access
+  severity: high
+  tags: network,zookeeper,unauth,argus-import

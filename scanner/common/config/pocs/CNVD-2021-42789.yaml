@@ -1,0 +1,32 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - 添加
+          - 首页
+          - 管理员列表
+          - 导航元素
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/admin/admin/admin_list.html'
+id: CNVD-2021-42789
+info:
+  author: daffainfo
+  description: |-
+    原创先锋 后台管理平台 存在未授权访问漏洞，攻击者通过漏洞可以任意接管账户权限
+    fofa-query: body="https://www.bjycxf.com"
+    fofa-query: icon_hash="-692947551"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 原创先锋 后台管理系统存在未授权访问漏洞
+  severity: high
+  tags: cnvd,cnvd2021,unauth,argus-import

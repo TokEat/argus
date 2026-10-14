@@ -74,8 +74,17 @@ func registerAPIV1Routes(api *gin.RouterGroup) {
 
 	// 漏洞资产与关联画像
 	api.GET("/vulns", getVulns)
+	api.GET("/vulns/:id", getVuln)
 	api.GET("/assets", getAssets)
 	api.GET("/fingerprints", getFingerprints)
+	api.GET("/crawl-site-candidates", listCrawlSiteCandidates)
+	api.GET("/sensitive-findings", listSensitiveFindings)
+	api.GET("/assets/:id/lineage", getAssetLineage)
+	api.GET("/vulns/:id/lineage", getVulnLineage)
+	api.GET("/vulns/:id/ai-review", getVulnAIReview)
+	api.POST("/vulns/:id/ai-review", retriggerVulnAIReview)
+	api.PATCH("/vulns/:id/ai-review", overrideVulnAIReview)
+	api.GET("/fingerprints/:id/lineage", getFingerprintLineage)
 	api.GET("/profiles", getProfiles)
 	api.POST("/credential-findings/:id/reveal", revealCredentialFinding)
 	api.GET("/poc-rules", listPocRules)
@@ -163,6 +172,17 @@ func registerAPIV1Routes(api *gin.RouterGroup) {
 	api.POST("/ai/actions/confirm", confirmCopilotAction)
 	api.GET("/ai/copilot/prompts", getCopilotPromptProfiles)
 	api.GET("/ai/tool-invocations", listAIToolInvocations)
+	api.GET("/ai/triage/config", getAITriageConfig)
+	api.PUT("/ai/triage/config", saveAITriageConfig)
+	api.GET("/ai/content/config", getContentAnalysisConfig)
+	api.PUT("/ai/content/config", saveContentAnalysisConfig)
+
+	// 扫描安全设备对抗哨兵：检测 → AI 决策 → 策略门控执行
+	api.GET("/sentinel/events", listSentinelEvents)
+	api.POST("/sentinel/events/:id/execute", executeSentinelEvent)
+	api.POST("/sentinel/events/:id/dismiss", dismissSentinelEvent)
+	api.GET("/sentinel/config", getSentinelConfig)
+	api.PUT("/sentinel/config", saveSentinelConfig)
 
 	// Arsenal 弹药库热发车网关与审核墙
 	api.POST("/arsenals/ai/analyze", aiAnalyzeArsenal)

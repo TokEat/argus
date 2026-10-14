@@ -13,6 +13,7 @@ import (
 	"github.com/P0lar1ght/argus/scanner/internal/vuln/nuclei"
 	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/P0lar1ght/argus/shared/proto/go/activefingerprint"
+	"github.com/projectdiscovery/gologger"
 	nucleiOutput "github.com/projectdiscovery/nuclei/v3/pkg/output"
 )
 
@@ -32,6 +33,7 @@ func runActiveFingerprintPhase(ctx *ScanContext, cfg *Config, aliveURLs []string
 	if cfg.BehaviorProbeRequestBudget < estimate {
 		return fmt.Errorf("active fingerprint estimate %d exceeds sealed request budget %d", estimate, cfg.BehaviorProbeRequestBudget)
 	}
+	gologger.Info().Msgf("[BehaviorProbe] running %d reviewed safe active-fingerprint templates on %d targets (not POC)", len(files), len(urls))
 	targets := make(map[string][]string, len(urls))
 	for _, target := range urls {
 		targets[target] = append([]string(nil), files...)

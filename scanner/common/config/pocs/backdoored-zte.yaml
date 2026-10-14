@@ -1,0 +1,27 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: word
+        part: body
+        words:
+          - BusyBox
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/'
+id: backdoored-zte
+info:
+  author: its0x08
+  description: |
+    Multiple ZTE router panels were detected. These routers have a telnet-hardcoded backdoor account that spawns root shell.
+    shodan: http.html:"ZTE Corporation"
+    fofa: title="F660"
+    google: intitle:"F660" intext:"ZTE Corporation"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: ZTE Router Panel - Detect
+  severity: critical
+  tags: edb,network,zte,telnet,backdoor,router,argus-import

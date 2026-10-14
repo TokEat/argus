@@ -17,6 +17,8 @@ func DefaultConfig() Config {
 		SYNPortScanThreads:         10000,
 		PortsThreshold:             300,
 		TCPPortScanTimeout:         6,
+		PortScanScatter:            false,
+		PortScanProbeInterval:      scanpolicy.DefaultPacingIntervalMillis,
 		MasscanPath:                "masscan",
 		GetBannerThreads:           500,
 		GetBannerTimeout:           5,

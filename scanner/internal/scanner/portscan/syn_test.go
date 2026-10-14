@@ -21,7 +21,7 @@ func TestScanSYNUsesRequestedPorts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ScanSYN([]string{"192.0.2.1"}, "80,443", helper, 10, nil)
+	ScanSYN([]string{"192.0.2.1"}, "80,443", helper, 10, false, 0, nil)
 	args, err := os.ReadFile(argsPath)
 	if err != nil {
 		t.Fatal(err)

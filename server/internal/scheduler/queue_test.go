@@ -194,6 +194,64 @@ func TestTaskQueueRabbitMQBrokerRestartSmoke(t *testing.T) {
 	}
 }
 
+func TestAgentQueueNameSanitizesUnsafeCharacters(t *testing.T) {
+	if got := AgentQueueName("agent-a_1.B"); got != "argus.tasks.agent.agent-a_1.B" {
+		t.Fatalf("unexpected safe name: %q", got)
+	}
+	if got := AgentQueueName("agent/with:slash"); got != "argus.tasks.agent.agent_with_slash" {
+		t.Fatalf("unexpected sanitized name: %q", got)
+	}
+}
+
+func TestPushToAgentQueueIsolatesAgentsAndPopsNonBlocking(t *testing.T) {
+	queue := NewTaskQueue("")
+	defer queue.Close()
+
+	// Empty agent queue must pop as (nil, "", nil), not block or error.
+	if task, id, err := queue.TryPopAgentTask(context.Background(), "agent-a"); err != nil || task != nil || id != "" {
+		t.Fatalf("empty agent queue should be a clean miss, got task=%+v id=%q err=%v", task, id, err)
+	}
+
+	if err := queue.PushToAgentQueue(context.Background(), "agent-a", &pb.Task{TaskId: "a-1", Priority: PriorityNormal}); err != nil {
+		t.Fatalf("push to agent-a: %v", err)
+	}
+	if err := queue.PushToAgentQueue(context.Background(), "agent-b", &pb.Task{TaskId: "b-1", Priority: PriorityNormal}); err != nil {
+		t.Fatalf("push to agent-b: %v", err)
+	}
+
+	// agent-b must not observe agent-a's task.
+	if task, _, err := queue.TryPopAgentTask(context.Background(), "agent-b"); err != nil || task == nil || task.TaskId != "b-1" {
+		t.Fatalf("agent-b should only see its own task, got %+v err=%v", task, err)
+	}
+	if task, _, err := queue.TryPopAgentTask(context.Background(), "agent-b"); err != nil || task != nil {
+		t.Fatalf("agent-b queue should now be empty, got %+v err=%v", task, err)
+	}
+	if task, _, err := queue.TryPopAgentTask(context.Background(), "agent-a"); err != nil || task == nil || task.TaskId != "a-1" {
+		t.Fatalf("agent-a should still see its own task, got %+v err=%v", task, err)
+	}
+}
+
+func TestAgentQueueRespectsPriorityOrdering(t *testing.T) {
+	queue := NewTaskQueue("")
+	defer queue.Close()
+	for _, task := range []*pb.Task{
+		{TaskId: "normal", Priority: PriorityNormal},
+		{TaskId: "urgent", Priority: PriorityUrgent},
+		{TaskId: "low", Priority: PriorityLow},
+	} {
+		if err := queue.PushToAgentQueue(context.Background(), "agent-p", task); err != nil {
+			t.Fatalf("push %s: %v", task.TaskId, err)
+		}
+	}
+	want := []string{"urgent", "normal", "low"}
+	for _, id := range want {
+		task, _, err := queue.TryPopAgentTask(context.Background(), "agent-p")
+		if err != nil || task == nil || task.TaskId != id {
+			t.Fatalf("priority pop want %s, got %+v err=%v", id, task, err)
+		}
+	}
+}
+
 func queueIsHealthy(queue *TaskQueue) bool {
 	queue.chMu.Lock()
 	defer queue.chMu.Unlock()

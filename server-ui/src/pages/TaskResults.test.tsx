@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from 'antd';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -10,6 +10,7 @@ const apiMocks = vi.hoisted(() => ({
     getAssets: vi.fn(),
     getFingerprints: vi.fn(),
     getFingerprintGroups: vi.fn(),
+    getAssetLineage: vi.fn(),
     exportVulns: vi.fn(),
     exportAssets: vi.fn(),
     exportFingerprints: vi.fn(),
@@ -48,6 +49,7 @@ describe('TaskResults', () => {
         apiMocks.getAssets.mockResolvedValue(paged([], 0, 1));
         apiMocks.getFingerprints.mockResolvedValue(paged([], 0, 1));
         apiMocks.getFingerprintGroups.mockResolvedValue(paged([], 0, 1));
+        apiMocks.getAssetLineage.mockResolvedValue({ nodes: [] });
         apiMocks.exportVulns.mockResolvedValue(new Blob(['vulns']));
         apiMocks.exportAssets.mockResolvedValue(new Blob(['assets']));
         apiMocks.exportFingerprints.mockResolvedValue(new Blob(['fingerprints']));
@@ -262,5 +264,136 @@ describe('TaskResults', () => {
         });
         expect(apiMocks.exportVulns).not.toHaveBeenCalled();
         expect(apiMocks.exportAssets).not.toHaveBeenCalled();
+    });
+
+    it('searches fingerprint products by name and resets to page 1', async () => {
+        const user = userEvent.setup();
+        render(
+            <MemoryRouter initialEntries={['/tasks/task-1/results']}>
+                <App>
+                    <Routes>
+                        <Route path="/tasks/:taskId/results" element={<TaskResults />} />
+                    </Routes>
+                </App>
+            </MemoryRouter>,
+        );
+
+        await user.click(await screen.findByText(/指纹 \(0\)/));
+        await user.type(screen.getByPlaceholderText('按产品名称搜索'), 'nginx');
+
+        await waitFor(() => {
+            expect(apiMocks.getFingerprintGroups).toHaveBeenCalledWith({
+                taskId: 'task-1',
+                projectId: 'project-1',
+                page: 1,
+                pageSize: 20,
+                search: 'nginx',
+            });
+        }, { timeout: 3000 });
+    });
+
+    it('drills down from a fingerprint target to filtered assets and clears the filter', async () => {
+        apiMocks.getVulns.mockResolvedValue(paged([], 0, 1));
+        apiMocks.getAssets.mockResolvedValue(paged([], 0, 1));
+        apiMocks.getFingerprintGroups.mockResolvedValue(paged([
+            {
+                ProductName: 'nginx',
+                TargetCount: 1,
+                Targets: [{ Target: 'https://a.example', RuleName: 'rule-a' }],
+                FirstSeen: '2026-07-05T00:00:00Z',
+                LastSeen: '2026-07-05T00:01:00Z',
+            },
+        ], 1, 1));
+
+        const user = userEvent.setup();
+        render(
+            <MemoryRouter initialEntries={['/tasks/task-1/results']}>
+                <App>
+                    <Routes>
+                        <Route path="/tasks/:taskId/results" element={<TaskResults />} />
+                    </Routes>
+                </App>
+            </MemoryRouter>,
+        );
+
+        expect(await screen.findByText('nginx')).toBeInTheDocument();
+        expect(screen.getByRole('tab', { name: /指纹 \(1\)/ })).toHaveAttribute('aria-selected', 'true');
+
+        await user.click(document.querySelector('.ant-table-row-expand-icon') as HTMLElement);
+        await user.click(await screen.findByText('看资产'));
+
+        await waitFor(() => {
+            expect(apiMocks.getAssets).toHaveBeenCalledWith({
+                taskId: 'task-1',
+                projectId: 'project-1',
+                page: 1,
+                pageSize: 20,
+                search: 'a.example',
+            });
+        });
+        expect(screen.getByRole('tab', { name: /资产 \(0\)/ })).toHaveAttribute('aria-selected', 'true');
+        expect(await screen.findByRole('button', { name: '清除过滤' })).toBeInTheDocument();
+
+        await user.click(screen.getByRole('button', { name: '清除过滤' }));
+        await waitFor(() => {
+            expect(apiMocks.getAssets).toHaveBeenCalledWith({
+                taskId: 'task-1',
+                projectId: 'project-1',
+                page: 1,
+                pageSize: 20,
+            });
+        });
+        expect(screen.queryByRole('button', { name: '清除过滤' })).toBeNull();
+    });
+
+    it('opens the lineage drawer and renders the scan-chain steps for an asset', async () => {
+        apiMocks.getAssets.mockImplementation(({ page }: { page: number }) => paged([
+            {
+                ID: 5,
+                TenantID: 'default',
+                TaskID: 'task-1',
+                Target: 'http://1.2.3.4:80',
+                Protocol: 'Web',
+                Port: 80,
+                URL: 'http://1.2.3.4:80',
+                Title: '',
+                Service: 'http/200',
+                CreatedAt: '2026-07-05T00:00:00Z',
+            },
+        ], 1, page));
+        apiMocks.getAssetLineage.mockResolvedValue({
+            nodes: [
+                { target: '1.2.3.4', stage: 'input', node_type: 'input' },
+                { target: '1.2.3.4:80', stage: 'PortScan', node_type: 'asset' },
+                { target: 'http://1.2.3.4:80', stage: 'Web', node_type: 'asset' },
+            ],
+        });
+
+        const user = userEvent.setup();
+        render(
+            <MemoryRouter initialEntries={['/tasks/task-1/results']}>
+                <App>
+                    <Routes>
+                        <Route path="/tasks/:taskId/results" element={<TaskResults />} />
+                    </Routes>
+                </App>
+            </MemoryRouter>,
+        );
+
+        await user.click(await screen.findByText(/资产 \(1\)/));
+        await user.click(await screen.getByRole('button', { name: /溯源/ }));
+
+        await waitFor(() => {
+            expect(apiMocks.getAssetLineage).toHaveBeenCalledWith('project-1', 5);
+        });
+        expect(await screen.findByText('扫描起点')).toBeInTheDocument();
+        const drawerEl = document.querySelector('.ant-drawer-content');
+        expect(drawerEl).toBeTruthy();
+        const drawer = within(drawerEl as HTMLElement);
+        expect(drawer.getByText('PortScan')).toBeInTheDocument();
+        expect(drawer.getByText('Web')).toBeInTheDocument();
+        expect(drawer.getAllByText('1.2.3.4:80').length).toBeGreaterThan(0);
+        // 起点节点必须具体到某个输入资产（IP/域名），而不是空描述。
+        expect(drawer.getAllByText('1.2.3.4').length).toBeGreaterThan(0);
     });
 });

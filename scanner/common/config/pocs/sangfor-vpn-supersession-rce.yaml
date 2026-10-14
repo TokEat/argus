@@ -1,0 +1,27 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <TwfID>
+          - <RSA_ENCRYPT_KEY>
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/por/login_auth.csp'
+id: sangfor-vpn-supersession-rce
+info:
+  author: G-H-Z
+  description: Sangfor VPN SuperSession TO RCE
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Sangfor VPN SuperSession TO RCE
+  severity: critical
+  tags: sangfor,vpn,supersession,rce,argus-import

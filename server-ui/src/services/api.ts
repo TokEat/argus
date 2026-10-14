@@ -284,6 +284,9 @@ type ResultPageParams = {
     projectId?: string;
     page?: number;
     pageSize?: number;
+    sort?: string;
+    order?: 'asc' | 'desc';
+    search?: string;
 };
 
 const buildResultParams = (first?: string | ResultPageParams, projectId?: string): Record<string, string | number> => {
@@ -293,6 +296,9 @@ const buildResultParams = (first?: string | ResultPageParams, projectId?: string
         if (first.projectId) params.project_id = first.projectId;
         if (first.page) params.page = first.page;
         if (first.pageSize) params.page_size = first.pageSize;
+        if (first.sort) params.sort = first.sort;
+        if (first.order) params.order = first.order;
+        if (first.search) params.search = first.search;
         return params;
     }
     if (first) params.task_id = first;
@@ -321,8 +327,120 @@ export async function getFingerprints(first?: string | ResultPageParams, project
     return typeof first === 'object' && first !== null ? result : pagedItems(result);
 }
 
-export async function getFingerprintGroups(params: ResultPageParams): Promise<API.PagedResponse<API.FingerprintGroup>> {
+export async function getFingerprintGroups(params: ResultPageParams): Promise<API.FingerprintGroupsPage> {
     return request.get('/fingerprints', { params: { ...buildResultParams(params), group_by: 'product' } });
+}
+
+export async function getAssetLineage(projectId: string, assetId: number): Promise<API.AssetLineageResponse> {
+    return request.get(`/assets/${assetId}/lineage`, { params: { project_id: projectId } });
+}
+
+export async function getVulnLineage(projectId: string, vulnId: number): Promise<API.AssetLineageResponse> {
+    return request.get(`/vulns/${vulnId}/lineage`, { params: { project_id: projectId } });
+}
+
+export async function getVulnAIReview(vulnId: number): Promise<{
+    vulnerability_id: number;
+    ai_status: string;
+    ai_confidence: number;
+    ai_reason: string;
+    ai_triaged_at?: string;
+    reviews: API.AIFindingReview[];
+}> {
+    return request.get(`/vulns/${vulnId}/ai-review`);
+}
+
+export async function retriggerVulnAIReview(vulnId: number): Promise<API.AIFindingReview> {
+    return request.post(`/vulns/${vulnId}/ai-review`);
+}
+
+export async function overrideVulnAIReview(vulnId: number, data: { verdict: string; reason?: string }): Promise<{ vulnerability_id: number; ai_status: string; override_applied: boolean }> {
+    return request.patch(`/vulns/${vulnId}/ai-review`, data);
+}
+
+export async function getAITriageConfig(): Promise<API.AITriageConfig> {
+    return request.get('/ai/triage/config');
+}
+
+export async function updateAITriageConfig(data: Partial<API.AITriageConfig>): Promise<API.AITriageConfig> {
+    return request.put('/ai/triage/config', data);
+}
+
+export async function getContentAnalysisConfig(): Promise<API.ContentAnalysisConfig> {
+    return request.get('/ai/content/config');
+}
+
+export async function updateContentAnalysisConfig(data: Partial<API.ContentAnalysisConfig>): Promise<API.ContentAnalysisConfig> {
+    return request.put('/ai/content/config', data);
+}
+
+export async function listCrawlSiteCandidates(params?: {
+    taskId?: string;
+    projectId?: string;
+    aiStatus?: string;
+    search?: string;
+    page?: number;
+    pageSize?: number;
+}): Promise<API.PagedResponse<API.CrawlSiteCandidate>> {
+    const query: Record<string, string | number> = {};
+    if (params?.taskId) query.task_id = params.taskId;
+    if (params?.projectId) query.project_id = params.projectId;
+    if (params?.aiStatus) query.ai_status = params.aiStatus;
+    if (params?.search) query.search = params.search;
+    if (params?.page) query.page = params.page;
+    if (params?.pageSize) query.page_size = params.pageSize;
+    return request.get('/crawl-site-candidates', { params: query });
+}
+
+export async function listSensitiveFindings(params?: {
+    taskId?: string;
+    projectId?: string;
+    kind?: string;
+    aiStatus?: string;
+    search?: string;
+    page?: number;
+    pageSize?: number;
+}): Promise<API.PagedResponse<API.SensitiveFinding>> {
+    const query: Record<string, string | number> = {};
+    if (params?.taskId) query.task_id = params.taskId;
+    if (params?.projectId) query.project_id = params.projectId;
+    if (params?.kind) query.kind = params.kind;
+    if (params?.aiStatus) query.ai_status = params.aiStatus;
+    if (params?.search) query.search = params.search;
+    if (params?.page) query.page = params.page;
+    if (params?.pageSize) query.page_size = params.pageSize;
+    return request.get('/sensitive-findings', { params: query });
+}
+
+export async function listSentinelEvents(params?: {
+    status?: string;
+    classification?: string;
+    signal_type?: string;
+    root_task_id?: string;
+    page?: number;
+    page_size?: number;
+}): Promise<{ items: API.SentinelEvent[]; total: number; page: number; page_size: number }> {
+    return request.get('/sentinel/events', { params });
+}
+
+export async function executeSentinelEvent(id: number, action?: string): Promise<API.SentinelEvent> {
+    return request.post(`/sentinel/events/${id}/execute`, action ? { action } : {});
+}
+
+export async function dismissSentinelEvent(id: number): Promise<{ id: number; status: string }> {
+    return request.post(`/sentinel/events/${id}/dismiss`);
+}
+
+export async function getSentinelConfig(): Promise<API.SentinelConfig> {
+    return request.get('/sentinel/config');
+}
+
+export async function updateSentinelConfig(data: Partial<API.SentinelConfig>): Promise<API.SentinelConfig> {
+    return request.put('/sentinel/config', data);
+}
+
+export async function getFingerprintLineage(projectId: string, fingerprintId: number): Promise<API.AssetLineageResponse> {
+    return request.get(`/fingerprints/${fingerprintId}/lineage`, { params: { project_id: projectId } });
 }
 
 export async function getProfiles(page: number = 1, pageSize: number = 50, search: string = '', projectId?: string): Promise<API.PaginatedResponse<API.Profile>> {

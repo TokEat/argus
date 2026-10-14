@@ -8,6 +8,7 @@ import (
 	"github.com/P0lar1ght/argus/scanner/lib/ddfinger"
 	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/P0lar1ght/argus/scanner/utils"
+	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 	"os"
 	"runtime"
 	"strings"
@@ -88,6 +89,14 @@ func ApplyConfigDefaults(cfg *Config) {
 	}
 	if !cfg.SkipHostDiscovery && !cfg.TCPPing && cfg.NoICMPPing {
 		cfg.SkipHostDiscovery = true
+	}
+	if cfg.WebCrawl {
+		if cfg.WebCrawlMaxDepth < 1 {
+			cfg.WebCrawlMaxDepth = scanpolicy.DefaultWebCrawlMaxDepth
+		}
+		if cfg.WebCrawlMaxPages < 1 {
+			cfg.WebCrawlMaxPages = scanpolicy.DefaultWebCrawlMaxPages
+		}
 	}
 }
 
@@ -486,5 +495,8 @@ func toEngineOutputMessage(msg ddout.OutputMessage) OutputMessage {
 		AdditionalMsg: msg.AdditionalMsg,
 		Show:          msg.Show,
 		Nuclei:        msg.Nuclei,
+		Source:        msg.Source,
+		CrawlSite:     msg.CrawlSite,
+		SensitiveInfo: msg.SensitiveInfo,
 	}
 }

@@ -280,11 +280,38 @@ func lockRetryableSubTask(tx *gorm.DB, expected *SubTask, allowTerminalRoot, all
 // PrepareSubTaskRetry preserves the terminal execution row and appends a new
 // Attempt under the same stable TaskBatch.
 func PrepareSubTaskRetry(sub *SubTask) (prepared SubTask, ok bool) {
-	return AppendSubTaskAttempt(sub, AttemptRetryOptions{
+	options := AttemptRetryOptions{
 		Trigger:              AttemptTriggerAutomaticRetry,
 		ConsumeRetryBudget:   true,
 		UseCurrentTaskConfig: true,
-	})
+	}
+	// Validation batches (risk/credential) must inherit their sealed attempt
+	// config (ExecutionMode, ValidationBudget*, NoPoc=false). Rebuilding from the
+	// root asset-scan config would silently disable POC execution and report a
+	// false-success DONE with zero findings.
+	if validationBatchKind(sub) {
+		options.UseCurrentTaskConfig = false
+		options.PreserveRuleVersion = true
+	}
+	return AppendSubTaskAttempt(sub, options)
+}
+
+// validationBatchKind reports whether the SubTask's batch is a risk/credential
+// validation batch. TaskBatch.ID is the sole primary key, so it is queried
+// directly (robust to an empty TenantID on the inbound SubTask).
+func validationBatchKind(sub *SubTask) bool {
+	if DB == nil || sub == nil || strings.TrimSpace(sub.BatchID) == "" {
+		return false
+	}
+	var batch TaskBatch
+	if err := DB.Select("kind").Where("id = ?", sub.BatchID).First(&batch).Error; err != nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(batch.Kind)) {
+	case "risk_validation", "credential_validation":
+		return true
+	}
+	return false
 }
 
 // SplitFailedSubTask preserves the failed Attempt, appends a retry Attempt for
@@ -390,6 +417,13 @@ func SplitFailedSubTask(sub *SubTask, resetRetryBudget bool) (split []SubTask, d
 		firstAttempt.Status = "Dispatching"
 		firstAttempt.AgentID = ""
 		firstAttempt.StreamMsgID = ""
+		// Fresh split attempts start unrouted; the dispatch controller assigns a
+		// new routing. Both halves inherit the parent's dispatch strategy and are
+		// held for one backoff step based on their incremented retry count.
+		firstAttempt.RoutedAgentID = ""
+		firstAttempt.RoutedAt = nil
+		eligibleAt := RetryEligibleAt(retryCount+1, now)
+		firstAttempt.NextEligibleAt = &eligibleAt
 		firstAttempt.FailureReason = ""
 		firstAttempt.RetryCount = retryCount + 1
 		firstAttempt.StartedAt = nil

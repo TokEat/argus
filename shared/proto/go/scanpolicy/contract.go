@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +21,14 @@ const (
 	MaximumCredentialPairLimit  = 100_000
 	MaximumCustomPorts          = 65_535
 	MaximumDictionaryReferences = 32
+	DefaultPacingIntervalMillis = 500
+	MinimumPacingIntervalMillis = 50
+	MaximumPacingIntervalMillis = 5000
+	DefaultWebCrawlMaxDepth     = 2
+	DefaultWebCrawlMaxPages     = 50
+	MaximumWebCrawlMaxDepth     = 5
+	MaximumWebCrawlMaxPages     = 500
+	MaximumWebCrawlPathAppLimit = 5
 )
 
 type Preset string
@@ -84,6 +93,86 @@ func (i Intensity) Valid() bool {
 	}
 }
 
+// ScanPacing is the low-and-slow port scan option: probes to the same target
+// are scattered across time with a minimum per-target interval so security
+// appliances with per-IP rate thresholds are less likely to auto-block the
+// scanner. Disabled by default; enabling trades throughput for stealth.
+type ScanPacing struct {
+	Enabled        bool `json:"enabled"`
+	IntervalMillis int  `json:"interval_millis"`
+}
+
+func (p ScanPacing) Valid() error {
+	if !p.Enabled {
+		return nil
+	}
+	if p.IntervalMillis < MinimumPacingIntervalMillis || p.IntervalMillis > MaximumPacingIntervalMillis {
+		return fmt.Errorf("pacing interval_millis must be between %d and %d", MinimumPacingIntervalMillis, MaximumPacingIntervalMillis)
+	}
+	return nil
+}
+
+// DispatchStrategy selects how SubTasks reach agents. controller_push routes
+// each SubTask to a specific alive agent under controller control (k8s-style
+// scheduling with load balancing); agent_claim keeps the legacy first-come
+// shared-queue pull model. It is a scheduling concern, not scan content, so it
+// is deliberately kept out of Policy and Hash (unlike Preset/PortProfile).
+type DispatchStrategy string
+
+const (
+	DispatchStrategyControllerPush DispatchStrategy = "controller_push"
+	DispatchStrategyAgentClaim     DispatchStrategy = "agent_claim"
+)
+
+func (s DispatchStrategy) Valid() bool {
+	switch s {
+	case DispatchStrategyControllerPush, DispatchStrategyAgentClaim:
+		return true
+	default:
+		return false
+	}
+}
+
+// NormalizeDispatchStrategy resolves empty/invalid values to def. Stored task
+// rows keep an empty strategy to mean "inherit the global default at read
+// time", so upgrades never hard-flip pre-existing rows.
+func NormalizeDispatchStrategy(s DispatchStrategy, def DispatchStrategy) DispatchStrategy {
+	if s.Valid() {
+		return s
+	}
+	return def
+}
+
+// dispatchStrategyDefaultEnv overrides the process-wide default dispatch
+// strategy. It exists so tests can pin the legacy pull model while production
+// defaults to controller-push.
+const dispatchStrategyDefaultEnv = "ARGUS_DISPATCH_STRATEGY_DEFAULT"
+
+var defaultDispatchStrategy = DispatchStrategyFromEnv()
+
+// DispatchStrategyFromEnv reads the configured default, falling back to
+// controller_push when the env var is empty or unrecognized.
+func DispatchStrategyFromEnv() DispatchStrategy {
+	switch raw := DispatchStrategy(strings.ToLower(strings.TrimSpace(os.Getenv(dispatchStrategyDefaultEnv)))); raw {
+	case DispatchStrategyAgentClaim:
+		return DispatchStrategyAgentClaim
+	default:
+		return DispatchStrategyControllerPush
+	}
+}
+
+// DefaultDispatchStrategy returns the process-wide default used when a task
+// row stores an empty dispatch_strategy.
+func DefaultDispatchStrategy() DispatchStrategy { return defaultDispatchStrategy }
+
+// SetDefaultDispatchStrategy overrides the process-wide default. Tests use it
+// to pin a strategy; passing an invalid value is ignored.
+func SetDefaultDispatchStrategy(s DispatchStrategy) {
+	if s.Valid() {
+		defaultDispatchStrategy = s
+	}
+}
+
 type Capabilities struct {
 	SubdomainDiscovery          bool `json:"subdomain_discovery"`
 	SubdomainBruteforce         bool `json:"subdomain_bruteforce"`
@@ -94,6 +183,28 @@ type Capabilities struct {
 	DirectoryProbe              bool `json:"directory_probe"`
 	RiskValidation              bool `json:"risk_validation"`
 	CredentialValidation        bool `json:"credential_validation"`
+	WebCrawl                    bool `json:"web_crawl"`
+	SensitiveInfo               bool `json:"sensitive_info"`
+}
+
+// WebCrawlPolicy bounds proactive same-host:port page crawling. Crawling is
+// strictly scoped to the seed host:port; cross-port / sibling-subdomain links
+// are reported as related-asset candidates but never fetched.
+type WebCrawlPolicy struct {
+	MaxDepth int `json:"max_depth,omitempty"`
+	MaxPages int `json:"max_pages,omitempty"`
+	// PathAppLimit caps per-host:port path-prefix app / hidden-endpoint
+	// candidates mined from crawled JS/HTML (0=disabled, no profiling cost).
+	PathAppLimit int `json:"path_app_limit,omitempty"`
+}
+
+// AIControlPolicy gates the optional server-side AI analysis (worth /
+// semantic-dedup / structured extraction) for the two content features. Each
+// sub-switch additionally requires a globally configured LLM; when off or
+// unconfigured the feature degrades to basic regex/hash extraction.
+type AIControlPolicy struct {
+	Crawl         bool `json:"crawl,omitempty"`
+	SensitiveInfo bool `json:"sensitive_info,omitempty"`
 }
 
 type Selector struct {
@@ -132,11 +243,14 @@ type Policy struct {
 	CustomPorts   string           `json:"custom_ports,omitempty"`
 	ScanMethod    ScanMethod       `json:"scan_method"`
 	Intensity     Intensity        `json:"intensity"`
-	Capabilities  Capabilities     `json:"capabilities"`
-	Selector      Selector         `json:"selector,omitempty"`
-	Subdomains    SubdomainPolicy  `json:"subdomains"`
-	Credentials   CredentialPolicy `json:"credentials"`
-	Authorization Authorization    `json:"authorization"`
+	Pacing        *ScanPacing      `json:"pacing,omitempty"`
+	Capabilities  Capabilities      `json:"capabilities"`
+	Selector      Selector          `json:"selector,omitempty"`
+	Subdomains    SubdomainPolicy   `json:"subdomains"`
+	Credentials   CredentialPolicy  `json:"credentials"`
+	Authorization Authorization     `json:"authorization"`
+	WebCrawl      WebCrawlPolicy    `json:"web_crawl,omitempty"`
+	AIControl     AIControlPolicy   `json:"ai_control,omitempty"`
 }
 
 func PresetPolicy(preset Preset) (Policy, error) {
@@ -178,7 +292,11 @@ func PresetPolicy(preset Preset) (Policy, error) {
 
 // Normalize validates a policy and returns its canonical representation.
 // Port profile, transport method, and intensity are immutable preset traits;
-// capability checkboxes are explicit user choices layered on those defaults.
+// capabilities are explicit user choices. The UI seeds its checkboxes from the
+// preset defaults, so an unticked capability here means "do not run that stage"
+// and must never be replaced by a preset default (an all-false Capabilities is a
+// legitimate choice, not an omission). Because a bool struct cannot distinguish
+// "field omitted" from "explicitly false", capabilities are taken verbatim.
 func Normalize(input Policy) (Policy, error) {
 	if input.SchemaVersion == "" {
 		input.SchemaVersion = SchemaVersion
@@ -193,14 +311,15 @@ func Normalize(input Policy) (Policy, error) {
 		expected, _ := PresetPolicy(input.Preset)
 		expected.Selector = input.Selector
 		expected.Authorization = input.Authorization
+		expected.Pacing = input.Pacing
 		expected.Subdomains.Wordlists = input.Subdomains.Wordlists
 		if input.Subdomains.BruteforceDepth != 0 {
 			expected.Subdomains.BruteforceDepth = input.Subdomains.BruteforceDepth
 		}
 		expected.Credentials = input.Credentials
-		if input.Capabilities != (Capabilities{}) {
-			expected.Capabilities = input.Capabilities
-		}
+		expected.Capabilities = input.Capabilities
+		expected.WebCrawl = input.WebCrawl
+		expected.AIControl = input.AIControl
 		if expected.Credentials.PairLimit == 0 {
 			expected.Credentials.PairLimit = DefaultCredentialPairLimit
 		}
@@ -220,6 +339,20 @@ func Normalize(input Policy) (Policy, error) {
 	}
 	if !input.Intensity.Valid() {
 		return Policy{}, fmt.Errorf("unsupported scan intensity %q", input.Intensity)
+	}
+	if input.Pacing != nil {
+		pacing := *input.Pacing
+		if !pacing.Enabled {
+			input.Pacing = nil
+		} else {
+			if pacing.IntervalMillis == 0 {
+				pacing.IntervalMillis = DefaultPacingIntervalMillis
+			}
+			if err := pacing.Valid(); err != nil {
+				return Policy{}, err
+			}
+			input.Pacing = &pacing
+		}
 	}
 	if input.PortProfile == PortProfileCustom {
 		ports, err := NormalizePorts(input.CustomPorts)
@@ -251,6 +384,32 @@ func Normalize(input Policy) (Policy, error) {
 	}
 	if (input.Capabilities.RiskValidation || input.Capabilities.CredentialValidation) && !input.Authorization.ValidationConfirmed {
 		return Policy{}, errors.New("POC or credential validation requires one explicit authorization confirmation")
+	}
+	if !input.Capabilities.WebCrawl && (input.WebCrawl.MaxDepth != 0 || input.WebCrawl.MaxPages != 0) {
+		return Policy{}, errors.New("web_crawl bounds require the web_crawl capability")
+	}
+	if input.Capabilities.WebCrawl {
+		if input.WebCrawl.MaxDepth == 0 {
+			input.WebCrawl.MaxDepth = DefaultWebCrawlMaxDepth
+		}
+		if input.WebCrawl.MaxPages == 0 {
+			input.WebCrawl.MaxPages = DefaultWebCrawlMaxPages
+		}
+		if input.WebCrawl.MaxDepth < 1 || input.WebCrawl.MaxDepth > MaximumWebCrawlMaxDepth {
+			return Policy{}, fmt.Errorf("web_crawl max_depth must be between 1 and %d", MaximumWebCrawlMaxDepth)
+		}
+		if input.WebCrawl.MaxPages < 1 || input.WebCrawl.MaxPages > MaximumWebCrawlMaxPages {
+			return Policy{}, fmt.Errorf("web_crawl max_pages must be between 1 and %d", MaximumWebCrawlMaxPages)
+		}
+		if input.WebCrawl.PathAppLimit < 0 || input.WebCrawl.PathAppLimit > MaximumWebCrawlPathAppLimit {
+			return Policy{}, fmt.Errorf("web_crawl path_app_limit must be between 0 and %d", MaximumWebCrawlPathAppLimit)
+		}
+	}
+	if input.AIControl.Crawl && !input.Capabilities.WebCrawl {
+		return Policy{}, errors.New("ai_control.crawl requires the web_crawl capability")
+	}
+	if input.AIControl.SensitiveInfo && !input.Capabilities.SensitiveInfo {
+		return Policy{}, errors.New("ai_control.sensitive_info requires the sensitive_info capability")
 	}
 	if input.Credentials.PairLimit == 0 {
 		input.Credentials.PairLimit = DefaultCredentialPairLimit

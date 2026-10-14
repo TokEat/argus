@@ -102,6 +102,136 @@ func TestManualRiskConfigStillRejectsEmptySelection(t *testing.T) {
 	}
 }
 
+func seedEmptyMatchRoot(t *testing.T, store *gorm.DB, id, projectID string, riskStatus, credentialStatus, policyJSON string) db.RootTask {
+	t.Helper()
+	root := db.RootTask{ID: id, TenantID: "default", ProjectID: projectID, UserID: "1", Status: "Running", Config: `{}`, RuleVersion: "unknown", CurrentConfigVersion: 1, TimeoutSec: 3600}
+	batch := db.TaskBatch{ID: id + "-asset", TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Kind: "asset_scan", Status: "Done", LatestAttemptID: id + "-discovery"}
+	attempt := db.SubTask{ID: batch.LatestAttemptID, TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, BatchID: batch.ID, Status: "Done", Config: `{}`, RuleVersion: root.RuleVersion}
+	revision := db.NewTaskConfigRevision(root, 1, `{}`, `{}`, "1", "initial")
+	if policyJSON == "" {
+		policy, _ := scanpolicy.PresetPolicy(scanpolicy.PresetStandard)
+		policy.Capabilities.RiskValidation = true
+		policy.Authorization.ValidationConfirmed = true
+		encoded, _ := json.Marshal(policy)
+		policyJSON = string(encoded)
+	}
+	intent := db.ScanPolicyIntent{TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, SchemaVersion: scanpolicy.SchemaVersion, PolicyJSON: policyJSON, PolicyHash: "policy-hash", PlanHash: "plan-hash", RiskStatus: riskStatus, CredentialStatus: credentialStatus, AuthorizationActorID: "1"}
+	for _, row := range []interface{}{&db.Project{ID: root.ProjectID, TenantID: root.TenantID, OwnerUserID: "1", Status: "active"}, &root, &batch, &attempt, &revision, &intent} {
+		if err := store.Create(row).Error; err != nil {
+			t.Fatalf("seed %T: %v", row, err)
+		}
+	}
+	return root
+}
+
+func TestDeriveRiskValidationEmptyCandidatesDefersThenSkips(t *testing.T) {
+	store := setupAITestDB(t)
+	queue := scheduler.NewTaskQueue("")
+	oldQueue := routerRuntime().TaskQueue
+	routerRuntime().TaskQueue = queue
+	t.Cleanup(func() { queue.Close(); routerRuntime().TaskQueue = oldQueue })
+
+	// No assets and no fingerprint hits → zero candidates. The asynchronous
+	// fingerprint writer may not have flushed yet, so the derivation must defer
+	// (keeping the intent pending) until the retry budget is exhausted.
+	root := seedEmptyMatchRoot(t, store, "empty-risk-root", "empty-risk-project", db.ScanStageIntentPending, db.ScanStageIntentSkipped, "")
+	orch := NewScanStageOrchestrator()
+	for pass := 1; pass <= maxEmptyMatchRetries; pass++ {
+		if err := orch.DeriveRoot(context.Background(), root.TenantID, root.ID); err != nil {
+			t.Fatalf("derive pass %d: %v", pass, err)
+		}
+		var got db.ScanPolicyIntent
+		if err := store.Where("tenant_id = ? AND root_task_id = ?", root.TenantID, root.ID).First(&got).Error; err != nil {
+			t.Fatalf("reload intent pass %d: %v", pass, err)
+		}
+		if got.RiskStatus != db.ScanStageIntentPending {
+			t.Fatalf("pass %d: risk_status=%s, want pending (deferred)", pass, got.RiskStatus)
+		}
+		if retries := existingEmptyMatchRetries(store, root.TenantID, root.ID, automaticRiskStage); retries != pass {
+			t.Fatalf("pass %d: retries=%d, want %d", pass, retries, pass)
+		}
+	}
+	if err := orch.DeriveRoot(context.Background(), root.TenantID, root.ID); err != nil {
+		t.Fatalf("final derive: %v", err)
+	}
+	var got db.ScanPolicyIntent
+	if err := store.Where("tenant_id = ? AND root_task_id = ?", root.TenantID, root.ID).First(&got).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.RiskStatus != db.ScanStageIntentSkipped {
+		t.Fatalf("final risk_status=%s, want skipped after budget exhausted", got.RiskStatus)
+	}
+}
+
+func TestDeriveRootHealsPendingIntentWhenAutoBatchExists(t *testing.T) {
+	store := setupAITestDB(t)
+	queue := scheduler.NewTaskQueue("")
+	oldQueue := routerRuntime().TaskQueue
+	routerRuntime().TaskQueue = queue
+	t.Cleanup(func() { queue.Close(); routerRuntime().TaskQueue = oldQueue })
+
+	root := seedEmptyMatchRoot(t, store, "replay-risk-root", "replay-risk-project", db.ScanStageIntentPending, db.ScanStageIntentSkipped, "")
+	// Pre-existing automatic batch with the deterministic ID the derivation would
+	// use (e.g. crash between batch insert and intent save). Re-entry must heal
+	// the intent instead of re-inserting rows or violating the derivation index.
+	autoBatch := db.TaskBatch{ID: root.ID + "-auto-risk", TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Sequence: 1, Kind: automaticRiskStage, Status: "Done", LatestAttemptID: root.ID + "-auto-risk-attempt-1"}
+	autoAttempt := db.SubTask{ID: autoBatch.LatestAttemptID, TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, BatchID: autoBatch.ID, AttemptNo: 1, Status: "Done", Config: `{}`, RuleVersion: root.RuleVersion}
+	derivation := db.ScanStageDerivation{TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Stage: automaticRiskStage, Status: db.ScanStageIntentDerived, PlanHash: "plan-hash", BatchID: autoBatch.ID, AttemptID: autoAttempt.ID, ItemCount: 1, Summary: `{}`}
+	for _, row := range []interface{}{&autoBatch, &autoAttempt, &derivation} {
+		if err := store.Create(row).Error; err != nil {
+			t.Fatalf("seed %T: %v", row, err)
+		}
+	}
+
+	if err := NewScanStageOrchestrator().DeriveRoot(context.Background(), root.TenantID, root.ID); err != nil {
+		t.Fatalf("derive with pre-existing auto batch: %v", err)
+	}
+	var got db.ScanPolicyIntent
+	if err := store.Where("tenant_id = ? AND root_task_id = ?", root.TenantID, root.ID).First(&got).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.RiskStatus != db.ScanStageIntentDerived {
+		t.Fatalf("risk_status=%s, want healed to derived", got.RiskStatus)
+	}
+	var batchCount, attemptCount int64
+	store.Model(&db.TaskBatch{}).Where("root_task_id = ? AND kind = ?", root.ID, automaticRiskStage).Count(&batchCount)
+	store.Model(&db.SubTask{}).Where("root_task_id = ? AND batch_id = ?", root.ID, autoBatch.ID).Count(&attemptCount)
+	if batchCount != 1 || attemptCount != 1 {
+		t.Fatalf("duplicate auto rows: batches=%d attempts=%d", batchCount, attemptCount)
+	}
+}
+
+func TestReconcileContinuesPastFailingIntent(t *testing.T) {
+	store := setupAITestDB(t)
+	withTaskCreateQueue(t)
+
+	// Intent A: credential derivation fails (invalid policy JSON). Intent B: a
+	// healthy risk derivation. A must not starve B.
+	rootA := seedEmptyMatchRoot(t, store, "reconcile-bad-root", "reconcile-bad-project", db.ScanStageIntentSkipped, db.ScanStageIntentPending, "{invalid json")
+	rootB := seedEmptyMatchRoot(t, store, "reconcile-good-root", "reconcile-good-project", db.ScanStageIntentPending, db.ScanStageIntentSkipped, "")
+	if err := store.Create(&db.Asset{TenantID: rootB.TenantID, ProjectID: rootB.ProjectID, RootTaskID: rootB.ID, Target: "192.0.2.10", Protocol: "smb", Service: "smb", Port: 445}).Error; err != nil {
+		t.Fatalf("seed good asset: %v", err)
+	}
+
+	if err := NewScanStageOrchestrator().Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile returned error instead of continuing: %v", err)
+	}
+	var statusA db.ScanPolicyIntent
+	if err := store.Where("tenant_id = ? AND root_task_id = ?", rootA.TenantID, rootA.ID).First(&statusA).Error; err != nil {
+		t.Fatal(err)
+	}
+	if statusA.CredentialStatus != db.ScanStageIntentPending {
+		t.Fatalf("intent A credential_status=%s, want pending (failed derive left pending)", statusA.CredentialStatus)
+	}
+	var statusB db.ScanPolicyIntent
+	if err := store.Where("tenant_id = ? AND root_task_id = ?", rootB.TenantID, rootB.ID).First(&statusB).Error; err != nil {
+		t.Fatal(err)
+	}
+	if statusB.RiskStatus != db.ScanStageIntentDerived {
+		t.Fatalf("intent B risk_status=%s, want derived (must not be starved by A)", statusB.RiskStatus)
+	}
+}
+
 func TestScanStageOrchestratorDerivesGoPocOnlyRiskBatch(t *testing.T) {
 	store := setupAITestDB(t)
 	queue := scheduler.NewTaskQueue("")
@@ -141,6 +271,41 @@ func TestScanStageOrchestratorDerivesGoPocOnlyRiskBatch(t *testing.T) {
 	}
 	if config.ExecutionMode != automaticRiskStage || len(config.RiskValidationGoPocTargets) != 1 || config.RiskValidationGoPocTargets[0].Plugin != "SMB-MS17-010" || config.GoPocCatalogSHA256 != scanpolicy.GoPocCatalogSHA256() || config.ValidationEstimatedRequests != 1 {
 		t.Fatalf("unexpected GoPoc-only risk config: %+v", config)
+	}
+}
+
+func TestScanStageOrchestratorSkipsRiskWhenCapabilityDisabled(t *testing.T) {
+	store := setupAITestDB(t)
+	queue := scheduler.NewTaskQueue("")
+	oldQueue := routerRuntime().TaskQueue
+	routerRuntime().TaskQueue = queue
+	t.Cleanup(func() { queue.Close(); routerRuntime().TaskQueue = oldQueue })
+
+	root := db.RootTask{ID: "gopoc-risk-disabled-root", TenantID: "default", ProjectID: "gopoc-risk-disabled-project", UserID: "1", Status: "Running", Config: `{}`, RuleVersion: "unknown", CurrentConfigVersion: 1, TimeoutSec: 3600}
+	batch := db.TaskBatch{ID: "gopoc-risk-disabled-asset", TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Kind: "asset_scan", Status: "Done", LatestAttemptID: "gopoc-risk-disabled-discovery"}
+	attempt := db.SubTask{ID: batch.LatestAttemptID, TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, BatchID: batch.ID, Status: "Done", Config: `{}`, RuleVersion: root.RuleVersion}
+	revision := db.NewTaskConfigRevision(root, 1, `{}`, `{}`, "1", "initial")
+	policy, _ := scanpolicy.PresetPolicy(scanpolicy.PresetStandard)
+	policy.Capabilities.RiskValidation = false
+	policy.Authorization.ValidationConfirmed = false
+	policyJSON, _ := json.Marshal(policy)
+	intent := db.ScanPolicyIntent{TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, SchemaVersion: scanpolicy.SchemaVersion, PolicyJSON: string(policyJSON), PolicyHash: "policy-hash", PlanHash: "plan-hash", RiskStatus: db.ScanStageIntentSkipped, CredentialStatus: db.ScanStageIntentSkipped, AuthorizationActorID: "1"}
+	asset := db.Asset{TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Target: "192.0.2.10", Protocol: "smb", Service: "smb", Port: 445}
+	for _, row := range []interface{}{&db.Project{ID: root.ProjectID, TenantID: root.TenantID, OwnerUserID: "1", Status: "active"}, &root, &batch, &attempt, &revision, &intent, &asset} {
+		if err := store.Create(row).Error; err != nil {
+			t.Fatalf("seed %T: %v", row, err)
+		}
+	}
+	if err := NewScanStageOrchestrator().DeriveRoot(context.Background(), root.TenantID, root.ID); err != nil {
+		t.Fatalf("derive with risk disabled: %v", err)
+	}
+	var child db.SubTask
+	if err := store.Where("root_task_id = ? AND trigger = ?", root.ID, "automatic_risk_validation").First(&child).Error; err == nil {
+		t.Fatalf("risk_validation sub-task was derived although capability was disabled: %+v", child)
+	}
+	var derivation db.ScanStageDerivation
+	if err := store.Where("root_task_id = ? AND stage = ?", root.ID, automaticRiskStage).First(&derivation).Error; err == nil {
+		t.Fatalf("unexpected risk_validation derivation row was created: %+v", derivation)
 	}
 }
 

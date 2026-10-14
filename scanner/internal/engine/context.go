@@ -89,6 +89,12 @@ type ScanContext struct {
 	// GoPocsResults 存储 Go Poc 的检测结果
 	GoPocsResults []GoPocsResultType
 
+	// LineageParents 扫描链路溯源：归一化子目标 → 归一化父目标。
+	// 由 pipeline 各编排阶段在产出子目标时写入，OutputHook 收口时据此给
+	// 每条 OutputMessage 打 Source。空 map / 未命中表示根或未知父。
+	LineageParents     map[string]string
+	LineageParentsLock sync.Mutex
+
 	// --- 高性能缓存 (HybridMap 基于 LevelDB) ---
 
 	// BannerHMap 协议 Banner 缓存
@@ -179,6 +185,7 @@ func NewScanContext(cfg Config) (*ScanContext, error) {
 		httpURLVisits:        make(map[string]struct{}),
 		ResultMap:            make(map[string][]string),
 		DirFallbackResultMap: make(map[string][]string),
+		LineageParents:       make(map[string]string),
 
 		BannerHMap: stores.Banner,
 		BodyHMap:   stores.Body,

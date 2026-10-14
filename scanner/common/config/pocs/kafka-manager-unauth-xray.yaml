@@ -1,0 +1,30 @@
+# 来源: xray（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - Kafka Manager</a>
+          - <title>Kafka Manager</title>
+          - Add Cluster
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/'
+id: kafka-manager-unauth
+info:
+  author: Aquilao(https://github.com/Aquilao)
+  description: ""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: 在符合以下条件的情况下，我们欢迎任何人以任何形式使用本项目（包括商用）。
+    argus-import-source: xray
+    argus-risk-level: medium
+  name: kafka-manager-unauth
+  reference:
+    - https://blog.csdn.net/qq_36923426/article/details/111361158
+  severity: medium
+  tags: argus-import

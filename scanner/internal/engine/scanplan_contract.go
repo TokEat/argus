@@ -33,6 +33,10 @@ func CanonicalStageForPhase(phase string) (scanplan.Stage, bool) {
 		return scanplan.StageRiskValidation, true
 	case PhaseCredentialValidation:
 		return scanplan.StageCredentialValidation, true
+	case PhaseWebCrawl:
+		return scanplan.StageWebCrawl, true
+	case PhaseSensitiveInfo:
+		return scanplan.StageSensitiveInfo, true
 	default:
 		return "", false
 	}

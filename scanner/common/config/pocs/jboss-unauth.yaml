@@ -1,0 +1,29 @@
+# 来源: xray（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - jboss.management.local
+          - jboss.web
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/jmx-console/'
+id: jboss-unauth
+info:
+  author: FiveAourThe(https://github.com/FiveAourThe)
+  description: ""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: 在符合以下条件的情况下，我们欢迎任何人以任何形式使用本项目（包括商用）。
+    argus-import-source: xray
+    argus-risk-level: medium
+  name: jboss-unauth
+  reference:
+    - https://xz.aliyun.com/t/6103
+  severity: medium
+  tags: argus-import

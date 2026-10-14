@@ -42,8 +42,8 @@ func (agentFingerprint) TableName() string { return "fingerprints" }
 
 type agentPoc struct {
 	ID             uint      `gorm:"primaryKey;autoIncrement"`
-	Name           string    `gorm:"uniqueIndex;not null"`
-	FileName       string    `gorm:"index;not null"`
+	Name           string    `gorm:"index;not null"` // 模板 id，可重复（同 id 不同文件）
+	FileName       string    `gorm:"uniqueIndex;not null"` // 物化/Workflow 引用的唯一键
 	Content        string    ``
 	ContentHash    string    ``
 	Severity       string    `gorm:"index;default:'info'"`
@@ -217,14 +217,17 @@ func buildArsenalSQLiteDB(tenantID string) (filePath string, md5Hash string, sha
 			}
 		}
 
-		// 按 Name 去重，避免 uniqueIndex 冲突导致整批插入失败
+		// 按 SourceFile（文件名）去重：server poc_rules 唯一键是 (tenant_id, source_file)，
+		// agent 本地 SQLite pocs 唯一键也是 file_name。同名不同文件的 POC（如
+		// nacos-version.yaml 与 nacos-version-nuclei-templates.yaml，id 都是 nacos-version）
+		// 必须全部保留，否则按 Name 去重会静默丢文件，导致 workflow 按文件名引用时 dangling。
 		seen := make(map[string]bool, len(pocRules))
 		batch := make([]agentPoc, 0, len(pocRules))
 		for _, r := range pocRules {
-			if seen[r.Name] {
+			if seen[r.SourceFile] {
 				continue
 			}
-			seen[r.Name] = true
+			seen[r.SourceFile] = true
 			content := contentMap[r.ArtifactID]
 			batch = append(batch, agentPoc{
 				Name:           r.Name,

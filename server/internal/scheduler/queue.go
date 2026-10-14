@@ -373,6 +373,57 @@ func (q *TaskQueue) publishConfirmedLocked(ctx context.Context, queueName string
 	return nil
 }
 
+// AgentQueueName returns the dedicated controller-push queue name for an agent.
+// The agent id is sanitized so the resulting queue name is always broker-safe.
+func AgentQueueName(agentID string) string {
+	safe := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			return r
+		}
+		return '_'
+	}, agentID)
+	return "argus.tasks.agent." + safe
+}
+
+// PushToAgentQueue routes a task to a specific agent's dedicated queue. This is
+// the controller-push dispatch primitive: the queue is declared on demand so it
+// survives broker reconnects, and delivery/ack semantics are identical to the
+// shared queues because pendingAcks already encodes queueName.
+func (q *TaskQueue) PushToAgentQueue(ctx context.Context, agentID string, task *pb.Task) error {
+	if q.mode == "memory" {
+		q.mem.pushAgent(agentID, task, int(task.Priority))
+		return nil
+	}
+
+	queueName := AgentQueueName(agentID)
+	data, err := json.Marshal(task)
+	if err != nil {
+		return fmt.Errorf("task marshal error: %w", err)
+	}
+
+	q.chMu.Lock()
+	defer q.chMu.Unlock()
+
+	if err := q.ensureChannel(); err != nil {
+		return err
+	}
+	if _, err := q.ch.QueueDeclare(queueName, true, false, false, false, nil); err != nil {
+		q.unhealthy = true
+		return fmt.Errorf("RabbitMQ declare agent queue %s failed: %w", queueName, err)
+	}
+
+	err = q.publishConfirmedLocked(ctx, queueName, amqp.Publishing{
+		ContentType:  "application/json",
+		DeliveryMode: amqp.Persistent,
+		Body:         data,
+	})
+	if err != nil {
+		q.unhealthy = true
+	}
+	return err
+}
+
 // ============================================================================
 // Pop 出队 — 多优先级降序消费
 // ============================================================================
@@ -432,6 +483,65 @@ func (q *TaskQueue) TryPopTask(ctx context.Context, agentID string) (*pb.Task, s
 	}
 
 	return nil, "", nil // 全部为空
+}
+
+// TryPopAgentTask 完全非阻塞地弹出指定 agent 专属队列中的一个任务
+// （controller-push 路径）。队列为空（或尚未声明）时返回 (nil, "", nil)。
+func (q *TaskQueue) TryPopAgentTask(ctx context.Context, agentID string) (*pb.Task, string, error) {
+	if q.mode == "memory" {
+		if task, ok := q.mem.popAgent(agentID); ok {
+			return task, "", nil
+		}
+		return nil, "", nil
+	}
+
+	q.chMu.Lock()
+	defer q.chMu.Unlock()
+
+	if err := q.ensureChannel(); err != nil {
+		return nil, "", err
+	}
+
+	queueName := AgentQueueName(agentID)
+	// The agent may poll before the controller's first route; a missing queue
+	// means "empty", not an error.
+	if _, err := q.ch.QueueDeclarePassive(queueName, true, false, false, false, nil); err != nil {
+		var amqpErr *amqp.Error
+		if errors.As(err, &amqpErr) && amqpErr.Code == amqp.NotFound {
+			return nil, "", nil
+		}
+		q.unhealthy = true
+		return nil, "", fmt.Errorf("RabbitMQ passive declare %s failed: %w", queueName, err)
+	}
+
+	msg, ok, err := q.ch.Get(queueName, false) // autoAck=false, 手动确认
+	if err != nil {
+		q.unhealthy = true
+		return nil, "", fmt.Errorf("RabbitMQ Get error on %s: %w", queueName, err)
+	}
+	if !ok {
+		return nil, "", nil
+	}
+
+	var task pb.Task
+	if err := json.Unmarshal(msg.Body, &task); err != nil {
+		if ackErr := q.ch.Ack(msg.DeliveryTag, false); ackErr != nil {
+			q.unhealthy = true
+		}
+		log.Printf("[TaskQueue] Discarded malformed agent message from %s: %v", queueName, err)
+		return nil, "", nil
+	}
+
+	compositeID := q.deliveryID(queueName, msg.DeliveryTag)
+	q.pendingAcks.Store(compositeID, &pendingDelivery{
+		tag:        msg.DeliveryTag,
+		queueName:  queueName,
+		agentID:    agentID,
+		claimedAt:  time.Now(),
+		generation: q.generation,
+	})
+
+	return &task, compositeID, nil
 }
 
 // PopTask 阻塞版本：先尝试立即获取，失败后等待 500ms 重试一次
@@ -658,11 +768,16 @@ type memoryQueue struct {
 	mu     sync.Mutex
 	tasks  []memoryTask
 	notify chan struct{}
+
+	// agentQueues holds dedicated per-agent buffers for controller-push
+	// dispatch (memory fallback). Only used when routing to a specific agent.
+	agentQueues map[string]*memoryAgentQueue
 }
 
 func newMemoryQueue() *memoryQueue {
 	return &memoryQueue{
-		notify: make(chan struct{}, 1),
+		notify:      make(chan struct{}, 1),
+		agentQueues: make(map[string]*memoryAgentQueue),
 	}
 }
 
@@ -714,4 +829,72 @@ func (q *memoryQueue) signal() {
 	case q.notify <- struct{}{}:
 	default:
 	}
+}
+
+func (q *memoryQueue) pushAgent(agentID string, task *pb.Task, priority int) {
+	q.mu.Lock()
+	aq := q.agentQueues[agentID]
+	if aq == nil {
+		aq = newMemoryAgentQueue()
+		q.agentQueues[agentID] = aq
+	}
+	q.mu.Unlock()
+	aq.push(task, priority)
+}
+
+func (q *memoryQueue) popAgent(agentID string) (*pb.Task, bool) {
+	q.mu.Lock()
+	aq := q.agentQueues[agentID]
+	q.mu.Unlock()
+	if aq == nil {
+		return nil, false
+	}
+	return aq.tryPop()
+}
+
+// memoryAgentQueue is a single-agent priority-ordered buffer used by the
+// controller-push dispatch path in memory fallback mode.
+type memoryAgentQueue struct {
+	mu     sync.Mutex
+	tasks  []memoryTask
+	notify chan struct{}
+}
+
+func newMemoryAgentQueue() *memoryAgentQueue {
+	return &memoryAgentQueue{notify: make(chan struct{}, 1)}
+}
+
+// push inserts by ascending priority value (lower number = higher priority),
+// mirroring memoryQueue.push.
+func (q *memoryAgentQueue) push(task *pb.Task, priority int) {
+	q.mu.Lock()
+	inserted := false
+	for i, t := range q.tasks {
+		if t.priority > priority {
+			q.tasks = append(q.tasks[:i+1], q.tasks[i:]...)
+			q.tasks[i] = memoryTask{task: task, priority: priority}
+			inserted = true
+			break
+		}
+	}
+	if !inserted {
+		q.tasks = append(q.tasks, memoryTask{task: task, priority: priority})
+	}
+	q.mu.Unlock()
+	select {
+	case q.notify <- struct{}{}:
+	default:
+	}
+}
+
+// tryPop non-blockingly removes and returns the highest-priority task.
+func (q *memoryAgentQueue) tryPop() (*pb.Task, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.tasks) == 0 {
+		return nil, false
+	}
+	task := q.tasks[0].task
+	q.tasks = q.tasks[1:]
+	return task, true
 }

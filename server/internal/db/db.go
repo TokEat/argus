@@ -11,6 +11,7 @@ import (
 	"time"
 
 	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
+	"github.com/P0lar1ght/argus/shared/proto/go/targetutil"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -82,6 +83,7 @@ type RootTask struct {
 	TimeoutSec           int
 	RuleVersion          string
 	CurrentConfigVersion int `gorm:"default:1"`
+	DispatchStrategy     string `gorm:"size:32;index"` // ''=inherit global default; controller_push|agent_claim
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 	ArchivedAt           *time.Time `gorm:"index"`
@@ -112,6 +114,10 @@ type SubTask struct {
 	RuleVersion        string
 	StartedAt          *time.Time `gorm:"index"`
 	FinishedAt         *time.Time `gorm:"index"`
+	DispatchStrategy   string     `gorm:"size:32;index"` // ''=inherit global default; controller_push|agent_claim
+	NextEligibleAt     *time.Time `gorm:"index"`         // exponential-retry backoff gate; NULL=eligible now
+	RoutedAgentID      string     `gorm:"index"`         // controller_push: advisory target agent (bind still at claim)
+	RoutedAt           *time.Time // controller_push: when the controller last routed this attempt
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
@@ -137,6 +143,7 @@ type TaskBatch struct {
 	CurrentAttemptNo   int    `gorm:"default:1"`
 	AttemptCount       int    `gorm:"default:1"`
 	LatestAttemptID    string `gorm:"index"`
+	DispatchStrategy   string `gorm:"size:32;index"` // ''=inherit global default; controller_push|agent_claim
 	CreatedBy          string `gorm:"index"`
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
@@ -320,6 +327,7 @@ type Asset struct {
 	Service     string
 	CertSubject string     // TLS 证书主体
 	CertExpiry  *time.Time // TLS 证书过期时间
+	Source      string     // 父目标（归一化），扫描链路溯源用；空串=根/未知
 	Tags        string     `gorm:"type:jsonb"`
 	Status      string     `gorm:"default:'alive';index"`
 	OwnerID     string     `gorm:"index"`
@@ -372,9 +380,87 @@ type Vulnerability struct {
 	Description  string `gorm:"type:text"` // 漏洞描述
 	Reference    string `gorm:"type:text"` // 参考链接 (JSON array)
 	MatchedAt    string `gorm:"type:text"` // 匹配位置 URL
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// AI 误报研判回写列（ai.TriageAnalyzer 写入；AI 是 advisor，默认不改 Status）
+	AIStatus     string     `gorm:"index"`
+	AIConfidence float64
+	AIReason     string `gorm:"type:text"`
+	AITriagedAt  *time.Time `gorm:"index"`
+	AIReviewID   uint
+	// 安全设备对抗哨兵污点标记（sentinel 包写入；taint_status 如 suspect_waf）
+	TaintStatus string `gorm:"index"`
+	TaintReason string `gorm:"type:text"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
+
+// AIFindingReview stores one AI triage verdict for a vulnerability. Rows are
+// keyed by evidence_hash (md5 of target|plugin|response) so identical evidence
+// is judged once; OverrideVerdict records a human decision that wins over Verdict.
+type AIFindingReview struct {
+	ID              uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID        string `gorm:"default:'default';index"`
+	VulnerabilityID uint   `gorm:"index"`
+	RootTaskID      string `gorm:"index"`
+	ProjectID       string `gorm:"index"`
+	Plugin          string
+	Severity        string
+	Target          string
+	EvidenceHash    string `gorm:"index"`
+	Verdict         string `gorm:"index"` // confirmed / likely_false_positive / uncertain
+	Confidence      float64
+	Reason          string `gorm:"type:text"`
+	RawResponse     string `gorm:"type:text"`
+	Provider        string
+	Model           string
+	OverriddenBy    string
+	OverrideVerdict string
+	CreatedBy       string
+	CreatedAt       time.Time
+}
+
+// EgressBanEvent is one sentinel detection: the rule engine spots a ban /
+// interception / coverage anomaly during scanning, AI classifies it and
+// recommends an action, and a policy-gated executor applies it. Evidence is
+// stored as JSONB samples so the AI decision is auditable end to end.
+type EgressBanEvent struct {
+	ID                uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID          string `gorm:"default:'default';index"`
+	RootTaskID        string `gorm:"index"`
+	SubTaskID         string `gorm:"index"`
+	BatchID           string `gorm:"index"`
+	ProjectID         string
+	Target            string `gorm:"index"`
+	Host              string
+	AgentID           string
+	SignalType        string // http_streak | homogeneity | success_drop
+	Evidence          string `gorm:"type:jsonb"`
+	Classification    string `gorm:"default:'pending'"` // pending | banned | rate_limited | waf_challenge | target_down | scanner_bug | false_positive
+	RecommendedAction string
+	ActionReason      string `gorm:"type:text"`
+	Confidence        float64
+	Status            string `gorm:"default:'open';index"` // open | executed | dismissed | expired
+	ExecutedAt        *time.Time
+	ExecutedBy        string
+	CooldownUntil     *time.Time
+	CreatedAt         time.Time
+	ResolvedAt        *time.Time
+}
+
+// NodeBan is ban memory keyed by (tenant, target, agent): which agent's egress
+// got banned for which target, plus cooldown, so rescan-on-other-node never
+// flip-flops back to a known-banned egress.
+type NodeBan struct {
+	ID            uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID      string `gorm:"default:'default'"`
+	Target        string
+	AgentID       string
+	EgressIP      string
+	HitCount      int `gorm:"default:1"`
+	BannedAt      time.Time
+	CooldownUntil *time.Time
+}
+
+func (NodeBan) TableName() string { return "node_bans" }
 
 type NotificationRule struct {
 	ID        uint   `gorm:"primaryKey;autoIncrement"`
@@ -630,6 +716,7 @@ func StartBatchWriters() {
 			OnResultBatchSaved(len(finalBatch), "vuln")
 		}
 	})
+	startContentFindingsWriters()
 }
 
 func startGenericBatchWriter[T any](ch chan T, saveFunc func(batch []T)) {
@@ -711,33 +798,7 @@ var taskOwnerCache = newTaskOwnerLRU(10000)
 //   - URL → 提取为 scheme://host:port（保留 scheme 和端口）: "https://example.com:443"
 //   - 域名 → 保持原样: "example.com"
 func normalizeTarget(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || raw == "unknown" {
-		return raw
-	}
-
-	// 尝试解析为 URL
-	if strings.Contains(raw, "://") {
-		if u, err := url.Parse(raw); err == nil && u.Host != "" {
-			host := u.Hostname()
-			port := u.Port()
-			// 补全默认端口
-			if port == "" {
-				switch u.Scheme {
-				case "https":
-					port = "443"
-				case "http":
-					port = "80"
-				}
-			}
-			if port != "" {
-				return u.Scheme + "://" + host + ":" + port
-			}
-			return u.Scheme + "://" + host
-		}
-	}
-
-	return raw
+	return targetutil.NormalizeTarget(raw)
 }
 
 func splitFingerprintToken(raw string) []string {
@@ -902,7 +963,7 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 	target := "unknown"
 	var p map[string]interface{}
 	var port int
-	var service, title, severity, plugin string
+	var service, title, severity, plugin, source string
 
 	if err := json.Unmarshal([]byte(payloadJSON), &p); err == nil {
 		// 提取 target
@@ -945,6 +1006,9 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 			plugin = v
 		} else if v, ok := p["name"].(string); ok {
 			plugin = v
+		}
+		if v, ok := p["source"].(string); ok {
+			source = v
 		}
 	}
 
@@ -1039,6 +1103,7 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 		assetBuffer <- Asset{
 			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID, Target: target, Protocol: payloadType,
 			Port: port, URL: actualURL, Title: title, Service: service,
+			Source: normalizeTarget(source),
 			Tags: payloadJSON, Status: "alive", CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
 	case "fingerprint", "web_fingerprint", "tech",
@@ -1060,6 +1125,61 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 				TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID, Target: target, ProductName: productName,
 				Evidence: payloadJSON, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 			}
+		}
+	case "CrawlSite":
+		// 主动爬取提取的"同主机不同站点"关联资产候选。
+		cs, ok := p["crawl_site"].(map[string]interface{})
+		if !ok {
+			break
+		}
+		rawURL := payloadString(cs, "url")
+		if rawURL == "" {
+			rawURL = target
+		}
+		if rawURL == "" || rawURL == "unknown" {
+			break
+		}
+		aiControl, _ := cs["ai_control"].(bool)
+		aiStatus := "confirmed"
+		if aiControl {
+			aiStatus = "pending"
+		}
+		portF, _ := cs["port"].(float64)
+		crawlSiteBuffer <- CrawlSiteCandidate{
+			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID,
+			SourceURL: payloadString(cs, "source_url"),
+			URL: rawURL, Scheme: payloadString(cs, "scheme"),
+			Host: payloadString(cs, "host"), Port: int(portF),
+			LinkContext: payloadString(cs, "link_context"),
+			SiteType:    payloadString(cs, "site_type"),
+			DedupeHash:  crawlSiteDedupeHash(projectID, rawURL),
+			AIControl:   aiControl, AIStatus: aiStatus,
+			CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		}
+	case "SensitiveInfo":
+		// 页面/JS 中提取的敏感信息候选。
+		si, ok := p["sensitive_info"].(map[string]interface{})
+		if !ok {
+			break
+		}
+		kind := payloadString(si, "kind")
+		value := payloadString(si, "value")
+		if value == "" {
+			break
+		}
+		host := payloadString(si, "host")
+		aiControl, _ := si["ai_control"].(bool)
+		aiStatus := "confirmed"
+		if aiControl {
+			aiStatus = "pending"
+		}
+		sensitiveBuffer <- SensitiveFinding{
+			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID,
+			SourceURL: payloadString(si, "source_url"), Host: host,
+			Kind: kind, Value: value, Snippet: payloadString(si, "snippet"),
+			DedupeHash: sensitiveDedupeHash(projectID, host, kind, value),
+			AIControl:  aiControl, AIStatus: aiStatus,
+			CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
 	case "phase":
 		// Agent PhaseHook 发送的阶段进度事件，仅广播到 WebSocket，不入库

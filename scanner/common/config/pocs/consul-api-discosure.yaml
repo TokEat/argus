@@ -1,0 +1,35 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"Config":'
+          - '"DebugConfig":'
+          - '"Telemetry":'
+        condition: and
+      - type: word
+        part: header
+        words:
+          - application/json
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/v1/agent/self'
+id: consul-api-discosure
+info:
+  author: zan8in
+  description: |-
+    Consul is a service networking solution to automate network configurations, discover services, and enable secure connectivity across any cloud or runtime.
+    Consul API is designed to be accessed inside trusted environments. It's not recommended to have Consul API publicly accessible.
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Consul API publicly exposed
+  severity: high
+  tags: consul,api,disclosure,argus-import

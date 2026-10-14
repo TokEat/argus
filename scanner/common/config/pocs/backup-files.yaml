@@ -1,0 +1,22 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+    method: GET
+    path:
+      - '{{BaseURL}}/'
+id: backup-files
+info:
+  author: zan8in
+  description: |
+    Multiple compressed backup files were detected.
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Compressed Backup File - Detect
+  severity: high
+  tags: exposure,backup,argus-import

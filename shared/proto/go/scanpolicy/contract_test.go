@@ -5,6 +5,67 @@ import (
 	"testing"
 )
 
+func TestPacingPassthroughAndNormalization(t *testing.T) {
+	policy, _ := PresetPolicy(PresetQuick)
+	policy.Pacing = &ScanPacing{Enabled: true}
+	normalized, err := Normalize(policy)
+	if err != nil {
+		t.Fatalf("normalize pacing on quick preset: %v", err)
+	}
+	if normalized.Pacing == nil || !normalized.Pacing.Enabled {
+		t.Fatalf("pacing was dropped on quick preset: %+v", normalized.Pacing)
+	}
+	if normalized.Pacing.IntervalMillis != DefaultPacingIntervalMillis {
+		t.Fatalf("default pacing interval = %d, want %d", normalized.Pacing.IntervalMillis, DefaultPacingIntervalMillis)
+	}
+
+	policy, _ = PresetPolicy(PresetStandard)
+	policy.Pacing = &ScanPacing{Enabled: true, IntervalMillis: 200}
+	if policy.Capabilities.RiskValidation {
+		policy.Authorization.ValidationConfirmed = true
+	}
+	normalized, err = Normalize(policy)
+	if err != nil {
+		t.Fatalf("normalize pacing on standard preset: %v", err)
+	}
+	if normalized.Pacing == nil || normalized.Pacing.IntervalMillis != 200 {
+		t.Fatalf("pacing passthrough on standard preset = %+v", normalized.Pacing)
+	}
+
+	policy, _ = PresetPolicy(PresetStandard)
+	policy.Pacing = &ScanPacing{Enabled: false, IntervalMillis: 200}
+	policy.Authorization.ValidationConfirmed = true
+	normalized, err = Normalize(policy)
+	if err != nil {
+		t.Fatalf("normalize disabled pacing: %v", err)
+	}
+	if normalized.Pacing != nil {
+		t.Fatalf("disabled pacing must normalize to nil, got %+v", normalized.Pacing)
+	}
+}
+
+func TestPacingIntervalValidation(t *testing.T) {
+	base := Policy{
+		SchemaVersion: SchemaVersion, Preset: PresetCustom,
+		PortProfile: PortProfileCommon100, ScanMethod: ScanMethodTCP, Intensity: IntensityLow,
+		Pacing: &ScanPacing{Enabled: true},
+	}
+	for _, interval := range []int{MinimumPacingIntervalMillis - 1, MaximumPacingIntervalMillis + 1} {
+		base.Pacing.IntervalMillis = interval
+		if _, err := Normalize(base); err == nil || !strings.Contains(err.Error(), "interval_millis") {
+			t.Fatalf("expected pacing interval %d rejection, got %v", interval, err)
+		}
+	}
+	base.Pacing.IntervalMillis = MinimumPacingIntervalMillis
+	if _, err := Normalize(base); err != nil {
+		t.Fatalf("boundary interval %d must be accepted: %v", MinimumPacingIntervalMillis, err)
+	}
+	base.Pacing.IntervalMillis = MaximumPacingIntervalMillis
+	if _, err := Normalize(base); err != nil {
+		t.Fatalf("boundary interval %d must be accepted: %v", MaximumPacingIntervalMillis, err)
+	}
+}
+
 func TestPresetPolicies(t *testing.T) {
 	tests := []struct {
 		preset   Preset
@@ -38,6 +99,44 @@ func TestPresetPolicies(t *testing.T) {
 		if test.preset == PresetDeep && normalized.Subdomains.BruteforceDepth != 2 {
 			t.Fatalf("deep preset bruteforce depth = %d, want 2", normalized.Subdomains.BruteforceDepth)
 		}
+	}
+}
+
+func TestExplicitCapabilitiesAreHonoredVerbatim(t *testing.T) {
+	// Regression: unticking every capability checkbox submits a zero-value
+	// Capabilities. That is an explicit "run none of these stages" choice, not an
+	// omission, and must not be replaced by preset defaults (standard/deep default
+	// RiskValidation to true, which would run the POC stage the user disabled).
+	policy, err := PresetPolicy(PresetStandard)
+	if err != nil {
+		t.Fatalf("PresetPolicy(standard): %v", err)
+	}
+	policy.Capabilities = Capabilities{} // user unticked every box, incl. POC
+	normalized, err := Normalize(policy)
+	if err != nil {
+		t.Fatalf("Normalize(standard, all capabilities off): %v", err)
+	}
+	if normalized.Capabilities.RiskValidation {
+		t.Fatalf("RiskValidation must stay disabled when POC is unticked on a standard preset: %+v", normalized.Capabilities)
+	}
+	if normalized.Capabilities.BehaviorProbe {
+		t.Fatalf("BehaviorProbe must stay disabled when unticked on a standard preset: %+v", normalized.Capabilities)
+	}
+
+	// The inverse must also hold: explicitly ticking POC on a preset that defaults
+	// it off keeps the stage enabled.
+	quick, err := PresetPolicy(PresetQuick)
+	if err != nil {
+		t.Fatalf("PresetPolicy(quick): %v", err)
+	}
+	quick.Capabilities.RiskValidation = true
+	quick.Authorization.ValidationConfirmed = true
+	normalized, err = Normalize(quick)
+	if err != nil {
+		t.Fatalf("Normalize(quick, POC on): %v", err)
+	}
+	if !normalized.Capabilities.RiskValidation {
+		t.Fatalf("RiskValidation must stay enabled when explicitly ticked on a quick preset")
 	}
 }
 

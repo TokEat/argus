@@ -1176,6 +1176,10 @@ func (w *Worker) executeTask(task *pb.Task) {
 	ctx.OutputHook = func(msg engine.OutputMessage) {
 		mirrorAgentConsoleOutputForMode(msg, cfg.ExecutionMode)
 
+		// 扫描链路溯源：在唯一收口点给每条结果打上父目标引用，
+		// 覆盖 emit 路径与 nuclei 直连路径，server 端据此回溯资产来源。
+		msg.Source = engine.LineageSourceFor(ctx, msg)
+
 		streamMu.Lock()
 		defer streamMu.Unlock()
 

@@ -148,6 +148,37 @@ CREATE SEQUENCE public.agent_session_audits_id_seq
 
 ALTER SEQUENCE public.agent_session_audits_id_seq OWNED BY public.agent_session_audits.id;
 
+CREATE TABLE public.ai_finding_reviews (
+    id bigint NOT NULL,
+    tenant_id text DEFAULT 'default'::text NOT NULL,
+    vulnerability_id bigint NOT NULL,
+    root_task_id text,
+    project_id text,
+    plugin text,
+    severity text,
+    target text,
+    evidence_hash text NOT NULL,
+    verdict text NOT NULL,
+    confidence double precision DEFAULT 0 NOT NULL,
+    reason text,
+    raw_response text,
+    provider text,
+    model text,
+    overridden_by text,
+    override_verdict text,
+    created_by text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE SEQUENCE public.ai_finding_reviews_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.ai_finding_reviews_id_seq OWNED BY public.ai_finding_reviews.id;
+
 CREATE TABLE public.ai_tool_invocations (
     id bigint NOT NULL,
     tenant_id text DEFAULT 'default'::text NOT NULL,
@@ -553,7 +584,8 @@ CREATE TABLE public.assets (
     owner_id text,
     cred_id text,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    root_task_id text
+    root_task_id text,
+    source character varying(512) DEFAULT ''::character varying NOT NULL
 );
 
 CREATE SEQUENCE public.assets_id_seq
@@ -672,6 +704,38 @@ CREATE TABLE public.cloud_scaling_policies (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     spot_duration_hours integer DEFAULT 1 NOT NULL
 );
+
+CREATE TABLE public.crawl_site_candidates (
+    id bigint NOT NULL,
+    tenant_id text DEFAULT 'default'::text NOT NULL,
+    project_id text DEFAULT ''::text NOT NULL,
+    task_id text DEFAULT ''::text NOT NULL,
+    root_task_id text DEFAULT ''::text NOT NULL,
+    source_url text DEFAULT ''::text NOT NULL,
+    url text DEFAULT ''::text NOT NULL,
+    scheme text DEFAULT ''::text NOT NULL,
+    host text DEFAULT ''::text NOT NULL,
+    port integer DEFAULT 0 NOT NULL,
+    link_context text DEFAULT ''::text NOT NULL,
+    dedupe_hash text NOT NULL,
+    ai_control boolean DEFAULT false NOT NULL,
+    ai_status text DEFAULT 'pending'::text NOT NULL,
+    ai_confidence double precision DEFAULT 0 NOT NULL,
+    ai_reason text DEFAULT ''::text NOT NULL,
+    asset_promoted boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    site_type text DEFAULT ''::text NOT NULL
+);
+
+CREATE SEQUENCE public.crawl_site_candidates_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.crawl_site_candidates_id_seq OWNED BY public.crawl_site_candidates.id;
 
 CREATE TABLE public.credential_bundles (
     ref character varying(36) NOT NULL,
@@ -857,6 +921,39 @@ CREATE SEQUENCE public.domains_id_seq
     CACHE 1;
 
 ALTER SEQUENCE public.domains_id_seq OWNED BY public.domains.id;
+
+CREATE TABLE public.egress_ban_events (
+    id bigint NOT NULL,
+    tenant_id text DEFAULT 'default'::text NOT NULL,
+    root_task_id text DEFAULT ''::text NOT NULL,
+    sub_task_id text DEFAULT ''::text NOT NULL,
+    batch_id text DEFAULT ''::text NOT NULL,
+    project_id text DEFAULT ''::text NOT NULL,
+    target text DEFAULT ''::text NOT NULL,
+    host text DEFAULT ''::text NOT NULL,
+    agent_id text DEFAULT ''::text NOT NULL,
+    signal_type text NOT NULL,
+    evidence jsonb DEFAULT '{}'::jsonb NOT NULL,
+    classification text DEFAULT 'pending'::text NOT NULL,
+    recommended_action text DEFAULT ''::text NOT NULL,
+    action_reason text DEFAULT ''::text NOT NULL,
+    confidence double precision DEFAULT 0 NOT NULL,
+    status text DEFAULT 'open'::text NOT NULL,
+    executed_at timestamp with time zone,
+    executed_by text DEFAULT ''::text NOT NULL,
+    cooldown_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    resolved_at timestamp with time zone
+);
+
+CREATE SEQUENCE public.egress_ban_events_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.egress_ban_events_id_seq OWNED BY public.egress_ban_events.id;
 
 CREATE TABLE public.exp_asset_refs (
     id bigint NOT NULL,
@@ -1127,6 +1224,26 @@ CREATE SEQUENCE public.fingerprint_rules_id_seq
 
 ALTER SEQUENCE public.fingerprint_rules_id_seq OWNED BY public.fingerprint_rules.id;
 
+CREATE TABLE public.node_bans (
+    id bigint NOT NULL,
+    tenant_id text DEFAULT 'default'::text NOT NULL,
+    target text DEFAULT ''::text NOT NULL,
+    agent_id text DEFAULT ''::text NOT NULL,
+    egress_ip text DEFAULT ''::text NOT NULL,
+    hit_count integer DEFAULT 1 NOT NULL,
+    banned_at timestamp with time zone DEFAULT now() NOT NULL,
+    cooldown_until timestamp with time zone
+);
+
+CREATE SEQUENCE public.node_bans_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.node_bans_id_seq OWNED BY public.node_bans.id;
+
 CREATE TABLE public.nodes (
     agent_id text NOT NULL,
     ip text,
@@ -1301,7 +1418,8 @@ CREATE TABLE public.root_tasks (
     total_targets integer DEFAULT 0 NOT NULL,
     completed_targets integer DEFAULT 0 NOT NULL,
     archived_at timestamp with time zone,
-    current_config_version integer DEFAULT 1 NOT NULL
+    current_config_version integer DEFAULT 1 NOT NULL,
+    dispatch_strategy character varying(32) DEFAULT ''::character varying NOT NULL
 );
 
 CREATE TABLE public.rule_catalog_bootstraps (
@@ -1526,6 +1644,36 @@ CREATE SEQUENCE public.scan_work_claims_id_seq
 
 ALTER SEQUENCE public.scan_work_claims_id_seq OWNED BY public.scan_work_claims.id;
 
+CREATE TABLE public.sensitive_findings (
+    id bigint NOT NULL,
+    tenant_id text DEFAULT 'default'::text NOT NULL,
+    project_id text DEFAULT ''::text NOT NULL,
+    task_id text DEFAULT ''::text NOT NULL,
+    root_task_id text DEFAULT ''::text NOT NULL,
+    source_url text DEFAULT ''::text NOT NULL,
+    host text DEFAULT ''::text NOT NULL,
+    kind text DEFAULT ''::text NOT NULL,
+    value text DEFAULT ''::text NOT NULL,
+    snippet text DEFAULT ''::text NOT NULL,
+    context text DEFAULT ''::text NOT NULL,
+    dedupe_hash text NOT NULL,
+    ai_control boolean DEFAULT false NOT NULL,
+    ai_status text DEFAULT 'pending'::text NOT NULL,
+    ai_confidence double precision DEFAULT 0 NOT NULL,
+    ai_reason text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE SEQUENCE public.sensitive_findings_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.sensitive_findings_id_seq OWNED BY public.sensitive_findings.id;
+
 CREATE TABLE public.sub_tasks (
     id text NOT NULL,
     tenant_id text DEFAULT 'default'::text NOT NULL,
@@ -1552,7 +1700,11 @@ CREATE TABLE public.sub_tasks (
     trigger text DEFAULT 'initial'::text NOT NULL,
     failure_reason text DEFAULT ''::text NOT NULL,
     started_at timestamp with time zone,
-    finished_at timestamp with time zone
+    finished_at timestamp with time zone,
+    dispatch_strategy character varying(32) DEFAULT ''::character varying NOT NULL,
+    next_eligible_at timestamp with time zone,
+    routed_agent_id character varying(255) DEFAULT ''::character varying NOT NULL,
+    routed_at timestamp with time zone
 );
 
 CREATE TABLE public.subdomain_dictionaries (
@@ -1723,7 +1875,8 @@ CREATE TABLE public.task_batches (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     archived_at timestamp with time zone,
-    control_state text DEFAULT 'active'::text NOT NULL
+    control_state text DEFAULT 'active'::text NOT NULL,
+    dispatch_strategy character varying(32) DEFAULT ''::character varying NOT NULL
 );
 
 CREATE TABLE public.task_config_revisions (
@@ -1905,7 +2058,14 @@ CREATE TABLE public.vulnerabilities (
     reference text,
     matched_at text,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    root_task_id text
+    root_task_id text,
+    ai_status text DEFAULT ''::text NOT NULL,
+    ai_confidence double precision DEFAULT 0 NOT NULL,
+    ai_reason text DEFAULT ''::text NOT NULL,
+    ai_triaged_at timestamp with time zone,
+    ai_review_id bigint,
+    taint_status text DEFAULT ''::text NOT NULL,
+    taint_reason text DEFAULT ''::text NOT NULL
 );
 
 CREATE SEQUENCE public.vulnerabilities_id_seq
@@ -1990,6 +2150,8 @@ ALTER TABLE ONLY public.agent_logs ALTER COLUMN id SET DEFAULT nextval('public.a
 
 ALTER TABLE ONLY public.agent_session_audits ALTER COLUMN id SET DEFAULT nextval('public.agent_session_audits_id_seq'::regclass);
 
+ALTER TABLE ONLY public.ai_finding_reviews ALTER COLUMN id SET DEFAULT nextval('public.ai_finding_reviews_id_seq'::regclass);
+
 ALTER TABLE ONLY public.ai_tool_invocations ALTER COLUMN id SET DEFAULT nextval('public.ai_tool_invocations_id_seq'::regclass);
 
 ALTER TABLE ONLY public.arsenal_ai_reviews ALTER COLUMN id SET DEFAULT nextval('public.arsenal_ai_reviews_id_seq'::regclass);
@@ -2024,6 +2186,8 @@ ALTER TABLE ONLY public.build_jobs ALTER COLUMN id SET DEFAULT nextval('public.b
 
 ALTER TABLE ONLY public.cloud_account_bindings ALTER COLUMN id SET DEFAULT nextval('public.cloud_account_bindings_id_seq'::regclass);
 
+ALTER TABLE ONLY public.crawl_site_candidates ALTER COLUMN id SET DEFAULT nextval('public.crawl_site_candidates_id_seq'::regclass);
+
 ALTER TABLE ONLY public.credential_dictionary_revisions ALTER COLUMN id SET DEFAULT nextval('public.credential_dictionary_revisions_id_seq'::regclass);
 
 ALTER TABLE ONLY public.credential_reveal_audits ALTER COLUMN id SET DEFAULT nextval('public.credential_reveal_audits_id_seq'::regclass);
@@ -2033,6 +2197,8 @@ ALTER TABLE ONLY public.custom_roles ALTER COLUMN id SET DEFAULT nextval('public
 ALTER TABLE ONLY public.dir_rules ALTER COLUMN id SET DEFAULT nextval('public.dir_rules_id_seq'::regclass);
 
 ALTER TABLE ONLY public.domains ALTER COLUMN id SET DEFAULT nextval('public.domains_id_seq'::regclass);
+
+ALTER TABLE ONLY public.egress_ban_events ALTER COLUMN id SET DEFAULT nextval('public.egress_ban_events_id_seq'::regclass);
 
 ALTER TABLE ONLY public.exp_asset_refs ALTER COLUMN id SET DEFAULT nextval('public.exp_asset_refs_id_seq'::regclass);
 
@@ -2052,6 +2218,8 @@ ALTER TABLE ONLY public.fingerprint_hits ALTER COLUMN id SET DEFAULT nextval('pu
 
 ALTER TABLE ONLY public.fingerprint_rules ALTER COLUMN id SET DEFAULT nextval('public.fingerprint_rules_id_seq'::regclass);
 
+ALTER TABLE ONLY public.node_bans ALTER COLUMN id SET DEFAULT nextval('public.node_bans_id_seq'::regclass);
+
 ALTER TABLE ONLY public.notification_rules ALTER COLUMN id SET DEFAULT nextval('public.notification_rules_id_seq'::regclass);
 
 ALTER TABLE ONLY public.poc_rules ALTER COLUMN id SET DEFAULT nextval('public.poc_rules_id_seq'::regclass);
@@ -2069,6 +2237,8 @@ ALTER TABLE ONLY public.scan_stage_derivations ALTER COLUMN id SET DEFAULT nextv
 ALTER TABLE ONLY public.scan_timing_events ALTER COLUMN id SET DEFAULT nextval('public.scan_timing_events_id_seq'::regclass);
 
 ALTER TABLE ONLY public.scan_work_claims ALTER COLUMN id SET DEFAULT nextval('public.scan_work_claims_id_seq'::regclass);
+
+ALTER TABLE ONLY public.sensitive_findings ALTER COLUMN id SET DEFAULT nextval('public.sensitive_findings_id_seq'::regclass);
 
 ALTER TABLE ONLY public.subdomain_dictionary_revisions ALTER COLUMN id SET DEFAULT nextval('public.subdomain_dictionary_revisions_id_seq'::regclass);
 
@@ -2111,6 +2281,9 @@ ALTER TABLE ONLY public.agent_logs
 
 ALTER TABLE ONLY public.agent_session_audits
     ADD CONSTRAINT agent_session_audits_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.ai_finding_reviews
+    ADD CONSTRAINT ai_finding_reviews_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.ai_tool_invocations
     ADD CONSTRAINT ai_tool_invocations_pkey PRIMARY KEY (id);
@@ -2175,6 +2348,9 @@ ALTER TABLE ONLY public.cloud_instances
 ALTER TABLE ONLY public.cloud_scaling_policies
     ADD CONSTRAINT cloud_scaling_policies_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.crawl_site_candidates
+    ADD CONSTRAINT crawl_site_candidates_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY public.credential_bundles
     ADD CONSTRAINT credential_bundles_pkey PRIMARY KEY (ref);
 
@@ -2204,6 +2380,9 @@ ALTER TABLE ONLY public.dir_rules
 
 ALTER TABLE ONLY public.domains
     ADD CONSTRAINT domains_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.egress_ban_events
+    ADD CONSTRAINT egress_ban_events_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.exp_asset_refs
     ADD CONSTRAINT exp_asset_refs_pkey PRIMARY KEY (id);
@@ -2246,6 +2425,12 @@ ALTER TABLE ONLY public.task_batches
 
 ALTER TABLE ONLY public.task_config_revisions
     ADD CONSTRAINT idx_task_config_revisions_task_version UNIQUE (root_task_id, version);
+
+ALTER TABLE ONLY public.node_bans
+    ADD CONSTRAINT node_bans_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.node_bans
+    ADD CONSTRAINT node_bans_tenant_id_target_agent_id_key UNIQUE (tenant_id, target, agent_id);
 
 ALTER TABLE ONLY public.nodes
     ADD CONSTRAINT nodes_pkey PRIMARY KEY (agent_id);
@@ -2291,6 +2476,9 @@ ALTER TABLE ONLY public.scan_timing_events
 
 ALTER TABLE ONLY public.scan_work_claims
     ADD CONSTRAINT scan_work_claims_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.sensitive_findings
+    ADD CONSTRAINT sensitive_findings_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.sub_tasks
     ADD CONSTRAINT sub_tasks_pkey PRIMARY KEY (id);
@@ -2439,6 +2627,12 @@ CREATE INDEX idx_agent_session_audits_created_at ON public.agent_session_audits 
 CREATE INDEX idx_agent_session_audits_operator_id ON public.agent_session_audits USING btree (operator_id);
 
 CREATE INDEX idx_agent_session_audits_tenant_id ON public.agent_session_audits USING btree (tenant_id);
+
+CREATE INDEX idx_ai_finding_reviews_evidence ON public.ai_finding_reviews USING btree (evidence_hash);
+
+CREATE INDEX idx_ai_finding_reviews_verdict ON public.ai_finding_reviews USING btree (verdict);
+
+CREATE INDEX idx_ai_finding_reviews_vuln ON public.ai_finding_reviews USING btree (vulnerability_id);
 
 CREATE INDEX idx_ai_tool_invocations_agent_id ON public.ai_tool_invocations USING btree (agent_id);
 
@@ -2664,6 +2858,20 @@ CREATE INDEX idx_cloud_policies_enabled ON public.cloud_scaling_policies USING b
 
 CREATE INDEX idx_cloud_policies_tenant ON public.cloud_scaling_policies USING btree (tenant_id);
 
+CREATE UNIQUE INDEX idx_crawlsite_dedupe ON public.crawl_site_candidates USING btree (dedupe_hash);
+
+CREATE INDEX idx_crawlsite_host ON public.crawl_site_candidates USING btree (host);
+
+CREATE INDEX idx_crawlsite_project ON public.crawl_site_candidates USING btree (project_id);
+
+CREATE INDEX idx_crawlsite_root_task ON public.crawl_site_candidates USING btree (root_task_id);
+
+CREATE INDEX idx_crawlsite_sitetype ON public.crawl_site_candidates USING btree (site_type);
+
+CREATE INDEX idx_crawlsite_status ON public.crawl_site_candidates USING btree (ai_status);
+
+CREATE INDEX idx_crawlsite_task ON public.crawl_site_candidates USING btree (task_id);
+
 CREATE INDEX idx_credential_bundles_attempt_id ON public.credential_bundles USING btree (attempt_id);
 
 CREATE INDEX idx_credential_bundles_expires_at ON public.credential_bundles USING btree (expires_at);
@@ -2727,6 +2935,14 @@ CREATE UNIQUE INDEX idx_domain_dedupe ON public.domains USING btree (tenant_id, 
 CREATE INDEX idx_domains_status ON public.domains USING btree (status);
 
 CREATE INDEX idx_domains_task_id ON public.domains USING btree (task_id);
+
+CREATE INDEX idx_egress_ban_events_created ON public.egress_ban_events USING btree (created_at);
+
+CREATE INDEX idx_egress_ban_events_root_task ON public.egress_ban_events USING btree (root_task_id);
+
+CREATE INDEX idx_egress_ban_events_target ON public.egress_ban_events USING btree (target);
+
+CREATE INDEX idx_egress_ban_events_tenant_status ON public.egress_ban_events USING btree (tenant_id, status);
 
 CREATE UNIQUE INDEX idx_exp_asset_identity ON public.exp_assets USING btree (tenant_id, asset_id, version);
 
@@ -2833,6 +3049,8 @@ CREATE INDEX idx_fingerprint_rules_tenant_state_product ON public.fingerprint_ru
 CREATE UNIQUE INDEX idx_fp_dedupe ON public.fingerprint_hits USING btree (project_id, target, product_name);
 
 CREATE UNIQUE INDEX idx_fp_rule_unique ON public.fingerprint_rules USING btree (tenant_id, product_name, rule_expr);
+
+CREATE INDEX idx_node_bans_target ON public.node_bans USING btree (tenant_id, target);
 
 CREATE INDEX idx_nodes_tenant_id ON public.nodes USING btree (tenant_id);
 
@@ -3032,9 +3250,25 @@ CREATE INDEX idx_scan_work_claims_tenant_id ON public.scan_work_claims USING btr
 
 CREATE UNIQUE INDEX idx_scan_work_claims_tenant_project_work ON public.scan_work_claims USING btree (tenant_id, project_id, work_key_hash);
 
+CREATE UNIQUE INDEX idx_sensitive_dedupe ON public.sensitive_findings USING btree (dedupe_hash);
+
+CREATE INDEX idx_sensitive_host ON public.sensitive_findings USING btree (host);
+
+CREATE INDEX idx_sensitive_kind ON public.sensitive_findings USING btree (kind);
+
+CREATE INDEX idx_sensitive_project ON public.sensitive_findings USING btree (project_id);
+
+CREATE INDEX idx_sensitive_root_task ON public.sensitive_findings USING btree (root_task_id);
+
+CREATE INDEX idx_sensitive_status ON public.sensitive_findings USING btree (ai_status);
+
+CREATE INDEX idx_sensitive_task ON public.sensitive_findings USING btree (task_id);
+
 CREATE INDEX idx_sub_tasks_agent_id ON public.sub_tasks USING btree (agent_id);
 
 CREATE INDEX idx_sub_tasks_batch_id ON public.sub_tasks USING btree (batch_id);
+
+CREATE INDEX idx_sub_tasks_dispatch ON public.sub_tasks USING btree (status, dispatch_strategy, next_eligible_at);
 
 CREATE INDEX idx_sub_tasks_finished_at ON public.sub_tasks USING btree (finished_at);
 
@@ -3045,6 +3279,8 @@ CREATE INDEX idx_sub_tasks_priority ON public.sub_tasks USING btree (priority);
 CREATE INDEX idx_sub_tasks_project_id ON public.sub_tasks USING btree (project_id);
 
 CREATE INDEX idx_sub_tasks_root_task_id ON public.sub_tasks USING btree (root_task_id);
+
+CREATE INDEX idx_sub_tasks_routed_agent ON public.sub_tasks USING btree (routed_agent_id, routed_at);
 
 CREATE UNIQUE INDEX idx_sub_tasks_scope_attempt_agent_id ON public.sub_tasks USING btree (tenant_id, project_id, root_task_id, batch_id, id, agent_id);
 
@@ -3180,11 +3416,17 @@ CREATE UNIQUE INDEX idx_users_username ON public.users USING btree (username);
 
 CREATE UNIQUE INDEX idx_vuln_new_dedupe ON public.vulnerabilities USING btree (project_id, target, plugin);
 
+CREATE INDEX idx_vulnerabilities_ai_status ON public.vulnerabilities USING btree (ai_status);
+
+CREATE INDEX idx_vulnerabilities_ai_triaged_at ON public.vulnerabilities USING btree (ai_triaged_at);
+
 CREATE INDEX idx_vulnerabilities_assignee ON public.vulnerabilities USING btree (assignee);
 
 CREATE INDEX idx_vulnerabilities_root_task_id ON public.vulnerabilities USING btree (root_task_id);
 
 CREATE INDEX idx_vulnerabilities_status ON public.vulnerabilities USING btree (status);
+
+CREATE INDEX idx_vulnerabilities_taint_status ON public.vulnerabilities USING btree (taint_status);
 
 CREATE INDEX idx_vulnerabilities_task_id ON public.vulnerabilities USING btree (task_id);
 

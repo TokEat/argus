@@ -1,0 +1,32 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      username=admin&password=password&Login=Login
+    headers:
+      Cookie: JSESSIONID=mlau2itbr9rv09ne2s32gsvhm2; security=low
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: header
+        words:
+          - index.php
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/login.php'
+id: dvwa-default-login
+info:
+  author: pdteam
+  description: |-
+    Damn Vulnerable Web App (DVWA) is a test application for security professionals. The hard coded credentials are part of a security testing scenario.
+    fofa: app="Damn-Vulnerable-Web-App-(DVWA)-Login"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: DVWA Default Login
+  severity: critical
+  tags: dvwa,default-login,argus-import

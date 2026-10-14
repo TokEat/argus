@@ -28,6 +28,29 @@ type WebInfo struct {
 	Title  string `json:"title,omitempty"`
 }
 
+// CrawlSiteMsg 主动爬取在页面中提取的"同主机不同站点"关联资产候选。
+// 该候选站点本身不会被抓取，仅上报供服务端 AI/规则判定是否值得收录为资产。
+type CrawlSiteMsg struct {
+	SourceURL   string `json:"source_url,omitempty"`   // 发现该链接的页面 URL
+	URL         string `json:"url,omitempty"`          // 候选站点 URL（scheme://host:port）
+	Scheme      string `json:"scheme,omitempty"`
+	Host        string `json:"host,omitempty"` // 主机名或 IP
+	Port        int    `json:"port,omitempty"`
+	LinkContext string `json:"link_context,omitempty"` // 链接锚文本/属性上下文
+	SiteType    string `json:"site_type,omitempty"`    // ""=端口/子域候选；path_app=路径反代应用；hidden_path=隐藏端点
+	AIControl   bool   `json:"ai_control,omitempty"`   // 是否走服务端 AI 判定
+}
+
+// SensitiveInfoMsg 页面/JS 中提取的敏感信息候选（服务于钓鱼暴露面分析）。
+type SensitiveInfoMsg struct {
+	SourceURL string `json:"source_url,omitempty"` // 来源页面/JS URL
+	Host      string `json:"host,omitempty"`
+	Kind      string `json:"kind,omitempty"`    // email/phone/idcard/account/keyword/custom
+	Value     string `json:"value,omitempty"`   // 命中值（可能被截断）
+	Snippet   string `json:"snippet,omitempty"` // 有界上下文，供服务端 AI 结构化提取
+	AIControl bool   `json:"ai_control,omitempty"`
+}
+
 // OutputMessage 统一输出消息格式。
 type OutputMessage struct {
 	Type          string           `json:"type,omitempty"`
@@ -44,6 +67,9 @@ type OutputMessage struct {
 	AdditionalMsg string           `json:"am,omitempty"`
 	Show          string           `json:"-"`
 	Nuclei        string           `json:"nuclei,omitempty"`
+	Source        string           `json:"source,omitempty"` // 父目标（归一化），扫描链路溯源；由 OutputHook 收口打标
+	CrawlSite     *CrawlSiteMsg    `json:"crawl_site,omitempty"`
+	SensitiveInfo *SensitiveInfoMsg `json:"sensitive_info,omitempty"`
 }
 
 type Config struct {
@@ -92,6 +118,15 @@ type Config struct {
 	SYNPortScanThreads         int
 	PortsThreshold             int
 	TCPPortScanTimeout         int
+	PortScanScatter            bool
+	PortScanProbeInterval      int
+	WebCrawl                   bool
+	WebCrawlMaxDepth           int
+	WebCrawlMaxPages           int
+	WebCrawlMaxPathApps        int
+	SensitiveInfo              bool
+	WebCrawlAI                 bool
+	SensitiveInfoAI            bool
 	MasscanPath                string
 	AllowLocalAreaDomain       bool
 	AllowCDNAssets             bool

@@ -30,6 +30,13 @@ export interface ScanPolicyFormValues {
 	behavior_probe?: boolean;
     risk_validation?: boolean;
     credential_validation?: boolean;
+    web_crawl?: boolean;
+    sensitive_info?: boolean;
+    web_crawl_max_depth?: number;
+    web_crawl_max_pages?: number;
+    web_crawl_path_app_limit?: number;
+    web_crawl_ai?: boolean;
+    sensitive_info_ai?: boolean;
     username_books?: string[];
     password_books?: string[];
     credential_pair_limit?: number;
@@ -49,6 +56,9 @@ export const scanPolicyInitialValues: ScanPolicyFormValues = {
     credential_validation: false, credential_pair_limit: 50000,
     username_books: [], password_books: [], validation_confirmed: false,
 	subdomain_books: [],
+    web_crawl: false, sensitive_info: false,
+    web_crawl_max_depth: 2, web_crawl_max_pages: 50,
+    web_crawl_ai: false, sensitive_info_ai: false,
 };
 
 export function buildScanPolicy(values: ScanPolicyFormValues, dictionaries: API.CredentialDictionary[], subdomainDictionaries: API.SubdomainDictionary[] = []): API.ScanPolicy {
@@ -73,11 +83,23 @@ export function buildScanPolicy(values: ScanPolicyFormValues, dictionaries: API.
             allow_private_resolved_domains: Boolean(merged.allow_private_resolved_domains),
             host_binding: Boolean(merged.host_binding), behavior_probe: Boolean(merged.behavior_probe), directory_probe: Boolean(merged.directory_probe),
             risk_validation: Boolean(merged.risk_validation), credential_validation: Boolean(merged.credential_validation),
+            web_crawl: Boolean(merged.web_crawl), sensitive_info: Boolean(merged.sensitive_info),
         },
 		subdomains: {
 			wordlists: subdomainRefs,
 			bruteforce_depth: merged.subdomain_bruteforce ? (merged.subdomain_bruteforce_depth || 1) : 0,
 		},
+        ...(merged.web_crawl ? {
+            web_crawl: {
+                max_depth: merged.web_crawl_max_depth || 2,
+                max_pages: merged.web_crawl_max_pages || 50,
+                path_app_limit: merged.web_crawl_path_app_limit || 0,
+            },
+        } : {}),
+        ai_control: {
+            crawl: Boolean(merged.web_crawl) && Boolean(merged.web_crawl_ai),
+            sensitive_info: Boolean(merged.sensitive_info) && Boolean(merged.sensitive_info_ai),
+        },
         credentials: {
             username_books: refs(values.username_books, 'username'), password_books: refs(values.password_books, 'password'),
             pair_limit: values.credential_pair_limit || 50000,
@@ -90,6 +112,7 @@ const stageNames: Record<string, string> = {
     host_discovery: '资产发现', port_scan: '端口扫描', protocol_identification: '协议识别',
 	subdomain_discovery: '子域发现', http_probe: 'HTTP 探测', behavior_probe: '安全行为探针', directory_probe: '主动路径指纹',
 	fingerprint: '响应指纹识别', risk_validation: 'POC 验证', credential_validation: '弱口令验证',
+	web_crawl: '主动页面爬取', sensitive_info: '敏感信息收集',
 };
 
 interface Props {
@@ -131,7 +154,8 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
         priority: values?.priority, timeout_sec: values?.timeout_sec,
         port_profile: values?.port_profile, custom_ports: values?.custom_ports,
         scan_method: values?.scan_method, intensity: values?.intensity,
-        capabilities: [values?.subdomain_discovery, values?.subdomain_bruteforce, values?.subdomain_bruteforce_depth, values?.allow_cdn_assets, values?.allow_private_resolved_domains, values?.host_binding, values?.behavior_probe, values?.directory_probe, values?.risk_validation, values?.credential_validation],
+        capabilities: [values?.subdomain_discovery, values?.subdomain_bruteforce, values?.subdomain_bruteforce_depth, values?.allow_cdn_assets, values?.allow_private_resolved_domains, values?.host_binding, values?.behavior_probe, values?.directory_probe, values?.risk_validation, values?.credential_validation, values?.web_crawl, values?.sensitive_info],
+        crawl: [values?.web_crawl_max_depth, values?.web_crawl_max_pages, values?.web_crawl_ai, values?.sensitive_info_ai],
         books: [values?.subdomain_books, values?.username_books, values?.password_books], pair_limit: values?.credential_pair_limit,
         confirmed: values?.validation_confirmed, dictionaries: dictionaries.map((item) => [item.id, item.revision, item.sha256]),
 		subdomain_dictionaries: subdomainDictionaries.map((item) => [item.id, item.revision, item.sha256]),
@@ -212,6 +236,25 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
 							<Alert type="success" showIcon message="响应指纹识别（默认）" description="复用 HTTP 探测响应完成基础指纹识别，作为后续 Workflow 与 POC 匹配依据。" style={{ marginBottom: 12 }} />
 							<Form.Item name="behavior_probe" valuePropName="checked" label="安全行为探针" extra="标准、深度默认开启；仅执行 Server 重新分类为自动安全的单请求 Nuclei 探针。"><Switch /></Form.Item>
 							<Form.Item name="directory_probe" valuePropName="checked" label="主动路径指纹" extra="可选；请求产品特征路径并产出 Active-Finger，不执行通用目录扫描。"><Switch /></Form.Item>
+						</Card>
+
+						<Card size="small" title="主动爬取与敏感信息">
+							<Alert type="info" showIcon message="默认关闭" description="两个能力均以 HTTP 探活站点为种子，严格限制在同 host:port 内抓取页面/JS 并做 hash 去重；跨端口 / 子域链接只作为关联资产候选上报、不去抓取。" style={{ marginBottom: 12 }} />
+							<Form.Item name="web_crawl" valuePropName="checked" label="主动页面爬取" extra="在种子站点同 host:port 内爬取页面与 JS（hash 去重），并提取指向同主机其他端口 / 同主域子域的链接作为关联资产候选。"><Switch /></Form.Item>
+							{values?.web_crawl && (
+								<>
+									<Row gutter={[12, 8]}>
+										<Col span={12}><Form.Item name="web_crawl_max_depth" label="爬取深度" extra={`1–5 层，默认 2`}><InputNumber min={1} max={5} style={{ width: '100%' }} /></Form.Item></Col>
+										<Col span={12}><Form.Item name="web_crawl_max_pages" label="每站点页数上限" extra="1–500，默认 50"><InputNumber min={1} max={500} style={{ width: '100%' }} /></Form.Item></Col>
+										<Col span={12}><Form.Item name="web_crawl_path_app_limit" label="路径应用发现上限" extra="0–5，默认 0=关闭。从已爬 JS/HTML 挖掘路径前缀，识别按路径反代的独立应用与隐藏端点，确认后入资产库（target 带路径）。"><InputNumber min={0} max={5} style={{ width: '100%' }} /></Form.Item></Col>
+									</Row>
+									<Form.Item name="web_crawl_ai" valuePropName="checked" label="AI 研判关联资产" extra="开启后候选进入服务端 AI Worker 做价值研判 / 判重，confirmed 回流为资产；关闭则直接确认。需全局已配置模型。"><Switch /></Form.Item>
+								</>
+							)}
+							<Form.Item name="sensitive_info" valuePropName="checked" label="敏感信息收集" extra="从种子页面及其引用的 JS 中提取邮箱 / 电话 / 身份证 / 用户名 / API 密钥 / 令牌 / 机密等可用于钓鱼暴露面分析的敏感信息。"><Switch /></Form.Item>
+							{values?.sensitive_info && (
+								<Form.Item name="sensitive_info_ai" valuePropName="checked" label="AI 结构化提取" extra="开启后由服务端 AI Worker 对候选做结构化提取与语义去重（优于正则）；关闭则保留基础正则结果。需全局已配置模型。"><Switch /></Form.Item>
+							)}
 						</Card>
 
 						<Card size="small" title="自动验证">

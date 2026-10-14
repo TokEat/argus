@@ -118,7 +118,7 @@ export const useCloudAccounts = ({ isAdmin, onDashboardRefresh }: UseCloudAccoun
         try {
             await deleteCloudAccount(id);
             message.success('凭证已删除');
-            fetchAccounts();
+            await fetchAccounts();
             onDashboardRefresh();
         } catch (err) {
             const messageText = extractErrorMsg(err);

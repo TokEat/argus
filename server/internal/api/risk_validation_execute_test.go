@@ -254,6 +254,42 @@ func TestExecuteTaskRiskValidationCreatesExactAuditedBatch(t *testing.T) {
 	}
 }
 
+func TestExecuteTaskRiskValidationSealsBudgetFields(t *testing.T) {
+	task, preview := seedExecutableRiskValidation(t, "FINISHED")
+	withTaskCreateQueue(t)
+	recorder := callExecuteRiskValidation(t, task.ID, executeRiskValidationRequest{
+		PlanHash: preview.PlanHash, Confirmed: true, SecondConfirmation: true,
+	})
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("execute status = %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		BatchID   string `json:"batch_id"`
+		AttemptID string `json:"attempt_id"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	var attempt db.SubTask
+	if err := db.DB.First(&attempt, "id = ?", response.AttemptID).Error; err != nil {
+		t.Fatalf("load risk attempt: %v", err)
+	}
+	var config map[string]interface{}
+	if err := json.Unmarshal([]byte(attempt.Config), &config); err != nil {
+		t.Fatalf("decode derived config: %v", err)
+	}
+	// The agent's risk-validation branch rejects any attempt whose sealed budget
+	// is missing or non-positive, so the manual path must seal all five fields.
+	if id, _ := config["ValidationBudgetID"].(string); id == "" {
+		t.Fatalf("ValidationBudgetID not sealed: %s", attempt.Config)
+	}
+	for _, key := range []string{"ValidationTargetConcurrency", "ValidationRateLimit", "ValidationRequestBudget", "ValidationEstimatedRequests"} {
+		if n, _ := config[key].(float64); n < 1 {
+			t.Fatalf("%s=%v, want >= 1: %s", key, config[key], attempt.Config)
+		}
+	}
+}
+
 func TestExecuteTaskRiskValidationRejectsUnconfirmedAndActivePlansWithoutWrites(t *testing.T) {
 	tests := []struct {
 		name       string

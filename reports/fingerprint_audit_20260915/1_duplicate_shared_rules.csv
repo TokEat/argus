@@ -1,0 +1,35 @@
+rule_expr,product_count,products
+"body=""webui/js/jquerylib/jquery-1.7.2.min.js""",3,H3C-下一代防火墙 | H3C/安博通/任子行/OEM系列安全产品 | 新华三交换机(华东)
+"body=""考试系统"" && body=""login.aspx"" && body=""品德""",3,南京品德在线医学考试系统 | 南京品德在线医学考试系统(0day) | 品德科技医学在线考试系统
+"((body=""<h1>BEA WebLogic Server"" || server=""Weblogic"" || body=""content=\""WebLogic Server"" || body=""<h1>Welcome to Weblogic Application"" || body=""<h1>BEA WebLogic Server"") && header!=""couchdb"" && header!=""boa"" && header!=""RouterOS"" && header!=""X-Generator: Drupal"") || (banner=""Weblogic"" && banner!=""couchdb"" && banner!=""drupal"" && banner!="" Apache,Tomcat,Jboss"" && banner!=""ReeCam IP Camera"" && banner!=""<h2>Blog Comments</h2>"")",2,BEA-WebLogic-Server | WebLogic
+"(body=""lui_login_message_td"" && body=""form_bottom"") || (body=""蓝凌软件 版权所有"" && (body=""j_acegi_security_check"" || title=""欢迎登录智慧协同平台"")) ||(body=""j_acegi_security_check"" && body=""onsubmit=\""return kmss_onsubmit();"" && (body=""ExceptionTranslationFilter对SPRING_SECURITY_TARGET_URL 进行未登录url保持 请求中的hash并不会传递到服务端，故只能前端处理"" || body=""kkDownloadLink link""))",2,LandRay-OA | 蓝凌EIS智慧协同平台
+"body=""../config/configECEMS.js"" || body=""dual_ipCfg/dual_ipCfg.js""",2,安科瑞ECEMS(西部) | 安科瑞电气系统(西部)
+"body=""./open/webApi.html""",2,通天星CMSV6车载定位监控平台 | 鸿运主动安全监控云平台
+"body=""//易企邮正式版发布""",2,17mail | 17mail-email
+"body=""/808gps/""",2,通天星 | 通天星CMSV6车载定位监控平台
+"body=""/CSS/NewtonTheme/assets/app.css""",2,奥威亚教育视频云平台 | 奥威亚视频云平台
+"body=""/Content/fonts-open-sans.css""",2,EAM资产管理(华东) | 分销系统
+"body=""/PortalLTE/Images/favicon.ico""",2,BuildingEasyTM | 金慧BuildingEasyTM
+"body=""/UILib/md5/md5.js""",2,力合科技 | 力和科技
+"body=""/ehr/login/css/login.css""",2,EHR | EHR系统
+"body=""/qysoss/assets/js""",2,契约锁(北京) | 契约锁(北北京)
+"body=""/static/vendor/handson/handsontable.full.min.css""",2,观远BI(北北京) | 观远BI(深圳)
+"body=""/wnm/ssl/web/frame/login.html""",2,H3C-安全产品管理平台 | H3C-安全产品管理平台(路由器)
+"body=""<a href=\""http://www.rainier.net.cn/\"">北京润尼尔网络科技有限公司""",2,Runnier - Network Product | 北京润尼尔网络科技有限公司
+"body="">多可电子档案管理系统</div""",2,315soft-FileSystem | Multi-electronic archive management system
+"body=""InTouch Access Anywhere""",2,AVEVA-InTouch-Access-Anywhere-Secure-Gateway | AVEVA-InTouch-安全网关
+"body=""This is standby RM. Redirecting to the current active RM""",2,APACHE-hadoop-ResourceManager | ResourceManager
+"body=""smartbiVersion"" || body=""smartbi.gcf.gcfutil"" || body=""css/bof_merge.css.jsp"" || icon_hash=""-1266146019""",2,SmartBI(北北京) | SmartBI(西部)
+"body=""static/qwebchannel.js""||body=""*客户端会小于800*""||body=""/static/fontshd/font-hd.css""||icon_hash=""-1935899595""",2,大华-智能物联综合管理平台 | 大华ICC智能物联综合管理平台
+"body=""uyun-base""",2,优云自动化运维系统(华南) | 优云自动化运维系统(深圳)
+"body=""value=\""明源售楼管理系统V5.0\"""" || body=""<img id=\""erp\"" src=\""/_imgs/login/zs_erp.png""",2,Mingyuan Yun - Sales Management System | 明源云(老版本)
+"body=""var Com_Parameter =""",2,LandRay-OA | 蓝凌EIS智慧协同平台
+"body=""中企动力提供技术支持""",2,China Enterprise Power - Portal CMS | Crow-Force-portal-CMS
+"body=""天问物业云""",2,天问物业云 | 天问物业云(华东)
+"body=""技术支持：网格（福建）智能科技有限公司""",2,21grid | VANGE- Grid
+"body=""智慧食堂后台管理系统""",2,满客宝(华东) | 满客宝(深圳)
+"header=""Docker-Distribution-Api"" || banner=""Docker-Distribution-Api""",2,Docker-Distribution-Api | Docker-Registry
+"icon_hash=""398162124"" || body=""/bi/viewer?proc="" || body=""/bi/?proc=2""||body=""var YH_CONFIG""||body=""yh-body fill overflow""||body=""background:url(404.jpg)no-repeat;""",2,永洪BI(北北京) | 永洪BI(西部)
+"icon_hash=""999357577""",2,HIKVISION-视频监控 | HikVision-Company Products
+"server=""EC2ws""",2,AWS-EC2 | Amazon-EC2
+"title=""章管家登录""||body=""/web/qrcode/polling.htm?xxx_number=""||body=""/resources/images/icon/logo/ChapterStewards_icon_new copy.png""",2,章管家(华南) | 章管家(西部)

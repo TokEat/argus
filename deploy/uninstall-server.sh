@@ -209,15 +209,23 @@ main() {
         docker compose -f "$yaksha_compose_file" down --remove-orphans 2>/dev/null || true
     fi
     if [[ -f "$compose_file" ]]; then
-        # 提供假变量避免 docker compose 警告；bind mount 必须使用已验证安装目录。
-        export POSTGRES_USER=postgres POSTGRES_PASSWORD=unused-uninstall-password POSTGRES_DB=argus POSTGRES_PORT=5432
-        export RABBITMQ_DEFAULT_USER=argus RABBITMQ_DEFAULT_PASS=unused-uninstall-password RABBITMQ_PORT=5672 RABBITMQ_MANAGEMENT_PORT=15672
-        export INSTALL_DIR="$install_dir"
-        docker compose -f "$compose_file" down -v --remove-orphans 2>/dev/null || true
+        secrets_env_file="${install_dir}/config/secrets.env"
+        if [[ -f "$secrets_env_file" ]]; then
+            # 以 secrets.env 为权威（含 INSTALL_DIR 与全部凭据），完整解析 compose 后清理所有基础设施容器。
+            docker compose --env-file "$secrets_env_file" -f "$compose_file" down -v --remove-orphans 2>/dev/null || true
+        else
+            # 无 secrets.env（旧环境）：提供假变量避免 compose 插值报错；bind mount 必须使用已验证安装目录。
+            export POSTGRES_USER=postgres POSTGRES_PASSWORD=unused-uninstall-password POSTGRES_DB=argus POSTGRES_PORT=5432
+            export RABBITMQ_DEFAULT_USER=argus RABBITMQ_DEFAULT_PASS=unused-uninstall-password RABBITMQ_PORT=5672 RABBITMQ_MANAGEMENT_PORT=15672
+            export MINIO_ROOT_USER=unused MINIO_ROOT_PASSWORD=unused-uninstall-password
+            export ARGUS_EXP_MINIO_ACCESS_KEY=unused ARGUS_EXP_MINIO_SECRET_KEY=unused-uninstall-password
+            export INSTALL_DIR="$install_dir"
+            docker compose -f "$compose_file" down -v --remove-orphans 2>/dev/null || true
+        fi
         echo -e "${GREEN}[✔] 容器已清理${NC}"
     else
         # 尝试直接通过 Argus 专用容器名称清理。
-        docker rm -f argus-rabbitmq argus-postgres 2>/dev/null || true
+        docker rm -f argus-minio-init argus-minio argus-rabbitmq argus-postgres 2>/dev/null || true
         echo -e "${GREEN}[✔] 容器清理完成 (备用模式)${NC}"
     fi
 

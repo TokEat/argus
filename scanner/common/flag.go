@@ -600,6 +600,8 @@ func FlagWithError() error {
 		flagSet.StringVarP(&structs.GlobalConfig.MasscanPath, "masscan-path", "mp", "masscan", "指定masscan程序路径 | SYN扫描依赖"),
 		flagSet.IntVarP(&structs.GlobalConfig.PortsThreshold, "ports-max-count", "pmc", 300, "IP端口数量阈值 | 当一个IP的端口数量超过此值，此IP将会被抛弃"),
 		flagSet.IntVarP(&structs.GlobalConfig.TCPPortScanTimeout, "port-scan-timeout", "pst", 6, "TCP端口扫描超时(秒)"),
+		flagSet.BoolVarP(&structs.GlobalConfig.PortScanScatter, "scan-scatter", "scs", false, "开启端口扫描打散 | 同一目标两次探测保持最小间隔，规避安全设备按IP速率封禁"),
+		flagSet.IntVarP(&structs.GlobalConfig.PortScanProbeInterval, "probe-interval", "pi", scanpolicy.DefaultPacingIntervalMillis, "打散模式下同一目标的最小探测间隔(毫秒) | 范围50-5000"),
 	)
 
 	flagSet.CreateGroup("alive", "主机发现",
