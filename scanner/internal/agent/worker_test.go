@@ -1127,6 +1127,65 @@ func TestFingerprintDebugCustomOnlyUsesMultipleCustomRules(t *testing.T) {
 	}
 }
 
+func TestFingerprintDebugCustomDirPathsReplaceDirDB(t *testing.T) {
+	origNewScanContext := newScanContext
+	origRunScanTask := runScanTask
+	defer func() {
+		newScanContext = origNewScanContext
+		runScanTask = origRunScanTask
+	}()
+
+	var dirDB map[string][]string
+	var reportAll bool
+	newScanContext = func(cfg engine.Config) (*engine.ScanContext, error) {
+		ctx, cancel := context.WithCancel(context.Background())
+		return &engine.ScanContext{
+			Config: cfg,
+			Ctx:    ctx,
+			Cancel: cancel,
+			DirDB: map[string][]string{
+				"/from-tenant": {"TenantProduct"},
+				"/other":       {"OtherProduct"},
+			},
+		}, nil
+	}
+	runScanTask = func(ctx *engine.ScanContext) error {
+		dirDB = ctx.DirDB
+		reportAll = ctx.ReportAllDirProbes
+		return nil
+	}
+
+	worker := NewWorker("agent-1", "127.0.0.1:50051", "http://127.0.0.1:8085", 1, nil)
+	var injected string
+	worker.runFingerprintDebugSession(
+		context.Background(),
+		&pb.DebugCommand{
+			Action:     "start_fingerprint_debug",
+			SessionId:  "debug-dir-1",
+			TenantId:   "default",
+			TargetUrl:  "https://target.local/",
+			TimeoutSec: 5,
+			PocContent: `{"custom_dir_product":"OnlyDir","custom_dir_paths":["/a","/b"]}`,
+		},
+		5*time.Second,
+		func(event *pb.DebugEvent) {
+			if event != nil && strings.Contains(event.Message, "injected custom dir paths only") {
+				injected = event.Message
+			}
+		},
+		func(string) {},
+	)
+	if _, ok := dirDB["/from-tenant"]; ok || len(dirDB) != 2 || !slices.Equal(dirDB["/a"], []string{"OnlyDir"}) || !slices.Equal(dirDB["/b"], []string{"OnlyDir"}) {
+		t.Fatalf("custom dir paths should replace tenant dir.yaml, got %#v", dirDB)
+	}
+	if !reportAll {
+		t.Fatal("custom dir debug should report every path")
+	}
+	if injected == "" {
+		t.Fatal("expected custom dir injection log")
+	}
+}
+
 func TestFingerprintDebugCustomRulesFallbackToCustomRuleWhenEmpty(t *testing.T) {
 	origNewScanContext := newScanContext
 	origRunScanTask := runScanTask
@@ -1269,10 +1328,6 @@ func (c *fakeAgentClient) Register(ctx context.Context, in *pb.RegisterReq, opts
 
 func (c *fakeAgentClient) Heartbeat(ctx context.Context, in *pb.HeartbeatReq, opts ...grpc.CallOption) (*pb.HeartbeatResp, error) {
 	return &pb.HeartbeatResp{Ack: true}, nil
-}
-
-func (c *fakeAgentClient) FetchTask(ctx context.Context, in *pb.FetchTaskReq, opts ...grpc.CallOption) (*pb.Task, error) {
-	return &pb.Task{}, nil
 }
 
 func (c *fakeAgentClient) FetchCredentialBundle(ctx context.Context, in *pb.FetchCredentialBundleReq, opts ...grpc.CallOption) (*pb.FetchCredentialBundleResp, error) {

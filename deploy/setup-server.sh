@@ -146,8 +146,10 @@ ARGUS_EXP_MINIO_ACCESS_KEY="${ARGUS_EXP_MINIO_ACCESS_KEY:-exp$(gen_hex_secret | 
 reuse_secret ARGUS_EXP_MINIO_SECRET_KEY
 ARGUS_EXP_MINIO_SECRET_KEY="${ARGUS_EXP_MINIO_SECRET_KEY:-$(gen_hex_secret)}"
 
-# DSN / AMQP（与 Makefile 格式一致），写入 secrets.env 供 systemd 与运维使用
+# DSN / AMQP（与 Makefile 格式一致），写入 secrets.env 供 systemd 与运维使用。
+# 容器内超级用户即 POSTGRES_USER，bootstrap / db-init.sh 用它连 postgres 库。
 DB_DSN="host=127.0.0.1 user=${POSTGRES_USER} password=${POSTGRES_PASSWORD} dbname=${POSTGRES_DB} port=${POSTGRES_PORT} sslmode=disable"
+ADMIN_DSN="host=127.0.0.1 user=${POSTGRES_USER} password=${POSTGRES_PASSWORD} dbname=postgres port=${POSTGRES_PORT} sslmode=disable"
 AMQP_URL="amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@127.0.0.1:${RABBITMQ_PORT}/"
 
 # 统一带 --env-file 调 docker compose：任何子命令（含 exec/ps/down）都会做
@@ -197,7 +199,7 @@ if ! command -v docker &>/dev/null; then
     echo -e "${YELLOW}  安装 Docker...${NC}"
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
-    apt-get install -y -qq ca-certificates curl gnupg
+    apt-get install -y -qq ca-certificates curl gnupg postgresql-client
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
     chmod a+r /etc/apt/keyrings/docker.gpg
@@ -266,10 +268,6 @@ if [[ "$(docker inspect -f '{{.State.ExitCode}}' argus-minio-init 2>/dev/null ||
     echo -e "${RED}[!] MinIO 私有 Bucket 或应用用户初始化失败${NC}"
     exit 1
 fi
-
-# 初始化数据库（执行 init 脚本）
-echo -e "  初始化数据库..."
-dcompose exec -T postgres bash -lc '/docker-entrypoint-initdb.d/000-init-db.sh' 2>/dev/null || true
 
 echo -e "${GREEN}[✔] 基础设施就绪${NC}"
 
@@ -375,12 +373,20 @@ fi
 echo -e "${GREEN}[✔] 二进制及配置部署完成${NC}"
 
 # ============================================================
-# Step 4: 数据库迁移
+# Step 4: 数据库初始化（纯 SQL，与 server 启动解耦）
 # ============================================================
-echo -e "${YELLOW}[4/6] 执行数据库迁移...${NC}"
+echo -e "${YELLOW}[4/6] 执行数据库初始化...${NC}"
 
-"$INSTALL_DIR/bin/argus-server" --db "$DB_DSN" --migrate-only --db-migration-mode apply --config-dir "$INSTALL_DIR/config"
-echo -e "${GREEN}[✔] 数据库迁移完成${NC}"
+command -v psql >/dev/null 2>&1 || {
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq && apt-get install -y -qq postgresql-client
+}
+
+if ! bash "${SCRIPT_DIR}/db-init.sh" --dsn "$DB_DSN" --admin-dsn "$ADMIN_DSN"; then
+    echo -e "${RED}[!] 数据库初始化失败${NC}"
+    exit 1
+fi
+echo -e "${GREEN}[✔] 数据库初始化完成${NC}"
 
 # ============================================================
 # Step 4.5: 导入规则资产库

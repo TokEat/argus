@@ -49,6 +49,15 @@ func activeFingerprintDownstreamValidations(templateID string) []string {
 	return result
 }
 
+func containsFold(values []string, expected string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(expected)) {
+			return true
+		}
+	}
+	return false
+}
+
 func inspectActiveFingerprint(c *gin.Context) {
 	var req struct {
 		FileName string `json:"file_name"`

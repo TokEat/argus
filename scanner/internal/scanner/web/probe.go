@@ -7,6 +7,7 @@ import (
 	"github.com/P0lar1ght/argus/scanner/lib/ddfinger"
 	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/P0lar1ght/argus/scanner/utils"
+	"net"
 	"net/url"
 	"sort"
 	"strconv"
@@ -32,6 +33,16 @@ type Runtime struct {
 	WorkFlowDB             map[string]structs.WorkFlowEntity
 	DirFallbackResultMap   map[string][]string
 	DirFallbackResultMapMu *sync.Mutex
+	DirEvidenceResultMap   map[string][]string
+	DirEvidenceResultMapMu *sync.Mutex
+	// CDNHosts holds lowercased hostnames classified as CDN so emitted Web /
+	// Domain-Bind messages can carry the "cdn" asset tag.
+	CDNHosts map[string]struct{}
+
+	// ReportAllDirProbes emits a Dir-Probe result for every directory probe
+	// response, including misses. Used by MCP/Agent dir debug so callers see
+	// per-path status and body instead of only fingerprint matches.
+	ReportAllDirProbes bool
 
 	fingerprintByProduct map[string][]structs.FingerPEntity
 	emit                 func(structs.OutputMessage)
@@ -69,6 +80,8 @@ func NewRuntime(
 		WorkFlowDB:             workFlowDB,
 		DirFallbackResultMap:   dirFallbackResultMap,
 		DirFallbackResultMapMu: dirFallbackResultMapMu,
+		DirEvidenceResultMap:   make(map[string][]string),
+		DirEvidenceResultMapMu: &sync.Mutex{},
 		emit:                   emit,
 		fingerprintByProduct:   make(map[string][]structs.FingerPEntity),
 		redirectURLSet:         make(map[string]struct{}),
@@ -89,20 +102,24 @@ func (rt *Runtime) URLCallback(resp runner.Result) {
 
 	rt.collectRedirectLocation(resp)
 
-	_, inserted := rt.upsertResponse(resp)
+	_, inserted := rt.upsertResponse(resp, true)
 	if !inserted {
 		return
 	}
 
-	if rt.emit != nil {
+	if rt.emit != nil && isHTTPScheme(resp.URL) {
 		rt.emit(structs.OutputMessage{
 			Type: "Web",
 			Web: structs.WebInfo{
-				Status: strconv.Itoa(resp.StatusCode),
-				Title:  resp.Title,
+				Status:   strconv.Itoa(resp.StatusCode),
+				Title:    resp.Title,
+				Cert:     compactCertificate(resp),
+				Size:     strconv.Itoa(resp.ContentLength),
+				Redirect: webRedirect(resp),
 			},
 			URI:    resp.URL,
-			Finger: nil,
+			Finger: rt.matchAllFingers(resp),
+			Tag:    rt.assetTag(resp.URL),
 		})
 	}
 }
@@ -131,26 +148,32 @@ func (rt *Runtime) DirBruteCallback(resp runner.Result) {
 		return
 	}
 
+	matched := make([]string, 0, 2)
+	catchAll := rt.isHomepageCatchAll(resp)
 	for _, path := range rt.matchingDirPaths(resp.Path) {
 		for _, productName := range rt.DirDB[path] {
-			success := rt.matchesProduct(resp, productName)
+			success := !catchAll && rt.matchesProduct(resp, productName)
 
 			if success {
-				rt.upsertResponse(resp)
+				rootURL, _ := rt.upsertResponse(resp, false)
 				rt.emit(ddout.OutputMessage{
 					Type: "Active-Finger",
 					Web: structs.WebInfo{
 						Status: strconv.Itoa(resp.StatusCode),
 						Title:  resp.Title,
 					},
-					Finger: []string{productName},
-					URI:    resp.URL,
+					Finger:        []string{productName},
+					URI:           resp.URL,
+					AdditionalMsg: "[directory-probe]",
 				})
-
+				if rootURL != "" {
+					rt.addDirEvidence(rootURL+normalizedPath(resp), productName)
+				}
+				matched = append(matched, productName)
 				continue
 			}
 
-			if resp.StatusCode != 200 {
+			if catchAll || resp.StatusCode != 200 {
 				continue
 			}
 			workflowEntity, ok := rt.WorkFlowDB[productName]
@@ -158,7 +181,7 @@ func (rt *Runtime) DirBruteCallback(resp runner.Result) {
 				continue
 			}
 
-			rootURL, _ := rt.upsertResponse(resp)
+			rootURL, _ := rt.upsertResponse(resp, false)
 			if rootURL == "" {
 				continue
 			}
@@ -173,10 +196,34 @@ func (rt *Runtime) DirBruteCallback(resp runner.Result) {
 				URI:           resp.URL,
 				AdditionalMsg: "[dir-fallback]",
 			})
+			matched = append(matched, productName)
 
 			rt.addDirFallback(rootURL, productName)
 		}
 	}
+	rt.emitDirProbe(resp, matched)
+}
+
+func (rt *Runtime) emitDirProbe(resp runner.Result, matched []string) {
+	if rt == nil || !rt.ReportAllDirProbes || rt.emit == nil {
+		return
+	}
+	body := resp.Body
+	const maxBody = 2048
+	if len(body) > maxBody {
+		body = body[:maxBody]
+	}
+	rt.emit(structs.OutputMessage{
+		Type: "Dir-Probe",
+		Web: structs.WebInfo{
+			Status: strconv.Itoa(resp.StatusCode),
+			Title:  resp.Title,
+			Size:   strconv.Itoa(resp.ContentLength),
+		},
+		URI:           resp.URL,
+		Finger:        matched,
+		AdditionalMsg: body,
+	})
 }
 
 // HostBindCheck 域名绑定资产探测。
@@ -249,10 +296,67 @@ func (rt *Runtime) HostBindCallback(resp runner.Result) {
 			},
 			URI:           resp.URL,
 			AdditionalMsg: resp.Title,
+			Tag:           rt.assetTag(resp.URL),
 		})
 	}
 
-	rt.upsertResponse(resp)
+	rt.upsertResponse(resp, true)
+}
+
+// assetTag returns the special asset class for a probed URL, currently "cdn"
+// when its hostname was classified as a CDN domain during CDN checks.
+func (rt *Runtime) assetTag(rawURL string) string {
+	if rt == nil || len(rt.CDNHosts) == 0 {
+		return ""
+	}
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return ""
+	}
+	if _, ok := rt.CDNHosts[strings.ToLower(parsed.Hostname())]; ok {
+		return "cdn"
+	}
+	return ""
+}
+
+// isHomepageCatchAll reports a directory probe that returned the same page as
+// the already-recorded site root. Catch-all auth gates and SPA/history fallback
+// pages share that signature and must not fan out into product fingerprints.
+func (rt *Runtime) isHomepageCatchAll(resp runner.Result) bool {
+	if rt == nil {
+		return false
+	}
+	hash := hashValue(resp, "body_md5")
+	if hash == "" {
+		return false
+	}
+	parsed, err := url.Parse(responseURL(resp))
+	if err != nil {
+		return false
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+	rootURL := fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
+	path := normalizedPath(resp)
+	if path == "/" {
+		return false
+	}
+
+	rt.lockURLMap()
+	defer rt.unlockURLMap()
+	entry, ok := rt.URLMap[rootURL]
+	if !ok || entry.WebPaths == nil {
+		return false
+	}
+	home, ok := entry.WebPaths["/"]
+	if !ok || home.Hash == "" || home.Hash != hash {
+		return false
+	}
+	if home.StatusCode != 0 && home.StatusCode != resp.StatusCode {
+		return false
+	}
+	return true
 }
 
 func (rt *Runtime) matchingDirPaths(respPath string) []string {
@@ -266,29 +370,73 @@ func (rt *Runtime) matchingDirPaths(respPath string) []string {
 	return paths
 }
 
+func (rt *Runtime) matchAllFingers(resp runner.Result) []string {
+	if rt == nil || len(rt.FingerprintDB) == 0 {
+		return nil
+	}
+	portInt, err := strconv.Atoi(resp.Port)
+	if err != nil {
+		portInt = -1
+	}
+	cert := getTLSString(resp)
+	path := normalizedPath(resp)
+	bodyHash := hashValue(resp, "body_md5")
+	seen := map[string]struct{}{}
+	var results []string
+
+	ctx := ddfinger.NewCheckContext(
+		resp.Scheme,
+		resp.Header,
+		resp.Body,
+		resp.WebServer,
+		resp.Title,
+		cert,
+		portInt,
+		path,
+		bodyHash,
+		resp.FavIconMMH3,
+		resp.StatusCode,
+		resp.ContentType,
+		"",
+	)
+
+	for _, finger := range rt.FingerprintDB {
+		if _, ok := seen[finger.ProductName]; ok {
+			continue
+		}
+		if !ddfinger.SingleCheckWithContext(finger, ctx) {
+			continue
+		}
+		seen[finger.ProductName] = struct{}{}
+		results = append(results, finger.ProductName)
+	}
+	return results
+}
+
 func (rt *Runtime) matchesProduct(resp runner.Result, productName string) bool {
 	portInt, err := strconv.Atoi(resp.Port)
 	if err != nil {
 		portInt = -1
 	}
 
+	ctx := ddfinger.NewCheckContext(
+		resp.Scheme,
+		resp.Header,
+		resp.Body,
+		resp.WebServer,
+		resp.Title,
+		getTLSString(resp),
+		portInt,
+		normalizedPath(resp),
+		hashValue(resp, "body_md5"),
+		resp.FavIconMMH3,
+		resp.StatusCode,
+		resp.ContentType,
+		"",
+	)
+
 	for _, finger := range rt.fingerprintByProduct[productName] {
-		if ddfinger.SingleCheck(
-			finger,
-			resp.Scheme,
-			resp.Header,
-			resp.Body,
-			resp.WebServer,
-			resp.Title,
-			getTLSString(resp),
-			portInt,
-			normalizedPath(resp),
-			hashValue(resp, "body_md5"),
-			resp.FavIconMMH3,
-			resp.StatusCode,
-			resp.ContentType,
-			"",
-		) {
+		if ddfinger.DirProbeCheckWithContext(finger, ctx) {
 			return true
 		}
 	}
@@ -296,10 +444,13 @@ func (rt *Runtime) matchesProduct(resp runner.Result, productName string) bool {
 	return false
 }
 
-func (rt *Runtime) upsertResponse(resp runner.Result) (string, bool) {
+func (rt *Runtime) upsertResponse(resp runner.Result, natural bool) (string, bool) {
 	finalURL := responseURL(resp)
 	URL, err := url.Parse(finalURL)
 	if err != nil {
+		return "", false
+	}
+	if URL.Scheme != "http" && URL.Scheme != "https" {
 		return "", false
 	}
 
@@ -324,6 +475,7 @@ func (rt *Runtime) upsertResponse(resp runner.Result) (string, bool) {
 		ContentLength:    resp.ContentLength,
 		HeaderHashString: headerHash,
 		IconHash:         resp.FavIconMMH3,
+		Natural:          natural,
 	}
 
 	port := responsePort(URL, resp.Port)
@@ -336,10 +488,16 @@ func (rt *Runtime) upsertResponse(resp runner.Result) (string, bool) {
 			urlEntry.WebPaths = make(map[string]structs.UrlPathEntity)
 		}
 		if existingPath, pathOK := urlEntry.WebPaths[path]; pathOK {
+			pathEntity.Natural = existingPath.Natural || natural
 			if shouldReplaceWebPath(existingPath, pathEntity) {
 				urlEntry.WebPaths[path] = pathEntity
 				rt.URLMap[rootURL] = urlEntry
 				return rootURL, true
+			}
+			if pathEntity.Natural != existingPath.Natural {
+				existingPath.Natural = pathEntity.Natural
+				urlEntry.WebPaths[path] = existingPath
+				rt.URLMap[rootURL] = urlEntry
 			}
 			return rootURL, false
 		}
@@ -411,20 +569,29 @@ func (rt *Runtime) isNewHostBind(resp runner.Result) bool {
 }
 
 func (rt *Runtime) addDirFallback(rootURL string, productName string) {
-	if rt.DirFallbackResultMap == nil {
+	appendUniqueProduct(&rt.DirFallbackResultMap, rt.DirFallbackResultMapMu, rootURL, productName)
+}
+
+func (rt *Runtime) addDirEvidence(fullURL string, productName string) {
+	appendUniqueProduct(&rt.DirEvidenceResultMap, rt.DirEvidenceResultMapMu, fullURL, productName)
+}
+
+func appendUniqueProduct(dst *map[string][]string, mu *sync.Mutex, key, productName string) {
+	if dst == nil || key == "" || productName == "" {
 		return
 	}
-
-	if rt.DirFallbackResultMapMu != nil {
-		rt.DirFallbackResultMapMu.Lock()
-		defer rt.DirFallbackResultMapMu.Unlock()
+	if mu != nil {
+		mu.Lock()
+		defer mu.Unlock()
 	}
-
-	existing := rt.DirFallbackResultMap[rootURL]
+	if *dst == nil {
+		*dst = make(map[string][]string)
+	}
+	existing := (*dst)[key]
 	if utils.GetItemInArray(existing, productName) != -1 {
 		return
 	}
-	rt.DirFallbackResultMap[rootURL] = append(existing, productName)
+	(*dst)[key] = append(existing, productName)
 }
 
 func (rt *Runtime) lockURLMap() {
@@ -556,6 +723,19 @@ func isDefaultPort(URL *url.URL) bool {
 		(URL.Scheme == "https" && port == "443")
 }
 
+func isHTTPScheme(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+		return true
+	default:
+		return false
+	}
+}
+
 func responseURL(resp runner.Result) string {
 	if resp.FinalURL != "" {
 		return resp.FinalURL
@@ -596,6 +776,123 @@ func hashValue(resp runner.Result, key string) string {
 		return typed
 	}
 	return fmt.Sprint(value)
+}
+
+func webRedirect(resp runner.Result) string {
+	location := strings.TrimSpace(resp.Location)
+	if location != "" {
+		return location
+	}
+	finalURL := strings.TrimSpace(resp.FinalURL)
+	if finalURL != "" && finalURL != strings.TrimSpace(resp.URL) {
+		return finalURL
+	}
+	return ""
+}
+
+// ProbeURLs builds HTTP(S) probe targets from a protocol-identify result.
+// TLS-typical ports that were labeled http still get an https:// attempt so
+// the WEB block can show the leaf certificate.
+func ProbeURLs(hostPort, service string) []string {
+	hostPort = strings.TrimSpace(hostPort)
+	service = strings.ToLower(strings.TrimSpace(service))
+	if hostPort == "" {
+		return nil
+	}
+	switch service {
+	case "https", "ssl/http", "http2":
+		return []string{"https://" + hostPort}
+	case "http", "http-proxy", "http-alt":
+		urls := []string{"http://" + hostPort}
+		if tlsLikelyWebPort(hostPort) {
+			urls = append(urls, "https://"+hostPort)
+		}
+		return urls
+	default:
+		return nil
+	}
+}
+
+func tlsLikelyWebPort(hostPort string) bool {
+	_, port, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		return false
+	}
+	return TLSLikelyPort(port)
+}
+
+// TLSLikelyPort reports whether the given port number commonly serves HTTPS
+// directly, so domain-form probing can pick the scheme without protocol
+// identification.
+func TLSLikelyPort(port string) bool {
+	switch port {
+	case "443", "1443", "3443", "4443", "6443", "7443", "8443", "9443", "10443":
+		return true
+	default:
+		return false
+	}
+}
+
+func compactCertificate(resp runner.Result) string {
+	if resp.TLSData == nil || resp.TLSData.CertificateResponse == nil {
+		return ""
+	}
+	cert := resp.TLSData.CertificateResponse
+	parts := make([]string, 0, 6)
+	cn := strings.TrimSpace(cert.SubjectCN)
+	if cn == "" && len(cert.SubjectAN) > 0 {
+		cn = strings.TrimSpace(cert.SubjectAN[0])
+	}
+	if cn != "" {
+		parts = append(parts, "CN="+cn)
+	}
+	if sans := compactSAN(cert.SubjectAN, cn); sans != "" {
+		parts = append(parts, "SAN="+sans)
+	}
+	issuer := strings.TrimSpace(cert.IssuerCN)
+	if issuer == "" && len(cert.IssuerOrg) > 0 {
+		issuer = strings.TrimSpace(cert.IssuerOrg[0])
+	}
+	if issuer != "" {
+		parts = append(parts, "issuer="+issuer)
+	}
+	if cert.SelfSigned {
+		parts = append(parts, "self_signed=true")
+	}
+	if cert.Expired {
+		parts = append(parts, "expired=true")
+	}
+	if cert.MisMatched {
+		parts = append(parts, "mismatch=true")
+	}
+	out := strings.Join(parts, " ")
+	if len(out) > 160 {
+		return out[:160]
+	}
+	return out
+}
+
+func compactSAN(names []string, cn string) string {
+	var out []string
+	seen := map[string]struct{}{}
+	if cn != "" {
+		seen[cn] = struct{}{}
+	}
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+		if len(out) == 3 {
+			break
+		}
+	}
+	return strings.Join(out, ",")
 }
 
 func getTLSString(resp runner.Result) string {

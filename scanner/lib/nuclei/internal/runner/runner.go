@@ -586,6 +586,18 @@ func (r *Runner) executeTemplatesInput(store *loader.Store, engine *core.Engine)
 
 // displayExecutionInfo displays misc info about the nuclei engine execution
 func (r *Runner) displayExecutionInfo(store *loader.Store) {
+	if r.options.DisableStdout {
+		for _, item := range []struct{ name, label string }{
+			{parsers.SyntaxWarningStats, "syntax warning"},
+			{parsers.SyntaxErrorStats, "syntax error"},
+			{parsers.RuntimeWarningsStats, "runtime error"},
+		} {
+			if n := stats.GetValue(item.name); n > 0 {
+				gologger.AuditTimeLogger("[Nuclei] %d templates with %s", n, item.label)
+			}
+		}
+		return
+	}
 	// Display stats for any loaded templates' syntax warnings or errors
 	stats.Display(parsers.SyntaxWarningStats)
 	stats.Display(parsers.SyntaxErrorStats)

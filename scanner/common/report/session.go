@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/P0lar1ght/argus/scanner/ddout"
 	"github.com/P0lar1ght/argus/scanner/structs"
 	nucleiOutput "github.com/projectdiscovery/nuclei/v3/pkg/output"
 )
@@ -108,9 +109,11 @@ type reportItem struct {
 	Link          string
 	IP            string
 	Port          string
+	Transport     string
 	Protocol      string
 	Status        string
 	Title         string
+	Certificate   string
 	Location      string
 	Fingerprints  []string
 	Details       string
@@ -449,14 +452,17 @@ func normalizeMessage(message structs.OutputMessage) reportItem {
 	switch message.Type {
 	case "IPAlive":
 		return reportItem{Category: categoryAssets, Type: message.Type, TypeLabel: "存活主机", Endpoint: message.IP, IP: message.IP, Location: message.City, Details: message.AdditionalMsg}
+	case "Path":
+		return reportItem{Category: categoryOther, Type: message.Type, TypeLabel: "路径", Endpoint: message.IP, IP: message.IP, Details: joinDetails(message.AdditionalMsg, strings.Join(cleanValues(message.IPs), " -> "))}
+	case "Topo":
+		return reportItem{Category: categoryOther, Type: message.Type, TypeLabel: "拓扑", Endpoint: firstNonEmpty(message.AdditionalMsg, strings.Join(cleanValues(message.IPs), " -> ")), Details: message.AdditionalMsg}
 	case "Domain", "DNS-SubFinder", "DNS-Brute", "CDN-Domain", "RealIP":
 		return reportItem{Category: categoryAssets, Type: message.Type, TypeLabel: "域名", Endpoint: message.Domain, Location: message.City, Details: joinDetails(strings.Join(cleanValues(message.IPs), ", "), message.AdditionalMsg)}
-	case "PortScan":
-		return reportItem{Category: categoryServices, Type: message.Type, TypeLabel: "开放端口", Endpoint: endpoint(message.IP, message.Port), IP: message.IP, Port: message.Port, Location: message.City, Details: message.AdditionalMsg}
-	case "Protocol", "Nmap":
-		return reportItem{Category: categoryServices, Type: message.Type, TypeLabel: "协议识别", Endpoint: endpoint(message.IP, message.Port), IP: message.IP, Port: message.Port, Protocol: message.Protocol, Location: message.City, Details: message.AdditionalMsg}
+	case "PortScan", "Protocol", "Nmap":
+		port := servicePort(message)
+		return reportItem{Category: categoryServices, Type: message.Type, TypeLabel: "开放端口", Endpoint: endpoint(message.IP, port), IP: message.IP, Port: port, Transport: ddout.ServiceTag(message.Transport, message.Protocol), Protocol: message.Protocol, Location: message.City, Details: message.AdditionalMsg}
 	case "Web", "Domain-Bind":
-		return reportItem{Category: categoryWeb, Type: message.Type, TypeLabel: typeLabel(message.Type), Endpoint: message.URI, Link: safeHTTPURL(message.URI), IP: message.IP, Port: message.Port, Status: message.Web.Status, Title: message.Web.Title, Location: message.City, Fingerprints: cleanValues(message.Finger), Details: message.AdditionalMsg}
+		return reportItem{Category: categoryWeb, Type: message.Type, TypeLabel: typeLabel(message.Type), Endpoint: message.URI, Link: safeHTTPURL(message.URI), IP: message.IP, Port: message.Port, Status: message.Web.Status, Title: message.Web.Title, Certificate: strings.TrimSpace(message.Web.Cert), Location: message.City, Fingerprints: cleanValues(message.Finger), Details: message.AdditionalMsg}
 	case "Finger", "Active-Finger":
 		return reportItem{Category: categoryFingerprints, Type: message.Type, TypeLabel: typeLabel(message.Type), Endpoint: message.URI, Link: safeHTTPURL(message.URI), IP: message.IP, Port: message.Port, Status: message.Web.Status, Title: message.Web.Title, Location: message.City, Fingerprints: cleanValues(message.Finger), Details: message.AdditionalMsg}
 	case "Nuclei":
@@ -714,6 +720,10 @@ func safeHTTPURL(value string) string {
 		return ""
 	}
 	return value
+}
+
+func servicePort(message structs.OutputMessage) string {
+	return strings.TrimSuffix(strings.TrimSpace(message.Port), "/udp")
 }
 
 func endpoint(host, port string) string {

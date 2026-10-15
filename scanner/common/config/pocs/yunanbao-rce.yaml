@@ -1,11 +1,11 @@
 id: yunanbao-rce
 
 info:
-  name: Yunanbao Cloud Box FastJson - Deserialization Remote Code Execution
+  name: 云安宝云匣子 Fastjson 反序列化远程命令执行
   author: DhiyaneshDK
   severity: critical
   description: |
-    The authService interface of Cloud Box uses the vulnerable fastjson component. Unauthorized attackers can launch attacks on Cloud Box through the fastjson serialization vulnerability to obtain server permissions.
+    云匣子 authService 使用存在漏洞的 Fastjson 组件，未授权可反序列化执行代码获取服务器权限。
   reference:
     - https://github.com/wy876/POC/blob/main/%E4%BA%91%E5%8C%A3%E5%AD%90%E5%A0%A1%E5%9E%92%E6%9C%BAfastjson%E6%BC%8F%E6%B4%9E.md
   metadata:

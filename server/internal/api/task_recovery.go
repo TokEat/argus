@@ -357,6 +357,56 @@ func handleTimeoutTasks(q *scheduler.TaskQueue) {
 			}
 
 			log.Printf("[TimeoutDaemon] SubTask %s recovered (retry %d/%d)", sub.ID, prepared.RetryCount, prepared.MaxRetry)
+		} else if db.IsImmutableDerivedExecutionConfig(sub.Config) {
+			// 验证快照不可二分拆分：RiskValidationTargets 是全集，拆半后
+			// 另一半的目标会被覆盖校验拒绝（"outside the dispatched batch"）。
+			// 改为不消耗重试预算的全量重派，按尝试次数封顶防死循环。
+			const maxAutomaticStageTimeoutRedeliveries = 5
+			if sub.AttemptNo > maxAutomaticStageTimeoutRedeliveries {
+				log.Printf("[TimeoutDaemon] Validation attempt %s exceeded redelivery cap (%d); settling as Timeout", sub.ID, maxAutomaticStageTimeoutRedeliveries)
+				settleRes := db.DB.Model(&sub).Where("status = ?", "Running").Updates(map[string]interface{}{
+					"status":         "Timeout",
+					"stream_msg_id":  "",
+					"failure_reason": fmt.Sprintf("attempt exceeded %d second timeout beyond validation redelivery cap", sub.TimeoutSec),
+					"finished_at":    time.Now(),
+				})
+				if settleRes.Error == nil && settleRes.RowsAffected == 1 {
+					if q != nil && leaseStreamMsgID != "" {
+						_ = q.AckTask(context.Background(), leaseStreamMsgID)
+					}
+					if sub.RootTaskID != "" {
+						db.RefreshRootTaskStatus(sub.RootTaskID)
+					}
+				}
+				continue
+			}
+			prepared, retryPrepared, retryErr := credentialbundle.AppendRetry(db.DB, &sub, db.AttemptRetryOptions{
+				Trigger:              db.AttemptTriggerTimeoutRetry,
+				TerminalStatus:       "Timeout",
+				FailureReason:        fmt.Sprintf("attempt exceeded %d second timeout", sub.TimeoutSec),
+				ConsumeRetryBudget:   false,
+				UseCurrentTaskConfig: true,
+			})
+			if retryErr != nil || !retryPrepared {
+				log.Printf("[TimeoutDaemon] Validation attempt %s full redelivery failed: err=%v prepared=%v", sub.ID, retryErr, retryPrepared)
+				continue
+			}
+			oldMessageReleased := leaseStreamMsgID == ""
+			if q != nil && leaseStreamMsgID != "" {
+				if err := q.AckTask(context.Background(), leaseStreamMsgID); err != nil {
+					log.Printf("[TimeoutDaemon] ACK failed for validation redelivery %s: %v", sub.ID, err)
+				} else {
+					oldMessageReleased = true
+				}
+			}
+			if q != nil && oldMessageReleased {
+				_, dispatchPending := dispatchSubTasks(context.Background(), q, []db.SubTask{prepared})
+				if dispatchPending == 0 {
+					broadcastDispatchedTasks(map[int]int{prepared.Priority: 1})
+				}
+			}
+			log.Printf("[TimeoutDaemon] Validation attempt %s timed out; requeued in full with preserved stage config (attempt %d)", prepared.ID, sub.AttemptNo+1)
+			continue
 		} else {
 			// 尝试二分拆分重试（绕过 retry_count 上限检查，直接看目标数）
 			var targets []string

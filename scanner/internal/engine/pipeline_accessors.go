@@ -13,7 +13,7 @@ func currentPipelineIPPortMap(ctx *ScanContext) map[string]string {
 }
 
 func currentWebRuntime(ctx *ScanContext, emit func(structs.OutputMessage)) *web.Runtime {
-	return web.NewRuntime(
+	rt := web.NewRuntime(
 		ctx.URLMap,
 		&ctx.URLMapLock,
 		ctx.IPDomainMap,
@@ -26,6 +26,12 @@ func currentWebRuntime(ctx *ScanContext, emit func(structs.OutputMessage)) *web.
 		&ctx.DirFallbackResultMapLock,
 		emit,
 	)
+	if ctx != nil {
+		rt.ReportAllDirProbes = ctx.ReportAllDirProbes
+		rt.DirEvidenceResultMap = ctx.DirEvidenceResultMap
+		rt.DirEvidenceResultMapMu = &ctx.DirEvidenceResultMapLock
+	}
+	return rt
 }
 
 func currentFingerRuntime(ctx *ScanContext, emit func(structs.OutputMessage)) *finger.Runtime {
@@ -42,11 +48,15 @@ func currentFingerRuntime(ctx *ScanContext, emit func(structs.OutputMessage)) *f
 }
 
 func currentProtocolRuntime(ctx *ScanContext, emit func(structs.OutputMessage)) *protocol.Runtime {
+	if ctx.ServiceMap == nil {
+		ctx.ServiceMap = make(map[string]structs.ServiceRecord)
+	}
 	return protocol.NewRuntime(
 		ctx.IPPortMap,
 		&ctx.IPPortMapLock,
 		ctx.BannerHMap,
 		emit,
+		ctx.ServiceMap,
 	)
 }
 
@@ -76,8 +86,8 @@ func setPipelineResultMap(ctx *ScanContext, resultMap map[string][]string) {
 	ctx.ResultMap = resultMap
 }
 
-func currentPipelineDirFallbackResultMap(ctx *ScanContext) map[string][]string {
-	return ctx.DirFallbackResultMap
+func currentPipelineDirEvidenceResultMap(ctx *ScanContext) map[string][]string {
+	return ctx.DirEvidenceResultMap
 }
 
 func currentPipelineWorkflowDB(ctx *ScanContext) map[string]structs.WorkFlowEntity {

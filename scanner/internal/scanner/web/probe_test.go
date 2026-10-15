@@ -8,7 +8,134 @@ import (
 	"testing"
 
 	"github.com/projectdiscovery/httpx/runner"
+	"github.com/projectdiscovery/tlsx/pkg/tlsx/clients"
 )
+
+func TestURLCallbackEmitsPassiveFingersForDisplay(t *testing.T) {
+	var emitted []structs.OutputMessage
+	rt := NewRuntime(
+		map[string]structs.URLEntity{},
+		&sync.Mutex{},
+		nil, nil, nil, nil,
+		[]structs.FingerPEntity{{
+			ProductName: "DemoCMS",
+			AllString:   `title="Index"`,
+			Rule:        ddfinger.ParseRule(`title="Index"`),
+		}},
+		nil,
+		map[string][]string{},
+		&sync.Mutex{},
+		func(msg structs.OutputMessage) { emitted = append(emitted, msg) },
+	)
+	rt.URLCallback(runner.Result{
+		URL:           "http://example.com/",
+		Scheme:        "http",
+		Host:          "example.com",
+		Port:          "80",
+		Path:          "/",
+		Title:         "Index",
+		StatusCode:    200,
+		ContentLength: 12,
+		Hashes: map[string]interface{}{
+			"body_md5":   "body-1",
+			"header_md5": "header-1",
+		},
+	})
+	if len(emitted) != 1 || !reflect.DeepEqual(emitted[0].Finger, []string{"DemoCMS"}) {
+		t.Fatalf("expected display fingers, got %#v", emitted)
+	}
+}
+
+func TestURLCallbackEmitsSizeAndRedirect(t *testing.T) {
+	var emitted []structs.OutputMessage
+	rt := NewRuntime(map[string]structs.URLEntity{}, &sync.Mutex{}, nil, nil, nil, nil, nil, nil, map[string][]string{}, &sync.Mutex{}, func(msg structs.OutputMessage) {
+		emitted = append(emitted, msg)
+	})
+	rt.URLCallback(runner.Result{
+		URL:           "http://example.com/",
+		Scheme:        "http",
+		Host:          "example.com",
+		Port:          "80",
+		Path:          "/",
+		Title:         "Home",
+		StatusCode:    302,
+		ContentLength: 2862,
+		Location:      "https://example.com/login",
+		Hashes: map[string]interface{}{
+			"body_md5":   "body-1",
+			"header_md5": "header-1",
+		},
+	})
+	if len(emitted) != 1 {
+		t.Fatalf("emitted = %#v", emitted)
+	}
+	if emitted[0].Web.Status != "302" || emitted[0].Web.Size != "2862" || emitted[0].Web.Redirect != "https://example.com/login" || emitted[0].Web.Title != "Home" {
+		t.Fatalf("web fields = %#v", emitted[0].Web)
+	}
+}
+
+func TestURLCallbackEmitsCertificate(t *testing.T) {
+	var emitted []structs.OutputMessage
+	rt := NewRuntime(map[string]structs.URLEntity{}, &sync.Mutex{}, nil, nil, nil, nil, nil, nil, map[string][]string{}, &sync.Mutex{}, func(msg structs.OutputMessage) {
+		emitted = append(emitted, msg)
+	})
+	rt.URLCallback(runner.Result{
+		URL:           "https://10.0.0.8/",
+		Scheme:        "https",
+		Host:          "10.0.0.8",
+		Port:          "443",
+		Path:          "/",
+		StatusCode:    200,
+		ContentLength: 12,
+		TLSData: &clients.Response{
+			CertificateResponse: &clients.CertificateResponse{
+				SubjectAN: []string{"intranet.local", "10.0.0.8"},
+				IssuerOrg: []string{"ExampleCA"},
+			},
+		},
+		Hashes: map[string]interface{}{"body_md5": "body-1", "header_md5": "header-1"},
+	})
+	if len(emitted) != 1 {
+		t.Fatalf("emitted = %#v", emitted)
+	}
+	if emitted[0].Web.Cert != "CN=intranet.local SAN=10.0.0.8 issuer=ExampleCA" {
+		t.Fatalf("cert = %q", emitted[0].Web.Cert)
+	}
+}
+
+func TestCompactCertificateUsesSANWhenCNEmpty(t *testing.T) {
+	got := compactCertificate(runner.Result{TLSData: &clients.Response{
+		CertificateResponse: &clients.CertificateResponse{
+			SubjectAN: []string{"app.local", "app.local"},
+			IssuerCN:  "R3",
+			Expired:   true,
+		},
+	}})
+	if got != "CN=app.local issuer=R3 expired=true" {
+		t.Fatalf("compact = %q", got)
+	}
+	if compactCertificate(runner.Result{}) != "" {
+		t.Fatal("empty TLS should stay empty")
+	}
+	if compactCertificate(runner.Result{TLSData: &clients.Response{}}) != "" {
+		t.Fatal("nil certificate response should stay empty")
+	}
+}
+
+func TestProbeURLsAddsHTTPSOnTLSPorts(t *testing.T) {
+	if got := ProbeURLs("10.0.0.8:80", "http"); !reflect.DeepEqual(got, []string{"http://10.0.0.8:80"}) {
+		t.Fatalf("http 80 = %v", got)
+	}
+	if got := ProbeURLs("10.0.0.8:443", "http"); !reflect.DeepEqual(got, []string{"http://10.0.0.8:443", "https://10.0.0.8:443"}) {
+		t.Fatalf("http 443 = %v", got)
+	}
+	if got := ProbeURLs("10.0.0.8:8443", "https"); !reflect.DeepEqual(got, []string{"https://10.0.0.8:8443"}) {
+		t.Fatalf("https 8443 = %v", got)
+	}
+	if got := ProbeURLs("10.0.0.8:22", "ssh"); got != nil {
+		t.Fatalf("ssh = %v", got)
+	}
+}
 
 func TestURLCallbackStoresWebPath(t *testing.T) {
 	urlMap := make(map[string]structs.URLEntity)
@@ -442,6 +569,101 @@ func TestDirBruteCallbackRecordsDirFallback(t *testing.T) {
 	}
 }
 
+func TestDirBruteCallbackDoesNotMarkGeneric403AsProducts(t *testing.T) {
+	urlMap := map[string]structs.URLEntity{
+		"http://58.210.164.90:8556": {
+			IP:       "58.210.164.90",
+			Port:     8556,
+			WebPaths: map[string]structs.UrlPathEntity{"/": {}},
+		},
+	}
+	var emitted []structs.OutputMessage
+	rt := NewRuntime(
+		urlMap,
+		&sync.Mutex{},
+		nil, nil, nil,
+		map[string][]string{
+			"/seeyon/":           {"致远互联-OA"},
+			"/wui/index.html":    {"泛微-协同办公OA"},
+			"/general/login.php": {"TDXK-通达OA"},
+		},
+		[]structs.FingerPEntity{
+			{ProductName: "致远互联-OA", AllString: `path="/seeyon/"`, Rule: ddfinger.ParseRule(`path="/seeyon/"`)},
+			{ProductName: "泛微-协同办公OA", AllString: `path="/wui/index.html"`, Rule: ddfinger.ParseRule(`path="/wui/index.html"`)},
+			{ProductName: "TDXK-通达OA", AllString: `path="/general/login.php"`, Rule: ddfinger.ParseRule(`path="/general/login.php"`)},
+			{ProductName: "TDXK-通达OA", AllString: `body="/general/login.php"`, Rule: ddfinger.ParseRule(`body="/general/login.php"`)},
+		},
+		nil,
+		map[string][]string{},
+		&sync.Mutex{},
+		func(msg structs.OutputMessage) { emitted = append(emitted, msg) },
+	)
+
+	denied := runner.Result{
+		Scheme:      "http",
+		Host:        "58.210.164.90",
+		Port:        "8556",
+		StatusCode:  403,
+		Title:       "403 Forbidden",
+		ContentType: "text/html",
+		Hashes:      map[string]interface{}{"body_md5": "same-waf", "header_md5": "same-hdr"},
+	}
+	for _, path := range []string{"/seeyon/", "/wui/index.html", "/general/login.php"} {
+		item := denied
+		item.Path = path
+		item.URL = "http://58.210.164.90:8556" + path
+		item.Body = `<html>403 Forbidden</html> URL: ` + item.URL
+		rt.DirBruteCallback(item)
+	}
+
+	if len(emitted) != 0 {
+		t.Fatalf("generic 403 directory probes should not emit active fingerprints, got %#v", emitted)
+	}
+}
+
+func TestDirBruteCallbackKeepsDistinctiveContentOnProbedPath(t *testing.T) {
+	urlMap := map[string]structs.URLEntity{
+		"http://example.com": {
+			IP:       "1.1.1.1",
+			Port:     80,
+			WebPaths: map[string]structs.UrlPathEntity{"/": {}},
+		},
+	}
+	var emitted []structs.OutputMessage
+	rt := NewRuntime(
+		urlMap,
+		&sync.Mutex{},
+		nil, nil, nil,
+		map[string][]string{"/seeyon/": {"致远互联-OA"}},
+		[]structs.FingerPEntity{{
+			ProductName: "致远互联-OA",
+			AllString:   `body="seeyonProductId"`,
+			Rule:        ddfinger.ParseRule(`body="seeyonProductId"`),
+		}},
+		nil,
+		map[string][]string{},
+		&sync.Mutex{},
+		func(msg structs.OutputMessage) { emitted = append(emitted, msg) },
+	)
+
+	rt.DirBruteCallback(runner.Result{
+		URL:         "http://example.com/seeyon/",
+		Scheme:      "http",
+		Host:        "example.com",
+		Port:        "80",
+		Path:        "/seeyon/",
+		StatusCode:  200,
+		Body:        `var seeyonProductId = "A8"`,
+		Title:       "致远A8",
+		ContentType: "text/html",
+		Hashes:      map[string]interface{}{"body_md5": "seeyon-ok", "header_md5": "hdr"},
+	})
+
+	if len(emitted) != 1 || len(emitted[0].Finger) != 1 || emitted[0].Finger[0] != "致远互联-OA" {
+		t.Fatalf("expected distinctive directory probe match, got %#v", emitted)
+	}
+}
+
 func TestMatchingDirPathsRequiresExactRequestURI(t *testing.T) {
 	rt := &Runtime{DirDB: map[string][]string{
 		"/login":               {"Login"},
@@ -503,6 +725,35 @@ func TestDirBruteCallbackSkipsUnmatchedPathInsert(t *testing.T) {
 	}
 }
 
+func TestDirBruteCallbackReportsEveryPathWhenAsked(t *testing.T) {
+	var got []structs.OutputMessage
+	rt := NewRuntime(
+		map[string]structs.URLEntity{},
+		&sync.Mutex{},
+		nil,
+		nil,
+		nil,
+		map[string][]string{"/admin": {"Demo"}},
+		nil,
+		map[string]structs.WorkFlowEntity{},
+		map[string][]string{},
+		&sync.Mutex{},
+		func(msg structs.OutputMessage) { got = append(got, msg) },
+	)
+	rt.ReportAllDirProbes = true
+	rt.DirBruteCallback(runner.Result{
+		URL:           "http://example.com/admin",
+		Path:          "/admin",
+		StatusCode:    404,
+		Title:         "missing",
+		Body:          "<html>nope</html>",
+		ContentLength: 16,
+	})
+	if len(got) != 1 || got[0].Type != "Dir-Probe" || got[0].Web.Status != "404" || got[0].AdditionalMsg != "<html>nope</html>" {
+		t.Fatalf("expected dir probe miss with body, got %#v", got)
+	}
+}
+
 func TestHostBindCallbackStoresChangedBinding(t *testing.T) {
 	urlMap := map[string]structs.URLEntity{
 		"http://1.1.1.1:80": {
@@ -538,5 +789,221 @@ func TestHostBindCallbackStoresChangedBinding(t *testing.T) {
 	}
 	if _, ok := entry.WebPaths["/"]; !ok {
 		t.Fatalf("expected host bind path to be recorded")
+	}
+}
+
+func TestURLCallbackMarksHomepageNatural(t *testing.T) {
+	urlMap := make(map[string]structs.URLEntity)
+	rt := NewRuntime(urlMap, &sync.Mutex{}, nil, nil, nil, nil, nil, nil, map[string][]string{}, &sync.Mutex{}, nil)
+	rt.URLCallback(runner.Result{
+		URL:        "http://example.com/",
+		Scheme:     "http",
+		Host:       "example.com",
+		Port:       "80",
+		Path:       "/",
+		StatusCode: 200,
+		Hashes:     map[string]interface{}{"body_md5": "home", "header_md5": "hdr"},
+	})
+	if !urlMap["http://example.com"].WebPaths["/"].Natural {
+		t.Fatal("homepage from HTTP probe must be marked natural")
+	}
+}
+
+func TestDirBruteCallbackDoesNotMarkGeneric401AsProducts(t *testing.T) {
+	urlMap := map[string]structs.URLEntity{
+		"https://edu.example": {
+			IP:   "1.1.1.1",
+			Port: 443,
+			WebPaths: map[string]structs.UrlPathEntity{
+				"/": {Hash: "auth-gate", StatusCode: 401, Title: "401 Unauthorized", Natural: true},
+			},
+		},
+	}
+	var emitted []structs.OutputMessage
+	rt := NewRuntime(
+		urlMap,
+		&sync.Mutex{},
+		nil, nil, nil,
+		map[string][]string{
+			"/airflow/":       {"APACHE-Airflow"},
+			"/geoserver/web/": {"GeoServer"},
+			"/nacos/":         {"Alibaba-Nacos"},
+		},
+		[]structs.FingerPEntity{
+			{ProductName: "APACHE-Airflow", AllString: `body="airflow"`, Rule: ddfinger.ParseRule(`body="airflow"`)},
+			{ProductName: "GeoServer", AllString: `body="/geoserver/"`, Rule: ddfinger.ParseRule(`body="/geoserver/"`)},
+			{ProductName: "Alibaba-Nacos", AllString: `body="/nacos/"`, Rule: ddfinger.ParseRule(`body="/nacos/"`)},
+		},
+		nil,
+		map[string][]string{},
+		&sync.Mutex{},
+		func(msg structs.OutputMessage) { emitted = append(emitted, msg) },
+	)
+
+	denied := runner.Result{
+		Scheme:      "https",
+		Host:        "edu.example",
+		Port:        "443",
+		StatusCode:  401,
+		Title:       "401 Unauthorized",
+		ContentType: "text/html",
+		Hashes:      map[string]interface{}{"body_md5": "auth-gate", "header_md5": "auth-hdr"},
+	}
+	for _, path := range []string{"/airflow/", "/geoserver/web/", "/nacos/"} {
+		item := denied
+		item.Path = path
+		item.URL = "https://edu.example" + path
+		item.Body = `<html>401 Unauthorized</html> URL: ` + item.URL
+		rt.DirBruteCallback(item)
+	}
+
+	for _, msg := range emitted {
+		if msg.Type == "Active-Finger" {
+			t.Fatalf("generic 401 directory probes should not emit active fingerprints, got %#v", emitted)
+		}
+	}
+	if len(rt.DirEvidenceResultMap) != 0 {
+		t.Fatalf("401 path echo must not enter ResultMap evidence: %#v", rt.DirEvidenceResultMap)
+	}
+}
+
+func TestDirBruteCallbackSuppressesHomepageCatchAllEvenWithProductTokens(t *testing.T) {
+	urlMap := map[string]structs.URLEntity{
+		"http://example.com": {
+			IP:   "1.1.1.1",
+			Port: 80,
+			WebPaths: map[string]structs.UrlPathEntity{
+				"/": {Hash: "same-gate", StatusCode: 401, Natural: true},
+			},
+		},
+	}
+	var emitted []structs.OutputMessage
+	rt := NewRuntime(
+		urlMap,
+		&sync.Mutex{},
+		nil, nil, nil,
+		map[string][]string{"/seeyon/": {"致远互联-OA"}},
+		[]structs.FingerPEntity{{
+			ProductName: "致远互联-OA",
+			AllString:   `body="seeyonProductId"`,
+			Rule:        ddfinger.ParseRule(`body="seeyonProductId"`),
+		}},
+		nil,
+		map[string][]string{},
+		&sync.Mutex{},
+		func(msg structs.OutputMessage) { emitted = append(emitted, msg) },
+	)
+
+	rt.DirBruteCallback(runner.Result{
+		URL:         "http://example.com/seeyon/",
+		Scheme:      "http",
+		Host:        "example.com",
+		Port:        "80",
+		Path:        "/seeyon/",
+		StatusCode:  401,
+		Body:        `var seeyonProductId = "A8"`,
+		Title:       "401 Unauthorized",
+		ContentType: "text/html",
+		Hashes:      map[string]interface{}{"body_md5": "same-gate", "header_md5": "hdr"},
+	})
+
+	for _, msg := range emitted {
+		if msg.Type == "Active-Finger" {
+			t.Fatalf("homepage catch-all 401 must not emit a product fingerprint, got %#v", emitted)
+		}
+	}
+}
+
+func TestDirBruteCallbackRecordsIndependentEvidenceForPOC(t *testing.T) {
+	urlMap := map[string]structs.URLEntity{
+		"http://example.com": {
+			IP:       "1.1.1.1",
+			Port:     80,
+			WebPaths: map[string]structs.UrlPathEntity{"/": {Hash: "home", Natural: true}},
+		},
+	}
+	var emitted []structs.OutputMessage
+	rt := NewRuntime(
+		urlMap,
+		&sync.Mutex{},
+		nil, nil, nil,
+		map[string][]string{"/nacos/": {"Alibaba-Nacos"}},
+		[]structs.FingerPEntity{{
+			ProductName: "Alibaba-Nacos",
+			AllString:   `title="Nacos"`,
+			Rule:        ddfinger.ParseRule(`title="Nacos"`),
+		}},
+		nil,
+		map[string][]string{},
+		&sync.Mutex{},
+		func(msg structs.OutputMessage) { emitted = append(emitted, msg) },
+	)
+
+	rt.DirBruteCallback(runner.Result{
+		URL:         "http://example.com/nacos/",
+		Scheme:      "http",
+		Host:        "example.com",
+		Port:        "80",
+		Path:        "/nacos/",
+		StatusCode:  200,
+		Title:       "Nacos",
+		Body:        `<html>/nacos/</html>`,
+		ContentType: "text/html",
+		Hashes:      map[string]interface{}{"body_md5": "nacos-login", "header_md5": "hdr"},
+	})
+
+	if len(emitted) != 1 || emitted[0].Type != "Active-Finger" || !reflect.DeepEqual(emitted[0].Finger, []string{"Alibaba-Nacos"}) {
+		t.Fatalf("expected Nacos directory evidence, got %#v", emitted)
+	}
+	if emitted[0].AdditionalMsg != "[directory-probe]" {
+		t.Fatalf("expected [directory-probe] tag, got %q", emitted[0].AdditionalMsg)
+	}
+	if !reflect.DeepEqual(rt.DirEvidenceResultMap["http://example.com/nacos/"], []string{"Alibaba-Nacos"}) {
+		t.Fatalf("independent directory evidence must enter ResultMap key, got %#v", rt.DirEvidenceResultMap)
+	}
+	if urlMap["http://example.com"].WebPaths["/nacos/"].Natural {
+		t.Fatal("directory-probe path must not be marked natural")
+	}
+}
+
+func TestDirBruteCallbackFallbackDoesNotEnterEvidenceMap(t *testing.T) {
+	urlMap := map[string]structs.URLEntity{
+		"http://example.com": {
+			IP:       "1.1.1.1",
+			Port:     80,
+			WebPaths: map[string]structs.UrlPathEntity{"/": {Natural: true}},
+		},
+	}
+	dirFallback := make(map[string][]string)
+	rt := NewRuntime(
+		urlMap,
+		&sync.Mutex{},
+		nil, nil, nil,
+		map[string][]string{"/admin": {"TestProduct"}},
+		nil,
+		map[string]structs.WorkFlowEntity{
+			"TestProduct": {DirFallback: true},
+		},
+		dirFallback,
+		&sync.Mutex{},
+		nil,
+	)
+
+	rt.DirBruteCallback(runner.Result{
+		URL:         "http://example.com/admin",
+		Scheme:      "http",
+		Host:        "example.com",
+		Port:        "80",
+		Path:        "/admin",
+		StatusCode:  200,
+		ContentType: "text/html",
+		Hashes:      map[string]interface{}{"body_md5": "body-admin", "header_md5": "header-admin"},
+	})
+
+	if !reflect.DeepEqual(dirFallback["http://example.com"], []string{"TestProduct"}) {
+		t.Fatalf("fallback observation = %#v", dirFallback)
+	}
+	if len(rt.DirEvidenceResultMap) != 0 {
+		t.Fatalf("dir-fallback must not enter evidence/ResultMap: %#v", rt.DirEvidenceResultMap)
 	}
 }

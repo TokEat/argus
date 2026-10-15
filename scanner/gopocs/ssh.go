@@ -22,9 +22,12 @@ func SshScan(info *structs.HostInfo) (tmperr error) {
 
 	userPasswdList := sortUserPassword(info, sshUserPasswdDict, []string{"ssh"})
 
+	// 每个目标只探测一次 TCP RTT，整个爆破循环复用自适应认证超时。
+	authTimeout := authTimeoutFor(info.Host, info.Ports)
+
 	for _, userPass := range userPasswdList {
 		gologger.AuditTimeLogger("[Go] [SSH-Brute] start try %s:%v %v %v", info.Host, info.Ports, maskUsername(userPass.UserName), maskPassword(userPass.Password))
-		flag, err := SshConn(info, userPass.UserName, userPass.Password)
+		flag, err := SshConn(info, userPass.UserName, userPass.Password, authTimeout)
 		if flag == true && err == nil {
 			return err
 		} else {
@@ -45,16 +48,21 @@ func SshScan(info *structs.HostInfo) (tmperr error) {
 	return tmperr
 }
 
-func SshConn(info *structs.HostInfo, user string, pass string) (flag bool, err error) {
+func SshConn(info *structs.HostInfo, user string, pass string, authTimeout time.Duration) (flag bool, err error) {
 	waitCredentialAttempt(info)
 	flag = false
 	Host, Port, Username, Password := info.Host, info.Ports, user, pass
 	Auth := []ssh.AuthMethod{ssh.Password(Password)}
 
+	// 防御非正超时：退回历史上限，避免拨号失去超时保护。
+	if authTimeout <= 0 {
+		authTimeout = adaptiveAuthTimeoutCeiling
+	}
+
 	config := &ssh.ClientConfig{
 		User:    Username,
 		Auth:    Auth,
-		Timeout: time.Duration(6) * time.Second,
+		Timeout: authTimeout,
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			return nil
 		},

@@ -32,6 +32,7 @@ const (
 	MaxFOFAQueryBytes      = 4096
 	fofaMaxCredentialBytes = 4096
 	fofaFields             = "host,protocol,title,icp,ip,port,domain"
+	fofaMaxPages           = 100000
 )
 
 var protocolPattern = regexp.MustCompile(`^[a-z][a-z0-9+.-]{0,31}$`)
@@ -54,10 +55,12 @@ type FOFACredential struct {
 	Key   string
 }
 
-// FOFAQuery is one bounded provider query. A zero Limit uses the safe default.
+// FOFAQuery is one bounded provider query. A zero Limit uses the safe default;
+// a zero Page fetches the first page only.
 type FOFAQuery struct {
 	Expression string
 	Limit      int
+	Page       int
 }
 
 // Asset is a normalized discovery candidate. Authorization and project-scope
@@ -79,12 +82,16 @@ type Asset struct {
 }
 
 // Result contains only normalized provider output and bounded accounting. Raw
-// responses and credentials are deliberately excluded.
+// responses and credentials are deliberately excluded. Page and PageSize
+// report the provider page actually fetched, so callers never need to guess
+// provider-specific page-size limits.
 type Result struct {
 	Provider      string  `json:"provider"`
 	ProviderTotal int     `json:"provider_total"`
 	SkippedRows   int     `json:"skipped_rows"`
 	Truncated     bool    `json:"truncated"`
+	Page          int     `json:"page,omitempty"`
+	PageSize      int     `json:"page_size,omitempty"`
 	Assets        []Asset `json:"assets"`
 }
 
@@ -134,7 +141,7 @@ func (c *FOFAClient) Search(ctx context.Context, credential FOFACredential, quer
 	if ctx == nil {
 		return result, fmt.Errorf("%w: context is required", ErrInvalidFOFARequest)
 	}
-	email, key, expression, limit, err := validateFOFAInput(credential, query)
+	email, key, expression, limit, page, err := validateFOFAInput(credential, query)
 	if err != nil {
 		return result, err
 	}
@@ -149,7 +156,7 @@ func (c *FOFAClient) Search(ctx context.Context, credential FOFACredential, quer
 	params.Set("qbase64", base64.StdEncoding.EncodeToString([]byte(expression)))
 	params.Set("email", email)
 	params.Set("key", key)
-	params.Set("page", "1")
+	params.Set("page", strconv.Itoa(page))
 	params.Set("size", strconv.Itoa(limit))
 	params.Set("fields", fofaFields)
 	params.Set("full", "false")
@@ -192,12 +199,14 @@ func (c *FOFAClient) Search(ctx context.Context, credential FOFACredential, quer
 		return result, fmt.Errorf("%w: negative result size", ErrInvalidFOFAResponse)
 	}
 
+	result.Page = page
+	result.PageSize = limit
 	result.ProviderTotal = providerResponse.Size
 	rows := providerResponse.Results
 	if len(rows) > limit {
 		rows = rows[:limit]
-		result.Truncated = true
 	}
+	result.Truncated = providerResponse.Size > (page-1)*limit+len(rows)
 	assetsByTarget := make(map[string]Asset, len(rows))
 	for _, row := range rows {
 		asset, ok := normalizeFOFARow(row)
@@ -221,31 +230,38 @@ func (c *FOFAClient) Search(ctx context.Context, credential FOFACredential, quer
 	return result, nil
 }
 
-func validateFOFAInput(credential FOFACredential, query FOFAQuery) (string, string, string, int, error) {
+func validateFOFAInput(credential FOFACredential, query FOFAQuery) (string, string, string, int, int, error) {
 	email := strings.TrimSpace(credential.Email)
 	key := strings.TrimSpace(credential.Key)
 	expression := strings.TrimSpace(query.Expression)
 	if email == "" || key == "" {
-		return "", "", "", 0, fmt.Errorf("%w: credential is incomplete", ErrInvalidFOFARequest)
+		return "", "", "", 0, 0, fmt.Errorf("%w: credential is incomplete", ErrInvalidFOFARequest)
 	}
 	if len(email) > fofaMaxCredentialBytes || len(key) > fofaMaxCredentialBytes ||
 		!utf8.ValidString(email) || !utf8.ValidString(key) || !strings.Contains(email, "@") || hasControl(email) || hasControl(key) {
-		return "", "", "", 0, fmt.Errorf("%w: credential is malformed", ErrInvalidFOFARequest)
+		return "", "", "", 0, 0, fmt.Errorf("%w: credential is malformed", ErrInvalidFOFARequest)
 	}
 	if expression == "" {
-		return "", "", "", 0, fmt.Errorf("%w: query is empty", ErrInvalidFOFARequest)
+		return "", "", "", 0, 0, fmt.Errorf("%w: query is empty", ErrInvalidFOFARequest)
 	}
 	if len(expression) > MaxFOFAQueryBytes || !utf8.ValidString(expression) || strings.ContainsAny(expression, "\r\n\x00") {
-		return "", "", "", 0, fmt.Errorf("%w: query is malformed", ErrInvalidFOFARequest)
+		return "", "", "", 0, 0, fmt.Errorf("%w: query is malformed", ErrInvalidFOFARequest)
 	}
 	limit := query.Limit
 	if limit == 0 {
 		limit = DefaultFOFAResultLimit
 	}
 	if limit < 1 || limit > MaxFOFAResultLimit {
-		return "", "", "", 0, fmt.Errorf("%w: result limit must be between 1 and %d", ErrInvalidFOFARequest, MaxFOFAResultLimit)
+		return "", "", "", 0, 0, fmt.Errorf("%w: result limit must be between 1 and %d", ErrInvalidFOFARequest, MaxFOFAResultLimit)
 	}
-	return email, key, expression, limit, nil
+	page := query.Page
+	if page == 0 {
+		page = 1
+	}
+	if page < 1 || page > fofaMaxPages {
+		return "", "", "", 0, 0, fmt.Errorf("%w: page must be between 1 and %d", ErrInvalidFOFARequest, fofaMaxPages)
+	}
+	return email, key, expression, limit, page, nil
 }
 
 func readBoundedResponse(reader io.Reader, limit int64, invalidResponseError error) ([]byte, error) {

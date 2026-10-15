@@ -18,12 +18,13 @@ func main() {
 		log.Fatal(err)
 	}
 	client := argusmcp.NewClientWithYakshaURL(cfg.BaseURL, cfg.Token, cfg.YakshaURL)
-	readyCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	if err := client.CheckYaksha(readyCtx); err != nil {
+	if cfg.Transport != "stdio" {
+		readyCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		if err := client.CheckYaksha(readyCtx); err != nil {
+			log.Printf("Yaksha runtime not ready (%v); EXP tools will fail until it is available", err)
+		}
 		cancel()
-		log.Fatal(err)
 	}
-	cancel()
 	server := argusmcp.NewServer(client)
 
 	switch cfg.Transport {

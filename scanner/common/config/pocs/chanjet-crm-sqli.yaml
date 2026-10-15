@@ -1,11 +1,11 @@
 id: chanjet-crm-sqli
 
 info:
-  name: Chanjet CRM - SQL Injection
+  name: 用友畅捷通 CRM SQL注入
   author: luckying1314@139.com
   severity: high
   description: |
-    SQL injection exists in the Chanjet CRM get_usedspace.php, and sensitive information can be obtained through the vulnerability.
+    畅捷通 CRM get_usedspace.php 存在 SQL 注入，可获取敏感信息。
   reference:
     - https://www.chanjet.com/
   classification:

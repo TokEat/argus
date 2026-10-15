@@ -53,7 +53,7 @@ func (rt *Runtime) Identify() {
 		return
 	}
 
-	gologger.Info().Msg("指纹识别中")
+	gologger.AuditTimeLogger("指纹识别中")
 
 	rt.identifyServices()
 	rt.identifyWeb()
@@ -105,7 +105,13 @@ func (rt *Runtime) identifyWeb() {
 			banner = rt.banner(fmt.Sprintf("%s:%d", urlEntity.IP, urlEntity.Port))
 		}
 
+		if scheme != "http" && scheme != "https" {
+			continue
+		}
 		for path, pathEntity := range urlEntity.WebPaths {
+			if !pathEntity.Natural {
+				continue
+			}
 			results := rt.checkPath(path, pathEntity, urlEntity.Port, scheme, banner, urlEntity.Cert)
 			fullURL := rootURL + path
 
@@ -141,24 +147,25 @@ func (rt *Runtime) checkPath(
 	body := rt.body(webPath.Hash)
 	header := rt.header(webPath.HeaderHashString)
 
+	ctx := ddfinger.NewCheckContext(
+		protocol,
+		header,
+		body,
+		webPath.Server,
+		webPath.Title,
+		cert,
+		port,
+		path,
+		webPath.Hash,
+		webPath.IconHash,
+		webPath.StatusCode,
+		webPath.ContentType,
+		banner,
+	)
+
 	var results []string
 	for _, finger := range rt.FingerprintDB {
-		if ddfinger.SingleCheck(
-			finger,
-			protocol,
-			header,
-			body,
-			webPath.Server,
-			webPath.Title,
-			cert,
-			port,
-			path,
-			webPath.Hash,
-			webPath.IconHash,
-			webPath.StatusCode,
-			webPath.ContentType,
-			banner,
-		) {
+		if ddfinger.SingleCheckWithContext(finger, ctx) {
 			results = append(results, finger.ProductName)
 		}
 	}

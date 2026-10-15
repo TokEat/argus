@@ -79,6 +79,7 @@ declare namespace API {
     RunningTasks?: number;
     RuleVersion?: string;
     CurrentConfigVersion?: number;
+    ProjectID?: string;
     CreatedAt: string;
     UpdatedAt: string;
     ArchivedAt?: string | null;
@@ -185,6 +186,29 @@ declare namespace API {
     reason?: string;
   }
 
+  /** Server 端被动子域收集进度（GET /api/v1/tasks/:id 的 passive_collection） */
+  interface PassiveCollectionProgress {
+    active: boolean;
+    state: string;
+    domains_total: number;
+    domains_done: number;
+    updated_at: string;
+    held_batches: {
+      batch_id: string;
+      attempt_id: string;
+      state: string;
+      domains: string[];
+      domains_done: number;
+      updated_at: string;
+    }[];
+    /** 每个注册根域（eTLD+1）一行的被动收集结果（来自已密封下发的批次配置）。 */
+    results?: {
+      domain: string;
+      count: number;
+      subdomains: string[];
+    }[];
+  }
+
   /** 子任务摘要 (GET /api/v1/tasks/:id) */
   interface SubTaskSummary {
     id: string;
@@ -279,6 +303,8 @@ declare namespace API {
     stage: string;
     status: string;
     reason: string;
+    fingerprints?: string[];
+    matched_pocs?: string[];
     source: TaskCoverageExplanationSource;
     invalidated_at: string;
     valid_until?: string | null;
@@ -290,7 +316,10 @@ declare namespace API {
       executed_work_items: number;
       reused_stages: number;
       in_flight_work_items: number;
+      skipped_stages?: number;
+      failed_stages?: number;
       invalidated_stages: number;
+      not_reusable_stages?: number;
       expired_stages: number;
       saved_stages: number;
       saved_targets: number;
@@ -325,6 +354,7 @@ declare namespace API {
   interface TaskTimingAttempt {
     attempt_id: string;
     available: boolean;
+    unavailable_reason?: 'not_executed' | 'not_reported' | 'pending' | string;
     events?: TaskTimingEvent[];
   }
 
@@ -337,6 +367,7 @@ declare namespace API {
     task: {
       id: string;
       name: string;
+      project_id?: string;
       status: string;
       priority: number;
       total_chunks: number;
@@ -356,6 +387,8 @@ declare namespace API {
     batches?: TaskBatchSummary[];
     attempts?: SubTaskSummary[];
     status_distribution: Record<string, number>;
+    /** Server-side passive subdomain collection progress (absent on old servers). */
+    passive_collection?: PassiveCollectionProgress;
     reason_stats: {
       status: string;
       reason: string;
@@ -403,7 +436,7 @@ declare namespace API {
     poc_file: string;
     severity: string;
     execution_class: 'detection' | 'verification';
-    risk_level: 'unknown' | 'low' | 'medium' | 'high';
+    risk_level: 'unknown' | 'info' | 'low' | 'medium' | 'high';
     requires_second_confirmation: boolean;
     poc_content_hash: string;
     template_request_estimate: number;
@@ -506,6 +539,8 @@ declare namespace API {
     agent_selector?: Record<string, string>;
     agent_selector_rules?: AgentSelectorRules;
     change_note?: string;
+    policy?: ScanPolicy;
+    plan_hash?: string;
   }
 
   interface UpdateTaskConfigResponse {
@@ -513,6 +548,8 @@ declare namespace API {
     unchanged: boolean;
     current_config_version: number;
     revision: TaskConfigRevision;
+    policy_hash?: string;
+    plan_hash?: string;
   }
 
   // ======================== Node ========================
@@ -595,6 +632,25 @@ declare namespace API {
     confidence_threshold: number;
   }
 
+  interface AIToolInvocation {
+    id: number;
+    user_id: string;
+    module: string;
+    tool_name: string;
+    args_summary: string;
+    agent_id?: string;
+    target_url?: string;
+    duration_ms: number;
+    status: string;
+    error_summary?: string;
+    created_at: string;
+  }
+
+  interface AIToolInvocationList {
+    total: number;
+    items: AIToolInvocation[];
+  }
+
   /** AI 内容分析（主动爬取关联资产 / 敏感信息）全局开关 (GET/PUT /ai/content/config) */
   interface ContentAnalysisConfig {
     enabled: boolean;
@@ -649,7 +705,20 @@ declare namespace API {
     Service: string;
     Status?: string;
     UpdatedAt?: string;
+    /** 疑似 CDN 资产标记：CDN-Domain 记录或来自 CDN 域名的探测结果 */
+    CDN?: boolean;
+    /** 原始上报 JSON（RealIP 行含 domain/ips，用于域名↔IP 关联展示） */
+    Tags?: string;
     CreatedAt: string;
+    /** Web 站点匹配到的指纹产品，含主动路径标记 */
+    Fingerprints?: AssetFingerprintMatch[];
+  }
+
+  interface AssetFingerprintMatch {
+    ProductName: string;
+    Source?: string;
+    SourceLabel?: string;
+    MatchedURL?: string;
   }
 
   /** 指纹 (GET /api/v1/fingerprints) */
@@ -714,7 +783,10 @@ declare namespace API {
 
   interface FingerprintGroupTarget {
     Target: string;
+    MatchedURL?: string;
     RuleName: string;
+    Source?: string;
+    SourceLabel?: string;
     Evidence?: string;
     CreatedAt?: string;
     UpdatedAt?: string;
@@ -724,6 +796,8 @@ declare namespace API {
     ProductName: string;
     TargetCount: number;
     Targets: FingerprintGroupTarget[];
+    Sources?: string[];
+    SourceLabels?: string[];
     FirstSeen?: string;
     LastSeen?: string;
   }
@@ -848,6 +922,21 @@ declare namespace API {
     };
   }
 
+  interface AssetResolution {
+    domain: string;
+    ips: string[];
+  }
+
+  interface AssetKindStats {
+    total: number;
+    web: number;
+    host_port: number;
+    domain: number;
+    resolution: number;
+    other: number;
+    resolutions?: AssetResolution[];
+  }
+
   interface PagedResponse<T> {
     items: T[];
     total: number;
@@ -856,6 +945,7 @@ declare namespace API {
     has_more: boolean;
     rule_version?: string;
     generated_at?: string;
+    stats?: AssetKindStats;
   }
 
   interface CopilotPendingAction {
@@ -903,25 +993,6 @@ declare namespace API {
     actions?: CopilotActionSpec[];
     source: string;
     reference: string;
-  }
-
-  interface AIToolInvocation {
-    id: number;
-    user_id: string;
-    module: string;
-    tool_name: string;
-    args_summary: string;
-    agent_id?: string;
-    target_url?: string;
-    duration_ms: number;
-    status: string;
-    error_summary?: string;
-    created_at: string;
-  }
-
-  interface AIToolInvocationList {
-    total: number;
-    items: AIToolInvocation[];
   }
 
   interface DebugPocRequest {
@@ -1187,7 +1258,7 @@ declare namespace API {
     content_hash: string;
     severity: string;
     execution_class: 'detection' | 'verification';
-    risk_level: 'unknown' | 'low' | 'medium' | 'high';
+    risk_level: 'unknown' | 'info' | 'low' | 'medium' | 'high';
     requires_confirmation: boolean;
     requires_second_confirmation: boolean;
     tags: string;
@@ -1360,15 +1431,6 @@ declare namespace API {
     finished_at?: string;
     created_at: string;
     updated_at: string;
-  }
-
-  // ======================== MCP Keys ========================
-
-  interface McpKey {
-    id: string;
-    provider: string;
-    key: string;
-    status: string;
   }
 
   // ======================== Arsenal Manifest ========================

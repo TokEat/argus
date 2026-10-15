@@ -32,7 +32,7 @@ describe('TaskTimingPanel', () => {
         expect(screen.getByText('阶段耗时由 Agent 进程内计时；各阶段合计可能与尝试的墙钟时间不同。')).toBeInTheDocument();
     });
 
-    it('labels timing as unavailable for an old Agent instead of showing zero duration', () => {
+    it('does not show zero duration when timing is unavailable', () => {
         render(
             <App>
                 <TaskTimingPanel
@@ -42,8 +42,35 @@ describe('TaskTimingPanel', () => {
             </App>,
         );
 
-        expect(screen.getByText('旧版 Agent 暂无阶段计时')).toBeInTheDocument();
+        expect(screen.getByText('此次尝试暂无阶段计时')).toBeInTheDocument();
         expect(screen.queryByText('0 ms')).not.toBeInTheDocument();
+        expect(screen.queryByText('旧版 Agent 暂无阶段计时')).not.toBeInTheDocument();
+    });
+
+    it('explains missing timing for attempts that never ran on an Agent', () => {
+        render(
+            <App>
+                <TaskTimingPanel
+                    stageLabels={stageLabels}
+                    timing={{ truncated: false, attempts: [{ attempt_id: 'attempt-empty-1', available: false, unavailable_reason: 'not_executed' }] }}
+                />
+            </App>,
+        );
+
+        expect(screen.getByText('此次尝试未由 Agent 执行，无阶段计时')).toBeInTheDocument();
+    });
+
+    it('explains missing timing when an Agent ran but did not report events', () => {
+        render(
+            <App>
+                <TaskTimingPanel
+                    stageLabels={stageLabels}
+                    timing={{ truncated: false, attempts: [{ attempt_id: 'attempt-unreported-1', available: false, unavailable_reason: 'not_reported' }] }}
+                />
+            </App>,
+        );
+
+        expect(screen.getByText('此次尝试未上报阶段计时')).toBeInTheDocument();
     });
 
     it('renders sub-millisecond timing and warns when timing events are truncated', () => {

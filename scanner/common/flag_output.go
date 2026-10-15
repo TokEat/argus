@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/P0lar1ght/argus/scanner/gopocs"
 	"github.com/P0lar1ght/argus/scanner/structs"
 )
 
@@ -17,13 +18,34 @@ func hasHTMLReportExtension(name string) bool {
 }
 
 func validateCLIRiskFlags(config structs.Config) error {
-	if !config.NoPoc {
-		return nil
+	if config.NoPoc && strings.TrimSpace(config.PocNameForSearch) != "" {
+		return &CLIUsageError{Message: "-nopoc 不能与 -poc/--poc-name 同时使用"}
 	}
-	if strings.TrimSpace(config.PocNameForSearch) != "" || config.GolangPoc {
-		return &CLIUsageError{Message: "-npoc 不能与 -poc/--poc-name 或 -gp/--golang-poc 同时使用"}
+	hasAppend := len(config.UserAppend) > 0 || len(config.PasswordAppend) > 0 || strings.TrimSpace(passwordAppendRaw) != "" || strings.TrimSpace(userAppendRaw) != ""
+	if hasAppend && (strings.TrimSpace(config.Password) != "" || strings.TrimSpace(config.PasswordFile) != "") {
+		return &CLIUsageError{Message: "-pwda/-usea 不能与 -up/--username-password 或 -upf 同时使用"}
+	}
+	if hasAppend && (config.NoBrute || config.NoGoPoc) {
+		return &CLIUsageError{Message: "-pwda/-usea 不能与 -nobr 或 -nogpoc 同时使用"}
+	}
+	if err := gopocs.ValidateModuleFilter(config.GoPocModules); err != nil {
+		return &CLIUsageError{Message: err.Error()}
 	}
 	return nil
+}
+
+func applyCLIAppendDictionaries() error {
+	passwords, err := parseAppendList(passwordAppendRaw)
+	if err != nil {
+		return err
+	}
+	users, err := parseAppendList(userAppendRaw)
+	if err != nil {
+		return err
+	}
+	structs.GlobalConfig.PasswordAppend = passwords
+	structs.GlobalConfig.UserAppend = users
+	return validateCLIRiskFlags(structs.GlobalConfig)
 }
 
 func sanitizeResultDirectoryName(value string) string {

@@ -1,0 +1,39 @@
+id: kingdee-apusic-deployapp-fileupload
+
+info:
+  name: 金蝶 Apusic 应用服务器 deployApp 任意文件上传（接口探测）
+  author: gobysec
+  severity: critical
+  description: |
+    金蝶 Apusic 应用服务器管理控制台 /admin//protect/application/deployApp 存在双斜杠认证绕过与任意文件上传（GobyVuls，CVSS 9.8）。
+    未授权访问者可部署恶意应用包接管服务器。本模板仅探测绕过后面的部署接口是否暴露，不上传应用包或 WebShell。
+  reference:
+    - https://github.com/gobysec/GobyVuls
+  metadata:
+    max-request: 2
+    fofa-query: title="欢迎使用Apusic应用服务器"
+  tags: apusic,kingdee,fileupload,unauth,rce
+
+http:
+  - raw:
+      - |
+        GET /admin//protect/application/deployApp HTTP/1.1
+        Host: {{Hostname}}
+        User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36
+
+      - |
+        GET /admin/protect/application/deployApp HTTP/1.1
+        Host: {{Hostname}}
+        User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36
+
+    matchers-condition: and
+    matchers:
+      - type: dsl
+        dsl:
+          - 'status_code_1 == 200 && len(body_1) > 0'
+          - 'contains_any(to_lower(body_1), "apusic", "deploy", "appname", "clientfile", "application", "应用服务器")'
+        condition: and
+
+      - type: dsl
+        dsl:
+          - 'status_code_2 != 200 || contains_any(to_lower(body_2), "login", "logon", "signin", "unauthorized", "j_security_check")'

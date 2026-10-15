@@ -7,11 +7,13 @@ import (
 )
 
 func TestConfigMachinePresentationNeverEntersTaskJSON(t *testing.T) {
-	encoded, err := json.Marshal(Config{Targets: []string{"127.0.0.1"}, MachineOutput: true})
+	encoded, err := json.Marshal(Config{Targets: []string{"127.0.0.1"}, MachineOutput: true, TraceOnly: true, ShowPocMap: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), "MachineOutput") || strings.Contains(string(encoded), "machine_output") {
-		t.Fatalf("CLI presentation leaked into task JSON: %s", encoded)
+	for _, leak := range []string{"MachineOutput", "machine_output", "TraceOnly", "trace_only", "ShowPocMap", "show_poc_map"} {
+		if strings.Contains(string(encoded), leak) {
+			t.Fatalf("CLI-only field leaked into task JSON (%s): %s", leak, encoded)
+		}
 	}
 }

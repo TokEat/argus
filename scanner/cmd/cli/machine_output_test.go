@@ -140,16 +140,16 @@ func TestCLIMachineProcessHelper(t *testing.T) {
 		defer server.Close()
 		target = server.URL
 	}
-	base := []string{"argus", "-t", target, "-Pn", "-nd", "-npoc", "-force", "-wto", "5", "-wt", "1"}
+	base := []string{"argus", "-a", target, "-Pn", "-nd", "-nopoc", "-nogpoc", "-force", "-wto", "5", "-wt", "1"}
 	switch mode {
 	case "json":
 		os.Args = append(base, "-ot", "json")
 	case "text":
 		os.Args = base
 	case "invalid-output":
-		os.Args = []string{"argus", "-t", "http://127.0.0.1", "-ot", "yaml"}
+		os.Args = []string{"argus", "-a", "http://127.0.0.1", "-ot", "yaml"}
 	case "unknown-flag":
-		os.Args = []string{"argus", "-t", "http://127.0.0.1", "-ot", "json", "--does-not-exist"}
+		os.Args = []string{"argus", "-a", "http://127.0.0.1", "-ot", "json", "--does-not-exist"}
 	case "no-target":
 		os.Args = []string{"argus"}
 	default:
@@ -171,10 +171,12 @@ func nonEmptyLines(value string) []string {
 
 func firstWebOutputURI(stdout string) string {
 	for _, line := range nonEmptyLines(stdout) {
-		if !strings.HasPrefix(line, "[Web] ") {
-			continue
+		if strings.HasPrefix(line, "[WEB] ") {
+			return firstOutputField(strings.TrimPrefix(line, "[WEB] "))
 		}
-		return firstOutputField(strings.TrimPrefix(line, "[Web] "))
+		if strings.HasPrefix(line, "[Web] ") {
+			return firstOutputField(strings.TrimPrefix(line, "[Web] "))
+		}
 	}
 	return ""
 }

@@ -39,6 +39,20 @@ func isCredentialValidationConfig(config string) bool {
 	return json.Unmarshal([]byte(config), &internal) == nil && strings.EqualFold(strings.TrimSpace(internal.ExecutionMode), "credential_validation")
 }
 
+// isRiskValidationConfig reports whether the attempt carries the derived
+// risk-validation stage snapshot. Such failures must be retried through
+// credentialbundle.AppendRetry so the immutable stage config (NoPoc=false,
+// RiskValidationTargets, pinned rule version) survives into the retry instead
+// of being replaced by the Root's asset-discovery revision.
+func isRiskValidationConfig(config string) bool {
+	var internal struct{ ExecutionMode string }
+	return json.Unmarshal([]byte(config), &internal) == nil && strings.EqualFold(strings.TrimSpace(internal.ExecutionMode), "risk_validation")
+}
+
+func isSealedNucleiBudgetExceeded(reason string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(reason)), "nuclei request budget exceeded")
+}
+
 func agentSupportsCredentialValidation(nodeTagsJSON string) bool {
 	return agentHasCapabilities(nodeTagsJSON, "credential_validation", "transport_tls")
 }

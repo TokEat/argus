@@ -150,14 +150,20 @@ func TestCompleteHTTPProbePhaseMarksTargetDeadlineFailedWithoutCancellingPipelin
 		t.Fatalf("target deadline should fail the stage without cancelling the remaining pipeline: %v", err)
 	}
 	if complete {
-		t.Fatal("target deadline must taint downstream HTTP-dependent coverage")
+		t.Fatal("target deadline must keep HTTP coverage incomplete")
 	}
 	if len(phases) != 1 || phases[0].Phase != PhaseHTTPProbe || phases[0].Status != "failed" {
 		t.Fatalf("unexpected phase events: %#v", phases)
 	}
 	completeHTTPDependentPhase(ctx, PhaseFingerprint, complete)
-	if len(phases) != 2 || phases[1].Phase != PhaseFingerprint || phases[1].Status != "failed" {
-		t.Fatalf("unexpected dependent phase events: %#v", phases)
+	if len(phases) != 2 || phases[1].Phase != PhaseFingerprint || phases[1].Status != "skipped" || phases[1].Message != "upstream HTTP probe incomplete" {
+		t.Fatalf("empty URL map must skip fingerprint instead of failing it: %#v", phases)
+	}
+
+	ctx.URLMap = map[string]URLEntity{"https://alive.example": {}}
+	completeHTTPDependentPhase(ctx, PhaseDirBrute, complete)
+	if len(phases) != 3 || phases[2].Phase != PhaseDirBrute || phases[2].Status != "end" {
+		t.Fatalf("partial HTTP evidence must still finish directory/fingerprint work: %#v", phases)
 	}
 
 	parent, cancel := context.WithCancel(context.Background())
@@ -168,5 +174,27 @@ func TestCompleteHTTPProbePhaseMarksTargetDeadlineFailedWithoutCancellingPipelin
 	}
 	if _, err := completeHTTPProbePhase(ctx, nil); err == nil {
 		t.Fatal("parent cancellation racing with a completed probe must still stop the pipeline")
+	}
+}
+
+func TestCompleteHTTPProbePhaseKeepsSuccessfulTargetsWhenAnotherBudgetExpires(t *testing.T) {
+	var phases []PhaseEvent
+	ctx := &ScanContext{
+		Ctx:    context.Background(),
+		URLMap: map[string]URLEntity{"https://alive.example": {}},
+		PhaseObserver: func(event PhaseEvent) {
+			phases = append(phases, event)
+		},
+	}
+
+	complete, err := completeHTTPProbePhase(ctx, context.DeadlineExceeded)
+	if err != nil {
+		t.Fatalf("independent target deadline should not cancel HTTP coverage: %v", err)
+	}
+	if !complete {
+		t.Fatal("usable HTTP responses must keep the HTTP stage complete")
+	}
+	if len(phases) != 1 || phases[0].Phase != PhaseHTTPProbe || phases[0].Status != "failed" || phases[0].Message != "target HTTP budget exhausted" {
+		t.Fatalf("partial budget expiry must fail unprobed targets, not emit end: %#v", phases)
 	}
 }

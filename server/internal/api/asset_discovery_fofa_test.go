@@ -221,6 +221,173 @@ func TestQueryProjectFOFAPreviewUsesTenantCredentialAndAuditsWithoutSecrets(t *t
 	assertAssetDiscoverySnapshot(t, store, audit, expression, provider.result.Assets[0])
 }
 
+func TestQueryProjectFOFAPreviewPagesAppendToSnapshotWithAudit(t *testing.T) {
+	store := setupAssetDiscoveryTestDB(t)
+	project, _ := seedFOFAProjectAndConfig(t, "default", "default", "Approved")
+	provider := &fakeFOFAQueryProvider{}
+	installFakeFOFAProvider(t, provider)
+	expression := `domain="scope.example.invalid"`
+
+	provider.result = assetdiscovery.Result{
+		Provider: "fofa", ProviderTotal: 150, Page: 1, PageSize: 100, Truncated: true,
+		Assets: []assetdiscovery.Asset{{
+			Target: "https://a.example.invalid:443", Domain: "a.example.invalid", Port: 443, Protocol: "https", Source: "fofa",
+		}},
+	}
+	recorder, _ := invokeFOFAPreview(t, project.ID, fmt.Sprintf(`{"expression":%q,"limit":100,"page":1}`, expression), "default", "operator", "9")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected page 1 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var first projectDiscoveryQueryResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &first); err != nil {
+		t.Fatalf("decode first page: %v", err)
+	}
+	if first.SnapshotID == 0 || first.ReturnedCount != 1 || first.Page != 1 || first.PageSize != 100 || !first.HasMore {
+		t.Fatalf("unexpected first page response: %+v", first)
+	}
+
+	provider.result = assetdiscovery.Result{
+		Provider: "fofa", ProviderTotal: 150, Page: 2, PageSize: 100, Truncated: false,
+		Assets: []assetdiscovery.Asset{
+			{Target: "https://b.example.invalid:443", Domain: "b.example.invalid", Port: 443, Protocol: "https", Source: "fofa"},
+			{Target: "https://a.example.invalid:443", Domain: "a.example.invalid", Port: 443, Protocol: "https", Source: "fofa"},
+		},
+	}
+	recorder, _ = invokeFOFAPreview(t, project.ID, fmt.Sprintf(`{"limit":100,"page":2,"snapshot_id":%d}`, first.SnapshotID), "default", "operator", "9")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected page 2 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var second projectDiscoveryQueryResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &second); err != nil {
+		t.Fatalf("decode second page: %v", err)
+	}
+	if second.SnapshotID != first.SnapshotID || second.Page != 2 || second.HasMore || second.ReturnedCount != 2 || len(second.Assets) != 1 {
+		t.Fatalf("unexpected page response: %+v", second)
+	}
+	if provider.query.Expression != expression || provider.query.Page != 2 || provider.query.Limit != 100 {
+		t.Fatalf("provider did not receive the stored expression: %+v", provider.query)
+	}
+
+	var snapshot db.AssetDiscoverySnapshot
+	if err := store.First(&snapshot, first.SnapshotID).Error; err != nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	// The mocked page 2 does not cover the full provider total (150), so the
+	// snapshot correctly stays truncated until every page is fetched.
+	if snapshot.ReturnedCount != 2 || snapshot.ProviderTotal != 150 || !snapshot.Truncated {
+		t.Fatalf("unexpected appended snapshot: %+v", snapshot)
+	}
+	var items []db.AssetDiscoverySnapshotItem
+	if err := store.Where("tenant_id = ? AND project_id = ? AND snapshot_id = ?", snapshot.TenantID, snapshot.ProjectID, snapshot.ID).
+		Order("position ASC").Find(&items).Error; err != nil {
+		t.Fatalf("load snapshot items: %v", err)
+	}
+	if len(items) != 2 || items[0].Position != 0 || items[1].Position != 1 {
+		t.Fatalf("unexpected appended items: %+v", items)
+	}
+	var pageAudit db.AssetDiscoveryAudit
+	if err := store.Where("action = ?", "query_page").Order("id DESC").First(&pageAudit).Error; err != nil {
+		t.Fatalf("load page audit: %v", err)
+	}
+	if pageAudit.Status != "success" || pageAudit.Action != "query_page" || pageAudit.QueryHash != snapshot.QueryHash ||
+		pageAudit.RequestedLimit != 100 || pageAudit.ProviderTotal != 150 {
+		t.Fatalf("unexpected page audit: %+v", pageAudit)
+	}
+
+	// Re-fetching the same page stays idempotent: targets are deduplicated by hash.
+	recorder, _ = invokeFOFAPreview(t, project.ID, fmt.Sprintf(`{"limit":100,"page":2,"snapshot_id":%d}`, first.SnapshotID), "default", "operator", "9")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected repeated page 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var repeated projectDiscoveryQueryResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &repeated); err != nil {
+		t.Fatalf("decode repeated page: %v", err)
+	}
+	if repeated.ReturnedCount != 2 || len(repeated.Assets) != 0 {
+		t.Fatalf("repeated page was not idempotent: %+v", repeated)
+	}
+}
+
+func TestQueryProjectFOFAPreviewPageValidatesArgumentsAndOwnership(t *testing.T) {
+	setupAssetDiscoveryTestDB(t)
+	project, _ := seedFOFAProjectAndConfig(t, "default", "default", "Approved")
+	provider := &fakeFOFAQueryProvider{}
+	installFakeFOFAProvider(t, provider)
+	expression := `domain="scope.example.invalid"`
+	provider.result = assetdiscovery.Result{
+		Provider: "fofa", ProviderTotal: 1, Page: 1, PageSize: 100,
+		Assets: []assetdiscovery.Asset{{Target: "https://a.example.invalid:443", Port: 443, Protocol: "https", Source: "fofa"}},
+	}
+	recorder, _ := invokeFOFAPreview(t, project.ID, fmt.Sprintf(`{"expression":%q,"limit":100,"page":1}`, expression), "default", "operator", "9")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected page 1 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var first projectDiscoveryQueryResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &first); err != nil {
+		t.Fatalf("decode first page: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		body       string
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "page without snapshot id", body: `{"limit":100,"page":2}`, wantStatus: http.StatusBadRequest, wantCode: "invalid_request"},
+		{name: "page with expression copy", body: fmt.Sprintf(`{"expression":%q,"limit":100,"page":2,"snapshot_id":%d}`, expression, first.SnapshotID), wantStatus: http.StatusBadRequest, wantCode: "invalid_request"},
+		{name: "first page with snapshot id", body: fmt.Sprintf(`{"expression":%q,"limit":100,"page":1,"snapshot_id":%d}`, expression, first.SnapshotID), wantStatus: http.StatusBadRequest, wantCode: "invalid_request"},
+		{name: "missing snapshot", body: fmt.Sprintf(`{"limit":100,"page":2,"snapshot_id":%d}`, first.SnapshotID+1), wantStatus: http.StatusNotFound, wantCode: "snapshot_not_found"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder, _ := invokeFOFAPreview(t, project.ID, test.body, "default", "operator", "9")
+			if recorder.Code != test.wantStatus {
+				t.Fatalf("status = %d (%s), want %d", recorder.Code, recorder.Body.String(), test.wantStatus)
+			}
+			var audit db.AssetDiscoveryAudit
+			if err := db.DB.Where("error_code = ?", test.wantCode).Order("id DESC").First(&audit).Error; err != nil {
+				t.Fatalf("load audit for %q: %v", test.wantCode, err)
+			}
+		})
+	}
+	if provider.calls != 1 {
+		t.Fatalf("invalid page requests must not reach the provider, calls=%d", provider.calls)
+	}
+}
+
+func TestQueryProjectDiscoveryPageRejectsProviderMismatch(t *testing.T) {
+	setupAssetDiscoveryTestDB(t)
+	project, _ := seedFOFAProjectAndConfig(t, "default", "default", "Approved")
+	fofaProvider := &fakeFOFAQueryProvider{}
+	installFakeFOFAProvider(t, fofaProvider)
+	fofaProvider.result = assetdiscovery.Result{
+		Provider: "fofa", ProviderTotal: 1, Page: 1, PageSize: 100,
+		Assets: []assetdiscovery.Asset{{Target: "https://a.example.invalid:443", Port: 443, Protocol: "https", Source: "fofa"}},
+	}
+	recorder, _ := invokeFOFAPreview(t, project.ID, `{"expression":"domain=example.invalid","limit":100,"page":1}`, "default", "operator", "9")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected page 1 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var first projectDiscoveryQueryResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &first); err != nil {
+		t.Fatalf("decode first page: %v", err)
+	}
+
+	hunterProvider := &fakeHunterQueryProvider{}
+	installFakeHunterProvider(t, hunterProvider)
+	recorder = invokeHunterPreview(t, project.ID, fmt.Sprintf(`{"limit":100,"page":2,"snapshot_id":%d}`, first.SnapshotID), "default", "operator", "9")
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected provider mismatch 400, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	if hunterProvider.calls != 0 {
+		t.Fatalf("provider must not be called for a mismatched snapshot, calls=%d", hunterProvider.calls)
+	}
+	var audit db.AssetDiscoveryAudit
+	if err := db.DB.Where("action = ? AND error_code = ?", "query_page", "snapshot_provider_mismatch").First(&audit).Error; err != nil {
+		t.Fatalf("load mismatch audit: %v", err)
+	}
+}
+
 func TestFOFAPreviewRouteAuthenticatesAndExecutesThroughRouter(t *testing.T) {
 	setupAssetDiscoveryTestDB(t)
 	project, _ := seedFOFAProjectAndConfig(t, "default", "default", "Approved")

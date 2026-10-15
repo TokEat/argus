@@ -29,7 +29,7 @@ type WorkflowStats = {
     fingerprint_rules: number;
 };
 
-type WorkflowPageWithStats = API.PagedResponse<API.WorkflowSummary> & {
+type WorkflowPageWithStats = Omit<API.PagedResponse<API.WorkflowSummary>, 'stats'> & {
     stats: WorkflowStats;
 };
 

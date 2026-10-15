@@ -1,10 +1,10 @@
 id: jolokia-createstandardhost-rce
 
 info:
-  name: Jolokia file write to RCE jfr
+  name: Jolokia createStandardHost 远程代码执行
   author: laluka,pathtaga,idealphase
   severity: critical
-  description: File read and file write to RCE by deploying a vhost with MBeanFactory/createStandardHost and DiagnosticCommand/jfrStart
+  description: 未授权 Jolokia/Actuator Jolokia 暴露 MBeanFactory/createStandardHost 与 DiagnosticCommand 时，可用于写文件并导致远程代码执行。
   reference:
     - https://github.com/laluka/jolokia-exploitation-toolkit
   classification:

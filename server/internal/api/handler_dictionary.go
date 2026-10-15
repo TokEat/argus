@@ -15,8 +15,9 @@ import (
 )
 
 type WorkflowEntry struct {
-	Type []string `yaml:"type" json:"type"`
-	Pocs []string `yaml:"pocs" json:"pocs"`
+	Type      []string `yaml:"type" json:"type"`
+	Pocs      []string `yaml:"pocs" json:"pocs"`
+	RiskLevel string   `yaml:"risk_level,omitempty" json:"risk_level,omitempty"`
 }
 
 // WorkflowItem 是传递给前端进行编辑的完整实体结构

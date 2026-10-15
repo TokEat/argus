@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Typography, Table, Tag, Tabs, Space, Spin, Button, Tooltip, Empty, Drawer, Descriptions, Divider, Popover, Input, Steps } from 'antd';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Typography, Table, Tag, Tabs, Space, Spin, Button, Tooltip, Empty, Drawer, Descriptions, Divider, Popover, Input, Select, Steps } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     BugOutlined,
@@ -11,7 +11,6 @@ import {
     SendOutlined,
     CloudDownloadOutlined,
     LinkOutlined,
-    SearchOutlined,
     PartitionOutlined,
     NodeIndexOutlined,
     FileTextOutlined,
@@ -23,7 +22,25 @@ import { useAutoContext } from '../contexts/GlobalAIContext';
 import { AIVerdictTag } from '../components/VulnAITriagePanel';
 import VulnAITriagePanel from '../components/VulnAITriagePanel';
 import ContentFindingsPanel from '../components/tasks/ContentFindingsPanel';
-import { DEFAULT_RESULT_PAGE_SIZE, firstNonEmptyResultTab, initialResultPageState, type ResultPageState, type ResultTabKey } from './taskResultTabs';
+import {
+    ASSET_KIND_LABELS,
+    DEFAULT_RESULT_PAGE_SIZE,
+    FINGERPRINT_SOURCE_FILTERS,
+    assetKindCount,
+    assetMatchesKind,
+    emptyAssetKindCounts,
+    fingerprintGroupSources,
+    fingerprintSourceColor,
+    fingerprintSourceLabel,
+    firstNonEmptyAssetKind,
+    firstNonEmptyResultTab,
+    initialResultPageState,
+    visibleAssetKinds,
+    type AssetKind,
+    type FingerprintSource,
+    type ResultPageState,
+    type ResultTabKey,
+} from './taskResultTabs';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
@@ -46,6 +63,12 @@ const TaskResults: React.FC = () => {
     const [fingerprintPagination, setFingerprintPagination] = useState<ResultPageState>(initialResultPageState);
     // 内容分析（关联资产候选 + 敏感信息）合计数，用于空结果判定与默认页签选择。
     const [contentFindingsTotal, setContentFindingsTotal] = useState(0);
+    const [fingerprintSearch, setFingerprintSearch] = useState('');
+    const [fingerprintSource, setFingerprintSource] = useState<'' | FingerprintSource>('');
+    const [assetKind, setAssetKind] = useState<AssetKind>('web');
+    const [assetKindCounts, setAssetKindCounts] = useState<Record<AssetKind, number>>(emptyAssetKindCounts);
+    const [assetTotal, setAssetTotal] = useState(0);
+    const [assetResolutions, setAssetResolutions] = useState<API.AssetResolution[]>([]);
     const [activeTab, setActiveTab] = useState<ResultTabKey>('vulns');
     const [selectedVuln, setSelectedVuln] = useState<API.Vulnerability | null>(null);
     const [drawerOpen, setDrawerOpen] = useState(false);
@@ -59,10 +82,7 @@ const TaskResults: React.FC = () => {
     const [assetSearch, setAssetSearch] = useState('');
     const vulnSearchRef = useRef('');
     const assetSearchRef = useRef('');
-    const fingerprintSearchRef = useRef('');
     const [fingerprintStats, setFingerprintStats] = useState<API.FingerprintGroupStats | null>(null);
-    const [fingerprintSearchInput, setFingerprintSearchInput] = useState('');
-    const fingerprintSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const navigate = useNavigate();
 
     const setTabBusy = useCallback((key: ResultTabKey, value: boolean) => {
@@ -92,32 +112,61 @@ const TaskResults: React.FC = () => {
         }
     }, [setTabBusy, taskId, vulnSort]);
 
-    const fetchAssetsPage = useCallback(async (page: number, pageSize: number) => {
+    const applyAssetStats = useCallback((stats: API.AssetKindStats | undefined, fallbackTotal: number, kind: AssetKind) => {
+        const counts = emptyAssetKindCounts();
+        if (stats) {
+            counts.web = stats.web || 0;
+            counts.host_port = stats.host_port || 0;
+            counts.domain = stats.domain || 0;
+            counts.resolution = stats.resolution || 0;
+            counts.other = stats.other || 0;
+            setAssetTotal(stats.total || fallbackTotal);
+            setAssetResolutions(stats.resolutions || []);
+        } else {
+            counts[kind] = fallbackTotal;
+            setAssetTotal(fallbackTotal);
+            setAssetResolutions([]);
+        }
+        setAssetKindCounts(counts);
+        return counts;
+    }, []);
+
+    const fetchAssetsPage = useCallback(async (page: number, pageSize: number, kind: AssetKind) => {
         setTabBusy('assets', true);
         try {
             const projectId = localStorage.getItem('active_project_id') || undefined;
-            const res = await getAssets({ taskId, projectId, page, pageSize, search: assetSearchRef.current || undefined });
-            setAssets(res.items || []);
+            const res = await getAssets({ taskId, projectId, page, pageSize, kind, search: assetSearchRef.current || undefined });
+            const items = (res.items || []).filter((asset) => assetMatchesKind(asset.Protocol, kind));
+            setAssets(items);
             setAssetPagination({
                 current: res.page || page,
                 pageSize: res.page_size || pageSize,
-                total: res.total || 0,
+                total: res.stats ? (res.total || 0) : items.length,
             });
-            return res.total || 0;
+            const counts = applyAssetStats(res.stats, res.stats?.total ?? res.total ?? items.length, kind);
+            return { kindTotal: res.total || items.length, allTotal: res.stats?.total ?? res.total ?? items.length, counts };
         } catch (error) {
             console.error('Failed to fetch assets:', error);
             setAssets([]);
-            return 0;
+            applyAssetStats(undefined, 0, kind);
+            return { kindTotal: 0, allTotal: 0, counts: emptyAssetKindCounts() };
         } finally {
             setTabBusy('assets', false);
         }
-    }, [setTabBusy, taskId]);
+    }, [applyAssetStats, setTabBusy, taskId]);
 
-    const fetchFingerprintsPage = useCallback(async (page: number, pageSize: number) => {
+    const fetchFingerprintsPage = useCallback(async (page: number, pageSize: number, search = '', source: '' | FingerprintSource = '') => {
         setTabBusy('fingerprints', true);
         try {
             const projectId = localStorage.getItem('active_project_id') || undefined;
-            const res = await getFingerprintGroups({ taskId, projectId, page, pageSize, search: fingerprintSearchRef.current || undefined });
+            const res = await getFingerprintGroups({
+                taskId,
+                projectId,
+                page,
+                pageSize,
+                search: search.trim() || undefined,
+                source: source || undefined,
+            });
             setFingerprints(res.items || []);
             setFingerprintStats(res.stats ?? null);
             setFingerprintPagination({
@@ -155,14 +204,21 @@ const TaskResults: React.FC = () => {
     const fetchFirstPages = useCallback(async () => {
         setLoading(true);
         try {
-            const [vulnerabilityTotal, assetTotal, fingerprintTotal, contentTotal] = await Promise.all([
+            const [vulnerabilityTotal, assetPage, fingerprintTotal, contentTotal] = await Promise.all([
                 fetchVulnsPage(1, DEFAULT_RESULT_PAGE_SIZE),
-                fetchAssetsPage(1, DEFAULT_RESULT_PAGE_SIZE),
+                fetchAssetsPage(1, DEFAULT_RESULT_PAGE_SIZE, 'web'),
                 fetchFingerprintsPage(1, DEFAULT_RESULT_PAGE_SIZE),
                 fetchContentTotals(),
             ]);
             setContentFindingsTotal(contentTotal);
-            setActiveTab(firstNonEmptyResultTab(vulnerabilityTotal, assetTotal, fingerprintTotal, contentTotal));
+            const nextKind = firstNonEmptyAssetKind(assetPage.counts);
+            let allAssets = assetPage.allTotal;
+            if (nextKind !== 'web') {
+                const selected = await fetchAssetsPage(1, DEFAULT_RESULT_PAGE_SIZE, nextKind);
+                allAssets = selected.allTotal;
+            }
+            setAssetKind(nextKind);
+            setActiveTab(firstNonEmptyResultTab(vulnerabilityTotal, allAssets, fingerprintTotal, contentTotal));
         } finally {
             setLoading(false);
         }
@@ -173,8 +229,8 @@ const TaskResults: React.FC = () => {
         try {
             const [, , , contentTotal] = await Promise.all([
                 fetchVulnsPage(vulnPagination.current, vulnPagination.pageSize),
-                fetchAssetsPage(assetPagination.current, assetPagination.pageSize),
-                fetchFingerprintsPage(fingerprintPagination.current, fingerprintPagination.pageSize),
+                fetchAssetsPage(assetPagination.current, assetPagination.pageSize, assetKind),
+                fetchFingerprintsPage(fingerprintPagination.current, fingerprintPagination.pageSize, fingerprintSearch, fingerprintSource),
                 fetchContentTotals(),
             ]);
             setContentFindingsTotal(contentTotal);
@@ -182,12 +238,15 @@ const TaskResults: React.FC = () => {
             setLoading(false);
         }
     }, [
+        assetKind,
         assetPagination,
         fetchAssetsPage,
         fetchContentTotals,
         fetchFingerprintsPage,
         fetchVulnsPage,
         fingerprintPagination,
+        fingerprintSearch,
+        fingerprintSource,
         vulnPagination,
         vulnSort,
     ]);
@@ -195,24 +254,15 @@ const TaskResults: React.FC = () => {
     // 切换任务时清空各页签搜索/统计，避免跨任务残留过滤态。
     // 声明在 fetchFirstPages effect 之前，保证先清 ref 再触发重抓。
     useEffect(() => {
-        if (fingerprintSearchTimer.current) {
-            clearTimeout(fingerprintSearchTimer.current);
-            fingerprintSearchTimer.current = null;
-        }
         vulnSearchRef.current = '';
         setVulnSearch('');
         assetSearchRef.current = '';
         setAssetSearch('');
-        fingerprintSearchRef.current = '';
-        setFingerprintSearchInput('');
+        setFingerprintSearch('');
+        setFingerprintSource('');
         setFingerprintStats(null);
         setDrawerOpen(false);
     }, [taskId]);
-
-    // 卸载时清理 debounce 定时器
-    useEffect(() => () => {
-        if (fingerprintSearchTimer.current) clearTimeout(fingerprintSearchTimer.current);
-    }, []);
 
     useEffect(() => {
         fetchFirstPages();
@@ -223,8 +273,10 @@ const TaskResults: React.FC = () => {
         active_tab: activeTab,
         stats: {
             vulns: vulnPagination.total,
-            assets: assetPagination.total,
+            assets: assetTotal,
             fingerprints: fingerprintPagination.total,
+            asset_kind: assetKind,
+            asset_kinds: assetKindCounts,
         },
         vulns_summary: vulns.slice(0, 10).map(v => ({
             id: v.ID,
@@ -239,11 +291,13 @@ const TaskResults: React.FC = () => {
             port: a.Port,
             title: a.Title,
             service: a.Service,
+            fingerprints: (a.Fingerprints || []).map((match) => match.ProductName),
         })),
         fingerprints_summary: fingerprints.slice(0, 10).map(f => ({
             product_name: f.ProductName,
             target_count: f.TargetCount,
-            targets: f.Targets?.slice(0, 5).map(target => target.Target) || [],
+            sources: fingerprintGroupSources(f),
+            targets: f.Targets?.slice(0, 5).map(target => target.MatchedURL || target.Target) || [],
         })),
         viewing_vuln: drawerOpen ? selectedVuln : null,
     });
@@ -254,10 +308,10 @@ const TaskResults: React.FC = () => {
             let blob: Blob;
             let filename: string;
             if (activeTab === 'assets') {
-                blob = await exportAssets(projectId, taskId);
-                filename = `assets-${taskId || 'all'}.csv`;
+                blob = await exportAssets(projectId, taskId, assetKind);
+                filename = `assets-${assetKind}-${taskId || 'all'}.csv`;
             } else if (activeTab === 'fingerprints') {
-                blob = await exportFingerprints(projectId, taskId);
+                blob = await exportFingerprints(projectId, taskId, fingerprintSearch, fingerprintSource);
                 filename = `fingerprints-${taskId || 'all'}.csv`;
             } else {
                 blob = await exportVulns(projectId, taskId);
@@ -338,6 +392,48 @@ const TaskResults: React.FC = () => {
         return 0;
     };
 
+    // ── 域名 ↔ 解析 IP 关联：来自整任务 RealIP 统计，不跟当前页走 ──
+    const { ipToDomains, domainToIPs } = useMemo(() => {
+        const ipMap = new Map<string, string[]>();
+        const domainMap = new Map<string, string[]>();
+        assetResolutions.forEach((row) => {
+            const domain = row.domain?.trim();
+            const ips = (row.ips || []).map((ip) => ip.trim()).filter(Boolean);
+            if (!domain || ips.length === 0) return;
+            domainMap.set(domain, ips);
+            ips.forEach((ip) => {
+                const domains = ipMap.get(ip) || [];
+                if (!domains.includes(domain)) domains.push(domain);
+                ipMap.set(ip, domains);
+            });
+        });
+        return { ipToDomains: ipMap, domainToIPs: domainMap };
+    }, [assetResolutions]);
+
+    const parseAssetResolution = (asset: API.Asset): { domain: string; ips: string[] } => {
+        let domain = '';
+        let ips: string[] = [];
+        if (asset.Tags) {
+            try {
+                const payload = JSON.parse(asset.Tags) as { domain?: unknown; ips?: unknown };
+                if (typeof payload.domain === 'string') domain = payload.domain.trim();
+                if (Array.isArray(payload.ips)) {
+                    ips = payload.ips.filter((item): item is string => typeof item === 'string' && item.trim() !== '').map((item) => item.trim());
+                }
+            } catch { /* ignore malformed tags */ }
+        }
+        if (!domain) domain = asset.Target || '';
+        if (ips.length === 0) ips = domainToIPs.get(domain) || [];
+        return { domain, ips };
+    };
+
+    const ipv4Pattern = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+    const relatedHostsFor = (host: string): string[] => {
+        if (ipv4Pattern.test(host)) return ipToDomains.get(host) || [];
+        return domainToIPs.get(host) || [];
+    };
+
+
     const isJsonString = (s: string): boolean => {
         if (!s) return false;
         return (s.startsWith('{') && s.endsWith('}')) || (s.startsWith('[') && s.endsWith(']'));
@@ -349,19 +445,6 @@ const TaskResults: React.FC = () => {
         'IPAlive': 'default',
     };
 
-    // 指纹产品名搜索（debounce，搜索变化重置到第 1 页）
-    const handleFingerprintSearchChange = (value: string) => {
-        setFingerprintSearchInput(value);
-        if (fingerprintSearchTimer.current) clearTimeout(fingerprintSearchTimer.current);
-        fingerprintSearchTimer.current = setTimeout(() => {
-            const term = value.trim();
-            if (term === fingerprintSearchRef.current) return;
-            fingerprintSearchRef.current = term;
-            setFingerprintPagination(prev => ({ ...prev, current: 1 }));
-            void fetchFingerprintsPage(1, fingerprintPagination.pageSize);
-        }, 300);
-    };
-
     // 下钻联动：指纹目标 → 资产/漏洞页签并按目标主机过滤
     const handleViewAssets = (target: string) => {
         const host = extractHostFromTarget(target);
@@ -369,7 +452,7 @@ const TaskResults: React.FC = () => {
         setAssetSearch(host);
         setAssetPagination(prev => ({ ...prev, current: 1 }));
         setActiveTab('assets');
-        void fetchAssetsPage(1, assetPagination.pageSize);
+        void fetchAssetsPage(1, assetPagination.pageSize, assetKind);
     };
 
     const handleViewVulns = (target: string) => {
@@ -385,7 +468,7 @@ const TaskResults: React.FC = () => {
         assetSearchRef.current = '';
         setAssetSearch('');
         setAssetPagination(prev => ({ ...prev, current: 1 }));
-        void fetchAssetsPage(1, assetPagination.pageSize);
+        void fetchAssetsPage(1, assetPagination.pageSize, assetKind);
     };
 
     const clearVulnFilter = () => {
@@ -518,141 +601,298 @@ const TaskResults: React.FC = () => {
     ];
 
 
-    const assetColumns: ColumnsType<API.Asset> = [
-        {
-            title: '主机',
-            key: 'host',
-            width: 160,
-            render: (_, record) => {
-                const host = extractHostFromTarget(record.Target);
-                return (
-                    <Text copyable={{ text: host }} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 500 }}>
-                        {host}
-                    </Text>
-                );
-            },
-            filters: (() => {
-                const hosts = [...new Set(assets.map(a => extractHostFromTarget(a.Target)))];
-                return hosts.slice(0, 20).map(h => ({ text: h, value: h }));
-            })(),
-            onFilter: (value, record) => extractHostFromTarget(record.Target) === value,
+    const renderRelatedHost = (host: string, cdn?: boolean) => {
+        const related = relatedHostsFor(host).filter((item) => item !== host);
+        const shown = related.slice(0, 2);
+        return (
+            <Space size={4} wrap>
+                <Text copyable={{ text: host }} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 500 }}>
+                    {host}
+                </Text>
+                {cdn && <Tag color="orange" style={{ margin: 0, fontSize: 10 }}>CDN</Tag>}
+                {shown.length > 0 && (
+                    <Tooltip title={`关联主机：${related.join('、')}`}>
+                        <span style={{ display: 'inline-flex', gap: 2 }}>
+                            <Text type="secondary" style={{ fontSize: 10 }}>↔</Text>
+                            {shown.map((item) => (
+                                <Tag key={item} color="default" style={{ margin: 0, fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }}>
+                                    {item}
+                                </Tag>
+                            ))}
+                            {related.length > shown.length && (
+                                <Tag style={{ margin: 0, fontSize: 10 }}>+{related.length - shown.length}</Tag>
+                            )}
+                        </span>
+                    </Tooltip>
+                )}
+            </Space>
+        );
+    };
+
+    const createdAtColumn: ColumnsType<API.Asset>[number] = {
+        title: '发现时间',
+        dataIndex: 'CreatedAt',
+        key: 'created_at',
+        width: 160,
+        sorter: (a, b) => new Date(a.CreatedAt).getTime() - new Date(b.CreatedAt).getTime(),
+        render: (v: string) => {
+            if (!v) return '-';
+            return <Text style={{ fontSize: 12, color: '#64748b' }}>{dayjs(v).format('YYYY-MM-DD HH:mm:ss')}</Text>;
         },
-        {
-            title: '端口',
-            key: 'port',
-            width: 90,
-            render: (_, record) => {
-                const port = extractPortFromTarget(record.Target, record.Port);
-                return port > 0
-                    ? <Tag color="blue" style={{ margin: 0, fontFamily: 'monospace', fontWeight: 600 }}>{port}</Tag>
-                    : <Text type="secondary">-</Text>;
-            },
-            sorter: (a, b) => extractPortFromTarget(a.Target, a.Port) - extractPortFromTarget(b.Target, b.Port),
-        },
-        {
-            title: '来源',
-            dataIndex: 'Protocol',
-            key: 'protocol',
-            width: 100,
-            render: (v: string) => <Tag color={protocolColors[v] || 'default'} style={{ margin: 0, fontSize: 11 }}>{v}</Tag>,
-            filters: [...new Set(assets.map(a => a.Protocol))].map(p => ({ text: p, value: p })),
-            onFilter: (value, record) => record.Protocol === value,
-        },
-        {
-            title: '服务',
-            dataIndex: 'Service',
-            key: 'service',
-            width: 120,
-            render: (v: string) => v ? <Tag color="geekblue" style={{ margin: 0 }}>{v}</Tag> : <Text type="secondary">-</Text>,
-        },
-        {
-            title: '标题',
-            dataIndex: 'Title',
-            key: 'title',
-            ellipsis: { showTitle: false },
-            render: (v: string) => v
-                ? <Tooltip title={v}><Text style={{ fontSize: 12 }}>{v}</Text></Tooltip>
-                : <Text type="secondary">-</Text>,
-        },
-        {
-            title: 'URL',
-            key: 'url',
-            width: 180,
-            ellipsis: true,
-            render: (_, record) => {
-                const url = record.URL;
-                if (!url) return <Text type="secondary">-</Text>;
-                // 如果是真实 URL（非 JSON）
-                if (url.startsWith('http://') || url.startsWith('https://')) {
-                    return (
-                        <Tooltip title={url}>
-                            <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, fontFamily: 'monospace' }}>
-                                <LinkOutlined style={{ marginRight: 4 }} />{url.replace(/^https?:\/\//, '').slice(0, 40)}
-                            </a>
-                        </Tooltip>
-                    );
-                }
-                // JSON evidence — show as popover
-                if (isJsonString(url)) {
-                    let preview = '';
-                    try {
-                        const parsed = JSON.parse(url);
-                        preview = parsed.ip || parsed.type || 'evidence';
-                    } catch {
-                        preview = 'data';
-                    }
-                    return (
-                        <Popover
-                            content={<pre style={{ maxWidth: 500, maxHeight: 300, overflow: 'auto', fontSize: 11, margin: 0 }}>{JSON.stringify(JSON.parse(url), null, 2)}</pre>}
-                            title="原始数据"
-                            trigger="hover"
-                        >
-                            <Tag color="default" style={{ cursor: 'pointer', fontSize: 10, margin: 0 }}>📋 {preview}</Tag>
-                        </Popover>
-                    );
-                }
-                return <Text style={{ fontSize: 12, color: '#64748b' }} ellipsis={{ tooltip: url }}>{url}</Text>;
-            },
-        },
-        {
-            title: '发现时间',
-            dataIndex: 'CreatedAt',
-            key: 'created_at',
-            width: 160,
-            sorter: (a, b) => new Date(a.CreatedAt).getTime() - new Date(b.CreatedAt).getTime(),
-            render: (v: string) => {
-                if (!v) return '-';
-                return <Text style={{ fontSize: 12, color: '#64748b' }}>{dayjs(v).format('YYYY-MM-DD HH:mm:ss')}</Text>;
-            },
-        },
-        {
-            title: '操作',
-            key: 'actions',
-            width: 80,
-            render: (_, record) => (
-                <Button
-                    type="link"
-                    size="small"
-                    style={{ padding: 0 }}
-                    icon={<PartitionOutlined />}
-                    onClick={() => void openAssetLineage(record)}
+    };
+
+    // 扫描链路溯源：打开该资产的发现链路 Drawer（本地能力，挂到各资产类别列尾）
+    const lineageActionColumn: ColumnsType<API.Asset>[number] = {
+        title: '操作',
+        key: 'actions',
+        width: 80,
+        render: (_, record) => (
+            <Button
+                type="link"
+                size="small"
+                style={{ padding: 0 }}
+                icon={<PartitionOutlined />}
+                onClick={() => void openAssetLineage(record)}
+            >
+                溯源
+            </Button>
+        ),
+    };
+
+    const cdnColumn: ColumnsType<API.Asset>[number] = {
+        title: 'CDN',
+        key: 'cdn',
+        width: 90,
+        render: (_, record) => record.CDN
+            ? <Tag color="orange" style={{ margin: 0 }}>疑似 CDN</Tag>
+            : <Text type="secondary">-</Text>,
+        filters: [{ text: '疑似 CDN', value: true }],
+        onFilter: (value, record) => Boolean(record.CDN) === value,
+    };
+
+    const protocolColumn: ColumnsType<API.Asset>[number] = {
+        title: '来源',
+        dataIndex: 'Protocol',
+        key: 'protocol',
+        width: 120,
+        render: (v: string) => <Tag color={protocolColors[v] || 'default'} style={{ margin: 0, fontSize: 11 }}>{v}</Tag>,
+        filters: [...new Set(assets.map(a => a.Protocol))].map(p => ({ text: p, value: p })),
+        onFilter: (value, record) => record.Protocol === value,
+    };
+
+    const renderAssetURL = (url?: string) => {
+        if (!url) return <Text type="secondary">-</Text>;
+        if (url.startsWith('http://') || url.startsWith('https://')) {
+            return (
+                <Tooltip title={url}>
+                    <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, fontFamily: 'monospace' }}>
+                        <LinkOutlined style={{ marginRight: 4 }} />{url.replace(/^https?:\/\//, '').slice(0, 40)}
+                    </a>
+                </Tooltip>
+            );
+        }
+        if (isJsonString(url)) {
+            let preview = '';
+            try {
+                const parsed = JSON.parse(url);
+                preview = parsed.ip || parsed.type || 'evidence';
+            } catch {
+                preview = 'data';
+            }
+            return (
+                <Popover
+                    content={<pre style={{ maxWidth: 500, maxHeight: 300, overflow: 'auto', fontSize: 11, margin: 0 }}>{JSON.stringify(JSON.parse(url), null, 2)}</pre>}
+                    title="原始数据"
+                    trigger="hover"
                 >
-                    溯源
-                </Button>
-            ),
-        },
-    ];
+                    <Tag color="default" style={{ cursor: 'pointer', fontSize: 10, margin: 0 }}>📋 {preview}</Tag>
+                </Popover>
+            );
+        }
+        return <Text style={{ fontSize: 12, color: '#64748b' }} ellipsis={{ tooltip: url }}>{url}</Text>;
+    };
+
+    const renderAssetFingerprints = (matches?: API.AssetFingerprintMatch[]) => {
+        if (!matches || matches.length === 0) return <Text type="secondary">-</Text>;
+        return (
+            <Space size={4} wrap>
+                {matches.map((match) => {
+                    const active = match.Source && match.Source !== 'passive';
+                    return (
+                        <Tag
+                            key={`${match.ProductName}-${match.Source || 'passive'}`}
+                            color={active ? fingerprintSourceColor(match.Source) : 'cyan'}
+                            style={{ margin: 0 }}
+                        >
+                            {match.ProductName}
+                            {active ? ` · ${fingerprintSourceLabel(match.Source, match.SourceLabel)}` : ''}
+                        </Tag>
+                    );
+                })}
+            </Space>
+        );
+    };
+
+    const assetColumnsForKind = (kind: AssetKind): ColumnsType<API.Asset> => {
+        if (kind === 'resolution') {
+            return [
+                {
+                    title: '域名',
+                    key: 'domain',
+                    width: 240,
+                    render: (_, record) => {
+                        const { domain } = parseAssetResolution(record);
+                        return renderRelatedHost(domain || record.Target, record.CDN);
+                    },
+                },
+                {
+                    title: '解析 IP',
+                    key: 'ips',
+                    render: (_, record) => {
+                        const { ips } = parseAssetResolution(record);
+                        if (ips.length === 0) return <Text type="secondary">-</Text>;
+                        return (
+                            <Space size={4} wrap>
+                                {ips.map((ip) => (
+                                    <Tag key={ip} style={{ margin: 0, fontFamily: "'JetBrains Mono', monospace" }}>{ip}</Tag>
+                                ))}
+                            </Space>
+                        );
+                    },
+                },
+                cdnColumn,
+                createdAtColumn,
+                lineageActionColumn,
+            ];
+        }
+        const hostColumn: ColumnsType<API.Asset>[number] = {
+            title: kind === 'domain' ? '域名' : '主机',
+            key: 'host',
+            width: 240,
+            render: (_, record) => renderRelatedHost(extractHostFromTarget(record.Target), record.CDN && kind !== 'web' && kind !== 'domain'),
+            filters: [...new Set(assets.map(a => extractHostFromTarget(a.Target)))].slice(0, 20).map(h => ({ text: h, value: h })),
+            onFilter: (value, record) => extractHostFromTarget(record.Target) === value,
+        };
+        if (kind === 'web') {
+            return [
+                hostColumn,
+                cdnColumn,
+                {
+                    title: 'URL',
+                    key: 'url',
+                    ellipsis: true,
+                    render: (_, record) => renderAssetURL(record.URL || record.Target),
+                },
+                {
+                    title: '标题',
+                    dataIndex: 'Title',
+                    key: 'title',
+                    ellipsis: { showTitle: false },
+                    render: (v: string) => v
+                        ? <Tooltip title={v}><Text style={{ fontSize: 12 }}>{v}</Text></Tooltip>
+                        : <Text type="secondary">-</Text>,
+                },
+                {
+                    title: '匹配指纹',
+                    key: 'fingerprints',
+                    render: (_, record) => renderAssetFingerprints(record.Fingerprints),
+                },
+                {
+                    title: '服务',
+                    dataIndex: 'Service',
+                    key: 'service',
+                    width: 120,
+                    render: (v: string) => v ? <Tag color="geekblue" style={{ margin: 0 }}>{v}</Tag> : <Text type="secondary">-</Text>,
+                },
+                protocolColumn,
+                createdAtColumn,
+                lineageActionColumn,
+            ];
+        }
+        if (kind === 'host_port') {
+            return [
+                hostColumn,
+                {
+                    title: '端口',
+                    key: 'port',
+                    width: 90,
+                    render: (_, record) => {
+                        const port = extractPortFromTarget(record.Target, record.Port);
+                        return port > 0
+                            ? <Tag color="blue" style={{ margin: 0, fontFamily: 'monospace', fontWeight: 600 }}>{port}</Tag>
+                            : <Text type="secondary">-</Text>;
+                    },
+                    sorter: (a, b) => extractPortFromTarget(a.Target, a.Port) - extractPortFromTarget(b.Target, b.Port),
+                },
+                protocolColumn,
+                {
+                    title: '服务',
+                    dataIndex: 'Service',
+                    key: 'service',
+                    width: 140,
+                    render: (v: string) => v ? <Tag color="geekblue" style={{ margin: 0 }}>{v}</Tag> : <Text type="secondary">-</Text>,
+                },
+                createdAtColumn,
+                lineageActionColumn,
+            ];
+        }
+        if (kind === 'domain') {
+            return [
+                hostColumn,
+                cdnColumn,
+                protocolColumn,
+                {
+                    title: '关联 IP',
+                    key: 'related_ips',
+                    render: (_, record) => {
+                        const host = extractHostFromTarget(record.Target);
+                        const ips = relatedHostsFor(host).filter((item) => ipv4Pattern.test(item));
+                        if (ips.length === 0) return <Text type="secondary">-</Text>;
+                        return (
+                            <Space size={4} wrap>
+                                {ips.map((ip) => (
+                                    <Tag key={ip} style={{ margin: 0, fontFamily: "'JetBrains Mono', monospace" }}>{ip}</Tag>
+                                ))}
+                            </Space>
+                        );
+                    },
+                },
+                createdAtColumn,
+                lineageActionColumn,
+            ];
+        }
+        return [
+            hostColumn,
+            cdnColumn,
+            protocolColumn,
+            {
+                title: '标题',
+                dataIndex: 'Title',
+                key: 'title',
+                ellipsis: { showTitle: false },
+                render: (v: string) => v
+                    ? <Tooltip title={v}><Text style={{ fontSize: 12 }}>{v}</Text></Tooltip>
+                    : <Text type="secondary">-</Text>,
+            },
+            createdAtColumn,
+            lineageActionColumn,
+        ];
+    };
 
     const fpColumns: ColumnsType<API.FingerprintGroup> = [
         {
             title: '产品名称',
             dataIndex: 'ProductName',
             key: 'product_name',
-            width: 240,
-            render: (v: string) => (
-                <Space size={6}>
-                    <ScanOutlined style={{ color: '#0ea5e9' }} />
-                    <Tag color="cyan" style={{ marginInlineEnd: 0 }}>{v}</Tag>
+            width: 280,
+            render: (v: string, record) => (
+                <Space size={4} wrap>
+                    <Tag color="cyan">{v}</Tag>
+                    {fingerprintGroupSources(record).map((source) => (
+                        <Tag key={source} color={fingerprintSourceColor(source)} style={{ margin: 0 }}>
+                            {fingerprintSourceLabel(source)}
+                        </Tag>
+                    ))}
                 </Space>
             ),
         },
@@ -671,16 +911,41 @@ const TaskResults: React.FC = () => {
             render: (_, record) => {
                 const targets = record.Targets || [];
                 if (targets.length === 0) return <Text type="secondary">-</Text>;
-                const preview = targets.slice(0, 2).map(t => t.Target);
                 return (
-                    <Space size={8} wrap>
-                        <Text type="secondary" style={{ fontSize: 12 }}>共 {targets.length} 个目标</Text>
-                        {preview.map((target, index) => (
-                            <Text key={`${target}-${index}`} style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>{target}</Text>
-                        ))}
-                        {targets.length > 2 && <Tag style={{ fontSize: 11, marginInlineEnd: 0 }}>+{targets.length - 2}</Tag>}
-                        <Text type="secondary" style={{ fontSize: 11 }}>点击行展开全部</Text>
-                    </Space>
+                    <div style={{ maxHeight: 180, overflow: 'auto', display: 'grid', gap: 6 }}>
+                        {targets.map((target, index) => {
+                            const displayURL = target.MatchedURL || target.Target;
+                            return (
+                                <Space key={`${displayURL}-${index}`} size={6} wrap>
+                                    <Text
+                                        copyable={{ text: displayURL }}
+                                        style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}
+                                    >
+                                        {displayURL}
+                                    </Text>
+                                    {target.Source && (
+                                        <Tag color={fingerprintSourceColor(target.Source)} style={{ margin: 0, fontSize: 11 }}>
+                                            {fingerprintSourceLabel(target.Source, target.SourceLabel)}
+                                        </Tag>
+                                    )}
+                                    {target.RuleName && target.RuleName !== 'Finger' && target.RuleName !== 'Active-Finger' && (
+                                        <Tag color="default">{target.RuleName}</Tag>
+                                    )}
+                                    {target.Evidence && (
+                                        <Popover
+                                            content={<pre style={{ maxWidth: 520, maxHeight: 320, overflow: 'auto', fontSize: 11, margin: 0 }}>{target.Evidence}</pre>}
+                                            title="匹配证据"
+                                            trigger="hover"
+                                        >
+                                            <Tag color="geekblue" style={{ cursor: 'pointer', margin: 0, fontSize: 11 }}>证据</Tag>
+                                        </Popover>
+                                    )}
+                                    <Button type="link" size="small" style={{ padding: 0 }} onClick={() => handleViewAssets(target.Target)}>看资产</Button>
+                                    <Button type="link" size="small" style={{ padding: 0 }} onClick={() => handleViewVulns(target.Target)}>看漏洞</Button>
+                                </Space>
+                            );
+                        })}
+                    </div>
                 );
             },
         },
@@ -731,7 +996,7 @@ const TaskResults: React.FC = () => {
                             </Tag>
                         );
                     })}
-                    <Tag color="blue"><GlobalOutlined /> 资产 {assetPagination.total}</Tag>
+                    <Tag color="blue"><GlobalOutlined /> 资产 {assetTotal}</Tag>
                     <Tag color="cyan"><ScanOutlined /> 指纹 {fingerprintPagination.total}</Tag>
                     <Button icon={<ReloadOutlined />} onClick={fetchCurrentPages} loading={loading}>刷新</Button>
                     <Button icon={<DownloadOutlined />} onClick={handleExport}>导出 CSV</Button>
@@ -743,7 +1008,7 @@ const TaskResults: React.FC = () => {
                     <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}>
                         <Spin size="large" />
                     </div>
-                ) : vulnPagination.total === 0 && assetPagination.total === 0 && fingerprintPagination.total === 0 && contentFindingsTotal === 0 ? (
+                ) : vulnPagination.total === 0 && assetTotal === 0 && fingerprintPagination.total === 0 && contentFindingsTotal === 0 ? (
                     <Empty description="暂无扫描结果" style={{ padding: '60px 0' }} />
                 ) : (
                     <Tabs
@@ -807,7 +1072,7 @@ const TaskResults: React.FC = () => {
                             },
                             {
                                 key: 'assets',
-                                label: <span><GlobalOutlined /> 资产 ({assetPagination.total})</span>,
+                                label: <span><GlobalOutlined /> 资产 ({assetTotal})</span>,
                                 children: (
                                     <>
                                         {assetSearch && (
@@ -823,24 +1088,39 @@ const TaskResults: React.FC = () => {
                                                 )}
                                             />
                                         )}
-                                        <Table
-                                            bordered
-                                            columns={assetColumns}
-                                            dataSource={assets}
-                                            rowKey="ID"
-                                            loading={tabLoading.assets}
-                                            pagination={{
-                                                current: assetPagination.current,
-                                                pageSize: assetPagination.pageSize,
-                                                total: assetPagination.total,
-                                                showSizeChanger: true,
-                                                pageSizeOptions: ['10', '20', '50', '100', '200'],
-                                                showTotal: (t) => `共 ${t} 条`,
-                                                onChange: (page, pageSize) => fetchAssetsPage(page, pageSize),
-                                            }}
-                                            size="middle"
-                                            rowClassName={(_, index) => index % 2 === 1 ? 'table-row-light' : 'table-row-dark'}
-                                        />
+                                    <Tabs
+                                        size="small"
+                                        activeKey={assetKind}
+                                        onChange={(key) => {
+                                            const nextKind = key as AssetKind;
+                                            setAssetKind(nextKind);
+                                            fetchAssetsPage(1, assetPagination.pageSize || DEFAULT_RESULT_PAGE_SIZE, nextKind);
+                                        }}
+                                        items={visibleAssetKinds(assetKindCounts).map((kind) => ({
+                                            key: kind,
+                                            label: `${ASSET_KIND_LABELS[kind]} (${assetKindCount(assetKindCounts, kind)})`,
+                                            children: (
+                                                <Table
+                                                    bordered
+                                                    columns={assetColumnsForKind(kind)}
+                                                    dataSource={kind === assetKind ? assets : []}
+                                                    rowKey="ID"
+                                                    loading={tabLoading.assets}
+                                                    pagination={{
+                                                        current: assetPagination.current,
+                                                        pageSize: assetPagination.pageSize,
+                                                        total: assetPagination.total,
+                                                        showSizeChanger: true,
+                                                        pageSizeOptions: ['10', '20', '50', '100', '200'],
+                                                        showTotal: (t) => `共 ${t} 条`,
+                                                        onChange: (page, pageSize) => fetchAssetsPage(page, pageSize, kind),
+                                                    }}
+                                                    size="middle"
+                                                    rowClassName={(_, index) => index % 2 === 1 ? 'table-row-light' : 'table-row-dark'}
+                                                />
+                                            ),
+                                        }))}
+                                    />
                                     </>
                                 ),
                             },
@@ -848,15 +1128,28 @@ const TaskResults: React.FC = () => {
                                 key: 'fingerprints',
                                 label: <span><ScanOutlined /> 指纹 ({fingerprintPagination.total})</span>,
                                 children: (
-                                    <>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-                                            <Input
+                                    <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                                        <Space wrap>
+                                            <Input.Search
                                                 allowClear
-                                                prefix={<SearchOutlined />}
-                                                placeholder="按产品名称搜索"
-                                                style={{ width: 300 }}
-                                                value={fingerprintSearchInput}
-                                                onChange={(e) => handleFingerprintSearchChange(e.target.value)}
+                                                placeholder="搜索产品名称或 URL"
+                                                defaultValue={fingerprintSearch}
+                                                onSearch={(value) => {
+                                                    const nextSearch = value.trim();
+                                                    setFingerprintSearch(nextSearch);
+                                                    fetchFingerprintsPage(1, fingerprintPagination.pageSize || DEFAULT_RESULT_PAGE_SIZE, nextSearch, fingerprintSource);
+                                                }}
+                                                style={{ width: 280 }}
+                                            />
+                                            <Select
+                                                value={fingerprintSource}
+                                                options={FINGERPRINT_SOURCE_FILTERS}
+                                                style={{ width: 220 }}
+                                                onChange={(value) => {
+                                                    const nextSource = value as '' | FingerprintSource;
+                                                    setFingerprintSource(nextSource);
+                                                    fetchFingerprintsPage(1, fingerprintPagination.pageSize || DEFAULT_RESULT_PAGE_SIZE, fingerprintSearch, nextSource);
+                                                }}
                                             />
                                             <Space size={8} wrap>
                                                 <Tag>产品种类 {fingerprintPagination.total}</Tag>
@@ -864,41 +1157,13 @@ const TaskResults: React.FC = () => {
                                                 <Tag color="cyan">涉及目标 {fingerprintStats ? fingerprintStats.distinct_targets : '-'}</Tag>
                                                 <Tag color="geekblue">当前页命中 {fingerprints.reduce((sum, f) => sum + (f.TargetCount || 0), 0)}</Tag>
                                             </Space>
-                                        </div>
+                                        </Space>
                                         <Table
                                             bordered
                                             columns={fpColumns}
                                             dataSource={fingerprints}
                                             rowKey="ProductName"
                                             loading={tabLoading.fingerprints}
-                                            scroll={{ y: 560, x: 900 }}
-                                            expandable={{
-                                                expandedRowRender: (record) => (
-                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '4px 8px' }}>
-                                                        {(record.Targets || []).map((target, index) => (
-                                                            <div key={`${target.Target}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                                                                <Text copyable={{ text: target.Target }} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>{target.Target}</Text>
-                                                                {target.RuleName && <Tag color="default" style={{ marginInlineEnd: 0 }}>{target.RuleName}</Tag>}
-                                                                {target.Evidence && (
-                                                                    <Popover
-                                                                        content={<pre style={{ maxWidth: 520, maxHeight: 320, overflow: 'auto', fontSize: 11, margin: 0 }}>{target.Evidence}</pre>}
-                                                                        title="匹配证据"
-                                                                        trigger="hover"
-                                                                    >
-                                                                        <Tag color="geekblue" style={{ cursor: 'pointer', marginInlineEnd: 0 }}>证据</Tag>
-                                                                    </Popover>
-                                                                )}
-                                                                <Text type="secondary" style={{ fontSize: 11 }}>
-                                                                    {target.UpdatedAt || target.CreatedAt ? dayjs(target.UpdatedAt || target.CreatedAt).format('YYYY-MM-DD HH:mm:ss') : ''}
-                                                                </Text>
-                                                                <span style={{ flex: 1 }} />
-                                                                <Button type="link" size="small" style={{ padding: 0 }} onClick={() => handleViewAssets(target.Target)}>看资产</Button>
-                                                                <Button type="link" size="small" style={{ padding: 0 }} onClick={() => handleViewVulns(target.Target)}>看漏洞</Button>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                ),
-                                            }}
                                             pagination={{
                                                 current: fingerprintPagination.current,
                                                 pageSize: fingerprintPagination.pageSize,
@@ -906,12 +1171,12 @@ const TaskResults: React.FC = () => {
                                                 showSizeChanger: true,
                                                 pageSizeOptions: ['10', '20', '50', '100', '200'],
                                                 showTotal: (t) => `共 ${t} 条`,
-                                                onChange: (page, pageSize) => fetchFingerprintsPage(page, pageSize),
+                                                onChange: (page, pageSize) => fetchFingerprintsPage(page, pageSize, fingerprintSearch, fingerprintSource),
                                             }}
                                             size="middle"
                                             rowClassName={(_, index) => index % 2 === 1 ? 'table-row-light' : 'table-row-dark'}
                                         />
-                                    </>
+                                    </Space>
                                 ),
                             },
                             {

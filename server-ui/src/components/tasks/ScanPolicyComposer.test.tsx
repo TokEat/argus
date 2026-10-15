@@ -52,4 +52,15 @@ describe('scan policy subdomain discovery', () => {
 		expect(policy.capabilities.subdomain_bruteforce).toBe(false);
 		expect(policy.subdomains.bruteforce_depth).toBe(0);
 	});
+
+	it('lets deep preset keep full ports after subdomain bruteforce is turned off', () => {
+		const policy = buildScanPolicy({
+			preset: 'deep', subdomain_bruteforce: false, subdomain_bruteforce_depth: 2,
+			subdomain_books: [subdomainDictionary.id],
+		}, [], [subdomainDictionary]);
+		expect(policy.preset).toBe('deep');
+		expect(policy.port_profile).toBe('all');
+		expect(policy.capabilities.subdomain_bruteforce).toBe(false);
+		expect(policy.subdomains).toEqual({ bruteforce_depth: 0, wordlists: [] });
+	});
 });

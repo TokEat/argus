@@ -173,7 +173,7 @@ const WorkflowConfig: React.FC = () => {
                     root: '根路径 (scheme://host)',
                     base: '完整路径 (scheme://host/a/b/c)',
                     dir: '逐级目录 (/a, /a/b, ...)',
-                    'dir-fallback': '目录探测命中时直接标记指纹',
+                    'dir-fallback': '目录探测 200 仅记录路径存在',
                 };
                 return (
                     <Space wrap>

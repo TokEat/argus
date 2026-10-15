@@ -15,6 +15,15 @@ const timingOutcomeMeta: Record<string, { label: string; color: string }> = {
     skipped: { label: '跳过', color: 'warning' },
 };
 
+const unavailableTimingMessages: Record<string, string> = {
+    not_executed: '此次尝试未由 Agent 执行，无阶段计时',
+    not_reported: '此次尝试未上报阶段计时',
+    pending: '此次尝试尚无阶段计时',
+};
+
+const unavailableTimingMessage = (attempt: API.TaskTimingAttempt): string =>
+    unavailableTimingMessages[attempt.unavailable_reason || ''] || '此次尝试暂无阶段计时';
+
 const formatTimingDuration = (event: API.TaskTimingEvent): string => {
     if (typeof event.duration_ms === 'number') {
         if (event.duration_ms === 0 && typeof event.duration_ns === 'number' && event.duration_ns > 0) {
@@ -61,7 +70,7 @@ const TaskTimingPanel = ({ timing, stageLabels }: TaskTimingPanelProps) => (
                         type="info"
                         showIcon
                         style={{ marginTop: 8 }}
-                        message="旧版 Agent 暂无阶段计时"
+                        message={unavailableTimingMessage(attempt)}
                     />
                 ) : (
                     <Table

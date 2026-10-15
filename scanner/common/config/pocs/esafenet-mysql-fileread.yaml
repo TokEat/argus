@@ -1,11 +1,11 @@
 id: esafenet-mysql-fileread
 
 info:
-  name: Esafenet CDG mysql - File Read
+  name: 亿赛通 CDG MySQL 任意文件读取
   author: DhiyaneshDk
   severity: high
   description: |
-    CDGServer3 Unauthorized File Download vulnerability is detected.
+    亿赛通 CDGServer3 未授权文件下载/读取漏洞。
   metadata:
     verified: true
     max-request: 1

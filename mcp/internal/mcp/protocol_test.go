@@ -31,7 +31,7 @@ func connectTestSession(t *testing.T, server *sdkmcp.Server) (*sdkmcp.ClientSess
 	}
 }
 
-func TestSDKServerListsOnlyAggregateTools(t *testing.T) {
+func TestSDKServerListsFocusedTools(t *testing.T) {
 	session, cleanup := connectTestSession(t, NewServer(NewClient("http://argus.local", "token")))
 	defer cleanup()
 
@@ -43,7 +43,10 @@ func TestSDKServerListsOnlyAggregateTools(t *testing.T) {
 	for _, tool := range result.Tools {
 		got = append(got, tool.Name)
 	}
-	want := map[string]bool{"argus_context": true, "argus_product_search": true, "argus_findings": true, "argus_results": true, "argus_rule_debug": true, "argus_rule_save": true, "argus_rule_apply": true, "argus_yaksha_exp": true, "argus_exp_workspace": true, "argus_scan_task": true}
+	want := map[string]bool{}
+	for _, name := range focusedMCPToolNames() {
+		want[name] = true
+	}
 	if len(got) != len(want) {
 		t.Fatalf("unexpected tool count: got %v want %v", got, want)
 	}
@@ -52,6 +55,19 @@ func TestSDKServerListsOnlyAggregateTools(t *testing.T) {
 			t.Fatalf("unexpected tool %q in %v", name, got)
 		}
 	}
+	for _, banned := range []string{"argus_context", "argus_rule_debug", "argus_rule_save", "argus_scan_task"} {
+		if want[banned] {
+			t.Fatalf("banned aggregate tool %q still registered", banned)
+		}
+		for _, name := range got {
+			if name == banned {
+				t.Fatalf("banned aggregate tool %q still listed", banned)
+			}
+		}
+	}
+	if instr := session.InitializeResult().Instructions; !strings.Contains(instr, "argus_help") || !strings.Contains(instr, "do not have the Argus source") {
+		t.Fatalf("missing source-less instructions: %q", instr)
+	}
 	capabilities, _ := json.Marshal(session.InitializeResult().Capabilities.Extensions)
 	for _, wantText := range []string{"io.modelcontextprotocol/ui", expConsoleMIMEType} {
 		if !strings.Contains(string(capabilities), wantText) {
@@ -59,9 +75,21 @@ func TestSDKServerListsOnlyAggregateTools(t *testing.T) {
 		}
 	}
 	data, _ := json.Marshal(result.Tools)
-	for _, wantText := range []string{"intent", "test_only", "workflow_links", "stable_ref", "argus_product_search", "argus_findings", "argus_results", "vuln_detail", "path_app", "hidden_path", "apikey", "rule_get", "rule_list", "drafts", "relationship_stats", "relationship_list", "unlinked_fingerprints", "missing_poc_refs", "range_start", "range_end", "product_search for fuzzy", "General-Poc-*", "argus_yaksha_exp", "argus_exp_workspace", "argus_scan_task", "argus.scan-policy/v1", "plan_hash", "revision_create", "exp_id", "revision", "source_sha256", "immutable source identity", expConsoleURI} {
+	for _, wantText := range []string{"intent", "test_only", "stable_ref", "argus_help", "argus_resource", "argus_rule_get", "argus_rule_list", "drafts", "argus_coverage", "include_content", "range_start", "range_end", "Hyphens are literal", "argus_yaksha_exp", "argus_exp_workspace", "argus_scan_preview", "argus_scan_create", "argus.scan-policy/v1", "plan_hash", "revision_create", "exp_id", "revision", "source_sha256", "immutable source identity", expConsoleURI, `"dir"`, "argus_debug_fingerprint", "argus_save_poc", "argus_findings", "argus_results", "vuln_detail", "path_app", "hidden_path", "apikey"} {
 		if !strings.Contains(string(data), wantText) {
 			t.Fatalf("tool schema/description missing %q: %s", wantText, data)
+		}
+	}
+	if strings.Contains(string(data), `"argus_context"`) || strings.Contains(string(data), `"argus_scan_task"`) || strings.Contains(string(data), `"argus_rule_debug"`) || strings.Contains(string(data), `"argus_rule_save"`) {
+		t.Fatalf("aggregate tool names leaked into schema: %s", data)
+	}
+	for _, tool := range result.Tools {
+		if tool.Name != "argus_coverage" {
+			continue
+		}
+		schema, _ := json.Marshal(tool.InputSchema)
+		if strings.Contains(string(schema), "range_start") || strings.Contains(string(schema), "range_end") {
+			t.Fatalf("argus_coverage must not advertise range fields: %s", schema)
 		}
 	}
 }
@@ -82,11 +110,11 @@ func TestSDKServerListsAndReadsResources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list resources: %v", err)
 	}
-	if len(list.Resources) != 12 {
-		t.Fatalf("expected 12 resources, got %d", len(list.Resources))
+	if len(list.Resources) != 14 {
+		t.Fatalf("expected 14 resources, got %d", len(list.Resources))
 	}
 	listData, _ := json.Marshal(list.Resources)
-	for _, want := range []string{"argus://argus-mcp/quickstart", "argus://fingerprint/spec", "argus://behavior-probe/spec", "argus://behavior-probe/template", "argus://workflow/template", "argus://examples/fingerprint-poc-workflow"} {
+	for _, want := range []string{"argus://argus-mcp/quickstart", "argus://fingerprint/spec", "argus://dir/spec", "argus://dir/template", "argus://behavior-probe/spec", "argus://behavior-probe/template", "argus://workflow/template", "argus://examples/fingerprint-poc-workflow"} {
 		if !strings.Contains(string(listData), want) {
 			t.Fatalf("resource list missing %q: %s", want, listData)
 		}
@@ -214,20 +242,16 @@ func TestSDKYakshaToolReturnsStructuredContentAndCompleteDebugTrace(t *testing.T
 
 func TestSDKServerRoutesAggregateToolsToNativeRESTEndpoints(t *testing.T) {
 	seen := make([]string, 0, 4)
-	var seenArsenalListQuery string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = append(seen, r.Method+" "+r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/api/v1/nodes":
-			_, _ = w.Write([]byte(`[{"agent_id":"agent-1","status":"Alive"}]`))
-		case "/api/v1/arsenals/poc/native-route.yaml":
+		case "/api/v1/mcp/tools/rule/context":
+			_, _ = w.Write([]byte(`{"status":"success","agents":[{"agent_id":"agent-1","status":"Alive"}]}`))
+		case "/api/v1/mcp/tools/rule/save":
 			_, _ = w.Write([]byte(`{"status":"saved","artifact_id":"poc_native-route.yaml","file_name":"native-route.yaml","hash":"h1","version":3,"state":"Draft"}`))
-		case "/api/v1/arsenals/poc":
-			seenArsenalListQuery = r.URL.RawQuery
-			_, _ = w.Write([]byte(`[{"ID":"poc_native-route.yaml","FileName":"native-route.yaml","Hash":"h1","Version":3,"State":"Draft"}]`))
-		case "/api/v1/arsenals/poc/native-route.yaml/approve":
-			_, _ = w.Write([]byte(`{"status":"approved","rule_version":"v-test"}`))
+		case "/api/v1/mcp/tools/rule/apply":
+			_, _ = w.Write([]byte(`{"status":"approved","file_name":"native-route.yaml","hash":"h1","version":3}`))
 		default:
 			t.Fatalf("unexpected route %s %s", r.Method, r.URL.Path)
 		}
@@ -241,8 +265,8 @@ func TestSDKServerRoutesAggregateToolsToNativeRESTEndpoints(t *testing.T) {
 		name string
 		args map[string]any
 	}{
-		{name: "argus_context", args: map[string]any{"action": "agents"}},
-		{name: "argus_rule_save", args: map[string]any{"rule_type": "poc", "file_name": "native-route.yaml", "content": "id: native-route\ninfo:\n  name: native route\n  severity: info\nrequests: []\n"}},
+		{name: "argus_agents", args: map[string]any{}},
+		{name: "argus_save_poc", args: map[string]any{"file_name": "native-route.yaml", "content": "id: native-route\ninfo:\n  name: native route\n  severity: info\nrequests: []\n"}},
 		{name: "argus_rule_apply", args: map[string]any{"action": "publish", "rule_type": "poc", "file_name": "native-route.yaml", "hash": "h1", "version": 3}},
 	}
 	for _, tc := range cases {
@@ -257,22 +281,18 @@ func TestSDKServerRoutesAggregateToolsToNativeRESTEndpoints(t *testing.T) {
 			t.Fatalf("CallTool(%s) returned %d content items", tc.name, len(result.Content))
 		}
 		text := result.Content[0].(*sdkmcp.TextContent).Text
-		if !strings.Contains(text, `"stable_ref"`) && tc.name == "argus_rule_save" {
+		if !strings.Contains(text, `"stable_ref"`) && tc.name == "argus_save_poc" {
 			t.Fatalf("CallTool(%s) returned no stable_ref: %s", tc.name, text)
 		}
 	}
 
 	want := []string{
-		"GET /api/v1/nodes",
-		"POST /api/v1/arsenals/poc/native-route.yaml",
-		"GET /api/v1/arsenals/poc",
-		"POST /api/v1/arsenals/poc/native-route.yaml/approve",
+		"POST /api/v1/mcp/tools/rule/context",
+		"POST /api/v1/mcp/tools/rule/save",
+		"POST /api/v1/mcp/tools/rule/apply",
 	}
 	if strings.Join(seen, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("unexpected aggregate routes:\n got %v\nwant %v", seen, want)
-	}
-	if seenArsenalListQuery != "all=1&lite=1" {
-		t.Fatalf("publish freshness should use lite arsenal listing, got query %q", seenArsenalListQuery)
 	}
 }
 
@@ -302,8 +322,8 @@ func TestContextRuleListRangeAndDrafts(t *testing.T) {
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name:      "argus_context",
-		Arguments: map[string]any{"action": "rule_list", "rule_type": "poc", "range_start": 1, "range_end": 2},
+		Name:      "argus_rule_list",
+		Arguments: map[string]any{"rule_type": "poc", "range_start": 1, "range_end": 2},
 	})
 	if err != nil {
 		t.Fatalf("CallTool(rule_list): %v", err)
@@ -321,8 +341,8 @@ func TestContextRuleListRangeAndDrafts(t *testing.T) {
 	}
 
 	result, err = session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name:      "argus_context",
-		Arguments: map[string]any{"action": "rule_list", "rule_type": "poc", "range_start": 3, "range_end": 4},
+		Name:      "argus_rule_list",
+		Arguments: map[string]any{"rule_type": "poc", "range_start": 3, "range_end": 4},
 	})
 	if err != nil {
 		t.Fatalf("CallTool(rule_list second range): %v", err)
@@ -337,8 +357,8 @@ func TestContextRuleListRangeAndDrafts(t *testing.T) {
 	}
 
 	result, err = session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name:      "argus_context",
-		Arguments: map[string]any{"action": "drafts", "rule_type": "poc", "range_start": 1, "range_end": 10},
+		Name:      "argus_rule_list",
+		Arguments: map[string]any{"rule_type": "poc", "state": "Draft", "range_start": 1, "range_end": 10},
 	})
 	if err != nil {
 		t.Fatalf("CallTool(drafts): %v", err)
@@ -353,90 +373,14 @@ func TestContextRuleListRangeAndDrafts(t *testing.T) {
 	}
 }
 
-func TestFingerprintAndWorkflowSaveComposeNativeArsenalDrafts(t *testing.T) {
-	seen := make([]string, 0, 4)
+func TestContextRuleGetReturnsProductNamesWithoutYAML(t *testing.T) {
+	const yamlBody = "ProdA:\n  - body=\"a\"\nProdB:\n  - body=\"b\"\nProdC:\n  - body=\"c\"\n"
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = append(seen, r.Method+" "+r.URL.Path+"?"+r.URL.RawQuery)
 		w.Header().Set("Content-Type", "application/json")
-		switch r.Method + " " + r.URL.Path {
-		case "GET /api/v1/arsenals/finger":
-			_, _ = w.Write([]byte(`[{"ID":"finger_finger.yaml","FileName":"finger.yaml","Content":"ExistingProduct:\n  - body=\"old\"\n","Hash":"old","Version":1,"State":"Approved"}]`))
-		case "POST /api/v1/arsenals/finger/finger.yaml":
-			var body struct {
-				Content string `json:"content"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode finger save: %v", err)
-			}
-			if !strings.Contains(body.Content, "ExistingProduct") || !strings.Contains(body.Content, "ArgusMCPNativeFinger") || !strings.Contains(body.Content, `body="native"`) {
-				t.Fatalf("unexpected finger content: %s", body.Content)
-			}
-			_, _ = w.Write([]byte(`{"status":"saved","file_name":"finger.yaml","hash":"finger-hash","version":2,"state":"Draft"}`))
-		case "GET /api/v1/arsenals/workflow":
-			_, _ = w.Write([]byte(`[{"ID":"workflow_workflow.yaml","FileName":"workflow.yaml","Content":"ExistingProduct:\n  type:\n    - root\n  pocs:\n    - old.yaml\n","Hash":"old","Version":1,"State":"Approved"}]`))
-		case "POST /api/v1/arsenals/workflow/workflow.yaml":
-			var body struct {
-				Content string `json:"content"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode workflow save: %v", err)
-			}
-			if !strings.Contains(body.Content, "ArgusMCPNativeFinger") || !strings.Contains(body.Content, "native-poc.yaml") || !strings.Contains(body.Content, "root") {
-				t.Fatalf("unexpected workflow content: %s", body.Content)
-			}
-			_, _ = w.Write([]byte(`{"status":"saved","file_name":"workflow.yaml","hash":"workflow-hash","version":2,"state":"Draft"}`))
-		default:
-			t.Fatalf("unexpected route %s %s", r.Method, r.URL.String())
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/arsenals/finger/finger.yaml" {
+			t.Fatalf("unexpected route %s %s", r.Method, r.URL.Path)
 		}
-	}))
-	defer ts.Close()
-
-	session, cleanup := connectTestSession(t, NewServer(NewClient(ts.URL, "test-token")))
-	defer cleanup()
-
-	for _, tc := range []struct {
-		name string
-		args map[string]any
-	}{
-		{name: "fingerprint", args: map[string]any{"rule_type": "fingerprint", "product_name": "ArgusMCPNativeFinger", "rules": []any{`body="native"`}}},
-		{name: "workflow", args: map[string]any{"rule_type": "workflow", "product_name": "ArgusMCPNativeFinger", "workflow_types": []any{"root"}, "workflow_pocs": []any{"native-poc.yaml"}}},
-	} {
-		result, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{Name: "argus_rule_save", Arguments: tc.args})
-		if err != nil {
-			t.Fatalf("CallTool save %s: %v", tc.name, err)
-		}
-		text := result.Content[0].(*sdkmcp.TextContent).Text
-		if !strings.Contains(text, `"stable_ref"`) {
-			t.Fatalf("save %s missing stable_ref: %s", tc.name, text)
-		}
-	}
-
-	want := []string{
-		"GET /api/v1/arsenals/finger?all=1",
-		"POST /api/v1/arsenals/finger/finger.yaml?",
-		"GET /api/v1/arsenals/workflow?all=1",
-		"POST /api/v1/arsenals/workflow/workflow.yaml?",
-	}
-	if strings.Join(seen, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("unexpected save routes:\n got %v\nwant %v", seen, want)
-	}
-}
-
-func TestWorkflowContextUsesNativeRESTEndpoints(t *testing.T) {
-	seen := make([]string, 0, 3)
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = append(seen, r.Method+" "+r.URL.Path+"?"+r.URL.RawQuery)
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/dictionaries/fingerprint":
-			_, _ = w.Write([]byte(`[{"product":"ArgusMCPNative","rules":["body=\"native\""]}]`))
-		case "/api/v1/dictionaries/workflow":
-			_, _ = w.Write([]byte(`[{"product":"ArgusMCPNative","type":["root"],"pocs":["native-poc.yaml"]},{"product":"BrokenProduct","type":["root"],"pocs":["missing.yaml"]}]`))
-		case "/api/v1/poc-rules":
-			_, _ = w.Write([]byte(`[{"name":"native-poc","source_file":"native-poc.yaml","severity":"info","state":"Approved","enabled":true}]`))
-		default:
-			t.Fatalf("unexpected route %s %s", r.Method, r.URL.String())
-		}
+		_, _ = w.Write([]byte(`{"ID":"finger_finger.yaml","Type":"finger","FileName":"finger.yaml","Hash":"h1","Version":1,"State":"Approved","Content":` + jsonString(yamlBody) + `,"UpdatedAt":"2026-06-18T10:00:00Z"}`))
 	}))
 	defer ts.Close()
 
@@ -444,131 +388,76 @@ func TestWorkflowContextUsesNativeRESTEndpoints(t *testing.T) {
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name:      "argus_context",
-		Arguments: map[string]any{"action": "workflow_links", "product_name": "ArgusMCPNative", "limit": 5},
+		Name:      "argus_rule_get",
+		Arguments: map[string]any{"rule_type": "fingerprint"},
 	})
 	if err != nil {
-		t.Fatalf("CallTool workflow_links: %v", err)
+		t.Fatalf("CallTool(rule_get): %v", err)
 	}
-	text := result.Content[0].(*sdkmcp.TextContent).Text
-	for _, want := range []string{`"source": "native_api"`, "ArgusMCPNative", "native-poc.yaml"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("workflow_links missing %q: %s", want, text)
+	var got map[string]interface{}
+	if err := json.Unmarshal([]byte(result.Content[0].(*sdkmcp.TextContent).Text), &got); err != nil {
+		t.Fatalf("decode rule_get: %v", err)
+	}
+	if _, exists := got["content"]; exists {
+		t.Fatalf("rule_get should omit YAML content by default: %#v", got)
+	}
+	if got["content_included"] != false || got["product_count"].(float64) != 3 {
+		t.Fatalf("unexpected rule_get metadata: %#v", got)
+	}
+	products, ok := got["products"].([]interface{})
+	if !ok || len(products) != 3 {
+		t.Fatalf("expected compact name array, got %#v", got["products"])
+	}
+	for i, name := range []string{"ProdA", "ProdB", "ProdC"} {
+		if products[i] != name {
+			t.Fatalf("products[%d]=%#v want %q (names only, no nested JSON)", i, products[i], name)
 		}
-	}
-	for _, got := range seen {
-		if strings.Contains(got, "/mcp/tools/rule/context") {
-			t.Fatalf("workflow context used MCP aggregate route: %v", seen)
-		}
-	}
-	wantRoutes := []string{
-		"GET /api/v1/dictionaries/fingerprint?",
-		"GET /api/v1/dictionaries/workflow?",
-		"GET /api/v1/poc-rules?all=1",
-	}
-	if strings.Join(seen, "\n") != strings.Join(wantRoutes, "\n") {
-		t.Fatalf("unexpected workflow context routes:\n got %v\nwant %v", seen, wantRoutes)
-	}
-}
-
-func TestRelationshipStatsAndListUseNativeRESTEndpoints(t *testing.T) {
-	seen := make([]string, 0, 8)
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = append(seen, r.Method+" "+r.URL.Path+"?"+r.URL.RawQuery)
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/dictionaries/fingerprint":
-			_, _ = w.Write([]byte(`[
-				{"product":"LinkedProduct","rules":["body=\"linked\"","title=\"linked\""]},
-				{"product":"UnlinkedProduct","rules":["body=\"unlinked\""]}
-			]`))
-		case "/api/v1/dictionaries/workflow":
-			_, _ = w.Write([]byte(`[
-				{"product":"LinkedProduct","type":["root"],"pocs":["linked-poc"]},
-				{"product":"MissingFingerProduct","type":["root"],"pocs":["missing-poc"]},
-				{"product":"General-Poc-Shiro","type":["root"],"pocs":["general-poc"]}
-			]`))
-		case "/api/v1/poc-rules":
-			_, _ = w.Write([]byte(`[
-				{"name":"linked-poc","source_file":"linked-poc.yaml","state":"Approved","enabled":true},
-				{"name":"general-poc","source_file":"general-poc.yaml","state":"Approved","enabled":true}
-			]`))
-		default:
-			t.Fatalf("unexpected route %s %s", r.Method, r.URL.String())
-		}
-	}))
-	defer ts.Close()
-
-	session, cleanup := connectTestSession(t, NewServer(NewClient(ts.URL, "test-token")))
-	defer cleanup()
-
-	result, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name:      "argus_context",
-		Arguments: map[string]any{"action": "relationship_stats", "limit": 5},
-	})
-	if err != nil {
-		t.Fatalf("CallTool relationship_stats: %v", err)
-	}
-	var stats map[string]interface{}
-	if err := json.Unmarshal([]byte(result.Content[0].(*sdkmcp.TextContent).Text), &stats); err != nil {
-		t.Fatalf("decode relationship_stats: %v", err)
-	}
-	totals := stats["totals"].(map[string]interface{})
-	if totals["fingerprint_products"].(float64) != 2 ||
-		totals["fingerprint_with_workflow"].(float64) != 1 ||
-		totals["fingerprint_without_workflow"].(float64) != 1 ||
-		totals["workflow_without_fingerprint"].(float64) != 1 ||
-		totals["general_poc_workflows"].(float64) != 1 ||
-		totals["workflow_missing_poc_references"].(float64) != 1 {
-		t.Fatalf("unexpected relationship totals: %#v", totals)
 	}
 
 	result, err = session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name:      "argus_context",
-		Arguments: map[string]any{"action": "relationship_list", "view": "unlinked_fingerprints", "range_start": 1, "range_end": 10},
+		Name:      "argus_rule_get",
+		Arguments: map[string]any{"rule_type": "fingerprint", "product_name": "ProdB"},
 	})
 	if err != nil {
-		t.Fatalf("CallTool relationship_list: %v", err)
+		t.Fatalf("CallTool(rule_get product_name): %v", err)
 	}
-	var list map[string]interface{}
-	if err := json.Unmarshal([]byte(result.Content[0].(*sdkmcp.TextContent).Text), &list); err != nil {
-		t.Fatalf("decode relationship_list: %v", err)
+	var one map[string]interface{}
+	if err := json.Unmarshal([]byte(result.Content[0].(*sdkmcp.TextContent).Text), &one); err != nil {
+		t.Fatalf("decode product rule_get: %v", err)
 	}
-	items := list["items"].([]interface{})
-	if list["total"].(float64) != 1 || items[0].(map[string]interface{})["product_name"] != "UnlinkedProduct" {
-		t.Fatalf("unexpected relationship list: %#v", list)
+	if _, exists := one["products"]; exists {
+		t.Fatalf("product_name lookup should not echo the full name list: %#v", one)
+	}
+	entry, _ := one["product_entry"].(map[string]interface{})
+	if entry["product_name"] != "ProdB" {
+		t.Fatalf("unexpected product_entry: %#v", one["product_entry"])
 	}
 
-	wantRoutes := []string{
-		"GET /api/v1/dictionaries/fingerprint?",
-		"GET /api/v1/dictionaries/workflow?",
-		"GET /api/v1/poc-rules?all=1",
-		"GET /api/v1/dictionaries/fingerprint?",
-		"GET /api/v1/dictionaries/workflow?",
-		"GET /api/v1/poc-rules?all=1",
+	result, err = session.CallTool(context.Background(), &sdkmcp.CallToolParams{
+		Name:      "argus_rule_get",
+		Arguments: map[string]any{"rule_type": "fingerprint", "include_content": true},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(rule_get include_content): %v", err)
 	}
-	if strings.Join(seen, "\n") != strings.Join(wantRoutes, "\n") {
-		t.Fatalf("unexpected relationship routes:\n got %v\nwant %v", seen, wantRoutes)
+	var withContent map[string]interface{}
+	if err := json.Unmarshal([]byte(result.Content[0].(*sdkmcp.TextContent).Text), &withContent); err != nil {
+		t.Fatalf("decode include_content: %v", err)
+	}
+	content, _ := withContent["content"].(string)
+	if withContent["content_included"] != true || !strings.Contains(content, "ProdA") {
+		t.Fatalf("small file include_content should return YAML: %#v", withContent)
 	}
 }
 
-func TestProductSearchUsesNativeRESTIndexes(t *testing.T) {
-	seen := make([]string, 0, 4)
+func TestContextRuleGetPOCDoesNotUseYAMLKeysAsProducts(t *testing.T) {
+	const yamlBody = "id: mcp-server-detect\ninfo:\n  name: MCP Server Detect\n  author: argus\n  severity: info\nhttp:\n  - method: GET\n    path:\n      - \"{{BaseURL}}/\"\n"
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = append(seen, r.Method+" "+r.URL.Path+"?"+r.URL.RawQuery)
 		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/dictionaries/fingerprint":
-			_, _ = w.Write([]byte(`[{"product":"Spring-Framework","rules":["title=\"Spring Boot\""]}]`))
-		case "/api/v1/dictionaries/workflow":
-			_, _ = w.Write([]byte(`[{"product":"Spring-Framework","type":["root"],"pocs":["springboot-env.yaml"]}]`))
-		case "/api/v1/active-fingerprint-rules":
-			_, _ = w.Write([]byte(`[{"name":"spring-behavior","source_file":"spring-behavior.yaml","product_name":"Spring-Framework","state":"Approved","enabled":true,"computed_auto_profile":"safe","auto_eligible":true}]`))
-		case "/api/v1/poc-rules":
-			_, _ = w.Write([]byte(`[{"name":"springboot-env","source_file":"springboot-env.yaml","target_product":"Spring Boot Actuator","severity":"high","state":"Approved","enabled":true,"tags":"springboot,actuator","description":"Spring actuator env disclosure"}]`))
-		default:
-			t.Fatalf("unexpected route %s %s", r.Method, r.URL.String())
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/arsenals/poc/mcp-server-detect.yaml" {
+			t.Fatalf("unexpected route %s %s", r.Method, r.URL.Path)
 		}
+		_, _ = w.Write([]byte(`{"ID":"poc_mcp-server-detect.yaml","Type":"poc","FileName":"mcp-server-detect.yaml","Hash":"h1","Version":1,"State":"Approved","Content":` + jsonString(yamlBody) + `,"UpdatedAt":"2026-06-18T10:00:00Z"}`))
 	}))
 	defer ts.Close()
 
@@ -576,25 +465,25 @@ func TestProductSearchUsesNativeRESTIndexes(t *testing.T) {
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{
-		Name:      "argus_product_search",
-		Arguments: map[string]any{"query": "spring boot", "limit": 5},
+		Name:      "argus_rule_get",
+		Arguments: map[string]any{"rule_type": "poc", "file_name": "mcp-server-detect.yaml"},
 	})
 	if err != nil {
-		t.Fatalf("CallTool product_search: %v", err)
+		t.Fatalf("CallTool(rule_get poc): %v", err)
 	}
-	text := result.Content[0].(*sdkmcp.TextContent).Text
-	for _, want := range []string{`"source": "native_api"`, "Spring-Framework", "springboot-env.yaml", "spring-behavior.yaml", "workflow_linked_poc"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("product_search missing %q: %s", want, text)
-		}
+	var got map[string]interface{}
+	if err := json.Unmarshal([]byte(result.Content[0].(*sdkmcp.TextContent).Text), &got); err != nil {
+		t.Fatalf("decode poc rule_get: %v", err)
 	}
-	wantRoutes := []string{
-		"GET /api/v1/dictionaries/fingerprint?",
-		"GET /api/v1/dictionaries/workflow?",
-		"GET /api/v1/active-fingerprint-rules?all=1",
-		"GET /api/v1/poc-rules?all=1",
+	if _, exists := got["products"]; exists {
+		t.Fatalf("POC rule_get must not treat YAML keys as products: %#v", got)
 	}
-	if strings.Join(seen, "\n") != strings.Join(wantRoutes, "\n") {
-		t.Fatalf("unexpected product_search routes:\n got %v\nwant %v", seen, wantRoutes)
+	if got["template_id"] != "mcp-server-detect" || got["template_name"] != "MCP Server Detect" {
+		t.Fatalf("unexpected POC identity: %#v", got)
 	}
+}
+
+func jsonString(value string) string {
+	data, _ := json.Marshal(value)
+	return string(data)
 }

@@ -57,24 +57,58 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]inte
 	switch name {
 	case "argus_context":
 		return c.argusContext(ctx, args)
-	case "argus_product_search":
-		return c.argusProductSearch(ctx, args)
+	case "argus_help":
+		return c.argusContext(ctx, withString(args, "action", "help"))
+	case "argus_resource":
+		return c.argusContext(ctx, withString(args, "action", "resource"))
+	case "argus_agents":
+		return c.argusContext(ctx, withString(args, "action", "agents"))
+	case "argus_coverage":
+		return c.argusContext(ctx, withString(args, "action", "coverage"))
 	case "argus_findings":
 		return c.argusFindings(ctx, args)
 	case "argus_results":
 		return c.argusResults(ctx, args)
+	case "argus_product_search":
+		return c.argusProductSearch(ctx, args)
+	case "argus_rule_get":
+		return c.argusRuleGet(ctx, args)
+	case "argus_rule_list":
+		return c.argusRuleList(ctx, args, strings.EqualFold(stringArg(args, "state"), "Draft"))
 	case "argus_rule_debug":
 		return c.argusRuleDebug(ctx, args)
+	case "argus_debug_fingerprint":
+		return c.argusRuleDebug(ctx, withString(args, "rule_type", "fingerprint"))
+	case "argus_debug_dir":
+		return c.argusRuleDebug(ctx, withString(args, "rule_type", "dir"))
+	case "argus_debug_poc":
+		return c.argusRuleDebug(ctx, withString(args, "rule_type", "poc"))
+	case "argus_debug_workflow":
+		return c.argusRuleDebug(ctx, withString(args, "rule_type", "workflow"))
+	case "argus_debug_behavior_probe":
+		return c.argusRuleDebug(ctx, withString(args, "rule_type", "behavior_probe"))
 	case "argus_rule_save":
 		return c.argusRuleSave(ctx, args)
+	case "argus_save_fingerprint":
+		return c.argusRuleSave(ctx, withString(args, "rule_type", "fingerprint"))
+	case "argus_save_dir":
+		return c.argusRuleSave(ctx, withString(args, "rule_type", "dir"))
+	case "argus_save_poc":
+		return c.argusRuleSave(ctx, withString(args, "rule_type", "poc"))
+	case "argus_save_workflow":
+		return c.argusRuleSave(ctx, withString(args, "rule_type", "workflow"))
+	case "argus_save_behavior_probe":
+		return c.argusRuleSave(ctx, withString(args, "rule_type", "behavior_probe"))
 	case "argus_rule_apply":
 		return c.argusRuleApply(ctx, args)
 	case "argus_yaksha_exp":
 		return c.yakshaExp(ctx, args)
 	case "argus_exp_workspace":
 		return c.expWorkspace(ctx, args)
-	case "argus_scan_task":
-		return c.scanTask(ctx, args)
+	case "argus_scan_preview":
+		return c.scanTask(ctx, withString(args, "action", "preview"))
+	case "argus_scan_create":
+		return c.scanTask(ctx, withString(args, "action", "create"))
 	default:
 		return nil, fmt.Errorf("unknown tool %q", name)
 	}

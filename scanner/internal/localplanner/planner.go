@@ -42,8 +42,7 @@ type historyPlanSummary struct {
 	skippedAddresses []historySkip
 }
 
-// Execute applies safe local defaults, skips targets already present in datas
-// history, and executes the remaining targets together.
+// Execute applies CLI defaults and runs the remaining targets together.
 func Execute(ctx *engine.ScanContext, run *localstate.Run) error {
 	return ExecuteWithTiming(ctx, run, nil)
 }
@@ -53,15 +52,19 @@ func ExecuteWithTiming(ctx *engine.ScanContext, run *localstate.Run, recorder *t
 		return errors.New("local planner requires a scan context and active run")
 	}
 	originalTargets := append([]string(nil), ctx.Config.Targets...)
-	cfg, explicitRisk := applyCLISafetyDefaults(ctx.Config)
+	cfg := applyCLISafetyDefaults(ctx.Config)
 	ctx.Config = cfg
 
 	policy := localstate.DefaultLocalPolicy()
 	ruleVersion := localRuleVersion(ctx)
 	configHash := localConfigHash(cfg, policy)
-	history, historyWarnings := loadDataResultHistory(dataResultRoot(cfg.OutputFile), cfg.OutputFile)
+	var history dataResultHistory
+	var historyWarnings []string
+	if cfg.SkipSeenHistory && !ctx.LocalForceFullScan {
+		history, historyWarnings = loadDataResultHistory(dataResultRoot(cfg.OutputFile), cfg.OutputFile)
+	}
 	run.AddWarnings(historyWarnings...)
-	executions, decisions, planSummary := buildExecutions(cfg, history, ruleVersion, configHash, explicitRisk, ctx.LocalForceFullScan)
+	executions, decisions, planSummary := buildExecutions(cfg, history, ruleVersion, configHash, ctx.LocalForceFullScan)
 	if err := run.SetTargetDecisions(decisions); err != nil {
 		return fmt.Errorf("record CLI target decisions: %w", err)
 	}
@@ -90,7 +93,11 @@ func ExecuteWithTiming(ctx *engine.ScanContext, run *localstate.Run, recorder *t
 			}
 		}
 		ctx.PhaseObserver = reporter.observePhase
-		gologger.Info().Msgf("[Argus] %s scan: %s", item.decision.Action, strings.Join(item.targets, ", "))
+		if cfg.TraceOnly {
+			gologger.Info().Msgf("[Argus] path: %s", strings.Join(item.targets, ", "))
+		} else {
+			gologger.Info().Msgf("[Argus] %s scan: %s", item.decision.Action, strings.Join(item.targets, ", "))
+		}
 		scanErr := runTask(ctx)
 		reporter.finalize(scanErr)
 		if scanErr != nil {
@@ -102,25 +109,24 @@ func ExecuteWithTiming(ctx *engine.ScanContext, run *localstate.Run, recorder *t
 	return errors.Join(scanErrors...)
 }
 
-func applyCLISafetyDefaults(cfg engine.Config) (engine.Config, bool) {
-	explicitRisk := strings.TrimSpace(cfg.PocNameForSearch) != "" || cfg.GolangPoc
-	if explicitRisk {
-		return cfg, true
+func applyCLISafetyDefaults(cfg engine.Config) engine.Config {
+	// Standalone CLI defaults to risk-on: Nuclei POC and GoPoc (including
+	// service credential brute force) run unless disabled explicitly with
+	// -nopoc / -nogpoc / -nobr. See CLI.md and docs/implementation-status.md.
+	if cfg.NoGoPoc {
+		cfg.GolangPoc = false
+	} else {
+		cfg.GolangPoc = true
 	}
-	// Ordinary CLI discovery is safe by default. POC and credential checks
-	// remain available only through their existing explicit flags.
-	cfg.NoPoc = true
-	cfg.GolangPoc = false
-	cfg.DisableGeneralPoc = true
-	cfg.PocNameForSearch = ""
-	return cfg, false
+	return cfg
 }
 
-func buildExecutions(cfg engine.Config, history dataResultHistory, ruleVersion, configHash string, explicitRisk, force bool) ([]execution, map[string]localstate.TargetDecision, historyPlanSummary) {
+func buildExecutions(cfg engine.Config, history dataResultHistory, ruleVersion, configHash string, force bool) ([]execution, map[string]localstate.TargetDecision, historyPlanSummary) {
 	decisions := make(map[string]localstate.TargetDecision, len(cfg.Targets))
 	fullTargets := make([]string, 0, len(cfg.Targets))
 	seenTargets := make(map[string]struct{}, len(cfg.Targets))
 	summary := historyPlanSummary{}
+	skipSeen := cfg.SkipSeenHistory && !force
 	for _, rawTarget := range cfg.Targets {
 		target := strings.TrimSpace(rawTarget)
 		stateTarget := localstate.NormalizeTargetForState(target)
@@ -131,9 +137,7 @@ func buildExecutions(cfg engine.Config, history dataResultHistory, ruleVersion, 
 		decision := localstate.TargetDecision{Action: "full", Reason: "history_asset_missing"}
 		if force {
 			decision.Reason = "force_full_scan"
-		} else if explicitRisk {
-			decision.Reason = "explicit_risk_operation"
-		} else {
+		} else if skipSeen {
 			planned, skipped := subtractHistoryAssets(target, history)
 			if len(skipped) > 0 {
 				summary.assetsSkipped += len(skipped)
@@ -295,20 +299,19 @@ func localRuleVersion(ctx *engine.ScanContext) string {
 
 func localConfigHash(cfg engine.Config, policy localstate.LocalPolicy) string {
 	semantic := struct {
-		Ports                                                              string
-		Subdomain, SkipHostDiscovery, AllowLocalAreaDomain, AllowCDNAssets bool
-		NoHostBind, NoDirSearch, NoICMPPing, TCPPing, LowPerceptionMode    bool
-		PortScanType                                                       string
-		PortScanScatter                                                    bool
-		PortsThreshold, TCPPortScanTimeout, PortScanProbeInterval          int
-		GetBannerTimeout, WebTimeout                                       int
-		HTTPProxy                                                          string
-		LocalPolicy                                                        localstate.LocalPolicy
+		Ports                                                                                string
+		Subdomain, SkipHostDiscovery, AllowLocalAreaDomain, AllowCDNAssets                   bool
+		NoHostBind, NoDirSearch, NoICMPPing, TCPPing, UDPPing, TraceRoute, LowPerceptionMode bool
+		PortScanType                                                                         string
+		PortScanScatter                                                                    bool
+		PortsThreshold, TCPPortScanTimeout, PortScanProbeInterval, GetBannerTimeout, WebTimeout int
+		HTTPProxy                                                                            string
+		LocalPolicy                                                                          localstate.LocalPolicy
 	}{
 		Ports: cfg.Ports, Subdomain: cfg.Subdomain, SkipHostDiscovery: cfg.SkipHostDiscovery,
 		AllowLocalAreaDomain: cfg.AllowLocalAreaDomain, AllowCDNAssets: cfg.AllowCDNAssets,
 		NoHostBind: cfg.NoHostBind, NoDirSearch: cfg.NoDirSearch, NoICMPPing: cfg.NoICMPPing,
-		TCPPing: cfg.TCPPing, LowPerceptionMode: cfg.LowPerceptionMode, PortScanType: cfg.PortScanType,
+		TCPPing: cfg.TCPPing, UDPPing: cfg.UDPPing, TraceRoute: cfg.TraceRoute, LowPerceptionMode: cfg.LowPerceptionMode, PortScanType: cfg.PortScanType,
 		PortScanScatter: cfg.PortScanScatter, PortsThreshold: cfg.PortsThreshold, TCPPortScanTimeout: cfg.TCPPortScanTimeout,
 		PortScanProbeInterval: cfg.PortScanProbeInterval,
 		GetBannerTimeout: cfg.GetBannerTimeout, WebTimeout: cfg.WebTimeout, HTTPProxy: cfg.HTTPProxy,

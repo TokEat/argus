@@ -22,6 +22,7 @@ import (
 	"github.com/P0lar1ght/argus/server/internal/grpc"
 	"github.com/P0lar1ght/argus/server/internal/scheduler"
 	"github.com/P0lar1ght/argus/server/internal/sentinel"
+	"github.com/P0lar1ght/argus/server/internal/subdomainpassive"
 	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 )
@@ -122,33 +123,29 @@ func shouldMarkAgentOffline(hub *grpc.NotifyHub, agentID string) bool {
 
 func main() {
 	var (
-		dbDSN           string
-		amqpURL         string
-		grpcPort        int
-		grpcTLSPort     int
-		grpcTLSCert     string
-		grpcTLSKey      string
-		apiAddr         string
-		configDir       string
-		agentPSK        string
-		devMode         bool
-		migrateOnly     bool
-		dbMigrationMode string
-		seedFromDB      string
+		dbDSN       string
+		amqpURL     string
+		grpcPort    int
+		grpcTLSPort int
+		grpcTLSCert string
+		grpcTLSKey  string
+		apiAddr     string
+		configDir   string
+		agentPSK    string
+		devMode     bool
+		seedFromDB  string
 	)
 
 	flag.StringVar(&dbDSN, "db", "", "PostgreSQL DSN. Empty uses the built-in local PostgreSQL default.")
 	flag.StringVar(&amqpURL, "amqp", "amqp://guest:guest@localhost:5672/", "RabbitMQ AMQP URL. Empty falls back to in-memory queue")
 	flag.IntVar(&grpcPort, "grpc", 50051, "gRPC listen port")
-	flag.IntVar(&grpcTLSPort, "grpc-tls-port", 0, "TLS gRPC listen port for credential-capable Agents (0=disabled)")
+	flag.IntVar(&grpcTLSPort, "grpc-tls-port", 0, "TLS gRPC port for credential-capable Agents (0=disabled)")
 	flag.StringVar(&grpcTLSCert, "grpc-tls-cert", "", "Server certificate for the TLS Agent listener")
 	flag.StringVar(&grpcTLSKey, "grpc-tls-key", "", "Server private key for the TLS Agent listener")
 	flag.StringVar(&apiAddr, "api", ":8085", "HTTP API listen address")
 	flag.StringVar(&configDir, "config-dir", "", "Path to the directory containing finger.yaml, dir.yaml, workflow.yaml, and pocs/")
 	flag.StringVar(&agentPSK, "agent-psk", "", "Pre-shared key for Agent authentication (env: ARGUS_AGENT_PSK)")
 	flag.BoolVar(&devMode, "dev", false, "Enable development mode (skip mandatory security checks)")
-	flag.BoolVar(&migrateOnly, "migrate-only", false, "Apply/verify PostgreSQL schema and exit without starting services")
-	flag.StringVar(&dbMigrationMode, "db-migration-mode", string(db.MigrationModeApply), "Database migration mode: apply|verify|dev-auto")
 	flag.StringVar(&seedFromDB, "seed-from-db", "", "Path to SQLite db file containing precompiled rule assets to seed into PostgreSQL and exit")
 	flag.Parse()
 
@@ -178,8 +175,8 @@ func main() {
 	}
 
 	// 生产模式安全强制检查。
-	// 数据库初始化/迁移场景不需要启动 API/gRPC，也不依赖运行期鉴权密钥。
-	if !devMode && !migrateOnly && seedFromDB == "" {
+	// 规则资产导入场景不启动 API/gRPC，也不依赖运行期鉴权密钥。
+	if !devMode && seedFromDB == "" {
 		if agentPSK == "" {
 			log.Fatalf("[SECURITY] ARGUS_AGENT_PSK is required in production mode. Use --dev to skip.")
 		}
@@ -194,52 +191,43 @@ func main() {
 		}
 	}
 
-	migrationMode, err := db.ParseMigrationMode(dbMigrationMode)
-	if err != nil {
-		log.Fatalf("Invalid db migration mode: %v", err)
-	}
-	if migrationMode == db.MigrationModeDevAuto && !devMode {
-		log.Fatalf("db migration mode 'dev-auto' requires --dev")
-	}
-
 	if strings.TrimSpace(dbDSN) == "" {
 		log.Printf("No DSN provided, using default PostgreSQL DSN: %s", db.DefaultPostgresDSN)
 	}
 
+	// 启动期只做数据库校验（连接重试 + schema 版本 + 结构契约），不执行任何迁移。
+	// 数据库初始化/升级由 deploy/db-init.sh（纯 SQL 导入）在部署阶段完成。
+	dbConnectTimeout := 30 * time.Second
+	if v := strings.TrimSpace(os.Getenv("ARGUS_DB_CONNECT_TIMEOUT")); v != "" {
+		if parsed, parseErr := time.ParseDuration(v); parseErr != nil {
+			log.Fatalf("Invalid ARGUS_DB_CONNECT_TIMEOUT: %v", parseErr)
+		} else if parsed > 0 {
+			dbConnectTimeout = parsed
+		}
+	}
 	log.Println("Opening PostgreSQL database connection...")
-	conn, err := db.OpenDB(dbDSN)
+	conn, err := db.OpenDBWithRetry(dbDSN, dbConnectTimeout)
 	if err != nil {
 		log.Fatalf("Failed to open PostgreSQL database: %v", err)
 	}
 	db.SetDB(conn)
 
-	log.Printf("Applying database migrations (mode=%s)...", migrationMode)
-	if err := db.ApplyMigrations(conn, migrationMode); err != nil {
-		log.Fatalf("Failed to apply database migrations: %v", err)
+	log.Printf("Verifying database schema (required version >= %s)...", db.RequiredSchemaVersion)
+	if err := db.VerifyDatabaseReady(conn); err != nil {
+		log.Fatalf("Database not ready: %v", err)
 	}
 
-	log.Println("Verifying database schema...")
-	if err := db.VerifySchema(conn); err != nil {
-		log.Fatalf("Failed to verify database schema: %v", err)
-	}
+	// Run rule catalog sync in background to avoid blocking startup.
+	// The sync rebuilds structured rule tables from raw arsenal data.
+	go func() {
+		log.Println("Synchronizing rule catalog indexes (background)...")
+		if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+			log.Printf("[RuleCatalog] background sync error: %v", err)
+			return
+		}
+		log.Println("[RuleCatalog] background sync completed")
+	}()
 
-	if migrationMode != db.MigrationModeVerify {
-		// Run rule catalog sync in background to avoid blocking startup.
-		// The sync rebuilds structured rule tables from raw arsenal data.
-		go func() {
-			log.Println("Synchronizing rule catalog indexes (background)...")
-			if err := db.SyncRuleCatalogFromArsenal(); err != nil {
-				log.Printf("[RuleCatalog] background sync error: %v", err)
-				return
-			}
-			log.Println("[RuleCatalog] background sync completed")
-		}()
-	}
-
-	if migrateOnly {
-		log.Println("Database migrations and schema verification completed successfully.")
-		return
-	}
 	if err := egresspkg.ReconcileStaleAudits(context.Background()); err != nil {
 		log.Fatalf("Failed to reconcile EXP egress audits: %v", err)
 	}
@@ -290,6 +278,9 @@ func main() {
 	log.Printf("Initializing gRPC server on :%d...", grpcPort)
 	srv := grpc.NewServer(grpcPort)
 	srv.SetPSK(agentPSK)
+	if devMode {
+		srv.SetAllowOpenPSK(true)
+	}
 	if grpcTLSPort != 0 {
 		go func() {
 			log.Printf("Initializing TLS Agent gRPC server on :%d...", grpcTLSPort)
@@ -323,27 +314,6 @@ func main() {
 		return task, msgID, nil
 	})
 
-	// FetchTask 兼容旧版 Agent：同样先尝试本 Agent 的推送队列，再阻塞等待共享队列（最多 1 秒）
-	srv.SetFetchTaskHook(func(agentID string) (*pb.Task, string, error) {
-		if task, msgID, err := queue.TryPopAgentTask(context.Background(), agentID); err != nil {
-			log.Printf("Error popping routed task for %s: %v", agentID, err)
-			return nil, "", err
-		} else if task != nil {
-			log.Printf("Assigned routed Task %s (MsgID: %s) to Agent %s", task.TaskId, msgID, agentID)
-			return task, msgID, nil
-		}
-		task, msgID, err := queue.PopTask(context.Background(), agentID)
-		if err != nil {
-			log.Printf("Error popping task for %s: %v", agentID, err)
-			return nil, "", err
-		}
-		if task == nil {
-			return &pb.Task{}, "", nil
-		}
-		log.Printf("Assigned Task %s (MsgID: %s) to Agent %s", task.TaskId, msgID, agentID)
-		return task, msgID, nil
-	})
-
 	srv.SetAckTaskHook(func(msgID string) error {
 		return queue.AckTask(context.Background(), msgID)
 	})
@@ -373,14 +343,42 @@ func main() {
 	routerDeps := api.NewRouterDependencies(queue, srv.Hub, agentPSK)
 	routerDeps.EgressBroker = srv.Egress
 	routerDeps.EXPWorkspace = expWorkspace
-
 	// k8s 风格控制器推送调度：为 controller_push 子任务选择存活 Agent 并
 	// 路由到其专属队列；agent_claim 任务仍走共享队列，不受影响。
 	dispatchController := dispatch.NewController(db.DB, queue, srv.Hub)
 	routerDeps.DispatchController = dispatchController
 	srv.SetDispatchNotifyHook(dispatchController.Notify)
 
+	publicBase := strings.TrimRight(strings.TrimSpace(os.Getenv("ARGUS_PUBLIC_URL")), "/")
+	if publicBase == "" {
+		_, port, splitErr := net.SplitHostPort(apiAddr)
+		if splitErr != nil || strings.TrimSpace(port) == "" {
+			port = "8085"
+		}
+		publicBase = "http://127.0.0.1:" + port
+	}
+	routerDeps.PublicBaseURL = publicBase
 	api.ConfigureRouterDependencies(routerDeps)
+
+	// Server 端被动子域收集：派发前统一收集并按域缓存，结果密封进任务配置。
+	// worker 必须常开：ARGUS_SERVER_PASSIVE_SUBDOMAIN=off 时进入排空模式，
+	// 立即释放已持有的域名批次（回退 Agent 端被动收集），避免批次滞留 Queued。
+	passiveWorker := subdomainpassive.NewWorker(db.DB, subdomainpassive.NewCollector(), func(ctx context.Context, sub db.SubTask) error {
+		if err := api.DispatchReleasedSubTask(ctx, queue, sub); err != nil {
+			return err
+		}
+		if srv.Hub != nil {
+			srv.Hub.BroadcastNewTask(1, int32(sub.Priority))
+		}
+		return nil
+	})
+	go passiveWorker.Run(context.Background())
+	if subdomainpassive.Enabled() {
+		log.Println("[PassiveSubdomain] server-side passive collection enabled")
+	} else {
+		log.Println("[PassiveSubdomain] disabled; hold drain mode active")
+	}
+
 	scanOrchestrator := api.NewScanStageOrchestrator()
 	srv.SetOnTaskTerminalHook(scanOrchestrator.HandleAttemptTerminal)
 	go func() {

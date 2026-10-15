@@ -1,11 +1,11 @@
 id: chanjet-tplus-unauth-passreset
 
 info:
-  name: Chanjet Tplus - Unauthorized Password Reset
+  name: 用友畅捷通 T+ 未授权重置管理员密码
   author: 0xr2r
   severity: high
   description: |
-    There is an unauthorized administrator password modification vulnerability in UF Chanjet T+ RecoverPassword.aspx. An attacker can use this vulnerability to modify the administrator account password to log in to the backend.
+    用友畅捷通 T+ RecoverPassword.aspx 存在未授权修改管理员密码漏洞。
   reference:
     - https://cn-sec.com/archives/1377207.html
     - https://www.chanjet.com

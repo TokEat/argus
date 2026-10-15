@@ -24,8 +24,9 @@ func TestTaskDetailReturnsScopedTimingAndLegacyUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	attempts := []db.SubTask{
-		{ID: "attempt-timed-" + suffix, TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Status: "Done"},
-		{ID: "attempt-legacy-" + suffix, TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Status: "Done"},
+		{ID: "attempt-timed-" + suffix, TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Status: "Done", AgentID: "agent-timing-" + suffix},
+		{ID: "attempt-legacy-" + suffix, TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Status: "Done", AgentID: "agent-legacy-" + suffix},
+		{ID: "attempt-empty-" + suffix, TenantID: root.TenantID, ProjectID: root.ProjectID, RootTaskID: root.ID, Status: "Done"},
 	}
 	if err := store.Create(&attempts).Error; err != nil {
 		t.Fatal(err)
@@ -61,14 +62,17 @@ func TestTaskDetailReturnsScopedTimingAndLegacyUnavailable(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Timing.Truncated || len(response.Timing.Attempts) != 2 {
+	if response.Timing.Truncated || len(response.Timing.Attempts) != 3 {
 		t.Fatalf("unexpected timing projection: %+v", response.Timing)
 	}
-	if !response.Timing.Attempts[0].Available || len(response.Timing.Attempts[0].Events) != 1 || response.Timing.Attempts[0].Events[0].DurationNS != int64(500*time.Microsecond) {
+	if !response.Timing.Attempts[0].Available || response.Timing.Attempts[0].UnavailableReason != "" || len(response.Timing.Attempts[0].Events) != 1 || response.Timing.Attempts[0].Events[0].DurationNS != int64(500*time.Microsecond) {
 		t.Fatalf("timed attempt projection lost precise evidence: %+v", response.Timing.Attempts[0])
 	}
-	if response.Timing.Attempts[1].Available || len(response.Timing.Attempts[1].Events) != 0 {
-		t.Fatalf("legacy attempt was presented as measured: %+v", response.Timing.Attempts[1])
+	if response.Timing.Attempts[1].Available || response.Timing.Attempts[1].UnavailableReason != db.TimingUnavailableNotReported || len(response.Timing.Attempts[1].Events) != 0 {
+		t.Fatalf("executed attempt without timing was presented as measured: %+v", response.Timing.Attempts[1])
+	}
+	if response.Timing.Attempts[2].Available || response.Timing.Attempts[2].UnavailableReason != db.TimingUnavailableNotExecuted || len(response.Timing.Attempts[2].Events) != 0 {
+		t.Fatalf("locally completed attempt was presented as measured: %+v", response.Timing.Attempts[2])
 	}
 	if strings.Contains(recorder.Body.String(), "rules-other") || strings.Contains(recorder.Body.String(), "project-other-") {
 		t.Fatalf("cross-project timing leaked into response: %s", recorder.Body.String())

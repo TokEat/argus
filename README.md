@@ -145,26 +145,27 @@ Argus 支持三种运行模式：
 
 ### 从源码构建
 
+本机可执行文件输出到 `bin/`，交叉编译输出到 `release/`。不要把 Agent 的 `config/`、`data/` 放进这两个目录。
+
 ```bash
-# 构建全部组件
-make all
+# 当前机器架构（推荐日常开发）
+./build.sh agent          # → bin/argus-agent
+./build.sh cli            # → bin/argus
+./build.sh server         # → bin/argus-server
+./build.sh                # cli + agent + server
 
-# 或单独构建
-make cli        # 单机版 CLI
-make agent      # Agent 探针节点
-make server     # Server 控制面
-make mcp        # MCP 代理
+# make 是同样入口
+make agent
 
-# 全平台交叉编译 (Linux/macOS/Windows)
-./build.sh
-
-# 启用 UPX 压缩
-./build.sh pack
+# 交叉编译到 release/
+./build.sh agent --target linux/amd64
+./build.sh cross          # 全平台
+./build.sh pack --all-targets
 ```
 
-产物输出在 `bin/`（make）或 `release/`（build.sh）目录。
+查看当前识别到的系统与可用目标：`./build.sh --list`。
 
-`build.sh` 默认使用 `CGO_ENABLED=0`、`-trimpath` 和 `-ldflags="-s -w"` 构建发行产物；CLI 内嵌规则，Agent 自动使用 `noembed`。UPX 是可选压缩步骤，未安装、目标平台不支持或压缩失败时会跳过，不影响未压缩产物。
+本机构建使用 `CGO_ENABLED=0`、`-trimpath` 和 `-ldflags="-s -w"`。Agent 使用 `noembed`，运行时从 Server 同步 `arsenal.db`。本机 CLI 内嵌规则，可直接 `./bin/argus`；发行版 CLI（`release/`）仍是 `noembed` + 离线弹药库压缩包。UPX 是可选压缩，未安装、darwin 或不支持的架构会跳过。
 
 ### 单机模式
 
@@ -174,30 +175,29 @@ argus --version
 argus -h
 
 # 扫描 IP
-argus -t 192.168.0.1
+argus -a 192.168.0.1
 
 # 扫描网段
-argus -t 192.168.0.1/24
-argus -t 192.168.0.0-192.168.0.12
+argus -a 192.168.0.1/24
+argus -a 192.168.0.0-192.168.0.12
 
 # 扫描网站
-argus -t http://test.com
+argus -a http://test.com
 ```
 
 单机 CLI 的扫描结果统一保存在当前工作目录的 `datas/<目标_时间>/` 下。普通运行只保留实时 `result.txt`、一份权威 HTML 报告和小型 `summary.txt`；不会再为了扫描记忆额外创建 `argus-data/state`、`argus-data/runs` 或 targets/findings/coverage/timing TSV。
 
-扫描开始时，CLI 会自动读取 `datas` 下已完成运行的 `result.txt` 作为“扫描记忆”，从 `[Alive]`、`[Port]`、`[Protocol]`、`[Web]`、`[Finger]`、`[Active-Finger]`、`[Domain]` 和 JSON finding 中抽取已经发现的资产；`targets.tsv` 不参与跳过判断。输入单个 IP 时，历史已出现该 IP 就跳过；输入 CIDR 或 IP 范围时，Argus 会展开地址集合、剔除历史已有资产的 IP，只把剩余 IP 交给完整发现流水线。终端会打印被跳过的 IP、来源结果目录以及本次计划/跳过数量。域名、URL 和显式 `IP:Port` 继续采用保守的精确匹配，历史没有 finding 的地址会重新扫描。
-
-历史跳过只对普通信息收集扫描生效。用户显式传入 `-poc <name>` 或 `-gp` 时，Argus 会认为这是一次新的风险验证意图，不会因为 `datas` 中已有资产而跳过；`-force` 也会忽略历史并强制完整重扫。历史结果损坏、仍在运行、失败或无法提取资产时会被忽略，不会阻断本次扫描。该模型有意不把“过去扫描过但没有结果”等同于“当前无需扫描”：只有 `result.txt` 中确实出现过的资产才会被剔除。
+把上次的结果目录或 `result.txt` 交给 `-a`，会复用 `[Alive]` / `[Port]`：有存活就跳过探活去做端口，有端口就直接做协议/Web/POC。
+`-ss` 才会跳过 `datas` 里已经出现过的 IP，默认关闭；与 `-f` 一起用时仍完整扫描。
 
 成功完成时，交互文本输出会给出执行阶段数、完整/部分/全跳过输入数，以及本次计划与历史跳过资产数。`-ot json` 使用版本化 UTF-8 NDJSON：每个 finding 独占一行，最后一行是唯一 `run_summary`；stdout 不包含 Banner、ANSI、进度或普通日志。重定向的文本模式同样只保留扫描结果和必要错误。完整 Schema、退出码和迁移示例见 [Argus CLI 结构化输出](docs/cli-output.md)。
 
-普通 CLI 扫描现在默认只执行资产发现，不自动启动 Nuclei POC、通用 POC 或 GoPoc/弱口令探测；已有 `-poc <name>` 或 `-gp` 仍代表用户显式请求风险操作，并固定绕过 `datas` 历史跳过。`-gp` 仅是离线 CLI 的兼容入口，会沿用旧的 GoPoc 混合派发，不是 Server 产品中的第三个开关；Server 会把 `protocol_check`、`vulnerability_check`、`credential` 分别收敛到协议识别、自动 POC 和弱口令阶段。`-npoc` 保留兼容，可继续用于脚本中明确表达“只做资产发现”；它与 `-poc`、`-gp` 同时出现时会按参数冲突退出，不会静默执行风险阶段。
+普通 CLI 扫描默认执行资产发现、Nuclei 与 GoPoc（含口令爆破），请在授权目标上使用。用 `-nopoc` 只关 Nuclei，用 `-nogpoc` 关全部 GoPoc，用 `-nobr` 只关服务口令爆破。只做发现时写 `-nopoc -nogpoc`；要跳过 `datas` 历史已见 IP 还需显式 `-ss`。`-pwda` / `-usea` 在内置用户本、密码本上追加；`-up` / `-upf` 是整本替换。Server 创建任务的默认值仍是关 POC，不跟 CLI 手感走。
 
 需要忽略未过期历史并重新执行完整资产流水线时，只增加可选 `-force`：
 
 ```bash
-argus -t 192.168.0.1 -force
+argus -a 192.168.0.1 -force
 ```
 
 `-force` 不会扩大目标或端口范围，不会开启 POC/GoPoc，也不会删除或覆盖旧结果；本次完整执行仍会写入新的 `datas/<目标_时间>/` 目录。默认命令和其他现有参数保持不变。
@@ -209,7 +209,7 @@ argus -t 192.168.0.1 -force
 #### 基础设施
 
 ```bash
-# 一键启动 RabbitMQ、PostgreSQL，并完成建库/建用户/migration
+# 一键启动 RabbitMQ、PostgreSQL，并完成数据库初始化（纯 SQL 导入）
 make setup-local
 ```
 
@@ -219,15 +219,23 @@ make setup-local
 # 1. 启动基础设施
 make infra-up
 
-# 2. 初始化数据库角色与数据库
-make db-init
+# 2. 数据库初始化（建库/建角色 + 最小基线导入 + 种子 + 自检，psql 纯 SQL）
+#    宿主机没有 psql 时自动对 compose postgres 使用 --container
+make db-setup
+# 或指定容器：make db-setup POSTGRES_CONTAINER=argus-postgres
+# 或：deploy/db-init.sh --container argus-postgres
 
-# 3. 执行业务 schema migration
-make db-migrate
+# 3. 校验：SQL 导入后跑 server 启动期同款版本/契约校验
+make db-verify
 
 # 4. 做一遍本地搭建冒烟校验（可选）
 make smoke-local
 ```
+
+> 数据库初始化与 server 启动已解耦：`argus-server` 启动时只校验数据库
+> （版本 + 表/列/索引契约），不再执行任何迁移；未初始化/版本不匹配会拒绝
+> 启动并提示运行 `deploy/db-init.sh`（或 `make db-setup`）。维护政策见
+> `deploy/db/README.md`。
 
 #### 安全配置
 
@@ -242,9 +250,10 @@ make smoke-local
 | `ARGUS_EGRESS_GATEWAY_TOKEN` | Yaksha Gateway 独立共享密钥 | `openssl rand -hex 32` |
 | `YAKSHA_RELAY_ADDR` | Yaksha 连接的私有 Gateway 地址 | `127.0.0.1:50052` |
 | `YAKSHA_RELAY_TOKEN` | 与 Gateway Token 相同，仅注入 Yaksha Daemon | `openssl rand -hex 32` |
-| `ARGUS_MCP_AUTH_TOKEN` | MCP HTTP/SSE 入站 Bearer Token，与 Server API Token 分离 | `openssl rand -hex 32` |
+| `ARGUS_MCP_AUTH_TOKEN` | 独立 `argus-mcp` HTTP/SSE **入站** Bearer（stdio 不需要）。Cursor 连 Server `/mcp` 时走 OAuth，不要把 JWT 写进 mcp.json | `openssl rand -hex 32` |
+| `ARGUS_PUBLIC_URL` | Server 对外 API 基址，用作 OAuth issuer 与 MCP resource（默认 `http://127.0.0.1:<apiPort>`） | `http://127.0.0.1:18085` |
 
-> **安全约束**：生产模式下前三个基础密钥必须设置，否则 Server 会直接退出。Agent 原生 Egress 启用时，Gateway 地址和 Token 必须成对配置；Gateway 与 Yaksha Token 必须一致，监听端口不得发布公网。MCP 使用 HTTP/SSE 时必须配置独立入站 Token，否则拒绝启动；stdio 不需要该 Token。开发环境可通过 `--dev` flag 跳过基础启动检查；`--dev` 不得用于生产环境。
+> **安全约束**：生产模式下前三个基础密钥必须设置，否则 Server 会直接退出。开发环境可通过 `--dev` flag 跳过基础启动检查；未设置 `ARGUS_JWT_SECRET` 时每次启动生成一次性 HMAC 密钥，进程重启后已签发 token 全部失效。`--dev` 不得用于生产环境。Agent 原生 Egress 启用时，Gateway 地址和 Token 必须成对配置；Gateway 与 Yaksha Token 必须一致，监听端口不得发布公网。独立 `argus-mcp` 使用 HTTP/SSE 时必须配置 `ARGUS_MCP_AUTH_TOKEN`，否则拒绝启动；stdio 不需要该 Token。Cursor 推荐配置 `{ "url": "http://<server>/mcp" }`，在 IDE 里 Connect 后用浏览器登录现有 Argus 账号，不要把 JWT 写入 mcp.json。租户管理员可在 Web「系统管理 → MCP 管理」查看接入地址、关闭本租户 MCP、撤销客户端会话，以及查看 debug/save 等高风险 tools/call 审计。
 
 #### 生产部署
 
@@ -291,9 +300,7 @@ sudo ./deploy/upgrade-server.sh
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--db` | 空（内置 PostgreSQL 默认 DSN） | PostgreSQL 数据库 DSN |
-| `--migrate-only` | `false` | 只执行数据库 migration 和 schema verify，然后退出。空库应用 `server/internal/db/schema` baseline，已有库继续增量升级 |
-| `--db-migration-mode` | `apply` | 数据库迁移模式：`apply` / `verify` / `dev-auto` |
+| `--db` | 空（内置 PostgreSQL 默认 DSN） | PostgreSQL 数据库 DSN。启动时仅校验（版本+契约），初始化/升级请用 `deploy/db-init.sh` |
 | `--amqp` | `amqp://guest:guest@localhost:5672/` | RabbitMQ 地址，空则回退内存队列 |
 | `--grpc` | `50051` | gRPC 监听端口 |
 | `--api` | `:8085` | HTTP API 监听地址 |
@@ -317,24 +324,22 @@ sudo ./deploy/upgrade-server.sh
 
 ```bash
 # 红队外网 - 子域名枚举
-argus -t xxx.com -sd
+argus -a xxx.com -sd
 
-# 红队内网
-argus -t 172.16.100.0/24
+# 红队内网（默认含 Nuclei 与 GoPoc）
+argus -a 172.16.100.0/24
 
 # 绕过本地增量覆盖，完整复测授权范围
-argus -t 172.16.100.0/24 -force
+argus -a 172.16.100.0/24 -force
 
 # 安服测试 - 开启审计日志
-argus -t 172.16.100.1 -a
+argus -a 172.16.100.1 -ad
 
-# 显式声明仅做资产发现（当前也是普通扫描默认值）
-argus -t http://www.xxx.com -npoc
-argus -t 172.16.100.11 -npoc
-argus -t 172.16.120.11:3307 -npoc
+# 只做资产发现
+argus -a http://www.xxx.com -nopoc -nogpoc
+argus -a 172.16.100.11 -nopoc -nogpoc
+argus -a 172.16.120.11:3307 -nopoc -nogpoc
 ```
-
-Hunter、FOFA 和 Quake 查询请在 Server 端当前项目的“资产测绘”页面发起；该页面负责租户凭据、权限、审计、历史、导出、标签/备注/软移除和笔记本分发。`argus` 只执行显式目标的本地扫描；Scanner/Agent 不读取或同步 Provider 凭据，也不发起 Provider 请求。
 
 ### 输出文件
 
@@ -344,7 +349,7 @@ Hunter、FOFA 和 Quake 查询请在 Server 端当前项目的“资产测绘”
 | Argus HTML 扫描报告 | `<timestamp>.html` | `-ho` 更改文件名；资产、服务、Web、指纹和漏洞证据均在同一页面 |
 | 审计日志 | `audit_YYYYMMDD_HHMMSS.log`（需 `-a` 开启） | `-alf` 更改文件名 |
 
-> 每次 CLI 运行只生成一份权威 HTML，不再拆分为当前目录的漏洞页和 `datas/` 下的资产页。`result.txt` 仍会实时持久化；HTML 在运行收敛后原子写入。报告按“服务边界 + 产品”归并重复指纹，同一产品只计数一次，展开后仍保留被动命中、主动确认和较低置信度的路径推断来源；原始 `Finger` / `Active-Finger` 事件继续保留在 `result.txt`。Nuclei 的全部 HTTP/Network 多步骤 packet/request/response 会保留，二进制 TCP 证据以可恢复的 hex-dump 展示；GoPoc 的 `InfoLeft`、`InfoRight`、`ShowMsg` 继续作为摘要保留，扫描器能够直接观测到的成功验证收发包会以结构化 `go_poc.exchanges` 同时写入 JSON 和 HTML。使用第三方协议客户端且 Argus 无法取得原始帧的插件只展示真实可得的验证摘要，不会把摘要或推测内容冒充网络包。普通 POC-off 扫描也会生成报告，但漏洞区为空且不会暗示已完成漏洞验证。
+> 每次 CLI 运行只生成一份权威 HTML，不再拆分为当前目录的漏洞页和 `datas/` 下的资产页。`result.txt` 仍会实时持久化；HTML 在运行收敛后原子写入。报告按“服务边界 + 产品”归并重复指纹，同一产品只计数一次，展开后仍保留被动命中、主动路径、行为探针和较低置信度的路径推断来源；原始 `Finger` / `Active-Finger` 事件继续保留在 `result.txt`。Nuclei 的全部 HTTP/Network 多步骤 packet/request/response 会保留，二进制 TCP 证据以可恢复的 hex-dump 展示；GoPoc 的 `InfoLeft`、`InfoRight`、`ShowMsg` 继续作为摘要保留，扫描器能够直接观测到的成功验证收发包会以结构化 `go_poc.exchanges` 同时写入 JSON 和 HTML。使用第三方协议客户端且 Argus 无法取得原始帧的插件只展示真实可得的验证摘要，不会把摘要或推测内容冒充网络包。普通 POC-off 扫描也会生成报告，但漏洞区为空且不会暗示已完成漏洞验证。
 
 ---
 
@@ -380,12 +385,8 @@ argus/
 │   │   ├── grpc/              # gRPC Agent 通信服务
 │   │   ├── scheduler/         # RabbitMQ 多优先级任务调度
 │   │   ├── db/                # PostgreSQL 数据层
-│   │   ├── bootstrap/         # 依赖装配
-│   │   ├── config/            # 服务端配置
-│   │   ├── core/              # 领域模型与用例
-│   │   ├── adapters/          # 端口适配器 (HTTP/gRPC/持久层/队列)
 │   │   ├── cloud/             # 云端集成
-│   │   └── shared/            # 通用工具
+│   │   └── storage/           # 对象存储
 │   └── deploy/                # 部署配置 (docker-compose)
 │
 ├── shared/
@@ -420,9 +421,11 @@ argus/
 | [ScanPlan 与覆盖契约](docs/scanplan-contract.md) | 场景、阶段、Plan、WorkKey、Observation 与 Coverage 的跨组件稳定语义 |
 | [扫描策略 V1](docs/scan-policy-v1.md) | 语义化预设、自动验证阶段、增量凭据字典和 Agent TLS 能力边界 |
 | [性能基线采集](docs/performance-baseline.md) | CLI/Agent 计时证据与可重复的外部 process-wall 基线采集方式 |
+| [CLI 参数说明](CLI.md) | Standalone CLI 扫描参数、默认值和常用例子 |
 | [CLI 结构化输出](docs/cli-output.md) | `-ot json` NDJSON Schema、终端摘要、非 TTY 行为和稳定退出码 |
+| [CLI 离线弹药库](docs/cli-offline-arsenal.md) | 发行包内 `arsenal.db` 的校验、物化与本地替换/导入 |
 | [云资源动态调度](docs/cloud-resource-scheduling.md) | AutoScaler、云实例生命周期、Spot 回收与未来演进 |
-| [EXP 能力规划](docs/exp-capability-planning.md) | 独立 EXP 规则库、POC 关联、执行审计、安全闸门与阶段路线 |
+| [Yaksha EXP](docs/yaksha-exp.md) | 单文件 Yaklang EXP 权威模型、利用族组织、五种动作与测试调试发布流程 |
 | [AI Copilot 架构](docs/ai_copilot_architecture.md) | 全局 Copilot、工具调用、POC AI 审查和后续路线 |
 | [技术白皮书](docs/argus-technical-whitepaper.md) | 对外技术定位、核心闭环、典型场景与演进路线 |
 

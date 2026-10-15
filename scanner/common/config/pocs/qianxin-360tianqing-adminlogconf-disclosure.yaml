@@ -1,29 +1,30 @@
-# 来源: afrog（转换自 afrog/xray 表达式 POC）
+id: qianxin-360tianqing-adminlogconf-disclosure
+
+info:
+  name: 奇安信 360 天擎 admin_log_conf.cache 信息泄露
+  author: zan8in
+  severity: high
+  description: |
+    奇安信 360 天擎终端安全管理系统 runtime/admin_log_conf.cache 可未授权访问，泄露后台路由等敏感配置。
+  reference:
+    - https://mp.weixin.qq.com/s/_Hoi_ESDEEIL81RY37nDcQ
+  metadata:
+    max-request: 1
+    fofa-query: title="360新天擎"
+  tags: qianxin,tianqing,disclosure
+
 http:
-  - matchers:
-      - type: status
-        status:
-          - 200
+  - method: GET
+    path:
+      - '{{BaseURL}}/runtime/admin_log_conf.cache'
+
+    matchers-condition: and
+    matchers:
       - type: word
         part: body
         words:
-          - s:12:"/login/login"
-        condition: and
-    method: GET
-    path:
-      - '{{BaseURL}}/runtime/admin_log_conf.cache'
-id: qianxin-360tianqing-adminlogconf-disclosure
-info:
-  author: zan8in
-  description: |-
-    fofa: title="360新天擎"
-    hunter: web.title="360新天擎"
-    zoomeye: app:"Tianqing terminal management"
-  metadata:
-    argus-execution-class: detection
-    argus-import-license: MIT License
-    argus-import-source: afrog
-    argus-risk-level: high
-  name: 360新天擎终端安全管理系统信息泄露漏洞
-  severity: high
-  tags: qianxin,360tianqing,disclosure,argus-import
+          - 's:12:"/login/login"'
+
+      - type: status
+        status:
+          - 200

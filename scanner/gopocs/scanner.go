@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/internal/scanner/protocol"
 	"github.com/P0lar1ght/argus/scanner/structs"
 
 	"github.com/projectdiscovery/gologger"
@@ -77,7 +78,7 @@ func (d *dispatcher) addScan(name string, info structs.HostInfo, ch chan struct{
 	allCount := d.allCount
 	d.progressMu.Unlock()
 
-	if currentCount%10 == 0 || currentCount == allCount {
+	if !d.presentation.MachineOutput && (currentCount%10 == 0 || currentCount == allCount) {
 		gologger.Info().Msgf("[GoPoc] 当前进度: %v %v [%v/%v]", name, info.Host+":"+info.Ports, currentCount, allCount)
 	}
 
@@ -166,12 +167,16 @@ func (d *dispatcher) snapshotResults() []structs.GoPocsResultType {
 
 // DispatchScoped runs GoPoc with task-local services and fingerprints.
 func DispatchScoped(ipPortMap map[string]string, fingerprints map[string][]string, goPocThreads int, password string, passwordFile string, nucleiResults []NucleiResult, emit func(structs.OutputMessage)) ([]structs.GoPocsResultType, error) {
-	return DispatchWithPresentationScoped(ipPortMap, fingerprints, goPocThreads, password, passwordFile, nucleiResults, emit, Presentation{})
+	return DispatchWithPresentationAndCreds(ipPortMap, fingerprints, goPocThreads, DispatchCreds{Password: password, PasswordFile: passwordFile}, nucleiResults, emit, Presentation{})
 }
 
-// DispatchWithPresentationScoped keeps follow-up triggers within the current
-// task. In particular, Agent jobs must never read the legacy global ResultMap.
 func DispatchWithPresentationScoped(ipPortMap map[string]string, fingerprints map[string][]string, goPocThreads int, password string, passwordFile string, nucleiResults []NucleiResult, emit func(structs.OutputMessage), presentation Presentation) ([]structs.GoPocsResultType, error) {
+	return DispatchWithPresentationAndCreds(ipPortMap, fingerprints, goPocThreads, DispatchCreds{Password: password, PasswordFile: passwordFile}, nucleiResults, emit, presentation)
+}
+
+// DispatchWithPresentationAndCreds keeps follow-up triggers within the current
+// task. In particular, Agent jobs must never read the legacy global ResultMap.
+func DispatchWithPresentationAndCreds(ipPortMap map[string]string, fingerprints map[string][]string, goPocThreads int, creds DispatchCreds, nucleiResults []NucleiResult, emit func(structs.OutputMessage), presentation Presentation) ([]structs.GoPocsResultType, error) {
 	if len(ipPortMap) == 0 && len(nucleiResults) == 0 && len(fingerprints) == 0 {
 		return nil, nil
 	}
@@ -189,7 +194,10 @@ func DispatchWithPresentationScoped(ipPortMap map[string]string, fingerprints ma
 		presentation: presentation,
 	}
 
-	plan := buildDispatchPlan(ipPortMap, fingerprints, nucleiResults, password, passwordFile, dispatcher.writeResult)
+	plan, err := buildDispatchPlan(ipPortMap, fingerprints, nucleiResults, creds, dispatcher.writeResult)
+	if err != nil {
+		return nil, err
+	}
 	dispatcher.allCount = len(plan)
 	if dispatcher.allCount == 0 {
 		return nil, nil
@@ -201,7 +209,9 @@ func DispatchWithPresentationScoped(ipPortMap map[string]string, fingerprints ma
 
 	var ch = make(chan struct{}, goPocThreads)
 	var wg = sync.WaitGroup{}
-	gologger.Info().Msg("Golang Poc引擎启动")
+	if !presentation.MachineOutput {
+		gologger.Info().Msg("Golang Poc引擎启动")
+	}
 
 	for _, task := range plan {
 		dispatcher.addScan(task.Name, task.Info, ch, &wg)
@@ -210,14 +220,14 @@ func DispatchWithPresentationScoped(ipPortMap map[string]string, fingerprints ma
 	wg.Wait()
 	if !presentation.MachineOutput {
 		fmt.Printf("\r\033[K")
+		gologger.Info().Msg("Golang Poc引擎扫描结束")
 	}
-	gologger.Info().Msg("Golang Poc引擎扫描结束")
 
 	results := dispatcher.snapshotResults()
 	if len(results) > 0 {
-		gologger.Info().Msg("发现漏洞汇总:")
+		gologger.AuditTimeLogger("发现漏洞汇总:")
 		for _, res := range results {
-			gologger.Info().Msgf("[%s] %s %s\n%s", res.Security, res.PocName, res.Target, res.InfoLeft)
+			gologger.AuditLogger("[%s] %s %s", res.Security, res.PocName, res.Target)
 		}
 	}
 	return results, dispatcher.executionError()
@@ -232,38 +242,55 @@ func appendUniqueScanTask(plan *[]scanTask, seen map[string]struct{}, task scanT
 	*plan = append(*plan, task)
 }
 
-func buildDispatchPlan(ipPortMap map[string]string, fingerprints map[string][]string, nucleiResults []NucleiResult, password, passwordFile string, writeResult func(structs.GoPocsResultType)) []scanTask {
-	basePlan := buildScanPlan(ipPortMap, password, passwordFile, writeResult)
+func buildDispatchPlan(ipPortMap map[string]string, fingerprints map[string][]string, nucleiResults []NucleiResult, creds DispatchCreds, writeResult func(structs.GoPocsResultType)) ([]scanTask, error) {
+	filter, err := newModuleFilter(creds.Modules)
+	if err != nil {
+		return nil, err
+	}
+	basePlan := buildScanPlan(ipPortMap, creds, writeResult)
 	seen := make(map[string]struct{}, len(basePlan)+len(nucleiResults)+len(fingerprints))
 	plan := make([]scanTask, 0, len(basePlan)+len(nucleiResults)+len(fingerprints))
 	for _, task := range basePlan {
+		if creds.NoBrute && isServiceBruteTask(task.Name) {
+			continue
+		}
+		if !filter.allows(task.Name) {
+			continue
+		}
 		appendUniqueScanTask(&plan, seen, task)
 	}
 	for _, result := range nucleiResults {
 		if result.TemplateID == "shiro-detect" {
-			appendUniqueScanTask(&plan, seen, scanTask{Name: "Shiro-Key-Crack", Info: structs.HostInfo{
-				Url: result.Matched, Password: password, PasswordFile: passwordFile,
-			}})
+			info := structs.HostInfo{Url: result.Matched}
+			applyDispatchCreds(&info, creds)
+			appendUniqueAllowedScanTask(&plan, seen, filter, scanTask{Name: "Shiro-Key-Crack", Info: info})
 		}
 		if isViewStateNucleiResult(result) {
 			targetURL := firstNonEmpty(result.Matched, result.URL)
 			if targetURL != "" {
-				appendUniqueScanTask(&plan, seen, scanTask{Name: "ViewState-Key-Crack", Info: structs.HostInfo{
-					Url: targetURL, Password: password, PasswordFile: passwordFile,
-				}})
+				info := structs.HostInfo{Url: targetURL}
+				applyDispatchCreds(&info, creds)
+				appendUniqueAllowedScanTask(&plan, seen, filter, scanTask{Name: "ViewState-Key-Crack", Info: info})
 			}
 		}
 	}
 	for host, values := range fingerprints {
 		for _, fingerprint := range values {
 			if strings.EqualFold(fingerprint, "viewstate") {
-				appendUniqueScanTask(&plan, seen, scanTask{Name: "ViewState-Key-Crack", Info: structs.HostInfo{
-					Url: host, Password: password, PasswordFile: passwordFile,
-				}})
+				info := structs.HostInfo{Url: host}
+				applyDispatchCreds(&info, creds)
+				appendUniqueAllowedScanTask(&plan, seen, filter, scanTask{Name: "ViewState-Key-Crack", Info: info})
 			}
 		}
 	}
-	return plan
+	return plan, nil
+}
+
+func appendUniqueAllowedScanTask(plan *[]scanTask, seen map[string]struct{}, filter moduleFilter, task scanTask) {
+	if !filter.allows(task.Name) {
+		return
+	}
+	appendUniqueScanTask(plan, seen, task)
 }
 
 func scanTaskIdentity(task scanTask) string {
@@ -296,162 +323,176 @@ func isViewStateNucleiResult(result NucleiResult) bool {
 	return result.TemplateID == "yongyou_u9_viewstate"
 }
 
-func buildScanPlan(ipPortMap map[string]string, password string, passwordFile string, writeResult func(structs.GoPocsResultType)) []scanTask {
+func buildScanPlan(ipPortMap map[string]string, creds DispatchCreds, writeResult func(structs.GoPocsResultType)) []scanTask {
 	var tasks []scanTask
-	for hostPort, protocol := range ipPortMap {
+	for hostPort, rawProtocol := range ipPortMap {
 		t := strings.Split(hostPort, ":")
 		if len(t) != 2 {
 			continue
 		}
 		host := t[0]
 		port := t[1]
+		observed := protocol.CanonicalProtocol(rawProtocol)
 
 		// 减少无效爆破：Web 服务跳过 GoPoc 暴力破解。
-		if protocol == "http" || protocol == "https" || protocol == "ssl/http" {
+		if observed == "http" || observed == "https" {
 			continue
 		}
 
 		info := structs.HostInfo{
-			Host:         host,
-			Ports:        port,
-			Password:     password,
-			PasswordFile: passwordFile,
-			WriteResult:  writeResult,
+			Host:            host,
+			Ports:           port,
+			WriteResult:     writeResult,
+			ObservedService: observed,
 		}
+		applyDispatchCreds(&info, creds)
 
-		if protocol == "ssh" || port == "22" {
+		if matchObservedOrPort(observed, port, "ssh", "22") {
 			tasks = append(tasks, scanTask{Name: "SSH-Crack", Info: info})
 		}
-		if protocol == "ftp" || port == "21" {
+		if matchObservedOrPort(observed, port, "ftp", "21") {
 			tasks = append(tasks, scanTask{Name: "FTP-Crack", Info: info})
 		}
-		if protocol == "mysql" || port == "3306" {
+		if matchObservedOrPort(observed, port, "mysql", "3306") {
 			tasks = append(tasks, scanTask{Name: "Mysql-Crack", Info: info})
 		}
-		if protocol == "mssql" || port == "1433" {
+		if matchObservedOrPort(observed, port, "mssql", "1433") {
 			tasks = append(tasks, scanTask{Name: "Mssql-Crack", Info: info})
 		}
-		if protocol == "oracle" || port == "1521" {
+		if matchObservedOrPort(observed, port, "oracle", "1521") {
 			tasks = append(tasks, scanTask{Name: "Oracle-Crack", Info: info})
 		}
-		if protocol == "mongodb" || port == "27017" {
+		if matchObservedOrPort(observed, port, "mongodb", "27017") {
 			tasks = append(tasks, scanTask{Name: "MongoDB-Crack", Info: info})
 		}
-		if protocol == "rdp" || port == "3389" {
+		if matchObservedOrPort(observed, port, "rdp", "3389") {
 			tasks = append(tasks, scanTask{Name: "RDP-Crack", Info: info})
 		}
-		if protocol == "redis" || port == "6379" {
+		if matchObservedOrPort(observed, port, "redis", "6379") {
 			tasks = append(tasks, scanTask{Name: "Redis-Crack", Info: info})
 		}
-		if protocol == "smb" || port == "445" {
+		if matchObservedOrPort(observed, port, "smb", "445") {
 			tasks = append(tasks,
 				scanTask{Name: "SMB-MS17-010", Info: info},
 				scanTask{Name: "SMB-Crack", Info: info},
 			)
 		}
-		if protocol == "postgresql" || port == "5432" {
+		if matchObservedOrPort(observed, port, "postgresql", "5432") {
 			tasks = append(tasks, scanTask{Name: "PostgreSQL-Crack", Info: info})
 		}
-		if protocol == "telnet" || port == "23" {
+		if matchObservedOrPort(observed, port, "telnet", "23") {
 			tasks = append(tasks, scanTask{Name: "Telnet-Crack", Info: info})
 		}
-		if protocol == "memcached" || port == "11211" {
+		if matchObservedOrPort(observed, port, "memcached", "11211") {
 			tasks = append(tasks, scanTask{Name: "Memcache-Crack", Info: info})
 		}
-		if protocol == "netbios" || port == "445" {
+		if observed == "netbios" || observed == "smb" || matchObservedOrPort(observed, port, "netbios", "445") {
 			tasks = append(tasks, scanTask{Name: "NetBios-GetHostInfo", Info: info})
 		}
-		if protocol == "rpc" {
+		if observed == "rpc" {
 			tasks = append(tasks, scanTask{Name: "RPC-GetHostInfo", Info: info})
 		}
-		if protocol == "jdwp" {
+		if observed == "jdwp" {
 			tasks = append(tasks, scanTask{Name: "JDWP-Scan", Info: info})
 		}
-		if protocol == "adb" || port == "5555" {
+		if matchObservedOrPort(observed, port, "adb", "5555") {
 			tasks = append(tasks, scanTask{Name: "ADB-Scan", Info: info})
 		}
-		if protocol == "vnc" || port == "5900" || port == "5901" {
+		if matchObservedOrPort(observed, port, "vnc", "5900", "5901") {
 			tasks = append(tasks, scanTask{Name: "VNC-Scan", Info: info})
 		}
-		if protocol == "rsync" || port == "873" {
+		if matchObservedOrPort(observed, port, "rsync", "873") {
 			tasks = append(tasks, scanTask{Name: "Rsync-Scan", Info: info})
 		}
-		if protocol == "dm" || port == "5236" {
+		if matchObservedOrPort(observed, port, "dm", "5236") {
 			tasks = append(tasks, scanTask{Name: "DM-Scan", Info: info})
 		}
-		if protocol == "kingbase" || port == "54321" {
+		if matchObservedOrPort(observed, port, "kingbase", "54321") {
 			tasks = append(tasks, scanTask{Name: "Kingbase-Scan", Info: info})
 		}
 
-		// ICS protocols
-		if protocol == "dnp3" || port == "20000" {
-			tasks = append(tasks, scanTask{Name: "DNP3-Scan", Info: info})
-		}
-		if protocol == "s7comm" || port == "102" {
-			tasks = append(tasks, scanTask{Name: "S7-Scan", Info: info})
-		}
-		if protocol == "enip" || port == "44818" {
-			tasks = append(tasks, scanTask{Name: "EtherNetIP-Scan", Info: info})
-		}
-		if protocol == "atg" || port == "10001" {
-			tasks = append(tasks, scanTask{Name: "ATG-Scan", Info: info})
-		}
-		if protocol == "melsec" || port == "5006" || port == "5007" {
-			tasks = append(tasks, scanTask{Name: "MELSEC-Scan", Info: info})
-		}
-		if protocol == "fins" || port == "9600" {
-			tasks = append(tasks, scanTask{Name: "FINS-Scan", Info: info})
-		}
-		if protocol == "crimson" || port == "789" {
-			tasks = append(tasks, scanTask{Name: "Crimson-Scan", Info: info})
-		}
-		if protocol == "iec104" || port == "2404" {
-			tasks = append(tasks, scanTask{Name: "IEC104-Scan", Info: info})
-		}
-
-		// Non-HTTP protocol detection
-		if protocol == "ldap" || port == "389" {
+		if matchObservedOrPort(observed, port, "ldap", "389") {
 			tasks = append(tasks, scanTask{Name: "LDAP-Scan", Info: info})
 		}
-		if protocol == "zookeeper" || port == "2181" {
+		if matchObservedOrPort(observed, port, "zookeeper", "2181") {
 			tasks = append(tasks, scanTask{Name: "Zookeeper-Scan", Info: info})
 		}
-		if protocol == "mqtt" || port == "1883" {
+		if matchObservedOrPort(observed, port, "mqtt", "1883") {
 			tasks = append(tasks, scanTask{Name: "MQTT-Scan", Info: info})
 		}
-		if protocol == "cassandra" || port == "9042" {
-			tasks = append(tasks, scanTask{Name: "Cassandra-Scan", Info: info})
-		}
-		if protocol == "clickhouse" || port == "9000" {
-			tasks = append(tasks, scanTask{Name: "ClickHouse-Scan", Info: info})
-		}
-		if protocol == "activemq" || port == "61616" {
-			tasks = append(tasks, scanTask{Name: "ActiveMQ-Scan", Info: info})
-		}
-		if protocol == "rmi" || port == "1099" {
+		if matchObservedOrPort(observed, port, "rmi", "1099") {
 			tasks = append(tasks, scanTask{Name: "RMI-Scan", Info: info})
 		}
-		if protocol == "svn" || port == "3690" {
-			tasks = append(tasks, scanTask{Name: "SVN-Scan", Info: info})
-		}
-		if protocol == "hsqldb" || port == "9001" {
-			tasks = append(tasks, scanTask{Name: "HsqlDb-Scan", Info: info})
-		}
-		if protocol == "mysql" && port == "4000" {
-			tasks = append(tasks, scanTask{Name: "TiDB-Scan", Info: info})
-		}
-		if port == "7848" {
-			tasks = append(tasks, scanTask{Name: "Nacos-Raft-Scan", Info: info})
-		}
-		if port == "1801" {
-			tasks = append(tasks, scanTask{Name: "MSMQ-Scan", Info: info})
-		}
-		if port == "50000" {
-			tasks = append(tasks, scanTask{Name: "SAP-P4-Scan", Info: info})
-		}
-		if protocol == "telnet" || port == "23" {
+		if matchObservedOrPort(observed, port, "telnet", "23") {
 			tasks = append(tasks, scanTask{Name: "Telnet-CVE-Scan", Info: info})
+		}
+		if matchRocketMQRole(observed, port, "10909", "10911") {
+			tasks = append(tasks, scanTask{Name: "RocketMQ-Broker-Scan", Info: info})
+		}
+		if matchRocketMQRole(observed, port, "9876") {
+			tasks = append(tasks, scanTask{Name: "RocketMQ-NameServer-Scan", Info: info})
+		}
+		if matchObservedOrPort(observed, port, "amqp", "5672", "5671") {
+			tasks = append(tasks, scanTask{Name: "RabbitMQ-AMQP-Scan", Info: info})
+		}
+		if matchObservedOrPort(observed, port, "epmd", "4369") {
+			tasks = append(tasks, scanTask{Name: "EPMD-Scan", Info: info})
+		}
+		if matchObservedOrPort(observed, port, "cassandra", "9042") {
+			tasks = append(tasks, scanTask{Name: "Cassandra-Scan", Info: info})
+		}
+		if matchObservedOrPort(observed, port, "clickhouse", "9000") {
+			tasks = append(tasks, scanTask{Name: "ClickHouse-Scan", Info: info})
 		}
 	}
 	return tasks
+}
+
+func matchRocketMQRole(observed, port string, defaultPorts ...string) bool {
+	portMatched := false
+	for _, defaultPort := range defaultPorts {
+		if port == defaultPort {
+			portMatched = true
+			break
+		}
+	}
+	if observed == "rocketmq-broker" && containsPort(defaultPorts, "10911") {
+		return true
+	}
+	if observed == "rocketmq-namesrv" && containsPort(defaultPorts, "9876") {
+		return true
+	}
+	if observed == "rocketmq" {
+		return portMatched
+	}
+	if !protocol.Unidentified(observed) {
+		return false
+	}
+	return portMatched
+}
+
+func containsPort(ports []string, port string) bool {
+	for _, candidate := range ports {
+		if candidate == port {
+			return true
+		}
+	}
+	return false
+}
+
+// matchObservedOrPort dispatches when the identified protocol matches, or when
+// the service is still unidentified and the port is a standard fallback.
+func matchObservedOrPort(observed, port, wanted string, defaultPorts ...string) bool {
+	if observed == wanted {
+		return true
+	}
+	if !protocol.Unidentified(observed) {
+		return false
+	}
+	for _, defaultPort := range defaultPorts {
+		if port == defaultPort {
+			return true
+		}
+	}
+	return false
 }

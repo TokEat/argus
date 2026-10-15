@@ -301,28 +301,58 @@ AMQP_URL="amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@127.0.0.1:${R
 
 # MinIO root：env → secrets.env → 旧 minio.env；再按容器实际值锁定
 MINIO_ROOT_USER="${MINIO_ROOT_USER:-$(env_file_value "$SECRETS_ENV_FILE" MINIO_ROOT_USER)}"
+
+MINIO_ENV_FILE="${INSTALL_DIR}/config/minio.env"
+EXP_STORAGE_ENV_FILE="${INSTALL_DIR}/config/exp-storage.env"
+
+# unit 的 EnvironmentFile（如 /opt/<dir>/etc/*.env）承载既有部署的真实
+# 端口、桶与密钥；config/*.env 缺失或未覆盖时以其为第二来源，避免用
+# 生成默认值覆盖生产配置。
+unit_env_value() {
+    local key="$1" file value
+    while IFS= read -r file; do
+        [[ -f "$file" ]] || continue
+        value="$(env_file_value "$file" "$key")"
+        [[ -n "$value" ]] && { printf '%s\n' "$value"; return; }
+    done < <(sed -nE 's/^EnvironmentFile=-?([^ ]+).*/\1/p' "$SERVICE_FILE" 2>/dev/null)
+}
+
 MINIO_ROOT_USER="${MINIO_ROOT_USER:-$(env_file_value "$MINIO_ENV_FILE" MINIO_ROOT_USER)}"
 MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-$(env_file_value "$SECRETS_ENV_FILE" MINIO_ROOT_PASSWORD)}"
 MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-$(env_file_value "$MINIO_ENV_FILE" MINIO_ROOT_PASSWORD)}"
 MINIO_API_PORT="${MINIO_API_PORT:-$(env_file_value "$MINIO_ENV_FILE" MINIO_API_PORT)}"
+MINIO_API_PORT="${MINIO_API_PORT:-$(unit_env_value MINIO_API_PORT)}"
 MINIO_CONSOLE_PORT="${MINIO_CONSOLE_PORT:-$(env_file_value "$MINIO_ENV_FILE" MINIO_CONSOLE_PORT)}"
 resolve_volume_locked_cred MINIO_ROOT_PASSWORD argus-minio
 resolve_volume_locked_cred MINIO_ROOT_USER argus-minio
 MINIO_ROOT_USER="${MINIO_ROOT_USER:-argus-minio-root}"
 MINIO_API_PORT="${MINIO_API_PORT:-9000}"
+MINIO_CONSOLE_PORT="${MINIO_CONSOLE_PORT:-$(unit_env_value MINIO_CONSOLE_PORT)}"
 MINIO_CONSOLE_PORT="${MINIO_CONSOLE_PORT:-9001}"
 
-# EXP_MINIO 应用用户：env → secrets.env → 旧 exp-storage.env → 生成
+# EXP_MINIO 应用用户：env → secrets.env → 旧 exp-storage.env → unit EnvironmentFile → 生成
 EXP_MINIO_ACCESS_KEY="${EXP_MINIO_ACCESS_KEY:-$(env_file_value "$SECRETS_ENV_FILE" ARGUS_EXP_MINIO_ACCESS_KEY)}"
 EXP_MINIO_ACCESS_KEY="${EXP_MINIO_ACCESS_KEY:-$(env_file_value "$EXP_STORAGE_ENV_FILE" ARGUS_EXP_MINIO_ACCESS_KEY)}"
+EXP_MINIO_ACCESS_KEY="${EXP_MINIO_ACCESS_KEY:-$(unit_env_value ARGUS_EXP_MINIO_ACCESS_KEY)}"
 EXP_MINIO_SECRET_KEY="${EXP_MINIO_SECRET_KEY:-$(env_file_value "$SECRETS_ENV_FILE" ARGUS_EXP_MINIO_SECRET_KEY)}"
 EXP_MINIO_SECRET_KEY="${EXP_MINIO_SECRET_KEY:-$(env_file_value "$EXP_STORAGE_ENV_FILE" ARGUS_EXP_MINIO_SECRET_KEY)}"
+EXP_MINIO_SECRET_KEY="${EXP_MINIO_SECRET_KEY:-$(unit_env_value ARGUS_EXP_MINIO_SECRET_KEY)}"
 EXP_MINIO_ENDPOINT="${EXP_MINIO_ENDPOINT:-$(env_file_value "$EXP_STORAGE_ENV_FILE" ARGUS_EXP_MINIO_ENDPOINT)}"
+EXP_MINIO_ENDPOINT="${EXP_MINIO_ENDPOINT:-$(unit_env_value ARGUS_EXP_MINIO_ENDPOINT)}"
 EXP_MINIO_REGION="${EXP_MINIO_REGION:-$(env_file_value "$EXP_STORAGE_ENV_FILE" ARGUS_EXP_MINIO_REGION)}"
 EXP_MINIO_BUCKET="${EXP_MINIO_BUCKET:-$(env_file_value "$EXP_STORAGE_ENV_FILE" ARGUS_EXP_MINIO_BUCKET)}"
+EXP_MINIO_BUCKET="${EXP_MINIO_BUCKET:-$(unit_env_value ARGUS_EXP_MINIO_BUCKET)}"
 EXP_MINIO_USE_SSL="${EXP_MINIO_USE_SSL:-$(env_file_value "$EXP_STORAGE_ENV_FILE" ARGUS_EXP_MINIO_USE_SSL)}"
 EXP_TRACE_RETENTION="${EXP_TRACE_RETENTION:-$(env_file_value "$EXP_STORAGE_ENV_FILE" ARGUS_EXP_TRACE_RETENTION)}"
 YAKSHA_URL="${YAKSHA_URL:-$(env_file_value "$EXP_STORAGE_ENV_FILE" ARGUS_YAKSHA_URL)}"
+YAKSHA_URL="${YAKSHA_URL:-$(unit_env_value ARGUS_YAKSHA_URL)}"
+if command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Names}}' | grep -qx "argus-minio" && { [[ -z "$MINIO_ROOT_USER" ]] || [[ -z "$MINIO_ROOT_PASSWORD" ]]; }; then
+    die "现有 MinIO 缺少 ${MINIO_ENV_FILE}；请显式提供 MINIO_ROOT_USER/MINIO_ROOT_PASSWORD 后再升级"
+fi
+MINIO_ROOT_USER="${MINIO_ROOT_USER:-argus-minio-root}"
+MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-$(gen_hex_secret)}"
+MINIO_API_PORT="${MINIO_API_PORT:-9000}"
+MINIO_CONSOLE_PORT="${MINIO_CONSOLE_PORT:-9001}"
 EXP_MINIO_ACCESS_KEY="${EXP_MINIO_ACCESS_KEY:-exp$(gen_hex_secret | cut -c1-20)}"
 EXP_MINIO_SECRET_KEY="${EXP_MINIO_SECRET_KEY:-$(gen_hex_secret)}"
 EXP_MINIO_ENDPOINT="${EXP_MINIO_ENDPOINT:-http://127.0.0.1:${MINIO_API_PORT}}"
@@ -453,7 +483,9 @@ rollback_on_error() {
         fi
         current_yaksha_compose="${INSTALL_DIR}/deploy/yaksha-compose.yaml"
         if [[ -f "$current_yaksha_compose" ]]; then
-            docker compose -f "$current_yaksha_compose" down --remove-orphans 2>/dev/null || true
+            # 不加 --remove-orphans：同项目标签下可能存在由外部脚本管理的
+            # postgres/rabbitmq 等基础设施容器，误判孤儿会导致数据库丢失。
+            docker compose -f "$current_yaksha_compose" down 2>/dev/null || true
         fi
         if [[ "$yaksha_had_compose" == "true" ]]; then
             cp -a "${BACKUP_DIR}/yaksha-compose.yaml" "$current_yaksha_compose" || true
@@ -665,13 +697,22 @@ if [[ -f "${SCRIPT_DIR}/images/argus-yaksha-linux-amd64.tar" ]]; then
     mkdir -p "${INSTALL_DIR}/deploy/images"
     cp -a "${SCRIPT_DIR}/images/argus-yaksha-linux-amd64.tar" "${INSTALL_DIR}/deploy/images/"
 fi
-if [[ -d "${SCRIPT_DIR}/postgres" ]]; then
-    mkdir -p "${INSTALL_DIR}/deploy/postgres"
-    cp -a "${SCRIPT_DIR}/postgres/." "${INSTALL_DIR}/deploy/postgres/"
+if [[ -d "${SCRIPT_DIR}/db" ]]; then
+    mkdir -p "${INSTALL_DIR}/deploy/db"
+    cp -a "${SCRIPT_DIR}/db/." "${INSTALL_DIR}/deploy/db/"
+fi
+if [[ -f "${SCRIPT_DIR}/db-init.sh" ]]; then
+    cp -a "${SCRIPT_DIR}/db-init.sh" "${INSTALL_DIR}/deploy/"
 fi
 
-echo -e "${YELLOW}[5/6] 执行数据库迁移与规则同步...${NC}"
-"${INSTALL_DIR}/bin/argus-server" --db "$DB_DSN" --migrate-only --db-migration-mode apply --config-dir "${INSTALL_DIR}/config"
+echo -e "${YELLOW}[5/6] 执行数据库初始化/升级与规则同步（纯 SQL，与启动解耦）...${NC}"
+command -v psql >/dev/null 2>&1 || { echo -e "${RED}  [!] 缺少 psql，无法升级数据库${NC}"; exit 1; }
+# 本脚本已在 [2/6] 用容器内匹配版本的 pg_dump 完成备份；db-init 自身的
+# 二次 pg_dump 在宿主客户端版本与服务端不一致时会失败，故显式跳过。
+if ! bash "${SCRIPT_DIR}/db-init.sh" --dsn "$DB_DSN" --no-bootstrap --no-backup; then
+    echo -e "${RED}  [!] 数据库初始化/升级失败${NC}"
+    exit 1
+fi
 
 if [[ -f "${SCRIPT_DIR}/arsenal_seed.db" ]]; then
     "${INSTALL_DIR}/bin/argus-server" --db "$DB_DSN" --seed-from-db "${SCRIPT_DIR}/arsenal_seed.db"

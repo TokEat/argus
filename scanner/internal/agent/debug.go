@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,7 +13,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/P0lar1ght/argus/scanner/common"
 	"github.com/P0lar1ght/argus/scanner/internal/engine"
 	"github.com/P0lar1ght/argus/scanner/internal/vuln/nuclei"
 	"github.com/P0lar1ght/argus/scanner/lib/ddfinger"
@@ -108,6 +108,7 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 	var sendMu sync.Mutex
 	var stopped atomic.Bool
 	var completeSent atomic.Bool
+	var anyMatched atomic.Bool
 	startedAt := time.Now()
 
 	send := func(event *pb.DebugEvent) {
@@ -120,6 +121,9 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 		event.AgentId = w.agentID
 		event.TenantId = cmd.TenantId
 		event.SessionId = cmd.SessionId
+		if event.Type == "debug_result" && event.Matched {
+			anyMatched.Store(true)
+		}
 		sendMu.Lock()
 		defer sendMu.Unlock()
 		_ = stream.Send(event)
@@ -133,6 +137,7 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 		send(&pb.DebugEvent{
 			Type:       "debug_complete",
 			Error:      errMsg,
+			Matched:    anyMatched.Load(),
 			DurationMs: time.Since(startedAt).Milliseconds(),
 		})
 	}
@@ -203,7 +208,17 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 	}
 
 	if w.logTee != nil {
+		suppressDeprecatedList := false
 		w.logTee.SetDebugSink(func(level, message string) {
+			if isNucleiDeprecatedCatalogLog(message) {
+				suppressDeprecatedList = true
+				return
+			}
+			trimmed := strings.TrimSpace(message)
+			if suppressDeprecatedList && strings.HasPrefix(trimmed, "- ") {
+				return
+			}
+			suppressDeprecatedList = false
 			send(&pb.DebugEvent{
 				Type:    "debug_log",
 				Level:   level,
@@ -244,7 +259,7 @@ func (w *Worker) runDebugSession(ctx context.Context, cmd *pb.DebugCommand, time
 			Response:   respData,
 			Extracted:  extracted,
 		})
-	}, "", true, true, common.EmbedNucleiPocs, tmpDir, nil, nil)
+	}, "", true, true, embed.FS{}, tmpDir, nil, nil)
 
 	close(done)
 	if !completeSent.Load() {
@@ -266,6 +281,8 @@ type fingerprintDebugOptions struct {
 	CustomProduct    string   `json:"custom_product"`
 	CustomRule       string   `json:"custom_rule"`
 	CustomRules      []string `json:"custom_rules"`
+	CustomDirProduct string   `json:"custom_dir_product"`
+	CustomDirPaths   []string `json:"custom_dir_paths"`
 	CustomWfProduct  string   `json:"custom_wf_product"`
 	CustomWfTypes    string   `json:"custom_wf_types"`
 	CustomWfPocs     string   `json:"custom_wf_pocs"`
@@ -305,7 +322,7 @@ func (w *Worker) runFingerprintDebugSession(
 	cfg.HTTPProxy = cmd.Proxy
 	cfg.NoPoc = !options.IncludePoc
 	cfg.NoHostBind = true
-	cfg.NoDirSearch = !options.IncludeDir
+	cfg.NoDirSearch = !options.IncludeDir && len(options.CustomDirPaths) == 0
 	cfg.SkipHostDiscovery = true
 	cfg.WebTimeout = int(timeout.Seconds())
 	if cfg.WebTimeout <= 0 || cfg.WebTimeout > int(defaultAgentDebugTimeout.Seconds()) {
@@ -369,6 +386,30 @@ func (w *Worker) runFingerprintDebugSession(
 	if options.CustomOnly && len(customProducts) == 0 {
 		sendComplete("custom_only fingerprint debug requires a valid custom fingerprint rule")
 		return
+	}
+
+	dirPaths := make([]string, 0, len(options.CustomDirPaths))
+	for _, path := range options.CustomDirPaths {
+		path = strings.TrimSpace(path)
+		if path != "" {
+			dirPaths = append(dirPaths, path)
+		}
+	}
+	if len(dirPaths) > 0 {
+		productName := strings.TrimSpace(options.CustomDirProduct)
+		if productName == "" {
+			productName = defaultDebugFingerprintProduct
+		}
+		sc.DirDB = map[string][]string{}
+		for _, path := range dirPaths {
+			sc.DirDB[path] = []string{productName}
+		}
+		sc.ReportAllDirProbes = true
+		send(&pb.DebugEvent{
+			Type:    "debug_log",
+			Level:   "INFO",
+			Message: fmt.Sprintf("injected custom dir paths only: %s → %v", productName, dirPaths),
+		})
 	}
 
 	// --- 注入自定义 Workflow 规则 ---
@@ -455,6 +496,17 @@ func (w *Worker) runFingerprintDebugSession(
 				Message:   fmt.Sprintf("web probe %s status=%s title=%s", msg.URI, msg.Web.Status, msg.Web.Title),
 				MatchedAt: msg.URI,
 				Request:   fmt.Sprintf("status=%s\ntitle=%s", msg.Web.Status, msg.Web.Title),
+			})
+		case "Dir-Probe":
+			send(&pb.DebugEvent{
+				Type:       "debug_result",
+				Matched:    len(msg.Finger) > 0,
+				TemplateId: "Dir-Probe",
+				MatchedAt:  msg.URI,
+				Extracted:  msg.Finger,
+				Request:    "GET " + msg.URI,
+				Response:   formatDirProbeResponse(msg),
+				Message:    fmt.Sprintf("dir probe %s status=%s", msg.URI, msg.Web.Status),
 			})
 		case "Finger", "Active-Finger":
 			// 对自定义规则命中的 product 加 [custom] 前缀
@@ -549,6 +601,39 @@ func safeDebugPocFileName(pocName string) (string, error) {
 		pocName += ".yaml"
 	}
 	return pocName, nil
+}
+
+func formatDirProbeResponse(msg engine.OutputMessage) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "HTTP %s\n", msg.Web.Status)
+	if msg.Web.Title != "" {
+		fmt.Fprintf(&b, "Title: %s\n", msg.Web.Title)
+	}
+	if msg.Web.Size != "" {
+		fmt.Fprintf(&b, "Size: %s\n", msg.Web.Size)
+	}
+	if body := strings.TrimSpace(msg.AdditionalMsg); body != "" {
+		b.WriteString("\n")
+		b.WriteString(body)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func isNucleiDeprecatedCatalogLog(message string) bool {
+	msg := strings.ToLower(strings.TrimSpace(message))
+	if strings.Contains(message, "不推荐使用的协议语法") {
+		return true
+	}
+	if strings.Contains(msg, "deprecated protocol") {
+		return true
+	}
+	if strings.Contains(msg, "loaded with deprecated") {
+		return true
+	}
+	if strings.Contains(msg, "templates loaded with deprecated paths") {
+		return true
+	}
+	return false
 }
 
 func (w *Worker) sendOneShotDebugComplete(cmd *pb.DebugCommand, errMsg string) {

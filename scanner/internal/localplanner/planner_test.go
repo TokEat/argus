@@ -14,19 +14,20 @@ import (
 	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 )
 
-func TestApplyCLISafetyDefaultsDisablesImplicitRiskExecution(t *testing.T) {
-	cfg, explicit := applyCLISafetyDefaults(engine.Config{})
-	if explicit || !cfg.NoPoc || cfg.GolangPoc || !cfg.DisableGeneralPoc {
-		t.Fatalf("ordinary CLI config was not made discovery-only: %#v explicit=%v", cfg, explicit)
+func TestApplyCLISafetyDefaultsEnablesNucleiAndGoPoc(t *testing.T) {
+	cfg := applyCLISafetyDefaults(engine.Config{})
+	if cfg.NoPoc || !cfg.GolangPoc || cfg.NoGoPoc {
+		t.Fatalf("ordinary CLI config was not risk-on: %#v", cfg)
 	}
 
-	cfg, explicit = applyCLISafetyDefaults(engine.Config{PocNameForSearch: "explicit-check"})
-	if !explicit || cfg.PocNameForSearch != "explicit-check" {
-		t.Fatalf("explicit POC selection was changed: %#v explicit=%v", cfg, explicit)
+	cfg = applyCLISafetyDefaults(engine.Config{NoPoc: true})
+	if !cfg.NoPoc || !cfg.GolangPoc {
+		t.Fatalf("-nopoc should leave GoPoc enabled: %#v", cfg)
 	}
-	cfg, explicit = applyCLISafetyDefaults(engine.Config{GolangPoc: true})
-	if !explicit || !cfg.GolangPoc {
-		t.Fatalf("explicit Go POC selection was changed: %#v explicit=%v", cfg, explicit)
+
+	cfg = applyCLISafetyDefaults(engine.Config{NoPoc: true, NoGoPoc: true})
+	if !cfg.NoPoc || cfg.GolangPoc || !cfg.NoGoPoc {
+		t.Fatalf("-nopoc -nogpoc should be discovery-only: %#v", cfg)
 	}
 }
 
@@ -34,8 +35,8 @@ func TestBuildExecutionsSkipsTargetsFoundInDatasHistory(t *testing.T) {
 	history := dataResultHistory{targetSources: map[string]string{}, ipSources: map[string]string{}}
 	history.addTarget("192.0.2.10", "run-a")
 	history.addTarget("https://app.example.test/login", "run-b")
-	cfg := engine.Config{Targets: []string{"192.0.2.10", "192.0.2.11", "https://APP.example.test/login"}}
-	executions, decisions, summary := buildExecutions(cfg, history, "rules", "config", false, false)
+	cfg := engine.Config{Targets: []string{"192.0.2.10", "192.0.2.11", "https://APP.example.test/login"}, SkipSeenHistory: true}
+	executions, decisions, summary := buildExecutions(cfg, history, "rules", "config", false)
 
 	if len(executions) != 1 || len(executions[0].targets) != 1 || executions[0].targets[0] != "192.0.2.11" {
 		t.Fatalf("executions = %#v, want only the unseen target", executions)
@@ -58,8 +59,8 @@ func TestBuildExecutionsSubtractsKnownIPsFromCIDR(t *testing.T) {
 	history := dataResultHistory{targetSources: map[string]string{}, ipSources: map[string]string{}}
 	history.addTarget("192.0.2.1:80", "run-a")
 	history.addTarget("http://192.0.2.2/admin", "run-b")
-	cfg := engine.Config{Targets: []string{"192.0.2.0/30"}}
-	executions, decisions, summary := buildExecutions(cfg, history, "rules", "config", false, false)
+	cfg := engine.Config{Targets: []string{"192.0.2.0/30"}, SkipSeenHistory: true}
+	executions, decisions, summary := buildExecutions(cfg, history, "rules", "config", false)
 	if len(executions) != 1 || strings.Join(executions[0].targets, ",") != "192.0.2.0,192.0.2.3" {
 		t.Fatalf("executions = %#v", executions)
 	}
@@ -83,7 +84,7 @@ func TestBuildExecutionsSubtractsKnownIPsFromCIDR(t *testing.T) {
 func TestBuildExecutionsKeepsCIDRWhenHistoryDoesNotOverlap(t *testing.T) {
 	history := dataResultHistory{targetSources: map[string]string{}, ipSources: map[string]string{}}
 	history.addTarget("198.51.100.10", "run-a")
-	executions, _, summary := buildExecutions(engine.Config{Targets: []string{"192.0.2.0/30"}}, history, "rules", "config", false, false)
+	executions, _, summary := buildExecutions(engine.Config{Targets: []string{"192.0.2.0/30"}, SkipSeenHistory: true}, history, "rules", "config", false)
 	if len(executions) != 1 || len(executions[0].targets) != 1 || executions[0].targets[0] != "192.0.2.0/30" {
 		t.Fatalf("executions = %#v, want the original non-overlapping CIDR", executions)
 	}
@@ -92,27 +93,24 @@ func TestBuildExecutionsKeepsCIDRWhenHistoryDoesNotOverlap(t *testing.T) {
 	}
 }
 
-func TestBuildExecutionsDoesNotSkipExplicitRiskOrForce(t *testing.T) {
+func TestBuildExecutionsSkipsOnlyWhenSkipSeenEnabled(t *testing.T) {
 	history := dataResultHistory{targetSources: map[string]string{}, ipSources: map[string]string{}}
 	history.addTarget("192.0.2.10", "run-a")
 	cfg := engine.Config{Targets: []string{"192.0.2.10"}}
-	for name, test := range map[string]struct {
-		explicitRisk bool
-		force        bool
-		reason       string
-	}{
-		"explicit risk": {explicitRisk: true, reason: "explicit_risk_operation"},
-		"force":         {force: true, reason: "force_full_scan"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			executions, decisions, _ := buildExecutions(cfg, history, "rules", "config", test.explicitRisk, test.force)
-			if len(executions) != 1 || len(executions[0].targets) != 1 {
-				t.Fatalf("executions = %#v, want full execution", executions)
-			}
-			if got := decisions["192.0.2.10"]; got.Action != "full" || got.Reason != test.reason {
-				t.Fatalf("decision = %#v", got)
-			}
-		})
+	executions, _, _ := buildExecutions(cfg, history, "rules", "config", false)
+	if len(executions) != 1 || executions[0].targets[0] != "192.0.2.10" {
+		t.Fatalf("default must not skip history: %#v", executions)
+	}
+
+	cfg.SkipSeenHistory = true
+	executions, decisions, _ := buildExecutions(cfg, history, "rules", "config", false)
+	if len(executions) != 0 || decisions["192.0.2.10"].Action != "skipped" {
+		t.Fatalf("skip-seen must drop known IP: executions=%#v decisions=%#v", executions, decisions)
+	}
+
+	executions, decisions, _ = buildExecutions(cfg, history, "rules", "config", true)
+	if len(executions) != 1 || decisions["192.0.2.10"].Reason != "force_full_scan" {
+		t.Fatalf("force must override skip-seen: %#v %#v", executions, decisions)
 	}
 }
 
@@ -312,7 +310,7 @@ func TestExecuteWithTimingSkipsDatasHistoryWithoutRunningPipeline(t *testing.T) 
 	t.Cleanup(func() { runTask = previousRunTask })
 	ctx := &engine.ScanContext{Config: engine.Config{
 		Targets: []string{"192.0.2.60:443"}, OutputFile: filepath.Join(currentDir, "result.txt"),
-		NoPoc: true, DisableGeneralPoc: true,
+		NoPoc: true, NoGoPoc: true, DisableGeneralPoc: true, SkipSeenHistory: true,
 	}}
 	if err := ExecuteWithTiming(ctx, run, nil); err != nil {
 		t.Fatal(err)

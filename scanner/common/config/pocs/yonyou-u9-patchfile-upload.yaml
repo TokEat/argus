@@ -1,15 +1,15 @@
 id: yonyou-u9-patchfile-upload
 
 info:
-  name: Yonyou U9 PatchFile.asmx - Unauthenticated Arbitrary File Upload
+  name: 用友 U9 PatchFile.asmx 任意文件上传
   author: Co5mos,ProjectDiscoveryAI
   severity: critical
   description: |
-    An arbitrary file upload vulnerability in U9 PatchFile.asmx allows attackers to upload files to the server.This can lead to various security issues including remote code execution.
+    用友 U9 PatchFile.asmx 未授权任意文件上传，可导致远程代码执行。
   metadata:
     verified: true
     fofa-query: title="U9-登录"
-  tags: unauth,file-upload,yonyou,u9,rce,vuln
+  tags: unauth,file-upload,yonyou,u9,rce
 
 variables:
   filename: '{{rand_base(5)}}.ashx'
@@ -53,4 +53,4 @@ http:
           - status_code == 200
           - contains_all(body, "2468642","File deleted successfully")
         condition: and
-# digest: 490a0046304402207b76824ccf0b3615bda5fe2803cc3d20ed0d1da0bc0d1d9f7a1edb5a7b8ff056022050eadeb55586f4092e141ed2e2be0e4278525bdf1de2efa44ae52b34991a5e8a:922c64590222798bb761d5b6d8e72950
+# digest: 4b0a00483046022100916eaddaa390f20f4990d96ae45f172e15d5ec5b96faffe151355760da55b249022100bc1433799c1366f6fad058b78825ddf35837dc0e2e7b7c57e094d8b5db5de934:922c64590222798bb761d5b6d8e72950

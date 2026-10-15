@@ -147,7 +147,7 @@ func InspectRulePackage(dbPath string) (inspection RulePackageInspection, err er
 			return inspection, fmt.Errorf("POC %q has forbidden execution class %q", item.Name, item.ExecutionClass)
 		}
 		switch risk {
-		case "unknown", "low", "medium", "high":
+		case "unknown", "info", "low", "medium", "high":
 		default:
 			return inspection, fmt.Errorf("POC %q has unsupported risk level %q", item.Name, item.RiskLevel)
 		}

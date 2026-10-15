@@ -49,6 +49,50 @@ func TestRequiredResumeStagesUsesValidatorSmallTargetPolicy(t *testing.T) {
 	}
 }
 
+func TestRequiredResumeStagesIncludesTCPRemainderForLargeCIDR(t *testing.T) {
+	cfg := Config{Targets: []string{"10.20.0.0/16"}, NoHostBind: true, NoDirSearch: true, NoPoc: true, DisableGeneralPoc: true}
+	stages, ok := RequiredResumeStages("10.20.0.0/16", cfg)
+	if !ok || len(stages) < 2 || stages[0] != scanplan.StageICMPDiscovery || stages[1] != scanplan.StageTCPLiveness {
+		t.Fatalf("large CIDR discovery stages = %v, ok=%v", stages, ok)
+	}
+}
+
+// NoResolvedIPScan：域名目标的端口扫描与协议识别阶段随之消失，
+// 仅保留 CDN 分类 + HTTP 探测 + 指纹等后续阶段。
+func TestRequiredResumeStagesDropsPortStagesForDomainWhenResolvedIPScanDisabled(t *testing.T) {
+	target := "abc.example.test"
+	baseCfg := Config{NoHostBind: true, NoDirSearch: true, NoPoc: true, DisableGeneralPoc: true}
+
+	withScan, ok := RequiredResumeStages(target, baseCfg)
+	if !ok {
+		t.Fatal("domain target stages should be computable")
+	}
+	has := func(want scanplan.Stage) bool {
+		for _, stage := range withScan {
+			if stage == want {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(scanplan.StagePortScan) || !has(scanplan.StageProtocolIdentify) {
+		t.Fatalf("default domain stages must keep port stages: %v", withScan)
+	}
+
+	withoutScan, ok := RequiredResumeStages(target, Config{NoHostBind: true, NoDirSearch: true, NoPoc: true, DisableGeneralPoc: true, NoResolvedIPScan: true})
+	if !ok {
+		t.Fatal("domain target stages should be computable")
+	}
+	for _, stage := range withoutScan {
+		if stage == scanplan.StagePortScan || stage == scanplan.StageProtocolIdentify {
+			t.Fatalf("NoResolvedIPScan must drop port/protocol stages, got %v", withoutScan)
+		}
+	}
+	if !has(scanplan.StageCDNClassification) {
+		t.Fatalf("CDN classification must remain, got %v", withoutScan)
+	}
+}
+
 func TestValidateResumePlanRejectsMissingDependencyAndUnsafeHTTPContentStart(t *testing.T) {
 	target := "192.0.2.10"
 	cfg := Config{Targets: []string{target}, SkipHostDiscovery: true, NoHostBind: true, NoDirSearch: true, NoPoc: true, DisableGeneralPoc: true}
@@ -105,6 +149,32 @@ func TestRestoreResumeProtocolServices(t *testing.T) {
 	restoreResumeProtocolServices(ctx)
 	if got := ctx.IPPortMap[target]; got != "https" {
 		t.Fatalf("protocol checkpoint restored %q, want https", got)
+	}
+}
+
+func TestRestoreResumeProtocolServicesUDPStaysOutOfIPPortMap(t *testing.T) {
+	target := "192.0.2.10:53"
+	checkpoint := testResumeCheckpoint(t, target, scanplan.StageCheckpoint{
+		SchemaVersion: scanplan.CheckpointSchemaVersion,
+		Stage:         scanplan.StageProtocolIdentify,
+		Services:      []scanplan.ServiceCheckpoint{{Endpoint: target, Protocol: "dns", Transport: "udp"}},
+	})
+	ctx := &ScanContext{
+		IPPortMap: make(map[string]string),
+		ResumePlan: &scanplan.ResumePlan{
+			Checkpoints: []scanplan.ResumeCheckpoint{checkpoint},
+		},
+	}
+	restoreResumeProtocolServices(ctx)
+	if _, exists := ctx.IPPortMap[target]; exists {
+		t.Fatalf("UDP service must not be restored into IPPortMap: %q", ctx.IPPortMap[target])
+	}
+	rec, ok := ctx.ServiceMap[target+"/udp"]
+	if !ok {
+		t.Fatalf("UDP service missing from ServiceMap key %q", target+"/udp")
+	}
+	if rec.Transport != "udp" || rec.Protocol != "dns" {
+		t.Fatalf("UDP record = %+v, want udp/dns", rec)
 	}
 }
 

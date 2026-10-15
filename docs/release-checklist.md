@@ -1,13 +1,13 @@
-# Argus v0.1.0 发布检查清单
+# Argus 发布检查清单
 
-本文档用于首个发布候选版本的人工验收。未执行的项目需要在 Release Notes 中明确标注。
+本文档用于发行候选版本的人工验收（首个目标版本 v0.1.0，命令中以 `VERSION=vX.Y.Z` 传入）。未执行的项目需要在 Release Notes 中明确标注。
 
 ## 1. 代码与质量门禁
 
 - [ ] `git status --short --ignored` 确认只有预期改动，`deploy/argus-release-*.tar.gz`、`deploy/arsenal_seed.db`、`server/build_seed_db` 为 ignored 生成物。
 - [ ] `git diff --check` 无空白错误。
 - [ ] `make ci` 通过，包含根模块 Go test、`server` 子模块 Go test、`server-ui` lint/test/build 和 smoke。
-- [ ] 在临时 PostgreSQL 库执行 `make db-migrate DB_MIGRATION_MODE=apply` 和 `make db-verify`，并确认升级前 Notebook 数据不含无对应项目的孤儿行。
+- [ ] 在临时 PostgreSQL 库执行 `make db-setup` 和 `make db-verify`（纯 SQL 初始化 + 启动期校验），并确认升级前 Notebook 数据不含无对应项目的孤儿行。存量旧库升级需演练 `deploy/db-init.sh` 的 cutover 路径（自动备份 + 版本重写）。
 
 ## 2. 发行包构建
 
@@ -43,7 +43,7 @@
 - [ ] 漏洞 CSV 可导出。
 - [ ] Agent 日志页面可筛选并导出日志。
 - [ ] BuildJob 列表可查看，已存在构建产物可下载。
-- [ ] 资产测绘仅由 Server 以当前租户已批准凭据执行；CLI/Agent 的旧 Provider 参数或遗留任务配置均被拒绝，不会向第三方 Provider 发起请求。
+- [ ] 资产测绘仅由 Server 以当前租户已批准凭据执行；CLI/Agent 不会向第三方 Provider 发起请求。
 - [ ] 测绘 Notebook 的筛选、标签、备注、移除/恢复只在当前用户有项目访问权的范围内可用；跨项目/跨租户请求失败关闭并留有脱敏审计。
 
 ## 5. Beta 边界

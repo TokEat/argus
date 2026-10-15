@@ -24,8 +24,11 @@ const (
 
 // WebInfo Web 页面信息。
 type WebInfo struct {
-	Status string `json:"status,omitempty"`
-	Title  string `json:"title,omitempty"`
+	Status   string `json:"status,omitempty"`
+	Title    string `json:"title,omitempty"`
+	Cert     string `json:"cert,omitempty"`
+	Size     string `json:"size,omitempty"`
+	Redirect string `json:"redirect,omitempty"`
 }
 
 // CrawlSiteMsg 主动爬取在页面中提取的"同主机不同站点"关联资产候选。
@@ -58,6 +61,9 @@ type OutputMessage struct {
 	IPs           []string         `json:"ips,omitempty"`
 	Port          string           `json:"port,omitempty"`
 	Protocol      string           `json:"protocol,omitempty"`
+	Product       string           `json:"product,omitempty"`
+	Version       string           `json:"version,omitempty"`
+	Transport     string           `json:"transport,omitempty"`
 	Web           WebInfo          `json:"web,omitempty"`
 	Finger        []string         `json:"finger,omitempty"`
 	Domain        string           `json:"domain,omitempty"`
@@ -65,22 +71,32 @@ type OutputMessage struct {
 	URI           string           `json:"uri,omitempty"`
 	City          string           `json:"city,omitempty"`
 	AdditionalMsg string           `json:"am,omitempty"`
-	Show          string           `json:"-"`
-	Nuclei        string           `json:"nuclei,omitempty"`
-	Source        string           `json:"source,omitempty"` // 父目标（归一化），扫描链路溯源；由 OutputHook 收口打标
-	CrawlSite     *CrawlSiteMsg    `json:"crawl_site,omitempty"`
-	SensitiveInfo *SensitiveInfoMsg `json:"sensitive_info,omitempty"`
+	// Tag marks special asset classes for Server-side asset tagging, e.g.
+	// "cdn" for suspected CDN assets. Old peers ignore the unknown field.
+	Tag               string            `json:"tag,omitempty"`
+	Show              string            `json:"-"`
+	Nuclei            string            `json:"nuclei,omitempty"`
+	Source            string            `json:"source,omitempty"` // 父目标（归一化），扫描链路溯源；由 OutputHook 收口打标
+	CrawlSite         *CrawlSiteMsg     `json:"crawl_site,omitempty"`
+	SensitiveInfo     *SensitiveInfoMsg `json:"sensitive_info,omitempty"`
 }
 
 type Config struct {
 	// ExecutionMode and validation plans are internal Server-to-Agent
 	// fields. Public task creation deliberately does not accept them; they are
 	// populated only after a version-bound validation authorization.
-	ExecutionMode               string
-	RequiredRuleVersion         string
-	RiskValidationTargets       map[string][]string
-	RiskValidationPocHashes     map[string]string
-	RiskValidationGoPocTargets  []scanpolicy.GoPocTarget
+	ExecutionMode              string
+	RequiredRuleVersion        string
+	RiskValidationTargets      map[string][]string
+	RiskValidationPocHashes    map[string]string
+	RiskValidationGoPocTargets []scanpolicy.GoPocTarget
+	// TargetFingerprints 是原生匹配派发模式的目标指纹集合（目标 → 产品名列表）。
+	// 与 RiskValidationTargets 互斥：设置时 Agent 使用本地 workflow.yaml 完成
+	// 指纹→POC 匹配（与单次扫描同源逻辑），服务端不再构建显式映射表。
+	TargetFingerprints map[string][]string
+	// AllowHighRiskAutoExecution 对应策略预授权开关：未开启时 Agent 本地匹配
+	// 会剔除 high/unknown 风险等级的 workflow 条目。
+	AllowHighRiskAutoExecution  bool
 	GoPocCatalogSHA256          string
 	ProtocolCheckEnabled        bool
 	ProtocolCheckTargetLimit    int
@@ -114,6 +130,7 @@ type Config struct {
 	PortScanType               string
 	GetBannerThreads           int
 	GetBannerTimeout           int
+	NoUDPIdentify              bool
 	TCPPortScanThreads         int
 	SYNPortScanThreads         int
 	PortsThreshold             int
@@ -131,10 +148,24 @@ type Config struct {
 	AllowLocalAreaDomain       bool
 	AllowCDNAssets             bool
 	NoHostBind                 bool
-	SubdomainWordListFile      string
+	// NoDomainProbe disables domain-form web probing. When false (default),
+	// an open ip:port that has bound domains from CDN classification is
+	// probed as scheme://domain:port instead of scheme://ip:port, so web
+	// assets keep the imported domain form.
+	NoDomainProbe bool
+	// NoResolvedIPScan skips host discovery / port scanning of domain-
+	// resolved IPs entirely; those domains are only probed blind as
+	// scheme://domain:port across the configured port set.
+	NoResolvedIPScan      bool
+	SubdomainWordListFile string
 	// SubdomainDictionaryWords is a Server-resolved, revision-bound additive
 	// list. Scanner always unions it with built-in and managed Agent words.
-	SubdomainDictionaryWords   []string
+	SubdomainDictionaryWords []string
+	// SubdomainPassiveResults carries Server-side pre-collected passive
+	// subdomains keyed by domain. Domains present here skip agent-side
+	// subfinder queries; the map is sealed by the Server and deduplicated
+	// with bruteforce results like any other enumeration output.
+	SubdomainPassiveResults    map[string][]string
 	HTTPProxy                  string
 	HTTPProxyTest              bool
 	HTTPProxyTestURL           string
@@ -151,6 +182,11 @@ type Config struct {
 	ActiveFingerprintProducts  map[string]string
 	BehaviorProbeRequestBudget int64
 	GolangPoc                  bool
+	NoGoPoc                    bool
+	NoBrute                    bool
+	GoPocModules               string
+	UserAppend                 []string
+	PasswordAppend             []string
 	DisableGeneralPoc          bool
 	WAFBypassHeaders           bool
 	WAFSkipOnManyFingerprints  bool
@@ -169,6 +205,8 @@ type Config struct {
 	QuakeSize                  int
 	NoICMPPing                 bool
 	TCPPing                    bool
+	UDPPing                    bool
+	TraceRoute                 bool
 	NoInteractsh               bool
 	OnlyIPPort                 bool
 	OutputFile                 string
@@ -183,8 +221,15 @@ type Config struct {
 	// MachineOutput is a standalone CLI presentation hint. It is never
 	// accepted from Server task JSON and does not change scan stages.
 	MachineOutput bool `json:"-"`
-	PasswordFile  string
-	Password      string
+	// SkipSeenHistory opts into skipping datas/ IPs from previous completed
+	// CLI runs. It is CLI-only and defaults to off.
+	SkipSeenHistory bool `json:"-"`
+	// ShowPocMap prints fingerprint-to-Nuclei YAML mapping. CLI-only, default off.
+	ShowPocMap bool `json:"-"`
+	// TraceOnly is CLI-only: -tr <target> runs traceroute without the scan pipeline.
+	TraceOnly    bool `json:"-"`
+	PasswordFile string
+	Password     string
 }
 
 type CDNResult struct {
@@ -218,6 +263,18 @@ type ProtocolResult struct {
 	Response *gonmap.Response
 }
 
+// ServiceRecord is the protocol-stage service picture for one endpoint.
+// IPPortMap still stores only the canonical protocol name.
+type ServiceRecord struct {
+	Endpoint   string
+	Transport  string
+	Protocol   string
+	Product    string
+	Version    string
+	Extra      string
+	Confidence string
+}
+
 // GlobalIPDomainMap 存储ip->domains的关系
 var GlobalIPDomainMap map[string][]string
 var GlobalIPDomainMapLock sync.Mutex
@@ -232,6 +289,10 @@ type UrlPathEntity struct {
 	Server           string
 	ContentLength    int
 	HeaderHashString string
+	// Natural is true when this path was observed without the scanner choosing
+	// it (homepage or same-origin redirect). Directory-probe responses stay false
+	// so Identify() does not treat them as passive evidence.
+	Natural bool
 }
 
 type URLEntity struct {
@@ -261,7 +322,8 @@ type WorkFlowEntity struct {
 	RootType    bool
 	DirType     bool
 	BaseType    bool
-	DirFallback bool // dir匹配且状态码200时直接标记指纹，无需finger验证
+	DirFallback bool   // 目录探测 200 且无独立内容时仅记录路径存在，不进 ResultMap、不调度 POC
+	RiskLevel   string // 关联 POC 的风险等级（unknown/low/medium/high），供预授权门本地过滤
 	PocsName    []string
 }
 
@@ -285,9 +347,15 @@ var DirDB map[string][]string
 // GlobalResultMap 存储识别到的指纹
 var GlobalResultMap map[string][]string
 
-// DirFallbackResultMap 存储dir-fallback标记的指纹（在FingerprintIdentification之后合并到GlobalResultMap）
+// DirFallbackResultMap 存储 dir-fallback 观察（路径 200 但无独立内容证据）。
+// 不再合并进 ResultMap，避免无指纹 200 驱动 POC。
 var DirFallbackResultMap map[string][]string
 var DirFallbackResultMapLock sync.Mutex
+
+// DirEvidenceResultMap 存储目录探测在独立内容证据下确认的产品（探测 URL → 产品）。
+// 在正式指纹阶段之后合并进 ResultMap，供 Workflow/POC 使用。
+var DirEvidenceResultMap map[string][]string
+var DirEvidenceResultMapLock sync.Mutex
 
 type GoPocsResultType struct {
 	PocName     string
@@ -337,6 +405,8 @@ type HostInfo struct {
 	CredentialAttempt   func()
 	Password            string
 	PasswordFile        string
+	UserAppend          []string
+	PasswordAppend      []string
 	WriteResult         func(GoPocsResultType)
 	Emit                func(OutputMessage)
 	OutputType          string

@@ -16,8 +16,8 @@ import (
 	"os"
 )
 
-// PrepareCLIArsenal resolves the fixed offline package before either a scan or
-// an arsenal management subcommand. It performs no network access.
+// PrepareCLIArsenal resolves the fixed offline package before a scan.
+// It performs no network access.
 func PrepareCLIArsenal(home localstate.Home) (localarsenal.Activation, error) {
 	activation, err := localarsenal.Prepare(home.Root)
 	if err != nil {
@@ -44,6 +44,20 @@ func InitCLIWithTiming(recorder *timing.Recorder) (*engine.ScanContext, error) {
 			return nil, err
 		}
 		return nil, fmt.Errorf("help output completed")
+	}
+	if common.CLITraceRequested(os.Args[1:]) {
+		if err := common.FlagWithError(); err != nil {
+			return nil, err
+		}
+		ctx, err := engine.NewScanContextFromLegacyGlobals("cli-local")
+		if err != nil {
+			return nil, err
+		}
+		if home, homeErr := localstate.Resolve(); homeErr == nil {
+			ctx.LocalDataRoot = home.Root
+		}
+		ctx.LocalForceFullScan = common.CLIForceFullScan
+		return ctx, nil
 	}
 	home, err := localstate.Resolve()
 	if err != nil {

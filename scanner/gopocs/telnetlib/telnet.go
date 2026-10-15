@@ -116,9 +116,12 @@ type Client struct {
 	conn         net.Conn
 	LastResponse string
 	ServerType   int
-	responseMu   sync.Mutex
-	evidenceMu   sync.Mutex
-	exchanges    []RawExchange
+	// DialTimeout bounds the TCP connect in Connect. Zero keeps the
+	// historical 5s default so existing callers are unaffected.
+	DialTimeout time.Duration
+	responseMu  sync.Mutex
+	evidenceMu  sync.Mutex
+	exchanges   []RawExchange
 }
 
 // RawExchange contains bytes observed by this client at the net.Conn boundary.
@@ -141,7 +144,11 @@ func New(addr string, port int) *Client {
 }
 
 func (c *Client) Connect() error {
-	conn, err := net.DialTimeout("tcp", c.Netloc(), 5*time.Second)
+	dialTimeout := c.DialTimeout
+	if dialTimeout <= 0 {
+		dialTimeout = 5 * time.Second
+	}
+	conn, err := net.DialTimeout("tcp", c.Netloc(), dialTimeout)
 	if err != nil {
 		return err
 	}

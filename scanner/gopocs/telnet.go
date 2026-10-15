@@ -64,6 +64,10 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 
 		return tmperr
 	}
+
+	// 每个目标只在爆破循环开始前探测一次 TCP RTT，后续登录连接复用自适应超时。
+	authTimeout := authTimeoutFor(info.Host, info.Ports)
+
 	var upList []string
 	if info.Password != "" {
 		upList = append(upList, info.Password)
@@ -92,7 +96,12 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 		credentialList = append(credentialList, structs.UserPasswd{UserName: user, Password: password})
 	}
 	credentialList = append(credentialList, info.UserPassPairs...)
+	credentialList = expandCredentialAppend(info, credentialList)
 	credentialList = limitUserPasswd(info, RemoveDuplicateUserPass(credentialList))
+	if serverType == telnetlib.OnlyPassword {
+		// OnlyPassword 设备忽略用户名，同一密码换用户名重试只会浪费连接。
+		credentialList = dedupePasswordsForOnlyPassword(credentialList)
+	}
 
 	// Telnet爆破
 	starttime := time.Now().Unix()
@@ -118,7 +127,7 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 		for _, pass := range passList {
 			gologger.AuditTimeLogger("[Go] [Telnet-Brute] start try %s:%v %v %v", info.Host, info.Ports, maskUsername(user), maskPassword(pass))
 			waitCredentialAttempt(info)
-			err, successfulEvidence := telnetCheckWithEvidence(info.Host, user, pass, portInt, serverType)
+			err, successfulEvidence := telnetCheckWithEvidence(info.Host, user, pass, portInt, serverType, authTimeout)
 			if err == nil {
 				if serverType == telnetlib.OnlyPassword {
 					result := fmt.Sprintf("Telnet://%v:%v %s", info.Host, info.Ports, pass)
@@ -158,13 +167,31 @@ func TelnetScan(info *structs.HostInfo) (tmperr error) {
 	return tmperr
 }
 
+// dedupePasswordsForOnlyPassword collapses pairs whose password already
+// appeared earlier in the slice, keeping first-seen order. OnlyPassword
+// devices ignore the username, so every duplicate password would otherwise
+// cost one full TCP connection per remaining user.
+func dedupePasswordsForOnlyPassword(pairs []structs.UserPasswd) []structs.UserPasswd {
+	seen := make(map[string]struct{}, len(pairs))
+	result := make([]structs.UserPasswd, 0, len(pairs))
+	for _, pair := range pairs {
+		if _, exists := seen[pair.Password]; exists {
+			continue
+		}
+		seen[pair.Password] = struct{}{}
+		result = append(result, pair)
+	}
+	return result
+}
+
 func TelnetCheck(addr, username, password string, port, serverType int) error {
-	err, _ := telnetCheckWithEvidence(addr, username, password, port, serverType)
+	err, _ := telnetCheckWithEvidence(addr, username, password, port, serverType, authTimeoutFor(addr, strconv.Itoa(port)))
 	return err
 }
 
-func telnetCheckWithEvidence(addr, username, password string, port, serverType int) (error, []telnetlib.RawExchange) {
+func telnetCheckWithEvidence(addr, username, password string, port, serverType int, dialTimeout time.Duration) (error, []telnetlib.RawExchange) {
 	client := telnetlib.New(addr, port)
+	client.DialTimeout = dialTimeout
 	err := client.Connect()
 	if err != nil {
 		return err, nil

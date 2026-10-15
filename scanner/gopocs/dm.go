@@ -77,6 +77,13 @@ func DmScan(info *structs.HostInfo) (tmperr error) {
 	for _, pair := range info.UserPassPairs {
 		userPassList = append(userPassList, struct{ User, Pass string }{pair.UserName, pair.Password})
 	}
+	pairs := make([]structs.UserPasswd, 0, len(userPassList))
+	for _, item := range userPassList {
+		pairs = append(pairs, structs.UserPasswd{UserName: item.User, Password: item.Pass})
+	}
+	for _, pair := range expandCredentialAppend(info, pairs) {
+		userPassList = append(userPassList, struct{ User, Pass string }{pair.UserName, pair.Password})
+	}
 
 	// ===== 去重 =====
 	userPassList = dedupUserPass(userPassList)

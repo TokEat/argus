@@ -1,11 +1,11 @@
 id: springblade-info-leak
 
 info:
-  name: SpringBlade - Information Leakage
+  name: SpringBlade 默认 SIGN_KEY 敏感信息泄露
   author: lbb
   severity: high
   description: |
-    SpringBlade is a comprehensive project upgraded and optimized from a commercial-grade project, featuring both a SpringCloud distributed microservice architecture and a SpringBoot monolithic microservice architecture. The SpringBlade framework has a default SIGN_KEY, which can be exploited by attackers to obtain sensitive information such as user account password logs.
+    SpringBlade 框架使用默认 SIGN_KEY，攻击者可伪造 JWT 访问用户列表等接口，获取账号口令等敏感信息。
   impact: |
     Attackers using default SIGN_KEY can forge JWT tokens to obtain sensitive user information including account credentials, password hashes, and logs from the SpringBlade system.
   remediation: |

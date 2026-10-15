@@ -1,10 +1,10 @@
 id: huawei-authhttp-lfi
 
 info:
-  name: Huawei Auth Http Server - Arbitrary File Read
+  name: 华为 Auth-HTTP Server 任意文件读取
   author: DhiyaneshDk
   severity: high
-  description: Huawei Auth HTTP Server is vulnerable to Arbitrary File Read.
+  description: 华为 Auth-HTTP Server 对请求路径校验不足，未授权攻击者可读取设备本地任意文件。
   reference:
     - https://mp.weixin.qq.com/s?__biz=MzIxMTg1ODAwNw==&mid=2247498499&idx=1&sn=6850c3e9a3df795e48ba9a10c9772ddd
     - https://github.com/Vme18000yuan/FreePOC/blob/master/poc/pocsuite/huawei-auth-http-readfile.py

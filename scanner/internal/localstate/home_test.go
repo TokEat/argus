@@ -22,6 +22,9 @@ func TestResolveHomeDefaultsBesideExecutable(t *testing.T) {
 		t.Fatalf("resolve default home: %v", err)
 	}
 	want := filepath.Join(binDir, DefaultHomeName)
+	if resolvedBinDir, err := filepath.EvalSymlinks(binDir); err == nil {
+		want = filepath.Join(resolvedBinDir, DefaultHomeName)
+	}
 	if got != want {
 		t.Fatalf("default home = %q, want %q", got, want)
 	}

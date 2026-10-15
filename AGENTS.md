@@ -1,6 +1,12 @@
 # AGENTS.md
 
-本文是 Argus 仓库的 Codex/AI 代理指令。执行任何任务前，先阅读本文件和 `CONTRIBUTING.md`。
+本文是 Argus 仓库的代理指令，Codex、Claude Code 与 Grok 都遵守本文件。执行任务前先读本文件和 `CONTRIBUTING.md`。
+
+指令文件：
+
+- 本文件是唯一的完整代理指令。根目录 `CLAUDE.md` 只作为 Claude Code 入口并引用本文件，不要在那里维护第二套规则。
+- 改 `config/` 或 `scanner/common/config/` 弹药库时，同时遵守 `config/AGENTS.md`。与本文件冲突时，以更深目录的文件为准。
+- 目录职责见 `docs/project-structure.md`，授权边界见 `SECURITY.md`。
 
 ## Repository role
 
@@ -40,7 +46,7 @@ issue -> branch -> code -> test -> review -> commit -> push -> PR -> merge -> cl
 
 - 先复现问题、定位根因，再修改代码；不要用猜测式补丁掩盖症状。
 - 涉及前端页面、API、Agent、CLI、Scanner、云调度、规则同步或部署行为时，优先做真实调用或 smoke 验证。
-- 用户提供授权测试目标时，默认只做完成问题所需的最小验证；例如指纹验证优先使用 `-npoc`，不要无故执行 POC/EXP。
+- 用户提供授权测试目标时，默认只做完成问题所需的最小验证；例如指纹验证优先使用 `-nopoc`，不要无故执行 POC/EXP。需要同时关掉 GoPoc 时再加 `-nogpoc`。
 - 浏览器问题需要用浏览器验证；接口问题需要用真实 HTTP/API 调用验证；Scanner 行为需要用 CLI/Agent 或最小测试靶场验证。
 - sandbox、网络或权限限制导致验证失败时，按规则申请必要权限重跑；仍不能运行时，记录失败原因和替代证据。
 - 提交或合并前优先使用子智能体或独立 reviewer 做只读 review；Critical/Important 反馈必须修复或明确说明技术取舍。
@@ -83,6 +89,7 @@ issue -> branch -> code -> test -> review -> commit -> push -> PR -> merge -> cl
 - 数据库 migration、schema、部署数据库路径：`make db-verify`
 - 云资源调度：`make cloud-smoke`
 - 发布脚本、发行包、部署脚本：`make release-artifacts`
+- Yaksha（独立 module，不在 `go.work` 内）：`cd yaksha && GOWORK=off go test ./...`
 - 跨模块或合并前完整验证：`make ci`
 - 文档-only：手动检查链接、路径、命令、代码块和 README 索引
 

@@ -4,17 +4,19 @@
 
 当前以以下实现为准：
 
-- `server/internal/db/schema/000_current_schema.sql`：空库当前态 DDL
+- `deploy/db/init/001_init.sql`：版本重启（v001）后的最小基线 DDL，由 `deploy/db-init.sh` 纯 SQL 导入
 - `server/internal/db/schema_verify.go`：启动后表/列/索引契约
-- `server/internal/db/migrations/`：已有库增量升级历史（文件不可改 checksum）
+- `server/internal/db/schema_version.go`：启动期 schema 版本校验（`RequiredSchemaVersion`）
 - `server/internal/db/db.go`
 - `server/internal/db/rule_catalog.go`
 - `server/internal/db/task_lifecycle.go`
 
 > 注：
-> - 本文描述的是“当前主链路实际需要的完整 schema”。
-> - 空库由 `argus-server --migrate-only` 应用 baseline；已有库继续按 `migrations/*.sql` 增量升级。
-> - 已发布的 migration 版本号和 checksum 都不可复用或改写；发生历史版本冲突时必须退休原编号，并以新的递增版本提供幂等迁移。版本 `510` 已永久退休，扫描策略编排使用 `560`。
+> - 本文覆盖控制面主链路的核心表，**不是全部表的穷举清单**；完整权威来源是 `deploy/db/init/*.sql` 与 `schema_verify.go`。文中字段为节选，未列出的列以 DDL 为准。
+> - 数据库初始化与项目启动已分离：`deploy/db-init.sh`（psql 纯 SQL 导入，不依赖二进制）负责建库/建角色/基线导入/种子/自检；`argus-server` 启动时只做连接重试 + 版本校验 + 结构契约校验，不再执行任何迁移。
+> - 历史上 010..570 的嵌入式增量迁移已随 v001 版本重启退役（git 历史可查）；存量旧终态库由 `deploy/db/legacy/900_cutover_from_010_570.sql` 一次性切换。v001 起的版本演进规则：新增 `deploy/db/init/NNN_xxx.sql`（文件末尾自记 `schema_migrations` 版本），并同步推进 `RequiredSchemaVersion` 与 `schema_verify.go` 契约（当前已有 002 被动子域、003 CDN 标记、004 MCP OAuth、005 MCP 管理、006 MCP 调用审计 五个增量）。
+> - v001 收敛时删除了历史废弃对象：`cron_tasks`、`notification_rules`、`asset_change_logs` 表、`tenant_quota` 兼容视图与 `root_tasks.cron_task_id` 列（均无业务代码引用）。
+> - 文中出现的 “Migration 4xx/5xx” 编号指 v001 之前的历史增量，仅作演进背景说明。
 > - 规则资产不在 SQL 里，使用 `deploy/arsenal_seed.db` 和 `--seed-from-db`。
 
 ---
@@ -38,7 +40,7 @@
 - 扫描结果统一做 `target` 归一化，避免 URL / Host / IP 多种写法导致重复资产。
 - 为保证吞吐，当前模型基本不依赖物理外键，而是通过应用层逻辑关联 `project_id`、`root_task_id`、`agent_id` 等业务主键。测绘证据链是例外：查询快照、笔记本来源及分发意图使用 tenant/project 复合外键绑定审计、资产项、任务配置和选中项，防止后续历史、导出、归档或分发链路产生跨项目挂接。
 - 灵活结构统一使用 `jsonb` 或 `text(JSON)` 存储，例如标签、任务配置、节点选择器、规则详情。
-- 误删风险高的实体使用软删除：当前包括 `projects`、`cron_tasks`、`credentials`。
+- 误删风险高的实体使用软删除：当前包括 `projects`、`credentials`。
 
 ### 1.3 当前状态字段约定
 
@@ -58,14 +60,14 @@
 
 核心数据关系可以概括为：
 
-- `projects` 是项目隔离的顶层容器，向下关联 `project_members`、`cron_tasks`、`root_tasks`、`notification_rules`、`domains`、`assets`、`credentials`、`fingerprint_hits`、`vulnerabilities`、`asset_change_logs`、`reports`。
-- `root_tasks` 表示一次用户发起或定时触发的巡航任务，向下包含稳定的 `task_batches`，每个批次以追加式 `sub_tasks` 保存真实 Attempt。
+- `projects` 是项目隔离的顶层容器，向下关联 `project_members`、`root_tasks`、`domains`、`assets`、`credentials`、`fingerprint_hits`、`vulnerabilities`、`reports`。
+- `root_tasks` 表示一次用户发起的巡航任务，向下包含稳定的 `task_batches`，每个批次以追加式 `sub_tasks` 保存真实 Attempt。
 - `sub_tasks` 由 `nodes` 认领执行，并驱动结果写入 `domains`、`assets`、`fingerprint_hits`、`vulnerabilities`；阶段级证据另以 `scan_observations` 追加保存。
 - `scan_coverages` 保存一个 WorkKey 的当前覆盖状态，`scan_work_claims` 为并发相同工作提供唯一占用槽，`task_coverage_links` 记录任务实际执行、历史复用或执行中挂接的来源。
 - `asset_discovery_audits` 保存 Server 网络空间测绘查询、导出和笔记本归档的项目级脱敏审计；只记录查询/配置哈希、计数、状态与耗时，不保存原始表达式、凭据或 Provider 响应。`asset_discovery_snapshots` 与 `asset_discovery_snapshot_items` 是查询历史、导出和笔记本的追加式来源；`asset_discovery_notebook_items` 与 `asset_discovery_notebook_sources` 分离项目内去重目标和每次快照来源；`asset_discovery_notebook_distribution_intents` 及其 item 表冻结分发确认的幂等请求快照，`asset_discovery_notebook_distribution_materializations` 冻结确认后的 typed 结果。intent 单独存在不代表授权或执行。
 - `nodes` 维护在线 Agent 的会话、容量、心跳和运行任务信息；`agent_logs` 记录节点侧黑匣子日志。
 - `arsenals` 是规则文件真相源；`fingerprint_rules`、`poc_rules`、`workflow_rules`、`dir_rules` 是由 `arsenals` 物化出的结构化检索层，`rule_catalog_bootstraps` 记录物化状态。
-- `system_configs` 承载全局配置与 `mcp_*` 类型的 API Key。
+- `system_configs` 承载全局配置（如 `rule_version`）。历史 `mcp_*` 密钥键若有残留可手工清理；资产引擎密钥走 API 密钥页，模型密钥走 AI 配置。
 
 ---
 
@@ -112,6 +114,34 @@
 | `status` | string | `active` / `disabled` | Default:`active` |
 | `created_at` / `updated_at` | timestamp | 审计时间 | - |
 
+#### MCP OAuth（`004_mcp_oauth.sql`）
+
+授权码与 refresh token 只存 SHA-256，不落明文。预置 public `client_id=cursor`。其它 MCP 客户端（Codex、Claude、Grok 等）走 DCR；回环 `http://127.0.0.1` / `localhost` / `[::1]` 按 RFC 8252 忽略端口，并视作同一类回环主机。远程 HTTPS 回调仍拒绝。
+
+| 表 | 作用 |
+|------|------|
+| `oauth_clients` | 公开客户端、redirect JSON、可选 `tenant_id` |
+| `oauth_authorization_codes` | 单次授权码（约 2 分钟）、PKCE S256 challenge、resource、用户/租户/角色 |
+| `oauth_refresh_tokens` | refresh 轮转；重放即吊销该 client+user 的未撤销 refresh |
+
+#### MCP 管理（`005_mcp_admin.sql`）
+
+租户级 MCP 开关与客户端治理。内置 `cursor` 客户端禁止物理删除，只能对本租户拉黑。
+
+| 表 | 作用 |
+|------|------|
+| `tenant_mcp_settings` | 本租户是否启用 MCP；缺行视为启用 |
+| `oauth_tenant_client_blocks` | 本租户拉黑的 `client_id`，不删除全局 `oauth_clients` 行 |
+| `mcp_admin_events` | admin 开关 / 撤销 / 禁用 / 删除动作审计，不是 tools/call 流水 |
+
+#### MCP 调用审计（`006_mcp_tool_invocations.sql`）
+
+高风险 MCP `tools/call` 流水。不是治理事件，也不是 Copilot 对话工具审计。`ai_tool_invocations` 在本版本删除。
+
+| 表 | 作用 |
+|------|------|
+| `mcp_tool_invocations` | 记录全部 `argus_debug_*`、`argus_save_*`，以及 `argus_scan_create`、`argus_rule_apply`（publish）、`argus_yaksha_exp`（debug/run）。`args` 为剥离密钥后的完整参数；不存响应体或 token |
+
 #### `system_configs`
 
 | 字段 | 类型 | 说明 | 约束 / 索引 |
@@ -123,28 +153,14 @@
 典型用途：
 
 - `rule_version`
-- `mcp_fofa`
-- `mcp_hunter`
-- `mcp_quake`
-- `mcp_openai`
+
+历史 `mcp_fofa` / `mcp_hunter` / `mcp_quake` / `mcp_openai` 键不再由接口读写。若库中仍有残留，可手工删除；不要把它们当成 MCP（Model Context Protocol）凭据。
 
 ---
 
 ### 3.2 调度控制面
 
-#### `cron_tasks`
-
-| 字段 | 类型 | 说明 | 约束 / 索引 |
-|------|------|------|-------------|
-| `id` | string | 定时任务主键 | PK |
-| `project_id` | string | 所属项目 | Index |
-| `name` | string | 定时任务名称 | - |
-| `cron_expr` | string | Cron 表达式 | Index |
-| `targets` | jsonb | 定时目标集 | - |
-| `config` | jsonb | 定时任务扫描配置 | - |
-| `next_run_at` | timestamp | 下次执行时间 | Index |
-| `status` | string | `active` / `disabled` | Index, Default:`active` |
-| `created_at` / `updated_at` / `deleted_at` | timestamp | 审计时间与软删除时间 | `deleted_at` Index |
+> `cron_tasks`（定时任务）与 `notification_rules`（通知规则）自 v001 起已随历史功能下线一并移除；定时触发能力由外部调度（cron/systemd timer）直接调用 API 承担。
 
 #### `root_tasks`
 
@@ -153,7 +169,6 @@
 | `id` | string | 根任务 ID | PK |
 | `tenant_id` | string | 租户隔离键 | Index |
 | `project_id` | string | 所属项目 | Index |
-| `cron_task_id` | string | 来源定时任务 | Index |
 | `user_id` | string | 发起用户 | Index |
 | `name` | string | 任务名称 | - |
 | `original_targets` | text | 原始输入目标列表 | Text |
@@ -349,39 +364,23 @@
 | `timestamp` | int64 | Agent 侧原始时间戳 | Index |
 | `created_at` | timestamp | 服务端入库时间 | - |
 
-#### `notification_rules`
-
-| 字段 | 类型 | 说明 | 约束 / 索引 |
-|------|------|------|-------------|
-| `id` | uint | 规则主键 | PK |
-| `project_id` | string | 所属项目 | Index |
-| `event` | string | 触发事件类型 | Index |
-| `channel` | string | 通知渠道 | - |
-| `config` | jsonb | 渠道配置 | - |
-| `status` | string | `enabled` / `disabled` | Default:`enabled` |
-| `created_at` | timestamp | 创建时间 | - |
-
 ---
 
-#### `task_creation_idempotencies`
+#### 幂等账本（五张同构表）
 
-Migration 430 的内部、不可变创建任务幂等账本。`(tenant_id, project_id, operator_id, operation, idempotency_key_hash)` 唯一，其中 `operation=create_task_v1`；只保存原始 Key 的 SHA-256、规范请求 SHA-256、RootTask ID、首批 Attempt ID 与首次 Project Scope/SeedTargets 增量，绝不持久化原始 Key、目标或配置正文。其 tenant/project 复合外键绑定 RootTask；与 RootTask、配置修订、TaskBatch、Attempt、Scope/SeedTargets 扩展和单条创建审计同事务提交，失败整体回滚。该账本不构成授权凭证，重放前仍需完成认证、operator RBAC、项目访问和 active 状态校验。
+| 表（Migration） | `operation` | 额外唯一维度 | 绑定的业务对象 | 额外保存的业务结果 |
+|---|---|---|---|---|
+| `task_creation_idempotencies`（430） | `create_task_v1` | - | RootTask、配置修订、首个 TaskBatch/Attempt | 首次 Project Scope/SeedTargets 增量 |
+| `task_append_idempotencies`（440） | `append_targets_v1` | `root_task_id` | 新增 TaskBatch/Attempt、Scope/SeedTargets、RootTask 聚合 | 首次 outcome、目标/范围增量、提交后任务总计数；全重复 `unchanged` 只写账本 |
+| `task_retry_idempotencies`（450） | `retry_task_v1` | `root_task_id` | 新增 Attempt、RootTask 状态 | 重试前后状态、首次跳过的完成/暂停批次数；Attempt 列表必须非空 |
+| `task_batch_retry_idempotencies`（460） | `retry_task_batch_v1` | `root_task_id` + `batch_id` | 稳定 TaskBatch 下的新 Attempt 与 Task/Batch 状态 | 前后状态、新 Attempt 编号/配置版本/规则版本 |
+| `risk_validation_execution_idempotencies`（470） | `execute_risk_validation_v1` | `root_task_id` | 配置修订、risk-validation Batch 与 Attempt（deferred/RESTRICT 复合外键） | preview plan、POC/端点集合哈希、候选/请求计数、二次确认要求、前后状态 |
 
-#### `task_append_idempotencies`
+五张账本均为内部不可变表，唯一键统一为 `(tenant_id, project_id[, root_task_id[, batch_id]], operator_id, operation, idempotency_key_hash)`，只保存原始 Key 和规范请求的 SHA-256，不落原始 Key、目标、配置或规则正文。账本与业务写入和单条审计在同一事务提交，失败整体回滚；只有首次提交后派发，重放返回首次冻结结果且不会再次入队。账本不是授权凭证：认证、operator RBAC、项目/任务/批次对象授权与归档校验始终先于重放；风险验证的新 Key 仍须重新验证 preview、配置、规则和 POC 内容哈希。
 
-Migration 440 的内部、不可变增加批次幂等账本。`(tenant_id, project_id, root_task_id, operator_id, operation, idempotency_key_hash)` 唯一，其中 `operation=append_targets_v1`；保存原始 Key/规范请求的 SHA-256、首次 outcome、配置与规则身份、状态、Batch/Attempt ID、目标/范围增量和提交后的任务总计数。它不保存原始 Key、目标列表或配置正文。账本通过 tenant/project/task 复合外键绑定 RootTask，并与新增 Batch/Attempt、Project Scope/SeedTargets、RootTask 聚合和单条 `batch_append` 审计在同一事务提交；全重复 `unchanged` 只写账本且不产生业务变更。只有首次新增在提交后进入队列，重放读取冻结对象且不会再次派发。
+#### `subdomain_passive_cache` / `subdomain_passive_jobs`
 
-#### `task_retry_idempotencies`
-
-Migration 450 的内部、不可变任务重试幂等账本。`(tenant_id, project_id, root_task_id, operator_id, operation, idempotency_key_hash)` 唯一，其中 `operation=retry_task_v1`；只保存原始 Key 的 SHA-256、版本化请求的 SHA-256、首次重试前后状态、新增 Attempt ID，以及首次跳过的完成/暂停批次数。账本不保存原始 Key、目标、配置、规则正文或 Provider 数据；Attempt 列表必须非空。它通过 tenant/project/task 复合外键绑定 RootTask，并与新 Attempt、RootTask 状态和单条 `retry` 审计在同一事务提交。只有首次提交后主动派发；重放读取首次 Attempt 的当前投递状态但不会再次入队，也不能绕过认证、operator RBAC、项目访问或归档校验。
-
-#### `task_batch_retry_idempotencies`
-
-Migration 460 的内部、不可变单批次重试幂等账本。`(tenant_id, project_id, root_task_id, batch_id, operator_id, operation, idempotency_key_hash)` 唯一，其中 `operation=retry_task_batch_v1`；只保存原始 Key 的 SHA-256、版本化请求的 SHA-256、首次重试前后状态以及新 Attempt 的 ID、编号、配置版本和规则版本。账本不保存原始 Key、目标、配置/规则正文或 Provider 数据，并通过 tenant/project/task/batch 复合外键绑定稳定 TaskBatch。账本、新 Attempt、Task/Batch 状态和单条 `batch_retry` 审计同事务提交；只有首次提交后主动派发，重放只投影该 Attempt 当前是否仍待投递，不会新增 Attempt、审计或队列消息。认证、operator RBAC、项目和批次对象授权及归档校验始终先于账本读取。
-
-#### `risk_validation_execution_idempotencies`
-
-Migration 470 的内部、不可变风险验证执行账本。`(tenant_id, project_id, root_task_id, operator_id, operation, idempotency_key_hash)` 唯一，其中 `operation=execute_risk_validation_v1`；只保存原始 Key 的 SHA-256，以及规范请求、preview plan、POC/端点集合和实际 Attempt 配置各自的 SHA-256，并保存配置/规则版本、Batch/Attempt ID、候选/目标/POC/预计请求计数、二次确认要求和前后状态。账本没有目标、POC 文件或内容、配置正文、Provider 查询、凭据或原始 Key 字段；复合 deferred/RESTRICT 外键将其绑定到同 tenant/project/task 的配置修订、risk-validation Batch 与 Attempt。首次确认的账本、Batch、Attempt、RootTask 状态和单条 `risk_validation_execute` 审计在同一事务提交，只有首次提交后派发；同 Key 同请求只重放已提交结果，异请求固定冲突。认证、operator RBAC、项目/任务对象授权和归档校验始终先于账本读取；新 Key 仍必须重新验证 preview、配置、规则、POC 内容哈希和双重确认，账本本身不是授权凭证。
+Migration 002（v001 基线后的增量）支撑 Server 端被动子域收集。`subdomain_passive_cache` 按注册根域（eTLD+1）主键缓存已验证的被动收集结果（`subdomains`/`sources` 为 jsonb 数组，`expires_at` 判定新鲜度）；CT/被动 DNS 为公共历史数据，缓存全局共享、不含租户语义。`subdomain_passive_jobs` 记录派发前持有：开启被动子域发现且存在 `passive_server=v1` 能力 Agent 时，域名批次 Attempt 初始停留 `Queued` 并写入 `pending` 任务行；后台 collector 按根域收集（先查缓存）、把结果密封进 Attempt 配置（`SubdomainPassiveResults`，全覆盖时同时置 `NoSubFinder=true`）后释放入队。收集超时（默认 8 分钟）或全部数据源失败时不密封直接释放，Agent 回退原有端内被动收集；任务行兼作重启恢复凭证（`running` 超时自动回退 `pending`），每次终态迁移写入 `task_audits`（`passive_subdomain_<state>`）。`ARGUS_SERVER_PASSIVE_SUBDOMAIN=off` 可整体关闭该特性。
 
 ### 3.3 资产、结果与报表
 
@@ -396,19 +395,11 @@ Migration 470 的内部、不可变风险验证执行账本。`(tenant_id, proje
 | `scan_work_claims` | 相同工作并发合并所需的唯一租约槽 | `(tenant_id, project_id, work_key_hash)` 唯一；保存 owner Task/Batch/Attempt/Agent、租约哈希、到期时间和错误摘要 |
 | `task_coverage_links` | 解释目标任务的工作是实际执行、历史复用还是挂接执行中来源 | 目标 Task/Batch/Attempt + WorkKey + link type 唯一；保存 Coverage/Claim 及来源 Task/Batch/Attempt |
 
-四张表均显式保存 `tenant_id` 与 `project_id`，任何读取或写入仍须由应用层验证当前用户对项目和任务的对象级权限。WorkKey 哈希不能替代租户条件；网络区域、Scope/Config、规则版本以及风险验证的 POC 集合和端点内容哈希均作为独立列保留，便于失效解释和审计。
+四张表均显式保存 `tenant_id` 与 `project_id`，任何读取或写入仍须由应用层验证当前用户对项目和任务的对象级权限；WorkKey 哈希不能替代租户条件，网络区域、Scope/Config、规则版本与风险验证内容哈希均作为独立列保留。
 
-当前归并规则是：Observation 只追加；同一租户内重复事件按目标派生幂等键；Coverage 只接受不早于当前来源的事件并递增修订号。成功或阴性事件在 Server 配置/规则快照一致时可形成 `complete`，失败或跳过只能形成 `incomplete`，版本漂移和缺少风险验证内容维度形成 `invalidated`。
+归并规则：Observation 只追加，同一租户内重复事件按目标派生幂等键；Coverage 只接受不早于当前来源的事件并递增修订号——配置/规则快照一致的成功或阴性形成 `complete`，失败或跳过形成 `incomplete`，版本漂移或缺少风险验证内容维度形成 `invalidated`。Server 为新完成 Coverage 设置有效期：存活证据 5 分钟、端口 1 小时、搜索/子域/CDN/协议/Web/Host 绑定/目录/指纹 6 小时、显式风险验证 24 小时；失效或不完整 Coverage 的 `valid_until` 为空且不可复用。Scope、配置、规则和网络区域是 WorkKey 维度，变化后不会命中旧行；上游内容变化会把较旧的依赖 Coverage 置为 `invalidated`（原因 `upstream_content_changed:<stage>`）。
 
-G21A 为新完成 Coverage 设置 Server 有效期：ICMP/TCP 存活 5 分钟，端口 1 小时，搜索/子域/CDN/协议/Web/Host 绑定/目录/指纹 6 小时，显式风险验证 24 小时。失效或不完整 Coverage 的 `valid_until` 为空且始终不可复用。Scope、配置、规则与网络区域属于 WorkKey 维度，变化后不会命中旧行；旧版本证据不做破坏性覆盖，仍可按原 WorkKey 审计。相同 WorkKey 的上游内容变化会把较旧的依赖 Coverage 置为 `invalidated`，原因使用 `upstream_content_changed:<stage>`，而上游和无关阶段保持有效。
-
-Migration 360 只为 `scan_observations` 增加 `checkpoint JSONB` 与 `checkpoint_hash`。检查点使用 `argus.checkpoint/v1`，只接收单目标成功/阴性事件的最多 4096 个存活 IP、开放端点、协议服务、URL 或域名；不保存响应正文、Header、凭据或任意错误文本。旧记录回填为空对象，旧 Agent 无检查点时保持兼容。当前 Coverage 仍通过 `source_observation_id` 指向不可变检查点，不复制 payload。
-
-G18 的领取时复用不会修改 `task_batches.targets/target_count`，它们继续表示用户请求的稳定范围。全量复用时，目标 Attempt 与 Batch 直接完成并写 `task_coverage_links(link_type=reused)`；部分目标复用时，剩余 `sub_tasks.chunk_targets`、Agent 租约和 reused links 在同一事务提交。每条关联保存来源 Task/Batch/Attempt/Coverage，RootTask 进度仍按稳定 Batch 范围聚合。显式手动重试和 `risk_validation` Batch 不读取历史覆盖。
-
-G20 起，网络区域由 Server 按目标和已注册 Node 标签派生：明确公网目标使用 `public`；私网、特殊用途地址或 split-horizon DNS 使用 `private:<network_zone>`；无区域标签的私网目标使用 `agent:<agent_id>`。带区域标签的 Agent 只有在 `network_scope=public` 时才把普通 DNS 归入公网，私网/保留 IP 始终不能提升为公网。归并、复用与 WorkClaim 都使用同一派生器，因此相同私网地址不会跨错误区域共享，且网络区域仍只是 WorkKey 维度，不能替代 tenant/project 查询条件。
-
-G19 将 `scan_work_claims.status` 约束为运行期 `active` 以及终态 `completed/failed`；相同唯一键的后续真实执行复用同一行并递增 `revision`，不会增长出多个活动 owner。`task_coverage_links` 使用 `executed/active` 表示 Claim 所有者，使用 `in_flight/waiting` 表示挂接者；来源结束后关联变为 `resolved` 或 `source_failed`。等待 Attempt 不写 Agent、使用 `workclaim:<digest>` 作为内部等待标记，普通 Pending 恢复查询不会提前派发它；所有依赖结束后才以 CAS 转为 `Dispatching`。Claim 获取与 Attempt/Agent 租约同事务提交，失败或状态竞态整体回滚。显式人工重试与 `risk_validation` 继续绕过 WorkClaim。
+检查点使用 `argus.checkpoint/v1`，只接收单目标成功/阴性事件的最多 4096 个存活 IP、开放端点、协议服务、URL 或域名，不保存响应正文、Header、凭据或任意错误文本；Coverage 通过 `source_observation_id` 引用检查点，不复制 payload。网络区域由 Server 按目标和 Node 标签派生（公网 `public`、私网 `private:<network_zone>`、无标签私网回退 `agent:<agent_id>`），归并、复用与 WorkClaim 共用同一派生器。`scan_work_claims.status` 约束为运行期 `active` 与终态 `completed/failed`，相同唯一键的后续真实执行复用同一行并递增 `revision`；`task_coverage_links` 使用 `executed/active` 表示 Claim 所有者、`in_flight/waiting` 表示挂接者，来源结束后转为 `resolved` 或 `source_failed`。等待 Attempt 不写 Agent，以 `workclaim:<digest>` 作内部标记，所有依赖结束后才以 CAS 转为 `Dispatching`；显式手动重试与 `risk_validation` 绕过 WorkClaim 和历史覆盖。
 
 #### `scan_timing_events`
 
@@ -416,7 +407,7 @@ G31 新增的 additive、append-only 表，保存 `argus.timing/v1` 的已校验
 
 写入前 Server 以活动 Attempt 的分配 Agent、会话和 tenant/project/task 归属重建边界，不接受 Agent 自行声明 tenant 或 project。`(tenant_id, source_event_id)` 唯一：同 ID 且所有受保存字段相同的重放返回已有记录，不同内容视为冲突；历史事件不更新或删除。索引 `idx_scan_timing_events_scope_created` 供已授权任务详情按 tenant/project/task 读取，`idx_scan_timing_events_attempt_created` 供 Attempt 历史排序。租户、项目、任务、批次、Attempt 与 Agent 归属通过不可变 Attempt 复合外键并使用 `ON DELETE RESTRICT`；计时表不外键到可清理的 `nodes` 行，因此不会阻断既有离线 Agent 清理。
 
-任务详情只在已完成 tenant + project + task 对象授权后构建有界 projection：按 Attempt 返回 `available` 和 `kind/stage/outcome/duration/start/finish`，最多 5000 条，超出时置 `truncated`。旧 Agent 没有事件时保持 unavailable，不以 0 代替；投影不返回 Agent 会话、target、WorkKey、事件 ID、配置/规则哈希或原始日志。
+任务详情只在已完成 tenant + project + task 对象授权后构建有界 projection：按 Attempt 返回 `available`、`unavailable_reason`（`not_executed` / `not_reported` / `pending`）和 `kind/stage/outcome/duration/start/finish`，最多 5000 条，超出时置 `truncated`。没有事件时保持 unavailable，不以 0 代替，也不把空风险兄弟或覆盖复用误标成旧版 Agent；投影不返回 Agent 会话、target、WorkKey、事件 ID、配置/规则哈希或原始日志。
 
 #### `domains`
 
@@ -452,6 +443,7 @@ G31 新增的 additive、append-only 表，保存 `argus.timing/v1` 的已校验
 | `service` | string | 服务名称 / 状态摘要 | - |
 | `cert_subject` | string | TLS 证书主体 | - |
 | `cert_expiry` | timestamp | TLS 证书过期时间 | - |
+| `cdn` | boolean | 是否疑似 CDN 资产（Migration 003，`tag=cdn` 探测与 CDN-Domain 记录置 true） | Not Null, Default:`false` |
 | `tags` | jsonb | 资产标签 | - |
 | `status` | string | `alive` / `inactive` 等 | Index, Default:`alive` |
 | `owner_id` | string | 责任人 | Index |
@@ -511,19 +503,6 @@ G31 新增的 additive、append-only 表，保存 `argus.timing/v1` 的已校验
 | `created_at` / `updated_at` | timestamp | 审计时间 | - |
 
 联合唯一约束：`(project_id, target, plugin)`。
-
-#### `asset_change_logs`
-
-| 字段 | 类型 | 说明 | 约束 / 索引 |
-|------|------|------|-------------|
-| `id` | uint | 变更主键 | PK |
-| `project_id` | string | 所属项目 | Index |
-| `task_id` | string | 触发变更的任务 | Index |
-| `entity_type` | string | 变更对象类型 | Index |
-| `entity_id` | uint | 变更对象主键 | Index |
-| `change_type` | string | 变更类型 | Index |
-| `details` | jsonb | 变更详情 | - |
-| `created_at` | timestamp | 记录时间 | - |
 
 #### `reports`
 
@@ -615,7 +594,7 @@ G31 新增的 additive、append-only 表，保存 `argus.timing/v1` 的已校验
 | `content_hash` | string | 内容哈希 | Index |
 | `severity` | string | 严重度 | Index, Default:`info` |
 | `execution_class` | string | POC 执行类别：`detection` / `verification`；`exploit` / `exp` 必须使用独立 EXP 包 | Index, Default:`detection` |
-| `risk_level` | string | 执行风险：`unknown` / `low` / `medium` / `high`；旧规则回填为 `unknown` | Index, Default:`unknown` |
+| `risk_level` | string | 执行风险：从 Nuclei `info.severity` 派生，`unknown` / `info` / `low` / `medium` / `high`；`critical` 记成 `high`，缺省 `severity` 记成 `unknown` | Index, Default:`unknown` |
 | `tags` | text | 标签串 | Text |
 | `author` | string | 作者 | - |
 | `description` | text | 描述 | Text |
@@ -626,7 +605,7 @@ G31 新增的 additive、append-only 表，保存 `argus.timing/v1` 的已校验
 
 联合唯一约束：`(tenant_id, source_file)`。
 
-`severity` 表示漏洞严重度，不能替代执行风险。所有 POC 仅能在显式风险验证流程确认后执行；`high` 和 `unknown` 需要二次确认。`arsenals` 中的 Nuclei YAML 仍是权威来源，治理字段来自 `info.metadata.argus-execution-class` 与 `info.metadata.argus-risk-level`，`poc_rules` 和 Agent `arsenal.db` 仅作为派生检索与分发层。
+`severity` 保存 Nuclei 原始严重度。执行风险 `risk_level` 与 `info.severity` 同步：`info` / `low` / `medium` 不要求二次确认，`high` 与缺省（`unknown`）需要二次确认，`critical` 在库中记成 `high`。`arsenals` 中的 Nuclei YAML 仍是权威来源，治理字段来自 `info.metadata.argus-execution-class` 与 `info.severity`，`poc_rules` 和 Agent `arsenal.db` 仅作为派生检索与分发层。
 
 #### `arsenal_ai_reviews`
 
@@ -719,21 +698,9 @@ G31 新增的 additive、append-only 表，保存 `argus.timing/v1` 的已校验
 
 ---
 
-## 5. 相比旧文档本次补齐的重点
+## 5. 云资源编排
 
-- 补全 `project_members`、`cron_tasks`、`notification_rules`、`domains`、`credentials`、`asset_change_logs`、`reports`。
-- 补全规则治理层的 `rule_catalog_bootstraps`、`fingerprint_rules`、`poc_rules`、`workflow_rules`、`dir_rules`。
-- 补全 `nodes` 的会话令牌、容量、运行任务列表、OS/Arch、资源使用率等字段。
-- 补全 `users` 的密码哈希、状态字段，以及 `system_configs` 对 `mcp_*` API Key 的承载方式。
-- 修正任务状态机，明确 `PartialDone`、`Dispatching`、`Recovered`、`CancelPending` 等中间态。
-- 明确 PostgreSQL 只保存报表元数据，不直接保存报表文件本体。
-- 补全云资源编排三表：`cloud_accounts`、`cloud_scaling_policies`、`cloud_instances`。
-
----
-
-## 5.1 云资源编排
-
-> 云资源编排三表已落地，对应 GORM 模型在 `server/internal/db/cloud_models.go`，SQL migration 为 `060_add_cloud_tables.sql`、`070_add_oss_fields.sql`、`080_add_cloud_instance_reboot_count.sql`。
+> 云资源编排表已落地，对应 GORM 模型在 `server/internal/db/cloud_models.go`；建表 DDL 已并入 `deploy/db/init/001_init.sql`。
 
 #### `cloud_accounts`
 
@@ -812,34 +779,13 @@ G31 新增的 additive、append-only 表，保存 `argus.timing/v1` 的已校验
 
 ---
 
-## 6. 结合整体架构，后续建议预留但当前尚未落地的表
-
-下列能力已在架构文档或实现状态文档中明确为缺口，但当前数据库尚未正式建模，可作为后续 schema 扩展候选：
-
-| 能力域 | 建议表 | 原因 |
-|--------|--------|------|
-| 租户治理 | `tenant_quotas`、`tenant_usage_snapshots` | 任务配额、并发额度、租户级资源限制尚未落库 |
-| 角色权限矩阵 | `roles`、`permissions`、`role_bindings` | 现阶段仅有用户角色字段，没有可管理的权限矩阵 |
-| 构建与发布 | `build_jobs`、`build_artifacts` | 当前客户端构建接口只返回 `accepted`，缺少任务状态跟踪 |
-
-这些建议表不属于当前已落地 schema，单独列出是为了避免后续架构扩展继续走“接口先行、数据模型缺位”的老路。
-
----
-
 ## 附录 A：项目隔离与资产入库演进背景
 
-Argus 早期结果入库以 `task_id` 为主要关联键，适合一次性扫描，但不适合持续巡航后的资产归档、漏洞修复态追踪和多轮扫描去重。当前 schema 已经将长期资产、域名、指纹、漏洞等结果统一沉淀到 `project_id` 维度，并保留 `task_id` 作为本次扫描来源。
+Argus 早期结果入库以 `task_id` 为主要关联键，适合一次性扫描；当前 schema 已将长期资产、域名、指纹、漏洞统一沉淀到 `project_id` 维度，并保留 `task_id` 作为本次扫描来源。核心设计判断：
 
-这次演进的核心设计判断是：
-
-- `projects` 是长期业务容器，承载授权边界、默认配置、初始目标、成员和后续巡航任务。
-- `root_tasks` / `sub_tasks` 只描述一次执行，不再作为资产生命周期的唯一真相源。
-- `domains`、`assets`、`fingerprint_hits`、`vulnerabilities` 使用 `project_id + target + 业务键` 做去重，避免同一项目多次扫描产生重复资产。
-- 误删影响大的实体使用软删除，例如 `projects`、`cron_tasks`、`credentials`。
-- 资产变更需要独立流水，`asset_change_logs` 用于描述发现、新增、消失、属性变化等事件，而不是把历史塞回资产主表。
-- 凭证必须加密存储，不使用 JSONB 明文查询；`credentials.content` 是密文承载字段。
-
-历史 schema 草案的具体结构体内容已经合并进本文的当前 schema 与上述设计背景，不再单独保留拆分稿。
+- `projects` 是长期业务容器，承载授权边界、默认配置、初始目标、成员和后续巡航任务；`root_tasks` / `sub_tasks` 只描述一次执行。
+- `domains`、`assets`、`fingerprint_hits`、`vulnerabilities` 使用 `project_id + target + 业务键` 去重，避免同一项目多次扫描产生重复资产。
+- 误删影响大的实体（`projects`、`credentials`）使用软删除；凭证必须加密存储，不使用 JSONB 明文查询。
 
 ## 附录 B：规则库 PostgreSQL 初始化流程
 

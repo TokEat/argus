@@ -3,6 +3,8 @@ package subdomain
 import (
 	"slices"
 	"testing"
+
+	"github.com/P0lar1ght/argus/scanner/ddout"
 )
 
 func TestEnumerateExpandsOnlyResolvedFrontierToRequestedDepth(t *testing.T) {
@@ -66,5 +68,105 @@ func TestMergeWordlistsNormalizesAndDeduplicates(t *testing.T) {
 	}
 	if len(got) != 3 {
 		t.Fatalf("merged wordlist = %v, want 3 unique entries", got)
+	}
+}
+
+func TestEnumerateMergesServerInjectedResultsWithoutSubfinder(t *testing.T) {
+	original := runDNSBruteforce
+	t.Cleanup(func() { runDNSBruteforce = original })
+	runDNSBruteforce = func(_ string, _ int, _ func(string), _ []string, _ string) []string {
+		return []string{"brute.example.test", "api.example.test"}
+	}
+
+	var emitted []ddout.OutputMessage
+	got := Enumerate([]string{"example.test"}, Config{
+		NoSubFinder: true,
+		Injected: map[string][]string{
+			"example.test": {"api.example.test", "injected.example.test"},
+		},
+		EmitFunc: func(msg ddout.OutputMessage) { emitted = append(emitted, msg) },
+	})
+
+	want := []string{"brute.example.test", "api.example.test", "injected.example.test"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("results = %v, want %v", got, want)
+	}
+	var injectedMessages []ddout.OutputMessage
+	for _, msg := range emitted {
+		if msg.Type == "DNS-SubFinder" && msg.AdditionalMsg == "server-passive" {
+			injectedMessages = append(injectedMessages, msg)
+		}
+	}
+	if len(injectedMessages) != 2 {
+		t.Fatalf("server-passive emissions = %d, want 2", len(injectedMessages))
+	}
+}
+
+func TestEnumerateInjectedDomainSkipsSubfinderEvenWhenEnabled(t *testing.T) {
+	original := runDNSBruteforce
+	t.Cleanup(func() { runDNSBruteforce = original })
+	runDNSBruteforce = func(_ string, _ int, _ func(string), _ []string, _ string) []string {
+		return nil
+	}
+
+	// NoSubFinder=false would normally run subFinder (network); the injected
+	// entry for the covered domain must prevent that. The uncovered domain
+	// stays on the subfinder path, so this test only feeds the covered one.
+	got := Enumerate([]string{"example.test"}, Config{
+		NoSubFinder: false,
+		Injected:    map[string][]string{"example.test": {"api.example.test"}},
+	})
+	if !slices.Equal(got, []string{"api.example.test"}) {
+		t.Fatalf("results = %v, want injected list only", got)
+	}
+}
+
+func TestApexDomainUsesRegistrableRoot(t *testing.T) {
+	if got := apexDomain("harbor-arm.uhomecp.com"); got != "uhomecp.com" {
+		t.Fatalf("apexDomain(harbor-arm.uhomecp.com) = %q, want uhomecp.com", got)
+	}
+	if got := apexDomain("jslgroup.cn"); got != "jslgroup.cn" {
+		t.Fatalf("apexDomain(jslgroup.cn) = %q, want jslgroup.cn", got)
+	}
+}
+
+func TestEnumerateInjectedApexCoversFQDNTarget(t *testing.T) {
+	original := runDNSBruteforce
+	t.Cleanup(func() { runDNSBruteforce = original })
+	runDNSBruteforce = func(_ string, _ int, _ func(string), _ []string, _ string) []string {
+		t.Fatal("bruteforce should be disabled")
+		return nil
+	}
+
+	var emitted []ddout.OutputMessage
+	got := Enumerate([]string{"www.example.test", "api.example.test"}, Config{
+		NoSubdomainBruteForce: true,
+		NoSubFinder:           false,
+		Injected:              map[string][]string{"example.test": {"www.example.test", "api.example.test", "mail.example.test"}},
+		EmitFunc:              func(msg ddout.OutputMessage) { emitted = append(emitted, msg) },
+	})
+	if !slices.Equal(got, []string{"mail.example.test"}) {
+		t.Fatalf("results = %v, want new hosts only after dropping inputs", got)
+	}
+	for _, msg := range emitted {
+		if msg.Type == "DNS-SubFinder" && (msg.Domain == "www.example.test" || msg.Domain == "api.example.test") {
+			t.Fatalf("passive emit must not repeat input %q", msg.Domain)
+		}
+	}
+}
+
+func TestEnumerateEmptyInjectedListStillSkipsSubfinder(t *testing.T) {
+	original := runDNSBruteforce
+	t.Cleanup(func() { runDNSBruteforce = original })
+	runDNSBruteforce = func(_ string, _ int, _ func(string), _ []string, _ string) []string {
+		return nil
+	}
+
+	got := Enumerate([]string{"example.test"}, Config{
+		NoSubFinder: false,
+		Injected:    map[string][]string{"example.test": nil},
+	})
+	if len(got) != 0 {
+		t.Fatalf("results = %v, want none", got)
 	}
 }

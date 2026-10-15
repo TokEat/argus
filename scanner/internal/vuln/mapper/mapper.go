@@ -55,10 +55,28 @@ func GetPocs(resultMap map[string][]string, workFlowDB map[string]structs.WorkFl
 	return result, count
 }
 
+func isHTTPTarget(target string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(target))
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+		return true
+	default:
+		return false
+	}
+}
+
 func applyWorkflow(target string, workflowEntity structs.WorkFlowEntity, result map[string][]string) int {
 	count := 0
 
-	if !strings.Contains(target, "http") {
+	// Non-HTTP service fingerprints (ssh://, zookeeper://, smb:// ...) still
+	// trigger root-level workflow templates. The workflow.yaml entries for
+	// those products (SSH, ZooKeeper, SVN ...) point at TCP/network templates
+	// (CVE-2001-1473, exposed-zookeeper, exposed-svn ...) which run fine
+	// against a service URL; only HTTP path/base/dir expansion is HTTP-only.
+	if !isHTTPTarget(target) {
 		if !workflowEntity.RootType {
 			return 0
 		}

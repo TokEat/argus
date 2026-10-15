@@ -15,6 +15,75 @@ import (
 	nucleiOutput "github.com/projectdiscovery/nuclei/v3/pkg/output"
 )
 
+func TestNativeWorkflowMatchWithEmptyFingerprintsEmitsNoPhase(t *testing.T) {
+	originalCall := callNucleiLimited
+	t.Cleanup(func() { callNucleiLimited = originalCall })
+	callNucleiLimited = func(
+		map[string][]string, string, func(nucleiOutput.ResultEvent), string, bool, bool, embed.FS, string, []string, []string, nuclei.ExecutionLimits, bool,
+	) ([]nucleiOutput.ResultEvent, error) {
+		t.Fatal("empty fingerprint native match must not invoke Nuclei")
+		return nil, nil
+	}
+	var phases []PhaseEvent
+	ctx := &ScanContext{
+		Config: Config{
+			ExecutionMode:               "risk_validation",
+			TargetFingerprints:          map[string][]string{},
+			ValidationBudgetID:          "empty-budget",
+			ValidationTargetConcurrency: 1,
+			ValidationRateLimit:         10,
+			ValidationRequestBudget:     1,
+			ValidationEstimatedRequests: 1,
+		},
+		PhaseHook: func(event PhaseEvent) { phases = append(phases, event) },
+	}
+	if err := (&Pipeline{}).Run(ctx); err != nil {
+		t.Fatalf("empty fingerprint risk validation failed: %v", err)
+	}
+	if len(phases) != 0 {
+		t.Fatalf("empty fingerprint native match emitted phases: %+v", phases)
+	}
+}
+
+func TestNativeWorkflowMatchIgnoresServerRequestBudget(t *testing.T) {
+	originalCall := callNucleiLimited
+	t.Cleanup(func() { callNucleiLimited = originalCall })
+	var got nuclei.ExecutionLimits
+	callNucleiLimited = func(
+		_ map[string][]string, _ string, _ func(nucleiOutput.ResultEvent), _ string, _ bool, _ bool, _ embed.FS, _ string, _ []string, _ []string, limits nuclei.ExecutionLimits, _ bool,
+	) ([]nucleiOutput.ResultEvent, error) {
+		got = limits
+		return nil, nil
+	}
+	ctx := &ScanContext{
+		Config: Config{
+			ExecutionMode:               "risk_validation",
+			Targets:                     []string{"https://app.example"},
+			TargetFingerprints:          map[string][]string{"https://app.example": {"nginx"}},
+			ValidationBudgetID:          "tiny-budget",
+			ValidationTargetConcurrency: 1,
+			ValidationRateLimit:         10,
+			ValidationRequestBudget:     25,
+			ValidationEstimatedRequests: 25,
+			AllowHighRiskAutoExecution:  true,
+		},
+		WorkFlowDB: map[string]WorkFlowEntity{
+			"nginx": {PocsName: []string{"one.yaml", "two.yaml"}, RootType: true},
+		},
+		Ctx:        context.Background(),
+		OutputHook: func(OutputMessage) {},
+	}
+	if err := (&Pipeline{}).Run(ctx); err != nil {
+		t.Fatalf("native match failed: %v", err)
+	}
+	if got.RequestBudget != 0 {
+		t.Fatalf("native match must not apply Server request budget, got %d", got.RequestBudget)
+	}
+	if got.RateLimit != 10 || got.TargetConcurrency != 1 {
+		t.Fatalf("intensity limits should still apply: %+v", got)
+	}
+}
+
 func TestPipelineRiskValidationRunsOnlyExactNucleiPhase(t *testing.T) {
 	originalCall := callNucleiLimited
 	t.Cleanup(func() { callNucleiLimited = originalCall })

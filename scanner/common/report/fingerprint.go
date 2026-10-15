@@ -12,6 +12,7 @@ import (
 
 const (
 	fingerprintSourcePassive  = "passive"
+	fingerprintSourceBehavior = "behavior"
 	fingerprintSourceActive   = "active"
 	fingerprintSourceFallback = "fallback"
 )
@@ -122,7 +123,7 @@ func (c *fingerprintCollector) Items() []reportItem {
 			Link:    fact.Link,
 			Product: fact.Product,
 		}
-		for _, sourceKey := range []string{fingerprintSourcePassive, fingerprintSourceActive, fingerprintSourceFallback} {
+		for _, sourceKey := range []string{fingerprintSourcePassive, fingerprintSourceBehavior, fingerprintSourceActive, fingerprintSourceFallback} {
 			if source, ok := fact.Sources[sourceKey]; ok {
 				view.Sources = append(view.Sources, source)
 			}
@@ -164,10 +165,14 @@ func (c *fingerprintCollector) Items() []reportItem {
 
 func fingerprintSource(message structs.OutputMessage) fingerprintSourceView {
 	if message.Type == "Active-Finger" {
-		if strings.Contains(strings.ToLower(message.AdditionalMsg), "[dir-fallback]") {
+		note := strings.ToLower(message.AdditionalMsg)
+		if strings.Contains(note, "[dir-fallback]") {
 			return fingerprintSourceView{Key: fingerprintSourceFallback, Label: "路径推断", Class: "source-fallback"}
 		}
-		return fingerprintSourceView{Key: fingerprintSourceActive, Label: "主动确认", Class: "source-active"}
+		if strings.Contains(note, "[behavior-probe:") {
+			return fingerprintSourceView{Key: fingerprintSourceBehavior, Label: "行为探针", Class: "source-behavior"}
+		}
+		return fingerprintSourceView{Key: fingerprintSourceActive, Label: "主动路径", Class: "source-active"}
 	}
 	return fingerprintSourceView{Key: fingerprintSourcePassive, Label: "被动命中", Class: "source-passive"}
 }
@@ -180,7 +185,10 @@ func fingerprintEvidence(message structs.OutputMessage, source fingerprintSource
 	details := strings.TrimSpace(message.AdditionalMsg)
 	if source.Key == fingerprintSourceFallback {
 		details = strings.TrimSpace(strings.ReplaceAll(details, "[dir-fallback]", ""))
-		details = joinDetails("产品专用路径返回 HTTP 200，未通过产品指纹规则复核。", details)
+		details = joinDetails("产品专用路径返回 HTTP 200，未通过产品指纹规则复核，不作为已识别、不调度 POC。", details)
+	}
+	if source.Key == fingerprintSourceActive {
+		details = strings.TrimSpace(strings.ReplaceAll(details, "[directory-probe]", ""))
 	}
 	return fingerprintEvidenceView{
 		SourceLabel: source.Label,
@@ -195,12 +203,19 @@ func fingerprintEvidence(message structs.OutputMessage, source fingerprintSource
 
 func fingerprintState(sources map[string]fingerprintSourceView) (string, string) {
 	_, passive := sources[fingerprintSourcePassive]
+	_, behavior := sources[fingerprintSourceBehavior]
 	_, active := sources[fingerprintSourceActive]
-	if passive && active {
+	if passive && (active || behavior) {
 		return "双源确认", "fingerprint-confirmed"
 	}
-	if passive || active {
+	if passive {
 		return "已识别", "fingerprint-confirmed"
+	}
+	if behavior {
+		return "行为确认", "fingerprint-confirmed"
+	}
+	if active {
+		return "主动路径命中", "fingerprint-suspected"
 	}
 	return "疑似", "fingerprint-suspected"
 }
@@ -209,10 +224,12 @@ func fingerprintSourceRank(class string) int {
 	switch class {
 	case "source-passive":
 		return 0
-	case "source-active":
+	case "source-behavior":
 		return 1
-	default:
+	case "source-active":
 		return 2
+	default:
+		return 3
 	}
 }
 

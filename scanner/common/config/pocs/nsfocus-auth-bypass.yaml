@@ -1,11 +1,11 @@
 id: nsfocus-auth-bypass
 
 info:
-  name: Nsfocus - Arbitrary User Login
+  name: 绿盟 SAS 堡垒机 任意用户登录
   author: ritikchaddha
   severity: high
   description: |
-    Nsfocus bastion host has an arbitrary user login vulnerability. Attackers can use the vulnerability to log in any user by including www/local_user.php
+    绿盟堡垒机 www/local_user.php 存在任意用户登录漏洞，攻击者可冒充任意用户进入系统。
   reference:
     - https://forum.butian.net/article/251
   metadata:

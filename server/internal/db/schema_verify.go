@@ -19,12 +19,43 @@ func schemaTableSpecs() []schemaTableSpec {
 			Table:   "schema_migrations",
 			Columns: []string{"version", "name", "checksum", "applied_at"},
 		},
+		{
+			Table:   "oauth_clients",
+			Columns: []string{"client_id", "redirect_uris", "public", "tenant_id", "created_at"},
+			Indexes: []string{"idx_oauth_clients_tenant_id"},
+		},
+		{
+			Table:   "oauth_authorization_codes",
+			Columns: []string{"code_hash", "client_id", "redirect_uri", "resource", "code_challenge", "user_id", "tenant_id", "role", "role_base", "exp_authorized", "expires_at", "used_at", "created_at"},
+			Indexes: []string{"idx_oauth_authorization_codes_client_id", "idx_oauth_authorization_codes_tenant_id", "idx_oauth_authorization_codes_expires_at"},
+		},
+		{
+			Table:   "oauth_refresh_tokens",
+			Columns: []string{"token_hash", "client_id", "user_id", "tenant_id", "role", "role_base", "exp_authorized", "resource", "expires_at", "revoked_at", "created_at"},
+			Indexes: []string{"idx_oauth_refresh_tokens_client_id", "idx_oauth_refresh_tokens_user_id", "idx_oauth_refresh_tokens_tenant_id", "idx_oauth_refresh_tokens_expires_at", "idx_oauth_refresh_tokens_revoked_at"},
+		},
+		{
+			Table:   "tenant_mcp_settings",
+			Columns: []string{"tenant_id", "enabled", "updated_at", "updated_by"},
+		},
+		{
+			Table:   "oauth_tenant_client_blocks",
+			Columns: []string{"tenant_id", "client_id", "blocked_at", "actor_id"},
+			Indexes: []string{"idx_oauth_tenant_client_blocks_client_id"},
+		},
+		{
+			Table:   "mcp_admin_events",
+			Columns: []string{"id", "tenant_id", "actor_id", "action", "client_id", "details", "created_at"},
+			Indexes: []string{"idx_mcp_admin_events_tenant_id", "idx_mcp_admin_events_actor_id", "idx_mcp_admin_events_action", "idx_mcp_admin_events_created_at"},
+		},
 		{Table: "scan_policy_intents", Columns: []string{"tenant_id", "project_id", "root_task_id", "schema_version", "policy_json", "policy_hash", "plan_hash", "risk_status", "credential_status", "authorization_actor_id", "authorized_at", "created_at", "updated_at"}, Indexes: []string{"idx_scan_policy_intent_root", "idx_scan_policy_intents_project_id", "idx_scan_policy_intents_policy_hash", "idx_scan_policy_intents_plan_hash"}},
 		{Table: "scan_stage_derivations", Columns: []string{"tenant_id", "project_id", "root_task_id", "stage", "status", "plan_hash", "observation_hash", "batch_id", "attempt_id", "item_count", "summary", "created_at", "updated_at"}, Indexes: []string{"idx_scan_stage_derivation", "idx_scan_stage_derivations_batch_id"}},
 		{Table: "credential_dictionaries", Columns: []string{"id", "tenant_id", "project_id", "kind", "name", "created_by", "created_at", "updated_at", "deleted_at"}, Indexes: []string{"idx_credential_dictionary_name", "idx_credential_dictionaries_project_id"}},
 		{Table: "credential_dictionary_revisions", Columns: []string{"tenant_id", "project_id", "dictionary_id", "revision", "sha256", "item_count", "ciphertext", "nonce", "created_by", "created_at"}, Indexes: []string{"idx_credential_dictionary_revision", "idx_credential_dictionary_revisions_tenant_id"}},
 		{Table: "subdomain_dictionaries", Columns: []string{"id", "tenant_id", "project_id", "name", "created_by", "created_at", "updated_at", "deleted_at"}, Indexes: []string{"idx_subdomain_dictionary_name", "idx_subdomain_dictionaries_project_id"}},
 		{Table: "subdomain_dictionary_revisions", Columns: []string{"tenant_id", "project_id", "dictionary_id", "revision", "sha256", "item_count", "values_json", "created_by", "created_at"}, Indexes: []string{"idx_subdomain_dictionary_revision", "idx_subdomain_dictionary_revisions_tenant_id"}},
+		{Table: "subdomain_passive_cache", Columns: []string{"domain", "subdomains", "sources", "collected_at", "expires_at"}, Indexes: []string{"idx_subdomain_passive_cache_expires"}},
+		{Table: "subdomain_passive_jobs", Columns: []string{"id", "tenant_id", "project_id", "root_task_id", "batch_id", "attempt_id", "domains", "domains_done", "state", "note", "created_at", "updated_at"}, Indexes: []string{"idx_subdomain_passive_jobs_state", "idx_subdomain_passive_jobs_attempt", "idx_subdomain_passive_jobs_root", "idx_subdomain_passive_jobs_tenant"}},
 		{Table: "credential_bundles", Columns: []string{"ref", "tenant_id", "project_id", "root_task_id", "batch_id", "attempt_id", "agent_id", "sha256", "pair_count", "ciphertext", "nonce", "expires_at", "claimed_at", "consumed_at", "created_at"}, Indexes: []string{"idx_credential_bundles_attempt_id", "idx_credential_bundles_expires_at"}},
 		{Table: "credential_finding_secrets", Columns: []string{"id", "tenant_id", "project_id", "root_task_id", "attempt_id", "endpoint", "service", "plugin", "masked_username", "ciphertext", "nonce", "created_at"}, Indexes: []string{"idx_credential_finding_secrets_tenant_id", "idx_credential_finding_secrets_root_task_id"}},
 		{Table: "credential_reveal_audits", Columns: []string{"tenant_id", "project_id", "finding_id", "actor_id", "action", "created_at"}, Indexes: []string{"idx_credential_reveal_audits_tenant_id", "idx_credential_reveal_audits_finding_id"}},
@@ -59,13 +90,8 @@ func schemaTableSpecs() []schemaTableSpec {
 			Columns: []string{"tenant_id", "project_id", "user_id", "role"},
 		},
 		{
-			Table:   "cron_tasks",
-			Columns: []string{"project_id", "cron_expr", "next_run_at", "status", "deleted_at"},
-			Indexes: []string{"idx_cron_tasks_project_id", "idx_cron_tasks_status", "idx_cron_tasks_deleted_at"},
-		},
-		{
 			Table:   "root_tasks",
-			Columns: []string{"project_id", "cron_task_id", "total_targets", "completed_targets", "status", "archived_at", "current_config_version", "dispatch_strategy"},
+			Columns: []string{"project_id", "total_targets", "completed_targets", "status", "archived_at", "current_config_version", "dispatch_strategy"},
 			Indexes: []string{"idx_root_tasks_tenant_id", "idx_root_tasks_project_id", "idx_root_tasks_status", "idx_root_tasks_archived_at", "idx_root_tasks_scope_id"},
 		},
 		{
@@ -291,7 +317,7 @@ func schemaTableSpecs() []schemaTableSpec {
 		},
 		{
 			Table:   "assets",
-			Columns: []string{"project_id", "tags", "status", "owner_id", "cred_id", "source", "updated_at"},
+			Columns: []string{"project_id", "tags", "cdn", "status", "owner_id", "cred_id", "source", "updated_at"},
 			Indexes: []string{"idx_asset_dedupe", "idx_assets_task_id", "idx_assets_status"},
 		},
 		{
@@ -345,6 +371,11 @@ func schemaTableSpecs() []schemaTableSpec {
 			Indexes: []string{"idx_ai_tool_invocations_tenant_id", "idx_ai_tool_invocations_user_id", "idx_ai_tool_invocations_module", "idx_ai_tool_invocations_tool_name", "idx_ai_tool_invocations_status"},
 		},
 		{
+			Table:   "mcp_tool_invocations",
+			Columns: []string{"id", "tenant_id", "user_id", "role", "client_id", "tool_name", "action", "args", "agent_id", "target", "duration_ms", "status", "error_summary", "created_at"},
+			Indexes: []string{"idx_mcp_tool_invocations_tenant_id", "idx_mcp_tool_invocations_user_id", "idx_mcp_tool_invocations_client_id", "idx_mcp_tool_invocations_tool_name", "idx_mcp_tool_invocations_status", "idx_mcp_tool_invocations_created_at"},
+		},
+		{
 			Table:   "custom_roles",
 			Columns: []string{"tenant_id", "name", "label", "description", "base_role", "permissions", "created_at", "updated_at"},
 			Indexes: []string{"idx_custom_roles_tenant_name", "idx_custom_roles_base_role"},
@@ -377,16 +408,6 @@ func schemaTableSpecs() []schemaTableSpec {
 			Table:   "build_jobs",
 			Columns: []string{"platform", "arch", "components", "pack", "status", "artifact", "artifacts", "log_tail", "log_text", "error", "started_at", "finished_at"},
 			Indexes: []string{"idx_build_jobs_platform", "idx_build_jobs_arch", "idx_build_jobs_status"},
-		},
-		{
-			Table:   "notification_rules",
-			Columns: []string{"project_id", "event", "channel", "config", "status"},
-			Indexes: []string{"idx_notification_rules_project_id", "idx_notification_rules_event"},
-		},
-		{
-			Table:   "asset_change_logs",
-			Columns: []string{"project_id", "task_id", "entity_type", "entity_id", "change_type", "details"},
-			Indexes: []string{"idx_asset_change_logs_project_id", "idx_asset_change_logs_task_id", "idx_asset_change_logs_entity_type"},
 		},
 		{
 			Table:   "reports",

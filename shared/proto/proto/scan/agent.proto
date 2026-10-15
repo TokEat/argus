@@ -18,11 +18,8 @@ service AgentService {
   rpc Subscribe(stream AgentSignal) returns (stream TaskNotify);
 
   // ClaimTask Agent 主动认领任务（原子操作，保证不重复领取）。
-  // Agent 收到 TaskNotify 后调用此接口从 Redis 队列中领取任务。
+  // Agent 收到 TaskNotify 后调用此接口从队列中领取任务。
   rpc ClaimTask(ClaimTaskReq) returns (Task);
-
-  // FetchTask 领取分配给该节点的扫描任务（兼容旧版，作为 fallback）
-  rpc FetchTask(FetchTaskReq) returns (Task);
   
   // StreamResult 流式回传扫描产生的中间结果（如单独发现的一个漏洞）
   rpc StreamResult(stream ScanResult) returns (Ack);
@@ -81,10 +78,6 @@ message HeartbeatResp {
   bool should_sync_rules = 3; // 通知 Agent 需要同步规则（替代 HTTP 轮询）
   // tasks_available 心跳响应中携带队列任务数，Agent 据此决定是否发起 ClaimTask
   int32 tasks_available = 4;
-}
-
-message FetchTaskReq {
-  string agent_id = 1;
 }
 
 // -------------------- Subscribe 双向流消息 --------------------

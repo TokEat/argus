@@ -22,6 +22,11 @@ describe('route permissions', () => {
         expect(configRoutes.every((route) => route.minRole === 'admin')).toBe(true);
     });
 
+    it('requires admin for MCP management', () => {
+        expect(routes.find((route) => route.path === '/mcp-admin')?.minRole).toBe('admin');
+        expect(routes.find((route) => route.path === '/mcp-admin')?.name).toBe('MCP 管理');
+    });
+
     it('does not raise unrelated task and project pages above viewer', () => {
         expect(routes.find((route) => route.path === '/tasks')?.minRole).toBe('viewer');
         expect(routes.find((route) => route.path === '/projects')?.minRole).toBe('viewer');

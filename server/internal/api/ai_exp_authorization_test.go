@@ -56,11 +56,4 @@ func TestConfirmCopilotActionRejectsExpDraftWithoutUserAuthorization(t *testing.
 	if count != 0 {
 		t.Fatalf("unauthorized Copilot action created %d EXP rows", count)
 	}
-	var audit db.AIToolInvocation
-	if err := store.Where("tool_name = ?", "CopilotAction:create_exp_draft").First(&audit).Error; err != nil {
-		t.Fatalf("expected rejected action audit row: %v", err)
-	}
-	if audit.Status != "error" || !strings.Contains(audit.ErrorSummary, "user-level authorization") {
-		t.Fatalf("unexpected rejected action audit: %+v", audit)
-	}
 }

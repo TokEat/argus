@@ -154,6 +154,23 @@ func retrySelectorSnapshot(revision TaskConfigRevision, batch TaskBatch, current
 	return string(selectorJSON), SelectorRulesToJSON(effectiveRules)
 }
 
+// immutableDerivedExecutionConfig reports whether the attempt carries a
+// derived validation-stage snapshot (risk or credential validation). These
+// snapshots are immutable: recovery paths must re-dispatch them verbatim
+// because replacing them with the Root's asset-discovery revision silently
+// disables POC execution (NoPoc=true) and marks the stage DONE unreached.
+func immutableDerivedExecutionConfig(config string) bool {
+	var execution struct{ ExecutionMode string }
+	if err := json.Unmarshal([]byte(config), &execution); err != nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(execution.ExecutionMode)) {
+	case "risk_validation", "credential_validation":
+		return true
+	}
+	return false
+}
+
 func applyCurrentTaskConfig(tx *gorm.DB, attempt *SubTask, batch TaskBatch, root RootTask) {
 	if root.ID == "" || root.CurrentConfigVersion < 1 {
 		return
@@ -309,10 +326,10 @@ func AppendSubTaskAttemptTx(tx *gorm.DB, expected *SubTask, options AttemptRetry
 	prepared.FinishedAt = nil
 	prepared.CreatedAt = time.Time{}
 	prepared.UpdatedAt = time.Time{}
-	if options.UseCurrentTaskConfig {
+	if options.UseCurrentTaskConfig && !immutableDerivedExecutionConfig(current.Config) {
 		applyCurrentTaskConfig(tx, &prepared, batch, root)
 	}
-	if !options.PreserveRuleVersion {
+	if !options.PreserveRuleVersion && !immutableDerivedExecutionConfig(current.Config) {
 		prepared.RuleVersion = currentAttemptRuleVersion(tx, prepared.RuleVersion)
 	}
 	if err := tx.Create(&prepared).Error; err != nil {
@@ -400,4 +417,12 @@ func SettlePausedTaskBatchAttempt(expected *SubTask, terminalStatus, failureReas
 		log.Printf("[Attempt] Failed to settle paused attempt %s: %v", expected.ID, err)
 	}
 	return settled
+}
+
+// IsImmutableDerivedExecutionConfig exposes the immutability check to recovery
+// paths outside this package: derived validation snapshots must never be
+// binary-split (RiskValidationTargets stays global, so each half would reject
+// the other half's targets during coverage validation).
+func IsImmutableDerivedExecutionConfig(config string) bool {
+	return immutableDerivedExecutionConfig(config)
 }

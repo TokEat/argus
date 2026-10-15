@@ -103,12 +103,13 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: PostgreSQL migration apply and schema verify
+      - name: PostgreSQL init (pure SQL) and schema verify
         env:
           DB_DSN: host=127.0.0.1 user=postgres password=argus_ci dbname=argus port=5432 sslmode=disable
         run: |
-          make db-migrate DB_MIGRATION_MODE=apply
-          make db-verify
+          bash deploy/tests/db-init-container.sh
+          make db-setup POSTGRES_PASSWORD=argus_ci
+          make db-verify POSTGRES_PASSWORD=argus_ci
 
   frontend:
     name: Frontend

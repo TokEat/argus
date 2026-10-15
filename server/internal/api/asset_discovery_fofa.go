@@ -19,10 +19,14 @@ import (
 )
 
 const (
-	assetDiscoveryPreviewSchema = "argus.asset-discovery-query-preview/v1"
-	assetDiscoveryRequestLimit  = int64(16 << 10)
-	assetDiscoveryConfigLimit   = 1 << 20
-	assetDiscoveryAuditTimeout  = 2 * time.Second
+	assetDiscoveryPreviewSchema  = "argus.asset-discovery-query-preview/v1"
+	assetDiscoveryRequestLimit   = int64(16 << 10)
+	assetDiscoveryConfigLimit    = 1 << 20
+	assetDiscoveryAuditTimeout   = 2 * time.Second
+	assetDiscoveryMaxQueryPage   = 100000
+	assetDiscoveryMaxQueryOffset = 10_000_000_000
+	assetDiscoveryActionPreview  = "query_preview"
+	assetDiscoveryActionPage     = "query_page"
 )
 
 var (
@@ -51,14 +55,21 @@ func isAssetDiscoveryQueryPath(path string) bool {
 type projectDiscoveryQueryRequest struct {
 	Expression string `json:"expression"`
 	Limit      int    `json:"limit"`
+	Page       int    `json:"page"`
+	SnapshotID uint   `json:"snapshot_id"`
 }
 
 type projectDiscoveryQueryResponse struct {
 	SchemaVersion string                 `json:"schema_version"`
 	ProjectID     string                 `json:"project_id"`
 	AuditID       uint                   `json:"audit_id"`
+	SnapshotID    uint                   `json:"snapshot_id"`
 	Provider      string                 `json:"provider"`
 	ProviderTotal int                    `json:"provider_total"`
+	ReturnedCount int                    `json:"returned_count"`
+	Page          int                    `json:"page"`
+	PageSize      int                    `json:"page_size"`
+	HasMore       bool                   `json:"has_more"`
 	SkippedRows   int                    `json:"skipped_rows"`
 	Truncated     bool                   `json:"truncated"`
 	Assets        []assetdiscovery.Asset `json:"assets"`
@@ -93,6 +104,10 @@ func queryProjectFOFAPreview(c *gin.Context) {
 
 	startedAt := time.Now()
 	audit := newAssetDiscoveryAudit(c, project.ID, "fofa", request, "failed", "", startedAt)
+	expression, ok := loadDiscoverySnapshotExpression(c, project.ID, "fofa", request, audit, startedAt)
+	if !ok {
+		return
+	}
 	credential, err := loadTenantFOFACredential(currentTenantID(c))
 	if err != nil {
 		audit.ErrorCode = "credential_unavailable"
@@ -120,8 +135,9 @@ func queryProjectFOFAPreview(c *gin.Context) {
 	}
 
 	result, searchErr := provider.Search(c.Request.Context(), credential.Credential, assetdiscovery.FOFAQuery{
-		Expression: request.Expression,
+		Expression: expression,
 		Limit:      request.Limit,
+		Page:       request.Page,
 	})
 	audit.DurationMS = time.Since(startedAt).Milliseconds()
 	if searchErr != nil {
@@ -134,7 +150,7 @@ func queryProjectFOFAPreview(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
-	completeProjectDiscoveryPreview(c, project.ID, request, result, audit)
+	completeProjectDiscoveryQuery(c, project.ID, request, result, audit)
 }
 
 func decodeProjectDiscoveryQueryRequest(c *gin.Context, maxQueryBytes, defaultLimit, maxLimit int) (projectDiscoveryQueryRequest, error) {
@@ -150,15 +166,39 @@ func decodeProjectDiscoveryQueryRequest(c *gin.Context, maxQueryBytes, defaultLi
 	}
 
 	request.Expression = strings.TrimSpace(request.Expression)
-	if request.Expression == "" || len(request.Expression) > maxQueryBytes ||
-		!utf8.ValidString(request.Expression) || strings.ContainsAny(request.Expression, "\r\n\x00") {
-		return request, errors.New("invalid query expression")
+	if request.Page == 0 {
+		// An empty body keeps the historical default of querying the first page.
+		request.Page = 1
+	}
+	if request.Page == 1 {
+		if request.Expression == "" || len(request.Expression) > maxQueryBytes ||
+			!utf8.ValidString(request.Expression) || strings.ContainsAny(request.Expression, "\r\n\x00") {
+			return request, errors.New("invalid query expression")
+		}
+		if request.SnapshotID != 0 {
+			return request, errors.New("snapshot_id is only valid for paged requests")
+		}
+	} else {
+		// Later pages reuse the expression stored in the snapshot instead of
+		// trusting a second copy from the client.
+		if request.Expression != "" {
+			return request, errors.New("expression is not allowed when continuing an existing query")
+		}
+		if request.SnapshotID == 0 {
+			return request, errors.New("snapshot_id is required for paged requests")
+		}
+	}
+	if request.Page < 1 || request.Page > assetDiscoveryMaxQueryPage {
+		return request, errors.New("invalid query page")
 	}
 	if request.Limit == 0 {
 		request.Limit = defaultLimit
 	}
 	if request.Limit < 1 || request.Limit > maxLimit {
 		return request, errors.New("invalid query limit")
+	}
+	if int64(request.Page-1)*int64(maxLimit) > assetDiscoveryMaxQueryOffset {
+		return request, errors.New("query page offset is too large")
 	}
 	return request, nil
 }
@@ -243,11 +283,15 @@ func validFOFACredentialPart(value string, email bool) bool {
 
 func newAssetDiscoveryAudit(c *gin.Context, projectID, provider string, request projectDiscoveryQueryRequest, status, errorCode string, startedAt time.Time) *db.AssetDiscoveryAudit {
 	digest := sha256.Sum256([]byte(strings.TrimSpace(request.Expression)))
+	action := assetDiscoveryActionPreview
+	if request.Page > 1 {
+		action = assetDiscoveryActionPage
+	}
 	return &db.AssetDiscoveryAudit{
 		TenantID:       currentTenantID(c),
 		ProjectID:      projectID,
 		Provider:       provider,
-		Action:         "query_preview",
+		Action:         action,
 		OperatorID:     currentUserID(c),
 		QueryHash:      hex.EncodeToString(digest[:]),
 		RequestedLimit: request.Limit,

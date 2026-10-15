@@ -12,6 +12,7 @@ import (
 
 	"github.com/projectdiscovery/nuclei/v3/pkg/output"
 
+	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/projectdiscovery/goflags"
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/gologger/levels"
@@ -30,6 +31,18 @@ var (
 	memProfile string // optional profile file path
 )
 
+func logNucleiTemplateLoad(debug bool, templates []string) {
+	if !structs.GlobalConfig.ShowPocMap {
+		return
+	}
+	pwd, _ := os.Getwd()
+	if debug {
+		gologger.Info().Msgf("[Nuclei][Debug] CWD=%s, Templates=%v, MatcherStatus=true", pwd, templates)
+		return
+	}
+	gologger.Info().Msgf("[Nuclei] CWD=%s, Templates=%v", pwd, templates)
+}
+
 // Presentation controls output from a single embedded Nuclei invocation.
 // Argus always owns the finding sink through its callback; MachineOutput also
 // disables color and progress for a structured CLI stream.
@@ -46,6 +59,7 @@ func applyPresentation(options *types.Options, presentation []Presentation) {
 	// embedded writer enabled duplicates interactive findings and corrupts the
 	// CLI NDJSON stream with Nuclei screen output.
 	options.DisableStdout = true
+	options.EnableProgressBar = true
 	if len(presentation) == 0 {
 		return
 	}
@@ -149,9 +163,7 @@ func CallNuclei(TargetAndPocsName map[string][]string,
 	nucleiRunner.EmbedPocsFS = fs
 	nucleiRunner.EnableSeverities = severities
 
-	// 调试日志：打印 Nuclei 实际加载的模板路径
-	pwd, _ := os.Getwd()
-	gologger.Info().Msgf("[Nuclei] CWD=%s, Templates=%v", pwd, options.Templates)
+	logNucleiTemplateLoad(false, options.Templates)
 
 	// Task 2.3: 移除 signal handler — Agent 有自己的生命周期管理，
 	// 此处的 SIGINT 处理会泄漏 goroutine 且可能杀死宿主进程。
@@ -232,8 +244,7 @@ func CallNucleiDebug(TargetAndPocsName map[string][]string,
 	nucleiRunner.EmbedPocsFS = fs
 	nucleiRunner.EnableSeverities = severities
 
-	pwd, _ := os.Getwd()
-	gologger.Info().Msgf("[Nuclei][Debug] CWD=%s, Templates=%v, MatcherStatus=true", pwd, options.Templates)
+	logNucleiTemplateLoad(true, options.Templates)
 
 	resumeFileName := types.DefaultResumeFilePath()
 
@@ -696,7 +707,7 @@ func readConfig(options *types.Options,
 	// 覆盖安装模板
 	options.NewTemplatesDirectory = pwd + "/config/pocs/nuclei-templates/"
 
-	// 显示正在扫描的统计信息
+	// Argus 终端保留 Nuclei 进度条；模板映射日志仍由 -spm 控制。
 	options.EnableProgressBar = true
 	// 将统计信息以JSONL格式输出到文件
 	options.StatsJSON = false

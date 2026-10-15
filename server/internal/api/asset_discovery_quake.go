@@ -43,6 +43,10 @@ func queryProjectQuakePreview(c *gin.Context) {
 
 	startedAt := time.Now()
 	audit := newAssetDiscoveryAudit(c, project.ID, "quake", request, "failed", "", startedAt)
+	expression, ok := loadDiscoverySnapshotExpression(c, project.ID, "quake", request, audit, startedAt)
+	if !ok {
+		return
+	}
 	credential, err := loadTenantQuakeCredential(currentTenantID(c))
 	if err != nil {
 		audit.ErrorCode = "credential_unavailable"
@@ -70,8 +74,9 @@ func queryProjectQuakePreview(c *gin.Context) {
 	}
 
 	result, searchErr := provider.Search(c.Request.Context(), credential.Credential, assetdiscovery.QuakeQuery{
-		Expression: request.Expression,
+		Expression: expression,
 		Limit:      request.Limit,
+		Page:       request.Page,
 	})
 	audit.DurationMS = time.Since(startedAt).Milliseconds()
 	if searchErr != nil {
@@ -84,7 +89,7 @@ func queryProjectQuakePreview(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
-	completeProjectDiscoveryPreview(c, project.ID, request, result, audit)
+	completeProjectDiscoveryQuery(c, project.ID, request, result, audit)
 }
 
 func loadTenantQuakeCredential(tenantID string) (tenantQuakeCredential, error) {

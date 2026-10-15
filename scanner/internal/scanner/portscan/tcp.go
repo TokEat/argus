@@ -2,20 +2,15 @@
 package portscan
 
 import (
-	"bytes"
 	"fmt"
-	"github.com/P0lar1ght/argus/scanner/ddout"
-	"github.com/P0lar1ght/argus/scanner/lib/masscan"
-	"github.com/P0lar1ght/argus/scanner/utils"
 	"math/rand"
-	"os"
-	"os/exec"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	"github.com/projectdiscovery/gologger"
 )
 
@@ -163,7 +158,7 @@ func (p *scanPacer) book(ip string) time.Duration {
 }
 
 // pacedSYNRate converts a per-target probe interval into an approximate global
-// masscan rate: with targetCount targets each probed at most once per interval,
+// scan rate: with targetCount targets each probed at most once per interval,
 // the aggregate demand is targetCount*1000/intervalMillis pps. The result is
 // capped by the configured rate so pacing never exceeds the operator's ceiling.
 func pacedSYNRate(targetCount, intervalMillis, capRate int) int {
@@ -180,6 +175,19 @@ func pacedSYNRate(targetCount, intervalMillis, capRate int) int {
 	return rate
 }
 
+func determineConnectTimeout(ip string, configuredTimeout int) time.Duration {
+	if configuredTimeout <= 0 {
+		configuredTimeout = 6
+	}
+	// 当使用默认超时 (>=6s) 且目标为本地/内网私有地址时，自适应收敛至 1.5s，
+	// 防止遭遇防火墙 DROP 静默丢包时无谓等待 6 秒。
+	// 若调用方已明确配置了更小超时，则严格按调用方设定执行。
+	if configuredTimeout >= 6 && utils.IsLocalIP(ip) {
+		return 1500 * time.Millisecond
+	}
+	return time.Duration(configuredTimeout) * time.Second
+}
+
 func portConnect(item addr, respondingHosts chan<- string, adjustedTimeout int, portScan bool, portsThreshold int, backlist *map[string]struct{}, backlistLock *sync.Mutex, pacer *scanPacer, wg *sync.WaitGroup, emit func(ddout.OutputMessage)) {
 	backlistLock.Lock()
 	_, blocked := (*backlist)[item.ip]
@@ -194,7 +202,8 @@ func portConnect(item addr, respondingHosts chan<- string, adjustedTimeout int, 
 		}
 	}
 
-	conn, err := utils.WrapperTcpWithTimeout("tcp4", fmt.Sprintf("%s:%d", item.ip, item.port), time.Duration(adjustedTimeout)*time.Second)
+	timeoutDur := determineConnectTimeout(item.ip, adjustedTimeout)
+	conn, err := utils.WrapperTcpWithTimeout("tcp4", fmt.Sprintf("%s:%d", item.ip, item.port), timeoutDur)
 	defer func() {
 		if conn != nil {
 			conn.Close()
@@ -212,107 +221,43 @@ func portConnect(item addr, respondingHosts chan<- string, adjustedTimeout int, 
 				Port: strconv.Itoa(item.port),
 			})
 		}
-	} else {
-		if emit != nil {
-			emit(ddout.OutputMessage{
-				Type:          "IPAlive",
-				IP:            item.ip,
-				AdditionalMsg: "TCP:" + strconv.Itoa(item.port),
-			})
-		}
+		wg.Add(1)
+		respondingHosts <- item.ip + ":" + strconv.Itoa(item.port)
+		return
+	}
+
+	// Liveness: first open port proves the host is up. Later ports skip.
+	backlistLock.Lock()
+	if _, exists := (*backlist)[item.ip]; exists {
+		backlistLock.Unlock()
+		return
+	}
+	(*backlist)[item.ip] = struct{}{}
+	backlistLock.Unlock()
+	if emit != nil {
+		emit(ddout.OutputMessage{
+			Type:          "IPAlive",
+			IP:            item.ip,
+			AdditionalMsg: "TCP:" + strconv.Itoa(item.port),
+		})
 	}
 	wg.Add(1)
 	respondingHosts <- item.ip + ":" + strconv.Itoa(item.port)
 }
 
-func ScanSYN(ips []string, ports string, masscanPath string, synThreads int, scatter bool, probeIntervalMillis int, emit func(ddout.OutputMessage)) []string {
-	uniqueIPs := utils.RemoveDuplicateElement(ips)
-	ipsPayload := strings.Join(uniqueIPs, "\n")
-	tmpFile, err := os.CreateTemp("", "masscan-targets-*.txt")
-	if err != nil {
-		return []string{}
-	}
-	tmpFileName := tmpFile.Name()
-	if _, err := tmpFile.Write([]byte(ipsPayload)); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpFileName)
-		return []string{}
-	}
-	tmpFile.Close()
-	defer os.Remove(tmpFileName)
-
-	ms := masscan.New(masscanPath)
-	ms.SetFileName(tmpFileName)
-	ms.SetPorts(ports)
+// ScanSYN runs the built-in IPv4 TCP SYN scanner (masscan-style async TX/RX
+// with SipHash SYN cookies). Returns nil when the scanner aborts before probing;
+// an empty non-nil slice means the scan completed with no open ports. Callers
+// should probe CanSYNScan and fall back to TCP connect scan on nil.
+// scatter/probeIntervalMillis 沿用本地端口扫描打散语义：开启时按
+// 目标数×最小间隔 聚合计速，上限仍为 synThreads。
+func ScanSYN(ips []string, ports string, synThreads int, scatter bool, probeIntervalMillis int, emit func(ddout.OutputMessage)) []string {
 	rate := synThreads
 	if scatter && probeIntervalMillis > 0 {
-		rate = pacedSYNRate(len(uniqueIPs), probeIntervalMillis, synThreads)
-		gologger.Info().Msgf("SYN端口扫描打散已开启，按 %d 个目标的 %dms 间隔限速为 %d pps", len(uniqueIPs), probeIntervalMillis, rate)
+		rate = pacedSYNRate(len(ips), probeIntervalMillis, synThreads)
+		gologger.Info().Msgf("SYN端口扫描打散已开启，按 %d 个目标的 %dms 间隔限速为 %d pps", len(ips), probeIntervalMillis, rate)
 	}
-	ms.SetRate(strconv.Itoa(rate))
-	gologger.Info().Msgf("调用masscan进行SYN端口扫描")
-	if err := ms.Run(); err != nil {
-		return []string{}
-	}
-	gologger.AuditTimeLogger("masscan扫描结束")
-
-	hosts, err := ms.Parse()
-	if err != nil {
-		gologger.Error().Msgf("masscan结果解析失败")
-		return []string{}
-	}
-
-	var results []string
-	for _, each := range hosts {
-		for _, port := range each.Ports {
-			results = append(results, each.Address.Addr+":"+port.Portid)
-		}
-	}
-
-	results = utils.RemoveDuplicateElement(results)
-	for _, each := range results {
-		parts := strings.Split(each, ":")
-		if len(parts) != 2 {
-			continue
-		}
-		if emit != nil {
-			emit(ddout.OutputMessage{
-				Type: "PortScan",
-				IP:   parts[0],
-				Port: parts[1],
-			})
-		}
-	}
-	return results
-}
-
-func CheckMasscan(masscanPath string) bool {
-	bsenv := ""
-	if runtime.GOOS != "windows" {
-		bsenv = "/bin/bash"
-	}
-
-	var command *exec.Cmd
-	switch runtime.GOOS {
-	case "windows":
-		command = exec.Command("cmd", "/c", masscanPath)
-	default:
-		command = exec.Command(bsenv, "-c", masscanPath)
-	}
-
-	outinfo := bytes.Buffer{}
-	command.Stdout = &outinfo
-	if err := command.Start(); err != nil {
-		gologger.Error().Msgf("未检测到路径 %v 存在masscan", masscanPath)
-		return false
-	}
-	_ = command.Wait()
-
-	if !strings.Contains(outinfo.String(), "masscan -p80,8000-8100 10.0.0.0/8 --rate=10000") {
-		gologger.Error().Msgf("未检测到路径 %v 存在masscan", masscanPath)
-		return false
-	}
-	return true
+	return scanSYNBuiltin(ips, ports, rate, emit)
 }
 
 func RemoveFirewall(ipPorts []string, portsThreshold int) []string {

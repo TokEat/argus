@@ -4,18 +4,11 @@
 >
 > 标注说明：`✅` = 已实现并接入主链路 | `⚠️` = 代码已存在但链路未闭环 / 仅部分可用 | `❌` = 尚未实现
 >
-> 当前接口清单已经合并到本文末尾，避免实现状态与接口状态分散维护。
+> 当前接口清单合并在本文末尾，避免实现状态与接口状态分散维护。
 >
-> 最后同步：2026-08-09。本次同步以当前工作树代码为准；只把已经接入 `/api/v1`、Agent 运行链路或 CI/Makefile 的能力标为已实现。
-
-## 2026-07-14 增量同步
-
-- **规则同步闭环**：Server 可导出带租户边界的 Arsenal SQLite 同步包，Agent 已将同步包物化为 `config/finger.yaml`、`config/workflow.yaml`、`config/dir.yaml`、`config/pocs/`、`config/dict/` 等扫描期目录；`tools/arsenal-sync` 支持将已审核规则回写源码基线，仍需通过 Git diff 和 PR 审查合并。
-- **任务输入校验**：创建任务前新增目标格式、协议和地址范围预校验，避免无效目标进入 RootTask/SubTask 调度链路。
-- **调度稳定性**：扩容增加单轮实例数量上限，扩容冷却、任务重试和滞留 Pending 子任务恢复逻辑已收敛；Spot 回收仍通过 `EmergencyDump`、队列 ACK/NACK 和服务端恢复协程提供兜底。
-- **云资源 API 架构**：云账号、目录、实例、OSS、策略和一键配置处理器已拆分，运行依赖通过 `CloudHandler` 显式注入；当前 mock smoke 覆盖依赖注入、凭证权限边界和主要 OSS/Provider 分支。
-- **MCP 代理**：MCP 客户端已按参数、传输、规则读写、关系查询、调试和产品检索职责拆分，核心规则数据改为类型化 DTO，并增加协议契约测试。
-- **安全基线**：开发模式固定密码登录已删除，弹药库访问继续受管理员权限和审核/发布流程约束。
+> 最后同步：2026-08-25，以当前工作树代码为准；只把已经接入 `/api/v1`、Agent 运行链路或 CI/Makefile 的能力标为已实现。
+>
+> 领域细节以专项文档为权威：[扫描策略 V1](scan-policy-v1.md)、[Yaksha EXP](yaksha-exp.md)、[Server 资产发现](asset-discovery.md)、[ScanPlan 与覆盖契约](scanplan-contract.md)、[云资源动态调度](cloud-resource-scheduling.md)。
 
 ---
 
@@ -29,21 +22,7 @@
 
 ---
 
-## 二、本轮修复闭环状态
-
-| 计划项 | 当前判定 | 已接入的主链路 | 仍需跟进 |
-|--------|----------|----------------|----------|
-| Agent 内部 HTTP session 鉴权 | ✅ 已闭环 | Agent 保存 `RegisterResp.token`，内部 HTTP 统一携带 `x-agent-id` + `x-agent-token`；Server 按 `nodes.agent_id + token` 注入真实 `tenant_id`，并校验 `/agents/:id/commands` 路径 ID；Agent 重注册会轮换 session token，离线/紧急下线会清理 token，内部 HTTP 只接受 Alive 节点；session 已支持过期时间、吊销时间、轮换审计和管理员主动吊销 | gRPC `ClaimTask` 仍通过现有 gRPC/bootstrap 体系和节点状态控制，没有把 session token 作为每个 RPC 的入参 |
-| Agent 规则同步租户隔离 | ✅ 已闭环 | `/arsenals/db*` 与 `/arsenals/manifest` 可由 Agent session 进入，按 Agent 所属租户导出规则；普通 JWT 访问仍走 JWT/RBAC | 规则包增量传输与长期制品存储 |
-| 显式调度控制 | ✅ 已闭环 | `CreateTaskRequest.agent_selector` 已支持扁平字符串 map，新增 `agent_selector_rules.match/not_match` 支持等值、多值和反选；Server 写入每个 SubTask；`POST /tasks/preview-selector` 与 Agent 认领共用匹配器，并按目标类型返回匹配节点、空闲槽位、预计立即领取批次数、等待批次数和不可匹配原因；前端任务创建页展示分组调度解释 | 后续可支持更复杂表达式 |
-| Agent 遥测日志 | ✅ 已闭环 | Agent gologger TeeWriter 通过 gRPC `StreamLogs` 上报；`GET /agents/:id/logs` 支持 `level/limit/q/since/until`；`/agent-logs/summary` 提供级别聚合和 ERROR/WARN 摘要；保留天数配置与定时清理已接入；前端 AgentLogs 支持筛选持久化、导出、告警规则、告警事件和按天归档 | 归档当前写入本地对象存储根目录；长期可补 OSS 归档、归档清理和告警通知渠道 |
-| 客户端构建链路 | ✅ 已闭环 | `POST /build/client` 原子化创建 BuildJob 并后台执行 `build.sh`；`GET /build/jobs*` 和 `/release/*` 可查看状态与下载产物；BuildJob 支持取消、重试、完整日志读取、多组件构建和多产物展示；GitHub Actions workflow 已配置 v0.1.0 bundle 与组件制品上传 | 后续可补制品签名；真实发布仍需等待 Actions 实际跑出 artifact |
-| Dashboard 实时化与数据化 | ✅ v1 闭环 | WebSocket envelope 包含 `id/type/event/version/project_id/occurred_at/data`，服务端 heartbeat 和 replay 日志表；重连支持 `last_event_id/since` 回放并按租户/项目权限过滤；前端 Dashboard、任务列表、节点列表、AgentLogs、ClientBuild 在重连后主动刷新 | replay 日志目前没有保留期清理策略，后续可补更长周期事件保留与清理 |
-| 工程质量门禁 | ✅ 基础闭环 | 顶层 `Makefile` 提供 `test/lint/ci/coverage/frontend-smoke/cloud-smoke`；server-ui 接入 Vitest + Testing Library；GitHub Actions 覆盖根模块 Go test、`server` 子模块 Go test、Go 覆盖率输出、Cloud Provider mock smoke、前端 lint/test/smoke/build | 后续补覆盖率阈值和 UI 截图回归 |
-
----
-
-## 三、已实现功能清单 (✅)
+## 二、已实现功能清单 (✅)
 
 ### 共享契约
 
@@ -56,7 +35,7 @@
 | 模块 | 功能 | 文件 |
 |------|------|------|
 | API Gateway | Gin REST API 主路由 | `server/internal/api/router.go` |
-| Server 资产发现（Server-only） | 已建立 FOFA/Hunter/Quake 三个 Server Provider 核心和项目级查询 API：operator 及以上且拥有项目访问权时，Server 从当前租户已批准配置读取对应凭据，执行有界查询并原子保存审计、不可变快照和规范资产。viewer 可在对象授权范围内读取历史、导出和测绘 Notebook；operator 可维护筛选、标签、备注、软移除/恢复，并将 1–100 个条目通过预览和 Idempotency-Key 显式分发到同项目任务。Standalone CLI 的旧 Provider 参数在初始化前返回迁移提示；Scanner 已删除搜索执行链和本地凭据模板，Agent 不再同步/读写 Provider 凭据，Server 对新建、追加、派发和领取的遗留 Provider 配置失败关闭 | `server/internal/assetdiscovery/` `server/internal/api/asset_discovery_*` `server/internal/api/asset_discovery_notebook_operations.go` `server/internal/db/asset_discovery_notebook.go` `scanner/cmd/cli/early.go` `scanner/internal/engine/` `scanner/internal/agent/worker.go` `server-ui/src/pages/AssetDiscovery.tsx` |
+| Server 资产发现（Server-only） | 已建立 FOFA/Hunter/Quake 三个 Server Provider 核心和项目级查询 API：operator 及以上且拥有项目访问权时，Server 从当前租户已批准配置读取对应凭据，执行有界查询并原子保存审计、不可变快照和规范资产。viewer 可在对象授权范围内读取历史、导出和测绘 Notebook；operator 可维护筛选、标签、备注、软移除/恢复，并将 1–100 个条目通过预览和 Idempotency-Key 显式分发到同项目任务。Scanner 不执行测绘查询、不读本地 Provider 凭据；Agent 不同步/读写 Provider 凭据；Server 对新建、追加、派发和领取中的测绘执行配置失败关闭 | `server/internal/assetdiscovery/` `server/internal/api/asset_discovery_*` `server/internal/api/asset_discovery_notebook_operations.go` `server/internal/db/asset_discovery_notebook.go` `scanner/internal/engine/` `scanner/internal/agent/worker.go` `server-ui/src/pages/AssetDiscovery.tsx` |
 | 身份与权限 | JWT 登录校验、RBAC 中间件、EXP 授权闸门、项目成员访问控制 | `server/internal/api/router.go` `server/internal/api/middleware_rbac.go` `server/internal/api/project_access.go` |
 | 任务管理 | RootTask / TaskBatch / Attempt 创建、拆分、查询、暂停/恢复/停止/重试、结果保留归档、增加批次、配置版本与项目访问校验；任务级控制只修改各批次最新 Attempt，暂停期间已领取执行允许收敛且失败后保持暂停，恢复按需追加 Attempt，立即停止可从暂停态执行并向 Agent 下发取消，任务重试仅重跑失败/超时/停止批次；增加批次会规范化并幂等去重、扩展 Project SeedTargets/Scope、写审计；TaskBatch 使用独立 `control_state` 支持批次控制，`sub_tasks` 兼容表追加保存实际 Attempt；任务详情区分可管理批次与完整执行历史；普通任务 POC 配置在 API、Agent 领取和 Agent 执行三层失败关闭；风险验证支持 Workflow 匹配和指定已审核 POC，预览绑定配置/规则/内容哈希，确认后追加只执行精确 POC 的 `risk_validation` Batch，高风险二次确认、关闭自动重试并写审计 | `server/internal/api/handler_tasks.go` `server/internal/api/task_input.go` `server/internal/api/task_lifecycle.go` `server/internal/api/task_batch_lifecycle.go` `server/internal/api/task_scope.go` `server/internal/api/task_config.go` `server/internal/api/risk_validation_preview.go` `server/internal/api/risk_validation_execute.go` `server/internal/db/task_batch.go` `server/internal/db/task_attempt.go` |
 | 创建任务幂等（G39A） | `POST /tasks` 可选 `Idempotency-Key`，无 header 的旧客户端保持原有非幂等行为，UI 为一次新建意图复用稳定 Key；同 tenant/project/operator/`create_task_v1`/Key 的同规范请求重放首次结果，异请求返回 409。原始 Key 不持久化；幂等账本与 RootTask、配置修订、TaskBatch、首个 Attempt、Project SeedTargets/Scope 扩展和创建审计同事务提交，仅首次提交后派发，重放不入队 | `server/internal/api/task_create_idempotency.go` `server/internal/db/task_creation_idempotency.go` `server-ui/src/pages/TaskManagement.tsx` |
@@ -67,7 +46,7 @@
 | 调度队列 | RabbitMQ 多优先级队列 + 内存 fallback，支持队列深度查询与通知广播；风险验证只允许规则版本一致且版本不低于 v2.4.0 的 Agent 领取；普通任务领取时原子占用同项目 WorkClaim，重复执行挂接等待且不占 Agent 容量 | `server/internal/scheduler/queue.go` `server/internal/grpc/server.go` `server/internal/db/scan_work_claim.go` |
 | 队列恢复 | Dead-Letter 回收、旧队列迁移、死亡节点任务抢救；终态 WorkClaim 来源的等待者自动重新规划，队列发布失败保留 Dispatching 供周期恢复 | `server/internal/scheduler/queue.go` `server/internal/api/task_recovery.go` `server/cmd/argus-server/main.go` |
 | 超时与重试 | 基于 `timeout_sec` 的超时扫描与自动重试守护协程 | `server/internal/api/router.go` |
-| gRPC 通信 | `Register` / `Heartbeat` / `FetchTask` / `StreamResult` / `TaskComplete` / `EmergencyDump` / `StreamLogs` | `server/internal/grpc/server.go` |
+| gRPC 通信 | `Register` / `Heartbeat` / `Subscribe` / `ClaimTask` / `StreamResult` / `TaskComplete` / `EmergencyDump` / `StreamLogs` | `server/internal/grpc/server.go` |
 | Agent 覆盖事件 | v2.5.0 将 legacy Phase 显式映射为 ScanPlan Stage，按分配目标上报 success/negative/failed/skipped、起止时间和顺序无关内容哈希；单目标成功/阴性事件可附带不含响应正文的有界派生检查点，多目标不做错误归属；Server 只接收与当前 Agent/Attempt/目标一致的事件，旧 Agent 无事件时保持 unknown | `scanner/internal/agent/coverage_reporter.go` `server/internal/grpc/server.go` |
 | 覆盖归并 | Server 用 Project Scope、配置修订、Attempt 规则版本、Agent 标签和目标类型重算 WorkKey，幂等追加 Observation 并维护当前 Coverage；公网使用共享 `public`，私网按 `private:<network_zone>` 隔离，无标签私网回退 `agent:<agent_id>`；失败/跳过、版本漂移和未知风险维度均不可复用；完整覆盖按阶段设置 TTL，上游内容变化只失效较旧依赖覆盖 | `server/internal/db/scan_observation_merge.go` `server/internal/db/scan_network_zone.go` `server/internal/db/scan_coverage_policy.go` |
 | 已完成覆盖复用 | Agent 领取前按完整目标匹配同租户、项目、网络区、Scope/Config/规则版本的有效 Coverage；全量复用不分配 Agent，部分复用只下发剩余目标并将 reused links 与 Agent 租约同事务提交；公网可跨 Agent 复用，同标签私网可跨 Agent 复用，不同标签或无标签私网保持隔离；手动重试、风险验证和未知旧配置绕过 | `server/internal/db/scan_reuse.go` `server/internal/grpc/server.go` |
@@ -76,7 +55,7 @@
 | 任务覆盖解释 | 任务详情以 `argus.task-coverage-explanation/v1` 汇总实际执行、历史复用、当前执行中关联、失效/过期和节省量；最近明细可追溯同项目来源 Task/Batch/Attempt，tenant/project 作用域重新校验且不暴露内部 WorkKey/哈希/租约 | `server/internal/api/task_coverage_explanation.go` `server-ui/src/pages/TaskManagement.tsx` |
 | 扫描计时证据（G31） | 已实现 target-free `argus.timing/v1`：Server 以活动 Attempt、分配 Agent、会话及 tenant/project/task 归属验证 `StreamResult` 中最多 16 KiB 的严格 JSON timing payload，并将同 ID 同内容幂等、不同内容冲突的证据追加到 `scan_timing_events`。任务详情在对象授权后按 Attempt 返回有界 timing projection（最多 5000 条）、结果与 unavailable；不返回 target、WorkKey、哈希、令牌或日志 | `shared/proto/go/scanplan/timing.go` `server/internal/grpc/timing.go` `server/internal/db/scan_timing_event.go` `server/internal/api/handler_tasks.go` `server-ui/src/components/TaskTimingPanel.tsx` |
 | Agent 内部 HTTP API | Agent 命令轮询、Arsenal DB Hash / SQLite DB 同步端点，使用 `x-agent-id` + `x-agent-token` session 鉴权；SQLite DB 作为规则传输包，包含指纹、Workflow、Dir、POC YAML 和 POC helper assets；`x-agent-psk` 仅保留给 gRPC/bootstrap | `server/internal/api/router.go` `server/internal/api/arsenal_export.go` |
-| 数据模型 | PostgreSQL migration runner + schema verify；追加式 `scan_observations`、当前 `scan_coverages`、唯一 `scan_work_claims` 与可解释 `task_coverage_links` 全部按 tenant/project 隔离，Coverage 复用和 WorkClaim 并发合并已接入调度；测绘成功审计、不可变查询快照、规范资产项和项目级去重笔记本来源已接入原子写入；Migration 400 保存不可变分发 intent/items，Migration 420 保存每次已确认 intent 的 typed materialization 结果，均按 tenant/project 复合约束且不保存原始幂等键或 Provider 正文 | `server/internal/db` |
+| 数据模型 | PostgreSQL migration runner + schema verify；追加式 `scan_observations`、当前 `scan_coverages`、唯一 `scan_work_claims` 与可解释 `task_coverage_links` 全部按 tenant/project 隔离，Coverage 复用和 WorkClaim 并发合并已接入调度；测绘成功审计、不可变查询快照、规范资产项和项目级去重笔记本来源已接入原子写入；分发 intent/items 与 materialization 结果表（见 `deploy/db/init/001_init.sql` 与 [数据库设计总览](db_schema.md)）均按 tenant/project 复合约束且不保存原始幂等键或 Provider 正文 | `server/internal/db` |
 | 结果入库 | Asset / FingerprintHit / Vulnerability 三层结构化存储 | `server/internal/db/db.go` |
 | 防洪落库 | BatchWriter 异步缓冲写入 | `server/internal/db/db.go` |
 | Arsenal 管理 | POC / Finger / Workflow / Dir / EXP 的 CRUD、审批、Manifest、回滚、Agent SQLite DB 导出；POC helper assets 随规则包同步，不进入 POC 规则治理列表 | `server/internal/api/router.go` `server/internal/api/handler_exploits.go` `server/internal/api/arsenal_export.go` |
@@ -85,8 +64,8 @@
 | 结果查询 | 漏洞、资产、指纹、融合画像接口 | `server/internal/api/router.go` |
 | 统计接口 | 首页五维统计 + 趋势 / 严重度 / 任务结果统计 / 最近高危漏洞 | `server/internal/api/router.go` `server/internal/db/stats.go` |
 | WebSocket Hub | 结果批量写入与 EXP 执行状态的服务端广播 | `server/internal/api/ws.go` |
-| 报表导出 | 漏洞 CSV 导出 | `server/internal/api/router.go` |
-| 系统管理 | 用户 CRUD、MCP Key CRUD、构建产物列表、Agent 日志查询、Agent 日志告警与归档 | `server/internal/api/router.go` |
+| 报表导出 | 漏洞 / 资产 / 指纹 CSV 导出 | `server/internal/api/router.go` `server/internal/api/handler_results.go` |
+| 系统管理 | 用户 CRUD、MCP 接入治理、构建产物列表、Agent 日志查询、Agent 日志告警与归档 | `server/internal/api/router.go` |
 | AI Copilot | 全局 AI 助手、多轮对话、流式输出、在线/离线 Agent 上下文感知 | `server/internal/ai/` `server/internal/api/ai_handlers.go` |
 | AI 工具链 (Tool Calling) | Nuclei 文档检索、知识库查询、POC / EXP 分析审查、执行诊断、节点容量分析 | `server/internal/ai/tools_builtins.go` `server/internal/api/ai_tools.go` |
 | 云资源编排 | AutoScaler 自动伸缩引擎、阿里云 ECS Provider、实例对账与孤儿回收、AES-256-GCM 凭证加密 | `server/internal/cloud/` |
@@ -113,20 +92,21 @@
 | 模块 | 功能 | 文件 |
 |------|------|------|
 | CLI 运行目录 | 普通扫描结果统一写入当前工作目录的 `datas/<目标_时间>/`，仅保留 `result.txt`、一份权威 HTML 报告和小型 `summary.txt`；不创建 targets/findings/coverage/timing TSV，扫描记忆也不再依赖或创建 `argus-data/state`、`argus-data/runs`。`ARGUS_HOME/argus-data` 仅保留为显式离线规则包管理兼容目录 | `scanner/cmd/cli/main.go` `scanner/internal/localstate/run.go` `scanner/internal/config/cli.go` |
-| datas 历史跳过 | 普通 CLI 默认关闭 POC/GoPoc；启动时只从 `datas/` 已完成运行的 `result.txt` 提取历史资产，不依赖 TSV。单 IP 命中即跳过，CIDR/IP 范围剔除历史已有资产 IP 后仅扫描剩余地址，域名/URL/显式服务保守精确匹配；终端打印跳过 IP 与来源，HTML/JSON 汇总完整、部分、全跳过及计划数量。该能力不维护长期资产表、不做 TTL/阶段级 ResumePlan、不读取 HTML；显式 `-poc/-gp` 与 `-force` 固定完整扫描 | `scanner/internal/localplanner/datas_history.go` `scanner/internal/localplanner/planner.go` `scanner/internal/localstate/run.go` |
+| datas 历史跳过 | 历史跳过只由显式 `-ss`/`--skip-seen` 开启：从 `datas/` 已完成运行的 `result.txt` 提取历史资产并跳过已出现 IP（`-nopoc -nogpoc` 不会隐式开启）。单 IP 命中即跳过，CIDR/IP 范围剔除历史已有资产 IP 后仅扫描剩余地址，域名/URL/显式服务保守精确匹配。`-force` 固定完整扫描 | `scanner/internal/localplanner/datas_history.go` `scanner/internal/localplanner/planner.go` `scanner/internal/localstate/run.go` |
 | CLI 与 Agent 计时（G31） | CLI 在进程内记录 earliest-observable startup、规则准备、`ScanContext` 初始化和实际 Stage 终态，text 模式只显示简短汇总，不再为普通 datas Run 生成 `timing.tsv`；JSON/非 text stdout 不增加人类日志。Agent 使用现有 `StreamResult` 和 `x-agent-token` 上报版本化有界契约，复用或未开始 Stage 不会伪装为执行。G31 仅建立测量/展示/基线，未实施 G32–G36 性能优化 | `scanner/cmd/cli/main.go` `scanner/internal/localstate/timing.go` `scanner/internal/timing/recorder.go` `scanner/internal/agent/worker.go` `scanner/cmd/perf-baseline/main.go` |
-| CLI 品牌与 Provider 迁移（G37/G41） | 发行命令名继续为 `argus`，通用扫描参数及 `finger/poc/workflow` 子命令兼容；Banner、版本、帮助和说明统一显示 Argus CLI，`--version` 在规则与扫描初始化前直接返回。FOFA/Hunter/Quake 参数从主帮助移除并由早期迁移守卫拦截；Scanner Pipeline 已删除旧搜索阶段，Agent 不再同步或读取 Provider 凭据，Server 新建/追加/派发/领取均对遗留 Provider 配置失败关闭 | `scanner/cmd/cli/early.go` `scanner/internal/engine/` `scanner/internal/agent/worker.go` `server/internal/api/task_dispatch.go` |
+| CLI 品牌 | 发行命令名继续为 `argus`；Banner、版本、帮助统一显示 Argus CLI，`--version` 在规则与扫描初始化前直接返回。Scanner Pipeline 不执行测绘查询，Agent 不同步或读取 Provider 凭据 | `scanner/cmd/cli/early.go` `scanner/internal/engine/` `scanner/internal/agent/worker.go` `server/internal/api/task_dispatch.go` |
 | 强制完整扫描 | CLI 可选 `-force` 仅绕过 `datas` 历史跳过；目标、端口和 POC-off 安全默认不变，本次执行继续追加证据。该指令不进入 Server/Agent 配置 | `scanner/common/flag.go` `scanner/internal/config/cli.go` `scanner/internal/localplanner/planner.go` |
 
 ### 扫描引擎
 
 | 模块 | 功能 |
 |------|------|
-| 空间搜索引擎（Server-only） | FOFA / Hunter / Quake 的用户查询入口固定在 Server 项目“资产测绘”页面。Standalone CLI、Scanner 与 Agent 不读取 Provider 凭据或发起 Provider 请求；旧参数、任务配置和队列消息均给出稳定拒绝/失败状态，不会回退到本机配置。被动子域仍保留但显式排除三家 Provider 来源 |
+| 空间搜索引擎（Server-only） | FOFA / Hunter / Quake 的用户查询入口固定在 Server 项目“资产测绘”页面。Standalone CLI、Scanner 与 Agent 不读取 Provider 凭据或发起 Provider 请求。被动子域仍保留但显式排除三家 Provider 来源 |
 | 子域名枚举 | subfinder + 自定义爆破 |
-| 存活探测 | ICMP + TCP Ping |
-| 端口扫描 | TCP / SYN (Masscan)，支持 `pacing` 打散规避（per-IP 最小探测间隔 50–5000ms，默认 500ms，TCP 精确间隔 / SYN 全局限速） |
-| 协议识别 | Banner 抓取 |
+| 存活探测 | 同网段 ARP，其余 ICMP；ARP/ICMP 未应答的再 TCP 探活（80/443/3389/445/22）。`-PU` 再对剩余主机打常关 UDP 口，ICMP port unreachable 视为存活。`-Pn` 跳过，`-nip` 跳过 ICMP 直接 TCP |
+| 内网路径 | CLI `-tr <目标>` 是单独命令（IP / 文件 / 上次 result.txt），不进入扫描流水线。自实现 UDP/ICMP TTL 探路（不调用系统 traceroute/tracert），输出 `[Path]` 跳数和 `[Topo]` 网段蓝图 |
+| 端口扫描 | TCP / SYN（Masscan + 内置 SYN Linux raw socket），支持 `pacing` 打散规避（per-IP 最小探测间隔 50–5000ms，默认 500ms，TCP 精确间隔 / SYN 全局限速） |
+| 协议识别 | gonmap TCP 识别 + 内网 TCP 握手 + 默认同机高价值 UDP 识别；Banner 抓取 |
 | Web 探测 | httpx 批量探测 |
 | 指纹识别 | 被动 + 主动目录指纹 |
 | Workflow 路由 | 指纹到 POC 的映射 |
@@ -149,19 +129,19 @@
 | ClientBuild | 构建产物、BuildJob 队列、状态和 `/release/*` 下载入口可用 |
 | AgentLogs | Agent 日志筛选、查看与导出可用 |
 | RoleManagement | 已接入后端角色列表、内置角色只读展示、自定义角色创建/编辑/删除、权限基线说明和租户任务配额配置 |
-| McpConfig | 可用 |
-| AI Copilot | 全局 Drawer 交互，支持表格/多行引用/代码块渲染、POC YAML / EXP Python 一键应用、草稿动作确认 |
-| AI Config | 大模型渠道、参数配置、连通性测试、Copilot Prompt/动作白名单/审计管理 |
+| ApiKeysConfig（原 McpConfig，`/api-keys`） | 可用 |
+| AI Copilot | 全局 Drawer 交互，支持表格/多行引用/代码块渲染、POC YAML / EXP Yak 源码一键应用、草稿动作确认 |
+| AI Config | 大模型渠道、参数配置、连通性测试、Copilot Prompt/动作白名单 |
 
 ---
 
-## 四、部分实现 / 链路未闭环 (⚠️)
+## 三、部分实现 / 链路未闭环 (⚠️)
 
 当前无发布阻塞型“部分实现”条目。为避免误解，下面按代码实际状态同时列出闭环结果和仍然存在的边界：
 
 | 原模块 | 闭环结果 |
 |--------|----------|
-| Agent 控制链路 | session token 已支持过期、吊销、轮换审计和管理员主动吊销；内部 HTTP 拒绝过期/吊销 token；Heartbeat 发现过期/吊销会要求 Agent 终止；`ClaimTask` 未增加独立 token 入参，仍依赖 gRPC/bootstrap 鉴权、节点 Alive 状态和调度匹配 |
+| Agent 控制链路 | session token 已支持过期、吊销、轮换审计和管理员主动吊销；内部 HTTP 拒绝过期/吊销 token；Heartbeat 发现过期/吊销会要求 Agent 终止；普通任务 `ClaimTask` 不校验 session token，仍依赖 gRPC/bootstrap 鉴权、节点 Alive 状态和调度匹配；弱口令验证类认领与 `EmergencyDump` 会强制校验 session token（及 TLS） |
 | WebSocket 实时看板 | envelope 增加事件 ID，replay 日志已落库；重连支持 `last_event_id/since` 回放并按租户/项目权限过滤；当前没有 replay 日志 TTL 清理 |
 | 优先级 / 标签 / 容量调度 | `agent_selector_rules` 已支持等值、多值和反选；预览接口与实际认领共用匹配器，并返回容量与等待批次解释 |
 | 任务状态机 | 任务详情返回失败、超时、取消、待认领等原因聚合，前端可展示原因分布 |
@@ -172,11 +152,11 @@
 | 角色与租户治理 | 自定义角色 permissions 已作为运行时授权依据，但只能在 base_role 已允许的范围内收窄权限，不能越权提升；项目成员支持 viewer/operator/owner；租户任务配额覆盖任务创建和 Agent 认领 |
 | 工程质量门禁 | GitHub Actions、顶层 Makefile、Go/Vitest/前端 smoke/Cloud mock smoke/发布制品上传已接入 |
 
-Clean Architecture 迁移不再作为用户功能链路验收项，降级到长期架构演进；当前 `/api/v1` 主链路保持兼容，不为清状态强行暴露 `/api/v2`。
+当前 `/api/v1` 主链路保持兼容，没有 `/api/v2`。
 
 ---
 
-## 五、发布前保留缺口 (❌)
+## 四、发布前保留缺口 (❌)
 
 > 已经进入主链路或只属于长期优化的事项不再放入“未实现”列表。以下只保留发布前需要明确处理或在 Release Notes 中声明边界的项目。
 
@@ -187,36 +167,9 @@ Clean Architecture 迁移不再作为用户功能链路验收项，降级到长�
 | REL-03 | 云资源与 OSS 发布验证 | Cloud Provider mock、OSSStore、本地对象存储、Agent 制品上传链路已有测试；真实云账号端到端弹容、回收、OSS fallback 仍需发布前 smoke | 发布前用测试云账号跑一次一键配置、制品上传、弹容、回收；若未跑真实云 smoke，需在发布说明中标注为 beta 能力 |
 | REL-04 | 文档与运维入口 | README 已指向生产部署指南和 `docs/release-checklist.md`；仍需发布说明、升级/回滚和常见故障 | 发布前 README 指向部署文档、运维文档和风险声明；避免把内部路线图当成用户使用说明 |
 
-### 已从缺口列表移除
+## 五、当前接口实现清单
 
-| 原编号 | 原类别 | 当前状态 |
-|--------|--------|----------|
-| GAP-02 | 调度解释与任务状态可观测 | 已有后端预览接口、目标类型分组、容量和不可匹配原因展示，后续表达式/反选属于增强 |
-| GAP-03 | Dashboard 真实数据消费 | 已接入真实趋势、严重度、任务结果、高危漏洞统计和重连刷新 |
-| GAP-04 | Agent session 生命周期 | 已支持 token 轮换、过期、主动吊销、离线清理和 Alive 校验；gRPC `ClaimTask` 未增加逐 RPC session token |
-| GAP-05 | 日志治理 | 已支持筛选、导出、聚合、保留天数、清理、告警规则、告警事件和本地 NDJSON 归档；OSS 归档和告警通知属于后续增强 |
-| GAP-07 | 自定义角色与权限后台 | 已支持自定义角色 CRUD、权限基线、用户分配和前端管理；permissions 可在 base_role 内收窄接口权限 |
-| GAP-08 | 租户治理 | 已支持租户任务配额、创建任务校验和 Agent 认领校验；按项目/用户细分属于后续治理 |
-| GAP-09 | GoPoc / EXP 高级治理 | 已支持 POC 元数据检索、EXP 批量审核、风险豁免、凭据引用和审计记录，凭据内容安全注入属于后续高级能力 |
-| GAP-10 | 对象存储层 | 已有 Storage 接口、LocalStore、OSSStore、构建制品校验和漏洞 CSV 报告落库，规则包迁移不阻塞首版发布 |
-| GAP-11 | Clean Architecture 落地 | 当前 `/api/v1` 主链路可用；Clean Architecture 迁移是长期维护事项，不作为发布阻塞 |
-
----
-
-## 六、发布准备任务规划
-
-| 顺序 | 任务 | 交付内容 | 验收标准 |
-|------|------|----------|----------|
-| 1 | 发布构建与制品整理 | 版本号固定为 `v0.1.0`；生成 server / agent / server-ui 制品；确认 `/release/*` 中 Agent 产物可下载 | `make ci` 通过；制品列表完整；发布说明包含版本号和构建来源 |
-| 2 | 生产配置模板 | 已提供 `deploy/production.env.example`；标注必填密钥、默认密码禁用、数据库/RabbitMQ/AI/云账号配置 | 新环境按模板能启动 server、server-ui 和至少 1 个 Agent |
-| 3 | 真实环境 smoke | 使用测试租户跑登录、节点注册、任务创建、规则同步、漏洞导出、Agent 日志、BuildJob、EXP dry-run；云能力跑一键配置和 OSS 上传 | smoke 清单全部记录通过；未验证项明确标为 beta 或可选 |
-| 4 | 发布文档收口 | README 指向快速部署、租户/RBAC、安全边界、常见故障；`implementation-status.md` 只保留内部状态 | 用户能按 README 完成安装、登录、接入 Agent、创建首个任务 |
-
----
-
-## 七、当前接口实现清单
-
-本文只描述从 `server/cmd/argus-server/main.go` 接线进入运行链路的接口，不把 `server/internal/adapters/httpapi`、`server/internal/adapters/grpcagent` 等 Clean Architecture scaffold 视为可用接口。
+本文只描述从 `server/cmd/argus-server/main.go` 接线进入运行链路的接口。
 
 ### 通用约定
 
@@ -232,21 +185,21 @@ Clean Architecture 迁移不再作为用户功能链路验收项，降级到长�
 
 | 模块 | 代表接口 | 当前实现 |
 |------|----------|----------|
-| 认证与会话 | `POST /auth/login` | 数据库用户优先，兼容开发密码，成功后签发 JWT |
+| 认证与会话 | `POST /auth/login` | 仅数据库 bcrypt 校验（开发模式固定密码已删除），成功后签发 JWT |
 | 任务与队列 | `GET/POST/DELETE /tasks`、`POST /tasks/preview-selector`、`POST /tasks/:id/risk-validation/preview`、`POST /tasks/:id/risk-validation`、`POST /tasks/:id/pause|resume|stop|cancel|retry|append`、`GET /tasks/:id/config-revisions`、`PUT /tasks/:id/config`、`GET /tasks/:id/batches`、`POST /tasks/:id/batches/:batch_id/pause|resume|stop|retry`、`DELETE /tasks/:id/batches/:batch_id`、`GET /queue/depth` | RootTask / TaskBatch / Attempt 创建、调度选择器预览、任务与批次生命周期控制、幂等增加批次、幂等任务级重试、幂等单批次重试和队列深度查询；风险验证预览是 viewer 可用的只读 POST，可用 Workflow 或指定已审核 POC 生成带版本、内容哈希、预计请求量及二次确认提示的计划；执行是 operator 变更操作，必须提交未过期计划和授权确认，高风险二次确认后才创建不自动重试的精确 POC Batch；任务停止以 `stop` 为规范接口并保留 `cancel` 兼容别名；`append` 在任务行锁内去重并扩展当前 Project Scope/SeedTargets，可选 Key 将首次 Batch/Attempt/计数冻结为可重放结果且重放不再次入队；任务与批次 `retry` 的可选 Key 都只允许首次提交追加并派发 Attempt，HTTP 重放只投影首次 Attempt 当前投递状态；任务与批次 `DELETE` 均为保留结果的终态归档；普通资产批次重试使用当前配置/规则，风险验证批次仅在规则版本不变时复用原确认快照；所有控制接口校验租户与项目归属，变更接口写审计 |
 | 项目与成员 | `/projects*`、`GET/PUT /projects/:id/members` | 项目 CRUD、viewer/operator/owner 成员维护、任务与结果访问校验；旧 `user_ids` 请求兼容为 operator |
 | Server 资产发现 | Provider 查询与项目历史/导出；`GET /asset-discovery/notebook-items`；项目 Notebook GET/PATCH/remove/restore、快照归档、分发 preview/materialize | operator 及以上在已授权项目内使用当前租户已批准的 Provider 配置执行有界查询，并可从持久化快照归档 1–100 个项目级候选目标；viewer 可读取项目列表或只聚合当前账号实际可访问项目的 Notebook。列表支持目标/标签/状态筛选；operator 可维护标签、备注并软移除/恢复，全部对象级写入与关联 item 的脱敏审计同事务，removed 条目不能进入新分发。分发确认要求 Idempotency-Key 与未过期 plan hash，原子保存 intent/result、扩展 Scope/SeedTargets、创建追加式 TaskBatch/Attempt 并写审计，提交后才派发；凭据、原始幂等键、备注/标签正文和 Provider 原始响应不进入审计或确认响应 |
-| 统计、结果与画像 | `/stats*`、`/vulns`、`/assets`、`/fingerprints`、`/profiles`、`/reports/export/vulns` | 统计聚合、结果查询、画像聚合、漏洞 CSV 导出 |
+| 统计、结果与画像 | `/stats*`、`/vulns`、`/assets`、`/fingerprints`、`/profiles`、`/reports/export/{vulns,assets,fingerprints}` | 统计聚合、结果查询、画像聚合、三类 CSV 导出 |
 | 节点与 Agent 指令 | `GET /nodes`、`POST /nodes/:id/revoke-token`、`GET /agents/:id/commands`、`GET /agents/:id/logs` | 节点列表、Agent session 主动吊销、Agent session 绑定命令轮询、Agent 日志筛选查询 |
 | Arsenal 与规则 | `/arsenals/:type`、`/arsenals/manifest`、`/arsenals/db*`、审批/回滚/删除接口 | 原始规则 CRUD、审批、回滚、Manifest、`rule_version`、Agent SQLite DB 同步 |
 | Yaksha EXP Workspace | `/exps*`、`/exp-assets*`、`/exp-runs*`、`/exp-egress-routes*` | 单文件 Yaklang EXP、不可变 Revision、依赖闭包、版本化 Asset、Fixture 验收、inspect/validate/test/debug/run、按哈希发布、活动版本回滚、Agent 原生出口与完整运行审计；生产对象存储为私有 MinIO |
 | 字典 | `/dictionaries/workflow`、`/dictionaries/fingerprint` | Workflow / Fingerprint 结构化 CRUD，并回写 Arsenal |
-| 用户、角色、租户与系统配置 | `/users`、`/roles`、`/tenants/:id/quotas`、`/mcp/keys`、`/agent-logs/alert-rules`、`/agent-logs/alerts`、`/agent-logs/archive`、`/ai/config`、`/ai/models`、`/ai/test` | 用户管理、自定义角色 CRUD、权限矩阵返回、租户任务配额管理、MCP Key、Agent 日志告警/归档、AI 配置与模型连通性测试 |
-| AI Copilot / POC 元数据 | `GET /poc-rules`、`POST /ai/chat`、`POST /ai/actions/confirm`、`GET /ai/copilot/prompts`、`GET /ai/tool-invocations`、`POST /ai/arsenal/analyze`、`POST /ai/arsenal/analyze/stream` | POC 元数据检索、全局 Copilot SSE、草稿动作确认、Prompt/动作白名单展示、工具审计、POC AI 审查同步/流式入口 |
+| 用户、角色、租户与系统配置 | `/users`、`/roles`、`/tenants/:id/quotas`、`/mcp/admin/*`、`/agent-logs/alert-rules`、`/agent-logs/alerts`、`/agent-logs/archive`、`/ai/config`、`/ai/models`、`/ai/test` | 用户管理、自定义角色 CRUD、权限矩阵返回、租户任务配额管理、MCP 接入治理 / 会话 / 调用审计 / 治理事件 / 只读工具目录（投影 tools()，含 schema 生成的调用示例）、Agent 日志告警/归档、AI 配置与模型连通性测试 |
+| AI Copilot / POC 元数据 | `GET /poc-rules`、`POST /ai/chat`、`POST /ai/actions/confirm`、`GET /ai/copilot/prompts`、`POST /ai/arsenal/analyze`、`POST /ai/arsenal/analyze/stream` | POC 元数据检索、全局 Copilot SSE、草稿动作确认、Prompt/动作白名单展示、POC AI 审查同步/流式入口 |
 | 云资源编排 | `/cloud/accounts*`、`/cloud/policies*`、`/cloud/instances*`、`/cloud/dashboard` | 云凭证、策略、实例生命周期、OSS、一键配置、仪表盘 |
 | 构建 | `GET /build/artifacts`、`GET /build/jobs*`、`GET /build/jobs/:id/logs`、`POST /build/jobs/:id/cancel`、`POST /build/jobs/:id/retry`、`POST /build/client`、`GET /release/*` | 产物列表、BuildJob 状态/完整日志、取消/重试、多组件后台执行 `build.sh`、多产物下载与静态下载可用 |
 
-### 本轮验收命令
+### 验收命令
 
 以下命令用于验证本文档描述的基础闭环。
 
@@ -270,8 +223,7 @@ Clean Architecture 迁移不再作为用户功能链路验收项，降级到长�
 | `Register` | 节点注册，写入/更新 `nodes`，记录容量、标签、OS/Arch、租户并返回节点会话 token；重注册会轮换 token；Agent 使用该 token 调用内部 HTTP |
 | `Heartbeat` | 更新节点存活时间、运行任务数、运行任务列表与规则版本，并判断是否需要同步规则；发现 token 过期/吊销时返回终止信号 |
 | `Subscribe` | Agent 长连接等待任务通知和控制信号，并接收 `capacity_update` 更新空闲槽位 |
-| `ClaimTask` | Agent 主动认领任务，支持 RabbitMQ 原子领取、标签匹配、容量回写和终态消息丢弃；不单独校验内部 HTTP session token |
-| `FetchTask` | 兼容旧 Agent 的轮询接口，内部委托领取逻辑 |
+| `ClaimTask` | Agent 主动认领任务，支持 RabbitMQ 原子领取、标签匹配、容量回写和终态消息丢弃；普通认领不单独校验内部 HTTP session token，弱口令验证类认领强制校验 session token 与 TLS |
 | `StreamResult` | 接收 Agent 流式结果并异步写入结果缓冲池 |
 | `TaskComplete` | 更新子任务状态、ACK 队列、递减节点运行数，并刷新 RootTask 聚合状态 |
 | `EmergencyDump` | Spot 或紧急中断场景的兜底上报入口 |
@@ -288,5 +240,4 @@ Clean Architecture 迁移不再作为用户功能链路验收项，降级到长�
 ### 维护约定
 
 - 新增或删除 `/api/v1` 路由时，同步更新本节。
-- 如果启用 `/api/v2`，单独增加版本化接口小节，不与当前主链路混写。
-- 对只返回 `accepted`、mock 或 scaffold 的接口，必须明确标注是否真正执行后端动作。
+- 对只返回 `accepted` 或 mock 的接口，必须明确标注是否真正执行后端动作。

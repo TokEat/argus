@@ -285,20 +285,20 @@ type pocMeta struct {
 
 // parsePocMeta 快速从 Nuclei 模板提取元数据（避免完整 YAML 解析）。
 func parsePocMeta(content []byte) pocMeta {
-	m := pocMeta{severity: "info", executionClass: "detection", riskLevel: "unknown"}
+	m := pocMeta{executionClass: "detection", riskLevel: "unknown"}
 	var parsed struct {
 		Info struct {
+			Severity string                 `yaml:"severity"`
 			Metadata map[string]interface{} `yaml:"metadata"`
 		} `yaml:"info"`
 	}
 	if err := yaml.Unmarshal(content, &parsed); err == nil {
+		m.severity = strings.ToLower(strings.TrimSpace(parsed.Info.Severity))
 		for key, value := range parsed.Info.Metadata {
 			normalizedKey := strings.ToLower(strings.ReplaceAll(key, "_", "-"))
 			switch normalizedKey {
 			case "argus-execution-class", "execution-class":
 				m.executionClass = strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
-			case "argus-risk-level", "risk-level":
-				m.riskLevel = strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
 			}
 		}
 	}
@@ -308,7 +308,9 @@ func parsePocMeta(content []byte) pocMeta {
 		if strings.HasPrefix(line, "id:") {
 			m.id = strings.TrimSpace(strings.TrimPrefix(line, "id:"))
 		} else if strings.HasPrefix(line, "severity:") {
-			m.severity = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, "severity:")))
+			if m.severity == "" || m.severity == "info" {
+				m.severity = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, "severity:")))
+			}
 		} else if strings.HasPrefix(line, "tags:") {
 			m.tags = strings.TrimSpace(strings.TrimPrefix(line, "tags:"))
 		} else if strings.HasPrefix(line, "author:") {
@@ -321,7 +323,31 @@ func parsePocMeta(content []byte) pocMeta {
 			m.description = val
 		}
 	}
+	m.riskLevel = pocRiskLevelFromNucleiSeverity(m.severity)
+	if m.severity == "" {
+		m.severity = "info"
+	}
+	if m.executionClass == "" {
+		m.executionClass = "detection"
+	}
 	return m
+}
+
+// pocRiskLevelFromNucleiSeverity 与服务端 db.PocRiskLevelFromNucleiSeverity 对齐：
+// 执行风险跟 Nuclei info.severity；critical 存成 high；缺省为 unknown。
+func pocRiskLevelFromNucleiSeverity(severity string) string {
+	switch strings.ToLower(strings.TrimSpace(severity)) {
+	case "info":
+		return "info"
+	case "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "high", "critical":
+		return "high"
+	default:
+		return "unknown"
+	}
 }
 
 func validatePocGovernanceMeta(meta pocMeta) error {
@@ -333,9 +359,9 @@ func validatePocGovernanceMeta(meta pocMeta) error {
 		return fmt.Errorf("POC execution_class must be detection or verification")
 	}
 	switch meta.riskLevel {
-	case "unknown", "low", "medium", "high":
+	case "unknown", "info", "low", "medium", "high":
 		return nil
 	default:
-		return fmt.Errorf("POC risk_level must be unknown, low, medium, or high")
+		return fmt.Errorf("POC risk_level must be unknown, info, low, medium, or high")
 	}
 }

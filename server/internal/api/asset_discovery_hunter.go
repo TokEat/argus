@@ -43,6 +43,10 @@ func queryProjectHunterPreview(c *gin.Context) {
 
 	startedAt := time.Now()
 	audit := newAssetDiscoveryAudit(c, project.ID, "hunter", request, "failed", "", startedAt)
+	expression, ok := loadDiscoverySnapshotExpression(c, project.ID, "hunter", request, audit, startedAt)
+	if !ok {
+		return
+	}
 	credential, err := loadTenantHunterCredential(currentTenantID(c))
 	if err != nil {
 		audit.ErrorCode = "credential_unavailable"
@@ -70,8 +74,9 @@ func queryProjectHunterPreview(c *gin.Context) {
 	}
 
 	result, searchErr := provider.Search(c.Request.Context(), credential.Credential, assetdiscovery.HunterQuery{
-		Expression: request.Expression,
+		Expression: expression,
 		Limit:      request.Limit,
+		Page:       request.Page,
 	})
 	audit.DurationMS = time.Since(startedAt).Milliseconds()
 	if searchErr != nil {
@@ -84,7 +89,7 @@ func queryProjectHunterPreview(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
-	completeProjectDiscoveryPreview(c, project.ID, request, result, audit)
+	completeProjectDiscoveryQuery(c, project.ID, request, result, audit)
 }
 
 func loadTenantHunterCredential(tenantID string) (tenantHunterCredential, error) {

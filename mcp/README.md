@@ -49,7 +49,7 @@ ARGUS_MCP_APP_DEV_HOST=true \
 go run ./cmd/argus-mcp
 ```
 
-访问 `http://127.0.0.1:8787/__dev/exp-studio`。宿主只允许 `argus_yaksha_exp`、`argus_exp_workspace` 与用于在线 Agent 选择的只读 `argus_context`，通过进程内 Client 转发真实调用；浏览器不接收 Server Token。该入口必须绑定 loopback，且默认关闭，不能作为生产 MCP Host。
+访问 `http://127.0.0.1:8787/__dev/exp-studio`。宿主只允许 `argus_yaksha_exp`、`argus_exp_workspace` 与用于在线 Agent 选择的只读 `argus_agents`，通过进程内 Client 转发真实调用；浏览器不接收 Server Token。该入口必须绑定 loopback，且默认关闭，不能作为生产 MCP Host。
 
 ## 环境变量
 
@@ -110,16 +110,19 @@ claude mcp add argus \
 
 | 工具 | 只读 | 说明 |
 |---|---|---|
-| `argus_context` | ✓ | 规则事实查询（指纹/探针/POC/workflow 的 get/list/drafts/关系等） |
-| `argus_product_search` | ✓ | 跨索引模糊产品搜索 |
+| `argus_help` | ✓ | 入门手册（先调这个） |
+| `argus_resource` | ✓ | 按 URI 拉取规范/模板 |
+| `argus_agents` | ✓ | 在线 Agent 列表 |
+| `argus_coverage` | ✓ | 指纹与 POC 覆盖 |
+| `argus_rule_get` / `argus_rule_list` | ✓ | 读取/列出规则 |
 | `argus_findings` | ✓ | 扫描结果查询：爬取站点候选 + 敏感信息（见下） |
 | `argus_results` | ✓ | 扫描核心结果：漏洞（含请求/响应证据）/资产/指纹命中（见下） |
-| `argus_rule_debug` | | 经授权 Agent 在线调试着规则/POC |
-| `argus_rule_save` | | 保存规则草稿（Draft），返回 stable_ref |
+| `argus_debug_*` | | 经授权 Agent 在线调试（指纹/目录/POC/workflow/行为探针） |
+| `argus_save_*` | | 保存规则草稿（Draft），返回 stable_ref |
 | `argus_rule_apply` | | 管理员发布/下线/回滚（hash/version 守卫） |
 | `argus_yaksha_exp` | | Yaklang EXP 运行（inspect/validate/test/debug/run） |
 | `argus_exp_workspace` | | EXP 工作区（修订/资产/夹具/运行历史） |
-| `argus_scan_task` | | 预览/创建扫描任务（Server 编译 scan-policy） |
+| `argus_scan_preview` / `argus_scan_create` | | 预览/创建扫描任务（Server 编译 scan-policy） |
 
 写工具（debug/save/apply/exp/scan）都由 Server 做租户鉴权、风险确认与审计；MCP 只转发。
 
@@ -146,7 +149,7 @@ argus_findings({"action": "sensitive", "project_id": "proj-1", "kind": "apikey",
 
 ## argus_results：扫描核心结果
 
-外部 AI 用 `argus_scan_task` 发起扫描后，用 `argus_results` 读回主结果——漏洞 POC 证据、资产清单、指纹命中，形成完整闭环。
+外部 AI 用 `argus_scan_preview` + `argus_scan_create` 发起扫描后，用 `argus_results` 读回主结果——漏洞 POC 证据、资产清单、指纹命中，形成完整闭环。
 
 - `action=summary`：三结果集计数聚合——`vulns.by_severity`/`by_status`、`assets.by_protocol`、`fingerprints.by_product`（top 20）。`total` 是 Server 精确计数，>200 时 `truncated=true`。
 - `action=vulns`：漏洞列表，支持 `search`（target 模糊）、`sort`（severity/created_at/updated_at）、`order`；每行自带 `Request`/`Response` 证据包与 AI 研判字段。

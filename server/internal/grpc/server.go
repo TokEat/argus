@@ -77,15 +77,15 @@ func taskRequestsUnconfirmedPOC(task *pb.Task) bool {
 type Server struct {
 	pb.UnimplementedAgentServiceServer
 	pb.UnimplementedAgentEgressServiceServer
-	port int
-	psk  string // Agent 预共享密钥，为空则跳过鉴权（开发模式）
+	port         int
+	psk          string // Agent 预共享密钥；生产必须非空
+	allowOpenPSK bool   // --dev 才允许空 PSK 开放模式
 	// NotifyHub 管理所有在线 Agent 的 Subscribe 流连接
 	Hub    *NotifyHub
 	Egress *egressbroker.Broker
 
 	// queue hooks — 通过回调与任务队列解耦（RabbitMQ / Memory）
 	claimTaskHook      func(agentID string) (*pb.Task, string, error) // 原子认领
-	fetchTaskHook      func(agentID string) (*pb.Task, string, error) // 兼容旧版
 	ackTaskHook        func(msgID string) error                       // ACK 确认
 	returnTaskHook     func(task *pb.Task, msgID string) error        // 退回队列
 	requeueTaskHook    func(task *pb.Task) error                      // 重新入队（用于重试/拆分）
@@ -123,10 +123,6 @@ func NewServer(port int) *Server {
 
 func (s *Server) SetClaimTaskHook(fn func(agentID string) (*pb.Task, string, error)) {
 	s.claimTaskHook = fn
-}
-
-func (s *Server) SetFetchTaskHook(fn func(agentID string) (*pb.Task, string, error)) {
-	s.fetchTaskHook = fn
 }
 
 func (s *Server) SetAckTaskHook(fn func(msgID string) error) {
@@ -174,9 +170,18 @@ func (s *Server) SetOnTaskTerminalHook(fn func(context.Context, db.SubTask) erro
 	s.onTaskTerminalHook = fn
 }
 
-// SetPSK 设置 Agent 预共享密钥（为空则跳过鉴权，适用于开发环境）
+// SetPSK 设置 Agent 预共享密钥（为空则跳过鉴权，仅允许开发环境）
 func (s *Server) SetPSK(psk string) {
 	s.psk = psk
+}
+
+// SetAllowOpenPSK 允许空 PSK 开放接入。仅 --dev 可打开。
+func (s *Server) SetAllowOpenPSK(allow bool) {
+	s.allowOpenPSK = allow
+}
+
+func (s *Server) agentPSKMissing() bool {
+	return strings.TrimSpace(s.psk) == "" && !s.allowOpenPSK
 }
 
 // generateSessionToken 生成随机 session token
@@ -194,24 +199,15 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterReq) (*pb.Registe
 	log.Printf("[Register] Agent %s connected, version: %s", req.AgentId, req.Version)
 
 	tags := attestedAgentTags(ctx, req.Tags)
-	tagsJSON := "{}"
-	if len(tags) > 0 {
-		if data, err := json.Marshal(tags); err == nil {
-			tagsJSON = string(data)
-		}
+	delete(tags, "tenant_id")
+	tenantID := resolveRegisterTenantID(strings.TrimSpace(req.AgentId))
+	if tags == nil {
+		tags = map[string]string{}
 	}
-
-	// 多租户：从 Agent 标签中提取 tenant_id（Cloud-Init 会注入），
-	// 回退到关联 CloudInstance 的 tenant_id，最终兜底 "default"。
-	tenantID := "default"
-	if tid, ok := tags["tenant_id"]; ok && strings.TrimSpace(tid) != "" {
-		tenantID = strings.TrimSpace(tid)
-	} else {
-		// 尝试从已有的 CloudInstance 记录中继承 tenant_id
-		var cloudInst db.CloudInstance
-		if err := db.DB.Select("tenant_id").Where("agent_id = ?", req.AgentId).First(&cloudInst).Error; err == nil && cloudInst.TenantID != "" {
-			tenantID = cloudInst.TenantID
-		}
+	tags["tenant_id"] = tenantID
+	tagsJSON := "{}"
+	if data, err := json.Marshal(tags); err == nil {
+		tagsJSON = string(data)
 	}
 
 	token := generateSessionToken()
@@ -369,9 +365,6 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 	}
 
 	hook := s.claimTaskHook
-	if hook == nil {
-		hook = s.fetchTaskHook // fallback
-	}
 	if hook == nil {
 		return &pb.Task{}, nil
 	}
@@ -744,7 +737,7 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 				continue
 			}
 		}
-		claimConfig, deferred, err := s.resolveClaimSubdomainConfig(tx, task, sub, resumeConfig, msgID)
+		claimConfig, deferred, err := s.resolveClaimSubdomainConfig(tx, task, sub, resumeConfig, msgID, claimNode.Tags)
 		if err != nil {
 			return &pb.Task{}, err
 		}
@@ -911,18 +904,6 @@ func (s *Server) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq) (*pb.Task,
 	}
 
 	return &pb.Task{}, nil // 重试耗尽
-}
-
-// ============================================================================
-// FetchTask — 兼容旧版 Agent 的轮询接口
-// ============================================================================
-
-func (s *Server) FetchTask(ctx context.Context, req *pb.FetchTaskReq) (*pb.Task, error) {
-	// 委托给 ClaimTask 逻辑
-	return s.ClaimTask(ctx, &pb.ClaimTaskReq{
-		AgentId:   req.AgentId,
-		FreeSlots: 1,
-	})
 }
 
 // ============================================================================
@@ -1111,19 +1092,50 @@ func (s *Server) TaskComplete(ctx context.Context, req *pb.TaskCompleteReq) (*pb
 		_ = s.ackTaskHook(sub.StreamMsgID)
 	}
 
-	// 失败批次拆分重试：对多目标失败批次执行二分拆分
-	if (status == "FAILED" || status == "TIMEOUT") && sub.RootTaskID != "" && !isCredentialValidationConfig(sub.Config) {
-		splitSubs, didSplit, _ := db.SplitFailedSubTask(&sub, false)
-		if didSplit && len(splitSubs) > 0 {
-			// 拆分成功，将两个子批次推入 urgent 队列优先调度。
-			for _, splitSub := range splitSubs {
-				s.enqueuePreparedRetry(splitSub)
+	// 失败批次拆分重试：对多目标失败批次执行二分拆分。
+	// 风险验证快照不可走通用拆分/重试：其派生配置（NoPoc=false、
+	// RiskValidationTargets、钉住的规则版本）会被任务级资产发现修订覆盖，
+	// 导致重试"成功完成"却静默跳过全部 POC。必须经 AppendRetry 保留原配置。
+	if (status == "FAILED" || status == "TIMEOUT") && sub.RootTaskID != "" {
+		switch {
+		case isCredentialValidationConfig(sub.Config):
+			// 凭据验证的重发由 sealed-bundle reissue 流程负责，这里不处理。
+		case isRiskValidationConfig(sub.Config):
+			if isSealedNucleiBudgetExceeded(sub.FailureReason) {
+				log.Printf("[Retry] Risk validation attempt %s exhausted its sealed Nuclei budget; skipping automatic retry with the same snapshot", sub.ID)
+				break
 			}
-			log.Printf("[SplitRetry] Task %s split into %d sub-batches and re-enqueued", req.TaskId, len(splitSubs))
-		} else if prepared, ok := db.PrepareSubTaskRetry(&sub); ok {
-			// 普通重试：单目标批次失败或无法拆分时，走常规重试流程
-			log.Printf("[Retry] Task %s failed, regular retry (%d/%d)", req.TaskId, prepared.RetryCount, prepared.MaxRetry)
-			s.enqueuePreparedRetry(prepared)
+			terminalStatus := "Failed"
+			if status == "TIMEOUT" {
+				terminalStatus = "Timeout"
+			}
+			prepared, appended, appendErr := credentialbundle.AppendRetry(db.DB, &sub, db.AttemptRetryOptions{
+				Trigger:              db.AttemptTriggerAutomaticRetry,
+				TerminalStatus:       terminalStatus,
+				FailureReason:        sub.FailureReason,
+				ConsumeRetryBudget:   true,
+				UseCurrentTaskConfig: true,
+			})
+			if appendErr != nil {
+				log.Printf("[Retry] Risk validation attempt %s retry preparation failed: %v", sub.ID, appendErr)
+			} else if !appended {
+				log.Printf("[Retry] Risk validation attempt %s retry blocked by state or budget", sub.ID)
+			} else if s.enqueuePreparedRetry(prepared) {
+				log.Printf("[Retry] Risk validation attempt %s requeued with preserved stage config (retry %d/%d)", prepared.ID, prepared.RetryCount, prepared.MaxRetry)
+			}
+		default:
+			splitSubs, didSplit, _ := db.SplitFailedSubTask(&sub, false)
+			if didSplit && len(splitSubs) > 0 {
+				// 拆分成功，将两个子批次推入 urgent 队列优先调度。
+				for _, splitSub := range splitSubs {
+					s.enqueuePreparedRetry(splitSub)
+				}
+				log.Printf("[SplitRetry] Task %s split into %d sub-batches and re-enqueued", req.TaskId, len(splitSubs))
+			} else if prepared, ok := db.PrepareSubTaskRetry(&sub); ok {
+				// 普通重试：单目标批次失败或无法拆分时，走常规重试流程
+				log.Printf("[Retry] Task %s failed, regular retry (%d/%d)", req.TaskId, prepared.RetryCount, prepared.MaxRetry)
+				s.enqueuePreparedRetry(prepared)
+			}
 		}
 	}
 
@@ -1557,6 +1569,32 @@ func tenantIDForAgent(agentID string) string {
 	var node db.Node
 	if err := db.DB.Select("tenant_id").Where("agent_id = ?", agentID).First(&node).Error; err == nil && strings.TrimSpace(node.TenantID) != "" {
 		return node.TenantID
+	}
+	return "default"
+}
+
+// resolveRegisterTenantID binds an Agent to a server-side tenant.
+// Agent-supplied tags are untrusted. Existing nodes keep their tenant (agent_id
+// is globally unique, so a node cannot be moved across tenants). New nodes
+// inherit CloudInstance.tenant_id when the Server provisioned that agent_id,
+// otherwise they join "default".
+func resolveRegisterTenantID(agentID string) string {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return "default"
+	}
+	var existing db.Node
+	if err := db.DB.Select("tenant_id").Where("agent_id = ?", agentID).First(&existing).Error; err == nil {
+		if tid := strings.TrimSpace(existing.TenantID); tid != "" {
+			return tid
+		}
+		return "default"
+	}
+	var cloudInst db.CloudInstance
+	if err := db.DB.Select("tenant_id").Where("agent_id = ?", agentID).First(&cloudInst).Error; err == nil {
+		if tid := strings.TrimSpace(cloudInst.TenantID); tid != "" {
+			return tid
+		}
 	}
 	return "default"
 }

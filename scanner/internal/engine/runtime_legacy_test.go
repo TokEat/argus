@@ -54,6 +54,22 @@ func TestToEngineOutputMessageKeepsCrawlAndSensitivePayload(t *testing.T) {
 	}
 }
 
+func TestToEngineOutputMessageKeepsServiceIdentity(t *testing.T) {
+	src := ddout.OutputMessage{
+		Type:      "Nmap",
+		IP:        "10.0.0.8",
+		Port:      "53",
+		Protocol:  "dns",
+		Product:   "DNS",
+		Version:   "9.18",
+		Transport: "udp",
+	}
+	got := toEngineOutputMessage(src)
+	if got.Product != src.Product || got.Version != src.Version || got.Transport != src.Transport || got.Protocol != src.Protocol {
+		t.Fatalf("service identity lost: %#v", got)
+	}
+}
+
 func TestNewScanContextRuleFilesOnlyIgnoresArsenalDB(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "config")
@@ -99,6 +115,24 @@ func TestNewScanContextRuleFilesOnlyIgnoresArsenalDB(t *testing.T) {
 	}
 	if sawDBProduct {
 		t.Fatalf("expected RuleFilesOnly scan context to ignore data/arsenal.db")
+	}
+}
+
+func TestApplyConfigDefaultsNoICMPEnablesTCPPing(t *testing.T) {
+	cfg := Config{NoICMPPing: true}
+	ApplyConfigDefaults(&cfg)
+	if !cfg.TCPPing || cfg.SkipHostDiscovery {
+		t.Fatalf("NoICMPPing should enable TCP ping, got TCPPing=%v Skip=%v", cfg.TCPPing, cfg.SkipHostDiscovery)
+	}
+	cfg = Config{NoICMPPing: true, UDPPing: true}
+	ApplyConfigDefaults(&cfg)
+	if cfg.TCPPing || cfg.SkipHostDiscovery {
+		t.Fatalf("UDP-only ping must not force TCPPing, got TCPPing=%v Skip=%v", cfg.TCPPing, cfg.SkipHostDiscovery)
+	}
+	cfg = Config{NoICMPPing: true, SkipHostDiscovery: true}
+	ApplyConfigDefaults(&cfg)
+	if cfg.TCPPing {
+		t.Fatal("-Pn must not force TCP ping")
 	}
 }
 

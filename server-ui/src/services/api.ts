@@ -286,7 +286,9 @@ type ResultPageParams = {
     pageSize?: number;
     sort?: string;
     order?: 'asc' | 'desc';
+    kind?: string;
     search?: string;
+    source?: string;
 };
 
 const buildResultParams = (first?: string | ResultPageParams, projectId?: string): Record<string, string | number> => {
@@ -298,7 +300,9 @@ const buildResultParams = (first?: string | ResultPageParams, projectId?: string
         if (first.pageSize) params.page_size = first.pageSize;
         if (first.sort) params.sort = first.sort;
         if (first.order) params.order = first.order;
+        if (first.kind) params.kind = first.kind;
         if (first.search) params.search = first.search;
+        if (first.source) params.source = first.source;
         return params;
     }
     if (first) params.task_id = first;
@@ -439,6 +443,16 @@ export async function updateSentinelConfig(data: Partial<API.SentinelConfig>): P
     return request.put('/sentinel/config', data);
 }
 
+export async function listAIToolInvocations(params?: {
+    limit?: number;
+    offset?: number;
+    module?: string;
+    tool_name?: string;
+    status?: string;
+}): Promise<API.AIToolInvocationList> {
+    return request.get('/ai/tool-invocations', { params });
+}
+
 export async function getFingerprintLineage(projectId: string, fingerprintId: number): Promise<API.AssetLineageResponse> {
     return request.get(`/fingerprints/${fingerprintId}/lineage`, { params: { project_id: projectId } });
 }
@@ -478,10 +492,19 @@ export async function listPocRulesPage(params?: {
     return request.get('/poc-rules', { params: { lite: '1', ...(params || {}) } });
 }
 
-const exportReportBlob = async (kind: 'vulns' | 'assets' | 'fingerprints', projectId?: string, taskId?: string): Promise<Blob> => {
+const exportReportBlob = async (
+    kind: 'vulns' | 'assets' | 'fingerprints',
+    projectId?: string,
+    taskId?: string,
+    assetKind?: string,
+    extras?: { search?: string; source?: string },
+): Promise<Blob> => {
     const params = new URLSearchParams();
     if (projectId) params.set('project_id', projectId);
     if (taskId) params.set('task_id', taskId);
+    if (kind === 'assets' && assetKind) params.set('kind', assetKind);
+    if (extras?.search) params.set('search', extras.search);
+    if (extras?.source) params.set('source', extras.source);
     const queryString = params.toString();
     const url = `/api/v1/reports/export/${kind}${queryString ? `?${queryString}` : ''}`;
     const response = await axios.get(url, {
@@ -497,12 +520,12 @@ export async function exportVulns(projectId?: string, taskId?: string): Promise<
     return exportReportBlob('vulns', projectId, taskId);
 }
 
-export async function exportAssets(projectId?: string, taskId?: string): Promise<Blob> {
-    return exportReportBlob('assets', projectId, taskId);
+export async function exportAssets(projectId?: string, taskId?: string, kind?: string): Promise<Blob> {
+    return exportReportBlob('assets', projectId, taskId, kind);
 }
 
-export async function exportFingerprints(projectId?: string, taskId?: string): Promise<Blob> {
-    return exportReportBlob('fingerprints', projectId, taskId);
+export async function exportFingerprints(projectId?: string, taskId?: string, search?: string, source?: string): Promise<Blob> {
+    return exportReportBlob('fingerprints', projectId, taskId, undefined, { search, source });
 }
 
 export async function exportArsenalSeedDB(): Promise<Blob> {
@@ -610,16 +633,6 @@ export async function confirmCopilotAction(action: API.CopilotPendingAction, pag
 
 export async function getCopilotPromptProfiles(): Promise<API.CopilotPromptRegistry> {
     return request.get('/ai/copilot/prompts');
-}
-
-export async function listAIToolInvocations(params?: {
-    limit?: number;
-    offset?: number;
-    module?: string;
-    tool_name?: string;
-    status?: string;
-}): Promise<API.AIToolInvocationList> {
-    return request.get('/ai/tool-invocations', { params });
 }
 
 /** SSE streaming version of AI analysis — real-time token output */
@@ -1183,22 +1196,6 @@ export async function cancelBuildJob(id: number): Promise<API.MessageResponse> {
 
 export async function retryBuildJob(id: number): Promise<API.MessageResponse> {
     return request.post(`/build/jobs/${id}/retry`);
-}
-
-// ===========================
-// MCP Key API
-// ===========================
-
-export async function listMcpKeys(): Promise<API.McpKey[]> {
-    return request.get('/mcp/keys');
-}
-
-export async function saveMcpKey(provider: string, key: string): Promise<API.MessageResponse> {
-    return request.post('/mcp/keys', { provider, key });
-}
-
-export async function deleteMcpKey(id: string): Promise<API.MessageResponse> {
-    return request.delete(`/mcp/keys/${id}`);
 }
 
 // ===========================

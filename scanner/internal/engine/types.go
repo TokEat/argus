@@ -79,7 +79,6 @@ type PhaseEvent struct {
 
 // Pipeline 扫描阶段常量
 const (
-	PhaseSearchEngine         = "search_engine"
 	PhaseSubdomain            = "subdomain"
 	PhaseCDN                  = "cdn_check"
 	PhaseICMP                 = "icmp_discovery"

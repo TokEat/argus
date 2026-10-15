@@ -13,7 +13,7 @@ import (
 func (c *Client) scanTask(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
 	action := strings.ToLower(strings.TrimSpace(rawStringArg(args, "action")))
 	if action != "preview" && action != "create" {
-		return nil, fmt.Errorf("argus_scan_task action must be preview or create")
+		return nil, fmt.Errorf("scan tool action must be preview or create")
 	}
 	body := make(map[string]interface{}, len(args))
 	for key, value := range args {
@@ -25,11 +25,11 @@ func (c *Client) scanTask(ctx context.Context, args map[string]interface{}) (map
 	headers := map[string]string(nil)
 	if action == "create" {
 		if strings.TrimSpace(rawStringArg(args, "plan_hash")) == "" {
-			return nil, fmt.Errorf("argus_scan_task create requires the exact plan_hash returned by preview")
+			return nil, fmt.Errorf("argus_scan_create requires the exact plan_hash returned by argus_scan_preview")
 		}
 		idempotencyKey := strings.TrimSpace(rawStringArg(args, "idempotency_key"))
 		if idempotencyKey == "" {
-			return nil, fmt.Errorf("argus_scan_task create requires idempotency_key")
+			return nil, fmt.Errorf("argus_scan_create requires idempotency_key")
 		}
 		path = "/api/v1/tasks"
 		headers = map[string]string{"Idempotency-Key": idempotencyKey}

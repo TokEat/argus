@@ -88,7 +88,7 @@ func MergeStageObservationEvent(store *gorm.DB, attempt SubTask, event scanplan.
 					pocSetHash = "_unknown"
 					invalidReasons = append(invalidReasons, "poc_set_unknown")
 				}
-				endpointContentHash, known = latestEndpointContentHash(tx, attempt.TenantID, attempt.ProjectID, networkZone, targetHash)
+				endpointContentHash, known = riskValidationEndpointContentHash(tx, attempt, networkZone, target, targetHash)
 				if !known {
 					endpointContentHash = "_unknown"
 					invalidReasons = append(invalidReasons, "endpoint_content_unknown")
@@ -314,18 +314,3 @@ func targetObservationEventID(event scanplan.StageObservationEvent, target strin
 	return sha256Hex([]byte(strings.Join([]string{event.EventID, event.AttemptID, string(event.Stage), target}, "\x00")))
 }
 
-func latestEndpointContentHash(tx *gorm.DB, tenantID, projectID, networkZone, targetHash string) (string, bool) {
-	var coverage ScanCoverage
-	if err := tx.Where(
-		"tenant_id = ? AND project_id = ? AND network_zone = ? AND target_hash = ? AND stage = ? AND status = ?",
-		tenantID, projectID, networkZone, targetHash, string(scanplan.StageHTTPProbe), string(scanplan.CoverageComplete),
-	).Order("finished_at DESC").First(&coverage).Error; err != nil {
-		return "", false
-	}
-	var observation ScanObservation
-	if err := tx.Select("content_hash").Where("id = ? AND tenant_id = ? AND project_id = ?", coverage.SourceObservationID, tenantID, projectID).First(&observation).Error; err != nil {
-		return "", false
-	}
-	contentHash := strings.TrimSpace(observation.ContentHash)
-	return contentHash, contentHash != ""
-}

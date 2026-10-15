@@ -257,11 +257,7 @@ func globalAIChat(c *gin.Context) {
 	pageContext := compactPageContext(req.PageContext)
 	module := resolveCopilotModule(pageContext)
 	profile := resolveCopilotProfile(module)
-	registerCopilotTools(agent, profile.Tools, AIToolAuditContext{
-		TenantID: currentTenantID(c),
-		UserID:   c.GetString("user_id"),
-		Module:   module,
-	})
+	registerCopilotTools(agent, profile.Tools, currentTenantID(c))
 
 	// Prepend System Prompt
 	finalMessages := []aipkg.ChatMessage{
@@ -306,27 +302,27 @@ func resolveCopilotModule(pageContext map[string]interface{}) string {
 	return "global"
 }
 
-func registerCopilotTools(agent *aipkg.Agent, toolNames []string, audit AIToolAuditContext) {
+func registerCopilotTools(agent *aipkg.Agent, toolNames []string, tenantID string) {
 	for _, name := range toolNames {
 		switch name {
 		case "argus_docs":
-			agent.RegisterTool(auditedCopilotTool(&aipkg.QueryArgusDocsTool{}, audit))
+			agent.RegisterTool(&aipkg.QueryArgusDocsTool{})
 		case "sandbox_debug":
-			agent.RegisterTool(auditedCopilotTool(&RunSandboxDebugTool{TenantID: audit.TenantID}, audit))
+			agent.RegisterTool(&RunSandboxDebugTool{TenantID: tenantID})
 		case "asset_search":
-			agent.RegisterTool(auditedCopilotTool(&SearchAssetsTool{TenantID: audit.TenantID}, audit))
+			agent.RegisterTool(&SearchAssetsTool{TenantID: tenantID})
 		case "task_insight":
-			agent.RegisterTool(auditedCopilotTool(&GetTaskInsightTool{TenantID: audit.TenantID}, audit))
+			agent.RegisterTool(&GetTaskInsightTool{TenantID: tenantID})
 		case "workflow_recommend":
-			agent.RegisterTool(auditedCopilotTool(&RecommendWorkflowRulesTool{TenantID: audit.TenantID}, audit))
+			agent.RegisterTool(&RecommendWorkflowRulesTool{TenantID: tenantID})
 		case "vulnerability_explain":
-			agent.RegisterTool(auditedCopilotTool(&ExplainVulnerabilityTool{TenantID: audit.TenantID}, audit))
+			agent.RegisterTool(&ExplainVulnerabilityTool{TenantID: tenantID})
 		case "node_capacity":
-			agent.RegisterTool(auditedCopilotTool(&AnalyzeNodeCapacityTool{TenantID: audit.TenantID}, audit))
+			agent.RegisterTool(&AnalyzeNodeCapacityTool{TenantID: tenantID})
 		case "dict_strategy":
-			agent.RegisterTool(auditedCopilotTool(&SuggestDictionaryStrategyTool{TenantID: audit.TenantID}, audit))
+			agent.RegisterTool(&SuggestDictionaryStrategyTool{TenantID: tenantID})
 		case "workflow_conflicts":
-			agent.RegisterTool(auditedCopilotTool(&DetectWorkflowConflictsTool{TenantID: audit.TenantID}, audit))
+			agent.RegisterTool(&DetectWorkflowConflictsTool{TenantID: tenantID})
 		}
 	}
 }

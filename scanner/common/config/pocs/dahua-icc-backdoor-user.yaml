@@ -1,11 +1,11 @@
 id: dahua-icc-backdoor-user
 
 info:
-  name: Dahua Intelligent IoT - Information Disclosure
+  name: 大华 ICC 智能物联综合管理平台 后门账号 justForTest
   author: DhiyaneshDk
   severity: high
   description: |
-    There is a vulnerability in the user login interface /evo-apigw/evo-oauth/oauth/token of Zhejiang Dahua Technology Co., Ltd. Intelligent IoT Integrated Management Platform. Users can successfully log in to the platform using justForTest/any password, causing information leakage.
+    大华 ICC /evo-apigw/evo-oauth/oauth/token 可用 justForTest 任意密码登录，造成信息泄露。
   metadata:
     verified: true
     max-request: 1

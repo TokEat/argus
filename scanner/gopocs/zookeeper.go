@@ -2,11 +2,12 @@ package gopocs
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/P0lar1ght/argus/scanner/ddout"
+	"github.com/P0lar1ght/argus/scanner/internal/protocolwire"
 	"github.com/P0lar1ght/argus/scanner/structs"
 	"github.com/P0lar1ght/argus/scanner/utils"
-	"strings"
-	"time"
 )
 
 func ZookeeperScan(info *structs.HostInfo) error {
@@ -26,19 +27,10 @@ func ZookeeperScan(info *structs.HostInfo) error {
 	if err != nil || n == 0 {
 		return err
 	}
-	resp := string(buf[:n])
-	if !strings.Contains(resp, "zookeeper.version") {
+	if !protocolwire.IsZooKeeperText(buf[:n]) {
 		return nil
 	}
-
-	version := ""
-	for _, line := range strings.Split(resp, "\n") {
-		if strings.HasPrefix(line, "zookeeper.version=") {
-			version = strings.TrimPrefix(line, "zookeeper.version=")
-			version = strings.TrimSpace(version)
-			break
-		}
-	}
+	version := protocolwire.ZooKeeperVersion(buf[:n])
 	exchanges := []structs.GoPocExchange{
 		binaryGoPocWriteExchange("ZooKeeper envi verification", probe, written, buf[:n]),
 	}

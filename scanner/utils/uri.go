@@ -94,7 +94,7 @@ func RangerToIP(ranger string) (IPs []net.IP) {
 
 func IsLocalIP(input string) bool {
 	ip := net.ParseIP(input)
-	return ip.IsPrivate() || ip.IsLoopback()
+	return ip != nil && (ip.IsPrivate() || ip.IsLoopback())
 }
 
 func ExtractResponse(response string) (code string, header string, body string, server string, contentType string, contentLen string) {

@@ -1,34 +1,23 @@
-# 来源: afrog（转换自 afrog/xray 表达式 POC）
-http:
-  - matchers:
-      - type: status
-        status:
-          - 200
-      - type: word
-        part: body
-        words:
-          - '"supportsLogin":false}'
-        condition: and
-      - type: word
-        part: header
-        words:
-          - application/json
-        condition: and
-    method: GET
-    path:
-      - '{{BaseURL}}/nifi-api/access/config'
 id: nifi-unauth
 info:
+  name: Apache NiFi 未授权访问
   author: pwnhxl
-  description: |-
-    Apache NiFi server was able to be accessed because no authentication was required.
-    shodan: title:"NiFi"
-    fofa: title="nifi" && body="Did you mean"
-  metadata:
-    argus-execution-class: detection
-    argus-import-license: MIT License
-    argus-import-source: afrog
-    argus-risk-level: high
-  name: Apache NiFi - Unauthenticated Access
   severity: high
-  tags: misconfig,apache,nifi,unauth,argus-import
+  description: NiFi /nifi-api/access/config 返回 supportsLogin false，表明 API 未启用登录即可访问。
+  reference:
+  - https://github.com/jm0x0/apache_nifi_processor_rce
+  tags: misconfig,apache,nifi,unauth
+http:
+- method: GET
+  path:
+  - '{{BaseURL}}/nifi-api/access/config'
+  matchers-condition: and
+  matchers:
+  - type: status
+    status:
+    - 200
+  - type: word
+    part: body
+    words:
+    - '"supportsLogin":false}'
+    condition: and

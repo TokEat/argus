@@ -455,7 +455,6 @@ func TestAIPermissions(t *testing.T) {
 		{method: "POST", path: "/api/v1/ai/chat", want: "operator"},
 		{method: "POST", path: "/api/v1/ai/actions/confirm", want: "operator"},
 		{method: "GET", path: "/api/v1/ai/copilot/prompts", want: "operator"},
-		{method: "GET", path: "/api/v1/ai/tool-invocations", want: "operator"},
 		{method: "GET", path: "/api/v1/ai/config", want: "admin"},
 		{method: "PUT", path: "/api/v1/ai/config", want: "admin"},
 		{method: "GET", path: "/api/v1/ai/models", want: "admin"},
@@ -516,11 +515,21 @@ func TestTenantRolePermissionMatrix(t *testing.T) {
 		{method: "POST", path: "/api/v1/ai/arsenal/analyze/stream", want: "admin"},
 		{method: "GET", path: "/api/v1/reports/export/assets", want: "viewer"},
 		{method: "GET", path: "/api/v1/reports/export/fingerprints", want: "viewer"},
-		{method: "POST", path: "/api/v1/mcp/tools/poc/debug", want: "operator"},
 		{method: "POST", path: "/api/v1/mcp/tools/rule/context", want: "operator"},
 		{method: "POST", path: "/api/v1/mcp/tools/rule/debug", want: "operator"},
 		{method: "POST", path: "/api/v1/mcp/tools/rule/save", want: "operator"},
 		{method: "POST", path: "/api/v1/mcp/tools/rule/apply", want: "admin"},
+		{method: "GET", path: "/api/v1/mcp/admin/status", want: "admin"},
+		{method: "PUT", path: "/api/v1/mcp/admin/status", want: "admin"},
+		{method: "GET", path: "/api/v1/mcp/admin/clients", want: "admin"},
+		{method: "POST", path: "/api/v1/mcp/admin/clients/cursor/revoke", want: "admin"},
+		{method: "POST", path: "/api/v1/mcp/admin/clients/cursor/disable", want: "admin"},
+		{method: "DELETE", path: "/api/v1/mcp/admin/clients/other", want: "admin"},
+		{method: "GET", path: "/api/v1/mcp/admin/sessions", want: "admin"},
+		{method: "POST", path: "/api/v1/mcp/admin/sessions/revoke", want: "admin"},
+		{method: "GET", path: "/api/v1/mcp/admin/invocations", want: "admin"},
+		{method: "GET", path: "/api/v1/mcp/admin/events", want: "admin"},
+		{method: "GET", path: "/api/v1/mcp/admin/tools", want: "admin"},
 		{method: "GET", path: "/api/v1/users", want: "operator"},
 		{method: "GET", path: "/api/v1/roles", want: "admin"},
 		{method: "POST", path: "/api/v1/roles", want: "admin"},
@@ -588,7 +597,6 @@ func TestRBACKeepsMCPRuleAuthoringPermissions(t *testing.T) {
 		path   string
 		want   string
 	}{
-		{method: http.MethodPost, path: "/api/v1/mcp/tools/poc/debug", want: "operator"},
 		{method: http.MethodPost, path: "/api/v1/mcp/tools/rule/context", want: "operator"},
 		{method: http.MethodPost, path: "/api/v1/mcp/tools/rule/debug", want: "operator"},
 		{method: http.MethodPost, path: "/api/v1/mcp/tools/rule/save", want: "operator"},
@@ -1125,6 +1133,22 @@ func TestNormalizeUserRoleAndStatus(t *testing.T) {
 	}
 }
 
+func TestCurrentJWTSecretIsNotCompileTimeDefault(t *testing.T) {
+	secret := string(currentJWTSecret())
+	if secret == "" {
+		t.Fatal("JWT secret must not be empty")
+	}
+	if secret == "P8-MUST-HAVE-SECRET-KEY" {
+		t.Fatal("JWT secret must not use the compile-time default")
+	}
+	if os.Getenv("ARGUS_JWT_SECRET") == "" && len(secret) < 32 {
+		t.Fatalf("ephemeral JWT secret too short: %d", len(secret))
+	}
+	if string(currentJWTSecret()) != secret {
+		t.Fatal("JWT secret must be stable for the process lifetime")
+	}
+}
+
 func TestValidateAgentSessionBindsTenantAndRejectsMismatch(t *testing.T) {
 	store := setupAITestDB(t)
 	if err := store.Create(&db.Node{
@@ -1149,6 +1173,12 @@ func TestValidateAgentSessionBindsTenantAndRejectsMismatch(t *testing.T) {
 	}
 	if got := c.GetString("tenant"); got != "tenant-a" {
 		t.Fatalf("expected tenant-a, got %q", got)
+	}
+	if got := c.GetString("role"); got != agentSessionRole {
+		t.Fatalf("expected agent session role %q, got %q", agentSessionRole, got)
+	}
+	if got, _ := c.Get("agent_internal"); got != true {
+		t.Fatalf("expected agent_internal flag, got %#v", got)
 	}
 
 	w = httptest.NewRecorder()
@@ -1210,6 +1240,38 @@ func TestValidateAgentSessionBindsTenantAndRejectsMismatch(t *testing.T) {
 	c.Request.Header.Set("x-agent-token", "revoked-token")
 	if ok := validateAgentSession(c); ok {
 		t.Fatalf("expected revoked agent session to be rejected")
+	}
+}
+
+func TestRBACMiddlewareLimitsAgentInternalSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tt := range []struct {
+		name string
+		path string
+		want int
+	}{
+		{name: "commands allowed", path: "/api/v1/agents/agent-a/commands", want: http.StatusOK},
+		{name: "admin users blocked", path: "/api/v1/users", want: http.StatusForbidden},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gin.New()
+			r.Use(func(c *gin.Context) {
+				c.Set("tenant", "tenant-a")
+				c.Set("role", agentSessionRole)
+				c.Set("agent_internal", true)
+				c.Next()
+			})
+			r.Use(RBACMiddleware())
+			r.GET(tt.path, func(c *gin.Context) {
+				c.JSON(http.StatusOK, gin.H{"status": "ok"})
+			})
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			r.ServeHTTP(w, req)
+			if w.Code != tt.want {
+				t.Fatalf("expected status %d, got %d body=%s", tt.want, w.Code, w.Body.String())
+			}
+		})
 	}
 }
 
@@ -2387,6 +2449,90 @@ func TestGetFingerprintsCanGroupByProductWithAllTargets(t *testing.T) {
 	}
 	if resp.Items[0].Targets[0].Target != "https://a.example" || resp.Items[0].Targets[1].Target != "https://b.example" {
 		t.Fatalf("unexpected grouped targets: %+v", resp.Items[0].Targets)
+	}
+}
+
+func TestGetFingerprintsGroupsSearchAndMarkDirectorySource(t *testing.T) {
+	store := setupAITestDB(t)
+	now := time.Now()
+	if err := store.Create(&db.Project{ID: "project-1", TenantID: "default", Name: "Project 1", Status: "active"}).Error; err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if err := store.Create(&db.RootTask{ID: "root-1", TenantID: "default", ProjectID: "project-1", Name: "root", Status: "Running"}).Error; err != nil {
+		t.Fatalf("seed root task: %v", err)
+	}
+	if err := store.Create(&db.SubTask{ID: "sub-1", TenantID: "default", ProjectID: "project-1", RootTaskID: "root-1", Status: "Done"}).Error; err != nil {
+		t.Fatalf("seed sub task: %v", err)
+	}
+	rows := []db.FingerprintHit{
+		{
+			TenantID: "default", ProjectID: "project-1", TaskID: "sub-1", RootTaskID: "root-1",
+			Target: "https://jenkins.example:443", ProductName: "Jenkins", RuleName: "Active-Finger",
+			Evidence:  `{"type":"Active-Finger","uri":"https://jenkins.example/jenkins/login","finger":["Jenkins"]}`,
+			CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			TenantID: "default", ProjectID: "project-1", TaskID: "sub-1", RootTaskID: "root-1",
+			Target: "https://nginx.example:443", ProductName: "nginx", RuleName: "Finger",
+			Evidence:  `{"type":"Finger","uri":"https://nginx.example/","finger":["nginx"]}`,
+			CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			TenantID: "default", ProjectID: "project-1", TaskID: "sub-1", RootTaskID: "root-1",
+			Target: "https://shiro.example:8080", ProductName: "APACHE-Shiro", RuleName: "behavior-probe",
+			Evidence:  `{"type":"Active-Finger","uri":"https://shiro.example:8080","am":"[behavior-probe:shiro-detect]"}`,
+			CreatedAt: now, UpdatedAt: now,
+		},
+	}
+	if err := store.Create(&rows).Error; err != nil {
+		t.Fatalf("seed fingerprint hits: %v", err)
+	}
+
+	ctx, recorder := newTenantContext(http.MethodGet, "/fingerprints?project_id=project-1&task_id=root-1&group_by=product&search=jenkins")
+	getFingerprints(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected search response, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var searchResp struct {
+		Items []struct {
+			ProductName  string   `json:"ProductName"`
+			Sources      []string `json:"Sources"`
+			SourceLabels []string `json:"SourceLabels"`
+			Targets      []struct {
+				Target      string `json:"Target"`
+				MatchedURL  string `json:"MatchedURL"`
+				Source      string `json:"Source"`
+				SourceLabel string `json:"SourceLabel"`
+			} `json:"Targets"`
+		} `json:"items"`
+		Total int64 `json:"total"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &searchResp); err != nil {
+		t.Fatalf("decode search response: %v; body=%s", err, recorder.Body.String())
+	}
+	if searchResp.Total != 1 || len(searchResp.Items) != 1 || searchResp.Items[0].ProductName != "Jenkins" {
+		t.Fatalf("expected Jenkins search hit, got %+v", searchResp)
+	}
+	if len(searchResp.Items[0].Sources) != 1 || searchResp.Items[0].Sources[0] != db.FingerprintSourceDirectory {
+		t.Fatalf("expected directory source on Jenkins group, got %+v", searchResp.Items[0])
+	}
+	if searchResp.Items[0].SourceLabels[0] != "主动路径" {
+		t.Fatalf("expected directory source label, got %+v", searchResp.Items[0].SourceLabels)
+	}
+	if searchResp.Items[0].Targets[0].MatchedURL != "https://jenkins.example/jenkins/login" || searchResp.Items[0].Targets[0].Source != db.FingerprintSourceDirectory {
+		t.Fatalf("expected directory target metadata, got %+v", searchResp.Items[0].Targets[0])
+	}
+
+	ctx, recorder = newTenantContext(http.MethodGet, "/fingerprints?project_id=project-1&task_id=root-1&group_by=product&source=directory")
+	getFingerprints(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected source filter response, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &searchResp); err != nil {
+		t.Fatalf("decode source filter response: %v; body=%s", err, recorder.Body.String())
+	}
+	if searchResp.Total != 1 || len(searchResp.Items) != 1 || searchResp.Items[0].ProductName != "Jenkins" {
+		t.Fatalf("expected only directory fingerprints, got %+v", searchResp)
 	}
 }
 

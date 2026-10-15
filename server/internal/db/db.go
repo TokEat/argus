@@ -51,25 +51,10 @@ type ProjectMember struct {
 	UpdatedAt time.Time
 }
 
-type CronTask struct {
-	ID        string `gorm:"primaryKey"`
-	ProjectID string `gorm:"index"`
-	Name      string
-	CronExpr  string     `gorm:"index"`
-	Targets   string     `gorm:"type:jsonb"`
-	Config    string     `gorm:"type:jsonb"`
-	NextRunAt *time.Time `gorm:"index"`
-	Status    string     `gorm:"default:'active';index"`
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	DeletedAt gorm.DeletedAt `gorm:"index"`
-}
-
 type RootTask struct {
 	ID                   string `gorm:"primaryKey"`
 	TenantID             string `gorm:"default:'default';index"`
 	ProjectID            string `gorm:"index"`
-	CronTaskID           string `gorm:"index"`
 	UserID               string `gorm:"index"`
 	Name                 string
 	OriginalTargets      string `gorm:"type:text"`
@@ -82,7 +67,7 @@ type RootTask struct {
 	Priority             int
 	TimeoutSec           int
 	RuleVersion          string
-	CurrentConfigVersion int `gorm:"default:1"`
+	CurrentConfigVersion int    `gorm:"default:1"`
 	DispatchStrategy     string `gorm:"size:32;index"` // ''=inherit global default; controller_push|agent_claim
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
@@ -329,9 +314,45 @@ type Asset struct {
 	CertExpiry  *time.Time // TLS 证书过期时间
 	Source      string     // 父目标（归一化），扫描链路溯源用；空串=根/未知
 	Tags        string     `gorm:"type:jsonb"`
-	Status      string     `gorm:"default:'alive';index"`
-	OwnerID     string     `gorm:"index"`
-	CredID      string     `gorm:"index"`
+	// CDN 标记疑似 CDN 资产：CDN-Domain 记录本身，以及来自 CDN 域名的
+	// Web / Domain-Bind 探测结果。仅作展示与过滤，不影响扫描行为。
+	CDN       bool   `gorm:"default:false"`
+	Status    string `gorm:"default:'alive';index"`
+	OwnerID   string `gorm:"index"`
+	CredID    string `gorm:"index"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// SubdomainPassiveCache caches Server-side passive subdomain enumeration per
+// domain. CT / passive DNS data is public and append-only by nature, so the
+// cache is shared globally across tenants; freshness is decided by ExpiresAt.
+type SubdomainPassiveCache struct {
+	Domain      string `gorm:"primaryKey"`
+	Subdomains  string `gorm:"type:jsonb;not null"`
+	Sources     string `gorm:"type:jsonb;not null"`
+	CollectedAt time.Time
+	ExpiresAt   time.Time `gorm:"index:idx_subdomain_passive_cache_expires"`
+}
+
+func (SubdomainPassiveCache) TableName() string { return "subdomain_passive_cache" }
+
+// SubdomainPassiveJob tracks the pre-dispatch Server-side passive collection
+// hold for a domain batch. The attempt stays Queued (not enqueued) until the
+// collector releases it, which makes the job row the restart-recovery record.
+type SubdomainPassiveJob struct {
+	ID         string `gorm:"primaryKey"`
+	TenantID   string `gorm:"default:'default';index:idx_subdomain_passive_jobs_tenant"`
+	ProjectID  string
+	RootTaskID string `gorm:"index:idx_subdomain_passive_jobs_root"`
+	BatchID    string
+	AttemptID  string `gorm:"index:idx_subdomain_passive_jobs_attempt"`
+	Domains    string `gorm:"type:jsonb;not null"`
+	// DomainsDone advances as the collector finishes each domain; it backs the
+	// frontend progress projection.
+	DomainsDone int    `gorm:"not null;default:0"`
+	State       string `gorm:"index:idx_subdomain_passive_jobs_state"`
+	Note        string `gorm:"type:text;not null;default:''"`
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -381,9 +402,9 @@ type Vulnerability struct {
 	Reference    string `gorm:"type:text"` // 参考链接 (JSON array)
 	MatchedAt    string `gorm:"type:text"` // 匹配位置 URL
 	// AI 误报研判回写列（ai.TriageAnalyzer 写入；AI 是 advisor，默认不改 Status）
-	AIStatus     string     `gorm:"index"`
+	AIStatus     string `gorm:"index"`
 	AIConfidence float64
-	AIReason     string `gorm:"type:text"`
+	AIReason     string     `gorm:"type:text"`
 	AITriagedAt  *time.Time `gorm:"index"`
 	AIReviewID   uint
 	// 安全设备对抗哨兵污点标记（sentinel 包写入；taint_status 如 suspect_waf）
@@ -550,7 +571,7 @@ type ArsenalAIReview struct {
 	CreatedAt           time.Time
 }
 
-// AIToolInvocation stores internal audit evidence for Copilot tool calls.
+// AIToolInvocation 记录 Copilot/AI 工具调用审计（ai_tool_invocations 表）。
 type AIToolInvocation struct {
 	ID           uint   `gorm:"primaryKey;autoIncrement"`
 	TenantID     string `gorm:"default:'default';index"`
@@ -801,6 +822,11 @@ func normalizeTarget(raw string) string {
 	return targetutil.NormalizeTarget(raw)
 }
 
+// ResultTargetKey 把扫描结果 target 归一成三表关联用的同一把键。
+func ResultTargetKey(raw string) string {
+	return normalizeTarget(raw)
+}
+
 func splitFingerprintToken(raw string) []string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -891,6 +917,43 @@ func normalizeSeverity(value string) string {
 
 func isOSINTAssetPayloadType(payloadType string) bool {
 	return payloadType == "Quake" || payloadType == "Hunter" || payloadType == "Fofa"
+}
+
+// assetPayloadTypes / fingerprintPayloadTypes / vulnerabilityPayloadTypes
+// 声明 payload Type 到结果表的唯一路由。漏洞表只接收漏洞类 Type；
+// CDN-Domain 等资产类 Type 永远不进入 vulnerabilities。
+var (
+	assetPayloadTypes = map[string]struct{}{
+		"asset": {}, "port_scan": {}, "subdomain": {},
+		"Web": {}, "Protocol": {}, "ProtocolCheck": {}, "PortScan": {}, "IPAlive": {},
+		"Domain": {}, "Domain-Bind": {}, "Nmap": {}, "DNS-SubFinder": {}, "DNS-Brute": {},
+		"CDN-Domain": {}, "RealIP": {},
+		"Quake": {}, "Hunter": {}, "Fofa": {},
+	}
+	fingerprintPayloadTypes = map[string]struct{}{
+		"fingerprint": {}, "web_fingerprint": {}, "tech": {},
+		"Finger": {}, "Active-Finger": {},
+	}
+	vulnerabilityPayloadTypes = map[string]struct{}{
+		"nuclei": {}, "gopoc": {}, "GoPoc": {}, "Nuclei": {}, "vulnerability": {},
+	}
+)
+
+func isAssetPayloadType(payloadType string) bool {
+	_, ok := assetPayloadTypes[payloadType]
+	return ok
+}
+
+func isFingerprintPayloadType(payloadType string) bool {
+	_, ok := fingerprintPayloadTypes[payloadType]
+	return ok
+}
+
+// isVulnerabilityPayloadType 是写入 vulnerabilities 表的唯一准入判定；
+// 资产类（含 CDN-Domain）与指纹类 Type 在集合层面与之互斥。
+func isVulnerabilityPayloadType(payloadType string) bool {
+	_, ok := vulnerabilityPayloadTypes[payloadType]
+	return ok
 }
 
 func payloadString(payload map[string]interface{}, key string) string {
@@ -1020,10 +1083,8 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 		})
 	}
 
-	switch payloadType {
-	case "asset", "port_scan", "subdomain",
-		"Web", "Protocol", "ProtocolCheck", "PortScan", "IPAlive", "Domain", "Domain-Bind", "Nmap", "DNS-SubFinder", "DNS-Brute", "CDN-Domain", "RealIP",
-		"Quake", "Hunter", "Fofa":
+	switch {
+	case isAssetPayloadType(payloadType):
 		// Agent 通过 ddout.OutputMessage 发送的 Type 为大写开头（如 Web/Protocol/PortScan/IPAlive/Domain/Nmap）
 		// 统一归入资产表
 		if isOSINTAssetPayloadType(payloadType) {
@@ -1100,14 +1161,22 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 			actualURL = target // target 已 normalize 为 scheme://host:port 格式
 		}
 
+		// 疑似 CDN 标记：CDN-Domain 记录本身，或携带 tag=cdn 的
+		// Web / Domain-Bind 探测结果（来自被判定为 CDN 的域名）。
+		cdn := payloadType == "CDN-Domain"
+		if !cdn {
+			if tag, ok := p["tag"].(string); ok {
+				cdn = strings.EqualFold(tag, "cdn")
+			}
+		}
+
 		assetBuffer <- Asset{
 			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID, Target: target, Protocol: payloadType,
 			Port: port, URL: actualURL, Title: title, Service: service,
 			Source: normalizeTarget(source),
-			Tags: payloadJSON, Status: "alive", CreatedAt: time.Now(), UpdatedAt: time.Now(),
+			Tags:   payloadJSON, CDN: cdn, Status: "alive", CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
-	case "fingerprint", "web_fingerprint", "tech",
-		"Finger", "Active-Finger":
+	case isFingerprintPayloadType(payloadType):
 		// Agent 通过 ddout 发送的指纹 Type 为 Finger/Active-Finger。
 		// 原实现将 finger[] 拼接成一个字符串，容易产生“顺序变化导致重复”
 		// 和“单产品维度漏报”。这里改为逐产品名写入。
@@ -1120,13 +1189,14 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 		if len(productNames) == 0 {
 			break
 		}
+		ruleName := fingerprintRuleName(payloadType, p)
 		for _, productName := range productNames {
 			fpBuffer <- FingerprintHit{
 				TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID, Target: target, ProductName: productName,
-				Evidence: payloadJSON, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+				RuleName: ruleName, Evidence: payloadJSON, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 			}
 		}
-	case "CrawlSite":
+	case payloadType == "CrawlSite":
 		// 主动爬取提取的"同主机不同站点"关联资产候选。
 		cs, ok := p["crawl_site"].(map[string]interface{})
 		if !ok {
@@ -1148,7 +1218,7 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 		crawlSiteBuffer <- CrawlSiteCandidate{
 			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID,
 			SourceURL: payloadString(cs, "source_url"),
-			URL: rawURL, Scheme: payloadString(cs, "scheme"),
+			URL:       rawURL, Scheme: payloadString(cs, "scheme"),
 			Host: payloadString(cs, "host"), Port: int(portF),
 			LinkContext: payloadString(cs, "link_context"),
 			SiteType:    payloadString(cs, "site_type"),
@@ -1156,7 +1226,7 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 			AIControl:   aiControl, AIStatus: aiStatus,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
-	case "SensitiveInfo":
+	case payloadType == "SensitiveInfo":
 		// 页面/JS 中提取的敏感信息候选。
 		si, ok := p["sensitive_info"].(map[string]interface{})
 		if !ok {
@@ -1181,7 +1251,7 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 			AIControl:  aiControl, AIStatus: aiStatus,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
-	case "phase":
+	case payloadType == "phase":
 		// Agent PhaseHook 发送的阶段进度事件，仅广播到 WebSocket，不入库
 		if WSBroadcastHook != nil {
 			WSBroadcastHook(tenantID, map[string]interface{}{
@@ -1191,7 +1261,7 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 			})
 		}
 		return
-	case "nuclei", "gopoc", "GoPoc", "Nuclei", "vulnerability":
+	case isVulnerabilityPayloadType(payloadType):
 		if severity == "" {
 			severity = "Unknown"
 		}

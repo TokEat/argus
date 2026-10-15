@@ -1,11 +1,11 @@
 id: panmicro-arbitrary-file-read
 
 info:
-  name: Panmicro E-Mobile System - Arbitrary File Read
+  name: 泛微 e-mobile client/cdnfile 任意文件读取
   author: s4e-io
   severity: high
   description: |
-    The Panmicro E-Mobile client/cdnfile interface has an arbitrary file reading vulnerability. Unauthenticated attackers can use this vulnerability to read important system files, database configuration files, and so on.
+    泛微 E-Mobile /client/cdnfile 接口存在任意文件读取，可读取系统与数据库配置文件。
   reference:
     - http://cn-sec.com/archives/3182931.html
     - https://cn-sec.com/archives/3188605.html

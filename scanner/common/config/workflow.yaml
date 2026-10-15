@@ -43,6 +43,11 @@ AIOHTTP:
   - CVE-2024-23334
   type:
   - root
+AJ-Report:
+  pocs:
+  - CVE-2024-7314
+  type:
+  - root
 ALERTMANAGER:
   pocs:
   - alertmanager-unauth
@@ -62,7 +67,10 @@ APACHE-ActiveMQ:
   - activemq-panel
   - activemq-openwire-transport-detect
   - activemq-path-disclosure
+  - CVE-2022-41678
   - CVE-2024-32114
+  - CVE-2026-34197
+  - CVE-2026-40466
   - activemq-panel-nuclei-templates
   - apache-activemq-artemis-detect
   type:
@@ -81,6 +89,7 @@ APACHE-Airflow:
   - airflow-debug
   - unauthenticated-airflow
   - CVE-2020-11981
+  - unauthenticated-airflow-instance
   - airflow-unauth-xray
   type:
   - root
@@ -112,6 +121,9 @@ APACHE-Druid:
   - apache-druid-log4j
   - apache-druid-kafka-connect-rce
   - Apache-Kafka系统Druid-RCE漏洞
+  - CVE-2023-25194
+  - CVE-2025-27817
+  - CVE-2025-27888
   - druid-panel
   type:
   - root
@@ -133,16 +145,17 @@ APACHE-JSPWiki:
   - root
 APACHE-NiFi:
   pocs:
+  - apache-nifi-rce
+  - nifi-unauth
   - CVE-2024-56512
   - apache-nifi-detect
-  - apache-nifi-rce
   - nifi-api-unauthorized-access
   type:
   - root
 APACHE-Shiro:
   pocs:
+  - CVE-2016-4437
   - default-apache-shiro
-  - shiro-detect
   type:
   - root
 APACHE-Skywalking:
@@ -160,6 +173,9 @@ APACHE-Solr:
   - apache-solr-file-read
   - apache-solr-log4j-rce
   - apache-solr-rce
+  - solr-admin-query
+  - CVE-2026-44825
+  - CVE-2024-45216
   - CVE-2023-50290
   - solr-panel-exposure
   type:
@@ -169,6 +185,7 @@ APACHE-Spark:
   - CVE-2022-33891
   - spark-webui-unauth
   - unauth-spark-api
+  - apache-spark-env
   - CVE-2018-8024
   - CVE-2022-33891-nuclei-templates
   - spark-panel
@@ -299,6 +316,8 @@ ATLASSIAN-Confluence:
   - CVE-2023-22515
   - CVE-2023-22518
   - Atlassian Confluence远程代码执行
+  - Atlassian-Confluence-RCE
+  - CVE-2024-21683
   type:
   - root
 ATLASSIAN-JIRA:
@@ -360,6 +379,11 @@ AVEVA-InTouch-Access-Anywhere-Secure-Gateway:
   - aveva-intouch-access-anywhere-panel
   type:
   - root
+AVEVA-InTouch-安全网关:
+  pocs:
+  - CVE-2022-23854
+  type:
+  - root
 AVTECH-Video Monitoring:
   pocs:
   - avtech-auth-bypass
@@ -367,6 +391,7 @@ AVTECH-Video Monitoring:
   - avtech-unauth-file-download
   - avtech-verification-bypass
   - avtech-dvr-exposure
+  - CVE-2024-7029
   type:
   - root
 AWS-Elastic-Beanstalk:
@@ -440,12 +465,15 @@ Adobe-ColdFusion:
   - CVE-2023-29300
   - CVE-2023-29298
   - Adobe ColdFusion 任意文件读取漏洞(CVE-2024-20767)
+  - Adobe-ColdFusion-information-read
+  - CVE-2026-48313
+  - CVE-2024-20767
+  - CVE-2026-48282
   - CVE-2009-1872-nuclei-templates
   - CVE-2023-26347
   - CVE-2023-26360-nuclei-templates
   - CVE-2023-44352
   - CVE-2023-44353
-  - CVE-2024-20767
   - adobe-coldfusion-detect
   type:
   - root
@@ -499,6 +527,7 @@ Adobe-Experience-Manager:
   - aem-userinfo-servlet
   - aem-wcm-suggestions-servlet
   - aem-xss-childlist-selector
+  - CVE-2025-49533
   - CVE-2019-16469
   - aem-detect
   type:
@@ -516,6 +545,8 @@ Adobe-Magento:
   - magento-2-exposed-api
   - magento-cacheleak
   - magento-unprotected-dev-files
+  - CVE-2024-34102
+  - CVE-2025-54236
   - CVE-2019-7139
   - magento-detect
   - magento-eol
@@ -550,6 +581,11 @@ Afterlogic-Aurora:
   - afterlogic-webmail-login
   type:
   - root
+Agent-Zero:
+  pocs:
+  - CVE-2025-55523
+  type:
+  - root
 Agentejo-Cockpit:
   pocs:
   - CVE-2020-14408
@@ -560,6 +596,30 @@ Agentejo-Cockpit:
   - CVE-2023-4451
   - cockpit-detect
   - cockpit-project-panel
+  type:
+  - root
+Aim-Server:
+  pocs:
+  - CVE-2024-6396
+  type:
+  - root
+Aitemi-M300:
+  pocs:
+  - CVE-2025-34152
+  type:
+  - root
+Akamai-CDN:
+  pocs:
+  - akamai-cloudtest
+  - akamai-arl-xss
+  - akamai-s3-cache-poisoning
+  - akamai-cache-detect
+  - akamai-detect
+  type:
+  - root
+Akamai-CloudTest:
+  pocs:
+  - CVE-2025-49493
   type:
   - root
 Akkadian-Provisioning-Manager:
@@ -601,6 +661,7 @@ Alibaba-Druid:
   - dir
 Alibaba-Nacos:
   pocs:
+  - nacos-v3-auth-scope
   - CVE-2021-29441
   - CVE-2021-29442
   - nacos-default-login
@@ -610,6 +671,8 @@ Alibaba-Nacos:
   - nacos-version
   - nacos-jraftserver-deserialization-rce
   - springboot-env-all-check
+  - nacos-default-identity
+  - nacos-default-token
   - nacos-auth-bypass
   - nacos-config-server-sql-inject
   - nacos-core-auth-enabled-bypass
@@ -627,6 +690,16 @@ Alibaba-Sentinel:
 Alibaba-Tengine:
   pocs:
   - default-tengine-page
+  type:
+  - root
+AlphaWeb-XE:
+  pocs:
+  - alphaweb-default-login
+  type:
+  - root
+Alt-N-MDaemon-Security-Gateway:
+  pocs:
+  - CVE-2022-25356
   type:
   - root
 Altenergy-Power-Control-Software:
@@ -652,6 +725,11 @@ Amazon-EC2:
 Amazon-Opensearch:
   pocs:
   - aws-opensearch-login
+  type:
+  - root
+Ametys-CMS:
+  pocs:
+  - CVE-2022-26159
   type:
   - root
 Ampache:
@@ -687,6 +765,11 @@ Ansible-semaphore-Ansible-semaphore:
   - ansible-semaphore-panel
   type:
   - root
+AntD-Admin:
+  pocs:
+  - CVE-2021-46371
+  type:
+  - root
 AnyProxy:
   pocs:
   - alibaba-anyproxy-lfi
@@ -709,6 +792,11 @@ Apache-APISIX:
   - CVE-2022-24112
   - apisix-default-login
   - apache-apisix-panel
+  type:
+  - root
+Apache-ActiveMQ-Artemis:
+  pocs:
+  - activemq-artemis-default-login
   type:
   - root
 Apache-Activemq-apollo:
@@ -781,6 +869,7 @@ Apache-Flink:
   - root
 Apache-Gravitino:
   pocs:
+  - CVE-2026-41042
   - apache-gravitino-detect
   type:
   - root
@@ -808,6 +897,11 @@ Apache-Hertzbeat:
 Apache-Hive:
   pocs:
   - apache-hive-detect
+  type:
+  - root
+Apache-HugeGraph:
+  pocs:
+  - CVE-2024-27348
   type:
   - root
 Apache-Inlong:
@@ -865,11 +959,14 @@ Apache-OFBiz:
   - apache-ofbiz-programexport-rce
   - Apache-OFBiz-xmlrpc-RCE-CVE-2023-49070
   - Apache-OFBiz-ProgramExport-rce-CVE-2023-51467
+  - CVE-2024-32113
+  - CVE-2024-36104
+  - CVE-2024-38856
+  - CVE-2024-45195
+  - CVE-2024-45507
   - CVE-2011-3600
   - CVE-2018-8033-nuclei-templates
   - CVE-2022-47501
-  - CVE-2024-36104
-  - CVE-2024-45195
   - apache-ofbiz-detect
   type:
   - root
@@ -940,9 +1037,10 @@ Apache-Tomcat:
   - tomcat-cookie-exposed
   - CVE-2019-0221
   - CVE-2017-12615
+  - CVE-2019-0232
+  - CVE-2025-24813
   - CVE-2000-0760
   - CVE-2018-11784-nuclei-templates
-  - CVE-2019-0232
   - CVE-2022-34305
   - CVE-2023-45648
   - CVE-2026-50229
@@ -1006,6 +1104,11 @@ Appspace:
   - appspace-panel
   type:
   - root
+Aquatronica-Controller:
+  pocs:
+  - CVE-2025-25037
+  type:
+  - root
 Arangodb-Arangodb:
   pocs:
   - arangodb-auth-bypass
@@ -1018,11 +1121,27 @@ ArcGIS:
   - arcgis-detect
   type:
   - root
+Arcserve-UDP:
+  pocs:
+  - CVE-2024-0799
+  - CVE-2024-0801
+  type:
+  - root
 Arcserve-Udp:
   pocs:
   - CVE-2023-26258
   - CVE-2024-0799
   - arcserve-panel
+  type:
+  - root
+Arelle:
+  pocs:
+  - CVE-2026-42796
+  type:
+  - root
+Argo-CD:
+  pocs:
+  - CVE-2025-55190
   type:
   - root
 Aria2-WebUI:
@@ -1038,6 +1157,7 @@ Artica-Web-Proxy:
   - CVE-2020-17506
   - CVE-2020-8497
   - CVE-2022-37153
+  - CVE-2024-2053
   - artica-web-proxy-detect
   type:
   - root
@@ -1122,7 +1242,13 @@ Avaya-Aura-utility-services:
 Aviatrix-Controller:
   pocs:
   - CVE-2021-40870
+  - CVE-2024-50603
   - aviatrix-panel
+  type:
+  - root
+Avideo:
+  pocs:
+  - CVE-2026-33478
   type:
   - root
 Axigen-Mail-Server:
@@ -1208,6 +1334,7 @@ BUSYBOX:
 BYTEVALUE-智能流控路由器:
   pocs:
   - 百为智能流控路由器存在命令执行漏洞
+  - BaiWei-ECE
   type:
   - root
 BYZORO-安全网关:
@@ -1300,14 +1427,29 @@ Boa-WebServer:
   - CVE-2017-9833
   type:
   - root
+Bonita-BPM-Portal:
+  pocs:
+  - CVE-2015-3897
+  type:
+  - root
 Bonobogitserver-Bonobo-git-server:
   pocs:
   - bonobo-server-panel
   type:
   - root
+BrightSign-Digital-Signage-Diagnostic-Web-Server:
+  pocs:
+  - brightsign-dsdws-ssrf
+  type:
+  - root
 Broadcom-Symantec-identity-manager:
   pocs:
   - symantec-iam-console
+  type:
+  - root
+Brother-Printer:
+  pocs:
+  - CVE-2024-51978
   type:
   - root
 Buffalo-TeraStation:
@@ -1328,11 +1470,22 @@ CACTI-monitoring system:
   - cacti-panel
   - cacti-weathermap-file-write
   - CVE-2023-39361
+  - CVE-2024-29895
+  type:
+  - root
+CAS 单点登录:
+  pocs:
+  - apereo-cas-4-1-rce
   type:
   - root
 CISCO-C2900XL:
   pocs:
   - cisco-vmanage-login
+  type:
+  - root
+CISCO-CloudCenter-Suite:
+  pocs:
+  - cisco-cloudcenter-suite-log4j-rce
   type:
   - root
 CISCO-Email-Security-Appliance-C690:
@@ -1395,9 +1548,24 @@ CLOUDERA-Hadoop-Hue:
   - hue-default-credential
   type:
   - root
+CMSimple:
+  pocs:
+  - CVE-2008-2650
+  type:
+  - root
 CODESYS-WebVisu:
   pocs:
   - codesys-webvisu-panel
+  type:
+  - root
+COUCH-CMS:
+  pocs:
+  - CVE-2018-7662
+  type:
+  - root
+CWP- Virtual Host Control Panel:
+  pocs:
+  - CVE-2025-48703
   type:
   - root
 Cacti-Cacti:
@@ -1498,6 +1666,11 @@ Chamilo:
   - CVE-2021-34187-nuclei-templates
   type:
   - root
+ChanCMS:
+  pocs:
+  - CVE-2025-8266
+  type:
+  - root
 Changedetection-Changedetection:
   pocs:
   - CVE-2024-34061
@@ -1513,6 +1686,12 @@ Changsha-Tongxun-Computer-Technology-Co.,-Ltd-Xspeeder-router:
 ChatGPT-Web:
   pocs:
   - chatgpt-web-unauth
+  - CVE-2024-27564
+  type:
+  - root
+CheckPoint-Quantum-Security-Gateway:
+  pocs:
+  - CVE-2024-24919
   type:
   - root
 Checkpoint-Firewall:
@@ -1530,6 +1709,27 @@ Checkpoint-Ssl-network-extender:
   - ssl-network-extender
   type:
   - root
+Chef-Automate:
+  pocs:
+  - CVE-2025-8868
+  type:
+  - root
+Cherokee:
+  pocs:
+  - CVE-2006-1681
+  type:
+  - root
+ChurchCRM:
+  pocs:
+  - CVE-2025-1023
+  type:
+  - root
+Chyrp:
+  pocs:
+  - CVE-2011-2744
+  - CVE-2011-2780
+  type:
+  - root
 Ciphertrust:
   pocs:
   - ciphertrust-default-login
@@ -1542,6 +1742,7 @@ CirCarLife-Scada:
   - CVE-2018-16670
   - CVE-2018-16671
   - circarlife-setup
+  - circarlife-installer
   type:
   - root
 Cisco-ASA:
@@ -1591,6 +1792,12 @@ Cisco-IOS-12.2:
   - CVE-2017-3881
   type:
   - root
+Cisco-ISE:
+  pocs:
+  - CVE-2025-20281
+  - CVE-2025-20282
+  type:
+  - root
 Cisco-ISE-Admin-Login-Panel:
   pocs:
   - cisco-ise-admin-panel
@@ -1632,6 +1839,11 @@ Cisco-Router:
 Cisco-SA520W:
   pocs:
   - cisco-asa-detect
+  type:
+  - root
+Cisco-SSM-On-Prem:
+  pocs:
+  - CVE-2024-20419
   type:
   - root
 Cisco-Sd-wan:
@@ -1703,6 +1915,7 @@ Citrix-ADC:
   - CVE-2020-8191
   - CVE-2020-8193
   - CVE-2020-8194
+  - CVE-2023-4966
   - CVE-2023-3519-afrog
   type:
   - root
@@ -1714,6 +1927,7 @@ Citrix-Access-Gateway:
   - CVE-2020-8194
   - CVE-2023-24488
   - CVE-2023-4966
+  - CVE-2025-5777
   - citrix-adc-gateway-panel
   - citrix-vpn-detect
   type:
@@ -1733,6 +1947,11 @@ Citrix-Netscaler:
   - netscaler-aaa-login
   type:
   - root
+Citrix-Netscaler-Gateway:
+  pocs:
+  - CVE-2026-3055
+  type:
+  - root
 Citrix-Netscaler-gateway:
   pocs:
   - netscaler-gateway
@@ -1747,6 +1966,7 @@ Citrix-ShareFile:
 Citrix-ShareFile-StorageZones-Controller:
   pocs:
   - CVE-2023-24489
+  - CVE-2026-2699
   type:
   - root
 Citrix-Sharefile-storage-zones-controller:
@@ -1768,6 +1988,12 @@ Citrix-Xenmobile-device-manager-mdm:
 ClamAV:
   pocs:
   - clamav-unauth
+  type:
+  - root
+Cleo-Harmony:
+  pocs:
+  - CVE-2024-50623
+  - CVE-2024-55956
   type:
   - root
 ClickHouse:
@@ -1795,6 +2021,7 @@ Cloudflare-Nginx-Detect:
 CmsEasy:
   pocs:
   - cmseasy-crossall-act-sqli
+  - cmseasy-crossall-sqli
   type:
   - root
 Cobbler-Web-Interface:
@@ -1805,6 +2032,11 @@ Cobbler-Web-Interface:
   - cobbler-webgui
   - cobbler-exposed-directory
   - cobbler-version
+  type:
+  - root
+CodeChecker:
+  pocs:
+  - CVE-2024-10081
   type:
   - root
 Codeigniter-Codeigniter:
@@ -1825,6 +2057,11 @@ Combodo-Itop:
   - itop-panel
   type:
   - root
+ComfyUI:
+  pocs:
+  - CVE-2025-67303
+  type:
+  - root
 Comfyanonymous-Comfyui:
   pocs:
   - comfyui-detect
@@ -1833,12 +2070,30 @@ Comfyanonymous-Comfyui:
 Commvault-backup system:
   pocs:
   - CVE-2020-25780
+  - CVE-2025-34028
   - commvault-panel
   type:
   - root
 Comsenz-Discuz\\!:
   pocs:
   - discuz-panel
+  type:
+  - root
+Concerto:
+  pocs:
+  - CVE-2025-34026
+  - CVE-2025-34027
+  type:
+  - root
+Conductor-UI:
+  pocs:
+  - CVE-2026-58138
+  type:
+  - root
+ConnectWise-ScreenConnect:
+  pocs:
+  - CVE-2024-1708
+  - CVE-2024-1709
   type:
   - root
 Connectwise-Screenconnect:
@@ -1887,6 +2142,11 @@ Copyparty:
   - copyparty-xss
   type:
   - root
+Coremail-邮件系统:
+  pocs:
+  - coremail-config-disclosure
+  type:
+  - root
 CouchBase-database:
   pocs:
   - couchbase-buckets-api
@@ -1898,6 +2158,15 @@ Craft-CMS:
   - CVE-2020-9757
   - CVE-2023-41892
   - CVE-2021-41749
+  - CVE-2024-56145
+  - CVE-2025-32432
+  type:
+  - root
+Crawl4AI:
+  pocs:
+  - CVE-2026-53753
+  - CVE-2026-56265
+  - CVE-2026-26217
   type:
   - root
 Crawlab:
@@ -1942,6 +2211,22 @@ Cyber-Stealer-C2-Panel:
   - cyber-stealer-panel
   type:
   - root
+CyberPanel:
+  pocs:
+  - CVE-2024-51378
+  - CVE-2024-51567
+  - CVE-2024-51568
+  type:
+  - root
+CyberPower-PowerPanel:
+  pocs:
+  - CVE-2024-32735
+  - CVE-2024-32736
+  - CVE-2024-32737
+  - CVE-2024-32738
+  - CVE-2024-32739
+  type:
+  - root
 Cyberark-Password-vault-web-access:
   pocs:
   - cyberark-pvwa-panel
@@ -1979,6 +2264,17 @@ D-Link-DIR-615:
   - CVE-2021-42627
   type:
   - root
+D-Link-DIR-823X:
+  pocs:
+  - CVE-2025-29635
+  type:
+  - root
+D-Tale:
+  pocs:
+  - CVE-2024-3408
+  - CVE-2024-55890
+  type:
+  - root
 D-link-850L:
   pocs:
   - dlink-850L-info-leak
@@ -1987,6 +2283,11 @@ D-link-850L:
 DASAN-路由器:
   pocs:
   - CVE-2018-10562
+  type:
+  - root
+DATAGERRY:
+  pocs:
+  - CVE-2024-50967
   type:
   - root
 DELL-N3024P:
@@ -2003,6 +2304,13 @@ DELL-idrac-FCZXMW1:
   pocs:
   - dell-idrac6-detect
   - dell-idrac8-detect
+  type:
+  - root
+DELMIA-Apriso:
+  pocs:
+  - CVE-2025-5086
+  - CVE-2025-6204
+  - CVE-2025-6205
   type:
   - root
 DELTA-enteliTOUCH:
@@ -2051,6 +2359,10 @@ D_Link-DNS-ShareCenter:
   pocs:
   - dlink-sharecenter-dns-320-rce
   - D-Link-rce-CVE-2024-3273
+  - CVE-2024-3272
+  - CVE-2024-3273
+  - CVE-2024-10914
+  - CVE-2024-10915
   type:
   - root
 D_Link-DVG-N5402SP:
@@ -2068,6 +2380,13 @@ Dahua-DSS:
   - dss-download-fileread
   - dahua-dss-s2-045-rce
   - 大华 DSS 数字监控系统 itcBulletin SQL 注入
+  - dahua-dds-itcBulletin-sqli
+  - dahua-dss-attachment-downloadatt-fileread
+  type:
+  - root
+Dahua-EIMS:
+  pocs:
+  - CVE-2024-13985
   type:
   - root
 Dahua-ICC:
@@ -2099,12 +2418,23 @@ Dash-Dash-core:
   - dash-panel-detect
   type:
   - root
+Dash-Uploader:
+  pocs:
+  - CVE-2026-38360
+  type:
+  - root
+DataCube3:
+  pocs:
+  - CVE-2024-31750
+  type:
+  - root
 DataEase:
   pocs:
+  - CVE-2025-49001
+  - CVE-2025-32966
   - CVE-2024-30269
   - CVE-2024-47073
   - CVE-2024-56511
-  - CVE-2025-32966
   - CVE-2025-49001-nuclei-templates
   - dataease-default-account
   - dataease-panel
@@ -2133,7 +2463,13 @@ Dataiku:
 DbGate:
   pocs:
   - dbgate-unauth-rce
+  - CVE-2026-47668
   - CVE-2026-47670
+  type:
+  - root
+Decolua-9router:
+  pocs:
+  - CVE-2026-46339
   type:
   - root
 DedeCMS:
@@ -2199,14 +2535,26 @@ Dependency-Track-Login:
   - dependency-track-panel
   type:
   - root
+Devika-AI:
+  pocs:
+  - CVE-2024-5334
+  type:
+  - root
 Dgraph-图数据库:
   pocs:
+  - CVE-2026-34976
   - CVE-2026-41492
+  type:
+  - root
+Dify:
+  pocs:
+  - CVE-2025-56520
   type:
   - root
 Discuz:
   pocs:
   - discuz-api-pathinfo
+  - CVE-2026-49952
   - discuz-v72-sqli
   type:
   - root
@@ -2221,6 +2569,7 @@ Django:
   - django-debug-exposure
   - django-debug-detect
   - default-django-page
+  - CVE-2026-1207
   - django-detect
   type:
   - root
@@ -2233,6 +2582,16 @@ Djangoproject-Django:
 DocCMS:
   pocs:
   - doc-cms-keyword-sql-injection
+  type:
+  - root
+Docassemble:
+  pocs:
+  - CVE-2024-27292
+  type:
+  - root
+DockWatch:
+  pocs:
+  - CVE-2026-58455
   type:
   - root
 Docker-Registry:
@@ -2262,6 +2621,11 @@ Dockge.kuma-Dockge:
   - dockge-panel
   type:
   - root
+DocsGPT:
+  pocs:
+  - CVE-2025-0868
+  type:
+  - root
 Dogtag-PKI:
   pocs:
   - CVE-2022-2414
@@ -2278,6 +2642,14 @@ DokuWiki:
   - dokuwiki-installer
   - CVE-2025-61224
   - dokuwiki-panel
+  type:
+  - root
+Dolibarr:
+  pocs:
+  - CVE-2012-1226
+  - CVE-2018-10095
+  - dolibarr-panel
+  - CVE-2023-33568
   type:
   - root
 DolphinScheduler:
@@ -2318,15 +2690,22 @@ DotCMS:
   - CVE-2018-17422
   - CVE-2022-26352
   - dotcms-admin-panel
-  - CVE-2018-17422-nuclei-templates
   - CVE-2026-8054
+  - CVE-2018-17422-nuclei-templates
   type:
   - root
 DotNetNuke:
   pocs:
   - CVE-2017-0929
   - CVE-2017-9822
+  - CVE-2025-52488
+  - CVE-2025-64095
   - CVE-2015-2794
+  type:
+  - root
+Dozzle:
+  pocs:
+  - CVE-2026-45298
   type:
   - root
 Drawio:
@@ -2343,6 +2722,7 @@ DrayTek-Vigor-AP810:
 DrayTek-Vigor-Router:
   pocs:
   - CVE-2020-8515
+  - CVE-2024-12987
   type:
   - root
 Draytek-VigorConnect:
@@ -2364,8 +2744,8 @@ Drupal:
   - drupal-user-enum-ajax
   - drupal-user-enum-redirect
   - drupal-avatar-xss
-  - CVE-2024-45440
   - CVE-2026-9082
+  - CVE-2024-45440
   - drupal-detect
   - drupal-eol
   - drupal7-elfinder-rce
@@ -2410,10 +2790,19 @@ ECTouch:
   - CVE-2023-39560
   type:
   - root
+EDOC2文档云(深圳):
+  pocs:
+  - edoc2-importNewBpmnDesign-xstream
+  - edoc2-importNewBpmnDesignByIe-xstream
+  - edoc2-auth-jwt
+  - edoc2-auth-pass
+  type:
+  - root
 EDUSOHO - Open source network classroom:
   pocs:
   - edusoho-education-open-fileread
   - 教培系统EduSoho任意文件读取漏洞
+  - EduShow-filereading
   type:
   - root
 EGROUPWARE-产品:
@@ -2436,6 +2825,11 @@ EMLOG:
 ERPNext:
   pocs:
   - erpnext-default-login
+  type:
+  - root
+ETQ-Reliance:
+  pocs:
+  - CVE-2025-34143
   type:
   - root
 EVSE-Web-Interface:
@@ -2515,6 +2909,11 @@ Elasticsearch:
   - elasticsearch-unauth
   type:
   - root
+Elber-Satellite:
+  pocs:
+  - CVE-2025-0674
+  type:
+  - root
 Embedthis-Appweb:
   pocs:
   - CVE-2018-8715
@@ -2542,6 +2941,11 @@ Emqx:
   - emqx-default-login
   - emqx-detect
   - emqx-panel
+  type:
+  - root
+EnGenius-EnShare:
+  pocs:
+  - CVE-2025-34035
   type:
   - root
 EnjoySCM:
@@ -2595,6 +2999,11 @@ EuroTel-ETL3100:
 Everlab-Catalog:
   pocs:
   - Everlab-Catalog-UploadApi-upload
+  type:
+  - root
+Evertz-SDVN:
+  pocs:
+  - CVE-2025-4009
   type:
   - root
 Everything:
@@ -2672,6 +3081,14 @@ FIT2CLOUD-JUMPSERVER-堡垒机:
   - jumpserver-panel
   type:
   - root
+FIT2CLOUD-JumpServer堡垒机:
+  pocs:
+  - jumpserver-chen-webdb
+  - jumpserver-chen-fastjson
+  - CVE-2023-42442
+  - jumpserver-unauth-rce
+  type:
+  - root
 FIT2CLOUD-MeterSphere:
   pocs:
   - metersphere-plugin-rce
@@ -2688,16 +3105,37 @@ FLIR-FLIR-AX8:
   - flir-path-traversal
   type:
   - root
+FOGProject:
+  pocs:
+  - CVE-2024-39914
+  - CVE-2025-58443
+  type:
+  - root
 FORTINET-FortiNAC:
   pocs:
   - CVE-2022-39952
   - fortinet-fortinac-panel
   type:
   - root
+FOSSBilling:
+  pocs:
+  - CVE-2026-28496
+  type:
+  - root
+FREEDOM-Administration:
+  pocs:
+  - CVE-2025-26793
+  type:
+  - root
 FRP-Web:
   pocs:
   - unauthenticated-frp
   - frp-default-login
+  type:
+  - root
+FUDforum:
+  pocs:
+  - CVE-2021-27520
   type:
   - root
 FUEL-CMS:
@@ -2711,6 +3149,7 @@ FUEL-CMS:
 FUXA:
   pocs:
   - CVE-2023-33831
+  - CVE-2026-25895
   type:
   - root
 Facefusion-Facefusion:
@@ -2734,6 +3173,7 @@ Fastjson:
   - fastjson-1-2-62-rce
   - fastjson-1-2-67-rce
   - fastjson-1-2-68-rce
+  - CVE-2017-18349
   type:
   - base
   - root
@@ -2773,10 +3213,28 @@ FlatPress:
   - CVE-2023-0947
   type:
   - root
+Flatnux-CMS:
+  pocs:
+  - CVE-2012-4878
+  type:
+  - root
 Flexnet:
   pocs:
   - flexnet-log4j-rce
   - flexnet-operations-panel
+  type:
+  - root
+Flowise:
+  pocs:
+  - CVE-2024-36420
+  - CVE-2025-26319
+  - CVE-2025-71324
+  - CVE-2025-71334
+  - CVE-2025-8943
+  - CVE-2026-46442
+  - CVE-2026-56270
+  - CVE-2024-8181
+  - CVE-2025-59528
   type:
   - root
 FlowiseAI-Flowise:
@@ -2793,6 +3251,12 @@ Flyte-Console:
   - CVE-2022-24856
   type:
   - root
+FortiClient-EMS:
+  pocs:
+  - CVE-2026-21643
+  - CVE-2026-35616
+  type:
+  - root
 FortiLogger:
   pocs:
   - CVE-2021-3378
@@ -2803,10 +3267,17 @@ FortiPortal:
   - fortiportal-log4j-rce
   type:
   - root
+FortiSandbox:
+  pocs:
+  - CVE-2026-39808
+  type:
+  - root
 Fortinet-FortiWeb:
   pocs:
-  - CVE-2021-22122
+  - CVE-2025-52970
   - CVE-2025-25257
+  - CVE-2025-64446
+  - CVE-2021-22122
   - fortiweb-login
   type:
   - root
@@ -2854,6 +3325,8 @@ Fortinet-Fortiswitch:
   - root
 Fortinet-Fortiwlm:
   pocs:
+  - CVE-2023-34990
+  - CVE-2023-34993
   - fortiwlm-panel
   type:
   - root
@@ -2878,10 +3351,25 @@ Fortinet-product:
   - api-fortitoken-cloud
   type:
   - root
+Fortra-FileCatalyst:
+  pocs:
+  - CVE-2024-5276
+  type:
+  - root
 Fortra-Goanywhere-managed-file-transfer:
   pocs:
   - CVE-2024-0204
   - goanywhere-mft-login-nuclei-templates
+  type:
+  - root
+Four_Faith-Router:
+  pocs:
+  - CVE-2024-9643
+  type:
+  - root
+FoxCMS:
+  pocs:
+  - CVE-2025-29306
   type:
   - root
 Frangoteam-Fuxa:
@@ -2907,6 +3395,12 @@ Frappe-Panel:
 Free5GC-Web-Console:
   pocs:
   - CVE-2022-38870
+  type:
+  - root
+FreePBX:
+  pocs:
+  - CVE-2025-57819
+  - CVE-2025-64328
   type:
   - root
 FreeRDP-WebConnect:
@@ -2971,6 +3465,11 @@ GeoServer:
   - CVE-2023-25157
   - geoserver-rce
   - CVE-2021-40822
+  - CVE-2024-29198
+  - CVE-2024-36401
+  - CVE-2025-30220
+  - CVE-2025-58360
+  - CVE-2026-76904
   - CVE-2021-40822-nuclei-templates
   - CVE-2023-25157-afrog
   type:
@@ -2980,6 +3479,8 @@ GeoWebServer:
   pocs:
   - geovision-geowebserver-xss
   - geovision-geowebserver-lfi
+  - geowebserver-lfi
+  - geowebserver-xss
   - geo-webserver-detect
   type:
   - root
@@ -2996,6 +3497,11 @@ Getgophish-Gophish:
 Geutebruck:
   pocs:
   - CVE-2021-33544
+  type:
+  - root
+Ghost-CMS:
+  pocs:
+  - CVE-2026-26980
   type:
   - root
 Ghost-Ghost:
@@ -3039,8 +3545,8 @@ GitLab:
   - gitlab-rce
   - CVE-2023-2825
   - gitlab-public-registration
-  - CVE-2021-22214-nuclei-templates
   - CVE-2026-19478
+  - CVE-2021-22214-nuclei-templates
   - CVE-2026-85706
   - gitlab-saml
   type:
@@ -3061,10 +3567,10 @@ Gitea:
   pocs:
   - CVE-2020-14144
   - gitea-rce
+  - CVE-2026-20896
   - CVE-2021-45328
   - CVE-2022-1058
   - CVE-2024-6886
-  - CVE-2026-20896
   - CVE-2026-27771
   - gitea-detect
   - gitea-login
@@ -3074,6 +3580,13 @@ Gitea:
 Github-Enterprise-server:
   pocs:
   - github-enterprise-detect
+  type:
+  - root
+Gladinet-CentreStack:
+  pocs:
+  - CVE-2025-12480
+  - CVE-2025-14611
+  - CVE-2025-30406
   type:
   - root
 Glpi-project-Glpi:
@@ -3099,6 +3612,8 @@ GoAnywhere-Managed-File-Transfer:
   - go-anywhere-client
   - goanywhere-mft-login
   - goanywhere-mft-log4j-rce
+  - CVE-2024-0204
+  - CVE-2025-10035
   type:
   - root
 GoAnywhere-Web-Client:
@@ -3146,6 +3661,18 @@ Gophish:
   - gophish-default-login
   type:
   - root
+Gorse:
+  pocs:
+  - CVE-2026-56782
+  type:
+  - root
+Gradio:
+  pocs:
+  - CVE-2024-1561
+  - CVE-2024-4325
+  - CVE-2026-28414
+  type:
+  - root
 Gradle_Enterprise-Server:
   pocs:
   - gradle-cache-node-detect
@@ -3175,6 +3702,10 @@ Grafana_Labs-公司产品:
   - grafana-detect
   - grafana-public-signup
   - grafana-file-read
+  - CVE-2019-15043
+  - CVE-2020-13379
+  - CVE-2025-4123
+  - CVE-2025-3415
   type:
   - root
 Grandnode:
@@ -3245,6 +3776,7 @@ Greenbone-Greenbone-security-assistant:
 Group_Office-公司产品:
   pocs:
   - groupoffice-lfi
+  - CVE-2026-25512
   type:
   - root
 Growatt-Shinelink:
@@ -3273,6 +3805,11 @@ H3C-CVM-虚拟化管理平台:
   - h3c-cvm-arbitrary-file-upload
   type:
   - root
+H3C-ER8300G2-X:
+  pocs:
+  - CVE-2024-32238
+  type:
+  - root
 H3C-Miniware-Webs:
   pocs:
   - h3c-miniware-web-disclosure
@@ -3286,6 +3823,8 @@ H3C-SecPath-运维审计系统:
 H3C-iMC:
   pocs:
   - h3c-imc-rce
+  - h3c-mselfservice-dynamiccontent-properties-rce
+  - h3c-cnsss-arbitrary-file-upload
   type:
   - root
 H3C-下一代防火墙:
@@ -3318,6 +3857,7 @@ HD-Network-Real-time-Monitoring-System:
 HFS:
   pocs:
   - hfs-rce
+  - CVE-2024-23692
   type:
   - root
 HIKVISION-智能应用平台:
@@ -3408,15 +3948,31 @@ HPE-OfficeConnect-Switch:
   - hpe-officeconnect-panel
   type:
   - root
+HPE-OneView:
+  pocs:
+  - CVE-2025-37164
+  type:
+  - root
 HUAWEI-HG532e:
   pocs:
   - huawei-HG532e-default-router-login
+  - huawei-HG532e-default-login
   - huawei-hg532e-panel
   type:
   - root
 HUAWEI-HG659:
   pocs:
   - huawei-hg659-lfi
+  type:
+  - root
+Hadoop-Administration:
+  pocs:
+  - hadoop-disclosure
+  type:
+  - root
+Hadoop-Hue:
+  pocs:
+  - hue-default-credential
   type:
   - root
 Hanwang-detect:
@@ -3428,6 +3984,11 @@ Hashicorp-Terraform:
   pocs:
   - terraform-detect
   - terraform-enterprise-panel
+  type:
+  - root
+HertzBeat:
+  pocs:
+  - CVE-2024-42323
   type:
   - root
 HikVision-Company Products:
@@ -3442,6 +4003,18 @@ Hikvision-iVMS:
   - hikvision-ivms-token-bypass-arbitrary-file-upload
   - hikvision-ivms-file-upload-rce
   - hikvision-ivms8700-getpic-fileupload
+  - hikvision-ivms-file-upload-bypass
+  - hikvision-ivms-8700-fileread
+  type:
+  - root
+Hillstone-SG-6000:
+  pocs:
+  - hillstone-stoneos-version
+  type:
+  - root
+Hillstone-StoneOS:
+  pocs:
+  - hillstone-stoneos-version
   type:
   - root
 Hitachi-Vantara-pentaho:
@@ -3462,6 +4035,11 @@ Home-Assistant:
 Honeywell PM43 Printers:
   pocs:
   - CVE-2023-3710
+  type:
+  - root
+Hoppscotch:
+  pocs:
+  - CVE-2026-50160
   type:
   - root
 Hoppscotch-Panel:
@@ -3487,6 +4065,12 @@ Hospital-Management-System:
   - hospital-management-xss2
   type:
   - root
+Hoverfly:
+  pocs:
+  - CVE-2024-45388
+  - CVE-2025-54123
+  type:
+  - root
 Hp-Oneview:
   pocs:
   - hpe-oneview-panel
@@ -3505,6 +4089,11 @@ Hpe-Autopass-license-server:
 Hpe-Integrated-lights-out-5:
   pocs:
   - hp-ilo-5
+  type:
+  - root
+HuaWei-Auth-Server:
+  pocs:
+  - huawei-authhttp-lfi
   type:
   - root
 HuaWei-Home-Gateway:
@@ -3546,6 +4135,7 @@ Hytec-Inter-HWL-2511-SS:
   pocs:
   - CVE-2022-36553
   - HWL-2511-SS 路由器命令执行漏洞
+  - HWL-2511-SS-RCE
   type:
   - root
 I-Doc-View:
@@ -3596,6 +4186,12 @@ IBM-Maximo:
   - CVE-2020-4463
   type:
   - root
+IBM-ODM:
+  pocs:
+  - CVE-2024-22319
+  - CVE-2024-22320
+  type:
+  - root
 IBM-Service-Assistant-Login-Panel:
   pocs:
   - ibm-service-assistant
@@ -3626,6 +4222,11 @@ IBM-WebSphere:
 ICEFLOW-VPN:
   pocs:
   - iceflow-vpn-disclosure
+  type:
+  - root
+ICTBroadcast:
+  pocs:
+  - CVE-2025-2611
   type:
   - root
 ICewarp:
@@ -3667,6 +4268,8 @@ IPython-Notebook:
 IP网络对讲广播系统:
   pocs:
   - ip-network-intercom-broadcasting-ping-rce
+  - CVE-2023-6895
+  - IP-intercom-RCE
   type:
   - root
 ISPCONFIG-product:
@@ -3716,6 +4319,12 @@ Imcat:
   - CVE-2018-20608
   type:
   - root
+Imgproxy:
+  pocs:
+  - CVE-2023-30019
+  - CVE-2023-1496
+  type:
+  - root
 ImpressCMS:
   pocs:
   - CVE-2021-26598
@@ -3731,6 +4340,12 @@ Inductive-Automation-Ignition:
 Infiniflow-Ragflow:
   pocs:
   - ragflow-panel
+  type:
+  - root
+Infoblox-NetMRI:
+  pocs:
+  - CVE-2025-32813
+  - CVE-2025-32814
   type:
   - root
 Inspur-ClusterEngine:
@@ -3762,6 +4377,11 @@ Intelligent-WAPPLES:
   - wapples-firewall-lfi
   type:
   - root
+Invision-Community:
+  pocs:
+  - CVE-2025-47916
+  type:
+  - root
 Issabel-Pbx:
   pocs:
   - CVE-2023-37599
@@ -3777,22 +4397,39 @@ Ivanti-Connect-secure:
   - ivanti-connect-secure-panel
   type:
   - root
+Ivanti-EPMM:
+  pocs:
+  - CVE-2025-4427
+  type:
+  - root
 Ivanti-ICS:
   pocs:
   - ivanti policy secure-22.6命令注入漏洞(CVE-2024-21887)
+  - Ivanti-RCE-CVE-2024-21887
+  - CVE-2024-21887
+  - CVE-2024-21893
+  - CVE-2024-22024
+  - CVE-2025-0282
   type:
   - root
 Ivanti-Landesk Cloud Service:
   pocs:
   - CVE-2021-44529
+  - CVE-2024-8963
   type:
   - root
 Ivanti-Sentry:
   pocs:
   - CVE-2023-38035
+  - CVE-2026-10520
   - detect-sentry
   - ivanti-sentry-panel
   - sentry-panel
+  type:
+  - root
+Ivanti-Virtual-Traffic-Manager:
+  pocs:
+  - CVE-2024-7593
   type:
   - root
 Ixsystems-Truenas:
@@ -3819,6 +4456,10 @@ JBoss-EAP:
 JET_BRAINS-TeamCity:
   pocs:
   - CVE-2023-42793
+  - CVE-2024-23917
+  - CVE-2024-27198
+  - CVE-2024-27199
+  - CVE-2026-63077
   type:
   - root
 JUNIPer-JUNOS:
@@ -3837,6 +4478,12 @@ JamF-Pro:
   - jamf-setup-assistant
   type:
   - root
+Jan-AI:
+  pocs:
+  - CVE-2024-36857
+  - CVE-2024-36858
+  type:
+  - root
 Java-Spring-Detection:
   pocs:
   - spring-detect
@@ -3847,6 +4494,11 @@ JavaMelody:
   - java-melody-xss
   type:
   - root
+JavaServer-Faces:
+  pocs:
+  - CVE-2020-6950
+  type:
+  - root
 Jboss:
   pocs:
   - CVE-2017-12149
@@ -3854,6 +4506,8 @@ Jboss:
   - jmx-default-login
   - CVE-2017-7501
   - CVE-2017-7504
+  - CVE-2015-7501
+  - jexboss-backdoor
   - CVE-2017-7504-afrog
   - jboss-detect
   type:
@@ -3865,18 +4519,22 @@ JeeSpringCloud:
   - root
 Jeecg-Boot:
   pocs:
+  - jeecg-boot-dict-unauth
+  - jeecg-boot-unauth
+  - jeecg-boot-swagger
+  - CVE-2023-38992
   - CVE-2021-37305
   - CVE-2021-37304
-  - jeecg-boot-swagger
   - CVE-2023-34659
   - CVE-2023-33510
   - CVE-2023-1454
   - jeecg-boot-ssti-rce
-  - jeecg-boot-unauth
   - jeecg-druid-unauth
   - JeecgBoot testConnection 远程命令执行漏洞
   - Jeecg-Boot-SSTL-RCE
-  - CVE-2023-38992
+  - JeecgBoot-testConnection-rce
+  - jeecg-boot-jmreport-fileupload
+  - CVE-2023-4450
   - CVE-2024-48307
   - jeecg-boot-detect
   type:
@@ -3885,6 +4543,7 @@ Jeeplus:
   pocs:
   - jeeplus-sql-injection
   - JeePlus低代码开发平台存在SQL注入漏洞
+  - JeePlus-SQLi
   type:
   - root
 Jellyfin:
@@ -3913,6 +4572,7 @@ Jenkins:
   - jenkins-script
   - jenkins-stack-trace
   - unauthenticated-jenkins
+  - jenkins-weak-password
   - jenkins-dashboard-unauth
   - jenkins-detect
   - unauthenticated-jenkins-nuclei-templates
@@ -3962,8 +4622,10 @@ Jolokia:
   - springboot-h2-db-rce
   - jolokia-logback-jndi-rce
   - jolokia-realm-jndi-rce
-  - jolokia-acceslogvalve-rce
   - jolokia-createstandardhost-rce
+  - jolokia-file-read-compilerdirectivesadd
+  - jolokia-tomcat-creds-leak
+  - jolokia-acceslogvalve-rce
   - jolokia-detect
   type:
   - root
@@ -4102,6 +4764,12 @@ Joomla:
   - CVE-2008-6080
   - CVE-2008-4668
   - CVE-2007-4504
+  - CVE-2026-48907
+  - CVE-2026-48939
+  - CVE-2026-49049
+  - CVE-2026-56290
+  - CVE-2026-56291
+  - CVE-2026-57827
   - CVE-2015-7297-afrog
   - CVE-2015-8562
   - CVE-2017-8917-afrog
@@ -4117,6 +4785,11 @@ Jorani:
   - jorani-benjamin-xss
   - CVE-2023-26469-nuclei-templates
   - jorani-panel
+  type:
+  - root
+Journyx:
+  pocs:
+  - CVE-2024-6893
   type:
   - root
 Jspxcms:
@@ -4152,6 +4825,16 @@ Jupyter-Notebook:
 JupyterHub:
   pocs:
   - jupyterhub-default-login
+  type:
+  - root
+KEDACOM-DVR接入网关:
+  pocs:
+  - kedacom-gateway-file-read
+  type:
+  - root
+KEDACOM-phoenix监控平台:
+  pocs:
+  - kedacom-phoenix-upload-fcgi-upload
   type:
   - root
 KESION-CMS:
@@ -4205,12 +4888,30 @@ Keking-Kkfileview:
   - kkfileview-panel
   type:
   - root
+Kemptechnologies-Loadmaster:
+  pocs:
+  - CVE-2024-1212
+  - CVE-2026-8037
+  type:
+  - root
 Kentico-CMS:
   pocs:
   - CVE-2015-7823
   - CVE-2017-17736
   - CVE-2019-10068
   - kentico-login
+  - CVE-2025-2746
+  - CVE-2025-2747
+  type:
+  - root
+Kerio-WinRout-Firewall:
+  pocs:
+  - CVE-2024-52875
+  type:
+  - root
+Kestra:
+  pocs:
+  - CVE-2026-53576
   type:
   - root
 Kettle:
@@ -4226,6 +4927,11 @@ Kibana:
   - kibana-panel
   - exposed-kibana
   - kibana-unauth
+  type:
+  - root
+Kimai:
+  pocs:
+  - CVE-2026-52824
   type:
   - root
 KindEditor:
@@ -4280,6 +4986,11 @@ Konga:
   - konga-default-jwt-key
   type:
   - root
+Kube-State-Metrics:
+  pocs:
+  - kube-state-metrics
+  type:
+  - root
 KubeOperator:
   pocs:
   - CVE-2023-22480
@@ -4307,6 +5018,18 @@ Kyocera-打印机:
   - CVE-2023-34259
   type:
   - root
+LB-LINK:
+  pocs:
+  - CVE-2026-19900
+  - CVE-2025-45985
+  type:
+  - root
+LG-LED-Assistant:
+  pocs:
+  - CVE-2024-2862
+  - CVE-2024-2863
+  type:
+  - root
 LG-NAS:
   pocs:
   - CVE-2018-10818
@@ -4316,6 +5039,11 @@ LGATE-902:
   pocs:
   - CVE-2018-14916
   - CVE-2018-14918
+  type:
+  - root
+LINKSYS-E2000:
+  pocs:
+  - CVE-2024-27497
   type:
   - root
 LISTSERV:
@@ -4328,6 +5056,11 @@ LISTSERV:
 LODOP-cloud printing:
   pocs:
   - clodop-printer-lfi
+  type:
+  - root
+LaRecipe:
+  pocs:
+  - CVE-2025-53833
   type:
   - root
 Labkey-Labkey-server:
@@ -4357,12 +5090,29 @@ LandRay-OA:
   - landray-oa-treexml-rce
   - landary-oa-sysuicomponent-fileupload
   - 蓝凌OA syszonepersoninfo 接口处存在信息泄露漏洞
+  - LanLing-syszonepersoninfo-Information-disclosure
+  - landray-wechat-loginhelper-sqli
+  - landray-oa-replaceextend-rce
   - landray-syszonepersoninfo-disclosure
   type:
   - root
 Langchain-Langsmith:
   pocs:
   - langsmith-panel
+  type:
+  - root
+Langflow:
+  pocs:
+  - CVE-2024-37014
+  - CVE-2025-34291
+  - CVE-2026-21445
+  - CVE-2026-33017
+  - CVE-2026-5027
+  - CVE-2026-9198
+  - CVE-2026-0770
+  - CVE-2026-33497
+  - CVE-2026-55450
+  - CVE-2025-3248
   type:
   - root
 Langflow-ai-Langflow:
@@ -4419,6 +5169,7 @@ Laravel-Framework:
   - root
 Laravel-Livewire:
   pocs:
+  - CVE-2025-54068
   - livewire-detect
   type:
   - root
@@ -4452,10 +5203,21 @@ Let me-CRM:
   - renwoxing-crm-smsdatalist-sqli
   type:
   - root
+Let me-CRM(任我行CRM):
+  pocs:
+  - renwoxing-crm-smsdatalist-sqli
+  - renwoxing-crm-SmsDataList-sqli
+  type:
+  - root
 Letta-AI-Letta:
   pocs:
   - CVE-2025-51482
   - letta-panel
+  type:
+  - root
+Letta平台AI代理框架:
+  pocs:
+  - CVE-2025-51482
   type:
   - root
 Lexmark companies products:
@@ -4506,6 +5268,12 @@ Lighttpd-Web-Server:
   - lighttpd-detect
   type:
   - root
+LikeShop:
+  pocs:
+  - Likeshop-FileUpload-CVE-2024-0352
+  - CVE-2024-0352
+  type:
+  - root
 LimeSurvey:
   pocs:
   - CVE-2020-11455
@@ -4529,6 +5297,7 @@ Linkerd:
   pocs:
   - linkerd-ssrf-detect
   - linkerd-ssrf
+  - linkerd-ssrf-detection
   - linkerd-badrule-detect
   - linkerd-panel
   type:
@@ -4546,9 +5315,33 @@ Linuxfoundation-Harbor:
   - harbor-panel-nuclei-templates
   type:
   - root
+LiquidFiles:
+  pocs:
+  - CVE-2025-56132
+  type:
+  - root
+ListSERV Maestro:
+  pocs:
+  - CVE-2010-1870
+  type:
+  - root
+LiteLLM:
+  pocs:
+  - CVE-2026-42208
+  - CVE-2026-42271
+  - CVE-2024-6587
+  - CVE-2026-40217
+  type:
+  - root
 LiveBOS:
   pocs:
   - livebos-file-read
+  type:
+  - root
+LiveZilla:
+  pocs:
+  - CVE-2019-12962
+  - livezilla-login-panel
   type:
   - root
 Lllyasviel-Fooocus:
@@ -4564,6 +5357,13 @@ Lm-sys-Fastchat:
 Lmstudio-Lmstudio:
   pocs:
   - lmstudio-panel
+  type:
+  - root
+LoLLMS:
+  pocs:
+  - CVE-2026-0558
+  - CVE-2024-6250
+  - CVE-2026-33340
   type:
   - root
 LoLLMS-WebUI:
@@ -4632,6 +5432,21 @@ MCMS:
   - CVE-2022-25125-nuclei-templates
   type:
   - root
+MCP-Inspector:
+  pocs:
+  - CVE-2025-49596
+  type:
+  - root
+MCP-Server:
+  pocs:
+  - mcp-initialize-detect
+  - mcp-discover-detect
+  - mcp-sse-endpoint-detect
+  - mcp-tools-list-unauth
+  - mcp-oauth-protected
+  risk_level: info
+  type:
+  - root
 MINIO-Browser:
   pocs:
   - CVE-2021-21287
@@ -4648,6 +5463,7 @@ MINIO-Console:
   - CVE-2021-41266
   - minio-default-login
   - CVE-2023-28432
+  - CVE-2025-31489
   - minio-console
   type:
   - root
@@ -4655,6 +5471,8 @@ MLflow:
   pocs:
   - CVE-2023-3765
   - CVE-2026-0545
+  - CVE-2026-2652
+  - CVE-2026-64849
   - CVE-2026-2614
   type:
   - root
@@ -4678,6 +5496,11 @@ MagicFlow-防火墙网关:
   - magicflow-lfi
   type:
   - root
+MagicMirror:
+  pocs:
+  - CVE-2026-42281
+  type:
+  - root
 Magmi-project-Magmi:
   pocs:
   - CVE-2017-7391
@@ -4692,10 +5515,31 @@ Magnolia-CMS:
   - magnolia-panel
   type:
   - root
+MagnusBilling:
+  pocs:
+  - CVE-2025-2609
+  - CVE-2025-2610
+  type:
+  - root
 Maian-Cart:
   pocs:
   - CVE-2021-32172
   - maian-cart-detect
+  type:
+  - root
+Mailman:
+  pocs:
+  - gnu-mailman
+  type:
+  - root
+Mailpit:
+  pocs:
+  - CVE-2026-21859
+  type:
+  - root
+MajordomoSL:
+  pocs:
+  - CVE-2026-27174
   type:
   - root
 Maltrail:
@@ -4793,11 +5637,22 @@ Masa-CMS:
   pocs:
   - CVE-2022-47002
   - CVE-2022-47003
+  - CVE-2024-32640
+  type:
+  - root
+MasterSAM-StarGate:
+  pocs:
+  - CVE-2024-55457
   type:
   - root
 Mattermost-Mattermost-Login:
   pocs:
   - mattermost-panel
+  type:
+  - root
+MaxSite-CMS:
+  pocs:
+  - CVE-2026-3395
   type:
   - root
 McAfee-ePolicy-Orchestrator:
@@ -4809,6 +5664,26 @@ McAfee-ePolicy-Orchestrator:
 Mckaywrigley-Chatbot-ui:
   pocs:
   - chatbot-ui-panel
+  type:
+  - root
+Melis-Platform:
+  pocs:
+  - CVE-2025-10353
+  type:
+  - root
+Memos:
+  pocs:
+  - CVE-2025-22952
+  type:
+  - root
+Mercurial:
+  pocs:
+  - mercurial-hgignore
+  type:
+  - root
+Mesop:
+  pocs:
+  - CVE-2026-33057
   type:
   - root
 MessageSolution:
@@ -4823,6 +5698,7 @@ MetInfo:
   - CVE-2019-16997
   - CVE-2019-17418
   - metinfo-lfi
+  - CVE-2026-29014
   type:
   - root
 Metabase:
@@ -4830,15 +5706,26 @@ Metabase:
   - CVE-2021-41277
   - metabase-log4j
   - CVE-2023-38646
-  - CVE-2021-41277-nuclei-templates
   - CVE-2026-72898
+  - CVE-2021-41277-nuclei-templates
   - metabase-panel
+  type:
+  - root
+MeteoBridge:
+  pocs:
+  - CVE-2025-4008
   type:
   - root
 Mi-router:
   pocs:
   - CVE-2019-18371
   - xiaomi-wireless-router-login
+  type:
+  - root
+MiCollab:
+  pocs:
+  - CVE-2020-11798
+  - CVE-2024-35286
   type:
   - root
 Micro Focus:
@@ -4938,6 +5825,8 @@ Microsoft-SharePoint:
   - CVE-2020-16952
   - exposed-sharepoint-list
   - CVE-2023-29357
+  - CVE-2026-58644
+  - CVE-2025-53770
   - sharepoint-lists-api-disclosure
   type:
   - root
@@ -4987,6 +5876,11 @@ Mida-eFramework:
   - mida-eframework-xss
   type:
   - root
+MikoPBX:
+  pocs:
+  - CVE-2025-52207
+  type:
+  - root
 Milesight-Routers:
   pocs:
   - CVE-2023-43261
@@ -5018,6 +5912,14 @@ Misp-Misp:
   pocs:
   - CVE-2026-44381
   - misp-panel
+  type:
+  - root
+Mitel:
+  pocs:
+  - CVE-2020-11798
+  - CVE-2024-41713
+  - CVE-2024-55550
+  - CVE-2025-47188
   type:
   - root
 Mitel-Cmg-suite:
@@ -5053,6 +5955,7 @@ MobSF:
 Mobotix-Camera:
   pocs:
   - mobotix-default-login
+  - mobotix-default-credentials
   type:
   - root
 Modoboa:
@@ -5081,6 +5984,7 @@ Monitorr:
   - root
 Monsta-FTP:
   pocs:
+  - CVE-2025-34299
   - monsta-ftp-detect
   type:
   - root
@@ -5103,6 +6007,7 @@ Moodle:
   - moodle-filter-jmol-xss
   - moodle-xss
   - CVE-2023-30943
+  - CVE-2025-34031
   - CVE-2022-35653
   - moodle-workplace-panel
   type:
@@ -5134,6 +6039,11 @@ Moxa-Nport-6450-t-firmware:
   - nport-web-console
   type:
   - root
+MySqlDumper:
+  pocs:
+  - CVE-2012-4253
+  type:
+  - root
 Mysql-Eventum:
   pocs:
   - eventum-panel
@@ -5142,6 +6052,7 @@ Mysql-Eventum:
 N-able-N-central:
   pocs:
   - CVE-2024-28200
+  - CVE-2025-11700
   - CVE-2026-18577
   - CVE-2026-86206
   - CVE-2026-86207
@@ -5161,9 +6072,16 @@ NAGIOS:
   - nagios-panel
   type:
   - root
+NAKIVO-Backup:
+  pocs:
+  - CVE-2024-48248
+  type:
+  - root
 NCAST-product:
   pocs:
   - Ncast盈可视高清智能录播系统busiFacade RCE漏洞
+  - Ncat-RCE-CVE-2024-0305
+  - CVE-2024-0305
   type:
   - root
 NETGEAR-DGN2200:
@@ -5320,6 +6238,7 @@ NUUO-NVR:
   pocs:
   - nuuo-file-inclusion
   - nuuo-nvrmini2-rce
+  - CVE-2025-1338
   type:
   - root
 Nagios-XI:
@@ -5348,6 +6267,17 @@ Neo4j:
 Neo4j-Neodash:
   pocs:
   - neo4j-neodash-detect
+  type:
+  - root
+NestJS-DevTools:
+  pocs:
+  - CVE-2025-54782
+  type:
+  - root
+NetAlertX:
+  pocs:
+  - CVE-2024-46506
+  - CVE-2024-48766
   type:
   - root
 NetMizer-日志管理系统:
@@ -5380,8 +6310,15 @@ Netflix-Metaflow-UI:
   - root
 Netis-router:
   pocs:
+  - CVE-2024-22729
+  - CVE-2024-48455
   - netis-info-leak
   - netis-router
+  type:
+  - root
+Netman-204:
+  pocs:
+  - CVE-2024-8877
   type:
   - root
 Netsweeper- product:
@@ -5406,6 +6343,14 @@ Next.js:
   - CVE-2018-6184
   - CVE-2020-5284
   - nextjs-redirect
+  - CVE-2025-29927
+  - CVE-2025-55182
+  - CVE-2025-55184
+  type:
+  - root
+NextChat:
+  pocs:
+  - CVE-2024-38514
   type:
   - root
 NextGen-Mirth-Connect:
@@ -5424,6 +6369,7 @@ Nexus-Repository-Manager:
   - CVE-2019-7238
   - CVE-2009-4679
   - nexus-default-login
+  - CVE-2024-5082
   type:
   - root
 Nexus-Router:
@@ -5439,6 +6385,11 @@ NexusDB:
 NexusPHP:
   pocs:
   - CVE-2022-46888
+  type:
+  - root
+Nezha:
+  pocs:
+  - CVE-2026-53519
   type:
   - root
 Nginx:
@@ -5463,6 +6414,12 @@ Nginx-HTTP-Server-Amazon-Linux:
 Nginx-Test-Page-for-OpenCloudOS:
   pocs:
   - nginx-opencloudos-test-page
+  type:
+  - root
+Nginx-UI:
+  pocs:
+  - CVE-2026-27944
+  - CVE-2026-33032
   type:
   - root
 Nginx-admin:
@@ -5544,6 +6501,11 @@ Nvidia-Triton:
   - nvidia-triton-detect
   type:
   - root
+OE-CMS:
+  pocs:
+  - CVE-2018-12095
+  type:
+  - root
 ONLYOFFICE:
   pocs:
   - onlyoffice-login-panel
@@ -5596,6 +6558,11 @@ Oliver-Server:
   - oliver-library-lfi
   type:
   - root
+Ollama:
+  pocs:
+  - CVE-2024-37032
+  type:
+  - root
 Ollama-Ollama:
   pocs:
   - ollama-llm-panel
@@ -5604,13 +6571,34 @@ Ollama-Ollama:
 OneBlog:
   pocs:
   - OneBlog博客Shiro反序列化远程命令执行漏洞
+  - oneblog-login-rce
   - oneblog-detect
+  type:
+  - root
+OneDev:
+  pocs:
+  - CVE-2024-45309
   type:
   - root
 OneDev-Panel:
   pocs:
   - CVE-2024-45309
   - onedev-panel
+  type:
+  - root
+OpTergy-product:
+  pocs:
+  - CVE-2019-7275
+  type:
+  - root
+Opcache-Control-Panel:
+  pocs:
+  - unauth-opache-control-panel
+  type:
+  - root
+Open-WebUI:
+  pocs:
+  - CVE-2026-44551
   type:
   - root
 Open-emr-Openemr:
@@ -5626,6 +6614,7 @@ OpenAM:
   - CVE-2021-29156
   - CVE-2021-35464
   - openam-panel
+  - CVE-2026-33439
   type:
   - root
 OpenBullet-2:
@@ -5641,9 +6630,9 @@ OpenCATS:
   - CVE-2022-43017
   - CVE-2022-43018
   - opencats-default-login
+  - CVE-2026-27760
   - CVE-2022-48012
   - CVE-2023-27292
-  - CVE-2026-27760
   - opencats-panel
   type:
   - root
@@ -5666,6 +6655,11 @@ OpenCart:
   - opencart-detect
   type:
   - root
+OpenChamber:
+  pocs:
+  - CVE-2026-53976
+  type:
+  - root
 OpenConnect-VPN-Server-(ocserv):
   pocs:
   - ocserv-panel
@@ -5686,6 +6680,12 @@ OpenERP:
 OpenMediaVault:
   pocs:
   - openmediavault-default-login
+  type:
+  - root
+OpenMetadata:
+  pocs:
+  - CVE-2024-28253
+  - CVE-2024-28255
   type:
   - root
 OpenNMS-product:
@@ -5822,6 +6822,7 @@ Oracle-Business-Intelligence:
   - CVE-2019-2616
   - CVE-2019-2767
   - businessintelligence-default-login
+  - oracle-business-intelligence-login
   - oracle-business-intelligence
   type:
   - root
@@ -5835,6 +6836,8 @@ Oracle-E-Business-Suite:
   - CVE-2018-3167
   - CVE-2022-21500
   - CVE-2022-21587
+  - CVE-2025-61882
+  - CVE-2025-61884
   - oracle-ebusiness-panel
   type:
   - root
@@ -5895,6 +6898,7 @@ Oracle-OPERA:
 Oracle-PeopleSoft:
   pocs:
   - peoplesoft-default-login
+  - CVE-2026-35273
   type:
   - root
 Oracle-Peoplesoft-enterprise:
@@ -5923,6 +6927,11 @@ Oracle-Webcenter-sites:
   - oracle-webcenter-sites
   type:
   - root
+Oracle-Xstore-Office:
+  pocs:
+  - CVE-2024-21136
+  type:
+  - root
 Oracle-iPlanet:
   pocs:
   - CVE-2020-9315
@@ -5939,6 +6948,11 @@ Os4ed-Opensis:
   - CVE-2021-40651
   - CVE-2023-38879
   - CVE-2024-35584
+  type:
+  - root
+Osclass:
+  pocs:
+  - CVE-2014-6308
   type:
   - root
 Osgeo-Geoserver:
@@ -5961,6 +6975,14 @@ OwnCloud:
   - owncloud-status-page
   type:
   - root
+PAN-OS:
+  pocs:
+  - CVE-2024-0012
+  - CVE-2024-3400
+  - CVE-2024-9474
+  - CVE-2025-0108
+  type:
+  - root
 PANDORAFMS-产品:
   pocs:
   - CVE-2019-20224
@@ -5979,6 +7001,7 @@ PHP:
   - CVE-2012-1823
   - php-xdebug-rce
   - phpinfo-files
+  - CVE-2024-4577
   type:
   - root
 PHP-810-dev:
@@ -5996,6 +7019,11 @@ PHP-Proxy:
   pocs:
   - CVE-2018-19458
   - php-proxy-detect
+  type:
+  - root
+PHPDebugBar:
+  pocs:
+  - php-debugbar-exposure
   type:
   - root
 PHPMyWind:
@@ -6040,6 +7068,14 @@ Palo-Alto-Network:
   - globalprotect-panel
   type:
   - root
+PaloAlto-Expedition:
+  pocs:
+  - CVE-2024-5910
+  - CVE-2024-9463
+  - CVE-2024-9465
+  - CVE-2025-0107
+  type:
+  - root
 Paloaltonetworks-Expedition:
   pocs:
   - CVE-2024-5910
@@ -6052,6 +7088,7 @@ Panabit-Panalog:
   - panabit-applist-rce
   - CVD-2023-1718
   - Panalog大数据日志审计系统libres_syn_delete.php存在命令执行
+  - Panalog-RCE
   - panabit-panel
   - panabit-singleuser-action-sqli
   type:
@@ -6080,6 +7117,11 @@ Parallels-H-Sphere:
 Parallels-Plesk-Panel:
   pocs:
   - default-parallels-plesk
+  type:
+  - root
+Parse-Server:
+  pocs:
+  - CVE-2026-30965
   type:
   - root
 Payara-Micro:
@@ -6116,6 +7158,11 @@ Pfsense- product:
   - pfsense-login
   type:
   - root
+Pheditor:
+  pocs:
+  - CVE-2026-48030
+  type:
+  - root
 Philip-M6:
   pocs:
   - philip-m6-salaryaccounting-sqli
@@ -6140,6 +7187,11 @@ Phpmailer-project-Phpmailer:
 Piano-LED-Visualizer:
   pocs:
   - CVE-2022-24900
+  type:
+  - root
+PicHome图床:
+  pocs:
+  - CVE-2025-1743
   type:
   - root
 Piwigo:
@@ -6209,6 +7261,11 @@ Powertek-Firmware:
   - CVE-2022-33174
   type:
   - root
+PraisonAI:
+  pocs:
+  - CVE-2026-44338
+  type:
+  - root
 PrestaShop:
   pocs:
   - CVE-2020-26248
@@ -6242,6 +7299,11 @@ ProFTPD:
   - CVE-2015-3306
   type:
   - root
+ProTop:
+  pocs:
+  - CVE-2025-44177
+  type:
+  - root
 ProcessMaker:
   pocs:
   - processmaker-lfi
@@ -6252,6 +7314,11 @@ ProcessWire-CMS:
   - CVE-2020-27467
   - processwire-login
   - processwire-installer
+  type:
+  - root
+Progress-Flowmon:
+  pocs:
+  - CVE-2024-2389
   type:
   - root
 Progress-Moveit-transfer:
@@ -6267,10 +7334,22 @@ Progress-Telerik-report-server:
   - telerik-server-login
   type:
   - root
+Progress-WhatsUp-Gold:
+  pocs:
+  - CVE-2024-4885
+  - CVE-2024-6670
+  - CVE-2024-6671
+  type:
+  - root
 Progress-Ws-ftp:
   pocs:
   - adhoc-transfer-panel
   - ws_ftp-server-web-transfer
+  type:
+  - root
+ProjectSend:
+  pocs:
+  - CVE-2024-11680
   type:
   - root
 Prometheus-Prometheus:
@@ -6319,6 +7398,11 @@ PuneethReddyHC:
 Purestorage-Purity:
   pocs:
   - pure-storage-login
+  type:
+  - root
+Pypiserver:
+  pocs:
+  - CVE-2019-6802
   type:
   - root
 Python-Pypiserver:
@@ -6459,6 +7543,13 @@ Raymar_Vanguard-Vanguard:
 React:
   pocs:
   - react-2025-rce
+  - React-Rce
+  type:
+  - root
+Rebuild:
+  pocs:
+  - CVE-2024-1021
+  - Rebuild-SSRF-CVE-2024-1021
   type:
   - root
 Redash-Redash:
@@ -6553,6 +7644,11 @@ Repetier-Server:
   - repetier-server-panel
   type:
   - root
+Reposilite:
+  pocs:
+  - CVE-2024-36117
+  type:
+  - root
 Reprise-License-Manager:
   pocs:
   - CVE-2021-44152
@@ -6586,6 +7682,11 @@ Retool-Retool:
   - retool-login
   - retool-postmessage-xss
   - retool-svg-xss
+  type:
+  - root
+RevPi-Status:
+  pocs:
+  - CVE-2025-41646
   type:
   - root
 Revive-Adserver:
@@ -6625,6 +7726,8 @@ RocketChat:
   - CVE-2020-28208
   - CVE-2021-22911
   - unauth-message-read
+  - rocketchat-unauth-access
+  - CVE-2024-39713
   type:
   - root
 RocketMQ:
@@ -6650,6 +7753,12 @@ Rosariosis:
   - CVE-2021-44427
   - CVE-2020-15718
   - rosariosis-detect
+  type:
+  - root
+Roundcube:
+  pocs:
+  - CVE-2024-42009
+  - CVE-2025-49113
   type:
   - root
 Roundcube-Webmail:
@@ -6708,6 +7817,8 @@ Ruijie-EG易网关:
   pocs:
   - ruijie-eg-rce
   - ruijie-eg-login-rce
+  - ruijie-eg-file-read
+  - ruijie-rg-eg-web-mis-rce
   - ruijie-excu-shell-disclosure
   - ruijie-smartweb-password-disclosure
   type:
@@ -6715,6 +7826,8 @@ Ruijie-EG易网关:
 Ruijie-EWEB网管系统:
   pocs:
   - CNVD-2021-09650
+  - ruijie-route-control-rce
+  - ruijie-route-timeout-fileread
   type:
   - root
 Ruijie-NBR路由器:
@@ -6722,6 +7835,7 @@ Ruijie-NBR路由器:
   - CNVD-2021-09650
   - ruijie-nbr-fileupload
   - ruijie-nbr1300g-exposure
+  - ruijie-nbr-default-login
   type:
   - root
 Ruijie-NPE50E:
@@ -6734,6 +7848,8 @@ Ruijie-RG-UAC:
   - CNVD-2021-14536
   - ruijie-password-leak
   - 锐捷RG-UAC统一上网行为管理与审计系统管理员密码泄露
+  - RG_UAC_leakPass
+  - ruijie-nmc-sync-rce
   type:
   - root
 Ruijie-Rg-uac-firmware:
@@ -6745,6 +7861,12 @@ Ruijie-Router:
   pocs:
   - CVE-2023-4169
   - CVE-2023-4415-afrog
+  type:
+  - root
+Ruijie-switch:
+  pocs:
+  - ruijie-excu-shell
+  - ruijie-networks-lfi
   type:
   - root
 Ruijie-下一代防火墙:
@@ -6790,6 +7912,11 @@ SANGFOR-应用交付管理系统:
   - sangfor-login-rce
   type:
   - root
+SANGFOR-运维安全管理系统:
+  pocs:
+  - CVE-2025-15503
+  type:
+  - root
 SAP-Internet-Graphics-Server:
   pocs:
   - CVE-2018-2392
@@ -6809,6 +7936,7 @@ SAP-NetWeaver-Application-Server-Java:
   pocs:
   - CVE-2017-12637
   - CVE-2016-2389
+  - CVE-2025-31324
   type:
   - root
 SAP-Web-App-Server:
@@ -6858,6 +7986,10 @@ SMARTBI:
   pocs:
   - smartbi-default-login
   - smartbi-deserialization
+  - smartbi-unauthenticated-sqli
+  - smartbi-bi-readfile
+  - smartbi-changepassword-bypass
+  - smartbi-auth-bypass
   type:
   - root
 SOPHOS-Cyberoam-CR25iNG:
@@ -6865,10 +7997,16 @@ SOPHOS-Cyberoam-CR25iNG:
   - cyberoam-ssl-vpn-panel
   type:
   - root
+SOPlanning:
+  pocs:
+  - CVE-2014-8676
+  type:
+  - root
 SOUND4-PULSE:
   pocs:
   - sound4-impact-auth-bypass
   - sound4-impact-password-auth-bypass
+  - sound4-password-auth-bypass
   - sound4-file-disclosure
   type:
   - root
@@ -6877,7 +8015,13 @@ SPIP:
   - CVE-2016-7981
   - CVE-2023-27372
   - CVE-2024-7954
+  - CVE-2025-71243
   - spip-detect
+  type:
+  - root
+SQLiteManager:
+  pocs:
+  - exposed-sqlite-manager
   type:
   - root
 SRM供应商系统:
@@ -6927,6 +8071,12 @@ Samsung-DVR:
   - web-viewer-panel
   type:
   - root
+Samsung-MagicInfo:
+  pocs:
+  - CVE-2024-7399
+  - CVE-2025-4632
+  type:
+  - root
 Samsung-Printer:
   pocs:
   - samsung-printer-default-login
@@ -6951,6 +8101,17 @@ SangFor- Behavioral Management or Identity Authentication System:
   - sangfor-cphp-rce
   type:
   - root
+SangFor- Internet optimization management:
+  pocs:
+  - sangfor-sg-catjs-fileread
+  type:
+  - root
+SangFor- behavior perception system:
+  pocs:
+  - sangfor-ba-rce
+  - sangfor-cphp-rce
+  type:
+  - root
 SangFor-EDR:
   pocs:
   - CNVD-2020-46552
@@ -6962,12 +8123,18 @@ SangFor-Firewall:
   pocs:
   - sangfor-ngaf-lfi
   - sangfor-ngaf-login-rce
+  - sangfor-nextgen-lfi
   type:
   - root
 Sangoma-Freepbx:
   pocs:
   - freepbx-administration-panel
   - freepbx-cleanup-backdoor
+  type:
+  - root
+Sante-PACS-Server:
+  pocs:
+  - CVE-2025-2264
   type:
   - root
 Sap-Content-server:
@@ -6993,6 +8160,11 @@ Sapido-router:
 Sas-Base-sas:
   pocs:
   - sas-login-panel
+  type:
+  - root
+Sawtooth-Lighthouse-Studio:
+  pocs:
+  - CVE-2025-34300
   type:
   - root
 Schneider-Electric-Clearscada:
@@ -7047,6 +8219,17 @@ SeaweedFS:
 Secnet - Smart Routing System:
   pocs:
   - secnet-ac-default-login
+  - secnet-ac-default-password
+  type:
+  - root
+SecurEnvoy:
+  pocs:
+  - CVE-2024-37393
+  type:
+  - root
+Securden-Unified-PAM:
+  pocs:
+  - CVE-2025-53118
   type:
   - root
 Securepoint-Unified-threat-management:
@@ -7092,14 +8275,19 @@ SequoiaDB-True Database:
   - sequoiadb-default-login
   type:
   - root
+Serv-U-FTP:
+  pocs:
+  - CVE-2024-28995
+  type:
+  - root
 ServiceNow:
   pocs:
   - servicenow-widget-misconfig
-  - CVE-2022-38463
-  - CVE-2022-39048
   - CVE-2024-4879
   - CVE-2024-5217
   - CVE-2026-6875
+  - CVE-2022-38463
+  - CVE-2022-39048
   - servicenow-helpdesk-credential
   - servicenow-panel
   type:
@@ -7134,12 +8322,19 @@ Shopware-CMS:
 ShowDoc:
   pocs:
   - showdoc-default-login
+  - CVE-2025-0520
   - showdoc-panel
   type:
   - root
 SillyTavern-Sillytavern:
   pocs:
   - sillytavern-panel
+  type:
+  - root
+SimpleHelp:
+  pocs:
+  - CVE-2024-57726
+  - CVE-2024-57727
   type:
   - root
 Sitecore:
@@ -7149,6 +8344,8 @@ Sitecore:
   - default-sitecore-page
   - sitecore-version
   - CVE-2023-35813
+  - CVE-2024-46938
+  - CVE-2025-34509
   - sitecore-login-panel
   type:
   - root
@@ -7160,6 +8357,13 @@ Skycaiji-Skycaiji:
 Smart-Office:
   pocs:
   - CVE-2022-47075
+  type:
+  - root
+SmarterMail:
+  pocs:
+  - CVE-2025-52691
+  - CVE-2026-24423
+  - CVE-2026-23760
   type:
   - root
 SoftEther-VPN:
@@ -7179,6 +8383,7 @@ SolarView-Compact:
   - solarview-compact-xss
   - CVE-2023-23333
   - Contec SolarView Compact 存在任意文件读取漏洞
+  - Contec-SolarView-Compact-file-Reading
   - CVE-2023-29919-afrog
   type:
   - root
@@ -7196,6 +8401,22 @@ SolarWinds-Orion:
   - CVE-2020-10148
   - solarwinds-orion
   - solarwinds-default-login
+  - solarwinds-default-admin
+  type:
+  - root
+SolarWinds-SEM:
+  pocs:
+  - CVE-2024-0692
+  type:
+  - root
+SolarWinds-Web-Help-Desk:
+  pocs:
+  - CVE-2024-28986
+  - CVE-2024-28987
+  - CVE-2025-26399
+  - CVE-2025-40536
+  - CVE-2025-40551
+  - CVE-2025-40554
   type:
   - root
 Solarwinds-Serv-u:
@@ -7233,6 +8454,7 @@ SonicWALL-SSL-VPN:
   pocs:
   - sonicwall-sslvpn-shellshock
   - CVE-2023-0126
+  - CVE-2024-53704
   type:
   - root
 SonicWall-Analytics:
@@ -7254,6 +8476,7 @@ SonicWall-GMS:
 SonicWall-SMA:
   pocs:
   - CVE-2021-20038
+  - CVE-2024-38475
   type:
   - root
 Sonicwall-NSM:
@@ -7286,9 +8509,19 @@ Sophos-Web-Appliance:
   - sophos-web-appliance
   type:
   - root
+SourceBans:
+  pocs:
+  - CVE-2015-8349
+  type:
+  - root
 SpaceLogic-C-Bus:
   pocs:
   - CVE-2022-34753
+  type:
+  - root
+Spark history-server:
+  pocs:
+  - apache-spark-env
   type:
   - root
 Splash-JS-Render-Service:
@@ -7407,8 +8640,15 @@ Stackposts:
   - stackposts-sqli
   type:
   - root
+SteVe:
+  pocs:
+  - steve-default-login
+  - steve-xss
+  type:
+  - root
 Stirling-PDF:
   pocs:
+  - CVE-2025-55161
   - stirling-pdf-detect
   - stirling-pdf-panel
   type:
@@ -7443,6 +8683,7 @@ Struts2:
   - CVE-2021-31805
   - struts-debug-mode
   - struts-problem-report
+  - CVE-2025-68493
   type:
   - base
   - root
@@ -7463,6 +8704,7 @@ SugarCRM:
   - CVE-2018-5715
   - CVE-2019-14974
   - sugarcrm-panel
+  - CVE-2025-25034
   type:
   - root
 SuperSign-EZ:
@@ -7532,6 +8774,11 @@ Symfony:
   - default-symfony-page
   type:
   - root
+Symmetricom-SyncServer:
+  pocs:
+  - CVE-2022-40022
+  type:
+  - root
 Synacor-Zimbra-collaboration-suite:
   pocs:
   - CVE-2013-7091-nuclei-templates
@@ -7552,6 +8799,9 @@ SysAid-Help-Desk:
   pocs:
   - CVE-2015-2996
   - CVE-2021-31862
+  - CVE-2025-2775
+  - CVE-2025-2776
+  - CVE-2025-2777
   type:
   - root
 TCExam:
@@ -7578,6 +8828,8 @@ TDXK-通达OA:
   - tongda-video-file-read
   - tongda-oa-action-crawler-fileupload
   - 通达OA down 信息泄露
+  - Tongda-down-userinfo
+  - tongdaoa-auth-bypass
   type:
   - root
 TEAMPASS:
@@ -7623,6 +8875,13 @@ TIBCO-Jaspersoft:
   - tibco-businessworks-detect
   type:
   - root
+TOTO_LINK:
+  pocs:
+  - CVE-2024-24329
+  - CVE-2024-24328
+  - CVE-2024-34257
+  type:
+  - root
 TOTO_LINK-WIRELESS-ROUTER:
   pocs:
   - CVE-2019-19824
@@ -7635,6 +8894,7 @@ TP-LINK:
   pocs:
   - CVE-2015-3035
   - CVE-2021-41653
+  - CVE-2024-57049
   type:
   - root
 TPSHOP:
@@ -7658,6 +8918,13 @@ TRS媒资管理系统:
   - trs-test-command-executor-rce
   type:
   - root
+TRUfusion-Enterprise:
+  pocs:
+  - CVE-2025-27222
+  - CVE-2025-27223
+  - CVE-2025-32355
+  type:
+  - root
 TVT-NVMS-1000:
   pocs:
   - CVE-2019-20085
@@ -7667,6 +8934,7 @@ TYPO3:
   pocs:
   - typo3-composer
   - typo3-debug-mode
+  - CVE-2026-46725
   - typo3-detect
   - typo3-login
   type:
@@ -7692,6 +8960,11 @@ Tautulli-product:
   - CVE-2026-31831
   - tautulli-panel
   - tautulli-unauth
+  type:
+  - root
+Telerik-Report-Server:
+  pocs:
+  - CVE-2024-4358
   type:
   - root
 Telos-Alliance-Omnia-MPX-Node:
@@ -7752,6 +9025,11 @@ TerraMaster-TOS:
   - terramaster-login
   type:
   - root
+TeslaMate:
+  pocs:
+  - teslamate-unauth-access
+  type:
+  - root
 ThinVNC:
   pocs:
   - CVE-2019-17662
@@ -7803,6 +9081,11 @@ Tibco-Spotfire-server:
   - tibco-spotfire-panel
   type:
   - root
+TileServer-php:
+  pocs:
+  - CVE-2025-44137
+  type:
+  - root
 TimeKeeper:
   pocs:
   - CVE-2023-31465
@@ -7813,6 +9096,7 @@ Tiny-File-Manager:
   pocs:
   - tiny-file-manager-default-login
   - tiny-file-manager-unauth
+  - tiny-filemanager-default-login
   type:
   - root
 Tomcat-Login:
@@ -7829,6 +9113,7 @@ ToolJet:
 TopApp-LB-负载均衡系统:
   pocs:
   - topsec-topapplb-auth-bypass
+  - topsec-topapplb-enable-tool-debug-rce
   type:
   - root
 Tor-Socks-Proxy:
@@ -7849,6 +9134,11 @@ Tosei-自助洗衣机:
 Total.js:
   pocs:
   - CVE-2019-8903
+  type:
+  - root
+Traccar:
+  pocs:
+  - CVE-2025-61666
   type:
   - root
 Traefik-Traefik:
@@ -7889,6 +9179,16 @@ Trixbox:
   - CVE-2017-14537
   type:
   - root
+TurboMeeting:
+  pocs:
+  - CVE-2024-38289
+  type:
+  - root
+TwonkyServer:
+  pocs:
+  - CVE-2025-13315
+  type:
+  - root
 UISP-Fiber-Panel:
   pocs:
   - uisp-fiber-panel
@@ -7897,6 +9197,11 @@ UISP-Fiber-Panel:
 UNIFI-airCube:
   pocs:
   - unifi-nfc-credentials
+  type:
+  - root
+UPS-Adapter-CS141-SNMP-Module:
+  pocs:
+  - cs141-default-login
   type:
   - root
 USG FLEX:
@@ -7937,6 +9242,13 @@ Umbraco:
 UniFi-Network:
   pocs:
   - unifi-network-log4j-rce
+  - CVE-2026-22557
+  type:
+  - root
+UniFi-OS:
+  pocs:
+  - CVE-2026-34908
+  - CVE-2026-34910
   type:
   - root
 Unraid:
@@ -7952,6 +9264,11 @@ Uptime.kuma-Uptime-kuma:
 Usememos-Memos:
   pocs:
   - memos-panel
+  type:
+  - root
+UsualTool-CMS:
+  pocs:
+  - CVE-2024-9916
   type:
   - root
 VICIdial:
@@ -8040,9 +9357,19 @@ VMware-vRealize-Automation-Appliance:
   - CVE-2022-31656
   type:
   - root
+Vanna-AI:
+  pocs:
+  - CVE-2024-5827
+  type:
+  - root
 Veeam-Backup-Enterprise-Manager-Login:
   pocs:
   - veeam-backup-manager-login
+  type:
+  - root
+Veeam-Backup-Replication:
+  pocs:
+  - CVE-2024-40711
   type:
   - root
 Veeam-Backup-for-Microsoft-Azure-Panel:
@@ -8063,6 +9390,11 @@ Veeam-Veeam-backup-for-google-cloud:
 Veritas-NetBackup-OpsCenter-Analytics-Login:
   pocs:
   - veritas-netbackup-panel
+  type:
+  - root
+Vidyo-video conferencing system:
+  pocs:
+  - vidyo-default-login
   type:
   - root
 Vinchin-Vinchin-backup-and-recovery:
@@ -8092,6 +9424,11 @@ Vivotek-Ip7361:
   - vivotex-web-console-detect
   type:
   - root
+Vlife:
+  pocs:
+  - vlife-fastjson-rce
+  type:
+  - root
 Vmware-Cloud-director:
   pocs:
   - vmware-cloud-availability
@@ -8111,6 +9448,11 @@ Vmware-Nsx-t-data-center:
 Vmware-Rabbitmq:
   pocs:
   - rabbitmq-dashboard
+  type:
+  - root
+Vmware-Spring-Cloud-Config:
+  pocs:
+  - CVE-2026-22739
   type:
   - root
 Vmware-Vcloud-director:
@@ -8166,6 +9508,7 @@ WAVLINK-Wi-Fi-APP:
 WAYOS-AC集中管理平台:
   pocs:
   - ac-weak-login
+  - ac-default-login
   type:
   - root
 WD-MyCloud:
@@ -8261,6 +9604,21 @@ Wazuh:
   - wazuh-panel
   type:
   - root
+WeGIA:
+  pocs:
+  - CVE-2026-28409
+  type:
+  - root
+Web-Check:
+  pocs:
+  - CVE-2025-32778
+  type:
+  - root
+WebIQ:
+  pocs:
+  - CVE-2024-8752
+  type:
+  - root
 WebLogic:
   pocs:
   - CVE-2018-2628
@@ -8325,6 +9683,7 @@ WeiPHP:
   - weiphp-panel
   - CVE-2020-20300
   - CNVD-2020-68596
+  - CVE-2025-34045
   type:
   - root
 Werkzeug:
@@ -8356,6 +9715,17 @@ WiFisky-7 layer flow control router:
   - wifisky-default-login
   type:
   - root
+WildFly-Server:
+  pocs:
+  - wildfly-default-login
+  type:
+  - root
+Windmill:
+  pocs:
+  - CVE-2026-23696
+  - CVE-2026-29059
+  type:
+  - root
 Windows:
   pocs:
   - windows-admin-center-panel
@@ -8366,9 +9736,217 @@ Windows-Wcf:
   - windows-communication-foundation-detect
   type:
   - root
+Wing-FTP-Server:
+  pocs:
+  - CVE-2025-47812
+  type:
+  - root
 WordPress:
   pocs:
   - wordpress-git-config
+  - CVE-2024-6220
+  - CVE-2026-63030
+  type:
+  - root
+WordPress-AI-Engine:
+  pocs:
+  - CVE-2025-11749
+  type:
+  - root
+WordPress-ARMember:
+  pocs:
+  - CVE-2026-5073
+  type:
+  - root
+WordPress-Breeze:
+  pocs:
+  - CVE-2026-3844
+  type:
+  - root
+WordPress-Burst-Statistics:
+  pocs:
+  - CVE-2026-8181
+  type:
+  - root
+WordPress-Delivery-Notes:
+  pocs:
+  - CVE-2025-13773
+  type:
+  - root
+WordPress-Drag-Drop-Multiple-File-Upload:
+  pocs:
+  - CVE-2026-5718
+  type:
+  - root
+WordPress-Email-Subscribers:
+  pocs:
+  - CVE-2024-2876
+  - CVE-2024-4295
+  type:
+  - root
+WordPress-Eventin:
+  pocs:
+  - CVE-2025-47539
+  type:
+  - root
+WordPress-Everest-Forms:
+  pocs:
+  - CVE-2026-3296
+  type:
+  - root
+WordPress-Everest-Forms-Pro:
+  pocs:
+  - CVE-2026-3300
+  type:
+  - root
+WordPress-File-Upload:
+  pocs:
+  - CVE-2024-9047
+  type:
+  - root
+WordPress-FluentForm:
+  pocs:
+  - CVE-2024-2771
+  type:
+  - root
+WordPress-Frontend-Admin:
+  pocs:
+  - CVE-2025-13342
+  type:
+  - root
+WordPress-Fusion-Builder:
+  pocs:
+  - CVE-2026-8713
+  type:
+  - root
+WordPress-GiveWP:
+  pocs:
+  - CVE-2024-5932
+  - CVE-2024-8353
+  type:
+  - root
+WordPress-GutenKit:
+  pocs:
+  - CVE-2024-9234
+  type:
+  - root
+WordPress-HTML5-Video-Player:
+  pocs:
+  - CVE-2024-1061
+  type:
+  - root
+WordPress-Hunk-Companion:
+  pocs:
+  - CVE-2024-11972
+  - CVE-2024-9707
+  type:
+  - root
+WordPress-InstaWP-Connect:
+  pocs:
+  - CVE-2024-2667
+  - CVE-2024-4898
+  type:
+  - root
+WordPress-Kali-Forms:
+  pocs:
+  - CVE-2026-3584
+  type:
+  - root
+WordPress-LearnPress:
+  pocs:
+  - CVE-2024-4434
+  - CVE-2024-8522
+  - CVE-2024-8529
+  type:
+  - root
+WordPress-Ninja-Forms-Uploads:
+  pocs:
+  - CVE-2026-0740
+  type:
+  - root
+WordPress-NotificationX:
+  pocs:
+  - CVE-2024-1698
+  type:
+  - root
+WordPress-Product-Slider-Pro:
+  pocs:
+  - CVE-2026-49777
+  type:
+  - root
+WordPress-Profile-Builder:
+  pocs:
+  - CVE-2026-15826
+  type:
+  - root
+WordPress-Query-Console:
+  pocs:
+  - CVE-2024-50498
+  type:
+  - root
+WordPress-Really-Simple-Security:
+  pocs:
+  - CVE-2024-10924
+  type:
+  - root
+WordPress-RegistrationMagic:
+  pocs:
+  - CVE-2025-15403
+  type:
+  - root
+WordPress-Super-Forms:
+  pocs:
+  - CVE-2026-14894
+  type:
+  - root
+WordPress-SuperBackup:
+  pocs:
+  - CVE-2024-56064
+  type:
+  - root
+WordPress-TI-Wishlist:
+  pocs:
+  - CVE-2024-43917
+  type:
+  - root
+WordPress-Tutor-LMS:
+  pocs:
+  - CVE-2024-10400
+  type:
+  - root
+WordPress-Ultimate-Gift-Card:
+  pocs:
+  - CVE-2024-8425
+  type:
+  - root
+WordPress-Ultimate-Member:
+  pocs:
+  - CVE-2024-1071
+  type:
+  - root
+WordPress-WP-Maps-Pro:
+  pocs:
+  - CVE-2026-8732
+  type:
+  - root
+WordPress-WP-Umbrella:
+  pocs:
+  - CVE-2024-12209
+  type:
+  - root
+WordPress-WPvivid:
+  pocs:
+  - CVE-2026-1357
+  type:
+  - root
+WordPress-Wholesale-Lead-Capture:
+  pocs:
+  - CVE-2026-27542
+  type:
+  - root
+WordPress-wpForo:
+  pocs:
+  - CVE-2026-1581
   type:
   - root
 Workerman-Websocket:
@@ -8396,6 +9974,11 @@ Wwbn-Avideo:
   - avideo-detect
   type:
   - root
+WyreStorm-Apollo-VX20:
+  pocs:
+  - CVE-2024-25735
+  type:
+  - root
 X-UI:
   pocs:
   - xui-weak-login
@@ -8409,6 +9992,7 @@ X-wrt-Luci:
 XMALL-background management system:
   pocs:
   - Exrick XMall 开源商城 SQL注入漏洞
+  - Exrick-SQLi-CVE-2024-24112
   type:
   - root
 XNAT:
@@ -8420,6 +10004,18 @@ XNAT:
 XWiki:
   pocs:
   - CVE-2023-37462
+  - CVE-2024-21650
+  - CVE-2024-31982
+  - CVE-2025-24893
+  - CVE-2025-29925
+  - CVE-2025-32429
+  - CVE-2025-32969
+  - CVE-2025-46554
+  - CVE-2025-52472
+  - CVE-2025-54125
+  - CVE-2025-55747
+  - CVE-2025-55748
+  - CVE-2025-55749
   - CVE-2022-24819
   - CVE-2023-29204
   - CVE-2023-29506
@@ -8436,17 +10032,8 @@ XWiki:
   - CVE-2023-48241
   - CVE-2023-50719
   - CVE-2023-50720
-  - CVE-2024-21650
-  - CVE-2024-31982
-  - CVE-2025-24893
-  - CVE-2025-29925
-  - CVE-2025-32429
-  - CVE-2025-32969
   - CVE-2025-32970
-  - CVE-2025-46554
   - CVE-2025-51991
-  - CVE-2025-52472
-  - CVE-2025-54125
   - CVE-2025-66472
   - xwiki-detect
   type:
@@ -8454,11 +10041,18 @@ XWiki:
 XXL-JOB:
   pocs:
   - xxljob-default-login
+  - xxljob-executor-unauth
   type:
   - root
 XXL-JOB-执行器:
   pocs:
   - xxl-job-executor-default-token-rce
+  type:
+  - root
+Xceedium-Xsuite:
+  pocs:
+  - CVE-2015-4666
+  - CVE-2015-4668
   type:
   - root
 XenApp:
@@ -8476,6 +10070,16 @@ Xerox-Workcentre:
 Xerox-Workcentre-7970i:
   pocs:
   - xerox-workcentre-detect
+  type:
+  - root
+Xerte-Online-Toolkits:
+  pocs:
+  - CVE-2026-34413
+  type:
+  - root
+Xibo-Digital-Signage:
+  pocs:
+  - CVE-2013-5979
   type:
   - root
 Xiuno-BBS:
@@ -8530,6 +10134,7 @@ YesWiki:
   - yeswiki-sql
   - yeswiki-stored-xss
   - yeswiki-xss
+  - CVE-2026-46670
   - CVE-2025-31131
   - CVE-2025-46349
   - CVE-2025-46549
@@ -8548,6 +10153,7 @@ Yii-Framework:
   pocs:
   - CVE-2020-15148
   - yii-debugger
+  - CVE-2024-58136
   type:
   - root
 Ymfe-Yapi:
@@ -8565,6 +10171,8 @@ Yonyou-U8-Cloud:
   - yonyou-u8c-registerservlet-sqli
   - yonyou-u8-cloud-appletinvoke-cacheinvokeservlet-rce
   - yonyou-u8c-loginvideoservlet-rce
+  - yonyou-u8-cloud-fileupload
+  - yonyou-u8-cloud-nccloudgatewayservlet-rce
   type:
   - root
 Yonyou-UFIDA:
@@ -8671,6 +10279,11 @@ ZOHO-流量管理:
   - CVE-2018-12998
   type:
   - root
+ZTE-F660:
+  pocs:
+  - CVE-2025-53558
+  type:
+  - root
 ZZCMS:
   pocs:
   - CVE-2020-20285
@@ -8685,6 +10298,11 @@ ZZZCMS:
   - zzzcms-info-disclosure
   - zzzcms-ssrf
   - zzzcms-xss
+  type:
+  - root
+Zarafa-WebApp:
+  pocs:
+  - CVE-2019-7219
   type:
   - root
 Zblogcn-Zblogphp:
@@ -8709,9 +10327,20 @@ Zeroshell-Firewall:
   - CVE-2020-29390
   type:
   - root
+Zeta Producer Desktop CMS:
+  pocs:
+  - CVE-2018-13980
+  type:
+  - root
 Zhilink:
   pocs:
   - Zhilink-xstream-rce
+  - Zhilink-Xstream-Rce
+  type:
+  - root
+ZimaOS:
+  pocs:
+  - CVE-2026-21891
   type:
   - root
 Zimbra-Collaboration-Suite:
@@ -8725,6 +10354,7 @@ Zimbra-Collaboration-Suite:
   - zimbra-web-login
   - zimbra-preauth-ssrf
   - CVE-2023-34192
+  - CVE-2025-68645
   - CVE-2022-24682
   - CVE-2022-27926
   - CVE-2022-41352
@@ -8813,6 +10443,8 @@ ZyXEL-NBG2105:
 Zyxel:
   pocs:
   - CVE-2022-0342
+  - CVE-2024-29972
+  - CVE-2024-29973
   type:
   - root
 Zyxel-ATP100:
@@ -8907,6 +10539,11 @@ cPanel-webmail:
   - CVE-2023-29489-afrog
   type:
   - root
+calibre:
+  pocs:
+  - CVE-2024-6782
+  type:
+  - root
 catfishcms:
   pocs:
   - CNVD-2019-06255
@@ -8926,6 +10563,7 @@ cgit:
   - root
 cpanel-WHM:
   pocs:
+  - CVE-2026-41940
   - cpanel-api-codes
   - whm-login-detect
   type:
@@ -8935,15 +10573,26 @@ dahua-NVR:
   - qiwang-erp-comboxstore-rce
   type:
   - root
+dahua-智慧园区综合管理平台:
+  pocs:
+  - dahua-bitmap-fileupload
+  type:
+  - root
 dahua-视频监控:
   pocs:
   - CVE-2021-33044
   - CVE-2017-7925
+  - CVE-2021-33045
   type:
   - root
 dotNETCMS:
   pocs:
   - dotnetcms-sqli
+  type:
+  - root
+eXtplorer:
+  pocs:
+  - CVE-2008-4764
   type:
   - root
 elFinder:
@@ -9043,6 +10692,7 @@ kingdee-EAS:
   - kingdee-eas-directory-traversal
   - kingdee-eas-extweb-fileread
   - kingdee-eas-uploadlogo-fileupload
+  - kingdee-eas-myuploadfile-fileupload
   type:
   - root
 kkFileView:
@@ -9060,10 +10710,20 @@ laravel-admin:
   - laravel-eol
   type:
   - root
+mini_httpd:
+  pocs:
+  - CVE-2018-18778
+  type:
+  - root
 mobileiron-security-platform:
   pocs:
   - CVE-2020-15505
   - mobileiron-log4j-jndi-rce
+  type:
+  - root
+mojoPortal:
+  pocs:
+  - CVE-2023-24322
   type:
   - root
 motionEye:
@@ -9074,6 +10734,13 @@ motionEye:
 muhttpd:
   pocs:
   - CVE-2022-31793
+  type:
+  - root
+n8n:
+  pocs:
+  - CVE-2025-68613
+  - CVE-2026-21877
+  - CVE-2026-21858
   type:
   - root
 netentsec Technology - Internet Control Gateway:
@@ -9090,6 +10757,7 @@ nginxWebUI:
   pocs:
   - nginxwebui-runcmd-rce
   - nginxWebUI runCmd前台远程命令执行漏洞
+  - nginxWebUI-runCmd-RCE
   type:
   - root
 nostromo:
@@ -9112,6 +10780,7 @@ openSIS:
   - opensis-panel
   - opensis-installer
   - opensis-lfi
+  - CVE-2024-51211
   type:
   - root
 osTicket:
@@ -9142,6 +10811,7 @@ paYara-Server:
   - root
 pgAdmin:
   pocs:
+  - CVE-2024-9014
   - CVE-2022-4223
   type:
   - root
@@ -9179,18 +10849,36 @@ phpMyAdmin:
   - phpmyadmin-server-import
   - phpmyadmin-setup
   - phpmyadmin-unauth
+  - phpmyadmin-unauth-access
+  - pma-server-import
   - CVE-2020-11441
   - CVE-2020-26935
   - phpmyadmin-panel-nuclei-templates
   type:
   - root
   - dir
+phpMyChat-Plus:
+  pocs:
+  - CVE-2019-19908
+  type:
+  - root
+phpMyFAQ:
+  pocs:
+  - CVE-2025-69200
+  - CVE-2026-46364
+  type:
+  - root
 phpPgAdmin:
   pocs:
   - CVE-2007-5728
   - CVE-2008-5587
   - phppgadmin-panel
   - phppgadmin-version
+  type:
+  - root
+phpVMS:
+  pocs:
+  - CVE-2026-42569
   type:
   - root
 portainer:
@@ -9250,6 +10938,8 @@ splunk-日志分析:
   - splunk-enterprise-panel
   - splunk-login
   - splunk-enterprise-log4j-rce
+  - CVE-2024-36991
+  - CVE-2026-20253
   type:
   - base
   - root
@@ -9300,6 +10990,8 @@ vBulletin:
   - CVE-2020-17496
   - CVE-2023-25135
   - CVE-2016-6195
+  - CVE-2025-48827
+  - CVE-2025-48828
   - CVE-2026-61511
   - vbulletin-ajaxreg-sqli
   - vbulletin-detect
@@ -9385,6 +11077,7 @@ vmware-SpringBoot-Framework:
   - springboot-actuators-jolokia-xxe
   - springboot-h2-db-rce
   - springboot-log4j-rce
+  - CVE-2017-8046
   type:
   - root
   - dir
@@ -9394,6 +11087,7 @@ vmware-Workspace-ONE-Access:
   - CVE-2022-22954
   - CVE-2022-22972
   - CVE-2022-31656
+  - CVE-2025-25231
   type:
   - root
 vmware-vRealize:
@@ -9406,6 +11100,12 @@ vmware-vRealize:
   - vmware-operation-manager-log4j
   type:
   - root
+webEdition:
+  pocs:
+  - CVE-2014-5258
+  type:
+  - root
+  - dir
 webui-js-OEM:
   pocs:
   - webui-js-oem-file-read
@@ -9463,6 +11163,13 @@ xxl-rpc:
   - wanhu-wpsservlet-fileupload
   - CVD-2023-2425
   - 万户ezoffice wpsservlet任意文件上传漏洞
+  - wanhu-ezoffice-wpsservlet-fileupload
+  - wanhu-oa-fileupload-controller
+  - wanhu-oa-downloadhttp-fileread
+  - wanhu-ezoffice-text2html-fileread
+  - wanhu-oa-rhinoscript-engineservice-rce
+  - wanhu-evointerfaceservlet-unauth
+  - wanhuoa-downloadservlet-lfi
   type:
   - root
 三汇SMG-网关管理软件:
@@ -9481,6 +11188,15 @@ xxl-rpc:
   - TongWeb-Rce
   type:
   - root
+东方通-TongWeb:
+  pocs:
+  - tongweb-selectapp-fileupload
+  - tongweb-console-detect
+  - tongweb-ejb-rce-payload
+  - TongWeb-Rce
+  - tongweb-version-detect
+  type:
+  - root
 中新金盾-信息安全管理系统:
   pocs:
   - cnzxsoft-default-login
@@ -9495,6 +11211,8 @@ xxl-rpc:
 云安宝-云匣子(华南):
   pocs:
   - 云安宝-云匣子 config fastjson RCE
+  - yunbox-baolei-config-fastjson-rce
+  - yunanbao-rce
   type:
   - root
   - base
@@ -9516,16 +11234,28 @@ xxl-rpc:
   - esafenet-cdg-dbajax-jdbc-rce
   - 亿赛通CDGServer3接口存在任意文件读取漏洞
   - 亿赛通 电子文档安全管理系统 任意文件读取 CNVD-2023-09184
+  - YiSaiTong-FileReading-CNVD-2023-09184
+  - Yisaitong-CDGServer3-Readfile
+  - CVE-2019-9632
+  - esafenet-mysql-fileread
+  - esafenet-netsecconfigajax-sqli
+  - esafenet-noticeajax-sqli
   type:
   - root
 傲盾信息安全管理系统:
   pocs:
   - 傲盾信息安全管理系统前台 sichuan_login 远程命令执行
+  - aodun-sichuan_login-RCE
   type:
   - root
 全程云OA:
   pocs:
   - cloud-oa-system-sqli
+  type:
+  - root
+六零导航页:
+  pocs:
+  - CVE-2024-36675
   type:
   - root
 兰德网络-O2OA:
@@ -9559,6 +11289,9 @@ xxl-rpc:
 华天动力OA:
   pocs:
   - huatian-oa8000-buffalo-rce
+  - huatiandongli-ntkodownload-fileread
+  - huatiandongli-templateservice-fileread
+  - huatiandongli-oa-downloadfortrace-fileread
   type:
   - root
 华测监测预警系统:
@@ -9578,6 +11311,11 @@ xxl-rpc:
   - CNVD-2022-03672
   type:
   - root
+启明星辰-4A统一安全管控平台:
+  pocs:
+  - venustech-4a-gtmaster-disclosure
+  type:
+  - root
 和信创天云桌面:
   pocs:
   - core-chuangtian-cloud-rce
@@ -9586,6 +11324,11 @@ xxl-rpc:
 图创软件-图书馆站群管理系统:
   pocs:
   - interlib-fileread
+  type:
+  - root
+圣乔ERP:
+  pocs:
+  - CVE-2024-13979
   type:
   - root
 圣博润堡垒机:
@@ -9605,6 +11348,30 @@ xxl-rpc:
   - dahua-icc-evo-runs-rce
   type:
   - root
+大华ICC智能物联综合管理平台:
+  pocs:
+  - dahua-icc-readpic-fileread
+  - dahua-icc-default-login
+  - Dahua_ICC_version_leak
+  - Dahua_ICC_personInfo
+  - Dahua_ICC_env
+  - Dahua_ICC_GetClassValue_RCE
+  - Dahua_ICC_SSRF
+  - dahua-icc-evo-runs-rce
+  - dahua-icc-backdoor-user
+  - dahua-icc-servicename-sql-inject
+  - dahua-icc-evo-runs-receive-rce
+  type:
+  - root
+大华安防 DSS:
+  pocs:
+  - dss-download-fileread
+  - dahua-dss-s2-045-rce
+  - 大华 DSS 数字监控系统 itcBulletin SQL 注入
+  - dahua-dds-itcBulletin-sqli
+  - dahua-dss-attachment-downloadatt-fileread
+  type:
+  - root
 大华智慧园区管理系统:
   pocs:
   - CVE-2023-3836
@@ -9620,14 +11387,45 @@ xxl-rpc:
   - CVE-2023-3121
   type:
   - root
+大华智慧园区综合管理平台:
+  pocs:
+  - CVE-2023-3836
+  - dahua-smart-park-getfacecapture-sqli
+  - dahua-smart-park-video-upload
+  - dahua-user-getuserinfobyusername-getpassword
+  - dahua-smart-park-poi-upload
+  - CVD-2023-1870
+  - dahua-smart-park-download-fileread
+  - Dahua-access_modifyOrg-xstream
+  - dahua-smart-park-ipms-rce
+  - dahua-smart-park-deleteftp-rce
+  - CVE-2023-3121
+  - Dahua-access_modifyOrg-xstream-unserialize
+  - dahua-bitmap-fileupload
+  - dahua-wpms-lfi
+  - dahua-wpms-rce
+  type:
+  - root
 天融信-TOPSEC:
   pocs:
   - 天融信TOPSEC Cookie 远程命令执行漏洞
+  - tianrongxin-topsec-maincgi-cookie-rce
   type:
   - root
 天融信-上网行为管理系统:
   pocs:
   - topsec-topacm-rce
+  type:
+  - root
+天融信-运维审计系统:
+  pocs:
+  - Tianrongxin-filedownload
+  type:
+  - root
+天融信TopAPP负载均衡系统:
+  pocs:
+  - topsec-topapplb-auth-bypass
+  - topsec-topapplb-enable-tool-debug-rce
   type:
   - root
 天融信运维审计系统:
@@ -9638,11 +11436,13 @@ xxl-rpc:
 天问物业云:
   pocs:
   - tianwen-auth-login
+  - tiantianwen-auth-login
   type:
   - root
 奇安信-VPN:
   pocs:
   - secsslvpn-auth-bypass
+  - qianxin-userlist-modify-user-password
   type:
   - root
 奇安信-天擎:
@@ -9652,6 +11452,15 @@ xxl-rpc:
   - tianqing-info-leak
   - 奇安信天擎rptsvr文件上传漏洞
   - 奇安信 天擎getsimilarlist SQL注入
+  - QiAnXin-tq-rptsvr-fileupload
+  - qianxin-360-tianqing-getsimilarlist-sqli-rce
+  - qianxin-360tianqing-adminlogconf-disclosure
+  type:
+  - root
+奥威亚教育视频云平台:
+  pocs:
+  - 奥威亚视屏云平台VideoCover任意文件上传
+  - aoweiya-VideoCover-upload
   type:
   - root
 奥威亚视频云平台:
@@ -9674,6 +11483,9 @@ xxl-rpc:
   - das-ngfw-aaa-rce
   - 安恒明御安全网关aaa_local_web_preview文件上传漏洞
   - 安恒明御安全网关 aaa_portal_auth_config_reset 远程命令执行漏洞
+  - anheng-mingyu-aaa_local_web_preview-fileupload
+  - anheng-mingyu-aaa_portal_auth_config_reset-rce
+  - webui-js-oem-sslvpn-client-fileupload
   type:
   - root
 安恒信息-明御运维审计与风险控制系统:
@@ -9681,10 +11493,33 @@ xxl-rpc:
   - das-usm-arbitrary-user-add
   type:
   - root
+安恒明御安全网关:
+  pocs:
+  - das-ngfw-aaa-rce
+  - 安恒明御安全网关aaa_local_web_preview文件上传漏洞
+  - 安恒明御安全网关 aaa_portal_auth_config_reset 远程命令执行漏洞
+  - anheng-mingyu-aaa_local_web_preview-fileupload
+  - anheng-mingyu-aaa_portal_auth_config_reset-rce
+  - webui-js-oem-sslvpn-client-fileupload
+  type:
+  - root
 安美数字-酒店宽带运营系统:
   pocs:
   - amtt-hiboss-language-sqli
   - amtt-hiboss-server-ping-rce
+  type:
+  - root
+宏景HCM管理系统:
+  pocs:
+  - CNVD-2023-08743
+  - hjhost-hcm-get-org-tree-sqli
+  - hjsoft-hcm-loadhistroyorgtree-sqli
+  - hjsoft-uploadlogo-fileupload
+  type:
+  - root
+宏景eHR人力资源信息管理系统:
+  pocs:
+  - hjsoft-uploadlogo-fileupload
   type:
   - root
 宝塔-Linux控制面板:
@@ -9695,11 +11530,20 @@ xxl-rpc:
 宝蓝德-Spark-BesEJB:
   pocs:
   - bes-spark-besejb-rce
+  - bes-spark-besejb-interface-detect
   type:
   - root
 宝蓝德-Spark-EJB:
   pocs:
   - bes-spark-ejb-rce
+  - bes-spark-ejb-interface-detect
+  type:
+  - root
+帆软-FineBI:
+  pocs:
+  - finereport-sqli-rce
+  - finereport-v10-channel-deserialization
+  - finereport-export-excel-sqli
   type:
   - root
 帆软-FineReport:
@@ -9726,6 +11570,13 @@ xxl-rpc:
   - glodon-linkworks-getimdirectionary-sqli
   - glodon-linkworks-getdeptbydeptcode-sqli
   - CVD-2023-2868
+  - glodon-linkworks-getuserbyemployeecode-sqli
+  type:
+  - root
+思福迪-Logbase运维安全管理系统:
+  pocs:
+  - 思福迪 运维安全管理系统 test_qrcode_b 远程命令执行漏洞
+  - logbase-test-qrcide-b-rce
   type:
   - root
 思福迪堡垒机(北京):
@@ -9761,6 +11612,7 @@ xxl-rpc:
 明源云-ERP:
   pocs:
   - mingyuan-erp-apiupdate-fileupload
+  - mingyuanyun-erp-datarule-xmlhttp-sqli
   type:
   - root
 易思无人值守智能物流系统:
@@ -9804,6 +11656,9 @@ xxl-rpc:
   - CNVD-2017-03561
   - weaver-e-office-mobile-upload-save-arbitrary-file-upload
   - weaver-e-mobile-rce
+  - emobile-lang2sql-fileupload
+  - weaver-emobile-client-fileread
+  - panmicro-arbitrary-file-read
   type:
   - root
 泛微-EOffice:
@@ -9830,6 +11685,9 @@ xxl-rpc:
   - weaver-e-office-config-infoleak
   - CVD-2022-1170
   - 泛微eoffice两处config接口存在信息泄露
+  - FanWei-eoffice-config-Information-disclosure
+  - weaver-mysql-config-exposure
+  - e-office10-atuh-file-phar-deserialization-rce
   type:
   - root
 泛微-云桥e-Bridge:
@@ -9868,6 +11726,13 @@ xxl-rpc:
   - ecology-info-leak
   - ecology-ifnewscheckoutbycurrentuser-dwr-sqli
   - ecology-dbconfigreader-info-leak
+  - weaver-ecology9-filedownloadlocation-sqli
+  - ecology-ofslogin-aul
+  - ecology-changeuserinfo-info-leak
+  - ecology-execforstr-rce
+  - weaver-ecology9-doc-list-sqli
+  - weaver-getemdslist-disclosure
+  - CVE-2025-34038
   type:
   - root
 浙大恩特客户资源管理系统:
@@ -9876,21 +11741,68 @@ xxl-rpc:
   - entersoft-customeraction-entphone-upload
   type:
   - root
+海康威视 流媒体管理服务器:
+  pocs:
+  - hikvision-info-leak
+  - hikvision-downfle-fileread
+  type:
+  - root
 海康威视综合安防平台:
   pocs:
   - hikvision-isecure-center-cmdb-alarmexport-upload-exposure
   - 海康威视综合安防管理平台任意文件读取漏洞
+  - Hikvision-filereading
+  - hikvision-fastjson-rce
+  - hikvision-isecure-center-fastjson-basicdatasource-rce
+  - hikvision-isecure-center-upload
+  - hikivision-env
+  - hikvision-isecure-center-report-upload
+  - hikvision-isecure-center-files-fileread
+  - Hikvision-center-rce
+  - hikvision-isecure-info-leak
+  - hikvision-js-files-upload
+  - hikvision-applyautologinticket-rce
+  - hikvision-detection-rce
+  - hikvision-isecure-report-fileupload-rce
   type:
   - root
   - base
+海康威视联网网关:
+  pocs:
+  - hikvision-ncg-downdb-fileread
+  type:
+  - root
 润乾报表(西部):
   pocs:
   - raqsoft_InputServlet_FileUpload
   type:
   - root
+深信服 NGAF:
+  pocs:
+  - sangfor-nextgen-lfi
+  - sangfor-ngaf-login-rce
+  type:
+  - root
+深信服一体化网关 MIG:
+  pocs:
+  - sangfor-mig-login-panel
+  type:
+  - root
+深信服下一代防火墙管理系统:
+  pocs:
+  - sangfor-nextgen-lfi
+  - sangfor-ngaf-login-rce
+  type:
+  - root
 深信服公司-产品:
   pocs:
   - sangfor-ngaf-login-rce
+  type:
+  - root
+深信服应用交付报表系统:
+  pocs:
+  - sangfor-download-lfi
+  - sangfor-sysuser-conf
   type:
   - root
 狮子鱼CMS:
@@ -9935,6 +11847,12 @@ xxl-rpc:
   - yonyou-nc-bshservlet-full-check
   - yonyou-nc-ncmessageservlet-rce
   - yonyou-nc-grouptemplet-fileupload
+  - yonyou-nc-savexmltofileservlet-fileupload
+  - yonyou-nc-download-fileread
+  - yonyou-nc-word-docx-fileread
+  - yonyou-nc-portalsesInittoolservice-disclosure
+  - yonyou-ncfindweb-fileread
+  - yonyou-nc-lfi
   type:
   - root
 用友-FE协作办公平台:
@@ -9956,6 +11874,11 @@ xxl-rpc:
   - yonyou-u8-sqli
   - yonyou-u8-grp-slbmbygr-sqli
   - yonyou-u8-grp-selectdmje-sqli
+  - grp-u8-uploadfiledata
+  - yonyou-grp-u8-app-proxy-fileupload
+  - yonyou-grp-u8-logs-disclosure
+  - yonyou-grp-u8-fileupload
+  - yonyou-grp-u8-smartupload01-fileupload
   type:
   - root
 用友-NC-Cloud:
@@ -9973,6 +11896,8 @@ xxl-rpc:
   - yonyou-nc-ncmessageservlet-rce
   - yonyou-nc-oacontactsfuzzysearchservlet-rce
   - 用友NC Cloud soapFormat.ajax接口XXE
+  - yonyou-nc-cloud-getStaffInfo-sqli
+  - yonyou-ufida-cloud-sqli
   type:
   - root
 用友-TurboCRM:
@@ -10006,11 +11931,44 @@ xxl-rpc:
   - yonyou-turbo-crm-downloadfile-fileread
   - yonyou-u8-crm-solr-log-infoleak
   - 用友-CRM文件读取
+  - yonyou-u8-crm-sqli
+  - yonyou-u8-crm-tb-sqli
+  type:
+  - root
+用友-U8-Cloud:
+  pocs:
+  - yonyou-u8c-registerservlet-sqli
+  - yonyou-u8-cloud-appletinvoke-cacheinvokeservlet-rce
+  - yonyou-u8c-loginvideoservlet-rce
+  - yonyou-u8-cloud-fileupload
+  - yonyou-u8-cloud-nccloudgatewayservlet-rce
   type:
   - root
 用友-UFIDA-NC:
   pocs:
   - 用友-ufida-nc-文件读取
+  - yongyou-ufida-nc-fileread
+  - CNVD-2021-30167
+  - wooyun-2015-148227
+  - yonyou-nc-accept-fileupload
+  - yonyou-nc-baseapp-deserialization
+  - yonyou-nc-dispatcher-fileupload
+  - yonyou-filereceiveservlet-fileupload
+  - yonyou-nc-bshservlet-full-check
+  - yonyou-nc-ncmessageservlet-rce
+  - yonyou-nc-grouptemplet-fileupload
+  - yonyou-nc-info-leak
+  - yonyou-nc-api-disclosure
+  - yonyou-nc-oacontactsfuzzysearchservlet-rce
+  - yonyou-nc-jiuqiclientreqdispatch-rce
+  - yonyou-nc-icustomerexporttocrmservice-sqli
+  - yonyou-nc-monitorservlet-rce
+  - yonyou-nc-savexmltofileservlet-fileupload
+  - yonyou-nc-download-fileread
+  - yonyou-nc-word-docx-fileread
+  - yonyou-nc-portalsesInittoolservice-disclosure
+  - yonyou-ncfindweb-fileread
+  - yonyou-nc-lfi
   type:
   - root
 用友-时空KSOA:
@@ -10025,6 +11983,7 @@ xxl-rpc:
   - yonyou-nc-ncmessageservlet-rce
   - CNVD-C-2023-76801
   - yonyou-ksoa-imageupload-fileupload
+  - yonyou-ksoa-dept-sqli
   type:
   - root
 用友-移动系统管理:
@@ -10038,12 +11997,38 @@ xxl-rpc:
   - yonyou-a-plus-rectifyAuditGaDoubt-rce
   type:
   - root
+用友U8Cloud(北京):
+  pocs:
+  - yonyou-u8c-registerservlet-sqli
+  - yonyou-u8-cloud-appletinvoke-cacheinvokeservlet-rce
+  - yonyou-u8c-loginvideoservlet-rce
+  - yonyou-u8-cloud-fileupload
+  - yonyou-u8-cloud-nccloudgatewayservlet-rce
+  type:
+  - root
 用友U9:
   pocs:
   - yongyou_u9_viewstate
+  - yonyou-u9-patchfile-upload
+  type:
+  - root
+用友bip:
+  pocs:
+  - yonyou-yonbip-lfi
+  - CVE-2025-66744
   type:
   - root
 畅捷通-TPlus:
+  pocs:
+  - chanjet-tplus-file-read
+  - chanjet-tplus-fileupload
+  - chanjet-tplus-ufida-sqli
+  - chanjet-tplus-rce
+  - chanjet-tplus-checkmutex-sqli
+  - chanjet-tplus-unauth-passreset
+  type:
+  - root
+畅捷通-TPlus(华东):
   pocs:
   - chanjet-tplus-file-read
   - chanjet-tplus-fileupload
@@ -10056,6 +12041,7 @@ xxl-rpc:
   pocs:
   - CNVD-2021-12845
   - chanjetcrm-createsite-sqli
+  - chanjet-crm-sqli
   type:
   - root
 畅捷通-远程通:
@@ -10096,6 +12082,11 @@ xxl-rpc:
   - kedacom-mts-file-read
   type:
   - root
+科达-网络键盘控制台:
+  pocs:
+  - kedacom-network-lfi
+  type:
+  - root
 科迈-RAS系统:
   pocs:
   - comai-ras-cookie-bypass
@@ -10104,10 +12095,23 @@ xxl-rpc:
 积木报表:
   pocs:
   - jmreport-jdbc-rce
+  - jeecg-boot-jmreport-fileupload
   type:
   - root
 红帆-ioffice:
   pocs:
+  - hongfan-ioffice-sqli
+  - hongfan-ioffice-lfi
+  - hongfan-ioffice-rce
+  - CVD-2023-1212
+  - hongfan-iodesktopdata-sqli
+  - hongfan-ioffice-iofiledown-fileread
+  type:
+  - root
+红帆ioffice-10:
+  pocs:
+  - hongfan-iodesktopdata-sqli
+  - hongfan-ioffice-iofiledown-fileread
   - hongfan-ioffice-sqli
   - hongfan-ioffice-lfi
   - hongfan-ioffice-rce
@@ -10118,18 +12122,35 @@ xxl-rpc:
   pocs:
   - lvmeng-chgplay-rce
   - lvmeng-sas-auditItems-sql
+  - nsfocus-auth-bypass
+  - nsfocus-lfi
   type:
   - root
 网康-NS-ASG安全网关:
   pocs:
   - ns-asg-file-read
   - netentsec-ns-asg-rce
+  - nsasg-arbitrary-file-read
+  type:
+  - root
+网康科技-ns-asg安全网关:
+  pocs:
+  - ns-asg-file-read
+  - netentsec-ns-asg-rce
+  - nsasg-arbitrary-file-read
   type:
   - root
 网康科技-下一代防火墙:
   pocs:
   - qi-anxin-netkang-next-generation-firewall-rce
   - 网康科技-下一代防火墙存在任意命令执行漏洞
+  - WangKang-NGFW-RCE
+  - netentsec-fiewall-heartbeat-php-rce
+  type:
+  - root
+网康科技·互联网控制网关:
+  pocs:
+  - nsicg-default-login
   type:
   - root
 网御星云-上网行为管理系统:
@@ -10137,10 +12158,27 @@ xxl-rpc:
   - leadsec-acm-bottomframe-cgi-sqli
   type:
   - root
+网神-Secips:
+  pocs:
+  - secworld-secips-3600-debuginfo-fileread
+  type:
+  - root
+网神SecGate 3600防火墙:
+  pocs:
+  - secgate-3600-file-upload
+  - 网神防火墙存在登录信息泄露
+  - qianxin-secworld-secgate3600-obj_area_import_save-fileupload
+  - secworld-secgate3600-obj-area-export-save-fileread
+  - secworld-secgate3600-obj-av-import-save-fileupload
+  type:
+  - root
 网神SecGate防火墙:
   pocs:
   - secgate-3600-file-upload
   - 网神防火墙存在登录信息泄露
+  - qianxin-secworld-secgate3600-obj_area_import_save-fileupload
+  - secworld-secgate3600-obj-area-export-save-fileread
+  - secworld-secgate3600-obj-av-import-save-fileupload
   type:
   - root
 致翔软件-致翔OA:
@@ -10152,6 +12190,7 @@ xxl-rpc:
   pocs:
   - seeyon-oa-m3-server-1sp1-rce
   - 致远M3server反序列化RCE漏洞
+  - ZhiYuan-m3server-mobile_portal-rce
   type:
   - root
 致远互联-M1移动端:
@@ -10182,6 +12221,13 @@ xxl-rpc:
   - seeyon-wpsassist-servlet-fileread
   - seeyon-oa-saveexcelinbase-fileupload
   - seeyon-wpsassistservlet-filetype-fileread
+  - seeyon-getajaxdataservlet-xxe
+  - seeyon-downloadatt-sqli
+  - seeyon-reportserver-directory-traversal
+  - seeyon-version
+  - seeyon-logs-disclosure
+  - seeyon-a8-management-monitor
+  - CVE-2025-34040
   type:
   - root
 若依-管理系统:
@@ -10194,6 +12240,10 @@ xxl-rpc:
 蓝凌EIS智慧协同平台:
   pocs:
   - landray-eis-saveimg-fileupload
+  - landray-zhihuixietong-dingusers-sqli
+  - landray-eis-sqli
+  - landray-eis-ws-infoleak
+  - CVE-2025-22214
   type:
   - root
 蓝海卓越计费管理系统:
@@ -10214,6 +12264,14 @@ xxl-rpc:
   - 通天星CMSV6车载定位监控平台SQL注入
   type:
   - root
+通天星CMSV6车载定位监控平台:
+  pocs:
+  - 通天星CMSV6 车载视频监控平台 信息泄露
+  - 通天星CMSV6车载定位监控平台SQL注入
+  - TTX-CMSV6-SQL
+  - TongTianXin-CMS-Information-disclosure
+  type:
+  - root
 金和网络-金和OA:
   pocs:
   - jinher-oa-default-login
@@ -10222,6 +12280,11 @@ xxl-rpc:
   - jinher-oa-saveasotherformatservlet-fileupload
   - jinher-oa-sap-b1config-unauth
   - jinher-c6-homeservice-sqli
+  - jinher-oa-c6-fileuploadmessage-fileread
+  - jinher-jc6-servlet-upload-fileupload
+  - jinhe-jc6-sqli
+  - jinhe-oa-c6-upload-lfi
+  - CVE-2025-10090
   type:
   - root
 金山VGM防毒墙:
@@ -10232,12 +12295,21 @@ xxl-rpc:
 金盘-微信管理平台:
   pocs:
   - jinpan-weichatcfg-disclosure
+  - jinpan-doupload-fileupload
   type:
   - root
 金航网上阅卷系统:
   pocs:
   - jinghang-upload
   - jinghang-druid
+  type:
+  - root
+金蝶-Apusic应用服务器:
+  pocs:
+  - kingdee-apusic-directory-traversal
+  - kingdee-eas-directory-traversal
+  - kingdee-apusic-deployapp-fileupload
+  - apusic-version-detect
   type:
   - root
 金蝶云星空:

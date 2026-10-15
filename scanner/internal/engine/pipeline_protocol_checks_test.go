@@ -15,13 +15,13 @@ func TestRunProtocolCheckPhaseBuildsExactGovernedTargets(t *testing.T) {
 	called := false
 	dispatchProtocolCheckTargets = func(targets []scanpolicy.GoPocTarget, catalog string, capability scanpolicy.GoPocCapability, threads, rate int, budget int64, emit func(structs.OutputMessage)) ([]structs.GoPocsResultType, error) {
 		called = true
-		if catalog != scanpolicy.GoPocCatalogSHA256() || capability != scanpolicy.GoPocProtocolCheck || len(targets) != 1 || targets[0].Plugin != "DNP3-Scan" || targets[0].Target != "192.0.2.10:20000" {
+		if catalog != scanpolicy.GoPocCatalogSHA256() || capability != scanpolicy.GoPocProtocolCheck || len(targets) != 1 || targets[0].Plugin != "NetBios-GetHostInfo" || targets[0].Target != "192.0.2.10:445" {
 			t.Fatalf("unexpected protocol plan: catalog=%s capability=%s targets=%+v", catalog, capability, targets)
 		}
 		return nil, nil
 	}
 	cfg := Config{ProtocolCheckEnabled: true, ProtocolCheckTargetLimit: 2, ProtocolCheckRateLimit: 10, ProtocolCheckRequestBudget: 2, GoPocThreads: 1, GoPocCatalogSHA256: scanpolicy.GoPocCatalogSHA256()}
-	if err := runProtocolCheckPhase(&ScanContext{}, &cfg, map[string]string{"192.0.2.10:20000": "dnp3", "192.0.2.20:80": "http"}); err != nil {
+	if err := runProtocolCheckPhase(&ScanContext{}, &cfg, map[string]string{"192.0.2.10:445": "smb", "192.0.2.20:80": "http"}); err != nil {
 		t.Fatal(err)
 	}
 	if !called {

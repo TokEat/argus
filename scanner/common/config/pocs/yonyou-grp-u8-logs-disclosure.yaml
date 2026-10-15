@@ -1,26 +1,28 @@
-# 来源: afrog（转换自 afrog/xray 表达式 POC）
+id: yonyou-grp-u8-logs-disclosure
+
+info:
+  name: 用友 GRP-U8 logs/info.log 敏感信息泄露
+  author: zan8in
+  severity: high
+  description: |
+    用友 GRP-U8 /logs/info.log 未授权可读，日志含 write 记录与运行路径等关键情报。属 GRP-U8，不绑定 NC / U8 Cloud。
+  reference:
+    - https://github.com/zan8in/afrog
+  metadata:
+    max-request: 1
+    fofa-query: title="用友GRP-U8"
+  tags: yonyou,grp-u8,disclosure,logs
+
 http:
-  - matchers:
-      - type: status
-        status:
-          - 200
+  - method: GET
+    path:
+      - "{{BaseURL}}/logs/info.log"
+    matchers-condition: and
+    matchers:
       - type: word
         part: body
         words:
-          - ' - [ INFO ]  write'
-        condition: and
-    method: GET
-    path:
-      - '{{BaseURL}}/logs/info.log'
-id: yonyou-grp-u8-logs-disclosure
-info:
-  author: zan8in
-  description: ""
-  metadata:
-    argus-execution-class: detection
-    argus-import-license: MIT License
-    argus-import-source: afrog
-    argus-risk-level: high
-  name: 用友 GRP-U8 管理平台 logs 敏感信息泄露
-  severity: high
-  tags: yonyou,logs,disclosure,argus-import
+          - " - [ INFO ]  write"
+      - type: status
+        status:
+          - 200

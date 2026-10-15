@@ -1,11 +1,11 @@
 id: nsfocus-lfi
 
 info:
-  name: Nsfocus - Arbitrary File Read
+  name: 绿盟 SAS 堡垒机 任意文件读取
   author: ritikchaddha
   severity: high
   description: |
-    Nsfocus bastion has an Arbitrary File Read Vulnerability through '/webconf/GetFile/'.
+    绿盟堡垒机 /webconf/GetFile/ 接口存在任意文件读取，可获取系统敏感配置。
   reference:
     - https://forum.butian.net/article/250
   metadata:

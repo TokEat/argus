@@ -1,11 +1,11 @@
 id: esafenet-noticeajax-sqli
 
 info:
-  name: Esafenet CDG NoticeAjax - Sql Injection
+  name: 亿赛通 CDG NoticeAjax SQL注入
   author: adeljck
   severity: high
   description: |
-    CDGServer3 NoticeAjax Interface Sql Injection.
+    亿赛通 CDGServer3 NoticeAjax 接口存在 SQL 注入。
   classification:
     cwe-id: CWE-89
   metadata:

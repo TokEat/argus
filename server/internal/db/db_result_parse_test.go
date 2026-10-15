@@ -61,7 +61,7 @@ func TestAddResultAsyncRoutesActiveFingerprintWithoutCreatingVulnerability(t *te
 	}
 	select {
 	case fingerprint := <-fpBuffer:
-		if fingerprint.ProductName != "APACHE-Shiro" || fingerprint.Target != "http://127.0.0.1:8081" || fingerprint.RootTaskID != "root-a" {
+		if fingerprint.ProductName != "APACHE-Shiro" || fingerprint.Target != "http://127.0.0.1:8081" || fingerprint.RootTaskID != "root-a" || fingerprint.RuleName != "behavior-probe" {
 			t.Fatalf("unexpected active fingerprint row: %+v", fingerprint)
 		}
 	case <-time.After(100 * time.Millisecond):
@@ -205,7 +205,7 @@ func TestAddResultAsyncExplicitVulnerabilityTypesRemainSupported(t *testing.T) {
 func TestAddResultAsyncProtocolCheckIsAssetEvidenceNotVulnerability(t *testing.T) {
 	drainResultBuffers(t)
 	taskOwnerCache.Store("task-protocol-check", &taskOwnerEntry{ProjectID: "project-a", TenantID: "tenant-a"})
-	AddResultAsync("task-protocol-check", "ProtocolCheck", `{"type":"ProtocolCheck","protocol":"dnp3","go_poc":{"PocName":"DNP3-Scan","Target":"192.0.2.10:20000"}}`)
+	AddResultAsync("task-protocol-check", "ProtocolCheck", `{"type":"ProtocolCheck","protocol":"smb","go_poc":{"PocName":"NetBios-GetHostInfo","Target":"192.0.2.10:445"}}`)
 	select {
 	case vuln := <-vulnBuffer2:
 		t.Fatalf("protocol evidence became a vulnerability: %+v", vuln)
@@ -213,7 +213,7 @@ func TestAddResultAsyncProtocolCheckIsAssetEvidenceNotVulnerability(t *testing.T
 	}
 	select {
 	case asset := <-assetBuffer:
-		if asset.Target != "192.0.2.10:20000" || asset.Service != "dnp3" || asset.Protocol != "ProtocolCheck" {
+		if asset.Target != "192.0.2.10:445" || asset.Service != "smb" || asset.Protocol != "ProtocolCheck" {
 			t.Fatalf("unexpected protocol evidence asset: %+v", asset)
 		}
 	case <-time.After(100 * time.Millisecond):

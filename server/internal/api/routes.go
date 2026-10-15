@@ -147,6 +147,8 @@ func registerAPIV1Routes(api *gin.RouterGroup) {
 	api.GET("/mcp/resources/argus-mcp/tool-guide", mcpArgusMCPToolGuide)
 	api.GET("/mcp/resources/fingerprint/spec", mcpFingerprintSpec)
 	api.GET("/mcp/resources/fingerprint/template", mcpFingerprintTemplate)
+	api.GET("/mcp/resources/dir/spec", mcpDirSpec)
+	api.GET("/mcp/resources/dir/template", mcpDirTemplate)
 	api.GET("/mcp/resources/behavior-probe/spec", mcpBehaviorProbeSpec)
 	api.GET("/mcp/resources/behavior-probe/template", mcpBehaviorProbeTemplate)
 	api.GET("/mcp/resources/poc/spec", mcpPOCSpec)
@@ -154,8 +156,6 @@ func registerAPIV1Routes(api *gin.RouterGroup) {
 	api.GET("/mcp/resources/workflow/spec", mcpWorkflowSpec)
 	api.GET("/mcp/resources/workflow/template", mcpWorkflowTemplate)
 	api.GET("/mcp/resources/examples/fingerprint-poc-workflow", mcpFullChainExample)
-	api.POST("/mcp/tools/poc/debug", mcpPOCDebug)
-	api.POST("/mcp/tools/poc/save-draft", mcpPOCSaveDraft)
 	api.POST("/mcp/tools/rule/context", mcpRuleContext)
 	api.POST("/mcp/tools/rule/debug", mcpRuleDebug)
 	api.POST("/mcp/tools/rule/save", mcpRuleSave)
@@ -289,10 +289,19 @@ func registerAPIV1Routes(api *gin.RouterGroup) {
 	api.POST("/build/jobs/:id/retry", retryBuildJob)
 	api.POST("/build/client", triggerBuild)
 
-	// MCP / API Key 管理
-	api.GET("/mcp/keys", listMcpKeys)
-	api.POST("/mcp/keys", saveMcpKey)
-	api.DELETE("/mcp/keys/:id", deleteMcpKey)
+	// MCP 管理
+	api.GET("/mcp/admin/status", mcpAdminGetStatus)
+	api.PUT("/mcp/admin/status", mcpAdminPutStatus)
+	api.GET("/mcp/admin/clients", mcpAdminListClients)
+	api.POST("/mcp/admin/clients/:id/revoke", mcpAdminRevokeClient)
+	api.POST("/mcp/admin/clients/:id/disable", mcpAdminDisableClient)
+	api.POST("/mcp/admin/clients/:id/enable", mcpAdminEnableClient)
+	api.DELETE("/mcp/admin/clients/:id", mcpAdminDeleteClient)
+	api.GET("/mcp/admin/sessions", mcpAdminListSessions)
+	api.POST("/mcp/admin/sessions/revoke", mcpAdminRevokeSessions)
+	api.GET("/mcp/admin/invocations", mcpAdminListInvocations)
+	api.GET("/mcp/admin/events", mcpAdminListEvents)
+	api.GET("/mcp/admin/tools", mcpAdminListTools)
 
 	// 数据增强：趋势统计与报表
 	api.GET("/stats/trends", getVulnTrends)

@@ -43,7 +43,7 @@ func (s *fakeSubscribeStream) RecvMsg(interface{}) error    { return io.EOF }
 
 func TestMCPRuleSaveFingerprintDraftDoesNotPublish(t *testing.T) {
 	store := setupAITestDB(t)
-	oldContent := "ExistingProduct:\n    - body=\"old\"\n"
+	oldContent := "# keep-me\nExistingProduct:\n    - body=\"old\"\nZedLast:\n    - title=\"z\"\n"
 	if err := store.Create(&db.Arsenal{
 		ID:       db.BuildTenantArsenalID("default", "finger", "finger.yaml"),
 		TenantID: "default",
@@ -84,6 +84,15 @@ func TestMCPRuleSaveFingerprintDraftDoesNotPublish(t *testing.T) {
 	if arsenal.State != "Draft" || arsenal.PreviousHash != "old-hash" || !strings.Contains(arsenal.Content, "ArgusMCP") {
 		t.Fatalf("unexpected finger arsenal: %+v", arsenal)
 	}
+	existingIdx := strings.Index(arsenal.Content, "ExistingProduct:")
+	zedIdx := strings.Index(arsenal.Content, "ZedLast:")
+	newIdx := strings.Index(arsenal.Content, "ArgusMCP:")
+	if existingIdx < 0 || zedIdx < 0 || newIdx < 0 || !(existingIdx < zedIdx && zedIdx < newIdx) {
+		t.Fatalf("fingerprint save remashaled the dictionary:\n%s", arsenal.Content)
+	}
+	if !strings.Contains(arsenal.Content, "# keep-me") {
+		t.Fatalf("fingerprint save dropped comments:\n%s", arsenal.Content)
+	}
 	var rule db.FingerprintRule
 	if err := store.Where("tenant_id = ? AND product_name = ?", "default", "ArgusMCP").First(&rule).Error; err != nil {
 		t.Fatalf("expected synced draft fingerprint rule: %v", err)
@@ -101,14 +110,19 @@ func TestMCPContextSelfDescribingResourcesAndQuickstart(t *testing.T) {
 		want []string
 	}{
 		{
+			name: "help",
+			body: `{"action":"help"}`,
+			want: []string{"source-less MCP client", "argus://dir/spec", "info.author", "rule_get", "coverage", "string array"},
+		},
+		{
 			name: "resources",
 			body: `{"action":"resources"}`,
-			want: []string{"argus://argus-mcp/quickstart", "argus://fingerprint/spec", "argus://workflow/spec", "recommended_reading_order"},
+			want: []string{"argus://argus-mcp/quickstart", "argus://fingerprint/spec", "argus://dir/spec", "argus://workflow/spec", "recommended_reading_order"},
 		},
 		{
 			name: "quickstart",
 			body: `{"action":"quickstart"}`,
-			want: []string{"debug", "save", "publish", "workflow_links"},
+			want: []string{"debug", "save", "publish", "argus_debug_"},
 		},
 		{
 			name: "lifecycle",
@@ -143,13 +157,16 @@ func TestMCPResourceEndpointsReturnSelfDescribingDocs(t *testing.T) {
 		wantURI string
 		want    []string
 	}{
-		{name: "quickstart", handler: mcpArgusMCPQuickstart, wantURI: "argus://argus-mcp/quickstart", want: []string{"argus_rule_debug", "argus_rule_save", "argus_rule_apply"}},
+		{name: "quickstart", handler: mcpArgusMCPQuickstart, wantURI: "argus://argus-mcp/quickstart", want: []string{"argus_debug_", "argus_save_", "argus_rule_apply"}},
+		{name: "tool guide", handler: mcpArgusMCPToolGuide, wantURI: "argus://argus-mcp/tool-guide", want: []string{"coverage", "include_content", "name array"}},
 		{name: "fingerprint spec", handler: mcpFingerprintSpec, wantURI: "argus://fingerprint/spec", want: []string{"body=", "product_name"}},
+		{name: "dir spec", handler: mcpDirSpec, wantURI: "argus://dir/spec", want: []string{"rule_type: dir", "paths"}},
+		{name: "dir template", handler: mcpDirTemplate, wantURI: "argus://dir/template", want: []string{"ExampleProduct", "/admin"}},
 		{name: "behavior probe spec", handler: mcpBehaviorProbeSpec, wantURI: "argus://behavior-probe/spec", want: []string{"active-fingerprint", "argus-behavior-kind", "ordinary HTTP response", "risk_confirmed", "HTTP/HTTPS"}},
 		{name: "behavior probe template", handler: mcpBehaviorProbeTemplate, wantURI: "argus://behavior-probe/template", want: []string{"example-product-detect", "Example-Product", "argus-behavior-kind", "{{randstr}}"}},
 		{name: "poc spec", handler: mcpPOCSpec, wantURI: "argus://poc/spec", want: []string{"id:", "requests:", "matchers:"}},
 		{name: "workflow spec", handler: mcpWorkflowSpec, wantURI: "argus://workflow/spec", want: []string{"root", "workflow_pocs", "General-Poc-*", "general POC workflow"}},
-		{name: "full chain example", handler: mcpFullChainExample, wantURI: "argus://examples/fingerprint-poc-workflow", want: []string{"fingerprint", "workflow_links", "test_only"}},
+		{name: "full chain example", handler: mcpFullChainExample, wantURI: "argus://examples/fingerprint-poc-workflow", want: []string{"fingerprint", "rule_get", "test_only"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, recorder := newTenantContextWithRole(http.MethodGet, "/mcp/resources", "operator", "9")
@@ -383,6 +400,115 @@ func TestMCPRuleContextWorkflowLinks(t *testing.T) {
 	}
 }
 
+func TestMCPContextCoverageFingerprintWithoutPOC(t *testing.T) {
+	store := setupAITestDB(t)
+	seed := []db.FingerprintRule{
+		{TenantID: "default", ProductName: "HasPOC", RuleExpr: `body="a"`, SourceFile: "finger.yaml", State: "Approved", Enabled: true},
+		{TenantID: "default", ProductName: "HasPOC", RuleExpr: `title="a"`, SourceFile: "finger.yaml", State: "Approved", Enabled: true},
+		{TenantID: "default", ProductName: "MissingPOC", RuleExpr: `body="b"`, SourceFile: "finger.yaml", State: "Approved", Enabled: true},
+		{TenantID: "default", ProductName: "AlsoMissing", RuleExpr: `body="c"`, SourceFile: "finger.yaml", State: "Approved", Enabled: true},
+		{TenantID: "default", ProductName: "DisabledFP", RuleExpr: `body="d"`, SourceFile: "finger.yaml", State: "Draft", Enabled: true},
+		{TenantID: "other", ProductName: "OtherTenant", RuleExpr: `body="e"`, SourceFile: "finger.yaml", State: "Approved", Enabled: true},
+	}
+	for i := range seed {
+		if err := store.Create(&seed[i]).Error; err != nil {
+			t.Fatalf("seed fingerprint rule: %v", err)
+		}
+	}
+	if err := store.Model(&db.FingerprintRule{}).Where("tenant_id = ? AND product_name = ?", "default", "DisabledFP").Update("enabled", false).Error; err != nil {
+		t.Fatalf("disable fingerprint rule: %v", err)
+	}
+	if err := store.Create(&db.WorkflowRule{TenantID: "default", ProductName: "HasPOC", PocName: "has-poc", MatchType: "root", SourceFile: "workflow.yaml", State: "Approved", Enabled: true}).Error; err != nil {
+		t.Fatalf("seed workflow rule: %v", err)
+	}
+	if err := store.Create(&db.WorkflowRule{TenantID: "default", ProductName: "General-Poc-Web", PocName: "generic", MatchType: "root", SourceFile: "workflow.yaml", State: "Approved", Enabled: true}).Error; err != nil {
+		t.Fatalf("seed general poc workflow: %v", err)
+	}
+	if err := store.Create(&db.PocRule{TenantID: "default", Name: "has-poc", SourceFile: "has-poc.yaml", State: "Approved", Enabled: true}).Error; err != nil {
+		t.Fatalf("seed poc rule: %v", err)
+	}
+
+	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/mcp/tools/rule/context", "operator", "9")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/rule/context", strings.NewReader(`{"action":"coverage"}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	mcpRuleContext(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode coverage: %v", err)
+	}
+	if got["fingerprint_products"].(float64) != 3 || got["workflow_products_with_poc"].(float64) != 1 || got["fingerprint_without_poc"].(float64) != 2 || got["general_poc_groups"].(float64) != 1 {
+		t.Fatalf("unexpected coverage counts: %#v", got)
+	}
+	products, _ := got["products"].([]interface{})
+	if len(products) != 2 || products[0] != "AlsoMissing" || products[1] != "MissingPOC" {
+		t.Fatalf("expected compact missing names, got %#v", got["products"])
+	}
+	for _, name := range products {
+		if _, isObject := name.(map[string]interface{}); isObject {
+			t.Fatalf("coverage products must be names only, got %#v", name)
+		}
+	}
+	if strings.Contains(recorder.Body.String(), "OtherTenant") || strings.Contains(recorder.Body.String(), "DisabledFP") {
+		t.Fatalf("coverage leaked other tenant or disabled rows: %s", recorder.Body.String())
+	}
+
+	ctx, recorder = newTenantContextWithRole(http.MethodPost, "/mcp/tools/rule/context", "operator", "9")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/rule/context", strings.NewReader(`{"action":"coverage","include_names":false}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	mcpRuleContext(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var countsOnly map[string]interface{}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &countsOnly); err != nil {
+		t.Fatalf("decode coverage without names: %v", err)
+	}
+	if _, exists := countsOnly["products"]; exists {
+		t.Fatalf("include_names=false should omit products: %#v", countsOnly)
+	}
+	if countsOnly["fingerprint_without_poc"].(float64) != 2 {
+		t.Fatalf("counts should remain when names are omitted: %#v", countsOnly)
+	}
+
+	if err := store.Create(&db.FingerprintRule{TenantID: "default", ProductName: "MCP-Server", RuleExpr: `body="mcp"`, SourceFile: "finger.yaml", State: "Approved", Enabled: true}).Error; err != nil {
+		t.Fatalf("seed hyphenated fingerprint: %v", err)
+	}
+	ctx, recorder = newTenantContextWithRole(http.MethodPost, "/mcp/tools/rule/context", "operator", "9")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/rule/context", strings.NewReader(`{"action":"coverage","query":"MCP-Server"}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	mcpRuleContext(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("hyphenated coverage query expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var hyphenated map[string]interface{}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &hyphenated); err != nil {
+		t.Fatalf("decode hyphenated coverage: %v", err)
+	}
+	hyphenProducts, _ := hyphenated["products"].([]interface{})
+	if hyphenated["query"] != "mcp-server" || len(hyphenProducts) != 1 || hyphenProducts[0] != "MCP-Server" {
+		t.Fatalf("query=MCP-Server should match the product name, got %#v", hyphenated)
+	}
+
+	ctx, recorder = newTenantContextWithRole(http.MethodPost, "/mcp/tools/rule/context", "operator", "9")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/rule/context", strings.NewReader(`{"action":"coverage","query":"No-Such-Product"}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	mcpRuleContext(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("empty hyphenated coverage query expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var emptyQuery map[string]interface{}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &emptyQuery); err != nil {
+		t.Fatalf("decode empty coverage query: %v", err)
+	}
+	emptyProducts, _ := emptyQuery["products"].([]interface{})
+	if emptyQuery["total"].(float64) != 0 || len(emptyProducts) != 0 {
+		t.Fatalf("unmatched coverage query should return an empty list, got %#v", emptyQuery)
+	}
+}
+
 func TestMCPRuleDebugFingerprintDispatchesPayloadAndCollectsResult(t *testing.T) {
 	store := setupAITestDB(t)
 	if err := store.Create(&db.Node{TenantID: "default", AgentID: "agent-1", Status: "Alive", Version: "v2.3.0"}).Error; err != nil {
@@ -517,8 +643,8 @@ func TestDebugFingerprintDispatchesCustomRules(t *testing.T) {
 	Hub = &WebSocketHub{clients: make(map[*websocket.Conn]string), broadcast: make(chan wsEnvelope, 16)}
 	oldSessions := pocDebugSessions
 	pocDebugSessions = &debugSessionManager{
-		sessions:     make(map[string]*debugSession),
-		activeTenant: make(map[string]string),
+		sessions:    make(map[string]*debugSession),
+		activeAgent: make(map[string]string),
 	}
 	t.Cleanup(func() {
 		routerRuntime().NotifyHub = oldHub
@@ -676,7 +802,7 @@ func TestMCPDebugResultWaitMarksTemplateLoadFailure(t *testing.T) {
 	}
 }
 
-func TestMCPDebugResultWaitUsesResultMatchedOverComplete(t *testing.T) {
+func TestMCPDebugResultWaitReconcilesCompleteMatched(t *testing.T) {
 	resultChan := make(chan map[string]interface{}, 2)
 	resultChan <- map[string]interface{}{"type": "debug_result", "matched": true, "template_id": "poc-demo", "matched_at": "http://target.local/"}
 	resultChan <- map[string]interface{}{"type": "debug_complete", "matched": false}
@@ -685,12 +811,68 @@ func TestMCPDebugResultWaitUsesResultMatchedOverComplete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("wait result: %v", err)
 	}
-	if !result.Matched || result.ExecutionResult["matched"] != true || result.ExecutionResult["success"] != true {
-		t.Fatalf("expected result.matched to win over complete.matched: %#v", result)
+	if !result.Matched || result.Complete["matched"] != true || result.ExecutionResult["matched"] != true || result.ExecutionResult["success"] != true {
+		t.Fatalf("expected complete.matched to follow result.matched: %#v", result)
 	}
-	warnings, ok := result.ExecutionResult["warnings"].([]string)
-	if !ok || len(warnings) == 0 || !strings.Contains(warnings[0], "complete.matched differed") {
-		t.Fatalf("expected mismatch warning, got %#v", result.ExecutionResult)
+	if _, hasWarn := result.ExecutionResult["warnings"]; hasWarn {
+		t.Fatalf("reconciled complete should not warn: %#v", result.ExecutionResult)
+	}
+}
+
+func TestMCPRuleSaveWorkflowDraftWritesRiskLevelWithoutRewritingSiblings(t *testing.T) {
+	store := setupAITestDB(t)
+	oldContent := "KeepMe:\n  type:\n    - root\n  pocs:\n    - keep.yaml\n  risk_level: high\n"
+	if err := store.Create(&db.Arsenal{
+		ID:       db.BuildTenantArsenalID("default", "workflow", "workflow.yaml"),
+		TenantID: "default",
+		Type:     "workflow",
+		FileName: "workflow.yaml",
+		Content:  oldContent,
+		Hash:     "old-hash",
+		Version:  1,
+		State:    "Approved",
+	}).Error; err != nil {
+		t.Fatalf("seed workflow arsenal: %v", err)
+	}
+
+	body := `{"rule_type":"workflow","product_name":"ArgusMCP","workflow_types":["root"],"workflow_pocs":["argus-mcp-poc.yaml"],"risk_level":"info"}`
+	ctx, recorder := newTenantContextWithRole(http.MethodPost, "/mcp/tools/rule/save", "operator", "9")
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/mcp/tools/rule/save", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	mcpRuleSave(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", recorder.Code, recorder.Body.String())
+	}
+	var arsenal db.Arsenal
+	if err := store.Where("tenant_id = ? AND type = ? AND file_name = ?", "default", "workflow", "workflow.yaml").First(&arsenal).Error; err != nil {
+		t.Fatalf("load workflow arsenal: %v", err)
+	}
+	if !strings.Contains(arsenal.Content, "KeepMe:") || !strings.Contains(arsenal.Content, "risk_level: high") {
+		t.Fatalf("workflow save rewrote sibling risk_level:\n%s", arsenal.Content)
+	}
+	if !strings.Contains(arsenal.Content, "ArgusMCP:") || !strings.Contains(arsenal.Content, "risk_level: info") {
+		t.Fatalf("workflow save did not write risk_level:\n%s", arsenal.Content)
+	}
+}
+
+func TestDebugSessionManagerLocksPerAgent(t *testing.T) {
+	manager := &debugSessionManager{
+		sessions:    make(map[string]*debugSession),
+		activeAgent: make(map[string]string),
+	}
+	first, ok := manager.start("tenant-a", "agent-1", time.Second, nil)
+	if !ok || first == nil {
+		t.Fatal("first debug session should start")
+	}
+	if _, ok := manager.start("tenant-a", "agent-2", time.Second, nil); !ok {
+		t.Fatal("same tenant different agent should not 409")
+	}
+	if _, ok := manager.start("tenant-b", "agent-1", time.Second, nil); ok {
+		t.Fatal("same agent should still 409 even across tenants")
+	}
+	manager.finish(first.SessionID)
+	if _, ok := manager.start("tenant-a", "agent-1", time.Second, nil); !ok {
+		t.Fatal("agent should accept a new session after finish")
 	}
 }
 

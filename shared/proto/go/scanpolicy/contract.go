@@ -234,6 +234,12 @@ type SubdomainPolicy struct {
 
 type Authorization struct {
 	ValidationConfirmed bool `json:"validation_confirmed"`
+	// AllowHighRiskAutoExecution is a per-task explicit pre-authorization that
+	// lets the automatic risk_validation stage seal approved POCs whose
+	// risk_level is high or unknown. Default false keeps those candidates out
+	// of automatic batches; they stay available through the operator-confirmed
+	// manual execution flow, which enforces second confirmation.
+	AllowHighRiskAutoExecution bool `json:"allow_high_risk_auto_execution,omitempty"`
 }
 
 type Policy struct {
@@ -320,6 +326,12 @@ func Normalize(input Policy) (Policy, error) {
 		expected.Capabilities = input.Capabilities
 		expected.WebCrawl = input.WebCrawl
 		expected.AIControl = input.AIControl
+		if !expected.Capabilities.SubdomainBruteforce {
+			// Depth is part of the bruteforce capability. Turning the checkbox
+			// off must drop the preset default (deep=2) instead of leaving a
+			// dangling depth that fails validation.
+			expected.Subdomains.BruteforceDepth = 0
+		}
 		if expected.Credentials.PairLimit == 0 {
 			expected.Credentials.PairLimit = DefaultCredentialPairLimit
 		}
@@ -410,6 +422,9 @@ func Normalize(input Policy) (Policy, error) {
 	}
 	if input.AIControl.SensitiveInfo && !input.Capabilities.SensitiveInfo {
 		return Policy{}, errors.New("ai_control.sensitive_info requires the sensitive_info capability")
+	}
+	if input.Authorization.AllowHighRiskAutoExecution && !input.Capabilities.RiskValidation {
+		return Policy{}, errors.New("high-risk auto execution pre-authorization requires risk validation")
 	}
 	if input.Credentials.PairLimit == 0 {
 		input.Credentials.PairLimit = DefaultCredentialPairLimit

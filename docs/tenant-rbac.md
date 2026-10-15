@@ -4,7 +4,7 @@
 
 ## 租户隔离原则
 
-- 身份来源：登录成功后 JWT 写入 `tenant_id`、`role`、`user_id`。
+- 身份来源：登录成功后 JWT 写入 `tenant_id`、`role`、`user_id`。MCP HTTP 通过 Server OAuth 签发带同样 claims 且 `aud` 为 MCP resource 的 access token。
 - 请求上下文：`TenantMiddleware` 校验 JWT，并把 `tenant_id` 和 `role` 注入 Gin Context。
 - 数据边界：业务查询、更新、删除都必须带 `tenant_id = 当前租户` 条件；默认租户为 `default`。
 - 用户管理：管理员只能创建、修改、删除当前租户用户，不能通过请求体创建其他租户用户。
@@ -36,17 +36,20 @@
 | 任务下发、追加、取消、删除 | - | 仅可访问项目内允许 | 全租户项目内允许 |
 | 节点状态 | 查看 | 查看 + 删除节点记录 + 清理离线节点 | 全部 |
 | 队列深度、Agent 日志 | - | 查看 | 查看 |
-| 弹药库规则 | 查看 | 创建、编辑、删除草稿规则 | 维护 + 审批 + 回滚 |
-| 字典配置 | 查看 | 创建、编辑、删除 | 创建、编辑、删除 |
+| 弹药库规则 | - | 仅可通过 MCP 规则工具保存草稿 | 管理、审批、回滚与 AI 审查入口 |
+| 字典配置 | - | - | 查看、创建、编辑、删除 |
 | 漏洞报表 | 导出 | 导出 | 导出 |
-| AI 分析、调试、全局问答 | - | 允许 | 允许 |
+| AI 问答、调试、全局问答 | - | 允许 | 允许 |
+| AI 规则分析（`/ai/arsenal/*`、`/arsenals/ai/analyze`） | - | - | 允许 |
 | 用户列表 | - | 查看 active 用户用于项目成员选择 | 允许管理用户 |
 | 角色管理 | - | - | 允许创建自定义角色和权限矩阵 |
-| MCP Key、API Key、AI 配置 | - | - | 允许 |
+| API Key、AI 配置、MCP 管理 | - | - | 允许 |
 | 云账号、伸缩策略、云实例、OSS 分发 | - | 使用自己创建或被绑定的 AK/SK | 全租户 AK/SK 管理 + 用户绑定 |
 | 客户端构建 | - | - | 允许 |
 
 ## 当前后端接口分组
+
+以下分组为代表性示例，不是全部接口的穷举清单；未在 RBAC 权限表中声明的新接口默认要求 `admin`。EXP Workspace（另受用户级 `exp_authorized` 门禁）、凭据字典与弱口令发现、Agent 日志告警/归档、MCP 资源与规则工具、租户配额、资产/指纹报表导出、POC 元数据检索等接口族按同层级原则分配。
 
 ### viewer 起可访问
 
@@ -57,9 +60,7 @@
 - `GET /nodes`
 - `GET /vulns`、`GET /assets`、`GET /fingerprints`、`GET /profiles`
 - `GET /stats`、`GET /stats/trends`、`GET /stats/severity`、`GET /stats/task-results`、`GET /stats/recent-high-vulns`
-- `GET /reports/export/vulns`
-- `GET /arsenals/*`
-- `GET /dictionaries/*`
+- `GET /reports/export/vulns`（另有 assets/fingerprints 导出）
 - `GET /ws`
 
 ### operator 起可访问
@@ -69,10 +70,7 @@
 - `PUT /projects/:id`、`DELETE /projects/:id`：operator 仅限自己创建的项目
 - `POST /tasks`、`POST /tasks/:id/append`、`POST /tasks/:id/pause|resume|stop|cancel|retry`、`POST /tasks/:id/batches/:batch_id/pause|resume|stop|retry`、`DELETE /tasks/:id/batches/:batch_id`、`PUT /tasks/:id/config`、`DELETE /tasks/:id`
   - 所有接口继续校验租户与项目归属；任务与批次的暂停、恢复、停止、重试和归档均记录操作者与前后状态。
-  - `POST /tasks` 的可选 `Idempotency-Key` 不是授权凭证：认证、operator RBAC、项目访问和 active 状态校验均先于重放；唯一作用域为 tenant/project/operator/`create_task_v1`/Key hash，同请求重放首次结果，异请求返回 409。
-  - `POST /tasks/:id/append` 的可选 `Idempotency-Key` 同样不是授权凭证：唯一作用域额外包含 Task ID；只有同 tenant/project/task/operator/`append_targets_v1`/Key 的同一规范请求可重放首次结果，重放不再次派发，异请求返回 409。
-  - `POST /tasks/:id/retry` 的可选 `Idempotency-Key` 也不能替代对象授权：Server 先校验 tenant、operator、Project 访问、Task 归属和归档状态，再按 tenant/project/task/operator/`retry_task_v1`/Key hash 重放首次结果；重放不会新增 Attempt、审计或再次派发。
-  - `POST /tasks/:id/batches/:batch_id/retry` 的可选 `Idempotency-Key` 额外绑定 Batch ID。Server 在账本读取前校验 tenant/project/task/batch 归属与归档状态；同一 Key 不能跨批次、任务、项目、租户或操作者重放，成功重放也不会新增 Attempt、审计或队列消息。
+  - 任务创建、追加、任务级/批次级重试和风险验证执行的可选 `Idempotency-Key` 都不是授权凭证：认证、operator RBAC 与对象/归档校验先于重放，唯一作用域含 tenant/project(/task[/batch])/operator/operation/Key hash；同一规范请求重放首次结果且不重复派发，异请求返回 409。
   - `DELETE /tasks/:id` 只归档已进入终态的任务，不删除批次和扫描结果；活动任务必须先停止。
   - `PUT /tasks/:id/config` 只为当前租户和已授权项目中的未归档任务创建新配置版本；旧批次快照不被覆盖，变更只影响后续批次并写审计。
 - `GET /queue/depth`
@@ -80,23 +78,26 @@
 - `GET /users`：用于项目成员选择
 - `GET /projects/:id/members`、`PUT /projects/:id/members`：仍需项目 owner 或 admin 通过业务校验
 - `DELETE /nodes/:id`、`POST /nodes/clean`
-- `POST /arsenals/*`、`DELETE /arsenals/*`
-- `POST /dictionaries/*`、`PUT /dictionaries/*`、`DELETE /dictionaries/*`
-- `POST /arsenals/ai/analyze`
-- `POST /ai/arsenal/analyze`、`POST /ai/arsenal/analyze/stream`、`POST /ai/chat`
-- `GET /cloud/*`、`POST /cloud/*`、`PUT /cloud/*`、`DELETE /cloud/*`：仅限自己创建或被绑定的云账号；绑定管理仍要求 admin
+- `POST /ai/chat`、`POST /ai/actions/confirm` 等 Copilot 问答与草稿确认接口
+- 规则草稿保存类 MCP 工具（如 `POST /mcp/tools/rule/save`）；规则应用（apply）仍需 admin
+- MCP HTTP（`POST /mcp`）使用 OAuth 签发的 access token；工具内 RBAC 仍按 token 中的 `role` 执行。本租户关闭 MCP 或拉黑该 `client_id` 后，即使 access JWT 未过期也会被拒绝。
+- `GET /cloud/*`、`POST /cloud/*`、`PUT /cloud/*`、`DELETE /cloud/*`：仅限自己创建或被绑定的云账号；云账号用户绑定在业务层额外要求 admin
+
+### 公开（无 JWT）
+
+- `POST /auth/login`
+- MCP OAuth：`GET /.well-known/oauth-protected-resource`、`GET /.well-known/oauth-authorization-server`、`GET /.well-known/openid-configuration`、`GET|POST /oauth/authorize`、`POST /oauth/token`、`POST /oauth/register`。登录使用现有用户表；access token 的 `aud` 为 MCP resource，租户与角色仍写入 JWT。公开客户端通过 DCR 注册；回环回调遵循 RFC 8252，不绑定单一 IDE。
 
 ### admin only
 
+- 弹药库与字典读写及治理：`GET|POST|DELETE /arsenals/*`（含 approve/rollback/deprecate/seed-db）、`GET|POST|PUT|DELETE /dictionaries/*`、`POST /arsenals/ai/analyze`、`POST /ai/arsenal/analyze(/stream)`
 - `POST /users`、`PUT /users/:id`、`DELETE /users/:id`
 - `GET /roles`、`POST /roles`、`PUT /roles/:name`、`DELETE /roles/:name`
-- `GET /mcp/keys`、`POST /mcp/keys`、`DELETE /mcp/keys/:id`
+- MCP 管理：`GET|PUT /mcp/admin/status`、`GET /mcp/admin/clients`、`POST /mcp/admin/clients/:id/{revoke,disable,enable}`、`DELETE /mcp/admin/clients/:id`、`GET /mcp/admin/sessions`、`POST /mcp/admin/sessions/revoke`、`GET /mcp/admin/invocations`、`GET /mcp/admin/events`、`GET /mcp/admin/tools`。仅当前租户；关闭开关会撤销该租户全部 MCP 刷新令牌。`/mcp` 与 `/oauth/authorize`、`/oauth/token` 在本租户关闭或客户端被拉黑时拒绝。调用审计含 `argus_debug_*`、`argus_save_*`、scan create、rule publish、yaksha debug/run，参数已脱敏。治理事件来自 `mcp_admin_events`。工具目录是 `tools()` 的只读投影（中文 Title、说明、InputSchema、由 schema 生成的 tools/call 示例），不改变 tools/list 或 tools/call。
 - `GET /config/api-keys`、`PUT /config/api-keys`
 - `GET /ai/config`、`PUT /ai/config`、`GET /ai/models`、`POST /ai/test`
 - `GET /build/artifacts`、`POST /build/client`、`POST /build/jobs/:id/cancel`、`POST /build/jobs/:id/retry`
 - `POST /nodes/:id/revoke-token`
-- `POST /arsenals/:type/:filename/approve`
-- `POST /arsenals/:type/:filename/rollback`
 - `GET /cloud/accounts/:id/bindings`、`PUT /cloud/accounts/:id/bindings`
 
 ## 项目成员角色

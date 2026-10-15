@@ -100,7 +100,7 @@ func mcpRuleDebugActiveFingerprint(c *gin.Context, req mcpRuleDebugRequest) {
 	resultChan := make(chan map[string]interface{}, 32)
 	session, ok := pocDebugSessions.start(tenantID, req.AgentID, time.Duration(timeoutSec)*time.Second, resultChan)
 	if !ok {
-		c.JSON(http.StatusConflict, gin.H{"error": "tenant already has a running debug session"})
+		c.JSON(http.StatusConflict, gin.H{"error": "agent already has a running debug session"})
 		return
 	}
 	artifact := db.Arsenal{

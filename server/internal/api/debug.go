@@ -64,22 +64,25 @@ type debugSession struct {
 }
 
 type debugSessionManager struct {
-	mu           sync.Mutex
-	sessions     map[string]*debugSession // sessionID -> session
-	activeTenant map[string]string        // tenantID -> sessionID
+	mu          sync.Mutex
+	sessions    map[string]*debugSession // sessionID -> session
+	activeAgent map[string]string        // agentID -> sessionID
 }
 
 var pocDebugSessions = &debugSessionManager{
-	sessions:     make(map[string]*debugSession),
-	activeTenant: make(map[string]string),
+	sessions:    make(map[string]*debugSession),
+	activeAgent: make(map[string]string),
 }
 
 func (m *debugSessionManager) start(tenantID, agentID string, timeout time.Duration, resultChan chan map[string]interface{}) (*debugSession, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, ok := m.activeTenant[tenantID]; ok {
-		return nil, false
+	agentID = strings.TrimSpace(agentID)
+	if agentID != "" {
+		if _, ok := m.activeAgent[agentID]; ok {
+			return nil, false
+		}
 	}
 
 	session := &debugSession{
@@ -93,7 +96,9 @@ func (m *debugSessionManager) start(tenantID, agentID string, timeout time.Durat
 	}
 	session.StartedAt = time.Now()
 	m.sessions[session.SessionID] = session
-	m.activeTenant[tenantID] = session.SessionID
+	if agentID != "" {
+		m.activeAgent[agentID] = session.SessionID
+	}
 	return session, true
 }
 
@@ -113,8 +118,8 @@ func (m *debugSessionManager) finish(sessionID string) {
 		return
 	}
 	delete(m.sessions, sessionID)
-	if m.activeTenant[session.TenantID] == sessionID {
-		delete(m.activeTenant, session.TenantID)
+	if session.AgentID != "" && m.activeAgent[session.AgentID] == sessionID {
+		delete(m.activeAgent, session.AgentID)
 	}
 	close(session.done)
 }
@@ -233,7 +238,7 @@ func startAgentDebug(c *gin.Context, action string, requirePocContent bool) {
 
 	session, ok := pocDebugSessions.start(tenantID, req.AgentID, time.Duration(req.TimeoutSec)*time.Second, nil)
 	if !ok {
-		c.JSON(http.StatusConflict, gin.H{"error": "tenant already has a running debug session"})
+		c.JSON(http.StatusConflict, gin.H{"error": "agent already has a running debug session"})
 		return
 	}
 

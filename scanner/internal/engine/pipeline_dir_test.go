@@ -27,3 +27,16 @@ func TestBuildDirProbeURLsSkipsMalformedInputsAndDeduplicates(t *testing.T) {
 		t.Fatalf("probe URLs = %v, want %v", got, want)
 	}
 }
+
+func TestMergeProductHitsAppendsDirectoryEvidence(t *testing.T) {
+	got := mergeProductHits(
+		map[string][]string{"https://example.test/": {"nginx"}},
+		map[string][]string{"https://example.test/nacos/": {"Alibaba-Nacos"}},
+	)
+	if !reflect.DeepEqual(got["https://example.test/"], []string{"nginx"}) {
+		t.Fatalf("passive hits = %v", got["https://example.test/"])
+	}
+	if !reflect.DeepEqual(got["https://example.test/nacos/"], []string{"Alibaba-Nacos"}) {
+		t.Fatalf("directory evidence hits = %v", got["https://example.test/nacos/"])
+	}
+}

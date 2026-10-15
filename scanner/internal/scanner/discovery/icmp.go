@@ -1,5 +1,4 @@
-// Package discovery 主机发现模块。
-// 桥接层：底层调用 common 包的原始实现。
+// Package discovery 主机发现：同网段 ARP，其余 ICMP，ICMP 全空再 TCP。
 package discovery
 
 import (
@@ -8,7 +7,6 @@ import (
 )
 
 // CheckLive ICMP 存活探测。
-// 桥接 common.CheckLive()
 func CheckLive(ips []string, ping bool, emit func(ddout.OutputMessage)) []string {
 	return common.CheckLive(ips, ping, emit)
 }

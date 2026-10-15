@@ -17,7 +17,7 @@ declare namespace API {
     selector?: { match?: Record<string, string[]>; not_match?: Record<string, string[]> };
 	 subdomains: { wordlists?: ScanDictionaryRef[]; bruteforce_depth: number };
     credentials: { username_books?: ScanDictionaryRef[]; password_books?: ScanDictionaryRef[]; pair_limit: number };
-    authorization: { validation_confirmed: boolean };
+    authorization: { validation_confirmed: boolean; allow_high_risk_auto_execution?: boolean };
     web_crawl?: { max_depth?: number; max_pages?: number; path_app_limit?: number };
     ai_control?: { crawl?: boolean; sensitive_info?: boolean };
   }

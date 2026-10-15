@@ -63,12 +63,12 @@ jobs:
       - name: Run CI checks
         run: make ci
 
-      - name: PostgreSQL migration apply and schema verify
+      - name: PostgreSQL init (pure SQL) and schema verify
         env:
           DB_DSN: host=127.0.0.1 user=postgres password=argus_release_ci dbname=argus port=5432 sslmode=disable
         run: |
-          make db-migrate DB_MIGRATION_MODE=apply
-          make db-verify
+          make db-setup POSTGRES_PASSWORD=argus_release_ci
+          make db-verify POSTGRES_PASSWORD=argus_release_ci
 
   build:
     name: Build release artifacts

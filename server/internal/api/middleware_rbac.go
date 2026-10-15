@@ -104,8 +104,6 @@ var permissionRules = map[string]string{
 	"GET:/queue/depth":                                     "operator",
 	"GET:/agents/*/logs":                                   "operator",
 	"GET:/mcp/resources/*":                                 "operator",
-	"POST:/mcp/tools/poc/debug":                            "operator",
-	"POST:/mcp/tools/poc/save-draft":                       "operator",
 	"POST:/mcp/tools/rule/context":                         "operator",
 	"POST:/mcp/tools/rule/debug":                           "operator",
 	"POST:/mcp/tools/rule/save":                            "operator",
@@ -151,7 +149,6 @@ var permissionRules = map[string]string{
 	"POST:/ai/chat":                                        "operator",
 	"POST:/ai/actions/confirm":                             "operator",
 	"GET:/ai/copilot/prompts":                              "operator",
-	"GET:/ai/tool-invocations":                             "operator",
 	"GET:/agent-logs/summary":                              "operator",
 	"GET:/agent-logs/retention":                            "operator",
 	"PUT:/agent-logs/retention":                            "admin",
@@ -167,36 +164,45 @@ var permissionRules = map[string]string{
 	"GET:/users":                                           "operator",
 
 	// 管理动作：admin only。更具体的规则会覆盖上面的 operator 通配符。
-	"POST:/arsenals/*/*/approve":   "admin",
-	"POST:/arsenals/*/*/deprecate": "admin",
-	"POST:/arsenals/*/*/rollback":  "admin",
-	"GET:/arsenals/seed-db":        "admin",
-	"GET:/build/artifacts":         "admin",
-	"GET:/build/jobs":              "admin",
-	"GET:/build/jobs/*":            "admin",
-	"POST:/build/client":           "admin",
-	"POST:/build/jobs/*/cancel":    "admin",
-	"POST:/build/jobs/*/retry":     "admin",
-	"POST:/users":                  "admin",
-	"PUT:/users/*":                 "admin",
-	"DELETE:/users/*":              "admin",
-	"GET:/roles":                   "admin",
-	"POST:/roles":                  "admin",
-	"PUT:/roles/*":                 "admin",
-	"DELETE:/roles/*":              "admin",
-	"GET:/tenants/*/quotas":        "admin",
-	"PUT:/tenants/*/quotas":        "admin",
-	"GET:/projects/*/members":      "operator",
-	"PUT:/projects/*/members":      "operator",
-	"GET:/mcp/keys":                "admin",
-	"POST:/mcp/keys":               "admin",
-	"DELETE:/mcp/keys/*":           "admin",
-	"GET:/config/api-keys":         "admin",
-	"PUT:/config/api-keys":         "admin",
-	"GET:/ai/config":               "admin",
-	"PUT:/ai/config":               "admin",
-	"GET:/ai/models":               "admin",
-	"POST:/ai/test":                "admin",
+	"POST:/arsenals/*/*/approve":        "admin",
+	"POST:/arsenals/*/*/deprecate":      "admin",
+	"POST:/arsenals/*/*/rollback":       "admin",
+	"GET:/arsenals/seed-db":             "admin",
+	"GET:/build/artifacts":              "admin",
+	"GET:/build/jobs":                   "admin",
+	"GET:/build/jobs/*":                 "admin",
+	"POST:/build/client":                "admin",
+	"POST:/build/jobs/*/cancel":         "admin",
+	"POST:/build/jobs/*/retry":          "admin",
+	"POST:/users":                       "admin",
+	"PUT:/users/*":                      "admin",
+	"DELETE:/users/*":                   "admin",
+	"GET:/roles":                        "admin",
+	"POST:/roles":                       "admin",
+	"PUT:/roles/*":                      "admin",
+	"DELETE:/roles/*":                   "admin",
+	"GET:/tenants/*/quotas":             "admin",
+	"PUT:/tenants/*/quotas":             "admin",
+	"GET:/projects/*/members":           "operator",
+	"PUT:/projects/*/members":           "operator",
+	"GET:/mcp/admin/status":             "admin",
+	"PUT:/mcp/admin/status":             "admin",
+	"GET:/mcp/admin/clients":            "admin",
+	"POST:/mcp/admin/clients/*/revoke":  "admin",
+	"POST:/mcp/admin/clients/*/disable": "admin",
+	"POST:/mcp/admin/clients/*/enable":  "admin",
+	"DELETE:/mcp/admin/clients/*":       "admin",
+	"GET:/mcp/admin/sessions":           "admin",
+	"POST:/mcp/admin/sessions/revoke":   "admin",
+	"GET:/mcp/admin/invocations":        "admin",
+	"GET:/mcp/admin/events":             "admin",
+	"GET:/mcp/admin/tools":              "admin",
+	"GET:/config/api-keys":              "admin",
+	"PUT:/config/api-keys":              "admin",
+	"GET:/ai/config":                    "admin",
+	"PUT:/ai/config":                    "admin",
+	"GET:/ai/models":                    "admin",
+	"POST:/ai/test":                     "admin",
 }
 
 // RBACMiddleware 基于角色的访问控制中间件
@@ -206,6 +212,17 @@ func RBACMiddleware() gin.HandlerFunc {
 		if c.Request.URL.Path == "/api/v1/auth/login" {
 			c.Next()
 			return
+		}
+
+		if agentInternal, ok := c.Get("agent_internal"); ok {
+			if enabled, _ := agentInternal.(bool); enabled {
+				if !isAgentInternalEndpoint(c) {
+					c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "agent session is limited to agent-internal endpoints"})
+					return
+				}
+				c.Next()
+				return
+			}
 		}
 
 		// 从 context 获取角色（由 TenantMiddleware 注入）

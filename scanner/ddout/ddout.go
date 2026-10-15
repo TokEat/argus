@@ -11,7 +11,10 @@ import (
 	"fmt"
 	"github.com/P0lar1ght/argus/scanner/structs"
 	"io"
+	"net"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -62,6 +65,9 @@ type JSONFinding struct {
 	IPs           []string   `json:"ips,omitempty"`
 	Port          string     `json:"port,omitempty"`
 	Protocol      string     `json:"protocol,omitempty"`
+	Product       string     `json:"product,omitempty"`
+	Version       string     `json:"version,omitempty"`
+	Transport     string     `json:"transport,omitempty"`
 	Web           *JSONWeb   `json:"web,omitempty"`
 	Finger        []string   `json:"finger,omitempty"`
 	Domain        string     `json:"domain,omitempty"`
@@ -73,8 +79,11 @@ type JSONFinding struct {
 }
 
 type JSONWeb struct {
-	Status string `json:"status,omitempty"`
-	Title  string `json:"title,omitempty"`
+	Status   string `json:"status,omitempty"`
+	Title    string `json:"title,omitempty"`
+	Cert     string `json:"cert,omitempty"`
+	Size     string `json:"size,omitempty"`
+	Redirect string `json:"redirect,omitempty"`
 }
 
 type JSONGoPoc struct {
@@ -112,7 +121,17 @@ var (
 	runEnded            bool
 	runWriteErr         error
 	protectedOutputPath string
+	webBlocks           map[string]*webBlock
+	webBlockOrder       []string
 )
+
+type webBlock struct {
+	URI        string // canonical origin, used as the grouping key
+	RawURI     string // first non-empty raw probe URI, used for the output line
+	Web        WebInfo
+	Fingers    []string
+	FingerNote string
+}
 
 // SetOutputSink sets a non-CLI output sink and returns the prior sink.
 func SetOutputSink(sink func(msg OutputMessage)) func(msg OutputMessage) {
@@ -137,6 +156,7 @@ func BeginRun(id string) error {
 	}
 	runID, sequence, findingCount, runWriteErr, protectedOutputPath = id, 0, 0, nil, ""
 	runStarted, runEnded = true, false
+	resetWEBBlocksLocked()
 	return nil
 }
 
@@ -151,6 +171,11 @@ func EndRun(summary RunSummary) error {
 		return errors.New("ddout: run already ended")
 	}
 	if err := summary.validate(); err != nil {
+		return err
+	}
+	if err := flushWEBBlocksLocked(); err != nil {
+		runEnded = true
+		recordWriteErrorLocked(err)
 		return err
 	}
 	runEnded = true
@@ -235,6 +260,11 @@ func FormatOutputE(msg OutputMessage) error {
 		return nil
 	}
 
+	if shouldBufferWEB(msg) {
+		noteWEBLocked(msg)
+		return nil
+	}
+
 	line := formatTextLine(msg)
 	if line == "" {
 		return nil
@@ -244,14 +274,229 @@ func FormatOutputE(msg OutputMessage) error {
 	return err
 }
 
+func shouldBufferWEB(msg OutputMessage) bool {
+	switch msg.Type {
+	case "Web":
+		return isHTTPWEBURI(msg.URI)
+	case "Finger", "Active-Finger":
+		return isHTTPWEBURI(msg.URI)
+	default:
+		return false
+	}
+}
+
+func isHTTPWEBURI(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+		return true
+	default:
+		return false
+	}
+}
+
+// MergeWEBFingers attaches fingerprint names to a buffered WEB block so the
+// later flush can print them under the original [WEB] header.
+func MergeWEBFingers(uri string, fingers []string) {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	if OutputType == "json" {
+		return
+	}
+	noteWEBLocked(OutputMessage{Type: "Finger", URI: uri, Finger: append([]string(nil), fingers...)})
+}
+
+// FlushWEBBlocks writes one grouped [WEB] block per HTTP origin after fingerprinting.
+func FlushWEBBlocks() error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	return flushWEBBlocksLocked()
+}
+
+func flushWEBBlocksLocked() error {
+	if OutputType == "json" || len(webBlockOrder) == 0 {
+		resetWEBBlocksLocked()
+		return nil
+	}
+	for _, key := range webBlockOrder {
+		block := webBlocks[key]
+		if block == nil {
+			continue
+		}
+		line := formatWEBBlock(block.outputMessage())
+		if line == "" {
+			continue
+		}
+		if err := writeLineLocked(line); err != nil {
+			recordWriteErrorLocked(err)
+			return err
+		}
+	}
+	resetWEBBlocksLocked()
+	return nil
+}
+
+func resetWEBBlocksLocked() {
+	webBlocks = map[string]*webBlock{}
+	webBlockOrder = nil
+}
+
+func noteWEBLocked(msg OutputMessage) {
+	key := canonicalWEBOrigin(msg.URI)
+	if key == "" {
+		return
+	}
+	if webBlocks == nil {
+		webBlocks = map[string]*webBlock{}
+	}
+	block, ok := webBlocks[key]
+	if !ok {
+		block = &webBlock{URI: key}
+		webBlocks[key] = block
+		webBlockOrder = append(webBlockOrder, key)
+	}
+	if block.RawURI == "" {
+		block.RawURI = strings.TrimSpace(msg.URI)
+	}
+	applyWEBFields(block, msg)
+	for _, finger := range msg.Finger {
+		finger = strings.TrimSpace(finger)
+		if finger == "" {
+			continue
+		}
+		exists := false
+		for _, existing := range block.Fingers {
+			if existing == finger {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			block.Fingers = append(block.Fingers, finger)
+		}
+	}
+	if msg.Type == "Active-Finger" && msg.AdditionalMsg != "" {
+		block.FingerNote = strings.TrimSpace(msg.AdditionalMsg)
+	}
+}
+
+func (block webBlock) outputMessage() OutputMessage {
+	uri := block.URI
+	if block.RawURI != "" {
+		uri = block.RawURI
+	}
+	return OutputMessage{
+		Type:          "Web",
+		URI:           uri,
+		Web:           block.Web,
+		Finger:        append([]string(nil), block.Fingers...),
+		AdditionalMsg: block.FingerNote,
+	}
+}
+
+func applyWEBFields(block *webBlock, msg OutputMessage) {
+	if block == nil {
+		return
+	}
+	incoming := msg.Web
+	newRank := webStatusRank(incoming.Status)
+	oldRank := webStatusRank(block.Web.Status)
+	if incoming.Status != "" && (block.Web.Status == "" || newRank > oldRank) {
+		block.Web.Status = incoming.Status
+		if incoming.Size != "" {
+			block.Web.Size = incoming.Size
+		}
+		if incoming.Title != "" {
+			block.Web.Title = incoming.Title
+		}
+	} else {
+		if block.Web.Size == "" && incoming.Size != "" {
+			block.Web.Size = incoming.Size
+		}
+		if block.Web.Title == "" && incoming.Title != "" {
+			block.Web.Title = incoming.Title
+		}
+	}
+	if incoming.Cert != "" && (block.Web.Cert == "" || newRank >= oldRank) {
+		block.Web.Cert = incoming.Cert
+	}
+	if incoming.Redirect != "" && block.Web.Redirect == "" {
+		block.Web.Redirect = incoming.Redirect
+	}
+}
+
+func webStatusRank(status string) int {
+	code, err := strconv.Atoi(strings.TrimSpace(status))
+	if err != nil {
+		return 0
+	}
+	switch {
+	case code >= 200 && code < 300:
+		return 3
+	case code >= 400:
+		return 2
+	case code >= 300 && code < 400:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func canonicalWEBURI(raw string) string {
+	return canonicalWEBOrigin(raw)
+}
+
+func canonicalWEBOrigin(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return raw
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	switch scheme {
+	case "http", "https":
+	default:
+		return ""
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return ""
+	}
+	port := parsed.Port()
+	if (scheme == "http" && port == "80") || (scheme == "https" && port == "443") {
+		port = ""
+	}
+	if port != "" {
+		parsed.Host = net.JoinHostPort(host, port)
+	} else if strings.Contains(host, ":") {
+		parsed.Host = "[" + host + "]"
+	} else {
+		parsed.Host = host
+	}
+	parsed.Scheme = scheme
+	parsed.User = nil
+	parsed.Path = "/"
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
 func jsonFinding(msg OutputMessage) *JSONFinding {
 	finding := &JSONFinding{
 		Type: msg.Type, IP: msg.IP, IPs: msg.IPs, Port: msg.Port, Protocol: msg.Protocol,
+		Product: msg.Product, Version: msg.Version, Transport: msg.Transport,
 		Finger: msg.Finger, Domain: msg.Domain, URI: msg.URI, City: msg.City,
 		AdditionalMsg: msg.AdditionalMsg, Nuclei: msg.Nuclei,
 	}
-	if msg.Web.Status != "" || msg.Web.Title != "" {
-		finding.Web = &JSONWeb{Status: msg.Web.Status, Title: msg.Web.Title}
+	if msg.Web.Status != "" || msg.Web.Title != "" || msg.Web.Cert != "" || msg.Web.Size != "" || msg.Web.Redirect != "" {
+		finding.Web = &JSONWeb{Status: msg.Web.Status, Title: msg.Web.Title, Cert: msg.Web.Cert, Size: msg.Web.Size, Redirect: msg.Web.Redirect}
 	}
 	if msg.GoPoc.PocName != "" || msg.GoPoc.Security != "" || msg.GoPoc.Description != "" || msg.GoPoc.Target != "" || msg.GoPoc.InfoLeft != "" || msg.GoPoc.InfoRight != "" || msg.GoPoc.ShowMsg != "" || len(msg.GoPoc.Exchanges) > 0 {
 		finding.GoPoc = &JSONGoPoc{
@@ -266,11 +511,12 @@ func jsonFinding(msg OutputMessage) *JSONFinding {
 func (finding JSONFinding) outputMessage() OutputMessage {
 	msg := OutputMessage{
 		Type: finding.Type, IP: finding.IP, IPs: finding.IPs, Port: finding.Port, Protocol: finding.Protocol,
+		Product: finding.Product, Version: finding.Version, Transport: finding.Transport,
 		Finger: finding.Finger, Domain: finding.Domain, URI: finding.URI, City: finding.City,
 		AdditionalMsg: finding.AdditionalMsg, Nuclei: finding.Nuclei,
 	}
 	if finding.Web != nil {
-		msg.Web = WebInfo{Status: finding.Web.Status, Title: finding.Web.Title}
+		msg.Web = WebInfo{Status: finding.Web.Status, Title: finding.Web.Title, Cert: finding.Web.Cert, Size: finding.Web.Size, Redirect: finding.Web.Redirect}
 	}
 	if finding.GoPoc != nil {
 		msg.GoPoc = GoPocsResultType{
@@ -420,7 +666,7 @@ func writeLineLocked(line string) error {
 			return err
 		}
 	}
-	if _, err := fmt.Fprintln(stdout, line); err != nil {
+	if _, err := fmt.Fprintln(stdout, colorizeFindingLine(line)); err != nil {
 		return fmt.Errorf("write stdout: %w", err)
 	}
 	return nil
@@ -442,6 +688,214 @@ func RunError() error {
 // Render returns the legacy text-mode line without writing it.
 func Render(msg OutputMessage) string { return formatTextLine(msg) }
 
+func displayServiceName(protocol string) string {
+	switch strings.ToLower(strings.TrimSpace(protocol)) {
+	case "", "tcp", "udp", "unknown", "unidentified", "portscan", "protocol":
+		return ""
+	default:
+		return strings.TrimSpace(protocol)
+	}
+}
+
+func formatIPPort(ip, port string) string {
+	ip = strings.TrimSpace(ip)
+	port = strings.TrimSuffix(strings.TrimSpace(port), "/udp")
+	if ip == "" {
+		return port
+	}
+	if port == "" {
+		return ip
+	}
+	return ip + ":" + port
+}
+
+// TransportLabel maps a finding to the text identifier after [Port]:
+// [web], [udp], [tcp], or [other]. HTTP/HTTPS stay TCP on the wire.
+func TransportLabel(transport string) string {
+	return ServiceTag(transport, "")
+}
+
+// ServiceTag prefers application class over raw L4 transport so HTTP
+// ports render as [web] without changing later Web/fingerprint stages.
+func ServiceTag(transport, protocol string) string {
+	switch strings.ToLower(strings.TrimSpace(protocol)) {
+	case "http", "https", "http2", "ssl/http", "http-proxy", "http-alt":
+		return "web"
+	}
+	switch strings.ToLower(strings.TrimSpace(transport)) {
+	case "udp":
+		return "udp"
+	case "web":
+		return "web"
+	case "tcp", "":
+		return "tcp"
+	default:
+		return "other"
+	}
+}
+
+// ParseServiceLineRest reads an optional [tcp]/[udp]/[other] prefix and the
+// first host:port token. Legacy "53/udp" suffixes are still recognized.
+func ParseServiceLineRest(rest string) (transport, endpoint string) {
+	rest = strings.TrimSpace(rest)
+	if strings.HasPrefix(rest, "[") {
+		if end := strings.IndexByte(rest, ']'); end > 1 {
+			tag := strings.ToLower(rest[1:end])
+			switch tag {
+			case "tcp", "udp", "web", "other":
+				transport = tag
+				rest = strings.TrimSpace(rest[end+1:])
+			}
+		}
+	}
+	endpoint = rest
+	if i := strings.IndexAny(endpoint, " \t"); i >= 0 {
+		endpoint = endpoint[:i]
+	}
+	endpoint = strings.TrimSpace(endpoint)
+	if strings.HasSuffix(endpoint, "/udp") {
+		transport = "udp"
+		endpoint = strings.TrimSuffix(endpoint, "/udp")
+	}
+	return transport, endpoint
+}
+
+func formatPOCLine(msg OutputMessage) string {
+	switch msg.Type {
+	case "Nuclei":
+		detail := strings.TrimSpace(msg.Show)
+		if detail == "" {
+			detail = strings.TrimSpace(msg.Nuclei)
+		}
+		if detail == "" {
+			return ""
+		}
+		return "[POC] " + detail
+	default:
+		detail := strings.TrimSpace(msg.GoPoc.ShowMsg)
+		if detail == "" {
+			detail = strings.TrimSpace(strings.Join(nonEmptyPOC(msg.GoPoc.Target, msg.GoPoc.PocName, msg.GoPoc.Description), " "))
+		}
+		if detail == "" {
+			return ""
+		}
+		if msg.GoPoc.Security != "" {
+			return fmt.Sprintf("[POC] [%s] %s", msg.GoPoc.Security, detail)
+		}
+		return "[POC] " + detail
+	}
+}
+
+func nonEmptyPOC(values ...string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func formatServiceFingerLine(msg OutputMessage) string {
+	uri := strings.TrimSpace(msg.URI)
+	if uri == "" {
+		uri = formatIPPort(msg.IP, msg.Port)
+	}
+	line := "[Finger] " + uri
+	if names := formatWEBFinger(msg); names != "" {
+		return line + " " + names
+	}
+	return line
+}
+
+func formatWEBBlock(msg OutputMessage) string {
+	uri := strings.TrimSpace(msg.URI)
+	if uri == "" {
+		uri = formatIPPort(msg.IP, msg.Port)
+	}
+	fields := []struct {
+		key, value string
+	}{
+		{"Finger", formatWEBFinger(msg)},
+		{"Certificates", strings.TrimSpace(msg.Web.Cert)},
+		{"Code", strings.TrimSpace(msg.Web.Status)},
+		{"Size", strings.TrimSpace(msg.Web.Size)},
+		{"Redirect", displayRedirect(uri, msg.Web.Redirect)},
+		{"Title", strings.TrimSpace(msg.Web.Title)},
+	}
+	var b strings.Builder
+	b.WriteString("[WEB] ")
+	b.WriteString(uri)
+	for _, field := range fields {
+		if field.value == "" {
+			continue
+		}
+		b.WriteString("\n     [")
+		b.WriteString(field.key)
+		b.WriteString("] ")
+		b.WriteString(field.value)
+	}
+	return b.String()
+}
+
+func formatWEBFinger(msg OutputMessage) string {
+	finger := strings.Join(msg.Finger, ",")
+	if msg.AdditionalMsg != "" {
+		return strings.TrimSpace(finger + " " + msg.AdditionalMsg)
+	}
+	return finger
+}
+
+func displayRedirect(origin, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	base, err := url.Parse(origin)
+	loc, locErr := url.Parse(value)
+	if err == nil && locErr == nil && base.Host != "" && loc.Host != "" {
+		if strings.EqualFold(base.Scheme, loc.Scheme) && strings.EqualFold(base.Hostname(), loc.Hostname()) && effectiveWEBPort(base) == effectiveWEBPort(loc) {
+			path := loc.RequestURI()
+			if path == "" || path == origin {
+				path = loc.Path
+			}
+			if path == "" {
+				path = "/"
+			}
+			return compactRedirect(path)
+		}
+	}
+	if err == nil && locErr == nil && !loc.IsAbs() {
+		return compactRedirect(value)
+	}
+	return compactRedirect(value)
+}
+
+func effectiveWEBPort(u *url.URL) string {
+	if u == nil {
+		return ""
+	}
+	if port := u.Port(); port != "" {
+		return port
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
+}
+
+func compactRedirect(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 180 {
+		return value[:180]
+	}
+	return value
+}
+
 func formatTextLine(msg OutputMessage) string {
 	switch msg.Type {
 	case "IPAlive":
@@ -449,49 +903,47 @@ func formatTextLine(msg OutputMessage) string {
 			return fmt.Sprintf("[Alive] %s (%s)", msg.IP, msg.AdditionalMsg)
 		}
 		return fmt.Sprintf("[Alive] %s", msg.IP)
-	case "PortScan":
-		return fmt.Sprintf("[Port] %s:%s", msg.IP, msg.Port)
-	case "Protocol":
-		return fmt.Sprintf("[Protocol] %s:%s %s", msg.IP, msg.Port, msg.Protocol)
-	case "Web":
-		parts := []string{fmt.Sprintf("[Web] %s", msg.URI)}
-		if msg.Web.Status != "" {
-			parts = append(parts, msg.Web.Status)
+	case "Path":
+		path := strings.Join(msg.IPs, " -> ")
+		if msg.AdditionalMsg != "" && path != "" {
+			return fmt.Sprintf("[Path] %s %s %s", msg.IP, msg.AdditionalMsg, path)
 		}
-		if msg.Web.Title != "" {
-			parts = append(parts, msg.Web.Title)
-		}
-		if len(msg.Finger) > 0 {
-			parts = append(parts, "["+strings.Join(msg.Finger, ",")+"]")
-		}
-		return strings.Join(parts, " ")
-	case "Finger":
-		return fmt.Sprintf("[Finger] %s [%s]", msg.URI, strings.Join(msg.Finger, ","))
-	case "Active-Finger":
-		line := fmt.Sprintf("[Active-Finger] %s [%s]", msg.URI, strings.Join(msg.Finger, ","))
 		if msg.AdditionalMsg != "" {
-			line += " " + msg.AdditionalMsg
+			return fmt.Sprintf("[Path] %s %s", msg.IP, msg.AdditionalMsg)
+		}
+		if path != "" {
+			return fmt.Sprintf("[Path] %s %s", msg.IP, path)
+		}
+		return fmt.Sprintf("[Path] %s", msg.IP)
+	case "Topo":
+		if msg.AdditionalMsg != "" {
+			return "[Topo] " + msg.AdditionalMsg
+		}
+		return "[Topo] " + strings.Join(msg.IPs, " -> ")
+	case "PortScan", "Protocol", "Nmap":
+		line := fmt.Sprintf("[Port] [%s] %s", ServiceTag(msg.Transport, msg.Protocol), formatIPPort(msg.IP, msg.Port))
+		if proto := displayServiceName(msg.Protocol); proto != "" {
+			line += " " + proto
+		}
+		if msg.AdditionalMsg != "" {
+			return line + " " + msg.AdditionalMsg
+		}
+		if extra := strings.TrimSpace(msg.Product + " " + msg.Version); extra != "" {
+			return line + " " + extra
 		}
 		return line
+	case "Web", "Finger", "Active-Finger":
+		if msg.Type != "Web" && !isHTTPWEBURI(msg.URI) {
+			return formatServiceFingerLine(msg)
+		}
+		return formatWEBBlock(msg)
 	case "Domain-Bind":
 		if msg.Web.Status != "" {
 			return fmt.Sprintf("[Domain-Bind] [%s] %s", msg.Web.Status, msg.URI)
 		}
 		return fmt.Sprintf("[Domain-Bind] %s", msg.URI)
-	case "Nuclei":
-		if msg.Show != "" {
-			return fmt.Sprintf("[Nuclei] %s", msg.Show)
-		}
-		return fmt.Sprintf("[Nuclei] %s", msg.Nuclei)
-	case "GoPoc":
-		detail := strings.TrimSpace(msg.GoPoc.ShowMsg)
-		if detail == "" {
-			detail = strings.TrimSpace(fmt.Sprintf("%s %s %s", msg.GoPoc.Target, msg.GoPoc.PocName, msg.GoPoc.Description))
-		}
-		if msg.GoPoc.Security != "" {
-			return fmt.Sprintf("[%s] %s", msg.GoPoc.Security, detail)
-		}
-		return fmt.Sprintf("[GoPoc] %s", detail)
+	case "Nuclei", "GoPoc":
+		return formatPOCLine(msg)
 	case "Domain":
 		return fmt.Sprintf("[Domain] %s -> %s", msg.Domain, strings.Join(msg.IPs, ","))
 	default:
@@ -535,5 +987,6 @@ func resetForTest() {
 	writeMu.Lock()
 	OutputType, OutputFileName, stdout = "text", "", os.Stdout
 	runID, sequence, findingCount, runStarted, runEnded, runWriteErr, protectedOutputPath = "", 0, 0, false, false, nil, ""
+	resetWEBBlocksLocked()
 	writeMu.Unlock()
 }

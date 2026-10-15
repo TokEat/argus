@@ -1,0 +1,41 @@
+id: seeyon-logs-disclosure
+
+info:
+  name: 致远 OA A8 登录日志与 status.jsp 信息泄露
+  author: zan8in
+  severity: medium
+  description: |
+    致远 A8 /seeyon/logs/login.log、v3x.log 与 /seeyon/management/status.jsp 可泄露访问 URL、用户与 JVM 运行时信息。
+  metadata:
+    verified: true
+    max-request: 3
+    fofa-query: app="致远互联-OA"
+  tags: seeyon,a8,disclosure,logs
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/seeyon/logs/login.log"
+      - "{{BaseURL}}/seeyon/management/status.jsp"
+      - "{{BaseURL}}/seeyon/logs/v3x.log"
+    stop-at-first-match: true
+    matchers-condition: or
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "[Access URL]"
+          - "==>"
+        condition: and
+      - type: word
+        part: body
+        words:
+          - "QuartzScheduler_Worker"
+          - "AccountDaoBean"
+        condition: and
+      - type: word
+        part: body
+        words:
+          - "JVM"
+          - "Max memory"
+        condition: and

@@ -1,28 +1,17 @@
-import React, { useEffect, useMemo, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Alert,
     App,
-    Badge,
     Button,
-	Checkbox,
-    Col,
-    Collapse,
-    Descriptions,
-    Divider,
     Dropdown,
-    Drawer,
     Empty,
     Form,
     Input,
-    InputNumber,
     Modal,
     Progress,
-    Row,
-    Select,
     Space,
     Spin,
-    Statistic,
     Switch,
     Table,
     Tag,
@@ -31,244 +20,45 @@ import {
 } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
-    AimOutlined,
-    ApiOutlined,
-    AuditOutlined,
-    BugOutlined,
-    InboxOutlined,
-    ExperimentOutlined,
-    EditOutlined,
     EyeOutlined,
-    GlobalOutlined,
+    InboxOutlined,
     InfoCircleOutlined,
-    KeyOutlined,
     MoreOutlined,
     PauseCircleOutlined,
     PlayCircleOutlined,
     PlusOutlined,
-    RadarChartOutlined,
     ReloadOutlined,
     RocketOutlined,
-    SearchOutlined,
     StopOutlined,
-    WifiOutlined,
+    UnorderedListOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { MenuProps } from 'antd';
-import { appendTargets, archiveTaskBatch, connectWebSocket, createTask, deleteTask, executeTaskRiskValidation, getTaskConfigRevisions, getTaskDetail, getNodes, listPocRulesPage, listProjects, listTasks, pauseTask, pauseTaskBatch, previewTaskRiskValidation, previewTaskSelector, resumeTask, resumeTaskBatch, retryTask, retryTaskBatch, stopTask, stopTaskBatch, updateTaskConfig, validateTargets } from '../services/api';
-import { getTaskStatusMeta, isTaskCancellable, isTaskFailedLike, isTaskFinished, isTaskPausable, isTaskResumable, isTaskRetryable, normalizeTaskStatus } from '../utils/taskStatus';
+import { appendTargets, archiveTaskBatch, connectWebSocket, createTask, deleteTask, getTaskConfigRevisions, getTaskDetail, listProjects, listTasks, pauseTask, pauseTaskBatch, resumeTask, resumeTaskBatch, retryTask, retryTaskBatch, stopTask, stopTaskBatch } from '../services/api';
+import { isTaskCancellable, isTaskFailedLike, isTaskFinished, isTaskPausable, isTaskResumable, isTaskRetryable, normalizeTaskStatus } from '../utils/taskStatus';
 import { canAccessRole } from '../utils/auth';
 import { useAutoContext } from '../contexts/GlobalAIContext';
 import NetworkCanvas from '../components/NetworkCanvas';
-import TaskTimingPanel from '../components/TaskTimingPanel';
 import { scanPolicyInitialValues, type ScanPolicyFormValues } from '../components/tasks/ScanPolicyComposer';
 import ScanTaskCreateModal from '../components/tasks/ScanTaskCreateModal';
-import TaskStageOverview from '../components/tasks/TaskStageOverview';
-import CredentialFindingsPanel from '../components/tasks/CredentialFindingsPanel';
+import TaskConfigUpdateModal from '../components/tasks/TaskConfigUpdateModal';
+import TaskBatchDrawer from './taskManagement/TaskBatchDrawer';
+import TaskDetailDrawer from './taskManagement/TaskDetailDrawer';
+import {
+    batchActionLabels,
+    isIdempotencyConflict,
+    isNetworkOrTimeout,
+    newIdempotencyKey,
+    renderTaskStatusTag,
+    type AppendIntent,
+    type BatchAction,
+    type BatchRetryIntent,
+    type CreateIntent,
+    type RetryIntent,
+} from './taskManagement/shared';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
-
-const directTargetHint = '每行一个显式目标，支持 IP、IP:Port、CIDR、IP 段、域名、域名:Port、URL。';
-const legacyProviderConfigKeys = new Set([
-    'hunter', 'hunterpagesize', 'huntermaxpagecount',
-    'fofa', 'fofamaxcount',
-    'quake', 'quakesize',
-    'lowperceptionmode', 'onlyipport', 'apiconfigfilepath',
-]);
-
-const targetTypeLabels: Record<string, string> = {
-    url: 'URL',
-    domain: '域名',
-    domain_port: '域名端口',
-    ip: 'IP',
-    cidr: 'CIDR',
-    ip_range: 'IP 段',
-    ip_port: 'IP 端口',
-    osint: '空间搜索',
-    unknown: '未知',
-};
-
-const scanStageLabels: Record<string, string> = {
-    search_engine: '空间搜索',
-    subdomain_discovery: '子域发现',
-    cdn_classification: 'CDN 识别',
-    icmp_discovery: 'ICMP 存活',
-    tcp_liveness: 'TCP 存活',
-    port_scan: '端口扫描',
-    protocol_identify: '协议识别',
-    http_probe: 'HTTP 探测',
-    host_binding: 'Host 绑定',
-    behavior_probe: '安全行为探针',
-    directory_probe: '主动路径指纹',
-    fingerprint: '指纹识别',
-    risk_validation: '风险验证',
-};
-
-const coverageLinkMeta: Record<string, { label: string; color: string }> = {
-    executed: { label: '实际执行', color: 'blue' },
-    reused: { label: '历史复用', color: 'green' },
-    in_flight: { label: '执行中关联', color: 'gold' },
-};
-
-const coverageReasonLabels: Record<string, string> = {
-    valid_project_coverage: '同项目有效历史覆盖',
-    checkpoint_resume: '有效检查点恢复',
-    claimed_for_execution: '当前尝试领取执行',
-    active_work_claim: '相同工作正在其他尝试执行',
-    source_replanned: '来源尝试已重新规划',
-    source_failed: '来源尝试失败，等待重新规划',
-    ttl_expired: '覆盖已超过有效期',
-    agent_config_hash_mismatch: 'Agent 配置证据不一致',
-    rule_version_mismatch: '规则版本不一致',
-    endpoint_content_unknown: '端点内容版本未知',
-};
-
-const coverageLinkStatusLabels: Record<string, { label: string; color: string }> = {
-    active: { label: '执行中', color: 'processing' },
-    waiting: { label: '等待来源', color: 'warning' },
-    completed: { label: '已完成', color: 'success' },
-    resolved: { label: '来源已完成', color: 'success' },
-    failed: { label: '执行失败', color: 'error' },
-    source_failed: { label: '来源失败', color: 'error' },
-};
-
-function coverageReasonText(reason: string): string {
-    if (!reason) return '-';
-    if (coverageReasonLabels[reason]) return coverageReasonLabels[reason];
-    if (reason.startsWith('upstream_content_changed:')) {
-        const stage = reason.slice('upstream_content_changed:'.length);
-        return `上游内容变化（${scanStageLabels[stage] || stage}）`;
-    }
-    return reason;
-}
-
-type BatchAction = 'pause' | 'resume' | 'stop' | 'retry' | 'archive';
-
-type CreateIntent = {
-    key: string;
-    fingerprint: string;
-    request: API.CreateTaskRequest;
-};
-
-type AppendIntent = {
-    key: string;
-    fingerprint: string;
-    taskId: string;
-    targets: string;
-};
-
-type RetryIntent = {
-    key: string;
-    taskId: string;
-};
-
-type BatchRetryIntent = {
-    key: string;
-    taskId: string;
-    batchId: string;
-    detailSession: number;
-};
-
-type RiskValidationIntent = {
-    key: string;
-    taskId: string;
-    previewSession: number;
-    request: API.ExecuteRiskValidationRequest;
-    fingerprint: string;
-};
-
-const newIdempotencyKey = () => globalThis.crypto?.randomUUID?.()
-    || `argus-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-const isIdempotencyConflict = (error: unknown) => {
-    if (typeof error === 'object' && error !== null && 'status' in error && (error as { status?: unknown }).status === 409) return true;
-    const text = typeof error === 'string' ? error : error instanceof Error ? error.message : '';
-    return /idempotency.*conflict|conflict.*idempotency|idempotency-key.*already used|different task creation request|幂等.*冲突/i.test(text);
-};
-
-const isNetworkOrTimeout = (error: unknown) => {
-    const status = typeof error === 'object' && error !== null && 'status' in error
-        ? (error as { status?: unknown }).status
-        : undefined;
-    if (typeof status === 'number') return false;
-    const code = typeof error === 'object' && error !== null && 'code' in error
-        ? String((error as { code?: unknown }).code || '')
-        : '';
-    const text = typeof error === 'string' ? error : error instanceof Error ? error.message : '';
-    return /^(ERR_NETWORK|ECONNABORTED|ETIMEDOUT)$/i.test(code) || /network|timeout|timed out|网络|超时/i.test(text);
-};
-
-const batchActionLabels: Record<BatchAction, string> = {
-    pause: '暂停批次',
-    resume: '恢复批次',
-    stop: '立即停止',
-    retry: '重试批次',
-    archive: '归档批次',
-};
-
-const riskLevelLabels: Record<API.RiskValidationPreviewCandidate['risk_level'], string> = {
-    unknown: '风险未分类', low: '低风险', medium: '中风险', high: '高风险',
-};
-
-const riskLevelColors: Record<API.RiskValidationPreviewCandidate['risk_level'], string> = {
-    unknown: 'orange', low: 'green', medium: 'gold', high: 'red',
-};
-
-const severityColors: Record<string, string> = {
-    critical: 'magenta', high: 'red', medium: 'orange', low: 'blue', info: 'default', unknown: 'default',
-};
-
-const excludedRiskReasonLabels: Record<string, string> = {
-    missing_poc: 'POC 不存在',
-    poc_not_approved: 'POC 未审核启用',
-    invalid_poc_governance: 'POC 执行治理元数据无效',
-    unsupported_match_type: 'Workflow 匹配类型不受支持',
-};
-
-const terminalBatchStatuses = new Set(['COMPLETED', 'FINISHED', 'DONE', 'SUCCESS', 'SUCCEEDED', 'FAILED', 'TIMEOUT', 'STOPPED', 'CANCELLED', 'CANCELED']);
-const activeBatchStatuses = new Set(['QUEUED', 'PENDING', 'DISPATCHING', 'RUNNING', 'RECOVERED']);
-const legacyScanUIEnabled = false;
-
-function availableBatchActions(batch: API.TaskBatchSummary): BatchAction[] {
-    if (batch.archived_at) return [];
-    const status = (batch.status || '').trim().toUpperCase();
-    const control = (batch.control_state || 'active').trim().toLowerCase();
-    if (control === 'stopping') return [];
-    if (control === 'paused') {
-        const actions: BatchAction[] = ['resume'];
-        if (status === 'PAUSED' || status === 'RUNNING') actions.push('stop');
-        return actions;
-    }
-    if (activeBatchStatuses.has(status)) return ['pause', 'stop'];
-    if (terminalBatchStatuses.has(status)) return ['retry', 'archive'];
-    return [];
-}
-
-const createInitialValues = {
-    priority: 1,
-    timeout_sec: 3600,
-    agent_selector_pairs: [],
-    agent_selector_rules_json: '',
-    PortScanType: 'tcp',
-    TCPPortScanThreads: 1000,
-    SYNPortScanThreads: 10000,
-    PortsThreshold: 300,
-    TCPPortScanTimeout: 6,
-    GetBannerThreads: 500,
-    GetBannerTimeout: 5,
-    Subdomain: true,
-    NoSubdomainBruteForce: true,
-    NoSubFinder: false,
-    NoHostBind: true,
-    WebThreads: 200,
-    WebTimeout: 10,
-    NoDirSearch: true,
-    NoPoc: true,
-    GolangPoc: false,
-    DisableGeneralPoc: true,
-    GoPocThreads: 50,
-};
 
 function parseProjectTargetList(raw?: string): string[] {
     if (!raw?.trim()) return [];
@@ -288,109 +78,6 @@ function projectDefaultTargets(project?: API.Project): string[] {
     ]));
 }
 
-const invertedSwitchBinding = {
-    getValueFromEvent: (checked: boolean) => !checked,
-    getValueProps: (value?: boolean) => ({ checked: value !== true }),
-};
-
-function compactObject(input: Record<string, unknown>) {
-    return Object.fromEntries(
-        Object.entries(input).filter(([, value]) => value !== undefined && value !== null && value !== '')
-    );
-}
-
-function parseNodeTags(tags?: string): Record<string, string> {
-    if (!tags) return {};
-    try {
-        const parsed = JSON.parse(tags);
-        if (parsed && !Array.isArray(parsed) && typeof parsed === 'object') {
-            return Object.fromEntries(
-                Object.entries(parsed as Record<string, unknown>)
-                    .filter(([, value]) => typeof value === 'string')
-                    .map(([key, value]) => [key, String(value)])
-            );
-        }
-    } catch {
-        return {};
-    }
-    return {};
-}
-
-function selectorFromPairs(pairs?: { key?: string; value?: string }[]): Record<string, string> | undefined {
-    const selector: Record<string, string> = {};
-    (pairs || []).forEach((pair) => {
-        const key = pair?.key?.trim();
-        const value = pair?.value?.trim();
-        if (key && value) {
-            selector[key] = value;
-        }
-    });
-    return Object.keys(selector).length > 0 ? selector : undefined;
-}
-
-function selectorRulesFromJSON(raw?: string): API.AgentSelectorRules | undefined {
-    const trimmed = raw?.trim();
-    if (!trimmed) return undefined;
-    const parsed = JSON.parse(trimmed);
-    if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
-        throw new Error('agent_selector_rules 必须是 JSON 对象');
-    }
-    return parsed as API.AgentSelectorRules;
-}
-
-function parseAdvancedConfig(raw?: string) {
-    const trimmed = raw?.trim();
-    if (!trimmed) {
-        return {};
-    }
-
-    const parsed = JSON.parse(trimmed);
-    if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
-        throw new Error('高级配置必须是 JSON 对象');
-    }
-    return Object.fromEntries(
-        Object.entries(parsed as Record<string, unknown>)
-            .filter(([key]) => !legacyProviderConfigKeys.has(key.toLowerCase()))
-    );
-}
-
-function buildTaskConfig(formValues: Record<string, unknown>) {
-    const values: Record<string, unknown> = { ...createInitialValues, ...formValues };
-    const config: Record<string, unknown> = {
-        Ports: values.Ports,
-        PortScanType: values.PortScanType,
-        SkipHostDiscovery: values.SkipHostDiscovery,
-        NoICMPPing: values.NoICMPPing,
-        TCPPing: values.TCPPing,
-        TCPPortScanThreads: values.TCPPortScanThreads,
-        SYNPortScanThreads: values.SYNPortScanThreads,
-        PortsThreshold: values.PortsThreshold,
-        TCPPortScanTimeout: values.TCPPortScanTimeout,
-        GetBannerThreads: values.GetBannerThreads,
-        GetBannerTimeout: values.GetBannerTimeout,
-        Subdomain: values.Subdomain,
-        NoSubdomainBruteForce: values.NoSubdomainBruteForce,
-        NoSubFinder: values.NoSubFinder,
-        AllowCDNAssets: values.AllowCDNAssets,
-        AllowLocalAreaDomain: values.AllowLocalAreaDomain,
-        NoHostBind: values.NoHostBind,
-        WebThreads: values.WebThreads,
-        WebTimeout: values.WebTimeout,
-        NoDirSearch: values.NoDirSearch,
-        NoPoc: values.NoPoc,
-        GolangPoc: values.GolangPoc,
-        DisableGeneralPoc: values.DisableGeneralPoc,
-        GoPocThreads: values.GoPocThreads,
-        ExcludeTags: values.ExcludeTags,
-        Severities: values.Severities,
-        PocNameForSearch: values.PocNameForSearch,
-        Password: values.Password,
-        PasswordFile: values.PasswordFile,
-    };
-
-    return compactObject(config);
-}
-
 const TaskManagement: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [tasks, setTasks] = useState<API.RootTask[]>([]);
@@ -399,43 +86,22 @@ const TaskManagement: React.FC = () => {
     const [form] = Form.useForm();
     const { message, modal } = App.useApp();
     const navigate = useNavigate();
-    const watchedProjectId = Form.useWatch('project_id', form) as string | undefined;
-    const watchedTargets = Form.useWatch('targets', form) as string | undefined;
-    const selectorPairs = Form.useWatch('agent_selector_pairs', form) as { key?: string; value?: string }[] | undefined;
     const globalProjectId = localStorage.getItem('active_project_id') || '';
     const [projects, setProjects] = useState<API.Project[]>([]);
-    const [nodes, setNodes] = useState<API.AgentNode[]>([]);
     const [taskPagination, setTaskPagination] = useState({ current: 1, pageSize: 20, total: 0 });
     const taskPaginationRef = useRef({ current: 1, pageSize: 20, total: 0 });
     const [showArchived, setShowArchived] = useState(false);
     const showArchivedRef = useRef(false);
     const [detailOpen, setDetailOpen] = useState(false);
+    const [batchOpen, setBatchOpen] = useState(false);
     const [detailLoading, setDetailLoading] = useState(false);
     const [taskDetail, setTaskDetail] = useState<API.TaskDetailResponse | null>(null);
-	const [riskPreviewOpen, setRiskPreviewOpen] = useState(false);
-	const [riskPreviewLoading, setRiskPreviewLoading] = useState(false);
-	const [riskPreview, setRiskPreview] = useState<API.RiskValidationPreviewResponse | null>(null);
-	const [riskSpecifiedPocs, setRiskSpecifiedPocs] = useState<string[]>([]);
-	const [riskPocOptions, setRiskPocOptions] = useState<{ label: React.ReactNode; value: string }[]>([]);
-	const [riskPocOptionsLoading, setRiskPocOptionsLoading] = useState(false);
-	const [riskAuthorizedConfirmed, setRiskAuthorizedConfirmed] = useState(false);
-	const [riskSecondConfirmed, setRiskSecondConfirmed] = useState(false);
-	const [riskExecuting, setRiskExecuting] = useState(false);
     const [configRevisions, setConfigRevisions] = useState<API.TaskConfigRevision[]>([]);
     const [configEditOpen, setConfigEditOpen] = useState(false);
-    const [configSaving, setConfigSaving] = useState(false);
-    const [configForm] = Form.useForm();
     const [appendOpen, setAppendOpen] = useState(false);
     const [appendValue, setAppendValue] = useState('');
     const [appendSaving, setAppendSaving] = useState(false);
-    const [selectorPreview, setSelectorPreview] = useState<API.TaskSelectorPreview | null>(null);
-    const [selectorPreviewLoading, setSelectorPreviewLoading] = useState(false);
     const [scanPlan, setScanPlan] = useState<API.ScanPlanPreview | null>(null);
-    const [targetValidationOpen, setTargetValidationOpen] = useState(false);
-    const [validTargets, setValidTargets] = useState<string[]>([]);
-    const [invalidTargets, setInvalidTargets] = useState<API.InvalidTarget[]>([]);
-    const [invalidTargetEdits, setInvalidTargetEdits] = useState<string[]>([]);
-    const pendingCreateRef = useRef<API.CreateTaskRequest | null>(null);
     const createIntentRef = useRef<CreateIntent | null>(null);
     const appendIntentRef = useRef<AppendIntent | null>(null);
     const appendInFlightRef = useRef(false);
@@ -445,15 +111,7 @@ const TaskManagement: React.FC = () => {
     const batchRetryInFlightRef = useRef(new Map<string, BatchRetryIntent>());
     const detailTaskIdRef = useRef<string | null>(null);
     const detailSessionRef = useRef(0);
-    const riskPreviewSessionRef = useRef(0);
-    const riskIntentRef = useRef<RiskValidationIntent | null>(null);
-    const riskInFlightRef = useRef<RiskValidationIntent | null>(null);
     const canManageTasks = canAccessRole('operator');
-	const riskTaskStatus = taskDetail ? normalizeTaskStatus(taskDetail.task.status) : '';
-	const canExecuteRiskValidation = Boolean(
-		canManageTasks && taskDetail && !taskDetail.task.archived_at &&
-		(isTaskFinished(riskTaskStatus) || isTaskFailedLike(riskTaskStatus) || riskTaskStatus === 'STOPPED'),
-	);
     const fetchTasks = async (
         page = taskPaginationRef.current.current,
         pageSize = taskPaginationRef.current.pageSize,
@@ -490,25 +148,15 @@ const TaskManagement: React.FC = () => {
         }
     };
 
-    const fetchNodes = async () => {
-        try {
-            const result = await getNodes();
-            setNodes(result || []);
-        } catch (error) {
-            console.error('Failed to fetch nodes:', error);
-        }
-    };
 
     useEffect(() => {
         fetchTasks();
         fetchProjects();
-        fetchNodes();
         const timer = setInterval(fetchTasks, 10000);
         const ws = connectWebSocket(() => undefined, undefined, {
             onReconnect: () => {
                 fetchTasks();
-                fetchNodes();
-            },
+                    },
         });
         return () => {
             clearInterval(timer);
@@ -530,7 +178,7 @@ const TaskManagement: React.FC = () => {
             completed_targets: t.CompletedTargets,
             created_at: t.CreatedAt,
         })),
-        viewing_task_detail: detailOpen ? taskDetail : null,
+        viewing_task_detail: (detailOpen || batchOpen) ? taskDetail : null,
     });
 
     const clearCreateIntent = () => {
@@ -539,27 +187,13 @@ const TaskManagement: React.FC = () => {
 
     const cancelCreate = () => {
         clearCreateIntent();
-        pendingCreateRef.current = null;
-        setTargetValidationOpen(false);
-        setValidTargets([]);
-        setInvalidTargets([]);
-        setInvalidTargetEdits([]);
         setCreateOpen(false);
         setScanPlan(null);
     };
 
     const invalidateCreateDraft = () => {
         clearCreateIntent();
-        pendingCreateRef.current = null;
-        setTargetValidationOpen(false);
-        setValidTargets([]);
-        setInvalidTargets([]);
-        setInvalidTargetEdits([]);
     };
-
-	const returnToCreateDraft = () => {
-		invalidateCreateDraft();
-	};
 
     const finishCreate = async (request: API.CreateTaskRequest) => {
         const fingerprint = JSON.stringify(request);
@@ -575,8 +209,6 @@ const TaskManagement: React.FC = () => {
             : skippedCount > 0 ? `任务创建成功，已跳过 ${skippedCount} 个无效目标` : '任务创建成功');
         clearCreateIntent();
         setCreateOpen(false);
-        setTargetValidationOpen(false);
-        pendingCreateRef.current = null;
         form.resetFields();
         form.setFieldsValue(scanPolicyInitialValues);
         fetchTasks(1, taskPaginationRef.current.pageSize);
@@ -622,120 +254,21 @@ const TaskManagement: React.FC = () => {
         }
     };
 
-    const handleSkipInvalidTargets = async () => {
-        const request = pendingCreateRef.current;
-        if (!request) return;
-        setCreating(true);
-        try {
-            await finishCreate({ ...request, skip_unsupported: true });
-        } catch (error: unknown) {
-            if (isIdempotencyConflict(error)) {
-                invalidateCreateDraft();
-                message.error('创建请求冲突，表单内容已变化，请重新创建');
-            } else if (isNetworkOrTimeout(error)) {
-                message.error('创建请求未确认完成，网络恢复后可直接重试');
-            } else if (typeof error === 'string') message.error(error);
-            else if (error instanceof Error) message.error(error.message);
-        } finally {
-            setCreating(false);
-        }
-    };
-
-    const handleRevalidateTargets = async () => {
-        const request = pendingCreateRef.current;
-        if (!request) return;
-        const targets = [...validTargets, ...invalidTargetEdits.map((target) => target.trim()).filter(Boolean)].join('\n');
-        // Corrected unsupported targets are a different final write payload.
-        clearCreateIntent();
-        setCreating(true);
-        try {
-            const validation = await validateTargets({ targets, config: request.config });
-            if ((validation.invalid || []).length > 0) {
-                setValidTargets(validation.valid || []);
-                setInvalidTargets(validation.invalid || []);
-                setInvalidTargetEdits((validation.invalid || []).map((item) => item.target));
-                message.warning(`仍有 ${validation.invalid.length} 个目标无法识别`);
-                return;
-            }
-            await finishCreate({ ...request, targets, skip_unsupported: false });
-        } catch (error: unknown) {
-            if (isIdempotencyConflict(error)) {
-                invalidateCreateDraft();
-                message.error('创建请求冲突，表单内容已变化，请重新创建');
-            } else if (isNetworkOrTimeout(error)) {
-                message.error('创建请求未确认完成，网络恢复后可直接重试');
-            } else if (typeof error === 'string') message.error(error);
-            else if (error instanceof Error) message.error(error.message);
-        } finally {
-            setCreating(false);
-        }
-    };
-
-    const currentSelector = useMemo(() => selectorFromPairs(selectorPairs), [selectorPairs]);
-    const tagOptions = Array.from(new Set(nodes.flatMap((node) => Object.keys(parseNodeTags(node.Tags))))).sort();
-    const tagValueOptions = (key?: string) => Array.from(new Set(
-        nodes.map((node) => parseNodeTags(node.Tags)[key || '']).filter(Boolean)
-    )).sort();
-    const matchedNodes = currentSelector
-        ? nodes.filter((node) => {
-            if (node.Status !== 'Alive') return false;
-            const tags = parseNodeTags(node.Tags);
-            return Object.entries(currentSelector).every(([key, value]) => {
-                const nodeValue = tags[key];
-                return nodeValue === value || nodeValue === 'all' || nodeValue === 'any' || nodeValue === '*';
-            });
-        })
-        : nodes.filter((node) => node.Status === 'Alive');
-    const matchedCapacity = matchedNodes.reduce(
-        (sum, node) => sum + Math.max((node.Capacity || 0) - (node.RunningTasks || 0), 0),
-        0
-    );
-    const previewMatchedNodes = selectorPreview?.matched_nodes ?? matchedNodes.length;
-    const previewCapacity = selectorPreview?.available_slots ?? matchedCapacity;
-    const previewReasons = selectorPreview?.reasons || [];
-    const previewGroups = selectorPreview?.groups || [];
-    const selectedCreateProject = projects.find((project) => project.ID === (watchedProjectId || globalProjectId));
-    const selectedProjectTargets = projectDefaultTargets(selectedCreateProject);
-
-    const handleCreateProjectChange = (projectId: string) => {
-        invalidateCreateDraft();
-        const currentTargets = form.getFieldValue('targets');
-        if (typeof currentTargets === 'string' && currentTargets.trim()) return;
-        const targetText = projectDefaultTargets(projects.find((project) => project.ID === projectId)).join('\n');
-        if (targetText) form.setFieldValue('targets', targetText);
-    };
-
+    // 被动收集进行中时轮询刷新任务详情，让进度条实时推进；收集结束或抽屉关闭即停。
     useEffect(() => {
-        if (!createOpen) {
-            setSelectorPreview(null);
-            return;
-        }
-        const projectId = watchedProjectId || globalProjectId;
-        if (!projectId || !watchedTargets?.trim()) {
-            setSelectorPreview(null);
-            return;
-        }
-        const timer = window.setTimeout(async () => {
-            setSelectorPreviewLoading(true);
+        if ((!detailOpen && !batchOpen) || !taskDetail?.passive_collection?.active) return;
+        const taskId = taskDetail.task.id;
+        const timer = setInterval(async () => {
+            if (detailTaskIdRef.current !== taskId) return;
             try {
-                const values = form.getFieldsValue(true);
-                const result = await previewTaskSelector({
-                    project_id: projectId,
-                    targets: watchedTargets,
-                    config: buildTaskConfig(values),
-                    agent_selector: currentSelector,
-                    agent_selector_rules: selectorRulesFromJSON(values.agent_selector_rules_json),
-                });
-                setSelectorPreview(result);
-            } catch (error) {
-                console.warn('Failed to preview task selector:', error);
-                setSelectorPreview(null);
-            } finally {
-                setSelectorPreviewLoading(false);
+                const refreshed = await getTaskDetail(taskId);
+                if (detailTaskIdRef.current === taskId) setTaskDetail(refreshed);
+            } catch {
+                // 轮询失败忽略，下个周期重试
             }
-        }, 300);
-        return () => window.clearTimeout(timer);
-    }, [createOpen, watchedProjectId, watchedTargets, currentSelector, form, globalProjectId]);
+        }, 3000);
+        return () => clearInterval(timer);
+    }, [detailOpen, batchOpen, taskDetail?.task?.id, taskDetail?.passive_collection?.active]);
 
     const handleArchive = async (taskId: string) => {
         if (!canManageTasks) return;
@@ -822,6 +355,10 @@ const TaskManagement: React.FC = () => {
                 : `已为 ${result.retried_batches} 个失败批次追加重试${pendingText}`);
             if (retryIntentRef.current === intent) retryIntentRef.current = null;
             fetchTasks();
+            if (detailTaskIdRef.current === taskId) {
+                const detail = await getTaskDetail(taskId);
+                if (detailTaskIdRef.current === taskId) setTaskDetail(detail);
+            }
         } catch (error: unknown) {
             if (isIdempotencyConflict(error)) {
                 if (retryIntentRef.current === intent) retryIntentRef.current = null;
@@ -916,16 +453,8 @@ const TaskManagement: React.FC = () => {
         });
     };
 
-    const handleShowDetail = async (taskId: string) => {
-        appendIntentRef.current = null;
-        retryIntentRef.current = null;
-        riskPreviewSessionRef.current += 1;
-        riskIntentRef.current = null;
-        riskInFlightRef.current = null;
-        setRiskExecuting(false);
+    const loadTaskDetail = async (taskId: string, detailSession: number) => {
         detailTaskIdRef.current = taskId;
-        const detailSession = ++detailSessionRef.current;
-        setDetailOpen(true);
         setDetailLoading(true);
         try {
             const result = await getTaskDetail(taskId);
@@ -945,17 +474,44 @@ const TaskManagement: React.FC = () => {
         }
     };
 
+    const handleShowDetail = async (taskId: string) => {
+        appendIntentRef.current = null;
+        retryIntentRef.current = null;
+        const detailSession = ++detailSessionRef.current;
+        setDetailOpen(true);
+        await loadTaskDetail(taskId, detailSession);
+    };
+
+    const handleShowBatches = async (taskId: string) => {
+        const detailSession = ++detailSessionRef.current;
+        setBatchOpen(true);
+        await loadTaskDetail(taskId, detailSession);
+    };
+
+    const closeDetailDrawer = () => {
+        appendIntentRef.current = null;
+        retryIntentRef.current = null;
+        setDetailOpen(false);
+        if (!batchOpen) {
+            detailTaskIdRef.current = null;
+            detailSessionRef.current += 1;
+            setTaskDetail(null);
+            setConfigRevisions([]);
+        }
+    };
+
+    const closeBatchDrawer = () => {
+        setBatchOpen(false);
+        if (!detailOpen) {
+            detailTaskIdRef.current = null;
+            detailSessionRef.current += 1;
+            setTaskDetail(null);
+            setConfigRevisions([]);
+        }
+    };
+
     const openConfigEditor = () => {
         if (!taskDetail || taskDetail.task.archived_at) return;
-        const current = configRevisions.find((item) => item.version === taskDetail.task.current_config_version) || configRevisions[0];
-        configForm.setFieldsValue({
-            config_json: JSON.stringify(current?.config || taskDetail.task.config || {}, null, 2),
-            priority: current?.priority ?? taskDetail.task.priority,
-            timeout_sec: current?.timeout_sec ?? taskDetail.task.timeout_sec,
-            agent_selector_json: JSON.stringify(current?.agent_selector || {}, null, 2),
-            agent_selector_rules_json: JSON.stringify(current?.agent_selector_rules || {}, null, 2),
-            change_note: '',
-        });
         setConfigEditOpen(true);
     };
 
@@ -1025,122 +581,6 @@ const TaskManagement: React.FC = () => {
             setAppendSaving(false);
         }
     };
-
-    const invalidateRiskValidationIntent = () => {
-        riskIntentRef.current = null;
-    };
-
-    const loadRiskValidationPreview = async (page: number = 1, pageSize: number = 50, specifiedPocs: string[] = riskSpecifiedPocs) => {
-        if (!taskDetail || riskInFlightRef.current) return;
-        const taskId = taskDetail.task.id;
-        const previewSession = ++riskPreviewSessionRef.current;
-        invalidateRiskValidationIntent();
-        setRiskPreviewOpen(true);
-        setRiskPreviewLoading(true);
-		setRiskAuthorizedConfirmed(false);
-		setRiskSecondConfirmed(false);
-        try {
-			const result = await previewTaskRiskValidation(taskId, page, pageSize, { specified_pocs: specifiedPocs });
-            if (detailTaskIdRef.current === taskId && riskPreviewSessionRef.current === previewSession) setRiskPreview(result);
-        } catch (error) {
-            console.error('Failed to preview task risk validation:', error);
-            if (detailTaskIdRef.current === taskId && riskPreviewSessionRef.current === previewSession) message.error('风险验证预览生成失败');
-        } finally {
-            if (detailTaskIdRef.current === taskId && riskPreviewSessionRef.current === previewSession) setRiskPreviewLoading(false);
-        }
-    };
-
-	const _openRiskValidationPreview = async () => {
-		setRiskSpecifiedPocs([]);
-		setRiskPocOptions([]);
-		setRiskPocOptionsLoading(true);
-		void loadRiskValidationPreview(1, 50, []);
-		try {
-			const result = await listPocRulesPage({ page: 1, page_size: 200 });
-			setRiskPocOptions((result.items || [])
-				.filter((rule) => rule.enabled && rule.state.toLowerCase() === 'approved')
-				.map((rule) => ({
-					value: rule.source_file,
-					label: <Space size={6}><Text>{rule.name || rule.source_file}</Text><Tag color={riskLevelColors[rule.risk_level]}>{riskLevelLabels[rule.risk_level]}</Tag></Space>,
-				})));
-		} catch {
-			message.warning('已审核 POC 列表加载失败，仍可使用 Workflow 自动匹配');
-		} finally {
-			setRiskPocOptionsLoading(false);
-		}
-	};
-	if (legacyScanUIEnabled) void _openRiskValidationPreview;
-
-	const closeRiskValidationPreview = () => {
-		if (riskInFlightRef.current) return;
-		riskPreviewSessionRef.current += 1;
-		invalidateRiskValidationIntent();
-		setRiskPreviewOpen(false);
-		setRiskPreview(null);
-		setRiskSpecifiedPocs([]);
-		setRiskAuthorizedConfirmed(false);
-		setRiskSecondConfirmed(false);
-	};
-
-	const handleExecuteRiskValidation = async () => {
-		if (!taskDetail || !riskPreview || !riskAuthorizedConfirmed) return;
-		if (riskPreview.summary.second_confirmation_required && !riskSecondConfirmed) {
-			message.warning('高风险或风险未分类 POC 必须完成二次确认');
-			return;
-		}
-		const taskId = taskDetail.task.id;
-		const previewSession = riskPreviewSessionRef.current;
-		const request: API.ExecuteRiskValidationRequest = {
-			plan_hash: riskPreview.plan_hash,
-			specified_pocs: [...riskSpecifiedPocs],
-			// The table is paginated for inspection only. An empty selection retains
-			// the preview contract's full, plan-hash-bound candidate set.
-			selected: [],
-			confirmed: true,
-			second_confirmation: riskSecondConfirmed,
-		};
-		const fingerprint = JSON.stringify(request);
-		let intent = riskIntentRef.current;
-		if (!intent || intent.taskId !== taskId || intent.previewSession !== previewSession || intent.fingerprint !== fingerprint) {
-			intent = { key: newIdempotencyKey(), taskId, previewSession, request, fingerprint };
-			riskIntentRef.current = intent;
-		}
-		if (riskInFlightRef.current === intent) return;
-		riskInFlightRef.current = intent;
-		setRiskExecuting(true);
-		try {
-			const result = await executeTaskRiskValidation(intent.taskId, intent.request, intent.key);
-			const isCurrent = riskIntentRef.current === intent && detailTaskIdRef.current === intent.taskId && riskPreviewSessionRef.current === intent.previewSession;
-			if (!isCurrent) return;
-			message.success(result.replayed
-				? `风险验证已确认，已复用此前结果${result.dispatch_pending > 0 ? '，等待队列恢复' : ''}`
-				: `已创建风险验证批次，包含 ${result.candidate_count} 个候选项${result.dispatch_pending > 0 ? '，等待队列恢复' : ''}`);
-			invalidateRiskValidationIntent();
-			riskInFlightRef.current = null;
-			closeRiskValidationPreview();
-			await Promise.all([handleShowDetail(intent.taskId), fetchTasks()]);
-		} catch (error: unknown) {
-			const isCurrent = riskIntentRef.current === intent && detailTaskIdRef.current === intent.taskId && riskPreviewSessionRef.current === intent.previewSession;
-			if (!isCurrent) return;
-			if (isIdempotencyConflict(error)) {
-				invalidateRiskValidationIntent();
-				message.error('风险验证请求冲突，请重新预览后确认');
-			} else if (isNetworkOrTimeout(error)) {
-				message.error('风险验证请求未确认完成，网络恢复后可直接重试');
-			} else if (error instanceof Error) {
-				invalidateRiskValidationIntent();
-				message.error(error.message);
-			} else {
-				invalidateRiskValidationIntent();
-				message.error('风险验证批次创建失败');
-			}
-		} finally {
-			if (riskInFlightRef.current === intent) {
-				riskInFlightRef.current = null;
-				if (detailTaskIdRef.current === intent.taskId && riskPreviewSessionRef.current === intent.previewSession) setRiskExecuting(false);
-			}
-		}
-	};
 
     const handleBatchAction = (batch: API.TaskBatchSummary, action: BatchAction) => {
         if (!taskDetail) return;
@@ -1222,48 +662,7 @@ const TaskManagement: React.FC = () => {
         });
     };
 
-    const handleSaveTaskConfig = async () => {
-        if (!taskDetail) return;
-        try {
-            const values = await configForm.validateFields();
-            const config = parseAdvancedConfig(values.config_json);
-            const agentSelector = parseAdvancedConfig(values.agent_selector_json) as Record<string, string>;
-            const agentSelectorRules = parseAdvancedConfig(values.agent_selector_rules_json) as API.AgentSelectorRules;
-            setConfigSaving(true);
-            const result = await updateTaskConfig(taskDetail.task.id, {
-                config,
-                priority: values.priority,
-                timeout_sec: values.timeout_sec,
-                agent_selector: agentSelector,
-                agent_selector_rules: agentSelectorRules,
-                change_note: values.change_note,
-            });
-            const [detail, revisions] = await Promise.all([
-                getTaskDetail(taskDetail.task.id),
-                getTaskConfigRevisions(taskDetail.task.id),
-            ]);
-            setTaskDetail(detail);
-            setConfigRevisions(revisions.items || []);
-            setConfigEditOpen(false);
-            fetchTasks();
-            message.success(result.unchanged ? '配置没有变化，继续使用当前版本' : `已创建配置版本 v${result.current_config_version}`);
-        } catch (error) {
-            if (error instanceof SyntaxError) {
-                message.error('配置与选择器必须是有效的 JSON 对象');
-            } else if (error && typeof error === 'object' && 'errorFields' in error) {
-                return;
-            } else {
-                message.error('保存任务配置失败');
-            }
-        } finally {
-            setConfigSaving(false);
-        }
-    };
-
-    const getStatusTag = (status: string) => {
-        const { color, text } = getTaskStatusMeta(status);
-        return <Tag color={color}>{text}</Tag>;
-    };
+    const getStatusTag = (status: string) => renderTaskStatusTag(status);
 
     const columns: ColumnsType<API.RootTask> = [
         {
@@ -1372,13 +771,17 @@ const TaskManagement: React.FC = () => {
         {
             title: '操作',
             key: 'actions',
-            width: 230,
+            width: 280,
             fixed: 'right',
             render: (_, record) => (
                 <Space size={4}>
                     <Button type="link" size="small" icon={<InfoCircleOutlined />}
                         onClick={() => handleShowDetail(record.ID)}>
                         详情
+                    </Button>
+                    <Button type="link" size="small" icon={<UnorderedListOutlined />}
+                        onClick={() => handleShowBatches(record.ID)}>
+                        批次
                     </Button>
                     <Button type="link" size="small" icon={<EyeOutlined />}
                         onClick={() => navigate(`/tasks/${record.ID}/results`)}>
@@ -1499,1175 +902,36 @@ const TaskManagement: React.FC = () => {
                 activeProjectId={globalProjectId} plan={scanPlan} onPlanChange={setScanPlan}
                 onCancel={cancelCreate} onCreate={handleCreate} onDraftChange={invalidateCreateDraft} />}
 
-            {legacyScanUIEnabled && canManageTasks && (
-                <Modal
-                    title="创建扫描任务"
-                    open={createOpen}
-                    onCancel={cancelCreate}
-                    onOk={handleCreate}
-                    okText="创建"
-                    confirmLoading={creating}
-                    width={920}
-                    destroyOnHidden
-                >
-                <Form 
-                    form={form} 
-                    layout="vertical" 
-                    style={{ marginTop: 16 }} 
-                    initialValues={{
-                        ...createInitialValues,
-                        project_id: globalProjectId || undefined
-                    }}
-                    onValuesChange={() => {
-                        // Any semantic form edit starts a new creation intent.  This
-                        // also prevents a pending target-validation payload from being
-                        // submitted after the user changes the underlying form.
-                        if (!creating) invalidateCreateDraft();
-                    }}
-                >
-                    <Row gutter={16}>
-                        <Col span={12}>
-                            <Form.Item label="所属项目" name="project_id" rules={[{ required: true, message: '请选择所属项目' }]}>
-                                <Select 
-                                    placeholder="选择扫描任务归属的项目"
-                                    options={projects.map(p => ({ label: p.Name, value: p.ID }))}
-                                    onChange={handleCreateProjectChange}
-                                />
-                            </Form.Item>
-                        </Col>
-                        <Col span={12}>
-                            <Form.Item label="任务名称（可选）" name="name" extra="留空时按首个目标自动生成">
-                                <Input placeholder="自动生成任务名称" />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-                    <Alert
-                        type="info"
-                        showIcon
-                        style={{ marginBottom: 16 }}
-                        message="输入规则"
-                        description={directTargetHint}
-                    />
-
-                    <Form.Item
-                        label="扫描目标"
-                        name="targets"
-                        rules={[{ required: true, message: '请输入扫描目标' }]}
-                    >
-                        <TextArea
-                            rows={6}
-                            placeholder={'192.168.1.10\n192.168.1.10:8080\nhttps://example.com\nexample.com\n10.0.0.1/24'}
-                        />
-                    </Form.Item>
-
-                    <Alert
-                        type="success"
-                        showIcon
-                        style={{ marginBottom: 12 }}
-                        message={`自动安全测绘 · ${selectedCreateProject?.Name || '当前项目'}`}
-                        description={selectedProjectTargets.length > 0
-                            ? `已载入项目范围 ${selectedProjectTargets.length} 个目标；自动选择 Agent 和平衡扫描参数。POC、子域爆破、目录探测和密码探测默认关闭。`
-                            : '自动选择 Agent 和平衡扫描参数。POC、子域爆破、目录探测和密码探测默认关闭。'}
-                    />
-                    <Alert
-                        type={previewMatchedNodes > 0 ? 'success' : 'warning'}
-                        showIcon
-                        icon={selectorPreviewLoading ? <Spin size="small" /> : undefined}
-                        style={{ marginBottom: 12 }}
-                        message={`匹配在线节点 ${previewMatchedNodes} 个，可用槽位 ${previewCapacity} 个`}
-                        description={previewReasons.length > 0 ? previewReasons.slice(0, 3).join('；') : undefined}
-                    />
-                    {previewGroups.length > 0 && (
-                        <Space direction="vertical" size={6} style={{ width: '100%', marginBottom: 12 }}>
-                            {previewGroups.map((group, index) => (
-                                <div key={`${group.target_type}-${index}`} style={{
-                                    border: '1px solid #e2e8f0',
-                                    borderRadius: 6,
-                                    padding: '8px 10px',
-                                    background: '#f8fafc',
-                                }}>
-                                    <Space wrap size={6}>
-                                        <Tag color={group.matched_nodes > 0 ? 'blue' : 'orange'}>
-                                            {targetTypeLabels[group.target_type] || group.target_type}
-                                        </Tag>
-                                        <Text style={{ fontSize: 12 }}>{group.target_count} 目标 / {group.batch_count} 批次</Text>
-                                        <Text style={{ fontSize: 12 }}>匹配 {group.matched_nodes} 节点</Text>
-                                        <Text style={{ fontSize: 12 }}>空闲 {group.available_slots} 槽</Text>
-                                        {typeof group.immediate_batches === 'number' && (
-                                            <Text style={{ fontSize: 12 }}>立即 {group.immediate_batches} / 等待 {group.waiting_batches || 0} 批</Text>
-                                        )}
-                                        {Object.entries(group.selector || {}).map(([key, value]) => (
-                                            <Tag key={key} style={{ fontSize: 11 }}>{key}={value}</Tag>
-                                        ))}
-                                    </Space>
-                                    {group.reasons?.length > 0 && (
-                                        <div style={{ marginTop: 4 }}>
-                                            <Text type="secondary" style={{ fontSize: 12 }}>
-                                                {group.reasons.join('；')}
-                                            </Text>
-                                        </div>
-                                    )}
-                                </div>
-                            ))}
-                        </Space>
-                    )}
-                    <Collapse
-                        bordered={false}
-                        style={{ background: 'transparent' }}
-                        items={[{
-                            key: 'advanced-task-settings',
-                            label: <Space><ExperimentOutlined style={{ color: '#64748b' }} />高级设置</Space>,
-                            children: (
-                                <>
-                                    <Divider orientation="left">任务控制</Divider>
-                                    <Row gutter={16}>
-                                        <Col span={8}>
-                                            <Form.Item label="任务优先级" name="priority" extra="P0 最高，P2 最低">
-                                                <Select options={[
-                                                    { value: 0, label: 'P0 / 紧急' },
-                                                    { value: 1, label: 'P1 / 普通' },
-                                                    { value: 2, label: 'P2 / 低' },
-                                                ]} />
-                                            </Form.Item>
-                                        </Col>
-                                        <Col span={8}>
-                                            <Form.Item label="任务超时(秒)" name="timeout_sec" extra="0 表示不启用超时回收">
-                                                <InputNumber min={0} step={60} style={{ width: '100%' }} />
-                                            </Form.Item>
-                                        </Col>
-                                    </Row>
-                                    <Divider orientation="left">调度选择</Divider>
-                    <Form.List name="agent_selector_pairs">
-                        {(fields, { add, remove }) => (
-                            <Space direction="vertical" style={{ width: '100%' }} size={8}>
-                                {fields.map((field) => (
-                                    <Row key={field.key} gutter={8} align="middle">
-                                        <Col span={9}>
-                                            <Form.Item {...field} name={[field.name, 'key']} noStyle>
-                                                <Select
-                                                    showSearch
-                                                    placeholder="标签键"
-                                                    options={tagOptions.map((key) => ({ label: key, value: key }))}
-                                                />
-                                            </Form.Item>
-                                        </Col>
-                                        <Col span={11}>
-                                            <Form.Item shouldUpdate noStyle>
-                                                {() => {
-                                                    const key = form.getFieldValue(['agent_selector_pairs', field.name, 'key']);
-                                                    return (
-                                                        <Form.Item {...field} name={[field.name, 'value']} noStyle>
-                                                            <Select
-                                                                showSearch
-                                                                placeholder="标签值"
-                                                                options={tagValueOptions(key).map((value) => ({ label: value, value }))}
-                                                            />
-                                                        </Form.Item>
-                                                    );
-                                                }}
-                                            </Form.Item>
-                                        </Col>
-                                        <Col span={4}>
-                                            <Button danger onClick={() => remove(field.name)}>删除</Button>
-                                        </Col>
-                                    </Row>
-                                ))}
-                                <Button onClick={() => add()} block>
-                                    添加标签条件
-                                </Button>
-                            </Space>
-                        )}
-                    </Form.List>
-                    <Form.Item
-                        label="高级选择器规则"
-                        name="agent_selector_rules_json"
-                        extra='可选 JSON，例如 {"match":{"region":["cn-hangzhou","cn-shanghai"]},"not_match":{"cloud":"test"}}'
-                    >
-                        <Input.TextArea rows={3} placeholder='{"match":{},"not_match":{}}' />
-                    </Form.Item>
-
-                    <Divider orientation="left">扫描配置</Divider>
-                    <Collapse
-                        bordered={false}
-                        style={{ background: 'transparent' }}
-                        items={[
-                            {
-                                key: 'portscan',
-                                label: <Space><RadarChartOutlined style={{ color: '#0ea5e9' }} />端口扫描</Space>,
-                                children: (
-                                    <>
-                                        <Row gutter={16}>
-                                            <Col span={8}>
-                                                <Form.Item label="端口范围" name="Ports" extra="留空使用默认 Top1000">
-                                                    <Input placeholder="80,443,8080,8443" />
-                                                </Form.Item>
-                                            </Col>
-                                            <Col span={8}>
-                                                <Form.Item label="扫描方式" name="PortScanType">
-                                                    <Select options={[
-                                                        { value: 'tcp', label: 'TCP 连接扫描' },
-                                                        { value: 'syn', label: 'SYN 半开扫描' },
-                                                    ]} />
-                                                </Form.Item>
-                                            </Col>
-                                            <Col span={8}>
-                                                <Form.Item label={<>端口数阈值 <Tooltip title="单IP端口数超过此值将被丢弃"><InfoCircleOutlined /></Tooltip></>} name="PortsThreshold">
-                                                    <InputNumber min={1} style={{ width: '100%' }} />
-                                                </Form.Item>
-                                            </Col>
-                                        </Row>
-                                        <Row gutter={16}>
-                                            <Col span={8}>
-                                                <Form.Item label="TCP 扫描线程" name="TCPPortScanThreads">
-                                                    <InputNumber min={1} style={{ width: '100%' }} />
-                                                </Form.Item>
-                                            </Col>
-                                            <Col span={8}>
-                                                <Form.Item label="SYN 扫描线程" name="SYNPortScanThreads">
-                                                    <InputNumber min={1} style={{ width: '100%' }} />
-                                                </Form.Item>
-                                            </Col>
-                                            <Col span={8}>
-                                                <Form.Item label="端口扫描超时(秒)" name="TCPPortScanTimeout">
-                                                    <InputNumber min={1} style={{ width: '100%' }} />
-                                                </Form.Item>
-                                            </Col>
-                                        </Row>
-                                    </>
-                                ),
-                            },
-                            {
-                                key: 'alive',
-                                label: <Space><WifiOutlined style={{ color: '#10b981' }} />主机发现</Space>,
-                                children: (
-                                    <Row gutter={16}>
-                                        <Col span={8}>
-                                            <Form.Item label={<>主机发现 <Tooltip title="关闭后跳过 ICMP 和 TCP 探活，直接扫描"><InfoCircleOutlined /></Tooltip></>} name="SkipHostDiscovery" {...invertedSwitchBinding}>
-                                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                                            </Form.Item>
-                                        </Col>
-                                        <Col span={8}>
-                                            <Form.Item label="ICMP 探测" name="NoICMPPing" {...invertedSwitchBinding}>
-                                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                                            </Form.Item>
-                                        </Col>
-                                        <Col span={8}>
-                                            <Form.Item label="TCP 探活" name="TCPPing" valuePropName="checked">
-                                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                                            </Form.Item>
-                                        </Col>
-                                    </Row>
-                                ),
-                            },
-                            {
-                                key: 'nmap',
-                                label: <Space><ApiOutlined style={{ color: '#8b5cf6' }} />协议识别</Space>,
-                                children: (
-                                    <Row gutter={16}>
-                                        <Col span={12}>
-                                            <Form.Item label="协议识别线程" name="GetBannerThreads">
-                                                <InputNumber min={1} style={{ width: '100%' }} />
-                                            </Form.Item>
-                                        </Col>
-                                        <Col span={12}>
-                                            <Form.Item label="协议识别超时(秒)" name="GetBannerTimeout">
-                                                <InputNumber min={1} style={{ width: '100%' }} />
-                                            </Form.Item>
-                                        </Col>
-                                    </Row>
-                                ),
-                            },
-                            {
-                                key: 'subdomain',
-                                label: <Space><GlobalOutlined style={{ color: '#f59e0b' }} />子域名探测</Space>,
-                                children: (
-                                    <>
-                                        <Row gutter={16}>
-                                            <Col span={8}>
-                                                <Form.Item label="子域名枚举" name="Subdomain" valuePropName="checked">
-                                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                                                </Form.Item>
-                                            </Col>
-                                            <Col span={8}>
-                                                <Form.Item label="子域爆破" name="NoSubdomainBruteForce" {...invertedSwitchBinding}>
-                                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                                                </Form.Item>
-                                            </Col>
-                                            <Col span={8}>
-                                                <Form.Item label="被动枚举" name="NoSubFinder" {...invertedSwitchBinding}>
-                                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                                                </Form.Item>
-                                            </Col>
-                                        </Row>
-                                        <Row gutter={16}>
-                                            <Col span={8}>
-                                                <Form.Item label="允许 CDN 资产" name="AllowCDNAssets" valuePropName="checked">
-                                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                                                </Form.Item>
-                                            </Col>
-                                            <Col span={8}>
-                                                <Form.Item label="允许解析到内网" name="AllowLocalAreaDomain" valuePropName="checked">
-                                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                                                </Form.Item>
-                                            </Col>
-                                            <Col span={8}>
-                                                <Form.Item label="域名绑定探测" name="NoHostBind" {...invertedSwitchBinding}>
-                                                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                                                </Form.Item>
-                                            </Col>
-                                        </Row>
-                                    </>
-                                ),
-                            },
-                            {
-                                key: 'web',
-                                label: <Space><SearchOutlined style={{ color: '#06b6d4' }} />Web 探针</Space>,
-                                children: (
-                                    <Row gutter={16}>
-                                        <Col span={8}>
-                                            <Form.Item label="Web 探针线程" name="WebThreads">
-                                                <InputNumber min={1} style={{ width: '100%' }} />
-                                            </Form.Item>
-                                        </Col>
-                                        <Col span={8}>
-                                            <Form.Item label="Web 超时(秒)" name="WebTimeout">
-                                                <InputNumber min={1} style={{ width: '100%' }} />
-                                            </Form.Item>
-                                        </Col>
-                                        <Col span={8}>
-                                            <Form.Item label="主动目录指纹" name="NoDirSearch" {...invertedSwitchBinding}>
-                                                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-                                            </Form.Item>
-                                        </Col>
-                                    </Row>
-                                ),
-                            },
-                            {
-                                key: 'vuln',
-                                label: <Space><BugOutlined style={{ color: '#ef4444' }} />风险验证</Space>,
-                                children: (
-                                    <Alert
-                                        type="info"
-                                        showIcon
-                                        message="POC 已与普通资产扫描隔离"
-                                        description="先完成资产扫描，再从任务详情打开“风险验证预览”。只有确认预览后才会创建独立风险验证批次，高风险或未分类 POC 还需要二次确认。"
-                                    />
-                                ),
-                            },
-                            {
-                                key: 'passwd',
-                                label: <Space><KeyOutlined style={{ color: '#f97316' }} />爆破密码</Space>,
-                                children: (
-                                    <Row gutter={16}>
-                                        <Col span={12}>
-                                            <Form.Item label="自定义弱口令" name="Password" extra="格式: admin : password">
-                                                <Input placeholder="admin : password" />
-                                            </Form.Item>
-                                        </Col>
-                                        <Col span={12}>
-                                            <Form.Item label="弱口令文件" name="PasswordFile">
-                                                <Input placeholder="config/password.txt" />
-                                            </Form.Item>
-                                        </Col>
-                                    </Row>
-                                ),
-                            },
-                            {
-                                key: 'advanced',
-                                label: <Space><ExperimentOutlined style={{ color: '#64748b' }} />高级配置</Space>,
-                                children: (
-                                    <Form.Item
-                                        label="额外 Agent 配置 JSON"
-                                        name="advanced_config_json"
-                                        extra="JSON 会直接合并进任务配置；键名请使用 Agent 实际配置字段，例如 NucleiTemplate、NoInteractsh。"
-                                    >
-                                        <TextArea
-                                            rows={6}
-                                            placeholder={`{\n  "NucleiTemplate": "config/pocs",\n  "NoInteractsh": true\n}`}
-                                        />
-                                    </Form.Item>
-                                ),
-                            },
-                        ]}
-                    />
-                                </>
-                            ),
-                        }]}
-                    />
-                </Form>
-                </Modal>
-            )}
-
-            {legacyScanUIEnabled && <Modal
-                title="目标预校验"
-                open={targetValidationOpen}
-				onCancel={returnToCreateDraft}
-                width={760}
-                destroyOnHidden
-                footer={[
-					<Button key="cancel" onClick={returnToCreateDraft}>返回修改</Button>,
-                    <Button key="skip" onClick={handleSkipInvalidTargets} loading={creating}>跳过无效项并创建</Button>,
-                    <Button key="revalidate" type="primary" onClick={handleRevalidateTargets} loading={creating}>重新校验并创建</Button>,
-                ]}
-            >
-                <Alert
-                    type="warning"
-                    showIcon
-                    message={`发现 ${invalidTargets.length} 个无法识别的目标`}
-                    description={`已识别 ${validTargets.length} 个有效目标。修正后重新校验，或明确跳过无效项。`}
-                    style={{ marginBottom: 16 }}
-                />
-                <Space direction="vertical" size={10} style={{ width: '100%' }}>
-                    {invalidTargets.map((item, index) => (
-                        <div key={`${item.target}-${index}`} style={{ display: 'grid', gridTemplateColumns: '180px minmax(0, 1fr)', gap: 10, alignItems: 'center' }}>
-                            <Tag color="error" style={{ margin: 0, whiteSpace: 'normal' }}>{item.reason}</Tag>
-                            <Input
-                                aria-label={`修正目标 ${index + 1}`}
-                                value={invalidTargetEdits[index] || ''}
-                                onChange={(event) => setInvalidTargetEdits((current) => current.map((value, itemIndex) => itemIndex === index ? event.target.value : value))}
-                            />
-                        </div>
-                    ))}
-                </Space>
-            </Modal>}
-
-            {/* 任务详情 Drawer */}
-            <Drawer
-                title={
-                    taskDetail ? (
-                        <Space>
-                            <RocketOutlined style={{ color: '#10b981' }} />
-                            <span>{taskDetail.task.name}</span>
-                            {getStatusTag(taskDetail.task.status)}
-                        </Space>
-                    ) : '任务详情'
-                }
+            <TaskDetailDrawer
                 open={detailOpen}
-                extra={taskDetail ? (
-                    <Space>
-						{canManageTasks && !taskDetail.task.archived_at && (
-							<Space size={8}>
-								<Button icon={<PlusOutlined />} onClick={openAppendTargets}>增加批次</Button>
-								<Button icon={<EditOutlined />} onClick={openConfigEditor}>更新配置</Button>
-							</Space>
-						)}
-                    </Space>
-                ) : null}
-                onClose={() => {
-                    if (riskInFlightRef.current) return;
-                    appendIntentRef.current = null;
-                    retryIntentRef.current = null;
-                    riskPreviewSessionRef.current += 1;
-                    riskIntentRef.current = null;
-                    riskInFlightRef.current = null;
-                    setRiskExecuting(false);
-                    detailTaskIdRef.current = null;
-                    detailSessionRef.current += 1;
-                    setDetailOpen(false);
-                    setTaskDetail(null);
-                    setConfigRevisions([]);
+                loading={detailLoading}
+                detail={taskDetail}
+                configRevisions={configRevisions}
+                canManageTasks={canManageTasks}
+                onClose={closeDetailDrawer}
+                onUpdateConfig={openConfigEditor}
+            />
+
+            <TaskBatchDrawer
+                open={batchOpen}
+                loading={detailLoading}
+                detail={taskDetail}
+                canManageTasks={canManageTasks}
+                onClose={closeBatchDrawer}
+                onAppend={openAppendTargets}
+                onBatchAction={handleBatchAction}
+                onBulkRetryFailed={() => {
+                    if (!taskDetail) return;
+                    const record = tasks.find((item) => item.ID === taskDetail.task.id);
+                    handleTaskAction(record || {
+                        ID: taskDetail.task.id,
+                        Name: taskDetail.task.name,
+                        Status: taskDetail.task.status,
+                    } as API.RootTask, 'retry');
                 }}
-                width={920}
-                destroyOnClose
-            >
-                {detailLoading ? (
-                    <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 0' }}>
-                        <Spin size="large" />
-                    </div>
-                ) : taskDetail ? (
-                    <div>
-                        <TaskStageOverview detail={taskDetail} />
-                        {/* 概况统计卡片 */}
-                        <Row gutter={16} style={{ marginBottom: 24 }}>
-                            <Col span={6}>
-                                <div style={{
-                                    background: 'linear-gradient(135deg, #0ea5e9 0%, #06b6d4 100%)',
-                                    borderRadius: 12, padding: '20px 16px', color: '#fff',
-                                }}>
-                                    <Statistic
-                                        title={<span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }}>进度</span>}
-                                        value={taskDetail.task.total_targets > 0
-                                            ? Math.round((taskDetail.task.completed_targets / taskDetail.task.total_targets) * 100)
-                                            : taskDetail.task.total_chunks > 0
-                                                ? Math.round((taskDetail.task.completed_chunks / taskDetail.task.total_chunks) * 100)
-                                                : 0}
-                                        suffix="%"
-                                        valueStyle={{ color: '#fff', fontSize: 28, fontWeight: 700 }}
-                                    />
-                                </div>
-                            </Col>
-                            <Col span={6}>
-                                <div style={{
-                                    background: 'linear-gradient(135deg, #3b82f6 0%, #6366f1 100%)',
-                                    borderRadius: 12, padding: '20px 16px', color: '#fff',
-                                }}>
-                                    <Statistic
-                                        title={<span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }}>资产</span>}
-                                        value={taskDetail.result_stats.assets}
-                                        valueStyle={{ color: '#fff', fontSize: 28, fontWeight: 700 }}
-                                    />
-                                </div>
-                            </Col>
-                            <Col span={6}>
-                                <div style={{
-                                    background: 'linear-gradient(135deg, #06b6d4 0%, #14b8a6 100%)',
-                                    borderRadius: 12, padding: '20px 16px', color: '#fff',
-                                }}>
-                                    <Statistic
-                                        title={<span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }}>指纹</span>}
-                                        value={taskDetail.result_stats.fingerprints}
-                                        valueStyle={{ color: '#fff', fontSize: 28, fontWeight: 700 }}
-                                    />
-                                </div>
-                            </Col>
-                            <Col span={6}>
-                                <div style={{
-                                    background: 'linear-gradient(135deg, #ef4444 0%, #f97316 100%)',
-                                    borderRadius: 12, padding: '20px 16px', color: '#fff',
-                                }}>
-                                    <Statistic
-                                        title={<span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }}>漏洞</span>}
-                                        value={taskDetail.result_stats.vulns}
-                                        valueStyle={{ color: '#fff', fontSize: 28, fontWeight: 700 }}
-                                    />
-                                </div>
-                            </Col>
-                        </Row>
+            />
 
-                        {/* 漏洞严重度分布 */}
-                        {taskDetail.result_stats.vulns > 0 && (
-                            <div style={{ marginBottom: 20 }}>
-                                <Space wrap>
-                                    {Object.entries(taskDetail.result_stats.severity).map(([sev, count]) => {
-                                        const colorMap: Record<string, string> = {
-                                            Critical: '#ef4444', High: '#f97316', Medium: '#f59e0b',
-                                            Low: '#3b82f6', Info: '#6b7280', Unknown: '#94a3b8',
-                                        };
-                                        return (
-                                            <Tag key={sev} color={colorMap[sev] || '#94a3b8'} style={{ fontSize: 12 }}>
-                                                {sev}: {count}
-                                            </Tag>
-                                        );
-                                    })}
-                                </Space>
-                            </div>
-                        )}
-
-                        {/* 任务基本信息 */}
-                        <Descriptions column={2} bordered size="small" style={{ marginBottom: 20 }}>
-                            <Descriptions.Item label="任务 ID">
-                                <Text copyable style={{ fontFamily: 'monospace', fontSize: 12 }}>{taskDetail.task.id}</Text>
-                            </Descriptions.Item>
-                            <Descriptions.Item label="优先级">
-                                {({ 0: 'P0 / 紧急', 1: 'P1 / 普通', 2: 'P2 / 低' } as Record<number, string>)[taskDetail.task.priority] || String(taskDetail.task.priority)}
-                            </Descriptions.Item>
-                            <Descriptions.Item label="目标进度">
-                                <Space>
-                                    <Progress
-                                        type="circle"
-                                        size={40}
-                                        percent={taskDetail.task.total_targets > 0
-                                            ? Math.round((taskDetail.task.completed_targets / taskDetail.task.total_targets) * 100)
-                                            : 0}
-                                    />
-                                    <Text style={{ fontSize: 12 }}>
-                                        {taskDetail.task.completed_targets}/{taskDetail.task.total_targets} 目标
-                                    </Text>
-                                </Space>
-                            </Descriptions.Item>
-                            <Descriptions.Item label="批次进度">
-                                <Space>
-                                    <Progress
-                                        type="circle"
-                                        size={40}
-                                        percent={taskDetail.task.total_chunks > 0
-                                            ? Math.round((taskDetail.task.completed_chunks / taskDetail.task.total_chunks) * 100)
-                                            : 0}
-                                    />
-                                    <Text style={{ fontSize: 12 }}>
-                                        {taskDetail.task.completed_chunks}/{taskDetail.task.total_chunks} 批次
-                                    </Text>
-                                </Space>
-                            </Descriptions.Item>
-                            <Descriptions.Item label="超时时间">
-                                {taskDetail.task.timeout_sec > 0 ? `${taskDetail.task.timeout_sec} 秒` : '未设置'}
-                            </Descriptions.Item>
-                            <Descriptions.Item label="规则版本">
-                                <Tag color="blue">{taskDetail.task.rule_version || '-'}</Tag>
-                            </Descriptions.Item>
-                            <Descriptions.Item label="配置版本">
-                                <Tag color="cyan">v{taskDetail.task.current_config_version || 1}</Tag>
-                            </Descriptions.Item>
-                            <Descriptions.Item label="创建时间">
-                                {taskDetail.task.created_at}
-                            </Descriptions.Item>
-                            {taskDetail.task.archived_at && (
-                                <Descriptions.Item label="归档时间" span={2}>
-                                    <Tag icon={<InboxOutlined />}>已归档</Tag>
-                                    {taskDetail.task.archived_at}
-                                </Descriptions.Item>
-                            )}
-                        </Descriptions>
-
-                        {/* 原始目标 */}
-                        {taskDetail.task.original_targets && (
-                            <>
-                                <Divider orientation="left" style={{ fontSize: 13 }}>
-                                    <AimOutlined style={{ marginRight: 4 }} />原始目标
-                                </Divider>
-                                <pre style={{
-                                    background: '#f1f5f9', border: '1px solid #e2e8f0',
-                                    borderRadius: 8, padding: 12, fontSize: 12,
-                                    maxHeight: 160, overflow: 'auto', whiteSpace: 'pre-wrap',
-                                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                                    color: '#334155',
-                                }}>
-                                    {taskDetail.task.original_targets}
-                                </pre>
-                            </>
-                        )}
-
-                        {/* 扫描配置 */}
-                        {taskDetail.task.config && typeof taskDetail.task.config === 'object' && (
-                            <>
-                                <Divider orientation="left" style={{ fontSize: 13 }}>
-                                    <AuditOutlined style={{ marginRight: 4 }} />扫描配置 <Tag color="cyan">v{taskDetail.task.current_config_version || 1}</Tag>
-                                </Divider>
-                                <pre style={{
-                                    background: '#0f172a', color: '#e2e8f0',
-                                    borderRadius: 8, padding: 12, fontSize: 11,
-                                    maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap',
-                                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                                }}>
-                                    {JSON.stringify(taskDetail.task.config, null, 2)}
-                                </pre>
-                            </>
-                        )}
-
-                        {/* 子任务状态分布 */}
-                        {Object.keys(taskDetail.status_distribution).length > 0 && (
-                            <>
-                                <Divider orientation="left" style={{ fontSize: 13 }}>
-                                    批次状态分布
-                                </Divider>
-                                <Space wrap style={{ marginBottom: 12 }}>
-                                    {Object.entries(taskDetail.status_distribution).map(([status, count]) => {
-                                        const { color, text } = getTaskStatusMeta(status);
-                                        return (
-                                            <Badge key={status} count={count} color={color === 'processing' ? '#1677ff' : undefined} overflowCount={9999}>
-                                                <Tag color={color} style={{ marginRight: 0 }}>{text}</Tag>
-                                            </Badge>
-                                        );
-                                    })}
-                                </Space>
-                            </>
-                        )}
-
-                        {/* 任务原因统计 */}
-                        {taskDetail.reason_stats?.length > 0 && (
-                            <>
-                                <Divider orientation="left" style={{ fontSize: 13 }}>
-                                    调度与终态原因
-                                </Divider>
-                                <Space direction="vertical" size={6} style={{ width: '100%', marginBottom: 12 }}>
-                                    {taskDetail.reason_stats.map((item, index) => {
-                                        const { color, text } = getTaskStatusMeta(item.status);
-                                        return (
-                                            <Alert
-                                                key={`${item.status}-${index}`}
-                                                type={item.status.toLowerCase().includes('fail') || item.status.toLowerCase().includes('timeout') ? 'warning' : 'info'}
-                                                showIcon
-                                                message={
-                                                    <Space wrap>
-                                                        <Tag color={color}>{text}</Tag>
-                                                        <Text>{item.reason}</Text>
-                                                        <Text type="secondary">{item.count} 批次 / {item.target_count} 目标</Text>
-                                                    </Space>
-                                                }
-                                            />
-                                        );
-                                    })}
-                                </Space>
-                            </>
-                        )}
-
-                        {taskDetail.coverage_explanation && (
-                            taskDetail.coverage_explanation.items.length > 0
-                            || taskDetail.coverage_explanation.invalidations.length > 0
-                            || Object.values(taskDetail.coverage_explanation.summary).some((value) => value > 0)
-                        ) && (
-                            <>
-                                <Divider orientation="left" style={{ fontSize: 13 }}>
-                                    <RadarChartOutlined style={{ marginRight: 4 }} />扫描复用与覆盖
-                                </Divider>
-                                <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
-                                    <Col xs={12} md={6}>
-                                        <Statistic title="实际执行工作项" value={taskDetail.coverage_explanation.summary.executed_work_items} valueStyle={{ color: '#1677ff', fontSize: 22 }} />
-                                    </Col>
-                                    <Col xs={12} md={6}>
-                                        <Statistic title="历史复用阶段" value={taskDetail.coverage_explanation.summary.reused_stages} valueStyle={{ color: '#16a34a', fontSize: 22 }} />
-                                    </Col>
-                                    <Col xs={12} md={6}>
-                                        <Statistic title="执行中关联" value={taskDetail.coverage_explanation.summary.in_flight_work_items} valueStyle={{ color: '#d97706', fontSize: 22 }} />
-                                    </Col>
-                                    <Col xs={12} md={6}>
-                                        <Statistic
-                                            title="失效 / 过期阶段"
-                                            value={taskDetail.coverage_explanation.summary.invalidated_stages + taskDetail.coverage_explanation.summary.expired_stages}
-                                            valueStyle={{ color: '#dc2626', fontSize: 22 }}
-                                        />
-                                    </Col>
-                                </Row>
-                                <Alert
-                                    type={taskDetail.coverage_explanation.summary.saved_stages > 0 ? 'success' : 'info'}
-                                    showIcon
-                                    message={taskDetail.coverage_explanation.summary.saved_stages > 0
-                                        ? `已节省 ${taskDetail.coverage_explanation.summary.saved_stages} 个扫描阶段、${taskDetail.coverage_explanation.summary.saved_targets} 个完整目标`
-                                        : '本次没有复用历史覆盖'}
-                                    description="实际执行工作项代表该目标领取的扫描流水线；历史复用按可验证阶段计数，执行中关联会在来源完成或失败后自动重新规划。"
-                                    style={{ marginBottom: 12 }}
-                                />
-                                {taskDetail.coverage_explanation.items.length > 0 && (
-                                    <Table
-                                        aria-label="扫描复用明细"
-                                        dataSource={taskDetail.coverage_explanation.items}
-                                        rowKey={(item) => `${item.link_type}-${item.normalized_target}-${item.stage}-${item.source.attempt_id}-${item.created_at}`}
-                                        size="small"
-                                        pagination={false}
-                                        scroll={{ x: 980 }}
-                                        style={{ marginBottom: 12 }}
-                                        columns={[
-                                            {
-                                                title: '处理方式', dataIndex: 'link_type', key: 'link_type', width: 110,
-                                                render: (value: string) => {
-                                                    const meta = coverageLinkMeta[value] || { label: value || '未知', color: 'default' };
-                                                    return <Tag color={meta.color}>{meta.label}</Tag>;
-                                                },
-                                            },
-                                            {
-                                                title: '状态', dataIndex: 'status', key: 'status', width: 105,
-                                                render: (value: string) => {
-                                                    const meta = coverageLinkStatusLabels[value] || { label: value || '未知', color: 'default' };
-                                                    return <Tag color={meta.color}>{meta.label}</Tag>;
-                                                },
-                                            },
-                                            { title: '目标', dataIndex: 'normalized_target', key: 'normalized_target', ellipsis: true, width: 230, render: (value: string) => value || '-' },
-                                            { title: '阶段', dataIndex: 'stage', key: 'stage', width: 120, render: (value: string) => scanStageLabels[value] || value || '-' },
-                                            { title: '网络区域', dataIndex: 'network_zone', key: 'network_zone', width: 120, render: (value: string) => <Tag>{value || '-'}</Tag> },
-                                            {
-                                                title: '来源', key: 'source', ellipsis: true, width: 220,
-                                                render: (_, item: API.TaskCoverageExplanationItem) => item.source.task_id ? (
-                                                    <Tooltip title={`${item.source.task_id} / ${item.source.batch_id || '-'} / ${item.source.attempt_id || '-'}`}>
-                                                        <Text>{item.source.task_name || item.source.task_id}</Text>
-                                                    </Tooltip>
-                                                ) : <Text type="secondary">-</Text>,
-                                            },
-                                            { title: '原因', dataIndex: 'reason', key: 'reason', ellipsis: true, width: 200, render: (value: string) => coverageReasonText(value) },
-                                        ]}
-                                    />
-                                )}
-                                {taskDetail.coverage_explanation.items_truncated && (
-                                    <Text type="secondary">仅展示最近 100 条复用关联，顶部汇总为完整计数。</Text>
-                                )}
-                                {taskDetail.coverage_explanation.invalidations.length > 0 && (
-                                    <>
-                                        <Text strong style={{ display: 'block', margin: '12px 0 8px' }}>失效与过期原因</Text>
-                                        <Table
-                                            aria-label="扫描覆盖失效明细"
-                                            dataSource={taskDetail.coverage_explanation.invalidations}
-                                            rowKey={(item) => `${item.normalized_target}-${item.stage}-${item.invalidated_at}`}
-                                            size="small"
-                                            pagination={false}
-                                            scroll={{ x: 820 }}
-                                            style={{ marginBottom: 12 }}
-                                            columns={[
-                                                { title: '目标', dataIndex: 'normalized_target', key: 'normalized_target', ellipsis: true, width: 250 },
-                                                { title: '阶段', dataIndex: 'stage', key: 'stage', width: 120, render: (value: string) => scanStageLabels[value] || value || '-' },
-                                                {
-                                                    title: '状态', dataIndex: 'status', key: 'status', width: 90,
-                                                    render: (value: string) => <Tag color={value === 'expired' ? 'orange' : 'red'}>{value === 'expired' ? '已过期' : '已失效'}</Tag>,
-                                                },
-                                                { title: '原因', dataIndex: 'reason', key: 'reason', ellipsis: true, width: 260, render: (value: string) => coverageReasonText(value) },
-                                            ]}
-                                        />
-                                        {taskDetail.coverage_explanation.invalidations_truncated && (
-                                            <Text type="secondary">仅展示最近 100 条失效记录，顶部汇总为完整计数。</Text>
-                                        )}
-                                    </>
-                                )}
-                            </>
-                        )}
-
-                        {configRevisions.length > 0 && (
-                            <>
-                                <Divider orientation="left" style={{ fontSize: 13 }}>配置修订历史</Divider>
-                                <Table
-                                    dataSource={configRevisions}
-                                    rowKey="version"
-                                    size="small"
-                                    pagination={false}
-                                    style={{ marginBottom: 12 }}
-                                    columns={[
-                                        { title: '版本', dataIndex: 'version', key: 'version', width: 80, render: (version: number) => <Tag color="cyan">v{version}</Tag> },
-                                        { title: '说明', dataIndex: 'change_note', key: 'change_note', render: (note: string) => note || '-' },
-                                        { title: '操作者', dataIndex: 'created_by', key: 'created_by', width: 120 },
-                                        { title: '时间', dataIndex: 'created_at', key: 'created_at', width: 180 },
-                                    ]}
-                                />
-                            </>
-                        )}
-
-                        {taskDetail.audits?.length > 0 && (
-                            <>
-                                <Divider orientation="left" style={{ fontSize: 13 }}>
-                                    <AuditOutlined style={{ marginRight: 4 }} />操作审计
-                                </Divider>
-                                <Table
-                                    dataSource={taskDetail.audits}
-                                    rowKey="id"
-                                    size="small"
-                                    pagination={false}
-                                    style={{ marginBottom: 12 }}
-                                    columns={[
-                                        {
-                                            title: '操作', dataIndex: 'action', key: 'action', width: 90,
-                                            render: (action: string) => ({
-                                                pause: '暂停', resume: '恢复', stop: '停止', archive: '归档', config_update: '更新配置', batch_append: '增加批次', notebook_distribution_materialize: '测绘笔记本分发',
-                                                batch_pause: '暂停批次', batch_resume: '恢复批次', batch_stop: '停止批次', batch_retry: '重试批次', batch_archive: '归档批次',
-                                            } as Record<string, string>)[action] || action,
-                                        },
-                                        {
-                                            title: '状态变化', key: 'status_change',
-                                            render: (_, audit) => (
-                                                <Space size={4}>
-                                                    <Tag>{audit.before_status || '-'}</Tag>
-                                                    <Text type="secondary">→</Text>
-                                                    <Tag color="blue">{audit.after_status || '-'}</Tag>
-                                                </Space>
-                                            ),
-                                        },
-                                        { title: '操作者', dataIndex: 'operator_id', key: 'operator_id', width: 120 },
-                                        { title: '时间', dataIndex: 'created_at', key: 'created_at', width: 180 },
-                                    ]}
-                                />
-                            </>
-                        )}
-
-                        {/* 当前批次 */}
-                        <Divider orientation="left" style={{ fontSize: 13 }}>
-                            批次管理 ({taskDetail.batches?.length || taskDetail.sub_tasks.length})
-                        </Divider>
-                        <Table
-                            dataSource={taskDetail.batches || []}
-                            rowKey="id"
-                            size="small"
-                            scroll={{ x: 1180 }}
-                            pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 个批次（含已归档历史）` }}
-                            columns={[
-                                {
-                                    title: '批次 ID', dataIndex: 'id', key: 'id', ellipsis: true, width: 230,
-                                    render: (v: string, row) => (
-                                        <Space size={4}>
-                                            <Text style={{ fontFamily: 'monospace', fontSize: 11 }}>{v}</Text>
-                                            {row.archived_at && <Tag icon={<InboxOutlined />}>已归档</Tag>}
-                                        </Space>
-                                    ),
-                                },
-                                { title: '尝试', dataIndex: 'current_attempt_no', key: 'current_attempt_no', width: 70, render: (v: number, row) => <Tag>#{v || 1}/{row.attempt_count || 1}</Tag> },
-                                {
-                                    title: '状态', dataIndex: 'display_status', key: 'display_status', width: 100,
-                                    render: (v: string) => getStatusTag(v),
-                                },
-                                {
-                                    title: '类型', dataIndex: 'target_type', key: 'target_type', width: 90,
-                                    render: (v: string) => <Tag>{targetTypeLabels[v] || v || '-'}</Tag>,
-                                },
-                                {
-                                    title: 'Agent', dataIndex: 'agent_id', key: 'agent_id', ellipsis: true, width: 140,
-                                    render: (v: string) => v ? <Tag color="blue" style={{ fontSize: 11 }}>{v}</Tag> : <Text type="secondary">-</Text>,
-                                },
-                                {
-                                    title: '目标数', dataIndex: 'target_count', key: 'target_count', width: 80,
-                                    sorter: (a, b) => a.target_count - b.target_count,
-                                },
-                                {
-                                    title: '重试', key: 'retry', width: 70,
-                                    render: (_, r) => <Text style={{ fontSize: 12 }}>{r.retry_count}/{r.max_retry}</Text>,
-                                },
-                                {
-                                    title: '配置', dataIndex: 'config_version', key: 'config_version', width: 70,
-                                    render: (version: number) => <Tag color="cyan">v{version || 1}</Tag>,
-                                },
-                                {
-                                    title: '更新时间', dataIndex: 'updated_at', key: 'updated_at', width: 170,
-                                    render: (v: string) => <Text style={{ fontSize: 11, color: '#64748b' }}>{v}</Text>,
-                                },
-                                {
-                                    title: '操作', key: 'actions', fixed: 'right', width: 80,
-                                    render: (_, row) => {
-                                        const actions = canManageTasks && !taskDetail.task.archived_at ? availableBatchActions(row) : [];
-                                        if (actions.length === 0) {
-                                            return <Text type="secondary">-</Text>;
-                                        }
-                                        return (
-                                            <Dropdown
-                                                trigger={['click']}
-                                                menu={{
-                                                    items: actions.map((action) => ({
-                                                        key: action,
-                                                        label: batchActionLabels[action],
-                                                        danger: action === 'stop' || action === 'archive',
-                                                    })),
-                                                    onClick: ({ key }) => handleBatchAction(row, key as BatchAction),
-                                                }}
-                                            >
-                                                <Button aria-label={`管理批次 ${row.id}`} size="small" icon={<MoreOutlined />} />
-                                            </Dropdown>
-                                        );
-                                    },
-                                },
-                            ]}
-                        />
-
-                        {(taskDetail.attempts?.length || 0) > 0 && (
-                            <>
-                                <Divider orientation="left" style={{ fontSize: 13 }}>
-                                    执行尝试历史 ({taskDetail.attempts?.length || 0})
-                                </Divider>
-                                <Table
-                                    dataSource={taskDetail.attempts}
-                                    rowKey="id"
-                                    size="small"
-                                    scroll={{ x: 1250 }}
-                                    pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 次执行` }}
-                                    columns={[
-                                        {
-                                            title: '批次 ID', dataIndex: 'batch_id', key: 'batch_id', ellipsis: true, width: 210,
-                                            render: (v: string) => <Text style={{ fontFamily: 'monospace', fontSize: 11 }}>{v || '-'}</Text>,
-                                        },
-                                        { title: '尝试', dataIndex: 'attempt_no', key: 'attempt_no', width: 65, render: (v: number) => <Tag>#{v || 1}</Tag> },
-                                        {
-                                            title: '触发方式', dataIndex: 'trigger', key: 'trigger', width: 130,
-                                            render: (v: string) => ({
-                                                initial: '初次执行', automatic_retry: '失败重试', timeout_retry: '超时重试', split_retry: '拆分重试',
-                                                agent_offline_recovery: '掉线恢复', spot_recovery: 'Spot 恢复', manual_retry: '手动重试', legacy_retry: '历史重试',
-                                            } as Record<string, string>)[v] || v || '-',
-                                        },
-                                        { title: '状态', dataIndex: 'status', key: 'status', width: 90, render: (v: string) => getStatusTag(v) },
-                                        {
-                                            title: 'Agent', dataIndex: 'agent_id', key: 'agent_id', ellipsis: true, width: 130,
-                                            render: (v: string) => v ? <Tag color="blue">{v}</Tag> : <Text type="secondary">-</Text>,
-                                        },
-                                        {
-                                            title: '版本', key: 'versions', width: 145,
-                                            render: (_, row) => <Space size={4}><Tag color="cyan">配置 v{row.config_version || 1}</Tag><Tag>{row.rule_version || '-'}</Tag></Space>,
-                                        },
-                                        {
-                                            title: '失败原因', dataIndex: 'failure_reason', key: 'failure_reason', ellipsis: true, width: 240,
-                                            render: (v: string) => v || <Text type="secondary">-</Text>,
-                                        },
-                                        { title: '开始时间', dataIndex: 'started_at', key: 'started_at', width: 180, render: (v?: string | null) => v || '-' },
-                                        { title: '完成时间', dataIndex: 'finished_at', key: 'finished_at', width: 180, render: (v?: string | null) => v || '-' },
-                                    ]}
-                                />
-                            </>
-                        )}
-
-                        {taskDetail.timing && <TaskTimingPanel timing={taskDetail.timing} stageLabels={scanStageLabels} />}
-                        <CredentialFindingsPanel taskId={taskDetail.task.id} />
-                    </div>
-                ) : null}
-            </Drawer>
-
-			{legacyScanUIEnabled && riskPreview && <Modal
-				title="风险验证预览"
-				open={riskPreviewOpen}
-				onCancel={closeRiskValidationPreview}
-				closable={!riskExecuting}
-				keyboard={!riskExecuting}
-				maskClosable={!riskExecuting}
-				width={1180}
-				footer={[
-					<Button key="close" onClick={closeRiskValidationPreview} disabled={riskExecuting}>关闭</Button>,
-					...(canManageTasks ? [
-						<Button
-							key="execute"
-							type="primary"
-							danger={Boolean(riskPreview?.summary.second_confirmation_required)}
-							loading={riskExecuting}
-							disabled={!canExecuteRiskValidation || !riskPreview || riskPreview.total === 0 || !riskAuthorizedConfirmed || Boolean(riskPreview.summary.second_confirmation_required && !riskSecondConfirmed)}
-							onClick={handleExecuteRiskValidation}
-						>
-							确认并创建风险验证批次
-						</Button>,
-					] : []),
-				]}
-				destroyOnHidden
-			>
-				<Alert
-					type="warning"
-					showIcon
-					message="此页面只生成预览，不会执行任何 POC"
-					description="候选项来自当前任务资产、已审核 Workflow 和已审核 POC。只有完成明确确认后才会创建仅执行这些 POC 的独立批次；高风险和未分类规则还需要二次确认。"
-					style={{ marginBottom: 16 }}
-				/>
-				<div style={{ marginBottom: 16 }}>
-					<Text strong>指定额外 POC（可选）</Text>
-					<Space.Compact style={{ width: '100%', marginTop: 8 }}>
-						<Select
-							mode="multiple"
-							showSearch
-							allowClear
-							aria-label="指定额外 POC"
-							placeholder="默认仅使用 Workflow 匹配；可选择已审核 POC 对当前任务资产验证"
-							value={riskSpecifiedPocs}
-							onChange={(values) => { invalidateRiskValidationIntent(); setRiskSpecifiedPocs(values); }}
-							options={riskPocOptions}
-							loading={riskPocOptionsLoading}
-							disabled={riskExecuting}
-							optionFilterProp="value"
-							style={{ flex: 1 }}
-						/>
-						<Button loading={riskPreviewLoading} disabled={riskExecuting} onClick={() => loadRiskValidationPreview(1, 50, riskSpecifiedPocs)}>重新生成预览</Button>
-					</Space.Compact>
-				</div>
-				{riskPreviewLoading && !riskPreview ? (
-					<div style={{ display: 'flex', justifyContent: 'center', padding: '64px 0' }}><Spin size="large" /></div>
-				) : riskPreview ? (
-					<>
-						<Row gutter={12} style={{ marginBottom: 16 }}>
-							<Col span={6}><Statistic title="指纹资产" value={riskPreview.summary.unique_assets} suffix={` / ${riskPreview.summary.fingerprint_hits} 指纹`} /></Col>
-							<Col span={6}><Statistic title="候选 POC" value={riskPreview.summary.candidates} suffix={` / ${riskPreview.summary.poc_rules} 规则`} /></Col>
-							<Col span={6}><Statistic title="预计请求量" value={riskPreview.summary.estimated_requests} /></Col>
-							<Col span={6}>
-								<Statistic
-									title="二次确认项"
-									value={riskPreview.summary.second_confirmation_items}
-									valueStyle={{ color: riskPreview.summary.second_confirmation_required ? '#dc2626' : '#16a34a' }}
-								/>
-							</Col>
-						</Row>
-						<Descriptions size="small" bordered column={2} style={{ marginBottom: 16 }}>
-							<Descriptions.Item label="当前规则版本"><Tag color="blue">{riskPreview.rule_version || 'unknown'}</Tag></Descriptions.Item>
-							<Descriptions.Item label="任务规则快照"><Tag>{riskPreview.task_rule_version || 'unknown'}</Tag></Descriptions.Item>
-							<Descriptions.Item label="配置版本"><Tag color="cyan">v{riskPreview.config_version}</Tag></Descriptions.Item>
-							<Descriptions.Item label="预览计划哈希"><Text code copyable>{riskPreview.plan_hash.slice(0, 16)}…</Text></Descriptions.Item>
-						</Descriptions>
-						{riskPreview.summary.second_confirmation_required && (
-							<Alert
-								type="error"
-								showIcon
-								message={`${riskPreview.summary.second_confirmation_items} 个候选项属于高风险或风险未分类，执行前必须二次确认`}
-								style={{ marginBottom: 12 }}
-							/>
-						)}
-						{((riskPreview.unmatched_products?.length ?? 0) > 0 || (riskPreview.excluded?.length ?? 0) > 0) && (
-							<Alert
-								type="info"
-								showIcon
-								message="部分指纹未生成候选项"
-								description={
-									<Space direction="vertical" size={4}>
-										{(riskPreview.unmatched_products?.length ?? 0) > 0 && (
-											<div>无已审核 Workflow：{riskPreview.unmatched_products.map(product => <Tag key={product}>{product}</Tag>)}</div>
-										)}
-										{(riskPreview.excluded || []).map(item => (
-											<div key={`${item.product}-${item.poc_name}-${item.reason}`}>
-												<Tag color="orange">{item.product}</Tag>
-												<Text code>{item.poc_name}</Text>
-												<Text type="secondary"> — {excludedRiskReasonLabels[item.reason] || item.reason}</Text>
-											</div>
-										))}
-									</Space>
-								}
-								style={{ marginBottom: 12 }}
-							/>
-						)}
-						<Table
-							rowKey={(row) => `${row.endpoint}-${row.poc_content_hash}-${row.poc_file}`}
-							dataSource={riskPreview.items}
-							loading={riskPreviewLoading}
-							size="small"
-							scroll={{ x: 1080 }}
-							pagination={{
-								current: riskPreview.page,
-								pageSize: riskPreview.page_size,
-								total: riskPreview.total,
-								showSizeChanger: true,
-								disabled: riskExecuting,
-								pageSizeOptions: [20, 50, 100, 200],
-								showTotal: (total) => `共 ${total} 个候选执行项`,
-							}}
-							onChange={(pagination) => loadRiskValidationPreview(pagination.current || 1, pagination.pageSize || 50)}
-							locale={{ emptyText: <Empty description="当前任务指纹没有匹配到可验证 POC" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
-							columns={[
-								{
-									title: '资产 / 端点', key: 'asset', width: 300,
-									render: (_, row) => (
-										<Space direction="vertical" size={0}>
-											<Text copyable style={{ fontFamily: 'monospace', fontSize: 12 }}>{row.endpoint}</Text>
-											<Text type="secondary">{row.asset.title || row.asset.service || row.asset.protocol || row.asset.target}</Text>
-										</Space>
-									),
-								},
-								{
-									title: '产品 / Workflow', key: 'products', width: 190,
-									render: (_, row) => (
-										<Space direction="vertical" size={2}>
-											<Space size={[4, 4]} wrap>{row.products.map(product => <Tag color="blue" key={product}>{product}</Tag>)}</Space>
-											<Text type="secondary">{row.match_types.join(', ')}</Text>
-										</Space>
-									),
-								},
-								{
-									title: 'POC', key: 'poc', width: 220,
-									render: (_, row) => (
-										<Space direction="vertical" size={0}>
-											<Text strong>{row.poc_name}</Text>
-											<Text type="secondary" style={{ fontFamily: 'monospace', fontSize: 11 }}>{row.poc_file}</Text>
-										</Space>
-									),
-								},
-								{
-									title: '严重性 / 执行风险', key: 'risk', width: 210,
-									render: (_, row) => (
-										<Space size={[4, 4]} wrap>
-											<Tag color={severityColors[row.severity] || 'default'}>{row.severity.toUpperCase()}</Tag>
-											<Tag color={row.execution_class === 'verification' ? 'purple' : 'blue'}>{row.execution_class === 'verification' ? '验证型' : '检测型'}</Tag>
-											<Tag color={riskLevelColors[row.risk_level]}>{riskLevelLabels[row.risk_level]}</Tag>
-										</Space>
-									),
-								},
-								{
-									title: '预计请求', dataIndex: 'estimated_requests', key: 'estimated_requests', width: 110,
-									render: (value: number, row) => (
-										<Tooltip title={row.estimate_basis === 'template_upper_bound' ? '根据模板路径和 payload 组合估算的上界' : '模板无法解析，按至少 1 次请求估算'}>
-											<Text strong>{value}</Text>
-										</Tooltip>
-									),
-								},
-							]}
-						/>
-						{canManageTasks && (
-							<Space direction="vertical" size={8} style={{ width: '100%', marginTop: 16 }}>
-								{!canExecuteRiskValidation && (
-									<Alert type="info" showIcon message="任务需先完成、失败、超时或停止，才能创建风险验证批次" />
-								)}
-								<Checkbox disabled={riskExecuting} checked={riskAuthorizedConfirmed} onChange={(event) => { invalidateRiskValidationIntent(); setRiskAuthorizedConfirmed(event.target.checked); }}>
-									我确认这些目标均在当前项目授权范围内，并同意执行预览中的全部 POC 请求
-								</Checkbox>
-								{riskPreview.summary.second_confirmation_required && (
-									<Checkbox disabled={riskExecuting} checked={riskSecondConfirmed} onChange={(event) => { invalidateRiskValidationIntent(); setRiskSecondConfirmed(event.target.checked); }}>
-										<Text type="danger">我已复核高风险或风险未分类规则，确认继续执行</Text>
-									</Checkbox>
-								)}
-							</Space>
-						)}
-					</>
-				) : null}
-			</Modal>}
-
-            <Modal
+<Modal
                 title="增加扫描批次"
                 open={appendOpen}
                 onCancel={closeAppendTargets}
@@ -2701,59 +965,24 @@ const TaskManagement: React.FC = () => {
                 />
             </Modal>
 
-            <Modal
-                title={`更新任务配置（当前 v${taskDetail?.task.current_config_version || 1}）`}
+            <TaskConfigUpdateModal
                 open={configEditOpen}
-                onCancel={() => setConfigEditOpen(false)}
-                onOk={handleSaveTaskConfig}
-                confirmLoading={configSaving}
-                okText="保存为新版本"
-                width={720}
-                destroyOnHidden
-            >
-                <Alert
-                    type="info"
-                    showIcon
-                    message="新版本只用于之后新增的批次；已创建批次继续保留原配置快照。"
-                    style={{ marginBottom: 16 }}
-                />
-                <Form form={configForm} layout="vertical">
-                    <Row gutter={12}>
-                        <Col span={12}>
-                            <Form.Item name="priority" label="优先级" rules={[{ required: true }]}>
-                                <Select options={[
-                                    { value: 0, label: 'P0 / 紧急' },
-                                    { value: 1, label: 'P1 / 普通' },
-                                    { value: 2, label: 'P2 / 低' },
-                                ]} />
-                            </Form.Item>
-                        </Col>
-                        <Col span={12}>
-                            <Form.Item name="timeout_sec" label="批次超时（秒）" rules={[{ required: true }]}>
-                                <InputNumber min={0} style={{ width: '100%' }} />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-                    <Form.Item name="config_json" label="扫描配置 JSON" rules={[{ required: true }]}>
-                        <TextArea rows={8} spellCheck={false} />
-                    </Form.Item>
-                    <Row gutter={12}>
-                        <Col span={12}>
-                            <Form.Item name="agent_selector_json" label="Agent 选择器 JSON" rules={[{ required: true }]}>
-                                <TextArea rows={4} spellCheck={false} />
-                            </Form.Item>
-                        </Col>
-                        <Col span={12}>
-                            <Form.Item name="agent_selector_rules_json" label="Agent 选择规则 JSON" rules={[{ required: true }]}>
-                                <TextArea rows={4} spellCheck={false} />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-                    <Form.Item name="change_note" label="变更说明" rules={[{ max: 500 }]}>
-                        <Input placeholder="说明本次调整的原因（可选）" />
-                    </Form.Item>
-                </Form>
-            </Modal>
+                taskId={taskDetail?.task.id || ''}
+                detail={taskDetail}
+                revisions={configRevisions}
+                projects={projects}
+                projectId={
+                    taskDetail?.task.project_id
+                    || tasks.find((item) => item.ID === taskDetail?.task.id)?.ProjectID
+                    || globalProjectId
+                }
+                onClose={() => setConfigEditOpen(false)}
+                onSaved={(nextDetail, nextRevisions) => {
+                    setTaskDetail(nextDetail);
+                    setConfigRevisions(nextRevisions);
+                    fetchTasks();
+                }}
+            />
         </div>
     );
 };

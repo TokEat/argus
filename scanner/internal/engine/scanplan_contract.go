@@ -7,8 +7,6 @@ import "github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 // into risk_validation because POC execution is isolated from discovery plans.
 func CanonicalStageForPhase(phase string) (scanplan.Stage, bool) {
 	switch phase {
-	case PhaseSearchEngine:
-		return scanplan.StageSearchEngine, true
 	case PhaseSubdomain:
 		return scanplan.StageSubdomainDiscovery, true
 	case PhaseCDN:

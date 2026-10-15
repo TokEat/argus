@@ -98,6 +98,7 @@ const BasicLayout: React.FC = () => {
         else if (path.startsWith('/arsenals/workflow')) module = 'workflow_list';
         else if (path.startsWith('/knowledge')) module = 'knowledge_base';
         else if (path.startsWith('/dashboard')) module = 'dashboard';
+        else if (path.startsWith('/mcp-admin')) module = 'mcp_admin';
 
         setPageContext((prev) => ({
             ...prev,

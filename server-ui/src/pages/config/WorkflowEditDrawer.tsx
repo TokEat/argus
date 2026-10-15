@@ -494,7 +494,7 @@ const WorkflowEditDrawer: React.FC<WorkflowEditDrawerProps> = ({
                             { label: 'root — 根路径 (scheme://host)', value: 'root' },
                             { label: 'base — 完整路径 (scheme://host/a/b/c)', value: 'base' },
                             { label: 'dir — 逐级目录 (scheme://host/a, /a/b, ...)', value: 'dir' },
-                            { label: 'dir-fallback — 目录探测命中 200 时直接标记指纹', value: 'dir-fallback' },
+                            { label: 'dir-fallback — 目录探测 200 仅记录路径存在，不标记已识别、不调度 POC', value: 'dir-fallback' },
                         ]}
                         optionRender={(option) => (
                             <Tooltip title={

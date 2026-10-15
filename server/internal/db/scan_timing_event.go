@@ -111,9 +111,10 @@ type TaskTimingProjection struct {
 }
 
 type AttemptTimingProjection struct {
-	AttemptID string                  `json:"attempt_id"`
-	Available bool                    `json:"available"`
-	Events    []TimingProjectionEvent `json:"events"`
+	AttemptID         string                  `json:"attempt_id"`
+	Available         bool                    `json:"available"`
+	UnavailableReason string                  `json:"unavailable_reason,omitempty"`
+	Events            []TimingProjectionEvent `json:"events"`
 }
 
 type TimingProjectionEvent struct {
@@ -137,6 +138,7 @@ func BuildTaskTimingProjection(store *gorm.DB, root RootTask, attempts []SubTask
 		return result, errors.New("timing projection root scope is required")
 	}
 	byAttempt := make(map[string]int, len(attempts))
+	sources := make([]SubTask, 0, len(attempts))
 	for _, attempt := range attempts {
 		if attempt.ID == "" || attempt.TenantID != root.TenantID || attempt.ProjectID != root.ProjectID || attempt.RootTaskID != root.ID {
 			continue
@@ -146,6 +148,7 @@ func BuildTaskTimingProjection(store *gorm.DB, root RootTask, attempts []SubTask
 		}
 		byAttempt[attempt.ID] = len(result.Attempts)
 		result.Attempts = append(result.Attempts, AttemptTimingProjection{AttemptID: attempt.ID})
+		sources = append(sources, attempt)
 	}
 	if len(byAttempt) == 0 {
 		return result, nil
@@ -169,6 +172,9 @@ func BuildTaskTimingProjection(store *gorm.DB, root RootTask, attempts []SubTask
 		attempt.Events = append(attempt.Events, TimingProjectionEvent{Kind: event.Kind, Stage: event.Stage, Outcome: event.Outcome, DurationNS: event.DurationNS, DurationMS: event.DurationNS / int64(time.Millisecond), StartedAt: event.StartedAt, FinishedAt: event.FinishedAt})
 	}
 	for i := range result.Attempts {
+		if !result.Attempts[i].Available {
+			result.Attempts[i].UnavailableReason = timingUnavailableReason(sources[i])
+		}
 		sort.SliceStable(result.Attempts[i].Events, func(a, b int) bool {
 			x, y := result.Attempts[i].Events[a], result.Attempts[i].Events[b]
 			if x.StartedAt != y.StartedAt {
@@ -181,4 +187,20 @@ func BuildTaskTimingProjection(store *gorm.DB, root RootTask, attempts []SubTask
 		})
 	}
 	return result, nil
+}
+
+const (
+	TimingUnavailableNotExecuted = "not_executed"
+	TimingUnavailableNotReported = "not_reported"
+	TimingUnavailablePending     = "pending"
+)
+
+func timingUnavailableReason(attempt SubTask) string {
+	if !IsTerminalAttemptStatus(attempt.Status) {
+		return TimingUnavailablePending
+	}
+	if strings.TrimSpace(attempt.AgentID) == "" && attempt.StartedAt == nil {
+		return TimingUnavailableNotExecuted
+	}
+	return TimingUnavailableNotReported
 }

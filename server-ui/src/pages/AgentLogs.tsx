@@ -85,6 +85,8 @@ const AgentLogs: React.FC = () => {
     const [retentionSaving, setRetentionSaving] = useState(false);
     const [loading, setLoading] = useState(false);
     const [alertModalOpen, setAlertModalOpen] = useState(false);
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(20);
     const [alertForm] = Form.useForm();
 
     const selectedAgentID = Form.useWatch('agent_id', form);
@@ -395,7 +397,18 @@ const AgentLogs: React.FC = () => {
                     columns={columns}
                     dataSource={logs}
                     loading={loading}
-                    pagination={{ pageSize: 20, showSizeChanger: true }}
+                    pagination={{
+                        current: page,
+                        pageSize,
+                        total: logs.length,
+                        showSizeChanger: true,
+                        pageSizeOptions: [20, 50, 100, 200],
+                        showTotal: (total) => `共 ${total} 条`,
+                        onChange: (nextPage, nextPageSize) => {
+                            setPage(nextPageSize === pageSize ? nextPage : 1);
+                            setPageSize(nextPageSize);
+                        },
+                    }}
                     scroll={{ y: 560 }}
                 />
             )}

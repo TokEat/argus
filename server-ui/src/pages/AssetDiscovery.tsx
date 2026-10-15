@@ -13,9 +13,11 @@ import {
     Space,
     Table,
     Tag,
+    Tooltip,
     Typography,
 } from 'antd';
 import {
+    CopyOutlined,
     DownloadOutlined,
     EyeOutlined,
     GlobalOutlined,
@@ -59,6 +61,50 @@ const queryPlaceholders: Record<API.AssetDiscoveryProvider, string> = {
     fofa: '例如：domain="example.com"',
     hunter: '例如：domain="example.com"',
     quake: '例如：domain:"example.com"',
+};
+
+const monoFont = "'JetBrains Mono', 'Fira Code', 'SFMono-Regular', Consolas, monospace";
+
+/** 状态码配色：2xx 绿 / 3xx 蓝 / 4xx 橙 / 5xx 红。 */
+const statusCodeMeta = (code?: number) => {
+    if (!code) return { text: '-', color: '#94a3b8' };
+    if (code < 300) return { text: String(code), color: '#10b981' };
+    if (code < 400) return { text: String(code), color: '#0ea5e9' };
+    if (code < 500) return { text: String(code), color: '#f59e0b' };
+    return { text: String(code), color: '#ef4444' };
+};
+
+/** 目标单元格主显：协议 + 主机（域名优先）+ 端口，一行等宽字体。 */
+const assetTargetText = (record: API.AssetDiscoveryQueryAsset): string => {
+    const host = record.domain || record.target;
+    if (!host) return '-';
+    const protocol = record.protocol ? `${record.protocol}://` : '';
+    return `${protocol}${host}:${record.port}`;
+};
+
+const csvEscape = (value: unknown): string => {
+    const text = value === undefined || value === null ? '' : String(value);
+    return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
+
+const assetCSVText = (records: API.AssetDiscoveryQueryAsset[]): string => {
+    const header = ['目标', '协议', '域名', 'IP 地址', '端口', '状态码', '站点标题', '供应商', 'ICP', '国家', '城市', '来源', '观察时间'];
+    const lines = records.map((asset) => [
+        asset.target,
+        asset.protocol,
+        asset.domain,
+        asset.ip,
+        asset.port,
+        asset.status_code,
+        asset.title,
+        asset.company,
+        asset.icp,
+        asset.country,
+        asset.city,
+        asset.source,
+        asset.observed_at,
+    ].map(csvEscape).join(','));
+    return [header.map(csvEscape).join(','), ...lines].join('\n');
 };
 
 const AssetDiscovery: React.FC = () => {
@@ -201,16 +247,17 @@ const AssetDiscovery: React.FC = () => {
         const normalizedExpression = expression.trim();
         if (!projectId || !normalizedExpression || !canQuery) return;
         const requestID = ++queryRequest.current;
+        detailRequest.current += 1;
         const requestedProjectId = projectId;
         setQuerying(true);
         try {
-            const result = await queryProjectAssetDiscovery(requestedProjectId, queryProvider, normalizedExpression);
+            const result = await queryProjectAssetDiscovery(requestedProjectId, queryProvider, normalizedExpression, { page: 1 });
             if (requestID !== queryRequest.current) return;
             setPreview(result);
             setSelectedQuery(null);
             setDetail(null);
             setDetailOpen(true);
-            message.success(`测绘完成，返回 ${result.assets.length} 个规范资产`);
+            message.success(`测绘完成，已获取 ${result.assets.length} 条规范资产`);
             await loadHistory();
         } catch (error) {
             if (requestID === queryRequest.current) {
@@ -238,6 +285,30 @@ const AssetDiscovery: React.FC = () => {
         }
     };
 
+    const loadPreviewPage = async (page: number, pageSize: number) => {
+        if (!projectId || !preview) return;
+        const requestID = ++detailRequest.current;
+        const requestedProjectId = projectId;
+        const provider = preview.provider as API.AssetDiscoveryProvider;
+        const snapshotId = preview.snapshot_id;
+        if (!snapshotId) return;
+        setDetailLoading(true);
+        try {
+            const result = await queryProjectAssetDiscovery(requestedProjectId, provider, '', {
+                page,
+                limit: pageSize,
+                snapshotId,
+            });
+            if (requestID === detailRequest.current) setPreview(result);
+        } catch (error) {
+            if (requestID === detailRequest.current) {
+                message.error(typeof error === 'string' ? error : '加载测绘结果失败');
+            }
+        } finally {
+            if (requestID === detailRequest.current) setDetailLoading(false);
+        }
+    };
+
     const handleOpenDetail = (query: API.AssetDiscoveryQuerySummary) => {
         setPreview(null);
         setSelectedQuery(query);
@@ -247,6 +318,30 @@ const AssetDiscovery: React.FC = () => {
         setDetailOpen(true);
         void loadDetail(query, 1, detailPageSize);
     };
+
+    const handleExportVisibleAssets = () => {
+        if (!visibleAssets.length) return;
+        const stamp = dayjs().format('YYYYMMDD-HHmmss');
+        const url = window.URL.createObjectURL(new Blob([`\uFEFF${assetCSVText(visibleAssets)}`], { type: 'text/csv;charset=utf-8' }));
+        const link = document.createElement('a');
+        try {
+            link.href = url;
+            link.download = `argus-asset-discovery-${preview ? 'preview' : `query-${selectedQuery?.id ?? 'result'}`}-${stamp}.csv`;
+            document.body.appendChild(link);
+            link.click();
+        } finally {
+            link.remove();
+            window.URL.revokeObjectURL(url);
+        }
+        message.success(`已导出当前结果 ${visibleAssets.length} 条资产`);
+    };
+
+    const handleCopyTarget = useCallback((target: string) => {
+        void navigator.clipboard?.writeText(target).then(
+            () => message.success('目标已复制'),
+            () => message.error('复制失败，请手动复制'),
+        );
+    }, [message]);
 
     const handleExportQuery = async (query: API.AssetDiscoveryQuerySummary) => {
         if (!projectId) return;
@@ -348,22 +443,85 @@ const AssetDiscovery: React.FC = () => {
     ];
 
     const assetColumns = useMemo<ColumnsType<API.AssetDiscoveryQueryAsset>>(() => [
-        { title: '#', dataIndex: 'position', width: 60, render: (value: number | undefined) => value === undefined ? '-' : value + 1 },
+        { title: '#', dataIndex: 'position', width: 44, align: 'center', render: (value: number | undefined) => value === undefined ? '-' : value + 1 },
         {
             title: '目标',
-            dataIndex: 'target',
-            width: 310,
-            render: (value: string) => <Paragraph copyable={{ text: value }} ellipsis={{ rows: 1 }} style={{ margin: 0 }}>{value}</Paragraph>,
+            key: 'target',
+            width: 230,
+            render: (_, record) => (
+                <Text
+                    style={{ fontFamily: monoFont, fontSize: 12, fontWeight: 600, color: '#1e293b', display: 'block' }}
+                    ellipsis={{ tooltip: assetTargetText(record) }}
+                >
+                    {assetTargetText(record)}
+                </Text>
+            ),
         },
-        { title: 'IP', dataIndex: 'ip', width: 150, render: (value?: string) => value || '-' },
-        { title: '端口', dataIndex: 'port', width: 80 },
-        { title: '协议', dataIndex: 'protocol', width: 90, render: (value?: string) => value || '-' },
-        { title: '域名', dataIndex: 'domain', width: 200, ellipsis: true, render: (value?: string) => value || '-' },
-        { title: '标题', dataIndex: 'title', width: 240, ellipsis: true, render: (value?: string) => value || '-' },
-        { title: '来源', dataIndex: 'source', width: 90, render: (value: string) => <Tag>{value.toUpperCase()}</Tag> },
-    ], []);
+        {
+            title: 'IP 地址',
+            dataIndex: 'ip',
+            width: 128,
+            render: (value?: string) => value
+                ? <Text style={{ fontFamily: monoFont, fontSize: 12, color: '#475569' }}>{value}</Text>
+                : <Text type="secondary" style={{ fontSize: 12 }}>-</Text>,
+        },
+        {
+            title: '端口',
+            dataIndex: 'port',
+            width: 58,
+            align: 'center',
+            render: (value: number) => <Text style={{ fontFamily: monoFont, fontSize: 12 }}>{value}</Text>,
+        },
+        {
+            title: '站点标题',
+            dataIndex: 'title',
+            width: 240,
+            render: (value?: string) => value
+                ? <Text ellipsis={{ tooltip: value }} style={{ fontSize: 12, color: '#334155', display: 'block' }}>{value}</Text>
+                : <Text type="secondary" style={{ fontSize: 12 }}>-</Text>,
+        },
+        {
+            title: '状态码',
+            dataIndex: 'status_code',
+            width: 64,
+            align: 'center',
+            render: (value?: number) => <Text style={{ fontSize: 12, fontFamily: monoFont, color: statusCodeMeta(value).color, fontWeight: 600 }}>{statusCodeMeta(value).text}</Text>,
+        },
+        {
+            title: '供应商',
+            key: 'vendor',
+            width: 180,
+            render: (_, record) => (
+                <Space size={4}>
+                    {record.company
+                        ? <Text ellipsis={{ tooltip: record.company }} style={{ fontSize: 12, color: '#334155', maxWidth: 96, display: 'block' }}>{record.company}</Text>
+                        : <Text type="secondary" style={{ fontSize: 12 }}>-</Text>}
+                    <Tag color={providerColor[record.source] || 'default'} style={{ fontSize: 11, marginInlineEnd: 0 }}>{record.source.toUpperCase()}</Tag>
+                </Space>
+            ),
+        },
+        {
+            title: '操作',
+            key: 'action',
+            width: 88,
+            render: (_, record) => (
+                <Tooltip title="复制完整目标">
+                    <Button type="link" size="small" style={{ padding: 0, fontSize: 12 }} icon={<CopyOutlined />} onClick={() => handleCopyTarget(record.target)}>
+                        复制
+                    </Button>
+                </Tooltip>
+            ),
+        },
+    ], [handleCopyTarget]);
 
     const visibleAssets = preview?.assets || detail?.assets || [];
+    const previewPageSize = preview?.page_size || 100;
+    const previewPageSizeOptions = preview?.provider === 'hunter' ? [100] : [100, 200, 500];
+    const previewTotal = preview
+        ? preview.has_more === false
+            ? preview.returned_count ?? preview.assets.length
+            : preview.provider_total || preview.assets.length
+        : 0;
     const currentProject = projects.find((project) => project.ID === projectId);
     const projectArchived = currentProject?.Status === 'archived';
     const canArchiveAssets = canQuery && !projectArchived && !preview && !!detail && !!selectedQuery;
@@ -488,7 +646,7 @@ const AssetDiscovery: React.FC = () => {
                                     </Text>
                                 </div>
                                 <Text type="secondary">
-                                    当前表达式 {expression.length}/4096；默认最多返回 100 条，不会自动创建扫描任务或执行 POC。
+                                    当前表达式 {expression.length}/4096；默认每页 100 条，可像官方站点一样逐页浏览全部结果，不会自动创建扫描任务或执行 POC。
                                 </Text>
                                 <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
                                     <Button
@@ -568,6 +726,28 @@ const AssetDiscovery: React.FC = () => {
                 open={detailOpen}
                 onClose={() => setDetailOpen(false)}
                 destroyOnHidden
+                extra={(
+                    <Space>
+                        <Button
+                            size="small"
+                            icon={<DownloadOutlined />}
+                            disabled={visibleAssets.length === 0}
+                            onClick={handleExportVisibleAssets}
+                        >
+                            导出结果
+                        </Button>
+                        {!preview && selectedQuery && (
+                            <Button
+                                size="small"
+                                icon={<DownloadOutlined />}
+                                loading={exportingQueryId === selectedQuery.id}
+                                onClick={() => void handleExportQuery(selectedQuery)}
+                            >
+                                导出快照
+                            </Button>
+                        )}
+                    </Space>
+                )}
             >
                 {detailLoading ? (
                     <Table loading columns={assetColumns} dataSource={[]} pagination={false} />
@@ -575,7 +755,7 @@ const AssetDiscovery: React.FC = () => {
                     <>
                         <Descriptions size="small" bordered column={{ xs: 1, sm: 2, md: 3 }} style={{ marginBottom: 16 }}>
                             <Descriptions.Item label="来源">{(preview?.provider || selectedQuery?.provider || '-').toUpperCase()}</Descriptions.Item>
-                            <Descriptions.Item label="返回资产">{preview?.assets.length ?? selectedQuery?.returned_count ?? 0}</Descriptions.Item>
+                            <Descriptions.Item label="返回资产">{preview?.returned_count ?? preview?.assets.length ?? selectedQuery?.returned_count ?? 0}</Descriptions.Item>
                             <Descriptions.Item label="Provider 总量">{preview?.provider_total ?? selectedQuery?.provider_total ?? 0}</Descriptions.Item>
                             {!preview && <Descriptions.Item label="查询时间">{selectedQuery ? dayjs(selectedQuery.created_at).format('YYYY-MM-DD HH:mm:ss') : '-'}</Descriptions.Item>}
                             {!preview && <Descriptions.Item label="查询表达式" span={2}><Text code>{selectedQuery?.expression || '-'}</Text></Descriptions.Item>}
@@ -584,6 +764,9 @@ const AssetDiscovery: React.FC = () => {
                             rowKey={(record) => (record as API.AssetDiscoveryQueryHistoryAsset).id ?? `${record.position ?? 'preview'}:${record.target}`}
                             columns={assetColumns}
                             dataSource={visibleAssets}
+                            size="small"
+                            className="argus-adt-table"
+                            tableLayout="fixed"
                             rowSelection={canArchiveAssets ? {
                                 selectedRowKeys: selectedAssetIds,
                                 onChange: (keys) => {
@@ -596,8 +779,32 @@ const AssetDiscovery: React.FC = () => {
                                     return { disabled: id === undefined || (selectedAssetIds.length >= 100 && !selectedAssetIds.includes(id)) };
                                 },
                             } : undefined}
-                            scroll={{ x: 1420 }}
-                            pagination={preview ? false : {
+                            expandable={{
+                                rowExpandable: (record) => Boolean(record.icp || record.country || record.city || record.company || record.observed_at),
+                                expandedRowRender: (record: API.AssetDiscoveryQueryAsset) => (
+                                    <Descriptions size="small" column={{ xs: 1, sm: 2, md: 4 }} style={{ maxWidth: 900, margin: '4px 0' }}>
+                                        <Descriptions.Item label="域名">{record.domain || '-'}</Descriptions.Item>
+                                        <Descriptions.Item label="ICP">{record.icp || '-'}</Descriptions.Item>
+                                        <Descriptions.Item label="国家">{record.country || '-'}</Descriptions.Item>
+                                        <Descriptions.Item label="城市">{record.city || '-'}</Descriptions.Item>
+                                        <Descriptions.Item label="公司">{record.company || '-'}</Descriptions.Item>
+                                        <Descriptions.Item label="来源">{record.source.toUpperCase()}</Descriptions.Item>
+                                        <Descriptions.Item label="观察时间">{record.observed_at || '-'}</Descriptions.Item>
+                                    </Descriptions>
+                                ),
+                            }}
+                            scroll={{ x: 1050 }}
+                            pagination={preview ? {
+                                current: preview.page || 1,
+                                pageSize: previewPageSize,
+                                total: previewTotal,
+                                showSizeChanger: previewPageSizeOptions.length > 1,
+                                pageSizeOptions: previewPageSizeOptions,
+                                showTotal: (total) => `共 ${total} 条结果`,
+                                onChange: (page, pageSize) => {
+                                    void loadPreviewPage(page, pageSize);
+                                },
+                            } : {
                                 current: detailPage,
                                 pageSize: detailPageSize,
                                 total: detail?.total || selectedQuery?.returned_count || 0,
@@ -624,6 +831,18 @@ const AssetDiscovery: React.FC = () => {
                     </>
                 )}
             </Drawer>
+            <style>{`
+                /* 测绘结果表：参考引擎检索视图的紧凑行距 */
+                .argus-adt-table .ant-table-tbody > tr > td {
+                    padding: 3px 8px !important;
+                }
+                .argus-adt-table .ant-table-thead > tr > th {
+                    padding: 6px 8px !important;
+                }
+                .argus-adt-table .ant-table-row-expand-icon {
+                    margin-inline-end: 6px;
+                }
+            `}</style>
         </div>
     );
 };

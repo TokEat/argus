@@ -73,12 +73,27 @@ func TestBuildTaskTimingProjectionIsScopedAndBounded(t *testing.T) {
 	if err := store.Create(&rows).Error; err != nil {
 		t.Fatal(err)
 	}
-	projection, err := BuildTaskTimingProjection(store, root, []SubTask{{ID: "attempt-1", TenantID: "tenant-a", ProjectID: "project-a", RootTaskID: "root-a"}, {ID: "old-agent", TenantID: "tenant-a", ProjectID: "project-a", RootTaskID: "root-a"}})
+	started := now
+	projection, err := BuildTaskTimingProjection(store, root, []SubTask{
+		{ID: "attempt-1", TenantID: "tenant-a", ProjectID: "project-a", RootTaskID: "root-a", Status: "Done", AgentID: "agent"},
+		{ID: "not-executed", TenantID: "tenant-a", ProjectID: "project-a", RootTaskID: "root-a", Status: "Done"},
+		{ID: "not-reported", TenantID: "tenant-a", ProjectID: "project-a", RootTaskID: "root-a", Status: "Done", AgentID: "agent-old", StartedAt: &started},
+		{ID: "pending", TenantID: "tenant-a", ProjectID: "project-a", RootTaskID: "root-a", Status: "Running", AgentID: "agent-live"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if projection.Truncated || len(projection.Attempts) != 2 || !projection.Attempts[0].Available || projection.Attempts[1].Available {
+	if projection.Truncated || len(projection.Attempts) != 4 || !projection.Attempts[0].Available || projection.Attempts[0].UnavailableReason != "" {
 		t.Fatalf("projection availability = %+v", projection)
+	}
+	if projection.Attempts[1].Available || projection.Attempts[1].UnavailableReason != TimingUnavailableNotExecuted {
+		t.Fatalf("not-executed attempt = %+v", projection.Attempts[1])
+	}
+	if projection.Attempts[2].Available || projection.Attempts[2].UnavailableReason != TimingUnavailableNotReported {
+		t.Fatalf("not-reported attempt = %+v", projection.Attempts[2])
+	}
+	if projection.Attempts[3].Available || projection.Attempts[3].UnavailableReason != TimingUnavailablePending {
+		t.Fatalf("pending attempt = %+v", projection.Attempts[3])
 	}
 	if got := projection.Attempts[0].Events; len(got) != 2 || got[0].Kind != "rule_prepare" || got[1].DurationMS != 2000 {
 		t.Fatalf("projection events = %+v", got)

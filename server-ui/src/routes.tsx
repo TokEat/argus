@@ -14,6 +14,7 @@ import {
     TeamOutlined,
     SafetyOutlined,
     KeyOutlined,
+    ApiOutlined,
     DatabaseOutlined,
     ProfileOutlined,
     ProjectOutlined,
@@ -43,6 +44,7 @@ import AgentLogs from './pages/AgentLogs';
 
 import ApiKeysConfig from './pages/ApiKeysConfig';
 import AIConfig from './pages/AIConfig';
+import McpManagement from './pages/McpManagement';
 import Login from './pages/Login';
 import { canAccessRole, getCurrentUserRole } from './utils/auth';
 import type { UserRole } from './utils/auth';
@@ -235,6 +237,13 @@ export const menuRoutes: RouteConfig[] = [
                 name: 'API 密钥',
                 icon: <KeyOutlined />,
                 element: <ApiKeysConfig />,
+                minRole: 'admin',
+            },
+            {
+                path: '/mcp-admin',
+                name: 'MCP 管理',
+                icon: <ApiOutlined />,
+                element: <McpManagement />,
                 minRole: 'admin',
             },
             {

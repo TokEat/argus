@@ -430,8 +430,13 @@ func SplitFailedSubTask(sub *SubTask, resetRetryBudget bool) (split []SubTask, d
 		firstAttempt.FinishedAt = nil
 		firstAttempt.CreatedAt = time.Time{}
 		firstAttempt.UpdatedAt = time.Time{}
-		applyCurrentTaskConfig(tx, &firstAttempt, currentBatch, root)
-		firstAttempt.RuleVersion = currentAttemptRuleVersion(tx, firstAttempt.RuleVersion)
+		// Derived validation snapshots are immutable: keep the attempt's own
+		// stage config and pinned rule version instead of the Root's current
+		// asset-discovery revision, which would silently disable POC execution.
+		if !immutableDerivedExecutionConfig(current.Config) {
+			applyCurrentTaskConfig(tx, &firstAttempt, currentBatch, root)
+			firstAttempt.RuleVersion = currentAttemptRuleVersion(tx, firstAttempt.RuleVersion)
+		}
 
 		siblingAttempt = firstAttempt
 		siblingAttempt.ID = siblingAttemptID

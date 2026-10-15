@@ -1,16 +1,9 @@
 package db
 
-import (
-	"fmt"
-
-	"gorm.io/gorm"
-)
-
 func schemaModels() []interface{} {
 	return []interface{}{
 		&Project{},
 		&ProjectMember{},
-		&CronTask{},
 		&RootTask{},
 		&SubTask{},
 		&TaskBatch{},
@@ -22,6 +15,8 @@ func schemaModels() []interface{} {
 		&CredentialDictionaryRevision{},
 		&SubdomainDictionary{},
 		&SubdomainDictionaryRevision{},
+		&SubdomainPassiveCache{},
+		&SubdomainPassiveJob{},
 		&CredentialBundle{},
 		&CredentialFindingSecret{},
 		&CredentialRevealAudit{},
@@ -44,13 +39,11 @@ func schemaModels() []interface{} {
 		&ScanWorkClaim{},
 		&TaskCoverageLink{},
 		&ScanTimingEvent{},
-		&NotificationRule{},
 		&Domain{},
 		&Asset{},
 		&Credential{},
 		&FingerprintHit{},
 		&Vulnerability{},
-		&AssetChangeLog{},
 		&Report{},
 		&Node{},
 		&AgentSessionAudit{},
@@ -58,7 +51,7 @@ func schemaModels() []interface{} {
 		&Arsenal{},
 		&ArsenalEvent{},
 		&ArsenalAIReview{},
-		&AIToolInvocation{},
+		&MCPToolInvocation{},
 		&User{},
 		&CustomRole{},
 		&TenantQuota{},
@@ -90,24 +83,11 @@ func schemaModels() []interface{} {
 		&CloudAccountBinding{},
 		&CloudScalingPolicy{},
 		&CloudInstance{},
+		&OAuthClient{},
+		&OAuthAuthorizationCode{},
+		&OAuthRefreshToken{},
+		&TenantMCPSettings{},
+		&OAuthTenantClientBlock{},
+		&MCPAdminEvent{},
 	}
-}
-
-func autoMigrateSchema(db *gorm.DB) error {
-	return db.AutoMigrate(schemaModels()...)
-}
-
-func ensureRuntimeIndexes(db *gorm.DB) error {
-	ddls := []string{
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_dedupe ON assets (project_id, target, protocol)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_fp_dedupe ON fingerprint_hits (project_id, target, product_name)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_vuln_new_dedupe ON vulnerabilities (project_id, target, plugin)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_domain_dedupe ON domains (tenant_id, project_id, name)`,
-	}
-	for _, ddl := range ddls {
-		if err := db.Exec(ddl).Error; err != nil {
-			return fmt.Errorf("ensure runtime index failed: %s: %w", ddl, err)
-		}
-	}
-	return nil
 }

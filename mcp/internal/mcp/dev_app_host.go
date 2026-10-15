@@ -79,12 +79,8 @@ func (h *devAppHost) callTool(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
 		return
 	}
-	if request.Name != "argus_yaksha_exp" && request.Name != "argus_exp_workspace" && request.Name != "argus_context" {
+	if request.Name != "argus_yaksha_exp" && request.Name != "argus_exp_workspace" && request.Name != "argus_agents" {
 		http.Error(w, `{"error":"tool is not available in EXP Studio"}`, http.StatusForbidden)
-		return
-	}
-	if request.Name == "argus_context" && request.Arguments["action"] != "agents" {
-		http.Error(w, `{"error":"only the read-only agents context is available in EXP Studio"}`, http.StatusForbidden)
 		return
 	}
 	result, err := h.client.CallTool(r.Context(), request.Name, request.Arguments)

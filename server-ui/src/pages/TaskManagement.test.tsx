@@ -120,7 +120,7 @@ describe('TaskManagement', () => {
             return ({
             policy: request.policy,
             policy_hash: 'policy-hash', plan_hash: 'plan-hash', rule_version: 'rules-v1',
-            port_count: request.policy.port_profile === 'common-100' ? 100 : request.policy.port_profile === 'all' ? 65535 : 1000,
+            port_count: request.policy.port_profile === 'common-100' ? 134 : request.policy.port_profile === 'all' ? 65535 : 1000,
             target_summary: { total: 1 }, stages: [
                 { id: 'host_discovery', enabled: true }, { id: 'port_scan', enabled: true },
                 { id: 'protocol_identification', enabled: true }, { id: 'fingerprint', enabled: true },
@@ -188,7 +188,7 @@ describe('TaskManagement', () => {
             policy: expect.objectContaining({
                 schema_version: 'argus.scan-policy/v1', preset: 'standard', port_profile: 'top-1000',
                 capabilities: expect.objectContaining({ risk_validation: true, credential_validation: false }),
-                authorization: { validation_confirmed: true },
+                authorization: { validation_confirmed: true, allow_high_risk_auto_execution: false },
             }),
         }), expect.any(String)));
     });
@@ -444,6 +444,7 @@ describe('TaskManagement', () => {
                 CompletedChunks: 0,
                 Priority: 1,
                 CurrentConfigVersion: 1,
+                ProjectID: 'project-1',
                 CreatedAt: '2026-08-09T01:00:00Z',
             } as API.RootTask],
             total: 1,
@@ -451,13 +452,45 @@ describe('TaskManagement', () => {
             page_size: 20,
             has_more: false,
         });
+        const sealedPolicy: API.ScanPolicy = {
+            schema_version: 'argus.scan-policy/v1',
+            preset: 'standard',
+            port_profile: 'top-1000',
+            scan_method: 'tcp',
+            intensity: 'balanced',
+            capabilities: {
+                subdomain_discovery: true,
+                subdomain_bruteforce: false,
+                allow_cdn_assets: false,
+                allow_private_resolved_domains: false,
+                host_binding: false,
+                behavior_probe: true,
+                directory_probe: false,
+                risk_validation: true,
+                credential_validation: false,
+                web_crawl: false,
+                sensitive_info: false,
+            },
+            subdomains: { wordlists: [], bruteforce_depth: 0 },
+            credentials: { username_books: [], password_books: [], pair_limit: 50000 },
+            authorization: { validation_confirmed: true, allow_high_risk_auto_execution: false },
+        };
         const detail = {
             task: {
-                id: 'task-config', name: 'Config Task', status: 'Running', priority: 1,
+                id: 'task-config', name: 'Config Task', project_id: 'project-1', status: 'Running', priority: 1,
                 total_chunks: 1, completed_chunks: 0, total_targets: 1, completed_targets: 0,
                 timeout_sec: 60, original_targets: '["https://example.test"]',
                 config: { NoPoc: true, WebTimeout: 10 }, rule_version: 'rules-v1', current_config_version: 1,
                 created_at: '2026-08-09T01:00:00Z', updated_at: '2026-08-09T01:00:00Z',
+            },
+            scan_policy: {
+                schema_version: 'argus.scan-policy/v1',
+                policy: sealedPolicy,
+                policy_hash: 'policy-hash',
+                plan_hash: 'plan-hash',
+                risk_status: 'pending',
+                credential_status: 'skipped',
+                authorized_at: '2026-08-09T01:00:00Z',
             },
             sub_tasks: [], status_distribution: {}, reason_stats: [], audits: [],
             result_stats: { assets: 0, fingerprints: 0, vulns: 0, severity: {} },
@@ -497,16 +530,25 @@ describe('TaskManagement', () => {
         const modalHint = await screen.findByText(/新版本只用于之后新增的批次/);
         const dialog = modalHint.closest('[role="dialog"]') as HTMLElement;
         expect(dialog).toBeTruthy();
-        const timeoutInput = within(dialog).getByLabelText('批次超时（秒）');
+        expect(within(dialog).getByText('项目与目标（只读）')).toBeInTheDocument();
+        expect(within(dialog).getByDisplayValue('默认项目')).toBeInTheDocument();
+        expect(within(dialog).queryByPlaceholderText('选择项目')).not.toBeInTheDocument();
+        await user.click(within(dialog).getByText(/结构化专家配置/));
+        const timeoutInput = within(dialog).getByLabelText('任务超时（秒）');
         await user.clear(timeoutInput);
         await user.type(timeoutInput, '120');
         await user.type(within(dialog).getByPlaceholderText(/说明本次调整/), 'increase timeout');
+        await waitFor(() => expect(within(dialog).getByRole('button', { name: /保存为新版本/ })).toBeEnabled());
         await user.click(within(dialog).getByRole('button', { name: /保存为新版本/ }));
 
         await waitFor(() => expect(updateTaskConfigMock).toHaveBeenCalledWith('task-config', expect.objectContaining({
             timeout_sec: 120,
             change_note: 'increase timeout',
-            config: { NoPoc: true, WebTimeout: 10 },
+            plan_hash: 'plan-hash',
+            policy: expect.objectContaining({
+                schema_version: 'argus.scan-policy/v1',
+                preset: 'standard',
+            }),
         })));
     });
 
@@ -550,8 +592,9 @@ describe('TaskManagement', () => {
         );
 
         expect(await screen.findByText('History Task')).toBeInTheDocument();
-        await user.click(screen.getByRole('button', { name: /详情/ }));
+        await user.click(screen.getByRole('button', { name: /批次/ }));
         expect(await screen.findByText('执行尝试历史 (2)')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /批量重试失败批次/ })).toBeDisabled();
         expect(screen.getByText('connection reset')).toBeInTheDocument();
         expect(screen.getByText('失败重试')).toBeInTheDocument();
         expect(screen.getByText('agent-old')).toBeInTheDocument();
@@ -579,7 +622,8 @@ describe('TaskManagement', () => {
                 schema_version: 'argus.task-coverage-explanation/v1',
                 summary: {
                     executed_work_items: 1, reused_stages: 2, in_flight_work_items: 1,
-                    invalidated_stages: 1, expired_stages: 1, saved_stages: 2, saved_targets: 1,
+                    skipped_stages: 1, failed_stages: 1,
+                    invalidated_stages: 1, not_reusable_stages: 36, expired_stages: 1, saved_stages: 2, saved_targets: 1,
                 },
                 items: [
                     {
@@ -598,12 +642,34 @@ describe('TaskManagement', () => {
                         reason: 'active_work_claim', created_at: '2026-08-09T01:00:20Z',
                     },
                 ],
-                invalidations: [{
-                    normalized_target: 'https://a.test', stage: 'http_probe', status: 'invalidated',
-                    reason: 'upstream_content_changed:port_scan',
-                    source: { task_id: 'task-source', task_name: 'Source Task', batch_id: 'source-batch', attempt_id: 'source-attempt' },
-                    invalidated_at: '2026-08-09T01:03:00Z', valid_until: null,
-                }],
+                invalidations: [
+                    {
+                        normalized_target: 'https://a.test', stage: 'http_probe', status: 'invalidated',
+                        reason: 'upstream_content_changed:port_scan',
+                        source: { task_id: 'task-source', task_name: 'Source Task', batch_id: 'source-batch', attempt_id: 'source-attempt' },
+                        invalidated_at: '2026-08-09T01:03:00Z', valid_until: null,
+                    },
+                    {
+                        normalized_target: 'jslgroup.cn', stage: 'icmp_discovery', status: 'skipped',
+                        reason: 'stage_not_executed',
+                        source: { task_id: 'task-coverage', task_name: 'Coverage Task', batch_id: 'batch-1', attempt_id: 'attempt-1' },
+                        invalidated_at: '2026-08-09T01:03:10Z', valid_until: null,
+                    },
+                    {
+                        normalized_target: 'https://dtry.cn:8088', stage: 'http_probe', status: 'failed',
+                        reason: 'http_budget_exhausted',
+                        source: { task_id: 'task-coverage', task_name: 'Coverage Task', batch_id: 'batch-1', attempt_id: 'attempt-1' },
+                        invalidated_at: '2026-08-09T01:03:20Z', valid_until: null,
+                    },
+                    {
+                        normalized_target: 'https://www.jslgroup.cn:443', stage: 'risk_validation', status: 'not_reusable',
+                        reason: 'endpoint_content_unknown',
+                        fingerprints: ['DigiCert-Cert', 'Nginx'],
+                        matched_pocs: ['nginx-config'],
+                        source: { task_id: 'task-coverage', task_name: 'Coverage Task', batch_id: 'batch-1', attempt_id: 'attempt-1' },
+                        invalidated_at: '2026-08-09T01:03:30Z', valid_until: null,
+                    },
+                ],
                 items_truncated: false,
                 invalidations_truncated: false,
             },
@@ -622,8 +688,18 @@ describe('TaskManagement', () => {
         expect(screen.getAllByText('执行中关联').length).toBeGreaterThan(0);
         expect(screen.getAllByText('Source Task').length).toBeGreaterThan(0);
         expect(screen.getByText('有效检查点恢复')).toBeInTheDocument();
-        expect(screen.getByText('失效与过期原因')).toBeInTheDocument();
+        expect(screen.getByText('覆盖缺口与原因')).toBeInTheDocument();
         expect(screen.getByText('上游内容变化（端口扫描）')).toBeInTheDocument();
+        expect(screen.getAllByText('已跳过').length).toBeGreaterThan(0);
+        expect(screen.getByText('该阶段对本批次不适用或已按策略跳过')).toBeInTheDocument();
+        expect(screen.getAllByText('阶段失败').length).toBeGreaterThan(0);
+        expect(screen.getByText('HTTP 探测超时，未得到完整响应')).toBeInTheDocument();
+        expect(screen.getByText('不可复用')).toBeInTheDocument();
+        expect(screen.getByText('风险验证已完成，但未绑定该目标的 HTTP 探测内容版本，下次不能复用')).toBeInTheDocument();
+        expect(screen.getByText('Nginx')).toBeInTheDocument();
+        expect(screen.getByText('DigiCert-Cert')).toBeInTheDocument();
+        expect(screen.getByText('nginx-config')).toBeInTheDocument();
+        expect(screen.getByText('已完成不可复用')).toBeInTheDocument();
     });
 
 
@@ -728,7 +804,7 @@ describe('TaskManagement', () => {
         );
 
         expect(await screen.findByText('Append Task')).toBeInTheDocument();
-        await user.click(screen.getByRole('button', { name: /详情/ }));
+        await user.click(screen.getByRole('button', { name: /批次/ }));
         await user.click(await screen.findByRole('button', { name: /增加批次/ }));
         const targetInput = await screen.findByLabelText('新增批次目标');
         const dialog = targetInput.closest('[role="dialog"]') as HTMLElement;
@@ -757,7 +833,7 @@ describe('TaskManagement', () => {
             .mockResolvedValue({ status: 'unchanged', replayed: false, new_subtasks: 0, new_batches: 0, new_targets: 0, duplicate_targets: 1, config_version: 1, total_chunks: 1, total_targets: 1 });
 
         render(<MemoryRouter><App><TaskManagement /></App></MemoryRouter>);
-        await user.click(await screen.findByRole('button', { name: /详情/ }));
+        await user.click(await screen.findByRole('button', { name: /批次/ }));
         await user.click(await screen.findByRole('button', { name: /增加批次/ }));
         const input = await screen.findByLabelText('新增批次目标');
         const dialog = input.closest('[role="dialog"]') as HTMLElement;
@@ -819,7 +895,8 @@ describe('TaskManagement', () => {
         );
 
         expect(await screen.findByText('Batch Control Task')).toBeInTheDocument();
-        await user.click(screen.getByRole('button', { name: /详情/ }));
+        await user.click(screen.getByRole('button', { name: /批次/ }));
+        expect(screen.getByRole('button', { name: /批量重试失败批次/ })).toBeDisabled();
         await user.click(await screen.findByRole('button', { name: '管理批次 batch-pending' }));
         await user.click(await screen.findByText('重试批次'));
         const confirmationText = await screen.findByText(/将保留历史执行/);
@@ -831,7 +908,7 @@ describe('TaskManagement', () => {
         const firstKey = retryTaskBatchMock.mock.calls[0][2];
         expect(await screen.findByText(/批次重试未确认完成/)).toBeInTheDocument();
         await user.click(screen.getByLabelText('Close'));
-        await user.click(screen.getByRole('button', { name: /详情/ }));
+        await user.click(screen.getByRole('button', { name: /批次/ }));
         await screen.findByRole('button', { name: '管理批次 batch-pending' });
         await user.click(await screen.findByRole('button', { name: '管理批次 batch-pending' }));
         const retryActions = await screen.findAllByText('重试批次');
@@ -872,6 +949,45 @@ describe('TaskManagement', () => {
 
         await waitFor(() => expect(retryTaskMock).toHaveBeenCalledWith('task-failed', expect.any(String)));
         await waitFor(() => expect(listTasksMock).toHaveBeenCalledTimes(2));
+    });
+
+    it('bulk-retries failed batches from the batch drawer of a partial task', async () => {
+        const user = userEvent.setup();
+        listTasksMock.mockResolvedValue({
+            items: [{
+                ID: 'task-partial', Name: 'Partial Task', Status: 'PartialDone', TotalTargets: 4, CompletedTargets: 2,
+                TotalChunks: 4, CompletedChunks: 2, Priority: 1, CreatedAt: '2026-08-09T01:00:00Z',
+            } as API.RootTask],
+            total: 1, page: 1, page_size: 20, has_more: false,
+        });
+        getTaskDetailMock.mockResolvedValue({
+            task: {
+                id: 'task-partial', name: 'Partial Task', status: 'PartialDone', priority: 1,
+                total_chunks: 4, completed_chunks: 2, total_targets: 4, completed_targets: 2,
+                timeout_sec: 60, original_targets: '[]', config: {},
+                rule_version: 'rules-v1', current_config_version: 1,
+                created_at: '2026-08-09T01:00:00Z', updated_at: '2026-08-09T01:02:00Z',
+            },
+            sub_tasks: [],
+            batches: [{
+                id: 'batch-failed', sequence: 0, kind: 'risk_validation', target_type: 'risk_validation', target_count: 2,
+                status: 'FAILED', display_status: 'FAILED', control_state: 'active', config_version: 1,
+                rule_version: 'rules-v1', priority: 1, timeout_sec: 60, current_attempt_no: 1, attempt_count: 1,
+                latest_attempt_id: 'batch-failed-attempt-1', retry_count: 0, max_retry: 3,
+                created_at: '2026-08-09T01:00:00Z', updated_at: '2026-08-09T01:01:00Z',
+            }],
+            attempts: [], status_distribution: { FAILED: 1 }, reason_stats: [], audits: [],
+            result_stats: { assets: 1, fingerprints: 1, vulns: 0, severity: {} },
+        } satisfies API.TaskDetailResponse);
+        getTaskConfigRevisionsMock.mockResolvedValue({ task_id: 'task-partial', current_config_version: 1, items: [] });
+        retryTaskMock.mockResolvedValue({ status: 'retried', replayed: false, retried_batches: 1, completed_skipped: 1, paused_skipped: 0, dispatch_pending: 0 });
+
+        render(<MemoryRouter><App><TaskManagement /></App></MemoryRouter>);
+        await user.click(await screen.findByRole('button', { name: /批次/ }));
+        await user.click(await screen.findByRole('button', { name: /批量重试失败批次/ }));
+        const dialog = (await screen.findByText(/成功批次不会重复扫描/)).closest('[role="dialog"]') as HTMLElement;
+        await user.click(within(dialog).getByRole('button', { name: '确 认' }));
+        await waitFor(() => expect(retryTaskMock).toHaveBeenCalledWith('task-partial', expect.any(String)));
     });
 
     it('reuses a retry key after a network failure', async () => {

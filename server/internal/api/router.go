@@ -3,7 +3,9 @@ package api
 import (
 	"bytes"
 	"crypto/md5"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -29,6 +31,8 @@ const (
 	agentLogRetentionKey     = "agent_logs_retention_days"
 	defaultAgentLogRetention = 14
 	agentSessionTTL          = 7 * 24 * time.Hour
+	agentSessionRole         = "agent"
+	ephemeralJWTSecretLen    = 32
 )
 
 func isAgentInternalEndpoint(c *gin.Context) bool {
@@ -102,7 +106,7 @@ func validateAgentSession(c *gin.Context) bool {
 		tenantID = "default"
 	}
 	c.Set("tenant", tenantID)
-	c.Set("role", "admin")
+	c.Set("role", agentSessionRole)
 	c.Set("agent_id", agentID)
 	c.Set("agent_internal", true)
 	return true
@@ -217,17 +221,27 @@ func scopedNodeQuery(tenantID string) *gorm.DB {
 	return db.DB.Where("tenant_id = ?", tenantID)
 }
 
-var jwtSecretWarningOnce sync.Once
+var (
+	jwtSecretOnce sync.Once
+	jwtSecret     []byte
+)
 
-// currentJWTSecret 从环境变量 ARGUS_JWT_SECRET 读取，未设置则使用默认值（仅限开发环境）
+// currentJWTSecret 从 ARGUS_JWT_SECRET 读取 HMAC 密钥。
+// 未设置时为当前进程生成一次性随机密钥（开发模式）；重启后已签发 token 全部失效。
 func currentJWTSecret() []byte {
-	if secret := os.Getenv("ARGUS_JWT_SECRET"); secret != "" {
-		return []byte(secret)
-	}
-	jwtSecretWarningOnce.Do(func() {
-		log.Println("[Auth] WARNING: ARGUS_JWT_SECRET not set, using insecure default (dev only)")
+	jwtSecretOnce.Do(func() {
+		if secret := os.Getenv("ARGUS_JWT_SECRET"); secret != "" {
+			jwtSecret = []byte(secret)
+			return
+		}
+		buf := make([]byte, ephemeralJWTSecretLen)
+		if _, err := rand.Read(buf); err != nil {
+			log.Fatalf("[Auth] failed to generate ephemeral JWT secret: %v", err)
+		}
+		jwtSecret = []byte(hex.EncodeToString(buf))
+		log.Println("[Auth] WARNING: ARGUS_JWT_SECRET not set, using ephemeral HMAC key for this process (tokens will not survive restart)")
 	})
-	return []byte("P8-MUST-HAVE-SECRET-KEY")
+	return jwtSecret
 }
 
 // TenantMiddleware 强制 JWT 校验并拦截身份
@@ -278,26 +292,16 @@ func TenantMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		if claims, ok := token.Claims.(jwt.MapClaims); ok {
-			c.Set("tenant", claims["tenant_id"])
-			// 解析角色信息用于 RBAC
-			if role, ok := claims["role"].(string); ok {
-				c.Set("role", role)
-			} else {
-				c.Set("role", "admin") // 兼容旧 token
-			}
-			if uid, ok := claims["user_id"].(string); ok {
-				c.Set("user_id", uid)
-			}
-			if expAuthorized, ok := claims["exp_authorized"].(bool); ok {
-				c.Set("exp_authorized", expAuthorized)
-			} else {
-				c.Set("exp_authorized", false)
-			}
-		} else {
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid claims map"})
 			return
 		}
+		if !tokenAllowsAPI(claims) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token audience"})
+			return
+		}
+		applyJWTClaims(c, claims)
 
 		c.Next()
 	}
@@ -352,7 +356,8 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 	r.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, UPDATE")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Idempotency-Key")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Idempotency-Key, Mcp-Session-Id, Last-Event-ID, MCP-Protocol-Version")
+		c.Writer.Header().Set("Access-Control-Expose-Headers", "Mcp-Session-Id, Last-Event-ID, WWW-Authenticate")
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
 			return
@@ -369,16 +374,22 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 	api.Use(RBACMiddleware())
 	registerAPIV1Routes(api)
 
+	registerOAuthRoutes(r)
+	registerMCPHTTP(r)
+
 	// SPA 控制塔前台映射兜底
 	r.Static("/assets", "./server-ui/dist/assets")
 	r.Static("/release", "./release") // Agent 二进制分发（OSS fallback）
 	r.StaticFile("/favicon.ico", "./server-ui/dist/favicon.ico")
 	r.NoRoute(func(c *gin.Context) {
-		if !strings.HasPrefix(c.Request.URL.Path, "/api/") {
-			c.File("./server-ui/dist/index.html")
-		} else {
+		if strings.HasPrefix(c.Request.URL.Path, "/api/") ||
+			strings.HasPrefix(c.Request.URL.Path, "/mcp") ||
+			strings.HasPrefix(c.Request.URL.Path, "/oauth") ||
+			strings.HasPrefix(c.Request.URL.Path, "/.well-known/") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "API route not found"})
+			return
 		}
+		c.File("./server-ui/dist/index.html")
 	})
 
 	return r

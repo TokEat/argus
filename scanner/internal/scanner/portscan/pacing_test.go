@@ -1,11 +1,6 @@
 package portscan
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-	"runtime"
-	"strings"
 	"testing"
 	"time"
 )
@@ -77,31 +72,4 @@ func TestScanTCPScatterPacesSameTarget(t *testing.T) {
 	if plain >= interval {
 		t.Fatalf("unscattered scan took %s, want well under %s", plain, interval)
 	}
-}
-
-func TestScanSYNScatterRateLimit(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake masscan helper uses a POSIX shell")
-	}
-	dir := t.TempDir()
-	argsPath := filepath.Join(dir, "args")
-	helper := filepath.Join(dir, "masscan")
-	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\nprintf '<nmaprun></nmaprun>'\n", argsPath)
-	if err := os.WriteFile(helper, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-
-	// 2 targets at a 500ms per-target interval demands 2*1000/500 = 4 pps.
-	ScanSYN([]string{"192.0.2.1", "192.0.2.2"}, "80", helper, 10000, true, 500, nil)
-	args, err := os.ReadFile(argsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(args)), "\n")
-	for i := 0; i+1 < len(lines); i++ {
-		if lines[i] == "--rate" && lines[i+1] == "4" {
-			return
-		}
-	}
-	t.Fatalf("masscan args do not contain paced rate 4: %q", lines)
 }

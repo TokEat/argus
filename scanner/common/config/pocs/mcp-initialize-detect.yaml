@@ -1,0 +1,69 @@
+id: mcp-initialize-detect
+
+info:
+  name: MCP 服务 JSON-RPC initialize 识别
+  author: argus
+  severity: info
+  description: |
+    对 MCP Streamable HTTP 端点发送规范 initialize 请求，按 2025-11-25、2025-03-26、2024-11-05 依次协商 protocolVersion。命中 JSON-RPC 的 protocolVersion、serverInfo 或 Unsupported protocol version，用于识别 MCP 服务本身，不代表未授权利用。
+  metadata:
+    max-request: 9
+    product: MCP-Server
+    argus-execution-class: detection
+  tags: mcp,detect,tech
+
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/mcp"
+      - "{{BaseURL}}/mcp/"
+      - "{{BaseURL}}/"
+
+    headers:
+      Accept: "application/json, text/event-stream"
+      Content-Type: "application/json"
+
+    body: '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"{{protocol_version}}","capabilities":{},"clientInfo":{"name":"argus","version":"1.0"}}}'
+
+    payloads:
+      protocol_version:
+        - "2025-11-25"
+        - "2025-03-26"
+        - "2024-11-05"
+
+    stop-at-first-match: true
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "jsonrpc"
+
+      - type: word
+        part: body
+        words:
+          - "protocolVersion"
+          - "serverInfo"
+          - "Unsupported protocol version"
+        condition: or
+
+      - type: dsl
+        dsl:
+          - "status_code != 401"
+
+    extractors:
+      - type: json
+        name: servername
+        json:
+          - ".result.serverInfo.name"
+
+      - type: json
+        name: serverversion
+        json:
+          - ".result.serverInfo.version"
+
+      - type: json
+        name: protocolversion
+        json:
+          - ".result.protocolVersion"

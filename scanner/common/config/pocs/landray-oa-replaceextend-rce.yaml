@@ -1,11 +1,11 @@
 id: landray-oa-replaceextend-rce
 
 info:
-  name: Landray OA replaceExtend Function - Remote Code Execution
+  name: 蓝凌EKP replaceExtend 远程命令执行
   author: adeljck
   severity: critical
   description: |
-    There is a remote command execution vulnerability in Lanling OA replaceExtend Method. Use This Method To Move dataxml.jsp To A Dirctory That Can Access Without Auth,Then An attacker can Run Command With this.
+    蓝凌 EKP/OA replaceExtend 方法可将 dataxml.jsp 移动到未授权可访问目录并执行系统命令。
   reference:
     - https://forum.ywhack.com/thread-203681-1-1.html
   classification:

@@ -62,22 +62,12 @@ func confirmCopilotAction(c *gin.Context) {
 		return
 	}
 
-	module := resolveCopilotModule(compactPageContext(req.PageContext))
-	audit := AIToolAuditContext{TenantID: currentTenantID(c), UserID: c.GetString("user_id"), Module: module}
-	startedAt := time.Now()
 	actionType := strings.TrimSpace(req.Action.ActionType)
 	if actionType == "" {
 		actionType = strings.TrimSpace(stringParam(req.Action.Params, "action_type"))
 	}
 
 	result, err := executeCopilotAction(c, actionType, req.Action)
-	status := "success"
-	errorSummary := ""
-	if err != nil {
-		status = "error"
-		errorSummary = err.Error()
-	}
-	recordAIToolInvocation(audit, "CopilotAction:"+actionType, summarizeCopilotAction(req.Action), "", "", time.Since(startedAt), status, truncateString(errorSummary, 1000))
 	if err != nil {
 		statusCode := http.StatusBadRequest
 		if errors.Is(err, errEXPUserAuthorization) {
@@ -667,6 +657,23 @@ func allowedWorkflowTrigger(value string) bool {
 	}
 }
 
+func clampQueryInt(raw string, fallback, min, max int) int {
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return fallback
+	}
+	if parsed < min {
+		return min
+	}
+	if parsed > max {
+		return max
+	}
+	return parsed
+}
+
 func listAIToolInvocations(c *gin.Context) {
 	limit := clampQueryInt(c.Query("limit"), 50, 1, 200)
 	offset := clampQueryInt(c.Query("offset"), 0, 0, 10000)
@@ -711,46 +718,4 @@ func listAIToolInvocations(c *gin.Context) {
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"total": total, "items": items})
-}
-
-func clampQueryInt(raw string, fallback, min, max int) int {
-	if raw == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil {
-		return fallback
-	}
-	if parsed < min {
-		return min
-	}
-	if parsed > max {
-		return max
-	}
-	return parsed
-}
-
-func summarizeCopilotAction(action CopilotPendingAction) string {
-	params := compactAuditValue(action.Params, 0)
-	if paramMap, ok := params.(map[string]interface{}); ok {
-		if content := stringParam(action.Params, "content"); content != "" {
-			sum := sha256.Sum256([]byte(content))
-			paramMap["content"] = map[string]interface{}{
-				"sha256": hex.EncodeToString(sum[:]),
-				"length": len(content),
-			}
-		}
-	}
-	summary := map[string]interface{}{
-		"action_type":   action.ActionType,
-		"title":         truncateString(action.Title, 200),
-		"risk_level":    action.RiskLevel,
-		"required_role": action.RequiredRole,
-		"params":        params,
-	}
-	data, err := json.Marshal(summary)
-	if err != nil {
-		return "{}"
-	}
-	return truncateString(string(data), 4096)
 }

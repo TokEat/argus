@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/P0lar1ght/argus/server/internal/db"
+	"github.com/P0lar1ght/argus/server/internal/subdomainpassive"
 	"github.com/P0lar1ght/argus/shared/proto/go/scanplan"
 	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 	"github.com/gin-gonic/gin"
@@ -116,7 +117,11 @@ func buildTaskReasonStats(subTasks []db.SubTask) []taskReasonStat {
 			add(st.Status, "取消请求已下发，等待 Agent 确认", targetCount)
 		case db.AttemptStateQueued, db.AttemptStateDispatching, db.AttemptStateRecovered:
 			if strings.TrimSpace(st.AgentID) == "" {
-				add(st.Status, "等待可匹配节点认领", targetCount)
+				if db.CanonicalAttemptState(st.Status) == db.AttemptStateQueued && subdomainPassiveJobActive(db.DB, st.TenantID, st.ID) {
+					add(st.Status, "Server 被动子域收集中，完成后派发", targetCount)
+				} else {
+					add(st.Status, "等待可匹配节点认领", targetCount)
+				}
 			}
 		}
 	}
@@ -295,6 +300,7 @@ func getTaskDetail(c *gin.Context) {
 		"task": gin.H{
 			"id":                     rootTask.ID,
 			"name":                   rootTask.Name,
+			"project_id":             rootTask.ProjectID,
 			"status":                 rootTask.Status,
 			"priority":               rootTask.Priority,
 			"total_chunks":           rootTask.TotalChunks,
@@ -314,6 +320,7 @@ func getTaskDetail(c *gin.Context) {
 		"batches":              buildTaskBatchSummaries(taskBatches, attemptByID),
 		"attempts":             attemptSummaries,
 		"status_distribution":  statusDistribution,
+		"passive_collection":   subdomainpassive.CollectionProgressForTask(db.DB, tenantID, taskID),
 		"reason_stats":         buildTaskReasonStats(latestSubTasks),
 		"audits":               audits,
 		"coverage_explanation": coverageExplanation,
@@ -327,6 +334,19 @@ func getTaskDetail(c *gin.Context) {
 			"severity":     resultStats.Severity,
 		},
 	})
+}
+
+// subdomainPassiveJobActive reports whether the attempt is currently held by
+// an in-flight Server-side passive collection job.
+func subdomainPassiveJobActive(store *gorm.DB, tenantID, attemptID string) bool {
+	if store == nil || attemptID == "" {
+		return false
+	}
+	var count int64
+	store.Model(&db.SubdomainPassiveJob{}).
+		Where("tenant_id = ? AND attempt_id = ? AND state IN ?", tenantID, attemptID, []string{subdomainpassive.JobStatePending, subdomainpassive.JobStateRunning}).
+		Count(&count)
+	return count > 0
 }
 
 func createTask(c *gin.Context) {
@@ -522,6 +542,13 @@ func createTask(c *gin.Context) {
 
 	var taskBatches []db.TaskBatch
 	var subTasks []db.SubTask
+	var passiveJobs []db.SubdomainPassiveJob
+	heldAttempts := make(map[string]struct{})
+	// Server 端被动收集持有：策略开启被动子域发现且存在满足批次选择器的
+	// 能力 Agent 时，域名批次先停留 Queued，收集完成（或超时兜底）后再入队。
+	passiveHoldEnabled := subdomainpassive.Enabled() &&
+		effectiveConfig.Subdomain && !effectiveConfig.NoSubFinder
+	aliveNodes := subdomainpassive.AliveNodes(db.DB)
 	profile := batchProfile{
 		TotalTargets:  len(targets),
 		TotalBatches:  len(batches),
@@ -532,9 +559,17 @@ func createTask(c *gin.Context) {
 	for idx, batch := range batches {
 		chunkJSON, _ := json.Marshal(batch.Targets)
 
-		_, _, rulesJSON := effectiveSelectorRules(batch.SelectorJSON, userSelector, userRules)
+		batchLegacySelector, batchRules, rulesJSON := effectiveSelectorRules(batch.SelectorJSON, userSelector, userRules)
 		batchID := fmt.Sprintf("%s-batch-%d-%s", rootTaskID, idx, batch.TargetType)
 		attemptID := fmt.Sprintf("%s-attempt-1", batchID)
+		holdPassive := passiveHoldEnabled && subdomainpassive.HoldApplies(
+			effectiveConfig.Subdomain, effectiveConfig.NoSubFinder, batch.TargetType,
+			subdomainpassive.CapableAgentMatchesSelector(aliveNodes, batchLegacySelector, batchRules))
+		initialStatus := subTaskStatusDispatching
+		if holdPassive {
+			initialStatus = subdomainpassive.HoldStatus
+			heldAttempts[attemptID] = struct{}{}
+		}
 		effectiveSelector := mergeAgentSelector(batch.SelectorJSON, userSelector)
 		taskBatches = append(taskBatches, db.TaskBatch{
 			ID:                 batchID,
@@ -546,7 +581,7 @@ func createTask(c *gin.Context) {
 			TargetType:         batch.TargetType,
 			Targets:            string(chunkJSON),
 			TargetCount:        len(batch.Targets),
-			Status:             subTaskStatusDispatching,
+			Status:             initialStatus,
 			ConfigVersion:      1,
 			RuleVersion:        ruleVersion,
 			Priority:           priority,
@@ -568,7 +603,7 @@ func createTask(c *gin.Context) {
 			AttemptNo:          1,
 			Trigger:            db.AttemptTriggerInitial,
 			ChunkTargets:       string(chunkJSON),
-			Status:             subTaskStatusDispatching,
+			Status:             initialStatus,
 			Config:             configJSON,
 			Priority:           priority,
 			TimeoutSec:         timeoutSec,
@@ -579,6 +614,19 @@ func createTask(c *gin.Context) {
 			AgentSelectorRules: rulesJSON,
 			DispatchStrategy:   string(dispatchStrategy),
 		})
+		if holdPassive {
+			domainsJSON, _ := json.Marshal(subdomainpassive.CollectionDomains(batch.Targets))
+			passiveJobs = append(passiveJobs, db.SubdomainPassiveJob{
+				ID:         subdomainpassive.PassiveJobID(attemptID),
+				TenantID:   tenantID,
+				ProjectID:  req.ProjectID,
+				RootTaskID: rootTaskID,
+				BatchID:    batchID,
+				AttemptID:  attemptID,
+				Domains:    string(domainsJSON),
+				State:      subdomainpassive.JobStatePending,
+			})
+		}
 
 		profile.BatchesByType[batch.TargetType]++
 		if _, ok := profile.BatchSize[batch.TargetType]; !ok {
@@ -721,6 +769,11 @@ func createTask(c *gin.Context) {
 				return err
 			}
 		}
+		if len(passiveJobs) > 0 {
+			if err := tx.CreateInBatches(passiveJobs, 100).Error; err != nil {
+				return err
+			}
+		}
 		return recordTaskAudit(tx, rootTask, "create", "", rootTask.Status, operatorID, map[string]interface{}{
 			"profile":                   scanplan.ScenarioExternalMap,
 			"target_source":             targetSource,
@@ -780,7 +833,14 @@ func createTask(c *gin.Context) {
 	}
 
 	// 3. Dispatch to Queue（闭环保证：失败任务保留 Dispatching，守护协程会继续补投）
-	pushedByPriority, dispatchPending := dispatchSubTasks(context.Background(), routerRuntime().TaskQueue, subTasks)
+	// 被动收集持有的域名批次跳过立即入队，由 collector 完成收集（或超时兜底）后释放。
+	dispatchableSubTasks := make([]db.SubTask, 0, len(subTasks))
+	for _, st := range subTasks {
+		if _, held := heldAttempts[st.ID]; !held {
+			dispatchableSubTasks = append(dispatchableSubTasks, st)
+		}
+	}
+	pushedByPriority, dispatchPending := dispatchSubTasks(context.Background(), routerRuntime().TaskQueue, dispatchableSubTasks)
 	pushedCount := totalDispatchedTasks(pushedByPriority)
 	broadcastDispatchedTasks(pushedByPriority)
 	if dispatchPending > 0 {

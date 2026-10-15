@@ -19,10 +19,6 @@ func TestValidateCLIRiskFlagsRejectsExplicitPOCWithNoPoc(t *testing.T) {
 			name:   "named nuclei POC",
 			config: structs.Config{NoPoc: true, PocNameForSearch: "shiro"},
 		},
-		{
-			name:   "Golang POC",
-			config: structs.Config{NoPoc: true, GolangPoc: true},
-		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -32,6 +28,14 @@ func TestValidateCLIRiskFlagsRejectsExplicitPOCWithNoPoc(t *testing.T) {
 				t.Fatalf("expected CLIUsageError, got %v", err)
 			}
 		})
+	}
+}
+
+func TestValidateCLIRiskFlagsRejectsUnknownGoPocModule(t *testing.T) {
+	err := validateCLIRiskFlags(structs.Config{GoPocModules: "ssh,does-not-exist"})
+	var usageErr *CLIUsageError
+	if !errors.As(err, &usageErr) || !strings.Contains(err.Error(), "does-not-exist") {
+		t.Fatalf("expected unknown module usage error, got %v", err)
 	}
 }
 
@@ -98,6 +102,7 @@ func TestValidateCLIRiskFlagsAllowsInformationOnlyOrExplicitRisk(t *testing.T) {
 		{NoPoc: true},
 		{PocNameForSearch: "shiro"},
 		{GolangPoc: true},
+		{GoPocModules: "ssh,mysql,rocketmq"},
 	} {
 		if err := validateCLIRiskFlags(config); err != nil {
 			t.Fatalf("unexpected validation error for %#v: %v", config, err)

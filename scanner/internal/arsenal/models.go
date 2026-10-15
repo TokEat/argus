@@ -1,6 +1,6 @@
 // Package arsenal 弹药库管理模块。
 // 提供指纹、POC、Workflow、主动探测路径的 CRUD 和导入导出能力。
-// CLI 子命令和 Server REST API 共用此包的数据模型与业务逻辑。
+// Server REST API 与扫描运行时共用此包的数据模型与业务逻辑。
 package arsenal
 
 import "time"
@@ -22,14 +22,14 @@ type Fingerprint struct {
 // Poc 漏洞检测模板。
 type Poc struct {
 	ID             uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	Name           string    `gorm:"uniqueIndex;not null" json:"name"`     // 模板 ID，如 CVE-2023-12345
-	FileName       string    `gorm:"index;not null" json:"file_name"`      // 完整文件名
-	Content        string    `json:"-"`                                    // Nuclei YAML 全文（列表查询时不返回）
-	ContentHash    string    `json:"content_hash"`                         // MD5
-	Severity       string    `gorm:"index;default:'info'" json:"severity"` // info/low/medium/high/critical
+	Name           string    `gorm:"index;not null" json:"name"`            // 模板 ID，如 CVE-2023-12345；不同模板可能重名
+	FileName       string    `gorm:"uniqueIndex;not null" json:"file_name"` // 完整文件名（包内唯一）
+	Content        string    `json:"-"`                                     // Nuclei YAML 全文（列表查询时不返回）
+	ContentHash    string    `json:"content_hash"`                          // MD5
+	Severity       string    `gorm:"index;default:'info'" json:"severity"`  // info/low/medium/high/critical
 	ExecutionClass string    `gorm:"index;default:'detection'" json:"execution_class"`
-	RiskLevel      string    `gorm:"index;default:'unknown'" json:"risk_level"`
-	Tags           string    `json:"tags"` // JSON 数组
+	RiskLevel      string    `gorm:"index;default:'unknown'" json:"risk_level"` // unknown/info/low/medium/high；critical 存成 high
+	Tags           string    `json:"tags"`                                      // JSON 数组
 	Author         string    `json:"author"`
 	Description    string    `json:"description"`
 	Enabled        bool      `gorm:"default:true" json:"enabled"`
@@ -80,9 +80,10 @@ type ConfigAsset struct {
 // Workflow 指纹→POC 映射关系。
 type Workflow struct {
 	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	ProductName string    `gorm:"index;not null" json:"product_name"` // 对应 Fingerprint.ProductName
-	PocName     string    `gorm:"index;not null" json:"poc_name"`     // 对应 Poc.Name 或文件名
-	MatchType   string    `gorm:"not null" json:"match_type"`         // root / dir / base / dir-fallback
+	ProductName string    `gorm:"index;not null" json:"product_name"`        // 对应 Fingerprint.ProductName
+	PocName     string    `gorm:"index;not null" json:"poc_name"`            // 对应 Poc.Name 或文件名
+	MatchType   string    `gorm:"not null" json:"match_type"`                // root / dir / base / dir-fallback
+	RiskLevel   string    `gorm:"index;default:'unknown'" json:"risk_level"` // 关联 POC 的风险等级，供 Agent 本地预授权过滤
 	Enabled     bool      `gorm:"default:true" json:"enabled"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`

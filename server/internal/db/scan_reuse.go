@@ -41,7 +41,11 @@ type reusableScanConfig struct {
 	SkipHostDiscovery bool
 	NoICMPPing        bool
 	TCPPing           bool
+	UDPPing           bool
 	NoHostBind        bool
+	// NoResolvedIPScan 改变域名目标的阶段集合（去掉端口扫描/协议识别），
+	// 必须参与复用阶段判定；旧配置缺省该字段时按 false 处理。
+	NoResolvedIPScan  bool
 	NoDirSearch       bool
 	NoPoc             bool
 	GolangPoc         bool
@@ -118,7 +122,7 @@ func ApplyReusableCoverageAtClaim(store *gorm.DB, attemptID, tenantID, agentID s
 		// Agent Pipeline skips host discovery for small tasks unless TCP ping
 		// was explicitly requested. Mirror that runtime decision so the Planner
 		// does not require an ICMP stage the Agent intentionally never ran.
-		if !config.TCPPing && !config.SkipHostDiscovery && reusableTargetIPCount(targets) <= 256 {
+		if !config.TCPPing && !config.UDPPing && !config.SkipHostDiscovery && reusableTargetIPCount(targets) <= 256 {
 			config.SkipHostDiscovery = true
 		}
 
@@ -482,7 +486,7 @@ func reusableStagesForTarget(target string, config reusableScanConfig) ([]scanpl
 		if !config.SkipHostDiscovery && !config.NoICMPPing {
 			stages = append(stages, scanplan.StageICMPDiscovery)
 		}
-		if !config.SkipHostDiscovery && config.TCPPing {
+		if !config.SkipHostDiscovery {
 			stages = append(stages, scanplan.StageTCPLiveness)
 		}
 		stages = append(stages, scanplan.StagePortScan)
@@ -493,7 +497,10 @@ func reusableStagesForTarget(target string, config reusableScanConfig) ([]scanpl
 		if config.Subdomain {
 			stages = append(stages, scanplan.StageSubdomainDiscovery)
 		}
-		stages = append(stages, scanplan.StageCDNClassification, scanplan.StagePortScan)
+		stages = append(stages, scanplan.StageCDNClassification)
+		if !config.NoResolvedIPScan {
+			stages = append(stages, scanplan.StagePortScan)
+		}
 		stages = append(stages, common...)
 		return stages, true, true
 	case "ip_port", "domain_port":

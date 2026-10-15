@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"fmt"
 	"log"
@@ -68,6 +69,9 @@ func (s *Server) ServeTLS(port int, certFile, keyFile string) error {
 }
 
 func (s *Server) serve(port int, transport credentials.TransportCredentials) error {
+	if s.agentPSKMissing() {
+		return fmt.Errorf("agent PSK is required; set ARGUS_AGENT_PSK or pass --dev")
+	}
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return fmt.Errorf("failed to listen: %w", err)
@@ -115,7 +119,11 @@ func (s *Server) validatePSK(ctx context.Context) error {
 		return status.Error(codes.Unauthenticated, "missing metadata")
 	}
 	tokens := md.Get("x-agent-psk")
-	if len(tokens) == 0 || tokens[0] != s.psk {
+	presented := ""
+	if len(tokens) > 0 {
+		presented = tokens[0]
+	}
+	if subtle.ConstantTimeCompare([]byte(presented), []byte(s.psk)) != 1 {
 		return status.Error(codes.Unauthenticated, "invalid agent pre-shared key")
 	}
 	return nil

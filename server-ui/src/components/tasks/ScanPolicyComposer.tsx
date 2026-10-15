@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Button, Card, Checkbox, Col, Collapse, Descriptions, Form, Input, InputNumber, Radio, Row, Select, Space, Spin, Statistic, Steps, Switch, Tag, Typography } from 'antd';
-import { DatabaseOutlined, ExperimentOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import { DatabaseOutlined, ExperimentOutlined, InfoCircleOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import type { FormInstance } from 'antd';
 import { listCredentialDictionaries, listSubdomainDictionaries, previewScanPlan } from '../../services/api';
 import CredentialDictionaryManager from './CredentialDictionaryManager';
@@ -41,6 +41,7 @@ export interface ScanPolicyFormValues {
     password_books?: string[];
     credential_pair_limit?: number;
     validation_confirmed?: boolean;
+    high_risk_auto_execution?: boolean;
 }
 
 export const presetDefaults: Record<Exclude<API.ScanPreset, 'custom'>, Partial<ScanPolicyFormValues>> = {
@@ -61,6 +62,33 @@ export const scanPolicyInitialValues: ScanPolicyFormValues = {
     web_crawl_ai: false, sensitive_info_ai: false,
 };
 
+export function policyToFormValues(policy?: API.ScanPolicy | null): Partial<ScanPolicyFormValues> {
+    if (!policy) return {};
+    return {
+        preset: policy.preset,
+        port_profile: policy.port_profile,
+        custom_ports: policy.custom_ports,
+        scan_method: policy.scan_method,
+        intensity: policy.intensity,
+        subdomain_discovery: Boolean(policy.capabilities?.subdomain_discovery),
+        subdomain_bruteforce: Boolean(policy.capabilities?.subdomain_bruteforce),
+        subdomain_bruteforce_depth: policy.subdomains?.bruteforce_depth || 1,
+        subdomain_books: (policy.subdomains?.wordlists || []).map((item) => item.id),
+        allow_cdn_assets: Boolean(policy.capabilities?.allow_cdn_assets),
+        allow_private_resolved_domains: Boolean(policy.capabilities?.allow_private_resolved_domains),
+        host_binding: Boolean(policy.capabilities?.host_binding),
+        behavior_probe: Boolean(policy.capabilities?.behavior_probe),
+        directory_probe: Boolean(policy.capabilities?.directory_probe),
+        risk_validation: Boolean(policy.capabilities?.risk_validation),
+        credential_validation: Boolean(policy.capabilities?.credential_validation),
+        username_books: (policy.credentials?.username_books || []).map((item) => item.id),
+        password_books: (policy.credentials?.password_books || []).map((item) => item.id),
+        credential_pair_limit: policy.credentials?.pair_limit || 50000,
+        validation_confirmed: Boolean(policy.authorization?.validation_confirmed),
+        high_risk_auto_execution: Boolean(policy.authorization?.allow_high_risk_auto_execution),
+    };
+}
+
 export function buildScanPolicy(values: ScanPolicyFormValues, dictionaries: API.CredentialDictionary[], subdomainDictionaries: API.SubdomainDictionary[] = []): API.ScanPolicy {
     const preset = values.preset || 'standard';
     const presetValues = preset === 'custom' ? {} : presetDefaults[preset];
@@ -68,9 +96,11 @@ export function buildScanPolicy(values: ScanPolicyFormValues, dictionaries: API.
     const refs = (ids: string[] | undefined, kind: 'username' | 'password') => (ids || []).map((id) => dictionaries.find((item) => item.id === id && item.kind === kind)).filter(Boolean).map((item) => ({
         id: item!.id, revision: item!.revision, sha256: item!.sha256, count: item!.count,
     }));
-	const subdomainRefs = (values.subdomain_books || []).map((id) => subdomainDictionaries.find((item) => item.id === id)).filter(Boolean).map((item) => ({
-		id: item!.id, revision: item!.revision, sha256: item!.sha256, count: item!.count,
-	}));
+	const subdomainRefs = merged.subdomain_bruteforce
+		? (values.subdomain_books || []).map((id) => subdomainDictionaries.find((item) => item.id === id)).filter(Boolean).map((item) => ({
+			id: item!.id, revision: item!.revision, sha256: item!.sha256, count: item!.count,
+		}))
+		: [];
     return {
         schema_version: 'argus.scan-policy/v1', preset,
         port_profile: merged.port_profile || 'top-1000',
@@ -104,7 +134,7 @@ export function buildScanPolicy(values: ScanPolicyFormValues, dictionaries: API.
             username_books: refs(values.username_books, 'username'), password_books: refs(values.password_books, 'password'),
             pair_limit: values.credential_pair_limit || 50000,
         },
-        authorization: { validation_confirmed: Boolean(values.validation_confirmed) },
+        authorization: { validation_confirmed: Boolean(values.validation_confirmed), allow_high_risk_auto_execution: Boolean(merged.risk_validation) && Boolean(values.high_risk_auto_execution) },
     };
 }
 
@@ -119,11 +149,17 @@ interface Props {
     form: FormInstance<ScanPolicyFormValues>;
     projects: API.Project[];
     onPlanChange: (plan: API.ScanPlanPreview | null) => void;
+    /** create = 新建；update = 更新配置（项目/目标只读） */
+    mode?: 'create' | 'update';
+    /** 更新配置时锁定所属项目，不依赖可编辑下拉框 */
+    lockedProjectId?: string;
 }
 
-export default function ScanPolicyComposer({ form, projects, onPlanChange }: Props) {
+export default function ScanPolicyComposer({ form, projects, onPlanChange, mode = 'create', lockedProjectId }: Props) {
+    const readOnlyTargets = mode === 'update';
     const values = Form.useWatch([], form) as ScanPolicyFormValues | undefined;
-    const projectId = values?.project_id || '';
+    const projectId = lockedProjectId || values?.project_id || '';
+    const lockedProjectName = projects.find((project) => project.ID === projectId)?.Name || projectId;
     const [dictionaries, setDictionaries] = useState<API.CredentialDictionary[]>([]);
 	const [subdomainDictionaries, setSubdomainDictionaries] = useState<API.SubdomainDictionary[]>([]);
     const [dictionaryOpen, setDictionaryOpen] = useState(false);
@@ -154,7 +190,7 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
         priority: values?.priority, timeout_sec: values?.timeout_sec,
         port_profile: values?.port_profile, custom_ports: values?.custom_ports,
         scan_method: values?.scan_method, intensity: values?.intensity,
-        capabilities: [values?.subdomain_discovery, values?.subdomain_bruteforce, values?.subdomain_bruteforce_depth, values?.allow_cdn_assets, values?.allow_private_resolved_domains, values?.host_binding, values?.behavior_probe, values?.directory_probe, values?.risk_validation, values?.credential_validation, values?.web_crawl, values?.sensitive_info],
+        capabilities: [values?.subdomain_discovery, values?.subdomain_bruteforce, values?.subdomain_bruteforce_depth, values?.allow_cdn_assets, values?.allow_private_resolved_domains, values?.host_binding, values?.behavior_probe, values?.directory_probe, values?.risk_validation, values?.credential_validation, values?.high_risk_auto_execution, values?.web_crawl, values?.sensitive_info],
         crawl: [values?.web_crawl_max_depth, values?.web_crawl_max_pages, values?.web_crawl_ai, values?.sensitive_info_ai],
         books: [values?.subdomain_books, values?.username_books, values?.password_books], pair_limit: values?.credential_pair_limit,
         confirmed: values?.validation_confirmed, dictionaries: dictionaries.map((item) => [item.id, item.revision, item.sha256]),
@@ -164,7 +200,10 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
     useEffect(() => {
         const currentValues = form.getFieldsValue(true) as ScanPolicyFormValues;
         if (!projectId || !currentValues.targets?.trim()) {
-            setPreview(null); setPreviewError('填写项目和目标后生成执行计划'); onPlanChange(null); return;
+            setPreview(null);
+            setPreviewError(readOnlyTargets ? '无法读取当前任务的项目或目标，无法生成执行计划' : '填写项目和目标后生成执行计划');
+            onPlanChange(null);
+            return;
         }
         let cancelled = false;
         const timer = window.setTimeout(async () => {
@@ -181,7 +220,7 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
             } finally { if (!cancelled) setPreviewing(false); }
         }, 350);
         return () => { cancelled = true; window.clearTimeout(timer); };
-    }, [previewKey, projectId, form, dictionaries, subdomainDictionaries, onPlanChange]);
+    }, [previewKey, projectId, form, dictionaries, subdomainDictionaries, onPlanChange, readOnlyTargets]);
 
     const applyPreset = (preset: API.ScanPreset) => {
         if (preset !== 'custom') form.setFieldsValue({ ...presetDefaults[preset], preset });
@@ -198,20 +237,41 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
             <Row gutter={20} align="top">
                 <Col xs={24} xl={13}>
                     <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                        <Card size="small" title="项目与目标">
-                            <Form.Item name="project_id" label="所属项目" rules={[{ required: true, message: '请选择所属项目' }]}>
-                                <Select showSearch optionFilterProp="label" options={projects.map((project) => ({ label: project.Name, value: project.ID }))} placeholder="选择项目" />
-                            </Form.Item>
-                            <Form.Item name="name" label="任务名称（可选）"><Input placeholder="自动生成任务名称" /></Form.Item>
-                            <Form.Item name="targets" label="扫描目标" rules={[{ required: true, whitespace: true, message: '请输入扫描目标' }]} extra="每行一个 IP、域名、CIDR、IP 段或 URL。">
-                                <Input.TextArea rows={6} placeholder={'192.168.1.10\nexample.com\nhttps://example.com'} />
+                        <Card size="small" title={readOnlyTargets ? '项目与目标（只读）' : '项目与目标'}>
+                            {readOnlyTargets ? (
+                                <>
+                                    <Form.Item name="project_id" hidden><Input /></Form.Item>
+                                    <Form.Item label="所属项目">
+                                        <Input disabled value={lockedProjectName || '当前任务所属项目'} />
+                                    </Form.Item>
+                                </>
+                            ) : (
+                                <Form.Item name="project_id" label="所属项目" rules={[{ required: true, message: '请选择所属项目' }]}>
+                                    <Select
+                                        showSearch
+                                        optionFilterProp="label"
+                                        options={projects.map((project) => ({ label: project.Name, value: project.ID }))}
+                                        placeholder="选择项目"
+                                    />
+                                </Form.Item>
+                            )}
+                            {!readOnlyTargets && (
+                                <Form.Item name="name" label="任务名称（可选）"><Input placeholder="自动生成任务名称" /></Form.Item>
+                            )}
+                            <Form.Item
+                                name="targets"
+                                label="扫描目标"
+                                rules={[{ required: true, whitespace: true, message: '请输入扫描目标' }]}
+                                extra={readOnlyTargets ? '更新配置不修改目标；如需扩面请使用「增加批次」。' : '每行一个 IP、域名、CIDR、IP 段或 URL。'}
+                            >
+                                <Input.TextArea rows={readOnlyTargets ? 4 : 6} disabled={readOnlyTargets} placeholder={'192.168.1.10\nexample.com\nhttps://example.com'} />
                             </Form.Item>
                         </Card>
 
                         <Card size="small" title="扫描预设">
                             <Form.Item name="preset" noStyle>
                                 <Radio.Group buttonStyle="solid" onChange={(event) => applyPreset(event.target.value)}>
-                                    <Radio.Button value="quick">快速 · 常用100</Radio.Button>
+                                    <Radio.Button value="quick">快速 · 常用协议</Radio.Button>
                                     <Radio.Button value="standard">标准 · Top1000</Radio.Button>
                                     <Radio.Button value="deep">深度 · 全端口</Radio.Button>
                                     <Radio.Button value="custom">自定义</Radio.Button>
@@ -220,12 +280,12 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
                         </Card>
 
 						<Card size="small" title="子域发现">
-							<Form.Item name="subdomain_discovery" valuePropName="checked" label="被动来源收集" extra="默认开启；从证书透明度与公共 DNS 数据源收集候选子域。"><Switch /></Form.Item>
-							<Form.Item name="subdomain_bruteforce" valuePropName="checked" label="字典爆破" extra="深度模式默认开启；始终保留 Scanner 内置字典。"><Switch disabled={!values?.subdomain_discovery} /></Form.Item>
+							<Form.Item name="subdomain_discovery" valuePropName="checked" label="被动来源收集" tooltip={{ title: '任务下发前由 Server 从 crt.sh、certspotter、crt.name 等证书透明度公开数据源被动收集候选子域，经 DNS 解析验证去重后密封进任务配置；结果跨任务缓存并共享给所有 Agent，无需任何 API 凭据。默认开启，三种预设均生效。', icon: <InfoCircleOutlined /> }} extra="默认开启；从证书透明度与公共 DNS 数据源收集候选子域。"><Switch /></Form.Item>
+							<Form.Item name="subdomain_bruteforce" valuePropName="checked" label="字典爆破" tooltip={{ title: '以并发 DNS 解析方式，用「Scanner 内置子域词典 ∪ 所选项目增量词典」猜测子域，命中者进入后续端口扫描与 HTTP 探测。快速与标准预设默认关闭；深度预设默认开启且为 2 层。始终保留内置词典，项目词典只做增量补充。', icon: <InfoCircleOutlined /> }} extra="深度模式默认开启；始终保留 Scanner 内置字典。"><Switch disabled={!values?.subdomain_discovery} /></Form.Item>
 							{values?.subdomain_bruteforce && <>
 								<Alert type="info" showIcon message="内置字典 ∪ 项目增量字典" description="Server 去重后将选中的不可变 Revision 密封到本次任务；不接受 Agent 文件路径。" style={{ marginBottom: 12 }} />
-				<Form.Item name="subdomain_books" label="项目增量字典"><Select mode="multiple" options={subdomainOptions} placeholder="可选；不会替换内置字典" /></Form.Item>
-				<Form.Item name="subdomain_bruteforce_depth" label="爆破深度" extra="仅对上一层真实解析成功的子域继续展开；层数越高，请求量增长越快。">
+				<Form.Item name="subdomain_books" label="项目增量字典" tooltip={{ title: '从项目字典库中选择要叠加的子域词典；Server 会把所选不可变 Revision 的内容与哈希密封进本次任务，保证各 Agent 使用完全一致的词典，不接受 Agent 侧本地文件路径。', icon: <InfoCircleOutlined /> }}><Select mode="multiple" options={subdomainOptions} placeholder="可选；不会替换内置字典" /></Form.Item>
+				<Form.Item name="subdomain_bruteforce_depth" label="爆破深度" tooltip={{ title: '控制字典爆破的递归层数：第 1 层对主域做词典拼接猜测，只有上一层真实解析成功的子域才会作为下一层的展开基础，最大支持 4 层。层数越高请求量增长越快；深度预设默认 2 层。', icon: <InfoCircleOutlined /> }} extra="仅对上一层真实解析成功的子域继续展开；层数越高，请求量增长越快。">
 					<Select options={[1, 2, 3, 4].map((value) => ({ value, label: `${value} 层` }))} />
 				</Form.Item>
 				<Button size="small" onClick={() => setSubdomainDictionaryOpen(true)}>管理子域字典</Button>
@@ -234,8 +294,8 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
 
 						<Card size="small" title="Web 指纹识别">
 							<Alert type="success" showIcon message="响应指纹识别（默认）" description="复用 HTTP 探测响应完成基础指纹识别，作为后续 Workflow 与 POC 匹配依据。" style={{ marginBottom: 12 }} />
-							<Form.Item name="behavior_probe" valuePropName="checked" label="安全行为探针" extra="标准、深度默认开启；仅执行 Server 重新分类为自动安全的单请求 Nuclei 探针。"><Switch /></Form.Item>
-							<Form.Item name="directory_probe" valuePropName="checked" label="主动路径指纹" extra="可选；请求产品特征路径并产出 Active-Finger，不执行通用目录扫描。"><Switch /></Form.Item>
+							<Form.Item name="behavior_probe" valuePropName="checked" label="安全行为探针" tooltip={{ title: 'HTTP 探测完成后对存活 Web 服务执行一批经安全审核的 Nuclei 行为探针：Server 仅保留重新分类为「自动安全」的单请求探针，每个 HTTP 服务每探针最多发送一次请求，用于补充行为特征并作为指纹与 POC 匹配依据。标准与深度预设默认开启。', icon: <InfoCircleOutlined /> }} extra="标准、深度默认开启；仅执行 Server 重新分类为自动安全的单请求 Nuclei 探针。"><Switch /></Form.Item>
+							<Form.Item name="directory_probe" valuePropName="checked" label="主动路径指纹" tooltip={{ title: '对每个存活 HTTP 服务请求规则内的产品特征路径（如 /nacos/、Druid 控制台）。路径是提问，命中必须靠与路径无关的内容证据，供后续 Workflow 匹配；不执行通用目录爆破。仅深度预设默认开启，开启会增加少量请求。', icon: <InfoCircleOutlined /> }} extra="可选；请求产品特征路径，仅独立内容证据才产出 Active-Finger，不执行通用目录扫描。"><Switch /></Form.Item>
 						</Card>
 
 						<Card size="small" title="主动爬取与敏感信息">
@@ -266,31 +326,34 @@ export default function ScanPolicyComposer({ form, projects, onPlanChange }: Pro
 								style={{ marginBottom: 12 }}
 							/>
 							<Row gutter={[12, 8]}>
-								<Col span={12}><Form.Item name="risk_validation" valuePropName="checked" label="自动 POC 验证"><Switch /></Form.Item></Col>
-								<Col span={12}><Form.Item name="credential_validation" valuePropName="checked" label="弱口令验证"><Switch /></Form.Item></Col>
-							</Row>
+								<Col span={12}><Form.Item name="risk_validation" valuePropName="checked" label="自动 POC 验证" tooltip={{ title: '指纹识别完成后自动匹配并执行漏洞验证：Workflow 规则命中的资产运行对应 Nuclei 模板，服务精确命中的执行受审核 GoPoc 漏洞检查。默认仅自动执行 info/low/medium 风险的已审批 POC；高风险与未分类 POC 默认跳过，可开启下方预授权或事后经手动风险验证二次确认执行。需勾选页面底部的授权范围确认。标准与深度预设默认开启。', icon: <InfoCircleOutlined /> }}><Switch /></Form.Item></Col>
+									<Col span={12}><Form.Item name="credential_validation" valuePropName="checked" label="弱口令验证" tooltip={{ title: '对协议识别确认的服务（SSH、数据库、中间件等）使用「内置服务凭据字典 ∪ 所选项目用户名本×密码本」尝试登录验证，组合数受「每服务目标组合上限」约束防止请求爆炸；同样需要授权确认后才执行。默认关闭，开启后在下方配置增量字典。', icon: <InfoCircleOutlined /> }}><Switch /></Form.Item></Col>
+								</Row>
+								{values?.risk_validation && (
+									<Form.Item name="high_risk_auto_execution" valuePropName="checked" label="高风险 POC 预授权" extra="默认关闭；开启后自动阶段将直接执行已审批的高风险/未分类 POC。" tooltip={{ title: '任务级显式预授权开关：关闭时自动阶段跳过 high 与未分类（unknown）风险的已审批 POC 并记录原因，这些 POC 需在任务完成后通过手动「风险验证」入口经二次确认执行；开启后资产发现结束将直接自动执行它们。该选择会密封进不可变任务快照并写入审计，请确认目标均在授权范围内后再开启。', icon: <InfoCircleOutlined /> }}><Switch /></Form.Item>
+								)}
 						</Card>
 
                         {values?.credential_validation && (
                             <Card size="small" title={<Space><DatabaseOutlined />增量凭据字典</Space>} extra={<Button size="small" onClick={() => setDictionaryOpen(true)}>管理字典</Button>}>
                                 <Alert type="info" showIcon message="内置服务字典始终参与验证" description="所选项目用户名本 × 密码本只做增量补充；任务锁定当前 Revision 与哈希。" style={{ marginBottom: 12 }} />
-                                <Form.Item name="username_books" label="用户名本"><Select mode="multiple" options={usernameOptions} placeholder="可选；不影响内置用户名" /></Form.Item>
-                                <Form.Item name="password_books" label="密码本"><Select mode="multiple" options={passwordOptions} placeholder="可选；不影响内置密码" /></Form.Item>
-                                <Form.Item name="credential_pair_limit" label="每服务目标组合上限"><InputNumber min={1} max={100000} step={1000} style={{ width: '100%' }} /></Form.Item>
+                                <Form.Item name="username_books" label="用户名本" tooltip={{ title: '从项目凭据字典库中选择用户名词典作为增量来源；与下方密码本做笛卡尔积生成本次任务的增量弱口令组合。内容按所选不可变 Revision 加密存储并密封进一次性凭据包（带哈希校验）下发给 Agent，不影响 Scanner 内置服务字典。', icon: <InfoCircleOutlined /> }}><Select mode="multiple" options={usernameOptions} placeholder="可选；不影响内置用户名" /></Form.Item>
+                                <Form.Item name="password_books" label="密码本" tooltip={{ title: '从项目凭据字典库中选择密码词典作为增量来源；与上方用户名本做笛卡尔积生成增量弱口令组合，同样按不可变 Revision 密封下发。两者都未选择时不产生增量组合，仅使用内置服务字典。', icon: <InfoCircleOutlined /> }}><Select mode="multiple" options={passwordOptions} placeholder="可选；不影响内置密码" /></Form.Item>
+                                <Form.Item name="credential_pair_limit" label="每服务目标组合上限" tooltip={{ title: '限制「所选用户名本×密码本」笛卡尔积的最大组合数：默认 50000，最大 100000，超出会直接拒绝生成验证计划；Server 同时按 目标数×该上限 预估请求预算并密封进任务，防止弱口令阶段对目标产生过量登录尝试。内置服务字典不受此上限约束。', icon: <InfoCircleOutlined /> }}><InputNumber min={1} max={100000} step={1000} style={{ width: '100%' }} /></Form.Item>
                             </Card>
                         )}
 
                         <Collapse items={[{ key: 'expert', label: <Space><ExperimentOutlined />结构化专家配置</Space>, children: (
                             <Row gutter={12}>
-                                <Col span={8}><Form.Item name="scan_method" label="扫描方式"><Select options={[{ value: 'tcp', label: 'TCP' }, { value: 'syn', label: 'SYN（需兼容 Agent）' }]} /></Form.Item></Col>
-                                <Col span={8}><Form.Item name="port_profile" label="端口范围"><Select disabled={values?.preset !== 'custom'} options={[{ value: 'common-100', label: '常用100' }, { value: 'top-1000', label: 'Top1000' }, { value: 'all', label: '1-65535' }, { value: 'custom', label: '自定义' }]} /></Form.Item></Col>
-                                <Col span={8}><Form.Item name="intensity" label="强度"><Select options={[{ value: 'low', label: '低' }, { value: 'balanced', label: '均衡' }, { value: 'high', label: '高' }]} /></Form.Item></Col>
-                                {values?.port_profile === 'custom' && <Col span={24}><Form.Item name="custom_ports" label="自定义端口" rules={[{ required: true, message: '请输入端口范围' }]}><Input placeholder="22,80,443,8000-9000" /></Form.Item></Col>}
-                                <Col span={8}><Form.Item name="priority" label="优先级"><Select options={[{ value: 0, label: 'P0 紧急' }, { value: 1, label: 'P1 普通' }, { value: 2, label: 'P2 低' }]} /></Form.Item></Col>
-                                <Col span={8}><Form.Item name="timeout_sec" label="任务超时（秒）"><InputNumber min={0} step={60} style={{ width: '100%' }} /></Form.Item></Col>
-                                <Col span={8}><Form.Item name="allow_cdn_assets" valuePropName="checked" label="允许 CDN 资产"><Switch /></Form.Item></Col>
-                                <Col span={8}><Form.Item name="allow_private_resolved_domains" valuePropName="checked" label="允许解析到私网"><Switch /></Form.Item></Col>
-								<Col span={8}><Form.Item name="host_binding" valuePropName="checked" label="Host Binding"><Switch /></Form.Item></Col>
+                                <Col span={8}><Form.Item name="scan_method" label="扫描方式" tooltip={{ title: 'TCP：全连接扫描，兼容性最好，无需特殊权限；SYN：Agent 内置半开扫描（Linux raw socket + SYN cookie），速度更快，仅调度已上报 scan_syn=v1 的 Agent（通常需 CAP_NET_RAW/root）。不具备能力的 Agent 不会领取 SYN 任务；已领取后运行时失败会降级 TCP。', icon: <InfoCircleOutlined /> }}><Select options={[{ value: 'tcp', label: 'TCP' }, { value: 'syn', label: 'SYN（内置，需 Linux Agent）' }]} /></Form.Item></Col>
+                                <Col span={8}><Form.Item name="port_profile" label="端口范围" tooltip={{ title: '常用协议端口：134 个精选常见协议与中间件端口，速度最快；Top1000：Nmap 频率统计前 1000 端口，覆盖均衡；1-65535：全端口最完整但耗时显著增加；自定义：如 22,80,443,8000-9000。该端口集同时决定 CDN 域名盲探的范围。', icon: <InfoCircleOutlined /> }}><Select disabled={values?.preset !== 'custom'} options={[{ value: 'common-100', label: '常用协议端口' }, { value: 'top-1000', label: 'Top1000' }, { value: 'all', label: '1-65535' }, { value: 'custom', label: '自定义' }]} /></Form.Item></Col>
+                                <Col span={8}><Form.Item name="intensity" label="强度" tooltip={{ title: '控制存活探测、端口扫描、Web 探测等各阶段的并发线程数与发包速率。低：对目标压力最小，适合脆弱生产环境；均衡：默认推荐；高：覆盖最快，但对目标压力大、网络丢包引起的误判风险升高。', icon: <InfoCircleOutlined /> }}><Select options={[{ value: 'low', label: '低' }, { value: 'balanced', label: '均衡' }, { value: 'high', label: '高' }]} /></Form.Item></Col>
+                                {values?.port_profile === 'custom' && <Col span={24}><Form.Item name="custom_ports" label="自定义端口" tooltip={{ title: '逗号分隔的单个端口或区间，例如 22,80,443,8000-9000。最多 65535 个端口。', icon: <InfoCircleOutlined /> }} rules={[{ required: true, message: '请输入端口范围' }]}><Input placeholder="22,80,443,8000-9000" /></Form.Item></Col>}
+                                <Col span={8}><Form.Item name="priority" label="优先级" tooltip={{ title: '任务在调度队列中的执行顺序：P0 紧急最先被 Agent 领取，P1 普通为默认，P2 低适合非紧急的例行扫描。', icon: <InfoCircleOutlined /> }}><Select options={[{ value: 0, label: 'P0 紧急' }, { value: 1, label: 'P1 普通' }, { value: 2, label: 'P2 低' }]} /></Form.Item></Col>
+                                <Col span={8}><Form.Item name="timeout_sec" label="任务超时（秒）" tooltip={{ title: '单个扫描批次允许执行的最长时间，超过后该批次会被判定失败并按策略重试或拆分重跑。默认 3600 秒（1 小时）；全端口大网段建议适当调大。', icon: <InfoCircleOutlined /> }}><InputNumber min={0} step={60} style={{ width: '100%' }} /></Form.Item></Col>
+                                <Col span={8}><Form.Item name="allow_cdn_assets" valuePropName="checked" label="允许 CDN 资产" tooltip={{ title: '开启后：判定为 CDN 的域名不扫描其解析 IP（避免触达厂商基础设施），而是按上方端口范围对域名本身以 域名:端口 形式做 Web 盲探，产出的资产带「疑似 CDN」标记。关闭时仅记录 CDN 判定结果，不做探测。', icon: <InfoCircleOutlined /> }}><Switch /></Form.Item></Col>
+                                <Col span={8}><Form.Item name="allow_private_resolved_domains" valuePropName="checked" label="允许解析到私网" tooltip={{ title: '域名解析到私网/回环地址（如 10.x、192.168.x、127.x）时是否纳入扫描。默认关闭=跳过这些解析结果，防止误扫内网；开启后才会对私网 IP 做存活探测与端口扫描。请确认私网目标在授权范围内再开启。', icon: <InfoCircleOutlined /> }}><Switch /></Form.Item></Col>
+								<Col span={8}><Form.Item name="host_binding" valuePropName="checked" label="Host Binding" tooltip={{ title: '基于本任务已建立的 DNS 解析记录，对发现的存活 IP 站点反查绑定域名，再以 域名:端口 形式补充探测，可发现仅靠 IP 访问看不到的虚拟主机资产。开启会增加请求量。', icon: <InfoCircleOutlined /> }}><Switch /></Form.Item></Col>
                             </Row>
                         ) }]} />
 

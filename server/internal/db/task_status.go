@@ -167,7 +167,7 @@ func CanStopTaskStatus(status string) bool {
 // task state and deliberately bypasses historical coverage reuse.
 func CanExplicitRetryTaskStatus(status string) bool {
 	switch CanonicalTaskState(status) {
-	case TaskStateStopped, TaskStateFailed, TaskStateTimeout:
+	case TaskStatePartial, TaskStateStopped, TaskStateFailed, TaskStateTimeout:
 		return true
 	default:
 		return false

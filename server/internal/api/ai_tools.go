@@ -2,15 +2,11 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	aipkg "github.com/P0lar1ght/argus/server/internal/ai"
 	"github.com/P0lar1ght/argus/server/internal/db"
 	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
 )
@@ -26,160 +22,6 @@ func workflowKind(product string) string {
 		return "general_poc"
 	}
 	return "product_bound"
-}
-
-type AIToolAuditContext struct {
-	TenantID string
-	UserID   string
-	Module   string
-}
-
-type auditedTool struct {
-	inner aipkg.Tool
-	audit AIToolAuditContext
-}
-
-func auditedCopilotTool(inner aipkg.Tool, audit AIToolAuditContext) aipkg.Tool {
-	return &auditedTool{inner: inner, audit: audit}
-}
-
-func (t *auditedTool) Name() string {
-	return t.inner.Name()
-}
-
-func (t *auditedTool) Description() string {
-	return t.inner.Description()
-}
-
-func (t *auditedTool) InputSchema() map[string]interface{} {
-	return t.inner.InputSchema()
-}
-
-func (t *auditedTool) Execute(ctx context.Context, input json.RawMessage) (interface{}, error) {
-	startedAt := time.Now()
-	argsSummary, agentID, targetURL := summarizeToolArgs(input)
-	result, err := t.inner.Execute(ctx, input)
-	status, errorSummary := classifyToolResult(ctx, result, err)
-	recordAIToolInvocation(t.audit, t.inner.Name(), argsSummary, agentID, targetURL, time.Since(startedAt), status, errorSummary)
-	return result, err
-}
-
-func summarizeToolArgs(input json.RawMessage) (string, string, string) {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(input, &raw); err != nil {
-		return truncateString(string(input), 4096), "", ""
-	}
-
-	agentID, _ := raw["agent_id"].(string)
-	targetURL, _ := raw["target_url"].(string)
-	summary := make(map[string]interface{}, len(raw))
-	for key, value := range raw {
-		lower := strings.ToLower(key)
-		switch {
-		case lower == "poc_content":
-			content, _ := value.(string)
-			sum := sha256.Sum256([]byte(content))
-			summary[key] = map[string]interface{}{
-				"sha256": hex.EncodeToString(sum[:]),
-				"length": len(content),
-			}
-		case strings.Contains(lower, "token") || strings.Contains(lower, "secret") || strings.Contains(lower, "password") || strings.Contains(lower, "api_key") || strings.Contains(lower, "authorization"):
-			summary[key] = "[redacted]"
-		default:
-			summary[key] = compactAuditValue(value, 0)
-		}
-	}
-
-	data, err := json.Marshal(summary)
-	if err != nil {
-		return "{}", agentID, targetURL
-	}
-	return truncateString(string(data), 4096), agentID, targetURL
-}
-
-func compactAuditValue(value interface{}, depth int) interface{} {
-	if depth >= 3 {
-		return "[truncated]"
-	}
-	switch v := value.(type) {
-	case map[string]interface{}:
-		out := make(map[string]interface{}, len(v))
-		for key, val := range v {
-			out[key] = compactAuditValue(val, depth+1)
-		}
-		return out
-	case []interface{}:
-		limit := len(v)
-		if limit > 10 {
-			limit = 10
-		}
-		out := make([]interface{}, 0, limit+1)
-		for i := 0; i < limit; i++ {
-			out = append(out, compactAuditValue(v[i], depth+1))
-		}
-		if len(v) > limit {
-			out = append(out, fmt.Sprintf("[truncated %d items]", len(v)-limit))
-		}
-		return out
-	case string:
-		return truncateString(v, 800)
-	default:
-		return v
-	}
-}
-
-func classifyToolResult(ctx context.Context, result interface{}, err error) (string, string) {
-	if err != nil {
-		msg := truncateString(err.Error(), 1000)
-		switch {
-		case errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled):
-			return "cancelled", msg
-		case errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) || strings.Contains(strings.ToLower(msg), "timeout"):
-			return "timeout", msg
-		default:
-			return "error", msg
-		}
-	}
-
-	if m, ok := result.(map[string]interface{}); ok {
-		if rawStatus, ok := m["status"].(string); ok {
-			switch strings.ToLower(rawStatus) {
-			case "hit", "success", "ok":
-				return "success", ""
-			case "miss":
-				return "miss", ""
-			case "failed", "error":
-				if errText, _ := m["error"].(string); errText != "" {
-					return "failed", truncateString(errText, 1000)
-				}
-				return "failed", ""
-			}
-		}
-	}
-	return "success", ""
-}
-
-func recordAIToolInvocation(audit AIToolAuditContext, toolName, argsSummary, agentID, targetURL string, duration time.Duration, status, errorSummary string) {
-	if db.DB == nil {
-		return
-	}
-	if audit.TenantID == "" {
-		audit.TenantID = "default"
-	}
-	row := db.AIToolInvocation{
-		TenantID:     audit.TenantID,
-		UserID:       audit.UserID,
-		Module:       audit.Module,
-		ToolName:     toolName,
-		ArgsSummary:  argsSummary,
-		AgentID:      truncateString(agentID, 255),
-		TargetURL:    truncateString(targetURL, 2000),
-		DurationMS:   duration.Milliseconds(),
-		Status:       status,
-		ErrorSummary: errorSummary,
-		CreatedAt:    time.Now(),
-	}
-	_ = db.DB.Create(&row).Error
 }
 
 func truncateString(value string, max int) string {
@@ -1235,7 +1077,7 @@ func (t *RunSandboxDebugTool) Execute(ctx context.Context, input json.RawMessage
 	// 启动沙箱会话 (借用现有的 debug.go 逻辑)
 	session, ok := pocDebugSessions.start(t.TenantID, args.AgentID, 30*time.Second, resultChan)
 	if !ok {
-		return nil, fmt.Errorf("tenant already has a running debug session")
+		return nil, fmt.Errorf("agent already has a running debug session")
 	}
 	defer pocDebugSessions.finish(session.SessionID)
 

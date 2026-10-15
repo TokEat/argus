@@ -1,4 +1,4 @@
-.PHONY: cli agent server yaksha yaksha-image yaksha-up yaksha-down exp-lab-up exp-lab-smoke exp-lab-down mcp proto-scan proto-egress nuclei-embed-test legacy all clean docker infra-up infra-down infra-logs db-init db-migrate db-verify db-schema-dump setup-local smoke-local test coverage frontend-smoke cloud-smoke source-size-check brand-check release-artifacts lint ci
+.PHONY: cli agent server yaksha yaksha-image yaksha-up yaksha-down exp-lab-up exp-lab-smoke exp-lab-down mcp proto-scan proto-egress nuclei-embed-test legacy all clean clean-release docker infra-up infra-down infra-logs db-setup db-verify setup-local smoke-local test coverage frontend-smoke cloud-smoke source-size-check brand-check release-artifacts lint ci
 
 COMPOSE_FILE := server/deploy/docker-compose.yml
 DOCKER_COMPOSE := docker compose -f $(COMPOSE_FILE)
@@ -10,24 +10,24 @@ DB_PORT ?= $(POSTGRES_PORT)
 POSTGRES_USER ?= postgres
 POSTGRES_PASSWORD ?= argus_dev_pg_S7m9Q4r2L8xP6nV3
 POSTGRES_DB ?= argus
-DB_MIGRATION_MODE ?= apply
+POSTGRES_CONTAINER ?=
 DB_DSN ?= host=$(DB_HOST) user=$(POSTGRES_USER) password=$(POSTGRES_PASSWORD) dbname=$(POSTGRES_DB) port=$(DB_PORT) sslmode=disable
 
-# Argus CLI 单机版
+# Argus CLI 单机版（当前机器 → bin/argus）
 cli:
-	go build -o bin/argus ./scanner/cmd/cli
+	./build.sh cli
 
-# argus-agent 扫描节点（Phase 1 实现）
+# argus-agent 扫描节点（当前机器 → bin/argus-agent）
 agent:
-	go build -o bin/argus-agent ./scanner/cmd/agent
+	./build.sh agent
 
-# argus-server 控制端
+# argus-server 控制端（当前机器 → bin/argus-server）
 server:
-	go build -o bin/argus-server ./server/cmd/argus-server
+	./build.sh server
 
 # argus-mcp 独立 MCP 代理
 mcp:
-	cd mcp && go build -o ../bin/argus-mcp ./cmd/argus-mcp
+	./build.sh mcp
 
 # Generate shared Agent and Yaksha egress contracts with pinned generators.
 proto-scan:
@@ -49,7 +49,7 @@ nuclei-embed-test:
 
 # Yaksha 独立 Yaklang EXP runtime；保持独立 module 依赖边界。
 yaksha:
-	cd yaksha && GOWORK=off go build -o ../bin/yaksha ./cmd/yaksha
+	./build.sh yaksha
 
 yaksha-image:
 	docker compose -f yaksha/compose.yaml build
@@ -74,14 +74,17 @@ exp-lab-down:
 
 # 向后兼容：根目录编译
 legacy:
-	go build -o bin/argus ./scanner/cmd/cli
+	./build.sh cli
 
-# 全部编译
+# 全部编译（当前机器 → bin/）
 all: cli agent server yaksha mcp
 
-# 清理
+# 清理本机产物；交叉编译产物用 make clean-release
 clean:
 	rm -rf bin/
+
+clean-release:
+	rm -rf release/
 
 infra-up:
 	$(DOCKER_COMPOSE) up -d --remove-orphans rabbitmq postgres
@@ -92,17 +95,33 @@ infra-down:
 infra-logs:
 	$(DOCKER_COMPOSE) logs -f rabbitmq postgres
 
-db-init:
-	$(DOCKER_COMPOSE) exec -T postgres bash -lc '/docker-entrypoint-initdb.d/000-init-db.sh'
+# 数据库初始化（纯 SQL，psql 导入）。POSTGRES_CONTAINER / ARGUS_DB_CONTAINER
+# 指定已有 Postgres 容器；宿主机无 psql 时自动对 compose postgres 使用 --container。
+db-setup:
+	@container="$(POSTGRES_CONTAINER)"; \
+	if [ -z "$$container" ]; then container="$$ARGUS_DB_CONTAINER"; fi; \
+	if [ -n "$$container" ]; then \
+		POSTGRES_DB="$(POSTGRES_DB)" POSTGRES_USER="$(POSTGRES_USER)" \
+		POSTGRES_PASSWORD="$(POSTGRES_PASSWORD)" \
+		bash deploy/db-init.sh --no-backup --container "$$container"; \
+	elif command -v psql >/dev/null 2>&1; then \
+		POSTGRES_HOST="$(DB_HOST)" POSTGRES_PORT="$(DB_PORT)" POSTGRES_DB="$(POSTGRES_DB)" \
+		POSTGRES_USER="$(POSTGRES_USER)" POSTGRES_PASSWORD="$(POSTGRES_PASSWORD)" \
+		bash deploy/db-init.sh --no-backup; \
+	else \
+		echo "[db-setup] host 未安装 psql，改为通过 postgres 容器执行"; \
+		$(DOCKER_COMPOSE) up -d --wait postgres >/dev/null; \
+		cid="$$($(DOCKER_COMPOSE) ps -q postgres | tr -d '\r')"; \
+		if [ -z "$$cid" ]; then echo "[db-setup] 无法解析 postgres 容器 ID" >&2; exit 1; fi; \
+		POSTGRES_DB="$(POSTGRES_DB)" POSTGRES_USER="$(POSTGRES_USER)" \
+		POSTGRES_PASSWORD="$(POSTGRES_PASSWORD)" \
+		bash deploy/db-init.sh --no-backup --container "$$cid"; \
+	fi
 
-db-migrate:
-	go run ./server/cmd/argus-server --db "$(DB_DSN)" --migrate-only --db-migration-mode $(DB_MIGRATION_MODE) $(if $(filter dev-auto,$(DB_MIGRATION_MODE)),--dev,)
-
+# 数据库校验：先用 SQL 初始化脚本收敛 schema，再跑 server 启动期同款校验测试
 db-verify:
-	go run ./server/cmd/argus-server --db "$(DB_DSN)" --migrate-only --db-migration-mode verify
-
-db-schema-dump:
-	bash server/scripts/dump_current_schema.sh
+	@$(MAKE) --no-print-directory db-setup
+	cd server && ARGUS_VERIFY_DSN="$(DB_DSN)" go test ./internal/db -run 'TestVerifyDatabaseReadyOnInitSQLDatabase' -count=1
 
 setup-local:
 	bash server/deploy/setup-local.sh

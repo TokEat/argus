@@ -370,50 +370,6 @@ func (x *HeartbeatResp) GetTasksAvailable() int32 {
 	return 0
 }
 
-type FetchTaskReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *FetchTaskReq) Reset() {
-	*x = FetchTaskReq{}
-	mi := &file_proto_scan_agent_proto_msgTypes[5]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *FetchTaskReq) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*FetchTaskReq) ProtoMessage() {}
-
-func (x *FetchTaskReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[5]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use FetchTaskReq.ProtoReflect.Descriptor instead.
-func (*FetchTaskReq) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{5}
-}
-
-func (x *FetchTaskReq) GetAgentId() string {
-	if x != nil {
-		return x.AgentId
-	}
-	return ""
-}
-
 // AgentSignal Agent→Server 的信号（通过 Subscribe 流上行）
 type AgentSignal struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -426,7 +382,7 @@ type AgentSignal struct {
 
 func (x *AgentSignal) Reset() {
 	*x = AgentSignal{}
-	mi := &file_proto_scan_agent_proto_msgTypes[6]
+	mi := &file_proto_scan_agent_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -438,7 +394,7 @@ func (x *AgentSignal) String() string {
 func (*AgentSignal) ProtoMessage() {}
 
 func (x *AgentSignal) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[6]
+	mi := &file_proto_scan_agent_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -451,7 +407,7 @@ func (x *AgentSignal) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentSignal.ProtoReflect.Descriptor instead.
 func (*AgentSignal) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{6}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *AgentSignal) GetAgentId() string {
@@ -488,7 +444,7 @@ type TaskNotify struct {
 
 func (x *TaskNotify) Reset() {
 	*x = TaskNotify{}
-	mi := &file_proto_scan_agent_proto_msgTypes[7]
+	mi := &file_proto_scan_agent_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -500,7 +456,7 @@ func (x *TaskNotify) String() string {
 func (*TaskNotify) ProtoMessage() {}
 
 func (x *TaskNotify) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[7]
+	mi := &file_proto_scan_agent_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -513,7 +469,7 @@ func (x *TaskNotify) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskNotify.ProtoReflect.Descriptor instead.
 func (*TaskNotify) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{7}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *TaskNotify) GetAvailableTasks() int32 {
@@ -561,7 +517,7 @@ type DebugCommand struct {
 
 func (x *DebugCommand) Reset() {
 	*x = DebugCommand{}
-	mi := &file_proto_scan_agent_proto_msgTypes[8]
+	mi := &file_proto_scan_agent_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -573,7 +529,7 @@ func (x *DebugCommand) String() string {
 func (*DebugCommand) ProtoMessage() {}
 
 func (x *DebugCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[8]
+	mi := &file_proto_scan_agent_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -586,7 +542,7 @@ func (x *DebugCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DebugCommand.ProtoReflect.Descriptor instead.
 func (*DebugCommand) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{8}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *DebugCommand) GetAction() string {
@@ -657,7 +613,7 @@ type ClaimTaskReq struct {
 
 func (x *ClaimTaskReq) Reset() {
 	*x = ClaimTaskReq{}
-	mi := &file_proto_scan_agent_proto_msgTypes[9]
+	mi := &file_proto_scan_agent_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -669,7 +625,7 @@ func (x *ClaimTaskReq) String() string {
 func (*ClaimTaskReq) ProtoMessage() {}
 
 func (x *ClaimTaskReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[9]
+	mi := &file_proto_scan_agent_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -682,7 +638,7 @@ func (x *ClaimTaskReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClaimTaskReq.ProtoReflect.Descriptor instead.
 func (*ClaimTaskReq) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{9}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ClaimTaskReq) GetAgentId() string {
@@ -719,7 +675,7 @@ type Task struct {
 
 func (x *Task) Reset() {
 	*x = Task{}
-	mi := &file_proto_scan_agent_proto_msgTypes[10]
+	mi := &file_proto_scan_agent_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -731,7 +687,7 @@ func (x *Task) String() string {
 func (*Task) ProtoMessage() {}
 
 func (x *Task) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[10]
+	mi := &file_proto_scan_agent_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -744,7 +700,7 @@ func (x *Task) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Task.ProtoReflect.Descriptor instead.
 func (*Task) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{10}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Task) GetTaskId() string {
@@ -796,7 +752,7 @@ type ScanResult struct {
 
 func (x *ScanResult) Reset() {
 	*x = ScanResult{}
-	mi := &file_proto_scan_agent_proto_msgTypes[11]
+	mi := &file_proto_scan_agent_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -808,7 +764,7 @@ func (x *ScanResult) String() string {
 func (*ScanResult) ProtoMessage() {}
 
 func (x *ScanResult) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[11]
+	mi := &file_proto_scan_agent_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -821,7 +777,7 @@ func (x *ScanResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScanResult.ProtoReflect.Descriptor instead.
 func (*ScanResult) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{11}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ScanResult) GetTaskId() string {
@@ -864,7 +820,7 @@ type TaskCompleteReq struct {
 
 func (x *TaskCompleteReq) Reset() {
 	*x = TaskCompleteReq{}
-	mi := &file_proto_scan_agent_proto_msgTypes[12]
+	mi := &file_proto_scan_agent_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -876,7 +832,7 @@ func (x *TaskCompleteReq) String() string {
 func (*TaskCompleteReq) ProtoMessage() {}
 
 func (x *TaskCompleteReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[12]
+	mi := &file_proto_scan_agent_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -889,7 +845,7 @@ func (x *TaskCompleteReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskCompleteReq.ProtoReflect.Descriptor instead.
 func (*TaskCompleteReq) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{12}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *TaskCompleteReq) GetAgentId() string {
@@ -931,7 +887,7 @@ type FetchCredentialBundleReq struct {
 
 func (x *FetchCredentialBundleReq) Reset() {
 	*x = FetchCredentialBundleReq{}
-	mi := &file_proto_scan_agent_proto_msgTypes[13]
+	mi := &file_proto_scan_agent_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -943,7 +899,7 @@ func (x *FetchCredentialBundleReq) String() string {
 func (*FetchCredentialBundleReq) ProtoMessage() {}
 
 func (x *FetchCredentialBundleReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[13]
+	mi := &file_proto_scan_agent_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -956,7 +912,7 @@ func (x *FetchCredentialBundleReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchCredentialBundleReq.ProtoReflect.Descriptor instead.
 func (*FetchCredentialBundleReq) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{13}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *FetchCredentialBundleReq) GetAgentId() string {
@@ -990,7 +946,7 @@ type CredentialPair struct {
 
 func (x *CredentialPair) Reset() {
 	*x = CredentialPair{}
-	mi := &file_proto_scan_agent_proto_msgTypes[14]
+	mi := &file_proto_scan_agent_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1002,7 +958,7 @@ func (x *CredentialPair) String() string {
 func (*CredentialPair) ProtoMessage() {}
 
 func (x *CredentialPair) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[14]
+	mi := &file_proto_scan_agent_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1015,7 +971,7 @@ func (x *CredentialPair) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CredentialPair.ProtoReflect.Descriptor instead.
 func (*CredentialPair) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{14}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *CredentialPair) GetUsername() string {
@@ -1044,7 +1000,7 @@ type FetchCredentialBundleResp struct {
 
 func (x *FetchCredentialBundleResp) Reset() {
 	*x = FetchCredentialBundleResp{}
-	mi := &file_proto_scan_agent_proto_msgTypes[15]
+	mi := &file_proto_scan_agent_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1056,7 +1012,7 @@ func (x *FetchCredentialBundleResp) String() string {
 func (*FetchCredentialBundleResp) ProtoMessage() {}
 
 func (x *FetchCredentialBundleResp) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[15]
+	mi := &file_proto_scan_agent_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1069,7 +1025,7 @@ func (x *FetchCredentialBundleResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchCredentialBundleResp.ProtoReflect.Descriptor instead.
 func (*FetchCredentialBundleResp) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{15}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *FetchCredentialBundleResp) GetPairs() []*CredentialPair {
@@ -1109,7 +1065,7 @@ type EmergencyReq struct {
 
 func (x *EmergencyReq) Reset() {
 	*x = EmergencyReq{}
-	mi := &file_proto_scan_agent_proto_msgTypes[16]
+	mi := &file_proto_scan_agent_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1121,7 +1077,7 @@ func (x *EmergencyReq) String() string {
 func (*EmergencyReq) ProtoMessage() {}
 
 func (x *EmergencyReq) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[16]
+	mi := &file_proto_scan_agent_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1134,7 +1090,7 @@ func (x *EmergencyReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EmergencyReq.ProtoReflect.Descriptor instead.
 func (*EmergencyReq) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{16}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *EmergencyReq) GetAgentId() string {
@@ -1156,7 +1112,7 @@ type LogPayload struct {
 
 func (x *LogPayload) Reset() {
 	*x = LogPayload{}
-	mi := &file_proto_scan_agent_proto_msgTypes[17]
+	mi := &file_proto_scan_agent_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1168,7 +1124,7 @@ func (x *LogPayload) String() string {
 func (*LogPayload) ProtoMessage() {}
 
 func (x *LogPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[17]
+	mi := &file_proto_scan_agent_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1181,7 +1137,7 @@ func (x *LogPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogPayload.ProtoReflect.Descriptor instead.
 func (*LogPayload) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{17}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *LogPayload) GetAgentId() string {
@@ -1237,7 +1193,7 @@ type DebugEvent struct {
 
 func (x *DebugEvent) Reset() {
 	*x = DebugEvent{}
-	mi := &file_proto_scan_agent_proto_msgTypes[18]
+	mi := &file_proto_scan_agent_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1249,7 +1205,7 @@ func (x *DebugEvent) String() string {
 func (*DebugEvent) ProtoMessage() {}
 
 func (x *DebugEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scan_agent_proto_msgTypes[18]
+	mi := &file_proto_scan_agent_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1262,7 +1218,7 @@ func (x *DebugEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DebugEvent.ProtoReflect.Descriptor instead.
 func (*DebugEvent) Descriptor() ([]byte, []int) {
-	return file_proto_scan_agent_proto_rawDescGZIP(), []int{18}
+	return file_proto_scan_agent_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *DebugEvent) GetAgentId() string {
@@ -1410,9 +1366,7 @@ const file_proto_scan_agent_proto_rawDesc = "" +
 	"\x03ack\x18\x01 \x01(\bR\x03ack\x12)\n" +
 	"\x10should_terminate\x18\x02 \x01(\bR\x0fshouldTerminate\x12*\n" +
 	"\x11should_sync_rules\x18\x03 \x01(\bR\x0fshouldSyncRules\x12'\n" +
-	"\x0ftasks_available\x18\x04 \x01(\x05R\x0etasksAvailable\")\n" +
-	"\fFetchTaskReq\x12\x19\n" +
-	"\bagent_id\x18\x01 \x01(\tR\aagentId\"h\n" +
+	"\x0ftasks_available\x18\x04 \x01(\x05R\x0etasksAvailable\"h\n" +
 	"\vAgentSignal\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1d\n" +
 	"\n" +
@@ -1509,14 +1463,12 @@ const file_proto_scan_agent_proto_rawDesc = "" +
 	"\textracted\x18\x0e \x03(\tR\textracted\x12\x1f\n" +
 	"\vduration_ms\x18\x0f \x01(\x03R\n" +
 	"durationMs\x12\x14\n" +
-	"\x05error\x18\x10 \x01(\tR\x05error2\xcd\x04\n" +
+	"\x05error\x18\x10 \x01(\tR\x05error2\xa0\x04\n" +
 	"\fAgentService\x121\n" +
 	"\bRegister\x12\x11.scan.RegisterReq\x1a\x12.scan.RegisterResp\x124\n" +
 	"\tHeartbeat\x12\x12.scan.HeartbeatReq\x1a\x13.scan.HeartbeatResp\x124\n" +
 	"\tSubscribe\x12\x11.scan.AgentSignal\x1a\x10.scan.TaskNotify(\x010\x01\x12+\n" +
 	"\tClaimTask\x12\x12.scan.ClaimTaskReq\x1a\n" +
-	".scan.Task\x12+\n" +
-	"\tFetchTask\x12\x12.scan.FetchTaskReq\x1a\n" +
 	".scan.Task\x12-\n" +
 	"\fStreamResult\x12\x10.scan.ScanResult\x1a\t.scan.Ack(\x01\x120\n" +
 	"\fTaskComplete\x12\x15.scan.TaskCompleteReq\x1a\t.scan.Ack\x12X\n" +
@@ -1538,59 +1490,56 @@ func file_proto_scan_agent_proto_rawDescGZIP() []byte {
 	return file_proto_scan_agent_proto_rawDescData
 }
 
-var file_proto_scan_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_proto_scan_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_proto_scan_agent_proto_goTypes = []any{
 	(*Ack)(nil),                       // 0: scan.Ack
 	(*RegisterReq)(nil),               // 1: scan.RegisterReq
 	(*RegisterResp)(nil),              // 2: scan.RegisterResp
 	(*HeartbeatReq)(nil),              // 3: scan.HeartbeatReq
 	(*HeartbeatResp)(nil),             // 4: scan.HeartbeatResp
-	(*FetchTaskReq)(nil),              // 5: scan.FetchTaskReq
-	(*AgentSignal)(nil),               // 6: scan.AgentSignal
-	(*TaskNotify)(nil),                // 7: scan.TaskNotify
-	(*DebugCommand)(nil),              // 8: scan.DebugCommand
-	(*ClaimTaskReq)(nil),              // 9: scan.ClaimTaskReq
-	(*Task)(nil),                      // 10: scan.Task
-	(*ScanResult)(nil),                // 11: scan.ScanResult
-	(*TaskCompleteReq)(nil),           // 12: scan.TaskCompleteReq
-	(*FetchCredentialBundleReq)(nil),  // 13: scan.FetchCredentialBundleReq
-	(*CredentialPair)(nil),            // 14: scan.CredentialPair
-	(*FetchCredentialBundleResp)(nil), // 15: scan.FetchCredentialBundleResp
-	(*EmergencyReq)(nil),              // 16: scan.EmergencyReq
-	(*LogPayload)(nil),                // 17: scan.LogPayload
-	(*DebugEvent)(nil),                // 18: scan.DebugEvent
-	nil,                               // 19: scan.RegisterReq.TagsEntry
-	nil,                               // 20: scan.ClaimTaskReq.TagsEntry
+	(*AgentSignal)(nil),               // 5: scan.AgentSignal
+	(*TaskNotify)(nil),                // 6: scan.TaskNotify
+	(*DebugCommand)(nil),              // 7: scan.DebugCommand
+	(*ClaimTaskReq)(nil),              // 8: scan.ClaimTaskReq
+	(*Task)(nil),                      // 9: scan.Task
+	(*ScanResult)(nil),                // 10: scan.ScanResult
+	(*TaskCompleteReq)(nil),           // 11: scan.TaskCompleteReq
+	(*FetchCredentialBundleReq)(nil),  // 12: scan.FetchCredentialBundleReq
+	(*CredentialPair)(nil),            // 13: scan.CredentialPair
+	(*FetchCredentialBundleResp)(nil), // 14: scan.FetchCredentialBundleResp
+	(*EmergencyReq)(nil),              // 15: scan.EmergencyReq
+	(*LogPayload)(nil),                // 16: scan.LogPayload
+	(*DebugEvent)(nil),                // 17: scan.DebugEvent
+	nil,                               // 18: scan.RegisterReq.TagsEntry
+	nil,                               // 19: scan.ClaimTaskReq.TagsEntry
 }
 var file_proto_scan_agent_proto_depIdxs = []int32{
-	19, // 0: scan.RegisterReq.tags:type_name -> scan.RegisterReq.TagsEntry
-	8,  // 1: scan.TaskNotify.debug_command:type_name -> scan.DebugCommand
-	20, // 2: scan.ClaimTaskReq.tags:type_name -> scan.ClaimTaskReq.TagsEntry
-	14, // 3: scan.FetchCredentialBundleResp.pairs:type_name -> scan.CredentialPair
+	18, // 0: scan.RegisterReq.tags:type_name -> scan.RegisterReq.TagsEntry
+	7,  // 1: scan.TaskNotify.debug_command:type_name -> scan.DebugCommand
+	19, // 2: scan.ClaimTaskReq.tags:type_name -> scan.ClaimTaskReq.TagsEntry
+	13, // 3: scan.FetchCredentialBundleResp.pairs:type_name -> scan.CredentialPair
 	1,  // 4: scan.AgentService.Register:input_type -> scan.RegisterReq
 	3,  // 5: scan.AgentService.Heartbeat:input_type -> scan.HeartbeatReq
-	6,  // 6: scan.AgentService.Subscribe:input_type -> scan.AgentSignal
-	9,  // 7: scan.AgentService.ClaimTask:input_type -> scan.ClaimTaskReq
-	5,  // 8: scan.AgentService.FetchTask:input_type -> scan.FetchTaskReq
-	11, // 9: scan.AgentService.StreamResult:input_type -> scan.ScanResult
-	12, // 10: scan.AgentService.TaskComplete:input_type -> scan.TaskCompleteReq
-	13, // 11: scan.AgentService.FetchCredentialBundle:input_type -> scan.FetchCredentialBundleReq
-	16, // 12: scan.AgentService.EmergencyDump:input_type -> scan.EmergencyReq
-	17, // 13: scan.AgentService.StreamLogs:input_type -> scan.LogPayload
-	18, // 14: scan.AgentService.StreamDebug:input_type -> scan.DebugEvent
-	2,  // 15: scan.AgentService.Register:output_type -> scan.RegisterResp
-	4,  // 16: scan.AgentService.Heartbeat:output_type -> scan.HeartbeatResp
-	7,  // 17: scan.AgentService.Subscribe:output_type -> scan.TaskNotify
-	10, // 18: scan.AgentService.ClaimTask:output_type -> scan.Task
-	10, // 19: scan.AgentService.FetchTask:output_type -> scan.Task
-	0,  // 20: scan.AgentService.StreamResult:output_type -> scan.Ack
-	0,  // 21: scan.AgentService.TaskComplete:output_type -> scan.Ack
-	15, // 22: scan.AgentService.FetchCredentialBundle:output_type -> scan.FetchCredentialBundleResp
-	0,  // 23: scan.AgentService.EmergencyDump:output_type -> scan.Ack
-	0,  // 24: scan.AgentService.StreamLogs:output_type -> scan.Ack
-	0,  // 25: scan.AgentService.StreamDebug:output_type -> scan.Ack
-	15, // [15:26] is the sub-list for method output_type
-	4,  // [4:15] is the sub-list for method input_type
+	5,  // 6: scan.AgentService.Subscribe:input_type -> scan.AgentSignal
+	8,  // 7: scan.AgentService.ClaimTask:input_type -> scan.ClaimTaskReq
+	10, // 8: scan.AgentService.StreamResult:input_type -> scan.ScanResult
+	11, // 9: scan.AgentService.TaskComplete:input_type -> scan.TaskCompleteReq
+	12, // 10: scan.AgentService.FetchCredentialBundle:input_type -> scan.FetchCredentialBundleReq
+	15, // 11: scan.AgentService.EmergencyDump:input_type -> scan.EmergencyReq
+	16, // 12: scan.AgentService.StreamLogs:input_type -> scan.LogPayload
+	17, // 13: scan.AgentService.StreamDebug:input_type -> scan.DebugEvent
+	2,  // 14: scan.AgentService.Register:output_type -> scan.RegisterResp
+	4,  // 15: scan.AgentService.Heartbeat:output_type -> scan.HeartbeatResp
+	6,  // 16: scan.AgentService.Subscribe:output_type -> scan.TaskNotify
+	9,  // 17: scan.AgentService.ClaimTask:output_type -> scan.Task
+	0,  // 18: scan.AgentService.StreamResult:output_type -> scan.Ack
+	0,  // 19: scan.AgentService.TaskComplete:output_type -> scan.Ack
+	14, // 20: scan.AgentService.FetchCredentialBundle:output_type -> scan.FetchCredentialBundleResp
+	0,  // 21: scan.AgentService.EmergencyDump:output_type -> scan.Ack
+	0,  // 22: scan.AgentService.StreamLogs:output_type -> scan.Ack
+	0,  // 23: scan.AgentService.StreamDebug:output_type -> scan.Ack
+	14, // [14:24] is the sub-list for method output_type
+	4,  // [4:14] is the sub-list for method input_type
 	4,  // [4:4] is the sub-list for extension type_name
 	4,  // [4:4] is the sub-list for extension extendee
 	0,  // [0:4] is the sub-list for field type_name
@@ -1607,7 +1556,7 @@ func file_proto_scan_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_scan_agent_proto_rawDesc), len(file_proto_scan_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   21,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

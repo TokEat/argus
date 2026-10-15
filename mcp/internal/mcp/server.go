@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -13,6 +14,8 @@ var resourceEndpoints = map[string]string{
 	"argus://argus-mcp/tool-guide":              "/api/v1/mcp/resources/argus-mcp/tool-guide",
 	"argus://fingerprint/spec":                  "/api/v1/mcp/resources/fingerprint/spec",
 	"argus://fingerprint/template":              "/api/v1/mcp/resources/fingerprint/template",
+	"argus://dir/spec":                          "/api/v1/mcp/resources/dir/spec",
+	"argus://dir/template":                      "/api/v1/mcp/resources/dir/template",
 	"argus://behavior-probe/spec":               "/api/v1/mcp/resources/behavior-probe/spec",
 	"argus://behavior-probe/template":           "/api/v1/mcp/resources/behavior-probe/template",
 	"argus://poc/spec":                          "/api/v1/mcp/resources/poc/spec",
@@ -22,8 +25,10 @@ var resourceEndpoints = map[string]string{
 	"argus://examples/fingerprint-poc-workflow": "/api/v1/mcp/resources/examples/fingerprint-poc-workflow",
 }
 
-func NewServer(client *Client) *sdkmcp.Server {
+func NewServer(client *Client, opts ...ServerOption) *sdkmcp.Server {
+	cfg := applyServerOptions(opts)
 	server := sdkmcp.NewServer(&sdkmcp.Implementation{Name: "argus-mcp", Version: "0.1.0"}, &sdkmcp.ServerOptions{
+		Instructions: sourceLessMCPInstructions,
 		Capabilities: &sdkmcp.ServerCapabilities{
 			Extensions: map[string]interface{}{
 				"io.modelcontextprotocol/ui": map[string]interface{}{
@@ -34,11 +39,11 @@ func NewServer(client *Client) *sdkmcp.Server {
 			Tools:     &sdkmcp.ToolCapabilities{},
 		},
 	})
-	RegisterArgusMCP(server, client)
+	RegisterArgusMCP(server, client, cfg.auditor)
 	return server
 }
 
-func RegisterArgusMCP(server *sdkmcp.Server, client *Client) {
+func RegisterArgusMCP(server *sdkmcp.Server, client *Client, auditor ToolAuditor) {
 	for _, resource := range resources() {
 		resource := resource
 		server.AddResource(resource, func(ctx context.Context, req *sdkmcp.ReadResourceRequest) (*sdkmcp.ReadResourceResult, error) {
@@ -65,9 +70,14 @@ func RegisterArgusMCP(server *sdkmcp.Server, client *Client) {
 					return nil, fmt.Errorf("invalid tools/call arguments: %w", err)
 				}
 			}
+			if pending, err := maybeElicit(client, tool.Name, req, args); pending != nil || err != nil {
+				return pending, err
+			}
+			started := time.Now()
 			result, err := client.CallTool(ctx, tool.Name, args)
+			recordAuditableTool(ctx, auditor, tool.Name, args, time.Since(started), err)
 			if err != nil {
-				if tool.Name == "argus_yaksha_exp" || tool.Name == "argus_exp_workspace" || tool.Name == "argus_scan_task" {
+				if isStructuredContentTool(tool.Name) {
 					return &sdkmcp.CallToolResult{
 						Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: err.Error()}},
 						IsError: true,
@@ -79,7 +89,7 @@ func RegisterArgusMCP(server *sdkmcp.Server, client *Client) {
 			response := &sdkmcp.CallToolResult{
 				Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: string(data)}},
 			}
-			if tool.Name == "argus_yaksha_exp" || tool.Name == "argus_exp_workspace" || tool.Name == "argus_scan_task" {
+			if isStructuredContentTool(tool.Name) {
 				response.StructuredContent = result
 			}
 			return response, nil
@@ -90,9 +100,11 @@ func RegisterArgusMCP(server *sdkmcp.Server, client *Client) {
 func resources() []*sdkmcp.Resource {
 	return []*sdkmcp.Resource{
 		{URI: "argus://argus-mcp/quickstart", Name: "Argus MCP Quickstart", Description: "Start here when the client has no Argus source code.", MIMEType: "text/markdown"},
-		{URI: "argus://argus-mcp/tool-guide", Name: "Argus MCP Tool Guide", Description: "How to use the four aggregate MCP tools and their required field combinations.", MIMEType: "text/markdown"},
+		{URI: "argus://argus-mcp/tool-guide", Name: "Argus MCP Tool Guide", Description: "How to use the rule authoring MCP tools and their required field combinations.", MIMEType: "text/markdown"},
 		{URI: "argus://fingerprint/spec", Name: "Argus Fingerprint Spec", Description: "Fingerprint YAML format and rule expression examples.", MIMEType: "text/markdown"},
 		{URI: "argus://fingerprint/template", Name: "Argus Fingerprint Template", Description: "Minimal fingerprint YAML snippet.", MIMEType: "text/yaml"},
+		{URI: "argus://dir/spec", Name: "Argus Dir Probe Spec", Description: "Dir dictionary format mapping products to URL paths.", MIMEType: "text/markdown"},
+		{URI: "argus://dir/template", Name: "Argus Dir Probe Template", Description: "Minimal dir YAML snippet.", MIMEType: "text/yaml"},
 		{URI: "argus://behavior-probe/spec", Name: "Argus Behavior Probe Spec", Description: "Nuclei HTTP/HTTPS behavior probe contract and safety classification.", MIMEType: "text/markdown"},
 		{URI: "argus://behavior-probe/template", Name: "Argus Behavior Probe Template", Description: "Minimal single-file Nuclei active fingerprint.", MIMEType: "text/yaml"},
 		{URI: "argus://poc/spec", Name: "Argus POC Spec", Description: "POC YAML format and debug/save boundaries.", MIMEType: "text/markdown"},
@@ -102,35 +114,6 @@ func resources() []*sdkmcp.Resource {
 		{URI: "argus://poc/template", Name: "Argus POC Template", Description: "Minimal POC YAML template.", MIMEType: "text/yaml"},
 		{URI: expConsoleURI, Name: "yaksha_exp_studio", Title: "Yaksha EXP Studio", Description: "Interactive Server-authoritative Yaklang EXP Studio for revisions, fixtures, execution and audit.", MIMEType: expConsoleMIMEType, Meta: sdkmcp.Meta(expConsoleMeta)},
 	}
-}
-
-func tools() []*sdkmcp.Tool {
-	return []*sdkmcp.Tool{
-		{Name: "argus_context", Description: "Read Argus rule facts for passive fingerprints, behavior probes, POCs and workflows.", InputSchema: objectSchema(map[string]interface{}{"action": enumSchema([]string{"resources", "quickstart", "lifecycle_policy", "resource", "agents", "workflow_links", "workflow_recommend", "workflow_conflicts", "rule_get", "rule_list", "drafts", "relationship_stats", "relationship_list"}), "uri": stringSchema("Resource URI for action=resource"), "agent_id": stringSchema("Agent ID"), "rule_type": enumSchema([]string{"fingerprint", "behavior_probe", "poc", "workflow"}), "file_name": stringSchema("Exact artifact file name"), "artifact_id": stringSchema("Exact artifact id"), "state": enumSchema([]string{"Draft", "Approved", "Deprecated"}), "query": stringSchema("Exact list filter; use product_search for fuzzy discovery"), "view": enumSchema([]string{"linked_fingerprints", "unlinked_fingerprints", "workflow_without_fingerprint", "missing_poc_refs", "general_poc_workflows", "workflow_links"}), "range_start": map[string]interface{}{"type": "integer", "description": "1-based inclusive first row"}, "range_end": map[string]interface{}{"type": "integer", "description": "1-based inclusive last row; max window 200"}, "product_name": stringSchema("Product name"), "poc_name": stringSchema("POC name"), "limit": map[string]interface{}{"type": "integer"}}, []string{"action"})},
-		{Name: "argus_product_search", Description: "Read-only fuzzy product search across fingerprint, workflow and POC indexes. It never saves, deletes, or publishes.", InputSchema: objectSchema(map[string]interface{}{"query": stringSchema("Product, alias, POC name, CVE, tag or keyword"), "limit": map[string]interface{}{"type": "integer", "maximum": 100}}, []string{"query"})},
-		{Name: "argus_findings", Description: "Read-only query of scan content-analysis findings: crawl-site asset candidates (including path_app/hidden_path sites) and sensitive-info findings (email/phone/idcard/account/username/apikey/token/secret). action=summary aggregates counts by kind/site_type/ai_status; action=crawl_sites or sensitive returns the filtered rows. Results stay scoped to the caller's tenant/RBAC projects. It never modifies findings.", InputSchema: objectSchema(map[string]interface{}{"action": enumSchema([]string{"summary", "crawl_sites", "sensitive"}), "project_id": stringSchema("Tenant-scoped project ID; omit to span all accessible projects"), "task_id": stringSchema("Root task ID; expands to its subtasks"), "kind": enumSchema([]string{"email", "phone", "idcard", "account", "username", "apikey", "token", "secret", "keyword", "custom"}), "site_type": enumSchema([]string{"path_app", "hidden_path"}), "ai_status": enumSchema([]string{"pending", "confirmed", "rejected"}), "search": stringSchema("Substring match on url/host (crawl_sites) or value/host (sensitive)"), "page": map[string]interface{}{"type": "integer", "minimum": 1}, "page_size": map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 200}}, []string{"action"})},
-		{Name: "argus_results", Description: "Read-only query of dispatched-scan results: vulnerabilities (POC findings with request/response evidence), assets, and fingerprint hits. action=summary aggregates counts (vulns by severity/status, assets by protocol, fingerprints by product); action=vulns/assets/fingerprints list filtered rows; action=vuln_detail returns one vulnerability's full evidence bundle (Request/Response原文, AI review, asset lineage) by id + project_id. Results stay scoped to the caller's tenant/RBAC projects. It never modifies results.", InputSchema: objectSchema(map[string]interface{}{"action": enumSchema([]string{"summary", "vulns", "vuln_detail", "assets", "fingerprints"}), "project_id": stringSchema("Tenant-scoped project ID; required for vuln_detail, otherwise spans accessible projects"), "task_id": stringSchema("Root task ID; expands to its subtasks"), "id": stringSchema("Vulnerability numeric ID; required for vuln_detail"), "search": stringSchema("Substring match on target (vulns/assets) or product_name/target (fingerprints)"), "sort": enumSchema([]string{"severity", "created_at", "updated_at"}), "order": enumSchema([]string{"asc", "desc"}), "group_by": enumSchema([]string{"product"}), "page": map[string]interface{}{"type": "integer", "minimum": 1}, "page_size": map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 200}}, []string{"action"})},
-		{Name: "argus_rule_debug", Description: "Debug a passive fingerprint, Nuclei behavior probe or POC through an authorized online Agent. Controlled behavior probes require risk_confirmed=true.", InputSchema: objectSchema(map[string]interface{}{"rule_type": enumSchema([]string{"fingerprint", "behavior_probe", "poc"}), "agent_id": stringSchema("Agent ID"), "target_url": stringSchema("Authorized target URL"), "proxy": stringSchema("Write-only proxy URL"), "timeout_sec": map[string]interface{}{"type": "integer"}, "file_name": stringSchema("Behavior probe YAML file name"), "content": stringSchema("Complete behavior probe YAML"), "risk_confirmed": map[string]interface{}{"type": "boolean"}, "product_name": stringSchema("Fingerprint product"), "rule": stringSchema("Fingerprint expression"), "include_dir": map[string]interface{}{"type": "boolean"}, "include_poc": map[string]interface{}{"type": "boolean"}, "workflow_product": stringSchema("Workflow product or General-Poc-* group"), "workflow_types": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}, "workflow_pocs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}, "poc_content": stringSchema("POC YAML source")}, []string{"rule_type", "target_url"})},
-		{Name: "argus_rule_save", Description: "Save fingerprint, behavior probe, POC or Workflow source as a Draft and return stable_ref.", InputSchema: objectSchema(map[string]interface{}{"rule_type": enumSchema([]string{"fingerprint", "behavior_probe", "poc", "workflow"}), "intent": enumSchema([]string{"test_only", "production_candidate", "approved_reusable"}), "file_name": stringSchema("Draft file name"), "content": stringSchema("Complete rule source"), "product_name": stringSchema("Product or General-Poc-* group"), "rules": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}, "workflow_types": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}, "workflow_pocs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}}, []string{"rule_type"})},
-		{Name: "argus_rule_apply", Description: "Admin-only publish, deprecate or rollback using exact stable_ref hash/version guards.", InputSchema: objectSchema(map[string]interface{}{"action": enumSchema([]string{"publish", "deprecate", "rollback"}), "rule_type": enumSchema([]string{"fingerprint", "behavior_probe", "poc", "workflow"}), "artifact_id": stringSchema("Stable DB artifact id from stable_ref"), "file_name": stringSchema("Draft file name"), "hash": stringSchema("Expected artifact hash"), "version": map[string]interface{}{"type": "integer"}}, []string{"action", "rule_type"})},
-		{Name: "argus_yaksha_exp", Title: "Yaksha EXP Runtime", Description: "Operate one sealed single-file Yaklang EXP through the persistent independent Yaksha runtime. Transient script is limited to inspect, validate, and offline Fixture test. Network-capable debug/run require a Server-saved Revision bound by exp_id + revision + source_sha256 as an immutable source identity, so tenant authorization, risk confirmation, and run audit cannot be bypassed. inspect derives the official cli.* UI plus literal yaksha.call/yaksha.asset references; validate checks source, params, dependencies, assets, exact network targets, and egress shape; test is fixture-only and always offline; debug returns complete unredacted HTTP/TCP Trace; run executes once. Dependencies are pinned child revisions and assets are hash-bound content. Egress explicitly selects disabled, direct, a per-call write-only SOCKS5 route, or an authorized Agent using agent_id plus risk_confirmed=true. Agent mode creates a single-use Server Route and never exposes route_id or Gateway credentials. This tool does not expose filesystem or object-storage paths.", Meta: sdkmcp.Meta{"ui": map[string]interface{}{"resourceUri": expConsoleURI, "visibility": []string{"model", "app"}}}, InputSchema: yakshaInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
-		{Name: "argus_exp_workspace", Title: "Yaksha EXP Studio Workspace", Description: "Manage the Server-authoritative Yaksha EXP Studio workspace: EXP metadata, immutable revisions, hash-bound Assets, Fixture acceptance cases, publication, rollback pointers and run history. All operations are tenant-scoped and require EXP authorization; publication/deprecation/rollback remain Admin-only. Source, Asset content and full run artifacts are stored in private MinIO and no object key, credential or host path is exposed.", Meta: sdkmcp.Meta{"ui": map[string]interface{}{"resourceUri": expConsoleURI, "visibility": []string{"model", "app"}}}, InputSchema: expWorkspaceInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
-		{Name: "argus_scan_task", Title: "Argus Scan Plan", Description: "Preview or create one authorized scan through the Server-authoritative argus.scan-policy/v1 compiler. Always call action=preview first, show its stages, port count, Agent capacity, POC scope and credential budget to the user, then pass the exact returned plan_hash to action=create. POC and credential validation share one explicit authorization confirmation. This tool never accepts Scanner raw config, Agent file paths or an independent manual POC phase.", InputSchema: scanTaskInputSchema(), OutputSchema: map[string]interface{}{"type": "object"}},
-	}
-}
-
-func scanTaskInputSchema() map[string]interface{} {
-	return objectSchema(map[string]interface{}{
-		"action":          enumSchema([]string{"preview", "create"}),
-		"project_id":      stringSchema("Tenant-scoped project ID"),
-		"name":            stringSchema("Optional task name"),
-		"targets":         map[string]interface{}{"oneOf": []interface{}{map[string]interface{}{"type": "string"}, map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}}, "description": "Authorized targets as newline text or a string array"},
-		"policy":          map[string]interface{}{"type": "object", "description": "Complete argus.scan-policy/v1 policy; Server normalizes it and verifies dictionary revisions, authorization and Agent capacity"},
-		"priority":        map[string]interface{}{"type": "integer", "minimum": 0, "maximum": 2},
-		"timeout_sec":     map[string]interface{}{"type": "integer", "minimum": 0},
-		"plan_hash":       stringSchema("Exact plan_hash returned by preview; required for create"),
-		"idempotency_key": stringSchema("Stable UUID-like key for this create intent; required for create and reused only when retrying the identical request"),
-	}, []string{"action", "project_id", "targets", "policy"})
 }
 
 func objectSchema(properties map[string]interface{}, required []string) map[string]interface{} {
@@ -169,7 +152,7 @@ func yakshaInputSchema() map[string]interface{} {
 		},
 		"risk_confirmed": map[string]interface{}{
 			"type":        "boolean",
-			"description": "Explicit per-call confirmation required for high/critical saved EXP debug or run when no active Server risk waiver exists",
+			"description": "Server governance flag for high/critical saved EXP debug or run when no active risk waiver exists. Hosts with elicitation ignore this argument and confirm via the operator prompt; other clients must set true.",
 		},
 		"test_cases": map[string]interface{}{
 			"type":        "array",
@@ -257,7 +240,7 @@ func yakshaInputSchema() map[string]interface{} {
 				"writeOnly":   true,
 			},
 			"agent_id":       stringSchema("Explicit Agent id for mode=agent"),
-			"risk_confirmed": map[string]interface{}{"type": "boolean", "description": "Must be true for mode=agent"},
+			"risk_confirmed": map[string]interface{}{"type": "boolean", "description": "Server governance flag for mode=agent. Hosts with elicitation set this after operator accept; other clients must set true."},
 		}, []string{"mode"}),
 	}, []string{"action"})
 	schema["anyOf"] = []interface{}{

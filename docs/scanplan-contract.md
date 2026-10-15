@@ -10,8 +10,9 @@ Argus 的 Server、Agent 与离线 CLI 共享 `github.com/P0lar1ght/argus/shared
 | `internal-fast` | 兼容保留的 CLI 本地场景标识 | 使用 `_local/_default/_local` 作为离线租户、项目和网络区域占位符；独立 CLI 不再维护阶段级长期状态 |
 | `internal-server` | Server + Agent 内网扫描 | 必须使用 Agent 的实际 `network_zone`，不能按私网 IP 跨区域复用 |
 | `risk-validation` | 已确认的独立 POC 验证 | Plan 只能包含强制执行的 `risk_validation`，不能混入资产发现阶段 |
+| `credential-validation` | 已确认的弱口令验证 | Plan 只能包含强制执行的 `credential_validation`，消费密封凭据 Bundle，不重新执行资产发现 |
 
-稳定阶段包括搜索引擎、子域发现、CDN 分类、ICMP 发现、TCP 存活、端口扫描、协议识别、HTTP 探测、Host 绑定、安全行为探针、目录探测、指纹和风险验证。安全行为探针依赖 HTTP 探测，按规范化服务端点执行创建任务时密封的自动安全 Nuclei 文件集合；它只产生产品指纹。该阶段只接收必须通过随机 Cookie、自定义 `X-*` Header 或 Query 刺激才能观察到产品特有行为的模板；普通 HTTP 响应特征属于被动指纹，固定路径特征属于目录探针，漏洞验证属于风险验证。Scanner 旧 `PhaseEvent` 通过显式适配器映射到这些阶段；未知阶段不会被静默当作已覆盖。
+稳定阶段包括搜索引擎、子域发现、CDN 分类、ICMP 发现、TCP 存活、端口扫描、协议识别、HTTP 探测、Host 绑定、安全行为探针、目录探测、指纹、风险验证和弱口令验证。安全行为探针依赖 HTTP 探测，按规范化服务端点执行创建任务时密封的自动安全 Nuclei 文件集合；它只产生产品指纹。该阶段只接收必须通过随机 Cookie、自定义 `X-*` Header 或 Query 刺激才能观察到产品特有行为的模板；普通 HTTP 响应特征属于被动指纹，固定路径特征属于目录探针，漏洞验证属于风险验证。Scanner 旧 `PhaseEvent` 通过显式适配器映射到这些阶段；未知阶段不会被静默当作已覆盖。
 
 ## Plan
 
@@ -29,7 +30,7 @@ CLI 扫描结果统一写入当前工作目录的 `datas/<目标_时间>/`。普
 
 CLI 只旁路观察输出，不把 CLI 切换为 Agent 模式。旧 localstate TSV 读写代码仅为兼容既有库内测试和显式工具保留，不进入普通扫描路径。
 
-普通 CLI 仍默认关闭 POC、通用 POC 和 GoPoc；只有 `-poc` 或 `-gp` 等显式风险参数保持原执行语义，并强制完整扫描。`-gp` 是混合派发的兼容入口；Server 策略不接受它，而是依据共享 `argus.gopoc-catalog/v1` 将协议、漏洞和凭据插件分别密封到协议识别、自动 POC 和弱口令阶段。Planner 启动时只扫描 `datas/` 下已完成历史目录的 `result.txt`：带 `summary.txt` 的 Run 必须同时满足 `status=completed` 与 `terminal_status=completed`；老格式目录只有在 `result.txt` 非空时才作为已有发现使用。`targets.tsv` 不参与扫描记忆，也不会把零 finding 的旧扫描作为跳过依据。
+Standalone CLI 默认开启 Nuclei 与 GoPoc（含口令爆破）。`-nopoc` 只关 Nuclei，`-nogpoc` 关全部 GoPoc，`-nobr` 只关服务口令爆破。`datas` 历史跳过默认关闭，需显式 `-ss`；`-f` 会覆盖 `-ss`。把上次 `result.txt` 交给 `-a` 会复用存活主机和开放端口，跳过已完成的探活/对应端口扫描。Server 依据共享 `argus.gopoc-catalog/v1` 将协议、漏洞和凭据插件分别密封到协议识别、自动 POC 和弱口令阶段。Planner 启动时只扫描 `datas/` 下已完成历史目录的 `result.txt`：带 `summary.txt` 的 Run 必须同时满足 `status=completed` 与 `terminal_status=completed`；老格式目录只有在 `result.txt` 非空时才作为已有发现使用。`targets.tsv` 不参与扫描记忆，也不会把零 finding 的旧扫描作为跳过依据。
 
 跳过粒度是资产差集，而不是阶段级恢复：单 IP 命中历史时直接跳过；CIDR/IP 范围会展开并剔除已有资产 IP，只扫描剩余地址；域名、URL 和显式服务目标按规范化身份精确匹配。交互终端打印跳过地址及来源目录，HTML 与 JSON `run_summary` 记录完整、部分、全跳过输入及计划/跳过资产计数。CLI 不再读取 TTL 策略、不生成 `ResumePlan`、不做端口前缀复核，也不维护长期资产差异表。显式风险参数和 `-force` 永远绕过 `datas` 历史跳过。
 
@@ -45,9 +46,9 @@ G31 新增独立的 `argus.timing/v1` 契约，用于保存性能测量证据，
 
 CLI 在 `main` 中最早可观测位置开始记录 startup，覆盖离线 Arsenal/旧运行时规则准备、`ScanContext` 初始化和实际执行的 Stage 终态。普通 datas Run 将这些事件保存在当前进程内，仅用于 text 模式显示 bootstrap、规则、上下文、Stage 分段合计及最慢 Stage，不再额外持久化 `timing.tsv`；JSON 或其他非 text stdout 不增加人类日志。Agent 侧仍使用版本化 timing 契约上报 Server。
 
-Agent v2.7.0 起对活动 Attempt 记录规则准备、`NewScanContext` 与已真实开始的 Stage 终态，并通过既有 `StreamResult` 以 `attempt_timing_event` payload 上报；未开始或复用的阶段不会伪装为执行。payload 是单一严格 JSON 对象，最大 16 KiB。Agent 使用已注册会话的 `x-agent-token` 发送该流；Server 不信任事件声明的租户或项目，而是以活动 Attempt、已分配 Agent、会话和 Task 的 tenant/project 归属重新绑定并校验。实时接收仅允许完成时间位于过去 24 小时至未来 10 分钟的事件。相同 tenant + event ID 且内容相同为幂等重放；相同 ID 内容不同为冲突并拒绝。旧 Agent 不上报时任务仍可完成，任务详情将该 Attempt 标为 `available: false`，即 unavailable，而不是 0。
+Agent v2.7.0 起对活动 Attempt 记录规则准备、`NewScanContext` 与已真实开始的 Stage 终态，并通过既有 `StreamResult` 以 `attempt_timing_event` payload 上报；未开始或复用的阶段不会伪装为执行。payload 是单一严格 JSON 对象，最大 16 KiB。Agent 使用已注册会话的 `x-agent-token` 发送该流；Server 不信任事件声明的租户或项目，而是以活动 Attempt、已分配 Agent、会话和 Task 的 tenant/project 归属重新绑定并校验。实时接收仅允许完成时间位于过去 24 小时至未来 10 分钟的事件。相同 tenant + event ID 且内容相同为幂等重放；相同 ID 内容不同为冲突并拒绝。没有事件时任务仍可完成，任务详情将该 Attempt 标为 `available: false` 并给出 `unavailable_reason`（未执行、未上报或进行中），而不是 0。
 
-Server 将通过校验的事件追加保存，不使用会被后续 WorkKey 更新的 `ScanCoverage` 当前视图。授权后的 `GET /api/v1/tasks/:id` 仅投影当前 tenant、project 和 task 作用域中的 Attempt、受限事件字段与 `truncated` 状态；单个任务最多返回 5000 条事件。UI 按 Attempt 展示准备项、Stage、结果和 unavailable，且不暴露 target、WorkKey、配置/规则哈希、会话令牌或原始日志。
+Server 将通过校验的事件追加保存，不使用会被后续 WorkKey 更新的 `ScanCoverage` 当前视图。授权后的 `GET /api/v1/tasks/:id` 仅投影当前 tenant、project 和 task 作用域中的 Attempt、受限事件字段、`unavailable_reason` 与 `truncated` 状态；单个任务最多返回 5000 条事件。UI 按 Attempt 展示准备项、Stage、结果，以及未执行/未上报/进行中的 unavailable 说明，且不暴露 target、WorkKey、配置/规则哈希、会话令牌或原始日志。
 
 G31 只建立测量、授权展示和基线；不包含 G32–G36 的 gonmap 懒加载、HTTP 预算/Scheme、URL 去重、规则共享、HybridMap 或 Nuclei 缓存优化。CLI 计时为进程内展示，Server/Agent timing 表与投影保持原契约；不改变扫描阶段、结果、目标范围、Coverage、任务状态机或 POC/EXP 的安全默认。
 
@@ -60,7 +61,7 @@ tenant_id + project_id + network_zone + normalized_target
 + stage + scope_hash + config_hash + rule_version
 ```
 
-`risk_validation` 额外且强制包含 `poc_set_hash + endpoint_content_hash`；其他阶段禁止携带这两个维度。`Digest()` 对校验后的固定字段 JSON 计算 SHA-256，任一维度变化都会得到不同键。WorkKey 不允许跨租户、项目或网络区域构造复用关系。
+`risk_validation` 额外且强制包含 `poc_set_hash + endpoint_content_hash`；`credential_validation` 额外且强制包含 `credential_set_hash + service_observation_hash`；其他阶段禁止携带这些内容维度。原生自动风险验证的 `poc_set_hash` 是密封指纹快照；显式确认路径仍是端点→POC 内容哈希。`endpoint_content_hash` 是完整 HTTP 探测内容，发现 URL 可继承来源资产 Attempt 的完整 HTTP 内容。`Digest()` 对校验后的固定字段 JSON 计算 SHA-256，任一维度变化都会得到不同键。WorkKey 不允许跨租户、项目或网络区域构造复用关系。
 
 ## Observation 与 Coverage
 
@@ -84,6 +85,6 @@ Server 新 Coverage 的默认有效期为：存活 5 分钟、端口 1 小时、
 
 运行中来源通过 WorkClaim 关联：由于当前 Scanner 以完整目标执行流水线，Server 使用每个目标的 `fingerprint` WorkKey 作为目标级互斥键，并在同一事务提交唯一 Claim、`executed` 来源关联、Attempt Agent 租约和节点容量。命中活动 Claim 的后续 Attempt 只记录 `in_flight/waiting` 关联并进入内部等待，不占 Agent；来源成功后重新进入 Planner 复用完整 Coverage，来源失败后重新竞争 Claim 执行，不会复用失败结果。
 
-`GET /api/v1/tasks/:id` 的 `coverage_explanation` 使用 `argus.task-coverage-explanation/v1` 返回上述决策的只读解释：完整汇总实际执行工作项、历史复用阶段、仍在等待的执行中关联、失效/过期阶段以及节省的阶段和完整目标数量；最近 100 条明细展示规范目标、Stage、network zone、状态、原因和同项目来源 Task/Batch/Attempt。失效列表只包含当前任务产生或曾由当前任务实际复用的 Coverage，避免把同项目无关历史误报为本任务决策。来源名称和证据关联都按当前 tenant/project 重新查询；WorkKey、配置哈希、租约令牌和检查点摘要不对 UI 暴露。
+`GET /api/v1/tasks/:id` 的 `coverage_explanation` 使用 `argus.task-coverage-explanation/v1` 返回上述决策的只读解释：完整汇总实际执行工作项、历史复用阶段、仍在等待的执行中关联、失效/过期阶段以及节省的阶段和完整目标数量；最近 100 条明细展示规范目标、Stage、network zone、状态、原因和同项目来源 Task/Batch/Attempt。风险验证缺口另含指纹与匹配 POC 文件名。失效列表只包含当前任务产生或曾由当前任务实际复用的 Coverage，避免把同项目无关历史误报为本任务决策。来源名称和证据关联都按当前 tenant/project 重新查询；WorkKey、配置哈希、租约令牌和检查点摘要不对 UI 暴露。
 
 Server 按每个目标派生 network zone：公网 IP/CIDR/范围和无私网标签的普通公网 DNS 为 `public`；私网、特殊用途地址与 split-horizon DNS 为 `private:<network_zone>`；无标签私网 Agent 回退为 `agent:<agent_id>`。Agent 不在 Observation 中声明这个边界。已有 `--tags` 可配置 `network_zone`；只有显式 `network_scope=public` 才允许带区域标签的普通公网 DNS 进入公网区，私网或保留 IP 永不提升为公网。

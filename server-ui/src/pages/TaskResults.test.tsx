@@ -22,13 +22,24 @@ vi.mock('../contexts/GlobalAIContext', () => ({
 
 vi.mock('../services/api', () => apiMocks);
 
-const paged = <T,>(items: T[], total: number, page: number, pageSize = 20) => ({
+const paged = <T,>(items: T[], total: number, page: number, pageSize = 20, stats?: API.AssetKindStats) => ({
     items,
     total,
     page,
     page_size: pageSize,
     has_more: page * pageSize < total,
     generated_at: '2026-07-05T00:00:00Z',
+    ...(stats ? { stats } : {}),
+});
+
+const assetStats = (partial: Partial<API.AssetKindStats>): API.AssetKindStats => ({
+    total: 0,
+    web: 0,
+    host_port: 0,
+    domain: 0,
+    resolution: 0,
+    other: 0,
+    ...partial,
 });
 
 describe('TaskResults', () => {
@@ -134,9 +145,11 @@ describe('TaskResults', () => {
             {
                 ProductName: 'nginx',
                 TargetCount: 2,
+                Sources: ['passive'],
+                SourceLabels: ['被动命中'],
                 Targets: [
-                    { Target: 'https://a.example', RuleName: 'rule-a' },
-                    { Target: 'https://b.example', RuleName: 'rule-b' },
+                    { Target: 'https://a.example', RuleName: 'rule-a', Source: 'passive', SourceLabel: '被动命中' },
+                    { Target: 'https://b.example', RuleName: 'rule-b', Source: 'passive', SourceLabel: '被动命中' },
                 ],
                 FirstSeen: '2026-07-05T00:00:00Z',
                 LastSeen: '2026-07-05T00:01:00Z',
@@ -162,11 +175,122 @@ describe('TaskResults', () => {
                 projectId: 'project-1',
                 page: 1,
                 pageSize: 20,
+                search: undefined,
+                source: undefined,
             });
         });
         expect(await screen.findByText('nginx')).toBeInTheDocument();
         expect(screen.getByText('https://a.example')).toBeInTheDocument();
         expect(screen.getByText('https://b.example')).toBeInTheDocument();
+    });
+
+    it('queries fingerprints and marks directory-scan active fingerprints', async () => {
+        apiMocks.getVulns.mockResolvedValue(paged([], 0, 1));
+        apiMocks.getAssets.mockResolvedValue(paged([], 0, 1));
+        apiMocks.getFingerprintGroups.mockResolvedValue(paged([
+            {
+                ProductName: 'Jenkins',
+                TargetCount: 1,
+                Sources: ['directory'],
+                SourceLabels: ['主动路径'],
+                Targets: [{
+                    Target: 'https://jenkins.example:443',
+                    MatchedURL: 'https://jenkins.example/jenkins/login',
+                    RuleName: 'Active-Finger',
+                    Source: 'directory',
+                    SourceLabel: '主动路径',
+                }],
+                FirstSeen: '2026-07-05T00:00:00Z',
+                LastSeen: '2026-07-05T00:00:00Z',
+            },
+        ], 1, 1));
+
+        const user = userEvent.setup();
+        render(
+            <MemoryRouter initialEntries={['/tasks/task-1/results']}>
+                <App>
+                    <Routes>
+                        <Route path="/tasks/:taskId/results" element={<TaskResults />} />
+                    </Routes>
+                </App>
+            </MemoryRouter>,
+        );
+
+        expect(await screen.findByText('Jenkins')).toBeInTheDocument();
+        expect(screen.getAllByText('主动路径').length).toBeGreaterThan(0);
+        expect(screen.getByText('https://jenkins.example/jenkins/login')).toBeInTheDocument();
+
+        await user.type(screen.getByPlaceholderText('搜索产品名称或 URL'), 'jenkins');
+        await user.keyboard('{Enter}');
+
+        await waitFor(() => {
+            expect(apiMocks.getFingerprintGroups).toHaveBeenCalledWith({
+                taskId: 'task-1',
+                projectId: 'project-1',
+                page: 1,
+                pageSize: 20,
+                search: 'jenkins',
+                source: undefined,
+            });
+        });
+    });
+
+    it('renders domain ↔ resolved-IP association badges from task-wide resolution stats', async () => {
+        apiMocks.getVulns.mockResolvedValue(paged([], 0, 1));
+        const stats = assetStats({
+            total: 2,
+            web: 1,
+            resolution: 1,
+            resolutions: [{ domain: 'assoc.test', ips: ['198.51.100.9'] }],
+        });
+        apiMocks.getAssets.mockImplementation((params: { kind?: string }) => {
+            if (params.kind === 'resolution') {
+                return paged([{
+                    ID: 11,
+                    TenantID: 'default',
+                    TaskID: 'task-1',
+                    Target: 'assoc.test',
+                    Protocol: 'RealIP',
+                    Port: 0,
+                    Title: '',
+                    Service: '',
+                    Tags: JSON.stringify({ type: 'RealIP', domain: 'assoc.test', ips: ['198.51.100.9'] }),
+                    CreatedAt: '2026-07-06T00:00:00Z',
+                }], 1, 1, 20, stats);
+            }
+            return paged([{
+                ID: 12,
+                TenantID: 'default',
+                TaskID: 'task-1',
+                Target: 'http://198.51.100.9:8080',
+                Protocol: 'Web',
+                Port: 8080,
+                Title: 'Origin page',
+                Service: 'http/200',
+                CreatedAt: '2026-07-06T00:00:00Z',
+            }], 1, 1, 20, stats);
+        });
+
+        const user = userEvent.setup();
+        render(
+            <MemoryRouter initialEntries={['/tasks/task-1/results']}>
+                <App>
+                    <Routes>
+                        <Route path="/tasks/:taskId/results" element={<TaskResults />} />
+                    </Routes>
+                </App>
+            </MemoryRouter>,
+        );
+
+        expect(await screen.findByText('Origin page')).toBeInTheDocument();
+        expect(screen.getByText('assoc.test')).toBeInTheDocument();
+        expect(screen.getByText('198.51.100.9')).toBeInTheDocument();
+        expect(screen.getByRole('tab', { name: /资产 \(2\)/ })).toBeInTheDocument();
+        expect(screen.getByRole('tab', { name: /Web 站点 \(1\)/ })).toBeInTheDocument();
+
+        await user.click(screen.getByRole('tab', { name: /解析关系 \(1\)/ }));
+        expect(await screen.findAllByText('assoc.test')).not.toHaveLength(0);
+        expect(screen.getAllByText('198.51.100.9').length).toBeGreaterThanOrEqual(1);
     });
 
     it('opens the first non-empty asset result instead of an empty vulnerability tab', async () => {
@@ -181,7 +305,7 @@ describe('TaskResults', () => {
 			Title: 'Asset result',
 			Service: 'http/200',
 			CreatedAt: '2026-07-05T00:00:00Z',
-		}], 1, 1));
+		}], 1, 1, 20, assetStats({ total: 1, web: 1 })));
 
 		render(
 			<MemoryRouter initialEntries={['/tasks/task-1/results']}>
@@ -238,7 +362,7 @@ describe('TaskResults', () => {
         await user.click(screen.getByRole('button', { name: /导出 CSV/ }));
 
         await waitFor(() => {
-            expect(apiMocks.exportAssets).toHaveBeenCalledWith('project-1', 'task-1');
+            expect(apiMocks.exportAssets).toHaveBeenCalledWith('project-1', 'task-1', 'web');
         });
         expect(apiMocks.exportVulns).not.toHaveBeenCalled();
         expect(apiMocks.exportFingerprints).not.toHaveBeenCalled();
@@ -260,7 +384,7 @@ describe('TaskResults', () => {
         await user.click(screen.getByRole('button', { name: /导出 CSV/ }));
 
         await waitFor(() => {
-            expect(apiMocks.exportFingerprints).toHaveBeenCalledWith('project-1', 'task-1');
+            expect(apiMocks.exportFingerprints).toHaveBeenCalledWith('project-1', 'task-1', '', '');
         });
         expect(apiMocks.exportVulns).not.toHaveBeenCalled();
         expect(apiMocks.exportAssets).not.toHaveBeenCalled();
@@ -279,7 +403,7 @@ describe('TaskResults', () => {
         );
 
         await user.click(await screen.findByText(/指纹 \(0\)/));
-        await user.type(screen.getByPlaceholderText('按产品名称搜索'), 'nginx');
+        await user.type(screen.getByPlaceholderText('搜索产品名称或 URL'), 'nginx{Enter}');
 
         await waitFor(() => {
             expect(apiMocks.getFingerprintGroups).toHaveBeenCalledWith({
@@ -319,7 +443,6 @@ describe('TaskResults', () => {
         expect(await screen.findByText('nginx')).toBeInTheDocument();
         expect(screen.getByRole('tab', { name: /指纹 \(1\)/ })).toHaveAttribute('aria-selected', 'true');
 
-        await user.click(document.querySelector('.ant-table-row-expand-icon') as HTMLElement);
         await user.click(await screen.findByText('看资产'));
 
         await waitFor(() => {
@@ -328,6 +451,7 @@ describe('TaskResults', () => {
                 projectId: 'project-1',
                 page: 1,
                 pageSize: 20,
+                kind: 'web',
                 search: 'a.example',
             });
         });
@@ -341,9 +465,51 @@ describe('TaskResults', () => {
                 projectId: 'project-1',
                 page: 1,
                 pageSize: 20,
+                kind: 'web',
             });
         });
         expect(screen.queryByRole('button', { name: '清除过滤' })).toBeNull();
+    });
+
+    it('keeps PortScan rows out of the Web 站点 group', async () => {
+        apiMocks.getVulns.mockResolvedValue(paged([], 0, 1));
+        apiMocks.getAssets.mockResolvedValue(paged([
+            {
+                ID: 1,
+                TenantID: 'default',
+                TaskID: 'task-1',
+                Target: '61.155.21.117:161',
+                Protocol: 'PortScan',
+                Port: 161,
+                CreatedAt: '2026-08-25T16:51:48Z',
+            },
+            {
+                ID: 2,
+                TenantID: 'default',
+                TaskID: 'task-1',
+                Target: 'https://jslgroup.cn',
+                Protocol: 'Web',
+                Port: 443,
+                Title: '苏豪鼎创',
+                Service: 'http/200',
+                CreatedAt: '2026-08-25T16:51:22Z',
+            },
+        ], 2, 1, 20, assetStats({ total: 2, web: 1, host_port: 1 })));
+
+        render(
+            <MemoryRouter initialEntries={['/tasks/task-1/results']}>
+                <App>
+                    <Routes>
+                        <Route path="/tasks/:taskId/results" element={<TaskResults />} />
+                    </Routes>
+                </App>
+            </MemoryRouter>,
+        );
+        expect(await screen.findByText('苏豪鼎创')).toBeInTheDocument();
+        expect(screen.queryByText('PortScan')).not.toBeInTheDocument();
+        expect(screen.getByRole('tab', { name: /资产 \(2\)/ })).toBeInTheDocument();
+        expect(screen.getByRole('tab', { name: /Web 站点 \(1\)/ })).toBeInTheDocument();
+        expect(screen.getByRole('tab', { name: /主机与端口 \(1\)/ })).toBeInTheDocument();
     });
 
     it('opens the lineage drawer and renders the scan-chain steps for an asset', async () => {
@@ -379,7 +545,6 @@ describe('TaskResults', () => {
                 </App>
             </MemoryRouter>,
         );
-
         await user.click(await screen.findByText(/资产 \(1\)/));
         await user.click(await screen.getByRole('button', { name: /溯源/ }));
 
@@ -396,4 +561,39 @@ describe('TaskResults', () => {
         // 起点节点必须具体到某个输入资产（IP/域名），而不是空描述。
         expect(drawer.getAllByText('1.2.3.4').length).toBeGreaterThan(0);
     });
+
+    it('shows matched fingerprints on Web 站点 rows and marks directory-scan hits', async () => {
+        apiMocks.getVulns.mockResolvedValue(paged([], 0, 1));
+        apiMocks.getAssets.mockResolvedValue(paged([{
+            ID: 21,
+            TenantID: 'default',
+            TaskID: 'task-1',
+            Target: 'https://web.example',
+            Protocol: 'Web',
+            Port: 443,
+            Title: 'Portal',
+            Service: 'http/200',
+            CreatedAt: '2026-08-25T16:51:22Z',
+            Fingerprints: [
+                { ProductName: 'Jenkins', Source: 'directory', SourceLabel: '主动路径', MatchedURL: 'https://web.example/jenkins/login' },
+                { ProductName: 'nginx', Source: 'passive', SourceLabel: '被动命中' },
+            ],
+        }], 1, 1, 20, assetStats({ total: 1, web: 1 })));
+
+        render(
+            <MemoryRouter initialEntries={['/tasks/task-1/results']}>
+                <App>
+                    <Routes>
+                        <Route path="/tasks/:taskId/results" element={<TaskResults />} />
+                    </Routes>
+                </App>
+            </MemoryRouter>,
+        );
+
+        expect(await screen.findByText('Portal')).toBeInTheDocument();
+        expect(screen.getByText('匹配指纹')).toBeInTheDocument();
+        expect(screen.getByText('nginx')).toBeInTheDocument();
+        expect(screen.getByText('Jenkins · 主动路径')).toBeInTheDocument();
+    });
+
 });
