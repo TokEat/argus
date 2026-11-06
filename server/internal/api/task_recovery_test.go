@@ -444,6 +444,76 @@ func TestRecoverPendingTasksRabbitMQSmoke(t *testing.T) {
 	}
 }
 
+func TestRecoverOrphanedRunningAttemptsRecyclesOfflineAgentTasksOnly(t *testing.T) {
+	store := setupAITestDB(t)
+	queue := scheduler.NewTaskQueue("")
+	defer queue.Close()
+	previous := *routerRuntime()
+	t.Cleanup(func() { ConfigureRouterDependencies(previous) })
+	ConfigureRouterDependencies(RouterDependencies{TaskQueue: queue})
+
+	// Offline agent：确死，其 Running 子任务启动时必须被回收。
+	offlineNode := db.Node{TenantID: "default", AgentID: "agent-offline", Status: "Offline", LastBeat: time.Now().Add(-time.Hour).UnixMilli()}
+	if err := store.Create(&offlineNode).Error; err != nil {
+		t.Fatalf("seed offline node: %v", err)
+	}
+	// Alive agent：可能正在慢重连，其 Running 子任务必须保持不动。
+	aliveNode := db.Node{TenantID: "default", AgentID: "agent-alive", Status: "Alive", LastBeat: time.Now().UnixMilli()}
+	if err := store.Create(&aliveNode).Error; err != nil {
+		t.Fatalf("seed alive node: %v", err)
+	}
+
+	root := db.RootTask{ID: "root-orphan", TenantID: "default", Status: "Running", TotalChunks: 2, TotalTargets: 2}
+	if err := store.Create(&root).Error; err != nil {
+		t.Fatalf("seed root task: %v", err)
+	}
+	batch := db.TaskBatch{ID: "batch-orphan", TenantID: "default", RootTaskID: root.ID, Sequence: 0, Status: "Running", LatestAttemptID: "sub-offline"}
+	if err := store.Create(&batch).Error; err != nil {
+		t.Fatalf("seed batch: %v", err)
+	}
+	offlineSub := db.SubTask{
+		ID: "sub-offline", TenantID: "default", RootTaskID: root.ID, BatchID: batch.ID,
+		Status: "Running", AgentID: "agent-offline", ChunkTargets: `["https://one.test"]`, MaxRetry: 3,
+	}
+	if err := store.Create(&offlineSub).Error; err != nil {
+		t.Fatalf("seed offline subtask: %v", err)
+	}
+	aliveSub := db.SubTask{
+		ID: "sub-alive", TenantID: "default", RootTaskID: root.ID, BatchID: batch.ID,
+		Status: "Running", AgentID: "agent-alive", ChunkTargets: `["https://two.test"]`, MaxRetry: 3,
+	}
+	if err := store.Create(&aliveSub).Error; err != nil {
+		t.Fatalf("seed alive subtask: %v", err)
+	}
+
+	recoverOrphanedRunningAttempts(context.Background())
+
+	// Offline 节点的 Running 任务必须被回收：原尝试进入终态，并产生一个可回收的新尝试。
+	var settled db.SubTask
+	if err := store.First(&settled, "id = ?", offlineSub.ID).Error; err != nil {
+		t.Fatalf("reload offline subtask: %v", err)
+	}
+	if settled.Status == "Running" || settled.Status == "CancelPending" {
+		t.Fatalf("offline-agent running task must be recycled out of Running, got %+v", settled)
+	}
+	var attempts []db.SubTask
+	if err := store.Where("parent_attempt_id = ?", offlineSub.ID).Find(&attempts).Error; err != nil {
+		t.Fatalf("load recovery attempts: %v", err)
+	}
+	if len(attempts) == 0 {
+		t.Fatalf("expected a recovery attempt for the offline task")
+	}
+
+	// Alive 节点的 Running 任务必须原样保留。
+	var alive db.SubTask
+	if err := store.First(&alive, "id = ?", aliveSub.ID).Error; err != nil {
+		t.Fatalf("reload alive subtask: %v", err)
+	}
+	if alive.Status != "Running" || alive.AgentID != "agent-alive" {
+		t.Fatalf("alive-agent running task must be untouched, got %+v", alive)
+	}
+}
+
 func TestHandleTimeoutTasksDoesNotRetryPausedRoot(t *testing.T) {
 	store := setupAITestDB(t)
 	root := db.RootTask{ID: "root-paused-timeout", TenantID: "default", Status: "Paused", TotalChunks: 1}

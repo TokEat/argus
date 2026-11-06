@@ -2,6 +2,8 @@ package grpc
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -10,7 +12,7 @@ import (
 	"github.com/P0lar1ght/argus/server/internal/credentialvault"
 	"github.com/P0lar1ght/argus/server/internal/db"
 	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
-	"github.com/google/uuid"
+	"gorm.io/gorm/clause"
 )
 
 var (
@@ -72,7 +74,8 @@ func persistCredentialValidationResult(ctx context.Context, result *pb.ScanResul
 	if err != nil {
 		return true, err
 	}
-	findingID := uuid.NewString()
+	endpoint := mapStringValue(goPoc, "target", "Target")
+	findingID := credentialFindingID(attempt.TenantID, attempt.ProjectID, endpoint, username)
 	vault, err := credentialvault.NewFromEnvironment(true)
 	if err != nil {
 		return true, err
@@ -81,13 +84,15 @@ func persistCredentialValidationResult(ctx context.Context, result *pb.ScanResul
 	if err != nil {
 		return true, err
 	}
-	endpoint := mapStringValue(goPoc, "target", "Target")
 	service, plugin, ok := credentialFindingBinding(attempt.Config, endpoint)
 	if !ok {
 		return true, errors.New("credential result endpoint is not present in the sealed attempt plan")
 	}
 	finding := db.CredentialFindingSecret{ID: findingID, TenantID: attempt.TenantID, ProjectID: attempt.ProjectID, RootTaskID: attempt.RootTaskID, AttemptID: attempt.ID, Endpoint: endpoint, Service: service, Plugin: plugin, MaskedUsername: maskCredentialUsername(username), Ciphertext: ciphertext, Nonce: nonce}
-	if err := db.DB.Create(&finding).Error; err != nil {
+	if err := db.DB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"ciphertext", "nonce", "masked_username", "service", "plugin", "attempt_id", "root_task_id"}),
+	}).Create(&finding).Error; err != nil {
 		return true, err
 	}
 	// Persist only a masked correlation record through the legacy vulnerability
@@ -135,6 +140,19 @@ func mapStringValue(values map[string]interface{}, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+// credentialFindingID 以 租户+项目+端点+用户名(小写) 的 SHA-256 作为 finding 主键，
+// 使同一端点的同一账号在多次验证/重扫后收敛到同一行，而不是累积重复行。
+// 用户名小写以避免大小写漂移产生重复；展示仍用真实用户名（masked）。
+func credentialFindingID(tenantID, projectID, endpoint, username string) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		tenantID,
+		projectID,
+		strings.TrimSpace(endpoint),
+		strings.ToLower(strings.TrimSpace(username)),
+	}, "\x00")))
+	return hex.EncodeToString(sum[:])
 }
 
 func credentialFindingBinding(config, endpoint string) (service, plugin string, ok bool) {

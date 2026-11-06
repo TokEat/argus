@@ -183,7 +183,7 @@ build_go_binary() {
         extra+=(-tags "$tags")
     fi
     CGO_ENABLED=0 GOOS="${os}" GOARCH="${arch}" go build \
-        "${extra[@]}" \
+        ${extra[@]+"${extra[@]}"} \
         -ldflags="-s -w" \
         -trimpath \
         -o "${out_file}" \

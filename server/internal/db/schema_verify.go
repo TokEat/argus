@@ -332,8 +332,8 @@ func schemaTableSpecs() []schemaTableSpec {
 		},
 		{
 			Table:   "vulnerabilities",
-			Columns: []string{"project_id", "status", "assignee", "ignore_reason", "verify_task_id", "request", "response", "description", "reference", "matched_at", "updated_at", "ai_status", "ai_confidence", "ai_reason", "ai_triaged_at", "ai_review_id", "taint_status", "taint_reason"},
-			Indexes: []string{"idx_vuln_new_dedupe", "idx_vulnerabilities_status", "idx_vulnerabilities_verify_task_id", "idx_vulnerabilities_ai_status", "idx_vulnerabilities_ai_triaged_at", "idx_vulnerabilities_taint_status"},
+			Columns: []string{"project_id", "status", "assignee", "ignore_reason", "verify_task_id", "request", "response", "description", "reference", "matched_at", "updated_at", "ai_status", "ai_confidence", "ai_reason", "ai_triaged_at", "ai_review_id", "taint_status", "taint_reason", "host", "port"},
+			Indexes: []string{"idx_vuln_new_dedupe", "idx_vulnerabilities_status", "idx_vulnerabilities_verify_task_id", "idx_vulnerabilities_ai_status", "idx_vulnerabilities_ai_triaged_at", "idx_vulnerabilities_taint_status", "idx_vulnerabilities_host", "idx_vulnerabilities_port"},
 		},
 		{
 			Table:   "arsenals",

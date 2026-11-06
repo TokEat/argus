@@ -271,6 +271,11 @@ func (c *Client) Replace(data string, interactshURLs []string) (string, []string
 
 // ReplaceMarkers replaces the placeholders with interactsh urls and appends them to interactshURLs
 func (c *Client) ReplaceWithMarker(data string, regex *regexp.Regexp, interactshURLs []string) (string, []string) {
+	// 当 NoInteractsh=true 时 Client 不会被初始化，c 为 nil；上游调用方未做 nil 检查，
+	// 这里加短路返回避免 SIGSEGV 把 agent 进程干掉。
+	if c == nil {
+		return data, interactshURLs
+	}
 	for _, interactshURLMarker := range regex.FindAllString(data, -1) {
 		if url, err := c.NewURLWithData(interactshURLMarker); err == nil {
 			interactshURLs = append(interactshURLs, url)

@@ -24,7 +24,6 @@ import (
 	"github.com/P0lar1ght/argus/server/internal/sentinel"
 	"github.com/P0lar1ght/argus/server/internal/subdomainpassive"
 	pb "github.com/P0lar1ght/argus/shared/proto/go/scan"
-	"github.com/P0lar1ght/argus/shared/proto/go/scanpolicy"
 )
 
 // sentinelPusher routes a rescan attempt onto a specific agent's dedicated
@@ -132,6 +131,7 @@ func main() {
 		apiAddr     string
 		configDir   string
 		agentPSK    string
+		deployMode  string
 		devMode     bool
 		seedFromDB  string
 	)
@@ -145,6 +145,7 @@ func main() {
 	flag.StringVar(&apiAddr, "api", ":8085", "HTTP API listen address")
 	flag.StringVar(&configDir, "config-dir", "", "Path to the directory containing finger.yaml, dir.yaml, workflow.yaml, and pocs/")
 	flag.StringVar(&agentPSK, "agent-psk", "", "Pre-shared key for Agent authentication (env: ARGUS_AGENT_PSK)")
+	flag.StringVar(&deployMode, "deploy-mode", "", "Deployment mode: cloud (default) or intranet. env: ARGUS_DEPLOY_MODE overrides")
 	flag.BoolVar(&devMode, "dev", false, "Enable development mode (skip mandatory security checks)")
 	flag.StringVar(&seedFromDB, "seed-from-db", "", "Path to SQLite db file containing precompiled rule assets to seed into PostgreSQL and exit")
 	flag.Parse()
@@ -152,6 +153,20 @@ func main() {
 	// 环境变量优先级高于 flag
 	if envPSK := os.Getenv("ARGUS_AGENT_PSK"); envPSK != "" {
 		agentPSK = envPSK
+	}
+	deployMode = strings.ToLower(strings.TrimSpace(deployMode))
+	if envMode := strings.ToLower(strings.TrimSpace(os.Getenv("ARGUS_DEPLOY_MODE"))); envMode != "" {
+		deployMode = envMode
+	}
+	if deployMode == "" {
+		deployMode = "cloud"
+	}
+	if deployMode != "cloud" && deployMode != "intranet" {
+		log.Fatalf("Invalid deploy mode %q: must be %q or %q", deployMode, "cloud", "intranet")
+	}
+	intranetMode := deployMode == "intranet"
+	if intranetMode {
+		log.Println("[Deploy] mode=intranet: cloud autoscaler/egress disabled; agents register actively")
 	}
 	if value := strings.TrimSpace(os.Getenv("ARGUS_GRPC_TLS_PORT")); value != "" {
 		parsed, parseErr := strconv.Atoi(value)
@@ -183,8 +198,11 @@ func main() {
 		if os.Getenv("ARGUS_JWT_SECRET") == "" {
 			log.Fatalf("[SECURITY] ARGUS_JWT_SECRET is required in production mode. Use --dev to skip.")
 		}
-		if err := cloud.ValidateEncryptKeyEnv(); err != nil {
-			log.Fatalf("[SECURITY] %v. Use --dev to skip.", err)
+		// 云 egress 加密密钥仅云模式需要；内网模式无云调度链路
+		if !intranetMode {
+			if err := cloud.ValidateEncryptKeyEnv(); err != nil {
+				log.Fatalf("[SECURITY] %v. Use --dev to skip.", err)
+			}
 		}
 		if err := credentialvault.ValidateEnvironment(); err != nil {
 			log.Fatalf("[SECURITY] %v. Use --dev to skip.", err)
@@ -436,33 +454,38 @@ func main() {
 		}
 	})
 
-	// ====== 云资源动态调度 ======
-	autoScaler := cloud.NewAutoScaler(conn, queue)
+	// ====== 云资源动态调度（仅 cloud 模式） ======
+	// 内网模式下不启动任何云调度组件：Agent 主动注册 + 心跳守护 + 分布式扫描照常工作。
+	if !intranetMode {
+		autoScaler := cloud.NewAutoScaler(conn, queue)
 
-	// Cloud-Init 中注入给 Agent 的 Server 地址
-	// 优先使用环境变量，确保云实例上的 Agent 能通过公网地址连接 Server
-	cloudGRPCAddr, cloudAPIURL, err := buildCloudAdvertiseAddrs(
-		grpcPort,
-		apiAddr,
-		os.Getenv("ARGUS_PUBLIC_IP"),
-		os.Getenv("ARGUS_PUBLIC_API"),
-		resolveOutboundHost,
-	)
-	if err != nil {
-		log.Fatalf("[Cloud] failed to determine routable advertise endpoints: %v. Set ARGUS_PUBLIC_IP or ARGUS_PUBLIC_API explicitly.", err)
+		// Cloud-Init 中注入给 Agent 的 Server 地址
+		// 优先使用环境变量，确保云实例上的 Agent 能通过公网地址连接 Server
+		cloudGRPCAddr, cloudAPIURL, err := buildCloudAdvertiseAddrs(
+			grpcPort,
+			apiAddr,
+			os.Getenv("ARGUS_PUBLIC_IP"),
+			os.Getenv("ARGUS_PUBLIC_API"),
+			resolveOutboundHost,
+		)
+		if err != nil {
+			log.Fatalf("[Cloud] failed to determine routable advertise endpoints: %v. Set ARGUS_PUBLIC_IP or ARGUS_PUBLIC_API explicitly.", err)
+		}
+		log.Printf("[Cloud] Using advertise endpoints for Cloud-Init: gRPC=%s API=%s", cloudGRPCAddr, cloudAPIURL)
+		autoScaler.SetServerAddrs(cloudGRPCAddr, cloudAPIURL, agentPSK)
+		routerDeps.Cloud = api.NewCloudHandler(conn, autoScaler)
+
+		// 启动自动伸缩决策循环
+		scalerCtx, scalerCancel := context.WithCancel(context.Background())
+		defer scalerCancel()
+		go autoScaler.Start(scalerCtx)
+		go autoScaler.StartReconciler(scalerCtx, 5*time.Minute)
+		go autoScaler.StartOrphanSweeper(scalerCtx, 10*time.Minute)
+		log.Println("[Cloud] AutoScaler and background reconcilers started")
+	} else {
+		log.Println("[Deploy] mode=intranet: skipping cloud autoscaler, reconcilers and cloud API handler")
 	}
-	log.Printf("[Cloud] Using advertise endpoints for Cloud-Init: gRPC=%s API=%s", cloudGRPCAddr, cloudAPIURL)
-	autoScaler.SetServerAddrs(cloudGRPCAddr, cloudAPIURL, agentPSK)
-	routerDeps.Cloud = api.NewCloudHandler(conn, autoScaler)
 	api.ConfigureRouterDependencies(routerDeps)
-
-	// 启动自动伸缩决策循环
-	scalerCtx, scalerCancel := context.WithCancel(context.Background())
-	defer scalerCancel()
-	go autoScaler.Start(scalerCtx)
-	go autoScaler.StartReconciler(scalerCtx, 5*time.Minute)
-	go autoScaler.StartOrphanSweeper(scalerCtx, 10*time.Minute)
-	log.Println("[Cloud] AutoScaler and background reconcilers started")
 
 	// 挂载一个后台协程启动 API HTTP Server
 	go func() {
@@ -484,66 +507,13 @@ func main() {
 				log.Printf("[Heartbeat] Agent %s marked as offline.", n.AgentID)
 				db.DB.Model(&n).Updates(agentOfflineUpdates())
 
-				// 回收该节点持有的 Running 任务：退回队列重新调度
+				// 回收该节点持有的 Running 任务：退回队列重新调度（与手动 drain 端点共用逻辑）
+				api.RecycleNodeRunningTasks(context.Background(), n)
+
+				// 云实例梯度容错等后续逻辑仍依赖 tenantID
 				tenantID := strings.TrimSpace(n.TenantID)
 				if tenantID == "" {
 					tenantID = "default"
-				}
-				var orphanTasks []db.SubTask
-				db.DB.Where("tenant_id = ? AND agent_id = ? AND status IN ?", tenantID, n.AgentID, []string{"Running", "CancelPending"}).Find(&orphanTasks)
-				requeued := 0
-				for _, sub := range orphanTasks {
-					// ACK 掉旧的 MQ 消息（如果还在）
-					if sub.StreamMsgID != "" {
-						_ = queue.AckTask(context.Background(), sub.StreamMsgID)
-					}
-
-					if db.IsStoppingAttemptStatus(sub.Status) {
-						finishedAt := time.Now()
-						db.DB.Model(&db.SubTask{}).
-							Where("id = ? AND tenant_id = ? AND status = ?", sub.ID, sub.TenantID, sub.Status).
-							Updates(map[string]interface{}{
-								"status":         "Cancelled",
-								"stream_msg_id":  "",
-								"failure_reason": "cancelled while Agent went offline",
-								"finished_at":    finishedAt,
-							})
-						_ = db.SettleStoppedTaskBatch(db.DB, sub.TenantID, sub.BatchID, sub.ID)
-						_ = db.SyncTaskBatchStatuses(db.DB, sub.TenantID, sub.RootTaskID)
-						log.Printf("[DeadNode] Settled cancelled attempt %s from dead agent %s", sub.ID, n.AgentID)
-					} else if prepared, appended := db.AppendSubTaskAttempt(&sub, db.AttemptRetryOptions{
-						Trigger:              db.AttemptTriggerAgentOfflineRecovery,
-						TerminalStatus:       "Failed",
-						FailureReason:        "Agent heartbeat expired during execution",
-						ConsumeRetryBudget:   false,
-						UseCurrentTaskConfig: true,
-					}); appended {
-						if scanpolicy.NormalizeDispatchStrategy(scanpolicy.DispatchStrategy(prepared.DispatchStrategy), scanpolicy.DefaultDispatchStrategy()) == scanpolicy.DispatchStrategyControllerPush {
-							// Controller-push：留在 Dispatching，由 DispatchController 立即重新路由到其他存活 Agent。
-							dispatchController.Notify()
-							requeued++
-						} else if pbTask, err := db.SubTaskToProto(&prepared); err == nil && pbTask != nil {
-							if pushErr := queue.PushTaskToFront(context.Background(), pbTask); pushErr == nil {
-								db.DB.Model(&db.SubTask{}).Where("id = ? AND tenant_id = ? AND status = ?", prepared.ID, prepared.TenantID, "Dispatching").
-									Updates(map[string]interface{}{"status": "Pending", "stream_msg_id": "queued"})
-								db.DB.Model(&db.TaskBatch{}).
-									Where("id = ? AND tenant_id = ? AND latest_attempt_id = ?", prepared.BatchID, prepared.TenantID, prepared.ID).
-									Update("status", "Pending")
-								requeued++
-							}
-						}
-					} else if db.SettlePausedTaskBatchAttempt(&sub, "Failed", "Agent heartbeat expired while batch was paused") {
-						log.Printf("[DeadNode] Settled paused attempt %s without automatic recovery", sub.ID)
-					}
-
-					if sub.RootTaskID != "" {
-						db.RefreshRootTaskStatus(sub.RootTaskID)
-					}
-				}
-
-				// 回收后通知在线 Agent
-				if requeued > 0 {
-					srv.Hub.BroadcastNewTask(int32(requeued), 0)
 				}
 
 				// ★ 若断线 Agent 对应的是一台云实例，执行梯度容错策略：

@@ -133,6 +133,39 @@ func TestAssetLineageMissingParentNamesSourceAsInput(t *testing.T) {
 	}
 }
 
+// 网段扫描：存活 IP 与其端口都是派生资产，链路起点必须是输入网段本身，
+// 而不是从网段扫出来的某个 IP。
+func TestAssetLineageSegmentInputIsStartNode(t *testing.T) {
+	store := setupAITestDB(t)
+	project := db.Project{ID: "lin-segment", TenantID: "default", OwnerUserID: "user-1", Name: "Lin Segment"}
+	if err := store.Create(&project).Error; err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	alive := db.Asset{TenantID: "default", ProjectID: project.ID, Target: "10.3.130.95", Protocol: "IPAlive", Source: "10.3.130.0/24"}
+	port := db.Asset{TenantID: "default", ProjectID: project.ID, Target: "10.3.130.95:22", Protocol: "PortScan", Source: "10.3.130.95"}
+	if err := store.Create(&alive).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(&port).Error; err != nil {
+		t.Fatal(err)
+	}
+	resp := invokeLineageHandler(t, "/assets/"+fmt.Sprint(port.ID)+"/lineage?project_id="+project.ID, fmt.Sprint(port.ID), getAssetLineage)
+	got := nodeSummary(resp)
+	want := []string{
+		"input:input:10.3.130.0/24",
+		"asset:IPAlive:10.3.130.95",
+		"asset:PortScan:10.3.130.95:22",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("segment lineage length=%d want %d\ngot:  %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("node[%d]=%q want %q\ngot:  %v", i, got[i], want[i], got)
+		}
+	}
+}
+
 func TestVulnAndFingerprintLineageAppendNode(t *testing.T) {
 	store := setupAITestDB(t)
 	project := db.Project{ID: "lin-vf", TenantID: "default", OwnerUserID: "user-1", Name: "Lin VF"}

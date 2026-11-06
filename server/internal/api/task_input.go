@@ -19,6 +19,36 @@ import (
 // window used when counting free slots for controller-push fan-out.
 const dispatchLivenessWindowMillis = 60000
 
+// defaultExcludedPoCTags 是产品级扫描降噪决策：所有带这些 nuclei 标签的模板
+// （含其中 high/critical CVE）在每次任务运行期都被 ExcludeTags 跳过，不执行 PoC。
+// 集中治理、可审计、可逆——恢复某类标签只需从本切片移除；模板文件保持不动。
+var defaultExcludedPoCTags = []string{"xss", "smuggling"}
+
+// unionExcludedPoCTags 把 defaultExcludedPoCTags 去重并集进 cfg.ExcludeTags，
+// 调用方自填的其它标签全部保留，默认排除项强制存在。
+func unionExcludedPoCTags(cfg *taskScanConfig) {
+	if cfg == nil {
+		return
+	}
+	seen := map[string]bool{}
+	var tags []string
+	for _, t := range strings.Split(cfg.ExcludeTags, ",") {
+		t = strings.TrimSpace(t)
+		if t == "" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		tags = append(tags, t)
+	}
+	for _, t := range defaultExcludedPoCTags {
+		if !seen[t] {
+			seen[t] = true
+			tags = append(tags, t)
+		}
+	}
+	cfg.ExcludeTags = strings.Join(tags, ",")
+}
+
 type taskTargetMode string
 
 const taskTargetModeDirect taskTargetMode = "direct"
@@ -191,6 +221,8 @@ func normalizeTaskConfigPayload(raw json.RawMessage) (string, taskTargetMode, er
 	if err := decoder.Decode(&cfg); err != nil {
 		return "", taskTargetModeDirect, fmt.Errorf("config contains unsupported field or invalid value: %w", err)
 	}
+
+	unionExcludedPoCTags(&cfg)
 
 	if err := validateTaskScanConfig(&cfg); err != nil {
 		return "", taskTargetModeDirect, err

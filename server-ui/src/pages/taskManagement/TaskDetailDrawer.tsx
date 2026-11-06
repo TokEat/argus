@@ -5,7 +5,7 @@ import { AimOutlined, AuditOutlined, EditOutlined, InboxOutlined, RocketOutlined
 import TaskStageOverview from '../../components/tasks/TaskStageOverview';
 import CredentialFindingsPanel from '../../components/tasks/CredentialFindingsPanel';
 import TaskTimingPanel from '../../components/TaskTimingPanel';
-import { SCAN_STAGE_LABELS } from '../taskCoverageReasons';
+import { SCAN_STAGE_LABELS, scanStageLabel } from '../taskCoverageReasons';
 import TaskCoverageSection from './TaskCoverageSection';
 import { auditActionLabels, renderTaskStatusTag } from './shared';
 
@@ -137,6 +137,50 @@ export default function TaskDetailDrawer({
                             </div>
                         </Col>
                     </Row>
+
+                    {(() => {
+                        const runningAttempts = (detail.sub_tasks || []).filter((sub) => sub.status === 'Running' && sub.progress_phase);
+                        if (runningAttempts.length === 0) return null;
+                        // 单元模式（progress_total>0）：done/total 同口径，显示占比 + 吞吐 + 预计剩余。
+                        // 发现模式（progress_total=0）：仅「仍在推进」活跃信号，显示已发现结果数。
+                        const unitAttempts = runningAttempts.filter((sub) => (sub.progress_total || 0) > 0);
+                        const discoveryAttempts = runningAttempts.filter((sub) => (sub.progress_total || 0) <= 0);
+                        const totalDiscovered = discoveryAttempts.reduce((sum, sub) => sum + (sub.progress_done || 0), 0);
+                        const phases = Array.from(new Set(runningAttempts.map((sub) => sub.progress_phase as string)));
+                        if (unitAttempts.length === 0 && totalDiscovered === 0) return null;
+                        const fmtEta = (ms?: number) => {
+                            if (!ms || ms <= 0) return null;
+                            const s = Math.ceil(ms / 1000);
+                            return s >= 60 ? `${Math.floor(s / 60)}分${s % 60}秒` : `${s}秒`;
+                        };
+                        return (
+                            <div style={{ marginBottom: 20, padding: '10px 14px', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 8 }}>
+                                <Space wrap size={8}>
+                                    <Text style={{ fontSize: 12, color: '#0369a1' }}>正在扫描</Text>
+                                    {phases.map((phase) => (
+                                        <Tag key={phase} color="processing" style={{ marginInlineEnd: 0 }}>{scanStageLabel(phase)}</Tag>
+                                    ))}
+                                    {unitAttempts.map((sub) => {
+                                        const total = sub.progress_total || 0;
+                                        const done = Math.min(sub.progress_done || 0, total);
+                                        const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+                                        const rate = sub.progress_rate || 0;
+                                        const eta = fmtEta(sub.progress_eta_ms);
+                                        return (
+                                            <Text key={sub.id} style={{ fontSize: 12, color: '#0369a1' }}>
+                                                {scanStageLabel(sub.progress_phase as string)} {done}/{total}（{pct}%）
+                                                {rate > 0 && ` · ${rate >= 100 ? Math.round(rate) : rate.toFixed(1)}/秒`}
+                                                {eta && ` · 剩余 ${eta}`}
+                                            </Text>
+                                        );
+                                    })}
+                                    {totalDiscovered > 0 && (
+                                        <Text style={{ fontSize: 12, color: '#0369a1' }}>· 已发现 {totalDiscovered} 个结果</Text>
+                                    )}
+                                </Space>
+                            </div>
+                        );
+                    })()}
 
                     {detail.result_stats.vulns > 0 && (
                         <div style={{ marginBottom: 20 }}>

@@ -17,7 +17,7 @@ export const ASSET_KIND_LABELS: Record<AssetKind, string> = {
 
 export const ASSET_KIND_PROTOCOLS: Record<Exclude<AssetKind, 'other'>, string[]> = {
     web: ['Web', 'Domain-Bind'],
-    host_port: ['PortScan', 'Protocol', 'ProtocolCheck', 'Nmap', 'IPAlive', 'Fofa', 'Hunter', 'Quake'],
+    host_port: ['PortScan', 'Protocol', 'ProtocolCheck', 'Nmap', 'Fofa', 'Hunter', 'Quake'],
     domain: ['Domain', 'DNS-SubFinder', 'DNS-Brute', 'CDN-Domain'],
     resolution: ['RealIP'],
 };

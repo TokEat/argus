@@ -18,7 +18,7 @@ describe('Login', () => {
             </MemoryRouter>
         );
 
-        expect(screen.getByPlaceholderText('租户 ID')).toBeInTheDocument();
+        expect(screen.getByPlaceholderText('账号')).toBeInTheDocument();
         expect(screen.getByPlaceholderText('密码')).toBeInTheDocument();
         expect(screen.getByRole('button', { name: /登\s*录/i })).toBeInTheDocument();
     });

@@ -14,7 +14,11 @@ import (
 	"github.com/projectdiscovery/gologger"
 )
 
-func ScanTCP(ips []string, ports string, timeout int, workers int, portsThreshold int, portScan bool, scatter bool, probeInterval time.Duration, emit func(ddout.OutputMessage)) []string {
+// ScanTCP 对 ips×ports 做 TCP connect 扫描，返回开放地址（liveness 模式返回存活地址）。
+// emit 在每次发现时回调；onUnit（可为 nil）在每消费一个探测单元（一个 addr）时回调，
+// 供引擎按 ips×ports 口径统计 x/y 进度与 ETA。onUnit 由多个工作 goroutine 并发调用，
+// 调用方需自行保证计数器并发安全（引擎 progressReporter 内部加锁）。
+func ScanTCP(ips []string, ports string, timeout int, workers int, portsThreshold int, portScan bool, scatter bool, probeInterval time.Duration, emit func(ddout.OutputMessage), onUnit func()) []string {
 	var aliveAddress []string
 	gologger.AuditTimeLogger("开始TCP端口扫描，端口设置: %s\nTCP端口扫描目标:%s", ports, strings.Join(ips, ","))
 
@@ -30,6 +34,16 @@ func ScanTCP(ips []string, ports string, timeout int, workers int, portsThreshol
 		probePorts[i], probePorts[j] = probePorts[j], probePorts[i]
 	})
 
+	// 队列容量固定上界：此前按 len(ips)*len(probePorts) 预分配两个 channel，
+	// 大网段×多端口（如 /16×1000 端口）可达数千万元素、数 GB 内存，是 agent OOM 首因。
+	// 生产者写满即阻塞（天然背压）、结果消费协程只读不阻塞，收窄容量不会死锁；
+	// ipPortCount/backlist 仅为 O(ips) 级 map（数万目标数 MB 级），无需再分片。
+	const scanQueueCap = 4096
+	queueCap := len(ips) * len(probePorts)
+	if queueCap > scanQueueCap {
+		queueCap = scanQueueCap
+	}
+
 	ipPortCount := make(map[string]int)
 	backlist := make(map[string]struct{})
 	var backlistLock sync.Mutex
@@ -41,8 +55,8 @@ func ScanTCP(ips []string, ports string, timeout int, workers int, portsThreshol
 		workers = 1
 	}
 
-	addrs := make(chan addr, len(ips)*len(probePorts))
-	results := make(chan string, len(ips)*len(probePorts))
+	addrs := make(chan addr, queueCap)
+	results := make(chan string, queueCap)
 	var wg sync.WaitGroup
 
 	go func() {
@@ -69,6 +83,11 @@ func ScanTCP(ips []string, ports string, timeout int, workers int, portsThreshol
 		go func() {
 			for item := range addrs {
 				portConnect(item, results, timeout, portScan, portsThreshold, &backlist, &backlistLock, pacer, &wg, emit)
+				if onUnit != nil {
+					// 每消费一个探测单元（含被 backlist 跳过的 addr）计 1，
+					// 保证 done 收敛到 len(ips)×len(probePorts) 的总数口径。
+					onUnit()
+				}
 				wg.Done()
 			}
 		}()

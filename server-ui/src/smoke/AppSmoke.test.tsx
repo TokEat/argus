@@ -85,7 +85,7 @@ describe('server-ui smoke', () => {
     it('renders the login entrypoint', () => {
         renderPage(<Login />);
 
-        expect(screen.getByPlaceholderText('租户 ID')).toBeInTheDocument();
+        expect(screen.getByPlaceholderText('账号')).toBeInTheDocument();
         expect(screen.getByRole('button', { name: /登\s*录/i })).toBeInTheDocument();
     });
 

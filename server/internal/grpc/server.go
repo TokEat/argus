@@ -1314,6 +1314,10 @@ func (s *Server) StreamResult(stream pb.AgentService_StreamResultServer) error {
 			}
 			continue
 		}
+		if res.PayloadType == scanplan.ProgressEventPayloadType {
+			persistScanProgress(res)
+			continue
+		}
 		db.AddResultAsync(res.TaskId, res.PayloadType, string(res.Payload))
 	}
 }

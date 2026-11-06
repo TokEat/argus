@@ -1240,8 +1240,7 @@ const GlobalAIChatDrawer: React.FC<GlobalAIChatDrawerProps> = ({ visible, onClos
                         disabled={messages.length === 0 && !streamingContent}
                     />
                 }
-                bodyStyle={{ display: 'flex', flexDirection: 'column', padding: 0 }}
-                headerStyle={{ borderBottom: '1px solid rgba(226,232,240,0.72)', background: 'rgba(255,255,255,0.72)', backdropFilter: 'blur(18px)' }}
+                styles={{ body: { display: 'flex', flexDirection: 'column', padding: 0 }, header: { borderBottom: '1px solid rgba(226,232,240,0.72)', background: 'rgba(255,255,255,0.72)', backdropFilter: 'blur(18px)' } }}
                 style={{
                     margin: '18px',
                     height: 'calc(100% - 36px)',

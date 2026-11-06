@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { App, Button, Form, Input, Modal, Space, Table, Tag, Typography, Spin, Empty, Statistic, Tooltip, Select } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
@@ -6,7 +7,7 @@ import {
     DeleteOutlined, InboxOutlined, UndoOutlined,
     ExclamationCircleOutlined, BugOutlined, ScanOutlined,
     ApiOutlined, RocketOutlined, WarningOutlined,
-    TeamOutlined,
+    TeamOutlined, DatabaseOutlined, ImportOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -19,6 +20,7 @@ import {
     getProjectMembers,
     updateProjectMembers,
 } from '../services/api';
+import ProjectDataImportModal from '../components/ProjectDataImportModal';
 import { canAccessRole, getCurrentUserRole } from '../utils/auth';
 import dayjs from 'dayjs';
 import NetworkCanvas from '../components/NetworkCanvas';
@@ -41,6 +43,8 @@ const ProjectManagement: React.FC = () => {
     const [creating, setCreating] = useState(false);
     const [form] = Form.useForm();
     const { message } = App.useApp();
+    const navigate = useNavigate();
+    const [projectImportOpen, setProjectImportOpen] = useState(false);
     const currentRole = getCurrentUserRole();
     const isAdmin = currentRole === 'admin';
     const canCreateProjects = canAccessRole('operator');
@@ -288,6 +292,20 @@ const ProjectManagement: React.FC = () => {
             width: 170,
             render: (val: string) => <Text style={{ fontSize: 12, color: '#64748b' }}>{dayjs(val).format('YYYY-MM-DD HH:mm:ss')}</Text>,
         },
+        {
+            title: '数据',
+            key: 'data',
+            width: 90,
+            render: (_: unknown, record: API.Project) => (
+                <Tooltip title="浏览项目数据">
+                    <Button
+                        type="text" size="small"
+                        icon={<DatabaseOutlined style={{ color: '#0ea5e9' }} />}
+                        onClick={() => navigate(`/projects/${record.ID}/data`)}
+                    />
+                </Tooltip>
+            ),
+        },
         ...(canCreateProjects ? [{
             title: '操作',
             key: 'actions',
@@ -351,6 +369,11 @@ const ProjectManagement: React.FC = () => {
                         刷新
                     </Button>
                     {canCreateProjects && (
+                        <Button icon={<ImportOutlined />} onClick={() => setProjectImportOpen(true)}>
+                            导入数据
+                        </Button>
+                    )}
+                    {canCreateProjects && (
                         <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
                             新建项目
                         </Button>
@@ -386,6 +409,15 @@ const ProjectManagement: React.FC = () => {
                     />
                 )}
             </ProCard>
+
+            {/* ── 导入项目数据 Modal（列表页上下文：仅新建项目） ── */}
+            {canCreateProjects && (
+                <ProjectDataImportModal
+                    open={projectImportOpen}
+                    onClose={() => setProjectImportOpen(false)}
+                    onImported={fetchProjects}
+                />
+            )}
 
             {/* ── 新建项目 Modal ── */}
             {canCreateProjects && (

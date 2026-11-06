@@ -55,5 +55,15 @@ func shouldGzip(c *gin.Context) bool {
 	if strings.EqualFold(c.GetHeader("Connection"), "upgrade") || c.GetHeader("Upgrade") != "" {
 		return false
 	}
+	// 项目数据导出自身已是 gzip 归档（.argus.json.gz），再包一层会双重压缩。
+	// 仅精确匹配 "/api/v1/projects/{id}/export"（中间恰一段），不影响 asset-discovery 的 /export。
+	if c.Request.Method == http.MethodGet {
+		p := strings.TrimPrefix(c.Request.URL.Path, "/api/v1") // = "/projects/{id}/export"
+		rest := strings.TrimPrefix(p, "/projects/")
+		if rest != p && strings.HasSuffix(rest, "/export") &&
+			strings.Count(strings.TrimSuffix(rest, "/export"), "/") == 0 {
+			return false
+		}
+	}
 	return true
 }

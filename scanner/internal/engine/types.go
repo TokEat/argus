@@ -77,6 +77,23 @@ type PhaseEvent struct {
 	Message string `json:"message,omitempty"` // 可选附加信息（如目标数量）
 }
 
+// ProgressEvent 细粒度进度事件：当前阶段 + 活动计数 + 输入总数。
+// 与 PhaseEvent（仅阶段边界）不同，ProgressEvent 在阶段内随活动节流上报，
+// 让 server 端进度条在大批次执行期间持续前进，而不是卡在某个点。
+//
+// Unit=false（发现模式）：Done 是「发现类输出数」，与 Total 单位不同，仅作
+// 「仍在推进」信号；Rate/EtaMillis 恒为 0，UI 不显示占比/ETA。
+// Unit=true（单元模式）：Done 与 Total 同口径（如端口扫描 connect 尝试数），
+// 可显示 done/total 占比；Rate 为吞吐（单元/秒），EtaMillis 为预计剩余毫秒。
+type ProgressEvent struct {
+	Phase     string `json:"phase"`       // 当前阶段标识
+	Done      int    `json:"done"`        // 已完成活动计数（本阶段累计）
+	Total     int    `json:"total"`       // 输入总数；0 表示总量未知（仅表示"有活动"）
+	Unit      bool   `json:"unit,omitempty"`    // true=单元计数模式（done/total 同口径）
+	Rate      float64 `json:"rate,omitempty"`   // 单元模式吞吐（单元/秒）
+	EtaMillis int64  `json:"eta_ms,omitempty"`  // 单元模式预计剩余毫秒
+}
+
 // Pipeline 扫描阶段常量
 const (
 	PhaseSubdomain            = "subdomain"

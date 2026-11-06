@@ -13,6 +13,17 @@ export const SCAN_STAGE_LABELS: Record<string, string> = {
     directory_probe: '主动路径指纹',
     fingerprint: '指纹识别',
     risk_validation: '风险验证',
+    // 引擎细粒度阶段（agent progress 帧的 phase 值）
+    subdomain: '子域发现',
+    cdn_check: 'CDN 识别',
+    tcp_ping: 'TCP 存活',
+    host_bind: 'Host 绑定',
+    dir_brute: '主动路径指纹',
+    nuclei_scan: 'Nuclei 扫描',
+    gopoc_scan: 'GoPoc 扫描',
+    credential_validation: '弱口令验证',
+    web_crawl: 'Web 爬取',
+    sensitive_info: '敏感信息',
 };
 
 export const COVERAGE_REASON_LABELS: Record<string, string> = {

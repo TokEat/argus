@@ -60,14 +60,14 @@ func TestScanTCPScatterPacesSameTarget(t *testing.T) {
 	const interval = 100 * time.Millisecond
 
 	start := time.Now()
-	ScanTCP([]string{"127.0.0.1"}, ports, 1, 3, 300, true, true, interval, nil)
+	ScanTCP([]string{"127.0.0.1"}, ports, 1, 3, 300, true, true, interval, nil, nil)
 	scattered := time.Since(start)
 	if scattered < 2*interval-20*time.Millisecond {
 		t.Fatalf("scattered scan took %s, want at least ~%s for 3 paced probes", scattered, 2*interval)
 	}
 
 	start = time.Now()
-	ScanTCP([]string{"127.0.0.1"}, ports, 1, 3, 300, true, false, interval, nil)
+	ScanTCP([]string{"127.0.0.1"}, ports, 1, 3, 300, true, false, interval, nil, nil)
 	plain := time.Since(start)
 	if plain >= interval {
 		t.Fatalf("unscattered scan took %s, want well under %s", plain, interval)

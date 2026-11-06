@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Typography, Table, Tag, Tabs, Space, Spin, Button, Tooltip, Empty, Drawer, Descriptions, Divider, Popover, Input, Select, Steps } from 'antd';
+import { Alert, Typography, Tag, Tabs, Space, Spin, Button, Tooltip, Empty, Drawer, Descriptions, Divider, Popover, Input, Select, Steps, App } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
     BugOutlined,
@@ -14,14 +14,18 @@ import {
     PartitionOutlined,
     NodeIndexOutlined,
     FileTextOutlined,
+    LockOutlined,
+    MinusCircleOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useNavigate, useParams } from 'react-router-dom';
-import { getVulns, getAssets, getFingerprintGroups, getAssetLineage, exportVulns, exportAssets, exportFingerprints, listCrawlSiteCandidates, listSensitiveFindings } from '../services/api';
+import { getVulns, getVulnFacets, getAssets, getAssetFacets, getFingerprintGroups, getAssetLineage, exportVulns, exportAssets, exportFingerprints, listCrawlSiteCandidates, listSensitiveFindings, revealCredentialFinding } from '../services/api';
+import { getCurrentUserRole } from '../utils/auth';
 import { useAutoContext } from '../contexts/GlobalAIContext';
 import { AIVerdictTag } from '../components/VulnAITriagePanel';
 import VulnAITriagePanel from '../components/VulnAITriagePanel';
 import ContentFindingsPanel from '../components/tasks/ContentFindingsPanel';
+import ResultTable from '../components/tasks/ResultTable';
 import {
     ASSET_KIND_LABELS,
     DEFAULT_RESULT_PAGE_SIZE,
@@ -45,8 +49,37 @@ import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
 
+// 漏洞表列 dataIndex → 服务端排序字段（getVulns 排序白名单）。未命中的列不传 sort，
+// 由服务端回退默认排序；排序全部服务端完成（列表服务端分页）。
+const VULN_SORT_FIELD_MAP: Record<string, string> = {
+    Severity: 'severity',
+    Plugin: 'plugin',
+    Target: 'target',
+    AIStatus: 'ai_status',
+    Status: 'status',
+    MatchedAt: 'matched_at',
+    CreatedAt: 'created_at',
+    UpdatedAt: 'updated_at',
+};
+
+// 从漏洞 Payload（server 已写入的脱敏 safePayload）提取凭据发现 ID。
+// 爆破类插件（SSH-Crack 等）命中后 server 只在 Payload 里放脱敏影子
+// （info_left="credential evidence sealed"）+ credential_finding_id 关联键，
+// 明文凭据密封在 credential_finding_secrets 表，需 admin 走 reveal 接口解密。
+function extractCredentialFindingId(payload?: string): string | null {
+    if (!payload) return null;
+    try {
+        const parsed = JSON.parse(payload) as { go_poc?: { credential_finding_id?: unknown } };
+        const id = parsed?.go_poc?.credential_finding_id;
+        return typeof id === 'string' && id ? id : null;
+    } catch {
+        return null;
+    }
+}
+
 const TaskResults: React.FC = () => {
     const { taskId } = useParams<{ taskId: string }>();
+    const { modal, message } = App.useApp();
     const [loading, setLoading] = useState(true);
     const [tabLoading, setTabLoading] = useState<Record<ResultTabKey, boolean>>({
         vulns: false,
@@ -77,12 +110,81 @@ const TaskResults: React.FC = () => {
     const [lineageNodes, setLineageNodes] = useState<API.AssetLineageNode[]>([]);
     const [lineageLoading, setLineageLoading] = useState(false);
     const [lineageTitle, setLineageTitle] = useState('');
+    // 凭据揭示（复用凭据发现面板同款 RBAC：viewer 看脱敏，admin 审计揭示）。
+    const isAdmin = getCurrentUserRole() === 'admin';
+    const revealCredential = useCallback(async (findingId: string) => {
+        try {
+            const secret = await revealCredentialFinding(findingId);
+            modal.confirm({
+                title: '已审计揭示凭据', icon: <LockOutlined />, okText: '关闭', cancelButtonProps: { style: { display: 'none' } },
+                content: (
+                    <Space direction="vertical">
+                        <Text>用户名：<Text code copyable>{secret.username}</Text></Text>
+                        <Text>密码：<Text code copyable>{secret.password}</Text></Text>
+                        <Text type="secondary">本次揭示已写入审计记录，请按最小权限使用。</Text>
+                    </Space>
+                ),
+            });
+        } catch (error) {
+            message.error(typeof error === 'string' ? error : '凭据揭示失败');
+        }
+    }, [modal, message]);
     // 各页签的服务端搜索词（state 用于展示，ref 供稳定的 fetch 函数读取，避免级联重抓）
     const [vulnSearch, setVulnSearch] = useState('');
     const [assetSearch, setAssetSearch] = useState('');
     const vulnSearchRef = useRef('');
     const assetSearchRef = useRef('');
+    // sort 的 ref 镜像：fetchVulnsPage 依赖它而非 vulnSort state，
+    // 避免 onChange 每次新建 sort 对象导致回调重建、触发首屏 effect 重置页码。
+    const vulnSortRef = useRef<{ field?: string; order?: 'asc' | 'desc' }>({});
+    // 漏洞/信息 子视图：'vulns' 排除 info 级，'info' 仅 info 级。ref 供稳定的
+    // fetchVulnsPage 读取，severity 过滤在服务端完成（与服务端分页一致）。
+    const vulnSeverityFilterRef = useRef<string[]>([]);
+    const [vulnSeverityFilter, setVulnSeverityFilter] = useState<string[]>([]);
+    const vulnSeverityViewRef = useRef<'vulns' | 'info'>('vulns');
+    // 插件/状态/AI 研判过滤：多选值存 ref 供稳定的 fetchVulnsPage 读取，过滤在服务端完成。
+    const [vulnPluginFilter, setVulnPluginFilter] = useState<string[]>([]);
+    const [vulnStatusFilter, setVulnStatusFilter] = useState<string[]>([]);
+    const [vulnAIStatusFilter, setVulnAIStatusFilter] = useState<string[]>([]);
+    const vulnPluginFilterRef = useRef<string[]>([]);
+    const vulnStatusFilterRef = useRef<string[]>([]);
+    const vulnAIStatusFilterRef = useRef<string[]>([]);
+    // 主机/端口过滤：同一多选 ref 模式，选项来自 facets 的 hosts/ports 维度。
+    const [vulnHostFilter, setVulnHostFilter] = useState<string[]>([]);
+    const [vulnPortFilter, setVulnPortFilter] = useState<string[]>([]);
+    const [vulnFilterField, setVulnFilterField] = useState<'plugin' | 'severity' | 'status' | 'aiStatus' | 'host' | 'port' | 'search'>('plugin');
+    const vulnHostFilterRef = useRef<string[]>([]);
+    const vulnPortFilterRef = useRef<string[]>([]);
+    const [vulnFacets, setVulnFacets] = useState<API.VulnFacets>({ plugins: [], statuses: [], ai_statuses: [], hosts: [], ports: [] });
+    const vulnValueByField: Record<typeof vulnFilterField, string[]> = {
+        plugin: vulnPluginFilter,
+        severity: vulnSeverityFilter,
+        status: vulnStatusFilter,
+        aiStatus: vulnAIStatusFilter,
+        host: vulnHostFilter,
+        port: vulnPortFilter,
+        search: [],
+    };
+    const vulnFacetByField: Record<typeof vulnFilterField, Array<{ value: string; count: number }>> = {
+        plugin: vulnFacets.plugins,
+        severity: ['critical', 'high', 'medium', 'low', 'info'].map(value => ({ value, count: 0 })),
+        status: vulnFacets.statuses,
+        aiStatus: vulnFacets.ai_statuses,
+        host: vulnFacets.hosts,
+        port: vulnFacets.ports.map(value => ({ value: String(value), count: 0 })),
+        search: [],
+    };
     const [fingerprintStats, setFingerprintStats] = useState<API.FingerprintGroupStats | null>(null);
+    // 资产服务/指纹/标题过滤：多选值存 ref 供稳定的 fetchAssetsPage 读取，过滤在服务端完成。
+    // 值形如 "nginx"（包含）或 "!Travel Blog"（排除，点选排除追加）。title 维度高基数、无下拉，
+    // 由搜索框（包含）+ 点选排除（!value）驱动；service/fingerprint 有 facets 下拉。
+    const [assetServiceFilter, setAssetServiceFilter] = useState<string[]>([]);
+    const [assetFingerprintFilter, setAssetFingerprintFilter] = useState<string[]>([]);
+    const [assetTitleFilter, setAssetTitleFilter] = useState<string[]>([]);
+    const assetServiceFilterRef = useRef<string[]>([]);
+    const assetFingerprintFilterRef = useRef<string[]>([]);
+    const assetTitleFilterRef = useRef<string[]>([]);
+    const [assetFacets, setAssetFacets] = useState<API.AssetFacets>({ services: [], fingerprints: [] });
     const navigate = useNavigate();
 
     const setTabBusy = useCallback((key: ResultTabKey, value: boolean) => {
@@ -93,9 +195,26 @@ const TaskResults: React.FC = () => {
         setTabBusy('vulns', true);
         try {
             const projectId = localStorage.getItem('active_project_id') || undefined;
-            const sort = sortField ?? vulnSort.field;
-            const order = sortOrder ?? vulnSort.order;
-            const res = await getVulns({ taskId, projectId, page, pageSize, sort, order, search: vulnSearchRef.current || undefined });
+            const sort = sortField ?? vulnSortRef.current.field;
+            const order = sortOrder ?? vulnSortRef.current.order;
+            const severity = vulnSeverityFilterRef.current.length > 0
+                ? vulnSeverityFilterRef.current.join(',')
+                : (vulnSeverityViewRef.current === 'info' ? 'info' : '!info');
+            const res = await getVulns({
+                taskId,
+                projectId,
+                page,
+                pageSize,
+                sort,
+                order,
+                search: vulnSearchRef.current || undefined,
+                severity,
+                plugin: vulnPluginFilterRef.current.join(',') || undefined,
+                status: vulnStatusFilterRef.current.join(',') || undefined,
+                aiStatus: vulnAIStatusFilterRef.current.join(',') || undefined,
+                host: vulnHostFilterRef.current.join(',') || undefined,
+                port: vulnPortFilterRef.current.join(',') || undefined,
+            });
             setVulns(res.items || []);
             setVulnPagination({
                 current: res.page || page,
@@ -110,7 +229,43 @@ const TaskResults: React.FC = () => {
         } finally {
             setTabBusy('vulns', false);
         }
-    }, [setTabBusy, taskId, vulnSort]);
+    }, [setTabBusy, taskId]);
+
+    // 过滤维度选项与列表同源（任务+项目+搜索+severity 视图），搜索/子视图变化时刷新。
+    const fetchVulnFacets = useCallback(async () => {
+        if (!taskId) return;
+        try {
+            const projectId = localStorage.getItem('active_project_id') || undefined;
+    const severity = vulnSeverityViewRef.current === 'info' ? 'info' : '!info';
+            const facets = await getVulnFacets(taskId, {
+                projectId,
+                severity,
+                search: vulnSearchRef.current || undefined,
+                host: vulnHostFilterRef.current.join(',') || undefined,
+                port: vulnPortFilterRef.current.join(',') || undefined,
+            });
+            setVulnFacets(facets);
+        } catch (error) {
+            console.error('Failed to fetch vuln facets:', error);
+        }
+    }, [taskId]);
+
+    // 资产过滤维度（服务/指纹）下拉。kind 是当前资产视图（对应漏洞 severity 视图），
+    // 使服务下拉随页签收缩；search 使选项与当前搜索口径对齐。选项不随已选服务/指纹收缩。
+    const fetchAssetFacets = useCallback(async (kind: AssetKind) => {
+        if (!taskId) return;
+        try {
+            const projectId = localStorage.getItem('active_project_id') || undefined;
+            const facets = await getAssetFacets(taskId, {
+                projectId,
+                kind,
+                search: assetSearchRef.current || undefined,
+            });
+            setAssetFacets(facets);
+        } catch (error) {
+            console.error('Failed to fetch asset facets:', error);
+        }
+    }, [taskId]);
 
     const applyAssetStats = useCallback((stats: API.AssetKindStats | undefined, fallbackTotal: number, kind: AssetKind) => {
         const counts = emptyAssetKindCounts();
@@ -135,7 +290,13 @@ const TaskResults: React.FC = () => {
         setTabBusy('assets', true);
         try {
             const projectId = localStorage.getItem('active_project_id') || undefined;
-            const res = await getAssets({ taskId, projectId, page, pageSize, kind, search: assetSearchRef.current || undefined });
+            const res = await getAssets({
+                taskId, projectId, page, pageSize, kind,
+                search: assetSearchRef.current || undefined,
+                service: assetServiceFilterRef.current.join(',') || undefined,
+                title: assetTitleFilterRef.current.join(',') || undefined,
+                fingerprint: assetFingerprintFilterRef.current.join(',') || undefined,
+            });
             const items = (res.items || []).filter((asset) => assetMatchesKind(asset.Protocol, kind));
             setAssets(items);
             setAssetPagination({
@@ -209,6 +370,7 @@ const TaskResults: React.FC = () => {
                 fetchAssetsPage(1, DEFAULT_RESULT_PAGE_SIZE, 'web'),
                 fetchFingerprintsPage(1, DEFAULT_RESULT_PAGE_SIZE),
                 fetchContentTotals(),
+                fetchVulnFacets(),
             ]);
             setContentFindingsTotal(contentTotal);
             const nextKind = firstNonEmptyAssetKind(assetPage.counts);
@@ -218,11 +380,12 @@ const TaskResults: React.FC = () => {
                 allAssets = selected.allTotal;
             }
             setAssetKind(nextKind);
+            void fetchAssetFacets(nextKind);
             setActiveTab(firstNonEmptyResultTab(vulnerabilityTotal, allAssets, fingerprintTotal, contentTotal));
         } finally {
             setLoading(false);
         }
-    }, [fetchAssetsPage, fetchContentTotals, fetchFingerprintsPage, fetchVulnsPage]);
+    }, [fetchAssetFacets, fetchAssetsPage, fetchContentTotals, fetchFingerprintsPage, fetchVulnFacets, fetchVulnsPage]);
 
     const fetchCurrentPages = useCallback(async () => {
         setLoading(true);
@@ -248,7 +411,6 @@ const TaskResults: React.FC = () => {
         fingerprintSearch,
         fingerprintSource,
         vulnPagination,
-        vulnSort,
     ]);
 
     // 切换任务时清空各页签搜索/统计，避免跨任务残留过滤态。
@@ -258,6 +420,28 @@ const TaskResults: React.FC = () => {
         setVulnSearch('');
         assetSearchRef.current = '';
         setAssetSearch('');
+        assetServiceFilterRef.current = [];
+        setAssetServiceFilter([]);
+        assetFingerprintFilterRef.current = [];
+        setAssetFingerprintFilter([]);
+        assetTitleFilterRef.current = [];
+        setAssetTitleFilter([]);
+        setAssetFacets({ services: [], fingerprints: [] });
+        vulnSortRef.current = {};
+        setVulnSort({});
+        vulnSeverityViewRef.current = 'vulns';
+
+        vulnPluginFilterRef.current = [];
+        setVulnPluginFilter([]);
+        vulnStatusFilterRef.current = [];
+        setVulnStatusFilter([]);
+        vulnAIStatusFilterRef.current = [];
+        setVulnAIStatusFilter([]);
+        vulnHostFilterRef.current = [];
+        setVulnHostFilter([]);
+        vulnPortFilterRef.current = [];
+        setVulnPortFilter([]);
+        setVulnFacets({ plugins: [], statuses: [], ai_statuses: [], hosts: [], ports: [] });
         setFingerprintSearch('');
         setFingerprintSource('');
         setFingerprintStats(null);
@@ -462,13 +646,21 @@ const TaskResults: React.FC = () => {
         setVulnPagination(prev => ({ ...prev, current: 1 }));
         setActiveTab('vulns');
         void fetchVulnsPage(1, vulnPagination.pageSize);
+        void fetchVulnFacets();
     };
 
     const clearAssetFilter = () => {
         assetSearchRef.current = '';
         setAssetSearch('');
+        assetServiceFilterRef.current = [];
+        setAssetServiceFilter([]);
+        assetFingerprintFilterRef.current = [];
+        setAssetFingerprintFilter([]);
+        assetTitleFilterRef.current = [];
+        setAssetTitleFilter([]);
         setAssetPagination(prev => ({ ...prev, current: 1 }));
         void fetchAssetsPage(1, assetPagination.pageSize, assetKind);
+        void fetchAssetFacets(assetKind);
     };
 
     const clearVulnFilter = () => {
@@ -476,6 +668,115 @@ const TaskResults: React.FC = () => {
         setVulnSearch('');
         setVulnPagination(prev => ({ ...prev, current: 1 }));
         void fetchVulnsPage(1, vulnPagination.pageSize);
+        void fetchVulnFacets();
+    };
+
+    const clearVulnDimensions = () => {
+        vulnSearchRef.current = '';
+        setVulnSearch('');
+        for (const [ref, setter] of [
+            [vulnPluginFilterRef, setVulnPluginFilter],
+            [vulnSeverityFilterRef, setVulnSeverityFilter],
+            [vulnStatusFilterRef, setVulnStatusFilter],
+            [vulnAIStatusFilterRef, setVulnAIStatusFilter],
+            [vulnHostFilterRef, setVulnHostFilter],
+            [vulnPortFilterRef, setVulnPortFilter],
+        ] as const) {
+            ref.current = [];
+            setter([]);
+        }
+    };
+
+    const handleVulnFieldChange = (value: typeof vulnFilterField) => {
+        if (value === vulnFilterField) return;
+        clearVulnDimensions();
+        setVulnFilterField(value);
+        setVulnPagination(prev => ({ ...prev, current: 1 }));
+        void fetchVulnsPage(1, vulnPagination.pageSize);
+        void fetchVulnFacets();
+    };
+
+    const refreshVulnFilter = () => {
+        setVulnPagination(prev => ({ ...prev, current: 1 }));
+        void fetchVulnsPage(1, vulnPagination.pageSize);
+        void fetchVulnFacets();
+    };
+
+    // 插件/状态/AI 研判/主机/端口过滤变化：写 ref 供稳定的 fetchVulnsPage 读取，回第 1 页重抓。
+    // 各维度独立（facets 不随单维度选择收缩），选项始终来自服务端当前作用域。
+    const handleVulnFilterChange = (kind: 'plugin' | 'severity' | 'status' | 'aiStatus' | 'host' | 'port', values: string[]) => {
+        if (kind === 'severity') {
+            vulnSeverityFilterRef.current = values;
+            setVulnSeverityFilter(values);
+        } else if (kind === 'plugin') {
+            vulnPluginFilterRef.current = values;
+            setVulnPluginFilter(values);
+        } else if (kind === 'status') {
+            vulnStatusFilterRef.current = values;
+            setVulnStatusFilter(values);
+        } else if (kind === 'host') {
+            vulnHostFilterRef.current = values;
+            setVulnHostFilter(values);
+        } else if (kind === 'port') {
+            vulnPortFilterRef.current = values;
+            setVulnPortFilter(values);
+        } else {
+            vulnAIStatusFilterRef.current = values;
+            setVulnAIStatusFilter(values);
+        }
+        setVulnPagination(prev => ({ ...prev, current: 1 }));
+        void fetchVulnsPage(1, vulnPagination.pageSize);
+    };
+
+    // 服务/指纹多选过滤变化：写 ref 供稳定的 fetchAssetsPage 读取，回第 1 页重抓。
+    // 选项始终来自服务端当前作用域（facets 不随单维度选择收缩），与漏洞口径一致。
+    const handleAssetFilterChange = (dimension: 'service' | 'fingerprint', values: string[]) => {
+        if (dimension === 'service') {
+            assetServiceFilterRef.current = values;
+            setAssetServiceFilter(values);
+        } else {
+            // 指纹下拉只驱动包含项，保留点选排除的 "!" 项（chips 栏单独展示/移除）。
+            const excludes = assetFingerprintFilterRef.current.filter(v => v.startsWith('!'));
+            const next = [...excludes, ...values];
+            assetFingerprintFilterRef.current = next;
+            setAssetFingerprintFilter(next);
+        }
+        setAssetPagination(prev => ({ ...prev, current: 1 }));
+        void fetchAssetsPage(1, assetPagination.pageSize || DEFAULT_RESULT_PAGE_SIZE, assetKind);
+    };
+
+    // 点选排除：向 title/fingerprint 维度追加 "!value"。去重，写 ref+state，回第 1 页重抓。
+    const addAssetExclude = (dimension: 'title' | 'fingerprint', rawValue: string) => {
+        const value = rawValue.trim();
+        if (!value) return;
+        const excluded = `!${value}`;
+        const ref = dimension === 'title' ? assetTitleFilterRef : assetFingerprintFilterRef;
+        const set = dimension === 'title' ? setAssetTitleFilter : setAssetFingerprintFilter;
+        if (ref.current.includes(excluded)) return;
+        const next = [...ref.current, excluded];
+        ref.current = next;
+        set(next);
+        setAssetPagination(prev => ({ ...prev, current: 1 }));
+        void fetchAssetsPage(1, assetPagination.pageSize || DEFAULT_RESULT_PAGE_SIZE, assetKind);
+    };
+
+    // chips 栏单项移除：从指定维度删掉一个值（含 "!value" 排除项），回第 1 页重抓。
+    const removeAssetFilterValue = (dimension: 'service' | 'title' | 'fingerprint', value: string) => {
+        if (dimension === 'service') {
+            const next = assetServiceFilterRef.current.filter(v => v !== value);
+            assetServiceFilterRef.current = next;
+            setAssetServiceFilter(next);
+        } else if (dimension === 'title') {
+            const next = assetTitleFilterRef.current.filter(v => v !== value);
+            assetTitleFilterRef.current = next;
+            setAssetTitleFilter(next);
+        } else {
+            const next = assetFingerprintFilterRef.current.filter(v => v !== value);
+            assetFingerprintFilterRef.current = next;
+            setAssetFingerprintFilter(next);
+        }
+        setAssetPagination(prev => ({ ...prev, current: 1 }));
+        void fetchAssetsPage(1, assetPagination.pageSize || DEFAULT_RESULT_PAGE_SIZE, assetKind);
     };
 
     // 扫描链路溯源：拉取资产链路并打开 Steps Drawer
@@ -496,6 +797,10 @@ const TaskResults: React.FC = () => {
         }
     };
 
+    // 受控排序展示：与 vulnSort 对齐，未排序列返回 null。服务端排序字段映射见 VULN_SORT_FIELD_MAP。
+    const vulnColumnSortOrder = (field: string): 'ascend' | 'descend' | null =>
+        vulnSort.field === field ? (vulnSort.order === 'asc' ? 'ascend' : 'descend') : null;
+
     const vulnColumns: ColumnsType<API.Vulnerability> = [
         {
             title: '主机',
@@ -504,23 +809,44 @@ const TaskResults: React.FC = () => {
             render: (_, record) => {
                 const host = extractHostFromTarget(record.Target);
                 return (
-                    <Text copyable={{ text: host }} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 500 }}>
+                    <Text copyable={{ text: host }} ellipsis={{ tooltip: host }} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 500, maxWidth: 120, display: 'inline-block' }}>
                         {host}
                     </Text>
                 );
             },
-            filters: (() => {
-                const hosts = [...new Set(vulns.map(v => extractHostFromTarget(v.Target)))];
-                return hosts.slice(0, 20).map(h => ({ text: h, value: h }));
-            })(),
-            onFilter: (value, record) => extractHostFromTarget(record.Target) === value,
         },
         {
             title: '插件',
             dataIndex: 'Plugin',
             key: 'plugin',
             ellipsis: true,
-            render: (v: string) => <Text strong style={{ fontSize: 13 }}>{v}</Text>,
+            sorter: true,
+            sortOrder: vulnColumnSortOrder('plugin'),
+            render: (v: string) => (
+                <Space size={4} style={{ width: '100%', flexWrap: 'nowrap' }}>
+                    <Tooltip title={v}>
+                        <Text strong style={{ fontSize: 13, minWidth: 0 }} ellipsis>{v}</Text>
+                    </Tooltip>
+                    <Tooltip title={`快速排除漏洞类型：${v}`}>
+                        <Button
+                            type="text"
+                            size="small"
+                            className="result-exclude-button"
+                            aria-label={`排除 ${v}`}
+                            icon={<MinusCircleOutlined />}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                if (!v || vulnPluginFilterRef.current.includes(`!${v}`)) return;
+                                const next = [...vulnPluginFilterRef.current, `!${v}`];
+                                vulnPluginFilterRef.current = next;
+                                setVulnPluginFilter(next);
+                                setVulnPagination(prev => ({ ...prev, current: 1 }));
+                                void fetchVulnsPage(1, vulnPagination.pageSize);
+                            }}
+                        />
+                    </Tooltip>
+                </Space>
+            ),
         },
         {
             title: '危害等级',
@@ -531,19 +857,17 @@ const TaskResults: React.FC = () => {
                 const normalized = normalizeSeverity(v);
                 return <Tag color={getSeverityColor(normalized)}>{normalized}</Tag>;
             },
-            filters: ['Critical', 'High', 'Medium', 'Low', 'Info', 'Unknown'].map(s => ({ text: s, value: s })),
-            onFilter: (value, record) => {
-                return normalizeSeverity(record.Severity) === value;
-            },
             sorter: true,
             sortDirections: ['descend', 'ascend'],
-            sortOrder: vulnSort.field === 'severity' ? (vulnSort.order === 'asc' ? 'ascend' : 'descend') : null,
+            sortOrder: vulnColumnSortOrder('severity'),
         },
         {
             title: 'AI 研判',
             dataIndex: 'AIStatus',
             key: 'ai_status',
             width: 110,
+            sorter: true,
+            sortOrder: vulnColumnSortOrder('ai_status'),
             render: (v: string, record: API.Vulnerability) => (
                 <Space direction="vertical" size={2}>
                     <AIVerdictTag verdict={v} />
@@ -559,20 +883,16 @@ const TaskResults: React.FC = () => {
                     )}
                 </Space>
             ),
-            filters: [
-                { text: '确认真实', value: 'confirmed' },
-                { text: '疑似误报', value: 'likely_false_positive' },
-                { text: '不确定', value: 'uncertain' },
-            ],
-            onFilter: (value, record) => (record.AIStatus || '') === value,
         },
         {
             title: '匹配位置',
             dataIndex: 'MatchedAt',
             key: 'matched_at',
             ellipsis: true,
+            sorter: true,
+            sortOrder: vulnColumnSortOrder('matched_at'),
             render: (v: string) => v ? (
-                <Text style={{ fontSize: 12, fontFamily: 'monospace', color: '#0ea5e9' }}>{v}</Text>
+                <Text style={{ fontSize: 12, fontFamily: 'monospace', color: '#0ea5e9' }} ellipsis={{ tooltip: v }}>{v}</Text>
             ) : <Text type="secondary">-</Text>,
         },
         {
@@ -588,11 +908,25 @@ const TaskResults: React.FC = () => {
             },
         },
         {
+            title: '凭据',
+            key: 'credential',
+            width: 104,
+            align: 'center',
+            render: (_: unknown, record: API.Vulnerability) => {
+                const findingId = extractCredentialFindingId(record.Payload);
+                if (!findingId) return <Text type="secondary" style={{ fontSize: 12 }}>-</Text>;
+                return isAdmin
+                    ? <Button size="small" type="link" style={{ padding: 0 }} icon={<LockOutlined />} onClick={() => revealCredential(findingId)}>审计揭示</Button>
+                    : <Tooltip title="弱口令已命中，凭据已密封存储；仅 Admin 可审计揭示"><Tag icon={<LockOutlined />} color="gold" style={{ marginInlineEnd: 0 }}>已捕获</Tag></Tooltip>;
+            },
+        },
+        {
             title: '发现时间',
             dataIndex: 'CreatedAt',
             key: 'created_at',
             width: 170,
-            sorter: (a, b) => new Date(a.CreatedAt).getTime() - new Date(b.CreatedAt).getTime(),
+            sorter: true,
+            sortOrder: vulnColumnSortOrder('created_at'),
             render: (v: string) => {
                 if (!v) return '-';
                 return <Text style={{ fontSize: 12, color: '#64748b' }}>{dayjs(v).format('YYYY-MM-DD HH:mm:ss')}</Text>;
@@ -606,7 +940,7 @@ const TaskResults: React.FC = () => {
         const shown = related.slice(0, 2);
         return (
             <Space size={4} wrap>
-                <Text copyable={{ text: host }} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 500 }}>
+                <Text copyable={{ text: host }} ellipsis={{ tooltip: host }} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 500, maxWidth: 190, display: 'inline-block' }}>
                     {host}
                 </Text>
                 {cdn && <Tag color="orange" style={{ margin: 0, fontSize: 10 }}>CDN</Tag>}
@@ -666,8 +1000,6 @@ const TaskResults: React.FC = () => {
         render: (_, record) => record.CDN
             ? <Tag color="orange" style={{ margin: 0 }}>疑似 CDN</Tag>
             : <Text type="secondary">-</Text>,
-        filters: [{ text: '疑似 CDN', value: true }],
-        onFilter: (value, record) => Boolean(record.CDN) === value,
     };
 
     const protocolColumn: ColumnsType<API.Asset>[number] = {
@@ -676,8 +1008,6 @@ const TaskResults: React.FC = () => {
         key: 'protocol',
         width: 120,
         render: (v: string) => <Tag color={protocolColors[v] || 'default'} style={{ margin: 0, fontSize: 11 }}>{v}</Tag>,
-        filters: [...new Set(assets.map(a => a.Protocol))].map(p => ({ text: p, value: p })),
-        onFilter: (value, record) => record.Protocol === value,
     };
 
     const renderAssetURL = (url?: string) => {
@@ -719,18 +1049,56 @@ const TaskResults: React.FC = () => {
                 {matches.map((match) => {
                     const active = match.Source && match.Source !== 'passive';
                     return (
-                        <Tag
-                            key={`${match.ProductName}-${match.Source || 'passive'}`}
-                            color={active ? fingerprintSourceColor(match.Source) : 'cyan'}
-                            style={{ margin: 0 }}
-                        >
-                            {match.ProductName}
-                            {active ? ` · ${fingerprintSourceLabel(match.Source, match.SourceLabel)}` : ''}
-                        </Tag>
+                        <Tooltip key={`${match.ProductName}-${match.Source || 'passive'}`} title={`点击排除此指纹：${match.ProductName}`}>
+                            <Tag
+                                color={active ? fingerprintSourceColor(match.Source) : 'cyan'}
+                                style={{ margin: 0, cursor: 'pointer' }}
+                                onClick={(e) => { e.stopPropagation(); addAssetExclude('fingerprint', match.ProductName); }}
+                            >
+                                {match.ProductName}
+                                {active ? ` · ${fingerprintSourceLabel(match.Source, match.SourceLabel)}` : ''}
+                            </Tag>
+                        </Tooltip>
                     );
                 })}
             </Space>
         );
+    };
+
+    // 当前资产过滤条件可视化：搜索 + 服务/指纹包含 + 标题/指纹排除，逐项可删（chips 栏）。
+    const hasAssetFilters = Boolean(assetSearch) || assetServiceFilter.length > 0 || assetFingerprintFilter.length > 0 || assetTitleFilter.length > 0;
+    const clearAssetSearch = () => {
+        assetSearchRef.current = '';
+        setAssetSearch('');
+        setAssetPagination(prev => ({ ...prev, current: 1 }));
+        void fetchAssetsPage(1, assetPagination.pageSize || DEFAULT_RESULT_PAGE_SIZE, assetKind);
+        void fetchAssetFacets(assetKind);
+    };
+    const renderAssetFilterChips = () => {
+        const chips: React.ReactNode[] = [];
+        if (assetSearch) {
+            chips.push(<Tag key="search" closable color="purple" onClose={clearAssetSearch}>搜索: {assetSearch}</Tag>);
+        }
+        assetServiceFilter.forEach((value) => chips.push(
+            <Tag key={`svc-${value}`} closable color="blue" onClose={() => removeAssetFilterValue('service', value)}>服务: {value}</Tag>
+        ));
+        assetFingerprintFilter.forEach((value) => {
+            const excluded = value.startsWith('!');
+            chips.push(
+                <Tag key={`fp-${value}`} closable color={excluded ? 'orange' : 'blue'} onClose={() => removeAssetFilterValue('fingerprint', value)}>
+                    {excluded ? `排除指纹: ${value.slice(1)}` : `指纹: ${value}`}
+                </Tag>
+            );
+        });
+        assetTitleFilter.forEach((value) => {
+            const excluded = value.startsWith('!');
+            chips.push(
+                <Tag key={`ttl-${value}`} closable color={excluded ? 'orange' : 'blue'} onClose={() => removeAssetFilterValue('title', value)}>
+                    {excluded ? `排除标题: ${value.slice(1)}` : `标题: ${value}`}
+                </Tag>
+            );
+        });
+        return chips;
     };
 
     const assetColumnsForKind = (kind: AssetKind): ColumnsType<API.Asset> => {
@@ -770,8 +1138,6 @@ const TaskResults: React.FC = () => {
             key: 'host',
             width: 240,
             render: (_, record) => renderRelatedHost(extractHostFromTarget(record.Target), record.CDN && kind !== 'web' && kind !== 'domain'),
-            filters: [...new Set(assets.map(a => extractHostFromTarget(a.Target)))].slice(0, 20).map(h => ({ text: h, value: h })),
-            onFilter: (value, record) => extractHostFromTarget(record.Target) === value,
         };
         if (kind === 'web') {
             return [
@@ -789,7 +1155,19 @@ const TaskResults: React.FC = () => {
                     key: 'title',
                     ellipsis: { showTitle: false },
                     render: (v: string) => v
-                        ? <Tooltip title={v}><Text style={{ fontSize: 12 }}>{v}</Text></Tooltip>
+                        ? (
+                            <Space size={4} style={{ width: '100%' }}>
+                                <Tooltip title={v}><Text style={{ fontSize: 12 }} ellipsis>{v}</Text></Tooltip>
+                                <Tooltip title={`排除此标题：${v}`}>
+                                    <Button
+                                        type="text"
+                                        size="small"
+                                        icon={<MinusCircleOutlined />}
+                                        onClick={(e) => { e.stopPropagation(); addAssetExclude('title', v); }}
+                                    />
+                                </Tooltip>
+                            </Space>
+                        )
                         : <Text type="secondary">-</Text>,
                 },
                 {
@@ -1027,13 +1405,82 @@ const TaskResults: React.FC = () => {
                                                 style={{ marginBottom: 12 }}
                                                 message={(
                                                     <Space size={8}>
-                                                        <span>已按目标 <Text code>{vulnSearch}</Text> 过滤</span>
+                                                        <span>已按关键词 <Text code>{vulnSearch}</Text> 过滤</span>
                                                         <Button type="link" size="small" style={{ padding: 0 }} onClick={clearVulnFilter}>清除过滤</Button>
                                                     </Space>
                                                 )}
                                             />
                                         )}
-                                        <Table
+                                        <div className="result-filter-bar">
+                                            <Select
+                                                aria-label="漏洞筛选字段"
+                                                value={vulnFilterField}
+                                                style={{ width: 145, flexShrink: 0 }}
+                                                onChange={handleVulnFieldChange}
+                                                options={[
+                                                    { label: '漏洞名称', value: 'plugin' },
+                                                    { label: '危害等级', value: 'severity' },
+                                                    { label: '处理状态', value: 'status' },
+                                                    { label: 'AI 研判', value: 'aiStatus' },
+                                                    { label: '主机', value: 'host' },
+                                                    { label: '端口', value: 'port' },
+                                                    { label: '关键词', value: 'search' },
+                                                ]}
+                                            />
+                                            {vulnFilterField === 'search' ? (
+                                                <Input.Search
+                                                    allowClear
+                                                    placeholder="输入目标 / CVE / 描述，回车过滤"
+                                                    value={vulnSearch}
+                                                    onChange={(event) => setVulnSearch(event.target.value)}
+                                                    onSearch={(value) => {
+                                                        const next = value.trim();
+                                                        vulnSearchRef.current = next;
+                                                        setVulnSearch(next);
+                                                        setVulnPagination(prev => ({ ...prev, current: 1 }));
+                                                        void fetchVulnsPage(1, vulnPagination.pageSize);
+                                                        void fetchVulnFacets();
+                                                    }}
+                                                    style={{ flex: 1, minWidth: 240 }}
+                                                />
+                                            ) : (
+                                                <Select
+                                                    mode="tags"
+                                                    allowClear
+                                                    showSearch
+                                                    placeholder="选择或输入筛选值，可用 !值 排除"
+                                                    aria-label="漏洞筛选值"
+                                                    style={{ flex: 1, minWidth: 240 }}
+                                                    maxTagCount="responsive"
+                                                    value={vulnValueByField[vulnFilterField]}
+                                                    onChange={(values) => {
+                                                        if (vulnFilterField === 'severity' && values.includes('info')) {
+                                                            clearVulnDimensions();
+                                                            vulnSeverityViewRef.current = 'info';
+
+                                                            refreshVulnFilter();
+                                                            return;
+                                                        }
+                                                        vulnSeverityViewRef.current = 'vulns';
+
+                                                        handleVulnFilterChange(vulnFilterField, values);
+                                                    }}
+                                                    options={vulnFacetByField[vulnFilterField].map(({ value, count }) => ({
+                                                        label: `${value}${count ? ` (${count})` : ''}`,
+                                                        value,
+                                                    }))}
+                                                />
+                                            )}
+                                            {(vulnValueByField[vulnFilterField].some(value => value.length > 0) || (vulnFilterField === 'search' && vulnSearch.length > 0)) && (
+                                                <Button type="link" onClick={() => {
+                                                    clearVulnDimensions();
+                                                    vulnSeverityViewRef.current = 'vulns';
+
+                                                    refreshVulnFilter();
+                                                }}>清除条件</Button>
+                                            )}
+                                        </div>
+                                        <ResultTable
                                             bordered
                                             columns={vulnColumns}
                                             dataSource={vulns}
@@ -1049,10 +1496,11 @@ const TaskResults: React.FC = () => {
                                         }}
                                         onChange={(pagination, _filters, sorter) => {
                                             const sort = Array.isArray(sorter) ? sorter[0] : sorter;
-                                            const sortField = sort?.field === 'Severity' ? 'severity' : sort?.field ? String(sort.field) : undefined;
+                                            const sortField = sort?.field ? VULN_SORT_FIELD_MAP[String(sort.field)] : undefined;
                                             const sortOrder: 'asc' | 'desc' | undefined = sort?.order === 'ascend' ? 'asc' : sort?.order === 'descend' ? 'desc' : undefined;
                                             const nextSort = { field: sortField, order: sortOrder };
                                             setVulnSort(nextSort);
+                                            vulnSortRef.current = nextSort;
                                             fetchVulnsPage(
                                                 pagination.current || 1,
                                                 pagination.pageSize || DEFAULT_RESULT_PAGE_SIZE,
@@ -1075,15 +1523,51 @@ const TaskResults: React.FC = () => {
                                 label: <span><GlobalOutlined /> 资产 ({assetTotal})</span>,
                                 children: (
                                     <>
-                                        {assetSearch && (
+                                        <Space wrap style={{ marginBottom: 12 }}>
+                                            <Input.Search
+                                                allowClear
+                                                placeholder="搜索目标/URL/标题/服务"
+                                                defaultValue={assetSearch}
+                                                onSearch={(value) => {
+                                                    const nextSearch = value.trim();
+                                                    assetSearchRef.current = nextSearch;
+                                                    setAssetSearch(nextSearch);
+                                                    setAssetPagination(prev => ({ ...prev, current: 1 }));
+                                                    void fetchAssetsPage(1, assetPagination.pageSize || DEFAULT_RESULT_PAGE_SIZE, assetKind);
+                                                    void fetchAssetFacets(assetKind);
+                                                }}
+                                                style={{ width: 240 }}
+                                            />
+                                            <Select
+                                                mode="multiple"
+                                                allowClear
+                                                placeholder="按服务过滤"
+                                                style={{ minWidth: 200 }}
+                                                maxTagCount={2}
+                                                value={assetServiceFilter}
+                                                onChange={(values) => handleAssetFilterChange('service', values)}
+                                                options={assetFacets.services.map(s => ({ label: `${s.value} (${s.count})`, value: s.value }))}
+                                            />
+                                            <Select
+                                                mode="multiple"
+                                                allowClear
+                                                placeholder="按指纹过滤"
+                                                style={{ minWidth: 200 }}
+                                                maxTagCount={2}
+                                                value={assetFingerprintFilter.filter(v => !v.startsWith('!'))}
+                                                onChange={(values) => handleAssetFilterChange('fingerprint', values)}
+                                                options={assetFacets.fingerprints.map(f => ({ label: `${f.value} (${f.count})`, value: f.value }))}
+                                            />
+                                        </Space>
+                                        {hasAssetFilters && (
                                             <Alert
                                                 type="info"
                                                 showIcon
                                                 style={{ marginBottom: 12 }}
                                                 message={(
-                                                    <Space size={8}>
-                                                        <span>已按目标 <Text code>{assetSearch}</Text> 过滤</span>
-                                                        <Button type="link" size="small" style={{ padding: 0 }} onClick={clearAssetFilter}>清除过滤</Button>
+                                                    <Space size={8} wrap>
+                                                        {renderAssetFilterChips()}
+                                                        <Button type="link" size="small" style={{ padding: 0 }} onClick={clearAssetFilter}>清除全部过滤</Button>
                                                     </Space>
                                                 )}
                                             />
@@ -1095,12 +1579,13 @@ const TaskResults: React.FC = () => {
                                             const nextKind = key as AssetKind;
                                             setAssetKind(nextKind);
                                             fetchAssetsPage(1, assetPagination.pageSize || DEFAULT_RESULT_PAGE_SIZE, nextKind);
+                                            void fetchAssetFacets(nextKind);
                                         }}
                                         items={visibleAssetKinds(assetKindCounts).map((kind) => ({
                                             key: kind,
                                             label: `${ASSET_KIND_LABELS[kind]} (${assetKindCount(assetKindCounts, kind)})`,
                                             children: (
-                                                <Table
+                                                <ResultTable
                                                     bordered
                                                     columns={assetColumnsForKind(kind)}
                                                     dataSource={kind === assetKind ? assets : []}
@@ -1158,7 +1643,7 @@ const TaskResults: React.FC = () => {
                                                 <Tag color="geekblue">当前页命中 {fingerprints.reduce((sum, f) => sum + (f.TargetCount || 0), 0)}</Tag>
                                             </Space>
                                         </Space>
-                                        <Table
+                                        <ResultTable
                                             bordered
                                             columns={fpColumns}
                                             dataSource={fingerprints}

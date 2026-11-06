@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+
 import { Form, Input, Button, App, ConfigProvider, theme } from 'antd';
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import { login } from '../services/api';
@@ -160,7 +160,6 @@ const dots = [
 /* ─────────────── Component ─────────────── */
 const Login: React.FC = () => {
     const [loading, setLoading] = useState(false);
-    const navigate = useNavigate();
     const { message } = App.useApp();
     const onFinish = async (values: { tenant_id: string; password: string }) => {
         setLoading(true);
@@ -169,10 +168,13 @@ const Login: React.FC = () => {
                 tenant_id: values.tenant_id,
                 password: values.password,
             });
+            // 1) 先清理可能存在的旧 token；2) 写入新 token；3) 硬刷新 SPA 让组件重新 mount，
+            // 此时所有首批接口的 request 拦截器读到的都是新 token，不会出现并发 401。
+            localStorage.removeItem('token');
             localStorage.setItem('token', result.token);
             localStorage.setItem('tenant_id', values.tenant_id);
             message.success('登录成功');
-            navigate('/dashboard');
+            window.location.href = '/dashboard';
         } catch (error: unknown) {
             const msg = typeof error === 'string' ? error : '登录失败';
             message.error(msg);
@@ -252,17 +254,17 @@ const Login: React.FC = () => {
                             <img src={argusLogoMark} alt="Argus" style={styles.brandIcon} />
                             <div>
                                 <div style={styles.headerTitle}>ARGUS 控制台</div>
-                                <div style={styles.headerSub}>输入租户 ID 和密码进入控制面板</div>
+                                <div style={styles.headerSub}>输入账号和密码进入控制面板</div>
                             </div>
                         </div>
 
                         <Form name="login" onFinish={onFinish} autoComplete="off" size="large"
                               initialValues={{ tenant_id: 'default', password: '' }}>
-                            {/* 租户 ID */}
-                            <Form.Item className="login-form-item" name="tenant_id" rules={[{ required: true, message: '请输入租户 ID' }]}>
+                            {/* 账号（后端 username 或 tenant_id 皆可） */}
+                            <Form.Item className="login-form-item" name="tenant_id" rules={[{ required: true, message: '请输入账号' }]}>
                                 <Input
                                     prefix={<UserOutlined style={{ color: '#030507' }} />}
-                                    placeholder="租户 ID"
+                                    placeholder="账号"
                                     disabled={loading}
                                     style={{ borderRadius: 10, height: 46 }}
                                 />

@@ -18,7 +18,7 @@ func TestAssetKindForProtocol(t *testing.T) {
 		"Protocol":      assetKindHostPort,
 		"ProtocolCheck": assetKindHostPort,
 		"Nmap":          assetKindHostPort,
-		"IPAlive":       assetKindHostPort,
+		"IPAlive":       assetKindOther,
 		"Fofa":          assetKindHostPort,
 		"Hunter":        assetKindHostPort,
 		"Quake":         assetKindHostPort,

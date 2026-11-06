@@ -888,3 +888,86 @@ body {
 .table-row-dark {
     background-color: #ffffff;
 }
+
+
+/* 扫描结果：列宽拖拽与长文本防覆盖。 */
+.result-resizable-table .result-cell-ellipsis {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.result-resizable-table .ant-table-container {
+  overflow-x: auto;
+}
+.result-resizable-table .ant-table-thead > tr > th {
+  position: relative;
+  white-space: nowrap;
+}
+.result-resizable-table .react-resizable-handle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 3;
+  width: 14px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.result-resizable-table .react-resizable-handle::after {
+  content: '';
+  position: absolute;
+  top: 25%;
+  bottom: 25%;
+  right: 0;
+  width: 3px;
+  background: #3b82f6;
+  border-radius: 2px;
+}
+.result-resizable-table .ant-table-tbody > tr > td,
+.result-resizable-table .ant-table-tbody > tr > td > div,
+.result-resizable-table .ant-table-tbody > tr > td > span {
+  min-width: 0;
+  max-width: 100%;
+}
+.result-resizable-table .ant-table-tbody > tr > td > * {
+  max-width: 100%;
+}
+.result-resizable-table .ant-space:has(> .ant-space-item > .ant-typography),
+.result-resizable-table td > .ant-typography,
+.result-resizable-table td a,
+.result-resizable-table td pre {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: anywhere;
+}
+.result-resizable-table .ant-typography-copy {
+  flex-shrink: 0;
+}
+.result-resizable-table .ant-table-cell-ellipsis .ant-space {
+  flex-wrap: nowrap;
+}
+.result-resizable-table .ant-table-cell-ellipsis .ant-space-item:last-child:not(:first-child) {
+  flex-shrink: 0;
+}
+/* Tooltip 不能被反序列化后的长 URL/片段撑出视口。 */
+.ant-tooltip .ant-tooltip-inner,
+.ant-popover .ant-popover-inner-content {
+  max-width: min(720px, 90vw);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* 漏洞名旁排除入口：平时弱化，悬停或聚焦时可见；只过滤结果，不删除记录。 */
+.result-exclude-button {
+  flex-shrink: 0;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  color: #f5222d;
+}
+.result-table-vulns tbody tr:not(:hover) .result-exclude-button { opacity: 0.35; }
+.result-exclude-button:hover,
+.result-exclude-button:focus-visible { opacity: 1 !important; }
+.result-table-vulns td:not(.ant-table-selection-column) > .ant-space { max-width: 100%; }

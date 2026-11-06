@@ -240,6 +240,44 @@ func TestNormalizeTaskConfigRejectsMasscanPath(t *testing.T) {
 	}
 }
 
+func TestNormalizeTaskConfigAlwaysExcludesXssAndSmugglingPoCTags(t *testing.T) {
+	// 调用方不传 ExcludeTags：默认排除项必须强制存在。
+	encoded, _, err := normalizeTaskConfigPayload(json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("empty config should be accepted: %v", err)
+	}
+	var cfg taskScanConfig
+	if err := json.Unmarshal([]byte(encoded), &cfg); err != nil {
+		t.Fatalf("decode normalized config: %v", err)
+	}
+	for _, tag := range defaultExcludedPoCTags {
+		if !strings.Contains(","+cfg.ExcludeTags+",", ","+tag+",") {
+			t.Fatalf("ExcludeTags %q must contain %q", cfg.ExcludeTags, tag)
+		}
+	}
+}
+
+func TestNormalizeTaskConfigKeepsCallerTagsAndForcesDefaults(t *testing.T) {
+	// 调用方自填其它标签：全部保留，且默认排除项去重并集进来。
+	encoded, _, err := normalizeTaskConfigPayload(json.RawMessage(`{"ExcludeTags":"dos,xss,custom-tag"}`))
+	if err != nil {
+		t.Fatalf("caller tags should be accepted: %v", err)
+	}
+	var cfg taskScanConfig
+	if err := json.Unmarshal([]byte(encoded), &cfg); err != nil {
+		t.Fatalf("decode normalized config: %v", err)
+	}
+	got := "," + cfg.ExcludeTags + ","
+	for _, want := range []string{"dos", "xss", "custom-tag", "smuggling"} {
+		if !strings.Contains(got, ","+want+",") {
+			t.Fatalf("ExcludeTags %q must contain %q after union", cfg.ExcludeTags, want)
+		}
+	}
+	if strings.Count(got, "xss,") != 1 {
+		t.Fatalf("ExcludeTags %q must dedupe xss", cfg.ExcludeTags)
+	}
+}
+
 func TestValidateTaskScanConfigNoICMPEnablesTCPPing(t *testing.T) {
 	cfg := defaultTaskScanConfig()
 	cfg.NoICMPPing = true

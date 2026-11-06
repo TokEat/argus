@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/P0lar1ght/argus/server/internal/credentialbundle"
@@ -31,6 +32,8 @@ func (s *TaskRecoveryService) Run(ctx context.Context) {
 	if err != nil {
 		log.Printf("[DispatchRecover] initial pending reconciliation failed: %v", err)
 	}
+	// 启动对账：回收已 Offline 节点持有的 Running 任务（不等 30s 守护首次 tick）。
+	recoverOrphanedRunningAttempts(ctx)
 
 	for {
 		select {
@@ -52,8 +55,35 @@ func (s *TaskRecoveryService) Run(ctx context.Context) {
 	}
 }
 
-func recoverScanWorkClaimWaiters(q *scheduler.TaskQueue) {
-	ready, err := db.ResolveTerminalScanWorkClaimWaiters(db.DB, 200)
+// recoverOrphanedRunningAttempts 启动对账：把「DB 已判 Offline 节点」仍持有的 Running/CancelPending
+// 子任务立即回收（复用心跳守护同一入口 RecycleNodeRunningTasks），不等 30s 守护首次 tick。
+// 仅处理 Offline 节点——它们确死、名下任务必为孤儿；Alive 节点可能正在慢重连，仍交由守护按 60s
+// 阈值处理，避免误回收正在恢复的连接。回收不消耗重试预算（ConsumeRetryBudget=false），误回收代价为零。
+func recoverOrphanedRunningAttempts(ctx context.Context) {
+	var agentIDs []string
+	if err := db.DB.Model(&db.SubTask{}).
+		Where("status IN ? AND agent_id <> ''", []string{"Running", "CancelPending"}).
+		Distinct().Pluck("agent_id", &agentIDs).Error; err != nil {
+		log.Printf("[StartupReconcile] list agents holding running tasks failed: %v", err)
+		return
+	}
+	recycled := 0
+	for _, agentID := range agentIDs {
+		var node db.Node
+		if err := db.DB.First(&node, "agent_id = ?", agentID).Error; err != nil {
+			continue // 节点行已删，交给超时守护兜底
+		}
+		if !strings.EqualFold(strings.TrimSpace(node.Status), "Offline") {
+			continue
+		}
+		recycled += RecycleNodeRunningTasks(ctx, node)
+	}
+	if recycled > 0 {
+		log.Printf("[StartupReconcile] recycled %d orphaned running tasks held by offline agents", recycled)
+	}
+}
+
+func recoverScanWorkClaimWaiters(q *scheduler.TaskQueue) {	ready, err := db.ResolveTerminalScanWorkClaimWaiters(db.DB, 200)
 	if err != nil {
 		log.Printf("[WorkClaimRecover] terminal owner reconciliation failed: %v", err)
 		return

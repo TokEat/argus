@@ -7,13 +7,18 @@ import TaskResults from './TaskResults';
 
 const apiMocks = vi.hoisted(() => ({
     getVulns: vi.fn(),
+    getVulnFacets: vi.fn(),
     getAssets: vi.fn(),
+    getAssetFacets: vi.fn(),
     getFingerprints: vi.fn(),
     getFingerprintGroups: vi.fn(),
     getAssetLineage: vi.fn(),
+    listCrawlSiteCandidates: vi.fn(),
+    listSensitiveFindings: vi.fn(),
     exportVulns: vi.fn(),
     exportAssets: vi.fn(),
     exportFingerprints: vi.fn(),
+    revealCredentialFinding: vi.fn(),
 }));
 
 vi.mock('../contexts/GlobalAIContext', () => ({
@@ -42,8 +47,16 @@ const assetStats = (partial: Partial<API.AssetKindStats>): API.AssetKindStats =>
     ...partial,
 });
 
+// 构造一个最小可用的 JWT（payload 为 base64url 编码的 claims），供 getCurrentUserRole 读取 role。
+const makeToken = (claims: Record<string, unknown>): string => {
+    const payload = btoa(JSON.stringify(claims)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    return `header.${payload}.sig`;
+};
+
 describe('TaskResults', () => {
     beforeEach(() => {
+    apiMocks.listCrawlSiteCandidates.mockResolvedValue(paged([], 0, 1));
+    apiMocks.listSensitiveFindings.mockResolvedValue(paged([], 0, 1));
         vi.clearAllMocks();
         localStorage.setItem('active_project_id', 'project-1');
         apiMocks.getVulns.mockImplementation(({ page }: { page: number }) => paged([
@@ -61,6 +74,8 @@ describe('TaskResults', () => {
         apiMocks.getFingerprints.mockResolvedValue(paged([], 0, 1));
         apiMocks.getFingerprintGroups.mockResolvedValue(paged([], 0, 1));
         apiMocks.getAssetLineage.mockResolvedValue({ nodes: [] });
+        apiMocks.getVulnFacets.mockResolvedValue({ plugins: [], statuses: [], ai_statuses: [], hosts: [], ports: [] });
+        apiMocks.getAssetFacets.mockResolvedValue({ services: [], fingerprints: [] });
         apiMocks.exportVulns.mockResolvedValue(new Blob(['vulns']));
         apiMocks.exportAssets.mockResolvedValue(new Blob(['assets']));
         apiMocks.exportFingerprints.mockResolvedValue(new Blob(['fingerprints']));
@@ -86,6 +101,7 @@ describe('TaskResults', () => {
                 projectId: 'project-1',
                 page: 1,
                 pageSize: 20,
+                severity: '!info',
             });
         });
         expect(await screen.findByText(/漏洞 \(25\)/)).toBeInTheDocument();
@@ -100,7 +116,31 @@ describe('TaskResults', () => {
                 projectId: 'project-1',
                 page: 2,
                 pageSize: 20,
+                severity: '!info',
             });
+        });
+    });
+
+    it('uses one compact filter and excludes a plugin from the vulnerability name', async () => {
+        apiMocks.getVulnFacets.mockResolvedValue({
+            plugins: [{ value: 'poc-1', count: 1 }],
+            statuses: [], ai_statuses: [], hosts: [], ports: [],
+        });
+        apiMocks.getVulns.mockResolvedValue(paged([
+            { ID: 1, TenantID: 'default', TaskID: 'task-1', Target: 'https://target-1.example', Plugin: 'poc-1', Severity: 'high', CreatedAt: '2026-07-05T00:00:00Z' },
+        ], 1, 1));
+        const user = userEvent.setup();
+        render(<MemoryRouter initialEntries={['/tasks/task-1/results']}><App><Routes><Route path="/tasks/:taskId/results" element={<TaskResults />} /></Routes></App></MemoryRouter>);
+        expect(await screen.findByText('poc-1')).toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: '排除 poc-1' }));
+        await waitFor(() => {
+            expect(apiMocks.getVulns).toHaveBeenLastCalledWith(expect.objectContaining({ taskId: 'task-1', severity: '!info', plugin: '!poc-1', page: 1 }));
+        });
+        expect(screen.getByRole('combobox', { name: '漏洞筛选字段' })).toBeInTheDocument();
+        expect(screen.getByRole('combobox', { name: '漏洞筛选值' })).toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: '清除条件' }));
+        await waitFor(() => {
+            expect(apiMocks.getVulns).toHaveBeenLastCalledWith({ taskId: 'task-1', projectId: 'project-1', page: 1, pageSize: 20, severity: '!info' });
         });
     });
 
@@ -456,9 +496,9 @@ describe('TaskResults', () => {
             });
         });
         expect(screen.getByRole('tab', { name: /资产 \(0\)/ })).toHaveAttribute('aria-selected', 'true');
-        expect(await screen.findByRole('button', { name: '清除过滤' })).toBeInTheDocument();
+        expect(await screen.findByRole('button', { name: '清除全部过滤' })).toBeInTheDocument();
 
-        await user.click(screen.getByRole('button', { name: '清除过滤' }));
+        await user.click(screen.getByRole('button', { name: '清除全部过滤' }));
         await waitFor(() => {
             expect(apiMocks.getAssets).toHaveBeenCalledWith({
                 taskId: 'task-1',
@@ -468,7 +508,7 @@ describe('TaskResults', () => {
                 kind: 'web',
             });
         });
-        expect(screen.queryByRole('button', { name: '清除过滤' })).toBeNull();
+        expect(screen.queryByRole('button', { name: '清除全部过滤' })).toBeNull();
     });
 
     it('keeps PortScan rows out of the Web 站点 group', async () => {
@@ -529,7 +569,8 @@ describe('TaskResults', () => {
         ], 1, page));
         apiMocks.getAssetLineage.mockResolvedValue({
             nodes: [
-                { target: '1.2.3.4', stage: 'input', node_type: 'input' },
+                { target: '1.2.3.0/24', stage: 'input', node_type: 'input' },
+                { target: '1.2.3.4', stage: 'IPAlive', node_type: 'asset' },
                 { target: '1.2.3.4:80', stage: 'PortScan', node_type: 'asset' },
                 { target: 'http://1.2.3.4:80', stage: 'Web', node_type: 'asset' },
             ],
@@ -545,7 +586,7 @@ describe('TaskResults', () => {
                 </App>
             </MemoryRouter>,
         );
-        await user.click(await screen.findByText(/资产 \(1\)/));
+        await user.click(await screen.findByRole('tab', { name: /资产 \(1\)/ }));
         await user.click(await screen.getByRole('button', { name: /溯源/ }));
 
         await waitFor(() => {
@@ -555,10 +596,12 @@ describe('TaskResults', () => {
         const drawerEl = document.querySelector('.ant-drawer-content');
         expect(drawerEl).toBeTruthy();
         const drawer = within(drawerEl as HTMLElement);
+        expect(drawer.getByText('IPAlive')).toBeInTheDocument();
         expect(drawer.getByText('PortScan')).toBeInTheDocument();
         expect(drawer.getByText('Web')).toBeInTheDocument();
+        // 起点必须是输入网段本身，而不是从网段扫出来的派生 IP。
+        expect(drawer.getAllByText('1.2.3.0/24').length).toBeGreaterThan(0);
         expect(drawer.getAllByText('1.2.3.4:80').length).toBeGreaterThan(0);
-        // 起点节点必须具体到某个输入资产（IP/域名），而不是空描述。
         expect(drawer.getAllByText('1.2.3.4').length).toBeGreaterThan(0);
     });
 
@@ -591,9 +634,110 @@ describe('TaskResults', () => {
         );
 
         expect(await screen.findByText('Portal')).toBeInTheDocument();
-        expect(screen.getByText('匹配指纹')).toBeInTheDocument();
+        expect(screen.getAllByText('匹配指纹').length).toBeGreaterThan(0);
         expect(screen.getByText('nginx')).toBeInTheDocument();
         expect(screen.getByText('Jenkins · 主动路径')).toBeInTheDocument();
+    });
+
+    it('lets an admin reveal the sealed credential from a credential vuln row', async () => {
+        apiMocks.getVulns.mockImplementation(({ page }: { page: number }) => paged([
+            {
+                ID: page,
+                TenantID: 'default',
+                TaskID: 'task-1',
+                Target: '10.3.130.95:22',
+                Plugin: 'SSH-Crack',
+                Severity: 'critical',
+                Payload: JSON.stringify({
+                    go_poc: {
+                        credential_finding_id: 'finding-1',
+                        info_left: 'credential evidence sealed',
+                        show_msg: 'credential verified (masked)',
+                    },
+                }),
+                CreatedAt: '2026-07-05T00:00:00Z',
+            },
+        ], 1, page));
+        apiMocks.revealCredentialFinding.mockResolvedValue({ username: 'svc_ssh', password: 'P@ssw0rd!x' });
+        localStorage.setItem('token', makeToken({ role: 'admin' }));
+
+        const user = userEvent.setup();
+        render(
+            <MemoryRouter initialEntries={['/tasks/task-1/results']}>
+                <App>
+                    <Routes>
+                        <Route path="/tasks/:taskId/results" element={<TaskResults />} />
+                    </Routes>
+                </App>
+            </MemoryRouter>,
+        );
+
+        await user.click(await screen.findByRole('button', { name: /审计揭示/ }));
+        await waitFor(() => {
+            expect(apiMocks.revealCredentialFinding).toHaveBeenCalledWith('finding-1');
+        });
+        // antd confirm 门户在动画期间可能渲染重复节点，用 findAllByText 断言脱敏值已展示。
+        expect((await screen.findAllByText('svc_ssh')).length).toBeGreaterThan(0);
+        expect((await screen.findAllByText('P@ssw0rd!x')).length).toBeGreaterThan(0);
+    });
+
+    it('shows a captured-credential tag without a reveal entry for non-admin rows', async () => {
+        apiMocks.getVulns.mockImplementation(({ page }: { page: number }) => paged([
+            {
+                ID: page,
+                TenantID: 'default',
+                TaskID: 'task-1',
+                Target: '10.3.130.95:22',
+                Plugin: 'SSH-Crack',
+                Severity: 'critical',
+                Payload: JSON.stringify({ go_poc: { credential_finding_id: 'finding-1' } }),
+                CreatedAt: '2026-07-05T00:00:00Z',
+            },
+        ], 1, page));
+        localStorage.setItem('token', makeToken({ role: 'viewer' }));
+
+        render(
+            <MemoryRouter initialEntries={['/tasks/task-1/results']}>
+                <App>
+                    <Routes>
+                        <Route path="/tasks/:taskId/results" element={<TaskResults />} />
+                    </Routes>
+                </App>
+            </MemoryRouter>,
+        );
+
+        expect(await screen.findByText('已捕获')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /审计揭示/ })).toBeNull();
+        expect(apiMocks.revealCredentialFinding).not.toHaveBeenCalled();
+    });
+
+    it('renders no credential entry for vuln rows without a credential finding', async () => {
+        apiMocks.getVulns.mockImplementation(({ page }: { page: number }) => paged([
+            {
+                ID: page,
+                TenantID: 'default',
+                TaskID: 'task-1',
+                Target: 'https://plain.example',
+                Plugin: 'XSS',
+                Severity: 'high',
+                CreatedAt: '2026-07-05T00:00:00Z',
+            },
+        ], 1, page));
+        localStorage.setItem('token', makeToken({ role: 'admin' }));
+
+        render(
+            <MemoryRouter initialEntries={['/tasks/task-1/results']}>
+                <App>
+                    <Routes>
+                        <Route path="/tasks/:taskId/results" element={<TaskResults />} />
+                    </Routes>
+                </App>
+            </MemoryRouter>,
+        );
+
+        await screen.findByText(/漏洞 \(1\)/);
+        expect(screen.queryByRole('button', { name: /审计揭示/ })).toBeNull();
+        expect(screen.queryByText('已捕获')).toBeNull();
     });
 
 });

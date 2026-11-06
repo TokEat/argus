@@ -62,3 +62,20 @@ ARGUS_MCP_TEST_BIN=../bin/argus-mcp \
 ARGUS_YAKSHA_TEST_BIN=../bin/yaksha \
 go test ./internal/mcp -run 'TestMCPToRealYakshaVerticalLoop|TestArgusMCPProcessCallsRealYaksha' -count=1 -v
 ```
+
+## Local ↔ Aliyun sync
+
+本机与阿里云开发树按需同步（**不经 GitHub**，只走 SSH Host `aliyun`）。完整说明见 [docs/local-aliyun-sync.md](../docs/local-aliyun-sync.md)；代理必须遵守根目录 `AGENTS.md` 对应章节。
+
+```bash
+./scripts/sync-aliyun.sh diff
+./scripts/sync-aliyun.sh push --dry-run   # 本地 -> 服务器
+./scripts/sync-aliyun.sh push
+./scripts/sync-aliyun.sh pull --dry-run   # 服务器 -> 本地
+./scripts/sync-aliyun.sh pull
+```
+
+- 脚本：`sync-aliyun.sh`
+- 排除列表：`sync-aliyun.excludes`（跳过 `.git`、`node_modules`、`bin`、运行时 `config/`/`data/`、数据库数据与报告产物等）
+- 远端默认：`aliyun:/home/claudex/workspace/project/argus-main`，以 `claudex` 身份写入
+- `push`/`pull` 默认 `--delete`，先 `diff` 再选方向

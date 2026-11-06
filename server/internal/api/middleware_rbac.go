@@ -27,8 +27,11 @@ var roleHierarchy = map[string]int{
 var permissionRules = map[string]string{
 	// 只读查询：viewer 起可用，仅返回当前 tenant_id 范围内数据。
 	"GET:/projects": "viewer",
+	"GET:/projects/*/export": "viewer",
 	"GET:/tasks":    "viewer",
 	"GET:/tasks/*":  "viewer",
+	"GET:/tasks/*/vulns/facets": "viewer",
+	"GET:/tasks/*/assets/facets": "viewer",
 	"GET:/projects/*/asset-discovery/queries":          "viewer",
 	"GET:/projects/*/asset-discovery/queries/*":        "viewer",
 	"GET:/projects/*/asset-discovery/queries/*/export": "viewer",
@@ -39,10 +42,15 @@ var permissionRules = map[string]string{
 	"POST:/tasks/*/risk-validation/preview": "viewer",
 	"POST:/tasks/*/risk-validation":         "operator",
 
+	// 硬删除（彻底清空）不可逆：仅 tenant admin 可用，项目 owner/operator 也不可。
+	// 显式登记以锁定 fail-closed 默认，避免后续新增宽泛 tasks 规则意外放开。
+	"POST:/tasks/*/purge": "admin",
+
 	"GET:/nodes":                          "viewer",
 	"GET:/vulns":                          "viewer",
 	"GET:/assets":                         "viewer",
 	"GET:/fingerprints":                   "viewer",
+	"GET:/domains":                        "viewer",
 	"GET:/profiles":                       "viewer",
 	"GET:/poc-rules":                      "viewer",
 	"GET:/active-fingerprint-rules":       "viewer",
@@ -109,6 +117,7 @@ var permissionRules = map[string]string{
 	"POST:/mcp/tools/rule/save":                            "operator",
 	"POST:/mcp/tools/rule/apply":                           "admin",
 	"POST:/projects":                                       "operator",
+	"POST:/projects/import":                                "operator",
 	"PUT:/projects/*":                                      "operator",
 	"DELETE:/projects/*":                                   "operator",
 	"GET:/projects/*/stats":                                "operator",

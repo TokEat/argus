@@ -20,6 +20,7 @@ import {
 } from 'antd';
 import { ProCard } from '@ant-design/pro-components';
 import {
+    DeleteOutlined,
     EyeOutlined,
     InboxOutlined,
     InfoCircleOutlined,
@@ -34,7 +35,7 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { MenuProps } from 'antd';
-import { appendTargets, archiveTaskBatch, connectWebSocket, createTask, deleteTask, getTaskConfigRevisions, getTaskDetail, listProjects, listTasks, pauseTask, pauseTaskBatch, resumeTask, resumeTaskBatch, retryTask, retryTaskBatch, stopTask, stopTaskBatch } from '../services/api';
+import { appendTargets, archiveTaskBatch, connectWebSocket, createTask, deleteTask, getTaskConfigRevisions, getTaskDetail, listProjects, listTasks, pauseTask, pauseTaskBatch, purgeTask, resumeTask, resumeTaskBatch, retryTask, retryTaskBatch, stopTask, stopTaskBatch } from '../services/api';
 import { isTaskCancellable, isTaskFailedLike, isTaskFinished, isTaskPausable, isTaskResumable, isTaskRetryable, normalizeTaskStatus } from '../utils/taskStatus';
 import { canAccessRole } from '../utils/auth';
 import { useAutoContext } from '../contexts/GlobalAIContext';
@@ -101,6 +102,9 @@ const TaskManagement: React.FC = () => {
     const [appendOpen, setAppendOpen] = useState(false);
     const [appendValue, setAppendValue] = useState('');
     const [appendSaving, setAppendSaving] = useState(false);
+    const [purgeTarget, setPurgeTarget] = useState<API.RootTask | null>(null);
+    const [purgeConfirmText, setPurgeConfirmText] = useState('');
+    const [purgeSubmitting, setPurgeSubmitting] = useState(false);
     const [scanPlan, setScanPlan] = useState<API.ScanPlanPreview | null>(null);
     const createIntentRef = useRef<CreateIntent | null>(null);
     const appendIntentRef = useRef<AppendIntent | null>(null);
@@ -281,6 +285,27 @@ const TaskManagement: React.FC = () => {
         }
     };
 
+    const openPurge = (record: API.RootTask) => {
+        setPurgeTarget(record);
+        setPurgeConfirmText('');
+    };
+
+    const handlePurge = async () => {
+        if (!purgeTarget || !canManageTasks) return;
+        setPurgeSubmitting(true);
+        try {
+            const result = await purgeTask(purgeTarget.ID);
+            const deleted = Object.values(result.deleted || {}).reduce((sum, n) => sum + (n || 0), 0);
+            message.success(`任务已彻底删除，共清空 ${deleted} 条关联数据`);
+            setPurgeTarget(null);
+            fetchTasks();
+        } catch {
+            message.error('彻底删除失败，仅终态任务可删除且需具备项目管理权限');
+        } finally {
+            setPurgeSubmitting(false);
+        }
+    };
+
     const openCreateTask = () => {
         const projectId = globalProjectId || projects[0]?.ID;
         const selectedProject = projects.find((project) => project.ID === projectId);
@@ -398,11 +423,17 @@ const TaskManagement: React.FC = () => {
                 items.push({ type: 'divider' });
             }
             items.push({ key: 'archive', icon: <InboxOutlined />, label: '归档' });
+            items.push({ key: 'purge', icon: <DeleteOutlined />, label: '彻底删除', danger: true });
         }
         return items;
     };
 
     const handleTaskAction = (record: API.RootTask, action: string) => {
+        // 彻底删除是不可逆的物理清空，不走轻量 confirm，改用需输入任务 ID 的强确认 Modal。
+        if (action === 'purge') {
+            openPurge(record);
+            return;
+        }
         const definitions: Record<string, {
             title: string;
             content: string;
@@ -714,6 +745,8 @@ const TaskManagement: React.FC = () => {
                 if (total === 0) return <Text type="secondary">-</Text>;
                 const pct = Math.round((completed / total) * 100);
                 const normalized = normalizeTaskStatus(record.Status);
+                // 运行中且有活动计数时，展示「扫描未卡死」的实时脉冲；完成度仍以目标/批次维度为准。
+                const liveActivity = normalized === 'Running' && (record.ProgressDone ?? 0) > 0;
                 const progressStatus = isTaskFinished(normalized)
                     ? 'success'
                     : isTaskFailedLike(normalized)
@@ -743,6 +776,11 @@ const TaskManagement: React.FC = () => {
                                 : `${record.CompletedChunks}/${record.TotalChunks} 分片`
                             }
                         </Text>
+                        {liveActivity && (
+                            <Text style={{ fontSize: 11, color: '#0ea5e9' }}>
+                                扫描中 · 已发现 {record.ProgressDone} 个结果
+                            </Text>
+                        )}
                     </Space>
                 );
             },
@@ -930,6 +968,49 @@ const TaskManagement: React.FC = () => {
                     } as API.RootTask, 'retry');
                 }}
             />
+
+            <Modal
+                title={<span style={{ color: '#cf1322' }}>彻底删除任务（不可恢复）</span>}
+                open={!!purgeTarget}
+                onCancel={() => { if (!purgeSubmitting) setPurgeTarget(null); }}
+                onOk={handlePurge}
+                confirmLoading={purgeSubmitting}
+                okText="永久删除"
+                cancelText="取消"
+                okButtonProps={{
+                    danger: true,
+                    disabled: purgeConfirmText !== purgeTarget?.ID,
+                }}
+                cancelButtonProps={{ disabled: purgeSubmitting }}
+                closable={!purgeSubmitting}
+                keyboard={!purgeSubmitting}
+                maskClosable={!purgeSubmitting}
+                destroyOnHidden
+            >
+                <Alert
+                    type="error"
+                    showIcon
+                    message={`将物理删除任务“${purgeTarget?.Name}”及其全部关联数据`}
+                    description={
+                        <>
+                            包括扫描资产、漏洞、指纹、敏感信息、覆盖记录、凭据、子任务、批次与操作审计，
+                            删除后<strong>不可恢复</strong>。共享资产清单中“最后归属”为本任务的行也会被一并清除。
+                        </>
+                    }
+                />
+                <div style={{ marginTop: 16 }}>
+                    <Typography.Text type="secondary">
+                        请输入任务 ID <Typography.Text code>{purgeTarget?.ID}</Typography.Text> 以确认操作：
+                    </Typography.Text>
+                    <Input
+                        style={{ marginTop: 8 }}
+                        placeholder={purgeTarget?.ID}
+                        value={purgeConfirmText}
+                        onChange={(event) => setPurgeConfirmText(event.target.value)}
+                        disabled={purgeSubmitting}
+                    />
+                </div>
+            </Modal>
 
 <Modal
                 title="增加扫描批次"

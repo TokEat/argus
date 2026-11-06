@@ -2,6 +2,8 @@ package db
 
 import (
 	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -231,5 +233,140 @@ func drainResultBuffers(t *testing.T) {
 		default:
 			return
 		}
+	}
+}
+
+func TestExtractHostAndPort(t *testing.T) {
+	cases := []struct {
+		name   string
+		target string
+		host   string
+		port   int
+	}{
+		{"http url with path", "http://1.2.3.4:8080/login", "1.2.3.4", 8080},
+		{"http default port", "http://example.invalid", "example.invalid", 80},
+		{"https default port", "https://example.invalid", "example.invalid", 443},
+		{"https explicit port", "https://example.invalid:8443/x", "example.invalid", 8443},
+		{"host:port no scheme", "1.2.3.4:8080", "1.2.3.4", 8080},
+		{"ssh url", "ssh://5.6.7.8:22", "5.6.7.8", 22},
+		{"bare ip", "1.2.3.4", "1.2.3.4", 0},
+		{"bare domain", "example.invalid", "example.invalid", 0},
+		{"empty", "", "", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			host, port := extractHostAndPort(tc.target)
+			if host != tc.host || port != tc.port {
+				t.Fatalf("extractHostAndPort(%q) = (%q,%d), want (%q,%d)", tc.target, host, port, tc.host, tc.port)
+			}
+		})
+	}
+}
+
+func TestAddResultAsyncPopulatesVulnHostPort(t *testing.T) {
+	drainResultBuffers(t)
+	taskOwnerCache.Store("task-vuln-hp", &taskOwnerEntry{ProjectID: "project-a", TenantID: "tenant-a"})
+
+	AddResultAsync("task-vuln-hp", "Nuclei", `{"target":"http://1.2.3.4:8080/login","plugin":"poc-hp","severity":"high"}`)
+	select {
+	case vuln := <-vulnBuffer2:
+		if vuln.Host != "1.2.3.4" || vuln.Port != 8080 {
+			t.Fatalf("expected host/port populated, got host=%q port=%d", vuln.Host, vuln.Port)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected vulnerability for explicit url target")
+	}
+
+	// https 无显式端口补 443。
+	AddResultAsync("task-vuln-hp", "Nuclei", `{"target":"https://example.invalid","plugin":"poc-hp2","severity":"low"}`)
+	select {
+	case vuln := <-vulnBuffer2:
+		if vuln.Host != "example.invalid" || vuln.Port != 443 {
+			t.Fatalf("expected https default 443, got host=%q port=%d", vuln.Host, vuln.Port)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected vulnerability for https target")
+	}
+}
+
+func TestParseNucleiPacketOrdersByStepIndex(t *testing.T) {
+	event := map[string]interface{}{
+		"packet": map[string]interface{}{
+			"1": map[string]interface{}{"Request": "GET /read HTTP/1.1", "Response": "HTTP/1.1 200 OK two"},
+			"0": map[string]interface{}{"Request": "POST /exec HTTP/1.1", "Response": "HTTP/1.1 200 OK one"},
+		},
+	}
+	pairs := parseNucleiPacket(event)
+	if len(pairs) != 2 {
+		t.Fatalf("expected 2 pairs, got %d", len(pairs))
+	}
+	if pairs[0].Request != "POST /exec HTTP/1.1" || pairs[1].Request != "GET /read HTTP/1.1" {
+		t.Fatalf("pairs not ordered by numeric index: %+v", pairs)
+	}
+}
+
+func TestParseNucleiPacketMissingOrEmpty(t *testing.T) {
+	if got := parseNucleiPacket(map[string]interface{}{}); got != nil {
+		t.Fatalf("expected nil for missing packet, got %v", got)
+	}
+	if got := parseNucleiPacket(map[string]interface{}{"packet": map[string]interface{}{}}); got != nil {
+		t.Fatalf("expected nil for empty packet, got %v", got)
+	}
+}
+
+func TestFormatNucleiPacketSequenceNumbersSteps(t *testing.T) {
+	pairs := []nucleiPacketPair{
+		{Request: "REQ1", Response: "RESP1"},
+		{Request: "REQ2", Response: "RESP2"},
+	}
+	req, resp := formatNucleiPacketSequence(pairs)
+	if !strings.Contains(req, "===== [Request 1] =====\nREQ1") || !strings.Contains(req, "===== [Request 2] =====\nREQ2") {
+		t.Fatalf("request sequence missing numbered steps:\n%s", req)
+	}
+	if !strings.Contains(resp, "===== [Response 1] =====\nRESP1") || !strings.Contains(resp, "===== [Response 2] =====\nRESP2") {
+		t.Fatalf("response sequence missing numbered steps:\n%s", resp)
+	}
+}
+
+func TestAddResultAsyncExpandsNucleiPacketToSequence(t *testing.T) {
+	drainResultBuffers(t)
+	taskOwnerCache.Store("task-vuln-pkt", &taskOwnerEntry{ProjectID: "project-a", TenantID: "tenant-a"})
+
+	resultEvent := `{"template-id":"multi-step-cmd","host":"http://1.2.3.4:8080","request":"GET /echo HTTP/1.1","response":"HTTP/1.1 200 OK","packet":{"0":{"Request":"POST /exec HTTP/1.1\r\n\r\ncmd=id","Response":"HTTP/1.1 200 OK"},"1":{"Request":"GET /echo HTTP/1.1","Response":"HTTP/1.1 200 OK\r\n\r\nuid=0(root)"}}}`
+	AddResultAsync("task-vuln-pkt", "Nuclei", `{"nuclei":`+strconv.Quote(resultEvent)+`}`)
+
+	select {
+	case vuln := <-vulnBuffer2:
+		if !strings.Contains(vuln.Request, "===== [Request 1] =====") || !strings.Contains(vuln.Request, "cmd=id") {
+			t.Fatalf("request sequence missing first (send-command) step:\n%s", vuln.Request)
+		}
+		if !strings.Contains(vuln.Request, "===== [Request 2] =====") || !strings.Contains(vuln.Request, "GET /echo") {
+			t.Fatalf("request sequence missing second (read-echo) step:\n%s", vuln.Request)
+		}
+		if !strings.Contains(vuln.Response, "===== [Response 1] =====") || !strings.Contains(vuln.Response, "===== [Response 2] =====") {
+			t.Fatalf("response sequence missing steps:\n%s", vuln.Response)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected vulnerability for nuclei multi-step packet payload")
+	}
+}
+
+func TestAddResultAsyncSinglePacketKeepsPlainRequestResponse(t *testing.T) {
+	drainResultBuffers(t)
+	taskOwnerCache.Store("task-vuln-1pkt", &taskOwnerEntry{ProjectID: "project-a", TenantID: "tenant-a"})
+
+	resultEvent := `{"template-id":"single-step","host":"http://1.2.3.4:8080","request":"GET /only HTTP/1.1","response":"HTTP/1.1 200 OK","packet":{"0":{"Request":"GET /only HTTP/1.1","Response":"HTTP/1.1 200 OK"}}}`
+	AddResultAsync("task-vuln-1pkt", "Nuclei", `{"nuclei":`+strconv.Quote(resultEvent)+`}`)
+
+	select {
+	case vuln := <-vulnBuffer2:
+		if vuln.Request != "GET /only HTTP/1.1" {
+			t.Fatalf("single-step packet must keep plain request, got %q", vuln.Request)
+		}
+		if strings.Contains(vuln.Request, "===== [Request 1] =====") {
+			t.Fatalf("single-step packet must not be reformatted, got %q", vuln.Request)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected vulnerability for single-step nuclei payload")
 	}
 }

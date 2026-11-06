@@ -160,6 +160,10 @@ export async function deleteTask(taskId: string): Promise<API.MessageResponse> {
     return request.delete(`/tasks/${taskId}`);
 }
 
+export async function purgeTask(taskId: string): Promise<{ status: string; deleted: Record<string, number> }> {
+    return request.post(`/tasks/${taskId}/purge`, { confirm: true });
+}
+
 export async function cancelTask(taskId: string): Promise<API.MessageResponse> {
     return request.post(`/tasks/${taskId}/cancel`);
 }
@@ -289,6 +293,15 @@ type ResultPageParams = {
     kind?: string;
     search?: string;
     source?: string;
+    severity?: string;
+    plugin?: string;
+    status?: string;
+    aiStatus?: string;
+    host?: string;
+    port?: string;
+    service?: string;
+    title?: string;
+    fingerprint?: string;
 };
 
 const buildResultParams = (first?: string | ResultPageParams, projectId?: string): Record<string, string | number> => {
@@ -303,6 +316,15 @@ const buildResultParams = (first?: string | ResultPageParams, projectId?: string
         if (first.kind) params.kind = first.kind;
         if (first.search) params.search = first.search;
         if (first.source) params.source = first.source;
+        if (first.severity) params.severity = first.severity;
+        if (first.plugin) params.plugin = first.plugin;
+        if (first.status) params.status = first.status;
+        if (first.aiStatus) params.ai_status = first.aiStatus;
+        if (first.host) params.host = first.host;
+        if (first.port) params.port = first.port;
+        if (first.service) params.service = first.service;
+        if (first.title) params.title = first.title;
+        if (first.fingerprint) params.fingerprint = first.fingerprint;
         return params;
     }
     if (first) params.task_id = first;
@@ -341,6 +363,26 @@ export async function getAssetLineage(projectId: string, assetId: number): Promi
 
 export async function getVulnLineage(projectId: string, vulnId: number): Promise<API.AssetLineageResponse> {
     return request.get(`/vulns/${vulnId}/lineage`, { params: { project_id: projectId } });
+}
+
+export async function getVulnFacets(taskId: string, params?: { projectId?: string; severity?: string; search?: string; host?: string; port?: string }): Promise<API.VulnFacets> {
+    const query: Record<string, string> = {};
+    if (params?.projectId) query.project_id = params.projectId;
+    if (params?.severity) query.severity = params.severity;
+    if (params?.search) query.search = params.search;
+    if (params?.host) query.host = params.host;
+    if (params?.port) query.port = params.port;
+    return request.get(`/tasks/${encodeURIComponent(taskId)}/vulns/facets`, { params: query });
+}
+
+// 资产过滤维度（服务/指纹产品）下拉数据。kind 是当前资产视图（对应漏洞的 severity），
+// 使下拉选项随页签收缩；search 使选项与当前搜索口径对齐。
+export async function getAssetFacets(taskId: string, params?: { projectId?: string; kind?: string; search?: string }): Promise<API.AssetFacets> {
+    const query: Record<string, string> = {};
+    if (params?.projectId) query.project_id = params.projectId;
+    if (params?.kind) query.kind = params.kind;
+    if (params?.search) query.search = params.search;
+    return request.get(`/tasks/${encodeURIComponent(taskId)}/assets/facets`, { params: query });
 }
 
 export async function getVulnAIReview(vulnId: number): Promise<{
@@ -536,6 +578,79 @@ export async function exportArsenalSeedDB(): Promise<Blob> {
         },
     });
     return response.data;
+}
+
+export async function getDomains(params?: ResultPageParams): Promise<API.PagedResponse<API.Domain>> {
+    const result = await request.get('/domains', { params: buildResultParams(params) }) as API.PagedResponse<API.Domain>;
+    return result;
+}
+
+export async function exportProjectData(projectId: string): Promise<Blob> {
+    const response = await axios.get(`/api/v1/projects/${projectId}/export`, {
+        responseType: 'blob',
+        headers: {
+            Authorization: `Bearer ${localStorage.getItem('token')}`,
+        },
+    });
+    return response.data;
+}
+
+export interface ProjectDataImportCounts {
+    received: number;
+    inserted: number;
+    updated: number;
+}
+
+export interface ProjectDataImportResult {
+    project_id: string;
+    mode: 'new' | 'merge';
+    counts: {
+        assets: ProjectDataImportCounts;
+        vulnerabilities: ProjectDataImportCounts;
+        fingerprint_hits: ProjectDataImportCounts;
+        domains: ProjectDataImportCounts;
+    };
+}
+
+// 用 raw XHR 绕开 services/request.ts 强制的 JSON Content-Type，支持 multipart + 上传进度。
+export async function importProjectData(
+    file: File,
+    mode: 'new' | 'merge',
+    projectId?: string,
+    onProgress?: (pct: number) => void,
+): Promise<ProjectDataImportResult> {
+    const qs = new URLSearchParams({ mode });
+    if (projectId) qs.set('project_id', projectId);
+    const form = new FormData();
+    form.append('mode', mode);
+    if (projectId) form.append('project_id', projectId);
+    form.append('file', file);
+
+    return new Promise<ProjectDataImportResult>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `/api/v1/projects/import?${qs.toString()}`);
+        const token = localStorage.getItem('token');
+        if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable && onProgress) {
+                onProgress(Math.round((e.loaded / e.total) * 100));
+            }
+        };
+        xhr.onload = () => {
+            try {
+                const data = JSON.parse(xhr.responseText || '{}');
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    resolve(data as ProjectDataImportResult);
+                } else {
+                    reject(new Error(data?.error || data?.message || `导入失败 (${xhr.status})`));
+                }
+            } catch {
+                reject(new Error(`导入失败: ${xhr.statusText || xhr.status}`));
+            }
+        };
+        xhr.onerror = () => reject(new Error('网络错误'));
+        xhr.send(form);
+    });
 }
 
 // ===========================

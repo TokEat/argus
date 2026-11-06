@@ -65,7 +65,9 @@ func pipelineHTTPURLVisits(ctx *ScanContext) httpx.URLVisitSet {
 // Run 执行完整的扫描流水线。
 func (p *Pipeline) Run(ctx *ScanContext) error {
 	var domains []string
+	ctx.progress = newProgressReporter(ctx)
 	emit := func(msg structs.OutputMessage) {
+		ctx.progress.tick()
 		RecordLineageParent(ctx, msg)
 		dispatchPipelineOutput(ctx, msg)
 	}
@@ -223,7 +225,8 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 				setPipelineConfig(ctx, cfg)
 			}
 
-			emitPhase(ctx, PhasePortScan, "start", fmt.Sprintf("%d ips, type=%s", len(ips), portScanType))
+			emitPhaseProgress(ctx, PhasePortScan, "start", fmt.Sprintf("%d ips, type=%s", len(ips), portScanType), portScanUnitTotal(ips, cfg.Ports, portScanType), true)
+			unitHook := func() { ctx.progress.unit(1) }
 			if portScanType == "syn" {
 				tmpIPPort = portscan.ScanSYN(ips, cfg.Ports, cfg.SYNPortScanThreads, cfg.PortScanScatter, cfg.PortScanProbeInterval, emit)
 				if tmpIPPort == nil && len(ips) > 0 && strings.TrimSpace(cfg.Ports) != "" {
@@ -231,10 +234,10 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 					portScanType = "tcp"
 					cfg.PortScanType = "tcp"
 					setPipelineConfig(ctx, cfg)
-					tmpIPPort = portscan.ScanTCP(ips, cfg.Ports, cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, true, cfg.PortScanScatter, time.Duration(cfg.PortScanProbeInterval)*time.Millisecond, emit)
+					tmpIPPort = portscan.ScanTCP(ips, cfg.Ports, cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, true, cfg.PortScanScatter, time.Duration(cfg.PortScanProbeInterval)*time.Millisecond, emit, unitHook)
 				}
 			} else {
-				tmpIPPort = portscan.ScanTCP(ips, cfg.Ports, cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, true, cfg.PortScanScatter, time.Duration(cfg.PortScanProbeInterval)*time.Millisecond, emit)
+				tmpIPPort = portscan.ScanTCP(ips, cfg.Ports, cfg.TCPPortScanTimeout, cfg.TCPPortScanThreads, cfg.PortsThreshold, true, cfg.PortScanScatter, time.Duration(cfg.PortScanProbeInterval)*time.Millisecond, emit, unitHook)
 			}
 
 			tmpIPPort = portscan.RemoveFirewall(tmpIPPort, cfg.PortsThreshold)
@@ -278,9 +281,9 @@ func (p *Pipeline) Run(ctx *ScanContext) error {
 		udpHosts = protocolPhaseUDPHosts(confirmedAlive)
 	}
 	if resumeStageEnabled(ctx, scanplan.StageProtocolIdentify) && (len(getProtocalInput) > 0 || udpProbed || len(udpHosts) > 0 || ctx.ResumePlan != nil) {
-		emitPhase(ctx, PhaseProtocol, "start", fmt.Sprintf("%d targets", len(getProtocalInput)))
+		emitPhaseProgress(ctx, PhaseProtocol, "start", fmt.Sprintf("%d targets", len(getProtocalInput)), len(getProtocalInput), true)
 		if len(getProtocalInput) > 0 || ctx.ResumePlan != nil {
-			currentProtocolRuntime(ctx, emit).Identify(getProtocalInput, cfg.GetBannerThreads, cfg.GetBannerTimeout)
+			currentProtocolRuntime(ctx, emit).Identify(getProtocalInput, cfg.GetBannerThreads, cfg.GetBannerTimeout, func() { ctx.progress.unit(1) })
 		}
 		if udpProbed {
 			currentProtocolRuntime(ctx, emit).StoreUDP(udpRecords)
@@ -767,7 +770,7 @@ var (
 	probeARP  = discovery.ProbeARP
 	probeICMP = discovery.CheckLive
 	probeTCP  = func(ips []string, timeout, threads, threshold int, emit func(ddout.OutputMessage)) []string {
-		return discovery.HostsFromIPPorts(portscan.ScanTCP(ips, discovery.TCPProbePorts, timeout, threads, threshold, false, false, 0, emit))
+		return discovery.HostsFromIPPorts(portscan.ScanTCP(ips, discovery.TCPProbePorts, timeout, threads, threshold, false, false, 0, emit, nil))
 	}
 	probeUDP      = discovery.ProbeUDP
 	localLinkNets = discovery.LocalIPv4Nets
@@ -876,10 +879,28 @@ func checkPipelineCancelled(ctx *ScanContext) error {
 	return nil
 }
 
-// emitPhase 安全地触发阶段进度回调。
+// emitPhase 安全地触发阶段进度回调。进度用发现模式（done=发现数，总量未知，
+// 仅活跃信号）。需要已知总量/占比/ETA 的阶段改用 emitPhaseProgress。
 func emitPhase(ctx *ScanContext, phase, status, message string) {
+	emitPhaseProgress(ctx, phase, status, message, 0, false)
+}
+
+// emitPhaseProgress 在 emitPhase 基础上显式声明该阶段已知的输入总数 total 与
+// 计数模式 unitMode：unitMode=true 时进入单元计数（done/total 同口径，UI 显示
+// 占比/吞吐/ETA）；total=0 表示总量未知，仅「有活动」。不再从 message 解析总数。
+func emitPhaseProgress(ctx *ScanContext, phase, status, message string, total int, unitMode bool) {
 	if ctx == nil {
 		return
+	}
+	// 驱动细粒度进度：start 进入新阶段（记录输入总数与计数模式），
+	// 其余边界状态 flush 出被最小间隔抑制的最新计数。
+	if ctx.progress != nil {
+		switch status {
+		case "start":
+			ctx.progress.enterPhase(phase, total, unitMode)
+		default:
+			ctx.progress.flush()
+		}
 	}
 	event := PhaseEvent{
 		Phase:   phase,
@@ -892,6 +913,19 @@ func emitPhase(ctx *ScanContext, phase, status, message string) {
 	if ctx.PhaseHook != nil {
 		ctx.PhaseHook(event)
 	}
+}
+
+// portScanUnitTotal 计算端口扫描单元模式的输入总数（ips × 解析后端口数），供 x/y
+// 进度与 ETA。仅 TCP connect 扫描按单元计数（每消费一个 addr 计 1）；SYN 为异步
+// 收发、无逐单元挂钩，返回 0 退化为「仅活跃」避免假总量。解析失败/无端口也返回 0。
+func portScanUnitTotal(ips []string, ports string, portScanType string) int {
+	if len(ips) == 0 || strings.TrimSpace(ports) == "" {
+		return 0
+	}
+	if strings.ToLower(strings.TrimSpace(portScanType)) != "tcp" {
+		return 0
+	}
+	return len(ips) * len(portscan.ParsePort(ports))
 }
 
 func currentSubdomainConfig(ctx *ScanContext, emit func(structs.OutputMessage)) subdomain.Config {

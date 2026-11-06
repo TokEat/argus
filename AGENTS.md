@@ -8,6 +8,33 @@
 - 改 `config/` 或 `scanner/common/config/` 弹药库时，同时遵守 `config/AGENTS.md`。与本文件冲突时，以更深目录的文件为准。
 - 目录职责见 `docs/project-structure.md`，授权边界见 `SECURITY.md`。
 
+## Local ↔ Aliyun sync（必读）
+
+本机 Mac 与阿里云开发机之间的代码同步**不经过 GitHub**，只用现有 SSH Host `aliyun` 上的按需 rsync。AI 代理在两边改代码、对比差异或「同步到服务器/拉回本地」时，必须走这套脚本，不要另起裸库、git daemon、HTTP 仓库或改公网 SSH 策略，除非用户明确要求。
+
+- 脚本：`scripts/sync-aliyun.sh`
+- 排除列表：`scripts/sync-aliyun.excludes`
+- 说明：`scripts/README.md`（「Local ↔ Aliyun sync」一节）、`docs/local-aliyun-sync.md`
+- 本地根目录：当前仓库
+- 远端路径：`aliyun:/home/claudex/workspace/project/argus-main`（环境变量可覆盖）
+- 远端写入身份：`sudo -u claudex rsync`（避免 root 属主）
+
+常用命令：
+
+```bash
+./scripts/sync-aliyun.sh diff              # 先看双向差异
+./scripts/sync-aliyun.sh push --dry-run    # 本地 -> 服务器（预览）
+./scripts/sync-aliyun.sh push              # 本地 -> 服务器
+./scripts/sync-aliyun.sh pull --dry-run    # 服务器 -> 本地（预览）
+./scripts/sync-aliyun.sh pull              # 服务器 -> 本地
+```
+
+约束：
+
+- `push` / `pull` 默认 `--delete`，是单向镜像；两边都改过同一文件时先 `diff`，再明确选方向，必要时先备份。
+- 默认不同步：`.git/`、`node_modules/`、`bin/`、根目录 `config/` 与 `data/`、Postgres/RabbitMQ 等运行时数据、报告产物等（见 excludes）。
+- 不要为「方便同步」在公网机器上暴露 git://、smart HTTP，或擅自关闭/打开 SSH 密码登录。
+
 ## Repository role
 
 Argus 是面向合法授权安全测试、分布式扫描、规则治理、云资源调度和 AI Copilot 辅助运营的平台。所有改动必须保持授权边界、租户隔离、RBAC、审计记录和安全默认值。

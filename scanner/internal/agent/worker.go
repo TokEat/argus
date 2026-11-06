@@ -253,6 +253,8 @@ type Worker struct {
 	freeSlots atomic.Int32
 	// draining prevents new claims after a Spot termination notice.
 	draining atomic.Bool
+	// memGuard 内存准入护栏：软限拒领新任务，硬限拒绝启动新扫描。
+	memGuard *memGuard
 
 	logTee   *grpcTeeWriter
 	stopCh   chan struct{}
@@ -281,6 +283,15 @@ func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[stri
 		}
 	}
 	tags = cleanTags
+	// target_type 是任务属性（url/ip/domain/osint），不是 agent capability。但
+	// server 的 dispatch controller 用 NodeMatchesSelectorRules 对 tagMap 做精确匹配，
+	// 且 `tagValueMatches` 把 "all"/"any"/"*" 视为通配通过。因此 agent 必须至少
+	// 宣告一个 target_type tag，否则默认 url/ip/domain 任务的 selector
+	// {"target_type":"url"} 会永远找不匹配节点，导致任务永久卡在 Dispatching。
+	// 如果用户启动时显式指定过 target_type，则保留其值（用于运维把节点限制为只跑某类任务）。
+	if _, ok := tags["target_type"]; !ok {
+		tags["target_type"] = "all"
+	}
 	tags["native_egress"] = "v1"
 	tags["scan_tcp"] = "v1"
 	tags["risk_validation"] = "v1"
@@ -302,6 +313,7 @@ func NewWorker(agentID, serverAddr, apiURL string, maxWorkers int, tags map[stri
 		tags:         tags,
 		stopCh:       make(chan struct{}),
 		reconnectCh:  make(chan struct{}, 1),
+		memGuard:     newMemGuard(),
 	}
 }
 
@@ -440,6 +452,11 @@ func (w *Worker) Start() error {
 		w.StartSpotTerminationListener()
 	}
 
+	// 清理历史崩溃残留的结果流 WAL（保留近期文件，避免误删在跑任务的缓冲）。
+	if resultReplayEnabled() {
+		cleanupOrphanWALs(resultSpoolDir(), time.Now())
+	}
+
 	log.Printf("Agent started with worker pool size: %d", effectiveWorkers)
 
 	// 信号劫持
@@ -493,6 +510,11 @@ func (w *Worker) Start() error {
 func (w *Worker) claimAvailableTasks() {
 	for {
 		if w.draining.Load() {
+			return
+		}
+		// 内存软限：拒领新任务，任务留在队列稍后或其他 agent 执行，避免推高内存。
+		if w.memGuard != nil && w.memGuard.overSoft() {
+			log.Printf("[memguard] host memory over soft limit (%.0f%%), stop claiming new tasks", w.memGuard.softPct)
 			return
 		}
 		// 检查是否有空闲 worker
@@ -919,6 +941,13 @@ func applyAgentRuleFileConfig(cfg *engine.Config) {
 func (w *Worker) executeTask(task *pb.Task) {
 	log.Printf("Received Task: %s with targets: %v", task.TaskId, task.Targets)
 
+	// 内存硬限：认领后内存已飙高则拒绝启动并上报失败（可重试），而不是硬撑到 OOM。
+	if w.memGuard != nil && w.memGuard.overHard() {
+		log.Printf("[memguard] host memory over hard limit (%.0f%%), refuse to start task %s", w.memGuard.hardPct, task.TaskId)
+		w.reportTaskCompletion(task.TaskId, "FAILED", "agent memory pressure, retry later")
+		return
+	}
+
 	cfg := engine.Config(structs.DefaultConfig())
 	// Server-dispatched asset discovery is always POC-off. Apply the safe
 	// baseline before decoding so legacy `{}` configs cannot inherit the CLI's
@@ -1090,7 +1119,10 @@ func (w *Worker) executeTask(task *pb.Task) {
 	if w.sessionToken != "" {
 		streamCtx = metadata.AppendToOutgoingContext(streamCtx, "x-agent-token", w.sessionToken)
 	}
-	stream, err := w.client.StreamResult(streamCtx)
+	openStream := func() (grpc.ClientStreamingClient[pb.ScanResult, pb.Ack], error) {
+		return w.client.StreamResult(streamCtx)
+	}
+	sender, err := w.newResultSender(openStream, task.TaskId)
 	if err != nil {
 		err = fmt.Errorf("open grpc result stream: %w", err)
 		log.Printf("Failed to open grpc stream for task %s: %v", task.TaskId, err)
@@ -1119,7 +1151,7 @@ func (w *Worker) executeTask(task *pb.Task) {
 			}
 			return
 		}
-		if err := stream.Send(&pb.ScanResult{TaskId: task.TaskId, PayloadType: scanplan.TimingEventPayloadType, Payload: payload, Timestamp: event.FinishedAt.UnixMilli()}); err != nil {
+		if err := sender.Send(&pb.ScanResult{TaskId: task.TaskId, PayloadType: scanplan.TimingEventPayloadType, Payload: payload, Timestamp: event.FinishedAt.UnixMilli()}); err != nil {
 			streamErr = fmt.Errorf("send timing event: %w", err)
 			if ctx.Cancel != nil {
 				ctx.Cancel()
@@ -1169,7 +1201,7 @@ func (w *Worker) executeTask(task *pb.Task) {
 			}
 			return
 		}
-		if err := stream.Send(&pb.ScanResult{
+		if err := sender.Send(&pb.ScanResult{
 			TaskId:      task.TaskId,
 			PayloadType: scanplan.StageObservationPayloadType,
 			Payload:     payload,
@@ -1205,7 +1237,7 @@ func (w *Worker) executeTask(task *pb.Task) {
 		}
 		coverageReporter.recordOutput(msg.Type, payload)
 
-		if err := stream.Send(&pb.ScanResult{
+		if err := sender.Send(&pb.ScanResult{
 			TaskId:      task.TaskId,
 			PayloadType: msg.Type,
 			Payload:     payload,
@@ -1233,7 +1265,7 @@ func (w *Worker) executeTask(task *pb.Task) {
 		}
 
 		log.Printf("[Phase] Task %s: %s %s %s", task.TaskId, phase.Phase, phase.Status, phase.Message)
-		if err := stream.Send(&pb.ScanResult{
+		if err := sender.Send(&pb.ScanResult{
 			TaskId:      task.TaskId,
 			PayloadType: "phase",
 			Payload:     payload,
@@ -1257,6 +1289,40 @@ func (w *Worker) executeTask(task *pb.Task) {
 				return
 			}
 			sendTimingEventLocked(timingEvent)
+		}
+	}
+
+	// 细粒度进度回调：阶段 + 活动计数 + 输入总数，server 据此在大批次内持续推进进度条。
+	ctx.ProgressHook = func(event engine.ProgressEvent) {
+		streamMu.Lock()
+		defer streamMu.Unlock()
+
+		if streamErr != nil {
+			return
+		}
+
+		payload, err := json.Marshal(scanplan.ProgressEvent{
+			Phase:     event.Phase,
+			Done:      event.Done,
+			Total:     event.Total,
+			Unit:      event.Unit,
+			Rate:      event.Rate,
+			EtaMillis: event.EtaMillis,
+		})
+		if err != nil {
+			return
+		}
+
+		if err := sender.Send(&pb.ScanResult{
+			TaskId:      task.TaskId,
+			PayloadType: scanplan.ProgressEventPayloadType,
+			Payload:     payload,
+			Timestamp:   time.Now().UnixMilli(),
+		}); err != nil {
+			streamErr = fmt.Errorf("send progress event: %w", err)
+			if ctx.Cancel != nil {
+				ctx.Cancel()
+			}
 		}
 	}
 
@@ -1284,11 +1350,17 @@ func (w *Worker) executeTask(task *pb.Task) {
 	if streamErr != nil && (runErr == nil || (!cancelRequested.Load() && errors.Is(runErr, context.Canceled))) {
 		runErr = streamErr
 	}
-	if closeErr := closeResultStream(stream); closeErr != nil && (runErr == nil || (!cancelRequested.Load() && errors.Is(runErr, context.Canceled))) {
+	if closeErr := sender.Close(); closeErr != nil && (runErr == nil || (!cancelRequested.Load() && errors.Is(runErr, context.Canceled))) {
 		runErr = closeErr
 	}
 
 	if runErr != nil {
+		// Agent 停机（SIGTERM drain）导致结果流主动放弃：按取消处理，server 可回收重试，不判失败。
+		if errors.Is(runErr, errResultStreamStopped) {
+			log.Printf("[Drain] Task %s aborted by agent shutdown", task.TaskId)
+			w.reportTaskCompletion(task.TaskId, "CANCELLED", "agent shutting down, result stream stopped")
+			return
+		}
 		if cancelRequested.Load() && errors.Is(runErr, context.Canceled) {
 			log.Printf("[Cancel] Task %s aborted via control-plane cancellation", task.TaskId)
 			w.reportTaskCompletion(task.TaskId, "CANCELLED", "task cancelled by control plane")
@@ -1338,6 +1410,39 @@ func closeResultStream(stream grpc.ClientStreamingClient[pb.ScanResult, pb.Ack])
 		return fmt.Errorf("result stream rejected by server: %s", ack.Message)
 	}
 	return nil
+}
+
+// resultReplayEnabled 报告是否启用结果流断线重放（磁盘 WAL）。默认开启，
+// ARGUS_RESULT_REPLAY=off|false|0 时回退到旧的裸流行为（出错即失败，不重试）。
+func resultReplayEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("ARGUS_RESULT_REPLAY")))
+	return v != "off" && v != "false" && v != "0"
+}
+
+// resultSpoolDir 返回 WAL 暂存目录，env 可覆盖，默认系统临时目录下的 argus-result-spool。
+func resultSpoolDir() string {
+	if d := strings.TrimSpace(os.Getenv("ARGUS_RESULT_SPOOL_DIR")); d != "" {
+		return d
+	}
+	return filepath.Join(os.TempDir(), "argus-result-spool")
+}
+
+// newResultSender 按配置构造结果发送端。重放开启时用 resilientResultStream（WAL + 断线重连重放），
+// 首次建流是惰性的（首个 Send 时才建立），server 短暂不可达不再直接导致任务失败；
+// 关闭重放或 WAL 打不开时降级为 plainResultStream（旧行为：开流出错即失败）。
+func (w *Worker) newResultSender(open func() (grpc.ClientStreamingClient[pb.ScanResult, pb.Ack], error), taskID string) (resultSender, error) {
+	if resultReplayEnabled() {
+		if wal, err := OpenWAL(resultSpoolDir(), taskID); err == nil {
+			return newResilientResultStream(open, wal, w.stopCh), nil
+		} else {
+			log.Printf("[ResultWAL] open wal for task %s failed, falling back to plain stream: %v", taskID, err)
+		}
+	}
+	stream, err := open()
+	if err != nil {
+		return nil, err
+	}
+	return &plainResultStream{stream: stream}, nil
 }
 
 func (w *Worker) sendTaskCompletionWithRetry(req *pb.TaskCompleteReq, attempts int) error {

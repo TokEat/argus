@@ -49,6 +49,7 @@ func setupAITestDB(t *testing.T) *gorm.DB {
 		&db.Node{},
 		&db.FingerprintHit{},
 		&db.Vulnerability{},
+		&db.Domain{},
 		&db.FingerprintRule{},
 		&db.PocRule{},
 		&db.ActiveFingerprintRule{},

@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Input, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from 'antd';
+import { Input, Select, Space, Tabs, Tag, Tooltip, Typography } from 'antd';
 import { LinkOutlined, SearchOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { listCrawlSiteCandidates, listSensitiveFindings } from '../../services/api';
 import { DEFAULT_RESULT_PAGE_SIZE } from '../../pages/taskResultTabs';
+import ResultTable from './ResultTable';
 
 const { Text } = Typography;
 
@@ -104,6 +105,7 @@ const ContentFindingsPanel: React.FC<ContentFindingsPanelProps> = ({ taskId, act
     const sensitiveKindRef = useRef('');
     const sensitiveStatusRef = useRef('');
     const sensitiveSearchRef = useRef('');
+    const [activeSubTab, setActiveSubTab] = useState<'crawl' | 'sensitive'>('crawl');
 
     const fetchCrawl = useCallback(async (page: number, pageSize: number) => {
         setCrawlLoading(true);
@@ -280,13 +282,15 @@ const ContentFindingsPanel: React.FC<ContentFindingsPanelProps> = ({ taskId, act
     return (
         <div>
             <Tabs
-                defaultActiveKey="crawl"
+                activeKey={activeSubTab}
+                onChange={(k) => setActiveSubTab(k as 'crawl' | 'sensitive')}
+                destroyOnHidden={true}
                 items={[
                     {
                         key: 'crawl',
                         label: <span><LinkOutlined /> 关联资产候选 ({crawlPage.total})</span>,
                         children: (
-                            <>
+                            <div key="crawl-pane">
                                 <Space style={{ marginBottom: 12 }} wrap>
                                     <Input.Search
                                         allowClear
@@ -312,7 +316,7 @@ const ContentFindingsPanel: React.FC<ContentFindingsPanelProps> = ({ taskId, act
                                         options={Object.keys(AI_STATUS_LABEL).map((key) => ({ value: key, label: AI_STATUS_LABEL[key] }))}
                                     />
                                 </Space>
-                                <Table
+                                <ResultTable
                                     bordered
                                     columns={crawlColumns}
                                     dataSource={crawlItems}
@@ -330,14 +334,14 @@ const ContentFindingsPanel: React.FC<ContentFindingsPanelProps> = ({ taskId, act
                                     size="middle"
                                     rowClassName={(_, index) => index % 2 === 1 ? 'table-row-light' : 'table-row-dark'}
                                 />
-                            </>
+                            </div>
                         ),
                     },
                     {
                         key: 'sensitive',
                         label: <span><SearchOutlined /> 敏感信息 ({sensitivePage.total})</span>,
                         children: (
-                            <>
+                            <div key="sensitive-pane">
                                 <Space style={{ marginBottom: 12 }} wrap>
                                     <Input.Search
                                         allowClear
@@ -375,7 +379,7 @@ const ContentFindingsPanel: React.FC<ContentFindingsPanelProps> = ({ taskId, act
                                         options={Object.keys(AI_STATUS_LABEL).map((key) => ({ value: key, label: AI_STATUS_LABEL[key] }))}
                                     />
                                 </Space>
-                                <Table
+                                <ResultTable
                                     bordered
                                     columns={sensitiveColumns}
                                     dataSource={sensitiveItems}
@@ -393,7 +397,7 @@ const ContentFindingsPanel: React.FC<ContentFindingsPanelProps> = ({ taskId, act
                                     size="middle"
                                     rowClassName={(_, index) => index % 2 === 1 ? 'table-row-light' : 'table-row-dark'}
                                 />
-                            </>
+                            </div>
                         ),
                     },
                 ]}

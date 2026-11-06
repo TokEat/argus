@@ -141,6 +141,10 @@ func (c *Controller) dispatchNew(ctx context.Context) error {
 		}
 		agentID := c.selectAgent(sub, nil, inflight)
 		if agentID == "" {
+			// Warn so silent selector mismatches (e.g. agent missing target_type tag)
+			// surface in logs instead of silently leaving the task in Dispatching.
+			log.Printf("[DispatchCtl] no eligible agent for subtask %s (target_selector=%s rules=%s)",
+				sub.ID, sub.AgentSelector, sub.AgentSelectorRules)
 			continue // no eligible agent right now; retry on a later pass
 		}
 		pbSub, err := db.SubTaskToProto(sub)

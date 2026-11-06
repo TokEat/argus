@@ -4,12 +4,49 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
+	"runtime/debug"
+	"strconv"
 	"strings"
 
 	"github.com/P0lar1ght/argus/scanner/internal/agent"
 	"github.com/P0lar1ght/argus/scanner/internal/engine"
 )
+
+// applyRuntimeKnobs 应用 opt-in 运行时内存/分析开关（不设则保持 Go 默认行为）：
+// ARGUS_GOMEMLIMIT → debug.SetMemoryLimit（软 GC 上限，应低于宿主机物理内存留出余量）；
+// ARGUS_GOGC → debug.SetGCPercent（不设则默认 GC）；
+// ARGUS_PPROF_ADDR → 在该地址起 pprof（仅本机调试用，生产勿暴露未认证端口）。
+func applyRuntimeKnobs() {
+	if v := strings.TrimSpace(os.Getenv("ARGUS_GOMEMLIMIT")); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n <= 0 {
+			log.Printf("WARNING: invalid ARGUS_GOMEMLIMIT=%q, ignored", v)
+		} else {
+			debug.SetMemoryLimit(n)
+			log.Printf("GOMEMLIMIT set to %d bytes", n)
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("ARGUS_GOGC")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			log.Printf("WARNING: invalid ARGUS_GOGC=%q, ignored", v)
+		} else {
+			debug.SetGCPercent(n)
+			log.Printf("GOGC set to %d", n)
+		}
+	}
+	if addr := strings.TrimSpace(os.Getenv("ARGUS_PPROF_ADDR")); addr != "" {
+		go func() {
+			log.Printf("pprof listening on %s", addr)
+			if err := http.ListenAndServe(addr, nil); err != nil {
+				log.Printf("pprof server stopped: %v", err)
+			}
+		}()
+	}
+}
 
 func main() {
 	serverAddr := flag.String("server", "127.0.0.1:50051", "Server gRPC address")
@@ -31,6 +68,7 @@ func main() {
 	grpcCA := flag.String("grpc-ca", "", "CA certificate for Server gRPC TLS (env: ARGUS_AGENT_GRPC_CA)")
 	grpcServerName := flag.String("grpc-server-name", "", "Expected Server certificate name (env: ARGUS_AGENT_GRPC_SERVER_NAME)")
 	flag.Parse()
+	applyRuntimeKnobs()
 
 	// 环境变量优先级高于 flag
 	if envPSK := os.Getenv("ARGUS_AGENT_PSK"); envPSK != "" {

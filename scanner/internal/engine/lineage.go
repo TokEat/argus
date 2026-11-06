@@ -1,10 +1,12 @@
 package engine
 
 import (
+	"net"
 	"net/url"
 	"strings"
 
 	"github.com/P0lar1ght/argus/scanner/structs"
+	"github.com/P0lar1ght/argus/scanner/utils"
 	"github.com/P0lar1ght/argus/shared/proto/go/targetutil"
 )
 
@@ -56,7 +58,14 @@ func deriveLineageParent(ctx *ScanContext, msg structs.OutputMessage, childKey s
 		// ip:port -> ip
 		return msg.IP
 	case "IPAlive":
-		// ip -> a domain that resolved to it (from CDN/DNS resolution).
+		// ip -> the scan-input segment (CIDR/IP range) it was enumerated from,
+		// so a host discovered by scanning "10.3.130.0/24" traces back to that
+		// segment as the lineage start, not to its own derived address. When the
+		// IP is not inside any segment input, fall back to a domain that resolved
+		// to it (bare-IP inputs keep the domain chain they already had).
+		if seg := inputSegmentForIP(ctx, msg.IP); seg != "" {
+			return seg
+		}
 		return firstDomainForIP(ctx, msg.IP)
 	case "Domain", "DNS-SubFinder", "DNS-Brute", "CDN-Domain", "Subdomain", "subdomain":
 		// subdomain -> the root input domain it belongs to.
@@ -132,6 +141,32 @@ func firstDomainForIP(ctx *ScanContext, ip string) string {
 	for _, d := range ctx.IPDomainMap[ip] {
 		if d != "" {
 			return d
+		}
+	}
+	return ""
+}
+
+// inputSegmentForIP returns the CIDR/IP-range input target that contains ip —
+// the original scan segment the address was enumerated from. Lineage must start
+// at that input, so a host found by scanning a segment traces back to the
+// segment itself rather than stopping at the derived IP.
+func inputSegmentForIP(ctx *ScanContext, ip string) string {
+	if ctx == nil || ip == "" {
+		return ""
+	}
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return ""
+	}
+	for _, target := range ctx.Config.Targets {
+		target = strings.TrimSpace(target)
+		// Only segment inputs (CIDR / IP range) qualify: a bare-IP input is its
+		// own root and must not be turned into a self-parent.
+		if !strings.Contains(target, "/") && !strings.Contains(target, "-") {
+			continue
+		}
+		if utils.TargetContainsIP(target, parsed) {
+			return target
 		}
 	}
 	return ""

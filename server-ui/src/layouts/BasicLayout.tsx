@@ -539,7 +539,7 @@ const BasicLayout: React.FC = () => {
                                     style={{ width: 250 }}
                                     placeholder="请选择项目上下文"
                                     options={projects.map(p => ({ label: p.Name, value: p.ID }))}
-                                    dropdownMatchSelectWidth={false}
+                                    popupMatchSelectWidth={false}
                                 />
                             </Space>
                         </div>

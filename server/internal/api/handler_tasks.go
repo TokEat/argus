@@ -206,6 +206,12 @@ func getTaskDetail(c *gin.Context) {
 		FinishedAt      *time.Time `json:"finished_at"`
 		CreatedAt       time.Time  `json:"created_at"`
 		UpdatedAt       time.Time  `json:"updated_at"`
+		ProgressPhase      string     `json:"progress_phase"`
+		ProgressDone       int        `json:"progress_done"`
+		ProgressTotal      int        `json:"progress_total"`
+		ProgressRate       float64    `json:"progress_rate"`
+		ProgressEtaMs      int64      `json:"progress_eta_ms"`
+		ProgressUpdatedAt  *time.Time `json:"progress_updated_at"`
 	}
 	buildSubSummaries := func(items []db.SubTask) []SubTaskSummary {
 		summaries := make([]SubTaskSummary, 0, len(items))
@@ -230,6 +236,12 @@ func getTaskDetail(c *gin.Context) {
 				FinishedAt:      st.FinishedAt,
 				CreatedAt:       st.CreatedAt,
 				UpdatedAt:       st.UpdatedAt,
+				ProgressPhase:   st.ProgressPhase,
+				ProgressDone:    st.ProgressDone,
+				ProgressTotal:   st.ProgressTotal,
+				ProgressRate:    st.ProgressRate,
+				ProgressEtaMs:   st.ProgressEtaMs,
+				ProgressUpdatedAt: st.ProgressUpdatedAt,
 			})
 		}
 		return summaries
@@ -307,6 +319,7 @@ func getTaskDetail(c *gin.Context) {
 			"completed_chunks":       rootTask.CompletedChunks,
 			"total_targets":          rootTask.TotalTargets,
 			"completed_targets":      rootTask.CompletedTargets,
+			"progress_done":          rootTask.ProgressDone,
 			"timeout_sec":            rootTask.TimeoutSec,
 			"original_targets":       rootTask.OriginalTargets,
 			"config":                 configObj,

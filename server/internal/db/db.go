@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -63,6 +64,8 @@ type RootTask struct {
 	CompletedChunks      int    // 已完成批次数
 	TotalTargets         int    // 原始目标总数（用于目标维度进度）
 	CompletedTargets     int    // 已完成目标数
+	ProgressDone         int64  // 实时活动计数（Σ 运行中子任务 progress_done），供 UI 展示扫描未卡死
+	ProgressRate         float64 // 实时总吞吐（单元/秒，Σ 运行中子任务 progress_rate）；活动信号，非完成度
 	Config               string `gorm:"type:text"`
 	Priority             int
 	TimeoutSec           int
@@ -103,6 +106,12 @@ type SubTask struct {
 	NextEligibleAt     *time.Time `gorm:"index"`         // exponential-retry backoff gate; NULL=eligible now
 	RoutedAgentID      string     `gorm:"index"`         // controller_push: advisory target agent (bind still at claim)
 	RoutedAt           *time.Time // controller_push: when the controller last routed this attempt
+	ProgressPhase      string     `gorm:"size:64"`       // 实时阶段标识（agent 上报），供 UI 展示未卡死
+	ProgressDone       int        // 实时活动计数：发现模式=已发现结果数；单元模式=已处理单元数（同 progress_total 口径）
+	ProgressTotal      int        // 本阶段输入目标总数（0=未知；>0 且为单元模式时可显示占比/ETA）
+	ProgressRate       float64    // 单元模式吞吐（单元/秒）；发现模式为 0
+	ProgressEtaMs      int64      // 单元模式预计剩余毫秒；发现模式/完成为 0
+	ProgressUpdatedAt  *time.Time // 最近一次进度上报时间（liveness）
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
@@ -391,6 +400,8 @@ type Vulnerability struct {
 	Target       string `gorm:"index:idx_vuln_new_dedupe,unique"`
 	Plugin       string `gorm:"index:idx_vuln_new_dedupe,unique"`
 	Severity     string
+	Host         string `gorm:"index"` // 从 target 解析出的主机（IP/域名），供按主机过滤
+	Port         int    `gorm:"index"` // 从 target 解析出的端口；无端口为 0，不参与 port>0 过滤
 	Status       string `gorm:"default:'open';index"`
 	Assignee     string `gorm:"index"`
 	IgnoreReason string `gorm:"type:text"`
@@ -825,6 +836,113 @@ func normalizeTarget(raw string) string {
 // ResultTargetKey 把扫描结果 target 归一成三表关联用的同一把键。
 func ResultTargetKey(raw string) string {
 	return normalizeTarget(raw)
+}
+
+// extractHostAndPort 从归一化 target 解析主机与端口，供 vulnerabilities 的
+// host/port 列过滤。scheme:// 走 url.Parse 取 Hostname+Port（http/https 无显式
+// 端口补 80/443）；host:port 走 net.SplitHostPort；裸 host 返回 (host,0)；
+// 解析不出主机返回 ("",0)。
+func extractHostAndPort(target string) (string, int) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", 0
+	}
+	if strings.Contains(target, "://") {
+		u, err := url.Parse(target)
+		if err != nil || u.Hostname() == "" {
+			return "", 0
+		}
+		port := 0
+		if p := u.Port(); p != "" {
+			if pv, err := strconv.Atoi(p); err == nil {
+				port = pv
+			}
+		} else if port = schemeDefaultPort(u.Scheme); port < 0 {
+			port = 0
+		}
+		return u.Hostname(), port
+	}
+	if host, portStr, err := net.SplitHostPort(target); err == nil {
+		port := 0
+		if pv, err := strconv.Atoi(portStr); err == nil {
+			port = pv
+		}
+		return strings.TrimSpace(host), port
+	}
+	// 裸 host / IP（无端口）。带单冒号的非端口形态（如 IPv6）回落到整体清洗。
+	if host := net.ParseIP(target); host != nil {
+		return target, 0
+	}
+	return strings.TrimSpace(target), 0
+}
+
+// schemeDefaultPort 返回 scheme 的默认端口；未知 scheme 返回 -1。
+func schemeDefaultPort(scheme string) int {
+	switch strings.ToLower(strings.TrimSpace(scheme)) {
+	case "http", "ws":
+		return 80
+	case "https", "wss":
+		return 443
+	}
+	return -1
+}
+
+// nucleiPacketPair 是 nuclei ResultEvent.Packet 中的单步请求/响应对。
+type nucleiPacketPair struct {
+	Request  string
+	Response string
+}
+
+// parseNucleiPacket 解析 ResultEvent JSON 的 packet 字段。nuclei 把多发包
+// 模板的完整步骤编码为 map[int]RequestResponsePair，JSON 序列化为
+// {"0":{"Request":...,"Response":...},"1":{...},...}。这里按步骤序号升序返回；
+// packet 缺失或为空时返回 nil。
+func parseNucleiPacket(event map[string]interface{}) []nucleiPacketPair {
+	raw, ok := event["packet"].(map[string]interface{})
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	type keyedPair struct {
+		index int
+		pair  nucleiPacketPair
+	}
+	keyed := make([]keyedPair, 0, len(raw))
+	for key, value := range raw {
+		idx, err := strconv.Atoi(key)
+		if err != nil {
+			continue
+		}
+		m, ok := value.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		pair := nucleiPacketPair{
+			Request:  payloadString(m, "Request"),
+			Response: payloadString(m, "Response"),
+		}
+		if pair.Request == "" && pair.Response == "" {
+			continue
+		}
+		keyed = append(keyed, keyedPair{index: idx, pair: pair})
+	}
+	sort.Slice(keyed, func(i, j int) bool { return keyed[i].index < keyed[j].index })
+	pairs := make([]nucleiPacketPair, len(keyed))
+	for i, k := range keyed {
+		pairs[i] = k.pair
+	}
+	return pairs
+}
+
+// formatNucleiPacketSequence 把多步请求/响应渲染为带序号的可读序列，
+// 便于人工判断与复现（例如第一步发送命令、第二步取回显）。
+func formatNucleiPacketSequence(pairs []nucleiPacketPair) (string, string) {
+	var reqSB, respSB strings.Builder
+	for i, pair := range pairs {
+		step := i + 1
+		fmt.Fprintf(&reqSB, "===== [Request %d] =====\n%s\n\n", step, pair.Request)
+		fmt.Fprintf(&respSB, "===== [Response %d] =====\n%s\n\n", step, pair.Response)
+	}
+	return strings.TrimRight(reqSB.String(), "\n"), strings.TrimRight(respSB.String(), "\n")
 }
 
 func splitFingerprintToken(raw string) []string {
@@ -1314,10 +1432,11 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 					if r, ok := event["response"].(string); ok {
 						respData = r
 					}
-					// 多步骤 Packet 数组（优先级高于单 request/response）
-					if packets, ok := event["interaction"].([]interface{}); ok && len(packets) > 0 {
-						// interaction 暂不处理
-						_ = packets
+					// 多步骤 Packet 序列（优先级高于单 request/response）：
+					// nuclei 对多发包模板只把最后一次交互写入 request/response，
+					// 完整步骤在 packet 字段，展开为编号序列便于人工判断与复现。
+					if pairs := parseNucleiPacket(event); len(pairs) > 1 {
+						reqData, respData = formatNucleiPacketSequence(pairs)
 					}
 					// 提取 matched URL
 					if m, ok := event["matched-at"].(string); ok {
@@ -1353,10 +1472,11 @@ func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
 		// 归一化 target，确保三表关联一致性
 		target = normalizeTarget(target)
 		severity = normalizeSeverity(severity)
+		vulnHost, vulnPort := extractHostAndPort(target)
 
 		vulnBuffer2 <- Vulnerability{
 			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID, Target: target, Plugin: plugin,
-			Severity: severity, Payload: payloadJSON, Status: "open",
+			Severity: severity, Host: vulnHost, Port: vulnPort, Payload: payloadJSON, Status: "open",
 			Request: reqData, Response: respData, Description: description,
 			Reference: reference, MatchedAt: matchedAt,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),

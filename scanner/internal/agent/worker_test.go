@@ -237,6 +237,9 @@ func TestSpotTerminationURLUsesEnvironmentOverride(t *testing.T) {
 
 func TestWorkerExecuteTaskFailsOnResultStreamSendError(t *testing.T) {
 	prepareUsableAgentConfig(t)
+	// 本用例验证旧的「流断开即失败」语义，显式关闭断线重放以走 plain 路径，
+	// 避免 resilient 路径按真实退避预算重连导致用例耗时 ~138s。
+	t.Setenv("ARGUS_RESULT_REPLAY", "off")
 
 	origNewScanContext := newScanContext
 	origRunScanTask := runScanTask
@@ -928,6 +931,8 @@ func arsenalDownloadHeaders(body []byte, legacyHash string) map[string]string {
 func prepareUsableAgentConfig(t *testing.T) {
 	t.Helper()
 	t.Chdir(t.TempDir())
+	// 隔离结果流 WAL 暂存目录，避免用例间/与真实运行共享 os.TempDir 下的 spool。
+	t.Setenv("ARGUS_RESULT_SPOOL_DIR", filepath.Join(t.TempDir(), "result-spool"))
 	mustWriteAgentFile(t, filepath.Join("config", "finger.yaml"), []byte("TestProduct:\n  - 'body=\"test\"'\n"))
 	mustWriteAgentFile(t, filepath.Join("config", "workflow.yaml"), []byte("TestProduct:\n  type:\n    - root\n  pocs:\n    - test.yaml\n"))
 	mustWriteAgentFile(t, filepath.Join("config", "dir.yaml"), []byte("TestProduct:\n  - /test\n"))

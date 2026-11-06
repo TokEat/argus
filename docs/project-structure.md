@@ -73,3 +73,7 @@
 - [Yaksha EXP](yaksha-exp.md)
 - [AI Copilot 架构](ai_copilot_architecture.md)
 - [技术白皮书](argus-technical-whitepaper.md)
+
+## 本地与阿里云同步
+
+开发机（Mac）与阿里云工作区按需 rsync 对齐时，见 [local-aliyun-sync.md](local-aliyun-sync.md)。代理指令见根目录 `AGENTS.md`「Local ↔ Aliyun sync」。

@@ -7,13 +7,17 @@ package subdomainpassive
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -40,12 +44,22 @@ type SourceClient struct {
 }
 
 // DefaultSources lists the keyless public sources in preference order.
-// crt.sh is kept although it has frequent outages; failures are isolated.
+// Certificate transparency (crt.name/crt.sh/certspotter) plus keyless
+// aggregators, archives and passive-DNS services; none require credentials.
+// crt.sh is kept although it has frequent outages; failures are isolated per
+// source so a flaky one never blocks the rest.
 func DefaultSources() []SourceClient {
 	return []SourceClient{
 		{Name: "crt.name", Fetch: fetchCRTName},
 		{Name: "crtsh", Fetch: fetchCrtsh},
 		{Name: "certspotter", Fetch: fetchCertspotter},
+		{Name: "alienvault", Fetch: fetchAlienVault},
+		{Name: "hackertarget", Fetch: fetchHackerTarget},
+		{Name: "rapiddns", Fetch: fetchRapidDNS},
+		{Name: "threatminer", Fetch: fetchThreatMiner},
+		{Name: "anubis", Fetch: fetchAnubis},
+		{Name: "digitorus", Fetch: fetchDigitorus},
+		{Name: "waybackarchive", Fetch: fetchWaybackArchive},
 	}
 }
 
@@ -124,6 +138,198 @@ func fetchCertspotter(ctx context.Context, client *http.Client, domain string) (
 		hosts = append(hosts, row.DNSNames...)
 	}
 	return hosts, nil
+}
+
+// maxSourceBody caps a single source response so a huge archive/CDX payload
+// cannot exhaust memory; a truncated body just yields fewer candidates.
+const maxSourceBody = 8 << 20
+
+// getBody performs a bounded GET and returns the response body.
+func getBody(ctx context.Context, client *http.Client, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET %s returned %s", url, resp.Status)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, maxSourceBody))
+}
+
+// fetchAlienVault queries AlienVault OTX passive DNS (keyless JSON).
+func fetchAlienVault(ctx context.Context, client *http.Client, domain string) ([]string, error) {
+	body, err := getBody(ctx, client, "https://otx.alienvault.com/api/v1/indicators/domain/"+domain+"/passive_dns")
+	if err != nil {
+		return nil, err
+	}
+	return parseAlienVaultHosts(body)
+}
+
+func parseAlienVaultHosts(body []byte) ([]string, error) {
+	var rows struct {
+		PassiveDNS []struct {
+			Hostname string `json:"hostname"`
+		} `json:"passive_dns"`
+	}
+	if err := json.Unmarshal(body, &rows); err != nil {
+		return nil, fmt.Errorf("decode alienvault response: %w", err)
+	}
+	hosts := make([]string, 0, len(rows.PassiveDNS))
+	for _, row := range rows.PassiveDNS {
+		if row.Hostname != "" {
+			hosts = append(hosts, row.Hostname)
+		}
+	}
+	return hosts, nil
+}
+
+// fetchHackerTarget queries the HackerTarget hostsearch API (keyless text,
+// one "sub.domain,ip" line per row).
+func fetchHackerTarget(ctx context.Context, client *http.Client, domain string) ([]string, error) {
+	body, err := getBody(ctx, client, "https://api.hackertarget.com/hostsearch/?q="+domain)
+	if err != nil {
+		return nil, err
+	}
+	return parseHackerTargetHosts(body)
+}
+
+func parseHackerTargetHosts(body []byte) ([]string, error) {
+	var hosts []string
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if host, _, ok := strings.Cut(line, ","); ok {
+			hosts = append(hosts, strings.TrimSpace(host))
+		} else {
+			hosts = append(hosts, line)
+		}
+	}
+	return hosts, scanner.Err()
+}
+
+// fetchRapidDNS scrapes rapiddns.io (keyless HTML table).
+func fetchRapidDNS(ctx context.Context, client *http.Client, domain string) ([]string, error) {
+	body, err := getBody(ctx, client, "https://rapiddns.io/subdomain/"+domain+"?full=1")
+	if err != nil {
+		return nil, err
+	}
+	return scrapeHosts(string(body), domain), nil
+}
+
+// fetchDigitorus scrapes certificatedetails.com (keyless HTML cert details).
+func fetchDigitorus(ctx context.Context, client *http.Client, domain string) ([]string, error) {
+	body, err := getBody(ctx, client, "https://certificatedetails.com/"+domain)
+	if err != nil {
+		return nil, err
+	}
+	return scrapeHosts(string(body), domain), nil
+}
+
+// fetchThreatMiner queries ThreatMiner (keyless JSON subdomain list).
+func fetchThreatMiner(ctx context.Context, client *http.Client, domain string) ([]string, error) {
+	body, err := getBody(ctx, client, fmt.Sprintf("https://api.threatminer.org/v2/domain.php?q=%s&rt=5", domain))
+	if err != nil {
+		return nil, err
+	}
+	return parseThreatMinerHosts(body)
+}
+
+func parseThreatMinerHosts(body []byte) ([]string, error) {
+	var rows struct {
+		Results []string `json:"results"`
+	}
+	if err := json.Unmarshal(body, &rows); err != nil {
+		return nil, fmt.Errorf("decode threatminer response: %w", err)
+	}
+	return removeEmptyStrings(rows.Results), nil
+}
+
+// fetchAnubis queries the Anubis subdomain service (keyless JSON array).
+func fetchAnubis(ctx context.Context, client *http.Client, domain string) ([]string, error) {
+	body, err := getBody(ctx, client, fmt.Sprintf("https://jonlu.ca/anubis/subdomains/%s", domain))
+	if err != nil {
+		return nil, err
+	}
+	return parseAnubisHosts(body)
+}
+
+func parseAnubisHosts(body []byte) ([]string, error) {
+	var hosts []string
+	if err := json.Unmarshal(body, &hosts); err != nil {
+		return nil, fmt.Errorf("decode anubis response: %w", err)
+	}
+	return removeEmptyStrings(hosts), nil
+}
+
+// fetchWaybackArchive walks the Wayback Machine CDX index (keyless) and
+// recovers hostnames from archived URLs.
+func fetchWaybackArchive(ctx context.Context, client *http.Client, domain string) ([]string, error) {
+	body, err := getBody(ctx, client, fmt.Sprintf("http://web.archive.org/cdx/search/cdx?url=*.%s/*&output=txt&fl=original&collapse=urlkey", domain))
+	if err != nil {
+		return nil, err
+	}
+	return parseWaybackHosts(body)
+}
+
+// parseWaybackHosts extracts hostnames from CDX "original" URL lines.
+func parseWaybackHosts(body []byte) ([]string, error) {
+	var hosts []string
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	for scanner.Scan() {
+		if host := hostFromArchiveURL(scanner.Text()); host != "" {
+			hosts = append(hosts, host)
+		}
+	}
+	return hosts, scanner.Err()
+}
+
+// hostFromArchiveURL resolves a possibly malformed archived URL to its
+// lowercase hostname, tolerating scheme-less or junk lines.
+func hostFromArchiveURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if u, err := url.Parse(raw); err == nil && u.Hostname() != "" {
+		return strings.ToLower(u.Hostname())
+	}
+	s := strings.TrimPrefix(strings.TrimPrefix(raw, "http://"), "https://")
+	if i := strings.IndexByte(s, '/'); i >= 0 {
+		s = s[:i]
+	}
+	if i := strings.IndexByte(s, ':'); i >= 0 {
+		s = s[:i]
+	}
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// scrapeHosts pulls every token ending in ".<domain>" out of an HTML page.
+func scrapeHosts(body, domain string) []string {
+	re := regexp.MustCompile(`(?i)[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?\.` + regexp.QuoteMeta(domain))
+	matches := re.FindAllString(body, -1)
+	hosts := make([]string, 0, len(matches))
+	for _, match := range matches {
+		hosts = append(hosts, strings.ToLower(strings.TrimPrefix(match, ".")))
+	}
+	return hosts
+}
+
+func removeEmptyStrings(input []string) []string {
+	out := make([]string, 0, len(input))
+	for _, value := range input {
+		if value = strings.TrimSpace(value); value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 // Collector enumerates one domain across sources and validates candidates

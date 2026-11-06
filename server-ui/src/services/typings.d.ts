@@ -73,6 +73,7 @@ declare namespace API {
     CompletedChunks: number;   // 已完成批次数
     TotalTargets: number;      // 原始目标总数
     CompletedTargets: number;  // 已完成目标数
+    ProgressDone?: number;     // 实时活动计数（Σ 运行中子任务 progress_done），扫描未卡死的活跃信号
     Config: string;
     Priority?: number;
     Capacity?: number;
@@ -230,6 +231,12 @@ declare namespace API {
     finished_at?: string | null;
     created_at: string;
     updated_at: string;
+    progress_phase?: string;
+    progress_done?: number;
+    progress_total?: number;
+    progress_rate?: number;
+    progress_eta_ms?: number;
+    progress_updated_at?: string | null;
   }
 
   interface TaskBatchSummary {
@@ -374,6 +381,7 @@ declare namespace API {
       completed_chunks: number;
       total_targets: number;
       completed_targets: number;
+      progress_done?: number;
       timeout_sec: number;
       original_targets: string;
       config: Record<string, unknown> | string;
@@ -595,6 +603,7 @@ declare namespace API {
     Target: string;
     Plugin: string;
     Severity: string;
+    Status?: string;
     Payload: string;
     Request: string;
     Response: string;
@@ -610,6 +619,26 @@ declare namespace API {
     /** 安全设备对抗哨兵污点标记（如 suspect_waf = 疑似 WAF/catch-all 拦截页） */
     TaintStatus?: string;
     TaintReason?: string;
+  }
+
+  /** 漏洞过滤维度计数 (GET /tasks/:id/vulns/facets) */
+  interface VulnFacetItem {
+    value: string;
+    count: number;
+  }
+
+  interface VulnFacets {
+    plugins: VulnFacetItem[];
+    statuses: VulnFacetItem[];
+    ai_statuses: VulnFacetItem[];
+    hosts: VulnFacetItem[];
+    ports: VulnFacetItem[];
+  }
+
+  /** 资产过滤维度计数 (GET /tasks/:id/assets/facets) */
+  interface AssetFacets {
+    services: VulnFacetItem[];
+    fingerprints: VulnFacetItem[];
   }
 
   /** AI 漏洞研判记录 (GET /vulns/:id/ai-review → reviews[]) */
@@ -731,6 +760,22 @@ declare namespace API {
     RuleName: string;
     Evidence: string;
     CreatedAt: string;
+  }
+
+  /** 域名 (GET /api/v1/domains) */
+  interface Domain {
+    ID: number;
+    TenantID: string;
+    ProjectID: string;
+    TaskID: string;
+    Name: string;
+    Tags?: string;
+    Records?: string;
+    ICP?: string;
+    Whois?: string;
+    Status?: string;
+    CreatedAt: string;
+    UpdatedAt: string;
   }
 
   /** 主动爬取关联资产候选 (GET /api/v1/crawl-site-candidates) */

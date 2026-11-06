@@ -33,6 +33,8 @@ describe('taskResultTabs', () => {
         expect(assetMatchesKind('Web', 'web')).toBe(true);
         expect(assetMatchesKind('PortScan', 'web')).toBe(false);
         expect(assetMatchesKind('PortScan', 'host_port')).toBe(true);
+        expect(assetMatchesKind('IPAlive', 'host_port')).toBe(false);
+        expect(assetMatchesKind('IPAlive', 'other')).toBe(true);
         expect(assetMatchesKind('DNS-SubFinder', 'domain')).toBe(true);
         expect(assetMatchesKind('RealIP', 'resolution')).toBe(true);
         expect(assetMatchesKind('https', 'other')).toBe(true);

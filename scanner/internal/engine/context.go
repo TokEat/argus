@@ -61,6 +61,11 @@ type ScanContext struct {
 	LocalArsenalVersion string
 
 	// --- 数据容器（替代 structs 包的全局 Map） ---
+	//
+	// 内存说明：这些 map 均为 O(已发现资产/访问记录) 规模，而非 O(目标×端口叉积)——
+	// RemoveFirewall 已按 portsThreshold 收敛每 IP 端口数，大响应体走下方磁盘支撑的
+	// HybridMap。端口扫描的叉积级内存占用已在 portscan.ScanTCP 内以固定容量 channel
+	// 界住，故此处不设硬上限（硬上限会静默丢真实资产、破坏覆盖正确性）。
 
 	// IPPortMap IP:Port → Protocol (如 "192.168.1.1:80" → "http")
 	IPPortMap     map[string]string
@@ -163,6 +168,15 @@ type ScanContext struct {
 	// PhaseObserver mirrors phase progress without replacing the Agent progress
 	// sink. Standalone CLI history uses it to derive local coverage evidence.
 	PhaseObserver func(phase PhaseEvent)
+
+	// ProgressHook 细粒度进度回调。Pipeline 在阶段内按活动节流触发，
+	// 携带当前阶段 + 活动计数 + 输入总数，用于 Agent 模式实时回传 server
+	// 进度条。如果为 nil，则不上报细粒度进度。
+	ProgressHook func(event ProgressEvent)
+
+	// progress 是 Run 期间的活动进度聚合器，由 emitPhase/emit 驱动，
+	// 把阶段边界与发现活动节流成 ProgressEvent 推给 ProgressHook。nil 表示未启用。
+	progress *progressReporter
 
 	// --- 生命周期 ---
 

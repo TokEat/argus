@@ -36,7 +36,10 @@ func NewRuntime(ipPortMap map[string]string, ipPortMapLock *sync.Mutex, bannerHM
 	}
 }
 
-func (rt *Runtime) Identify(hostPorts []string, threads int, timeout int) {
+// Identify 对 hostPorts 做 TCP 指纹识别。emit 在每次产出识别结果时回调；onUnit
+//（可为 nil）在每消费一个识别目标时回调，供引擎按 len(hostPorts) 口径统计 x/y
+// 进度与 ETA。onUnit 由多个工作 goroutine 并发调用，调用方需保证计数器并发安全。
+func (rt *Runtime) Identify(hostPorts []string, threads int, timeout int, onUnit func()) {
 	if len(hostPorts) == 0 {
 		return
 	}
@@ -67,6 +70,10 @@ func (rt *Runtime) Identify(hostPorts []string, threads int, timeout int) {
 			scanner := gonmap.New()
 			scanner.SetTimeout(time.Duration(timeout) * time.Second)
 			for addr := range addrs {
+				if onUnit != nil {
+					// 每消费一个识别目标计 1（含格式非法被跳过的），保证 done 收敛到总数口径。
+					onUnit()
+				}
 				parts := strings.Split(addr, ":")
 				if len(parts) != 2 {
 					results <- protocolResult{Status: int(gonmap.Closed)}

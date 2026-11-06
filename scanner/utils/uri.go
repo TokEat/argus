@@ -92,6 +92,34 @@ func RangerToIP(ranger string) (IPs []net.IP) {
 	return pairsToIP(first, last)
 }
 
+// TargetContainsIP 判断 target（CIDR、IP 段或裸 IP 输入）是否包含 ip。
+// 只做边界比较，不物化整段地址列表，大网段（如 /8）也必须保持 O(1)。
+func TargetContainsIP(target string, ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	if strings.Contains(target, "/") {
+		_, network, err := net.ParseCIDR(target)
+		return err == nil && network.Contains(ip)
+	}
+	if strings.Contains(target, "-") {
+		first, last := parseIPPairs(target)
+		if first == nil || last == nil {
+			return false
+		}
+		v := toInt(ip)
+		return toInt(first) <= v && v <= toInt(last)
+	}
+	if t := net.ParseIP(target); t != nil {
+		return t.Equal(ip)
+	}
+	return false
+}
+
 func IsLocalIP(input string) bool {
 	ip := net.ParseIP(input)
 	return ip != nil && (ip.IsPrivate() || ip.IsLoopback())

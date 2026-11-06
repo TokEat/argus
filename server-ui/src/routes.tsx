@@ -31,6 +31,7 @@ import TaskManagement from './pages/TaskManagement';
 import TaskResults from './pages/TaskResults';
 import ProfilesView from './pages/ProfilesView';
 import ProjectManagement from './pages/ProjectManagement';
+import ProjectData from './pages/ProjectData';
 import AssetDiscovery from './pages/AssetDiscovery';
 import ConfigLayout from './pages/config/ConfigLayout';
 import PocConfig from './pages/config/PocConfig';
@@ -95,6 +96,14 @@ export const menuRoutes: RouteConfig[] = [
         name: '项目管理',
         icon: <ProjectOutlined />,
         element: <ProjectManagement />,
+        minRole: 'viewer',
+    },
+    {
+        path: '/projects/:projectId/data',
+        name: '项目数据',
+        icon: <DatabaseOutlined />,
+        element: <ProjectData />,
+        hideInMenu: true,
         minRole: 'viewer',
     },
     {

@@ -25,7 +25,7 @@ var (
 
 	assetKindProtocols = map[string][]string{
 		assetKindWeb:        {"Web", "Domain-Bind"},
-		assetKindHostPort:   {"PortScan", "Protocol", "ProtocolCheck", "Nmap", "IPAlive", "Fofa", "Hunter", "Quake"},
+		assetKindHostPort:   {"PortScan", "Protocol", "ProtocolCheck", "Nmap", "Fofa", "Hunter", "Quake"},
 		assetKindDomain:     {"Domain", "DNS-SubFinder", "DNS-Brute", "CDN-Domain"},
 		assetKindResolution: {"RealIP"},
 	}

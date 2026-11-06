@@ -599,7 +599,7 @@ const Dashboard: React.FC = () => {
                         {wsMessages.length > 0 ? (
                             <Table
                                 columns={wsColumns}
-                                dataSource={wsMessages.map((m, i) => ({ ...m, key: i }))}
+                                dataSource={wsMessages.map((m) => ({ ...m, key: `${m.time}-${m.type}-${m.data}` }))}
                                 pagination={false}
                                 size="small"
                                 scroll={{ y: 200 }}

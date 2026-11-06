@@ -572,18 +572,151 @@ func getVulns(c *gin.Context) {
 		query = applyTaskResultScope(c, query, taskID, reportResultVulnerability)
 	}
 	if search := strings.TrimSpace(c.Query("search")); search != "" {
-		query = query.Where("target LIKE ?", "%"+search+"%")
+		query = applyVulnSearch(query, search)
+	}
+	query = applyCSVResultFilter(query, "severity", c.Query("severity"), true)
+	query = applyCSVResultFilter(query, "plugin", c.Query("plugin"), false)
+	query = applyCSVResultFilter(query, "ai_status", c.Query("ai_status"), true)
+	query = applyCSVResultFilter(query, "status", c.Query("status"), true)
+	query = applyCSVResultFilter(query, "host", c.Query("host"), false)
+	if ports := parseCSVPorts(c.Query("port")); len(ports) > 0 {
+		query = query.Where("port IN ?", ports)
 	}
 	query = applyResultSort(c, query, "created_at", map[string]string{
 		"severity":   "severity",
 		"created_at": "created_at",
 		"updated_at": "updated_at",
+		"target":     "target",
+		"plugin":     "plugin",
+		"status":     "status",
+		"ai_status":  "ai_status",
+		"matched_at": "matched_at",
 	})
 	page, pageSize, total, ok := paginateResultQuery(c, query, &db.Vulnerability{}, &vulns)
 	if !ok {
 		return
 	}
 	c.JSON(http.StatusOK, pagedResponse(vulns, total, page, pageSize, ""))
+}
+
+// applyVulnSearch 做漏洞跨列自由文本模糊匹配（同一 term）。plugin≈nuclei
+// template-id≈CVE，覆盖 CVE 检索；host 列为 Feature 新增的主机过滤维度。
+// 用显式括号把 OR 组聚合，与后续 AND 过滤正确分组。
+func applyVulnSearch(query *gorm.DB, search string) *gorm.DB {
+	term := "%" + strings.TrimSpace(search) + "%"
+	return query.Where(
+		"(target LIKE ? OR plugin LIKE ? OR description LIKE ? OR host LIKE ?)",
+		term, term, term, term,
+	)
+}
+
+// applyAssetSearch 做资产跨列自由文本模糊匹配（同一 term）：目标/URL/标题/服务。
+// 单表查询，列名无歧义，无需限定表前缀。括号聚合 OR 组，与后续 AND 过滤正确分组。
+func applyAssetSearch(query *gorm.DB, search string) *gorm.DB {
+	term := "%" + strings.TrimSpace(search) + "%"
+	return query.Where(
+		"(target LIKE ? OR url LIKE ? OR title LIKE ? OR service LIKE ?)",
+		term, term, term, term,
+	)
+}
+
+// parseCSVPorts 把逗号分隔的端口串解析成 int 切片，忽略空项与非法项。
+// port 为整数列，单独解析为 int 绑定，避免 int vs text 绑定类型问题。
+func parseCSVPorts(raw string) []int {
+	var ports []int
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if pv, err := strconv.Atoi(part); err == nil && pv >= 0 && pv <= 65535 {
+			ports = append(ports, pv)
+		}
+	}
+	return ports
+}
+
+// applyCSVResultFilter 按列做逗号分隔多值过滤。raw 形如 "a,b,!c"：普通项为包含
+// （IN），"!" 前缀项为排除（<>）。lower=true 时对列与取值套 LOWER()，用于大小写
+// 不敏感的枚举列（severity/status/ai_status）；插件名等标识列传 false 保持精确匹配。
+// 漏洞列表服务端分页，必须由数据库过滤，避免客户端只对当前页过滤导致总数/分页错乱。
+// column 只能由调用点硬编码传入，不得取自用户输入，无注入面。
+func applyCSVResultFilter(query *gorm.DB, column, raw string, lower bool) *gorm.DB {
+	var include, exclude []string
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.HasPrefix(part, "!") {
+			if negated := strings.TrimSpace(strings.TrimPrefix(part, "!")); negated != "" {
+				exclude = append(exclude, negated)
+			}
+			continue
+		}
+		include = append(include, part)
+	}
+	col := column
+	if lower {
+		col = "LOWER(" + column + ")"
+		for i := range include {
+			include[i] = strings.ToLower(include[i])
+		}
+		for i := range exclude {
+			exclude[i] = strings.ToLower(exclude[i])
+		}
+	}
+	if len(include) > 0 {
+		query = query.Where(col+" IN ?", include)
+	}
+	for _, value := range exclude {
+		query = query.Where(col+" <> ?", value)
+	}
+	return query
+}
+
+// applyAssetFingerprintFilter 按指纹产品名过滤资产。raw 形如 "Apache,!Nginx"：
+// 普通项为「资产关联了这些产品」，"!" 前缀项为「排除关联了这些产品的资产」。
+// 资产↔指纹的权威关联在 Go 端按 endpointIdentity(host|port)+key 扩展计算
+// （attachAssetFingerprints），无法纯 SQL 复刻；此处用子查询做直连匹配
+// （assets.target/url = fingerprint_hits.target），覆盖标准 web 关联，
+// 跨主机 retarget 别名（CDN/RealIP 交叉引用）可能漏——作为收窄过滤可接受。
+// 子查询套 tenant+project+task 三层作用域，不越权；值走 ? 绑定，无注入面。
+// 外表列必须限定 assets. 前缀，避免与子查询里的 target 列歧义。
+func applyAssetFingerprintFilter(c *gin.Context, query *gorm.DB, raw string) *gorm.DB {
+	var include, exclude []string
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.HasPrefix(part, "!") {
+			if negated := strings.TrimSpace(strings.TrimPrefix(part, "!")); negated != "" {
+				exclude = append(exclude, negated)
+			}
+			continue
+		}
+		include = append(include, part)
+	}
+	if len(include) == 0 && len(exclude) == 0 {
+		return query
+	}
+	subquery := func(values []string) *gorm.DB {
+		fp := db.DB.Model(&db.FingerprintHit{}).Select("target").Where("tenant_id = ?", currentTenantID(c))
+		fp, _ = applyProjectScope(c, fp, "project_id")
+		if taskID := strings.TrimSpace(c.Query("task_id")); taskID != "" {
+			fp = applyTaskResultScope(c, fp, taskID, reportResultFingerprint)
+		}
+		return fp.Where("product_name IN ?", values)
+	}
+	if len(include) > 0 {
+		// 每个占位符用独立子查询实例，避免同一 *gorm.DB 复用的共享状态问题。
+		query = query.Where("assets.target IN (?) OR assets.url IN (?)", subquery(include), subquery(include))
+	}
+	for _, value := range exclude {
+		query = query.Where("assets.target NOT IN (?) AND assets.url NOT IN (?)", subquery([]string{value}), subquery([]string{value}))
+	}
+	return query
 }
 
 // getVuln 返回单条漏洞全量字段（含 Request/Response 证据包），供结果详情查询。
@@ -601,6 +734,124 @@ func getVuln(c *gin.Context) {
 	c.JSON(http.StatusOK, vuln)
 }
 
+// getVulnFacets 返回漏洞列表过滤维度（插件/状态/AI 研判）的 distinct 值与计数，
+// 供前端过滤下拉填充选项。作用域与 getVulns 一致（租户 + 项目 + 任务 + 搜索
+// + severity 视图），任务取自路径 :id，保证选项与列表数据对齐；空值不计入选项。
+func getVulnFacets(c *gin.Context) {
+	tenantID := currentTenantID(c)
+	base := func() *gorm.DB {
+		query := db.DB.Model(&db.Vulnerability{}).Where("tenant_id = ?", tenantID)
+		query, _ = applyProjectScope(c, query, "project_id")
+		query = applyTaskResultScope(c, query, c.Param("id"), reportResultVulnerability)
+		if search := strings.TrimSpace(c.Query("search")); search != "" {
+			query = applyVulnSearch(query, search)
+		}
+		return applyCSVResultFilter(query, "severity", c.Query("severity"), true)
+	}
+	type facetItem struct {
+		Value string `json:"value"`
+		Count int64  `json:"count"`
+	}
+	load := func(column string) []facetItem {
+		// 初始化为非空切片，保证空结果序列化为 [] 而非 null，
+		// 前端 .map 渲染选项不会因 null 抛 TypeError。
+		items := []facetItem{}
+		err := base().
+			Select(column + " AS value, COUNT(*) AS count").
+			Where(column + " <> ''").
+			Group(column).
+			Order("count DESC").
+			Scan(&items).Error
+		if err != nil {
+			log.Printf("[Results] vuln facets %s failed: %v", column, err)
+			return []facetItem{}
+		}
+		return items
+	}
+	// port 为整数列，不能套用 "<> ''" 文本谓词，单独按 port>0 分组计数。
+	loadPorts := func() []facetItem {
+		var rows []struct {
+			Value int   `gorm:"column:value"`
+			Count int64 `gorm:"column:count"`
+		}
+		if err := base().
+			Select("port AS value, COUNT(*) AS count").
+			Where("port > 0").
+			Group("port").
+			Order("count DESC").
+			Scan(&rows).Error; err != nil {
+			log.Printf("[Results] vuln facets port failed: %v", err)
+			return []facetItem{}
+		}
+		items := make([]facetItem, 0, len(rows))
+		for _, r := range rows {
+			items = append(items, facetItem{Value: strconv.Itoa(r.Value), Count: r.Count})
+		}
+		return items
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"plugins":     load("plugin"),
+		"statuses":    load("status"),
+		"ai_statuses": load("ai_status"),
+		"hosts":       load("host"),
+		"ports":       loadPorts(),
+	})
+}
+
+// getAssetFacets 返回资产列表过滤维度（服务/指纹产品）的 distinct 值与计数，
+// 供前端过滤下拉填充选项。作用域与 getAssets 对齐：租户 + 项目 + 任务(:id)
+// + 跨列搜索 + kind 视图（kind 是资产的「视图」开关，对应漏洞的 severity 视图）。
+// 指纹选项按 tenant+project+task 取全集，不随其它维度选择收缩（与漏洞 facets
+// 口径一致）。空值初始化为 []，避免前端 .map 对 null 抛 TypeError。
+func getAssetFacets(c *gin.Context) {
+	tenantID := currentTenantID(c)
+	type facetItem struct {
+		Value string `json:"value"`
+		Count int64  `json:"count"`
+	}
+	assetBase := func() *gorm.DB {
+		query := db.DB.Model(&db.Asset{}).Where("tenant_id = ?", tenantID)
+		query, _ = applyProjectScope(c, query, "project_id")
+		query = applyTaskResultScope(c, query, c.Param("id"), reportResultAsset)
+		if search := strings.TrimSpace(c.Query("search")); search != "" {
+			query = applyAssetSearch(query, search)
+		}
+		return query
+	}
+	kind := strings.TrimSpace(c.Query("kind"))
+	assetQuery, kindErr := applyAssetKindFilter(assetBase(), kind)
+	if kindErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": errUnknownAssetKind.Error()})
+		return
+	}
+	services := []facetItem{}
+	if err := withoutQueryOrder(assetQuery).
+		Select("service AS value, COUNT(*) AS count").
+		Where("service <> ''").
+		Group("service").
+		Order("count DESC").
+		Scan(&services).Error; err != nil {
+		log.Printf("[Results] asset facets service failed: %v", err)
+		services = []facetItem{}
+	}
+	fp := db.DB.Model(&db.FingerprintHit{}).Where("tenant_id = ?", tenantID)
+	fp, _ = applyProjectScope(c, fp, "project_id")
+	fp = applyTaskResultScope(c, fp, c.Param("id"), reportResultFingerprint)
+	fingerprints := []facetItem{}
+	if err := withoutQueryOrder(fp).
+		Select("product_name AS value, COUNT(*) AS count").
+		Group("product_name").
+		Order("count DESC").
+		Scan(&fingerprints).Error; err != nil {
+		log.Printf("[Results] asset facets fingerprint failed: %v", err)
+		fingerprints = []facetItem{}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"services":     services,
+		"fingerprints": fingerprints,
+	})
+}
+
 func getAssets(c *gin.Context) {
 	var assets []db.Asset
 	tenantID := currentTenantID(c)
@@ -610,8 +861,11 @@ func getAssets(c *gin.Context) {
 		query = applyTaskResultScope(c, query, taskID, reportResultAsset)
 	}
 	if search := strings.TrimSpace(c.Query("search")); search != "" {
-		query = query.Where("target LIKE ?", "%"+search+"%")
+		query = applyAssetSearch(query, search)
 	}
+	query = applyCSVResultFilter(query, "service", c.Query("service"), false)
+	query = applyCSVResultFilter(query, "title", c.Query("title"), false)
+	query = applyAssetFingerprintFilter(c, query, c.Query("fingerprint"))
 	stats, err := collectAssetResultStats(query)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
