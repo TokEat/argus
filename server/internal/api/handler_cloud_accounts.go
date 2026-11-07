@@ -297,13 +297,35 @@ func (h *CloudHandler) deleteCloudAccount(c *gin.Context) {
 	}
 
 	var boundPolicies int64
-	h.DB.
+	if err := h.DB.
 		Model(&db.CloudScalingPolicy{}).
 		Where("cloud_account_id = ? AND tenant_id = ?", id, tenantID).
-		Count(&boundPolicies)
+		Count(&boundPolicies).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check cloud account policies"})
+		return
+	}
 	if boundPolicies > 0 {
+		// Only return the fields needed to locate dependencies, after manage access
+		// has been checked. Disabled policies still reference the credential.
+		policies := make([]struct {
+			ID      string `json:"id"`
+			Name    string `json:"name"`
+			Enabled bool   `json:"enabled"`
+		}, 0)
+		if err := h.DB.Model(&db.CloudScalingPolicy{}).
+			Select("id", "name", "enabled").
+			Where("cloud_account_id = ? AND tenant_id = ?", id, tenantID).
+			Order("name ASC, id ASC").Limit(20).Find(&policies).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load cloud account policies"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("Cloud account still has %d scaling policy/policies; delete them before deletion", boundPolicies),
+			"error":              fmt.Sprintf("Cloud account still has %d scaling policy/policies; delete them before deletion", boundPolicies),
+			"code":               "cloud_account_has_policies",
+			"cloud_account_id":   account.ID,
+			"policy_count":       boundPolicies,
+			"policies":           policies,
+			"policies_truncated": boundPolicies > int64(len(policies)),
 		})
 		return
 	}

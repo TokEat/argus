@@ -10,6 +10,7 @@ import {
     updateCloudAccountBindings,
 } from '../../services/api';
 import { extractErrorMsg } from './utils';
+import { getCloudAccountPolicyConflict } from './cloudAccountDeletion';
 
 interface UseCloudAccountsOptions {
     isAdmin: boolean;
@@ -26,6 +27,7 @@ export const useCloudAccounts = ({ isAdmin, onDashboardRefresh }: UseCloudAccoun
     const [bindingAccount, setBindingAccount] = useState<API.CloudAccount | null>(null);
     const [bindingUserIds, setBindingUserIds] = useState<string[]>([]);
     const [bindingSaving, setBindingSaving] = useState(false);
+    const [deletionConflict, setDeletionConflict] = useState<API.CloudAccountPolicyConflict | null>(null);
     const [form] = Form.useForm();
 
     const canManage = useCallback((account?: API.CloudAccount | null) => {
@@ -115,12 +117,18 @@ export const useCloudAccounts = ({ isAdmin, onDashboardRefresh }: UseCloudAccoun
     }, [bindingAccount, bindingUserIds, fetchAccounts]);
 
     const deleteAccount = useCallback(async (id: string) => {
+        setDeletionConflict(null);
         try {
             await deleteCloudAccount(id);
             message.success('凭证已删除');
             await fetchAccounts();
             onDashboardRefresh();
         } catch (err) {
+            const conflict = getCloudAccountPolicyConflict(err, id);
+            if (conflict) {
+                setDeletionConflict(conflict);
+                return;
+            }
             const messageText = extractErrorMsg(err);
             if (messageText) message.error(messageText);
         }
@@ -155,6 +163,8 @@ export const useCloudAccounts = ({ isAdmin, onDashboardRefresh }: UseCloudAccoun
         bindingUserIds,
         setBindingUserIds,
         bindingSaving,
+        deletionConflict,
+        setDeletionConflict,
         form,
         canManage,
         fetchAccounts,

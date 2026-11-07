@@ -1,4 +1,18 @@
 declare namespace API {
+  interface CloudAccountPolicyDependency {
+    id: string;
+    name: string;
+    enabled: boolean;
+  }
+
+  interface CloudAccountPolicyConflict {
+    code: 'cloud_account_has_policies';
+    cloud_account_id: string;
+    policy_count: number;
+    policies: CloudAccountPolicyDependency[];
+    policies_truncated: boolean;
+  }
+
   interface CloudRecommendationItem {
     region: string;
     region_name?: string;

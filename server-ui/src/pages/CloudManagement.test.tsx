@@ -1,8 +1,9 @@
-import { App, message } from 'antd';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { App, ConfigProvider, message } from 'antd';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import CloudManagement from './CloudManagement';
+import { APIRequestError } from '../services/request';
 
 const apiMocks = vi.hoisted(() => ({
     listCloudInstances: vi.fn(),
@@ -119,10 +120,29 @@ const policy = (): API.CloudScalingPolicy => ({
 });
 
 const renderPage = () => render(
-    <App>
+    <ConfigProvider theme={{ token: { motion: false } }}><App>
         <CloudManagement />
-    </App>,
+    </App></ConfigProvider>,
 );
+
+const blockedDeletion = (overrides: Partial<API.CloudAccountPolicyConflict> = {}) => new APIRequestError('still referenced', {
+    code: 'cloud_account_has_policies',
+    cloud_account_id: 'account-1',
+    policy_count: 2,
+    policies: [
+        { id: 'enabled-policy', name: 'Enabled dependency', enabled: true },
+        { id: 'disabled-policy', name: 'Disabled dependency', enabled: false },
+    ],
+    policies_truncated: false,
+    ...overrides,
+});
+
+const confirmCredentialDeletion = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole('tab', { name: /API 凭证管理/ }));
+    await user.click(await screen.findByRole('button', { name: '删除' }));
+    const confirmation = await screen.findByRole('tooltip');
+    await user.click(within(confirmation).getByRole('button', { name: 'OK' }));
+};
 
 describe('CloudManagement', () => {
     beforeEach(() => {
@@ -147,6 +167,8 @@ describe('CloudManagement', () => {
         apiMocks.listOSSFiles.mockResolvedValue({ files: [] });
         apiMocks.toggleCloudPolicy.mockResolvedValue({ status: 'ok' });
         apiMocks.deleteCloudInstance.mockResolvedValue({ status: 'ok' });
+        apiMocks.deleteCloudAccount.mockReset().mockResolvedValue({ status: 'ok' });
+        apiMocks.deleteCloudPolicy.mockReset().mockResolvedValue({ status: 'ok' });
     });
 
     it('loads each tab through its existing server request boundary', async () => {
@@ -219,5 +241,130 @@ describe('CloudManagement', () => {
         await user.click(await screen.findByRole('button', { name: /连通性/ }));
 
         await waitFor(() => expect(errorSpy).toHaveBeenCalledWith('连通性测试失败: provider unavailable'));
+    });
+
+    it('explains enabled and disabled policy dependencies without mutating them', async () => {
+        apiMocks.deleteCloudAccount.mockRejectedValue(blockedDeletion());
+        const user = userEvent.setup();
+        renderPage();
+        await confirmCredentialDeletion(user);
+        const dialog = await screen.findByRole('dialog');
+        expect(within(dialog).getByText('凭证删除受阻')).toBeInTheDocument();
+        expect(within(dialog).getByText(/仍关联 2 条伸缩策略/)).toBeInTheDocument();
+        expect(within(dialog).getByText('Enabled dependency')).toBeInTheDocument();
+        expect(within(dialog).getByText('Disabled dependency')).toBeInTheDocument();
+        expect(within(dialog).getByText('已启用')).toBeInTheDocument();
+        expect(within(dialog).getByText('已停用')).toBeInTheDocument();
+        expect(within(dialog).getByText(/停用策略不等于解除凭证关联/)).toBeInTheDocument();
+        await user.click(within(dialog).getByRole('button', { name: /关\s*闭/ }));
+        expect(apiMocks.deleteCloudPolicy).not.toHaveBeenCalled();
+        expect(apiMocks.toggleCloudPolicy).not.toHaveBeenCalled();
+        expect(apiMocks.deleteCloudInstance).not.toHaveBeenCalled();
+        expect(apiMocks.deleteCloudAccount).toHaveBeenCalledTimes(1);
+    });
+
+    it('refreshes dependencies and selects the requested policy instead of the first policy', async () => {
+        apiMocks.deleteCloudAccount.mockRejectedValue(blockedDeletion());
+        const refreshedPolicies = [
+            { ...policy(), cloud_account_id: 'another-account', name: 'Unrelated first policy' },
+            { ...policy(), id: 'disabled-policy', name: 'Disabled dependency', enabled: false },
+        ];
+        let finishRefresh!: (policies: API.CloudScalingPolicy[]) => void;
+        const pendingRefresh = new Promise<API.CloudScalingPolicy[]>(resolve => { finishRefresh = resolve; });
+        apiMocks.listCloudPolicies.mockImplementationOnce(() => pendingRefresh).mockResolvedValue(refreshedPolicies);
+        const user = userEvent.setup();
+        renderPage();
+        await confirmCredentialDeletion(user);
+        const dialog = await screen.findByRole('dialog');
+        await user.click(within(dialog).getByRole('button', { name: '查看策略 Disabled dependency' }));
+        expect(screen.getByRole('tab', { name: /API 凭证管理/ })).toHaveAttribute('aria-selected', 'true');
+        expect(within(dialog).getByRole('button', { name: /关\s*闭/ })).toBeDisabled();
+        expect(within(dialog).getByRole('button', { name: '查看策略页' })).toBeDisabled();
+        expect(within(dialog).getByRole('button', { name: '查看策略 Enabled dependency' })).toBeDisabled();
+        await act(async () => { finishRefresh(refreshedPolicies); });
+
+        await waitFor(() => expect(screen.getByRole('tab', { name: /AutoScaler 策略/ })).toHaveAttribute('aria-selected', 'true'));
+        await waitFor(() => expect(screen.getByLabelText('策略名称')).toHaveValue('Disabled dependency'));
+        expect(screen.getByRole('switch')).not.toBeChecked();
+        expect(apiMocks.listCloudPolicies).toHaveBeenCalled();
+        expect(apiMocks.updateCloudPolicy).not.toHaveBeenCalled();
+        expect(apiMocks.deleteCloudPolicy).not.toHaveBeenCalled();
+    });
+
+    it('keeps the dependency dialog usable when refreshing policies fails', async () => {
+        apiMocks.deleteCloudAccount.mockRejectedValue(blockedDeletion());
+        apiMocks.listCloudPolicies.mockRejectedValue(new Error('service unavailable'));
+        const errorSpy = vi.spyOn(message, 'error').mockImplementation(() => undefined as never);
+        const warning = vi.spyOn(message, 'warning').mockImplementation(() => undefined as never);
+        const user = userEvent.setup();
+        renderPage();
+        await confirmCredentialDeletion(user);
+        const dialog = await screen.findByRole('dialog');
+        await user.click(within(dialog).getByRole('button', { name: '查看策略 Disabled dependency' }));
+        await waitFor(() => expect(errorSpy).toHaveBeenCalledWith('读取关联策略失败：service unavailable'));
+        expect(warning).not.toHaveBeenCalled();
+        expect(screen.getByRole('tab', { name: /API 凭证管理/ })).toHaveAttribute('aria-selected', 'true');
+        expect(within(dialog).getByRole('button', { name: /关\s*闭/ })).toBeEnabled();
+        expect(within(dialog).getByRole('button', { name: '查看策略 Disabled dependency' })).toBeEnabled();
+        expect(apiMocks.deleteCloudPolicy).not.toHaveBeenCalled();
+        warning.mockRestore();
+        errorSpy.mockRestore();
+    });
+
+    it.each(['removed', 'rebound'])('does not navigate to a %s dependency', async (change) => {
+        apiMocks.deleteCloudAccount.mockRejectedValue(blockedDeletion());
+        apiMocks.listCloudPolicies.mockResolvedValue(change === 'removed' ? [] : [
+            { ...policy(), id: 'disabled-policy', cloud_account_id: 'another-account' },
+        ]);
+        const warning = vi.spyOn(message, 'warning').mockImplementation(() => undefined as never);
+        const user = userEvent.setup();
+        renderPage();
+        await confirmCredentialDeletion(user);
+        const dialog = await screen.findByRole('dialog');
+        await user.click(within(dialog).getByRole('button', { name: '查看策略 Disabled dependency' }));
+        await waitFor(() => expect(warning).toHaveBeenCalledWith('关联策略已变更或不可访问，请关闭提示后重新尝试删除。'));
+        expect(screen.getByRole('tab', { name: /API 凭证管理/ })).toHaveAttribute('aria-selected', 'true');
+        expect(dialog).toBeInTheDocument();
+        expect(apiMocks.deleteCloudPolicy).not.toHaveBeenCalled();
+        warning.mockRestore();
+    });
+
+    it('allows a fresh explicit deletion attempt after dependencies have been handled', async () => {
+        apiMocks.deleteCloudAccount.mockRejectedValueOnce(blockedDeletion()).mockResolvedValue({ status: 'ok' });
+        const user = userEvent.setup();
+        renderPage();
+        await confirmCredentialDeletion(user);
+        const dialog = await screen.findByRole('dialog');
+        await user.click(within(dialog).getByRole('button', { name: /关\s*闭/ }));
+        apiMocks.listCloudAccounts.mockResolvedValue([]);
+        await confirmCredentialDeletion(user);
+        await waitFor(() => expect(apiMocks.deleteCloudAccount).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(screen.queryByText('Aliyun production')).not.toBeInTheDocument());
+        expect(apiMocks.deleteCloudPolicy).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        new APIRequestError('legacy error', { error: 'legacy error' }),
+        blockedDeletion({ cloud_account_id: 'another-account' }),
+    ])('falls back to the existing message for unrecognized or mismatched errors', async (error) => {
+        apiMocks.deleteCloudAccount.mockRejectedValue(error);
+        const errorSpy = vi.spyOn(message, 'error').mockImplementation(() => undefined as never);
+        const user = userEvent.setup();
+        renderPage();
+        await confirmCredentialDeletion(user);
+        await waitFor(() => expect(errorSpy).toHaveBeenCalledWith(error.message));
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('labels partial dependency details and provides the policy page entry', async () => {
+        apiMocks.deleteCloudAccount.mockRejectedValue(blockedDeletion({ policy_count: 25, policies_truncated: true }));
+        const user = userEvent.setup();
+        renderPage();
+        await confirmCredentialDeletion(user);
+        const dialog = await screen.findByRole('dialog');
+        expect(within(dialog).getByText(/仍关联 25 条伸缩策略/)).toBeInTheDocument();
+        expect(within(dialog).getByText(/当前仅显示前 2 条/)).toBeInTheDocument();
+        await user.click(within(dialog).getByRole('button', { name: '查看策略页' }));
+        expect(screen.getByRole('tab', { name: /AutoScaler 策略/ })).toHaveAttribute('aria-selected', 'true');
     });
 });

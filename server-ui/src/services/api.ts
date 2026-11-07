@@ -1,5 +1,5 @@
 import axios from 'axios';
-import request from './request';
+import request, { type RequestConfig } from './request';
 import { notifyProjectsChanged } from '../utils/projectSelection';
 
 // ===========================
@@ -1106,7 +1106,7 @@ export async function updateCloudAccountBindings(id: string, userIds: string[]):
 }
 
 export async function deleteCloudAccount(id: string): Promise<API.MessageResponse> {
-    return request.delete(`/cloud/accounts/${id}`);
+    return request.delete(`/cloud/accounts/${id}`, { preserveErrorData: true } as RequestConfig);
 }
 
 export async function testCloudAccount(id: string): Promise<API.MessageResponse> {

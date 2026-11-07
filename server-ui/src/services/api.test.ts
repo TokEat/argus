@@ -27,13 +27,48 @@ import {
     connectWebSocket,
     createProject,
     createTask,
+    deleteCloudAccount,
     deleteProject,
     executeTaskRiskValidation,
     retryTask,
     retryTaskBatch,
     updateProject,
 } from './api';
+import { APIRequestError } from './request';
 import { PROJECTS_CHANGED_EVENT, projectChangePreference } from '../utils/projectSelection';
+
+const rejectResponse = responseInterceptors.use.mock.calls[0][1];
+
+describe('structured cloud deletion errors', () => {
+    it('opts in only for cloud account deletion', async () => {
+        deleteMock.mockResolvedValue({ status: 'ok' });
+        await deleteCloudAccount('account-1');
+        expect(deleteMock).toHaveBeenLastCalledWith('/cloud/accounts/account-1', { preserveErrorData: true });
+        await deleteProject('project-1');
+        expect(deleteMock).toHaveBeenLastCalledWith('/projects/project-1');
+    });
+
+    it('keeps structured response data without copying credentials or request configuration', async () => {
+        const data = { error: 'still referenced', code: 'cloud_account_has_policies', policies: [] };
+        const result = await rejectResponse({
+            config: { preserveErrorData: true, headers: { Authorization: 'Bearer test-only' } },
+            response: { status: 400, data },
+        }).catch((error: unknown) => error);
+        expect(result).toBeInstanceOf(APIRequestError);
+        expect(result.message).toBe('still referenced');
+        expect(result.responseData).toEqual(data);
+        expect(JSON.stringify(result)).not.toContain('test-only');
+    });
+
+    it('preserves existing string errors for requests that did not opt in', async () => {
+        await expect(rejectResponse({ config: {}, response: { status: 400, data: { error: 'original error' } } })).rejects.toBe('original error');
+    });
+
+    it('retains readable messages for legacy and network failures', async () => {
+        await expect(rejectResponse({ config: { preserveErrorData: true }, response: { status: 400, data: ' legacy error ' } })).rejects.toThrow('legacy error');
+        await expect(rejectResponse({ config: { preserveErrorData: true }, message: 'Network Error' })).rejects.toThrow('Network Error');
+    });
+});
 
 describe('project mutation API', () => {
     beforeEach(() => {

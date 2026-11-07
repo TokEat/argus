@@ -1,6 +1,20 @@
 import axios from 'axios';
 import type { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 
+export interface RequestConfig extends AxiosRequestConfig {
+    preserveErrorData?: boolean;
+}
+
+export class APIRequestError extends Error {
+    readonly responseData: unknown;
+
+    constructor(message: string, responseData: unknown) {
+        super(message);
+        this.name = 'APIRequestError';
+        this.responseData = responseData;
+    }
+}
+
 const request: AxiosInstance = axios.create({
     baseURL: '/api/v1',
     timeout: 30000,
@@ -26,6 +40,9 @@ request.interceptors.response.use((response: AxiosResponse) => response.data, (e
     }
     const data = error.response?.data;
     const message = typeof data === 'string' ? data.trim() : data?.error || data?.message || error.message;
+    if ((error.config as RequestConfig | undefined)?.preserveErrorData) {
+        return Promise.reject(new APIRequestError(String(message || '请求失败'), data));
+    }
     return Promise.reject(message);
 });
 

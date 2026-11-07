@@ -1,6 +1,6 @@
 import { AppstoreOutlined, CloudOutlined, CloudUploadOutlined, DeleteOutlined, KeyOutlined, PlusOutlined, ReloadOutlined, SettingOutlined, WifiOutlined } from '@ant-design/icons';
 import { ProCard } from '@ant-design/pro-components';
-import { Button, Popconfirm, Space, Tabs, Tag, Typography } from 'antd';
+import { Button, message, Popconfirm, Space, Tabs, Tag, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import NetworkCanvas from '../components/NetworkCanvas';
 import { useAutoContext } from '../contexts/GlobalAIContext';
@@ -9,6 +9,7 @@ import { canAccessRole, getCurrentUserRole } from '../utils/auth';
 import { AddCloudAccountModal, CloudAccountBindingModal, CloudDiscoveryModal } from './cloud/CloudAccountDialogs';
 import { CloudOSSTestModal, CloudPermissionDrawer, CloudSetupResultModal } from './cloud/CloudAccountResultDialogs';
 import { CloudAccountsPanel } from './cloud/CloudAccountsPanel';
+import { CloudAccountDeleteBlockedModal } from './cloud/CloudAccountDeleteBlockedModal';
 import { CloudAgentUploadModal, CloudRegionSelectModal } from './cloud/CloudAgentDialogs';
 import { CloudAgentDistributionPanel } from './cloud/CloudAgentDistributionPanel';
 import { CloudInstanceCreateModal } from './cloud/CloudInstanceCreateModal';
@@ -19,12 +20,14 @@ import { useCloudDiscovery } from './cloud/useCloudDiscovery';
 import { useCloudInstances } from './cloud/useCloudInstances';
 import { useCloudOSS } from './cloud/useCloudOSS';
 import { useCloudPolicies } from './cloud/useCloudPolicies';
+import { extractErrorMsg } from './cloud/utils';
 
 const { Title } = Typography;
 
 const CloudManagement = () => {
     const [activeTab, setActiveTab] = useState('instances');
     const [dashboard, setDashboard] = useState<API.CloudDashboard | null>(null);
+    const [openingPolicyId, setOpeningPolicyId] = useState<string | null>(null);
     const isAdmin = useMemo(() => canAccessRole('admin', getCurrentUserRole()), []);
 
     const fetchDashboard = useCallback(async () => {
@@ -55,6 +58,26 @@ const CloudManagement = () => {
         onDashboardRefresh: fetchDashboard,
     });
     const ossState = useCloudOSS();
+    const openBlockingPolicy = async (policyId: string) => {
+        const conflict = accountState.deletionConflict;
+        if (!conflict) return;
+        setOpeningPolicyId(policyId);
+        try {
+            const policies = await policyState.fetchPolicies({ throwOnError: true });
+            const policy = policies.find(item => item.id === policyId && item.cloud_account_id === conflict.cloud_account_id);
+            if (!policy) {
+                message.warning('关联策略已变更或不可访问，请关闭提示后重新尝试删除。');
+                return;
+            }
+            policyState.selectPolicy(policy.id, policies);
+            accountState.setDeletionConflict(null);
+            setActiveTab('policy');
+        } catch (error) {
+            message.error(`读取关联策略失败：${extractErrorMsg(error) || '请稍后重试'}`);
+        } finally {
+            setOpeningPolicyId(null);
+        }
+    };
     const tabLifecycleRef = useRef({
         fetchDashboard,
         fetchInstances: instanceState.fetchInstances,
@@ -203,6 +226,15 @@ const CloudManagement = () => {
                     ]}
                 />
             </ProCard>
+
+            <CloudAccountDeleteBlockedModal
+                conflict={accountState.deletionConflict}
+                accountName={accountState.accounts.find(account => account.id === accountState.deletionConflict?.cloud_account_id)?.name}
+                openingPolicyId={openingPolicyId}
+                onClose={() => accountState.setDeletionConflict(null)}
+                onOpenPolicy={openBlockingPolicy}
+                onOpenPolicies={() => { accountState.setDeletionConflict(null); setActiveTab('policy'); }}
+            />
 
             <CloudInstanceCreateModal
                 open={instanceState.modalOpen}

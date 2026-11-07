@@ -36,7 +36,7 @@ export const useCloudPolicies = ({ active, accounts, onDashboardRefresh }: UseCl
         [defaultFormValues],
     );
 
-    const fetchPolicies = useCallback(async () => {
+    const fetchPolicies = useCallback(async (options?: { throwOnError?: boolean }) => {
         setLoading(true);
         setError(null);
         try {
@@ -58,6 +58,7 @@ export const useCloudPolicies = ({ active, accounts, onDashboardRefresh }: UseCl
             const messageText = extractErrorMsg(err) || 'Failed to fetch policies';
             setError(messageText);
             console.error('Failed to fetch policies:', err);
+            if (options?.throwOnError) throw err;
             return [];
         } finally {
             setLoading(false);
@@ -71,14 +72,14 @@ export const useCloudPolicies = ({ active, accounts, onDashboardRefresh }: UseCl
         return () => window.cancelAnimationFrame(frame);
     }, [active, currentPolicyId, form, policies, valuesFor]);
 
-    const selectPolicy = useCallback((policyId: string | null) => {
+    const selectPolicy = useCallback((policyId: string | null, availablePolicies = policies) => {
         if (!policyId) {
             setCurrentPolicyId(null);
             form.setFieldsValue(valuesFor(null));
             setUserDataScript(DEFAULT_CLOUD_INIT_TEMPLATE);
             return;
         }
-        const selected = policies.find(policy => policy.id === policyId) || null;
+        const selected = availablePolicies.find(policy => policy.id === policyId) || null;
         setCurrentPolicyId(policyId);
         form.setFieldsValue(valuesFor(selected));
         setUserDataScript(selected?.user_data_template || DEFAULT_CLOUD_INIT_TEMPLATE);
