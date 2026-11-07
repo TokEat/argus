@@ -16,6 +16,11 @@ import (
 var legacyToken = strings.Repeat("d", 4)
 var machineKeyLinePattern = regexp.MustCompile(`^[0-9A-Fa-f]+,[0-9A-Fa-f]+$`)
 
+// uuidPattern and longHexPattern strip hex noise so an accidental legacy
+// token inside digests / vulnerability UUIDs is not treated as branding.
+var uuidPattern = regexp.MustCompile(`(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
+var longHexPattern = regexp.MustCompile(`(?i)[0-9a-f]{8,}`)
+
 type finding struct {
 	Path string
 	Line int
@@ -67,6 +72,10 @@ func scan(root string) ([]finding, int, error) {
 			if !strings.Contains(strings.ToLower(line), legacyToken) {
 				continue
 			}
+			if legacyOnlyInHexOrUUID(line) {
+				allowed++
+				continue
+			}
 			if allowedLegacyEvidence(rel, line) {
 				allowed++
 				continue
@@ -101,6 +110,15 @@ func trackedFiles(root string) ([]string, error) {
 		files = append(files, filepath.ToSlash(string(part)))
 	}
 	return files, nil
+}
+
+// legacyOnlyInHexOrUUID reports whether every legacy-token occurrence on the
+// line sits inside a UUID or a continuous hex run of length >= 8. Standalone
+// branding tokens (length 4) are not hex runs and still fail the check.
+func legacyOnlyInHexOrUUID(line string) bool {
+	stripped := uuidPattern.ReplaceAllString(strings.ToLower(line), "")
+	stripped = longHexPattern.ReplaceAllString(stripped, "")
+	return !strings.Contains(stripped, legacyToken)
 }
 
 func allowedLegacyEvidence(path, line string) bool {

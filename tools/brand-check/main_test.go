@@ -43,3 +43,27 @@ func TestAllowedLegacyEvidenceIsNarrow(t *testing.T) {
 		})
 	}
 }
+
+func TestLegacyOnlyInHexOrUUID(t *testing.T) {
+	legacy := strings.Repeat("d", 4)
+	tests := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{"digest hex comment", "# digest: 4b0a00483046022100f389769f114f5af6928dc61169dbedbf9f91fe0ca6f7ef" + legacy + "75964cb38986400221009c1e5f78c80d3a8277e0553855eab8d5afd6069520d4c4f30d1e564e91e8012f:922c64590222798bb761d5b6d8e72950", true},
+		{"wpscan uuid with embedded token", "- https://wpscan.com/vulnerability/cb232354-f74d-48bb-b437-7b" + legacy + "1df42a", true},
+		{"wpscan uuid segment equals token", "- https://wpscan.com/vulnerability/63270b61-" + legacy + "-4cc0-a091-a04cb4f682ec/", true},
+		{"standalone product brand", "product: " + legacy, false},
+		{"command brand", "run " + legacy + " --help", false},
+		{"historical jsp payload", "GET /upload/" + legacy + ".jsp", false},
+		{"brand beside hex still fails", "product: " + legacy + " hash=abcdef0123456789", false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := legacyOnlyInHexOrUUID(test.line); got != test.want {
+				t.Fatalf("legacyOnlyInHexOrUUID(%q) = %t, want %t", test.line, got, test.want)
+			}
+		})
+	}
+}

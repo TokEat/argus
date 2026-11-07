@@ -80,7 +80,7 @@ func SeedArsenalFromSQLite(dbPath string) error {
 const (
 	legacyShiroPOCMD5      = "7774baad68d35d51457514f81de51b53"
 	legacyShiroWorkflowMD5 = "02854e9cb1e8bcceb2779e6bf7507e1a"
-	activeShiroWorkflowMD5 = "93477c20f770d573528d7df5085f239e"
+	activeShiroWorkflowMD5 = "b30dcca23a07936618ff8afb82f135da"
 	previousShiroProbeMD5  = "b17c2311ae032f502a4fc258129e50a4"
 	activeShiroProbeMD5    = "72e331ff053fc10956c73804502c6994"
 )

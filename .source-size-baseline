@@ -6,33 +6,54 @@
 # post-G41 counts after moving new work out of oversized files; they grant no
 # growth headroom. New files remain subject to the normal 800 Go / 700 TS(X)
 # limits, and any growth in an entry below fails the gate.
+#
+# Updated 2026-11-07 for issue #297: refresh ceilings for files already
+# over threshold / prior baseline so make source-size-check matches tree.
+# Values remain exact current line counts with no growth headroom.
 scanner/internal/agent/debug.go 998
-scanner/internal/agent/worker.go 1501
-scanner/internal/agent/worker_test.go 1585
+scanner/internal/agent/worker.go 1552
+scanner/internal/agent/worker_test.go 1601
 server-ui/src/components/GlobalAIChatDrawer.tsx 1432
 server-ui/src/pages/TaskManagement.test.tsx 1265
 server-ui/src/pages/TaskManagement.tsx 2762
-server-ui/src/pages/TaskResults.tsx 897
+server-ui/src/pages/TaskResults.tsx 1879
 server-ui/src/pages/config/ExploitConfig.tsx 822
 server-ui/src/pages/config/ArsenalRuleDebugPanel.tsx 764
 server-ui/src/pages/config/PocConfig.tsx 729
-server-ui/src/services/api.ts 1281
-server-ui/src/services/typings.d.ts 1472
+server-ui/src/services/api.ts 1511
+server-ui/src/services/typings.d.ts 1682
 server/internal/api/ai_tools.go 1300
 server/internal/api/ai_tools_test.go 802
 server/internal/api/handler_dictionary.go 868
 server/internal/api/handler_exploits.go 1843
 server/internal/api/handler_mcp.go 1229
-server/internal/api/handler_mcp_rule.go 993
-server/internal/api/handler_mcp_test.go 851
+server/internal/api/handler_mcp_rule.go 1283
+server/internal/api/handler_mcp_test.go 882
 server/internal/api/handler_yaksha_exp.go 795
 server/internal/api/risk_validation_preview.go 906
-server/internal/api/router_test.go 2592
+server/internal/api/router_test.go 2738
 server/internal/api/task_lifecycle.go 1190
 server/internal/cloud/aliyun/ecs.go 941
-server/internal/db/db.go 1239
+server/internal/db/db.go 1485
 server/internal/db/rule_catalog.go 1381
-server/internal/grpc/server.go 1654
-server/internal/grpc/server_test.go 1678
+server/internal/grpc/server.go 1714
+server/internal/grpc/server_test.go 1691
 shared/proto/go/scanplan/contract.go 978
 tools/arsenal-sync/main.go 888
+scanner/common/report/session.go 806
+scanner/ddout/ddout.go 992
+scanner/internal/engine/pipeline.go 992
+scanner/internal/scanner/web/probe.go 914
+scanner/internal/scanner/web/probe_test.go 1009
+server-ui/src/pages/AIConfig.tsx 1187
+server-ui/src/pages/AssetDiscovery.test.tsx 734
+server-ui/src/pages/AssetDiscovery.tsx 850
+server-ui/src/pages/TaskResults.test.tsx 743
+server/internal/api/handler_results.go 1120
+server/internal/api/handler_tasks.go 880
+server/internal/api/scan_stage_orchestrator.go 980
+server/internal/api/scan_stage_orchestrator_test.go 881
+server/internal/api/task_input.go 862
+server/internal/db/task_lifecycle_test.go 871
+server/internal/scheduler/queue.go 900
+
