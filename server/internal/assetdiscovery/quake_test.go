@@ -30,7 +30,11 @@ func TestQuakeClientSearchUsesSingleBoundedRequestAndNormalizesAssets(t *testing
 		if request.Query != `domain: "Example.com"` || request.Start != 0 || request.Size != 4 || request.Latest || !request.IgnoreCache {
 			t.Fatalf("unexpected Quake request: %+v", request)
 		}
-		for _, required := range []string{"ip", "port", "service.name", "service.http.host", "service.http.title", "service.http.http_load_url"} {
+		fields := []string{"ip", "port", "service.name", "service.http.host", "service.http.title"}
+		if len(request.Include) != len(fields) {
+			t.Fatalf("unexpected include fields: %v", request.Include)
+		}
+		for _, required := range fields {
 			found := false
 			for _, field := range request.Include {
 				if field == required {
@@ -83,6 +87,91 @@ func TestQuakeClientSearchUsesSingleBoundedRequestAndNormalizesAssets(t *testing
 		if strings.Contains(string(encoded), sensitive) {
 			t.Fatalf("result exposed request/provider value %q: %s", sensitive, encoded)
 		}
+	}
+}
+
+func TestQuakeClientSearchUsesSupportedFieldsWithoutOptionalURLs(t *testing.T) {
+	tests := []struct {
+		name string
+		row  string
+		want Asset
+	}{
+		{
+			name: "http domain",
+			row:  `{"ip":"192.0.2.1","port":8080,"service":{"name":"http","http":{"host":"Portal.Example.test:8080","title":"Portal"}}}`,
+			want: Asset{Target: "http://portal.example.test:8080", IP: "192.0.2.1", Port: 8080, Domain: "portal.example.test", Protocol: "http", Title: "Portal", Source: quakeProvider},
+		},
+		{
+			name: "https domain",
+			row:  `{"ip":"192.0.2.2","port":8443,"service":{"name":"http/ssl","http":{"host":"Secure.Example.test","title":"Secure"}}}`,
+			want: Asset{Target: "https://secure.example.test:8443", IP: "192.0.2.2", Port: 8443, Domain: "secure.example.test", Protocol: "https", Title: "Secure", Source: quakeProvider},
+		},
+		{
+			name: "http ipv4 without host",
+			row:  `{"ip":"192.0.2.3","port":80,"service":{"name":"http","http":{"title":"IP endpoint"}}}`,
+			want: Asset{Target: "http://192.0.2.3:80", IP: "192.0.2.3", Port: 80, Protocol: "http", Title: "IP endpoint", Source: quakeProvider},
+		},
+		{
+			name: "https ipv4 without host",
+			row:  `{"ip":"192.0.2.4","port":443,"service":{"name":"http/ssl"}}`,
+			want: Asset{Target: "https://192.0.2.4:443", IP: "192.0.2.4", Port: 443, Protocol: "https", Source: quakeProvider},
+		},
+		{
+			name: "https ipv6 without host",
+			row:  `{"ip":"2001:db8::1","port":8443,"service":{"name":"https"}}`,
+			want: Asset{Target: "https://[2001:db8::1]:8443", IP: "2001:db8::1", Port: 8443, Protocol: "https", Source: quakeProvider},
+		},
+		{
+			name: "non web service",
+			row:  `{"ip":"192.0.2.5","port":22,"service":{"name":"ssh"}}`,
+			want: Asset{Target: "192.0.2.5:22", IP: "192.0.2.5", Port: 22, Protocol: "ssh", Source: quakeProvider},
+		},
+		{
+			name: "restricted metadata",
+			row:  `{"ip":"192.0.2.6","port":3389,"service":{"name":"暂无权限","http":{"host":"暂无权限","title":"暂无权限"}}}`,
+			want: Asset{Target: "192.0.2.6:3389", IP: "192.0.2.6", Port: 3389, Source: quakeProvider},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				var request quakeRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Errorf("decode request: %v", err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				for _, field := range request.Include {
+					switch field {
+					case "ip", "port", "service.name", "service.http.host", "service.http.title":
+					default:
+						// Quake returns HTTP 200 with a rejection code for unsupported selectors.
+						_, _ = w.Write([]byte(`{"code":"q2001","message":"unsupported include field"}`))
+						return
+					}
+				}
+				// Every fixture omits http_load_url, as a restricted response can do.
+				_, _ = fmt.Fprintf(w, `{"code":0,"meta":{"pagination":{"total":1}},"data":[%s]}`, tt.row)
+			}))
+			defer server.Close()
+
+			client := NewQuakeClient(server.Client())
+			client.endpoint = server.URL + "/api/v3/search/quake_service"
+			result, err := client.Search(context.Background(), QuakeCredential{Token: "test-token"}, QuakeQuery{
+				Expression: "port:443", Limit: 1,
+			})
+			if err != nil {
+				t.Fatalf("Search with supported include fields: %v", err)
+			}
+			if requests.Load() != 1 || result.ProviderTotal != 1 || result.Truncated || result.SkippedRows != 0 {
+				t.Fatalf("unexpected accounting: requests=%d result=%#v", requests.Load(), result)
+			}
+			if len(result.Assets) != 1 || result.Assets[0] != tt.want {
+				t.Fatalf("assets = %#v, want %#v", result.Assets, tt.want)
+			}
+		})
 	}
 }
 

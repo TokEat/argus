@@ -133,7 +133,11 @@ Provider 查询、历史读取、导出、笔记本归档和分发预览都不�
 
 Server 已具备 FOFA、Hunter 与 Quake 三个相互独立的 Provider 核心和项目授权入口。Hunter 核心沿用统一规范资产结构，以租户隔离配置中的 API Key 和用户查询工作。聚合模式（不指定页）共享一次 30 秒总超时、最多 10 页/1000 条和 8 MiB 总响应预算；逐页模式每次只请求指定的一页（单页不超过 100 条、总页数不超过 10 页）。它只提取 IP、域名、端口、协议、标题、国家、城市、公司和状态码，不保存或返回 Hunter banner、剩余额度、原始查询、原始响应或 API Key。
 
-Quake 核心只执行一次最多 500 条的有界 POST，不再沿用旧 Scanner 的查询前固定等待和 `/user/info` VIP 探测。Token 仅放在 `X-QuakeToken` Header，结果字段显式收窄；高级字段不可用时回退为规范 `IP:Port`。单行最多处理 32 个 URL，最终资产数还受查询条数派生上限和 2000 条硬上限约束。
+Quake 核心只执行一次最多 500 条的有界 POST，不再沿用旧 Scanner 的查询前固定等待和 `/user/info` VIP 探测。Token 仅放在 `X-QuakeToken` Header，`include` 显式收窄为 `ip`、`port`、`service.name`、`service.http.host` 和 `service.http.title`。
+
+[Quake 官方使用说明](https://quake.360.net/quake/#/help?id=5e77423bcb9954d2f8a01656)将 `include` 标为可选参数，并要求其成员来自 `/api/v3/filterable/field/quake_service`。`service.http.http_load_url` 不属于受支持的筛选项，不能因响应中可能存在同名字段而将它加入请求。缺少该可选 URL 列表时，Server 根据 HTTP 主机或 IP、端口和服务名生成 HTTP/HTTPS 资产；非 Web 服务或高级元数据不可用时回退为规范 `IP:Port`，也支持 IPv6。
+
+响应中若仍提供 `http_load_url`，继续兼容解析、去重和移除 URL 路径/查询参数。单行最多处理 32 个 URL，最终资产数还受查询条数派生上限和 2000 条硬上限约束。查询不会为获取该字段扩大返回范围或增加重试；仅存在于可选 URL 列表中的额外主机别名不保证返回。
 
 三个查询入口都要求 operator 及以上角色和项目对象级访问权，Provider 成功但审计或快照写入失败时均不返回结果。当前已持久化不可变查询快照，并开放项目内历史读取、CSV 导出、项目级测绘笔记本运营、TaskBatch 分发预览和显式确认物化；确认链路使用不可变 intent/result 保证重放不会重复创建或派发。Scanner/Agent 的旧 Provider 执行、Agent 凭据同步与 Subfinder Provider 配置读取均已移除或失败关闭。
 

@@ -133,7 +133,9 @@ func (c *QuakeClient) Search(ctx context.Context, credential QuakeCredential, qu
 
 	payload, err := json.Marshal(quakeRequest{
 		Query: expression, Start: (page - 1) * limit, Size: limit, Latest: false, IgnoreCache: true,
-		Include: []string{"ip", "port", "service.name", "service.http.host", "service.http.title", "service.http.http_load_url"},
+		// http_load_url is optional response data, not a supported include selector.
+		// Host and service name preserve endpoint normalization when it is absent.
+		Include: []string{"ip", "port", "service.name", "service.http.host", "service.http.title"},
 	})
 	if err != nil {
 		return result, fmt.Errorf("%w: encode request", ErrInvalidQuakeRequest)
