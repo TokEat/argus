@@ -1242,7 +1242,7 @@ export async function autoConfigureCloudAccount(accountId: string, data: { regio
 }
 
 export async function oneClickSetup(accountId: string): Promise<any> {
-    return request.post(`/cloud/accounts/${accountId}/one-click-setup`);
+    return request.post(`/cloud/accounts/${accountId}/one-click-setup`, undefined, { timeout: 180000 });
 }
 
 // Permission Check

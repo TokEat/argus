@@ -30,6 +30,7 @@ import {
     deleteCloudAccount,
     deleteProject,
     executeTaskRiskValidation,
+    oneClickSetup,
     retryTask,
     retryTaskBatch,
     updateProject,
@@ -67,6 +68,14 @@ describe('structured cloud deletion errors', () => {
     it('retains readable messages for legacy and network failures', async () => {
         await expect(rejectResponse({ config: { preserveErrorData: true }, response: { status: 400, data: ' legacy error ' } })).rejects.toThrow('legacy error');
         await expect(rejectResponse({ config: { preserveErrorData: true }, message: 'Network Error' })).rejects.toThrow('Network Error');
+    });
+});
+
+describe('cloud setup API', () => {
+    it('allows time for cloud discovery, network polling and Agent upload', async () => {
+        postMock.mockResolvedValueOnce({ status: 'ok' });
+        await oneClickSetup('ca-test');
+        expect(postMock).toHaveBeenLastCalledWith('/cloud/accounts/ca-test/one-click-setup', undefined, { timeout: 180000 });
     });
 });
 

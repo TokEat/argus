@@ -137,6 +137,14 @@ sequenceDiagram
 3. 也可以直接执行 **OneClickSetup**；若 OSS 已配置，服务端会先验证所需 Agent 制品已经可用，再继续创建默认伸缩策略
 4. 后续所有通过该凭证创建的云实例，Cloud-Init 将自动从 OSS 下载 Agent
 
+**一键配置的失败处理：**
+
+- 缺少交换机时，优先选择 `DescribeZones` 明确支持创建 `VSwitch` 的可用区；能力字段缺失的旧响应仅作为后备。遇到 `OperationDenied.ZoneIsDisabled` 时，在同一地域、同一 VPC 内尝试下一候选；权限拒绝、CIDR 冲突及其他错误直接返回，不盲目重试创建。
+- 一键配置页面单独等待最多 180 秒，以容纳资源发现、网络资源轮询和 Agent 上传；其他接口维持原有超时。超时并不撤销后端已创建的资源，请先刷新配置和云端资源状态再重试。
+- OSS 返回 `UserDisable` / `0003-00000801` 时，应由账号所有者检查 OSS 开通、欠费或账号停用状态，参见 [阿里云错误说明](https://help.aliyun.com/zh/oss/user-guide/0003-00000801)。增加 RAM 权限不能替代开通服务。
+- 服务端必须能读取 `release/argus-agent-linux-amd64`（或 OSS 已有对应制品）。容器部署需将该发布文件纳入镜像或以只读目录挂载到服务工作目录下的 `release/`；可用 `./build.sh agent --target linux/amd64` 构建，不能用 macOS 或 ARM 二进制替代。
+- 一键配置保持默认伸缩策略关闭，不创建 ECS 实例。启用策略前还需确认 Agent 能访问 Server 的 API/gRPC 地址。
+
 ### 3.4 Spot 竞价实例回收感知
 
 - **Agent 侧**：启动时检测到环境变量 `ARGUS_SPOT=1` 或 `cloud` 标签时，激活 `StartSpotTerminationListener`（`scanner/internal/agent/signal.go`）。

@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 	ecs "github.com/alibabacloud-go/ecs-20140526/v4/client"
 	"github.com/alibabacloud-go/tea/tea"
+	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 )
 
 // AutoCreateOSS 自动在当前地域下创建 OSS 存储桶
@@ -85,28 +85,10 @@ func (p *ECSProvider) AutoCreateNetwork() (sgID string, vswID string, err error)
 	if err == nil && vswRes.Body != nil && vswRes.Body.VSwitches != nil && len(vswRes.Body.VSwitches.VSwitch) > 0 {
 		vswID = *vswRes.Body.VSwitches.VSwitch[0].VSwitchId
 	} else {
-		// 需要一个 Zone ID
-		zoneReq := &ecs.DescribeZonesRequest{
-			RegionId: tea.String(p.regionId),
-		}
-		zoneRes, err := p.client.DescribeZones(zoneReq)
-		if err != nil || zoneRes.Body == nil || zoneRes.Body.Zones == nil || len(zoneRes.Body.Zones.Zone) == 0 {
-			return "", "", fmt.Errorf("获取可用区失败: %v", err)
-		}
-		zoneId := *zoneRes.Body.Zones.Zone[0].ZoneId
-
-		createVswReq := &ecs.CreateVSwitchRequest{
-			RegionId:    tea.String(p.regionId),
-			VpcId:       tea.String(vpcId),
-			ZoneId:      tea.String(zoneId),
-			CidrBlock:   tea.String("10.0.1.0/24"),
-			VSwitchName: tea.String("argus-auto-vsw"),
-		}
-		createVswRes, err := p.client.CreateVSwitch(createVswReq)
+		vswID, err = p.createSetupVSwitch(vpcId)
 		if err != nil {
-			return "", "", fmt.Errorf("创建交换机失败: %v", err)
+			return "", "", err
 		}
-		vswID = *createVswRes.Body.VSwitchId
 
 		// 等待交换机可用
 		for i := 0; i < 10; i++ {
