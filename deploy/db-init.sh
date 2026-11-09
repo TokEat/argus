@@ -117,19 +117,21 @@ run_psql() {
     shift
   done
   if [[ -z "${CONTAINER}" ]]; then
+    # bash 4.4 之前，set -u 会把空数组视为未绑定变量（args[@]: unbound variable）；
+    # 仅在数组非空时展开。
     if [[ -n "${sql_file}" ]]; then
-      psql "$dsn" -v ON_ERROR_STOP=1 "${args[@]}" -f "${sql_file}"
+      psql "$dsn" -v ON_ERROR_STOP=1 ${args[@]+"${args[@]}"} -f "${sql_file}"
     else
-      psql "$dsn" -v ON_ERROR_STOP=1 "${args[@]}"
+      psql "$dsn" -v ON_ERROR_STOP=1 ${args[@]+"${args[@]}"}
     fi
     return
   fi
   if [[ -n "${sql_file}" ]]; then
     [[ -f "${sql_file}" ]] || fail "SQL 文件不存在: ${sql_file}"
-    docker exec -i "${CONTAINER}" psql "$dsn" -v ON_ERROR_STOP=1 "${args[@]}" -f - < "${sql_file}"
+    docker exec -i "${CONTAINER}" psql "$dsn" -v ON_ERROR_STOP=1 ${args[@]+"${args[@]}"} -f - < "${sql_file}"
     return
   fi
-  docker exec "${CONTAINER}" psql "$dsn" -v ON_ERROR_STOP=1 "${args[@]}"
+  docker exec "${CONTAINER}" psql "$dsn" -v ON_ERROR_STOP=1 ${args[@]+"${args[@]}"}
 }
 
 psql_app()   { run_psql "$APP_DSN" "$@"; }
@@ -267,7 +269,8 @@ esac
 shopt -s nullglob
 INIT_FILES=("${DB_DIR}"/init/[0-9]*.sql)
 shopt -u nullglob
-for f in "${INIT_FILES[@]}"; do
+# bash 4.4 之前，set -u 会把空数组视为未绑定变量；仅在数组非空时展开。
+for f in ${INIT_FILES[@]+"${INIT_FILES[@]}"}; do
   base="$(basename "$f")"
   ver="${base%%_*}"
   if [[ "${MODE}" != "fresh" ]] && psql_app -tAc "SELECT 1 FROM schema_migrations WHERE version='${ver}'" | grep -q 1; then

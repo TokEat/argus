@@ -20,7 +20,9 @@ fi
 if [[ -n "${ARGUS_AGENT_EXTRA_ARGS:-}" ]]; then
     # shellcheck disable=SC2206
     extra_args=(${ARGUS_AGENT_EXTRA_ARGS})
-    agent_args+=("${extra_args[@]}")
+    # bash 4.4 之前，set -u 会把空数组视为未绑定变量；
+    # ARGUS_AGENT_EXTRA_ARGS 只含空白时 extra_args 会是空数组。
+    agent_args+=(${extra_args[@]+"${extra_args[@]}"})
 fi
 
 argus_start_process agent "${agent_bin}" "${agent_args[@]}"

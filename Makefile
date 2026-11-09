@@ -1,4 +1,4 @@
-.PHONY: cli agent server yaksha yaksha-image yaksha-up yaksha-down exp-lab-up exp-lab-smoke exp-lab-down mcp proto-scan proto-egress nuclei-embed-test legacy all clean clean-release docker infra-up infra-down infra-logs db-setup db-verify setup-local smoke-local test coverage frontend-smoke cloud-smoke source-size-check brand-check release-artifacts lint ci
+.PHONY: cli agent server yaksha yaksha-image yaksha-up yaksha-down exp-lab-up exp-lab-smoke exp-lab-down mcp proto-scan proto-egress nuclei-embed-test legacy all clean clean-release docker infra-up infra-down infra-logs db-setup db-verify setup-local smoke-local test coverage frontend-smoke cloud-smoke source-size-check brand-check release-artifacts lint deploy-test ci
 
 COMPOSE_FILE := server/deploy/docker-compose.yml
 DOCKER_COMPOSE := docker compose -f $(COMPOSE_FILE)
@@ -166,7 +166,11 @@ release-artifacts:
 lint:
 	npm --prefix server-ui run lint
 
-ci: source-size-check brand-check lint test coverage frontend-smoke cloud-smoke
+# 部署脚本契约：空数组展开在 bash < 4.4 + set -u 下会 unbound variable。
+deploy-test:
+	bash deploy/tests/shell-empty-array.sh
+
+ci: source-size-check brand-check lint test coverage frontend-smoke cloud-smoke deploy-test
 	npm --prefix server-ui run build
 
 docker: setup-local

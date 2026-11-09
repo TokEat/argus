@@ -2,6 +2,10 @@ name: CI
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -110,6 +114,21 @@ jobs:
           bash deploy/tests/db-init-container.sh
           make db-setup POSTGRES_PASSWORD=argus_ci
           make db-verify POSTGRES_PASSWORD=argus_ci
+
+      - name: Deploy shell contracts (host bash)
+        run: |
+          bash deploy/tests/shell-empty-array.sh
+
+      - name: Deploy shell contracts on legacy bash 3.2
+        run: |
+          if ! command -v docker >/dev/null 2>&1; then
+            echo "skip: docker 不在 PATH，未跑 bash 3.2 容器验证"
+            exit 0
+          fi
+          # 固定 digest：浮动 tag 可能被上游更新或因 Docker Hub 限流拉取失败。
+          docker run --rm -v "$PWD:/w" -w /w \
+            bash@sha256:44900632c47e54937a3c2d7de2b4d05af7aee6d269c71c3116204842ee26101c \
+            bash deploy/tests/shell-empty-array.sh
 
   frontend:
     name: Frontend

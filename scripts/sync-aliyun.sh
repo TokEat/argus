@@ -49,11 +49,13 @@ run_rsync() {
   if [[ "$DRY_RUN" -eq 1 ]]; then
     dry=(--dry-run)
   fi
+  # bash 4.4 之前，set -u 会把空数组视为未绑定变量（dry[@]: unbound variable）；
+  # 非 dry-run 时 dry 为空数组，仅在数组非空时展开。
   rsync -aHz --delete \
     --exclude-from="$EXCLUDES" \
     -e "ssh -o BatchMode=yes -o ConnectTimeout=15" \
     --rsync-path="$RSYNC_PATH" \
-    "${dry[@]}" \
+    ${dry[@]+"${dry[@]}"} \
     "$@"
 }
 

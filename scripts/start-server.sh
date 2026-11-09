@@ -18,7 +18,9 @@ fi
 if [[ -n "${ARGUS_SERVER_EXTRA_ARGS:-}" ]]; then
     # shellcheck disable=SC2206
     extra_args=(${ARGUS_SERVER_EXTRA_ARGS})
-    server_args+=("${extra_args[@]}")
+    # bash 4.4 之前，set -u 会把空数组视为未绑定变量；
+    # ARGUS_SERVER_EXTRA_ARGS 只含空白时 extra_args 会是空数组。
+    server_args+=(${extra_args[@]+"${extra_args[@]}"})
 fi
 
 argus_start_process server "${server_bin}" "${server_args[@]}"
