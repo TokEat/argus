@@ -190,7 +190,7 @@ argus -a http://test.com
 把上次的结果目录或 `result.txt` 交给 `-a`，会复用 `[Alive]` / `[Port]`：有存活就跳过探活去做端口，有端口就直接做协议/Web/POC。
 `-ss` 才会跳过 `datas` 里已经出现过的 IP，默认关闭；与 `-f` 一起用时仍完整扫描。
 
-成功完成时，交互文本输出会给出执行阶段数、完整/部分/全跳过输入数，以及本次计划与历史跳过资产数。`-ot json` 使用版本化 UTF-8 NDJSON：每个 finding 独占一行，最后一行是唯一 `run_summary`；stdout 不包含 Banner、ANSI、进度或普通日志。重定向的文本模式同样只保留扫描结果和必要错误。完整 Schema、退出码和迁移示例见 [Argus CLI 结构化输出](docs/cli-output.md)。
+成功完成时，交互文本输出会给出执行阶段数、完整/部分/全跳过输入数，以及本次计划与历史跳过资产数。`-ot json` 使用版本化 UTF-8 NDJSON：每个 finding 独占一行，最后一行是唯一 `run_summary`；stdout 不包含 Banner、ANSI、进度或普通日志。重定向的文本模式同样只保留扫描结果和必要错误。
 
 普通 CLI 扫描默认执行资产发现、Nuclei 与 GoPoc（含口令爆破），请在授权目标上使用。用 `-nopoc` 只关 Nuclei，用 `-nogpoc` 关全部 GoPoc，用 `-nobr` 只关服务口令爆破。只做发现时写 `-nopoc -nogpoc`；要跳过 `datas` 历史已见 IP 还需显式 `-ss`。`-pwda` / `-usea` 在内置用户本、密码本上追加；`-up` / `-upf` 是整本替换。Server 创建任务的默认值仍是关 POC，不跟 CLI 手感走。
 
@@ -411,22 +411,12 @@ argus/
 | [AI/Codex 代理指令](AGENTS.md) | Codex/AI 协作硬约束、Definition of Done 和验证要求 |
 | [安全策略](SECURITY.md) | 漏洞报告方式、支持版本、安全范围和安全港原则 |
 | [生产部署指南](deploy/README.md) | v0.1.0 发行包构建、服务器安装、Agent 接入和卸载流程 |
-| [发布检查清单](docs/release-checklist.md) | `make ci`、打包、解包、部署 smoke 和 beta 边界验收 |
 | [项目结构](docs/project-structure.md) | 目录结构与组件职责 |
 | [实现状态与接口清单](docs/implementation-status.md) | 当前实现程度、主要缺口、`/api/v1` / WebSocket / gRPC 主链路接口 |
-| [Server 资产发现](docs/asset-discovery.md) | FOFA/Hunter/Quake 查询、项目级历史、安全 CSV 导出、去重且可追溯的测绘笔记本、Provider 预算、租户凭据、脱敏审计及后续任务分发边界 |
 | [租户隔离与角色权限划分](docs/tenant-rbac.md) | 当前租户边界、三档角色和后端接口权限矩阵 |
 | [数据库设计总览](docs/db_schema.md) | 当前 schema、索引策略、项目隔离演进与规则库初始化机制 |
 | [分布式扫描架构](docs/distributed-scan-architecture.md) | 控制面 / 数据面架构、Agent-Pull 调度与 Agent 扫描流水线 |
-| [ScanPlan 与覆盖契约](docs/scanplan-contract.md) | 场景、阶段、Plan、WorkKey、Observation 与 Coverage 的跨组件稳定语义 |
-| [扫描策略 V1](docs/scan-policy-v1.md) | 语义化预设、自动验证阶段、增量凭据字典和 Agent TLS 能力边界 |
-| [性能基线采集](docs/performance-baseline.md) | CLI/Agent 计时证据与可重复的外部 process-wall 基线采集方式 |
 | [CLI 参数说明](CLI.md) | Standalone CLI 扫描参数、默认值和常用例子 |
-| [CLI 结构化输出](docs/cli-output.md) | `-ot json` NDJSON Schema、终端摘要、非 TTY 行为和稳定退出码 |
-| [CLI 离线弹药库](docs/cli-offline-arsenal.md) | 发行包内 `arsenal.db` 的校验、物化与本地替换/导入 |
-| [云资源动态调度](docs/cloud-resource-scheduling.md) | AutoScaler、云实例生命周期、Spot 回收与未来演进 |
-| [Yaksha EXP](docs/yaksha-exp.md) | 单文件 Yaklang EXP 权威模型、利用族组织、五种动作与测试调试发布流程 |
-| [AI Copilot 架构](docs/ai_copilot_architecture.md) | 全局 Copilot、工具调用、POC AI 审查和后续路线 |
 | [技术白皮书](docs/argus-technical-whitepaper.md) | 对外技术定位、核心闭环、典型场景与演进路线 |
 
 ---

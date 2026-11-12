@@ -4,8 +4,6 @@
 入口：`scanner/cmd/cli/main.go`，参数定义：`scanner/common/flag.go`，扫描默认：`scanner/internal/localplanner/planner.go`。
 当前版本字符串：`Argus CLI v2.0.1`。
 
-更细的输出契约见 [docs/cli-output.md](docs/cli-output.md)，离线规则库见 [docs/cli-offline-arsenal.md](docs/cli-offline-arsenal.md)。
-
 ---
 
 ## 1. 怎么调用

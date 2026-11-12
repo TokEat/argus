@@ -89,7 +89,7 @@ sudo ./deploy/setup-server.sh \
 ### Agent 节点接入
 当您在其它机器上启动扫描子节点时，需将分配给您的 `Agent PSK` 配置在目标机器节点中，节点即可通过上述的 gRPC 或 API 端口主动连接母体。
 
-CloudManagement、OSS 自动弹容和真实云资源回收在未完成真实云账号 smoke 前按 beta 能力发布。发布前验收步骤见 [发布检查清单](../docs/release-checklist.md)。
+CloudManagement、OSS 自动弹容和真实云资源回收在未完成真实云账号 smoke 前按 beta 能力发布。
 
 ---
 
