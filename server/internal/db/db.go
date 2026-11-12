@@ -1,0 +1,1485 @@
+package db
+
+import (
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/url"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	pb "github.com/TokEat/argus/shared/proto/go/scan"
+	"github.com/TokEat/argus/shared/proto/go/targetutil"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+var DB *gorm.DB
+
+// WSBroadcastHook is called to push real-time updates to connected WebSocket clients
+var WSBroadcastHook func(tenantID string, msg interface{})
+
+// DebugEventHook receives transient Agent-side POC debug events. These events
+// are intentionally not persisted with scan results.
+var DebugEventHook func(event *pb.DebugEvent)
+
+type Project struct {
+	ID            string `gorm:"primaryKey"`
+	TenantID      string `gorm:"default:'default';index"`
+	OwnerUserID   string `gorm:"index"`
+	Name          string `gorm:"index"`
+	Description   string `gorm:"type:text"`
+	Tags          string `gorm:"type:jsonb"`
+	SeedTargets   string `gorm:"type:jsonb"`
+	Scope         string `gorm:"type:jsonb"`
+	DefaultConfig string `gorm:"type:jsonb"`
+	NodeAffinity  string `gorm:"type:jsonb"`
+	Status        string `gorm:"default:'active';index"`
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	DeletedAt     gorm.DeletedAt `gorm:"index"`
+}
+
+type ProjectMember struct {
+	TenantID  string `gorm:"default:'default';index"`
+	ProjectID string `gorm:"primaryKey"`
+	UserID    string `gorm:"primaryKey"`
+	Role      string `gorm:"default:'operator'"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type RootTask struct {
+	ID                   string `gorm:"primaryKey"`
+	TenantID             string `gorm:"default:'default';index"`
+	ProjectID            string `gorm:"index"`
+	UserID               string `gorm:"index"`
+	Name                 string
+	OriginalTargets      string `gorm:"type:text"`
+	Status               string `gorm:"index"`
+	TotalChunks          int    // 批次总数（聚合后的 SubTask 数量）
+	CompletedChunks      int    // 已完成批次数
+	TotalTargets         int    // 原始目标总数（用于目标维度进度）
+	CompletedTargets     int    // 已完成目标数
+	ProgressDone         int64  // 实时活动计数（Σ 运行中子任务 progress_done），供 UI 展示扫描未卡死
+	ProgressRate         float64 // 实时总吞吐（单元/秒，Σ 运行中子任务 progress_rate）；活动信号，非完成度
+	Config               string `gorm:"type:text"`
+	Priority             int
+	TimeoutSec           int
+	RuleVersion          string
+	CurrentConfigVersion int    `gorm:"default:1"`
+	DispatchStrategy     string `gorm:"size:32;index"` // ''=inherit global default; controller_push|agent_claim
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	ArchivedAt           *time.Time `gorm:"index"`
+}
+
+type SubTask struct {
+	ID                 string `gorm:"primaryKey"`
+	TenantID           string `gorm:"default:'default';index"`
+	ProjectID          string `gorm:"index"`
+	RootTaskID         string `gorm:"index"`
+	BatchID            string `gorm:"index"`
+	AttemptNo          int    `gorm:"default:1"`
+	ParentAttemptID    string `gorm:"index"`
+	Trigger            string `gorm:"default:'initial';index"`
+	ChunkTargets       string `gorm:"type:text"`
+	Status             string `gorm:"index"`
+	AgentID            string `gorm:"index"`
+	FailureReason      string `gorm:"type:text"`
+	Config             string `gorm:"type:text"`
+	StreamMsgID        string
+	Priority           int    `gorm:"default:1;index"` // 0=最高, 1=普通, 2=低
+	AgentSelector      string `gorm:"type:text"`       // JSON: 节点标签选择器
+	AgentSelectorRules string `gorm:"type:text"`       // JSON: 扩展 selector 规则
+	TimeoutSec         int
+	RetryCount         int
+	MaxRetry           int `gorm:"default:3"`
+	ConfigVersion      int `gorm:"default:1"`
+	RuleVersion        string
+	StartedAt          *time.Time `gorm:"index"`
+	FinishedAt         *time.Time `gorm:"index"`
+	DispatchStrategy   string     `gorm:"size:32;index"` // ''=inherit global default; controller_push|agent_claim
+	NextEligibleAt     *time.Time `gorm:"index"`         // exponential-retry backoff gate; NULL=eligible now
+	RoutedAgentID      string     `gorm:"index"`         // controller_push: advisory target agent (bind still at claim)
+	RoutedAt           *time.Time // controller_push: when the controller last routed this attempt
+	ProgressPhase      string     `gorm:"size:64"`       // 实时阶段标识（agent 上报），供 UI 展示未卡死
+	ProgressDone       int        // 实时活动计数：发现模式=已发现结果数；单元模式=已处理单元数（同 progress_total 口径）
+	ProgressTotal      int        // 本阶段输入目标总数（0=未知；>0 且为单元模式时可显示占比/ETA）
+	ProgressRate       float64    // 单元模式吞吐（单元/秒）；发现模式为 0
+	ProgressEtaMs      int64      // 单元模式预计剩余毫秒；发现模式/完成为 0
+	ProgressUpdatedAt  *time.Time // 最近一次进度上报时间（liveness）
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+type TaskBatch struct {
+	ID                 string `gorm:"primaryKey"`
+	TenantID           string `gorm:"default:'default';index"`
+	ProjectID          string `gorm:"index"`
+	RootTaskID         string `gorm:"index;uniqueIndex:idx_task_batches_task_sequence,priority:1"`
+	Sequence           int    `gorm:"uniqueIndex:idx_task_batches_task_sequence,priority:2"`
+	Kind               string `gorm:"default:'asset_scan';index"`
+	TargetType         string `gorm:"index"`
+	Targets            string `gorm:"type:text"`
+	TargetCount        int
+	Status             string `gorm:"index"`
+	ControlState       string `gorm:"default:'active';index"`
+	ConfigVersion      int    `gorm:"default:1"`
+	RuleVersion        string
+	Priority           int
+	TimeoutSec         int
+	AgentSelector      string `gorm:"type:text"`
+	AgentSelectorRules string `gorm:"type:text"`
+	CurrentAttemptNo   int    `gorm:"default:1"`
+	AttemptCount       int    `gorm:"default:1"`
+	LatestAttemptID    string `gorm:"index"`
+	DispatchStrategy   string `gorm:"size:32;index"` // ''=inherit global default; controller_push|agent_claim
+	CreatedBy          string `gorm:"index"`
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	ArchivedAt         *time.Time `gorm:"index"`
+}
+
+type TaskConfigRevision struct {
+	ID                 uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID           string `gorm:"default:'default';index"`
+	ProjectID          string `gorm:"index"`
+	RootTaskID         string `gorm:"index;uniqueIndex:idx_task_config_revisions_task_version,priority:1"`
+	Version            int    `gorm:"uniqueIndex:idx_task_config_revisions_task_version,priority:2"`
+	Config             string `gorm:"type:text"`
+	ConfigHash         string `gorm:"size:64;index"`
+	Priority           int
+	TimeoutSec         int
+	AgentSelector      string `gorm:"type:text"`
+	AgentSelectorRules string `gorm:"type:text"`
+	CreatedBy          string `gorm:"index"`
+	ChangeNote         string `gorm:"type:text"`
+	CreatedAt          time.Time
+}
+
+type TaskAudit struct {
+	ID           uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID     string `gorm:"default:'default';index"`
+	ProjectID    string `gorm:"index"`
+	RootTaskID   string `gorm:"index"`
+	BatchID      string `gorm:"index"`
+	AttemptID    string `gorm:"index"`
+	OperatorID   string `gorm:"index"`
+	Action       string `gorm:"index"`
+	BeforeStatus string
+	AfterStatus  string
+	Details      string    `gorm:"type:jsonb;default:'{}'"`
+	CreatedAt    time.Time `gorm:"index"`
+}
+
+// AssetDiscoveryAudit records project-scoped control-plane discovery calls.
+// Raw provider expressions, credentials, URLs, and response bodies are never
+// stored here; QueryHash and ConfigHash are correlation-only digests.
+type AssetDiscoveryAudit struct {
+	ID             uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID       string `gorm:"default:'default';index"`
+	ProjectID      string `gorm:"index"`
+	NotebookItemID *uint  `gorm:"index"`
+	Provider       string `gorm:"size:32;index"`
+	Action         string `gorm:"size:64;index"`
+	OperatorID     string `gorm:"index"`
+	QueryHash      string `gorm:"size:64;index"`
+	ConfigVersion  int
+	ConfigHash     string `gorm:"size:64"`
+	RequestedLimit int
+	ProviderTotal  int
+	ReturnedCount  int
+	SkippedRows    int
+	Truncated      bool
+	Status         string `gorm:"size:32;index"`
+	ErrorCode      string `gorm:"size:64;index"`
+	DurationMS     int64
+	CreatedAt      time.Time `gorm:"index"`
+}
+
+type Node struct {
+	TenantID           string `gorm:"default:'default';index"`
+	AgentID            string `gorm:"primaryKey"`
+	IP                 string
+	Status             string
+	Token              string
+	TokenExpiresAt     *time.Time
+	TokenRevokedAt     *time.Time
+	LastTokenRotatedAt *time.Time
+	Tags               string
+	Version            string
+	Capacity           int    `gorm:"default:1"`
+	RunningTasks       int    `gorm:"default:0"`
+	RunningTaskIDs     string `gorm:"type:text"` // JSON array of task IDs
+	RuleVersion        string
+	OS                 string
+	Arch               string
+	CPUUsage           float32
+	MemUsage           float32
+	LastBeat           int64
+	CreatedAt          time.Time
+}
+
+type AgentSessionAudit struct {
+	ID         uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID   string `gorm:"default:'default';index"`
+	AgentID    string `gorm:"index"`
+	Action     string `gorm:"index"`
+	Reason     string `gorm:"type:text"`
+	OperatorID string `gorm:"index"`
+	CreatedAt  time.Time
+}
+
+type WSEventLog struct {
+	ID         uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID   string    `gorm:"default:'default';index" json:"tenant_id"`
+	ProjectID  string    `gorm:"index" json:"project_id"`
+	EventType  string    `gorm:"index" json:"event_type"`
+	Payload    string    `gorm:"type:jsonb" json:"payload"`
+	OccurredAt time.Time `gorm:"index" json:"occurred_at"`
+}
+
+// User 用户模型 - 多租户用户管理
+type User struct {
+	ID            uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID      string `gorm:"default:'default';index"`
+	Username      string `gorm:"uniqueIndex"`
+	PasswordHash  string
+	Role          string `gorm:"default:'viewer'"` // admin, operator, viewer
+	Status        string `gorm:"default:'active'"` // active, disabled
+	ExpAuthorized bool   `gorm:"default:false"`    // 是否允许使用 EXP 功能
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+// CustomRole 租户级自定义角色。
+// BaseRole 决定后端实际权限基线；Permissions 保存前端展示/审计用的权限矩阵快照。
+type CustomRole struct {
+	ID          uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID    string `gorm:"default:'default';index:idx_custom_roles_tenant_name,unique"`
+	Name        string `gorm:"index:idx_custom_roles_tenant_name,unique"`
+	Label       string
+	Description string `gorm:"type:text"`
+	BaseRole    string `gorm:"default:'viewer';index"`
+	Permissions string `gorm:"type:jsonb"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+// TenantQuota 定义租户任务额度。
+// 0 表示不限制，便于无配置租户保持历史兼容。
+type TenantQuota struct {
+	TenantID           string `gorm:"primaryKey;default:'default'"`
+	MaxConcurrentTasks int    `gorm:"default:0"`
+	MaxRunningSubTasks int    `gorm:"default:0"`
+	DailyTaskLimit     int    `gorm:"default:0"`
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+func (TenantQuota) TableName() string {
+	return "tenant_quotas"
+}
+
+// SystemConfig 系统配置键值存储
+type SystemConfig struct {
+	Key       string `gorm:"primaryKey"`
+	Value     string `gorm:"type:text"`
+	UpdatedAt time.Time
+}
+
+type Domain struct {
+	ID        uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID  string `gorm:"default:'default';index:idx_domain_dedupe"`
+	ProjectID string `gorm:"index:idx_domain_dedupe,unique"`
+	Name      string `gorm:"index:idx_domain_dedupe,unique"`
+	TaskID    string `gorm:"index"`
+	Tags      string `gorm:"type:jsonb"`
+	Records   string `gorm:"type:jsonb"`
+	ICP       string
+	Whois     string `gorm:"type:jsonb"`
+	Status    string `gorm:"default:'alive';index"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type Asset struct {
+	ID          uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID    string `gorm:"default:'default';index"`
+	ProjectID   string `gorm:"index:idx_asset_dedupe,unique"`
+	TaskID      string `gorm:"index"`
+	RootTaskID  string `gorm:"index"`
+	Target      string `gorm:"index:idx_asset_dedupe,unique"`
+	Protocol    string `gorm:"index:idx_asset_dedupe,unique"`
+	Port        int
+	URL         string `gorm:"type:text"`
+	Title       string
+	Service     string
+	CertSubject string     // TLS 证书主体
+	CertExpiry  *time.Time // TLS 证书过期时间
+	Source      string     // 父目标（归一化），扫描链路溯源用；空串=根/未知
+	Tags        string     `gorm:"type:jsonb"`
+	// CDN 标记疑似 CDN 资产：CDN-Domain 记录本身，以及来自 CDN 域名的
+	// Web / Domain-Bind 探测结果。仅作展示与过滤，不影响扫描行为。
+	CDN       bool   `gorm:"default:false"`
+	Status    string `gorm:"default:'alive';index"`
+	OwnerID   string `gorm:"index"`
+	CredID    string `gorm:"index"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// SubdomainPassiveCache caches Server-side passive subdomain enumeration per
+// domain. CT / passive DNS data is public and append-only by nature, so the
+// cache is shared globally across tenants; freshness is decided by ExpiresAt.
+type SubdomainPassiveCache struct {
+	Domain      string `gorm:"primaryKey"`
+	Subdomains  string `gorm:"type:jsonb;not null"`
+	Sources     string `gorm:"type:jsonb;not null"`
+	CollectedAt time.Time
+	ExpiresAt   time.Time `gorm:"index:idx_subdomain_passive_cache_expires"`
+}
+
+func (SubdomainPassiveCache) TableName() string { return "subdomain_passive_cache" }
+
+// SubdomainPassiveJob tracks the pre-dispatch Server-side passive collection
+// hold for a domain batch. The attempt stays Queued (not enqueued) until the
+// collector releases it, which makes the job row the restart-recovery record.
+type SubdomainPassiveJob struct {
+	ID         string `gorm:"primaryKey"`
+	TenantID   string `gorm:"default:'default';index:idx_subdomain_passive_jobs_tenant"`
+	ProjectID  string
+	RootTaskID string `gorm:"index:idx_subdomain_passive_jobs_root"`
+	BatchID    string
+	AttemptID  string `gorm:"index:idx_subdomain_passive_jobs_attempt"`
+	Domains    string `gorm:"type:jsonb;not null"`
+	// DomainsDone advances as the collector finishes each domain; it backs the
+	// frontend progress projection.
+	DomainsDone int    `gorm:"not null;default:0"`
+	State       string `gorm:"index:idx_subdomain_passive_jobs_state"`
+	Note        string `gorm:"type:text;not null;default:''"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type Credential struct {
+	ID        string `gorm:"primaryKey"`
+	ProjectID string `gorm:"index"`
+	Name      string
+	Type      string `gorm:"index"`
+	Content   string `gorm:"type:text"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt `gorm:"index"`
+}
+
+type FingerprintHit struct {
+	ID          uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID    string `gorm:"default:'default';index"`
+	ProjectID   string `gorm:"index:idx_fp_dedupe,unique"`
+	TaskID      string `gorm:"index"`
+	RootTaskID  string `gorm:"index"`
+	Target      string `gorm:"index:idx_fp_dedupe,unique"`
+	ProductName string `gorm:"index:idx_fp_dedupe,unique"`
+	RuleName    string
+	Evidence    string `gorm:"type:text"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type Vulnerability struct {
+	ID           uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID     string `gorm:"default:'default';index"`
+	ProjectID    string `gorm:"index:idx_vuln_new_dedupe,unique"`
+	TaskID       string `gorm:"index"`
+	RootTaskID   string `gorm:"index"`
+	Target       string `gorm:"index:idx_vuln_new_dedupe,unique"`
+	Plugin       string `gorm:"index:idx_vuln_new_dedupe,unique"`
+	Severity     string
+	Host         string `gorm:"index"` // 从 target 解析出的主机（IP/域名），供按主机过滤
+	Port         int    `gorm:"index"` // 从 target 解析出的端口；无端口为 0，不参与 port>0 过滤
+	Status       string `gorm:"default:'open';index"`
+	Assignee     string `gorm:"index"`
+	IgnoreReason string `gorm:"type:text"`
+	VerifyTaskID string `gorm:"index"`
+	Payload      string `gorm:"type:text"`
+	Request      string `gorm:"type:text"` // HTTP 请求包原文
+	Response     string `gorm:"type:text"` // HTTP 响应包原文
+	Description  string `gorm:"type:text"` // 漏洞描述
+	Reference    string `gorm:"type:text"` // 参考链接 (JSON array)
+	MatchedAt    string `gorm:"type:text"` // 匹配位置 URL
+	// AI 误报研判回写列（ai.TriageAnalyzer 写入；AI 是 advisor，默认不改 Status）
+	AIStatus     string `gorm:"index"`
+	AIConfidence float64
+	AIReason     string     `gorm:"type:text"`
+	AITriagedAt  *time.Time `gorm:"index"`
+	AIReviewID   uint
+	// 安全设备对抗哨兵污点标记（sentinel 包写入；taint_status 如 suspect_waf）
+	TaintStatus string `gorm:"index"`
+	TaintReason string `gorm:"type:text"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+// AIFindingReview stores one AI triage verdict for a vulnerability. Rows are
+// keyed by evidence_hash (md5 of target|plugin|response) so identical evidence
+// is judged once; OverrideVerdict records a human decision that wins over Verdict.
+type AIFindingReview struct {
+	ID              uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID        string `gorm:"default:'default';index"`
+	VulnerabilityID uint   `gorm:"index"`
+	RootTaskID      string `gorm:"index"`
+	ProjectID       string `gorm:"index"`
+	Plugin          string
+	Severity        string
+	Target          string
+	EvidenceHash    string `gorm:"index"`
+	Verdict         string `gorm:"index"` // confirmed / likely_false_positive / uncertain
+	Confidence      float64
+	Reason          string `gorm:"type:text"`
+	RawResponse     string `gorm:"type:text"`
+	Provider        string
+	Model           string
+	OverriddenBy    string
+	OverrideVerdict string
+	CreatedBy       string
+	CreatedAt       time.Time
+}
+
+// EgressBanEvent is one sentinel detection: the rule engine spots a ban /
+// interception / coverage anomaly during scanning, AI classifies it and
+// recommends an action, and a policy-gated executor applies it. Evidence is
+// stored as JSONB samples so the AI decision is auditable end to end.
+type EgressBanEvent struct {
+	ID                uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID          string `gorm:"default:'default';index"`
+	RootTaskID        string `gorm:"index"`
+	SubTaskID         string `gorm:"index"`
+	BatchID           string `gorm:"index"`
+	ProjectID         string
+	Target            string `gorm:"index"`
+	Host              string
+	AgentID           string
+	SignalType        string // http_streak | homogeneity | success_drop
+	Evidence          string `gorm:"type:jsonb"`
+	Classification    string `gorm:"default:'pending'"` // pending | banned | rate_limited | waf_challenge | target_down | scanner_bug | false_positive
+	RecommendedAction string
+	ActionReason      string `gorm:"type:text"`
+	Confidence        float64
+	Status            string `gorm:"default:'open';index"` // open | executed | dismissed | expired
+	ExecutedAt        *time.Time
+	ExecutedBy        string
+	CooldownUntil     *time.Time
+	CreatedAt         time.Time
+	ResolvedAt        *time.Time
+}
+
+// NodeBan is ban memory keyed by (tenant, target, agent): which agent's egress
+// got banned for which target, plus cooldown, so rescan-on-other-node never
+// flip-flops back to a known-banned egress.
+type NodeBan struct {
+	ID            uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID      string `gorm:"default:'default'"`
+	Target        string
+	AgentID       string
+	EgressIP      string
+	HitCount      int `gorm:"default:1"`
+	BannedAt      time.Time
+	CooldownUntil *time.Time
+}
+
+func (NodeBan) TableName() string { return "node_bans" }
+
+type NotificationRule struct {
+	ID        uint   `gorm:"primaryKey;autoIncrement"`
+	ProjectID string `gorm:"index"`
+	Event     string `gorm:"index"`
+	Channel   string
+	Config    string `gorm:"type:jsonb"`
+	Status    string `gorm:"default:'enabled'"`
+	CreatedAt time.Time
+}
+
+type AssetChangeLog struct {
+	ID         uint   `gorm:"primaryKey;autoIncrement"`
+	ProjectID  string `gorm:"index"`
+	TaskID     string `gorm:"index"`
+	EntityType string `gorm:"index"`
+	EntityID   uint   `gorm:"index"`
+	ChangeType string `gorm:"index"`
+	Details    string `gorm:"type:jsonb"`
+	CreatedAt  time.Time
+}
+
+type Report struct {
+	ID        string `gorm:"primaryKey"`
+	ProjectID string `gorm:"index"`
+	Name      string
+	Type      string `gorm:"index"`
+	Format    string
+	FileURL   string `gorm:"type:text"`
+	Status    string `gorm:"default:'pending'"`
+	CreatedBy string `gorm:"index"`
+	CreatedAt time.Time
+}
+
+// Arsenal represents dynamic rule files synced to agents.
+type Arsenal struct {
+	ID              string `gorm:"primaryKey"`
+	TenantID        string `gorm:"default:'default';index"`
+	Type            string `gorm:"index"`
+	FileName        string `gorm:"index"`
+	Content         string `gorm:"type:text"`
+	Hash            string
+	PreviousHash    string // 上一版本 Hash（用于回滚）
+	PreviousContent string `gorm:"type:text"` // 上一版本内容（用于回滚）
+	Version         int    `gorm:"default:1"` // 自增版本号
+	State           string `gorm:"default:'Draft';index"`
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+// ArsenalEvent is the immutable revision and governance history for one
+// tenant-scoped arsenal artifact. Content is populated only for revision
+// snapshots; debug events keep metadata/result summaries in Details.
+type ArsenalEvent struct {
+	ID         uint      `gorm:"primaryKey;autoIncrement"`
+	TenantID   string    `gorm:"default:'default';index;index:idx_arsenal_event_artifact"`
+	ArtifactID string    `gorm:"index;index:idx_arsenal_event_artifact"`
+	Type       string    `gorm:"index"`
+	FileName   string    `gorm:"index"`
+	Version    int       `gorm:"index"`
+	Hash       string    `gorm:"index"`
+	State      string    `gorm:"index"`
+	Action     string    `gorm:"index"`
+	ActorID    string    `gorm:"index"`
+	Content    string    `gorm:"type:text"`
+	Details    string    `gorm:"type:jsonb"`
+	CreatedAt  time.Time `gorm:"index"`
+}
+
+// ArsenalAIReview stores AI-assisted review evidence for one arsenal content hash.
+type ArsenalAIReview struct {
+	ID                  uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID            string `gorm:"default:'default';index"`
+	Type                string `gorm:"index"`
+	FileName            string `gorm:"index"`
+	ContentHash         string `gorm:"index"`
+	Suggestion          string `gorm:"index"`
+	Confidence          float64
+	Summary             string `gorm:"type:text"`
+	Reason              string `gorm:"type:text"`
+	Issues              string `gorm:"type:jsonb"`
+	DuplicateCandidates string `gorm:"type:jsonb"`
+	RawResponse         string `gorm:"type:jsonb"`
+	Provider            string
+	Model               string
+	CreatedBy           string `gorm:"index"`
+	CreatedAt           time.Time
+}
+
+// AIToolInvocation 记录 Copilot/AI 工具调用审计（ai_tool_invocations 表）。
+type AIToolInvocation struct {
+	ID           uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID     string `gorm:"default:'default';index"`
+	UserID       string `gorm:"index"`
+	Module       string `gorm:"index"`
+	ToolName     string `gorm:"index"`
+	ArgsSummary  string `gorm:"type:jsonb"`
+	AgentID      string `gorm:"index"`
+	TargetURL    string `gorm:"type:text"`
+	DurationMS   int64
+	Status       string `gorm:"index"`
+	ErrorSummary string `gorm:"type:text"`
+	CreatedAt    time.Time
+}
+
+// AgentLog 遥测日志模型
+type AgentLog struct {
+	ID        uint   `gorm:"primaryKey;autoIncrement"`
+	TenantID  string `gorm:"default:'default';index"`
+	AgentID   string `gorm:"index"`
+	Level     string // INFO, WARN, ERROR
+	Message   string `gorm:"type:text"`
+	Timestamp int64  `gorm:"index"`
+	CreatedAt time.Time
+}
+
+type AgentLogAlertRule struct {
+	ID        uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID  string    `gorm:"default:'default';index" json:"tenant_id"`
+	Name      string    `gorm:"index" json:"name"`
+	AgentID   string    `gorm:"index" json:"agent_id"`
+	Level     string    `gorm:"index" json:"level"`
+	Keyword   string    `gorm:"type:text" json:"keyword"`
+	Enabled   bool      `gorm:"default:true" json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type AgentLogAlertEvent struct {
+	ID        uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID  string    `gorm:"default:'default';index" json:"tenant_id"`
+	RuleID    uint      `gorm:"index" json:"rule_id"`
+	AgentID   string    `gorm:"index" json:"agent_id"`
+	Level     string    `gorm:"index" json:"level"`
+	Message   string    `gorm:"type:text" json:"message"`
+	LogID     uint      `gorm:"index" json:"log_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type AgentLogArchive struct {
+	ID         uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID   string    `gorm:"default:'default';index" json:"tenant_id"`
+	Day        string    `gorm:"index" json:"day"`
+	StorageKey string    `gorm:"type:text" json:"storage_key"`
+	LogCount   int       `json:"log_count"`
+	Status     string    `gorm:"index" json:"status"`
+	Error      string    `gorm:"type:text" json:"error"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// BuildJob records one server-side client/agent binary build request.
+type BuildJob struct {
+	ID         uint       `gorm:"primaryKey;autoIncrement" json:"id"`
+	Platform   string     `gorm:"index" json:"platform"`
+	Arch       string     `gorm:"index" json:"arch"`
+	Components string     `gorm:"type:text" json:"components"`
+	Pack       bool       `json:"pack"`
+	Status     string     `gorm:"index" json:"status"` // queued, running, success, failed, canceled
+	Artifact   string     `json:"artifact"`
+	Artifacts  string     `gorm:"type:text" json:"artifacts"`
+	LogTail    string     `gorm:"type:text" json:"log_tail"`
+	LogText    string     `gorm:"type:text" json:"-"`
+	Error      string     `gorm:"type:text" json:"error"`
+	StartedAt  *time.Time `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+func UpdateNodeHeartbeat(agentID string) error {
+	return DB.Model(&Node{}).Where("agent_id = ?", agentID).
+		Update("last_beat", time.Now().UnixMilli()).Error
+}
+
+func CompleteTask(taskID string, status string) error {
+	return DB.Model(&SubTask{}).Where("id = ?", taskID).
+		Update("status", status).Error
+}
+
+var assetBuffer = make(chan Asset, 10000)
+var fpBuffer = make(chan FingerprintHit, 10000)
+var vulnBuffer2 = make(chan Vulnerability, 10000)
+
+var OnResultBatchSaved func(count int, rType string)
+
+func StartBatchWriters() {
+	go startGenericBatchWriter(assetBuffer, func(batch []Asset) {
+		unique := make(map[string]Asset)
+		var keys []string
+		for _, a := range batch {
+			k := a.ProjectID + "|" + a.Target + "|" + a.Protocol
+			if _, exists := unique[k]; !exists {
+				keys = append(keys, k)
+			}
+			unique[k] = a
+		}
+		var finalBatch []Asset
+		for _, k := range keys {
+			finalBatch = append(finalBatch, unique[k])
+		}
+
+		DB.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "project_id"}, {Name: "target"}, {Name: "protocol"}},
+			DoUpdates: clause.AssignmentColumns([]string{"task_id", "root_task_id", "port", "url", "title", "service", "cert_subject", "cert_expiry", "status", "updated_at"}),
+		}).CreateInBatches(finalBatch, 500)
+		if OnResultBatchSaved != nil && len(finalBatch) > 0 {
+			OnResultBatchSaved(len(finalBatch), "asset")
+		}
+	})
+	go startGenericBatchWriter(fpBuffer, func(batch []FingerprintHit) {
+		unique := make(map[string]FingerprintHit)
+		var keys []string
+		for _, f := range batch {
+			k := f.ProjectID + "|" + f.Target + "|" + f.ProductName
+			if _, exists := unique[k]; !exists {
+				keys = append(keys, k)
+			}
+			unique[k] = f
+		}
+		var finalBatch []FingerprintHit
+		for _, k := range keys {
+			finalBatch = append(finalBatch, unique[k])
+		}
+
+		DB.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "project_id"}, {Name: "target"}, {Name: "product_name"}},
+			DoUpdates: clause.AssignmentColumns([]string{"task_id", "root_task_id", "rule_name", "evidence", "updated_at"}),
+		}).CreateInBatches(finalBatch, 500)
+		if OnResultBatchSaved != nil && len(finalBatch) > 0 {
+			OnResultBatchSaved(len(finalBatch), "fingerprint")
+		}
+	})
+	go startGenericBatchWriter(vulnBuffer2, func(batch []Vulnerability) {
+		unique := make(map[string]Vulnerability)
+		var keys []string
+		for _, v := range batch {
+			k := v.ProjectID + "|" + v.Target + "|" + v.Plugin
+			if _, exists := unique[k]; !exists {
+				keys = append(keys, k)
+			}
+			unique[k] = v
+		}
+		var finalBatch []Vulnerability
+		for _, k := range keys {
+			finalBatch = append(finalBatch, unique[k])
+		}
+
+		DB.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "project_id"}, {Name: "target"}, {Name: "plugin"}},
+			DoUpdates: clause.AssignmentColumns([]string{"task_id", "root_task_id", "severity", "payload", "request", "response", "description", "reference", "matched_at", "updated_at", "status"}),
+		}).CreateInBatches(finalBatch, 500)
+		if OnResultBatchSaved != nil && len(finalBatch) > 0 {
+			OnResultBatchSaved(len(finalBatch), "vuln")
+		}
+	})
+	startContentFindingsWriters()
+}
+
+func startGenericBatchWriter[T any](ch chan T, saveFunc func(batch []T)) {
+	var batch []T
+	ticker := time.NewTicker(200 * time.Millisecond)
+	for {
+		select {
+		case v := <-ch:
+			batch = append(batch, v)
+			if len(batch) >= 500 {
+				saveFunc(batch)
+				batch = batch[:0]
+			}
+		case <-ticker.C:
+			if len(batch) > 0 {
+				saveFunc(batch)
+				batch = batch[:0]
+			}
+		}
+	}
+}
+
+// taskOwnerEntry 缓存任务归属信息
+type taskOwnerEntry struct {
+	ProjectID  string
+	TenantID   string
+	RootTaskID string
+}
+
+// taskOwnerLRU 有界 LRU 缓存，防止长期运行内存膨胀
+type taskOwnerLRU struct {
+	mu      sync.Mutex
+	items   map[string]*taskOwnerEntry
+	order   []string // 插入顺序，用于淘汰
+	maxSize int
+}
+
+func newTaskOwnerLRU(maxSize int) *taskOwnerLRU {
+	return &taskOwnerLRU{
+		items:   make(map[string]*taskOwnerEntry, maxSize),
+		order:   make([]string, 0, maxSize),
+		maxSize: maxSize,
+	}
+}
+
+func (c *taskOwnerLRU) Load(key string) (*taskOwnerEntry, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.items[key]
+	return entry, ok
+}
+
+func (c *taskOwnerLRU) Store(key string, entry *taskOwnerEntry) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, exists := c.items[key]; exists {
+		c.items[key] = entry
+		return
+	}
+	// 淘汰最旧的条目
+	if len(c.order) >= c.maxSize {
+		evictKey := c.order[0]
+		c.order = c.order[1:]
+		delete(c.items, evictKey)
+	}
+	c.items[key] = entry
+	c.order = append(c.order, key)
+}
+
+// taskOwnerCache 有界 LRU：最多缓存 10000 个 taskID 映射
+var taskOwnerCache = newTaskOwnerLRU(10000)
+
+// normalizeTarget 将各种格式的 target 归一化为统一格式，
+// 确保同一主机在 assets / fingerprint_hits / vulnerabilities 三表中的 target 值一致。
+//
+// 规则：
+//   - 纯 IP → 保持原样: "192.168.1.1"
+//   - IP:Port → 保持原样: "192.168.1.1:80"
+//   - URL → 提取为 scheme://host:port（保留 scheme 和端口）: "https://example.com:443"
+//   - 域名 → 保持原样: "example.com"
+func normalizeTarget(raw string) string {
+	return targetutil.NormalizeTarget(raw)
+}
+
+// ResultTargetKey 把扫描结果 target 归一成三表关联用的同一把键。
+func ResultTargetKey(raw string) string {
+	return normalizeTarget(raw)
+}
+
+// extractHostAndPort 从归一化 target 解析主机与端口，供 vulnerabilities 的
+// host/port 列过滤。scheme:// 走 url.Parse 取 Hostname+Port（http/https 无显式
+// 端口补 80/443）；host:port 走 net.SplitHostPort；裸 host 返回 (host,0)；
+// 解析不出主机返回 ("",0)。
+func extractHostAndPort(target string) (string, int) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", 0
+	}
+	if strings.Contains(target, "://") {
+		u, err := url.Parse(target)
+		if err != nil || u.Hostname() == "" {
+			return "", 0
+		}
+		port := 0
+		if p := u.Port(); p != "" {
+			if pv, err := strconv.Atoi(p); err == nil {
+				port = pv
+			}
+		} else if port = schemeDefaultPort(u.Scheme); port < 0 {
+			port = 0
+		}
+		return u.Hostname(), port
+	}
+	if host, portStr, err := net.SplitHostPort(target); err == nil {
+		port := 0
+		if pv, err := strconv.Atoi(portStr); err == nil {
+			port = pv
+		}
+		return strings.TrimSpace(host), port
+	}
+	// 裸 host / IP（无端口）。带单冒号的非端口形态（如 IPv6）回落到整体清洗。
+	if host := net.ParseIP(target); host != nil {
+		return target, 0
+	}
+	return strings.TrimSpace(target), 0
+}
+
+// schemeDefaultPort 返回 scheme 的默认端口；未知 scheme 返回 -1。
+func schemeDefaultPort(scheme string) int {
+	switch strings.ToLower(strings.TrimSpace(scheme)) {
+	case "http", "ws":
+		return 80
+	case "https", "wss":
+		return 443
+	}
+	return -1
+}
+
+// nucleiPacketPair 是 nuclei ResultEvent.Packet 中的单步请求/响应对。
+type nucleiPacketPair struct {
+	Request  string
+	Response string
+}
+
+// parseNucleiPacket 解析 ResultEvent JSON 的 packet 字段。nuclei 把多发包
+// 模板的完整步骤编码为 map[int]RequestResponsePair，JSON 序列化为
+// {"0":{"Request":...,"Response":...},"1":{...},...}。这里按步骤序号升序返回；
+// packet 缺失或为空时返回 nil。
+func parseNucleiPacket(event map[string]interface{}) []nucleiPacketPair {
+	raw, ok := event["packet"].(map[string]interface{})
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	type keyedPair struct {
+		index int
+		pair  nucleiPacketPair
+	}
+	keyed := make([]keyedPair, 0, len(raw))
+	for key, value := range raw {
+		idx, err := strconv.Atoi(key)
+		if err != nil {
+			continue
+		}
+		m, ok := value.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		pair := nucleiPacketPair{
+			Request:  payloadString(m, "Request"),
+			Response: payloadString(m, "Response"),
+		}
+		if pair.Request == "" && pair.Response == "" {
+			continue
+		}
+		keyed = append(keyed, keyedPair{index: idx, pair: pair})
+	}
+	sort.Slice(keyed, func(i, j int) bool { return keyed[i].index < keyed[j].index })
+	pairs := make([]nucleiPacketPair, len(keyed))
+	for i, k := range keyed {
+		pairs[i] = k.pair
+	}
+	return pairs
+}
+
+// formatNucleiPacketSequence 把多步请求/响应渲染为带序号的可读序列，
+// 便于人工判断与复现（例如第一步发送命令、第二步取回显）。
+func formatNucleiPacketSequence(pairs []nucleiPacketPair) (string, string) {
+	var reqSB, respSB strings.Builder
+	for i, pair := range pairs {
+		step := i + 1
+		fmt.Fprintf(&reqSB, "===== [Request %d] =====\n%s\n\n", step, pair.Request)
+		fmt.Fprintf(&respSB, "===== [Response %d] =====\n%s\n\n", step, pair.Response)
+	}
+	return strings.TrimRight(reqSB.String(), "\n"), strings.TrimRight(respSB.String(), "\n")
+}
+
+func splitFingerprintToken(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if !strings.Contains(raw, ",") {
+		return []string{raw}
+	}
+	parts := strings.Split(raw, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		result = append(result, part)
+	}
+	return result
+}
+
+func extractFingerprintProductNames(payloadType, plugin string, payload map[string]interface{}) []string {
+	candidates := make([]string, 0, 4)
+
+	if plugin != "" {
+		candidates = append(candidates, splitFingerprintToken(plugin)...)
+	}
+
+	if payload != nil {
+		if raw, ok := payload["finger"]; ok {
+			switch typed := raw.(type) {
+			case []interface{}:
+				for _, item := range typed {
+					if name, ok := item.(string); ok {
+						candidates = append(candidates, splitFingerprintToken(name)...)
+					}
+				}
+			case []string:
+				for _, item := range typed {
+					candidates = append(candidates, splitFingerprintToken(item)...)
+				}
+			case string:
+				candidates = append(candidates, splitFingerprintToken(typed)...)
+			}
+		}
+	}
+
+	if len(candidates) == 0 {
+		fallback := strings.TrimSpace(payloadType)
+		switch fallback {
+		case "", "Finger", "Active-Finger", "fingerprint", "web_fingerprint", "tech":
+		default:
+			candidates = append(candidates, fallback)
+		}
+	}
+
+	seen := make(map[string]struct{}, len(candidates))
+	result := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || strings.EqualFold(candidate, "unknown") {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		result = append(result, candidate)
+	}
+	return result
+}
+
+func normalizeSeverity(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "critical":
+		return "Critical"
+	case "high":
+		return "High"
+	case "medium":
+		return "Medium"
+	case "low":
+		return "Low"
+	case "info", "informational":
+		return "Info"
+	default:
+		return "Unknown"
+	}
+}
+
+func isOSINTAssetPayloadType(payloadType string) bool {
+	return payloadType == "Quake" || payloadType == "Hunter" || payloadType == "Fofa"
+}
+
+// assetPayloadTypes / fingerprintPayloadTypes / vulnerabilityPayloadTypes
+// 声明 payload Type 到结果表的唯一路由。漏洞表只接收漏洞类 Type；
+// CDN-Domain 等资产类 Type 永远不进入 vulnerabilities。
+var (
+	assetPayloadTypes = map[string]struct{}{
+		"asset": {}, "port_scan": {}, "subdomain": {},
+		"Web": {}, "Protocol": {}, "ProtocolCheck": {}, "PortScan": {}, "IPAlive": {},
+		"Domain": {}, "Domain-Bind": {}, "Nmap": {}, "DNS-SubFinder": {}, "DNS-Brute": {},
+		"CDN-Domain": {}, "RealIP": {},
+		"Quake": {}, "Hunter": {}, "Fofa": {},
+	}
+	fingerprintPayloadTypes = map[string]struct{}{
+		"fingerprint": {}, "web_fingerprint": {}, "tech": {},
+		"Finger": {}, "Active-Finger": {},
+	}
+	vulnerabilityPayloadTypes = map[string]struct{}{
+		"nuclei": {}, "gopoc": {}, "GoPoc": {}, "Nuclei": {}, "vulnerability": {},
+	}
+)
+
+func isAssetPayloadType(payloadType string) bool {
+	_, ok := assetPayloadTypes[payloadType]
+	return ok
+}
+
+func isFingerprintPayloadType(payloadType string) bool {
+	_, ok := fingerprintPayloadTypes[payloadType]
+	return ok
+}
+
+// isVulnerabilityPayloadType 是写入 vulnerabilities 表的唯一准入判定；
+// 资产类（含 CDN-Domain）与指纹类 Type 在集合层面与之互斥。
+func isVulnerabilityPayloadType(payloadType string) bool {
+	_, ok := vulnerabilityPayloadTypes[payloadType]
+	return ok
+}
+
+func payloadString(payload map[string]interface{}, key string) string {
+	if payload == nil {
+		return ""
+	}
+	value, ok := payload[key].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func payloadPortString(payload map[string]interface{}) string {
+	if payload == nil {
+		return ""
+	}
+	switch value := payload["port"].(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case float64:
+		if value > 0 {
+			return strconv.Itoa(int(value))
+		}
+	}
+	return ""
+}
+
+func osintTargetFromPayload(payload map[string]interface{}, fallback string) string {
+	if uri := payloadString(payload, "uri"); uri != "" {
+		return uri
+	}
+	if ip := payloadString(payload, "ip"); ip != "" {
+		if port := payloadPortString(payload); port != "" {
+			return ip + ":" + port
+		}
+	}
+	for _, key := range []string{"target", "host", "url", "ip"} {
+		if value := payloadString(payload, key); value != "" {
+			return value
+		}
+	}
+	return fallback
+}
+
+func AddResultAsync(taskID string, payloadType string, payloadJSON string) {
+	// 优先从 LRU 缓存查找任务归属
+	projectID := "default_project"
+	tenantID := "default"
+	rootTaskID := ""
+	if entry, ok := taskOwnerCache.Load(taskID); ok {
+		projectID = entry.ProjectID
+		tenantID = entry.TenantID
+		rootTaskID = entry.RootTaskID
+	} else {
+		// 缓存未命中，查库并缓存结果
+		var subTask SubTask
+		if err := DB.Select("project_id", "tenant_id", "root_task_id").Where("id = ?", taskID).First(&subTask).Error; err == nil {
+			if subTask.ProjectID != "" {
+				projectID = subTask.ProjectID
+			}
+			if subTask.TenantID != "" {
+				tenantID = subTask.TenantID
+			}
+			rootTaskID = subTask.RootTaskID
+		}
+		taskOwnerCache.Store(taskID, &taskOwnerEntry{ProjectID: projectID, TenantID: tenantID, RootTaskID: rootTaskID})
+	}
+
+	target := "unknown"
+	var p map[string]interface{}
+	var port int
+	var service, title, severity, plugin, source string
+
+	if err := json.Unmarshal([]byte(payloadJSON), &p); err == nil {
+		// 提取 target
+		if t, ok := p["target"].(string); ok && t != "" {
+			target = t
+		} else if t, ok := p["host"].(string); ok && t != "" {
+			target = t
+		} else if t, ok := p["url"].(string); ok && t != "" {
+			target = t
+		} else if t, ok := p["ip"].(string); ok && t != "" {
+			target = t
+			if portStr, ok := p["port"].(string); ok && portStr != "" {
+				target = t + ":" + portStr
+			} else if portFl, ok := p["port"].(float64); ok && portFl > 0 {
+				target = t + ":" + fmt.Sprint(portFl)
+			}
+		} else if gp, ok := p["go_poc"].(map[string]interface{}); ok {
+			if t, ok := gp["Target"].(string); ok && t != "" {
+				target = t
+			}
+		}
+		// 精细化字段提取
+		if v, ok := p["port"].(float64); ok {
+			port = int(v)
+		} else if v, ok := p["port"].(string); ok && v != "" {
+			if pv, err := strconv.Atoi(v); err == nil {
+				port = pv
+			}
+		}
+		if v, ok := p["service"].(string); ok {
+			service = v
+		}
+		if v, ok := p["title"].(string); ok {
+			title = v
+		}
+		if v, ok := p["severity"].(string); ok {
+			severity = v
+		}
+		if v, ok := p["plugin"].(string); ok {
+			plugin = v
+		} else if v, ok := p["name"].(string); ok {
+			plugin = v
+		}
+		if v, ok := p["source"].(string); ok {
+			source = v
+		}
+	}
+
+	if WSBroadcastHook != nil {
+		WSBroadcastHook(tenantID, map[string]interface{}{
+			"type":    payloadType,
+			"target":  target,
+			"payload": payloadJSON,
+		})
+	}
+
+	switch {
+	case isAssetPayloadType(payloadType):
+		// Agent 通过 ddout.OutputMessage 发送的 Type 为大写开头（如 Web/Protocol/PortScan/IPAlive/Domain/Nmap）
+		// 统一归入资产表
+		if isOSINTAssetPayloadType(payloadType) {
+			target = osintTargetFromPayload(p, target)
+			if proto, ok := p["protocol"].(string); ok && proto != "" {
+				service = proto
+			}
+		}
+
+		// 对 Web 类型提取更丰富的字段
+		if payloadType == "Web" || payloadType == "Domain-Bind" {
+			if uri, ok := p["uri"].(string); ok && target == "unknown" {
+				target = uri
+			}
+			if web, ok := p["web"].(map[string]interface{}); ok {
+				if t, ok := web["title"].(string); ok && t != "" {
+					title = t
+				}
+				if s, ok := web["status"].(string); ok && s != "" {
+					service = "http/" + s
+				}
+			}
+		}
+		if payloadType == "PortScan" {
+			if ip, ok := p["ip"].(string); ok {
+				target = ip
+				if portStr, ok := p["port"].(string); ok {
+					target = ip + ":" + portStr
+				}
+			}
+		}
+		if payloadType == "Protocol" || payloadType == "Nmap" || payloadType == "ProtocolCheck" {
+			if ip, ok := p["ip"].(string); ok {
+				target = ip
+				if portStr, ok := p["port"].(string); ok {
+					target = ip + ":" + portStr
+				}
+			}
+			if proto, ok := p["protocol"].(string); ok {
+				service = proto
+			}
+		}
+		if payloadType == "Domain" || payloadType == "DNS-SubFinder" || payloadType == "DNS-Brute" || payloadType == "CDN-Domain" || payloadType == "RealIP" {
+			if domain, ok := p["domain"].(string); ok {
+				target = domain
+			}
+		}
+		if payloadType == "IPAlive" {
+			if ip, ok := p["ip"].(string); ok {
+				target = ip
+			}
+		}
+
+		// 归一化 target，确保三表关联一致性
+		target = normalizeTarget(target)
+
+		// 尝试从 target 中回填端口号（如果精细化提取未命中）
+		if port == 0 && strings.Contains(target, ":") {
+			if u, err := url.Parse(target); err == nil && u.Port() != "" {
+				if pv, err := strconv.Atoi(u.Port()); err == nil {
+					port = pv
+				}
+			} else if _, portStr, err := net.SplitHostPort(target); err == nil {
+				if pv, err := strconv.Atoi(portStr); err == nil {
+					port = pv
+				}
+			}
+		}
+
+		// 构建真实 URL。OSINT 的纯 IP:Port 输出仍只作为资产 target 保存。
+		actualURL := ""
+		if payloadType == "Web" || payloadType == "Domain-Bind" ||
+			(isOSINTAssetPayloadType(payloadType) && strings.Contains(target, "://")) {
+			actualURL = target // target 已 normalize 为 scheme://host:port 格式
+		}
+
+		// 疑似 CDN 标记：CDN-Domain 记录本身，或携带 tag=cdn 的
+		// Web / Domain-Bind 探测结果（来自被判定为 CDN 的域名）。
+		cdn := payloadType == "CDN-Domain"
+		if !cdn {
+			if tag, ok := p["tag"].(string); ok {
+				cdn = strings.EqualFold(tag, "cdn")
+			}
+		}
+
+		assetBuffer <- Asset{
+			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID, Target: target, Protocol: payloadType,
+			Port: port, URL: actualURL, Title: title, Service: service,
+			Source: normalizeTarget(source),
+			Tags:   payloadJSON, CDN: cdn, Status: "alive", CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		}
+	case isFingerprintPayloadType(payloadType):
+		// Agent 通过 ddout 发送的指纹 Type 为 Finger/Active-Finger。
+		// 原实现将 finger[] 拼接成一个字符串，容易产生“顺序变化导致重复”
+		// 和“单产品维度漏报”。这里改为逐产品名写入。
+		if uri, ok := p["uri"].(string); ok && target == "unknown" {
+			target = uri
+		}
+		// 归一化 target，确保三表关联一致性
+		target = normalizeTarget(target)
+		productNames := extractFingerprintProductNames(payloadType, plugin, p)
+		if len(productNames) == 0 {
+			break
+		}
+		ruleName := fingerprintRuleName(payloadType, p)
+		for _, productName := range productNames {
+			fpBuffer <- FingerprintHit{
+				TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID, Target: target, ProductName: productName,
+				RuleName: ruleName, Evidence: payloadJSON, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+			}
+		}
+	case payloadType == "CrawlSite":
+		// 主动爬取提取的"同主机不同站点"关联资产候选。
+		cs, ok := p["crawl_site"].(map[string]interface{})
+		if !ok {
+			break
+		}
+		rawURL := payloadString(cs, "url")
+		if rawURL == "" {
+			rawURL = target
+		}
+		if rawURL == "" || rawURL == "unknown" {
+			break
+		}
+		aiControl, _ := cs["ai_control"].(bool)
+		aiStatus := "confirmed"
+		if aiControl {
+			aiStatus = "pending"
+		}
+		portF, _ := cs["port"].(float64)
+		crawlSiteBuffer <- CrawlSiteCandidate{
+			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID,
+			SourceURL: payloadString(cs, "source_url"),
+			URL:       rawURL, Scheme: payloadString(cs, "scheme"),
+			Host: payloadString(cs, "host"), Port: int(portF),
+			LinkContext: payloadString(cs, "link_context"),
+			SiteType:    payloadString(cs, "site_type"),
+			DedupeHash:  crawlSiteDedupeHash(projectID, rawURL),
+			AIControl:   aiControl, AIStatus: aiStatus,
+			CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		}
+	case payloadType == "SensitiveInfo":
+		// 页面/JS 中提取的敏感信息候选。
+		si, ok := p["sensitive_info"].(map[string]interface{})
+		if !ok {
+			break
+		}
+		kind := payloadString(si, "kind")
+		value := payloadString(si, "value")
+		if value == "" {
+			break
+		}
+		host := payloadString(si, "host")
+		aiControl, _ := si["ai_control"].(bool)
+		aiStatus := "confirmed"
+		if aiControl {
+			aiStatus = "pending"
+		}
+		sensitiveBuffer <- SensitiveFinding{
+			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID,
+			SourceURL: payloadString(si, "source_url"), Host: host,
+			Kind: kind, Value: value, Snippet: payloadString(si, "snippet"),
+			DedupeHash: sensitiveDedupeHash(projectID, host, kind, value),
+			AIControl:  aiControl, AIStatus: aiStatus,
+			CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		}
+	case payloadType == "phase":
+		// Agent PhaseHook 发送的阶段进度事件，仅广播到 WebSocket，不入库
+		if WSBroadcastHook != nil {
+			WSBroadcastHook(tenantID, map[string]interface{}{
+				"type":    "phase",
+				"task_id": taskID,
+				"payload": payloadJSON,
+			})
+		}
+		return
+	case isVulnerabilityPayloadType(payloadType):
+		if severity == "" {
+			severity = "Unknown"
+		}
+		if plugin == "" {
+			plugin = payloadType
+		}
+
+		var reqData, respData, description, reference, matchedAt string
+
+		// GoPoc 类型提取
+		if payloadType == "GoPoc" {
+			if goPoc, ok := p["go_poc"].(map[string]interface{}); ok {
+				if name, ok := goPoc["PocName"].(string); ok && name != "" {
+					plugin = name
+				}
+				if t, ok := goPoc["Target"].(string); ok && t != "" {
+					target = t
+				}
+				if sec, ok := goPoc["Security"].(string); ok && sec != "" {
+					severity = sec
+				}
+				if left, ok := goPoc["InfoLeft"].(string); ok {
+					reqData = left
+				}
+				if right, ok := goPoc["InfoRight"].(string); ok {
+					respData = right
+				}
+				if desc, ok := goPoc["Description"].(string); ok {
+					description = desc
+				}
+			}
+		}
+
+		// Nuclei 类型提取：nuclei 字段是完整 ResultEvent 的 JSON 字符串
+		if payloadType == "Nuclei" {
+			if nucleiStr, ok := p["nuclei"].(string); ok && nucleiStr != "" {
+				plugin = nucleiStr // 向后兼容：保留原始字符串作为 plugin
+
+				// 二次解析 ResultEvent JSON，提取 request/response/info 等字段
+				var event map[string]interface{}
+				if json.Unmarshal([]byte(nucleiStr), &event) == nil {
+					// 提取 template-id 作为更精确的 plugin 名
+					if tid, ok := event["template-id"].(string); ok && tid != "" {
+						plugin = tid
+					}
+					// 提取 request / response
+					if r, ok := event["request"].(string); ok {
+						reqData = r
+					}
+					if r, ok := event["response"].(string); ok {
+						respData = r
+					}
+					// 多步骤 Packet 序列（优先级高于单 request/response）：
+					// nuclei 对多发包模板只把最后一次交互写入 request/response，
+					// 完整步骤在 packet 字段，展开为编号序列便于人工判断与复现。
+					if pairs := parseNucleiPacket(event); len(pairs) > 1 {
+						reqData, respData = formatNucleiPacketSequence(pairs)
+					}
+					// 提取 matched URL
+					if m, ok := event["matched-at"].(string); ok {
+						matchedAt = m
+					} else if m, ok := event["matched"].(string); ok {
+						matchedAt = m
+					}
+					// 提取 host 作为 target
+					if h, ok := event["host"].(string); ok && h != "" {
+						target = h
+					}
+					// 提取 severity
+					if info, ok := event["info"].(map[string]interface{}); ok {
+						if s, ok := info["severity"].(string); ok && s != "" {
+							severity = s
+						}
+						if d, ok := info["description"].(string); ok {
+							description = d
+						}
+						if refs, ok := info["reference"]; ok {
+							if refBytes, err := json.Marshal(refs); err == nil {
+								reference = string(refBytes)
+							}
+						}
+						if name, ok := info["name"].(string); ok && name != "" {
+							description = name + "\n" + description
+						}
+					}
+				}
+			}
+		}
+
+		// 归一化 target，确保三表关联一致性
+		target = normalizeTarget(target)
+		severity = normalizeSeverity(severity)
+		vulnHost, vulnPort := extractHostAndPort(target)
+
+		vulnBuffer2 <- Vulnerability{
+			TenantID: tenantID, ProjectID: projectID, TaskID: taskID, RootTaskID: rootTaskID, Target: target, Plugin: plugin,
+			Severity: severity, Host: vulnHost, Port: vulnPort, Payload: payloadJSON, Status: "open",
+			Request: reqData, Response: respData, Description: description,
+			Reference: reference, MatchedAt: matchedAt,
+			CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		}
+	}
+}

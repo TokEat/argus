@@ -1,0 +1,27 @@
+id: bes-spark-ejb-interface-detect
+
+info:
+  name: 宝兰德 BES Spark EJB 反序列化接口暴露
+  author: argus
+  severity: critical
+  description: |
+    宝兰德 BES 应用服务器 Spark EJB 服务 /BesEJB/spark 对非 POST 请求返回 "Spark expects a POST"，为已验证反序列化 RCE 的同一暴露面。
+    本模板仅探测接口特征，不发送 gadget/反序列化载荷。
+  metadata:
+    max-request: 1
+  tags: bes,baolande,spark,ejb,deserialization,rce
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/BesEJB/spark"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 500
+      - type: word
+        part: body
+        words:
+          - "Spark expects a POST"

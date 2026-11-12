@@ -1,0 +1,22 @@
+id: Dahua_ICC_version_leak
+info:
+  name: Dahua_ICC_version_leak
+  author: test
+  severity: info
+
+http:
+  - raw:
+      - |
+        GET /evo-apigw/evo-brm/1.2.0/config/get-version HTTP/1.1
+        Host: {{Hostname}}
+        Connection: keep-alive
+        Accept-Language: zh-CN
+        User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36
+        Accept: application/json, text/plain, */*
+        Content-Type: application/json;charset=utf-8
+        Accept-Encoding: gzip, deflate, br, zstd
+
+    matchers:
+      - type: dsl
+        dsl:
+          - status_code_1==200  && contains_all(body_1,"versionInfo")

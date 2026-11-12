@@ -1,0 +1,26 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: word
+        part: body
+        words:
+          - http://yousite/radminpass.php
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/radminpass.php'
+id: dede-cms-radminpass-disclosure
+info:
+  author: jijue
+  description: |-
+    radminpass.php文件是一个用于修改管理员密码的PHP脚本工具
+    多出现在新手站长用过这个工具以后忘记删了
+    fofa: app="DedeCMS"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 织梦CMS radminpass.php文件暴露
+  severity: high
+  tags: dede,disclosure,argus-import

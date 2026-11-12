@@ -1,0 +1,36 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      Username=user&Password=MDRmODk5NmRhNzYzYjdhOTY5YjEwMjhlZTMwMDc1NjllYWYzYTYzNTQ4NmRkYWIyMTFkNTEyYzg1YjlkZjhmYg%3D%3D
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <title>replace</title>
+        case-insensitive: true
+        condition: and
+      - type: word
+        part: header
+        words:
+          - SessionID
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/index/login.cgi'
+id: huawei-hg532e-default-login
+info:
+  author: pussycat0x
+  description: |-
+    Huawei HG532e default admin credentials were discovered.
+    shodan: http.html:"HG532e"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Huawei HG532e Default Credential
+  severity: high
+  tags: default-login,huawei,argus-import

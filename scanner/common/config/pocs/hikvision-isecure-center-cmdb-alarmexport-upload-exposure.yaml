@@ -1,0 +1,22 @@
+id: hikvision-isecure-center-cmdb-alarmexport-upload-exposure
+info:
+  name: Hikvision iSecure Center CMDB AlarmExport upload exposure
+  author: codex
+  severity: high
+  description: Detects accessible Hikvision iSecure Center CMDB alarm export component. The related upload endpoint /nms-cmdb/ui/alarmExport/v1/upload may be exposed to a Zip Slip style file upload risk according to source-code analysis.
+  reference:
+    - source-code AlarmExportRestful.java GET /ui/alarmExport/v1/sum and POST /ui/alarmExport/v1/upload
+  tags: hikvision,isecure-center,cmdb,alarmexport,upload,zipslip,exposure
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/nms-cmdb/ui/alarmExport/v1/sum"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"code"'

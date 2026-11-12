@@ -1,0 +1,74 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.html
+bin/
+bin-*
+scanner/agent
+server/argus-server
+**/.gocache/
+
+# Output files
+datas/
+*.log
+
+# IDEs
+.idea/
+.claude/
+.vscode/
+config/
+!server-ui/src/pages/config/
+!scanner/common/config/
+scanner/common/config/*
+!scanner/common/config/finger.yaml
+!scanner/common/config/workflow.yaml
+!scanner/common/config/dir.yaml
+!scanner/common/config/socket.yaml
+!scanner/common/config/api-config.yaml
+!scanner/common/config/subdomains.txt
+!scanner/common/config/pocs/
+!scanner/common/config/pocs/**
+!scanner/common/config/dict/
+!scanner/common/config/dict/**
+!scanner/common/config/AGENTS.md
+
+# OS files
+.DS_Store
+
+# Go
+vendor/
+*.test
+
+# UI
+
+release/
+data/
+runtime/
+**/node_modules
+
+**/dist
+bak/
+*.tar.gz
+*.db
+server/build_seed_db
+
+# 测试
+test/
+!server-ui/src/test/
+test-env
+
+# Yaksha sidecar build artifacts
+yaksha/bin/
+yaksha/.DS_Store
+
+# ai 参考
+
+_ref_claude_code
+# Obsidian
+.obsidian/
+
+# db-init cutover 备份（含数据库 dump，禁止提交）
+deploy/backup/

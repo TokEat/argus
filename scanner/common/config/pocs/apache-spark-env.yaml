@@ -1,0 +1,24 @@
+id: apache-spark-env
+info:
+  name: Apache Spark Web UI 环境与版本信息泄露
+  author: zan8in
+  severity: medium
+  description: 未授权访问 Spark /environment/ 可返回 Spark Properties、运行时与版本等配置信息。
+  reference:
+  - https://github.com/zan8in/afrog
+  tags: hadoop,disclosure
+http:
+- method: GET
+  path:
+  - '{{BaseURL}}/environment/'
+  matchers-condition: and
+  matchers:
+  - type: status
+    status:
+    - 200
+  - type: word
+    part: body
+    words:
+    - Spark
+    - Properties
+    condition: and

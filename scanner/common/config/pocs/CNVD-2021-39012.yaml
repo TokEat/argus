@@ -1,0 +1,33 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: username=admin&password=admin
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"success":"true"'
+          - '"data":'
+        condition: and
+      - type: word
+        part: header
+        words:
+          - text/html
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/login.php?action=login&type=admin'
+id: CNVD-2021-39012
+info:
+  author: Print1n
+  description: app="WIFISKY-7层流控路由器"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Wifisky Default Password
+  severity: high
+  tags: cnvd,cnvd2021,default-login,argus-import

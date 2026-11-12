@@ -1,0 +1,116 @@
+# Yaksha 纵向开发目标
+
+## Goal
+
+建立两条相互衔接的纵向闭环：第一条由 Yaksha 完成 EXP 的解析、校验、执行和诊断；第二条由 Argus MCP 与一个通用 MCP App 为 AI 提供远端 EXP 编写、测试、调试和发布控制面。AI 不接触 Server/Yaksha 文件系统。
+
+## 核心模型
+
+- 一个 EXP 的权威形态是“少量治理元数据 + 一个带版本的 Yak 源码”。
+- Yak 源码同时包含官方 `cli.*` 参数声明和执行逻辑，不增加 Manifest、文件树或自定义包格式。
+- AI 不接触 Server/Yaksha 文件系统，也不直接连接 Yaksha；唯一入口是 MCP。
+- Published Revision 不可变；测试、调试和执行始终绑定确定的 Revision 与源码哈希。
+- 复杂能力通过锁定版本的子 EXP 编排；大型 Payload、字典和样本通过 Asset ID 引用。
+- 保持 Yaklang 原生语言能力，安全边界由远端运行环境的权限、网络和资源隔离承担。
+- 网络授权与出口分离：`network_targets` 决定允许访问的精确目标，调用方为单次运行显式选择 `disabled/direct/socks5`；未来 Agent 通过原生 TCP relay 提供节点出口，不充当 SOCKS5 服务。
+
+## EXP V1 结构
+
+EXP 是 Server 中的逻辑对象，不是 AI 可见的文件目录。其概念结构如下：
+
+```text
+Exp
+├── metadata                 # id、tenant、名称、描述、风险等级和状态
+├── revisions
+│   └── <revision>
+│       └── main.yak         # 唯一权威源码
+├── dependencies             # 锁定到子 EXP 的确定 Revision
+├── asset_refs               # Payload、字典和样本的逻辑 ID
+├── test_cases               # Server 管理的 Fixture/验收用例
+└── runs                     # 执行、调试和审计记录
+```
+
+V1 不定义 Manifest、多文件源码目录或 `.yakexp` 包。`main.yak` 是唯一源码；上述其他内容均由 Server 作为结构化数据管理。Yaklang 仍保留 `include` 等语言能力，但可发布 EXP 不依赖宿主本地文件；复杂源码通过子 EXP 编排，外部数据通过 Asset 引用。
+
+## main.yak 标准
+
+源码按“参数声明 → `cli.check()` → 函数与执行逻辑 → 结构化结果”组织：
+
+```yak
+target = cli.String(
+    "target",
+    cli.setVerboseName("目标地址"),
+    cli.setHelp("授权测试目标"),
+    cli.setRequired(true),
+)
+
+timeout = cli.Int(
+    "timeout",
+    cli.setDefault(10),
+    cli.setCliGroup("执行配置"),
+)
+
+verifyOnly = cli.Bool(
+    "verify_only",
+    cli.setDefault(true),
+)
+
+cli.check()
+
+// EXP logic
+yaksha.result({
+    "vulnerable": false,
+    "message": "not vulnerable",
+})
+```
+
+约定：
+
+- 参数使用官方 `cli.String/Text/Int/Integer/Float/Bool/StringSlice` 声明；UI 信息使用 `setRequired/setDefault/setHelp/setVerboseName/setCliGroup/setSelectOption/setMultipleSelect`。
+- CLI 声明位于顶层并使用字面量配置，`cli.check()` 只出现一次，使远端 `inspect` 可以稳定生成 UI Schema。
+- 协议状态表示脚本是否成功执行；业务判断由 EXP 自己完成。存在可靠回显、Canary 或行为标记时，脚本必须继续验证并通过 `yaksha.result` 返回布尔字段 `vulnerable`；一次性标记应在 Yak 脚本中使用 `codec.CryptoRandBytes` 生成，不提升为 Runtime 参数能力。
+- 确实不存在可靠自动判据时，不得猜测 `vulnerable`；脚本返回 `verdict: "manual_review"`、原因和必要证据，由用户结合完整请求/响应人工判断。
+- 过程证据写入 `yaksha.evidence`，诊断信息写入 `yaksha.log`，不要把凭据、Cookie 或完整敏感响应写入结果和日志。
+- 子 EXP 使用 `yaksha.call(exp_id, revision, params)`，必须锁定 Revision；资源使用 `yaksha.asset(asset_id)`，不接受宿主文件路径。
+- 发布后的 Revision 不可修改；源码编辑期间只保留内存草稿，实时 inspect 并用离线 Fixture 验收，验收通过后才创建新的不可变 Revision。
+
+## 第一条纵向闭环：Yaksha EXP Runtime
+
+1. `inspect`：解析 Yak 源码，返回语法诊断、官方 `cli.*` 参数 Schema 和源码摘要。
+2. `validate`：校验参数、运行时能力、依赖引用和执行限制，不产生真实副作用。
+3. `run`：输入源码、参数、执行上下文和资源限制，返回结构化结果、日志、Evidence 与 Trace。
+4. `debug`：对单个 Yaklang EXP 及一组参数做诊断执行，返回结果、日志、Evidence、错误及 HTTP/TCP Trace，供 AI 修改源码后重试；不设计语言级断点会话。
+5. `test`：使用调用方提供的 Fixture 和断言运行 EXP，返回逐用例结果与可复现诊断。
+
+扩展边界：
+
+- `compose`：通过受控 Resolver 调用锁定版本的子 EXP，不由 Yaksha 管理 Revision。
+- `asset`：通过受控 Resolver 读取 Asset 内容，不向脚本暴露宿主路径。
+- `exp_id`、Revision 和源码哈希仅作为执行上下文与 Trace 标识传入；其存储、状态、权限和发布由 Server 管理。
+
+当前 Runtime 闭环已完成：常驻 HTTP Daemon、预热 Worker、每请求全新 VM/CLI/Session、密封依赖与 Asset Resolver、调用树、Fixture-only test、未脱敏 debug Trace、精确目标授权、统一原始 TCP Connector、每请求 disabled/direct/SOCKS5/Agent relay 出口、Worker 回收和 OCI 运行隔离。Agent Route 具备租户与权限检查、单次认领、预算、取消、会话失效和控制面审计；默认禁网、出口故障不回退、SOCKS5 Raw URL 不进入 Worker 或输出。
+
+复杂 EXP 的运行时能力已统一：`yaksha.httpRequest` 负责多方法 HTTP、Header/Body、逐跳目标复检和完整响应；`yaksha.tcpExchange` 负责单连接内的有序读写、read-until、超时与半关闭。Fixture 使用相同的有序交互模型且永久离线。当前 Yaklang 完整 `yso` 与场景所需 `codec` 核心可直接使用；发布门禁使用无副作用的 `contract` 校验，test/debug/run 使用严格 `execution` 校验。
+
+Server 权威模型已接入：EXP、不可变 Revision、锁定依赖、版本化 Asset、Fixture、发布/回滚指针、运行记录、风险豁免和审计均按租户管理。生产对象存储固定为私有 MinIO，PostgreSQL 只保存治理数据、对象键、大小和哈希；LocalStore 仅允许显式开发模式。完整 Debug Trace 保持未脱敏并按保留期删除正文，摘要和审计永久保留。
+
+## 第二条纵向闭环：MCP EXP Workspace
+
+- Argus MCP 使用 Go SDK `v1.7.0` 和 MCP `2026-07-28` Stateless/Sessionless 协议，对外提供 EXP 的读取、创建 Revision、inspect、Fixture 测试、debug、run 和发布工具。
+- 临时 Draft 源码仅允许通过 MCP 执行 `inspect`、`validate` 和永久离线的 Fixture `test`；具备真实副作用的 `debug/run` 必须先创建 Server Draft Revision，并携带 `exp_id + Revision + source_sha256`。Daemon 复用 Worker，但每次执行创建全新 VM；MCP 不把宿主路径暴露给 AI。
+- `exp_id + Revision + source_sha256` 组成不可变源码身份；Yaksha 按实际源码复算哈希并在全部响应中返回执行上下文。源码、依赖、Asset 或 Fixture 一旦编辑，App 立即解除旧绑定；Server 对内存包执行 contract validate 与永久离线 Fixture test，并签发绑定完整包哈希的短时一次性凭据，只有携带该凭据才能保存 Revision。Debug / Run 不自动保存且只接受已保存身份。
+- Server 权威阶段已提供 `argus_exp_workspace`，绑定 EXP、Revision、Asset、TestCase、Run、审计与风险豁免；发布只针对确定 Revision 和预期源码哈希，并要求 Admin 人工确认。
+- 已保存 Revision 的 `test/debug/run` 全部由 Server 在执行前创建 Run 审计并编排 Yaksha；可信 Fixture 验收因此不能由调用方伪造，MCP 不再使用执行后回报作为审计边界。
+- 提供一个通用 `ui://argus/exp-console` MCP App，不为每个 EXP 创建独立 App；它根据 Yaksha 返回的 CLI Schema 渲染参数表单，并展示源码、诊断、日志、Evidence、Trace 和结构化结果。
+- AI 通过 MCP Tool 读写 EXP 逻辑对象，MCP App 通过同一组受控 Tool 完成交互；两者都不获得 Server/Yaksha 文件路径或任意文件系统能力。
+- 多次编辑不会产生残余 Revision；只有当前内存包通过 Fixture 验收后才生成新的 Draft Revision。调试、执行、比较和发布都携带 `exp_id`、Revision 与源码哈希。
+- 不支持 MCP Apps 的客户端仍通过 Tool 的文本与 `structuredContent` 完成相同闭环；MCP App 只增强交互，不成为执行和治理的权威来源。
+- MCP 层保留租户隔离、对象级授权、草稿优先、发布确认和审计；Yaksha 只负责语言运行时，不承担用户身份与治理状态。
+- MCP Tool 与 EXP Console 可携带密封依赖、Asset、精确网络目标和本次 `disabled/direct/socks5` 出口；SOCKS5 Raw URL 为 write-only，只用于 Daemon 连接，不进入 Yaklang Worker、调用树或调试输出，也不由 App 回填。
+- Agent 原生出口已使用独立多路复用 gRPC 双向流实现，不复用任务 `Subscribe`，也不套 SOCKS5。Server 绑定租户、操作者、Agent、deadline、目标和预算后签发单次 `route_id`；Yaksha 只接收内部 `relay + route_id`，Agent 在自己的网络环境解析并固定目标 IP。出口审计只保存控制面元数据与流量计数，不保存 Payload。
+
+Server Web UI 与 MCP App 已接入完整 Workspace 交互。旧 EXP 数据在 migration 中执行 fail-closed 空表检查；确认无数据后原子删除旧表、协议、Agent 执行器、API、MCP 和 UI 产品入口，不保留双栈运行路径。
+
+## 验收目标
+
+AI 能仅通过 MCP/MCP App 完成：创建单文件 EXP → 解析并渲染 CLI UI → 修复语法问题 → Fixture 测试 → 交互调试 → 执行验证 → 查看结构化结果 → 生成新 Revision → 人工确认发布。整个流程不依赖 AI 可见的本地文件系统，也不需要多文件 EXP 包。

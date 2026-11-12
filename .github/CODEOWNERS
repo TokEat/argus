@@ -1,0 +1,33 @@
+# CODEOWNERS for Argus.
+#
+# 当前维护者：@TokEat
+# 后续如果拆分维护团队，可以将具体路径 owner 替换为真实 GitHub team。
+#
+# GitHub 会使用 .github/CODEOWNERS、根目录 CODEOWNERS 中第一个匹配文件。
+# 若启用 branch protection 的 "Require review from Code Owners"，相关路径必须由 owner 批准。
+
+# Default
+* @TokEat
+
+# Backend and control plane
+/server/ @TokEat
+/scanner/ @TokEat
+/shared/ @TokEat
+/mcp/ @TokEat
+
+# Frontend
+/server-ui/ @TokEat
+
+# Deployment, database, and release
+/deploy/ @TokEat
+/server/deploy/ @TokEat
+/server/internal/db/migrations/ @TokEat
+/.github/workflows/ @TokEat
+
+# Security-sensitive docs and governance
+/AGENTS.md @TokEat
+/CONTRIBUTING.md @TokEat
+/SECURITY.md @TokEat
+/.github/ISSUE_TEMPLATE/ @TokEat
+/.github/PULL_REQUEST_TEMPLATE.md @TokEat
+/.github/CODEOWNERS @TokEat

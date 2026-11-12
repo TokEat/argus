@@ -1,0 +1,35 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: username=admin&password=geoserver
+    matchers:
+      - type: status
+        status:
+          - 302
+      - type: word
+        part: header
+        words:
+          - /geoserver/web
+        condition: and
+      - type: word
+        part: header
+        words:
+          - error=true
+        negative: true
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/geoserver/j_spring_security_check'
+id: geoserver-default-login
+info:
+  author: For3stCo1d
+  description: |-
+    Geoserver default admin credentials were discovered.
+    fofa: app="GeoServer"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Geoserver Default Admin Login
+  severity: high
+  tags: geoserver,default-login,argus-import

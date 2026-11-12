@@ -1,0 +1,127 @@
+# ==============================================================================
+# Argus Windows 单机部署 - 基础设施编排
+#
+# 包含数据面基础设施（PostgreSQL / RabbitMQ / MinIO+初始化）与 EXP 沙箱运行时
+# yaksha（仅 Linux 二进制，故容器化运行）。
+# argus-server / argus-agent 以原生 Windows 进程运行（见 setup.ps1）。
+#
+# 数据库初始化：首次启动时 postgres 镜像自动按字母序执行
+#   ./db-init/*.sql（001..006, 580..604, seed_admin.sql），无需 psql 客户端。
+# 重新初始化：删除 ./data/postgres 后重新 up（会清空全部数据）。
+#
+# 所有端口仅绑定 127.0.0.1；对外（Agent 接入）的是宿主机 argus-server 的
+# :8085 / :50051，由 Windows 防火墙单独放行。
+# ==============================================================================
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: argus-postgres
+    env_file:
+      - ../secrets.env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-argus}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ../data/postgres:/var/lib/postgresql/data
+      # 首次建库自动执行；字母序 001..006,580..604,seed_admin 即正确迁移顺序
+      - ./db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: argus-rabbitmq
+    env_file:
+      - ../secrets.env
+    ports:
+      - "127.0.0.1:${RABBITMQ_PORT:-5672}:5672"
+      - "127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - ../data/rabbitmq:/var/lib/rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-argus}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?RABBITMQ_DEFAULT_PASS is required}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: argus-minio
+    env_file:
+      - ../secrets.env
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+    ports:
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - ../data/minio:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  # EXP 沙箱运行时（yaksha 依赖 cgo libpcre2，仅支持 Linux，故以容器运行在
+  # Docker Desktop 上）；server（宿主机原生进程）经 127.0.0.1:8790 访问。
+  # 镜像由打包脚本 docker save 进 deploy\images\argus-yaksha.tar，
+  # setup.ps1 首次启动时 docker load。
+  yaksha:
+    image: argus-yaksha:local
+    container_name: argus-yaksha
+    ports:
+      - "127.0.0.1:8790:8790"
+    environment:
+      YAKSHA_LISTEN_ADDR: "0.0.0.0:8790"
+      YAKSHA_WORKERS: "2"
+      YAKSHA_QUEUE_SIZE: "32"
+      YAKSHA_RECYCLE_AFTER: "100"
+    restart: unless-stopped
+
+  # EXP 工作区对象桶初始化（一次性）；无需 EXP 功能可注释掉本服务与 minio
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    container_name: argus-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    env_file:
+      - ../secrets.env
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      ARGUS_EXP_MINIO_ACCESS_KEY: ${ARGUS_EXP_MINIO_ACCESS_KEY:?ARGUS_EXP_MINIO_ACCESS_KEY is required}
+      ARGUS_EXP_MINIO_SECRET_KEY: ${ARGUS_EXP_MINIO_SECRET_KEY:?ARGUS_EXP_MINIO_SECRET_KEY is required}
+      ARGUS_EXP_MINIO_BUCKET: ${ARGUS_EXP_MINIO_BUCKET:-argus-exp}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        mc alias set argus http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        bucket="$${ARGUS_EXP_MINIO_BUCKET}"
+        case "$${bucket}" in ''|*[!a-z0-9.-]*) echo "invalid MinIO bucket name" >&2; exit 2 ;; esac
+        printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetBucketLocation","s3:ListBucket"],"Resource":["arn:aws:s3:::%s"]},{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::%s/*"]}]}' "$${bucket}" "$${bucket}" > /tmp/argus-exp-policy.json
+        mc mb --ignore-existing "argus/$${bucket}"
+        mc anonymous set none "argus/$${bucket}"
+        mc admin user add argus "$${ARGUS_EXP_MINIO_ACCESS_KEY}" "$${ARGUS_EXP_MINIO_SECRET_KEY}"
+        mc admin policy create argus argus-exp-rw /tmp/argus-exp-policy.json
+        mc admin policy attach argus argus-exp-rw --user "$${ARGUS_EXP_MINIO_ACCESS_KEY}"
+    restart: "no"

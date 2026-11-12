@@ -1,0 +1,29 @@
+# 来源: xray（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <title>Spark
+          - '<strong>URL:</strong> spark:'
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/'
+id: spark-webui-unauth
+info:
+  author: argus-import
+  description: ""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: 在符合以下条件的情况下，我们欢迎任何人以任何形式使用本项目（包括商用）。
+    argus-import-source: xray
+    argus-risk-level: medium
+  name: spark-webui-unauth
+  reference:
+    - https://github.com/vulhub/vulhub/tree/master/spark/unacc
+  severity: medium
+  tags: argus-import

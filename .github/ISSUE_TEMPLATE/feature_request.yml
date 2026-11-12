@@ -1,0 +1,47 @@
+name: Feature request
+description: 提出新功能或行为增强
+title: "[feature] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: 目标
+      description: 本功能要解决什么问题？
+    validations:
+      required: true
+  - type: textarea
+    id: value
+    attributes:
+      label: 用户价值
+      description: 谁会使用它？带来什么改进？
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 影响范围
+      description: 涉及哪些模块、接口、页面、Agent、规则、云资源或部署路径？
+    validations:
+      required: true
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: 非目标
+      description: 明确本次不做什么，避免范围漂移。
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: 逐条列出完成条件。
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: 预期验证方式
+      description: 需要执行哪些测试、构建、手动验证或安全检查？
+    validations:
+      required: true

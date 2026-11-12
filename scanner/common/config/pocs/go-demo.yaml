@@ -1,0 +1,23 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: word
+        part: body
+        words:
+          - hello
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/'
+id: go-demo
+info:
+  author: zan8in
+  description: Go Demo
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Go Demo
+  severity: high
+  tags: go,demo,argus-import

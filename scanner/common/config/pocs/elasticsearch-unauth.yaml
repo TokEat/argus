@@ -1,0 +1,33 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - /_cat/master
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/_cat'
+id: elasticsearch-unauth
+info:
+  author: p0wd3r
+  description: |-
+    /_nodes #查看节点数据
+    /_cat/indices #索引
+    _cat/indices
+    /_plugin/head
+    /_nodes/
+    /_status
+    /_search?pretty
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: ElasticSearch Information Disclosure
+  severity: high
+  tags: elasticsearch,unauth,argus-import

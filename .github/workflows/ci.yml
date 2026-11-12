@@ -1,0 +1,175 @@
+name: CI
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: Static contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Source size ratchet
+        run: make source-size-check
+
+      - name: Argus brand contract
+        run: make brand-check
+
+      - name: Deploy shell contracts
+        run: make deploy-test
+
+      - name: Deploy shell contracts on legacy bash 3.2
+        run: |
+          # bash 4.4 之前，set -u 会把空数组视为未绑定变量；
+          # 宿主 bash 通常 >= 4.4，需在旧 bash 上才能真正复现该缺陷。
+          docker run --rm -v "$PWD:/w" -w /w \
+            bash@sha256:44900632c47e54937a3c2d7de2b4d05af7aee6d269c71c3116204842ee26101c \
+            bash deploy/tests/shell-empty-array.sh
+
+  go-tests:
+    name: Go tests (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: root
+            directory: .
+            gowork: auto
+          - name: server
+            directory: server
+            gowork: auto
+          - name: mcp
+            directory: mcp
+            gowork: auto
+          - name: yaksha
+            directory: yaksha
+            gowork: 'off'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            server/go.sum
+            mcp/go.sum
+            yaksha/go.sum
+
+      - name: Test once with coverage
+        working-directory: ${{ matrix.directory }}
+        env:
+          GOWORK: ${{ matrix.gowork }}
+        run: |
+          go test -coverprofile="$RUNNER_TEMP/${{ matrix.name }}.out" ./...
+          go tool cover -func="$RUNNER_TEMP/${{ matrix.name }}.out" | tail -n 1
+
+      - name: Embedded Nuclei request-budget tests
+        if: matrix.name == 'root'
+        working-directory: scanner/lib/nuclei
+        env:
+          GOWORK: 'off'
+        run: go test ./pkg/protocols ./pkg/protocols/http ./pkg/protocols/dns ./internal/runner -run '^TestRequestBudget' -count=1
+
+      - name: Cloud provider mock smoke
+        if: matrix.name == 'server'
+        working-directory: server
+        run: go test ./internal/api -run TestCloudProviderMockSmoke -count=1
+
+  database:
+    name: Database schema
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: argus_ci
+          POSTGRES_DB: argus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d argus"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: PostgreSQL init (pure SQL) and schema verify
+        env:
+          DB_DSN: host=127.0.0.1 user=postgres password=argus_ci dbname=argus port=5432 sslmode=disable
+        run: |
+          bash deploy/tests/db-init-container.sh
+          make db-setup POSTGRES_PASSWORD=argus_ci
+          make db-verify POSTGRES_PASSWORD=argus_ci
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server-ui/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: server-ui
+
+      - name: Frontend lint
+        run: npm run lint
+        working-directory: server-ui
+
+      - name: Frontend tests
+        run: npm run test -- --run
+        working-directory: server-ui
+
+      - name: Frontend smoke
+        run: npm run test:smoke
+        working-directory: server-ui
+
+      - name: Frontend build
+        run: npm run build
+        working-directory: server-ui
+
+  verify:
+    name: Verify
+    if: always()
+    needs: [static, go-tests, database, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every CI shard
+        env:
+          STATIC_RESULT: ${{ needs.static.result }}
+          GO_RESULT: ${{ needs.go-tests.result }}
+          DATABASE_RESULT: ${{ needs.database.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+        run: |
+          test "$STATIC_RESULT" = success
+          test "$GO_RESULT" = success
+          test "$DATABASE_RESULT" = success
+          test "$FRONTEND_RESULT" = success

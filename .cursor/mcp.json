@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "argus": {
+      "url": "http://127.0.0.1:18085/mcp"
+    }
+  }
+}

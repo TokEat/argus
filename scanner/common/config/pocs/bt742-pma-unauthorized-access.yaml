@@ -1,0 +1,37 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - information_schema
+        condition: and
+      - type: word
+        part: body
+        words:
+          - phpmyadmin
+        case-insensitive: true
+        condition: and
+      - type: word
+        part: body
+        words:
+          - server_sql.php
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/pma/'
+id: bt742-pma-unauthorized-access
+info:
+  author: Facker007
+  description: ""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: BT742 PMA Unauthorized Access
+  severity: high
+  tags: bt742,pma,unauth,argus-import

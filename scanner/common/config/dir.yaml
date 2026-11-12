@@ -1,0 +1,119 @@
+Alibaba-Nacos:
+  - "/nacos/"
+  - "/api/nacos/"
+
+Alibaba-Druid:
+  - "/druid/index.html"
+
+springboot-heapdump:
+  - "/actuator"
+  - "/api/actuator"
+
+东方通-TongWeb:
+  - "/console/"
+  - "/ejbserver/ejb"
+
+宝蓝德-Spark-EJB:
+  - "/BesEJB/spark"
+
+百度-UEditor:
+  - "/ueditor/ueditor.all.js"
+
+积木报表:
+  - "/jmreport/testConnection"
+
+Docker-api:
+  - "/containers/json"
+
+Docker-Registry:
+  - "/v2/_catalog"
+
+etcd:
+  - "/v2/keys"
+
+XXL-JOB:
+  - "/xxl-job-admin/toLogin"
+
+xxl-rpc:
+  - "/services"
+
+Apache-Tomcat:
+  - "/manager/html"
+  - "/host-manager/html"
+
+Apache-APISIX:
+  - "/apisix/"
+
+Jboss:
+  - "/jmx-console/"
+  - "/invoker/JMXInvokerServlet"
+
+Jolokia:
+  - "/jolokia/"
+
+金蝶云星空:
+  - "/k3cloud"
+
+亿赛通-电子文档安全管理系统:
+  - "/CDGServer3/"
+
+GeoServer:
+  - "/geoserver/web/"
+
+ArcGIS:
+  - "/arcgis/"
+
+MINIO-Browser:
+  - "/minio/"
+
+MINIO-Console:
+  - "/minio/console/"
+
+Edoc2(rce):
+  - "/edoc2Flow-web/edoc-etc-processManage/importNewBpmnDesign"
+
+海康威视联网网关:
+  - "/localDomain/downdb.php"
+
+海康威视 流媒体管理服务器:
+  - "/config/user.xml"
+
+KEDACOM-phoenix监控平台:
+  - "/pmc-bin/upload_fcgi"
+
+Laravel-Framework:
+  - "/_ignition/health-check"
+
+phpMyAdmin:
+  - "/phpmyadmin/"
+
+ureport:
+  - "/ureport"
+
+Camunda:
+  - "/camunda/"
+
+Adobe-ColdFusion:
+  - "/CFIDE/administrator/index.cfm"
+
+ClickHouse:
+  - "/play"
+
+Jenkins:
+  - "/jenkins/login"
+
+APACHE-Solr:
+  - "/solr/"
+
+APACHE-Airflow:
+  - "/airflow/"
+
+畅捷通-TPlus:
+  - "/tplus/"
+
+MCP-Server:
+  - "/.well-known/mcp.json"
+  - "/.well-known/mcp/server-card.json"
+  - "/mcp"
+  - "/sse"
+  - "/messages"

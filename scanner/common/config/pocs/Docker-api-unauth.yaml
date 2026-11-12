@@ -1,0 +1,23 @@
+id: Docker-api-unauth
+
+info:
+  name: Docker-api-unauth
+  author: test
+  severity: critical
+  description: RCE
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/containers/json"
+    
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "Command"
+          - "ImageID"
+        condition: and

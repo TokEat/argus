@@ -1,0 +1,27 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <a class="top-nav-zbbshare" target="_blank" title="Zabbix Share" href="https://share.zabbix.com/">Share</a>
+          - <title>Dashboard</title>
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/zabbix.php?action=dashboard.view&dashboardid=1'
+id: zabbix-authentication-bypass
+info:
+  author: FiveAourThe
+  description: Zabbix authentication Bypass
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Zabbix authentication Bypass
+  severity: high
+  tags: zabbix,unauth,argus-import

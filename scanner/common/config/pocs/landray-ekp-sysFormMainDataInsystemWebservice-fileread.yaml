@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 500
+      - type: word
+        part: body
+        words:
+          - 'Unmarshalling Error:'
+        case-insensitive: true
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/'
+id: landray-ekp-sysFormMainDataInsystemWebservice-fileread
+info:
+  author: ZacharyZcR
+  description: |-
+    Landray EKP System sysFormMainDataInsystemWebservice interface has an arbitrary file read vulnerability.
+    fofa: body="Com_Parameter"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Landray EKP sysFormMainDataInsystemWebservice File Read
+  severity: high
+  tags: landray,fileread,argus-import

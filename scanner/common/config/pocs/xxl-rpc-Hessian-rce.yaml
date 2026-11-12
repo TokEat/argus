@@ -1,0 +1,38 @@
+id: xxl-rpc-Hessian-rce
+
+info:
+  name: xxl-rpc-Hessian-rce
+  author: admin
+  severity: critical
+  description: xxl-rpc-Hessian-rce
+  metadata:
+    max-request: 1
+    shodan-query: ""
+    verified: true
+  yakit-info:
+    sign: efd3d008e164a3da5c31578e9d414523
+
+http:
+- method: GET
+  path:
+  - '{{RootURL}}/services'
+  headers:
+    Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7
+    Accept-Encoding: gzip, deflate
+    Accept-Language: zh-CN,zh;q=0.9
+    Sec-Purpose: prefetch
+    User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
+      (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36
+
+  max-redirects: 3
+  disable-cookie: true
+  matchers-condition: and
+  matchers:
+  - type: regex
+    part: body
+    regex:
+    - <ui><li>(.*?)<\/li><\/ui>
+    condition: and
+
+
+# Generated From WebFuzzer on 2026-01-19 17:05:55

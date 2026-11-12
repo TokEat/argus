@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package scan;
+
+option go_package = "github.com/TokEat/argus/shared/proto/go/scan";
+
+// EgressFrameKind defines the bounded control/data frames used by both the
+// Agent tunnel and the private Yaksha gateway. Payload is meaningful only for
+// EGRESS_FRAME_DATA and is capped by both peers at 64 KiB.
+enum EgressFrameKind {
+  EGRESS_FRAME_UNSPECIFIED = 0;
+  EGRESS_FRAME_HELLO = 1;
+  EGRESS_FRAME_HELLO_ACK = 2;
+  EGRESS_FRAME_OPEN = 3;
+  EGRESS_FRAME_OPEN_RESULT = 4;
+  EGRESS_FRAME_DATA = 5;
+  EGRESS_FRAME_HALF_CLOSE = 6;
+  EGRESS_FRAME_CLOSE = 7;
+  EGRESS_FRAME_ERROR = 8;
+  EGRESS_FRAME_PING = 9;
+  EGRESS_FRAME_PONG = 10;
+}
+
+message EgressFrame {
+  EgressFrameKind kind = 1;
+  string agent_id = 2;
+  string route_id = 3;
+  string connection_id = 4;
+  uint64 sequence = 5;
+  string host = 6;
+  uint32 port = 7;
+  string protocol = 8;
+  string resolved_ip = 9;
+  string remote_address = 10;
+  bytes payload = 11;
+  string error_code = 12;
+  string error_message = 13;
+}
+
+// AgentEgressService is a long-lived Agent initiated stream. One stream
+// multiplexes all authorized routes and raw TCP connections for that Agent.
+service AgentEgressService {
+  rpc EgressTunnel(stream EgressFrame) returns (stream EgressFrame);
+}
+
+// YakshaEgressGateway is a private control-plane service. A stream is scoped
+// to one top-level Yaksha request and one single-use route_id.
+service YakshaEgressGateway {
+  rpc Relay(stream EgressFrame) returns (stream EgressFrame);
+}

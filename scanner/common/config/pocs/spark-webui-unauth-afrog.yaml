@@ -1,0 +1,27 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <title>Spark Master at spark://
+          - <strong>URL:</strong>
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/'
+id: spark-webui-unauth
+info:
+  author: princechaddha
+  description: Apache Spark WebUI Unauthenticated
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: medium
+  name: Spark WebUI Unauthenticated
+  severity: medium
+  tags: spark,webui,unauth,argus-import

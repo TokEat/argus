@@ -1,0 +1,31 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"identity":"anonymous","anonymous":true'
+        condition: and
+      - type: word
+        part: header
+        words:
+          - json
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/nifi-api/flow/current-user'
+id: nifi-api-unauthorized-access
+info:
+  author: wulalalaaa
+  description: Apache NiFi Api未授权访问导致命令执行
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Apache Nifi Api Unauthorized Access
+  severity: high
+  tags: apache,nifi,unauth,argus-import

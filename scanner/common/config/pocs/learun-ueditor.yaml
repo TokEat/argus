@@ -1,0 +1,20 @@
+id: learun-ueditor
+info:
+  name: 力软敏捷开发框架ueditor任意文件上传
+  author: admin
+  severity: critical
+  description: 力软敏捷开发框架ueditor任意文件上传,web.body="/Content/images/Login/default_account0.png"&&web.body="/Login/CheckLogin"
+  reference:
+    - https://
+  tags: learun,ueditor,upload
+http:
+  - raw:
+      - |+
+        GET {{BaseURL}}/Utility/CrawlerHandler HTTP/1.1
+        Host: {{Hostname}}
+        
+    matchers:
+      - type: binary
+        part: body
+        binary:
+          - 7b227374617465223a22e58f82e695b0e99499e8afafefbc

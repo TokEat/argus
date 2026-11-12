@@ -1,0 +1,37 @@
+id: ureport-jdbc
+
+info:
+  name: ureport-jdbc
+  author: admin
+  severity: critical
+  description: ureport-jdbc
+  metadata:
+    max-request: 1
+    shodan-query: ""
+    verified: true
+  yakit-info:
+    sign: 35082662335ead9831ba1e417983af3f
+
+http:
+- method: GET
+  path:
+  - '{{RootURL}}/ureport/datasource/testConnection'
+  headers:
+    Accept-Charset: utf-8
+    Accept-Encoding: gzip, deflate, br
+    Connection: keep-alive
+    User-Agent: Mozilla/5.0 (X11; Linux i686) AppleWebKit/537.36 (KHTML, like Gecko)
+      Ubuntu Chromium/51.0.2704.79 Chrome/51.0.2704.79 Safari/537.36
+
+  max-redirects: 3
+  disable-cookie: true
+  matchers-condition: and
+  matchers:
+  - type: word
+    part: body
+    words:
+    - java.lang.NullPointerException
+    condition: and
+
+
+# Generated From WebFuzzer on 2025-11-19 17:32:59

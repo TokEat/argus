@@ -1,0 +1,30 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"sec_pwd":'
+          - '"http_passwd":'
+          - '"user_info":'
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/actpt.data'
+id: datang-ac-disclosure
+info:
+  author: zan8in
+  description: |-
+    页面搜一下sec_pwd，有可能会暴露密码信息
+    fofa: app="大唐电信AC集中管理平台"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 大唐电信AC集中管理平台信息泄漏
+  severity: high
+  tags: datang,disclosure,argus-import

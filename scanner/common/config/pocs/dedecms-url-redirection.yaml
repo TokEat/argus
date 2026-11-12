@@ -1,0 +1,28 @@
+# 来源: xray（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 302
+      - type: word
+        part: header
+        words:
+          - https://www.du1x3r12.com
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/plus/download.php?open=1&link=aHR0cHM6Ly93d3cuZHUxeDNyMTIuY29t'
+id: dedecms-url-redirection
+info:
+  author: cc_ci(https://github.com/cc8ci)
+  description: ""
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: 在符合以下条件的情况下，我们欢迎任何人以任何形式使用本项目（包括商用）。
+    argus-import-source: xray
+    argus-risk-level: medium
+  name: dedecms-url-redirection
+  reference:
+    - https://blog.csdn.net/ystyaoshengting/article/details/82734888
+  severity: medium
+  tags: argus-import

@@ -1,0 +1,30 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      httpd;General;lang=en&login_id=root&login_pw=sweap12~
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - document.formParent2.changepasswd1.value
+          - passwd_change.ehp
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/main.ehp'
+id: samsung-wea453e-default-pwd
+info:
+  author: sharecast
+  description: |
+    fofa: title=="Wea453e"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Samsung Wea453e Default Password
+  severity: high
+  tags: samsung,wea453e,default,pwd,argus-import

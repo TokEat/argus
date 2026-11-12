@@ -1,0 +1,454 @@
+package engine
+
+import (
+	"crypto/md5"
+	"embed"
+	"encoding/json"
+	"fmt"
+	"github.com/TokEat/argus/scanner/gopocs"
+	"github.com/TokEat/argus/scanner/internal/output"
+	"github.com/TokEat/argus/scanner/internal/vuln/mapper"
+	"github.com/TokEat/argus/scanner/internal/vuln/nuclei"
+	"github.com/TokEat/argus/scanner/structs"
+	"github.com/TokEat/argus/shared/proto/go/scanpolicy"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+	"sync"
+
+	"github.com/projectdiscovery/gologger"
+	nucleiOutput "github.com/projectdiscovery/nuclei/v3/pkg/output"
+)
+
+type nucleiCaller func(map[string][]string, string, func(nucleiOutput.ResultEvent), string, bool, bool, embed.FS, string, []string, []string) ([]nucleiOutput.ResultEvent, error)
+
+type limitedNucleiCaller func(map[string][]string, string, func(nucleiOutput.ResultEvent), string, bool, bool, embed.FS, string, []string, []string, nuclei.ExecutionLimits, bool) ([]nucleiOutput.ResultEvent, error)
+
+var (
+	callNuclei        nucleiCaller        = nuclei.Call
+	callNucleiMachine nucleiCaller        = nuclei.CallMachine
+	callNucleiLimited limitedNucleiCaller = nuclei.CallLimited
+)
+
+func configuredNucleiCaller(cfg *Config) nucleiCaller {
+	if cfg != nil && cfg.MachineOutput {
+		return callNucleiMachine
+	}
+	return callNuclei
+}
+
+func normalizedRiskValidationTargets(cfg *Config) (map[string][]string, int, error) {
+	if cfg == nil || !strings.EqualFold(strings.TrimSpace(cfg.ExecutionMode), "risk_validation") {
+		return nil, 0, fmt.Errorf("risk validation execution mode is required")
+	}
+	allowedTargets := make(map[string]struct{}, len(cfg.Targets))
+	for _, target := range cfg.Targets {
+		target = strings.TrimSpace(target)
+		if target == "" || strings.ContainsAny(target, "\r\n\x00") {
+			return nil, 0, fmt.Errorf("risk validation contains an invalid target")
+		}
+		allowedTargets[target] = struct{}{}
+	}
+	if len(allowedTargets) == 0 {
+		return nil, 0, fmt.Errorf("risk validation requires confirmed targets")
+	}
+	if len(cfg.RiskValidationTargets) == 0 {
+		return map[string][]string{}, 0, nil
+	}
+
+	normalized := make(map[string][]string, len(cfg.RiskValidationTargets))
+	total := 0
+	for rawTarget, rawPocs := range cfg.RiskValidationTargets {
+		target := strings.TrimSpace(rawTarget)
+		if _, ok := allowedTargets[target]; !ok {
+			return nil, 0, fmt.Errorf("risk validation target %q is outside the dispatched batch", target)
+		}
+		seen := make(map[string]struct{}, len(rawPocs))
+		for _, rawPoc := range rawPocs {
+			poc := strings.TrimSpace(strings.ReplaceAll(rawPoc, "\\", "/"))
+			clean := path.Clean(poc)
+			ext := strings.ToLower(path.Ext(clean))
+			if poc == "" || clean != poc || path.IsAbs(clean) || strings.Contains(clean, "/") || (ext != ".yaml" && ext != ".yml") {
+				return nil, 0, fmt.Errorf("risk validation POC filename %q is unsafe", rawPoc)
+			}
+			if _, exists := seen[clean]; exists {
+				continue
+			}
+			seen[clean] = struct{}{}
+			normalized[target] = append(normalized[target], clean)
+			total++
+		}
+		if len(normalized[target]) == 0 {
+			return nil, 0, fmt.Errorf("risk validation target %q has no confirmed POC", target)
+		}
+	}
+	return normalized, total, nil
+}
+
+func validateRiskValidationPocFiles(cfg *Config, targets map[string][]string) error {
+	if len(targets) == 0 {
+		if len(cfg.RiskValidationPocHashes) != 0 {
+			return fmt.Errorf("risk validation contains POC hashes without a Nuclei plan")
+		}
+		return nil
+	}
+	if cfg == nil || strings.TrimSpace(cfg.NucleiTemplate) == "" {
+		return fmt.Errorf("risk validation requires a materialized POC directory")
+	}
+	selected := make(map[string]struct{})
+	for _, pocs := range targets {
+		for _, poc := range pocs {
+			selected[poc] = struct{}{}
+		}
+	}
+	if len(cfg.RiskValidationPocHashes) != len(selected) {
+		return fmt.Errorf("risk validation POC content hashes do not cover the confirmed selection")
+	}
+	for poc := range selected {
+		expected := strings.ToLower(strings.TrimSpace(cfg.RiskValidationPocHashes[poc]))
+		if expected == "" {
+			return fmt.Errorf("risk validation POC %q has no confirmed content hash", poc)
+		}
+		content, err := os.ReadFile(filepath.Join(cfg.NucleiTemplate, poc))
+		if err != nil {
+			return fmt.Errorf("read confirmed risk validation POC %q: %w", poc, err)
+		}
+		actual := fmt.Sprintf("%x", md5.Sum(content))
+		if actual != expected {
+			return fmt.Errorf("risk validation POC %q content changed after confirmation", poc)
+		}
+	}
+	for poc := range cfg.RiskValidationPocHashes {
+		if _, exists := selected[poc]; !exists {
+			return fmt.Errorf("risk validation contains an unselected POC content hash for %q", poc)
+		}
+	}
+	return nil
+}
+
+func runRiskValidationPhase(ctx *ScanContext, cfg *Config, enableLocalReports bool) ([]gopocs.NucleiResult, error) {
+	// 原生匹配模式：服务端只下发目标+指纹（TargetFingerprints），workflow→POC
+	// 的匹配由 Agent 本地 workflow.yaml 完成，与单次扫描同源（mapper.GetPocs）。
+	if len(cfg.RiskValidationTargets) == 0 {
+		if cfg.TargetFingerprints != nil {
+			return runNativeWorkflowMatchedPhase(ctx, cfg, enableLocalReports)
+		}
+		return nil, fmt.Errorf("risk validation requires confirmed targets")
+	}
+	targets, count, err := normalizedRiskValidationTargets(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateRiskValidationPocFiles(cfg, targets); err != nil {
+		return nil, err
+	}
+	goPocTargets, goPocCost, err := normalizedRiskValidationGoPocTargets(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if count == 0 && len(goPocTargets) == 0 {
+		return nil, fmt.Errorf("risk validation requires a sealed Nuclei or GoPoc plan")
+	}
+	if strings.TrimSpace(cfg.ValidationBudgetID) == "" || cfg.ValidationTargetConcurrency < 1 || cfg.ValidationRateLimit < 1 || cfg.ValidationRequestBudget < 1 || cfg.ValidationEstimatedRequests < 1 {
+		return nil, fmt.Errorf("risk validation requires a positive sealed execution budget")
+	}
+	if cfg.ValidationEstimatedRequests > cfg.ValidationRequestBudget {
+		return nil, fmt.Errorf("risk validation estimate exceeds the sealed request budget")
+	}
+	var results []nucleiOutput.ResultEvent
+	if count > 0 {
+		nucleiBudget := cfg.ValidationRequestBudget - goPocCost
+		if nucleiBudget < 1 {
+			return nil, fmt.Errorf("risk validation leaves no request budget for the sealed Nuclei plan")
+		}
+		emitPhase(ctx, PhaseNuclei, "start", fmt.Sprintf("%d explicitly confirmed pocs", count))
+		addResult, collector := buildNucleiResultHandler(ctx, enableLocalReports)
+		var callErr error
+		results, callErr = callNucleiLimited(
+			targets,
+			cfg.HTTPProxy,
+			addResult,
+			"",
+			cfg.NoInteractsh,
+			cfg.WAFBypassHeaders,
+			currentPipelineEmbedPocs(ctx),
+			cfg.NucleiTemplate,
+			strings.Split(cfg.ExcludeTags, ","),
+			strings.Split(cfg.Severities, ","),
+			nuclei.ExecutionLimits{RateLimit: cfg.ValidationRateLimit, TargetConcurrency: cfg.ValidationTargetConcurrency, RequestBudget: nucleiBudget},
+			cfg.MachineOutput,
+		)
+		results = authoritativeNucleiResults(results, collector.snapshot())
+		if callErr != nil {
+			emitPhase(ctx, PhaseNuclei, "failed", "nuclei execution failed")
+			return nil, callErr
+		}
+		emitPhase(ctx, PhaseNuclei, "end", "")
+	}
+	if len(goPocTargets) > 0 {
+		goPocTargets = activatedRiskGoPocTargets(goPocTargets, results)
+	}
+	if len(goPocTargets) > 0 {
+		emitPhase(ctx, PhaseGoPoc, "start", fmt.Sprintf("%d explicitly confirmed checks", len(goPocTargets)))
+		goResults, dispatchErr := gopocs.DispatchGoPocTargets(goPocTargets, cfg.GoPocCatalogSHA256, scanpolicy.GoPocVulnerabilityCheck, cfg.ValidationTargetConcurrency, cfg.ValidationRateLimit, goPocCost, func(message structs.OutputMessage) {
+			dispatchPipelineOutput(ctx, message)
+		})
+		if ctx != nil {
+			ctx.GoPocsResults = toEngineGoPocResults(goResults)
+		}
+		if dispatchErr != nil {
+			emitPhase(ctx, PhaseGoPoc, "failed", "scoped GoPoc vulnerability checks failed")
+			return nil, dispatchErr
+		}
+		emitPhase(ctx, PhaseGoPoc, "end", fmt.Sprintf("%d findings", len(goResults)))
+	}
+	converted := make([]gopocs.NucleiResult, len(results))
+	for i, result := range results {
+		converted[i] = gopocs.NucleiResult{TemplateID: result.TemplateID, Matched: result.Matched, URL: result.URL}
+	}
+	return converted, nil
+}
+
+func runNucleiPhase(ctx *ScanContext, cfg *Config, resultMap map[string][]string, enableLocalReports bool, emit func(structs.OutputMessage)) ([]gopocs.NucleiResult, error) {
+	if cfg.NoPoc {
+		return nil, nil
+	}
+	var nucleiResults []nucleiOutput.ResultEvent
+	TargetAndPocsName, count := mapper.GetPocs(resultMap, currentPipelineWorkflowDB(ctx), cfg.DisableGeneralPoc, cfg.WAFSkipOnManyFingerprints)
+	logNucleiPocMap(cfg, TargetAndPocsName, count)
+	if count > 0 {
+		emitPhase(ctx, PhaseNuclei, "start", fmt.Sprintf("%d pocs", count))
+		addResult, collector := buildNucleiResultHandler(ctx, enableLocalReports)
+		var callErr error
+		nucleiResults, callErr = configuredNucleiCaller(cfg)(TargetAndPocsName,
+			cfg.HTTPProxy, addResult,
+			"", cfg.NoInteractsh, cfg.WAFBypassHeaders, currentPipelineEmbedPocs(ctx),
+			cfg.NucleiTemplate, strings.Split(cfg.ExcludeTags, ","),
+			strings.Split(cfg.Severities, ","))
+		nucleiResults = authoritativeNucleiResults(nucleiResults, collector.snapshot())
+		if callErr != nil {
+			emitPhase(ctx, PhaseNuclei, "failed", "nuclei execution failed")
+			return nil, callErr
+		}
+		emitPhase(ctx, PhaseNuclei, "end", "")
+	}
+	converted := make([]gopocs.NucleiResult, len(nucleiResults))
+	for i, r := range nucleiResults {
+		converted[i] = gopocs.NucleiResult{TemplateID: r.TemplateID, Matched: r.Matched, URL: r.URL}
+	}
+	return converted, nil
+}
+
+func authoritativeNucleiResults(returned, collected []nucleiOutput.ResultEvent) []nucleiOutput.ResultEvent {
+	if len(collected) == 0 {
+		return returned
+	}
+	// The vendored writer both invokes the callback and appends the same event
+	// to its return slice. The callback stream is authoritative for reporting,
+	// so do not duplicate successful POCs before GoPoc dispatch.
+	return collected
+}
+
+func runPocSearch(ctx *ScanContext, cfg *Config, aliveURLs []string, enableLocalReports bool) ([]gopocs.NucleiResult, error) {
+	TargetAndPocsName := make(map[string][]string)
+	for _, url := range aliveURLs {
+		TargetAndPocsName[url] = []string{}
+	}
+	emitPhase(ctx, PhaseNuclei, "start", fmt.Sprintf("%d targets, poc=%s", len(TargetAndPocsName), cfg.PocNameForSearch))
+	addResult, _ := buildNucleiResultHandler(ctx, enableLocalReports)
+	nucleiResults, callErr := configuredNucleiCaller(cfg)(TargetAndPocsName,
+		cfg.HTTPProxy, addResult,
+		cfg.PocNameForSearch, cfg.NoInteractsh,
+		cfg.WAFBypassHeaders,
+		currentPipelineEmbedPocs(ctx), cfg.NucleiTemplate,
+		strings.Split(cfg.ExcludeTags, ","), strings.Split(cfg.Severities, ","))
+	if callErr != nil {
+		emitPhase(ctx, PhaseNuclei, "failed", "nuclei execution failed")
+		return nil, callErr
+	}
+	emitPhase(ctx, PhaseNuclei, "end", "")
+	converted := make([]gopocs.NucleiResult, len(nucleiResults))
+	for i, r := range nucleiResults {
+		converted[i] = gopocs.NucleiResult{TemplateID: r.TemplateID, Matched: r.Matched, URL: r.URL}
+	}
+	return converted, nil
+}
+
+func logNucleiPocMap(cfg *Config, targetAndPocs map[string][]string, count int) {
+	if cfg == nil || !cfg.ShowPocMap {
+		return
+	}
+	gologger.Info().Msgf("[Pipeline] Nuclei 映射结果: targets=%d pocs=%d template_path=%s", len(targetAndPocs), count, cfg.NucleiTemplate)
+	for target, pocs := range targetAndPocs {
+		gologger.Info().Msgf("[Pipeline]   %s → %v", target, pocs)
+	}
+}
+
+func embedPocs(ep embed.FS) embed.FS { return ep }
+
+type nucleiResultCollector struct {
+	mu      sync.Mutex
+	results []nucleiOutput.ResultEvent
+}
+
+func (c *nucleiResultCollector) add(result nucleiOutput.ResultEvent) {
+	c.mu.Lock()
+	c.results = append(c.results, result)
+	c.mu.Unlock()
+}
+
+func (c *nucleiResultCollector) snapshot() []nucleiOutput.ResultEvent {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]nucleiOutput.ResultEvent(nil), c.results...)
+}
+
+func buildNucleiResultHandler(ctx *ScanContext, enableLocalReports bool) (func(result nucleiOutput.ResultEvent), *nucleiResultCollector) {
+	collector := &nucleiResultCollector{}
+	if enableLocalReports || ctx == nil || ctx.OutputHook == nil {
+		return func(result nucleiOutput.ResultEvent) {
+			output.AddResultByResultEvent(result)
+			collector.add(result)
+			observeNucleiResult(ctx, result)
+		}, collector
+	}
+	return func(result nucleiOutput.ResultEvent) {
+		collector.add(result)
+		message, ok := nucleiResultMessage(result)
+		if !ok {
+			return
+		}
+		if ctx.OutputObserver != nil {
+			ctx.OutputObserver(message)
+		}
+		ctx.OutputHook(message)
+	}, collector
+}
+
+func observeNucleiResult(ctx *ScanContext, result nucleiOutput.ResultEvent) {
+	if ctx == nil || ctx.OutputObserver == nil {
+		return
+	}
+	if message, ok := nucleiResultMessage(result); ok {
+		ctx.OutputObserver(message)
+	}
+}
+
+func nucleiResultMessage(result nucleiOutput.ResultEvent) (OutputMessage, bool) {
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return OutputMessage{}, false
+	}
+	show := fmt.Sprintf("[%s] [%s] %v",
+		result.TemplateID,
+		result.Info.SeverityHolder.Severity.String(),
+		result.Matched,
+	)
+	return OutputMessage{Type: "Nuclei", Nuclei: string(payload), Show: show}, true
+}
+
+// dispatchedNativeTargets 构建本批 ChunkTargets 的成员集合。
+func dispatchedNativeTargets(targets []string) map[string]struct{} {
+	allowed := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		target = strings.TrimSpace(target)
+		if target != "" {
+			allowed[target] = struct{}{}
+		}
+	}
+	return allowed
+}
+
+// runNativeWorkflowMatchedPhase 原生匹配执行：Agent 用本地 workflow.yaml 对
+// 服务端下发的目标指纹做 workflow→POC 匹配（mapper.GetPocs，与单次扫描同源），
+// 预授权门在本地按 workflow 条目的 risk_level 过滤 high/unknown 模板。
+func runNativeWorkflowMatchedPhase(ctx *ScanContext, cfg *Config, enableLocalReports bool) ([]gopocs.NucleiResult, error) {
+	if cfg == nil || len(cfg.TargetFingerprints) == 0 {
+		// 服务端应对零指纹兄弟批次本地完结。若仍被下发，不要发出空
+		// coverage 事件（StageObservationEvent 拒绝空 targets）。
+		return []gopocs.NucleiResult{}, nil
+	}
+	workflowDB, err := loadWorkflowDB(*cfg)
+	if err != nil {
+		return nil, fmt.Errorf("load local workflow db: %w", err)
+	}
+	matched, _ := mapper.GetPocs(cfg.TargetFingerprints, workflowDB, cfg.DisableGeneralPoc, cfg.WAFSkipOnManyFingerprints)
+
+	// 预授权门：未授权时，被任何 high/unknown workflow 引用的模板全部剔除
+	// （同一模板被低危条目共享时同样保守剔除，避免借道绕过审批）。
+	highRiskPocs := make(map[string]struct{})
+	if !cfg.AllowHighRiskAutoExecution {
+		for _, entity := range workflowDB {
+			if !pocRequiresSecondConfirmation(entity.RiskLevel) {
+				continue
+			}
+			for _, poc := range entity.PocsName {
+				highRiskPocs[poc] = struct{}{}
+			}
+		}
+	}
+
+	allowed := make(map[string][]string, len(matched))
+	total := 0
+	skippedHighRisk := 0
+	allowedTargets := dispatchedNativeTargets(cfg.Targets)
+	for target, pocs := range matched {
+		if _, ok := allowedTargets[strings.TrimSpace(target)]; !ok {
+			continue // 双保险：目标必须在本批 ChunkTargets 内
+		}
+		filtered := make([]string, 0, len(pocs))
+		for _, poc := range pocs {
+			if _, blocked := highRiskPocs[poc]; blocked {
+				skippedHighRisk++
+				continue
+			}
+			filtered = append(filtered, poc)
+		}
+		if len(filtered) == 0 {
+			continue
+		}
+		allowed[target] = filtered
+		total += len(filtered)
+	}
+	if len(allowed) == 0 || total == 0 {
+		emitPhase(ctx, PhaseNuclei, "end", "native match produced no eligible pocs")
+		return []gopocs.NucleiResult{}, nil
+	}
+
+	rateLimit := cfg.ValidationRateLimit
+	if rateLimit < 1 {
+		rateLimit = 30
+	}
+	concurrency := cfg.ValidationTargetConcurrency
+	if concurrency < 1 {
+		concurrency = 6
+	}
+	emitPhase(ctx, PhaseNuclei, "start", fmt.Sprintf("native workflow match: %d targets, %d pocs (high-risk skipped: %d)", len(allowed), total, skippedHighRisk))
+	addResult, collector := buildNucleiResultHandler(ctx, enableLocalReports)
+	results, callErr := callNucleiLimited(
+		allowed,
+		cfg.HTTPProxy,
+		addResult,
+		cfg.PocNameForSearch,
+		cfg.NoInteractsh,
+		cfg.WAFBypassHeaders,
+		currentPipelineEmbedPocs(ctx),
+		cfg.NucleiTemplate,
+		strings.Split(cfg.ExcludeTags, ","),
+		strings.Split(cfg.Severities, ","),
+		nuclei.ExecutionLimits{RateLimit: rateLimit, TargetConcurrency: concurrency},
+		cfg.MachineOutput,
+	)
+	results = authoritativeNucleiResults(results, collector.snapshot())
+	if callErr != nil {
+		emitPhase(ctx, PhaseNuclei, "failed", "nuclei execution failed")
+		return nil, callErr
+	}
+	emitPhase(ctx, PhaseNuclei, "end", fmt.Sprintf("%d findings", len(results)))
+	converted := make([]gopocs.NucleiResult, len(results))
+	for i, result := range results {
+		converted[i] = gopocs.NucleiResult{TemplateID: result.TemplateID, Matched: result.Matched, URL: result.URL}
+	}
+	return converted, nil
+}

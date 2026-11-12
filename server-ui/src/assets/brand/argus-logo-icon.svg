@@ -1,0 +1,14 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Argus A app icon</title>
+  <desc id="desc">A black rounded-square app icon with a white angular Argus A mark.</desc>
+  <rect x="70" y="70" width="884" height="884" rx="92" fill="#030507"/>
+  <rect x="70" y="70" width="884" height="884" rx="92" stroke="#F4F7FA" stroke-width="28"/>
+  <g transform="translate(132 118) scale(.74)">
+    <g fill="#F4F7FA">
+      <polygon points="196 844 266 844 470 314 400 314"/>
+      <polygon points="298 844 420 844 548 486 498 344"/>
+      <polygon points="466 154 594 154 860 844 714 844 536 360"/>
+      <polygon points="388 594 654 594 696 706 348 706"/>
+    </g>
+  </g>
+</svg>

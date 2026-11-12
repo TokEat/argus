@@ -1,0 +1,35 @@
+id: jmreport-jdbc-rce
+
+info:
+  name: jmreport-jdbc-rce
+  author: admin
+  severity: critical
+  description: jmreport组件-jdbc-rce
+  metadata:
+    max-request: 1
+    shodan-query: ""
+    verified: true
+  yakit-info:
+    sign: a5f389797139f883dc9d0b31c3977f3f
+
+http:
+- method: POST
+  path:
+  - '{{RootURL}}/jmreport/testConnection'
+  headers:
+    Content-Type: application/json
+    token: "null"
+  body: '{"id":"56987","code":"ABC","dbType":"mysql","dbDriver":"com-mysql.cj.jdbc.Driver","dbUrl":"","dbName":"1d","dbPassword":"2d","userName":"3d"}'
+
+  max-redirects: 3
+  disable-cookie: true
+  matchers-condition: and
+  matchers:
+  - type: word
+    part: body
+    words:
+    - 数据库连接失败：驱动类不存在
+    condition: and
+
+
+# Generated From WebFuzzer on 2026-03-27 11:39:49

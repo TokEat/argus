@@ -1,0 +1,512 @@
+package api
+
+import (
+	"crypto/md5"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/TokEat/argus/server/internal/db"
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+)
+
+// Global variable acting as hot-reload trigger
+var GlobalArsenalReloadCounter int64 = 0
+
+func getArsenals(c *gin.Context) {
+	var arsenals []db.Arsenal
+	typ := db.CanonicalArsenalType(c.Param("type"))
+	if rejectRetiredEXPArsenal(c, typ) {
+		return
+	}
+	query := db.DB.Where("tenant_id = ? AND type IN ?", currentTenantID(c), db.ArsenalTypeAliases(typ))
+
+	// 如果没有 ?all=1 参数，默认只下发已审核武器给 Agent
+	if c.Query("all") != "1" {
+		query = query.Where("state = ?", "Approved")
+	}
+
+	isLite := c.Query("lite") == "1"
+	// 如果指定了 lite=1 ，则省略动辄几千上万行的巨大 Content 正文内容，只提取主要元数据
+	if isLite {
+		query = query.Omit("Content", "PreviousContent")
+	}
+
+	if q := strings.TrimSpace(c.Query("q")); q != "" {
+		like := "%" + strings.ToLower(q) + "%"
+		query = query.Where("LOWER(file_name) LIKE ? OR LOWER(state) LIKE ? OR LOWER(hash) LIKE ?", like, like, like)
+	}
+
+	if c.Query("page") != "" || c.Query("page_size") != "" || strings.TrimSpace(c.Query("q")) != "" {
+		page, pageSize := parsePagination(c, 50, 200)
+		var total int64
+		if err := query.Model(&db.Arsenal{}).Count(&total).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if err := query.Order("updated_at DESC, file_name ASC, id ASC").Limit(pageSize).Offset((page - 1) * pageSize).Find(&arsenals).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if isLite {
+			clearArsenalLargeFields(arsenals)
+		}
+		c.JSON(http.StatusOK, pagedResponse(arsenals, total, page, pageSize, currentRuleVersion()))
+		return
+	}
+
+	if err := query.Find(&arsenals).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if isLite {
+		clearArsenalLargeFields(arsenals)
+	}
+	c.JSON(http.StatusOK, arsenals)
+}
+
+func getArsenal(c *gin.Context) {
+	typ := db.CanonicalArsenalType(c.Param("type"))
+	if rejectRetiredEXPArsenal(c, typ) {
+		return
+	}
+	fn := c.Param("filename")
+	tenantID := currentTenantID(c)
+	arsenal, err := db.FindTenantArsenalByTypeAndFile(tenantID, typ, fn)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
+		return
+	}
+	c.JSON(http.StatusOK, arsenal)
+}
+
+func clearArsenalLargeFields(arsenals []db.Arsenal) {
+	for i := range arsenals {
+		arsenals[i].Content = ""
+		arsenals[i].PreviousContent = ""
+	}
+}
+
+func saveArsenal(c *gin.Context) {
+	typ := db.CanonicalArsenalType(c.Param("type"))
+	if rejectRetiredEXPArsenal(c, typ) {
+		return
+	}
+	fn := c.Param("filename")
+	tenantID := currentTenantID(c)
+
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	hash := fmt.Sprintf("%x", md5.Sum([]byte(req.Content)))
+
+	// 查找已有记录以保存 PreviousHash/PreviousContent 和递增 Version
+	var existing db.Arsenal
+	var previousHash string
+	var previousContent string
+	var version int = 1
+	approvedChanged := false
+	if err := db.DB.Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).First(&existing).Error; err == nil {
+		previousHash = existing.Hash
+		previousContent = existing.Content // 保存当前内容用于回滚
+		version = existing.Version + 1
+		approvedChanged = strings.EqualFold(existing.State, "Approved")
+	}
+
+	arsenal := db.Arsenal{
+		ID:              db.BuildTenantArsenalID(tenantID, typ, fn),
+		TenantID:        tenantID,
+		Type:            typ,
+		FileName:        fn,
+		Content:         req.Content,
+		Hash:            hash,
+		PreviousHash:    previousHash,
+		PreviousContent: previousContent,
+		Version:         version,
+		State:           "Draft",
+	}
+	if typ == "poc" || typ == "active_fingerprint" {
+		if err := db.ValidateRuleCatalogCandidate(arsenal); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("rule governance validation failed: %v", err)})
+			return
+		}
+	}
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(&arsenal).Error; err != nil {
+			return err
+		}
+		return createArsenalEvent(tx, arsenal, "saved", c.GetString("user_id"), arsenal.Content, nil)
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	resp := gin.H{"status": "saved", "hash": hash, "state": "Draft", "version": version}
+	if approvedChanged && typ != "exp" {
+		resp["rule_version"] = BumpRuleVersion()
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+func approveArsenal(c *gin.Context) {
+	typ := db.CanonicalArsenalType(c.Param("type"))
+	if rejectRetiredEXPArsenal(c, typ) {
+		return
+	}
+	fn := c.Param("filename")
+	tenantID := currentTenantID(c)
+	var existing db.Arsenal
+	if err := db.DB.Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).First(&existing).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
+		return
+	}
+	if !bindArsenalLifecycleGuard(c, existing) {
+		return
+	}
+	if typ == "poc" {
+		candidate := existing
+		candidate.State = "Approved"
+		if err := db.ValidateRuleCatalogCandidate(candidate); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("rule governance validation failed: %v", err)})
+			return
+		}
+	}
+
+	existing.State = "Approved"
+	persistApproval := func(tx *gorm.DB) error {
+		if err := tx.Model(&db.Arsenal{}).Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).Update("state", "Approved").Error; err != nil {
+			return err
+		}
+		return createArsenalEvent(tx, existing, "published", c.GetString("user_id"), "", nil)
+	}
+	var approvalErr error
+	if typ == "active_fingerprint" {
+		approvalErr = db.ApplyRuleCatalogCandidate(existing, persistApproval)
+	} else {
+		approvalErr = db.DB.Transaction(persistApproval)
+	}
+	if approvalErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": approvalErr.Error()})
+		return
+	}
+	if typ != "active_fingerprint" {
+		if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	if typ == "exp" {
+		c.JSON(http.StatusOK, gin.H{"status": "approved"})
+		return
+	}
+
+	// 触发版本号递增
+	newVersion := BumpRuleVersion()
+	log.Printf("[Arsenal Hub] Rules approved by Tenant %s. Rule version bumped to %s. Global Reload Triggered!", tenantID, newVersion)
+
+	c.JSON(http.StatusOK, gin.H{"status": "approved", "rule_version": newVersion})
+}
+
+func deleteArsenal(c *gin.Context) {
+	typ := db.CanonicalArsenalType(c.Param("type"))
+	if rejectRetiredEXPArsenal(c, typ) {
+		return
+	}
+	fn := c.Param("filename")
+	tenantID := currentTenantID(c)
+	var arsenal db.Arsenal
+	if err := db.DB.Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).First(&arsenal).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
+		return
+	}
+	if typ == "poc" {
+		if refs := workflowReferencesForPOC(tenantID, fn); len(refs) > 0 {
+			c.JSON(http.StatusConflict, gin.H{
+				"error":      "POC is referenced by workflow rules",
+				"references": refs,
+			})
+			return
+		}
+	}
+	if err := db.DB.Delete(&db.Arsenal{}, "tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	resp := gin.H{"status": "deleted"}
+	if strings.EqualFold(arsenal.State, "Approved") && typ != "exp" {
+		resp["rule_version"] = BumpRuleVersion()
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+func deprecateArsenal(c *gin.Context) {
+	typ := db.CanonicalArsenalType(c.Param("type"))
+	if rejectRetiredEXPArsenal(c, typ) {
+		return
+	}
+	fn := c.Param("filename")
+	tenantID := currentTenantID(c)
+	var arsenal db.Arsenal
+	if err := db.DB.Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).First(&arsenal).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
+		return
+	}
+	if !bindArsenalLifecycleGuard(c, arsenal) {
+		return
+	}
+	wasApproved := strings.EqualFold(arsenal.State, "Approved")
+	arsenal.State = "Deprecated"
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&db.Arsenal{}).Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).Update("state", "Deprecated").Error; err != nil {
+			return err
+		}
+		return createArsenalEvent(tx, arsenal, "deprecated", c.GetString("user_id"), "", nil)
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	resp := gin.H{"status": "deprecated", "hash": arsenal.Hash, "version": arsenal.Version}
+	if wasApproved && typ != "exp" {
+		resp["rule_version"] = BumpRuleVersion()
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+func getArsenalHistory(c *gin.Context) {
+	typ := db.CanonicalArsenalType(c.Param("type"))
+	if rejectRetiredEXPArsenal(c, typ) {
+		return
+	}
+	fn := c.Param("filename")
+	tenantID := currentTenantID(c)
+	arsenal, err := db.FindTenantArsenalByTypeAndFile(tenantID, typ, fn)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
+		return
+	}
+	var events []db.ArsenalEvent
+	if err := db.DB.Where("tenant_id = ? AND artifact_id = ?", tenantID, arsenal.ID).Order("created_at DESC, id DESC").Limit(200).Find(&events).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": events})
+}
+
+func createArsenalEvent(tx *gorm.DB, arsenal db.Arsenal, action, actorID, content string, details interface{}) error {
+	detailJSON := "{}"
+	if details != nil {
+		encoded, err := json.Marshal(details)
+		if err != nil {
+			return err
+		}
+		detailJSON = string(encoded)
+	}
+	return tx.Create(&db.ArsenalEvent{
+		TenantID: arsenal.TenantID, ArtifactID: arsenal.ID, Type: arsenal.Type,
+		FileName: arsenal.FileName, Version: arsenal.Version, Hash: arsenal.Hash,
+		State: arsenal.State, Action: action, ActorID: strings.TrimSpace(actorID),
+		Content: content, Details: detailJSON,
+	}).Error
+}
+
+func workflowReferencesForPOC(tenantID, fileName string) []gin.H {
+	names := map[string]bool{}
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			names[value] = true
+		}
+	}
+	add(fileName)
+	add(strings.TrimSuffix(fileName, filepath.Ext(fileName)))
+	var poc db.PocRule
+	if err := db.DB.Where("tenant_id = ? AND source_file = ?", tenantID, fileName).First(&poc).Error; err == nil {
+		add(poc.Name)
+		add(poc.SourceFile)
+	}
+	list := make([]string, 0, len(names))
+	for name := range names {
+		list = append(list, name)
+	}
+	sort.Strings(list)
+	var workflows []db.WorkflowRule
+	if err := db.DB.Where("tenant_id = ? AND poc_name IN ?", tenantID, list).Order("product_name, poc_name, match_type").Find(&workflows).Error; err != nil {
+		return nil
+	}
+	refs := make([]gin.H, 0, len(workflows))
+	for _, wf := range workflows {
+		refs = append(refs, gin.H{
+			"product_name": wf.ProductName,
+			"poc_name":     wf.PocName,
+			"match_type":   wf.MatchType,
+			"source_file":  wf.SourceFile,
+			"state":        wf.State,
+			"enabled":      wf.Enabled,
+		})
+	}
+	return refs
+}
+
+func getArsenalManifest(c *gin.Context) {
+	var arsenals []db.Arsenal
+	tenantID := currentTenantID(c)
+	db.DB.Select("type, file_name, hash, state, updated_at").
+		Where("tenant_id = ? AND state = ? AND type IN ?", tenantID, "Approved", agentSyncArsenalTypes()).
+		Find(&arsenals)
+
+	type ManifestItem struct {
+		Type      string `json:"type"`
+		FileName  string `json:"file_name"`
+		Hash      string `json:"hash"`
+		UpdatedAt string `json:"updated_at"`
+	}
+
+	ruleVersion := currentRuleVersionValue()
+
+	items := make([]ManifestItem, 0, len(arsenals))
+	for _, a := range arsenals {
+		items = append(items, ManifestItem{
+			Type:      db.CanonicalArsenalType(a.Type),
+			FileName:  a.FileName,
+			Hash:      a.Hash,
+			UpdatedAt: a.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"rule_version": ruleVersion,
+		"items":        items,
+	})
+}
+
+// GetCurrentRuleVersion 获取当前规则版本号
+func GetCurrentRuleVersion() string {
+	var cfg db.SystemConfig
+	if db.DB.Where("key = ?", "rule_version").First(&cfg).Error == nil {
+		return cfg.Value
+	}
+	return ""
+}
+
+// BumpRuleVersion 生成并保存新的规则版本号
+func BumpRuleVersion() string {
+	version := fmt.Sprintf("v%s.%03d", time.Now().Format("2006.01.02"), time.Now().UnixMilli()%1000)
+	cfg := db.SystemConfig{
+		Key:       "rule_version",
+		Value:     version,
+		UpdatedAt: time.Now(),
+	}
+	db.DB.Save(&cfg)
+	return version
+}
+
+func rollbackArsenal(c *gin.Context) {
+	typ := db.CanonicalArsenalType(c.Param("type"))
+	if rejectRetiredEXPArsenal(c, typ) {
+		return
+	}
+	fn := c.Param("filename")
+	tenantID := currentTenantID(c)
+
+	var arsenal db.Arsenal
+	if err := db.DB.Where("tenant_id = ? AND type = ? AND file_name = ?", tenantID, typ, fn).First(&arsenal).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Arsenal not found"})
+		return
+	}
+	if !bindArsenalLifecycleGuard(c, arsenal) {
+		return
+	}
+
+	if arsenal.PreviousHash == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No previous version available for rollback"})
+		return
+	}
+
+	// 交换当前版本和上一版本（含 Content 内容回滚）
+	previousState := arsenal.State
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&arsenal).Updates(map[string]interface{}{
+			"content":          arsenal.PreviousContent,
+			"previous_content": arsenal.Content,
+			"hash":             arsenal.PreviousHash,
+			"previous_hash":    arsenal.Hash,
+			"state":            "Draft", // 回滚后重新审批
+			"version":          arsenal.Version + 1,
+		}).Error; err != nil {
+			return err
+		}
+		arsenal.Content, arsenal.PreviousContent = arsenal.PreviousContent, arsenal.Content
+		arsenal.Hash, arsenal.PreviousHash = arsenal.PreviousHash, arsenal.Hash
+		arsenal.Version++
+		arsenal.State = "Draft"
+		return createArsenalEvent(tx, arsenal, "rolled_back", c.GetString("user_id"), arsenal.Content, map[string]interface{}{"previous_state": previousState})
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := db.SyncRuleCatalogFromArsenal(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 触发全网 Agent 重新拉取
+	newVersion := BumpRuleVersion()
+	log.Printf("[Arsenal Hub] Rule %s/%s rolled back. Rule version: %s", typ, fn, newVersion)
+
+	c.JSON(http.StatusOK, gin.H{"status": "rolled_back", "rule_version": newVersion})
+}
+
+func bindArsenalLifecycleGuard(c *gin.Context, arsenal db.Arsenal) bool {
+	var req struct {
+		Hash    string `json:"hash"`
+		Version int    `json:"version"`
+	}
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil && err != io.EOF {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid lifecycle guard"})
+		return false
+	}
+	if req.Hash == "" && req.Version == 0 {
+		return true
+	}
+	if req.Hash == "" || req.Version <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "hash and version must be supplied together"})
+		return false
+	}
+	if req.Hash != arsenal.Hash || req.Version != arsenal.Version {
+		c.JSON(http.StatusConflict, gin.H{"error": "artifact hash or version changed", "current_hash": arsenal.Hash, "current_version": arsenal.Version})
+		return false
+	}
+	return true
+}
+
+func rejectRetiredEXPArsenal(c *gin.Context, typ string) bool {
+	if typ != "exp" && typ != "exploit" {
+		return false
+	}
+	c.JSON(http.StatusGone, gin.H{"error": "legacy EXP Arsenal path was removed; use /api/v1/exps"})
+	return true
+}

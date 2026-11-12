@@ -1,0 +1,85 @@
+services:
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: argus-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+    ports:
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - ${INSTALL_DIR:-/opt/argus}/data/minio:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    container_name: argus-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      ARGUS_EXP_MINIO_ACCESS_KEY: ${ARGUS_EXP_MINIO_ACCESS_KEY:?ARGUS_EXP_MINIO_ACCESS_KEY is required}
+      ARGUS_EXP_MINIO_SECRET_KEY: ${ARGUS_EXP_MINIO_SECRET_KEY:?ARGUS_EXP_MINIO_SECRET_KEY is required}
+      ARGUS_EXP_MINIO_BUCKET: ${ARGUS_EXP_MINIO_BUCKET:-argus-exp}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        mc alias set argus http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        bucket="$${ARGUS_EXP_MINIO_BUCKET}"
+        case "$${bucket}" in ''|*[!a-z0-9.-]*) echo "invalid MinIO bucket name" >&2; exit 2 ;; esac
+        printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetBucketLocation","s3:ListBucket"],"Resource":["arn:aws:s3:::%s"]},{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::%s/*"]}]}' "$${bucket}" "$${bucket}" > /tmp/argus-exp-policy.json
+        mc mb --ignore-existing "argus/$${bucket}"
+        mc anonymous set none "argus/$${bucket}"
+        mc admin user add argus "$${ARGUS_EXP_MINIO_ACCESS_KEY}" "$${ARGUS_EXP_MINIO_SECRET_KEY}"
+        mc admin policy create argus argus-exp-rw /tmp/argus-exp-policy.json
+        mc admin policy attach argus argus-exp-rw --user "$${ARGUS_EXP_MINIO_ACCESS_KEY}"
+    restart: "no"
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: argus-rabbitmq
+    ports:
+      - "127.0.0.1:${RABBITMQ_PORT:-5672}:5672"
+      - "127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - ${INSTALL_DIR:-/opt/argus}/data/rabbitmq:/var/lib/rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-argus}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?RABBITMQ_DEFAULT_PASS is required}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: argus-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-argus}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ${INSTALL_DIR:-/opt/argus}/data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped

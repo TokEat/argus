@@ -1,0 +1,36 @@
+id: mcp-discover-detect
+
+info:
+  name: MCP 服务 server/discover 识别
+  author: argus
+  severity: info
+  description: |
+    按 MCP 规范向 Streamable HTTP 端点发送 server/discover，用于发现服务支持的协议版本。命中 supportedVersions 即视为 MCP 服务。
+  metadata:
+    max-request: 3
+    product: MCP-Server
+    argus-execution-class: detection
+  tags: mcp,detect,tech
+
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/mcp"
+      - "{{BaseURL}}/mcp/"
+      - "{{BaseURL}}/"
+
+    headers:
+      Accept: "application/json, text/event-stream"
+      Content-Type: "application/json"
+      MCP-Protocol-Version: "2026-07-28"
+      Mcp-Method: "server/discover"
+
+    body: '{"jsonrpc":"2.0","id":1,"method":"server/discover"}'
+
+    stop-at-first-match: true
+
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "supportedVersions"

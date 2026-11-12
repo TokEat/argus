@@ -1,0 +1,30 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - powered by SpiderControl
+          - LSWEBSERVER
+          - SCWEBSERVICES
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/cgi-bin/GetSrvInfo.exe'
+id: spidercontrol-scada-server-info
+info:
+  author: geeknik
+  description: |-
+    SpiderControl SCADA Web Server is vulnerable to sensitive information exposure. Numerous, market-leading OEM manufacturers - from a wide variety of industries - rely on SpiderControl.
+    fofa: "SpiderControl"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: SpiderControl SCADA Web Server - Sensitive Information Exposure
+  severity: high
+  tags: spidercontrol,scada,exposure,misconfig,argus-import

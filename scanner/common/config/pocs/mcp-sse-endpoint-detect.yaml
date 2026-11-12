@@ -1,0 +1,41 @@
+id: mcp-sse-endpoint-detect
+
+info:
+  name: MCP SSE endpoint 事件识别
+  author: argus
+  severity: info
+  description: |
+    以短超时 GET /sse，识别 MCP SSE 传输返回的 endpoint 事件。命中 text/event-stream 与 event: endpoint，并包含 session 标识或 /messages。
+  metadata:
+    max-request: 1
+    product: MCP-Server
+    argus-execution-class: detection
+  tags: mcp,detect,tech,sse
+
+http:
+  - raw:
+      - |
+        @timeout: 5s
+        GET /sse HTTP/1.1
+        Host: {{Hostname}}
+        Accept: text/event-stream
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: header
+        words:
+          - "text/event-stream"
+
+      - type: word
+        part: body
+        words:
+          - "event: endpoint"
+
+      - type: word
+        part: body
+        words:
+          - "session_id="
+          - "sessionId="
+          - "/messages"
+        condition: or

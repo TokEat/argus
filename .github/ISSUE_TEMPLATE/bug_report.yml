@@ -1,0 +1,61 @@
+name: Bug report
+description: 报告可复现缺陷或回归问题
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题描述
+      description: 简要说明发生了什么，以及期望行为是什么。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 请提供最小复现路径。
+      placeholder: |
+        1. 打开 ...
+        2. 执行 ...
+        3. 观察到 ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+      description: 说明修复后应表现为什么。
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: 影响范围
+      description: 涉及哪些模块、接口、页面、任务、Agent、规则或部署环境？
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 日志 / 截图 / 版本
+      description: 请脱敏后粘贴日志、截图、commit、浏览器、系统或部署版本。
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: 逐条列出修复完成的判断标准。
+      placeholder: |
+        - 原问题不再复现
+        - 相关回归测试通过
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: 预期验证方式
+      description: 需要执行哪些测试、构建、手动验证或安全检查？
+    validations:
+      required: true

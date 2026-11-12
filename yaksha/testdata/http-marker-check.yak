@@ -1,0 +1,28 @@
+target = cli.String(
+    "target",
+    cli.setVerboseName("授权测试目标"),
+    cli.setRequired(true),
+)
+marker = cli.String(
+    "marker",
+    cli.setDefault("yaksha-marker"),
+)
+
+cli.check()
+
+response, err = yaksha.httpGet(target)
+if err != nil {
+    yaksha.log("request failed: " + yaksha.toString(err))
+    panic(err)
+}
+
+matched, matchErr = yaksha.regexMatch(marker, response)
+if matchErr != nil {
+    panic(matchErr)
+}
+
+yaksha.evidence("marker_matched", matched)
+yaksha.result({
+    "vulnerable": matched,
+    "response": response,
+})

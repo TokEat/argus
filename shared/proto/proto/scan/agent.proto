@@ -1,0 +1,195 @@
+syntax = "proto3";
+
+package scan;
+
+option go_package = "github.com/TokEat/argus/shared/proto/go/scan";
+
+// AgentService 定义了扫描节点(Agent)与服务端(Server)之间的通信接口
+service AgentService {
+  // Register 节点上线注册
+  rpc Register(RegisterReq) returns (RegisterResp);
+  
+  // Heartbeat 节点心跳保活
+  rpc Heartbeat(HeartbeatReq) returns (HeartbeatResp);
+  
+  // Subscribe 建立 Server→Agent 的任务通知双向流。
+  // Agent 连接后持续监听，Server 有新任务时主动推送 TaskNotify。
+  // Agent 通过 AgentSignal 上报状态变更（如容量变化）。
+  rpc Subscribe(stream AgentSignal) returns (stream TaskNotify);
+
+  // ClaimTask Agent 主动认领任务（原子操作，保证不重复领取）。
+  // Agent 收到 TaskNotify 后调用此接口从队列中领取任务。
+  rpc ClaimTask(ClaimTaskReq) returns (Task);
+  
+  // StreamResult 流式回传扫描产生的中间结果（如单独发现的一个漏洞）
+  rpc StreamResult(stream ScanResult) returns (Ack);
+  
+  // TaskComplete 任务完成通知
+  rpc TaskComplete(TaskCompleteReq) returns (Ack);
+
+  // FetchCredentialBundle returns a short-lived, one-time credential package
+  // bound to the currently leased Attempt and authenticated Agent session.
+  rpc FetchCredentialBundle(FetchCredentialBundleReq) returns (FetchCredentialBundleResp);
+
+  // EmergencyDump 紧急数据下刷（竞价实例回收前调用）
+  rpc EmergencyDump(EmergencyReq) returns (Ack);
+
+  // StreamLogs 节点流水日志黑匣子上传
+  rpc StreamLogs(stream LogPayload) returns (Ack);
+
+  // StreamDebug Agent 侧 POC 调试事件流。
+  rpc StreamDebug(stream DebugEvent) returns (Ack);
+}
+
+// -------------------- 基础消息类型 --------------------
+
+message Ack {
+  bool success = 1;
+  string message = 2;
+}
+
+message RegisterReq {
+  string agent_id = 1;       // 节点唯一ID (可以由云主机的 instance_id 充当)
+  string version = 2;        // Argus Agent 版本
+  map<string, string> tags = 3; // 节点标签能力
+  string os = 4;             // 节点操作系统
+  string arch = 5;           // 节点架构
+  int32 capacity = 6;        // 节点最大并发能力(max_workers)
+}
+
+message RegisterResp {
+  bool success = 1;
+  string token = 2;          // 认证或会话 Token
+}
+
+message HeartbeatReq {
+  string agent_id = 1;
+  string status = 2;         // 节点当前状态：IDLE, RUNNING...
+  string rule_version = 3;   // Agent 当前规则版本号
+  int32 running_tasks = 4;   // Agent 当前运行中任务数
+  repeated string running_task_ids = 5; // Agent 当前正在执行的子任务ID列表
+  float cpu_usage = 6;       // CPU 使用率 0-100
+  float mem_usage = 7;       // 内存 使用率 0-100
+}
+
+message HeartbeatResp {
+  bool ack = 1;
+  bool should_terminate = 2;  // Server有权要求节点退出（例如竞价实例即将被回收或者资源充裕）
+  bool should_sync_rules = 3; // 通知 Agent 需要同步规则（替代 HTTP 轮询）
+  // tasks_available 心跳响应中携带队列任务数，Agent 据此决定是否发起 ClaimTask
+  int32 tasks_available = 4;
+}
+
+// -------------------- Subscribe 双向流消息 --------------------
+
+// AgentSignal Agent→Server 的信号（通过 Subscribe 流上行）
+message AgentSignal {
+  string agent_id = 1;
+  int32 free_slots = 2;     // 当前空闲 worker 数量
+  string signal_type = 3;   // "ready" | "capacity_update" | "ping"
+}
+
+// TaskNotify Server→Agent 的任务通知（通过 Subscribe 流下行）
+message TaskNotify {
+  int32 available_tasks = 1;   // 队列中可领取的任务数
+  int32 priority = 2;          // 最高优先级任务的级别
+  string notify_type = 3;      // "new_task" | "task_returned" | "heartbeat_check"
+  DebugCommand debug_command = 4; // 可选：Server 定向下发的 POC debug 命令
+}
+
+// DebugCommand Server→Agent 的临时 POC 调试命令。
+message DebugCommand {
+  string action = 1;       // "start_debug" | "start_fingerprint_debug" | "cancel_debug"
+  string session_id = 2;
+  string tenant_id = 3;
+  string poc_content = 4;
+  string target_url = 5;
+  string proxy = 6;
+  int32 timeout_sec = 7;
+  string params = 8;       // JSON-encoded params for EXP execution
+}
+
+// -------------------- ClaimTask 认领消息 --------------------
+
+// ClaimTaskReq Agent 主动认领任务的请求
+message ClaimTaskReq {
+  string agent_id = 1;
+  int32 free_slots = 2;        // 当前空闲 worker 数，用于批量认领决策
+  map<string, string> tags = 3; // 节点标签，用于标签路由匹配
+}
+
+// -------------------- 任务与结果消息 --------------------
+
+message Task {
+  string task_id = 1;
+  repeated string targets = 2; // 目标列表
+  bytes config = 3;            // 序列化后的 engine.Config JSON，包含具体扫描参数
+  int32 priority = 4;          // 任务优先级 (0=最高, 1=普通, 2=低优先级)
+  int32 timeout_sec = 5;       // 任务超时秒数 (0=使用默认值)
+}
+
+message ScanResult {
+  string task_id = 1;
+  // payload_type 区分结果类型（如 web_info, finger, poc_vuln）
+  // 以决定如何反序列化 payload
+  string payload_type = 2; 
+  bytes payload = 3;           // JSON payload，对应 engine.OutputMessage
+  int64 timestamp = 4;         // 发现时间 Unix Msec
+}
+
+message TaskCompleteReq {
+  string agent_id = 1;
+  string task_id = 2;
+  string status = 3;         // DONE, FAILED, CANCELLED
+  string error_message = 4;
+}
+
+message FetchCredentialBundleReq {
+  string agent_id = 1;
+  string task_id = 2;
+  string bundle_ref = 3;
+}
+
+message CredentialPair {
+  string username = 1;
+  string password = 2;
+}
+
+message FetchCredentialBundleResp {
+  repeated CredentialPair pairs = 1;
+  string sha256 = 2;
+  int32 pair_count = 3;
+  int64 expires_at_unix = 4;
+}
+
+message EmergencyReq {
+  string agent_id = 1;
+}
+
+message LogPayload {
+  string agent_id = 1;
+  string level = 2; // INFO, WARN, ERROR
+  string message = 3;
+  int64 timestamp = 4;
+}
+
+// DebugEvent Agent→Server 的 POC 调试事件。
+message DebugEvent {
+  string agent_id = 1;
+  string tenant_id = 2;
+  string session_id = 3;
+  string type = 4; // debug_log | debug_result | debug_complete
+  int64 timestamp = 5;
+
+  string level = 6;
+  string message = 7;
+  bool matched = 8;
+  string template_id = 9;
+  string severity = 10;
+  string matched_at = 11;
+  string request = 12;
+  string response = 13;
+  repeated string extracted = 14;
+  int64 duration_ms = 15;
+  string error = 16;
+}

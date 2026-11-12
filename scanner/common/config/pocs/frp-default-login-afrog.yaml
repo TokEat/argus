@@ -1,0 +1,28 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - headers:
+      Authorization: Basic YWRtaW46YWRtaW4=
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - proxies
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/api/proxy/tcp'
+id: frp-default-login
+info:
+  author: pikpikcu
+  description: FRP default login credentials were discovered.
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: FRP Default Login
+  severity: high
+  tags: frp,default-login,argus-import

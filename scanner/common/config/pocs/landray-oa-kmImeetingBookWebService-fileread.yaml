@@ -1,0 +1,29 @@
+# 来源: afrog（转换自 afrog/xray 表达式 POC）
+http:
+  - matchers:
+      - type: status
+        status:
+          - 500
+      - type: word
+        part: body
+        words:
+          - Unmarshalling Error
+        condition: and
+    method: GET
+    path:
+      - '{{BaseURL}}/'
+id: landray-oa-kmImeetingBookWebService-fileread
+info:
+  author: ZacharyZcR
+  description: |-
+    Landray OA System kmImeetingBookWebService interface has an arbitrary file read vulnerability.
+    The vulnerability exists in the getImeetingBookLists method which can be exploited to read arbitrary files on the system.
+    fofa: body="Com_Parameter"
+  metadata:
+    argus-execution-class: detection
+    argus-import-license: MIT License
+    argus-import-source: afrog
+    argus-risk-level: high
+  name: Landray OA kmImeetingBookWebService File Read
+  severity: high
+  tags: landray,fileread,argus-import

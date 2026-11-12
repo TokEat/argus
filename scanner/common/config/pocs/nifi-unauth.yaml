@@ -1,0 +1,23 @@
+id: nifi-unauth
+info:
+  name: Apache NiFi 未授权访问
+  author: pwnhxl
+  severity: high
+  description: NiFi /nifi-api/access/config 返回 supportsLogin false，表明 API 未启用登录即可访问。
+  reference:
+  - https://github.com/jm0x0/apache_nifi_processor_rce
+  tags: misconfig,apache,nifi,unauth
+http:
+- method: GET
+  path:
+  - '{{BaseURL}}/nifi-api/access/config'
+  matchers-condition: and
+  matchers:
+  - type: status
+    status:
+    - 200
+  - type: word
+    part: body
+    words:
+    - '"supportsLogin":false}'
+    condition: and

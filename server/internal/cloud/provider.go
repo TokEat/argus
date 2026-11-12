@@ -1,0 +1,52 @@
+package cloud
+
+import (
+	"context"
+	"time"
+)
+
+// InstanceConfig 定义了创建云实例所需的通用配置
+type InstanceConfig struct {
+	Region        string            // 区域
+	InstanceType  string            // 实例规格 (如 ecs.c6.large)
+	ImageID       string            // 系统镜像ID（需预装好基础环境）
+	SecurityGroup string            // 安全组ID
+	VSwitch       string            // 虚拟交换机ID
+	UserData      string            // cloud-init 启动脚本（用于拉起 agent）
+	Tags          map[string]string // 实例标签
+	MaxPrice      float64           // 竞价实例最高容忍价格（0为按量付费）
+	SpotStrategy  string            // SpotAsPriceGo 或 SpotWithPriceLimit
+	SpotDuration  int32             // 抢占式保留时长（小时，0-6；0=无保护期）
+	AgentID       string            // 预分配的 Agent ID（Server 侧生成）
+	TenantID      string            // 租户 ID
+}
+
+// Instance 描述一个正在运行中的云节点
+type Instance struct {
+	ID        string    // 实例唯一ID
+	IP        string    // 实例公网或私网IP
+	Status    string    // 实例状态 (Pending, Starting, Running, Terminated)
+	CreatedAt time.Time // 创建时间
+}
+
+// CloudProvider 云服务编排的抽象接口
+type CloudProvider interface {
+	// CreateInstance 根据配置申请创建云实例（可以是竞价实例或按量付费）
+	CreateInstance(cfg InstanceConfig) (*Instance, error)
+
+	// WaitReady 等待实例状态变更为可运行（如操作系统就绪，网络分配完成）
+	// ctx 用于支持取消，防止 Server 关停时 goroutine 泄漏。
+	WaitReady(ctx context.Context, instanceID string, timeout time.Duration) error
+
+	// GetInstanceIP 获取实例的公网/私网通信IP
+	GetInstanceIP(instanceID string) (string, error)
+
+	// RebootInstance 重启实例（保留机器，只做 OS 级重启以恢复 Agent 进程）
+	RebootInstance(instanceID string) error
+
+	// TerminateInstance 销毁实例释放资源
+	TerminateInstance(instanceID string) error
+
+	// ListInstances 根据特定的 tag 获取当前正在运行的实例列表 (用于异常状态监控与孤儿实例回收)
+	ListInstances(tags map[string]string) ([]*Instance, error)
+}

